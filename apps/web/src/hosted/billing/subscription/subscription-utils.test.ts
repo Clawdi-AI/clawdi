@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import type { BillingOffer, Plan } from "@/hosted/billing/contracts";
+import type { BillingOffer, HostedDeployment, Plan } from "@/hosted/billing/contracts";
 import {
-	COMPUTE_FREE_SLUG,
+	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
+	computeFundingMode,
+	computeTierLabel,
+	isBasicCompute,
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionTermChangeable,
-	resolveFreePlan,
+	resolveBasicPlan,
 	resolvePerformancePlan,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
@@ -35,6 +38,17 @@ function plan(overrides: Partial<Plan> & Pick<Plan, "slug" | "price_cents">): Pl
 	};
 }
 
+function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+	return {
+		status: "active",
+		payment_state: "ok",
+		billing_term_months: 1,
+		price_cents: 900,
+		currency: "usd",
+		cancel_at_period_end: false,
+	};
+}
+
 describe("compute plan resolvers", () => {
 	test("resolvePerformancePlan prefers the canonical slug before price fallback", () => {
 		const priceFallback = plan({ slug: "legacy_paid", price_cents: 1900 });
@@ -44,17 +58,48 @@ describe("compute plan resolvers", () => {
 	});
 
 	test("resolvePerformancePlan falls back to the first paid plan when the slug is absent", () => {
-		const free = plan({ slug: COMPUTE_FREE_SLUG, price_cents: 0 });
+		const basic = plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 900 });
 		const paid = plan({ slug: "paid", price_cents: 1900 });
 
-		expect(resolvePerformancePlan([free, paid])).toBe(paid);
+		expect(resolvePerformancePlan([basic, paid])).toBe(paid);
 	});
 
-	test("resolveFreePlan prefers the canonical slug before price fallback", () => {
-		const priceFallback = plan({ slug: "legacy_free", price_cents: 0 });
-		const canonical = plan({ slug: COMPUTE_FREE_SLUG, price_cents: 500 });
+	test("resolvePerformancePlan never treats compute_basic as the positive-price fallback", () => {
+		const basic = plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 900 });
 
-		expect(resolveFreePlan([priceFallback, canonical])).toBe(canonical);
+		expect(resolvePerformancePlan([basic])).toBeUndefined();
+	});
+
+	test("resolveBasicPlan only resolves the canonical Basic plan", () => {
+		const otherPaid = plan({ slug: "legacy_paid", price_cents: 900 });
+		const basic = plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 1_100 });
+
+		expect(resolveBasicPlan([otherPaid, basic])).toBe(basic);
+		expect(resolveBasicPlan([otherPaid])).toBeUndefined();
+	});
+});
+
+describe("compute tier naming", () => {
+	test("presents the low tier as Basic", () => {
+		expect(computeTierLabel(COMPUTE_BASIC_SLUG)).toBe("Basic");
+		expect(computeTierLabel(COMPUTE_PERFORMANCE_SLUG)).toBe("Performance");
+	});
+
+	test("recognizes the Basic slug without inferring its funding source", () => {
+		expect(isBasicCompute(COMPUTE_BASIC_SLUG)).toBe(true);
+		expect(isBasicCompute(COMPUTE_PERFORMANCE_SLUG)).toBe(false);
+	});
+});
+
+describe("compute funding", () => {
+	test("derives included and paid Basic from subscription presence", () => {
+		expect(computeFundingMode(COMPUTE_BASIC_SLUG, null)).toBe("included_basic");
+		expect(computeFundingMode(COMPUTE_BASIC_SLUG, subscription())).toBe("subscription");
+	});
+
+	test("does not infer included funding for Performance without subscription state", () => {
+		expect(computeFundingMode(COMPUTE_PERFORMANCE_SLUG, subscription())).toBe("subscription");
+		expect(computeFundingMode(COMPUTE_PERFORMANCE_SLUG, null)).toBe("unknown");
 	});
 });
 

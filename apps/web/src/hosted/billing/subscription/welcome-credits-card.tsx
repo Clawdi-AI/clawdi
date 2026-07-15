@@ -81,12 +81,12 @@ export function WelcomeCreditsCard() {
 						</p>
 						<p className="text-sm text-muted-foreground">
 							{grantApplied
-								? "Your Free compute slot is ready. Deploy your first agent — managed AI is on us to start."
+								? "Your free Basic compute slot is ready. Deploy your first agent — managed AI is on us to start."
 								: grantPending
 									? grantCredits
 										? `Your ${grantCredits} in AI Credits is on the way. You can deploy now; it’ll be ready in a moment.`
 										: "Your welcome credits are on the way. You can deploy now; they’ll be ready in a moment."
-									: "Your Free compute slot is ready at $0. Deploy your first agent to get going."}
+									: "Your free Basic compute slot is ready. Deploy your first agent to get going."}
 						</p>
 					</div>
 				</div>

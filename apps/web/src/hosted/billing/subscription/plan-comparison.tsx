@@ -20,16 +20,16 @@ import { billingTermSuffix, creditsToUsd, formatCentsCompact } from "@/hosted/bi
 import { usePlans } from "@/hosted/billing/hooks";
 import {
 	planOffers,
-	resolveFreePlan,
+	resolveBasicPlan,
 	resolvePerformancePlan,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { settingsQueryHref } from "@/lib/settings-routes";
 
-function partitionPlans(plans: Plan[]): { free?: Plan; performance?: Plan } {
+function partitionPlans(plans: Plan[]): { basic?: Plan; performance?: Plan } {
 	return {
-		free: resolveFreePlan(plans),
+		basic: resolveBasicPlan(plans),
 		performance: resolvePerformancePlan(plans),
 	};
 }
@@ -44,7 +44,7 @@ function FeatureRow({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The Free / Performance / AI Credits comparison, folded into the Plan tab's
+ * The Basic / Performance / AI Credits comparison, folded into the Plan tab's
  * deploy flow (its own Pricing tab was redundant in Settings — Linear/Vercel
  * keep Plan + Usage). Self-contained; safe to drop below the current-plan card.
  */
@@ -66,7 +66,7 @@ export function PlanComparison({
 	const term = termProp ?? internalTerm;
 	const setTerm = onTermChange ?? setInternalTerm;
 
-	const { free, performance } = useMemo(
+	const { basic, performance } = useMemo(
 		() => partitionPlans(plansQuery.data ?? []),
 		[plansQuery.data],
 	);
@@ -77,6 +77,12 @@ export function PlanComparison({
 	);
 	const performanceOffer = performanceOfferSelection?.offer ?? null;
 	const performanceBillingTermMonths = performanceOfferSelection?.billingTermMonths ?? term;
+	const basicOfferSelection = useMemo(
+		() => (basic ? selectOfferForTerm(basic, term) : null),
+		[basic, term],
+	);
+	const basicOffer = basicOfferSelection?.offer ?? null;
+	const basicBillingTermMonths = basicOfferSelection?.billingTermMonths ?? term;
 
 	async function startPerformanceCheckout() {
 		if (!performance) return;
@@ -85,13 +91,16 @@ export function PlanComparison({
 
 	if (!plansQuery.data) return null;
 
-	const pointsPerUsd = performance?.points_per_usd ?? free?.points_per_usd ?? 1000;
+	const pointsPerUsd = performance?.points_per_usd ?? basic?.points_per_usd ?? 1000;
 	const creditsPerDollar = pointsPerUsd.toLocaleString();
 	const signupGrantCredits = Math.max(
 		0,
-		free?.signup_grant_credits ?? performance?.signup_grant_credits ?? 0,
+		basic?.signup_grant_credits ?? performance?.signup_grant_credits ?? 0,
 	);
 	const subscriptionGrantCredits = Math.max(0, performance?.subscription_grant_credits ?? 0);
+	const basicSubscriptionGrantCredits = Math.max(0, basic?.subscription_grant_credits ?? 0);
+	const basicOffers = basic ? planOffers(basic) : [];
+	const basicResources = basic;
 	const performanceOffers = performance ? planOffers(performance) : [];
 	const annualOffer = performanceOffers.find((o) => o.billing_term_months === 12);
 
@@ -100,35 +109,66 @@ export function PlanComparison({
 			<div>
 				<h3 className="text-base font-semibold">Compare compute options</h3>
 				<p className="text-sm text-muted-foreground">
-					Free is one user-level slot. Performance is billed per hosted agent.
+					Basic includes the first active agent. Additional Basic and Performance agents are billed
+					separately.
 				</p>
 			</div>
 			<div className="grid items-start gap-4 lg:grid-cols-3">
-				{/* Free */}
+				{/* Basic */}
 				<Card className="flex flex-col">
 					<CardHeader>
 						<div className="flex items-center justify-between">
 							<CardTitle className="flex items-center gap-2">
-								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Free
+								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Basic
 							</CardTitle>
 						</div>
-						<div className="mt-2 flex items-baseline gap-1">
-							<span className="text-3xl font-semibold tracking-tight tabular-nums">$0</span>
-							<span className="text-sm text-muted-foreground">/mo</span>
+						<div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+							<span className="text-2xl font-semibold tracking-tight">First agent free</span>
+							<span className="text-sm text-muted-foreground">
+								{basicOffer
+									? `then ${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo`
+									: "additional pricing unavailable"}
+							</span>
 						</div>
 						<CardDescription className="mt-2">
-							An always-on agent. Pair it with your own AI key to run end-to-end at no cost.
+							One active Basic agent is included. Each additional Basic agent uses its own
+							subscription.
 						</CardDescription>
+						{basicOffer && basicOffer.billing_term_months !== 1 ? (
+							<p className="text-xs text-muted-foreground">
+								Additional agents billed {formatCentsCompact(basicOffer.price_cents)}
+								{billingTermSuffix(basicOffer.billing_term_months)}
+							</p>
+						) : null}
+						{basicOffers.length > 1 ? (
+							<div className="mt-3">
+								<TermSwitcher
+									offers={basicOffers}
+									value={basicBillingTermMonths}
+									onChange={setTerm}
+								/>
+							</div>
+						) : null}
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
 							<FeatureRow>Always-on hosted runtime + TEE</FeatureRow>
 							<FeatureRow>
-								Burstable compute{free ? ` (${free.vcpu} vCPU / ${free.ram_gb} GB burst)` : ""}
+								Burstable compute
+								{basicResources
+									? ` (${basicResources.vcpu} vCPU / ${basicResources.ram_gb} GB burst)`
+									: ""}
 							</FeatureRow>
-							<FeatureRow>One active Free agent per user</FeatureRow>
+							<FeatureRow>One free active Basic agent per user</FeatureRow>
+							<FeatureRow>Paid additional Basic agents</FeatureRow>
 							<FeatureRow>Single agent engine (OpenClaw or Hermes)</FeatureRow>
-							<FeatureRow>$0 with BYOK — bring your own provider key</FeatureRow>
+							<FeatureRow>BYOK avoids managed-AI usage charges</FeatureRow>
+							{basicSubscriptionGrantCredits > 0 ? (
+								<FeatureRow>
+									{creditsToUsd(basicSubscriptionGrantCredits, pointsPerUsd)} in AI Credits per
+									subscription
+								</FeatureRow>
+							) : null}
 							{signupGrantCredits > 0 ? (
 								<FeatureRow>
 									{creditsToUsd(signupGrantCredits, pointsPerUsd)} in AI Credits on signup
@@ -142,7 +182,7 @@ export function PlanComparison({
 							variant="outline"
 							onClick={() => void router.navigate({ href: "/deploy" })}
 						>
-							<Rocket /> Deploy Free agent
+							<Rocket /> Deploy Basic agent
 						</Button>
 					</CardFooter>
 				</Card>
@@ -190,7 +230,7 @@ export function PlanComparison({
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>Everything in Free, plus:</FeatureRow>
+							<FeatureRow>Everything in Basic, plus:</FeatureRow>
 							<FeatureRow>
 								Higher burst
 								{performance ? ` (${performance.vcpu} vCPU / ${performance.ram_gb} GB)` : ""}
@@ -240,13 +280,13 @@ export function PlanComparison({
 							<FeatureRow>Top up any amount, $10–$2,000</FeatureRow>
 							<FeatureRow>Optional auto-reload so agents never stall</FeatureRow>
 							<FeatureRow>
-								<span className="font-medium">Free with BYOK</span> — your own key bypasses managed
-								AI
+								<span className="font-medium">No managed-AI charge with BYOK</span> — your own key
+								bypasses managed AI
 							</FeatureRow>
 						</ul>
 						<Separator className="my-4" />
 						<p className="text-xs text-muted-foreground">
-							Works with both Free and Performance compute. Manage balance and auto-reload from the
+							Works with both Basic and Performance compute. Manage balance and auto-reload from the
 							Wallet.
 						</p>
 					</CardContent>

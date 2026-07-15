@@ -5,11 +5,13 @@ import createClient from "openapi-fetch";
 import { useMemo } from "react";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
+	BillingDeployPaths,
 	CheckoutRequest,
 	ComputeFixPaymentRequest,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
 	DeployRequest,
+	HostedDeployment,
 	PortalRequest,
 	RuntimeAgentType,
 	SetAgentEnabledRequest,
@@ -80,7 +82,10 @@ function runtimeAgentType(agentType: string): RuntimeAgentType {
 export function useBillingClient() {
 	const { getToken } = useAuthToken();
 	return useMemo(() => {
-		const api = createClient<DeployPaths>({ baseUrl: ROOT_BASE_URL, fetch: fetchWithTimeout });
+		const api = createClient<BillingDeployPaths>({
+			baseUrl: ROOT_BASE_URL,
+			fetch: fetchWithTimeout,
+		});
 		api.use({
 			async onRequest({ request }) {
 				const token = await getToken();
@@ -134,7 +139,8 @@ export function useBillingClient() {
 			getMe: async () => unwrapDeploy(await api.GET("/v1/me")),
 			getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/v1/agent-environments")),
 
-			listDeployments: async () => unwrapDeploy(await api.GET("/v2/deployments")),
+			listDeployments: async (): Promise<HostedDeployment[]> =>
+				unwrapDeploy(await api.GET("/v2/deployments")),
 			createDeployment: async (body: DeployRequest, idempotencyKey: string) =>
 				unwrapDeploy(
 					await api.POST("/v2/deployments", {

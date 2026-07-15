@@ -108,9 +108,14 @@ import {
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
 import {
+	COMPUTE_BASIC_SLUG,
+	COMPUTE_PERFORMANCE_SLUG,
+	computeFundingMode,
+	computeTierLabel,
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionTermChangeable,
 	planOffers,
+	resolveBasicPlan,
 	resolvePerformancePlan,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
@@ -372,7 +377,7 @@ export function HostedAgentDetail({
 		section: activeTab,
 	});
 
-	const isPerformance = ci?.compute_plan_slug === "compute_performance";
+	const isPerformance = ci?.compute_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const scopedSessionLink = (sessionId: string) => ({
@@ -486,7 +491,6 @@ export function HostedAgentDetail({
 						<HostedAgentSettingsTab
 							environmentId={environmentId}
 							deployment={deployment}
-							isPerformance={isPerformance}
 							runtime={runtime}
 						/>
 					) : null}
@@ -728,7 +732,7 @@ function OverviewTab({
 					label="Status"
 					value={<RuntimeStatusValue deployment={deployment} agent={agent} />}
 				/>
-				<StatCard label="Compute" value={isPerformance ? "Performance" : "Free"} />
+				<StatCard label="Compute" value={isPerformance ? "Performance" : "Basic"} />
 				<StatCard label="Model" value={model} />
 				<StatCard
 					label="Resources"
@@ -1957,19 +1961,17 @@ function LinkedChannelRow({
 function HostedAgentSettingsTab({
 	environmentId,
 	deployment,
-	isPerformance,
 	runtime,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
-	isPerformance: boolean;
 	runtime: Runtime;
 }) {
 	return (
 		<div className="flex flex-col gap-10">
 			<AgentSettingsPanel environmentId={environmentId} />
 			<LanguageTimezoneSettingsSection deployment={deployment} runtime={runtime} />
-			<ComputeSettingsSections deployment={deployment} isPerformance={isPerformance} />
+			<ComputeSettingsSections deployment={deployment} />
 		</div>
 	);
 }
@@ -2095,13 +2097,7 @@ function LanguageTimezoneSettingsSection({
 	);
 }
 
-function ComputeSettingsSections({
-	deployment,
-	isPerformance,
-}: {
-	deployment: HostedDeployment;
-	isPerformance: boolean;
-}) {
+function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment }) {
 	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const lifecycle = useDeploymentLifecycle();
@@ -2121,11 +2117,17 @@ function ComputeSettingsSections({
 	const canRestart = canRestartDeployment(deploymentStatus);
 	const primaryLifecycleAction: "stop" | "start" = canStop ? "stop" : "start";
 	const canRunPrimaryLifecycleAction = canStop || canStart;
+	const computePlanSlug = deployment.config_info?.compute_plan_slug;
 	const currentSubscription = deployment.compute_subscription;
+	const fundingMode = computeFundingMode(computePlanSlug, currentSubscription);
+	const isIncludedBasic = fundingMode === "included_basic";
+	const isPaidCompute = fundingMode === "subscription";
+	const tierLabel = computeTierLabel(computePlanSlug);
 	const currentBillingTerm = currentSubscription?.billing_term_months ?? 1;
 	const [term, setTerm] = useState(currentBillingTerm);
 	const [termChangeConfirmation, setTermChangeConfirmation] =
 		useState<TermChangeConfirmation | null>(null);
+	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
 	const perfOffers = useMemo(() => (perfPlan ? planOffers(perfPlan) : []), [perfPlan]);
 	const perfOfferSelection = useMemo(
@@ -2133,10 +2135,22 @@ function ComputeSettingsSections({
 		[perfPlan, term],
 	);
 	const perfOffer = perfOfferSelection?.offer ?? null;
-	const selectedBillingTerm = perfOfferSelection?.billingTermMonths ?? term;
+	const currentPaidPlan =
+		computePlanSlug === COMPUTE_BASIC_SLUG
+			? basicPlan
+			: computePlanSlug === COMPUTE_PERFORMANCE_SLUG
+				? perfPlan
+				: undefined;
+	const billingPlan = isIncludedBasic ? perfPlan : currentPaidPlan;
+	const billingOffers = useMemo(() => (billingPlan ? planOffers(billingPlan) : []), [billingPlan]);
+	const billingOfferSelection = useMemo(
+		() => (billingPlan ? selectOfferForTerm(billingPlan, term) : null),
+		[billingPlan, term],
+	);
+	const selectedBillingTerm = billingOfferSelection?.billingTermMonths ?? term;
 	const currentOfferSelection = useMemo(
-		() => (perfPlan ? selectOfferForTerm(perfPlan, currentBillingTerm) : null),
-		[perfPlan, currentBillingTerm],
+		() => (currentPaidPlan ? selectOfferForTerm(currentPaidPlan, currentBillingTerm) : null),
+		[currentPaidPlan, currentBillingTerm],
 	);
 	const currentOffer =
 		currentOfferSelection?.billingTermMonths === currentBillingTerm
@@ -2152,27 +2166,30 @@ function ComputeSettingsSections({
 	const subscriptionCancelPending = !!currentSubscription?.cancel_at_period_end;
 	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
 	const canChangeBillingTerm =
-		isPerformance &&
-		!!perfPlan &&
-		!!perfOfferSelection &&
+		isPaidCompute &&
+		!!currentPaidPlan &&
+		!!billingOfferSelection &&
 		!!currentSubscription &&
 		isComputeSubscriptionTermChangeable(currentSubscription) &&
 		!subscriptionCancelPending &&
 		selectedBillingTerm !== currentBillingTerm;
-	const canUpgrade = !isPerformance && deployment.upgrade_available;
+	const canUpgrade = isIncludedBasic && deployment.upgrade_available;
 	const upgradeUnavailableMessage = plans.isLoading
 		? "Checking Performance availability..."
 		: !perfPlan
 			? "Performance compute is unavailable right now."
 			: isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped"
-				? "An upgrade may already be pending for this Free agent."
-				: "Upgrade is available once this Free agent is running or stopped.";
+				? "An upgrade may already be pending for this Basic agent."
+				: "Upgrade is available once this Basic agent is running or stopped.";
 	useEffect(() => {
-		if (!perfOffers.length || perfOffers.some((offer) => offer.billing_term_months === term)) {
+		if (
+			!billingOffers.length ||
+			billingOffers.some((offer) => offer.billing_term_months === term)
+		) {
 			return;
 		}
-		setTerm(perfOffers[0]?.billing_term_months ?? 1);
-	}, [perfOffers, term]);
+		setTerm(billingOffers[0]?.billing_term_months ?? 1);
+	}, [billingOffers, term]);
 	useEffect(() => {
 		setTerm(currentBillingTerm);
 	}, [deployment.id, currentBillingTerm]);
@@ -2283,21 +2300,23 @@ function ComputeSettingsSections({
 		);
 	}
 
-	async function cancelPerformanceSubscription() {
+	async function cancelComputeSubscription() {
 		if (!subscriptionCancelable || subscriptionCancelPending) return;
 		try {
 			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.id });
 			toast.success("Subscription cancellation scheduled", {
 				description: res.current_period_end
-					? `Performance stays active until ${formatShortDate(res.current_period_end)}.`
-					: (res.message ?? undefined),
+					? `Cancellation takes effect ${formatShortDate(
+							res.current_period_end,
+						)}. The deployment then falls back to included Basic funding if available; otherwise, it stops.`
+					: "The deployment falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
 			});
 		} catch (error) {
 			toast.error("Couldn’t cancel subscription", { description: normalizeBillingError(error) });
 		}
 	}
 
-	async function resumePerformanceSubscription() {
+	async function resumeComputeSubscription() {
 		if (!subscriptionCancelable || !subscriptionCancelPending) return;
 		try {
 			await resumeSubscription.mutateAsync({ deployment_id: deployment.id });
@@ -2349,16 +2368,21 @@ function ComputeSettingsSections({
 				<div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
 					<div className="min-w-0 flex-1">
 						<div className="flex flex-wrap items-center gap-1.5 text-sm font-medium">
-							{isPerformance ? <Zap className="size-4" /> : <Cpu className="size-4" />}
-							<span>{isPerformance ? "Performance compute" : "Free compute"}</span>
+							{tierLabel === "Performance" ? (
+								<Zap className="size-4" />
+							) : (
+								<Cpu className="size-4" />
+							)}
+							<span>{tierLabel} compute</span>
 							<Badge variant="outline" className="font-normal text-muted-foreground">
 								Current
 							</Badge>
 						</div>
 						<p className="mt-1 text-xs text-muted-foreground">
-							Free uses one active slot per user. Performance uses one subscription per deployment.
+							Basic includes one free active slot per user. Paid Basic and Performance each use one
+							subscription per deployment.
 						</p>
-						{isPerformance && currentSubscription ? (
+						{isPaidCompute && currentSubscription ? (
 							<p className="mt-2 text-xs text-muted-foreground">
 								{billingTermLabel(currentBillingTerm)}
 								{currentPriceCents !== null ? (
@@ -2374,7 +2398,7 @@ function ComputeSettingsSections({
 						) : null}
 					</div>
 					<div className="flex w-full flex-col gap-2 lg:w-auto lg:min-w-64 lg:items-end">
-						{!isPerformance && perfPlan ? (
+						{isIncludedBasic && perfPlan ? (
 							<div className="text-xs text-muted-foreground sm:text-right">
 								<span className="font-medium text-foreground">
 									{perfOffer
@@ -2391,7 +2415,7 @@ function ComputeSettingsSections({
 								) : null}
 							</div>
 						) : null}
-						{!isPerformance ? (
+						{isIncludedBasic ? (
 							<div className="flex w-full flex-col gap-2 lg:w-64">
 								<TermSwitcher offers={perfOffers} value={selectedBillingTerm} onChange={setTerm} />
 								<Button
@@ -2416,9 +2440,13 @@ function ComputeSettingsSections({
 									<p className="text-xs text-muted-foreground">{upgradeUnavailableMessage}</p>
 								)}
 							</div>
-						) : (
+						) : isPaidCompute ? (
 							<div className="flex w-full flex-col gap-2 lg:w-72">
-								<TermSwitcher offers={perfOffers} value={selectedBillingTerm} onChange={setTerm} />
+								<TermSwitcher
+									offers={billingOffers}
+									value={selectedBillingTerm}
+									onChange={setTerm}
+								/>
 								<Button
 									type="button"
 									variant="outline"
@@ -2439,9 +2467,7 @@ function ComputeSettingsSections({
 										variant="outline"
 										size="sm"
 										disabled={resumeSubscription.isPending || !subscriptionCancelable}
-										onClick={() =>
-											void runAction(resumePerformanceSubscription).catch(() => undefined)
-										}
+										onClick={() => void runAction(resumeComputeSubscription).catch(() => undefined)}
 									>
 										{resumeSubscription.isPending ? (
 											<Spinner className="size-3.5" />
@@ -2452,16 +2478,16 @@ function ComputeSettingsSections({
 									</Button>
 								) : (
 									<ConfirmAction
-										title="Cancel Performance?"
+										title={`Cancel ${tierLabel} subscription?`}
 										description={
 											<p>
-												This deployment stays on Performance until {subscriptionPeriodLabel}, then
-												moves back to Free compute.
+												Cancellation takes effect {subscriptionPeriodLabel}. The deployment then
+												falls back to included Basic funding if available; otherwise, it stops.
 											</p>
 										}
 										confirmLabel="Cancel at period end"
 										destructive
-										onConfirm={() => runAction(cancelPerformanceSubscription)}
+										onConfirm={() => runAction(cancelComputeSubscription)}
 									>
 										<Button
 											type="button"
@@ -2484,7 +2510,7 @@ function ComputeSettingsSections({
 									</p>
 								) : null}
 							</div>
-						)}
+						) : null}
 					</div>
 				</div>
 			</SettingsSection>

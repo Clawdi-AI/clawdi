@@ -1,11 +1,30 @@
 import { describe, expect, test } from "bun:test";
-import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
+import type { ComputePlanSlug, HostedDeployment, Plan } from "@/hosted/billing/contracts";
+import {
+	resolveBasicDeploySelection,
+	usesActiveIncludedBasicSlot,
+} from "@/hosted/billing/deploy/deploy-model";
 
-function deployment(
-	status: string,
-	computePlanSlug: "compute_free" | "compute_performance",
-): HostedDeployment {
+function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+	return {
+		status: "active",
+		payment_state: "ok",
+		billing_term_months: 1,
+		price_cents: 900,
+		currency: "usd",
+		cancel_at_period_end: false,
+	};
+}
+
+function deployment({
+	status,
+	computePlanSlug = "compute_basic",
+	computeSubscription,
+}: {
+	status: string;
+	computePlanSlug?: ComputePlanSlug;
+	computeSubscription?: HostedDeployment["compute_subscription"];
+}): HostedDeployment {
 	return {
 		id: `hdep_${status}_${computePlanSlug}`,
 		user_id: "usr_test",
@@ -14,6 +33,7 @@ function deployment(
 		status,
 		created_at: "2026-06-24T00:00:00Z",
 		upgrade_available: false,
+		compute_subscription: computeSubscription,
 		config_info: {
 			compute_plan_slug: computePlanSlug,
 			mux_enabled: false,
@@ -31,29 +51,105 @@ function deployment(
 	};
 }
 
-describe("usesActiveFreeComputeSlot", () => {
-	test("treats non-stopped Free deployments as occupying the user Free slot", () => {
-		expect(usesActiveFreeComputeSlot([deployment("running", "compute_free")])).toBe(true);
-		expect(usesActiveFreeComputeSlot([deployment("starting", "compute_free")])).toBe(true);
-		expect(usesActiveFreeComputeSlot([deployment("failed", "compute_free")])).toBe(true);
-		expect(usesActiveFreeComputeSlot([deployment("deleting", "compute_free")])).toBe(true);
+function plan(priceCents: number): Plan {
+	return {
+		slug: "compute_basic",
+		name: "Basic",
+		price_cents: priceCents,
+		points_per_usd: 100,
+		signup_grant_credits: 0,
+		subscription_grant_credits: 0,
+		vcpu: 1,
+		ram_gb: 2,
+		disk_size: 20,
+		offers: [
+			{
+				billing_term_months: 1,
+				price_cents: priceCents,
+				effective_monthly_price_cents: priceCents,
+				discount_percent: 0,
+			},
+		],
+	};
+}
+
+describe("usesActiveIncludedBasicSlot", () => {
+	test("counts active free-funded Basic deployments", () => {
+		expect(usesActiveIncludedBasicSlot([deployment({ status: "running" })])).toBe(true);
+		expect(usesActiveIncludedBasicSlot([deployment({ status: "starting" })])).toBe(true);
+		expect(usesActiveIncludedBasicSlot([deployment({ status: "failed" })])).toBe(true);
+		expect(usesActiveIncludedBasicSlot([deployment({ status: "deleting" })])).toBe(true);
 	});
 
-	test("does not count stopped or deleted Free deployments or Performance deployments", () => {
-		expect(usesActiveFreeComputeSlot([deployment("stopped", "compute_free")])).toBe(false);
-		expect(usesActiveFreeComputeSlot([deployment("deleted", "compute_free")])).toBe(false);
-		expect(usesActiveFreeComputeSlot([deployment("running", "compute_performance")])).toBe(false);
+	test("ignores inactive, paid-funded Basic, and Performance deployments", () => {
+		expect(usesActiveIncludedBasicSlot([deployment({ status: "stopped" })])).toBe(false);
+		expect(usesActiveIncludedBasicSlot([deployment({ status: "deleted" })])).toBe(false);
+		expect(
+			usesActiveIncludedBasicSlot([
+				deployment({ status: "running", computeSubscription: subscription() }),
+			]),
+		).toBe(false);
+		expect(
+			usesActiveIncludedBasicSlot([
+				deployment({ status: "running", computePlanSlug: "compute_performance" }),
+			]),
+		).toBe(false);
+	});
+});
+
+describe("resolveBasicDeploySelection", () => {
+	const basic = plan(900);
+
+	test("deploys compute_basic directly while included funding is available", () => {
+		expect(
+			resolveBasicDeploySelection({
+				includedSlotUsed: false,
+				basicPlan: basic,
+				billingTermMonths: 1,
+			}),
+		).toEqual({ mode: "direct", computePlanSlug: "compute_basic", plan: basic });
+	});
+
+	test("starts compute_basic checkout with the API offer after included funding is used", () => {
+		const selection = resolveBasicDeploySelection({
+			includedSlotUsed: true,
+			basicPlan: basic,
+			billingTermMonths: 1,
+		});
+
+		expect(selection).toMatchObject({
+			mode: "checkout",
+			computePlanSlug: "compute_basic",
+			billingTermMonths: 1,
+			plan: basic,
+			offer: { price_cents: 900 },
+		});
+	});
+
+	test("requires the canonical Basic plan for either funding path", () => {
+		expect(
+			resolveBasicDeploySelection({
+				includedSlotUsed: false,
+				basicPlan: undefined,
+				billingTermMonths: 1,
+			}),
+		).toEqual({ mode: "unavailable" });
+		expect(
+			resolveBasicDeploySelection({
+				includedSlotUsed: true,
+				basicPlan: undefined,
+				billingTermMonths: 1,
+			}),
+		).toEqual({ mode: "unavailable" });
 	});
 });
 
 /**
- * The compute-slot contract. Every row must match the deploy-API's
- * `slot_occupancy.py::v2_hosted_deployment_occupies_compute_slot` exactly —
- * a divergence here is what locked a production user out of deploying
- * (a `failed` row with no k8s resources held the free slot forever, while
- * the agents view sourced from cloud-api envs never showed it).
+ * The active-state half of the funding-slot contract. Every row must match the
+ * deploy API occupancy predicate; subscription-backed Basic is excluded before
+ * this predicate runs because it does not consume included funding.
  */
-describe("usesActiveFreeComputeSlot agrees with the backend predicate", () => {
+describe("usesActiveIncludedBasicSlot agrees with the backend occupancy predicate", () => {
 	const cases: Array<{ status: string; failureReason: string | null; occupies: boolean }> = [
 		{ status: "running", failureReason: null, occupies: true },
 		{ status: "starting", failureReason: null, occupies: true },
@@ -61,7 +157,6 @@ describe("usesActiveFreeComputeSlot agrees with the backend predicate", () => {
 		{ status: "deleting", failureReason: null, occupies: true },
 		{ status: "stopped", failureReason: null, occupies: false },
 		{ status: "deleted", failureReason: null, occupies: false },
-		// failed: only released when the reason proves the infra is gone.
 		{ status: "failed", failureReason: "backend_status=not_found", occupies: false },
 		{
 			status: "failed",
@@ -71,19 +166,21 @@ describe("usesActiveFreeComputeSlot agrees with the backend predicate", () => {
 		{ status: "failed", failureReason: "creation_interrupted", occupies: false },
 		{ status: "failed", failureReason: "startup_probe_failing; restart_count=2", occupies: true },
 		{ status: "failed", failureReason: null, occupies: true },
-		// unknown future statuses are treated as occupying (fail closed).
 		{ status: "some_future_state", failureReason: null, occupies: true },
 	];
 
 	for (const { status, failureReason, occupies } of cases) {
-		test(`${status} / ${failureReason ?? "no reason"} → ${occupies ? "occupies" : "free"}`, () => {
-			const d = { ...deployment(status, "compute_free"), failure_reason: failureReason };
-			expect(usesActiveFreeComputeSlot([d])).toBe(occupies);
+		test(`${status} / ${failureReason ?? "no reason"} → ${occupies ? "occupies" : "available"}`, () => {
+			const candidate = { ...deployment({ status }), failure_reason: failureReason };
+			expect(usesActiveIncludedBasicSlot([candidate])).toBe(occupies);
 		});
 	}
 
-	test("ignores non-free plans entirely", () => {
-		const d = { ...deployment("running", "compute_performance"), failure_reason: null };
-		expect(usesActiveFreeComputeSlot([d])).toBe(false);
+	test("excludes subscription-backed Basic before applying occupancy", () => {
+		const candidate = {
+			...deployment({ status: "running", computeSubscription: subscription() }),
+			failure_reason: null,
+		};
+		expect(usesActiveIncludedBasicSlot([candidate])).toBe(false);
 	});
 });

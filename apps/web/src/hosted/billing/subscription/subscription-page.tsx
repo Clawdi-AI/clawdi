@@ -81,8 +81,8 @@ export function SubscriptionPage() {
 				<CardHeader>
 					<CardTitle>Compute is managed per agent</CardTitle>
 					<CardDescription>
-						Free gives one active hosted-agent slot. Performance creates a separate subscription for
-						each hosted agent.
+						Basic includes one free active hosted-agent slot. Additional Basic and Performance
+						agents each use a separate subscription.
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-4">

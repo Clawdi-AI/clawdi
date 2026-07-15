@@ -1,11 +1,27 @@
 import { describe, expect, test } from "bun:test";
-import type { HostedDeployment } from "@/hosted/billing/contracts";
+import type { ComputePlanSlug, HostedDeployment } from "@/hosted/billing/contracts";
 import { computeDunningState, computeDunningTileStatus } from "./compute-dunning.logic";
 
 function deployment(
 	computeSubscription: HostedDeployment["compute_subscription"],
-): Pick<HostedDeployment, "compute_subscription"> {
-	return { compute_subscription: computeSubscription };
+	computePlanSlug?: ComputePlanSlug,
+): Pick<HostedDeployment, "compute_subscription" | "config_info"> {
+	return {
+		compute_subscription: computeSubscription,
+		config_info: computePlanSlug
+			? {
+					compute_plan_slug: computePlanSlug,
+					mux_enabled: false,
+					telegram_mux_enabled: false,
+					discord_mux_enabled: false,
+					whatsapp_mux_enabled: false,
+					imessage_mux_enabled: false,
+					kobb_available: false,
+					ai_provider_auth_kind: "managed",
+					runtime: "hermes",
+				}
+			: null,
+	};
 }
 
 function subscription(
@@ -49,6 +65,18 @@ describe("computeDunningState", () => {
 		expect(state?.ctaTarget).toBe("invoice");
 		expect(state?.invoiceUrl).toBe("https://invoice.stripe.test/action");
 		expect(state?.tileLabel).toBe("Payment action required");
+	});
+
+	test("uses Basic naming for paid Basic payment remediation", () => {
+		const state = computeDunningState(
+			deployment(
+				subscription({ status: "past_due", payment_state: "requires_action" }),
+				"compute_basic",
+			),
+		);
+
+		expect(state?.description).toContain("keep Basic compute active");
+		expect(state?.tileTitle).toContain("keep Basic compute active");
 	});
 
 	test("uses portal remediation for retryable past-due subscriptions", () => {

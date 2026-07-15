@@ -92,7 +92,7 @@ function deployment(
 		openclaw_control_ui_url: null,
 		hermes_control_ui_url: null,
 		config_info: {
-			compute_plan_slug: "compute_free",
+			compute_plan_slug: "compute_basic",
 			mux_enabled: true,
 			telegram_mux_enabled: false,
 			discord_mux_enabled: false,
@@ -180,7 +180,7 @@ describe("deploymentToTiles", () => {
 
 		expect(tile?.secondaryStatus).toEqual({
 			label: "Payment action required",
-			title: "Complete payment authentication to keep Performance compute active.",
+			title: "Complete payment authentication to keep Basic compute active.",
 			textClass: "text-warning-muted-foreground",
 		});
 	});

@@ -23,7 +23,7 @@ function configInfo(
 	overrides: Partial<NonNullable<HostedDeployment["config_info"]>>,
 ): NonNullable<HostedDeployment["config_info"]> {
 	return {
-		compute_plan_slug: "compute_free",
+		compute_plan_slug: "compute_basic",
 		mux_enabled: true,
 		telegram_mux_enabled: false,
 		discord_mux_enabled: false,

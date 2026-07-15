@@ -70,7 +70,7 @@ export function InvoicesSection() {
 						Invoices
 					</h2>
 					<p className="text-sm text-muted-foreground">
-						Recent Performance compute invoices from Stripe.
+						Recent Basic and Performance compute invoices from Stripe.
 					</p>
 				</div>
 			</div>
@@ -98,7 +98,7 @@ export function InvoicesSection() {
 					variant="inset"
 					icon={Receipt}
 					title="No invoices yet"
-					description="Performance compute invoices will appear here after Stripe creates them."
+					description="Paid compute invoices will appear here after Stripe creates them."
 				/>
 			) : (
 				<>

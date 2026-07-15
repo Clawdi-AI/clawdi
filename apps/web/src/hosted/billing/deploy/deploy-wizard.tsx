@@ -50,6 +50,7 @@ import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type {
 	BillingOffer,
 	CheckoutRequest,
+	ComputePlanSlug,
 	DeployRequest,
 	Plan,
 } from "@/hosted/billing/contracts";
@@ -61,7 +62,10 @@ import {
 	DEFAULT_DEPLOY_RUNTIME,
 	type DeployWizardAiAccessMode,
 } from "@/hosted/billing/deploy/deploy-defaults";
-import { usesActiveFreeComputeSlot } from "@/hosted/billing/deploy/deploy-model";
+import {
+	resolveBasicDeploySelection,
+	usesActiveIncludedBasicSlot,
+} from "@/hosted/billing/deploy/deploy-model";
 import {
 	buildHostedDeployRequest,
 	type DeployAiFields,
@@ -93,10 +97,10 @@ import {
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
 import {
-	COMPUTE_FREE_SLUG,
+	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	planOffers,
-	resolveFreePlan,
+	resolveBasicPlan,
 	resolvePerformancePlan,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
@@ -130,14 +134,14 @@ import { agentSectionHref } from "@/lib/agent-routes";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
-type Compute = "free" | "performance";
+type Compute = "basic" | "performance";
 type AiAccessMode = DeployWizardAiAccessMode;
-type ComputePlanSlug = DeployRequest["compute_plan_slug"];
 type NativeDeployCheckout = {
 	clientSecret: string;
 	previousDeploymentIds: string[];
 	request: CheckoutRequest;
 	summary: StripeCheckoutSummary;
+	tierLabel: "Basic" | "Performance";
 };
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
@@ -181,25 +185,38 @@ function AddTile({
 	);
 }
 
-function performanceCheckoutSummary({
+function computeCheckoutSummary({
 	offer,
 	plan,
 	termMonths,
+	tierLabel,
 }: {
 	offer: BillingOffer;
 	plan: Plan;
 	termMonths: number;
+	tierLabel: "Basic" | "Performance";
 }): StripeCheckoutSummary {
 	const effectiveMonthly = formatCentsCompact(offer.effective_monthly_price_cents);
+	const agentLabel =
+		tierLabel === "Basic" ? "additional hosted Basic agent" : "hosted Performance agent";
 	return {
 		detail:
 			termMonths === 1
-				? "Per hosted Performance agent, billed monthly."
-				: `${effectiveMonthly}/mo effective per hosted Performance agent.`,
+				? `Per ${agentLabel}, billed monthly.`
+				: `${effectiveMonthly}/mo effective per ${agentLabel}.`,
 		planName: plan.name,
 		priceLabel: formatCentsCompact(offer.price_cents),
 		termLabel: billingTermLabel(termMonths),
 	};
+}
+
+function recurringOfferLabel(offer: BillingOffer): string {
+	const monthly = `${formatCentsCompact(offer.effective_monthly_price_cents)}/mo`;
+	return offer.billing_term_months === 1
+		? monthly
+		: `${monthly}, billed ${formatCentsCompact(offer.price_cents)}${billingTermSuffix(
+				offer.billing_term_months,
+			)}`;
 }
 
 function ChannelInfoTile({ channel }: { channel: ChannelAccount }) {
@@ -222,10 +239,11 @@ function ChannelInfoTile({ channel }: { channel: ChannelAccount }) {
 
 interface ComputeStatusInput {
 	compute: Compute;
-	freeSlotPending: boolean;
-	freeSlotUsed: boolean;
+	includedSlotPending: boolean;
+	includedSlotUsed: boolean;
 	deploymentsError: unknown;
-	freePlan: Plan | undefined;
+	basicSelection: ReturnType<typeof resolveBasicDeploySelection>;
+	basicOffer: BillingOffer | null;
 	perfOffer: BillingOffer | null;
 }
 
@@ -264,40 +282,45 @@ function DeploySectionSkeleton({ columns = 2 }: { columns?: 2 | 3 }) {
 
 function computeStatusLine({
 	compute,
-	freeSlotPending,
-	freeSlotUsed,
+	includedSlotPending,
+	includedSlotUsed,
 	deploymentsError,
-	freePlan,
+	basicSelection,
+	basicOffer,
 	perfOffer,
 }: ComputeStatusInput): { message: string; tone: "destructive" | "muted" } | null {
-	if (compute === "free") {
+	if (compute === "basic") {
 		if (deploymentsError) {
 			return {
 				tone: "destructive",
-				message: "Couldn’t verify your Free slot. Retry this page before deploying Free.",
+				message: "Couldn’t verify your included Basic slot. Retry this page before deploying.",
 			};
 		}
-		if (!freePlan) {
+		if (basicSelection.mode === "unavailable") {
 			return {
 				tone: "destructive",
 				message:
-					"Free compute isn’t available from the billing service. Retry plans before deploying.",
+					"The Basic plan isn’t available from the billing service. Retry plans before deploying.",
 			};
 		}
-		if (freeSlotUsed) {
+		if (includedSlotPending) {
 			return {
 				tone: "muted",
-				message:
-					"You already have an active Free agent. Stop or delete it to reuse Free, or deploy a Performance agent.",
+				message: "Checking whether your included Basic slot is available before deployment.",
 			};
 		}
-		if (freeSlotPending) {
+		if (includedSlotUsed && basicOffer) {
 			return {
 				tone: "muted",
-				message: "Checking whether your Free slot is available before deployment.",
+				message: `Your included Basic slot is in use. Checkout opens here for an additional Basic agent at ${recurringOfferLabel(
+					basicOffer,
+				)}.`,
 			};
 		}
-		return null;
+		return {
+			tone: "muted",
+			message: "Your first active Basic agent is free. This deployment won’t open checkout.",
+		};
 	}
 
 	if (perfOffer && perfOffer.billing_term_months !== 1) {
@@ -343,7 +366,7 @@ export function DeployWizard() {
 		DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 	);
 	const [primaryModel, setPrimaryModel] = useState(DEFAULT_DEPLOY_PRIMARY_MODEL);
-	const [compute, setCompute] = useState<Compute>("free");
+	const [compute, setCompute] = useState<Compute>("basic");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
@@ -363,18 +386,35 @@ export function DeployWizard() {
 		return all;
 	}, [timezone]);
 
-	const freePlan = resolveFreePlan(plans.data);
+	const basicPlan = resolveBasicPlan(plans.data);
 	const perfPlan = resolvePerformancePlan(plans.data);
-	const freeSlotUsed = usesActiveFreeComputeSlot(deployments.data);
-	const freeSlotPending = deployments.isLoading;
-	const freeSlotUnavailable = freeSlotUsed || freeSlotPending || !!deployments.error;
+	const includedSlotUsed = usesActiveIncludedBasicSlot(deployments.data);
+	const includedSlotPending = deployments.isLoading;
+	const basicOfferSelection = useMemo(
+		() => (basicPlan ? selectOfferForTerm(basicPlan, term) : null),
+		[basicPlan, term],
+	);
+	const basicSelection = useMemo(
+		() =>
+			resolveBasicDeploySelection({
+				includedSlotUsed,
+				basicPlan,
+				billingTermMonths: term,
+			}),
+		[basicPlan, includedSlotUsed, term],
+	);
 	const perfOfferSelection = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
 		[perfPlan, term],
 	);
 	const perfOffer = perfOfferSelection?.offer ?? null;
+	const basicOffer = basicOfferSelection?.offer ?? null;
+	const basicBillingTermMonths = basicOfferSelection?.billingTermMonths ?? term;
 	const perfBillingTermMonths = perfOfferSelection?.billingTermMonths ?? term;
+	const basicOffers = basicPlan ? planOffers(basicPlan) : [];
 	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
+	const basicUnavailable =
+		includedSlotPending || !!deployments.error || basicSelection.mode === "unavailable";
 
 	const providerList = useMemo(
 		() =>
@@ -385,9 +425,7 @@ export function DeployWizard() {
 	);
 	const channelList = channels.data ?? [];
 	const computePlanReady =
-		compute === "performance"
-			? !!perfPlan && !!perfOfferSelection
-			: !!freePlan && !freeSlotUnavailable;
+		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
 	const canSubmit = planReady && !submitting;
 
@@ -428,19 +466,21 @@ export function DeployWizard() {
 
 	useEffect(() => {
 		if (compute !== "performance" || !plans.isSuccess || perfPlan) return;
-		setCompute("free");
+		setCompute("basic");
 	}, [compute, plans.isSuccess, perfPlan]);
 
 	useEffect(() => {
-		if (
-			compute !== "performance" ||
-			!perfOfferSelection ||
-			term === perfOfferSelection.billingTermMonths
-		) {
+		const selectedOffer =
+			compute === "performance"
+				? perfOfferSelection
+				: includedSlotUsed
+					? basicOfferSelection
+					: null;
+		if (!selectedOffer || term === selectedOffer.billingTermMonths) {
 			return;
 		}
-		setTerm(perfOfferSelection.billingTermMonths);
-	}, [compute, perfOfferSelection, term]);
+		setTerm(selectedOffer.billingTermMonths);
+	}, [basicOfferSelection, compute, includedSlotUsed, perfOfferSelection, term]);
 
 	// Don't let the selection silently degrade to managed: if the chosen
 	// provider vanishes from a SUCCESSFULLY-loaded list (deleted elsewhere),
@@ -488,11 +528,6 @@ export function DeployWizard() {
 		);
 		if (fallback) setPrimaryModel(fallback);
 	}, [aiProviders.data?.providers, primaryModel, primaryProviderChoice]);
-
-	useEffect(() => {
-		if (compute !== "free" || !freeSlotUsed || !perfPlan) return;
-		setCompute("performance");
-	}, [compute, freeSlotUsed, perfPlan]);
 
 	function setComputeTier(next: Compute) {
 		setCompute(next);
@@ -597,9 +632,10 @@ export function DeployWizard() {
 		return body;
 	}
 
-	function buildDeployRequest(aiFields: DeployAiFields): DeployRequest {
-		const computePlanSlug: ComputePlanSlug =
-			compute === "performance" ? COMPUTE_PERFORMANCE_SLUG : COMPUTE_FREE_SLUG;
+	function buildDeployRequest<TPlanSlug extends ComputePlanSlug>(
+		aiFields: DeployAiFields,
+		computePlanSlug: TPlanSlug,
+	): DeployRequest<TPlanSlug> {
 		return buildHostedDeployRequest({
 			computePlanSlug,
 			runtime,
@@ -635,22 +671,24 @@ export function DeployWizard() {
 		throw new Error("No checkout URL was returned.");
 	}
 
-	async function handleCheckoutComplete(previousDeploymentIds: readonly string[]) {
+	async function handleCheckoutComplete(
+		previousDeploymentIds: readonly string[],
+		tierLabel: "Basic" | "Performance",
+	) {
 		setCheckoutSession(null);
 		let refreshedDeployments: Awaited<ReturnType<typeof refreshCheckoutReturn>>;
 		try {
 			refreshedDeployments = await refreshCheckoutReturn();
 		} catch {
 			toast.success("Checkout complete", {
-				description:
-					"Your Performance deployment is provisioning. We’ll refresh it on the next load.",
+				description: `Your ${tierLabel} deployment is provisioning. We’ll refresh it on the next load.`,
 			});
 			return;
 		}
 		const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
 		if (deploymentId) {
 			toast.success("Checkout complete", {
-				description: "Your Performance deployment is provisioning now.",
+				description: `Your ${tierLabel} deployment is provisioning now.`,
 			});
 			void router.navigate({
 				href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
@@ -659,8 +697,7 @@ export function DeployWizard() {
 			return;
 		}
 		toast.success("Checkout complete", {
-			description:
-				"Your Performance deployment is provisioning. Check your agents list in a moment.",
+			description: `Your ${tierLabel} deployment is provisioning. Check your agents list in a moment.`,
 		});
 	}
 
@@ -670,12 +707,30 @@ export function DeployWizard() {
 		try {
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
-			const deployConfig = buildDeployRequest(aiFields);
+			const paidSelection =
+				compute === "performance" && perfPlan && perfOfferSelection
+					? {
+							billingTermMonths: perfOfferSelection.billingTermMonths,
+							computePlanSlug: COMPUTE_PERFORMANCE_SLUG,
+							offer: perfOfferSelection.offer,
+							plan: perfPlan,
+							tierLabel: "Performance" as const,
+						}
+					: compute === "basic" && basicSelection.mode === "checkout"
+						? {
+								billingTermMonths: basicSelection.billingTermMonths,
+								computePlanSlug: COMPUTE_BASIC_SLUG,
+								offer: basicSelection.offer,
+								plan: basicSelection.plan,
+								tierLabel: "Basic" as const,
+							}
+						: null;
 
-			if (compute === "performance" && perfPlan && perfOfferSelection) {
+			if (paidSelection) {
+				const deployConfig = buildDeployRequest(aiFields, paidSelection.computePlanSlug);
 				const body: CheckoutRequest = {
-					plan_slug: perfPlan.slug,
-					billing_term_months: perfOfferSelection.billingTermMonths,
+					plan_slug: paidSelection.plan.slug,
+					billing_term_months: paidSelection.billingTermMonths,
 					ui_mode: CHECKOUT_ELEMENTS_UI_MODE,
 					deploy_config: deployConfig,
 				};
@@ -694,11 +749,13 @@ export function DeployWizard() {
 						clientSecret: result.client_secret,
 						previousDeploymentIds: (deployments.data ?? []).map((deployment) => deployment.id),
 						request: body,
-						summary: performanceCheckoutSummary({
-							offer: perfOfferSelection.offer,
-							plan: perfPlan,
-							termMonths: perfOfferSelection.billingTermMonths,
+						summary: computeCheckoutSummary({
+							offer: paidSelection.offer,
+							plan: paidSelection.plan,
+							termMonths: paidSelection.billingTermMonths,
+							tierLabel: paidSelection.tierLabel,
 						}),
+						tierLabel: paidSelection.tierLabel,
 					});
 					return;
 				}
@@ -708,6 +765,8 @@ export function DeployWizard() {
 				});
 				return;
 			}
+			if (compute !== "basic" || basicSelection.mode !== "direct") return;
+			const deployConfig = buildDeployRequest(aiFields, COMPUTE_BASIC_SLUG);
 
 			deployAttemptRef.current = idempotencyAttemptFor(
 				deployAttemptRef.current,
@@ -732,7 +791,10 @@ export function DeployWizard() {
 		}
 	}
 
-	const deployLabel = compute === "performance" ? "Continue to checkout" : "Deploy agent";
+	const deployLabel =
+		compute === "performance" || (compute === "basic" && basicSelection.mode === "checkout")
+			? "Continue to checkout"
+			: "Deploy agent";
 	const selectedProviderCount =
 		aiAccessMode === "configured"
 			? normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice).length
@@ -745,7 +807,7 @@ export function DeployWizard() {
 				}`;
 	const runtimeSummary = runtimeDisplayName(runtime);
 	const summaryLine = [
-		`${compute === "performance" ? "Performance" : "Free"} compute`,
+		`${compute === "performance" ? "Performance" : "Basic"} compute`,
 		aiSummary,
 		runtimeSummary,
 		LANGUAGE_OPTIONS.find((l) => l.code === language)?.label ?? null,
@@ -949,32 +1011,36 @@ export function DeployWizard() {
 
 				<SettingsSection
 					title="Compute"
-					description="Free gives one active hosted deployment. Performance is billed per deployment with higher resources."
+					description="Basic includes the first active deployment. Additional Basic and Performance agents are billed per deployment."
 				>
 					<div className="flex flex-col gap-3">
 						<div className="grid gap-2 sm:grid-cols-2">
 							<EntityChoiceCard
-								selected={compute === "free"}
-								onClick={!freeSlotUnavailable ? () => setComputeTier("free") : undefined}
+								selected={compute === "basic"}
+								onClick={!basicUnavailable ? () => setComputeTier("basic") : undefined}
 								icon={
 									<IconChip tint="bg-identity-3-bg text-identity-3-fg">
 										<Cpu />
 									</IconChip>
 								}
-								title="Free"
+								title="Basic"
 								description={
-									freeSlotUsed
-										? "Free slot already in use"
-										: freeSlotPending
-											? "Checking Free slot…"
-											: deployments.error
-												? "Free slot check unavailable"
-												: freePlan
-													? `${freePlan.vcpu} vCPU / ${freePlan.ram_gb} GB burst · one active deployment`
-													: "$0 · one active deployment"
+									basicOffer
+										? `First active agent free · then ${recurringOfferLabel(basicOffer)} per additional agent`
+										: "First active agent free · paid additional agents unavailable"
 								}
-								badge={<Badge variant="secondary">$0</Badge>}
-								disabled={freeSlotUnavailable}
+								badge={
+									<Badge variant={includedSlotUsed ? "default" : "secondary"}>
+										{includedSlotPending
+											? "Checking slot"
+											: deployments.error
+												? "Slot unavailable"
+												: includedSlotUsed && basicOffer
+													? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo additional`
+													: "First slot free"}
+									</Badge>
+								}
+								disabled={basicUnavailable}
 							/>
 							<EntityChoiceCard
 								selected={compute === "performance"}
@@ -1002,22 +1068,26 @@ export function DeployWizard() {
 								disabled={!perfPlan}
 							/>
 						</div>
-						{compute === "performance" && perfOffers.length > 1 ? (
+						{(compute === "performance" ? perfOffers : includedSlotUsed ? basicOffers : []).length >
+						1 ? (
 							<div className="flex flex-col gap-1.5 sm:max-w-xs">
 								<span className="text-xs text-muted-foreground">Billing term</span>
 								<TermSwitcher
-									offers={perfOffers}
-									value={perfBillingTermMonths}
+									offers={
+										compute === "performance" ? perfOffers : includedSlotUsed ? basicOffers : []
+									}
+									value={compute === "performance" ? perfBillingTermMonths : basicBillingTermMonths}
 									onChange={setTerm}
 								/>
 							</div>
 						) : null}
 						<ComputeStatusLine
 							compute={compute}
-							freeSlotPending={freeSlotPending}
-							freeSlotUsed={freeSlotUsed}
+							includedSlotPending={includedSlotPending}
+							includedSlotUsed={includedSlotUsed}
 							deploymentsError={deployments.error}
-							freePlan={freePlan}
+							basicSelection={basicSelection}
+							basicOffer={basicOffer}
 							perfOffer={perfOffer}
 						/>
 					</div>
@@ -1103,10 +1173,15 @@ export function DeployWizard() {
 					if (!next) setCheckoutSession(null);
 				}}
 				clientSecret={checkoutSession?.clientSecret ?? null}
-				title="Complete Performance checkout"
+				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
 				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
 				summary={checkoutSession?.summary ?? null}
-				onComplete={() => void handleCheckoutComplete(checkoutSession?.previousDeploymentIds ?? [])}
+				onComplete={() =>
+					void handleCheckoutComplete(
+						checkoutSession?.previousDeploymentIds ?? [],
+						checkoutSession?.tierLabel ?? "Basic",
+					)
+				}
 				onFallback={() =>
 					checkoutSession
 						? fallbackToHostedCheckout(checkoutSession.request)
