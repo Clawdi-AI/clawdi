@@ -192,25 +192,48 @@ const walletPendingDowngradeDeployment = {
 	},
 };
 
+const walletFallbackDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_wallet_fallback",
+	name: "Wallet fallback agent",
+	upgrade_available: true,
+	last_funding_event: {
+		type: "compute_subscription_fallback",
+		funding_source: "wallet",
+		occurred_at: "2026-07-18T00:00:00Z",
+		prior_plan_slug: "compute_performance",
+		subscription_id: 42,
+	},
+};
+
+type StubResponse = { body: unknown; status: number };
+
 type HostedApiStubOptions = {
 	billingHistoryRequests?: string[];
 	billingHistoryResponses?: unknown[];
 	cancelRequests?: string[];
 	checkoutRequests?: string[];
 	createRequests?: string[];
+	deployRequestStatusRequests?: string[];
+	deployRequestStatusResponses?: StubResponse[];
 	deployments?: readonly unknown[];
 	plans?: readonly unknown[];
 	retryRequests?: string[];
+	walletRetryResponses?: StubResponse[];
 	startError?: { status: number; detail: string };
 	startRequests?: string[];
 	topUpRequests?: string[];
 	walletActivateRequests?: string[];
-	walletActivateResponses?: Array<{ body: unknown; status: number }>;
+	walletActivateResponses?: StubResponse[];
 	walletQuoteRequests?: string[];
 	walletQuoteResponses?: unknown[];
 	walletPlanChangeRequests?: string[];
+	walletPlanChangeResponses?: StubResponse[];
 	walletPlanQuoteRequests?: string[];
+	walletPlanQuoteResponses?: StubResponse[];
 	onWalletActivateSuccess?: () => void;
+	onWalletPlanChangeSuccess?: () => void;
+	onWalletRetrySuccess?: () => void;
 };
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
@@ -233,6 +256,20 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			return fulfillJson(r, deployments);
+		}
+		if (p.startsWith("/v2/deployments/by-request/") && r.request().method() === "GET") {
+			const deployRequestId = decodeURIComponent(p.slice("/v2/deployments/by-request/".length));
+			options.deployRequestStatusRequests?.push(deployRequestId);
+			const response = options.deployRequestStatusResponses?.shift() ?? {
+				status: 200,
+				body: {
+					deploy_request_id: deployRequestId,
+					request_status: "succeeded",
+					deployment_id: "hdep_wallet",
+					deployment_status: "provisioning",
+				},
+			};
+			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/deployments" && r.request().method() === "POST") {
 			options.createRequests?.push(r.request().postData() ?? "");
@@ -281,6 +318,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					status: "active",
 					funding_source: "wallet",
 					deploy_request_id: "wallet-deploy-browser",
+					deployment_id: "hdep_wallet",
 					charge_ledger_id: "ledger_wallet_browser",
 					charged_credits: "9000",
 					post_charge_balance_credits: "16000",
@@ -294,47 +332,61 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/subscription/wallet/retry" && r.request().method() === "POST") {
 			options.retryRequests?.push(r.request().postData() ?? "");
-			return fulfillJson(r, {
-				subscription_id: 42,
-				status: "active",
-				current_period_end: "2026-08-15T00:00:00Z",
-			});
+			const response = options.walletRetryResponses?.shift() ?? {
+				status: 200,
+				body: {
+					subscription_id: 42,
+					status: "active",
+					current_period_end: "2026-08-15T00:00:00Z",
+				},
+			};
+			if (response.status < 400) options.onWalletRetrySuccess?.();
+			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/subscription/wallet/plan/quote" && r.request().method() === "POST") {
 			options.walletPlanQuoteRequests?.push(r.request().postData() ?? "");
-			return fulfillJson(r, {
-				subscription_id: 73,
-				current_plan_slug: "compute_basic",
-				target_plan_slug: "compute_performance",
-				change_kind: "upgrade",
-				status: "quoted",
-				effective_at: "2026-07-15T00:00:00Z",
-				period_start: "2026-07-01T00:00:00Z",
-				period_end: "2026-08-01T00:00:00Z",
-				prorated_delta_cents: 600,
-				prorated_delta_credits: "6000",
-				points_per_usd: 1000,
-				charge_ledger_id: null,
-				pending_plan_slug: null,
-			});
+			const response = options.walletPlanQuoteResponses?.shift() ?? {
+				status: 200,
+				body: {
+					subscription_id: 73,
+					current_plan_slug: "compute_basic",
+					target_plan_slug: "compute_performance",
+					change_kind: "upgrade",
+					status: "quoted",
+					effective_at: "2026-07-15T00:00:00Z",
+					period_start: "2026-07-01T00:00:00Z",
+					period_end: "2026-08-01T00:00:00Z",
+					prorated_delta_cents: 600,
+					prorated_delta_credits: "6000",
+					points_per_usd: 1000,
+					charge_ledger_id: null,
+					pending_plan_slug: null,
+				},
+			};
+			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/subscription/wallet/plan/change" && r.request().method() === "POST") {
 			options.walletPlanChangeRequests?.push(r.request().postData() ?? "");
-			return fulfillJson(r, {
-				subscription_id: 73,
-				current_plan_slug: "compute_basic",
-				target_plan_slug: "compute_performance",
-				change_kind: "upgrade",
-				status: "active",
-				effective_at: "2026-07-15T00:00:00Z",
-				period_start: "2026-07-01T00:00:00Z",
-				period_end: "2026-08-01T00:00:00Z",
-				prorated_delta_cents: 600,
-				prorated_delta_credits: "6000",
-				points_per_usd: 1000,
-				charge_ledger_id: "ledger_plan_change",
-				pending_plan_slug: null,
-			});
+			const response = options.walletPlanChangeResponses?.shift() ?? {
+				status: 200,
+				body: {
+					subscription_id: 73,
+					current_plan_slug: "compute_basic",
+					target_plan_slug: "compute_performance",
+					change_kind: "upgrade",
+					status: "active",
+					effective_at: "2026-07-15T00:00:00Z",
+					period_start: "2026-07-01T00:00:00Z",
+					period_end: "2026-08-01T00:00:00Z",
+					prorated_delta_cents: 600,
+					prorated_delta_credits: "6000",
+					points_per_usd: 1000,
+					charge_ledger_id: "ledger_plan_change",
+					pending_plan_slug: null,
+				},
+			};
+			if (response.status < 400) options.onWalletPlanChangeSuccess?.();
+			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/wallet/topup" && r.request().method() === "POST") {
 			options.topUpRequests?.push(r.request().postData() ?? "");
@@ -739,10 +791,12 @@ test("wallet-funded Basic quotes, debits Wallet, and deploys without checkout", 
 	const errors = collectBrowserErrors(page);
 	const deployments: unknown[] = [includedBasicDeployment];
 	const checkoutRequests: string[] = [];
+	const deployRequestStatusRequests: string[] = [];
 	const walletQuoteRequests: string[] = [];
 	const walletActivateRequests: string[] = [];
 	await stubHostedApi(page, {
 		checkoutRequests,
+		deployRequestStatusRequests,
 		deployments,
 		plans: [basicPlan, performancePlan],
 		walletActivateRequests,
@@ -774,8 +828,66 @@ test("wallet-funded Basic quotes, debits Wallet, and deploys without checkout", 
 	expect(activation.deploy_config.deploy_request_id).toMatch(/^wallet-compute-deploy-/);
 	expect(walletQuoteRequests).toHaveLength(1);
 	expect(checkoutRequests).toEqual([]);
+	expect(deployRequestStatusRequests).toEqual([]);
 	await expect(page).toHaveURL(/\/agents\/hdep_wallet(?:\?|\/)/);
 	expect(errors, `wallet deploy happy path: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("wallet deploy resolves an asynchronous autodeploy by stable request ID", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const deployments: unknown[] = [includedBasicDeployment];
+	const deployRequestStatusRequests: string[] = [];
+	const walletActivateRequests: string[] = [];
+	const asyncDeployment = {
+		...walletBasicDeployment,
+		id: "hdep_wallet_async",
+		name: "Async Wallet Basic",
+		deploy_request_id: "wallet-async-request",
+	};
+	await stubHostedApi(page, {
+		deployments,
+		plans: [basicPlan, performancePlan],
+		walletActivateRequests,
+		walletActivateResponses: [
+			{
+				status: 200,
+				body: {
+					subscription_id: 43,
+					status: "active",
+					funding_source: "wallet",
+					deploy_request_id: "wallet-async-request",
+					deployment_id: null,
+					charge_ledger_id: "ledger_wallet_async",
+					charged_credits: "9000",
+					post_charge_balance_credits: "16000",
+					current_period_start: "2026-07-15T00:00:00Z",
+					current_period_end: "2026-08-15T00:00:00Z",
+					entitled_until: "2026-08-15T00:00:00Z",
+				},
+			},
+		],
+		deployRequestStatusRequests,
+		deployRequestStatusResponses: [
+			{
+				status: 200,
+				body: {
+					deploy_request_id: "wallet-async-request",
+					request_status: "succeeded",
+					deployment_id: "hdep_wallet_async",
+					deployment_status: "provisioning",
+				},
+			},
+		],
+		onWalletActivateSuccess: () => deployments.push(asyncDeployment),
+	});
+	await page.goto("/deploy");
+	await page.getByRole("button", { name: /Wallet balance/ }).click();
+	await page.getByRole("button", { name: "Pay $9.00 from wallet & deploy" }).click();
+
+	await expect(page).toHaveURL(/\/agents\/hdep_wallet_async(?:\?|\/)/);
+	expect(deployRequestStatusRequests).toEqual(["wallet-async-request"]);
+	expect(walletActivateRequests).toHaveLength(1);
+	expect(errors, `wallet deploy request resolution: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("insufficient wallet deploy keeps the wizard, opens top-up, and re-quotes", async ({
@@ -859,11 +971,18 @@ test("insufficient wallet deploy keeps the wizard, opens top-up, and re-quotes",
 
 test("wallet dunning shows grace recovery without Stripe portal actions", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
+	const deployments: unknown[] = [walletPastDueDeployment];
 	const retryRequests: string[] = [];
 	await stubHostedApi(page, {
-		deployments: [walletPastDueDeployment],
+		deployments,
 		plans: [basicPlan, performancePlan],
 		retryRequests,
+		onWalletRetrySuccess: () =>
+			deployments.splice(0, 1, {
+				...walletBasicDeployment,
+				id: "hdep_wallet_due",
+				name: "Wallet grace agent",
+			}),
 	});
 	await gotoHostedAgentSettings(page, "hdep_wallet_due", "Basic");
 
@@ -880,7 +999,91 @@ test("wallet dunning shows grace recovery without Stripe portal actions", async 
 	await page.getByRole("button", { name: "Retry payment" }).click();
 	await expect.poll(() => retryRequests.length).toBe(1);
 	expect(JSON.parse(retryRequests[0] ?? "{}")).toEqual({ subscription_id: 42 });
+	await expect(page.getByText("Wallet payment recovered", { exact: true })).toBeVisible();
+	await expect(page.getByText("Wallet payment failed", { exact: true })).toHaveCount(0);
 	expect(errors, `wallet dunning: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("wallet retry distinguishes insufficient balance from a collection conflict", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const retryRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [walletPastDueDeployment],
+		plans: [basicPlan, performancePlan],
+		retryRequests,
+		walletRetryResponses: [
+			{
+				status: 402,
+				body: { detail: { code: "insufficient_balance", retryable: true } },
+			},
+			{
+				status: 409,
+				body: { detail: "Wallet compute collection is already in progress." },
+			},
+		],
+	});
+	await gotoHostedAgentSettings(page, "hdep_wallet_due", "Basic");
+
+	await page.getByRole("button", { name: "Retry payment" }).click();
+	await expect(
+		page.getByRole("dialog").getByText("Top up AI Credits", { exact: true }),
+	).toBeVisible();
+	await page.keyboard.press("Escape");
+	await page.getByRole("button", { name: "Retry payment" }).click();
+	await expect(
+		page.getByText(
+			"Another billing action is in progress, or this payment no longer needs recovery. Refresh and try again.",
+			{ exact: true },
+		),
+	).toBeVisible();
+	expect(retryRequests).toHaveLength(2);
+	expect(
+		errors.filter((error) => !error.includes("status of 402") && !error.includes("status of 409")),
+		`wallet retry errors: ${errors.join(" | ")}`,
+	).toEqual([]);
+});
+
+test("wallet fallback explains the failed Performance payment and offers re-activation", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const deployments: unknown[] = [walletFallbackDeployment];
+	const retryRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments,
+		plans: [basicPlan, performancePlan],
+		retryRequests,
+		onWalletRetrySuccess: () =>
+			deployments.splice(0, 1, {
+				...performanceDeployment,
+				id: "hdep_wallet_fallback",
+				name: "Wallet fallback agent",
+				last_funding_event: walletFallbackDeployment.last_funding_event,
+				compute_subscription: {
+					...walletBasicDeployment.compute_subscription,
+					subscription_id: 42,
+					price_cents: 1_900,
+				},
+			}),
+	});
+	await gotoHostedAgentSettings(page, "hdep_wallet_fallback", "Basic");
+
+	const alert = page.getByRole("alert").filter({ hasText: "Wallet compute funding ended" });
+	await expect(alert).toContainText(
+		"This agent fell back from Performance compute because payment failed on Jul 18, 2026.",
+	);
+	await expect(alert).toContainText("This agent is now using included Basic.");
+	await expect(page.getByRole("button", { name: "Retry payment" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toHaveCount(0);
+	await expect(page.getByText("Wallet fallback", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Retry payment" }).click();
+	await expect.poll(() => retryRequests.length).toBe(1);
+	expect(JSON.parse(retryRequests[0] ?? "{}")).toEqual({ subscription_id: 42 });
+	await expect(page.getByText("Wallet compute funding ended", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Performance compute", { exact: true })).toBeVisible();
+	expect(errors, `wallet fallback: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("wallet-funded plan upgrade quotes the prorated debit before resizing", async ({ page }) => {
@@ -912,6 +1115,69 @@ test("wallet-funded plan upgrade quotes the prorated debit before resizing", asy
 		target_plan_slug: "compute_performance",
 	});
 	expect(errors, `wallet plan upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("wallet plan change distinguishes quote conflicts from debit shortfalls", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const walletPlanChangeRequests: string[] = [];
+	const walletPlanQuoteRequests: string[] = [];
+	const upgradeQuote = {
+		subscription_id: 73,
+		current_plan_slug: "compute_basic",
+		target_plan_slug: "compute_performance",
+		change_kind: "upgrade",
+		status: "quoted",
+		effective_at: "2026-07-15T00:00:00Z",
+		period_start: "2026-07-01T00:00:00Z",
+		period_end: "2026-08-01T00:00:00Z",
+		prorated_delta_cents: 600,
+		prorated_delta_credits: "6000",
+		points_per_usd: 1000,
+		charge_ledger_id: null,
+		pending_plan_slug: null,
+	};
+	await stubHostedApi(page, {
+		deployments: [walletPlanDeployment],
+		plans: [basicPlan, performancePlan],
+		walletPlanChangeRequests,
+		walletPlanQuoteRequests,
+		walletPlanQuoteResponses: [
+			{ status: 409, body: { detail: { code: "open_refund_debt" } } },
+			{ status: 200, body: upgradeQuote },
+		],
+		walletPlanChangeResponses: [
+			{
+				status: 402,
+				body: {
+					detail: {
+						code: "insufficient_wallet_balance",
+						required_credits: "6000",
+						available_credits: "3500",
+						shortfall_credits: "2500",
+					},
+				},
+			},
+		],
+	});
+	await gotoHostedAgentSettings(page, "hdep_wallet_plan", "Basic");
+
+	await page.getByRole("button", { name: "Upgrade with Wallet" }).click();
+	await expect(page.getByText("Wallet plan change conflict", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Upgrade with Wallet" }).click();
+	await expect(page.getByRole("button", { name: "Pay $6.00 & upgrade" })).toBeVisible();
+	await page.getByRole("button", { name: "Pay $6.00 & upgrade" }).click();
+	await expect(
+		page.getByRole("dialog").getByText("Top up AI Credits", { exact: true }),
+	).toBeVisible();
+	await expect(
+		page.getByText("Top up 2,500 credits, then confirm again.", { exact: true }),
+	).toBeVisible();
+	expect(walletPlanQuoteRequests).toHaveLength(2);
+	expect(walletPlanChangeRequests).toHaveLength(1);
+	expect(
+		errors.filter((error) => !error.includes("status of 402") && !error.includes("status of 409")),
+		`wallet plan errors: ${errors.join(" | ")}`,
+	).toEqual([]);
 });
 
 test("wallet-funded pending downgrade is visible without a cancel control", async ({ page }) => {

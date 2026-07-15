@@ -64,4 +64,18 @@ describe("wallet plan change logic", () => {
 		);
 		expect(failure).toEqual({ kind: "insufficient", shortfallCredits: 2500.5 });
 	});
+
+	test("keeps typed upstream failures retryable", () => {
+		expect(
+			walletPlanChangeFailure(
+				new BillingApiError(502, "upstream", {
+					detail: {
+						code: "wallet_compute_charge_failed",
+						failure_code: "deployment_resize_failed",
+						retryable: true,
+					},
+				}),
+			),
+		).toEqual({ kind: "retryable", shortfallCredits: null });
+	});
 });
