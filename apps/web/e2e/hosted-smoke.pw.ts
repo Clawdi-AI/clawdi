@@ -108,15 +108,35 @@ const paidBasicDeployment = {
 	},
 };
 
+const performanceDeployment = {
+	...paidBasicDeployment,
+	id: "hdep_performance",
+	name: "Performance agent",
+	config_info: {
+		...paidBasicDeployment.config_info,
+		compute_plan_slug: "compute_performance",
+	},
+};
+
+const stoppedIncludedBasicDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_stopped",
+	name: "Stopped Basic",
+	status: "stopped",
+};
+
 type HostedApiStubOptions = {
+	cancelRequests?: string[];
 	checkoutRequests?: string[];
 	createRequests?: string[];
 	deployments?: readonly unknown[];
 	plans?: readonly unknown[];
+	startError?: { status: number; detail: string };
+	startRequests?: string[];
 };
 
-async function fulfillJson(route: Route, body: unknown) {
-	await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+async function fulfillJson(route: Route, body: unknown, status = 200) {
+	await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
 async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
@@ -148,6 +168,23 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				client_secret: null,
 			});
 		}
+		if (p === "/v2/subscription/cancel" && r.request().method() === "POST") {
+			options.cancelRequests?.push(r.request().postData() ?? "");
+			return fulfillJson(r, {
+				status: "active",
+				billing_term_months: 12,
+				cancel_at_period_end: true,
+				current_period_end: "2026-08-15T00:00:00Z",
+				cancel_at: "2026-08-15T00:00:00Z",
+			});
+		}
+		if (p.endsWith("/start") && r.request().method() === "POST") {
+			options.startRequests?.push(r.request().postData() ?? "");
+			if (options.startError) {
+				return fulfillJson(r, { detail: options.startError.detail }, options.startError.status);
+			}
+			return fulfillJson(r, { status: "starting" });
+		}
 		return fulfillJson(r, {});
 	});
 	// Cloud API (/v1/*).
@@ -155,6 +192,30 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/v1/me") return fulfillJson(r, me);
 		if (p === "/v1/agents") return fulfillJson(r, []);
+		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
+			const id = decodeURIComponent(p.slice("/v1/agents/".length));
+			return fulfillJson(r, {
+				id,
+				name: id,
+				default_name: "Hosted agent",
+				machine_name: "hosted.local",
+				display_name: null,
+				avatar_url: null,
+				sort_order: 0,
+				agent_type: "hermes",
+				agent_version: "1.0.0",
+				os: "linux",
+				last_seen_at: "2026-07-15T00:00:00Z",
+				last_sync_at: "2026-07-15T00:00:00Z",
+				last_sync_error: null,
+				last_revision_seen: 1,
+				queue_depth_high_water: 0,
+				dropped_count: 0,
+				sync_enabled: true,
+				explicit_identity: true,
+				default_project_id: "project-hosted",
+			});
+		}
 		if (p === "/v1/ai-providers") return fulfillJson(r, { providers: [] });
 		if (p === "/v1/channels") return fulfillJson(r, []);
 		if (p === "/v1/channels/bot-pool") return fulfillJson(r, { providers: {} });
@@ -204,6 +265,22 @@ async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: str
 	expect(box, `${label} should render a layout box`).not.toBeNull();
 	expect(box?.width, `${label} width`).toBeGreaterThan(0);
 	expect(box?.height, `${label} height`).toBeGreaterThan(0);
+}
+
+async function gotoHostedAgentSettings(
+	page: Page,
+	deploymentId: string,
+	tier: "Basic" | "Performance",
+) {
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		await page.goto(`/agents/${deploymentId}/settings`);
+		try {
+			await expect(page.getByText(`${tier} compute`, { exact: true })).toBeVisible();
+			return;
+		} catch (error) {
+			if (attempt === 1) throw error;
+		}
+	}
 }
 
 test("deploy wizard Select opens without browser errors", async ({ page }) => {
@@ -294,6 +371,153 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 		deploy_config: { compute_plan_slug: "compute_basic" },
 	});
 	expect(errors, `paid Basic checkout: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("included Basic starts annual Performance checkout without direct tier switching", async ({
+	page,
+}) => {
+	const checkoutRequests: string[] = [];
+	await stubHostedApi(page, {
+		checkoutRequests,
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+	const errors = collectBrowserErrors(page);
+
+	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Change billing term" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Restart", exact: true })).toBeEnabled();
+	await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeEnabled();
+	await expect(page.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
+
+	await page.getByRole("button", { name: /Annual/ }).click();
+	await page.getByRole("button", { name: "Upgrade to Performance" }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(1);
+	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({
+		plan_slug: "compute_performance",
+		billing_term_months: 12,
+		upgrade_deployment_id: "hdep_included",
+	});
+	expect(errors, `included Basic upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("paid Basic cancellation stays conditional with the included slot vacant or occupied", async ({
+	page,
+}) => {
+	const cancelRequests: string[] = [];
+	const deployments: unknown[] = [paidBasicDeployment];
+	await stubHostedApi(page, {
+		cancelRequests,
+		deployments,
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+	const errors = collectBrowserErrors(page);
+
+	for (const [index, label] of ["vacant", "occupied"].entries()) {
+		if (label === "occupied") deployments.push(includedBasicDeployment);
+		if (index > 0) await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+
+		await expect(page.getByRole("button", { name: "Change billing term" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toHaveCount(0);
+
+		await page.getByRole("button", { name: "Cancel subscription" }).click();
+		const cancelDialog = page.getByRole("alertdialog");
+		await expect(
+			cancelDialog.getByText("Cancel Basic subscription?", { exact: true }),
+		).toBeVisible();
+		await expect(
+			cancelDialog.getByText(
+				/falls back to included Basic funding if available; otherwise, it stops/,
+			),
+		).toBeVisible();
+		await cancelDialog.getByRole("button", { name: "Cancel at period end" }).click();
+
+		await expect.poll(() => cancelRequests.length, { message: label }).toBe(index + 1);
+		expect(JSON.parse(cancelRequests[index] ?? "{}")).toMatchObject({
+			deployment_id: "hdep_paid",
+		});
+		await expect(
+			page.getByText("Subscription cancellation scheduled", { exact: true }),
+		).toBeVisible();
+		await expect(page.getByRole("button", { name: "Resume subscription" })).toBeVisible();
+	}
+	expect(errors, `paid Basic cancellation: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("paid Performance exposes subscription actions without a direct Basic switch", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		deployments: [performanceDeployment],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_performance", "Performance");
+	const errors = collectBrowserErrors(page);
+
+	await expect(page.getByRole("button", { name: "Change billing term" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: /switch|downgrade/i })).toHaveCount(0);
+	expect(errors, `paid Performance actions: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("occupied included Basic start surfaces the backend slot entitlement error", async ({
+	page,
+}) => {
+	const startRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [stoppedIncludedBasicDeployment, includedBasicDeployment],
+		plans: [basicPlan, performancePlan],
+		startError: {
+			status: 403,
+			detail: "The Compute Basic free slot allows only one active deployment.",
+		},
+		startRequests,
+	});
+	await gotoHostedAgentSettings(page, "hdep_stopped", "Basic");
+	const errors = collectBrowserErrors(page);
+
+	await expect(page.getByRole("button", { name: "Start", exact: true })).toBeEnabled();
+	await expect(page.getByRole("button", { name: "Restart", exact: true })).toBeDisabled();
+	await expect(page.getByRole("button", { name: "Stop", exact: true })).toHaveCount(0);
+	await page.getByRole("button", { name: "Start", exact: true }).click();
+
+	await expect.poll(() => startRequests.length).toBe(1);
+	await expect(page.getByText("Couldn't update lifecycle", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("The Compute Basic free slot allows only one active deployment.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	expect(errors, `included Basic start entitlement: ${errors.join(" | ")}`).toEqual([
+		expect.stringMatching(/status of 403 \(Forbidden\)/),
+	]);
+});
+
+test("checkout abandonment leaves the Basic wizard unchanged and creates no deployment", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const checkoutRequests: string[] = [];
+	const createRequests: string[] = [];
+	await stubHostedApi(page, {
+		checkoutRequests,
+		createRequests,
+		deployments: [],
+		plans: [basicPlan, performancePlan],
+	});
+	await page.goto("/deploy?checkout=cancel");
+
+	await expect(page.getByText("Checkout canceled", { exact: true })).toBeVisible();
+	await expect(page.getByText("You were not charged. Your agent was not deployed.")).toBeVisible();
+	await expect(page.getByText("First slot free", { exact: true })).toBeVisible();
+	expect(checkoutRequests).toEqual([]);
+	expect(createRequests).toEqual([]);
+	expect(errors, `checkout abandonment: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("compute plans keep signup credits without advertising subscription credit grants", async ({
