@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { ComputePlanSlug, HostedDeployment } from "@/hosted/billing/contracts";
 import {
+	collectionFailureMessage,
 	computeDunningState,
 	computeDunningTileStatus,
 	dunningDeadlineCountdown,
@@ -165,5 +166,14 @@ describe("dunningDeadlineCountdown", () => {
 		const now = Date.parse("2026-07-15T12:00:00Z");
 		expect(dunningDeadlineCountdown("2026-07-18T14:00:00Z", now)).toBe("3d 2h remaining");
 		expect(dunningDeadlineCountdown("2026-07-15T11:59:00Z", now)).toBe("Grace period ended");
+	});
+});
+
+describe("collectionFailureMessage", () => {
+	test("maps known recovery states without exposing internal upstream codes", () => {
+		expect(collectionFailureMessage("insufficient_balance")).toBe(
+			"The wallet balance was too low.",
+		);
+		expect(collectionFailureMessage("internal_bridge_timeout")).toBeNull();
 	});
 });

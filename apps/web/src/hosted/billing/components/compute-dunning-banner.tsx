@@ -11,13 +11,17 @@ import { BillingApiError, normalizeBillingError } from "@/hosted/billing/errors"
 import { useFixPayment, useRetryWalletCompute, useWallet } from "@/hosted/billing/hooks";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { formatShortDate } from "@/lib/format";
-import { computeDunningState, dunningDeadlineCountdown } from "./compute-dunning.logic";
+import {
+	collectionFailureMessage,
+	computeDunningState,
+	dunningDeadlineCountdown,
+} from "./compute-dunning.logic";
 
 export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
 	const state = computeDunningState(deployment);
 	const fixPayment = useFixPayment();
 	const retryWallet = useRetryWalletCompute();
-	const wallet = useWallet();
+	const wallet = useWallet({ enabled: state?.ctaTarget === "wallet" });
 	const [topUpOpen, setTopUpOpen] = useState(false);
 	const [now, setNow] = useState(() => Date.now());
 
@@ -41,7 +45,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	const destructive = state.paymentState === "unpaid";
 	const bannerDescription = [
 		state.description,
-		state.failureCode ? `Failure: ${state.failureCode.replaceAll("_", " ")}.` : null,
+		collectionFailureMessage(state.failureCode),
 		riskLabel,
 	]
 		.filter(Boolean)

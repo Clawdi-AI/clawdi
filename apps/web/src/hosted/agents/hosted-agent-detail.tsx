@@ -137,6 +137,7 @@ import {
 import {
 	walletPlanChangeFailure,
 	walletPlanChangeSummary,
+	walletPlanResultTarget,
 	walletPlanTarget,
 } from "@/hosted/billing/subscription/wallet-plan-change.logic";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -2127,7 +2128,9 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const checkout = useCheckout();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const portal = usePortal();
-	const wallet = useWallet();
+	const wallet = useWallet({
+		enabled: deployment.compute_subscription?.funding_source === "wallet",
+	});
 	const quoteWalletPlanChange = useQuoteWalletPlanChange();
 	const changeWalletPlan = useChangeWalletPlan();
 	const cancelSubscription = useCancelSubscription();
@@ -2365,6 +2368,15 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				subscription_id: walletSubscriptionId,
 				target_plan_slug: targetPlanSlug,
 			});
+			if (
+				quote.subscription_id !== walletSubscriptionId ||
+				walletPlanResultTarget(quote) !== targetPlanSlug
+			) {
+				toast.error("Wallet plan quote changed", {
+					description: "Refresh the agent and request a new quote before confirming.",
+				});
+				return;
+			}
 			setWalletPlanQuote(quote);
 		} catch (error) {
 			const failure = walletPlanChangeFailure(error);
@@ -2381,13 +2393,17 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 
 	async function confirmWalletComputePlanChange() {
 		if (!walletPlanQuote) return;
+		const targetPlanSlug = walletPlanResultTarget(walletPlanQuote);
+		if (!targetPlanSlug) {
+			toast.error("Wallet plan quote is invalid", {
+				description: "Close this dialog and request a new quote.",
+			});
+			return;
+		}
 		try {
 			const result = await changeWalletPlan.mutateAsync({
 				subscription_id: walletPlanQuote.subscription_id,
-				target_plan_slug:
-					walletPlanQuote.target_plan_slug === COMPUTE_PERFORMANCE_SLUG
-						? COMPUTE_PERFORMANCE_SLUG
-						: COMPUTE_BASIC_SLUG,
+				target_plan_slug: targetPlanSlug,
 			});
 			setWalletPlanQuote(null);
 			toast.success(result.change_kind === "upgrade" ? "Compute upgraded" : "Downgrade scheduled", {
@@ -2419,13 +2435,12 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 
 	function handleWalletPlanTopup(status: "succeeded" | "processing") {
 		if (status !== "succeeded" || !walletPlanQuote) return;
+		const targetPlanSlug = walletPlanResultTarget(walletPlanQuote);
+		if (!targetPlanSlug) return;
 		void quoteWalletPlanChange
 			.mutateAsync({
 				subscription_id: walletPlanQuote.subscription_id,
-				target_plan_slug:
-					walletPlanQuote.target_plan_slug === COMPUTE_PERFORMANCE_SLUG
-						? COMPUTE_PERFORMANCE_SLUG
-						: COMPUTE_BASIC_SLUG,
+				target_plan_slug: targetPlanSlug,
 			})
 			.then(setWalletPlanQuote)
 			.catch((error: unknown) => {

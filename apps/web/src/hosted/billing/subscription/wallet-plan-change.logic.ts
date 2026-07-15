@@ -16,6 +16,14 @@ export function walletPlanTarget(
 	return null;
 }
 
+export function walletPlanResultTarget(
+	quote: WalletComputePlanChangeResult,
+): ComputePlanSlug | null {
+	if (quote.target_plan_slug === COMPUTE_BASIC_SLUG) return COMPUTE_BASIC_SLUG;
+	if (quote.target_plan_slug === COMPUTE_PERFORMANCE_SLUG) return COMPUTE_PERFORMANCE_SLUG;
+	return null;
+}
+
 export function walletPlanChangeFailure(error: unknown): WalletPlanChangeFailure {
 	const detail = billingErrorDetail(error);
 	if (error instanceof BillingApiError && error.status === 402) {

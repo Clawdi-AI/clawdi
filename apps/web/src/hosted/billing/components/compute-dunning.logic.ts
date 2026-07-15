@@ -42,6 +42,12 @@ export function dunningDeadlineCountdown(deadline: string | null, now = Date.now
 	return hours === 0 ? `${days}d remaining` : `${days}d ${hours}h remaining`;
 }
 
+export function collectionFailureMessage(code: string | null): string | null {
+	if (code === "insufficient_balance") return "The wallet balance was too low.";
+	if (code === "open_refund_debt") return "A wallet refund is still settling.";
+	return null;
+}
+
 export function computeDunningState(deployment: DunningDeployment): ComputeDunningState | null {
 	const subscription = subscriptionForDunning(deployment);
 	if (!subscription || subscription.payment_state === "ok") return null;

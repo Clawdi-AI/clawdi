@@ -121,6 +121,19 @@ describe("normalizeBillingError", () => {
 		).toBe("That code has already been used.");
 	});
 
+	test("structured wallet errors never expose raw JSON or internal codes", () => {
+		const known = new BillingApiError(409, '{"detail":{"code":"open_refund_debt"}}', {
+			detail: { code: "open_refund_debt" },
+		});
+		const unknown = new BillingApiError(409, '{"detail":{"code":"bridge_internal_17"}}', {
+			detail: { code: "bridge_internal_17" },
+		});
+		expect(normalizeBillingError(known)).toContain("refund is still settling");
+		expect(normalizeBillingError(unknown)).toBe(
+			"The billing request could not be completed. Refresh and try again.",
+		);
+	});
+
 	test("unknown shapes get a safe message", () => {
 		expect(normalizeBillingError(null)).toMatch(/something went wrong/i);
 	});

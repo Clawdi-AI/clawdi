@@ -164,6 +164,19 @@ export function normalizeBillingError(error: unknown): string {
 		return "The billing service is having trouble right now. Please try again in a moment.";
 	}
 	if (error instanceof BillingApiError) {
+		const code = billingErrorDetail(error)?.code;
+		if (code === "open_refund_debt") {
+			return "A wallet refund is still settling. Try again after it completes.";
+		}
+		if (code === "deploy_request_funding_conflict") {
+			return "This deploy request is already linked to a different payment flow.";
+		}
+		if (code === "idempotency_key_reused") {
+			return "This payment request conflicts with an earlier attempt. Refresh and try again.";
+		}
+		if (typeof code === "string") {
+			return "The billing request could not be completed. Refresh and try again.";
+		}
 		// Snake_case error codes → readable text; pass through real sentences.
 		if (/^[a-z0-9_]+$/.test(error.detail)) {
 			return error.detail.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());

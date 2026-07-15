@@ -110,6 +110,7 @@ import {
 	useWalletComputeQuote,
 } from "@/hosted/billing/hooks";
 import {
+	forgetIdempotencyAttempt,
 	type IdempotencyAttempt,
 	idempotencyAttemptFor,
 	idempotencyFingerprint,
@@ -822,6 +823,8 @@ export function DeployWizard() {
 								deploy_request_id: walletDeployAttemptRef.current.key,
 							},
 						});
+						forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
+						walletDeployAttemptRef.current = null;
 						setWalletFailure(null);
 						const refreshedDeployments = await refreshCheckoutReturn().catch(() => undefined);
 						const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);

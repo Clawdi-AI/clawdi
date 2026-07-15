@@ -161,11 +161,12 @@ export function useHostedUser() {
  * surfacing immediately while still absorbing transient 5xx / network blips
  * with up to two retries.
  */
-export function useWallet() {
+export function useWallet({ enabled = true }: { enabled?: boolean } = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
 		queryKey: billingKeys.wallet,
 		queryFn: () => client.getWallet(),
+		enabled: isDeployApiConfigured() && enabled,
 		refetchInterval: 30_000,
 	});
 }
@@ -298,6 +299,7 @@ export function useWalletComputeQuote(body: WalletComputeQuoteRequest | null) {
 
 function invalidateWalletCompute(qc: QueryClient): void {
 	qc.invalidateQueries({ queryKey: billingKeys.wallet });
+	qc.invalidateQueries({ queryKey: ["billing", "ledger"] });
 	qc.invalidateQueries({ queryKey: billingKeys.deployments });
 	qc.invalidateQueries({ queryKey: ["billing", "history"] });
 	qc.invalidateQueries({ queryKey: ["agents"] });

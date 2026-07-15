@@ -869,7 +869,7 @@ test("wallet dunning shows grace recovery without Stripe portal actions", async 
 
 	await expect(page.getByText("Wallet payment failed", { exact: true })).toBeVisible();
 	await expect(page.getByRole("alert").filter({ hasText: "Wallet payment failed" })).toContainText(
-		"payment. Failure: insufficient balance.",
+		"payment. The wallet balance was too low.",
 	);
 	await expect(page.getByText(/Grace deadline:/)).toBeVisible();
 	await expect(page.getByRole("button", { name: "Top up" })).toBeVisible();
