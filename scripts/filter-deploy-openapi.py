@@ -67,6 +67,7 @@ KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v2/subscription/portal": {"post"},
     "/v2/subscription/resume": {"post"},
     "/v2/subscription/wallet/activate": {"post"},
+    "/v2/subscription/wallet/plan/cancel-pending": {"post"},
     "/v2/subscription/wallet/plan/change": {"post"},
     "/v2/subscription/wallet/plan/quote": {"post"},
     "/v2/subscription/wallet/quote": {"post"},

@@ -364,6 +364,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/subscription/wallet/plan/cancel-pending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cancel Pending V2 Wallet Subscription Plan */
+        post: operations["cancel_pending_v2_wallet_subscription_plan_v2_subscription_wallet_plan_cancel_pending_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/subscription/wallet/plan/change": {
         parameters: {
             query?: never;
@@ -1170,6 +1187,11 @@ export interface components {
              */
             funding_source: "stripe" | "wallet";
             /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "payment_failure" | "canceled" | "refunded" | "disputed" | "admin_forced";
+            /**
              * Occurred At
              * Format: date-time
              */
@@ -1375,6 +1397,22 @@ export interface components {
              */
             entitled_until: string;
         };
+        /** V2WalletComputeCancelPendingPlanRequest */
+        V2WalletComputeCancelPendingPlanRequest: {
+            /** Subscription Id */
+            subscription_id: number;
+        };
+        /** V2WalletComputeCancelPendingPlanResponse */
+        V2WalletComputeCancelPendingPlanResponse: {
+            /** Subscription Id */
+            subscription_id: number;
+            /** Current Plan Slug */
+            current_plan_slug: string;
+            /** Canceled Plan Slug */
+            canceled_plan_slug: string;
+            /** Pending Plan Slug */
+            pending_plan_slug: null;
+        };
         /** V2WalletComputeConflictCodeDetail */
         V2WalletComputeConflictCodeDetail: {
             /**
@@ -1392,9 +1430,9 @@ export interface components {
         V2WalletComputeInsufficientErrorDetail: {
             /**
              * Code
-             * @constant
+             * @enum {string}
              */
-            code: "insufficient_wallet_balance";
+            code: "insufficient_wallet_balance" | "insufficient_balance";
             /** Required Credits */
             required_credits: string;
             /** Available Credits */
@@ -1549,7 +1587,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "wallet_balance_refresh_failed" | "wallet_compute_charge_failed" | "wallet_compute_upstream_failed";
+            code: "wallet_balance_refresh_failed" | "wallet_compute_charge_failed" | "wallet_compute_upstream_failed" | "resize_failed_retryable";
             /** Failure Code */
             failure_code?: string | null;
             /**
@@ -2412,6 +2450,48 @@ export interface operations {
             };
         };
     };
+    cancel_pending_v2_wallet_subscription_plan_v2_subscription_wallet_plan_cancel_pending_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2WalletComputeCancelPendingPlanRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeCancelPendingPlanResponse"];
+                };
+            };
+            /** @description No wallet-funded pending plan change can be canceled. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2WalletComputeConflictErrorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     change_v2_wallet_subscription_plan_v2_subscription_wallet_plan_change_post: {
         parameters: {
             query?: never;
@@ -2584,7 +2664,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2WalletComputeConflictErrorResponse"];
+                    "application/json": components["schemas"]["V2WalletComputeInsufficientErrorResponse"];
                 };
             };
             /** @description The retry conflicts with current collection state. */
