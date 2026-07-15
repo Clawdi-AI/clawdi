@@ -753,6 +753,8 @@ test("wallet-funded Basic quotes, debits Wallet, and deploys without checkout", 
 	await page.waitForLoadState("networkidle");
 
 	await page.getByRole("button", { name: /Wallet balance/ }).click();
+	await expect(page.getByText(/Wallet funds this additional Basic agent/)).toBeVisible();
+	await expect(page.getByText(/Checkout opens here for an additional Basic agent/)).toHaveCount(0);
 	await expect(page.getByText("Due now", { exact: true })).toBeVisible();
 	await expect(page.getByText("Current balance", { exact: true })).toBeVisible();
 	await expect(page.getByText("After this charge", { exact: true })).toBeVisible();
@@ -866,6 +868,9 @@ test("wallet dunning shows grace recovery without Stripe portal actions", async 
 	await gotoHostedAgentSettings(page, "hdep_wallet_due", "Basic");
 
 	await expect(page.getByText("Wallet payment failed", { exact: true })).toBeVisible();
+	await expect(page.getByRole("alert").filter({ hasText: "Wallet payment failed" })).toContainText(
+		"payment. Failure: insufficient balance.",
+	);
 	await expect(page.getByText(/Grace deadline:/)).toBeVisible();
 	await expect(page.getByRole("button", { name: "Top up" })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Retry payment" })).toBeVisible();
@@ -992,6 +997,27 @@ test("mixed billing history paginates wallet charges and Stripe invoices", async
 	await expect(billingTable.getByText("Refunded", { exact: true })).toBeVisible();
 	await settingsDialog.screenshot({ path: "/tmp/mixed-billing-history.png" });
 	expect(errors, `mixed billing history: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("Wallet summarizes compute commitment, coverage, renewal, and deployment link", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	await stubHostedApi(page, {
+		deployments: [walletBasicDeployment],
+		plans: [basicPlan, performancePlan],
+	});
+	await page.goto("/channels?settings=billing-wallet");
+	const settingsDialog = page.getByTestId("settings-dialog");
+	await expect(settingsDialog.getByText("Compute coverage", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByText("Monthly commitment", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByText("$9.00", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByText("Wallet Basic", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByText(/\$9 on Aug 15, 2026/)).toBeVisible();
+	const manage = settingsDialog.locator('a[href^="/agents/hdep_wallet/settings"]');
+	await expect(manage).toBeVisible();
+	await settingsDialog.screenshot({ path: "/tmp/wallet-compute-coverage.png" });
+	expect(errors, `wallet compute coverage: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("compute plans keep signup credits without advertising subscription credit grants", async ({

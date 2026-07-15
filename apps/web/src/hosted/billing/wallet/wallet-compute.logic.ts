@@ -6,6 +6,7 @@ export type WalletFundedDeployment = {
 	name: string;
 	planLabel: "Basic" | "Performance";
 	priceCents: number;
+	renews: boolean;
 	nextRenewalAt: string | null;
 	status: string;
 };
@@ -36,6 +37,7 @@ export function walletComputeCoverage(
 			name: deployment.name,
 			planLabel: computeTierLabel(deployment.config_info?.compute_plan_slug),
 			priceCents: Math.max(0, subscription.price_cents ?? 0),
+			renews: !subscription.cancel_at_period_end && subscription.status !== "canceled",
 			nextRenewalAt: subscription.current_period_end ?? null,
 			status: subscription.payment_state,
 		});
@@ -47,7 +49,10 @@ export function walletComputeCoverage(
 			: Number.POSITIVE_INFINITY;
 		return leftTime - rightTime;
 	});
-	const totalMonthlyCents = funded.reduce((sum, deployment) => sum + deployment.priceCents, 0);
+	const totalMonthlyCents = funded.reduce(
+		(sum, deployment) => sum + (deployment.renews ? deployment.priceCents : 0),
+		0,
+	);
 	const balanceValueCents = wallet.points_per_usd
 		? Math.max(0, (wallet.balance_credits / wallet.points_per_usd) * 100)
 		: 0;

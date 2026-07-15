@@ -275,6 +275,7 @@ interface ComputeStatusInput {
 	basicSelection: ReturnType<typeof resolveBasicDeploySelection>;
 	basicOffer: BillingOffer | null;
 	perfOffer: BillingOffer | null;
+	paymentMethod: DeployPaymentMethod;
 }
 
 function ComputeStatusLine(input: ComputeStatusInput) {
@@ -318,6 +319,7 @@ function computeStatusLine({
 	basicSelection,
 	basicOffer,
 	perfOffer,
+	paymentMethod,
 }: ComputeStatusInput): { message: string; tone: "destructive" | "muted" } | null {
 	if (compute === "basic") {
 		if (deploymentsError) {
@@ -344,14 +346,21 @@ function computeStatusLine({
 		if (includedSlotUsed && basicOffer) {
 			return {
 				tone: "muted",
-				message: `Your included Basic slot is in use. Checkout opens here for an additional Basic agent at ${recurringOfferLabel(
-					basicOffer,
-				)}.`,
+				message:
+					paymentMethod === "wallet"
+						? `Your included Basic slot is in use. Wallet funds this additional Basic agent at ${recurringOfferLabel(basicOffer)}.`
+						: `Your included Basic slot is in use. Checkout opens here for an additional Basic agent at ${recurringOfferLabel(basicOffer)}.`,
 			};
 		}
 		return {
 			tone: "muted",
 			message: "Your first active Basic agent is free. This deployment won’t open checkout.",
+		};
+	}
+	if (paymentMethod === "wallet") {
+		return {
+			tone: "muted",
+			message: "Wallet pays the first month now and renews this Performance agent monthly.",
 		};
 	}
 
@@ -1364,6 +1373,7 @@ export function DeployWizard() {
 							basicSelection={basicSelection}
 							basicOffer={basicOffer}
 							perfOffer={perfOffer}
+							paymentMethod={paymentMethod}
 						/>
 					</div>
 				</SettingsSection>

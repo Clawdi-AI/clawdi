@@ -116,9 +116,11 @@ export function ComputeCommitmentCard({
 										</div>
 										<div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
 											<CalendarClock className="size-3.5" aria-hidden />
-											{deployment.nextRenewalAt
-												? `${formatCentsCompact(deployment.priceCents)} on ${formatShortDate(deployment.nextRenewalAt)}`
-												: `${formatCentsCompact(deployment.priceCents)} monthly · renewal pending`}
+											{deployment.renews
+												? deployment.nextRenewalAt
+													? `${formatCentsCompact(deployment.priceCents)} on ${formatShortDate(deployment.nextRenewalAt)}`
+													: `${formatCentsCompact(deployment.priceCents)} monthly · renewal pending`
+												: `Ends ${formatShortDate(deployment.nextRenewalAt)} · no renewal charge`}
 										</div>
 									</div>
 									<Button

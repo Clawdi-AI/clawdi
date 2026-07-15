@@ -77,6 +77,16 @@ describe("walletComputeCoverage", () => {
 		if (stripe.compute_subscription) stripe.compute_subscription.funding_source = "stripe";
 		expect(walletComputeCoverage(wallet, [stripe]).deployments).toEqual([]);
 	});
+
+	test("keeps canceling deployments visible without counting a renewal", () => {
+		const canceling = deployment("canceling", "compute_basic", 900, "2026-08-15T00:00:00Z");
+		if (canceling.compute_subscription) canceling.compute_subscription.cancel_at_period_end = true;
+		const result = walletComputeCoverage(wallet, [canceling]);
+		expect(result.deployments).toHaveLength(1);
+		expect(result.deployments[0]?.renews).toBe(false);
+		expect(result.totalMonthlyCents).toBe(0);
+		expect(result.coverageMonths).toBeNull();
+	});
 });
 
 describe("decimalCredits", () => {

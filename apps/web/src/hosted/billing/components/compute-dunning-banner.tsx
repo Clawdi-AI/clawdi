@@ -39,6 +39,13 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				? `Service is at risk after ${formatShortDate(state.serviceRiskAt)}.`
 				: null;
 	const destructive = state.paymentState === "unpaid";
+	const bannerDescription = [
+		state.description,
+		state.failureCode ? `Failure: ${state.failureCode.replaceAll("_", " ")}.` : null,
+		riskLabel,
+	]
+		.filter(Boolean)
+		.join(" ");
 
 	async function handleFixPayment() {
 		if (!state) return;
@@ -91,32 +98,33 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				<TriangleAlert />
 				<AlertTitle>{state.title}</AlertTitle>
 				<AlertDescription className="flex flex-col items-start gap-3">
-					<span>
-						{state.description}
-						{state.failureCode ? ` Failure: ${state.failureCode.replaceAll("_", " ")}.` : ""}
-						{riskLabel ? ` ${riskLabel}` : ""}
-					</span>
+					<span>{bannerDescription}</span>
 					{state.ctaTarget === "wallet" ? (
-						<div className="flex flex-wrap gap-2">
-							<Button
-								size="sm"
-								variant={destructive ? "destructive" : "default"}
-								onClick={() => setTopUpOpen(true)}
-								disabled={!wallet.data}
-							>
-								<WalletCards data-icon="inline-start" /> Top up
-							</Button>
-							{state.subscriptionId ? (
+						<div className="flex flex-col items-start gap-2">
+							<div className="flex flex-wrap gap-2">
+								<Button
+									size="sm"
+									variant={destructive ? "destructive" : "default"}
+									onClick={() => setTopUpOpen(true)}
+									disabled={!wallet.data}
+								>
+									<WalletCards data-icon="inline-start" /> Top up
+								</Button>
 								<Button
 									size="sm"
 									variant="outline"
 									onClick={() => void handleWalletRetry()}
-									disabled={retryWallet.isPending}
+									disabled={retryWallet.isPending || !state.subscriptionId}
 								>
 									{retryWallet.isPending ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
 									Retry payment
 								</Button>
-							) : null}
+							</div>
+							{state.subscriptionId ? null : (
+								<span className="text-xs text-muted-foreground">
+									Retry becomes available after wallet billing details finish syncing.
+								</span>
+							)}
 						</div>
 					) : (
 						<Button
