@@ -271,9 +271,10 @@ async function gotoHostedAgentSettings(
 	page: Page,
 	deploymentId: string,
 	tier: "Basic" | "Performance",
+	search = "",
 ) {
 	for (let attempt = 0; attempt < 2; attempt += 1) {
-		await page.goto(`/agents/${deploymentId}/settings`);
+		await page.goto(`/agents/${deploymentId}/settings${search}`);
 		try {
 			await expect(page.getByText(`${tier} compute`, { exact: true })).toBeVisible();
 			return;
@@ -403,6 +404,26 @@ test("included Basic starts annual Performance checkout without direct tier swit
 	expect(errors, `included Basic upgrade: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("included Basic checkout abandonment preserves the current plan", async ({ page }) => {
+	const checkoutRequests: string[] = [];
+	await stubHostedApi(page, {
+		checkoutRequests,
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_included", "Basic", "?checkout=cancel");
+	const errors = collectBrowserErrors(page);
+
+	await expect(page.getByText("Checkout canceled", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("You were not charged. Your compute plan is unchanged.", { exact: true }),
+	).toBeVisible();
+	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
+	expect(checkoutRequests).toEqual([]);
+	expect(errors, `included Basic checkout abandonment: ${errors.join(" | ")}`).toEqual([]);
+});
+
 test("paid Basic cancellation stays conditional with the included slot vacant or occupied", async ({
 	page,
 }) => {
@@ -498,23 +519,23 @@ test("occupied included Basic start surfaces the backend slot entitlement error"
 	]);
 });
 
-test("checkout abandonment leaves the Basic wizard unchanged and creates no deployment", async ({
-	page,
-}) => {
+test("paid Basic checkout abandonment preserves the checkout-ready wizard", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const checkoutRequests: string[] = [];
 	const createRequests: string[] = [];
 	await stubHostedApi(page, {
 		checkoutRequests,
 		createRequests,
-		deployments: [],
+		deployments: [includedBasicDeployment],
 		plans: [basicPlan, performancePlan],
 	});
 	await page.goto("/deploy?checkout=cancel");
 
 	await expect(page.getByText("Checkout canceled", { exact: true })).toBeVisible();
 	await expect(page.getByText("You were not charged. Your agent was not deployed.")).toBeVisible();
-	await expect(page.getByText("First slot free", { exact: true })).toBeVisible();
+	await expect(page.getByText("$9/mo additional", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Continue to checkout" })).toBeVisible();
+	await expect(page.getByText("First slot free", { exact: true })).toHaveCount(0);
 	expect(checkoutRequests).toEqual([]);
 	expect(createRequests).toEqual([]);
 	expect(errors, `checkout abandonment: ${errors.join(" | ")}`).toEqual([]);
