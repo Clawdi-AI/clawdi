@@ -57,8 +57,9 @@ export function isIncludedBasicSubscription(
 ): boolean {
 	return (
 		isBasicCompute(planSlug) &&
-		(!computeSubscription ||
-			(computeSubscription.funding_source == null && computeSubscription.price_cents === 0))
+		computeSubscription != null &&
+		computeSubscription.funding_source == null &&
+		computeSubscription.price_cents === 0
 	);
 }
 

@@ -55,6 +55,15 @@ function subscription(
 	};
 }
 
+function includedSubscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+	return subscription({
+		subscription_id: 7,
+		funding_source: null,
+		payment_state: "ok",
+		price_cents: 0,
+	});
+}
+
 describe("computeDunningState", () => {
 	test("returns null for healthy subscriptions", () => {
 		expect(computeDunningState(deployment(null))).toBeNull();
@@ -160,7 +169,7 @@ describe("computeDunningState", () => {
 		}
 	});
 
-	test("uses the persisted fallback deployment for terminal recovery copy", () => {
+	test("uses the persisted fallback event with a rebound $0 row for terminal recovery", () => {
 		const fallback = {
 			type: "compute_subscription_fallback" as const,
 			funding_source: "wallet" as const,
@@ -170,7 +179,7 @@ describe("computeDunningState", () => {
 			subscription_id: 42,
 		};
 		const running = computeDunningState(
-			deployment(null, "compute_basic", { last_funding_event: fallback }),
+			deployment(includedSubscription(), "compute_basic", { last_funding_event: fallback }),
 		);
 		expect(running).toMatchObject({
 			paymentState: "unpaid",
@@ -184,12 +193,29 @@ describe("computeDunningState", () => {
 		expect(running?.description).toContain("now using included Basic");
 
 		const stopped = computeDunningState(
-			deployment(null, "compute_basic", {
+			deployment(includedSubscription(), "compute_basic", {
 				last_funding_event: fallback,
 				status: "stopped",
 			}),
 		);
 		expect(stopped?.description).toContain("No included Basic slot was available");
+	});
+
+	test("does not recover the deleted null subscription projection", () => {
+		expect(
+			computeDunningState(
+				deployment(null, "compute_basic", {
+					last_funding_event: {
+						type: "compute_subscription_fallback",
+						funding_source: "stripe",
+						reason: "payment_failure",
+						occurred_at: "2026-07-18T12:00:00Z",
+						prior_plan_slug: "compute_performance",
+						subscription_id: 42,
+					},
+				}),
+			),
+		).toBeNull();
 	});
 
 	test("ignores an old fallback trace after recovery", () => {
@@ -235,7 +261,7 @@ describe("computeDunningState", () => {
 
 		for (const expected of cases) {
 			const state = computeDunningState(
-				deployment(null, "compute_basic", {
+				deployment(includedSubscription(), "compute_basic", {
 					last_funding_event: {
 						type: "compute_subscription_fallback",
 						funding_source: "wallet",

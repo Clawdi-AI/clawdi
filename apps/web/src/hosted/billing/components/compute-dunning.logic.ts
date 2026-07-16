@@ -5,6 +5,7 @@ import type {
 } from "@/hosted/billing/contracts";
 import {
 	computeTierLabel,
+	isIncludedBasicSubscription,
 	pendingComputePlanSlug,
 } from "@/hosted/billing/subscription/subscription-utils";
 
@@ -151,7 +152,14 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 
 export function computeDunningState(deployment: DunningDeployment): ComputeDunningState | null {
 	const subscription = deployment.compute_subscription ?? null;
-	if (!subscription) return detachedFallbackState(deployment);
+	const fallbackState = detachedFallbackState(deployment);
+	if (
+		fallbackState &&
+		isIncludedBasicSubscription(deployment.config_info?.compute_plan_slug, subscription)
+	) {
+		return fallbackState;
+	}
+	if (!subscription) return null;
 	if (subscription.payment_state === "ok") return null;
 
 	const recoveryPlanSlug = recoveryPlanSlugFor(deployment, subscription);

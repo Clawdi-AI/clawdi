@@ -33,7 +33,7 @@ function includedSubscription(): NonNullable<HostedDeployment["compute_subscript
 function deployment({
 	status,
 	computePlanSlug = "compute_basic",
-	computeSubscription,
+	computeSubscription = includedSubscription(),
 }: {
 	status: string;
 	computePlanSlug?: ComputePlanSlug;
@@ -90,11 +90,6 @@ function plan(priceCents: number): Plan {
 describe("usesActiveIncludedBasicSlot", () => {
 	test("counts active free-funded Basic deployments", () => {
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "running" })])).toBe(true);
-		expect(
-			usesActiveIncludedBasicSlot([
-				deployment({ status: "running", computeSubscription: includedSubscription() }),
-			]),
-		).toBe(true);
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "starting" })])).toBe(true);
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "failed" })])).toBe(true);
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "deleting" })])).toBe(true);

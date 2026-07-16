@@ -115,10 +115,15 @@ describe("compute tier naming", () => {
 
 describe("compute funding", () => {
 	test("derives included and paid Basic from the generated funding projection", () => {
-		expect(computeFundingMode(COMPUTE_BASIC_SLUG, null)).toBe("included_basic");
 		expect(computeFundingMode(COMPUTE_BASIC_SLUG, includedSubscription())).toBe("included_basic");
 		expect(computeFundingMode(COMPUTE_BASIC_SLUG, subscription())).toBe("subscription");
 		expect(isIncludedBasicSubscription(COMPUTE_BASIC_SLUG, includedSubscription())).toBe(true);
+	});
+
+	test("does not resurrect the deleted null subscription projection", () => {
+		expect(computeFundingMode(COMPUTE_BASIC_SLUG, null)).toBe("unknown");
+		expect(computeFundingSource(COMPUTE_BASIC_SLUG, null)).toBe("unknown");
+		expect(isIncludedBasicSubscription(COMPUTE_BASIC_SLUG, null)).toBe(false);
 	});
 
 	test("does not infer included funding for Performance without subscription state", () => {
