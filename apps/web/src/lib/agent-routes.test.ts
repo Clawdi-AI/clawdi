@@ -1,5 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import {
+	agentDeploymentRouteQuery,
+	agentDeploymentSelector,
 	agentRouteQueryString,
 	agentSectionHref,
 	agentSectionLabel,
@@ -42,6 +44,19 @@ describe("agent routes", () => {
 				empty: undefined,
 			}),
 		).toBe("/agents/agent%201/sessions?tag=a&tag=b");
+	});
+
+	it("preserves only deployment identity while navigating agent sections", () => {
+		const query = "source=on-clawdi&d=dep_older&checkout=success";
+
+		expect(agentDeploymentSelector(query)).toBe("dep_older");
+		expect(agentDeploymentRouteQuery(query)).toEqual({
+			source: "on-clawdi",
+			d: "dep_older",
+		});
+		expect(agentSectionHref("agent 1", "settings", agentDeploymentRouteQuery(query))).toBe(
+			"/agents/agent%201/settings?source=on-clawdi&d=dep_older",
+		);
 	});
 
 	it("parses only canonical section segments", () => {

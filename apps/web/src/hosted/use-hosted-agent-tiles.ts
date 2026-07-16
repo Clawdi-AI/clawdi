@@ -33,7 +33,7 @@ import {
 import { HostedDeploymentTileDeleteAction } from "@/hosted/hosted-deployment-tile-action";
 import { deploymentRuntime, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
-import { agentSectionHref } from "@/lib/agent-routes";
+import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
 type DeploymentStatusInput = Pick<HostedDeployment, "status" | "failure_reason">;
@@ -236,9 +236,13 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 	// join only decorates the tile and may legitimately lag or be missing.
 	const envId = runtimeEnvironmentId(d.config_info, runtime);
 	const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
-	const detailHref = envId ? agentSectionHref(envId, "overview", "source=on-clawdi") : null;
+	const routeQuery = {
+		source: "on-clawdi",
+		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.id,
+	};
+	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
 	const settingsHref = matchedEnv
-		? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
+		? agentSectionHref(matchedEnv.id, "settings", routeQuery)
 		: undefined;
 	const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
 	const contextLabel = slug !== name ? slug : null;

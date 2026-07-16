@@ -273,6 +273,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		agent_type: tile.agentType,
 	});
 	const meta: string[] = [];
+	if (tile.contextLabel) meta.push(tile.contextLabel);
 	if (identity.secondaryLabel) meta.push(identity.secondaryLabel);
 	if (onClawdi) meta.push(tile.statusLabel);
 	const activityLabel = agentTileActivityLabel(tile);
@@ -330,7 +331,8 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		ENTITY_CARD_BUTTON_FOCUS_CLASS,
 	);
 	const linkStatus = [statusDot.label, tile.secondaryStatus?.label].filter(Boolean).join(", ");
-	const linkLabel = `Open ${tile.name}. Status: ${linkStatus}`;
+	const linkIdentity = tile.contextLabel ? `${tile.name} (${tile.contextLabel})` : tile.name;
+	const linkLabel = `Open ${linkIdentity}. Status: ${linkStatus}`;
 
 	if (!tile.href) {
 		return (

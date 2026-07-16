@@ -155,6 +155,46 @@ const failedRetainedProjectionDeployment = {
 	},
 };
 
+const sharedLegacyEnvironmentId = "77777777-7777-4777-8777-777777777777";
+const newerSharedEnvironmentDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_shared_newer",
+	name: "Newer twin",
+	created_at: "2026-07-15T00:00:00Z",
+	config_info: {
+		...includedBasicDeployment.config_info,
+		clawdi_cloud_environments: { hermes: sharedLegacyEnvironmentId },
+	},
+};
+const olderSharedEnvironmentDeployment = {
+	...newerSharedEnvironmentDeployment,
+	id: "hdep_shared_older",
+	name: "Older twin",
+	status: "stopped",
+	created_at: "2026-07-14T00:00:00Z",
+};
+const sharedLegacyCloudAgent = {
+	id: sharedLegacyEnvironmentId,
+	name: "shared-legacy-agent",
+	default_name: "shared-legacy-agent",
+	machine_name: "shared-legacy-agent",
+	display_name: null,
+	avatar_url: null,
+	sort_order: 0,
+	agent_type: "hermes",
+	agent_version: "1.0.0",
+	os: "linux",
+	last_seen_at: "2026-07-15T00:00:00Z",
+	last_sync_at: "2026-07-15T00:00:00Z",
+	last_sync_error: null,
+	last_revision_seen: 1,
+	queue_depth_high_water: 0,
+	dropped_count: 0,
+	sync_enabled: true,
+	explicit_identity: true,
+	default_project_id: "project-hosted",
+};
+
 const interruptedIdentitylessDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_creation_interrupted",
@@ -284,6 +324,7 @@ type HostedApiStubOptions = {
 	cancelRequests?: string[];
 	checkoutRequests?: string[];
 	cloudAgentOverrides?: Record<string, unknown>;
+	cloudAgents?: readonly unknown[];
 	cloudAgentNotFoundIds?: readonly string[];
 	createRequests?: string[];
 	deleteRequests?: string[];
@@ -546,7 +587,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	await page.route(`${CLOUD_API}/**`, (r) => {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/v1/me") return fulfillJson(r, me);
-		if (p === "/v1/agents") return fulfillJson(r, []);
+		if (p === "/v1/agents") return fulfillJson(r, options.cloudAgents ?? []);
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
 			if (options.cloudAgentNotFoundIds?.includes(id)) {
@@ -768,6 +809,64 @@ test("failed deployment with a retained projection renders recovery without live
 	await expect
 		.poll(() => deleteRequests)
 		.toEqual(["/v2/deployments/hdep_failed_retained_projection"]);
+});
+
+test("shared legacy environment routes an older tile's actions to its deployment", async ({
+	page,
+}) => {
+	const deleteRequests: string[] = [];
+	await stubHostedApi(page, {
+		// The deploy API returns newest first.
+		deployments: [newerSharedEnvironmentDeployment, olderSharedEnvironmentDeployment],
+		plans: [basicPlan, performancePlan],
+		cloudAgents: [sharedLegacyCloudAgent],
+		deleteRequests,
+	});
+
+	await page.goto("/agents");
+	const agents = page.locator("main");
+	const newerTile = agents.getByRole("link").filter({ hasText: "Newer twin" });
+	const olderTile = agents.getByRole("link").filter({ hasText: "Older twin" });
+	await expect(newerTile).toBeVisible();
+	await expect(olderTile).toBeVisible();
+	await olderTile.click();
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await expect(page).toHaveURL(
+		new RegExp(`/agents/${sharedLegacyEnvironmentId}/settings\\?.*d=hdep_shared_older`),
+	);
+
+	const main = page.locator("main");
+	await main.getByRole("button", { name: "Delete", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Delete compute", exact: true })
+		.click();
+
+	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_shared_older"]);
+});
+
+test("shared legacy environment direct route asks the user to choose a deployment", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		deployments: [newerSharedEnvironmentDeployment, olderSharedEnvironmentDeployment],
+	});
+
+	await page.goto(`/agents/${sharedLegacyEnvironmentId}?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect(main.getByRole("heading", { name: "Choose a deployment" })).toBeVisible();
+	const newerChoice = main.getByRole("link", { name: "Open Newer twin" });
+	const olderChoice = main.getByRole("link", { name: "Open Older twin" });
+	await expect(newerChoice).toContainText("Running");
+	await expect(newerChoice).toContainText("Created Jul 15, 2026");
+	await expect(olderChoice).toContainText("Stopped");
+	await expect(olderChoice).toContainText("Created Jul 14, 2026");
+	await expect(main.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
+	await olderChoice.click();
+	await expect(page).toHaveURL(
+		new RegExp(`/agents/${sharedLegacyEnvironmentId}\\?.*d=hdep_shared_older`),
+	);
+	await expect(main.getByRole("heading", { name: "Overview" })).toBeVisible();
 });
 
 test("identity-less interrupted deployment tile exposes delete", async ({ page }) => {

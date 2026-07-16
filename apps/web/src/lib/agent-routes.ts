@@ -12,6 +12,8 @@ export type AgentSectionId =
 export type RouteSearchParamsRecord = Record<string, string | string[] | undefined>;
 export type AgentRouteQuery = string | URLSearchParams | RouteSearchParamsRecord | null | undefined;
 
+export const AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY = "d";
+
 export const CONNECTED_AGENT_SECTION_IDS = [
 	"overview",
 	"sessions",
@@ -123,6 +125,23 @@ function agentRouteSearchParams(query?: AgentRouteQuery): URLSearchParams {
 
 export function hasAgentTabQuery(query?: AgentRouteQuery): boolean {
 	return agentRouteSearchParams(query).has("tab");
+}
+
+export function agentDeploymentSelector(query?: AgentRouteQuery): string | null {
+	const selector = agentRouteSearchParams(query).get(AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY)?.trim();
+	return selector || null;
+}
+
+export function agentDeploymentRouteQuery(
+	query?: AgentRouteQuery,
+): RouteSearchParamsRecord | undefined {
+	const params = agentRouteSearchParams(query);
+	const selector = agentDeploymentSelector(params);
+	if (!selector) return undefined;
+	return {
+		source: params.get("source") || undefined,
+		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: selector,
+	};
 }
 
 export function agentRouteQueryString(query?: AgentRouteQuery): string {

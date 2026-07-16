@@ -99,6 +99,7 @@ import {
 } from "@/lib/agent-ownership";
 import {
 	type AgentSectionId,
+	agentDeploymentRouteQuery,
 	agentSectionHref,
 	agentSectionLabel,
 	parseAgentPathname,
@@ -479,6 +480,8 @@ function AgentSectionList({
 	extraPrimaryItems?: SidebarNavItem[];
 	onNavigate?: () => void;
 }) {
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	const normalizedActiveSection = sections.some((section) => section.id === activeSection)
 		? activeSection
 		: "overview";
@@ -495,7 +498,7 @@ function AgentSectionList({
 			return {
 				id: section.id,
 				label: agentSectionLabel(section.id),
-				href: agentSectionHref(agentId, section.id),
+				href: agentSectionHref(agentId, section.id, routeQuery),
 				icon: Icon,
 				tint: AGENT_SECTION_TINTS[section.id],
 				tooltip: section.tooltip,
@@ -509,7 +512,7 @@ function AgentSectionList({
 		return {
 			id: section.id,
 			label: agentSectionLabel(section.id),
-			href: agentSectionHref(agentId, section.id),
+			href: agentSectionHref(agentId, section.id, routeQuery),
 			icon: Icon,
 			tint: AGENT_SECTION_TINTS[section.id],
 			tooltip: section.tooltip,
@@ -589,10 +592,12 @@ function AgentFocusLoadingSections({
 	activeSection: AgentSectionId;
 	onNavigate?: () => void;
 }) {
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	const overviewItem: SidebarNavItem = {
 		id: "overview",
 		label: "Overview",
-		href: agentSectionHref(agentId),
+		href: agentSectionHref(agentId, "overview", routeQuery),
 		icon: LayoutDashboard,
 		tint: RESOURCE_TINT_CLASSES.overview,
 		tooltip: "Agent overview",
@@ -1199,6 +1204,8 @@ function FocusHeader({
 	activeAgentId: string | null;
 	showCloudFeatures: boolean;
 }) {
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	const kind = useAgentChromeKind(activeAgent);
 	if (!activeAgent && !activeAgentId) {
 		return (
@@ -1230,7 +1237,7 @@ function FocusHeader({
 	const title = [name, meta.detailLabel, meta.activityLabel].filter(Boolean).join(" · ");
 	const manageHref =
 		kind === "cloud"
-			? agentSectionHref(activeAgent.id, "settings")
+			? agentSectionHref(activeAgent.id, "settings", routeQuery)
 			: kind === "legacy"
 				? (legacyHostedDashboardUrl() ?? undefined)
 				: undefined;
