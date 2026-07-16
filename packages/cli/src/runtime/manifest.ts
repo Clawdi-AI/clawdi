@@ -4632,14 +4632,20 @@ function resetFailedRuntimeUserService(name: string, paths: RuntimePaths, cwd: s
 }
 
 function reloadRuntimeUserManager(paths: RuntimePaths, cwd: string): void {
-	ensureConfiguredRuntimeUserManagerReady();
-	runRuntimeUserCommand(
-		process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl",
-		["--user", "daemon-reload"],
-		"",
-		paths.userHome,
-		cwd,
-	);
+	try {
+		ensureConfiguredRuntimeUserManagerReady();
+		runRuntimeUserCommand(
+			process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl",
+			["--user", "daemon-reload"],
+			"",
+			paths.userHome,
+			cwd,
+		);
+	} catch {
+		// Best-effort: environments without a reachable user manager (unit tests,
+		// non-hosted hosts) must not fail convergence, and official installers
+		// perform their own daemon-reload after writing the base unit.
+	}
 }
 
 function uninstallOfficialRuntimeUserService(input: {
