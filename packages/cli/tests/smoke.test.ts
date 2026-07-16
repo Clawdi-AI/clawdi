@@ -125,7 +125,7 @@ describe("CLI smoke — src entry", () => {
 			expect(parsed.runtimeMode).toBe("local");
 			expect(parsed.local.config).toBe(join(fakeHome, ".clawdi", "config.json"));
 			expect(parsed.hosted.serviceStateRoot).toBe("/var/lib/clawdi");
-			expect(parsed.hosted.workspaceRoot).toBe(join(fakeHome, "clawdi"));
+			expect(parsed.hosted.workspaceRoot).toBe(fakeHome);
 			expect(stdout).not.toContain("CLAWDI_AUTH_TOKEN");
 		} finally {
 			rmSync(fakeHome, { recursive: true, force: true });
@@ -293,11 +293,11 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 				schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
 				status: "installed",
 				source: "npm",
-				packageSpec: "clawdi@0.12.10-beta.53",
+				packageSpec: "clawdi@0.12.10-beta.54",
 				registry: "https://registry.npmjs.org",
 				activePath: managedCli,
 				activeTarget: managedCliTarget,
-				version: "0.12.10-beta.53",
+				version: "0.12.10-beta.54",
 			}),
 		);
 		writeFileSync(
@@ -305,7 +305,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			JSON.stringify({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-					minimumCliVersion: "0.12.10-beta.53",
+					minimumCliVersion: "0.12.10-beta.54",
 					runtime: "openclaw",
 					deploymentId: "dep_strict_smoke",
 					environmentId: "env_strict_smoke",
@@ -313,16 +313,11 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					generation: 1,
 					issuedAt: "2026-07-12T00:00:00Z",
 					locale: { language: "en", timezone: "UTC" },
-					system: {
-						user: "clawdi",
-						home,
-						workspace: join(home, "clawdi"),
-						persistentPaths: [home],
-					},
+					system: {},
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
-						packageSpec: "clawdi@0.12.10-beta.53",
+						packageSpec: "clawdi@0.12.10-beta.54",
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {
@@ -331,7 +326,6 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 							install: { source: "official" },
 							providerMode: "unmanaged",
 							provider_ids: [],
-							paths: { home, workspace: join(home, "clawdi") },
 						},
 					},
 					providers: {},

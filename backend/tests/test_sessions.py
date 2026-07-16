@@ -12,10 +12,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 _TEST_SYSTEM = {
-    "user": "clawdi",
-    "home": "/home/clawdi",
-    "workspace": "/home/clawdi/clawdi",
-    "persistentPaths": ["/home/clawdi"],
 }
 
 
@@ -257,7 +253,7 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
             deployment_id="hdep_test",
             instance_id="instance-test",
             generation=1,
-            cli_package_spec="clawdi@0.12.10-beta.53",
+            cli_package_spec="clawdi@0.12.10-beta.54",
             locale={"language": "en", "timezone": "UTC"},
             system=_TEST_SYSTEM,
             live_sync={"enabled": False, "agents": []},
@@ -272,10 +268,6 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
                         "model": "gpt-5.5",
                     },
                     "install": {"source": "official"},
-                    "paths": {
-                        "home": "/home/clawdi",
-                        "workspace": "/home/clawdi/clawdi",
-                    },
                 }
             },
         )

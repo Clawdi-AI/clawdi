@@ -79,6 +79,7 @@ function apiUrlSource(): "CLAWDI_API_URL" | "config.json" | "default" {
 export function configPaths(opts: { json?: boolean } = {}) {
 	const mode = detectRuntimeMode();
 	const paths = getRuntimePaths({ mode });
+	const hostedPaths = getRuntimePaths({ mode: "hosted" });
 	const payload = {
 		schemaVersion: "clawdi.configPaths.v1",
 		runtimeMode: mode,
@@ -93,18 +94,18 @@ export function configPaths(opts: { json?: boolean } = {}) {
 			serveState: paths.serveState,
 		},
 		hosted: {
-			imageShim: paths.imageShim,
-			hostPolicy: paths.hostPolicy,
-			shareRoot: paths.shareRoot,
-			serviceStateRoot: paths.serviceStateRoot,
-			managedConfig: paths.managedConfig,
-			syncState: paths.syncState,
-			managedCliBin: paths.cliManagedBin,
-			cliNpmPrefix: paths.cliNpmPrefix,
-			cliBootstrapStatus: paths.cliBootstrapStatus,
-			runRoot: paths.runRoot,
-			persistentHome: paths.userHome,
-			workspaceRoot: paths.workspaceRoot,
+			imageShim: hostedPaths.imageShim,
+			hostPolicy: hostedPaths.hostPolicy,
+			shareRoot: hostedPaths.shareRoot,
+			serviceStateRoot: hostedPaths.serviceStateRoot,
+			managedConfig: hostedPaths.managedConfig,
+			syncState: hostedPaths.syncState,
+			managedCliBin: hostedPaths.cliManagedBin,
+			cliNpmPrefix: hostedPaths.cliNpmPrefix,
+			cliBootstrapStatus: hostedPaths.cliBootstrapStatus,
+			runRoot: hostedPaths.runRoot,
+			persistentHome: hostedPaths.userHome,
+			workspaceRoot: hostedPaths.workspaceRoot,
 		},
 	};
 

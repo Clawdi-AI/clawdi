@@ -102,7 +102,7 @@ describe("run command project folder selection", () => {
 				service: null,
 				command: "/home/clawdi/.openclaw/bin/openclaw",
 				args: ["gateway", "run"],
-				cwd: "/home/clawdi/clawdi",
+				cwd: "/home/clawdi",
 				env: {
 					HOME: "/home/clawdi",
 					CLAWDI_RUNTIME_USER: "clawdi",
@@ -134,7 +134,7 @@ describe("run command project folder selection", () => {
 				service: null,
 				command: "/home/clawdi/.local/bin/hermes",
 				args: ["dashboard"],
-				cwd: "/home/clawdi/clawdi",
+				cwd: "/home/clawdi",
 				env: {
 					HOME: "/home/clawdi",
 					PATH: "/home/clawdi/.local/bin:/usr/bin",
@@ -175,7 +175,7 @@ describe("run command project folder selection", () => {
 					service: null,
 					command: "openclaw",
 					args: [],
-					cwd: "/home/clawdi/clawdi",
+					cwd: "/home/clawdi",
 					env: { CLAWDI_RUNTIME_USER: "clawdi" },
 					configPath: "/var/lib/clawdi/config/run/openclaw.json",
 				},

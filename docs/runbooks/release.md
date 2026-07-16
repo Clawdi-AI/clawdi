@@ -122,7 +122,7 @@ releases.
    runtime never resolves an npm dist-tag.
 
    Hosted Codex is a CLI-owned tool-plane dependency pinned by the immutable
-   Clawdi CLI release. For `0.12.10-beta.53`, verify the audited exact package
+   Clawdi CLI release. For `0.12.10-beta.54`, verify the audited exact package
    and executable before activating Hosted:
 
    ```bash
@@ -144,7 +144,7 @@ releases.
 
    Agent deployment v2 is not live. Keep creation and runtime-state
    reconciliation disabled until the Hosted image contract, CLI version
-   `0.12.10-beta.53`, and the Cloud manifest contract are all deployed. Validate
+   `0.12.10-beta.54`, and the Cloud manifest contract are all deployed. Validate
    one fresh deployment end to end through `/v1/runtime/manifest` and SSE before
    enabling v2. Do not add compatibility fields, aliases, or fallback package
    channels.

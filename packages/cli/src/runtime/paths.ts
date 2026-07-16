@@ -174,6 +174,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		daemonAuthToken: join(runRoot, "secrets", "auth-token"),
 		instanceData: join(runRoot, "instance-data.json"),
 		sensitiveInstanceData: join(runRoot, "instance-data-sensitive.json"),
-		workspaceRoot: join(userHome, "clawdi"),
+		workspaceRoot: mode === "hosted" ? userHome : join(userHome, "clawdi"),
 	};
 }

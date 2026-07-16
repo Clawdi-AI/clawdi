@@ -283,8 +283,7 @@ Normalization maps hosted fields into the internal shape:
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
 | `runtime` | Required selected compute runtime; exactly one enabled `openclaw` or `hermes` entry must match it |
 | `locale.language`, `locale.timezone` | Required supported language and valid IANA timezone |
-| `system.user`, `system.home`, `system.workspace`, `system.persistentPaths` | Required runtime identity and persistent filesystem contract; Hosted does not derive defaults |
-| `system.openclawControlUiAllowedOrigins` | Optional validated HTTP(S) origins for the OpenClaw gateway Control UI patch |
+| `system.openclawControlUiAllowedOrigins` | Optional control-plane-selected, validated HTTP(S) origins for the OpenClaw gateway Control UI patch |
 | `controlPlane.cloudApiUrl` | Required and only control-plane field; `appId`, `apiUrl`, and `manifestUrl` are not public manifest fields |
 | `minimumCliVersion` | Required hosted CLI protocol floor |
 | `clawdiCli.source` | Required literal `npm:clawdi` for Hosted managed CLI updates |
@@ -296,7 +295,7 @@ Normalization maps hosted fields into the internal shape:
 | `runtimes.<name>.providerMode` | Required runtime-provider ownership discriminator: `configured` or `unmanaged` |
 | `runtimes.<name>.provider_ids` | Configured mode requires a non-empty unique selection; unmanaged mode requires an exact empty list |
 | `runtimes.<name>.primary_model.{provider_id,model}` | Required only in configured mode and its provider must belong to `provider_ids`; absent in unmanaged mode |
-| `runtimes.<name>.paths.{home,workspace}` | Required canonical runtime paths; missing values and legacy `stateDir` are rejected |
+| Hosted filesystem defaults | Derived locally from Hosted `RuntimePaths`: HOME, workspace, persistence root, installer home, and explicit process/service cwd use `userHome`; obsolete external `system`/runtime path fields are rejected |
 | `providers.<id>` | Canonical Hosted provider projection: `kind` is exactly `openai-compatible`; normal entries also require `type` and `baseUrl`, while `provider_not_found` is the only reduced error entry |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `bridge.surfaces` | Optional authenticated runtime surface listen/upstream mappings |
@@ -551,7 +550,7 @@ instead of durable unit files:
 ```ini
 # $HOME/.config/systemd/user/openclaw-gateway.service.d/10-clawdi-hosted.conf
 [Service]
-WorkingDirectory=/home/clawdi/clawdi
+WorkingDirectory=/home/clawdi
 Environment="XDG_RUNTIME_DIR=%t"
 Environment="DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus"
 EnvironmentFile="/run/clawdi/systemd/env/openclaw-gateway.service.env"
@@ -730,7 +729,7 @@ The exact-only Hosted package, fixture-only bootstrap tgz, strict
 provider/install fields, and preserved generic desired-state behavior described
 above are the CLI boundary. The Hosted rollout writer selects
 `cli_package_spec`; Cloud validates and persists it, requires the exact version
-to be at least the Cloud-owned `0.12.10-beta.53` protocol floor, and owns the
+to be at least the Cloud-owned `0.12.10-beta.54` protocol floor, and owns the
 public manifest projection. Cloud fixes `clawdiCli.source` to `npm:clawdi` and
 `clawdiCli.registry` to `https://registry.npmjs.org`. Stored package state is
 revalidated on every read and fails closed with `409` when invalid or below the

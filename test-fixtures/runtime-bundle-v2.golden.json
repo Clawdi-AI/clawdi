@@ -9,11 +9,13 @@
 	],
 	"manifest": {
 		"clawdiCli": {
-			"packageSpec": "clawdi@0.12.10-beta.53",
+			"packageSpec": "clawdi@0.12.10-beta.54",
 			"registry": "https://registry.npmjs.org",
 			"source": "npm:clawdi"
 		},
-		"controlPlane": { "cloudApiUrl": "https://cloud.test" },
+		"controlPlane": {
+			"cloudApiUrl": "https://cloud.test"
+		},
 		"deploymentId": "dep_test",
 		"environmentId": "20000000-0000-0000-0000-000000000002",
 		"generation": 7,
@@ -28,8 +30,11 @@
 			],
 			"enabled": true
 		},
-		"locale": { "language": "en", "timezone": "UTC" },
-		"minimumCliVersion": "0.12.10-beta.53",
+		"locale": {
+			"language": "en",
+			"timezone": "UTC"
+		},
+		"minimumCliVersion": "0.12.10-beta.54",
 		"providers": {
 			"managed": {
 				"apiKeySecretRef": "tool.codex.apiKey",
@@ -41,34 +46,38 @@
 				"type": "openai"
 			}
 		},
-		"recovery": { "allowOfflineBoot": true, "cacheManifest": true },
+		"recovery": {
+			"allowOfflineBoot": true,
+			"cacheManifest": true
+		},
 		"runtime": "openclaw",
 		"runtimes": {
 			"openclaw": {
 				"enabled": true,
-				"install": { "source": "official" },
-				"providerMode": "configured",
-				"paths": {
-					"home": "/home/clawdi",
-					"workspace": "/home/clawdi/clawdi"
+				"install": {
+					"source": "official"
 				},
-				"primary_model": { "model": "gpt-test", "provider_id": "managed" },
+				"providerMode": "configured",
+				"primary_model": {
+					"model": "gpt-test",
+					"provider_id": "managed"
+				},
 				"provider_ids": ["managed"],
-				"run": { "args": ["gateway", "run"] },
+				"run": {
+					"args": ["gateway", "run"]
+				},
 				"services": {}
 			}
 		},
 		"schemaVersion": "clawdi.hosted-runtime.manifest.v1",
-		"system": {
-			"home": "/home/clawdi",
-			"persistentPaths": ["/home/clawdi"],
-			"user": "clawdi",
-			"workspace": "/home/clawdi/clawdi"
-		},
+		"system": {},
 		"terminalTooling": {
 			"codex": {
 				"enabled": true,
-				"primary_model": { "model": "gpt-test", "provider_id": "managed" },
+				"primary_model": {
+					"model": "gpt-test",
+					"provider_id": "managed"
+				},
 				"provider": {
 					"apiKeySecretRef": "tool.codex.apiKey",
 					"apiMode": "openai_responses",
@@ -88,5 +97,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "40a7584d7613031f489606ff215523af06f681df4011cfc9ed718beefd09c848"
+	"sourceRevision": "9223bfd14a6d83f010a4d531a4725f964514e786e78d6e87329ed8c190e16250"
 }

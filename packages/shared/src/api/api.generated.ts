@@ -4471,7 +4471,6 @@ export interface components {
             services?: {
                 [key: string]: components["schemas"]["HostedRuntimeRunSettings"];
             } | null;
-            paths: components["schemas"]["HostedRuntimePaths"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
@@ -4669,13 +4668,6 @@ export interface components {
             /** Truncated */
             truncated?: boolean | null;
         };
-        /** HostedRuntimePaths */
-        HostedRuntimePaths: {
-            /** Home */
-            home: string;
-            /** Workspace */
-            workspace: string;
-        };
         /** HostedRuntimePrimaryModel */
         HostedRuntimePrimaryModel: {
             /** Provider Id */
@@ -4711,14 +4703,6 @@ export interface components {
         };
         /** HostedRuntimeSystem */
         HostedRuntimeSystem: {
-            /** User */
-            user: string;
-            /** Home */
-            home: string;
-            /** Workspace */
-            workspace: string;
-            /** Persistentpaths */
-            persistentPaths: string[];
             /** Openclawcontroluiallowedorigins */
             openclawControlUiAllowedOrigins?: string[] | null;
         };
@@ -4741,7 +4725,6 @@ export interface components {
             services?: {
                 [key: string]: components["schemas"]["HostedRuntimeRunSettings"];
             } | null;
-            paths: components["schemas"]["HostedRuntimePaths"];
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}

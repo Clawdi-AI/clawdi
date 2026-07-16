@@ -322,12 +322,6 @@ const hostedRuntimeEntryBaseShape = {
 	install: hostedRuntimeInstallSchema,
 	run: hostedRuntimeRunSettingsSchema.optional(),
 	services: z.record(runtimeServiceNameSchema, hostedRuntimeRunSettingsSchema).default({}),
-	paths: z
-		.object({
-			home: z.string().min(1),
-			workspace: z.string().min(1),
-		})
-		.strict(),
 };
 
 const hostedConfiguredRuntimeEntrySchema = z
@@ -563,10 +557,6 @@ export const hostedRuntimeManifestSchema = z
 		locale: runtimeLocaleSchema,
 		system: z
 			.object({
-				user: z.string().min(1),
-				home: z.string().min(1),
-				workspace: z.string().min(1),
-				persistentPaths: z.array(z.string().min(1)),
 				openclawControlUiAllowedOrigins: z.array(urlOriginSchema).optional(),
 			})
 			.strict(),

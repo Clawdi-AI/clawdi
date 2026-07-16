@@ -1263,13 +1263,9 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
             "deployment_id": "dep-admin-agent-alias",
             "instance_id": "iid-admin-agent-alias",
             "generation": 7,
-            "cli_package_spec": "clawdi@0.12.10-beta.53",
+            "cli_package_spec": "clawdi@0.12.10-beta.54",
             "locale": {"language": "en", "timezone": "America/Los_Angeles"},
             "system": {
-                "user": "clawdi",
-                "home": "/home/clawdi",
-                "workspace": "/home/clawdi/clawdi",
-                "persistentPaths": ["/home/clawdi"],
             },
             "live_sync": {"enabled": False, "agents": []},
             "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
@@ -1293,10 +1289,6 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
                         "model": "gpt-5.5",
                     },
                     "install": {"source": "official"},
-                    "paths": {
-                        "home": "/home/clawdi",
-                        "workspace": "/home/clawdi/clawdi",
-                    },
                 }
             },
         },

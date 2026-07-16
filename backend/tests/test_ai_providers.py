@@ -23,10 +23,6 @@ from app.services.managed_ai_provider import (
 from tests.conftest import create_env_with_project
 
 _TEST_SYSTEM = {
-    "user": "clawdi",
-    "home": "/home/clawdi",
-    "workspace": "/home/clawdi/clawdi",
-    "persistentPaths": ["/home/clawdi"],
 }
 
 
@@ -322,7 +318,7 @@ async def test_provider_and_secret_mutations_invalidate_only_bound_runtime(
                 deployment_id=f"dep-{provider_id}",
                 instance_id=f"hri-{provider_id}",
                 generation=1,
-                cli_package_spec="clawdi@0.12.10-beta.53",
+                cli_package_spec="clawdi@0.12.10-beta.54",
                 locale={"language": "en", "timezone": "UTC"},
                 system=_TEST_SYSTEM,
                 live_sync={"enabled": False, "agents": []},
@@ -334,10 +330,6 @@ async def test_provider_and_secret_mutations_invalidate_only_bound_runtime(
                         "provider_ids": [provider_id],
                         "primary_model": {"provider_id": provider_id, "model": "test-model"},
                         "install": {"source": "official"},
-                        "paths": {
-                            "home": "/home/clawdi",
-                            "workspace": "/home/clawdi/clawdi",
-                        },
                     }
                 },
             )
