@@ -1,11 +1,13 @@
+const subscriptionCreateQuotes = ["billing", "subscription-create-quote"] as const;
+
 export const billingKeys = {
 	wallet: ["billing", "wallet"] as const,
 	ledger: (limit: number) => ["billing", "ledger", limit] as const,
-	invoices: (limit: number) => ["billing", "invoices", limit] as const,
+	subscriptionCreateQuotes,
+	subscriptionCreateQuote: (planSlug: string, billingTermMonths: number, fundingSource: string) =>
+		[...subscriptionCreateQuotes, planSlug, billingTermMonths, fundingSource] as const,
 	billingHistory: (limit: number) => ["billing", "history", limit] as const,
 	plans: ["billing", "plans"] as const,
-	walletComputeQuote: (planSlug: string, billingTermMonths: number) =>
-		["billing", "wallet-compute-quote", planSlug, billingTermMonths] as const,
 	deployments: ["billing", "deployments"] as const,
 	legacyAgentEnvironments: ["billing", "legacy-agent-environments"] as const,
 	me: ["billing", "me"] as const,

@@ -17,8 +17,12 @@ export type ComputeSubscriptionCancelRequest = Schemas["V2ComputeSubscriptionCan
 export type ComputeFixPaymentRequest = Schemas["V2ComputeFixPaymentRequest"];
 export type ComputeBillingHistoryItem = Schemas["V2ComputeBillingHistoryItem"];
 export type ComputeBillingHistoryPage = Schemas["V2ComputeBillingHistoryResponse"];
-export type ComputeInvoice = Schemas["V2ComputeInvoiceInfo"];
-export type ComputeInvoicesPage = Schemas["V2ComputeInvoicesResponse"];
+export type ComputePlanChangeRequest = Schemas["V2ComputePlanChangeRequest"];
+export type ComputePlanChangeResponse = Schemas["V2ComputePlanChangeResponse"];
+export type ComputePlanChangeQuoteRequest = Schemas["V2ComputePlanChangeQuoteRequest"];
+export type ComputePlanChangeQuoteResponse = Schemas["V2ComputePlanChangeQuoteResponse"];
+export type ComputeSubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];
+export type ComputeSubscriptionQuoteResponse = Schemas["V2ComputeSubscriptionQuoteResponse-Output"];
 export type ComputeSubscriptionResumeRequest = Schemas["V2ComputeSubscriptionResumeRequest"];
 export type DeleteDeploymentResult = Schemas["V2DeploymentDeleteResponse"];
 export type DeployRequest = Schemas["V2HostedDeployRequest"];
@@ -42,25 +46,6 @@ export type UsageModelBreakdown = Schemas["V2HostedUsageModelBreakdown"];
 export type UsageSummary = Schemas["V2HostedUsageSummaryResponse"];
 export type WalletAutoReloadAction = Schemas["V2WalletAutoReloadActionResponse"];
 export type WalletAutoReloadRequest = Schemas["V2WalletAutoReloadRequest"];
-export type WalletComputeActivateRequest = Schemas["V2WalletComputeActivateRequest"];
-export type WalletComputeActivateResult = Schemas["V2WalletComputeActivateResponse"];
-export type WalletComputeCancelPendingPlanRequest =
-	Schemas["V2WalletComputeCancelPendingPlanRequest"];
-export type WalletComputeCancelPendingPlanResult =
-	Schemas["V2WalletComputeCancelPendingPlanResponse"];
-export type WalletComputePlanChangeRequest = Schemas["V2WalletComputePlanChangeRequest"];
-export type WalletComputePlanChangeResult = Schemas["V2WalletComputePlanChangeResponse"];
-export type WalletComputeQuoteRequest = Schemas["V2WalletComputeQuoteRequest"];
-export type WalletComputeQuote = Schemas["V2WalletComputeQuoteResponse"];
-export type WalletComputeRetryRequest = Schemas["V2WalletComputeRetryRequest"];
-export type WalletComputeRetryResult = Schemas["V2WalletComputeRetryResponse"];
-export type WalletComputeConflictError = Schemas["V2WalletComputeConflictErrorResponse"];
-export type WalletComputeInsufficientError = Schemas["V2WalletComputeInsufficientErrorResponse"];
-export type WalletComputeUpstreamError = Schemas["V2WalletComputeUpstreamErrorResponse"];
-export type WalletComputeErrorDetail =
-	| WalletComputeConflictError["detail"]
-	| WalletComputeInsufficientError["detail"]
-	| WalletComputeUpstreamError["detail"];
 export type WalletLedgerEntry = Schemas["V2WalletLedgerItemResponse"];
 export type WalletLedgerPage = Schemas["V2WalletLedgerResponse"];
 export type WalletLedgerStatus = WalletLedgerEntry["status"];

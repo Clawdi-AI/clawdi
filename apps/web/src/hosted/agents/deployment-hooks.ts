@@ -60,7 +60,7 @@ function toastAgentLanguageTimezoneError(error: unknown) {
  */
 export function useAgentDeployment(environmentId: string, deploymentSelector?: string | null) {
 	const inventory = useHostedDeploymentInventory({
-		pollWalletDunningFor: deploymentSelector ?? environmentId,
+		pollBillingRecoveryFor: deploymentSelector ?? environmentId,
 	});
 	const resolution = useMemo(
 		() => resolveAgentDeployment(inventory.deployments ?? [], environmentId, deploymentSelector),

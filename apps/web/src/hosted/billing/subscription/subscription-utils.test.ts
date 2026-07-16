@@ -12,6 +12,7 @@ import {
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionRenewing,
 	isComputeSubscriptionTermChangeable,
+	isIncludedBasicSubscription,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
@@ -37,7 +38,6 @@ function plan(overrides: Partial<Plan> & Pick<Plan, "slug" | "price_cents">): Pl
 		price_cents: priceCents,
 		points_per_usd: 100,
 		signup_grant_credits: 0,
-		subscription_grant_credits: 0,
 		vcpu: 1,
 		ram_gb: 1,
 		disk_size: 10,
@@ -52,6 +52,19 @@ function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 		payment_state: "ok",
 		billing_term_months: 1,
 		price_cents: 900,
+		currency: "usd",
+		cancel_at_period_end: false,
+	};
+}
+
+function includedSubscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+	return {
+		subscription_id: 7,
+		status: "active",
+		funding_source: null,
+		payment_state: "ok",
+		billing_term_months: 1,
+		price_cents: 0,
 		currency: "usd",
 		cancel_at_period_end: false,
 	};
@@ -100,9 +113,16 @@ describe("compute tier naming", () => {
 });
 
 describe("compute funding", () => {
-	test("derives included and paid Basic from subscription presence", () => {
-		expect(computeFundingMode(COMPUTE_BASIC_SLUG, null)).toBe("included_basic");
+	test("derives included and paid Basic from the generated funding projection", () => {
+		expect(computeFundingMode(COMPUTE_BASIC_SLUG, includedSubscription())).toBe("included_basic");
 		expect(computeFundingMode(COMPUTE_BASIC_SLUG, subscription())).toBe("subscription");
+		expect(isIncludedBasicSubscription(COMPUTE_BASIC_SLUG, includedSubscription())).toBe(true);
+	});
+
+	test("does not resurrect the deleted null subscription projection", () => {
+		expect(computeFundingMode(COMPUTE_BASIC_SLUG, null)).toBe("unknown");
+		expect(computeFundingSource(COMPUTE_BASIC_SLUG, null)).toBe("unknown");
+		expect(isIncludedBasicSubscription(COMPUTE_BASIC_SLUG, null)).toBe(false);
 	});
 
 	test("does not infer included funding for Performance without subscription state", () => {
@@ -111,6 +131,7 @@ describe("compute funding", () => {
 	});
 
 	test("distinguishes Stripe and Wallet subscription funding", () => {
+		expect(computeFundingSource(COMPUTE_BASIC_SLUG, includedSubscription())).toBe("included_basic");
 		expect(computeFundingSource(COMPUTE_BASIC_SLUG, subscription())).toBe("stripe");
 		expect(
 			computeFundingSource(COMPUTE_BASIC_SLUG, { ...subscription(), funding_source: "wallet" }),
@@ -220,9 +241,9 @@ describe("compute subscription action status gates", () => {
 	});
 
 	test("keeps term changes stricter than cancel or resume", () => {
-		expect(isComputeSubscriptionTermChangeable({ status: "trialing" })).toBe(true);
 		expect(isComputeSubscriptionTermChangeable({ status: "active" })).toBe(true);
 
+		expect(isComputeSubscriptionTermChangeable({ status: "trialing" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable({ status: "past_due" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable({ status: "unpaid" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable(undefined)).toBe(false);
@@ -247,6 +268,17 @@ describe("compute subscription lifecycle presentation", () => {
 			badgeLabel: "Paused",
 			renews: false,
 		});
+		expect(
+			computeSubscriptionLifecycle({
+				...subscription(),
+				status: "past_due",
+			}),
+		).toMatchObject({
+			badgeLabel: "Payment past due",
+			dateAt: null,
+			dateVerb: null,
+			renews: true,
+		});
 		expect(computeSubscriptionLifecycle({ ...subscription(), status: "incomplete" })).toMatchObject(
 			{ badgeLabel: "Setup incomplete", renews: false },
 		);
@@ -261,22 +293,12 @@ describe("compute subscription lifecycle presentation", () => {
 		});
 	});
 
-	test("does not claim an overdue pending plan boundary is still scheduled", () => {
-		expect(
-			pendingPlanScheduleCopy(
-				"compute_basic",
-				"2026-07-01T00:00:00Z",
-				"Jul 1, 2026",
-				Date.parse("2026-07-02T00:00:00Z"),
-			),
-		).toBe("Basic plan change is awaiting renewal processing.");
-		expect(
-			pendingPlanScheduleCopy(
-				"compute_basic",
-				"2026-08-01T00:00:00Z",
-				"Aug 1, 2026",
-				Date.parse("2026-07-02T00:00:00Z"),
-			),
-		).toBe("Basic scheduled for Aug 1, 2026.");
+	test("describes the server-projected schedule without local renewal state", () => {
+		expect(pendingPlanScheduleCopy("compute_basic", "2026-07-01T00:00:00Z", "Jul 1, 2026")).toBe(
+			"Basic scheduled for Jul 1, 2026.",
+		);
+		expect(pendingPlanScheduleCopy("compute_basic", "2026-08-01T00:00:00Z", "Aug 1, 2026")).toBe(
+			"Basic scheduled for Aug 1, 2026.",
+		);
 	});
 });

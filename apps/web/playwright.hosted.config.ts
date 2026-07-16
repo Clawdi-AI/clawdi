@@ -2,7 +2,11 @@ import { defineConfig, devices } from "@playwright/test";
 
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
 // (no Clerk key needed) + deploy-api enabled so /deploy renders.
-const baseURL = process.env.E2E_HOSTED_BASE_URL ?? "http://127.0.0.1:3100";
+const hostedPort = Number(process.env.E2E_HOSTED_PORT ?? 3100);
+if (!Number.isInteger(hostedPort) || hostedPort < 1 || hostedPort > 65_535) {
+	throw new Error("E2E_HOSTED_PORT must be a valid TCP port.");
+}
+const baseURL = process.env.E2E_HOSTED_BASE_URL ?? `http://127.0.0.1:${hostedPort}`;
 
 export default defineConfig({
 	testDir: "./e2e",
@@ -13,7 +17,7 @@ export default defineConfig({
 	reporter: "list",
 	use: { baseURL, trace: "on-first-retry" },
 	webServer: {
-		command: "bun run dev -- --host 127.0.0.1 --port 3100",
+		command: `bun run dev -- --host 127.0.0.1 --port ${hostedPort}`,
 		url: baseURL,
 		reuseExistingServer: false,
 		timeout: 120_000,
@@ -24,6 +28,7 @@ export default defineConfig({
 			VITE_CLAWDI_DEPLOY_API_URL: "http://127.0.0.1:8001",
 			VITE_DEV_AUTH_BYPASS: "true",
 			VITE_DEV_AUTH_TOKEN: "dev-bypass",
+			VITE_STRIPE_PUBLISHABLE_KEY: "pk_test_browser",
 		},
 	},
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

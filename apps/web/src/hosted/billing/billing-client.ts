@@ -7,7 +7,10 @@ import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
 	CheckoutRequest,
 	ComputeFixPaymentRequest,
+	ComputePlanChangeQuoteRequest,
+	ComputePlanChangeRequest,
 	ComputeSubscriptionCancelRequest,
+	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionResumeRequest,
 	DeployRequest,
 	HostedDeployment,
@@ -15,11 +18,6 @@ import type {
 	RuntimeAgentType,
 	SetAgentEnabledRequest,
 	WalletAutoReloadRequest,
-	WalletComputeActivateRequest,
-	WalletComputeCancelPendingPlanRequest,
-	WalletComputePlanChangeRequest,
-	WalletComputeQuoteRequest,
-	WalletComputeRetryRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
@@ -130,32 +128,20 @@ export function useBillingClient() {
 						headers: { "Idempotency-Key": idempotencyKey },
 					}),
 				),
+			quoteSubscription: async (body: ComputeSubscriptionQuoteRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/quote", { body })),
+			quotePlanChange: async (body: ComputePlanChangeQuoteRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/plan/quote", { body })),
+			changePlan: async (body: ComputePlanChangeRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/plan/change", { body })),
 			cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
 			fixPayment: async (body: ComputeFixPaymentRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/fix-payment", { body })),
-			getInvoices: async (limit = 12) =>
-				unwrapDeploy(
-					await api.GET("/v2/subscription/invoices", {
-						params: { query: { limit } },
-					}),
-				),
 			portal: async (body: PortalRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/portal", { body })),
 			resumeSubscription: async (body: ComputeSubscriptionResumeRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/resume", { body })),
-			quoteWalletCompute: async (body: WalletComputeQuoteRequest) =>
-				unwrapDeploy(await api.POST("/v2/subscription/wallet/quote", { body })),
-			activateWalletCompute: async (body: WalletComputeActivateRequest) =>
-				unwrapDeploy(await api.POST("/v2/subscription/wallet/activate", { body })),
-			retryWalletCompute: async (body: WalletComputeRetryRequest) =>
-				unwrapDeploy(await api.POST("/v2/subscription/wallet/retry", { body })),
-			quoteWalletPlanChange: async (body: WalletComputePlanChangeRequest) =>
-				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/quote", { body })),
-			changeWalletPlan: async (body: WalletComputePlanChangeRequest) =>
-				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/change", { body })),
-			cancelPendingWalletPlan: async (body: WalletComputeCancelPendingPlanRequest) =>
-				unwrapDeploy(await api.POST("/v2/subscription/wallet/plan/cancel-pending", { body })),
 			getUsage: async () => unwrapDeploy(await api.GET("/v2/usage")),
 
 			getMe: async () => unwrapDeploy(await api.GET("/v1/me")),

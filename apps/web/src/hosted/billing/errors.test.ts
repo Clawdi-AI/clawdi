@@ -10,7 +10,6 @@ import {
 	isRetryableError,
 	isServerError,
 	normalizeBillingError,
-	walletComputeErrorDetail,
 } from "@/hosted/billing/errors";
 
 describe("error classification", () => {
@@ -140,34 +139,5 @@ describe("normalizeBillingError", () => {
 
 	test("unknown shapes get a safe message", () => {
 		expect(normalizeBillingError(null)).toMatch(/something went wrong/i);
-	});
-});
-
-describe("walletComputeErrorDetail", () => {
-	test("accepts shortfall and refund-debt generated error variants", () => {
-		const insufficient = walletComputeErrorDetail(
-			new BillingApiError(402, "insufficient", {
-				detail: {
-					code: "insufficient_balance",
-					required_credits: "19000",
-					available_credits: "5000",
-					shortfall_credits: "14000",
-				},
-			}),
-		);
-		expect(insufficient).toMatchObject({ code: "insufficient_balance" });
-
-		const debt = walletComputeErrorDetail(
-			new BillingApiError(409, "refund debt", {
-				detail: {
-					code: "open_refund_debt",
-					outstanding_debt_credits: "2500.5",
-				},
-			}),
-		);
-		expect(debt).toMatchObject({
-			code: "open_refund_debt",
-			outstanding_debt_credits: "2500.5",
-		});
 	});
 });

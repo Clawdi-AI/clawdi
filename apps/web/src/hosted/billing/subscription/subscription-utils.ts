@@ -9,7 +9,7 @@ import {
 
 export { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG };
 export const COMPUTE_SUBSCRIPTION_CANCELABLE_STATUSES = new Set(["trialing", "active", "past_due"]);
-export const COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES = new Set(["trialing", "active"]);
+export const COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES = new Set(["active"]);
 
 export type ResolvedBillingOffer = {
 	offer: BillingOffer;
@@ -51,12 +51,24 @@ export type ComputeFundingMode = "included_basic" | "subscription" | "unknown";
 
 export type ComputeFundingSource = "included_basic" | "stripe" | "wallet" | "unknown";
 
+export function isIncludedBasicSubscription(
+	planSlug: string | null | undefined,
+	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+): boolean {
+	return (
+		isBasicCompute(planSlug) &&
+		computeSubscription != null &&
+		computeSubscription.funding_source == null &&
+		computeSubscription.price_cents === 0
+	);
+}
+
 export function computeFundingMode(
 	planSlug: string | null | undefined,
 	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
 ): ComputeFundingMode {
+	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
 	if (computeSubscription) return "subscription";
-	if (isBasicCompute(planSlug)) return "included_basic";
 	return "unknown";
 }
 
@@ -64,11 +76,11 @@ export function computeFundingSource(
 	planSlug: string | null | undefined,
 	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
 ): ComputeFundingSource {
+	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
 	if (computeSubscription?.funding_source === "wallet") return "wallet";
 	// Additive rollout compatibility: subscriptions from the pre-wallet
 	// deployment projection had no funding_source and were necessarily Stripe.
 	if (computeSubscription) return "stripe";
-	if (isBasicCompute(planSlug) && !computeSubscription) return "included_basic";
 	return "unknown";
 }
 
@@ -144,8 +156,8 @@ export function computeSubscriptionLifecycle(
 	if (status === "past_due") {
 		return {
 			badgeLabel: "Payment past due",
-			dateAt: subscription.dunning_deadline_at ?? null,
-			dateVerb: subscription.dunning_deadline_at ? "Grace ends" : null,
+			dateAt: null,
+			dateVerb: null,
 			renews: true,
 		};
 	}
@@ -176,14 +188,11 @@ export function pendingPlanScheduleCopy(
 	planSlug: ComputePlanSlug,
 	effectiveAt: string | null | undefined,
 	dateLabel: string,
-	now = Date.now(),
 ): string {
 	const planLabel = computeTierLabel(planSlug);
-	const effectiveMs = effectiveAt ? Date.parse(effectiveAt) : Number.NaN;
-	if (Number.isFinite(effectiveMs) && effectiveMs > now) {
-		return `${planLabel} scheduled for ${dateLabel}.`;
-	}
-	return `${planLabel} plan change is awaiting renewal processing.`;
+	return effectiveAt
+		? `${planLabel} scheduled for ${dateLabel}.`
+		: `${planLabel} scheduled for the next billing date.`;
 }
 
 export function computeTierLabel(

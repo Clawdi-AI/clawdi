@@ -6,6 +6,7 @@ describe("hostedProductAccessFromProfile", () => {
 		expect(hostedProductAccessFromProfile(undefined)).toEqual({
 			canUseLegacyHostedDashboard: false,
 			canCreateCloudAgents: false,
+			canUsePlanCBilling: false,
 			canUseCloudAgents: false,
 		});
 	});
@@ -18,6 +19,23 @@ describe("hostedProductAccessFromProfile", () => {
 		).toEqual({
 			canUseLegacyHostedDashboard: false,
 			canCreateCloudAgents: true,
+			canUsePlanCBilling: false,
+			canUseCloudAgents: true,
+		});
+	});
+
+	it("keeps Plan C billing separate from the Cloud agent creation gate", () => {
+		expect(
+			hostedProductAccessFromProfile({
+				capabilities: {
+					can_use_v2: true,
+					can_use_plan_c_billing: true,
+				},
+			}),
+		).toEqual({
+			canUseLegacyHostedDashboard: false,
+			canCreateCloudAgents: true,
+			canUsePlanCBilling: true,
 			canUseCloudAgents: true,
 		});
 	});
@@ -30,6 +48,7 @@ describe("hostedProductAccessFromProfile", () => {
 		).toEqual({
 			canUseLegacyHostedDashboard: true,
 			canCreateCloudAgents: false,
+			canUsePlanCBilling: false,
 			canUseCloudAgents: false,
 		});
 	});
@@ -45,6 +64,7 @@ describe("hostedProductAccessFromProfile", () => {
 		).toEqual({
 			canUseLegacyHostedDashboard: false,
 			canCreateCloudAgents: false,
+			canUsePlanCBilling: false,
 			canUseCloudAgents: false,
 		});
 	});

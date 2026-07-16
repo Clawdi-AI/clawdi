@@ -17,10 +17,23 @@ function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 	};
 }
 
+function includedSubscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+	return {
+		subscription_id: 7,
+		status: "active",
+		funding_source: null,
+		payment_state: "ok",
+		billing_term_months: 1,
+		price_cents: 0,
+		currency: "usd",
+		cancel_at_period_end: false,
+	};
+}
+
 function deployment({
 	status,
 	computePlanSlug = "compute_basic",
-	computeSubscription,
+	computeSubscription = includedSubscription(),
 }: {
 	status: string;
 	computePlanSlug?: ComputePlanSlug;
@@ -59,7 +72,6 @@ function plan(priceCents: number): Plan {
 		price_cents: priceCents,
 		points_per_usd: 100,
 		signup_grant_credits: 0,
-		subscription_grant_credits: 0,
 		vcpu: 2,
 		ram_gb: 4,
 		disk_size: 20,
