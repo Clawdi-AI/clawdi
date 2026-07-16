@@ -24,6 +24,15 @@ export interface TopupStartResultControls extends TopupCompletionControls {
 	toastError: TopupToast;
 }
 
+export function validTopUpAmountCents(amountCents: number): boolean {
+	return (
+		Number.isFinite(amountCents) &&
+		amountCents >= TOPUP_MIN_CENTS &&
+		amountCents <= TOPUP_MAX_CENTS &&
+		amountCents % TOPUP_INCREMENT_CENTS === 0
+	);
+}
+
 /** Convert a credit shortfall into the smallest whole-dollar top-up that covers it. */
 export function topUpAmountCentsForCreditShortfall(
 	shortfallCredits: number | null,
@@ -57,7 +66,7 @@ export function completeTopup(
 	controls.onComplete?.(status);
 	if (status === "succeeded") {
 		controls.toastSuccess("Top-up complete", {
-			description: "Your credits will appear in a moment.",
+			description: "Your AI Credits will appear in a moment.",
 		});
 	} else {
 		controls.toastSuccess("Top-up processing", {

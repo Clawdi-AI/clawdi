@@ -157,14 +157,23 @@ function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | nu
 function CheckoutElementForm({
 	onComplete,
 	onLoadError,
+	onSubmittingChange,
 }: {
 	onComplete: () => void;
 	onLoadError: (message: string) => void;
+	onSubmittingChange: (submitting: boolean) => void;
 }) {
 	const checkoutState = useCheckoutElements();
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const submittingRef = useRef(false);
 	const loadErrorMessage = checkoutState.type === "error" ? checkoutState.error.message : null;
+
+	function finishSubmitting() {
+		submittingRef.current = false;
+		setSubmitting(false);
+		onSubmittingChange(false);
+	}
 
 	useEffect(() => {
 		if (loadErrorMessage) onLoadError(loadErrorMessage);
@@ -177,7 +186,7 @@ function CheckoutElementForm({
 				className="flex min-h-36 items-center gap-2 py-6 text-sm text-muted-foreground"
 			>
 				<Spinner />
-				<span>Loading secure payment form...</span>
+				<span>Loading secure payment form…</span>
 			</div>
 		);
 	}
@@ -196,14 +205,16 @@ function CheckoutElementForm({
 	const { checkout } = checkoutState;
 
 	async function confirmCheckout() {
-		if (submitting || !checkout.canConfirm) return;
+		if (submittingRef.current || !checkout.canConfirm) return;
+		submittingRef.current = true;
 		setSubmitting(true);
+		onSubmittingChange(true);
 		setError(null);
 		try {
 			const result = await checkout.confirm({ redirect: "if_required" });
 			if (result.type === "error") {
 				setError(result.error.message || "We could not confirm this payment. Please try again.");
-				setSubmitting(false);
+				finishSubmitting();
 				return;
 			}
 			if (result.session.status.type === "complete") {
@@ -211,10 +222,10 @@ function CheckoutElementForm({
 				return;
 			}
 			setError("Stripe needs another step before this checkout can finish.");
-			setSubmitting(false);
+			finishSubmitting();
 		} catch {
 			setError("We could not reach Stripe. Check your connection and try again.");
-			setSubmitting(false);
+			finishSubmitting();
 		}
 	}
 
@@ -233,10 +244,14 @@ function CheckoutElementForm({
 				</Alert>
 			) : null}
 			<div className="flex justify-end">
-				<Button onClick={confirmCheckout} disabled={submitting || !checkout.canConfirm}>
+				<Button
+					type="button"
+					onClick={confirmCheckout}
+					disabled={submitting || !checkout.canConfirm}
+				>
 					{submitting ? (
 						<>
-							<Spinner data-icon="inline-start" /> Processing...
+							<Spinner data-icon="inline-start" /> Processing…
 						</>
 					) : (
 						"Subscribe"
@@ -262,6 +277,7 @@ export function StripeCheckoutDialog({
 	const [state, setState] = useState<DialogState>("loading");
 	const [message, setMessage] = useState<string | null>(null);
 	const [attempt, setAttempt] = useState(0);
+	const [checkoutSubmitting, setCheckoutSubmitting] = useState(false);
 	const appearance = useCheckoutAppearance(open);
 	const onCompleteRef = useRef(onComplete);
 	const onFallbackRef = useRef(onFallback);
@@ -302,6 +318,7 @@ export function StripeCheckoutDialog({
 		if (!open || !clientSecret) return;
 		let cancelled = false;
 		fallbackStartedRef.current = false;
+		setCheckoutSubmitting(false);
 		setStripe(null);
 		setMessage(null);
 		setState("loading");
@@ -351,12 +368,17 @@ export function StripeCheckoutDialog({
 		};
 	}, [appearance, clientSecret]);
 
+	function requestOpenChange(nextOpen: boolean) {
+		if (!nextOpen && (checkoutSubmitting || state === "redirecting")) return;
+		onOpenChange(nextOpen);
+	}
+
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog open={open} onOpenChange={requestOpenChange}>
 			<DialogContent
 				className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg"
 				data-hosted="true"
-				showCloseButton={state !== "redirecting"}
+				showCloseButton={state !== "redirecting" && !checkoutSubmitting}
 			>
 				<DialogHeader>
 					<DialogTitle>{title}</DialogTitle>
@@ -373,6 +395,7 @@ export function StripeCheckoutDialog({
 						<CheckoutElementForm
 							onComplete={completeCheckout}
 							onLoadError={handleProviderLoadError}
+							onSubmittingChange={setCheckoutSubmitting}
 						/>
 					</CheckoutElementsProvider>
 				) : state === "error" ? (
@@ -394,7 +417,7 @@ export function StripeCheckoutDialog({
 								<Button
 									size="sm"
 									onClick={() => {
-										void startHostedFallback("Opening Stripe checkout...");
+										void startHostedFallback("Opening Stripe checkout…");
 									}}
 								>
 									Continue in Stripe
@@ -408,7 +431,7 @@ export function StripeCheckoutDialog({
 						className="flex min-h-36 items-center gap-2 py-6 text-sm text-muted-foreground"
 					>
 						<Spinner />
-						<span>{message ?? "Loading secure checkout..."}</span>
+						<span>{message ?? "Loading secure checkout…"}</span>
 					</div>
 				)}
 			</DialogContent>

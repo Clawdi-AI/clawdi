@@ -93,6 +93,7 @@ import {
 import {
 	BillingApiError,
 	billingErrorNormalizer,
+	isIdempotencyKeyReusedError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 import {
@@ -100,6 +101,7 @@ import {
 	billingTermSuffix,
 	formatCents,
 	formatCentsCompact,
+	formatUsd,
 } from "@/hosted/billing/format";
 import {
 	checkoutReturnDeploymentId,
@@ -117,6 +119,7 @@ import {
 	useWallet,
 } from "@/hosted/billing/hooks";
 import {
+	forgetIdempotencyAttempt,
 	type IdempotencyAttempt,
 	idempotencyAttemptFor,
 	idempotencyFingerprint,
@@ -153,6 +156,7 @@ import {
 	type PaymentOutcome,
 	StripePaymentForm,
 } from "@/hosted/billing/wallet/stripe-payment-form";
+import { buildSubscriptionPaymentReturnUrl } from "@/hosted/billing/wallet/stripe-payment-form.logic";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
@@ -218,6 +222,8 @@ type DeploymentStatus = ReturnType<typeof parseDeploymentStatus>;
 type TermChangeConfirmation = {
 	clientSecret: string;
 	billingTermMonths: number;
+	amountDueUsd: number | null;
+	effectiveAt: string | null;
 };
 type HostedAgentTab =
 	| "overview"
@@ -303,7 +309,7 @@ function isProvisioningStatus(status: DeploymentStatus): boolean {
 }
 
 function provisioningTitle(status: DeploymentStatus): string {
-	return status.kind === "starting" ? "Starting your agent..." : "Setting up your agent...";
+	return status.kind === "starting" ? "Starting your agent…" : "Setting up your agent…";
 }
 
 function RestartComputeAction({
@@ -2269,7 +2275,7 @@ function LanguageTimezoneSettingsSection({
 						Reset
 					</Button>
 					{setLanguageTimezone.isPending ? (
-						<span className="text-xs text-muted-foreground">Updating runtime settings...</span>
+						<span className="text-xs text-muted-foreground">Updating runtime settings…</span>
 					) : null}
 				</div>
 			</div>
@@ -2322,6 +2328,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const [term, setTerm] = useState(currentBillingTerm);
 	const [termChangeConfirmation, setTermChangeConfirmation] =
 		useState<TermChangeConfirmation | null>(null);
+	const [termChangeSubmitting, setTermChangeSubmitting] = useState(false);
 	const [walletPlanQuote, setWalletPlanQuote] = useState<WalletComputePlanChangeResult | null>(
 		null,
 	);
@@ -2405,7 +2412,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 		selectedBillingTerm !== currentBillingTerm;
 	const canUpgrade = isIncludedBasic && deployment.upgrade_available;
 	const upgradeUnavailableMessage = plans.isLoading
-		? "Checking Performance availability..."
+		? "Checking Performance availability…"
 		: !perfPlan
 			? "Performance compute is unavailable right now."
 			: isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped"
@@ -2429,6 +2436,9 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 		checkoutReturnRef.current = marker;
 		void refreshCheckoutReturn().then(() => {
 			if (checkoutReturnWasCanceled(searchStr)) {
+				const attempt = checkoutAttemptRef.current;
+				if (attempt) forgetIdempotencyAttempt("subscription-upgrade", attempt.fingerprint);
+				checkoutAttemptRef.current = null;
 				toast.message("Checkout canceled", {
 					description: "You were not charged. Your compute plan is unchanged.",
 				});
@@ -2485,6 +2495,10 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				description: "No checkout URL was returned. Please try again.",
 			});
 		} catch (error) {
+			if (isIdempotencyKeyReusedError(error) && checkoutAttemptRef.current) {
+				forgetIdempotencyAttempt("subscription-upgrade", checkoutAttemptRef.current.fingerprint);
+				checkoutAttemptRef.current = null;
+			}
 			toast.error("Couldn’t start upgrade", { description: normalizeBillingError(error) });
 		}
 	}
@@ -2501,6 +2515,8 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				setTermChangeConfirmation({
 					clientSecret: res.payment_intent_client_secret,
 					billingTermMonths: selectedBillingTerm,
+					amountDueUsd: res.amount_due_usd ?? null,
+					effectiveAt: res.effective_at ?? null,
 				});
 				return;
 			}
@@ -2509,23 +2525,30 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				return;
 			}
 			toast.message("Subscription update unavailable", {
-				description: res.message ?? "Please try again in a moment.",
+				description: "Refresh this agent and try again in a moment.",
 			});
 		} catch (error) {
 			toast.error("Couldn’t change billing term", { description: normalizeBillingError(error) });
 		}
 	}
 
-	function completeBillingTermConfirmation(status: PaymentOutcome) {
+	async function completeBillingTermConfirmation(status: PaymentOutcome) {
 		setTermChangeConfirmation(null);
-		void refreshCheckoutReturn().catch(() => undefined);
+		setTermChangeSubmitting(false);
+		const refreshed = await refreshCheckoutReturn();
+		if (!refreshed) {
+			toast.warning("Payment received; details need a refresh", {
+				description: "Reload this agent to confirm the updated billing term.",
+			});
+			return;
+		}
 		toast.success(
-			status === "succeeded" ? "Billing term update confirmed" : "Billing term update processing",
+			status === "succeeded" ? "Billing term updated" : "Billing term update processing",
 			{
 				description:
 					status === "succeeded"
-						? "We refreshed your compute subscription details."
-						: "We will refresh your compute subscription details once the payment settles.",
+						? "The refreshed subscription now shows the confirmed term."
+						: "The subscription will update after the payment settles.",
 			},
 		);
 	}
@@ -2661,6 +2684,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			});
 		} catch (error) {
 			toast.error("Couldn’t cancel subscription", { description: normalizeBillingError(error) });
+			throw error;
 		}
 	}
 
@@ -2688,25 +2712,45 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			<Dialog
 				open={termChangeConfirmation !== null}
 				onOpenChange={(open) => {
-					if (!open) setTermChangeConfirmation(null);
+					if (!open && !termChangeSubmitting) setTermChangeConfirmation(null);
 				}}
 			>
-				<DialogContent className="sm:max-w-md" data-hosted="true">
+				<DialogContent
+					className="sm:max-w-md"
+					data-hosted="true"
+					showCloseButton={!termChangeSubmitting}
+				>
 					<DialogHeader>
 						<DialogTitle>Confirm billing term change</DialogTitle>
 						<DialogDescription>
-							Complete your bank confirmation to switch this compute to{" "}
-							{billingTermLabel(
-								termChangeConfirmation?.billingTermMonths ?? selectedBillingTerm,
-							).toLowerCase()}
-							.
+							{termChangeConfirmation
+								? `${billingTermLabel(termChangeConfirmation.billingTermMonths)} billing${
+										termChangeConfirmation.effectiveAt
+											? ` takes effect ${formatShortDate(termChangeConfirmation.effectiveAt)}`
+											: " takes effect after confirmation"
+									}.`
+								: "Review the billing term change."}
 						</DialogDescription>
 					</DialogHeader>
 					{termChangeConfirmation ? (
 						<StripePaymentForm
 							clientSecret={termChangeConfirmation.clientSecret}
-							onComplete={completeBillingTermConfirmation}
+							onComplete={(status) => void completeBillingTermConfirmation(status)}
 							onCancel={() => setTermChangeConfirmation(null)}
+							returnUrl={(currentHref) =>
+								buildSubscriptionPaymentReturnUrl(currentHref, deployment.id)
+							}
+							summary={
+								termChangeConfirmation.amountDueUsd !== null
+									? `Charge due now: ${formatUsd(termChangeConfirmation.amountDueUsd)}`
+									: "No immediate charge was quoted."
+							}
+							submitLabel={
+								termChangeConfirmation.amountDueUsd !== null
+									? `Pay ${formatUsd(termChangeConfirmation.amountDueUsd)} & update term`
+									: "Confirm term change"
+							}
+							onSubmittingChange={setTermChangeSubmitting}
 						/>
 					) : null}
 				</DialogContent>
@@ -2720,7 +2764,11 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 					}
 				}}
 			>
-				<DialogContent className="sm:max-w-md" data-hosted="true">
+				<DialogContent
+					className="sm:max-w-md"
+					data-hosted="true"
+					showCloseButton={!changeWalletPlan.isPending}
+				>
 					<DialogHeader>
 						<DialogTitle>Confirm wallet-funded plan change</DialogTitle>
 						<DialogDescription>
@@ -2763,7 +2811,9 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 									Back
 								</Button>
 								<Button
-									onClick={() => void confirmWalletComputePlanChange()}
+									onClick={() =>
+										void runAction(confirmWalletComputePlanChange).catch(() => undefined)
+									}
 									disabled={changeWalletPlan.isPending}
 								>
 									{changeWalletPlan.isPending ? <Spinner /> : <WalletCards />}
@@ -2859,7 +2909,16 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 								) : null}
 							</div>
 						) : null}
-						{isWalletPaymentFailureFallback ? (
+						{isIncludedBasic && plans.error ? (
+							<div className="w-full lg:w-72">
+								<ApiErrorPanel
+									normalizer={billingErrorNormalizer}
+									error={plans.error}
+									onRetry={() => void plans.refetch()}
+									title="Couldn’t check Performance availability"
+								/>
+							</div>
+						) : isWalletPaymentFailureFallback ? (
 							<div className="flex w-full flex-col gap-2 text-xs text-muted-foreground lg:w-72">
 								<p>
 									Use the Wallet recovery banner above to top up and retry the previous paid compute

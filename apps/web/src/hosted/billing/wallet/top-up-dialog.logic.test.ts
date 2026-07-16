@@ -5,6 +5,7 @@ import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	handleTopupStartResult,
 	topUpAmountCentsForCreditShortfall,
+	validTopUpAmountCents,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
 
 function result(overrides: Partial<WalletTopupResult>): WalletTopupResult {
@@ -56,7 +57,7 @@ describe("handleTopupStartResult", () => {
 		expect(resetAttempt).toHaveBeenCalledTimes(1);
 		expect(closeDialog).toHaveBeenCalledTimes(1);
 		expect(toastSuccess).toHaveBeenCalledWith("Top-up complete", {
-			description: "Your credits will appear in a moment.",
+			description: "Your AI Credits will appear in a moment.",
 		});
 		expect(toastError).not.toHaveBeenCalled();
 		expect(startPayment).not.toHaveBeenCalled();
@@ -112,5 +113,16 @@ describe("topUpAmountCentsForCreditShortfall", () => {
 		expect(topUpAmountCentsForCreditShortfall(null, 1_000)).toBeNull();
 		expect(topUpAmountCentsForCreditShortfall(14_000, 0)).toBeNull();
 		expect(topUpAmountCentsForCreditShortfall(Number.NaN, 1_000)).toBeNull();
+	});
+});
+
+describe("validTopUpAmountCents", () => {
+	test("enforces visible bounds and whole-dollar increments", () => {
+		expect(validTopUpAmountCents(1_000)).toBe(true);
+		expect(validTopUpAmountCents(200_000)).toBe(true);
+		expect(validTopUpAmountCents(999)).toBe(false);
+		expect(validTopUpAmountCents(1_001)).toBe(false);
+		expect(validTopUpAmountCents(1_000.1)).toBe(false);
+		expect(validTopUpAmountCents(Number.NaN)).toBe(false);
 	});
 });

@@ -3,88 +3,107 @@
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import type { Stripe } from "@stripe/stripe-js";
 import { AlertCircle, RefreshCw } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
+import {
+	type PaymentOutcome,
+	paymentOutcomeForStatus,
+} from "@/hosted/billing/wallet/stripe-payment-form.logic";
 import { buildWalletTopupReturnUrl } from "@/hosted/billing/wallet/top-up-return.logic";
 import { env } from "@/lib/env";
 
-/** Terminal outcomes only — `requires_action` (3DS) is resolved inside the form. */
-export type PaymentOutcome = "succeeded" | "processing";
+export type { PaymentOutcome } from "@/hosted/billing/wallet/stripe-payment-form.logic";
+
+type PaymentReturnUrl = (currentHref: string) => string;
 
 function InnerForm({
 	onComplete,
 	onCancel,
+	returnUrl,
+	submitLabel,
+	summary,
+	onSubmittingChange,
 }: {
 	onComplete: (status: PaymentOutcome) => void;
 	onCancel: () => void;
+	returnUrl: PaymentReturnUrl;
+	submitLabel: string;
+	summary?: string;
+	onSubmittingChange?: (submitting: boolean) => void;
 }) {
 	const stripe = useStripe();
 	const elements = useElements();
 	const [submitting, setSubmitting] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const submittingRef = useRef(false);
+
+	function finishSubmitting() {
+		submittingRef.current = false;
+		setSubmitting(false);
+		onSubmittingChange?.(false);
+	}
 
 	async function pay() {
-		// Guard re-entry: the button disables on submit, but a fast double-tap
-		// could still queue a second confirmPayment before React repaints.
-		if (!stripe || !elements || submitting) return;
+		if (!stripe || !elements || submittingRef.current) return;
+		submittingRef.current = true;
 		setSubmitting(true);
+		onSubmittingChange?.(true);
 		setError(null);
-		// `redirect: "if_required"` keeps card payments inline; only methods that
-		// truly need a redirect (some wallets) navigate away.
 		try {
 			const result = await stripe.confirmPayment({
 				elements,
 				redirect: "if_required",
 				confirmParams: {
-					return_url: buildWalletTopupReturnUrl(window.location.href),
+					return_url: returnUrl(window.location.href),
 				},
 			});
 			if (result.error) {
 				setError(result.error.message ?? "We couldn't process that card. Please try again.");
-				setSubmitting(false);
+				finishSubmitting();
 				return;
 			}
 			const status = result.paymentIntent?.status;
-			if (status === "requires_action") {
-				// Stripe couldn't complete the bank confirmation inline (the prompt was
-				// dismissed, or it needs another pass). Keep the form mounted with a
-				// clear next step rather than closing on an unconfirmed payment.
+			const outcome = paymentOutcomeForStatus(status);
+			if (!outcome) {
 				setError(
-					"Your bank needs to confirm this payment. Complete the prompt, then tap Pay again.",
+					status === "requires_action"
+						? "Your bank needs to confirm this payment. Complete the prompt, then select the payment button again."
+						: "This payment is not ready to complete. Review the card details and try again.",
 				);
-				setSubmitting(false);
+				finishSubmitting();
 				return;
 			}
-			onComplete(status === "succeeded" ? "succeeded" : "processing");
+			onComplete(outcome);
 		} catch {
 			setError("We couldn't reach Stripe. Check your connection and try again.");
-			setSubmitting(false);
+			finishSubmitting();
 		}
 	}
 
 	return (
-		<div data-hosted="true" className="space-y-3">
+		<div data-hosted="true" className="flex flex-col gap-3">
+			{summary ? <p className="text-sm font-medium tabular-nums">{summary}</p> : null}
 			<PaymentElement />
 			{error ? (
 				<Alert variant="destructive">
-					<AlertCircle />
+					<AlertCircle aria-hidden />
 					<AlertDescription>{error}</AlertDescription>
 				</Alert>
 			) : null}
 			<div className="flex justify-end gap-2">
-				<Button variant="ghost" onClick={onCancel} disabled={submitting}>
+				<Button type="button" variant="ghost" onClick={onCancel} disabled={submitting}>
 					Back
 				</Button>
-				<Button onClick={pay} disabled={!stripe || submitting}>
+				<Button type="button" onClick={pay} disabled={!stripe || submitting}>
 					{submitting ? (
 						<>
-							<Spinner /> Processing…
+							<Spinner data-icon="inline-start" /> Processing…
 						</>
 					) : (
-						"Pay now"
+						submitLabel
 					)}
 				</Button>
 			</div>
@@ -92,28 +111,24 @@ function InnerForm({
 	);
 }
 
-/**
- * Card-confirmation step for a wallet top-up PaymentIntent. Mounts Stripe
- * Elements against the `client_secret` from `POST /wallet/topup`.
- *
- * Three degrade paths so the dialog never silently breaks:
- *  - no publishable key (OSS / preview) → explicit configuration error.
- *  - Stripe.js fails to load (network / blocked script) → explicit error +
- *    Retry that re-injects the script (rather than mounting `Elements` against
- *    a rejected promise, which renders nothing).
- *  - still loading → a spinner instead of a blank gap.
- */
 export function StripePaymentForm({
 	clientSecret,
 	onComplete,
 	onCancel,
+	returnUrl = buildWalletTopupReturnUrl,
+	submitLabel = "Confirm payment",
+	summary,
+	onSubmittingChange,
 }: {
 	clientSecret: string;
 	onComplete: (status: PaymentOutcome) => void;
 	onCancel: () => void;
+	returnUrl?: PaymentReturnUrl;
+	submitLabel?: string;
+	summary?: string;
+	onSubmittingChange?: (submitting: boolean) => void;
 }) {
 	const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
-	// undefined = loading, null = load failed, Stripe = ready.
 	const [stripe, setStripe] = useState<Stripe | null | undefined>(undefined);
 	const [attempt, setAttempt] = useState(0);
 
@@ -122,11 +137,10 @@ export function StripePaymentForm({
 		let cancelled = false;
 		setStripe(undefined);
 		getStripe(key)
-			.then((s) => {
-				if (!cancelled) setStripe(s);
+			.then((nextStripe) => {
+				if (!cancelled) setStripe(nextStripe);
 			})
 			.catch(() => {
-				// Drop the rejected singleton so the next attempt re-injects.
 				resetStripeCache();
 				if (!cancelled) setStripe(null);
 			});
@@ -138,10 +152,10 @@ export function StripePaymentForm({
 	if (!key) {
 		return (
 			<Alert data-hosted="true">
-				<AlertCircle />
+				<AlertCircle aria-hidden />
 				<AlertDescription>
-					Card payments aren’t configured in this environment. Set a Stripe publishable key to top
-					up.
+					Card payments aren’t configured in this environment. Set a Stripe publishable key to
+					continue.
 				</AlertDescription>
 			</Alert>
 		);
@@ -150,21 +164,22 @@ export function StripePaymentForm({
 	if (stripe === null) {
 		return (
 			<Alert data-hosted="true" variant="destructive">
-				<AlertCircle />
+				<AlertCircle aria-hidden />
 				<AlertDescription className="flex flex-col items-start gap-3">
 					<span>
-						We couldn’t load the secure payment form. Check your connection (or any ad-blocker) and
-						try again.
+						We couldn’t load the secure payment form. Check your connection or ad blocker and try
+						again.
 					</span>
 					<Button
+						type="button"
 						size="sm"
 						variant="outline"
 						onClick={() => {
 							resetStripeCache();
-							setAttempt((a) => a + 1);
+							setAttempt((current) => current + 1);
 						}}
 					>
-						<RefreshCw /> Retry
+						<RefreshCw data-icon="inline-start" /> Retry payment form
 					</Button>
 				</AlertDescription>
 			</Alert>
@@ -177,7 +192,7 @@ export function StripePaymentForm({
 				data-hosted="true"
 				className="flex items-center gap-2 py-6 text-sm text-muted-foreground"
 			>
-				<Spinner /> Loading secure payment…
+				<Spinner data-icon="inline-start" /> Loading secure payment…
 			</div>
 		);
 	}
@@ -185,7 +200,14 @@ export function StripePaymentForm({
 	return (
 		<div data-hosted="true">
 			<Elements stripe={stripe} options={{ clientSecret, appearance: { theme: "stripe" } }}>
-				<InnerForm onComplete={onComplete} onCancel={onCancel} />
+				<InnerForm
+					onComplete={onComplete}
+					onCancel={onCancel}
+					returnUrl={returnUrl}
+					submitLabel={submitLabel}
+					summary={summary}
+					onSubmittingChange={onSubmittingChange}
+				/>
 			</Elements>
 		</div>
 	);
