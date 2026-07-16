@@ -247,6 +247,18 @@ describe("compute subscription lifecycle presentation", () => {
 			badgeLabel: "Paused",
 			renews: false,
 		});
+		expect(
+			computeSubscriptionLifecycle({
+				...subscription(),
+				status: "past_due",
+				dunning_deadline_at: "2026-07-20T12:00:00Z",
+			}),
+		).toMatchObject({
+			badgeLabel: "Payment past due",
+			dateAt: null,
+			dateVerb: null,
+			renews: true,
+		});
 		expect(computeSubscriptionLifecycle({ ...subscription(), status: "incomplete" })).toMatchObject(
 			{ badgeLabel: "Setup incomplete", renews: false },
 		);

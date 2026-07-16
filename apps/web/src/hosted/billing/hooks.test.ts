@@ -4,11 +4,11 @@ import type { ComputeSubscriptionActionResult, HostedDeployment } from "@/hosted
 import {
 	applyDeploymentSubscriptionResult,
 	billingKeys,
+	billingRecoveryRefetchIntervalFor,
 	checkoutReturnMarker,
 	checkoutReturnWasCanceled,
 	refreshCheckoutReturnQueries,
-	shouldPollWalletDunningFor,
-	walletDunningRefetchIntervalFor,
+	shouldPollBillingRecoveryFor,
 } from "@/hosted/billing/hooks";
 
 function deployment(
@@ -145,10 +145,8 @@ describe("refreshCheckoutReturnQueries", () => {
 	});
 });
 
-describe("shouldPollWalletDunningFor", () => {
-	const now = Date.parse("2026-07-16T00:00:00Z");
-
-	test("polls only the visible wallet grace deployment", () => {
+describe("shouldPollBillingRecoveryFor", () => {
+	test("polls only the visible past-due deployment", () => {
 		const due = deployment({
 			status: "past_due",
 			funding_source: "wallet",
@@ -160,11 +158,11 @@ describe("shouldPollWalletDunningFor", () => {
 			cancel_at_period_end: false,
 		});
 		due.id = "hdep_due";
-		expect(shouldPollWalletDunningFor([due], "hdep_due", now)).toBe(true);
-		expect(shouldPollWalletDunningFor([due], "hdep_other", now)).toBe(false);
+		expect(shouldPollBillingRecoveryFor([due], "hdep_due")).toBe(true);
+		expect(shouldPollBillingRecoveryFor([due], "hdep_other")).toBe(false);
 	});
 
-	test("starts before an active wallet collection boundary and stops after settlement", () => {
+	test("does not derive polling from a local renewal boundary", () => {
 		const active = deployment({
 			status: "active",
 			funding_source: "wallet",
@@ -176,28 +174,8 @@ describe("shouldPollWalletDunningFor", () => {
 			current_period_end: "2026-07-16T00:00:30Z",
 		});
 		active.id = "hdep_active";
-		expect(shouldPollWalletDunningFor([active], active.id, now)).toBe(true);
-
-		if (active.compute_subscription) {
-			active.compute_subscription.current_period_end = "2026-08-16T00:00:00Z";
-		}
-		expect(shouldPollWalletDunningFor([active], active.id, now)).toBe(false);
-		expect(walletDunningRefetchIntervalFor([active], active.id, now)).toBe(2_000_000_000);
-	});
-
-	test("schedules a wake-up before a future collection boundary", () => {
-		const active = deployment({
-			status: "active",
-			funding_source: "wallet",
-			payment_state: "ok",
-			billing_term_months: 1,
-			price_cents: 900,
-			currency: "usd",
-			cancel_at_period_end: false,
-			current_period_end: "2026-07-16T00:10:00Z",
-		});
-		active.id = "hdep_active";
-		expect(walletDunningRefetchIntervalFor([active], active.id, now)).toBe(540_000);
+		expect(shouldPollBillingRecoveryFor([active], active.id)).toBe(false);
+		expect(billingRecoveryRefetchIntervalFor([active], active.id)).toBe(false);
 	});
 
 	test("does not poll terminal wallet states", () => {
@@ -213,7 +191,7 @@ describe("shouldPollWalletDunningFor", () => {
 			current_period_end: "2026-07-16T00:00:00Z",
 		});
 		unpaid.id = "hdep_unpaid";
-		expect(shouldPollWalletDunningFor([unpaid], unpaid.id, now)).toBe(false);
+		expect(shouldPollBillingRecoveryFor([unpaid], unpaid.id)).toBe(false);
 	});
 });
 

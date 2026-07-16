@@ -144,8 +144,8 @@ export function computeSubscriptionLifecycle(
 	if (status === "past_due") {
 		return {
 			badgeLabel: "Payment past due",
-			dateAt: subscription.dunning_deadline_at ?? null,
-			dateVerb: subscription.dunning_deadline_at ? "Grace ends" : null,
+			dateAt: null,
+			dateVerb: null,
 			renews: true,
 		};
 	}

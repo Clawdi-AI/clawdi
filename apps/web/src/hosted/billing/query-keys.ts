@@ -4,8 +4,6 @@ export const billingKeys = {
 	invoices: (limit: number) => ["billing", "invoices", limit] as const,
 	billingHistory: (limit: number) => ["billing", "history", limit] as const,
 	plans: ["billing", "plans"] as const,
-	walletComputeQuote: (planSlug: string, billingTermMonths: number) =>
-		["billing", "wallet-compute-quote", planSlug, billingTermMonths] as const,
 	deployments: ["billing", "deployments"] as const,
 	legacyAgentEnvironments: ["billing", "legacy-agent-environments"] as const,
 	me: ["billing", "me"] as const,

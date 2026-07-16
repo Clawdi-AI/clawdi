@@ -8,13 +8,13 @@ import { resolveHostedInventory } from "@/hosted/hosted-agent-resolution";
 /** Single query adapter for hosted-agent membership across every surface. */
 export function useHostedDeploymentInventory({
 	enabled = true,
-	pollWalletDunningFor = null,
+	pollBillingRecoveryFor = null,
 }: {
 	enabled?: boolean;
-	pollWalletDunningFor?: string | null;
+	pollBillingRecoveryFor?: string | null;
 } = {}) {
 	const configured = isDeployApiConfigured();
-	const query = useHostedDeployments({ enabled, pollWalletDunningFor });
+	const query = useHostedDeployments({ enabled, pollBillingRecoveryFor });
 	const resolution = useMemo(
 		() =>
 			resolveHostedInventory({

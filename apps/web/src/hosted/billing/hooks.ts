@@ -21,11 +21,6 @@ import type {
 	HostedDeployment,
 	PortalRequest,
 	WalletAutoReloadRequest,
-	WalletComputeActivateRequest,
-	WalletComputeCancelPendingPlanRequest,
-	WalletComputePlanChangeRequest,
-	WalletComputeQuoteRequest,
-	WalletComputeRetryRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
@@ -282,74 +277,6 @@ export function useComputeBillingHistory(limit = 20) {
 	});
 }
 
-export function useWalletComputeQuote(body: WalletComputeQuoteRequest | null) {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.walletComputeQuote(
-			body?.plan_slug ?? "unselected",
-			body?.billing_term_months ?? 1,
-		),
-		queryFn: () => {
-			if (!body) throw new Error("Wallet compute quote requires a plan.");
-			return client.quoteWalletCompute(body);
-		},
-		enabled: isDeployApiConfigured() && body !== null,
-		staleTime: 15_000,
-	});
-}
-
-function invalidateWalletCompute(qc: QueryClient): void {
-	qc.invalidateQueries({ queryKey: billingKeys.wallet });
-	qc.invalidateQueries({ queryKey: ["billing", "ledger"] });
-	qc.invalidateQueries({ queryKey: billingKeys.deployments });
-	qc.invalidateQueries({ queryKey: ["billing", "history"] });
-	qc.invalidateQueries({ queryKey: ["agents"] });
-}
-
-export function useActivateWalletCompute() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (body: WalletComputeActivateRequest) => client.activateWalletCompute(body),
-		onSuccess: () => invalidateWalletCompute(qc),
-	});
-}
-
-export function useRetryWalletCompute() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (body: WalletComputeRetryRequest) => client.retryWalletCompute(body),
-		onSuccess: () => invalidateWalletCompute(qc),
-	});
-}
-
-export function useQuoteWalletPlanChange() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (body: WalletComputePlanChangeRequest) => client.quoteWalletPlanChange(body),
-	});
-}
-
-export function useChangeWalletPlan() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (body: WalletComputePlanChangeRequest) => client.changeWalletPlan(body),
-		onSuccess: () => invalidateWalletCompute(qc),
-	});
-}
-
-export function useCancelPendingWalletPlan() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (body: WalletComputeCancelPendingPlanRequest) =>
-			client.cancelPendingWalletPlan(body),
-		onSettled: () => invalidateWalletCompute(qc),
-	});
-}
-
 export function useResumeSubscription() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
@@ -412,14 +339,11 @@ export function useUsage() {
 
 // ── Deployments ────────────────────────────────────────────────────────────────
 
-const WALLET_DUNNING_POLL_INTERVAL_MS = 30_000;
-const WALLET_DUNNING_LEAD_TIME_MS = 60_000;
-const WALLET_DUNNING_MAX_WAKE_INTERVAL_MS = 2_000_000_000;
+const BILLING_RECOVERY_POLL_INTERVAL_MS = 30_000;
 
-export function walletDunningRefetchIntervalFor(
+export function billingRecoveryRefetchIntervalFor(
 	deployments: readonly HostedDeployment[] | undefined,
 	targetId: string | null | undefined,
-	now = Date.now(),
 ): number | false {
 	const target = targetId?.toLowerCase();
 	if (!target) return false;
@@ -432,43 +356,28 @@ export function walletDunningRefetchIntervalFor(
 		return matchesTarget;
 	});
 	const subscription = deployment?.compute_subscription;
-	const walletFunded =
-		subscription?.funding_source === "wallet" || subscription?.recovery_action === "top_up";
-	if (!subscription || !walletFunded) return false;
-	if (subscription.payment_state === "past_due") return WALLET_DUNNING_POLL_INTERVAL_MS;
-	if (subscription.payment_state !== "ok") return false;
-	const status = subscription.status.toLowerCase();
-	if (status !== "active" && status !== "trialing") return false;
-	const collectionBoundary =
-		subscription.next_collection_attempt_at ?? subscription.current_period_end ?? null;
-	if (!collectionBoundary) return false;
-	const boundaryMs = Date.parse(collectionBoundary);
-	if (!Number.isFinite(boundaryMs)) return false;
-	const untilPollingWindow = boundaryMs - now - WALLET_DUNNING_LEAD_TIME_MS;
-	if (untilPollingWindow <= 0) return WALLET_DUNNING_POLL_INTERVAL_MS;
-	// Wake the query up before the cached boundary even when the page opened
-	// earlier in the billing period. Cap long timers below the browser's signed
-	// 32-bit timeout limit; ordinary query invalidations still reconcile a
-	// changed backend boundary sooner.
-	return Math.min(untilPollingWindow, WALLET_DUNNING_MAX_WAKE_INTERVAL_MS);
+	if (!subscription) return false;
+	return subscription.payment_state === "past_due" ||
+		subscription.payment_state === "requires_action"
+		? BILLING_RECOVERY_POLL_INTERVAL_MS
+		: false;
 }
 
-export function shouldPollWalletDunningFor(
+export function shouldPollBillingRecoveryFor(
 	deployments: readonly HostedDeployment[] | undefined,
 	targetId: string | null | undefined,
-	now = Date.now(),
 ): boolean {
 	return (
-		walletDunningRefetchIntervalFor(deployments, targetId, now) === WALLET_DUNNING_POLL_INTERVAL_MS
+		billingRecoveryRefetchIntervalFor(deployments, targetId) === BILLING_RECOVERY_POLL_INTERVAL_MS
 	);
 }
 
 export function useHostedDeployments({
 	enabled = true,
-	pollWalletDunningFor = null,
+	pollBillingRecoveryFor = null,
 }: {
 	enabled?: boolean;
-	pollWalletDunningFor?: string | null;
+	pollBillingRecoveryFor?: string | null;
 } = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
@@ -477,9 +386,12 @@ export function useHostedDeployments({
 		queryFn: () => client.listDeployments(),
 		refetchInterval: (q) => {
 			const inventoryInterval = deploymentRefetchInterval(q.state.data);
-			const walletInterval = walletDunningRefetchIntervalFor(q.state.data, pollWalletDunningFor);
-			return typeof walletInterval === "number"
-				? Math.min(inventoryInterval, walletInterval)
+			const billingInterval = billingRecoveryRefetchIntervalFor(
+				q.state.data,
+				pollBillingRecoveryFor,
+			);
+			return typeof billingInterval === "number"
+				? Math.min(inventoryInterval, billingInterval)
 				: inventoryInterval;
 		},
 		refetchIntervalInBackground: false,

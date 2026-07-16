@@ -75,7 +75,6 @@ import {
 	buildHostedDeployRequest,
 	type DeployAiFields,
 } from "@/hosted/billing/deploy/deploy-request";
-import type { DeployPaymentMethod } from "@/hosted/billing/deploy/deploy-wallet.logic";
 import {
 	browserLanguage,
 	browserTimezone,
@@ -154,6 +153,7 @@ import { cn } from "@/lib/utils";
 
 type Compute = "basic" | "performance";
 type AiAccessMode = DeployWizardAiAccessMode;
+type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: string;
 	previousDeploymentIds: string[];
