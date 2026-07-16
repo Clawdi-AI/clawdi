@@ -1860,7 +1860,7 @@ test("paid Basic checkout abandonment preserves the checkout-ready wizard", asyn
 	expect(errors, `checkout abandonment: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("Stripe invoice history shows both rails, receipts, and hides free invoices", async ({
+test("Stripe invoice history shows both rails and a server-visible zero proration", async ({
 	page,
 }) => {
 	const errors = collectBrowserErrors(page);
@@ -1946,7 +1946,7 @@ test("Stripe invoice history shows both rails, receipts, and hides free invoices
 	await expect(settingsDialog.getByText("Billing history", { exact: true })).toBeVisible();
 	const billingTable = settingsDialog.getByRole("table");
 	await expect(billingTable.getByText("Paid with AI Credits", { exact: true })).toBeVisible();
-	await expect(billingTable.getByText("Paid by card", { exact: true })).toBeVisible();
+	await expect(billingTable.getByText("Paid by card", { exact: true })).toHaveCount(2);
 	await expect(
 		billingTable.locator('a[href="https://invoice.stripe.test/in_wallet"]'),
 	).toBeVisible();
