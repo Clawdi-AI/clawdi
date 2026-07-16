@@ -37,11 +37,6 @@ import { deploymentRefetchInterval } from "@/hosted/deployment-status";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
 
-type CheckoutMutationVariables = {
-	body: CheckoutRequest;
-	idempotencyKey: string;
-};
-
 type CreateDeploymentMutationVariables = {
 	body: DeployRequest;
 	idempotencyKey: string;
@@ -236,19 +231,6 @@ export function usePlans() {
 		queryKey: billingKeys.plans,
 		queryFn: () => client.getPlans(),
 		staleTime: 5 * 60_000,
-	});
-}
-
-export function useCheckout() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: ({ body, idempotencyKey }: CheckoutMutationVariables) =>
-			client.checkout(body, idempotencyKey),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-		},
 	});
 }
 

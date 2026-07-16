@@ -1,21 +1,8 @@
-import type { ComputePlanSlug } from "@/hosted/billing/contracts";
+import type { ComputePlanChangeQuoteRequest, ComputePlanSlug } from "@/hosted/billing/contracts";
 import { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG } from "./subscription-utils";
 
-export type PlanChangeSelection = {
-	planSlug: ComputePlanSlug;
-	billingTermMonths: number;
-};
-
-export type PlanChangeQuoteView = {
-	operationId: string;
-	fundingSource: "stripe" | "wallet";
-	targetPlanSlug: ComputePlanSlug;
-	targetBillingTermMonths: number;
-	changeKind: "immediate_upgrade" | "scheduled_downgrade";
-	effectiveAt: string;
-	expiresAt: string;
-	amountCents: number;
-	amountCredits: string | null;
+export type PlanChangeSelection = Omit<ComputePlanChangeQuoteRequest, "subscription_id"> & {
+	funding_source: NonNullable<ComputePlanChangeQuoteRequest["funding_source"]>;
 };
 
 const UNSIGNED_DECIMAL = /^(\d+)(?:\.(\d+))?$/;
@@ -57,12 +44,14 @@ export function walletBalanceAfterDebit(
 
 export function defaultPlanChangeSelection(
 	currentPlanSlug: ComputePlanSlug,
-	currentBillingTermMonths: number,
+	currentBillingTermMonths: ComputePlanChangeQuoteRequest["target_billing_term_months"],
+	fundingSource: PlanChangeSelection["funding_source"],
 ): PlanChangeSelection {
 	return {
-		planSlug:
+		target_plan_slug:
 			currentPlanSlug === COMPUTE_PERFORMANCE_SLUG ? COMPUTE_BASIC_SLUG : COMPUTE_PERFORMANCE_SLUG,
-		billingTermMonths: currentBillingTermMonths,
+		target_billing_term_months: currentBillingTermMonths,
+		funding_source: fundingSource,
 	};
 }
 
@@ -72,8 +61,8 @@ export function isSamePlanChangeSelection(
 	currentBillingTermMonths: number,
 ): boolean {
 	return (
-		selection.planSlug === currentPlanSlug &&
-		selection.billingTermMonths === currentBillingTermMonths
+		selection.target_plan_slug === currentPlanSlug &&
+		selection.target_billing_term_months === currentBillingTermMonths
 	);
 }
 

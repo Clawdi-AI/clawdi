@@ -21,27 +21,37 @@ describe("walletBalanceAfterDebit", () => {
 
 describe("plan change selection", () => {
 	test("defaults to the other compute tier while preserving the term", () => {
-		expect(defaultPlanChangeSelection("compute_basic", 12)).toEqual({
-			planSlug: "compute_performance",
-			billingTermMonths: 12,
+		expect(defaultPlanChangeSelection("compute_basic", 12, "wallet")).toEqual({
+			target_plan_slug: "compute_performance",
+			target_billing_term_months: 12,
+			funding_source: "wallet",
 		});
-		expect(defaultPlanChangeSelection("compute_performance", 1)).toEqual({
-			planSlug: "compute_basic",
-			billingTermMonths: 1,
+		expect(defaultPlanChangeSelection("compute_performance", 1, "stripe")).toEqual({
+			target_plan_slug: "compute_basic",
+			target_billing_term_months: 1,
+			funding_source: "stripe",
 		});
 	});
 
 	test("detects a no-op plan and term selection", () => {
 		expect(
 			isSamePlanChangeSelection(
-				{ planSlug: "compute_performance", billingTermMonths: 12 },
+				{
+					target_plan_slug: "compute_performance",
+					target_billing_term_months: 12,
+					funding_source: "stripe",
+				},
 				"compute_performance",
 				12,
 			),
 		).toBe(true);
 		expect(
 			isSamePlanChangeSelection(
-				{ planSlug: "compute_performance", billingTermMonths: 1 },
+				{
+					target_plan_slug: "compute_performance",
+					target_billing_term_months: 1,
+					funding_source: "stripe",
+				},
 				"compute_performance",
 				12,
 			),

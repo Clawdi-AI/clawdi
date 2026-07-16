@@ -22,9 +22,15 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
-import type { ComputePlanSlug, Plan } from "@/hosted/billing/contracts";
+import type {
+	ComputePlanChangeQuoteRequest,
+	ComputePlanChangeQuoteResponse,
+	ComputePlanSlug,
+	Plan,
+} from "@/hosted/billing/contracts";
 import { billingTermLabel, formatCents } from "@/hosted/billing/format";
 import {
 	computeTierLabel,
@@ -37,7 +43,6 @@ import { formatShortDate } from "@/lib/format";
 import {
 	defaultPlanChangeSelection,
 	isSamePlanChangeSelection,
-	type PlanChangeQuoteView,
 	type PlanChangeSelection,
 	walletBalanceAfterDebit,
 } from "./plan-change.logic";
@@ -57,6 +62,8 @@ export function PlanChangeDialog({
 	plans,
 	currentPlanSlug,
 	currentBillingTermMonths,
+	defaultFundingSource,
+	fundingSourceSelectable,
 	quote,
 	walletBalanceCredits,
 	isQuoting,
@@ -69,8 +76,10 @@ export function PlanChangeDialog({
 	onOpenChange: (open: boolean) => void;
 	plans: Plan[];
 	currentPlanSlug: ComputePlanSlug;
-	currentBillingTermMonths: number;
-	quote: PlanChangeQuoteView | null;
+	currentBillingTermMonths: ComputePlanChangeQuoteRequest["target_billing_term_months"];
+	defaultFundingSource: PlanChangeSelection["funding_source"];
+	fundingSourceSelectable: boolean;
+	quote: ComputePlanChangeQuoteResponse | null;
 	walletBalanceCredits: number | null;
 	isQuoting: boolean;
 	isConfirming: boolean;
@@ -79,29 +88,32 @@ export function PlanChangeDialog({
 	onTopUp?: () => void;
 }) {
 	const initialSelection = useMemo(
-		() => defaultPlanChangeSelection(currentPlanSlug, currentBillingTermMonths),
-		[currentBillingTermMonths, currentPlanSlug],
+		() =>
+			defaultPlanChangeSelection(currentPlanSlug, currentBillingTermMonths, defaultFundingSource),
+		[currentBillingTermMonths, currentPlanSlug, defaultFundingSource],
 	);
 	const [selection, setSelection] = useState(initialSelection);
 	const selectedPlan =
-		selection.planSlug === "compute_performance"
+		selection.target_plan_slug === "compute_performance"
 			? resolvePerformancePlan(plans)
 			: resolveBasicPlan(plans);
 	const offers = selectedPlan
-		? selection.planSlug === "compute_basic"
+		? selection.target_plan_slug === "compute_basic"
 			? explicitPlanOffers(selectedPlan)
 			: planOffers(selectedPlan)
 		: [];
 	const selectedOffer = offers.find(
-		(offer) => offer.billing_term_months === selection.billingTermMonths,
+		(offer) => offer.billing_term_months === selection.target_billing_term_months,
 	);
 	const noChange = isSamePlanChangeSelection(selection, currentPlanSlug, currentBillingTermMonths);
 	const walletBalanceBefore = walletBalanceCredits === null ? null : String(walletBalanceCredits);
+	const quoteFundingSource = quote?.funding_source ?? selection.funding_source;
 	const walletBalanceAfter =
-		quote?.fundingSource === "wallet" && quote.amountCredits && walletBalanceBefore
-			? walletBalanceAfterDebit(walletBalanceBefore, quote.amountCredits)
+		quoteFundingSource === "wallet" && quote?.amount_credits && walletBalanceBefore
+			? walletBalanceAfterDebit(walletBalanceBefore, quote.amount_credits)
 			: null;
 	const walletInsufficient = walletBalanceAfter?.startsWith("-") ?? false;
+	const walletReady = selection.funding_source !== "wallet" || walletBalanceCredits !== null;
 
 	useEffect(() => {
 		if (open) setSelection(initialSelection);
@@ -120,20 +132,23 @@ export function PlanChangeDialog({
 				: planOffers(plan)
 			: [];
 		const keepsTerm = nextOffers.some(
-			(offer) => offer.billing_term_months === selection.billingTermMonths,
+			(offer) => offer.billing_term_months === selection.target_billing_term_months,
 		);
 		setSelection({
-			planSlug: nextPlanSlug,
-			billingTermMonths: keepsTerm
-				? selection.billingTermMonths
-				: (nextOffers[0]?.billing_term_months ?? 1),
+			...selection,
+			target_plan_slug: nextPlanSlug,
+			target_billing_term_months: keepsTerm
+				? selection.target_billing_term_months
+				: nextOffers[0]?.billing_term_months === 12
+					? 12
+					: 1,
 		});
 	}
 
 	const quoteTitle =
-		quote?.changeKind === "immediate_upgrade" ? "Confirm immediate upgrade" : "Schedule downgrade";
+		quote?.change_kind === "immediate_upgrade" ? "Confirm immediate upgrade" : "Schedule downgrade";
 	const confirmLabel =
-		quote?.changeKind === "immediate_upgrade" ? "Confirm upgrade" : "Schedule downgrade";
+		quote?.change_kind === "immediate_upgrade" ? "Confirm upgrade" : "Schedule downgrade";
 
 	return (
 		<Dialog
@@ -147,9 +162,9 @@ export function PlanChangeDialog({
 					<DialogTitle>{quote ? quoteTitle : "Change compute subscription"}</DialogTitle>
 					<DialogDescription>
 						{quote
-							? quote.changeKind === "immediate_upgrade"
+							? quote.change_kind === "immediate_upgrade"
 								? "The quoted proration is charged now. Compute changes after payment is confirmed."
-								: `The current plan remains active until ${formatShortDate(quote.effectiveAt)}.`
+								: `The current plan remains active until ${formatShortDate(quote.effective_at)}.`
 							: "Choose a compute plan and monthly or annual billing, then review the server quote."}
 					</DialogDescription>
 				</DialogHeader>
@@ -160,34 +175,34 @@ export function PlanChangeDialog({
 							<dl>
 								<dt className="text-xs text-muted-foreground">New subscription</dt>
 								<dd className="font-medium">
-									{computeTierLabel(quote.targetPlanSlug)} ·{" "}
-									{billingTermLabel(quote.targetBillingTermMonths)}
+									{computeTierLabel(planSlug(quote.target_plan_slug))} ·{" "}
+									{billingTermLabel(quote.target_billing_term_months)}
 								</dd>
 							</dl>
 							<dl>
 								<dt className="text-xs text-muted-foreground">
-									{quote.changeKind === "immediate_upgrade" ? "Due now" : "Effective date"}
+									{quote.change_kind === "immediate_upgrade" ? "Due now" : "Effective date"}
 								</dt>
 								<dd className="font-medium tabular-nums">
-									{quote.changeKind === "immediate_upgrade"
-										? formatCents(quote.amountCents)
-										: formatShortDate(quote.effectiveAt)}
+									{quote.change_kind === "immediate_upgrade"
+										? formatCents(quote.amount_cents)
+										: formatShortDate(quote.effective_at)}
 								</dd>
 							</dl>
 						</div>
-						{quote.fundingSource === "wallet" &&
-						quote.changeKind === "immediate_upgrade" &&
-						quote.amountCredits &&
+						{quoteFundingSource === "wallet" &&
+						quote.change_kind === "immediate_upgrade" &&
+						quote.amount_credits &&
 						walletBalanceBefore &&
 						walletBalanceAfter ? (
 							<WalletDebitEquation
 								balanceBeforeCredits={walletBalanceBefore}
-								exactDebitCredits={quote.amountCredits}
-								exactDebitCents={quote.amountCents}
+								exactDebitCredits={quote.amount_credits}
+								exactDebitCents={quote.amount_cents}
 								balanceAfterCredits={walletBalanceAfter}
 							/>
 						) : null}
-						{quote.changeKind === "scheduled_downgrade" ? (
+						{quote.change_kind === "scheduled_downgrade" ? (
 							<Alert>
 								<CalendarClock aria-hidden />
 								<AlertTitle>No charge today</AlertTitle>
@@ -216,12 +231,12 @@ export function PlanChangeDialog({
 								Back
 							</Button>
 							<Button
-								onClick={() => onConfirm(quote.operationId)}
+								onClick={() => onConfirm(quote.operation_id)}
 								disabled={isConfirming || walletInsufficient}
 							>
 								{isConfirming ? (
 									<Spinner data-icon="inline-start" />
-								) : quote.fundingSource === "wallet" ? (
+								) : quoteFundingSource === "wallet" ? (
 									<WalletCards data-icon="inline-start" />
 								) : (
 									<CreditCard data-icon="inline-start" />
@@ -235,7 +250,11 @@ export function PlanChangeDialog({
 						<div className="grid gap-4 sm:grid-cols-2">
 							<div className="flex flex-col gap-1.5">
 								<Label htmlFor="plan-change-tier">Compute plan</Label>
-								<Select items={PLAN_ITEMS} value={selection.planSlug} onValueChange={updatePlan}>
+								<Select
+									items={PLAN_ITEMS}
+									value={selection.target_plan_slug}
+									onValueChange={updatePlan}
+								>
 									<SelectTrigger id="plan-change-tier" className="w-full">
 										<SelectValue />
 									</SelectTrigger>
@@ -254,13 +273,52 @@ export function PlanChangeDialog({
 								<Label>Billing term</Label>
 								<TermSwitcher
 									offers={offers}
-									value={selection.billingTermMonths}
+									value={selection.target_billing_term_months}
 									onChange={(billingTermMonths) =>
-										setSelection((current) => ({ ...current, billingTermMonths }))
+										setSelection((current) => ({
+											...current,
+											target_billing_term_months: billingTermMonths === 12 ? 12 : 1,
+										}))
 									}
 								/>
 							</div>
 						</div>
+						{fundingSourceSelectable ? (
+							<div className="flex flex-col gap-1.5">
+								<Label id="plan-change-funding-label">Funding source</Label>
+								<ToggleGroup
+									value={[selection.funding_source]}
+									onValueChange={(value) => {
+										const next = value[0];
+										if (next === "stripe" || next === "wallet") {
+											setSelection((current) => ({
+												...current,
+												funding_source: next,
+											}));
+										}
+									}}
+									variant="outline"
+									className="grid w-full grid-cols-2"
+									aria-labelledby="plan-change-funding-label"
+								>
+									<ToggleGroupItem value="stripe">
+										<CreditCard data-icon="inline-start" /> Card
+									</ToggleGroupItem>
+									<ToggleGroupItem value="wallet">
+										<WalletCards data-icon="inline-start" /> Wallet
+									</ToggleGroupItem>
+								</ToggleGroup>
+							</div>
+						) : (
+							<p className="text-sm text-muted-foreground">
+								Funding source: {selection.funding_source === "wallet" ? "Wallet" : "Card"}
+							</p>
+						)}
+						{selection.funding_source === "wallet" && !walletReady ? (
+							<p className="text-sm text-muted-foreground" role="status">
+								Loading Wallet balance…
+							</p>
+						) : null}
 						{selectedOffer ? (
 							<p className="text-sm text-muted-foreground">
 								Server quote required · listed recurring price{" "}
@@ -274,7 +332,7 @@ export function PlanChangeDialog({
 							</Button>
 							<Button
 								onClick={() => onQuote(selection)}
-								disabled={isQuoting || noChange || !selectedOffer}
+								disabled={isQuoting || noChange || !selectedOffer || !walletReady}
 							>
 								{isQuoting ? <Spinner data-icon="inline-start" /> : null}
 								Review change
