@@ -127,6 +127,7 @@ const stoppedIncludedBasicDeployment = {
 
 const walletState = {
 	balance_credits: 25_000,
+	overdraft_credits: 0,
 	balance_snapshot_at: "2026-07-15T00:00:00Z",
 	payment_mode: "card",
 	x402_enabled: false,
@@ -170,6 +171,21 @@ const walletPastDueDeployment = {
 	},
 };
 
+const walletUnpaidDeployment = {
+	...walletBasicDeployment,
+	id: "hdep_wallet_unpaid",
+	name: "Wallet unpaid agent",
+	compute_subscription: {
+		...walletBasicDeployment.compute_subscription,
+		subscription_id: 44,
+		status: "unpaid",
+		payment_state: "unpaid",
+		pending_plan_slug: "compute_performance",
+		last_collection_failure_code: "insufficient_balance",
+		recovery_action: "top_up",
+	},
+};
+
 const walletPlanDeployment = {
 	...walletBasicDeployment,
 	id: "hdep_wallet_plan",
@@ -207,6 +223,21 @@ const walletFallbackDeployment = {
 	},
 };
 
+const stripeFallbackDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_stripe_fallback",
+	name: "Stripe fallback agent",
+	upgrade_available: true,
+	last_funding_event: {
+		type: "compute_subscription_fallback",
+		funding_source: "stripe",
+		reason: "payment_failure",
+		occurred_at: "2026-07-14T00:00:00Z",
+		prior_plan_slug: "compute_performance",
+		subscription_id: 84,
+	},
+};
+
 type StubResponse = { body: unknown; status: number };
 
 type HostedApiStubOptions = {
@@ -218,12 +249,18 @@ type HostedApiStubOptions = {
 	deployRequestStatusRequests?: string[];
 	deployRequestStatusResponses?: StubResponse[];
 	deployments?: readonly unknown[];
+	fixPaymentRequests?: string[];
+	ledgerResponseForRequest?: (limit: number) => unknown;
+	ledgerRequests?: string[];
+	ledgerResponses?: unknown[];
 	plans?: readonly unknown[];
 	retryRequests?: string[];
 	walletRetryResponses?: StubResponse[];
 	startError?: { status: number; detail: string };
 	startRequests?: string[];
+	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
+	topUpResponses?: StubResponse[];
 	walletActivateRequests?: string[];
 	walletActivateResponses?: StubResponse[];
 	walletQuoteRequests?: string[];
@@ -257,7 +294,13 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, walletState);
 		}
 		if (p === "/v2/wallet/ledger" && r.request().method() === "GET") {
-			return fulfillJson(r, { items: [] });
+			options.ledgerRequests?.push(r.request().url());
+			const limit = Number(new URL(r.request().url()).searchParams.get("limit"));
+			return fulfillJson(
+				r,
+				options.ledgerResponseForRequest?.(limit) ??
+					options.ledgerResponses?.shift() ?? { items: [], has_more: false },
+			);
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			return fulfillJson(r, deployments);
@@ -356,15 +399,11 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					subscription_id: 73,
 					current_plan_slug: "compute_basic",
 					target_plan_slug: "compute_performance",
-					change_kind: "upgrade",
 					status: "quoted",
-					effective_at: "2026-07-15T00:00:00Z",
-					period_start: "2026-07-01T00:00:00Z",
-					period_end: "2026-08-01T00:00:00Z",
-					prorated_delta_cents: 600,
-					prorated_delta_credits: "6000",
+					effective_at: "2026-08-15T00:00:00Z",
+					amount_cents: 1900,
+					amount_credits: "19000",
 					points_per_usd: 1000,
-					charge_ledger_id: null,
 					pending_plan_slug: null,
 				},
 			};
@@ -378,16 +417,12 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					subscription_id: 73,
 					current_plan_slug: "compute_basic",
 					target_plan_slug: "compute_performance",
-					change_kind: "upgrade",
-					status: "active",
-					effective_at: "2026-07-15T00:00:00Z",
-					period_start: "2026-07-01T00:00:00Z",
-					period_end: "2026-08-01T00:00:00Z",
-					prorated_delta_cents: 600,
-					prorated_delta_credits: "6000",
+					status: "scheduled",
+					effective_at: "2026-08-15T00:00:00Z",
+					amount_cents: 1900,
+					amount_credits: "19000",
 					points_per_usd: 1000,
-					charge_ledger_id: "ledger_plan_change",
-					pending_plan_slug: null,
+					pending_plan_slug: "compute_performance",
 				},
 			};
 			if (response.status < 400) options.onWalletPlanChangeSuccess?.();
@@ -410,13 +445,22 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/wallet/topup" && r.request().method() === "POST") {
 			options.topUpRequests?.push(r.request().postData() ?? "");
-			return fulfillJson(r, {
-				status: "succeeded",
-				flow_type: "mock",
-				payment_intent_id: null,
-				client_secret: null,
-				credits_added: 25_000,
-			});
+			options.topUpIdempotencyKeys?.push(r.request().headers()["idempotency-key"] ?? "");
+			const response = options.topUpResponses?.shift() ?? {
+				status: 200,
+				body: {
+					status: "succeeded",
+					flow_type: "mock",
+					payment_intent_id: null,
+					client_secret: null,
+					credits_added: 25_000,
+				},
+			};
+			return fulfillJson(r, response.body, response.status);
+		}
+		if (p === "/v2/subscription/fix-payment" && r.request().method() === "POST") {
+			options.fixPaymentRequests?.push(r.request().postData() ?? "");
+			return fulfillJson(r, { message: "Payment recovery started." });
 		}
 		if (p === "/v2/subscription/billing-history" && r.request().method() === "GET") {
 			options.billingHistoryRequests?.push(r.request().url());
@@ -546,6 +590,21 @@ async function gotoHostedAgentSettings(
 			if (attempt === 1) throw error;
 		}
 	}
+}
+
+async function gotoHostedSettingsDialog(page: Page, section: string) {
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		await page.goto(`/channels?settings=${section}`);
+		const dialog = page.getByTestId("settings-dialog");
+		try {
+			await expect(dialog).toBeVisible();
+			await page.waitForLoadState("networkidle");
+			return dialog;
+		} catch (error) {
+			if (attempt === 1) throw error;
+		}
+	}
+	throw new Error("Settings dialog did not open.");
 }
 
 test("deploy wizard Select opens without browser errors", async ({ page }) => {
@@ -860,6 +919,54 @@ test("wallet-funded Basic quotes, debits Wallet, and deploys without checkout", 
 	expect(errors, `wallet deploy happy path: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("wallet deploy rotates its request key after an explicit reuse conflict", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const deployments: unknown[] = [includedBasicDeployment];
+	const walletActivateRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments,
+		plans: [basicPlan, performancePlan],
+		walletActivateRequests,
+		walletActivateResponses: [
+			{
+				status: 409,
+				body: {
+					detail: {
+						code: "idempotency_key_reused",
+						message: "The deploy request key belongs to another payload.",
+					},
+				},
+			},
+		],
+		onWalletActivateSuccess: () => deployments.push(walletBasicDeployment),
+	});
+	await page.goto("/deploy");
+	await page.getByRole("button", { name: /Wallet balance/ }).click();
+	const submit = page.getByRole("button", { name: "Pay $9.00 from wallet & deploy" });
+
+	await submit.click();
+	await expect.poll(() => walletActivateRequests.length).toBe(1);
+	const freshAttemptToast = page.getByText("Start a fresh wallet attempt", { exact: true });
+	await expect(freshAttemptToast).toBeVisible();
+	await page.mouse.move(0, 0);
+	await expect(freshAttemptToast).toHaveCount(0);
+	await submit.click();
+	await expect.poll(() => walletActivateRequests.length).toBe(2);
+
+	const requestKeys = walletActivateRequests.map((body) => {
+		const request = JSON.parse(body);
+		return request.deploy_config.deploy_request_id as string;
+	});
+	expect(requestKeys[0]).toMatch(/^wallet-compute-deploy-/);
+	expect(requestKeys[1]).toMatch(/^wallet-compute-deploy-/);
+	expect(requestKeys[1]).not.toBe(requestKeys[0]);
+	await expect(page).toHaveURL(/\/agents\/hdep_wallet(?:\?|\/)/);
+	expect(
+		errors.filter((error) => !error.includes("status of 409")),
+		`wallet deploy key rotation: ${errors.join(" | ")}`,
+	).toEqual([]);
+});
+
 test("wallet deploy resolves an asynchronous autodeploy by stable request ID", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const deployments: unknown[] = [includedBasicDeployment];
@@ -996,6 +1103,42 @@ test("insufficient wallet deploy keeps the wizard, opens top-up, and re-quotes",
 	).toEqual([]);
 });
 
+test("wallet deploy refund debt prefills debt plus the blocked compute charge", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	await stubHostedApi(page, {
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan, performancePlan],
+		walletActivateResponses: [
+			{
+				status: 409,
+				body: {
+					detail: {
+						code: "open_refund_debt",
+						outstanding_debt_credits: "2500.5",
+					},
+				},
+			},
+		],
+	});
+	await page.goto("/deploy");
+	await page.getByRole("button", { name: /Wallet balance/ }).click();
+	await page.getByRole("button", { name: "Pay $9.00 from wallet & deploy" }).click();
+
+	const topUpDialog = page.getByRole("dialog");
+	await expect(topUpDialog.getByText("Top up AI Credits", { exact: true })).toBeVisible();
+	await expect(topUpDialog.getByText("Refund debt is repaid first", { exact: true })).toBeVisible();
+	await expect(topUpDialog).toContainText(
+		"The remaining funds cover the 9,000 credits blocked compute charge.",
+	);
+	await expect(page.getByLabel("Amount (USD)")).toHaveValue("12");
+	expect(
+		errors.filter((error) => !error.includes("status of 409")),
+		`wallet deploy refund debt: ${errors.join(" | ")}`,
+	).toEqual([]);
+});
+
 test("wallet dunning shows grace recovery without Stripe portal actions", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const deployments: unknown[] = [walletPastDueDeployment];
@@ -1031,9 +1174,7 @@ test("wallet dunning shows grace recovery without Stripe portal actions", async 
 	expect(errors, `wallet dunning: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("wallet retry distinguishes insufficient balance from a collection conflict", async ({
-	page,
-}) => {
+test("wallet retry opens top-up for balance shortfalls and refund debt", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const retryRequests: string[] = [];
 	const topUpRequests: string[] = [];
@@ -1056,7 +1197,12 @@ test("wallet retry distinguishes insufficient balance from a collection conflict
 			},
 			{
 				status: 409,
-				body: { detail: "Wallet compute collection is already in progress." },
+				body: {
+					detail: {
+						code: "open_refund_debt",
+						outstanding_debt_credits: "2500.5",
+					},
+				},
 			},
 		],
 	});
@@ -1075,11 +1221,10 @@ test("wallet retry distinguishes insufficient balance from a collection conflict
 	).toHaveCount(0);
 	await page.getByRole("button", { name: "Retry payment" }).click();
 	await expect(
-		page.getByText(
-			"Another billing action is in progress, or this payment no longer needs recovery. Refresh and try again.",
-			{ exact: true },
-		),
+		page.getByRole("dialog").getByText("Refund debt is repaid first", { exact: true }),
 	).toBeVisible();
+	await expect(page.getByLabel("Amount (USD)")).toHaveValue("12");
+	await expect(page.getByText("Top up to clear refund debt", { exact: true })).toBeVisible();
 	expect(retryRequests).toHaveLength(2);
 	expect(
 		errors.filter((error) => !error.includes("status of 402") && !error.includes("status of 409")),
@@ -1087,17 +1232,56 @@ test("wallet retry distinguishes insufficient balance from a collection conflict
 	).toEqual([]);
 });
 
+test("wallet unpaid subscription reactivates the plan due after terminal dunning", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const deployments: unknown[] = [walletUnpaidDeployment];
+	const walletActivateRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments,
+		plans: [basicPlan, performancePlan],
+		walletActivateRequests,
+		onWalletActivateSuccess: () =>
+			deployments.splice(0, 1, {
+				...performanceDeployment,
+				id: "hdep_wallet_unpaid",
+				name: "Wallet unpaid agent",
+				compute_subscription: {
+					...walletBasicDeployment.compute_subscription,
+					subscription_id: 45,
+					price_cents: 1_900,
+				},
+			}),
+	});
+	await gotoHostedAgentSettings(page, "hdep_wallet_unpaid", "Basic");
+
+	const alert = page.getByRole("alert").filter({ hasText: "Wallet compute funding ended" });
+	await expect(alert).toContainText("Reactivate Performance compute to start a new subscription.");
+	await expect(page.getByRole("button", { name: "Reactivate Performance" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Retry payment" })).toHaveCount(0);
+	await page.getByRole("button", { name: "Reactivate Performance" }).click();
+	await expect.poll(() => walletActivateRequests.length).toBe(1);
+	expect(JSON.parse(walletActivateRequests[0] ?? "{}")).toEqual({
+		plan_slug: "compute_performance",
+		billing_term_months: 1,
+		upgrade_deployment_id: "hdep_wallet_unpaid",
+	});
+	await expect(page.getByText("Wallet compute funding ended", { exact: true })).toHaveCount(0);
+	expect(errors, `wallet unpaid recovery: ${errors.join(" | ")}`).toEqual([]);
+});
+
 test("wallet fallback explains the failed Performance payment and offers re-activation", async ({
 	page,
 }) => {
 	const errors = collectBrowserErrors(page);
 	const deployments: unknown[] = [walletFallbackDeployment];
-	const retryRequests: string[] = [];
+	const walletActivateRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments,
 		plans: [basicPlan, performancePlan],
-		retryRequests,
-		onWalletRetrySuccess: () =>
+		walletActivateRequests,
+		onWalletActivateSuccess: () =>
 			deployments.splice(0, 1, {
 				...performanceDeployment,
 				id: "hdep_wallet_fallback",
@@ -1117,18 +1301,42 @@ test("wallet fallback explains the failed Performance payment and offers re-acti
 		"This agent fell back from Performance compute because payment failed on Jul 18, 2026.",
 	);
 	await expect(alert).toContainText("This agent is now using included Basic.");
-	await expect(page.getByRole("button", { name: "Retry payment" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Reactivate Performance" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Retry payment" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toHaveCount(0);
 	await expect(page.getByText("Wallet fallback", { exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Retry payment" }).click();
-	await expect.poll(() => retryRequests.length).toBe(1);
-	expect(JSON.parse(retryRequests[0] ?? "{}")).toEqual({ subscription_id: 42 });
+	await page.getByRole("button", { name: "Reactivate Performance" }).click();
+	await expect.poll(() => walletActivateRequests.length).toBe(1);
+	expect(JSON.parse(walletActivateRequests[0] ?? "{}")).toEqual({
+		plan_slug: "compute_performance",
+		billing_term_months: 1,
+		upgrade_deployment_id: "hdep_wallet_fallback",
+	});
 	await expect(page.getByText("Wallet compute funding ended", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Performance compute", { exact: true })).toBeVisible();
 	expect(errors, `wallet fallback: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("wallet-funded plan upgrade quotes the prorated debit before resizing", async ({ page }) => {
+test("detached Stripe recovery omits the deployment id from fix-payment", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const fixPaymentRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [stripeFallbackDeployment],
+		fixPaymentRequests,
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_stripe_fallback", "Basic");
+
+	await expect(page.getByText("Compute funding ended", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Fix payment" }).click();
+	await expect.poll(() => fixPaymentRequests.length).toBe(1);
+	expect(JSON.parse(fixPaymentRequests[0] ?? "null")).toEqual({});
+	expect(errors, `detached Stripe recovery: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("wallet-funded plan upgrade renders and submits a scheduled renewal change", async ({
+	page,
+}) => {
 	const errors = collectBrowserErrors(page);
 	const walletPlanQuoteRequests: string[] = [];
 	const walletPlanChangeRequests: string[] = [];
@@ -1142,11 +1350,15 @@ test("wallet-funded plan upgrade quotes the prorated debit before resizing", asy
 
 	await expect(page.getByText("Wallet", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Change billing term" })).toHaveCount(0);
-	await page.getByRole("button", { name: "Upgrade with Wallet" }).click();
+	await page.getByRole("button", { name: "Schedule Performance upgrade" }).click();
 	await expect.poll(() => walletPlanQuoteRequests.length).toBe(1);
-	await expect(page.getByText("Due now", { exact: true })).toBeVisible();
-	await expect(page.getByText("$6.00", { exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Pay $6.00 & upgrade" }).click();
+	await expect(
+		page.getByText("Changes at next renewal on Aug 15, 2026 · then $19.00/mo.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(page.getByText("Due now", { exact: true })).toHaveCount(0);
+	await page.getByRole("button", { name: "Schedule plan change" }).click();
 	await expect.poll(() => walletPlanChangeRequests.length).toBe(1);
 	expect(JSON.parse(walletPlanQuoteRequests[0] ?? "{}")).toEqual({
 		subscription_id: 73,
@@ -1156,113 +1368,24 @@ test("wallet-funded plan upgrade quotes the prorated debit before resizing", asy
 		subscription_id: 73,
 		target_plan_slug: "compute_performance",
 	});
+	await expect(page.getByText("Plan change scheduled", { exact: true })).toBeVisible();
 	expect(errors, `wallet plan upgrade: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("wallet plan upgrade retries a paid resize without quoting or charging again", async ({
-	page,
-}) => {
+test("wallet plan quote refund debt opens an actionable prefilled top-up", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const walletPlanQuoteRequests: string[] = [];
-	const walletPlanChangeRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments: [walletPlanDeployment],
 		plans: [basicPlan, performancePlan],
-		walletPlanChangeRequests,
-		walletPlanQuoteRequests,
-		walletPlanChangeResponses: [
-			{
-				status: 502,
-				body: {
-					detail: {
-						code: "resize_failed_retryable",
-						failure_code: "deployment_resize_failed",
-						retryable: true,
-					},
-				},
-			},
-			{
-				status: 200,
-				body: {
-					subscription_id: 73,
-					current_plan_slug: "compute_performance",
-					target_plan_slug: "compute_performance",
-					change_kind: "upgrade",
-					status: "active",
-					effective_at: "2026-07-15T00:00:00Z",
-					period_start: "2026-07-01T00:00:00Z",
-					period_end: "2026-08-01T00:00:00Z",
-					prorated_delta_cents: 600,
-					prorated_delta_credits: "6000",
-					points_per_usd: 1000,
-					charge_ledger_id: "ledger_plan_change",
-					pending_plan_slug: null,
-				},
-			},
-		],
-	});
-	await gotoHostedAgentSettings(page, "hdep_wallet_plan", "Basic");
-
-	await page.getByRole("button", { name: "Upgrade with Wallet" }).click();
-	await page.getByRole("button", { name: "Pay $6.00 & upgrade" }).click();
-	await expect(
-		page.getByRole("dialog").getByRole("heading", { name: "Charge applied, resize pending" }),
-	).toBeVisible();
-	await expect(page.getByText(/Wallet debit is already recorded/)).toBeVisible();
-	await expect(page.getByRole("button", { name: "Retry resize" })).toBeVisible();
-	await expect(page.getByText("Top up AI Credits", { exact: true })).toHaveCount(0);
-	await page.getByRole("button", { name: "Retry resize" }).click();
-	await expect.poll(() => walletPlanChangeRequests.length).toBe(2);
-	expect(walletPlanQuoteRequests).toHaveLength(1);
-	expect(walletPlanChangeRequests.map((body) => JSON.parse(body))).toEqual([
-		{ subscription_id: 73, target_plan_slug: "compute_performance" },
-		{ subscription_id: 73, target_plan_slug: "compute_performance" },
-	]);
-	await expect(page.getByText("Compute upgraded", { exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Retry resize" })).toHaveCount(0);
-	expect(
-		errors.filter((error) => !error.includes("status of 502")),
-		`wallet resize retry: ${errors.join(" | ")}`,
-	).toEqual([]);
-});
-
-test("wallet plan change distinguishes quote conflicts from debit shortfalls", async ({ page }) => {
-	const errors = collectBrowserErrors(page);
-	const walletPlanChangeRequests: string[] = [];
-	const walletPlanQuoteRequests: string[] = [];
-	const upgradeQuote = {
-		subscription_id: 73,
-		current_plan_slug: "compute_basic",
-		target_plan_slug: "compute_performance",
-		change_kind: "upgrade",
-		status: "quoted",
-		effective_at: "2026-07-15T00:00:00Z",
-		period_start: "2026-07-01T00:00:00Z",
-		period_end: "2026-08-01T00:00:00Z",
-		prorated_delta_cents: 600,
-		prorated_delta_credits: "6000",
-		points_per_usd: 1000,
-		charge_ledger_id: null,
-		pending_plan_slug: null,
-	};
-	await stubHostedApi(page, {
-		deployments: [walletPlanDeployment],
-		plans: [basicPlan, performancePlan],
-		walletPlanChangeRequests,
 		walletPlanQuoteRequests,
 		walletPlanQuoteResponses: [
-			{ status: 409, body: { detail: { code: "open_refund_debt" } } },
-			{ status: 200, body: upgradeQuote },
-		],
-		walletPlanChangeResponses: [
 			{
-				status: 402,
+				status: 409,
 				body: {
 					detail: {
-						code: "insufficient_wallet_balance",
-						required_credits: "6000",
-						available_credits: "3500",
-						shortfall_credits: "2500",
+						code: "open_refund_debt",
+						outstanding_debt_credits: "2500.5",
 					},
 				},
 			},
@@ -1270,21 +1393,15 @@ test("wallet plan change distinguishes quote conflicts from debit shortfalls", a
 	});
 	await gotoHostedAgentSettings(page, "hdep_wallet_plan", "Basic");
 
-	await page.getByRole("button", { name: "Upgrade with Wallet" }).click();
-	await expect(page.getByText("Wallet plan change conflict", { exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Upgrade with Wallet" }).click();
-	await expect(page.getByRole("button", { name: "Pay $6.00 & upgrade" })).toBeVisible();
-	await page.getByRole("button", { name: "Pay $6.00 & upgrade" }).click();
+	await page.getByRole("button", { name: "Schedule Performance upgrade" }).click();
 	await expect(
 		page.getByRole("dialog").getByText("Top up AI Credits", { exact: true }),
 	).toBeVisible();
-	await expect(
-		page.getByText("Top up 2,500 credits, then confirm again.", { exact: true }),
-	).toBeVisible();
-	expect(walletPlanQuoteRequests).toHaveLength(2);
-	expect(walletPlanChangeRequests).toHaveLength(1);
+	await expect(page.getByText("Refund debt is repaid first", { exact: true })).toBeVisible();
+	await expect(page.getByLabel("Amount (USD)")).toHaveValue("10");
+	expect(walletPlanQuoteRequests).toHaveLength(1);
 	expect(
-		errors.filter((error) => !error.includes("status of 402") && !error.includes("status of 409")),
+		errors.filter((error) => !error.includes("status of 409")),
 		`wallet plan errors: ${errors.join(" | ")}`,
 	).toEqual([]);
 });
@@ -1312,17 +1429,17 @@ test("wallet-funded pending downgrade can be canceled and refreshes the deployme
 
 	await expect(page.getByText(/Basic scheduled for/)).toBeVisible();
 	await expect(page.getByRole("button", { name: "Schedule Basic downgrade" })).toBeDisabled();
-	await page.getByRole("button", { name: "Cancel scheduled downgrade" }).click();
-	await expect(page.getByText("Cancel scheduled downgrade?", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Cancel scheduled plan change" }).click();
+	await expect(page.getByText("Cancel scheduled plan change?", { exact: true })).toBeVisible();
 	await page
 		.getByRole("alertdialog")
-		.getByRole("button", { name: "Cancel scheduled downgrade" })
+		.getByRole("button", { name: "Cancel scheduled plan change" })
 		.click();
 	await expect.poll(() => walletPlanCancelRequests.length).toBe(1);
 	expect(JSON.parse(walletPlanCancelRequests[0] ?? "{}")).toEqual({ subscription_id: 74 });
 	await expect(page.getByText(/Basic scheduled for/)).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Schedule Basic downgrade" })).toBeEnabled();
-	await expect(page.getByText("Scheduled downgrade canceled", { exact: true })).toBeVisible();
+	await expect(page.getByText("Scheduled plan change canceled", { exact: true })).toBeVisible();
 	expect(errors, `wallet pending downgrade: ${errors.join(" | ")}`).toEqual([]);
 });
 
@@ -1348,10 +1465,10 @@ test("wallet pending downgrade cancel reconciles an already-cleared conflict", a
 	});
 	await gotoHostedAgentSettings(page, "hdep_wallet_pending", "Performance");
 
-	await page.getByRole("button", { name: "Cancel scheduled downgrade" }).click();
+	await page.getByRole("button", { name: "Cancel scheduled plan change" }).click();
 	await page
 		.getByRole("alertdialog")
-		.getByRole("button", { name: "Cancel scheduled downgrade" })
+		.getByRole("button", { name: "Cancel scheduled plan change" })
 		.click();
 	await expect(page.getByText("Scheduled change already cleared", { exact: true })).toBeVisible();
 	expect(walletPlanCancelRequests).toHaveLength(1);
@@ -1430,6 +1547,96 @@ test("mixed billing history paginates wallet charges and Stripe invoices", async
 	await expect(billingTable.getByText("Refunded", { exact: true })).toBeVisible();
 	await settingsDialog.screenshot({ path: "/tmp/mixed-billing-history.png" });
 	expect(errors, `mixed billing history: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("Wallet activity caps show-more requests at the ledger API limit", async ({ page }) => {
+	const ledgerRequests: string[] = [];
+	const computeCharge = {
+		id: "ledger-compute-charge",
+		operation: "compute_charge",
+		request_id: "compute-renewal-42",
+		credits_amount: -9_000,
+		status: "applied",
+		created_at: "2026-07-15T00:00:00Z",
+	};
+	await stubHostedApi(page, {
+		ledgerRequests,
+		ledgerResponseForRequest: (limit) =>
+			limit === 50
+				? { items: [computeCharge], has_more: true }
+				: {
+						items: [
+							computeCharge,
+							{
+								...computeCharge,
+								id: "ledger-compute-credit",
+								operation: "compute_credit",
+								request_id: "compute-reversal-42",
+								credits_amount: 9_000,
+							},
+						],
+						has_more: true,
+					},
+		plans: [basicPlan, performancePlan],
+	});
+	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
+	const errors = collectBrowserErrors(page);
+	const ledgerTable = settingsDialog.getByRole("table");
+
+	await expect(ledgerTable.getByText("Compute charge", { exact: true })).toBeVisible();
+	await settingsDialog.getByRole("button", { name: "Show more" }).click();
+	await expect.poll(() => ledgerRequests.length).toBe(2);
+	await expect(ledgerTable.getByText("Compute reversal", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByRole("button", { name: "Show more" })).toHaveCount(0);
+	await expect(settingsDialog).toContainText(
+		"Showing your most recent activity. Older entries are archived.",
+	);
+
+	const limits = ledgerRequests.map((url) => Number(new URL(url).searchParams.get("limit")));
+	expect([...new Set(limits)]).toEqual([50, 100]);
+	expect(limits.every((limit) => limit <= 100)).toBe(true);
+	expect(errors, `wallet ledger cap: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("top-up rotates its idempotency key after an explicit reuse conflict", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const topUpIdempotencyKeys: string[] = [];
+	await stubHostedApi(page, {
+		plans: [basicPlan, performancePlan],
+		topUpIdempotencyKeys,
+		topUpResponses: [
+			{
+				status: 409,
+				body: {
+					detail: {
+						code: "idempotency_key_reused",
+						message: "The top-up key belongs to another amount.",
+					},
+				},
+			},
+		],
+	});
+	await page.goto("/channels?settings=billing-wallet");
+	const settingsDialog = page.getByTestId("settings-dialog");
+	await settingsDialog.getByRole("button", { name: "Top up" }).click();
+	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up AI Credits" });
+	const submit = topUpDialog.getByRole("button", { name: "Continue" });
+
+	await submit.click();
+	await expect.poll(() => topUpIdempotencyKeys.length).toBe(1);
+	await expect(page.getByText("Start a fresh top-up", { exact: true })).toBeVisible();
+	await expect(topUpDialog).toBeVisible();
+	await submit.click();
+	await expect.poll(() => topUpIdempotencyKeys.length).toBe(2);
+
+	expect(topUpIdempotencyKeys[0]).toMatch(/^topup-/);
+	expect(topUpIdempotencyKeys[1]).toMatch(/^topup-/);
+	expect(topUpIdempotencyKeys[1]).not.toBe(topUpIdempotencyKeys[0]);
+	await expect(topUpDialog).toHaveCount(0);
+	expect(
+		errors.filter((error) => !error.includes("status of 409")),
+		`top-up key rotation: ${errors.join(" | ")}`,
+	).toEqual([]);
 });
 
 test("Wallet summarizes compute commitment, coverage, renewal, and deployment link", async ({

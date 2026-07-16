@@ -6,11 +6,14 @@ import {
 	computeFundingMode,
 	computeFundingSource,
 	computeSubscriptionId,
+	computeSubscriptionLifecycle,
 	computeTierLabel,
 	isBasicCompute,
 	isComputeSubscriptionCancelable,
+	isComputeSubscriptionRenewing,
 	isComputeSubscriptionTermChangeable,
 	pendingComputePlanSlug,
+	pendingPlanScheduleCopy,
 	resolveBasicPlan,
 	resolvePerformancePlan,
 	selectExplicitOfferForTerm,
@@ -223,5 +226,57 @@ describe("compute subscription action status gates", () => {
 		expect(isComputeSubscriptionTermChangeable({ status: "past_due" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable({ status: "unpaid" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable(undefined)).toBe(false);
+	});
+});
+
+describe("compute subscription lifecycle presentation", () => {
+	test("only renewing states present as renewing", () => {
+		for (const status of ["active", "trialing", "past_due"]) {
+			expect(isComputeSubscriptionRenewing({ ...subscription(), status }), status).toBe(true);
+		}
+		for (const status of ["unpaid", "paused", "incomplete", "canceled", "expired"]) {
+			expect(isComputeSubscriptionRenewing({ ...subscription(), status }), status).toBe(false);
+		}
+		expect(isComputeSubscriptionRenewing({ ...subscription(), cancel_at_period_end: true })).toBe(
+			false,
+		);
+	});
+
+	test("labels terminal and non-entitled states honestly", () => {
+		expect(computeSubscriptionLifecycle({ ...subscription(), status: "paused" })).toMatchObject({
+			badgeLabel: "Paused",
+			renews: false,
+		});
+		expect(computeSubscriptionLifecycle({ ...subscription(), status: "incomplete" })).toMatchObject(
+			{ badgeLabel: "Setup incomplete", renews: false },
+		);
+		expect(computeSubscriptionLifecycle({ ...subscription(), status: "canceled" })).toMatchObject({
+			badgeLabel: "Canceled",
+			dateVerb: "Canceled",
+			renews: false,
+		});
+		expect(computeSubscriptionLifecycle({ ...subscription(), status: "expired" })).toMatchObject({
+			badgeLabel: "Expired",
+			renews: false,
+		});
+	});
+
+	test("does not claim an overdue pending plan boundary is still scheduled", () => {
+		expect(
+			pendingPlanScheduleCopy(
+				"compute_basic",
+				"2026-07-01T00:00:00Z",
+				"Jul 1, 2026",
+				Date.parse("2026-07-02T00:00:00Z"),
+			),
+		).toBe("Basic plan change is awaiting renewal processing.");
+		expect(
+			pendingPlanScheduleCopy(
+				"compute_basic",
+				"2026-08-01T00:00:00Z",
+				"Aug 1, 2026",
+				Date.parse("2026-07-02T00:00:00Z"),
+			),
+		).toBe("Basic scheduled for Aug 1, 2026.");
 	});
 });

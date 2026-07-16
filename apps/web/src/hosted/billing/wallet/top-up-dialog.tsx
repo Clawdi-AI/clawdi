@@ -1,8 +1,10 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { Info } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -15,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import type { WalletState } from "@/hosted/billing/contracts";
-import { normalizeBillingError } from "@/hosted/billing/errors";
+import { isIdempotencyKeyReusedError, normalizeBillingError } from "@/hosted/billing/errors";
 import { formatCents, formatCredits } from "@/hosted/billing/format";
 import { useTopUp } from "@/hosted/billing/hooks";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
@@ -41,12 +43,16 @@ export function TopUpDialog({
 	wallet,
 	onComplete,
 	initialAmountCents,
+	refundDebtCredits,
+	blockedChargeCredits,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	wallet: WalletState;
 	onComplete?: (status: "succeeded" | "processing") => void;
 	initialAmountCents?: number | null;
+	refundDebtCredits?: number | null;
+	blockedChargeCredits?: number | null;
 }) {
 	const topUp = useTopUp();
 	const qc = useQueryClient();
@@ -115,7 +121,11 @@ export function TopUpDialog({
 				},
 			});
 		} catch (e) {
-			toast.error("Couldn’t start top-up", { description: normalizeBillingError(e) });
+			const reused = isIdempotencyKeyReusedError(e);
+			if (reused) topupKeyRef.current = null;
+			toast.error(reused ? "Start a fresh top-up" : "Couldn’t start top-up", {
+				description: normalizeBillingError(e),
+			});
 		}
 	}
 
@@ -148,6 +158,18 @@ export function TopUpDialog({
 
 				{step === "amount" ? (
 					<div className="space-y-4">
+						{refundDebtCredits && refundDebtCredits > 0 ? (
+							<Alert>
+								<Info />
+								<AlertTitle>Refund debt is repaid first</AlertTitle>
+								<AlertDescription>
+									This top-up first repays {formatCredits(refundDebtCredits)} of refund debt.
+									{blockedChargeCredits && blockedChargeCredits > 0
+										? ` The remaining funds cover the ${formatCredits(blockedChargeCredits)} blocked compute charge.`
+										: " Remaining funds become available in your Wallet."}
+								</AlertDescription>
+							</Alert>
+						) : null}
 						<div className="flex flex-wrap gap-2">
 							{TOPUP_PRESETS_CENTS.map((preset) => (
 								<Button

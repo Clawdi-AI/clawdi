@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { WalletLedgerEntry } from "@/hosted/billing/contracts";
-import { filteredLedgerEntries, ledgerEmptyStateCopy } from "./ledger-table.logic";
+import {
+	filteredLedgerEntries,
+	ledgerEmptyStateCopy,
+	ledgerOperationGroup,
+} from "./ledger-table.logic";
 
 function entry(overrides: Partial<WalletLedgerEntry> = {}): WalletLedgerEntry {
 	return {
@@ -21,6 +25,17 @@ describe("filteredLedgerEntries", () => {
 		const filtered = filteredLedgerEntries([entry({ operation: "topup" })], "refund");
 
 		expect(filtered).toEqual([]);
+	});
+
+	test("groups compute charges and reversals under Compute", () => {
+		expect(ledgerOperationGroup("compute_charge")).toBe("compute");
+		expect(ledgerOperationGroup("compute_credit")).toBe("compute");
+		expect(
+			filteredLedgerEntries(
+				[entry({ operation: "compute_charge" }), entry({ id: "entry_2", operation: "topup" })],
+				"compute",
+			).map((item) => item.operation),
+		).toEqual(["compute_charge"]);
 	});
 });
 

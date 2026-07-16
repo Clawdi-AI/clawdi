@@ -2,6 +2,7 @@ import type { HostedDeployment, Plan, WalletState } from "@/hosted/billing/contr
 import {
 	COMPUTE_BASIC_SLUG,
 	computeTierLabel,
+	isComputeSubscriptionRenewing,
 	pendingComputePlanSlug,
 	resolveBasicPlan,
 	resolvePerformancePlan,
@@ -53,7 +54,7 @@ export function walletComputeCoverage(
 			planLabel: computeTierLabel(deployment.config_info?.compute_plan_slug),
 			pendingPlanLabel: pendingPlanSlug ? computeTierLabel(pendingPlanSlug) : null,
 			priceCents: Math.max(0, pendingPlan?.price_cents ?? subscription.price_cents ?? 0),
-			renews: !subscription.cancel_at_period_end && subscription.status !== "canceled",
+			renews: isComputeSubscriptionRenewing(subscription),
 			nextRenewalAt: subscription.current_period_end ?? null,
 			status: subscription.payment_state,
 		});

@@ -181,8 +181,8 @@ export function WalletPage() {
 					entries={ledger.data?.items ?? []}
 					pointsPerUsd={w.points_per_usd}
 					isLoading={ledger.isLoading}
-					hasMore={(ledger.data?.items.length ?? 0) >= ledgerLimit && ledgerLimit < LEDGER_MAX_ROWS}
-					atCap={(ledger.data?.items.length ?? 0) >= LEDGER_MAX_ROWS}
+					hasMore={ledger.data?.has_more ?? false}
+					atCap={ledgerLimit >= LEDGER_MAX_ROWS && (ledger.data?.has_more ?? false)}
 					isFetchingMore={ledger.isFetching}
 					onShowMore={() => setLedgerLimit((n) => Math.min(n + LEDGER_PAGE_SIZE, LEDGER_MAX_ROWS))}
 				/>

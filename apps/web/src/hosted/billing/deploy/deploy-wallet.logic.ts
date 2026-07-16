@@ -7,19 +7,25 @@ import {
 	isNetworkError,
 	isRetryableError,
 	walletComputeErrorDetail,
+	walletRefundDebtCredits,
 } from "@/hosted/billing/errors";
 import { decimalCredits } from "@/hosted/billing/wallet/wallet-compute.logic";
 
 export type DeployPaymentMethod = "card" | "wallet";
 
 export type WalletActivationFailure = {
-	kind: "insufficient" | "conflict" | "retryable" | "other";
+	kind: "insufficient" | "refund_debt" | "conflict" | "retryable" | "other";
 	code: string | null;
 	shortfallCredits: number | null;
+	debtCredits: number | null;
+	topUpCredits: number | null;
 	description: string;
 };
 
-export function walletActivationFailure(error: unknown): WalletActivationFailure {
+export function walletActivationFailure(
+	error: unknown,
+	blockedChargeCredits = 0,
+): WalletActivationFailure {
 	const detail = walletComputeErrorDetail(error);
 	const code = typeof detail === "string" ? null : (detail?.code ?? null);
 	if (error instanceof BillingApiError && error.status === 402) {
@@ -31,18 +37,32 @@ export function walletActivationFailure(error: unknown): WalletActivationFailure
 			kind: "insufficient",
 			code,
 			shortfallCredits: shortfall === null ? null : decimalCredits(shortfall),
+			debtCredits: null,
+			topUpCredits: shortfall === null ? null : decimalCredits(shortfall),
 			description: "Your wallet does not have enough credits for the first compute charge.",
 		};
 	}
 	if (error instanceof BillingApiError && error.status === 409) {
+		const debtCredits = walletRefundDebtCredits(error);
+		if (debtCredits !== null) {
+			return {
+				kind: "refund_debt",
+				code,
+				shortfallCredits: null,
+				debtCredits,
+				topUpCredits: debtCredits + Math.max(0, blockedChargeCredits),
+				description:
+					"Top up to repay the outstanding refund debt first, then cover the compute charge.",
+			};
+		}
 		return {
 			kind: "conflict",
 			code,
 			shortfallCredits: null,
+			debtCredits: null,
+			topUpCredits: null,
 			description:
-				code === "open_refund_debt"
-					? "A wallet refund is still settling. Wait for it to finish before funding compute."
-					: "Another billing action owns this deploy request. Refresh the quote before trying again.",
+				"Another billing action owns this deploy request. Refresh the quote before trying again.",
 		};
 	}
 	const retryablePayload = detail !== null && typeof detail !== "string" && "retryable" in detail;
@@ -54,6 +74,8 @@ export function walletActivationFailure(error: unknown): WalletActivationFailure
 			kind: "retryable",
 			code,
 			shortfallCredits: null,
+			debtCredits: null,
+			topUpCredits: null,
 			description:
 				"The wallet charge result is temporarily unclear. Retry with the same deploy request; you will not be charged twice.",
 		};
@@ -62,6 +84,8 @@ export function walletActivationFailure(error: unknown): WalletActivationFailure
 		kind: "other",
 		code,
 		shortfallCredits: null,
+		debtCredits: null,
+		topUpCredits: null,
 		description: "Wallet funding could not be completed. Check the details and try again.",
 	};
 }
@@ -105,13 +129,15 @@ export async function resolveWalletDeploymentId(
 	if (activation.deployment_id) {
 		return { kind: "resolved", deploymentId: activation.deployment_id };
 	}
+	const deployRequestId = activation.deploy_request_id;
+	if (!deployRequestId) return { kind: "pending" };
 	const maxAttempts = Math.max(1, options.maxAttempts ?? 5);
 	const delay = options.delay ?? wait;
 
 	for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
 		try {
-			const status = await lookup(activation.deploy_request_id);
-			if (status.deploy_request_id !== activation.deploy_request_id) {
+			const status = await lookup(deployRequestId);
+			if (status.deploy_request_id !== deployRequestId) {
 				throw new Error("Deployment request lookup returned a mismatched request ID.");
 			}
 			if (status.deployment_id) {

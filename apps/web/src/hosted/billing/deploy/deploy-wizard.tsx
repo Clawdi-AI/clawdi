@@ -91,7 +91,11 @@ import {
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
-import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
+import {
+	billingErrorNormalizer,
+	isIdempotencyKeyReusedError,
+	normalizeBillingError,
+} from "@/hosted/billing/errors";
 import {
 	billingTermLabel,
 	billingTermSuffix,
@@ -131,6 +135,7 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { decimalCredits } from "@/hosted/billing/wallet/wallet-compute.logic";
 import { runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
@@ -747,16 +752,25 @@ export function DeployWizard() {
 
 	async function fallbackToHostedCheckout(request: CheckoutRequest) {
 		const hostedBody = buildHostedCheckoutFallbackRequest(request);
+		const fingerprint = idempotencyFingerprint(hostedBody);
 		checkoutAttemptRef.current = idempotencyAttemptFor(
 			checkoutAttemptRef.current,
 			"subscription-checkout-hosted-fallback",
-			idempotencyFingerprint(hostedBody),
+			fingerprint,
 			newIdempotencyKey,
 		);
-		const result = await checkout.mutateAsync({
-			body: hostedBody,
-			idempotencyKey: checkoutAttemptRef.current.key,
-		});
+		const result = await checkout
+			.mutateAsync({
+				body: hostedBody,
+				idempotencyKey: checkoutAttemptRef.current.key,
+			})
+			.catch((error: unknown) => {
+				if (isIdempotencyKeyReusedError(error)) {
+					forgetIdempotencyAttempt("subscription-checkout-hosted-fallback", fingerprint);
+					checkoutAttemptRef.current = null;
+				}
+				throw error;
+			});
 		if (redirectTo(checkoutRedirectUrl(result))) return;
 		throw new Error("No checkout URL was returned.");
 	}
@@ -829,15 +843,28 @@ export function DeployWizard() {
 							},
 						});
 					} catch (error) {
-						const failure = walletActivationFailure(error);
+						if (isIdempotencyKeyReusedError(error)) {
+							forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
+							walletDeployAttemptRef.current = null;
+						}
+						const failure = walletActivationFailure(
+							error,
+							decimalCredits(walletQuote.data?.first_charge_credits),
+						);
 						setWalletFailure(failure);
-						if (failure.kind === "insufficient") setTopUpOpen(true);
+						if (failure.kind === "insufficient" || failure.kind === "refund_debt") {
+							setTopUpOpen(true);
+						}
 						toast.error(
 							failure.kind === "insufficient"
 								? "Wallet balance too low"
-								: failure.kind === "conflict"
-									? "Wallet funding conflict"
-									: "Couldn’t fund compute from Wallet",
+								: failure.kind === "refund_debt"
+									? "Top up to clear refund debt"
+									: failure.kind === "conflict"
+										? isIdempotencyKeyReusedError(error)
+											? "Start a fresh wallet attempt"
+											: "Wallet funding conflict"
+										: "Couldn’t fund compute from Wallet",
 							{ description: failure.description },
 						);
 						return;
@@ -882,16 +909,25 @@ export function DeployWizard() {
 					ui_mode: CHECKOUT_ELEMENTS_UI_MODE,
 					deploy_config: deployConfig,
 				};
+				const checkoutFingerprint = idempotencyFingerprint(body);
 				checkoutAttemptRef.current = idempotencyAttemptFor(
 					checkoutAttemptRef.current,
 					"subscription-checkout",
-					idempotencyFingerprint(body),
+					checkoutFingerprint,
 					newIdempotencyKey,
 				);
-				const result = await checkout.mutateAsync({
-					body,
-					idempotencyKey: checkoutAttemptRef.current.key,
-				});
+				const result = await checkout
+					.mutateAsync({
+						body,
+						idempotencyKey: checkoutAttemptRef.current.key,
+					})
+					.catch((error: unknown) => {
+						if (isIdempotencyKeyReusedError(error)) {
+							forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
+							checkoutAttemptRef.current = null;
+						}
+						throw error;
+					});
 				if (hasCheckoutClientSecret(result)) {
 					setCheckoutSession({
 						clientSecret: result.client_secret,
@@ -915,17 +951,26 @@ export function DeployWizard() {
 			}
 			if (compute !== "basic" || basicSelection.mode !== "direct") return;
 			const deployConfig = buildDeployRequest(aiFields, COMPUTE_BASIC_SLUG);
+			const deployFingerprint = idempotencyFingerprint(deployConfig);
 
 			deployAttemptRef.current = idempotencyAttemptFor(
 				deployAttemptRef.current,
 				"deploy",
-				idempotencyFingerprint(deployConfig),
+				deployFingerprint,
 				newIdempotencyKey,
 			);
-			const deployment = await createDeployment.mutateAsync({
-				body: deployConfig,
-				idempotencyKey: deployAttemptRef.current.key,
-			});
+			const deployment = await createDeployment
+				.mutateAsync({
+					body: deployConfig,
+					idempotencyKey: deployAttemptRef.current.key,
+				})
+				.catch((error: unknown) => {
+					if (isIdempotencyKeyReusedError(error)) {
+						forgetIdempotencyAttempt("deploy", deployFingerprint);
+						deployAttemptRef.current = null;
+					}
+					throw error;
+				});
 			toast.success("Deploying your agent", {
 				description: "It’ll appear in your agents in a moment.",
 			});
@@ -1338,7 +1383,8 @@ export function DeployWizard() {
 											</div>
 											{walletQuote.data.warnings?.includes("open_refund_debt") ? (
 												<p className="text-xs text-destructive">
-													A wallet refund is still settling, so this charge may be blocked.
+													Wallet funds repay refund debt before compute charges. Top up enough to
+													cover both before deploying.
 												</p>
 											) : walletQuote.data.warnings?.includes("low_coverage") ? (
 												<p className="text-xs text-warning-muted-foreground">
@@ -1351,15 +1397,21 @@ export function DeployWizard() {
 
 								{walletFailure ? (
 									<Alert
-										variant={walletFailure.kind === "insufficient" ? "default" : "destructive"}
+										variant={
+											walletFailure.kind === "insufficient" || walletFailure.kind === "refund_debt"
+												? "default"
+												: "destructive"
+										}
 									>
 										<TriangleAlert />
 										<AlertTitle>
 											{walletFailure.kind === "insufficient"
 												? "Top up to deploy"
-												: walletFailure.kind === "retryable"
-													? "Wallet response needs a retry"
-													: "Wallet payment didn’t complete"}
+												: walletFailure.kind === "refund_debt"
+													? "Clear refund debt to deploy"
+													: walletFailure.kind === "retryable"
+														? "Wallet response needs a retry"
+														: "Wallet payment didn’t complete"}
 										</AlertTitle>
 										<AlertDescription className="flex flex-col items-start gap-3">
 											<span>
@@ -1368,7 +1420,8 @@ export function DeployWizard() {
 													? ` Shortfall: ${creditsToUsd(walletFailure.shortfallCredits, walletQuote.data.points_per_usd)}.`
 													: ""}
 											</span>
-											{walletFailure.kind === "insufficient" ? (
+											{walletFailure.kind === "insufficient" ||
+											walletFailure.kind === "refund_debt" ? (
 												<Button
 													size="sm"
 													onClick={() => setTopUpOpen(true)}
@@ -1505,6 +1558,16 @@ export function DeployWizard() {
 					onOpenChange={setTopUpOpen}
 					wallet={wallet.data}
 					onComplete={handleWalletTopupComplete}
+					initialAmountCents={topUpAmountCentsForCreditShortfall(
+						walletFailure?.topUpCredits ?? null,
+						wallet.data.points_per_usd,
+					)}
+					refundDebtCredits={walletFailure?.debtCredits}
+					blockedChargeCredits={
+						walletFailure?.kind === "refund_debt"
+							? decimalCredits(walletQuote.data?.first_charge_credits)
+							: null
+					}
 				/>
 			) : null}
 		</div>

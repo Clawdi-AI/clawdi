@@ -1,7 +1,13 @@
-import type { HostedDeployment, HostedFundingEvent } from "@/hosted/billing/contracts";
+import type {
+	ComputeFixPaymentRequest,
+	ComputePlanSlug,
+	HostedDeployment,
+	HostedFundingEvent,
+} from "@/hosted/billing/contracts";
 import {
 	computeSubscriptionId,
 	computeTierLabel,
+	pendingComputePlanSlug,
 } from "@/hosted/billing/subscription/subscription-utils";
 
 type ComputeSubscription = NonNullable<HostedDeployment["compute_subscription"]>;
@@ -18,7 +24,14 @@ export type ComputeDunningState = {
 	tone: "neutral" | "warning" | "destructive";
 	title: string;
 	description: string;
-	ctaTarget: "invoice" | "portal" | "wallet" | "billing_history" | "support" | "none";
+	ctaTarget:
+		| "invoice"
+		| "portal"
+		| "wallet_retry"
+		| "wallet_reactivate"
+		| "billing_history"
+		| "support"
+		| "none";
 	invoiceUrl: string | null;
 	subscriptionId: number | null;
 	nextPaymentAttemptAt: string | null;
@@ -27,6 +40,7 @@ export type ComputeDunningState = {
 	fallbackOccurredAt: string | null;
 	fallbackPlanLabel: string | null;
 	fallbackReason: HostedFundingEvent["reason"] | null;
+	recoveryPlanSlug: ComputePlanSlug | null;
 	tileLabel: string;
 	tileTitle: string;
 	tileTextClass: string;
@@ -70,8 +84,19 @@ export function dunningDeadlineCountdown(deadline: string | null, now = Date.now
 
 export function collectionFailureMessage(code: string | null): string | null {
 	if (code === "insufficient_balance") return "The wallet balance was too low.";
-	if (code === "open_refund_debt") return "A wallet refund is still settling.";
+	if (code === "open_refund_debt") {
+		return "New Wallet funds repay refund debt before compute charges.";
+	}
 	return null;
+}
+
+export function fixPaymentRequestForDunning(
+	state: Pick<ComputeDunningState, "fallbackOccurredAt" | "fundingSource">,
+	deploymentId: string,
+): ComputeFixPaymentRequest {
+	return state.fundingSource === "stripe" && state.fallbackOccurredAt
+		? {}
+		: { deployment_id: deploymentId };
 }
 
 export function computeDunningState(deployment: DunningDeployment): ComputeDunningState | null {
@@ -88,13 +113,19 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 					? "Basic compute"
 					: "paid compute";
 		const stopped = deployment.status.toLowerCase() === "stopped";
+		const recoveryPlanSlug: ComputePlanSlug | null =
+			fallback.prior_plan_slug === "compute_performance"
+				? "compute_performance"
+				: fallback.prior_plan_slug === "compute_basic"
+					? "compute_basic"
+					: null;
 		const fallbackPresentation = (() => {
 			switch (fallback.reason) {
 				case "payment_failure":
 					return {
 						tone: "destructive" as const,
 						title: walletRecovery ? "Wallet compute funding ended" : "Compute funding ended",
-						ctaTarget: walletRecovery ? ("wallet" as const) : ("portal" as const),
+						ctaTarget: walletRecovery ? ("wallet_reactivate" as const) : ("portal" as const),
 						tileLabel: walletRecovery ? "Wallet funding ended" : "Compute funding ended",
 						tileTextClass: "text-destructive",
 					};
@@ -152,14 +183,17 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			fallbackOccurredAt: fallback.occurred_at,
 			fallbackPlanLabel,
 			fallbackReason: fallback.reason,
+			recoveryPlanSlug,
 			tileTitle: stopped
 				? `${fallbackPlanLabel} stopped after its funding ended.`
 				: `${fallbackPlanLabel} fell back to included Basic after its funding ended.`,
 		};
 	}
 	if (subscription.payment_state === "ok") return null;
-	const computeName = deployment.config_info
-		? `${computeTierLabel(deployment.config_info.compute_plan_slug)} compute`
+	const recoveryPlanSlug =
+		pendingComputePlanSlug(subscription) ?? deployment.config_info?.compute_plan_slug ?? null;
+	const computeName = recoveryPlanSlug
+		? `${computeTierLabel(recoveryPlanSlug)} compute`
 		: "paid compute";
 	const fundingSource = subscription.funding_source ?? "stripe";
 	const recoveryAction =
@@ -182,6 +216,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		fallbackOccurredAt: null,
 		fallbackPlanLabel: null,
 		fallbackReason: null,
+		recoveryPlanSlug,
 	};
 
 	if (walletRecovery && subscription.payment_state === "past_due") {
@@ -191,7 +226,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			tone: "warning",
 			title: "Wallet payment failed",
 			description: `The latest ${computeName} debit failed. Your resources stay available during the 72-hour grace period; top up, then retry the payment.`,
-			ctaTarget: "wallet",
+			ctaTarget: "wallet_retry",
 			tileLabel: "Wallet payment past due",
 			tileTitle: "Top up and retry before the compute grace period ends.",
 			tileTextClass: "text-warning-muted-foreground",
@@ -204,8 +239,8 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			paymentState: "unpaid",
 			tone: "destructive",
 			title: "Wallet compute funding ended",
-			description: `The grace period ended. The deployment fell back to included Basic when a slot was available; otherwise it stopped. Top up and retry to re-activate paid ${computeName}.`,
-			ctaTarget: "wallet",
+			description: `The grace period ended. The deployment fell back to included Basic when a slot was available; otherwise it stopped. Reactivate ${computeName} to start a new subscription.`,
+			ctaTarget: "wallet_reactivate",
 			tileLabel: "Wallet funding ended",
 			tileTitle: "Paid compute fell back to included Basic or stopped after the grace period.",
 			tileTextClass: "text-destructive",

@@ -93,6 +93,99 @@ export function pendingComputePlanSlug(
 		: null;
 }
 
+const COMPUTE_RENEWING_STATUSES = new Set(["trialing", "active", "past_due"]);
+
+export function isComputeSubscriptionRenewing(
+	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+): boolean {
+	if (!subscription || subscription.cancel_at_period_end) return false;
+	return (
+		COMPUTE_RENEWING_STATUSES.has(subscription.status.toLowerCase()) &&
+		subscription.payment_state !== "unpaid"
+	);
+}
+
+export type ComputeSubscriptionLifecycle = {
+	badgeLabel: string;
+	dateAt: string | null;
+	dateVerb: string | null;
+	renews: boolean;
+};
+
+export function computeSubscriptionLifecycle(
+	subscription: NonNullable<HostedDeployment["compute_subscription"]>,
+): ComputeSubscriptionLifecycle {
+	const status = subscription.status.toLowerCase();
+	const canceledAt = subscription.canceled_at ?? subscription.current_period_end ?? null;
+	if (subscription.cancel_at_period_end && COMPUTE_RENEWING_STATUSES.has(status)) {
+		return {
+			badgeLabel: "Canceling",
+			dateAt: subscription.cancel_at ?? subscription.current_period_end ?? null,
+			dateVerb: "Ends",
+			renews: false,
+		};
+	}
+	if (status === "active") {
+		return {
+			badgeLabel: "Current",
+			dateAt: subscription.current_period_end ?? null,
+			dateVerb: "Renews",
+			renews: true,
+		};
+	}
+	if (status === "trialing") {
+		return {
+			badgeLabel: "Trial",
+			dateAt: subscription.current_period_end ?? null,
+			dateVerb: "Renews",
+			renews: true,
+		};
+	}
+	if (status === "past_due") {
+		return {
+			badgeLabel: "Payment past due",
+			dateAt: subscription.dunning_deadline_at ?? null,
+			dateVerb: subscription.dunning_deadline_at ? "Grace ends" : null,
+			renews: true,
+		};
+	}
+	if (status === "unpaid") {
+		return { badgeLabel: "Unpaid", dateAt: canceledAt, dateVerb: "Ended", renews: false };
+	}
+	if (status === "paused") {
+		return { badgeLabel: "Paused", dateAt: null, dateVerb: null, renews: false };
+	}
+	if (status === "incomplete") {
+		return { badgeLabel: "Setup incomplete", dateAt: null, dateVerb: null, renews: false };
+	}
+	if (status === "canceled") {
+		return { badgeLabel: "Canceled", dateAt: canceledAt, dateVerb: "Canceled", renews: false };
+	}
+	if (status === "expired" || status === "incomplete_expired") {
+		return { badgeLabel: "Expired", dateAt: canceledAt, dateVerb: "Expired", renews: false };
+	}
+	return {
+		badgeLabel: status.replace(/_/g, " ").replace(/\b\w/g, (character) => character.toUpperCase()),
+		dateAt: null,
+		dateVerb: null,
+		renews: false,
+	};
+}
+
+export function pendingPlanScheduleCopy(
+	planSlug: ComputePlanSlug,
+	effectiveAt: string | null | undefined,
+	dateLabel: string,
+	now = Date.now(),
+): string {
+	const planLabel = computeTierLabel(planSlug);
+	const effectiveMs = effectiveAt ? Date.parse(effectiveAt) : Number.NaN;
+	if (Number.isFinite(effectiveMs) && effectiveMs > now) {
+		return `${planLabel} scheduled for ${dateLabel}.`;
+	}
+	return `${planLabel} plan change is awaiting renewal processing.`;
+}
+
 export function computeTierLabel(
 	planSlug: ComputePlanSlug | null | undefined,
 ): "Basic" | "Performance" {

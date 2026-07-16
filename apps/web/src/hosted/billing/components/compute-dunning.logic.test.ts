@@ -6,6 +6,7 @@ import {
 	computeDunningTileStatus,
 	dunningDeadlineCountdown,
 	fallbackReasonSentence,
+	fixPaymentRequestForDunning,
 } from "./compute-dunning.logic";
 
 function deployment(
@@ -82,7 +83,7 @@ describe("computeDunningState", () => {
 		expect(state).toMatchObject({
 			fundingSource: "wallet",
 			recoveryAction: "top_up",
-			ctaTarget: "wallet",
+			ctaTarget: "wallet_retry",
 			serviceRiskAt: "2026-07-18T12:00:00Z",
 			failureCode: "insufficient_balance",
 		});
@@ -99,11 +100,13 @@ describe("computeDunningState", () => {
 					payment_state: "unpaid",
 					recovery_action: "top_up",
 				}),
+				"compute_basic",
 			),
 		);
 		expect(state?.description).toContain("fell back to included Basic");
 		expect(state?.description).toContain("otherwise it stopped");
-		expect(state?.ctaTarget).toBe("wallet");
+		expect(state?.ctaTarget).toBe("wallet_reactivate");
+		expect(state?.recoveryPlanSlug).toBe("compute_basic");
 	});
 
 	test("renders the persisted wallet fallback trace after the subscription detaches", () => {
@@ -121,7 +124,7 @@ describe("computeDunningState", () => {
 		expect(running).toMatchObject({
 			paymentState: "unpaid",
 			fundingSource: "wallet",
-			ctaTarget: "wallet",
+			ctaTarget: "wallet_reactivate",
 			subscriptionId: 42,
 			fallbackOccurredAt: "2026-07-18T12:00:00Z",
 			fallbackPlanLabel: "Performance compute",
@@ -159,7 +162,7 @@ describe("computeDunningState", () => {
 			{
 				fallbackReason: "payment_failure" as const,
 				tone: "destructive",
-				ctaTarget: "wallet",
+				ctaTarget: "wallet_reactivate",
 				title: "Wallet compute funding ended",
 			},
 			{
@@ -250,6 +253,47 @@ describe("computeDunningState", () => {
 
 		expect(state?.description).toContain("keep Basic compute active");
 		expect(state?.tileTitle).toContain("keep Basic compute active");
+	});
+
+	test("names the pending plan that the wallet retry will actually charge", () => {
+		const state = computeDunningState(
+			deployment(
+				subscription({
+					status: "past_due",
+					funding_source: "wallet",
+					payment_state: "past_due",
+					recovery_action: "top_up",
+					pending_plan_slug: "compute_basic",
+				}),
+				"compute_performance",
+			),
+		);
+		expect(state?.description).toContain("Basic compute debit");
+		expect(state?.recoveryPlanSlug).toBe("compute_basic");
+	});
+
+	test("omits the detached deployment id for Stripe fallback recovery", () => {
+		const state = computeDunningState(
+			deployment(null, "compute_basic", {
+				last_funding_event: {
+					type: "compute_subscription_fallback",
+					funding_source: "stripe",
+					reason: "payment_failure",
+					occurred_at: "2026-07-18T12:00:00Z",
+					prior_plan_slug: "compute_performance",
+					subscription_id: 42,
+				},
+			}),
+		);
+		expect(state).not.toBeNull();
+		if (!state) return;
+		expect(fixPaymentRequestForDunning(state, "hdep_detached")).toEqual({});
+		expect(
+			fixPaymentRequestForDunning(
+				{ fundingSource: "stripe", fallbackOccurredAt: null },
+				"hdep_bound",
+			),
+		).toEqual({ deployment_id: "hdep_bound" });
 	});
 
 	test("uses portal remediation for retryable past-due subscriptions", () => {

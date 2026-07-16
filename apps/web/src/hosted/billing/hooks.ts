@@ -412,26 +412,55 @@ export function useUsage() {
 
 // ── Deployments ────────────────────────────────────────────────────────────────
 
+const WALLET_DUNNING_POLL_INTERVAL_MS = 30_000;
+const WALLET_DUNNING_LEAD_TIME_MS = 60_000;
+const WALLET_DUNNING_MAX_WAKE_INTERVAL_MS = 2_000_000_000;
+
+export function walletDunningRefetchIntervalFor(
+	deployments: readonly HostedDeployment[] | undefined,
+	targetId: string | null | undefined,
+	now = Date.now(),
+): number | false {
+	const target = targetId?.toLowerCase();
+	if (!target) return false;
+	const deployment = (deployments ?? []).find((candidate) => {
+		const matchesTarget =
+			candidate.id.toLowerCase() === target ||
+			Object.values(candidate.config_info?.clawdi_cloud_environments ?? {}).some(
+				(environmentId) => environmentId?.toLowerCase() === target,
+			);
+		return matchesTarget;
+	});
+	const subscription = deployment?.compute_subscription;
+	const walletFunded =
+		subscription?.funding_source === "wallet" || subscription?.recovery_action === "top_up";
+	if (!subscription || !walletFunded) return false;
+	if (subscription.payment_state === "past_due") return WALLET_DUNNING_POLL_INTERVAL_MS;
+	if (subscription.payment_state !== "ok") return false;
+	const status = subscription.status.toLowerCase();
+	if (status !== "active" && status !== "trialing") return false;
+	const collectionBoundary =
+		subscription.next_collection_attempt_at ?? subscription.current_period_end ?? null;
+	if (!collectionBoundary) return false;
+	const boundaryMs = Date.parse(collectionBoundary);
+	if (!Number.isFinite(boundaryMs)) return false;
+	const untilPollingWindow = boundaryMs - now - WALLET_DUNNING_LEAD_TIME_MS;
+	if (untilPollingWindow <= 0) return WALLET_DUNNING_POLL_INTERVAL_MS;
+	// Wake the query up before the cached boundary even when the page opened
+	// earlier in the billing period. Cap long timers below the browser's signed
+	// 32-bit timeout limit; ordinary query invalidations still reconcile a
+	// changed backend boundary sooner.
+	return Math.min(untilPollingWindow, WALLET_DUNNING_MAX_WAKE_INTERVAL_MS);
+}
+
 export function shouldPollWalletDunningFor(
 	deployments: readonly HostedDeployment[] | undefined,
 	targetId: string | null | undefined,
+	now = Date.now(),
 ): boolean {
-	const target = targetId?.toLowerCase();
-	if (!target) return false;
-	return (deployments ?? []).some((deployment) => {
-		const matchesTarget =
-			deployment.id.toLowerCase() === target ||
-			Object.values(deployment.config_info?.clawdi_cloud_environments ?? {}).some(
-				(environmentId) => environmentId?.toLowerCase() === target,
-			);
-		if (!matchesTarget) return false;
-		const subscription = deployment.compute_subscription;
-		if (subscription?.payment_state !== "past_due") return false;
-		return (
-			subscription.recovery_action === "top_up" ||
-			(!subscription.recovery_action && subscription.funding_source === "wallet")
-		);
-	});
+	return (
+		walletDunningRefetchIntervalFor(deployments, targetId, now) === WALLET_DUNNING_POLL_INTERVAL_MS
+	);
 }
 
 export function useHostedDeployments({
@@ -448,10 +477,7 @@ export function useHostedDeployments({
 		queryFn: () => client.listDeployments(),
 		refetchInterval: (q) => {
 			if (shouldPollDeployments(q.state.data)) return 10_000;
-			if (shouldPollWalletDunningFor(q.state.data, pollWalletDunningFor)) {
-				return 30_000;
-			}
-			return false;
+			return walletDunningRefetchIntervalFor(q.state.data, pollWalletDunningFor);
 		},
 	});
 }
