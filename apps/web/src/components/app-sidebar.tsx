@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import { useQueryState } from "nuqs";
 import { parseAsStringLiteral } from "nuqs/server";
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
@@ -54,10 +54,14 @@ import {
 	agentSourceKindLabel,
 	agentTextLabel,
 	agentTypeLabel,
-	compareAgentEnvironments,
 	displayMachineName,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
+import {
+	type AgentTile,
+	compareAgentTiles,
+	selfManagedAgentTiles,
+} from "@/components/dashboard/agents-card";
 import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
 import { NewAgentButton } from "@/components/dashboard/new-agent-button";
 import { IconChip } from "@/components/icon-chip";
@@ -129,6 +133,13 @@ const HostedFocusRuntimeStatusBadge = IS_HOSTED_BUILD
 	? lazy(() =>
 			import("@/hosted/use-hosted-agent-tiles").then((m) => ({
 				default: m.HostedFocusRuntimeStatusBadge,
+			})),
+		)
+	: null;
+const HostedUnifiedAgentListSensor = IS_HOSTED_BUILD
+	? lazy(() =>
+			import("@/hosted/use-unified-agent-list").then((m) => ({
+				default: m.HostedUnifiedAgentListSensor,
 			})),
 		)
 	: null;
@@ -274,12 +285,18 @@ function reorderEnvironmentsForCache(
 	return reordered.map((env, index) => ({ ...env, sort_order: index }));
 }
 
-function reorderEnvironmentsByIndex(
-	current: SidebarEnvironment[],
-	from: number,
-	to: number,
-): SidebarEnvironment[] {
-	return arrayMove(current, from, to).map((env, index) => ({ ...env, sort_order: index }));
+function reorderAgentTilesByIndex(current: AgentTile[], from: number, to: number): AgentTile[] {
+	return arrayMove(current, from, to).map((tile, index) => ({
+		...tile,
+		sortOrder: index,
+		env: tile.env ? { ...tile.env, sort_order: index } : tile.env,
+	}));
+}
+
+function agentTileChromeKind(tile: AgentTile): AgentChromeKind {
+	if (tile.source === "on-clawdi") return "cloud";
+	if (tile.source === "legacy-hosted") return "legacy";
+	return "connected";
 }
 
 function sameOrder(a: string[], b: string[]): boolean {
@@ -712,7 +729,7 @@ function RailFocusButton({
 	showTooltip = true,
 	children,
 }: {
-	href: string;
+	href: string | null;
 	label: string;
 	caption?: string;
 	active: boolean;
@@ -726,21 +743,24 @@ function RailFocusButton({
 	children: React.ReactNode;
 }) {
 	const hasCaption = Boolean(caption);
+	const focusTarget = href ? (
+		<Link
+			to={href}
+			draggable={false}
+			onClickCapture={onClickCapture}
+			onClick={onNavigate}
+			onPointerDownCapture={onPointerDownCapture}
+			onPointerDown={onPointerDown}
+			onTouchStartCapture={onTouchStartCapture}
+			onTouchStart={onTouchStart}
+			className="cursor-default"
+		/>
+	) : (
+		<div aria-disabled="true" className="cursor-default" />
+	);
 	const button = (
 		<SidebarMenuButton
-			render={
-				<Link
-					to={href}
-					draggable={false}
-					onClickCapture={onClickCapture}
-					onClick={onNavigate}
-					onPointerDownCapture={onPointerDownCapture}
-					onPointerDown={onPointerDown}
-					onTouchStartCapture={onTouchStartCapture}
-					onTouchStart={onTouchStart}
-					className="cursor-default"
-				/>
-			}
+			render={focusTarget}
 			size="lg"
 			isActive={active}
 			aria-label={label}
@@ -806,7 +826,7 @@ function SortableAgentRailItem({
 	onTouchStartCapture,
 	showTooltip,
 }: {
-	agent: SidebarEnvironment;
+	agent: AgentTile;
 	active: boolean;
 	onNavigate: React.MouseEventHandler<HTMLAnchorElement>;
 	onClickCapture: React.MouseEventHandler<HTMLAnchorElement>;
@@ -816,14 +836,25 @@ function SortableAgentRailItem({
 }) {
 	const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
 		id: agent.id,
+		disabled: !agent.env,
 	});
-	const kind = useAgentChromeKind(agent);
-	const label =
+	const kind = agentTileChromeKind(agent);
+	const identity = agent.env ?? {
+		id: agent.id,
+		name: agent.name,
+		machine_name: agent.name,
+		agent_type: agent.agentType,
+	};
+	const identityLabel =
 		kind === "legacy"
-			? `Legacy · ${agentTextLabel(agent, { includeSource: false, ownershipKind: kind })}`
-			: agentTextLabel(agent, { includeSource: kind === "cloud", ownershipKind: kind });
-	const caption = displayMachineName(agentDisplayName(agent));
-	const href = agentSectionHref(agent.id);
+			? `Legacy · ${agentTextLabel(identity, { includeSource: false, ownershipKind: kind })}`
+			: agentTextLabel(identity, { includeSource: kind === "cloud", ownershipKind: kind });
+	const statusLabel =
+		kind === "cloud"
+			? [agent.statusLabel, agent.secondaryStatus?.label].filter(Boolean).join(" · ")
+			: null;
+	const label = statusLabel ? `${identityLabel} · ${statusLabel}` : identityLabel;
+	const caption = displayMachineName(agent.name);
 	const style: React.CSSProperties = {
 		transform: CSS.Transform.toString(transform),
 		transition: isDragging ? undefined : transition,
@@ -845,7 +876,7 @@ function SortableAgentRailItem({
 			)}
 		>
 			<RailFocusButton
-				href={href}
+				href={agent.href}
 				label={label}
 				caption={caption}
 				active={active}
@@ -858,7 +889,7 @@ function SortableAgentRailItem({
 				showTooltip={showTooltip}
 			>
 				<span className="relative inline-flex rounded-md">
-					<AgentIcon agent={agent.agent_type} size="rail" avatarUrl={agent.avatar_url} />
+					<AgentIcon agent={agent.agentType} size="rail" avatarUrl={agent.avatarUrl} />
 					{kind === "cloud" ? (
 						<span
 							title="Clawdi Cloud agent"
@@ -886,7 +917,7 @@ function FocusRailContent({
 	onNavigate,
 	showTooltips = true,
 }: {
-	agents: SidebarEnvironment[];
+	agents: AgentTile[];
 	activeAgentId: string | null;
 	onNavigate?: () => void;
 	showTooltips?: boolean;
@@ -896,12 +927,12 @@ function FocusRailContent({
 	const draggingRailItem = useRef(false);
 	const railPointerStart = useRef<{ x: number; y: number } | null>(null);
 	const suppressCurrentRailPointerClick = useRef(false);
-	const [railAgents, setRailAgents] = useState<SidebarEnvironment[]>(() =>
-		[...agents].sort(compareAgentEnvironments),
+	const [railAgents, setRailAgents] = useState<AgentTile[]>(() =>
+		[...agents].sort(compareAgentTiles),
 	);
 	const railAgentsRef = useRef(railAgents);
-	const dragStartRailAgents = useRef<SidebarEnvironment[] | null>(null);
-	const setRailAgentsOrder = (next: SidebarEnvironment[]) => {
+	const dragStartRailAgents = useRef<AgentTile[] | null>(null);
+	const setRailAgentsOrder = (next: AgentTile[]) => {
 		railAgentsRef.current = next;
 		setRailAgents(next);
 	};
@@ -911,32 +942,35 @@ function FocusRailContent({
 	);
 	useEffect(() => {
 		if (!draggingRailItem.current) {
-			setRailAgentsOrder([...agents].sort(compareAgentEnvironments));
+			setRailAgentsOrder([...agents].sort(compareAgentTiles));
 		}
 	}, [agents]);
 	const orderedAgents = railAgents;
 	const orderedAgentIds = orderedAgents.map((agent) => agent.id);
 	const reorderAgents = useMutation({
-		mutationFn: async (environmentIds: string[]) =>
-			unwrap(await api.PATCH("/v1/agents/order", { body: { agent_ids: environmentIds } })),
-		onMutate: async (environmentIds) => {
+		mutationFn: async ({
+			environmentIds,
+		}: {
+			environmentIds: string[];
+			previousRail: AgentTile[];
+		}) => unwrap(await api.PATCH("/v1/agents/order", { body: { agent_ids: environmentIds } })),
+		onMutate: async ({ environmentIds, previousRail }) => {
 			await queryClient.cancelQueries({ queryKey: ["agents"] });
 			const previous = queryClient.getQueryData<SidebarEnvironment[]>(["agents"]);
 			queryClient.setQueryData<SidebarEnvironment[]>(["agents"], (current) =>
 				current ? reorderEnvironmentsForCache(current, environmentIds) : current,
 			);
-			return { previous };
+			return { previous, previousRail };
 		},
-		onError: (error, _environmentIds, context) => {
+		onError: (error, _variables, context) => {
 			if (context?.previous) {
 				queryClient.setQueryData(["agents"], context.previous);
-				setRailAgentsOrder([...context.previous].sort(compareAgentEnvironments));
 			}
+			if (context?.previousRail) setRailAgentsOrder(context.previousRail);
 			toast.error("Couldn't reorder agents", { description: errorMessage(error) });
 		},
 		onSuccess: (data) => {
 			queryClient.setQueryData(["agents"], data);
-			setRailAgentsOrder([...data].sort(compareAgentEnvironments));
 		},
 	});
 	const onDragEnd = (event: DragEndEvent) => {
@@ -955,13 +989,16 @@ function FocusRailContent({
 			const from = finalIds.indexOf(String(active.id));
 			const to = finalIds.indexOf(String(over.id));
 			if (from >= 0 && to >= 0) {
-				finalAgents = reorderEnvironmentsByIndex(finalAgents, from, to);
+				finalAgents = reorderAgentTilesByIndex(finalAgents, from, to);
 				setRailAgentsOrder(finalAgents);
 				finalIds = finalAgents.map((agent) => agent.id);
 			}
 		}
 		if (sameOrder(initialIds, finalIds)) return;
-		reorderAgents.mutate(finalIds);
+		reorderAgents.mutate({
+			environmentIds: finalAgents.flatMap((agent) => (agent.env ? [agent.env.id] : [])),
+			previousRail: initialAgents ?? orderedAgents,
+		});
 	};
 	const onDragOver = (event: DragOverEvent) => {
 		const { active, over } = event;
@@ -972,7 +1009,7 @@ function FocusRailContent({
 		const from = current.findIndex((agent) => agent.id === activeId);
 		const to = current.findIndex((agent) => agent.id === overId);
 		if (from < 0 || to < 0 || from === to) return;
-		setRailAgentsOrder(reorderEnvironmentsByIndex(current, from, to));
+		setRailAgentsOrder(reorderAgentTilesByIndex(current, from, to));
 	};
 	const beginRailDragGesture = () => {
 		draggingRailItem.current = true;
@@ -1080,7 +1117,7 @@ function FocusRailContent({
 							if (dragStartRailAgents.current) {
 								setRailAgentsOrder(dragStartRailAgents.current);
 							} else {
-								setRailAgentsOrder([...agents].sort(compareAgentEnvironments));
+								setRailAgentsOrder([...agents].sort(compareAgentTiles));
 							}
 							dragStartRailAgents.current = null;
 						}}
@@ -1092,7 +1129,7 @@ function FocusRailContent({
 								<SortableAgentRailItem
 									key={agent.id}
 									agent={agent}
-									active={activeAgentId === agent.id}
+									active={activeAgentId === agent.env?.id}
 									onNavigate={onRailAgentNavigate}
 									onClickCapture={onRailAgentClickCapture}
 									onPointerDownCapture={recordRailPointerStart}
@@ -1263,7 +1300,7 @@ function RailSidebar({
 	agents,
 	activeAgentId,
 }: {
-	agents: SidebarEnvironment[];
+	agents: AgentTile[];
 	activeAgentId: string | null;
 }) {
 	return (
@@ -1554,6 +1591,7 @@ export function AppSidebar({
 	const api = useApi();
 	const hostedAccess = useHostedProductAccess();
 	const [mounted, setMounted] = useState(false);
+	const [hostedAgentTiles, setHostedAgentTiles] = useState<AgentTile[] | null>(null);
 	useEffect(() => {
 		setMounted(true);
 	}, []);
@@ -1566,9 +1604,17 @@ export function AppSidebar({
 		refetchInterval: activeAgentId ? 10_000 : false,
 	});
 	const hydratedEnvironments = mounted ? environments : undefined;
-	const agentsLoaded = hydratedEnvironments !== undefined;
-	const agents = hydratedEnvironments ?? [];
-	const activeAgent = activeAgentId ? agents.find((env) => env.id === activeAgentId) : null;
+	const selfManagedTiles = useMemo(
+		() => selfManagedAgentTiles(hydratedEnvironments),
+		[hydratedEnvironments],
+	);
+	const unifiedAgentListEnabled = mounted && Boolean(HostedUnifiedAgentListSensor);
+	const agentsLoaded =
+		hydratedEnvironments !== undefined && (!unifiedAgentListEnabled || hostedAgentTiles !== null);
+	const agents = unifiedAgentListEnabled ? (hostedAgentTiles ?? []) : selfManagedTiles;
+	const activeAgent = activeAgentId
+		? (hydratedEnvironments?.find((env) => env.id === activeAgentId) ?? null)
+		: null;
 	const activeSection = agentRoute?.section ?? "overview";
 	const [settingsSection, setSettingsSection] = useQueryState(
 		SETTINGS_QUERY_KEY,
@@ -1601,6 +1647,16 @@ export function AppSidebar({
 
 	return (
 		<>
+			{unifiedAgentListEnabled && HostedUnifiedAgentListSensor ? (
+				<Suspense fallback={null}>
+					<HostedUnifiedAgentListSensor
+						cloudEnvs={hydratedEnvironments ?? []}
+						showCloudDeployments
+						showLegacyAgents={hostedAccess.canUseLegacyHostedDashboard}
+						onChange={setHostedAgentTiles}
+					/>
+				</Suspense>
+			) : null}
 			{!isMobile ? <RailSidebar agents={agents} activeAgentId={activeAgentId} /> : null}
 			<Sidebar
 				collapsible="offcanvas"

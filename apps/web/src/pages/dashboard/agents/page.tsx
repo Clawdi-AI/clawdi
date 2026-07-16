@@ -60,7 +60,6 @@ export default function AgentsIndexPage() {
 			) : hostedSectionEnabled && HostedAgentsByCompute ? (
 				<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
 					<HostedAgentsByCompute
-						selfManagedTiles={selfManagedTiles}
 						envsLoading={envsLoading}
 						selfManagedError={envsError}
 						onRetrySelfManaged={() => {

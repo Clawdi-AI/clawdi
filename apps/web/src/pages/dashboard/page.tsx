@@ -73,7 +73,7 @@ const HostedSecondaryCTA = IS_HOSTED_BUILD
 	: null;
 const HostedFleetSummary = IS_HOSTED_BUILD
 	? lazy(() =>
-			import("@/hosted/use-hosted-agent-tiles").then((m) => ({
+			import("@/hosted/use-unified-agent-list").then((m) => ({
 				default: m.HostedFleetSummary,
 			})),
 		)
@@ -181,7 +181,6 @@ export default function DashboardPage() {
 			) : hostedSectionEnabled && HostedFleetSummary ? (
 				<Suspense fallback={greeting}>
 					<HostedFleetSummary
-						selfManagedTiles={selfManagedTiles}
 						cloudEnvs={environments ?? []}
 						showCloudDeployments={cloudDeploymentManagementEnabled}
 						showLegacyAgents={legacyHostedAgentsEnabled}
@@ -210,7 +209,6 @@ export default function DashboardPage() {
 					) : hostedSectionEnabled && HostedAgentsSection ? (
 						<Suspense fallback={<AgentsCard agents={selfManagedTiles} isLoading />}>
 							<HostedAgentsSection
-								selfManagedTiles={selfManagedTiles}
 								envsLoading={envsLoading}
 								selfManagedError={envsError}
 								onRetrySelfManaged={() => {
@@ -309,7 +307,6 @@ export default function DashboardPage() {
 					{hostedAccessLoading ? null : hostedSectionEnabled && HostedSecondaryCTA ? (
 						<Suspense fallback={null}>
 							<HostedSecondaryCTA
-								selfManagedCount={selfManagedCount}
 								envsLoading={envsLoading}
 								cloudEnvs={environments ?? []}
 								showCloudDeployments={cloudDeploymentManagementEnabled}
