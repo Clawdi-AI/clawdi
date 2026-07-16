@@ -38,7 +38,6 @@ function plan(overrides: Partial<Plan> & Pick<Plan, "slug" | "price_cents">): Pl
 		price_cents: priceCents,
 		points_per_usd: 100,
 		signup_grant_credits: 0,
-		subscription_grant_credits: 0,
 		vcpu: 1,
 		ram_gb: 1,
 		disk_size: 10,

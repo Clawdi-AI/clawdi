@@ -72,7 +72,6 @@ function plan(priceCents: number): Plan {
 		price_cents: priceCents,
 		points_per_usd: 100,
 		signup_grant_credits: 0,
-		subscription_grant_credits: 0,
 		vcpu: 2,
 		ram_gb: 4,
 		disk_size: 20,
