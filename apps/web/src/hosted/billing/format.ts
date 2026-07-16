@@ -24,6 +24,8 @@ const CREDITS = new Intl.NumberFormat("en-US", {
 	maximumFractionDigits: 0,
 });
 
+const DECIMAL_CREDITS = /^([+-]?)(\d+)(?:\.(\d+))?$/;
+
 /** Cents → "$19.00". */
 export function formatCents(cents: number): string {
 	return USD.format(cents / 100);
@@ -42,6 +44,22 @@ export function formatUsd(dollars: number): string {
 /** Credits → "1,000 credits" (no decimals — credits are integers). */
 export function formatCredits(credits: number): string {
 	return `${CREDITS.format(Math.round(credits))} credits`;
+}
+
+/**
+ * Decimal-string credits → a grouped display without rounding through a
+ * JavaScript number. Stripe wallet quotes use decimal strings so the debit
+ * shown before confirmation stays exact.
+ */
+export function formatExactCredits(credits: string): string {
+	const match = DECIMAL_CREDITS.exec(credits.trim());
+	if (!match) return "— credits";
+	const [, sign, rawWhole, rawFraction] = match;
+	const whole = rawWhole.replace(/^0+(?=\d)/, "");
+	const fraction = rawFraction?.replace(/0+$/, "") ?? "";
+	const normalizedSign = whole === "0" && !fraction ? "" : sign;
+	const groupedWhole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+	return `${normalizedSign}${groupedWhole}${fraction ? `.${fraction}` : ""} credits`;
 }
 
 /** Credits → USD string using the wallet's conversion rate. */
