@@ -36,6 +36,7 @@ export function WalletDebitEquation({
 	)} equals ${formatExactCredits(balanceAfterCredits)}`;
 	return (
 		<figure
+			data-hosted="true"
 			className="flex flex-col gap-1.5 rounded-lg border p-3 text-sm sm:flex-row sm:items-center"
 			data-testid="wallet-debit-equation"
 		>
