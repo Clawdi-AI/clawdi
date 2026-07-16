@@ -86,8 +86,7 @@ function isWalletComputeUpstreamDetail(
 	return (
 		(value.code === "wallet_balance_refresh_failed" ||
 			value.code === "wallet_compute_charge_failed" ||
-			value.code === "wallet_compute_upstream_failed" ||
-			value.code === "resize_failed_retryable") &&
+			value.code === "wallet_compute_upstream_failed") &&
 		value.retryable === true &&
 		(value.failure_code === undefined ||
 			value.failure_code === null ||
@@ -98,10 +97,12 @@ function isWalletComputeUpstreamDetail(
 function isWalletComputeConflictDetail(
 	value: Record<string, unknown>,
 ): value is Exclude<WalletComputeConflictError["detail"], string> {
+	if (value.code === "open_refund_debt") {
+		return typeof value.outstanding_debt_credits === "string";
+	}
 	return (
 		value.code === "deploy_request_funding_conflict" ||
 		value.code === "idempotency_key_reused" ||
-		value.code === "open_refund_debt" ||
 		(typeof value.code === "string" && value.retryable === true)
 	);
 }
@@ -114,6 +115,24 @@ export function walletComputeErrorDetail(error: unknown): WalletComputeErrorDeta
 	if (isWalletComputeUpstreamDetail(detail)) return detail;
 	if (isWalletComputeConflictDetail(detail)) return detail;
 	return null;
+}
+
+export function isIdempotencyKeyReusedError(error: unknown): boolean {
+	return billingErrorDetail(error)?.code === "idempotency_key_reused";
+}
+
+export function walletRefundDebtCredits(error: unknown): number | null {
+	const detail = walletComputeErrorDetail(error);
+	if (
+		!detail ||
+		typeof detail === "string" ||
+		detail.code !== "open_refund_debt" ||
+		!("outstanding_debt_credits" in detail)
+	) {
+		return null;
+	}
+	const credits = Number(detail.outstanding_debt_credits);
+	return Number.isFinite(credits) && credits > 0 ? credits : null;
 }
 
 /**
@@ -219,13 +238,13 @@ export function normalizeBillingError(error: unknown): string {
 	if (error instanceof BillingApiError) {
 		const code = billingErrorDetail(error)?.code;
 		if (code === "open_refund_debt") {
-			return "A wallet refund is still settling. Try again after it completes.";
+			return "Top up your Wallet to continue. New funds repay refund debt before compute charges.";
 		}
 		if (code === "deploy_request_funding_conflict") {
 			return "This deploy request is already linked to a different payment flow.";
 		}
 		if (code === "idempotency_key_reused") {
-			return "This payment request conflicts with an earlier attempt. Refresh and try again.";
+			return "This attempt conflicts with an earlier request. Review the details and submit again for a fresh attempt.";
 		}
 		if (typeof code === "string") {
 			return "The billing request could not be completed. Refresh and try again.";

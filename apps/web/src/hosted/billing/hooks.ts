@@ -415,6 +415,7 @@ export function useUsage() {
 export function shouldPollWalletDunningFor(
 	deployments: readonly HostedDeployment[] | undefined,
 	targetId: string | null | undefined,
+	now = Date.now(),
 ): boolean {
 	const target = targetId?.toLowerCase();
 	if (!target) return false;
@@ -426,11 +427,21 @@ export function shouldPollWalletDunningFor(
 			);
 		if (!matchesTarget) return false;
 		const subscription = deployment.compute_subscription;
-		if (subscription?.payment_state !== "past_due") return false;
-		return (
-			subscription.recovery_action === "top_up" ||
-			(!subscription.recovery_action && subscription.funding_source === "wallet")
-		);
+		const walletFunded =
+			subscription?.funding_source === "wallet" || subscription?.recovery_action === "top_up";
+		if (!subscription || !walletFunded) return false;
+		if (subscription.payment_state === "past_due") return true;
+		if (subscription.payment_state !== "ok") return false;
+		const status = subscription.status.toLowerCase();
+		if (status !== "active" && status !== "trialing") return false;
+		const collectionBoundary =
+			subscription.next_collection_attempt_at ?? subscription.current_period_end ?? null;
+		if (!collectionBoundary) return false;
+		const boundaryMs = Date.parse(collectionBoundary);
+		if (!Number.isFinite(boundaryMs)) return false;
+		// Start shortly before the collection boundary. A successful collection
+		// advances the projected period, while past_due keeps polling through grace.
+		return boundaryMs - now <= 60_000;
 	});
 }
 

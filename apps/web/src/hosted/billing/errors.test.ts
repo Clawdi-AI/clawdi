@@ -129,7 +129,7 @@ describe("normalizeBillingError", () => {
 		const unknown = new BillingApiError(409, '{"detail":{"code":"bridge_internal_17"}}', {
 			detail: { code: "bridge_internal_17" },
 		});
-		expect(normalizeBillingError(known)).toContain("refund is still settling");
+		expect(normalizeBillingError(known)).toContain("repay refund debt");
 		expect(normalizeBillingError(unknown)).toBe(
 			"The billing request could not be completed. Refresh and try again.",
 		);
@@ -141,7 +141,7 @@ describe("normalizeBillingError", () => {
 });
 
 describe("walletComputeErrorDetail", () => {
-	test("accepts the retry shortfall and resize-pending generated error variants", () => {
+	test("accepts shortfall and refund-debt generated error variants", () => {
 		const insufficient = walletComputeErrorDetail(
 			new BillingApiError(402, "insufficient", {
 				detail: {
@@ -154,15 +154,17 @@ describe("walletComputeErrorDetail", () => {
 		);
 		expect(insufficient).toMatchObject({ code: "insufficient_balance" });
 
-		const resize = walletComputeErrorDetail(
-			new BillingApiError(502, "resize", {
+		const debt = walletComputeErrorDetail(
+			new BillingApiError(409, "refund debt", {
 				detail: {
-					code: "resize_failed_retryable",
-					failure_code: "deployment_resize_failed",
-					retryable: true,
+					code: "open_refund_debt",
+					outstanding_debt_credits: "2500.5",
 				},
 			}),
 		);
-		expect(resize).toMatchObject({ code: "resize_failed_retryable" });
+		expect(debt).toMatchObject({
+			code: "open_refund_debt",
+			outstanding_debt_credits: "2500.5",
+		});
 	});
 });

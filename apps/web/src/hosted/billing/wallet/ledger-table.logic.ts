@@ -1,8 +1,15 @@
 import type { WalletLedgerEntry } from "@/hosted/billing/contracts";
 
-export type LedgerFilter = "all" | "topup" | "grant" | "usage" | "refund";
+export type LedgerFilter = "all" | "topup" | "grant" | "usage" | "compute" | "refund";
 
-const LEDGER_FILTERS: readonly LedgerFilter[] = ["all", "topup", "grant", "usage", "refund"];
+const LEDGER_FILTERS: readonly LedgerFilter[] = [
+	"all",
+	"topup",
+	"grant",
+	"usage",
+	"compute",
+	"refund",
+];
 
 export interface LedgerEmptyStateCopyInput {
 	entriesCount: number;
@@ -23,6 +30,7 @@ export function ledgerOperationGroup(op: string): LedgerFilter {
 	if (op === "topup" || op === "invoice" || op === "x402") return "topup";
 	if (op.startsWith("grant_")) return "grant";
 	if (op === "proxy") return "usage";
+	if (op === "compute_charge" || op === "compute_credit") return "compute";
 	if (op === "refund") return "refund";
 	return "all";
 }

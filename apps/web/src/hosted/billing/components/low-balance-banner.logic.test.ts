@@ -5,6 +5,7 @@ import { lowBalanceBannerState } from "./low-balance-banner.logic";
 function wallet(over: Partial<WalletState> = {}): WalletState {
 	return {
 		balance_credits: 50_000,
+		overdraft_credits: 0,
 		balance_snapshot_at: null,
 		payment_mode: "card",
 		x402_enabled: true,

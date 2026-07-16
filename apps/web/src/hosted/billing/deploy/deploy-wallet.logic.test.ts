@@ -21,13 +21,30 @@ describe("walletActivationFailure", () => {
 			kind: "insufficient",
 			code: "insufficient_wallet_balance",
 			shortfallCredits: 14_000.5,
+			topUpCredits: 14_000.5,
+		});
+	});
+
+	test("prefills enough to repay refund debt before the blocked charge", () => {
+		const failure = walletActivationFailure(
+			new BillingApiError(409, "refund debt", {
+				detail: { code: "open_refund_debt", outstanding_debt_credits: "2500.5" },
+			}),
+			9_000,
+		);
+		expect(failure).toMatchObject({
+			kind: "refund_debt",
+			debtCredits: 2_500.5,
+			topUpCredits: 11_500.5,
 		});
 	});
 
 	test("separates conflicts from retryable ambiguous failures", () => {
 		expect(
 			walletActivationFailure(
-				new BillingApiError(409, "conflict", { detail: { code: "open_refund_debt" } }),
+				new BillingApiError(409, "conflict", {
+					detail: { code: "deploy_request_funding_conflict" },
+				}),
 			).kind,
 		).toBe("conflict");
 		expect(

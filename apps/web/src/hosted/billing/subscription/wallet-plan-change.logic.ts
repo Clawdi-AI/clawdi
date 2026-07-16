@@ -1,11 +1,12 @@
 import type { ComputePlanSlug, WalletComputePlanChangeResult } from "@/hosted/billing/contracts";
-import { BillingApiError, isNetworkError, walletComputeErrorDetail } from "@/hosted/billing/errors";
-import { decimalCredits } from "@/hosted/billing/wallet/wallet-compute.logic";
+import { BillingApiError, isNetworkError, walletRefundDebtCredits } from "@/hosted/billing/errors";
+import { formatCents } from "@/hosted/billing/format";
+import { formatShortDate } from "@/lib/format";
 import { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG } from "./subscription-utils";
 
 export type WalletPlanChangeFailure = {
-	kind: "insufficient" | "conflict" | "resize_pending" | "retryable" | "other";
-	shortfallCredits: number | null;
+	kind: "refund_debt" | "conflict" | "retryable" | "other";
+	debtCredits: number | null;
 };
 
 export function walletPlanTarget(
@@ -25,45 +26,18 @@ export function walletPlanResultTarget(
 }
 
 export function walletPlanChangeFailure(error: unknown): WalletPlanChangeFailure {
-	const detail = walletComputeErrorDetail(error);
-	if (error instanceof BillingApiError && error.status === 402) {
-		const value =
-			detail && typeof detail !== "string" && "shortfall_credits" in detail
-				? detail.shortfall_credits
-				: null;
-		return {
-			kind: "insufficient",
-			shortfallCredits: typeof value === "string" ? decimalCredits(value) : null,
-		};
-	}
 	if (error instanceof BillingApiError && error.status === 409) {
-		return { kind: "conflict", shortfallCredits: null };
+		const debtCredits = walletRefundDebtCredits(error);
+		return debtCredits === null
+			? { kind: "conflict", debtCredits: null }
+			: { kind: "refund_debt", debtCredits };
 	}
-	if (
-		error instanceof BillingApiError &&
-		error.status === 502 &&
-		detail !== null &&
-		typeof detail !== "string" &&
-		"code" in detail &&
-		detail.code === "resize_failed_retryable"
-	) {
-		return { kind: "resize_pending", shortfallCredits: null };
+	if (isNetworkError(error) || (error instanceof BillingApiError && error.status >= 500)) {
+		return { kind: "retryable", debtCredits: null };
 	}
-	if (
-		isNetworkError(error) ||
-		(error instanceof BillingApiError &&
-			error.status >= 500 &&
-			detail !== null &&
-			typeof detail !== "string" &&
-			"retryable" in detail)
-	) {
-		return { kind: "retryable", shortfallCredits: null };
-	}
-	return { kind: "other", shortfallCredits: null };
+	return { kind: "other", debtCredits: null };
 }
 
 export function walletPlanChangeSummary(quote: WalletComputePlanChangeResult): string {
-	return quote.change_kind === "upgrade"
-		? "The prorated difference is charged from Wallet now, then compute resizes immediately."
-		: "The current plan stays active until the next renewal, when the lower monthly charge begins.";
+	return `Changes at next renewal on ${formatShortDate(quote.effective_at)} · then ${formatCents(quote.amount_cents)}/mo.`;
 }

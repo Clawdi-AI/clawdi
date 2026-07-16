@@ -4,6 +4,7 @@ import { decimalCredits, walletComputeCoverage } from "./wallet-compute.logic";
 
 const wallet: WalletState = {
 	balance_credits: 2_800,
+	overdraft_credits: 0,
 	balance_snapshot_at: null,
 	payment_mode: "card",
 	x402_enabled: false,
@@ -118,6 +119,16 @@ describe("walletComputeCoverage", () => {
 			pendingPlanLabel: "Basic",
 			priceCents: 900,
 		});
+	});
+
+	test("keeps non-renewing lifecycle states visible without counting commitment", () => {
+		for (const status of ["unpaid", "paused", "incomplete", "canceled", "expired"]) {
+			const terminal = deployment(status, "compute_basic", 900, "2026-08-15T00:00:00Z");
+			if (terminal.compute_subscription) terminal.compute_subscription.status = status;
+			const result = walletComputeCoverage(wallet, [terminal]);
+			expect(result.deployments[0]?.renews, status).toBe(false);
+			expect(result.totalMonthlyCents, status).toBe(0);
+		}
 	});
 });
 

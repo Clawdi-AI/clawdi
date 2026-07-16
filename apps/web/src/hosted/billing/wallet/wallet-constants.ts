@@ -23,7 +23,7 @@ export const LOW_BALANCE_USD = 2;
 // with thousands of entries can never render thousands of rows. "Show more"
 // steps up by a page until the cap, then the table states it's capped.
 export const LEDGER_PAGE_SIZE = 50;
-export const LEDGER_MAX_ROWS = 500;
+export const LEDGER_MAX_ROWS = 100;
 
 export function isLowBalance(balanceCredits: number, pointsPerUsd: number): boolean {
 	if (!pointsPerUsd) return false;
