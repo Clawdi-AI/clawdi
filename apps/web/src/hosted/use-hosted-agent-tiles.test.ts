@@ -300,14 +300,21 @@ describe("hostedRuntimeStatusView", () => {
 		expect(view.secondary).toBeNull();
 	});
 
-	test("counts a hosted runtime active when its joined environment is fresh", () => {
+	test("keeps a failed deployment inactive when its joined environment is fresh", () => {
+		const view = hostedRuntimeStatusView("failed", env({ last_seen_at: new Date().toISOString() }));
+
+		expect(view.primary.label).toBe("Failed");
+		expect(view.active).toBe(false);
+	});
+
+	test("keeps a stopped deployment inactive when its joined environment is fresh", () => {
 		const view = hostedRuntimeStatusView(
 			"stopped",
 			env({ last_seen_at: new Date().toISOString() }),
 		);
 
 		expect(view.primary.label).toBe("Stopped");
-		expect(view.active).toBe(true);
+		expect(view.active).toBe(false);
 		expect(view.secondary).toBeNull();
 	});
 
