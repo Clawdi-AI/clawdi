@@ -55,6 +55,10 @@ export function topUpAmountCentsForCreditShortfall(
 export function invalidateWalletActivity(queryClient: QueryClient): void {
 	queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
 	queryClient.invalidateQueries({ queryKey: ["billing", "ledger"] });
+	queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
+	queryClient.invalidateQueries({ queryKey: ["billing", "invoices"] });
+	queryClient.invalidateQueries({ queryKey: ["billing", "history"] });
+	queryClient.invalidateQueries({ queryKey: ["agents"] });
 }
 
 export function completeTopup(
@@ -66,7 +70,7 @@ export function completeTopup(
 	controls.onComplete?.(status);
 	if (status === "succeeded") {
 		controls.toastSuccess("Top-up complete", {
-			description: "Your AI Credits will appear in a moment.",
+			description: "Your balance and any open wallet invoice will update automatically.",
 		});
 	} else {
 		controls.toastSuccess("Top-up processing", {

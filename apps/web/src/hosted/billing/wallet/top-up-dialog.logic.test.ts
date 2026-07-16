@@ -23,6 +23,10 @@ function queryClientWithWalletActivity(): QueryClient {
 	const qc = new QueryClient();
 	qc.setQueryData(billingKeys.wallet, { balance_cents: 1_000 });
 	qc.setQueryData(billingKeys.ledger(50), { items: [] });
+	qc.setQueryData(billingKeys.deployments, []);
+	qc.setQueryData(billingKeys.invoices(12), { items: [] });
+	qc.setQueryData(billingKeys.billingHistory(20), { pages: [] });
+	qc.setQueryData(["agents"], []);
 	return qc;
 }
 
@@ -54,10 +58,14 @@ describe("handleTopupStartResult", () => {
 
 		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.ledger(50))?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.invoices(12))?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(billingKeys.billingHistory(20))?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
 		expect(resetAttempt).toHaveBeenCalledTimes(1);
 		expect(closeDialog).toHaveBeenCalledTimes(1);
 		expect(toastSuccess).toHaveBeenCalledWith("Top-up complete", {
-			description: "Your AI Credits will appear in a moment.",
+			description: "Your balance and any open wallet invoice will update automatically.",
 		});
 		expect(toastError).not.toHaveBeenCalled();
 		expect(startPayment).not.toHaveBeenCalled();
