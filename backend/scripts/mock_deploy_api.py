@@ -271,7 +271,7 @@ async def create_deployment(request: Request) -> dict[str, Any]:
         enabled_optional.append("hermes")
     agents = ["codex", *enabled_optional]
     config = _base_config()
-    config["compute_plan_slug"] = body.get("compute_plan_slug", "compute_free")
+    config["compute_plan_slug"] = body.get("compute_plan_slug", "compute_basic")
     config["enable_openclaw"] = "openclaw" in enabled_optional
     config["enable_hermes"] = "hermes" in enabled_optional
     config["onboarded_agents"] = agents
@@ -596,8 +596,8 @@ async def start_deployment(deployment_id: str) -> dict[str, Any]:
 async def plans() -> list[dict[str, Any]]:
     return [
         {
-            "slug": "compute_free",
-            "name": "Free",
+            "slug": "compute_basic",
+            "name": "Basic",
             "price_cents": 0,
             "points_per_usd": 100,
             "signup_grant_credits": 500,
@@ -606,7 +606,14 @@ async def plans() -> list[dict[str, Any]]:
             "ram_gb": 2,
             "disk_size": 20,
             "instance_type": "dev-free",
-            "offers": [],
+            "offers": [
+                {
+                    "billing_term_months": 1,
+                    "price_cents": 0,
+                    "effective_monthly_price_cents": 0,
+                    "discount_percent": 0,
+                }
+            ],
         },
         {
             "slug": "compute_performance",
@@ -718,6 +725,28 @@ async def invoices() -> dict[str, Any]:
         ],
         "has_more": False,
         "next_starting_after": None,
+    }
+
+
+@app.get("/v2/subscription/billing-history")
+async def billing_history() -> dict[str, Any]:
+    now = _now()
+    return {
+        "data": [
+            {
+                "id": "stripe:in_dev_performance",
+                "funding_source": "stripe",
+                "compute_subscription_id": 1,
+                "plan_slug": "compute_performance",
+                "status": "paid",
+                "amount_cents": 1900,
+                "currency": "usd",
+                "created": _iso(now - timedelta(days=7)),
+                "hosted_invoice_url": f"{_web_base_url()}/?mockInvoice=1",
+            }
+        ],
+        "has_more": False,
+        "next_cursor": None,
     }
 
 

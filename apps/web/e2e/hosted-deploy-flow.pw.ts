@@ -15,7 +15,7 @@ async function clearFreeDeployments(request: APIRequestContext) {
 	}>;
 	await Promise.all(
 		deployments
-			.filter((deployment) => deployment.config_info?.compute_plan_slug === "compute_free")
+			.filter((deployment) => deployment.config_info?.compute_plan_slug === "compute_basic")
 			.map((deployment) => request.delete(`${DEPLOY_API}/v2/deployments/${deployment.id}`)),
 	);
 }
@@ -40,7 +40,7 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 		"aria-pressed",
 		"false",
 	);
-	await page.getByRole("button", { name: /Free/i }).click();
+	await expect(page.getByText("First slot free", { exact: true })).toBeVisible();
 
 	const createdResponse = page.waitForResponse(
 		(response) =>
@@ -63,9 +63,8 @@ test("deploy wizard creates one selected runtime and renders mock status transit
 	expect(errors, `deploy flow: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("deployment status surface renders every known status from the shared status source", async ({
+test("deployment status surface renders every list-visible known status from the shared status source", async ({
 	page,
-	request,
 }) => {
 	const errors = collectBrowserErrors(page);
 	await stubCloudApi(page);
@@ -101,9 +100,10 @@ test("deployment status surface renders every known status from the shared statu
 	});
 
 	await page.goto("/agents");
-	for (const raw of KNOWN_DEPLOYMENT_STATUSES) {
+	for (const raw of KNOWN_DEPLOYMENT_STATUSES.filter((status) => status !== "deleted")) {
 		const label = deploymentStatusLabel(parseDeploymentStatus(raw));
 		await expect(page.getByText(label).first()).toBeVisible();
 	}
+	await expect(page.getByText("Deleted")).toHaveCount(0);
 	expect(errors, `status surface: ${errors.join(" | ")}`).toEqual([]);
 });

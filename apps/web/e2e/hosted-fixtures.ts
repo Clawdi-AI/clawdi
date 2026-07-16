@@ -83,6 +83,16 @@ export async function stubCloudApi(page: Page) {
 	const providers: JsonRecord[] = [managedProvider()];
 
 	await page.route("**/favicon.ico", (route) => route.fulfill({ status: 204, body: "" }));
+	await page.route(`${DEPLOY_API}/me`, (route) =>
+		fulfillJson(route, {
+			capabilities: { can_use_v1: false, can_use_v2: true, can_use_plan_c_billing: true },
+		}),
+	);
+	await page.route(`${DEPLOY_API}/v1/me`, (route) =>
+		fulfillJson(route, {
+			capabilities: { can_use_v1: false, can_use_v2: true, can_use_plan_c_billing: true },
+		}),
+	);
 
 	await page.route(`${CLOUD_API}/**`, async (route) => {
 		const request = route.request();
@@ -185,7 +195,7 @@ export async function stubCloudApi(page: Page) {
 		if (path === "/v1/ai-providers" && method === "GET") return fulfillJson(route, { providers });
 		if (path === "/v1/ai-providers" && method === "POST") {
 			const body = requestJson(route);
-			const provider = {
+			const provider: JsonRecord = {
 				...body,
 				auth: body.auth ?? { type: "secret_ref" },
 				models: body.models ?? [],

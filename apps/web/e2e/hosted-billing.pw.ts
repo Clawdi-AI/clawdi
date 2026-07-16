@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { collectBrowserErrors, stubCloudApi } from "./hosted-fixtures";
 
-test.beforeEach(async ({ page, request }) => {
+test.beforeEach(async ({ page }) => {
 	await stubCloudApi(page);
 });
 
@@ -32,7 +32,8 @@ test("billing entry points render when cloud features are enabled", async ({ pag
 	await settings.getByRole("button", { name: /Compute/ }).click();
 	await expect(settings.getByRole("heading", { name: "Compute", exact: true })).toBeVisible();
 	await expect(settings.getByText("Compute is managed per agent")).toBeVisible();
-	await expect(settings.getByRole("cell", { name: "E2E-0001" })).toBeVisible();
+	await expect(settings.getByRole("region", { name: "Billing history" })).toBeVisible();
+	await expect(settings.getByRole("table").getByText("Paid", { exact: true })).toBeVisible();
 	await expect(settings.getByText("Performance").first()).toBeVisible();
 	expect(errors, `billing entry points: ${errors.join(" | ")}`).toEqual([]);
 });
