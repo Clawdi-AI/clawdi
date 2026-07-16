@@ -125,6 +125,29 @@ const stoppedIncludedBasicDeployment = {
 	status: "stopped",
 };
 
+const missingProjectionEnvironmentId = "55555555-5555-4555-8555-555555555555";
+const missingProjectionFailureReason =
+	"startup_probe_failing; restart_count=2; container failed readiness probe after the runtime bridge exhausted every startup attempt";
+const failedMissingProjectionDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_failed_projection",
+	name: "Failed projection agent",
+	status: "failed",
+	failure_reason: missingProjectionFailureReason,
+	config_info: {
+		...includedBasicDeployment.config_info,
+		clawdi_cloud_environments: { hermes: missingProjectionEnvironmentId },
+	},
+};
+
+const interruptedIdentitylessDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_creation_interrupted",
+	name: "Interrupted deployment",
+	status: "failed",
+	failure_reason: "creation_interrupted",
+};
+
 const walletState = {
 	balance_credits: 25_000,
 	overdraft_credits: 0,
@@ -245,7 +268,9 @@ type HostedApiStubOptions = {
 	billingHistoryResponses?: unknown[];
 	cancelRequests?: string[];
 	checkoutRequests?: string[];
+	cloudAgentNotFoundIds?: readonly string[];
 	createRequests?: string[];
+	deleteRequests?: string[];
 	deployRequestStatusRequests?: string[];
 	deployRequestStatusResponses?: StubResponse[];
 	deployments?: readonly unknown[];
@@ -255,6 +280,7 @@ type HostedApiStubOptions = {
 	ledgerResponses?: unknown[];
 	plans?: readonly unknown[];
 	retryRequests?: string[];
+	restartRequests?: string[];
 	walletRetryResponses?: StubResponse[];
 	startError?: { status: number; detail: string };
 	startRequests?: string[];
@@ -483,12 +509,20 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				cancel_at: "2026-08-15T00:00:00Z",
 			});
 		}
+		if (p.endsWith("/restart") && r.request().method() === "POST") {
+			options.restartRequests?.push(p);
+			return fulfillJson(r, { status: "starting" });
+		}
 		if (p.endsWith("/start") && r.request().method() === "POST") {
 			options.startRequests?.push(r.request().postData() ?? "");
 			if (options.startError) {
 				return fulfillJson(r, { detail: options.startError.detail }, options.startError.status);
 			}
 			return fulfillJson(r, { status: "starting" });
+		}
+		if (p.startsWith("/v2/deployments/") && r.request().method() === "DELETE") {
+			options.deleteRequests?.push(p);
+			return fulfillJson(r, { status: "deleted", cvm_deleted: true });
 		}
 		return fulfillJson(r, {});
 	});
@@ -499,6 +533,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p === "/v1/agents") return fulfillJson(r, []);
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
+			if (options.cloudAgentNotFoundIds?.includes(id)) {
+				return fulfillJson(r, { detail: "Agent not found" }, 404);
+			}
 			return fulfillJson(r, {
 				id,
 				name: id,
@@ -624,6 +661,67 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	await page.getByRole("option").first().click();
 	await page.waitForTimeout(150);
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("env-keyed agent route keeps failed deployment recovery available without its projection", async ({
+	page,
+}) => {
+	const restartRequests: string[] = [];
+	const deleteRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [failedMissingProjectionDeployment],
+		plans: [basicPlan, performancePlan],
+		cloudAgentNotFoundIds: [missingProjectionEnvironmentId],
+		restartRequests,
+		deleteRequests,
+	});
+
+	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toBeVisible();
+	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toBeVisible();
+	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
+	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
+	await expect(main.getByText("Jul 15, 2026", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toHaveCount(0);
+
+	await main.getByRole("button", { name: "Retry startup", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Retry startup", exact: true })
+		.click();
+	await expect
+		.poll(() => restartRequests)
+		.toEqual(["/v2/deployments/hdep_failed_projection/restart"]);
+
+	await main.getByRole("button", { name: "Delete", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Delete compute", exact: true })
+		.click();
+	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_failed_projection"]);
+});
+
+test("identity-less interrupted deployment tile exposes delete", async ({ page }) => {
+	const deleteRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [interruptedIdentitylessDeployment],
+		deleteRequests,
+	});
+
+	await page.goto("/agents");
+	const deleteAction = page.getByRole("button", { name: "Delete Interrupted deployment" });
+	await expect(deleteAction).toBeVisible();
+	await deleteAction.click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Delete deployment", exact: true })
+		.click();
+	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_creation_interrupted"]);
 });
 
 test("paid-funded Basic leaves the included slot available for direct compute_basic deploy", async ({

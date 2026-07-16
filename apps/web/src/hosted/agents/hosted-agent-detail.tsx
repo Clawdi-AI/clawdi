@@ -32,6 +32,7 @@ import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
+import { ConnectedAgentDetailSkeleton } from "@/components/dashboard/connected-agent-detail";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -61,7 +62,6 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
 	useCreateRuntimeUiRedemption,
@@ -155,10 +155,7 @@ import {
 } from "@/hosted/billing/wallet/stripe-payment-form";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
-import {
-	compactDeploymentFailureReason,
-	deploymentFailureReason,
-} from "@/hosted/deployment-failure";
+import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
 	canRestart as canRestartDeployment,
 	canStart as canStartDeployment,
@@ -209,6 +206,7 @@ import {
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { isApiNotFoundError } from "@/lib/api-errors";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel, formatShortDate } from "@/lib/format";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -308,7 +306,13 @@ function provisioningTitle(status: DeploymentStatus): string {
 	return status.kind === "starting" ? "Starting your agent..." : "Setting up your agent...";
 }
 
-function RestartComputeAction({ deployment }: { deployment: HostedDeployment }) {
+function RestartComputeAction({
+	deployment,
+	label = "Restart compute",
+}: {
+	deployment: HostedDeployment;
+	label?: string;
+}) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
 	const status = parseDeploymentStatus(deployment.status);
@@ -317,7 +321,7 @@ function RestartComputeAction({ deployment }: { deployment: HostedDeployment }) 
 		<ConfirmAction
 			title="Restart compute?"
 			description={<p>This restarts this hosted agent.</p>}
-			confirmLabel="Restart compute"
+			confirmLabel={label}
 			onConfirm={() =>
 				runAction(async () => {
 					await lifecycle.mutateAsync({ id: deployment.id, action: "restart" });
@@ -330,7 +334,32 @@ function RestartComputeAction({ deployment }: { deployment: HostedDeployment }) 
 				) : (
 					<RefreshCw className="size-3.5" />
 				)}
-				Restart compute
+				{label}
+			</Button>
+		</ConfirmAction>
+	);
+}
+
+function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
+	const router = useRouter();
+	const deleteDeployment = useDeleteDeployment();
+	const runAction = useActionLock();
+	return (
+		<ConfirmAction
+			title={`Delete ${deploymentDisplayName(deployment.name)}?`}
+			description={<p>The hosted agent is torn down. This can’t be undone.</p>}
+			confirmLabel="Delete compute"
+			destructive
+			onConfirm={() =>
+				runAction(async () => {
+					await deleteDeployment.mutateAsync(deployment.id);
+					await router.navigate({ href: "/" });
+				})
+			}
+		>
+			<Button type="button" variant="destructive" size="sm" disabled={deleteDeployment.isPending}>
+				{deleteDeployment.isPending ? <Spinner /> : <Trash2 />}
+				Delete
 			</Button>
 		</ConfirmAction>
 	);
@@ -398,6 +427,7 @@ export function HostedAgentDetail({
 		enabled: isCloudEnvId(environmentId),
 	});
 	const agent = agentQuery.data;
+	const agentProjectionMissing = isApiNotFoundError(agentQuery.error);
 	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
@@ -426,8 +456,22 @@ export function HostedAgentDetail({
 
 	const sessions = useQuery({
 		...sessionListQueryOptions(api, { environment_id: environmentId, page_size: 20 }),
-		enabled: isCloudEnvId(environmentId),
+		enabled: Boolean(agent),
 	});
+
+	if (agentQuery.isLoading && isCloudEnvId(environmentId)) {
+		return <ConnectedAgentDetailSkeleton hosted />;
+	}
+
+	if (agentProjectionMissing) {
+		return (
+			<MissingAgentProjectionDetail
+				deployment={deployment}
+				runtime={runtime}
+				environmentId={environmentId}
+			/>
+		);
+	}
 
 	const activeNavItem = HOSTED_AGENT_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
@@ -660,20 +704,16 @@ function OverviewProvisioningPanel({ status }: { status: DeploymentStatus }) {
 }
 
 function DeploymentFailureReasonText({ reason }: { reason: string }) {
-	const preview = compactDeploymentFailureReason(reason);
-	return (
-		<Tooltip>
-			<TooltipTrigger
-				render={<span className="mt-2 block max-w-full truncate font-mono text-xs" />}
-			>
-				{preview}
-			</TooltipTrigger>
-			<TooltipContent className="max-w-sm whitespace-normal break-words">{reason}</TooltipContent>
-		</Tooltip>
-	);
+	return <p className="mt-2 whitespace-pre-wrap break-words font-mono text-xs">{reason}</p>;
 }
 
-function OverviewFailedPanel({ deployment }: { deployment: HostedDeployment }) {
+function OverviewFailedPanel({
+	deployment,
+	restartLabel = "Restart compute",
+}: {
+	deployment: HostedDeployment;
+	restartLabel?: string;
+}) {
 	const status = parseDeploymentStatus(deployment.status);
 	const failureReason = deploymentFailureReason(deployment);
 	if (failureReason) {
@@ -689,7 +729,7 @@ function OverviewFailedPanel({ deployment }: { deployment: HostedDeployment }) {
 						<DeploymentFailureReasonText reason={failureReason} />
 					</div>
 					<div className="shrink-0">
-						<RestartComputeAction deployment={deployment} />
+						<RestartComputeAction deployment={deployment} label={restartLabel} />
 					</div>
 				</AlertDescription>
 			</Alert>
@@ -710,9 +750,70 @@ function OverviewFailedPanel({ deployment }: { deployment: HostedDeployment }) {
 					</div>
 				</div>
 				<div className="shrink-0">
-					<RestartComputeAction deployment={deployment} />
+					<RestartComputeAction deployment={deployment} label={restartLabel} />
 				</div>
 			</div>
+		</div>
+	);
+}
+
+function MissingAgentProjectionDetail({
+	deployment,
+	runtime,
+	environmentId,
+}: {
+	deployment: HostedDeployment;
+	runtime: Runtime;
+	environmentId: string;
+}) {
+	const status = parseDeploymentStatus(deployment.status);
+	const canRestart = canRestartDeployment(status);
+	const canStart = canStartDeployment(status);
+	const failed = status.kind === "failed";
+	return (
+		<div
+			data-hosted="true"
+			className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}
+		>
+			<section className="flex flex-col gap-5">
+				<PageHeader
+					title="Overview"
+					description="Deployment status and recovery controls."
+					icon={<Info className="size-4 text-muted-foreground" />}
+					status={<AgentSourceBadge source="hosted" compact />}
+				/>
+				<Alert data-hosted="true">
+					<AlertCircle />
+					<AlertTitle>Agent sync record unavailable</AlertTitle>
+					<AlertDescription>
+						The hosted deployment still claims agent {environmentId}, but its synced agent record is
+						missing. Runtime UI, terminal, sessions, and other agent data will become available
+						after the agent reconnects.
+					</AlertDescription>
+				</Alert>
+				{failed ? (
+					<OverviewFailedPanel deployment={deployment} restartLabel="Retry startup" />
+				) : null}
+				<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+					<StatCard label="Status" value={deploymentStatusLabel(status)} />
+					<StatCard
+						label="Compute plan"
+						value={computeTierLabel(deployment.config_info?.compute_plan_slug)}
+					/>
+					<StatCard label="Created" value={formatShortDate(deployment.created_at)} />
+					<StatCard label="Runtime" value={runtimeDisplayName(runtime)} />
+				</div>
+				<SettingsSection
+					title="Deployment actions"
+					description="Manage compute while synced agent data is unavailable."
+				>
+					<div className="flex flex-wrap gap-2.5">
+						{canRestart && !failed ? <RestartComputeAction deployment={deployment} /> : null}
+						{canStart && !failed ? <StartComputeAction deployment={deployment} /> : null}
+						<DeleteComputeAction deployment={deployment} />
+					</div>
+				</SettingsSection>
+			</section>
 		</div>
 	);
 }

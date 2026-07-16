@@ -194,13 +194,43 @@ describe("deploymentToTiles", () => {
 		});
 	});
 
-	test("keeps an unmatched deployment non-navigable instead of emitting an agent route", () => {
+	test("links by deployment env identity when the cloud-api projection is missing", () => {
 		const failureReason = "startup_probe_failing; restart_count=2";
+		const environmentId = "55555555-5555-4555-8555-555555555555";
 		const [tile] = hostedDeploymentToTiles(
 			deployment(
 				{
 					status: "failed",
 					failure_reason: failureReason,
+				},
+				{
+					clawdi_cloud_environments: { openclaw: environmentId },
+				},
+			),
+		);
+
+		expect(tile).toMatchObject({
+			id: "dep_123",
+			source: "on-clawdi",
+			href: `/agents/${environmentId}?source=on-clawdi`,
+			env: null,
+			secondaryStatus: {
+				label: "Failure: startup_probe_failing; restart_count=2",
+				title: failureReason,
+				textClass: "text-destructive-muted-foreground font-medium",
+			},
+		});
+		expect(tile?.manageHref).toBeUndefined();
+		expect(tile?.action).toBeUndefined();
+		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
+	});
+
+	test("keeps a deployment without an env identity non-navigable but exposes delete", () => {
+		const [tile] = hostedDeploymentToTiles(
+			deployment(
+				{
+					status: "failed",
+					failure_reason: "creation_interrupted",
 				},
 				{
 					clawdi_cloud_environments: {},
@@ -210,16 +240,14 @@ describe("deploymentToTiles", () => {
 
 		expect(tile).toMatchObject({
 			id: "dep_123",
-			source: "on-clawdi",
 			href: null,
 			env: null,
 			secondaryStatus: {
-				label: "Failure: startup_probe_failing; restart_count=2",
-				title: failureReason,
-				textClass: "text-destructive-muted-foreground font-medium",
+				label: "Failure: creation_interrupted",
+				title: "creation_interrupted",
 			},
 		});
-		expect(tile?.manageHref).toBeUndefined();
+		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 });

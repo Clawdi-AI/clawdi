@@ -30,6 +30,7 @@ import {
 	parseDeploymentStatus,
 	shouldPollDeployments,
 } from "@/hosted/deployment-status";
+import { HostedDeploymentTileDeleteAction } from "@/hosted/hosted-deployment-tile-action";
 import { deploymentRuntime, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
@@ -225,19 +226,18 @@ export function useHostedAgentTiles({
 
 /**
  * One deployment renders as one hosted agent tile. The selected runtime decides
- * which cloud-api environment is joined for daemon sync state and detail links.
+ * which config env id owns the detail route. A matching cloud-api environment
+ * only decorates the tile with daemon sync state and presentation metadata.
  */
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	const runtime = deploymentRuntime(d);
 	const slug = deploymentDisplayName(d.name);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
-	// Hosted env join: the selected hosted runtime registers one cloud-api env
-	// via the admin endpoint. Without that env there is no resolvable agent route.
+	// The deployment config owns the stable agent identity. The cloud-api env
+	// join only decorates the tile and may legitimately lag or be missing.
 	const envId = runtimeEnvironmentId(d.config_info, runtime);
 	const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
-	const detailHref = matchedEnv
-		? agentSectionHref(matchedEnv.id, "overview", "source=on-clawdi")
-		: null;
+	const detailHref = envId ? agentSectionHref(envId, "overview", "source=on-clawdi") : null;
 	const settingsHref = matchedEnv
 		? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
 		: undefined;
@@ -260,6 +260,9 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			href: detailHref,
 			external: false,
+			action: envId
+				? undefined
+				: createElement(HostedDeploymentTileDeleteAction, { deployment: d }),
 			manageHref: settingsHref,
 			active: runtimeStatus.active,
 			statusDot: {
