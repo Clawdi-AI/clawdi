@@ -73,7 +73,7 @@ DEV_V2_HOSTED_MACHINE_ID = "dev-hosted-sidebar"
 DEV_V2_HOSTED_MACHINE_NAME = "Dev Hosted Compute"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
 DEV_V2_CODEX_PROVIDER_ID = "clawdi-v2"
-DEV_V2_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.53"
+DEV_V2_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
 _STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 
 
@@ -245,12 +245,7 @@ async def _create_hosted_runtime_graph(
                 generation=3,
                 cli_package_spec=DEV_V2_CLI_PACKAGE_SPEC,
                 locale={"language": "en", "timezone": "UTC"},
-                system={
-                    "user": "clawdi",
-                    "home": "/home/clawdi",
-                    "workspace": "/home/clawdi/clawdi",
-                    "persistentPaths": ["/home/clawdi"],
-                },
+                system={},
                 runtimes={
                     runtime: {
                         "enabled": True,
@@ -269,10 +264,6 @@ async def _create_hosted_runtime_graph(
                             )
                         },
                         "services": {},
-                        "paths": {
-                            "home": "/home/clawdi",
-                            "workspace": "/home/clawdi/clawdi",
-                        },
                     }
                 },
                 bridge=(

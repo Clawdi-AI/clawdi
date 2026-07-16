@@ -25,18 +25,9 @@ from tests.conftest import create_env_with_project
 
 _ADMIN_KEY = "test-platform-admin-secret"
 _ADMIN_AUTH = {"X-Admin-Key": _ADMIN_KEY}
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.53"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
 _TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
-_TEST_SYSTEM = {
-    "user": "clawdi",
-    "home": "/home/clawdi",
-    "workspace": "/home/clawdi/clawdi",
-    "persistentPaths": ["/home/clawdi"],
-}
-_TEST_RUNTIME_PATHS = {
-    "home": "/home/clawdi",
-    "workspace": "/home/clawdi/clawdi",
-}
+_TEST_SYSTEM = {}
 _TEST_TOOLS = {
     "codex": {
         "enabled": True,
@@ -112,7 +103,6 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
                 "install": {"source": "official"},
                 "run": {"args": ["gateway", "run"]},
                 "services": {},
-                "paths": _TEST_RUNTIME_PATHS,
             }
         },
         "live_sync": {

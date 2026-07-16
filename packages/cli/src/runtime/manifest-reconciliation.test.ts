@@ -41,9 +41,8 @@ import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
-const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.53";
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.55";
 const TEST_HOSTED_HOME = "/home/clawdi";
-const TEST_HOSTED_WORKSPACE = "/home/clawdi/clawdi";
 const TEST_HOSTED_CODEX_TOOLING = {
 	codex: {
 		enabled: true,
@@ -62,13 +61,7 @@ const TEST_HOSTED_CODEX_TOOLING = {
 };
 
 function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-	return {
-		user: "clawdi",
-		home: TEST_HOSTED_HOME,
-		workspace: TEST_HOSTED_WORKSPACE,
-		persistentPaths: [TEST_HOSTED_HOME, TEST_HOSTED_WORKSPACE],
-		...overrides,
-	};
+	return overrides;
 }
 
 function tempRuntimePaths(): RuntimePaths {
@@ -138,7 +131,7 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 		controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
 		clawdiCli: {
 			source: "npm:clawdi",
-			packageSpec: "clawdi@0.12.10-beta.53",
+			packageSpec: "clawdi@0.12.10-beta.55",
 			registry: "https://registry.npmjs.org",
 		},
 		providers: {
@@ -158,7 +151,6 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 				providerMode: "configured",
 				provider_ids: ["default"],
 				primary_model: { provider_id: "default", model: "gpt-test" },
-				paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
 			},
 		},
 		...overrides,
@@ -166,12 +158,6 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 }
 
 function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-	const paths =
-		typeof overrides.paths === "object" &&
-		overrides.paths !== null &&
-		!Array.isArray(overrides.paths)
-			? (overrides.paths as Record<string, unknown>)
-			: {};
 	return {
 		enabled: true,
 		install: { source: "official" },
@@ -179,7 +165,6 @@ function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<s
 		provider_ids: ["default"],
 		primary_model: { provider_id: "default", model: "gpt-test" },
 		...overrides,
-		paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE, ...paths },
 	};
 }
 
@@ -588,28 +573,21 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
-		"system",
 		"system.user",
 		"system.home",
 		"system.workspace",
 		"system.persistentPaths",
 		"runtime.paths",
-		"runtime.paths.home",
-		"runtime.paths.workspace",
-	])("rejects hosted manifests with missing %s", (field) => {
+	])("rejects obsolete hosted manifest field %s", (field) => {
 		const manifest = structuredClone(hostedManifestFixture()) as Record<string, unknown>;
 		const system = manifest.system as Record<string, unknown>;
 		const runtimes = manifest.runtimes as Record<string, Record<string, unknown>>;
 		const runtime = runtimes.openclaw;
-		const paths = runtime.paths as Record<string, unknown>;
-		if (field === "system") delete manifest.system;
-		if (field === "system.user") delete system.user;
-		if (field === "system.home") delete system.home;
-		if (field === "system.workspace") delete system.workspace;
-		if (field === "system.persistentPaths") delete system.persistentPaths;
-		if (field === "runtime.paths") delete runtime.paths;
-		if (field === "runtime.paths.home") delete paths.home;
-		if (field === "runtime.paths.workspace") delete paths.workspace;
+		if (field === "system.user") system.user = "clawdi";
+		if (field === "system.home") system.home = TEST_HOSTED_HOME;
+		if (field === "system.workspace") system.workspace = TEST_HOSTED_HOME;
+		if (field === "system.persistentPaths") system.persistentPaths = [TEST_HOSTED_HOME];
+		if (field === "runtime.paths") runtime.paths = { home: TEST_HOSTED_HOME };
 
 		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
 	});
@@ -777,7 +755,6 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("preserves canonical OpenClaw Control UI origins through gateway projection", () => {
 		const paths = tempRuntimePaths();
-		const workspace = join(paths.userHome, "clawdi");
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const patchPath = join(paths.serviceStateRoot, "openclaw-gateway-patch.json");
 		const allowedOrigins = ["https://app-v2-18789.k3s.example.test"];
@@ -800,9 +777,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		const hosted = hostedRuntimeManifestSchema.parse(
 			hostedManifestFixture({
 				system: hostedSystemFixture({
-					home: paths.userHome,
-					workspace,
-					persistentPaths: [paths.userHome, workspace],
 					openclawControlUiAllowedOrigins: allowedOrigins,
 				}),
 				runtimes: {
@@ -812,7 +786,6 @@ describe("runtime manifest reconciliation invariants", () => {
 						providerMode: "configured",
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
-						paths: { home: paths.userHome, workspace },
 					},
 				},
 			}),
@@ -911,19 +884,19 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "wrong source",
 			clawdiCli: {
 				source: "npm:other",
-				packageSpec: "clawdi@0.12.10-beta.53",
+				packageSpec: "clawdi@0.12.10-beta.55",
 				registry: "https://registry.npmjs.org",
 			},
 		},
 		{
 			name: "missing registry",
-			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.12.10-beta.53" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.12.10-beta.55" },
 		},
 		{
 			name: "non-official registry",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.53",
+				packageSpec: "clawdi@0.12.10-beta.55",
 				registry: "https://registry.example.test",
 			},
 		},
@@ -931,7 +904,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "dead managed flags",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.53",
+				packageSpec: "clawdi@0.12.10-beta.55",
 				registry: "https://registry.npmjs.org",
 				managedConfig: true,
 				userEditableConfig: false,
@@ -960,7 +933,7 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
-		"clawdi@0.12.10-beta.53",
+		"clawdi@0.12.10-beta.55",
 		"clawdi@1.2.3-rc-1.2",
 		"clawdi@1.2.3",
 	])("accepts exact hosted CLI package spec %s", (packageSpec) => {
@@ -1016,7 +989,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		"clawdi@01.2.3",
 		"./clawdi.tgz",
 		"/tmp/clawdi.tgz",
-		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.53.tgz",
+		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.55.tgz",
 		"/usr/local/share/clawdi/bootstrap/../clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/nested/clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/clawdi..tgz",
@@ -1046,17 +1019,13 @@ describe("runtime manifest reconciliation invariants", () => {
 				generation: 7,
 				issuedAt: "2026-07-01T00:00:00.000Z",
 				locale: TEST_HOSTED_LOCALE,
-				system: hostedSystemFixture({
-					home: "/home/clawdi-test",
-					workspace: "/workspace/clawdi",
-					persistentPaths: ["/home/clawdi-test", "/workspace/clawdi"],
-				}),
+				system: hostedSystemFixture(),
 				controlPlane: {
 					cloudApiUrl: "https://cloud-api.example.test",
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.53",
+					packageSpec: "clawdi@0.12.10-beta.55",
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
@@ -1084,7 +1053,6 @@ describe("runtime manifest reconciliation invariants", () => {
 							},
 							prependPath: [],
 						},
-						paths: { home: "/home/clawdi-test", workspace: "/workspace/openclaw" },
 					},
 				},
 				bridge: { surfaces: [] },
@@ -1194,7 +1162,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.53",
+					packageSpec: "clawdi@0.12.10-beta.55",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
@@ -1279,7 +1247,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.53",
+				packageSpec: "clawdi@0.12.10-beta.55",
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
@@ -1318,7 +1286,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.53",
+					packageSpec: "clawdi@0.12.10-beta.55",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
@@ -1338,7 +1306,6 @@ describe("runtime manifest reconciliation invariants", () => {
 						providerMode: "configured",
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
-						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
 						run: { command: "openclaw", args: ["gateway", "run"] },
 					},
 					hermes: {
@@ -1347,7 +1314,6 @@ describe("runtime manifest reconciliation invariants", () => {
 						providerMode: "configured",
 						provider_ids: ["default"],
 						primary_model: { provider_id: "default", model: "gpt-test" },
-						paths: { home: TEST_HOSTED_HOME, workspace: TEST_HOSTED_WORKSPACE },
 						run: { command: "hermes", args: ["gateway", "run"] },
 					},
 				},

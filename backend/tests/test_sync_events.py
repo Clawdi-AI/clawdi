@@ -264,7 +264,6 @@ def test_runtime_provider_usage_includes_independent_codex_tool_ref() -> None:
                 "provider_ids": [],
                 "install": {"source": "official"},
                 "services": {},
-                "paths": {"home": "/home/clawdi", "workspace": "/home/clawdi/clawdi"},
             }
         },
         tools={

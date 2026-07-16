@@ -46,7 +46,7 @@ describe("runtime run config services", () => {
 				instanceId: "hri_test",
 				commandPath: null,
 				appRoot: null,
-				workspaceRoot: "/home/clawdi/clawdi",
+				workspaceRoot: "/home/clawdi",
 				settings: runSettings("hermes", ["gateway", "run"]),
 			}),
 			paths,
@@ -61,7 +61,7 @@ describe("runtime run config services", () => {
 				instanceId: "hri_test",
 				commandPath: null,
 				appRoot: null,
-				workspaceRoot: "/home/clawdi/clawdi",
+				workspaceRoot: "/home/clawdi",
 				settings: runSettings("hermes", [
 					"dashboard",
 					"--host",

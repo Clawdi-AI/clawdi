@@ -46,7 +46,7 @@ from app.services.platform_workload_auth import (
 )
 
 _ADMIN_KEY = "test-platform-admin-secret"
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.53"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
 _TEST_TOOLS = {
     "codex": {
         "enabled": True,
@@ -254,12 +254,7 @@ def _runtime_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, Any]:
         "generation": 1,
         "cli_package_spec": _TEST_CLI_PACKAGE_SPEC,
         "locale": {"language": "en", "timezone": "UTC"},
-        "system": {
-            "user": "clawdi",
-            "home": "/home/clawdi",
-            "workspace": "/home/clawdi/clawdi",
-            "persistentPaths": ["/home/clawdi"],
-        },
+        "system": {},
         "runtimes": {
             "openclaw": {
                 "enabled": True,
@@ -272,10 +267,6 @@ def _runtime_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, Any]:
                 "install": {"source": "official"},
                 "run": {"args": ["gateway", "run"]},
                 "services": {},
-                "paths": {
-                    "home": "/home/clawdi",
-                    "workspace": "/home/clawdi/clawdi",
-                },
             }
         },
         "live_sync": {

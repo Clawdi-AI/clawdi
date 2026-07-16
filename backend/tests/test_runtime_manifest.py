@@ -63,16 +63,7 @@ from tests.hosted_runtime_fixtures import (
 _ADMIN_KEY = "runtime-state-admin-secret"
 _AUTH = {"X-Admin-Key": _ADMIN_KEY}
 TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
-TEST_SYSTEM = {
-    "user": "clawdi",
-    "home": "/home/clawdi",
-    "workspace": "/home/clawdi/clawdi",
-    "persistentPaths": ["/home/clawdi"],
-}
-TEST_RUNTIME_PATHS = {
-    "home": "/home/clawdi",
-    "workspace": "/home/clawdi/clawdi",
-}
+TEST_SYSTEM = {}
 TEST_EGRESS_ENGINE_PIN = {
     "type": "mitmproxy",
     "version": "12.2.3",
@@ -140,7 +131,7 @@ TEST_HERMES_BRIDGE = {
     ]
 }
 OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp")
-TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.53"
+TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
 
 
 async def _create_bundle_runtime(admin_client, db_session, seed_user):
@@ -317,7 +308,6 @@ def _runtime_state(
         "install": {"source": "official"},
         "run": {"args": ["gateway", "run"]},
         "services": {},
-        "paths": TEST_RUNTIME_PATHS,
     }
     if provider_mode == "configured" or primary_model is not None:
         runtime["primary_model"] = primary_model or {
@@ -549,7 +539,7 @@ async def _runtime_state_audit_count(db: AsyncSession, environment_id) -> int:
     ("cli_package_spec", "accepted"),
     [
         ("clawdi@0.12.10-beta.52", False),
-        ("clawdi@0.12.10-beta.53", True),
+        ("clawdi@0.12.10-beta.55", True),
         ("clawdi@1.2.3-rc-1.2", True),
         ("clawdi@1.2.3-beta..1", False),
         ("clawdi@1.2.3-beta.", False),
@@ -756,7 +746,7 @@ async def test_admin_runtime_state_rejects_invalid_or_below_floor_cli_package_sp
 @pytest.mark.parametrize(
     "cli_package_spec",
     [
-        "clawdi@0.12.10-beta.53",
+        "clawdi@0.12.10-beta.55",
         "clawdi@0.12.10-rc.1",
         "clawdi@0.12.10",
         "clawdi@0.12.11-beta.0",
@@ -842,7 +832,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
-    assert manifest["minimumCliVersion"] == "0.12.10-beta.53"
+    assert manifest["minimumCliVersion"] == "0.12.10-beta.55"
     assert manifest["runtime"] == "openclaw"
     assert set(manifest["runtimes"]) == {"openclaw"}
     assert manifest["locale"] == TEST_LOCALE
@@ -986,7 +976,7 @@ async def test_stale_runtime_state_generation_returns_current_generation_without
             json={
                 **body,
                 "generation": 6,
-                "cli_package_spec": "clawdi@0.12.10-beta.53",
+                "cli_package_spec": "clawdi@0.12.10-beta.55",
             },
         )
 
@@ -1025,7 +1015,7 @@ async def test_equal_generation_material_conflict_returns_current_generation_wit
         response = await admin_client.put(
             f"/v1/admin/environments/{environment_id}/runtime-state",
             headers=_AUTH,
-            json={**body, "cli_package_spec": "clawdi@0.12.10-beta.54"},
+            json={**body, "cli_package_spec": "clawdi@0.12.10-beta.56"},
         )
 
         assert response.status_code == 409, response.text
@@ -1063,8 +1053,8 @@ async def test_concurrent_same_generation_runtime_state_updates_allow_one_winner
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     try:
         candidate_specs = (
-            "clawdi@0.12.10-beta.53",
-            "clawdi@0.12.10-beta.54",
+            "clawdi@0.12.10-beta.55",
+            "clawdi@0.12.10-beta.56",
         )
         candidate_bodies = [
             AdminRuntimeStateUpsert.model_validate(
@@ -1168,8 +1158,8 @@ async def test_concurrent_initial_conflicting_runtime_state_upserts_return_gener
     )
     body = _runtime_state_body(str(env.id))
     candidate_specs = (
-        "clawdi@0.12.10-beta.53",
-        "clawdi@0.12.10-beta.54",
+        "clawdi@0.12.10-beta.55",
+        "clawdi@0.12.10-beta.56",
     )
     audit_count = await _runtime_state_audit_count(db_session, env.id)
     queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
@@ -1237,7 +1227,7 @@ async def test_cli_package_spec_change_updates_etag_audit_and_invalidation(
 
     queue = sync_events.subscribe(seed_user.id, frozenset(), environment_id=env.id)
     try:
-        updated_spec = "clawdi@0.12.10-beta.54"
+        updated_spec = "clawdi@0.12.10-beta.56"
         updated = await admin_client.put(
             f"/v1/admin/environments/{env.id}/runtime-state",
             headers=_AUTH,
@@ -1375,7 +1365,7 @@ async def test_agent_v2_manifest_cli_package_and_protocol_are_cloud_owned(
         "packageSpec": TEST_CLI_PACKAGE_SPEC,
         "registry": "https://registry.npmjs.org",
     }
-    assert response.json()["manifest"]["minimumCliVersion"] == "0.12.10-beta.53"
+    assert response.json()["manifest"]["minimumCliVersion"] == "0.12.10-beta.55"
 
 
 @pytest.mark.asyncio
@@ -1402,7 +1392,7 @@ async def test_admin_runtime_state_rejects_manifest_protocol_metadata(
             "locale": TEST_LOCALE,
             "system": TEST_SYSTEM,
             "runtimes": _runtime_state(),
-            "minimumCliVersion": "0.12.10-beta.53",
+            "minimumCliVersion": "0.12.10-beta.55",
         },
     )
 
@@ -1504,6 +1494,7 @@ async def test_admin_runtime_state_rejects_personality_desired_state(
             "deployment_id": "dep-personality",
             "instance_id": "hri-personality",
             "generation": 1,
+            "cli_package_spec": TEST_CLI_PACKAGE_SPEC,
             "locale": TEST_LOCALE,
             "system": TEST_SYSTEM,
             "runtimes": _runtime_state(),
@@ -1537,14 +1528,11 @@ async def test_admin_runtime_state_rejects_personality_desired_state(
             if key != "primary_model"
         },
         {
-            key: value
-            for key, value in next(iter(_runtime_state().values())).items()
-            if key != "paths"
-        },
-        {**next(iter(_runtime_state().values())), "paths": {"home": "/home/clawdi"}},
-        {
             **next(iter(_runtime_state().values())),
-            "paths": {**TEST_RUNTIME_PATHS, "stateDir": "/var/lib/clawdi"},
+            "paths": {
+                "home": "/home/clawdi",
+                "workspace": "/home/clawdi",
+            },
         },
         {
             **next(iter(_runtime_state().values())),
@@ -1584,6 +1572,7 @@ async def test_admin_runtime_state_rejects_noncanonical_runtime_entries(
             "deployment_id": f"dep_{uuid4().hex}",
             "instance_id": f"hri_{uuid4().hex}",
             "generation": 7,
+            "cli_package_spec": TEST_CLI_PACKAGE_SPEC,
             "locale": TEST_LOCALE,
             "system": TEST_SYSTEM,
             "runtimes": {"openclaw": runtime_entry},
@@ -1598,8 +1587,10 @@ async def test_admin_runtime_state_rejects_noncanonical_runtime_entries(
     "system",
     [
         None,
-        {"home": "/home/clawdi"},
-        {**TEST_SYSTEM, "persistentPaths": [""]},
+        {**TEST_SYSTEM, "user": "clawdi"},
+        {**TEST_SYSTEM, "home": "/home/clawdi"},
+        {**TEST_SYSTEM, "workspace": "/home/clawdi"},
+        {**TEST_SYSTEM, "persistentPaths": ["/home/clawdi"]},
         {**TEST_SYSTEM, "openclawControlUiAllowedOrigins": ["ftp://cloud.test"]},
         {**TEST_SYSTEM, "openclawControlUiAllowedOrigins": ["https://cloud.test/path"]},
         {**TEST_SYSTEM, "openclawControlUiAllowedOrigins": ["https://cloud.test/"]},
@@ -1622,6 +1613,7 @@ async def test_admin_runtime_state_requires_canonical_system(
         "deployment_id": f"dep_{uuid4().hex}",
         "instance_id": f"hri_{uuid4().hex}",
         "generation": 7,
+        "cli_package_spec": TEST_CLI_PACKAGE_SPEC,
         "locale": TEST_LOCALE,
         "runtimes": _runtime_state(),
     }
@@ -1772,7 +1764,6 @@ async def test_runtime_manifest_rejects_invalid_stored_locale(
             },
             TEST_SYSTEM,
         ),
-        (_runtime_state(), {"home": "/home/clawdi"}),
     ],
 )
 async def test_runtime_manifest_rejects_malformed_stored_contract(

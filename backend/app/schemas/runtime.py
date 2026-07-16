@@ -31,7 +31,7 @@ _EXACT_SEMVER_PATTERN = re.compile(
     rf"({_SEMVER_CORE_IDENTIFIER})(?:-({_SEMVER_PRERELEASE_IDENTIFIER}"
     rf"(?:\.{_SEMVER_PRERELEASE_IDENTIFIER})*))?$"
 )
-_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.53"
+_AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION = "0.12.10-beta.55"
 _FORBIDDEN_TOOL_SECRET_KEYS = {
     "apikey",
     "api_key",
@@ -445,10 +445,6 @@ def validate_hosted_runtime_bridge(
 class HostedRuntimeSystem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    user: str = Field(min_length=1, max_length=200)
-    home: str = Field(min_length=1, max_length=1000)
-    workspace: str = Field(min_length=1, max_length=1000)
-    persistentPaths: list[str] = Field(min_length=1)
     openclawControlUiAllowedOrigins: list[str] | None = None
 
     @field_validator("openclawControlUiAllowedOrigins")
@@ -457,20 +453,6 @@ class HostedRuntimeSystem(BaseModel):
         if value is None:
             return None
         return [_validate_http_origin(origin) for origin in value]
-
-    @field_validator("persistentPaths")
-    @classmethod
-    def _validate_persistent_paths(cls, value: list[str]) -> list[str]:
-        if any(not path for path in value):
-            raise ValueError("persistentPaths values must be non-empty strings")
-        return value
-
-
-class HostedRuntimePaths(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    home: str = Field(min_length=1, max_length=1000)
-    workspace: str = Field(min_length=1, max_length=1000)
 
 
 class HostedRuntimeInstall(BaseModel):
@@ -583,7 +565,6 @@ class _HostedRuntimeDesiredStateBase(BaseModel):
     install: HostedRuntimeInstall
     run: HostedRuntimeRunSettings | None = None
     services: dict[str, HostedRuntimeRunSettings] | None = None
-    paths: HostedRuntimePaths
 
     @field_validator("services")
     @classmethod

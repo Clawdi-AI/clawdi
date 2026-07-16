@@ -190,7 +190,7 @@ const TEST_HOSTED_LOCALE = {
 	language: "en" as const,
 	timezone: "UTC",
 };
-const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.53";
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.55";
 const TEST_HOSTED_CODEX_SECRET_REF = "tool.codex.apiKey";
 const TEST_HOSTED_CODEX_SECRET_VALUES = {
 	[TEST_HOSTED_CODEX_SECRET_REF]: "sk-codex-tool",
@@ -229,17 +229,11 @@ function hostedRequiredState() {
 }
 
 function hostedSystemFixture(
-	home: string,
-	workspace = join(home, "clawdi"),
+	_home: string,
+	_workspace = join(_home, "clawdi"),
 	overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
-	return {
-		user: "clawdi",
-		home,
-		workspace,
-		persistentPaths: [home, workspace],
-		...overrides,
-	};
+	return overrides;
 }
 
 function runtimeWatchLocaleManifest(
@@ -347,9 +341,7 @@ function hostedRuntimeWatchLocalePayload(
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
-				openclaw: hostedOpenClawRuntime({
-					paths: { home, workspace: join(home, "clawdi") },
-				}),
+				openclaw: hostedOpenClawRuntime({}),
 			},
 		},
 		secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
@@ -394,9 +386,7 @@ function hostedCliManifestResponse(
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
-				openclaw: hostedOpenClawRuntime({
-					paths: { home, workspace: join(home, "clawdi") },
-				}),
+				openclaw: hostedOpenClawRuntime({}),
 			},
 		},
 		secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
@@ -536,7 +526,6 @@ type HostedRuntimeFixtureEntry = {
 	install: { source: "official" };
 	run?: HostedRunFixture;
 	services?: Record<string, HostedRunFixture>;
-	paths: { home: string; workspace: string };
 	provider_ids: string[];
 	primary_model: { provider_id: string; model: string };
 };
@@ -544,9 +533,7 @@ type HostedRuntimeFixtureEntry = {
 function hostedOpenClawRuntime(
 	overrides: Partial<HostedRuntimeFixtureEntry> = {},
 ): HostedRuntimeFixtureEntry {
-	const home = process.env.HOME ?? "/home/clawdi";
 	const {
-		paths,
 		provider_ids = ["default"],
 		primary_model = { provider_id: provider_ids[0] ?? "default", model: "gpt-test" },
 		...entryOverrides
@@ -573,20 +560,13 @@ function hostedOpenClawRuntime(
 		},
 		services: {},
 		...entryOverrides,
-		paths: {
-			home,
-			workspace: join(home, "clawdi"),
-			...paths,
-		},
 	};
 }
 
 function hostedHermesRuntime(
 	overrides: Partial<HostedRuntimeFixtureEntry> = {},
 ): HostedRuntimeFixtureEntry {
-	const home = process.env.HOME ?? "/home/clawdi";
 	const {
-		paths,
 		provider_ids = ["default"],
 		primary_model = { provider_id: provider_ids[0] ?? "default", model: "gpt-test" },
 		...entryOverrides
@@ -610,11 +590,6 @@ function hostedHermesRuntime(
 			},
 		},
 		...entryOverrides,
-		paths: {
-			home,
-			workspace: join(home, "clawdi"),
-			...paths,
-		},
 	};
 }
 
@@ -1135,6 +1110,7 @@ describe("runtime paths", () => {
 		expect(paths.mode).toBe("local");
 		expect(paths.localConfig).toBe(join(home, ".clawdi", "config.json"));
 		expect(paths.localAuth).toBe(join(home, ".clawdi", "auth.json"));
+		expect(paths.workspaceRoot).toBe(join(home, "clawdi"));
 		expect(paths.serviceStateRoot).toBe("/var/lib/clawdi");
 		expect(paths.runRoot).toBe("/run/clawdi");
 	});
@@ -1153,7 +1129,7 @@ describe("runtime paths", () => {
 		const paths = getRuntimePaths();
 		expect(paths.mode).toBe("hosted");
 		expect(paths.userHome).toBe(home);
-		expect(paths.workspaceRoot).toBe(join(home, "clawdi"));
+		expect(paths.workspaceRoot).toBe(home);
 		expect(paths.managedConfig).toBe(join(state, "config", "clawdi.json"));
 		expect(paths.syncState).toBe(join(state, "sync", "runtimes.json"));
 		expect(paths.runtimeSource).toBe("/etc/clawdi/runtime-source.json");
@@ -1233,7 +1209,7 @@ describe("runtime run config", () => {
 			instanceId: "iid_hermes_ui",
 			commandPath: "/home/clawdi/.local/bin/hermes",
 			appRoot: "/home/clawdi/.hermes/hermes-agent",
-			workspaceRoot: "/home/clawdi/clawdi",
+			workspaceRoot: "/home/clawdi",
 		});
 
 		expect(config.defaultArgs).toEqual(["dashboard", "--host", "127.0.0.1", "--no-open"]);
@@ -1248,7 +1224,7 @@ describe("runtime run config", () => {
 			instanceId: "iid_openclaw_env_only",
 			commandPath: "/home/clawdi/.openclaw/bin/openclaw",
 			appRoot: "/home/clawdi/.openclaw",
-			workspaceRoot: "/home/clawdi/clawdi",
+			workspaceRoot: "/home/clawdi",
 			settings: {
 				env: { OPENCLAW_MODE: "hosted" },
 				prependPath: [],
@@ -1275,7 +1251,7 @@ describe("runtime run config", () => {
 			instanceId: "iid_openclaw_empty_args",
 			commandPath: "/home/clawdi/.openclaw/bin/openclaw",
 			appRoot: "/home/clawdi/.openclaw",
-			workspaceRoot: "/home/clawdi/clawdi",
+			workspaceRoot: "/home/clawdi",
 			settings: {
 				args: [],
 				env: {},
@@ -1609,12 +1585,7 @@ describe("runtime manifest datasource", () => {
 							generation: 3,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: {
-								user: "clawdi",
-								home,
-								workspace: join(home, "managed-workspace"),
-								persistentPaths: [home],
-							},
+							system: {},
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -1625,7 +1596,6 @@ describe("runtime manifest datasource", () => {
 							},
 							runtimes: {
 								openclaw: hostedOpenClawRuntime({
-									paths: { home },
 									provider_ids: ["default"],
 								}),
 							},
@@ -1661,7 +1631,7 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.source).toBe("remote-datasource");
 			expect(loaded.sourcePath).toBe("https://runtime.test/v1/runtime/manifest");
 			expect(loaded.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
-			expect(loaded.manifest.workspaceRoot).toBe(join(home, "managed-workspace"));
+			expect(loaded.manifest.workspaceRoot).toBe(home);
 			expect(loaded.manifest.environmentId).toBe("env_test");
 			expect(loaded.manifest.controlPlane.apiUrl).toBe("https://cloud-api.test");
 			expect(loaded.manifest.clawdiCli?.source).toBe("npm:clawdi");
@@ -1938,9 +1908,7 @@ chmod +x "$HOME/.local/bin/hermes"
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
-								hermes: hostedHermesRuntime({
-									paths: { home },
-								}),
+								hermes: hostedHermesRuntime({}),
 							},
 							bridge: {
 								surfaces: [hostedHermesBridgeSurface()],
@@ -2984,7 +2952,7 @@ exit 0
 		const home = join(root, runtimeName, "home", "clawdi");
 		const state = join(root, runtimeName, "var", "lib", "clawdi");
 		const run = join(root, runtimeName, "run", "clawdi");
-		const workspace = join(home, "clawdi");
+		const workspace = home;
 		mkdirSync(workspace, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -4320,7 +4288,6 @@ exit 64
 							providerMode: "configured",
 							provider_ids: ["default"],
 							primary_model: { provider_id: "default", model: "gpt-test" },
-							paths: { home, workspace: join(home, "clawdi") },
 						},
 					},
 				},
@@ -4597,7 +4564,7 @@ exit 64
 				instanceId: "iid_empty_channels",
 				generation: 3,
 				issuedAt: "2026-06-14T00:00:00Z",
-				system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
+				system: { home: "/home/clawdi", workspace: "/home/clawdi" },
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: { enabled: true },
@@ -4754,7 +4721,7 @@ exit 64
 					openclaw: { enabled: true },
 				},
 				projection: {
-					system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
+					system: { home: "/home/clawdi", workspace: "/home/clawdi" },
 				},
 			},
 			source: "remote-datasource",
@@ -4834,7 +4801,7 @@ exit 64
 				instanceId: "iid_stale_channels",
 				generation: 4,
 				issuedAt: "2026-06-14T00:00:00Z",
-				system: { home: "/home/clawdi", workspace: "/home/clawdi/clawdi" },
+				system: { home: "/home/clawdi", workspace: "/home/clawdi" },
 				controlPlane: { apiUrl: "https://cloud-api.test" },
 				runtimes: {
 					openclaw: { enabled: true },
@@ -5613,7 +5580,6 @@ exit 42
 				},
 				runtimes: {
 					openclaw: hostedOpenClawRuntime({
-						paths: { home },
 						provider_ids: ["clawdi-managed-v2"],
 						primary_model: {
 							provider_id: "clawdi-managed-v2",
@@ -7388,9 +7354,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 									registry: "https://registry.npmjs.org",
 								},
 								runtimes: {
-									openclaw: hostedOpenClawRuntime({
-										paths: { home },
-									}),
+									openclaw: hostedOpenClawRuntime({}),
 								},
 							},
 							channelBindings: [
@@ -7530,9 +7494,7 @@ chmod +x "$prefix/bin/clawdi"
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
-				openclaw: hostedOpenClawRuntime({
-					paths: { home },
-				}),
+				openclaw: hostedOpenClawRuntime({}),
 			},
 		};
 		writeRuntimeAppliedState(
@@ -8421,7 +8383,6 @@ exit 64
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
-		const workspace = join(home, "clawdi");
 		const bundle = JSON.parse(
 			readFileSync(
 				join(import.meta.dir, "../../../test-fixtures/runtime-bundle-v2.golden.json"),
@@ -8430,23 +8391,12 @@ exit 64
 		) as {
 			manifest: {
 				runtime: string;
-				system: {
-					home: string;
-					workspace: string;
-					persistentPaths: string[];
-				};
-				runtimes: Record<string, { paths: { home: string; workspace: string } }>;
+				system: Record<string, unknown>;
+				runtimes: Record<string, unknown>;
 			};
 			channelBindings: Array<{ agentTokenSecretRef: string }>;
 			secretValues: Record<string, string>;
 		};
-		const selectedRuntime = bundle.manifest.runtimes[bundle.manifest.runtime];
-		if (!selectedRuntime) throw new Error("golden bundle has no selected runtime");
-		bundle.manifest.system.home = home;
-		bundle.manifest.system.workspace = workspace;
-		bundle.manifest.system.persistentPaths = [home];
-		selectedRuntime.paths.home = home;
-		selectedRuntime.paths.workspace = workspace;
 		const missingSecretRef = bundle.channelBindings[0]?.agentTokenSecretRef;
 		if (!missingSecretRef) throw new Error("golden bundle has no channel binding");
 		delete bundle.secretValues[missingSecretRef];
@@ -9573,11 +9523,11 @@ exit 64
 		expect(patchText).toContain('"plugins"');
 	});
 
-	it("uses explicit hosted workspaces when converging run config and systemd units", async () => {
+	it("derives hosted workspace and explicit process cwd from HOME", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		const workspace = join(home, "custom-workspace");
+		const workspace = home;
 		writeHermesVersionBinary(home, "0.18.0");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
@@ -9610,9 +9560,7 @@ exit 64
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: {
-								hermes: hostedHermesRuntime({
-									paths: { home, workspace },
-								}),
+								hermes: hostedHermesRuntime({}),
 							},
 							bridge: { surfaces: [hostedHermesBridgeSurface()] },
 						},
@@ -9778,11 +9726,10 @@ exit 64
 		expect(loaded.errors.join("\n")).toContain(`manifest.${field}`);
 	});
 
-	it("uses hosted runtime workspace paths even without explicit run settings", async () => {
+	it("uses derived hosted HOME as cwd without explicit run settings", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		const runtimeWorkspace = join(home, "hermes-workspace");
 		const manifestPath = join(root, "runtime-workspace.json");
 		writeHermesVersionBinary(home, "0.18.0");
 		process.env.HOME = home;
@@ -9811,9 +9758,7 @@ exit 64
 						registry: "https://registry.npmjs.org",
 					},
 					runtimes: {
-						hermes: hostedHermesRuntime({
-							paths: { workspace: runtimeWorkspace },
-						}),
+						hermes: hostedHermesRuntime({}),
 					},
 					bridge: { surfaces: [hostedHermesBridgeSurface()] },
 				},
@@ -9832,10 +9777,10 @@ exit 64
 			readFileSync(join(state, "config", "run", "hermes+dashboard.json"), "utf-8"),
 		);
 
-		expect(convergence.outputs.workspaceRoot).toBe(join(home, "system-workspace"));
-		expect(hermesRunConfig.cwd).toBe(runtimeWorkspace);
+		expect(convergence.outputs.workspaceRoot).toBe(home);
+		expect(hermesRunConfig.cwd).toBe(home);
 		expect(hermesRunConfig.defaultArgs).toEqual(["gateway", "run", "--replace"]);
-		expect(hermesDashboardRunConfig.cwd).toBe(runtimeWorkspace);
+		expect(hermesDashboardRunConfig.cwd).toBe(home);
 		expect(hermesDashboardRunConfig.defaultArgs).toEqual([
 			"dashboard",
 			"--host",

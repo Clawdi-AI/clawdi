@@ -493,11 +493,7 @@ async def mock_terminal_ws(websocket: WebSocket, deployment_id: str) -> None:
     subprotocol = "tty" if "tty" in {value.strip() for value in protocols.split(",")} else None
     await websocket.accept(subprotocol=subprotocol)
     await websocket.send_text(
-        "0"
-        f"Clawdi mock terminal - {deployment_id}\r\n"
-        "whoami: clawdi\r\n"
-        "cwd: /home/clawdi/clawdi\r\n"
-        "$ "
+        f"0Clawdi mock terminal - {deployment_id}\r\nwhoami: clawdi\r\ncwd: /home/clawdi\r\n$ "
     )
 
     buffer = ""
@@ -534,7 +530,7 @@ def _mock_terminal_command(command: str) -> str:
     if not command:
         return ""
     if command == "pwd":
-        return "/home/clawdi/clawdi\r\n"
+        return "/home/clawdi\r\n"
     if command == "whoami":
         return "clawdi\r\n"
     if command == "clear":

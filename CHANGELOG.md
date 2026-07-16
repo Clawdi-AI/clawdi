@@ -10,9 +10,21 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.55
+
+Package: `clawdi@0.12.10-beta.55`
+
+### Changed
+
+- Hosted manifests no longer carry host-owned user, home, workspace,
+  persistence, or runtime path fields. Hosted runtime paths derive HOME,
+  installer home, persistent home, workspace, and process working directories
+  from the `/home/clawdi` runtime contract, while local workspaces remain
+  `$HOME/clawdi`.
+
 ## Clawdi CLI v0.12.10-beta.54
 
-Package: `clawdi@0.12.10-beta.54`
+Published immutable package: `clawdi@0.12.10-beta.54`
 
 ### Fixed
 

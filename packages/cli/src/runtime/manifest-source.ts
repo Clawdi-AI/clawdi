@@ -21,7 +21,7 @@ import {
 	RUNTIME_DESIRED_STATE_SCHEMA_VERSION,
 	type RuntimeManifest,
 } from "./manifest-contract";
-import type { RuntimePaths } from "./paths";
+import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
 import { canonicalSecretRefName, envSecretRefName, normalizeSecretValues } from "./secret-values";
 
@@ -468,7 +468,8 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 }
 
 export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
-	const workspaceRoot = hosted.system.workspace;
+	const paths = getRuntimePaths({ mode: "hosted" });
+	const workspaceRoot = paths.workspaceRoot;
 	const selectedRuntime = hosted.runtime;
 	const runtime = hosted.runtimes[selectedRuntime];
 	return {
@@ -496,14 +497,14 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 					authority: "official" as const,
 					method: "official-installer" as const,
 					url: OFFICIAL_INSTALL_URLS[selectedRuntime],
-					home: runtime.paths.home,
+					home: paths.userHome,
 					args: OFFICIAL_INSTALL_ARGS[selectedRuntime],
 				},
-				run: hostedRuntimeRunSettings(runtime.run, runtime.paths.workspace),
+				run: hostedRuntimeRunSettings(runtime.run, workspaceRoot),
 				services: Object.fromEntries(
 					Object.entries(runtime.services ?? {}).map(([service, run]) => [
 						service,
-						hostedRuntimeServiceRunSettings(run, runtime.paths.workspace),
+						hostedRuntimeServiceRunSettings(run, workspaceRoot),
 					]),
 				),
 				...hostedRuntimeProviderBinding(runtime),
