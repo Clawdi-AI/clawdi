@@ -72,16 +72,22 @@ describe("planChangeUnavailableReason", () => {
 		).toBe("Resume this subscription before changing its plan or billing term.");
 	});
 
-	test("allows active and trialing subscriptions with a server id", () => {
-		for (const status of ["active", "trialing"]) {
-			expect(
-				planChangeUnavailableReason({
-					canUsePlanCBilling: true,
-					cancelAtPeriodEnd: false,
-					status,
-					subscriptionId: 42,
-				}),
-			).toBeNull();
-		}
+	test("allows only active subscriptions with a server id", () => {
+		expect(
+			planChangeUnavailableReason({
+				canUsePlanCBilling: true,
+				cancelAtPeriodEnd: false,
+				status: "active",
+				subscriptionId: 42,
+			}),
+		).toBeNull();
+		expect(
+			planChangeUnavailableReason({
+				canUsePlanCBilling: true,
+				cancelAtPeriodEnd: false,
+				status: "trialing",
+				subscriptionId: 42,
+			}),
+		).toContain("Resolve the subscription status");
 	});
 });

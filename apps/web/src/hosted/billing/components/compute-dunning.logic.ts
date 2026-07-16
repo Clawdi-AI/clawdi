@@ -31,6 +31,7 @@ export type ComputeDunningState = {
 		| "support"
 		| "none";
 	invoiceUrl: string | null;
+	secondaryTarget: "billing_history" | "support" | null;
 	fallbackOccurredAt: string | null;
 	fallbackPlanLabel: string | null;
 	fallbackReason: HostedFundingEvent["reason"] | null;
@@ -83,14 +84,13 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 				? "Basic compute"
 				: "paid compute";
 	const stopped = deployment.status.toLowerCase() === "stopped";
-	const paymentFailure = fallback.reason === "payment_failure";
 	const presentation = (() => {
 		switch (fallback.reason) {
 			case "payment_failure":
 				return {
 					tone: "destructive" as const,
 					title: "Compute subscription ended",
-					ctaTarget: "start_new" as const,
+					secondaryTarget: null,
 					tileLabel: "Compute subscription ended",
 					tileTextClass: "text-destructive",
 				};
@@ -98,7 +98,7 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 				return {
 					tone: "neutral" as const,
 					title: "Compute subscription ended",
-					ctaTarget: "none" as const,
+					secondaryTarget: null,
 					tileLabel: "Compute subscription ended",
 					tileTextClass: "text-muted-foreground",
 				};
@@ -106,7 +106,7 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 				return {
 					tone: "neutral" as const,
 					title: "Compute payment refunded",
-					ctaTarget: "billing_history" as const,
+					secondaryTarget: "billing_history" as const,
 					tileLabel: "Compute payment refunded",
 					tileTextClass: "text-muted-foreground",
 				};
@@ -114,7 +114,7 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 				return {
 					tone: "warning" as const,
 					title: "Compute payment disputed",
-					ctaTarget: "support" as const,
+					secondaryTarget: "support" as const,
 					tileLabel: "Compute payment disputed",
 					tileTextClass: "text-warning-muted-foreground",
 				};
@@ -122,7 +122,7 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 				return {
 					tone: "neutral" as const,
 					title: "Compute funding changed",
-					ctaTarget: "support" as const,
+					secondaryTarget: "support" as const,
 					tileLabel: "Compute funding changed",
 					tileTextClass: "text-muted-foreground",
 				};
@@ -133,7 +133,7 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		...presentation,
 		paymentState: "unpaid",
 		fundingSource: fallback.funding_source,
-		recoveryAction: paymentFailure ? "start_new" : null,
+		recoveryAction: "start_new",
 		description: stopped
 			? "No included Basic slot was available, so this deployment stopped. Start a new subscription to restore paid compute."
 			: "This deployment is now using included Basic. Start a new subscription to restore paid compute.",
@@ -142,6 +142,7 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		fallbackPlanLabel,
 		fallbackReason: fallback.reason,
 		recoveryPlanSlug: recoveryPlanSlugFor(deployment),
+		ctaTarget: "start_new",
 		tileTitle: stopped
 			? `${fallbackPlanLabel} ended and the deployment stopped.`
 			: `${fallbackPlanLabel} ended and fell back to included Basic.`,
@@ -165,6 +166,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		fallbackPlanLabel: null,
 		fallbackReason: null,
 		recoveryPlanSlug,
+		secondaryTarget: null,
 	};
 
 	if (subscription.payment_state === "unpaid") {

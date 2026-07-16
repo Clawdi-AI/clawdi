@@ -123,6 +123,7 @@ import {
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
 	canRestart as canRestartDeployment,
@@ -2333,6 +2334,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const currentBillingTerm = currentSubscription?.billing_term_months ?? 1;
 	const [term, setTerm] = useState(currentBillingTerm);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
+	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
 	const perfOffers = useMemo(() => (perfPlan ? planOffers(perfPlan) : []), [perfPlan]);
@@ -2526,6 +2528,13 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 
 	return (
 		<div className="flex flex-col gap-9">
+			{hostedAccess.canUsePlanCBilling && wallet.data ? (
+				<TopUpDialog
+					open={walletTopUpOpen}
+					onOpenChange={setWalletTopUpOpen}
+					wallet={wallet.data}
+				/>
+			) : null}
 			{currentSubscription &&
 			(computePlanSlug === COMPUTE_BASIC_SLUG || computePlanSlug === COMPUTE_PERFORMANCE_SLUG) ? (
 				<PlanChangeDialog
@@ -2540,6 +2549,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 					isConfirming={false}
 					onQuote={requestPlanChangeQuote}
 					onConfirm={requestPlanChangeQuote}
+					onTopUp={() => setWalletTopUpOpen(true)}
 				/>
 			) : null}
 

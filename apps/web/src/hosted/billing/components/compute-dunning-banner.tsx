@@ -143,13 +143,32 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 							disabled={fixPayment.isPending}
 						>
 							{fixPayment.isPending ? (
-								<Spinner />
+								<Spinner data-icon="inline-start" />
 							) : state.ctaTarget === "invoice" ? (
 								<ExternalLink data-icon="inline-start" />
 							) : (
 								<CreditCard data-icon="inline-start" />
 							)}
 							Fix payment
+						</Button>
+					) : null}
+					{state.secondaryTarget === "billing_history" ? (
+						<Button
+							render={<a href={settingsQueryHref("billing-plan")} />}
+							nativeButton={false}
+							size="sm"
+							variant="outline"
+						>
+							<History data-icon="inline-start" /> View billing history
+						</Button>
+					) : state.secondaryTarget === "support" ? (
+						<Button
+							render={<a href="mailto:support@clawdi.ai" />}
+							nativeButton={false}
+							size="sm"
+							variant="outline"
+						>
+							<LifeBuoy data-icon="inline-start" /> Contact support
 						</Button>
 					) : null}
 				</AlertDescription>

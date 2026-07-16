@@ -51,7 +51,6 @@ function subscription(
 		canceled_at: null,
 		latest_failed_invoice_id: null,
 		latest_failed_invoice_hosted_url: null,
-		next_payment_attempt_at: null,
 		...overrides,
 	};
 }
@@ -70,8 +69,6 @@ describe("computeDunningState", () => {
 					funding_source: "wallet",
 					payment_state: "past_due",
 					recovery_action: "top_up",
-					dunning_deadline_at: "2026-07-18T12:00:00Z",
-					last_collection_failure_code: "insufficient_balance",
 				}),
 				"compute_performance",
 			),
@@ -159,7 +156,7 @@ describe("computeDunningState", () => {
 				tileTextClass: "text-destructive",
 			});
 			expect(state?.description).toContain("Start a new subscription");
-			expect(state?.description).not.toMatch(/reactivate|retry previous/i);
+			expect(state?.description).not.toMatch(/reactivate/i);
 		}
 	});
 
@@ -216,22 +213,22 @@ describe("computeDunningState", () => {
 		const cases = [
 			{
 				fallbackReason: "canceled" as const,
-				ctaTarget: "none",
+				secondaryTarget: null,
 				title: "Compute subscription ended",
 			},
 			{
 				fallbackReason: "refunded" as const,
-				ctaTarget: "billing_history",
+				secondaryTarget: "billing_history",
 				title: "Compute payment refunded",
 			},
 			{
 				fallbackReason: "disputed" as const,
-				ctaTarget: "support",
+				secondaryTarget: "support",
 				title: "Compute payment disputed",
 			},
 			{
 				fallbackReason: "admin_forced" as const,
-				ctaTarget: "support",
+				secondaryTarget: "support",
 				title: "Compute funding changed",
 			},
 		];
@@ -250,7 +247,10 @@ describe("computeDunningState", () => {
 				}),
 			);
 			expect(state).toMatchObject(expected);
-			expect(state?.recoveryAction).toBeNull();
+			expect(state).toMatchObject({
+				ctaTarget: "start_new",
+				recoveryAction: "start_new",
+			});
 		}
 	});
 

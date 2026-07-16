@@ -220,9 +220,9 @@ describe("compute subscription action status gates", () => {
 	});
 
 	test("keeps term changes stricter than cancel or resume", () => {
-		expect(isComputeSubscriptionTermChangeable({ status: "trialing" })).toBe(true);
 		expect(isComputeSubscriptionTermChangeable({ status: "active" })).toBe(true);
 
+		expect(isComputeSubscriptionTermChangeable({ status: "trialing" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable({ status: "past_due" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable({ status: "unpaid" })).toBe(false);
 		expect(isComputeSubscriptionTermChangeable(undefined)).toBe(false);
@@ -251,7 +251,6 @@ describe("compute subscription lifecycle presentation", () => {
 			computeSubscriptionLifecycle({
 				...subscription(),
 				status: "past_due",
-				dunning_deadline_at: "2026-07-20T12:00:00Z",
 			}),
 		).toMatchObject({
 			badgeLabel: "Payment past due",

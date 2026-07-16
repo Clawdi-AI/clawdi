@@ -9,7 +9,7 @@ import {
 
 export { COMPUTE_BASIC_SLUG, COMPUTE_PERFORMANCE_SLUG };
 export const COMPUTE_SUBSCRIPTION_CANCELABLE_STATUSES = new Set(["trialing", "active", "past_due"]);
-export const COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES = new Set(["trialing", "active"]);
+export const COMPUTE_SUBSCRIPTION_TERM_CHANGEABLE_STATUSES = new Set(["active"]);
 
 export type ResolvedBillingOffer = {
 	offer: BillingOffer;

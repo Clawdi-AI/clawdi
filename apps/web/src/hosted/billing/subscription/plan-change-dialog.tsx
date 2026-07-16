@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarClock, CreditCard, WalletCards } from "lucide-react";
+import { CalendarClock, CreditCard, TriangleAlert, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -63,6 +63,7 @@ export function PlanChangeDialog({
 	isConfirming,
 	onQuote,
 	onConfirm,
+	onTopUp,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -75,6 +76,7 @@ export function PlanChangeDialog({
 	isConfirming: boolean;
 	onQuote: (selection: PlanChangeSelection) => void;
 	onConfirm: (operationId: string) => void;
+	onTopUp?: () => void;
 }) {
 	const initialSelection = useMemo(
 		() => defaultPlanChangeSelection(currentPlanSlug, currentBillingTermMonths),
@@ -99,6 +101,7 @@ export function PlanChangeDialog({
 		quote?.fundingSource === "wallet" && quote.amountCredits && walletBalanceBefore
 			? walletBalanceAfterDebit(walletBalanceBefore, quote.amountCredits)
 			: null;
+	const walletInsufficient = walletBalanceAfter?.startsWith("-") ?? false;
 
 	useEffect(() => {
 		if (open) setSelection(initialSelection);
@@ -194,17 +197,34 @@ export function PlanChangeDialog({
 								</AlertDescription>
 							</Alert>
 						) : null}
+						{walletInsufficient ? (
+							<Alert variant="destructive">
+								<TriangleAlert aria-hidden />
+								<AlertTitle>Not enough AI Credits</AlertTitle>
+								<AlertDescription className="flex flex-col items-start gap-3">
+									<span>Top up the shortfall, then request a fresh server quote.</span>
+									{onTopUp ? (
+										<Button type="button" size="sm" variant="outline" onClick={onTopUp}>
+											<WalletCards data-icon="inline-start" /> Top up AI Credits
+										</Button>
+									) : null}
+								</AlertDescription>
+							</Alert>
+						) : null}
 						<DialogFooter>
 							<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isConfirming}>
 								Back
 							</Button>
-							<Button onClick={() => onConfirm(quote.operationId)} disabled={isConfirming}>
+							<Button
+								onClick={() => onConfirm(quote.operationId)}
+								disabled={isConfirming || walletInsufficient}
+							>
 								{isConfirming ? (
-									<Spinner />
+									<Spinner data-icon="inline-start" />
 								) : quote.fundingSource === "wallet" ? (
-									<WalletCards />
+									<WalletCards data-icon="inline-start" />
 								) : (
-									<CreditCard />
+									<CreditCard data-icon="inline-start" />
 								)}
 								{confirmLabel}
 							</Button>
@@ -256,7 +276,7 @@ export function PlanChangeDialog({
 								onClick={() => onQuote(selection)}
 								disabled={isQuoting || noChange || !selectedOffer}
 							>
-								{isQuoting ? <Spinner /> : null}
+								{isQuoting ? <Spinner data-icon="inline-start" /> : null}
 								Review change
 							</Button>
 						</DialogFooter>

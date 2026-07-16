@@ -94,7 +94,7 @@ export function planChangeUnavailableReason({
 		return "Resume this subscription before changing its plan or billing term.";
 	if (!subscriptionId)
 		return "Plan changes will be available after subscription details finish syncing.";
-	if (status !== "active" && status !== "trialing") {
+	if (status !== "active") {
 		return "Resolve the subscription status before changing its plan or billing term.";
 	}
 	return null;
