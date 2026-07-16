@@ -229,6 +229,10 @@ const HOSTED_AGENT_SECTIONS: {
 	},
 ];
 
+const HOSTED_AGENT_FALLBACK_SECTIONS = HOSTED_AGENT_SECTIONS.filter(
+	(section) => section.id === "overview",
+);
+
 const AGENT_SECTION_TINTS = {
 	overview: RESOURCE_TINT_CLASSES.overview,
 	sessions: RESOURCE_TINT_CLASSES.sessions,
@@ -297,6 +301,11 @@ function agentTileChromeKind(tile: AgentTile): AgentChromeKind {
 	if (tile.source === "on-clawdi") return "cloud";
 	if (tile.source === "legacy-hosted") return "legacy";
 	return "connected";
+}
+
+function agentTileRouteId(tile: AgentTile): string | null {
+	if (tile.env) return tile.env.id;
+	return tile.href ? (parseAgentPathname(tile.href)?.agentId ?? null) : null;
 }
 
 function sameOrder(a: string[], b: string[]): boolean {
@@ -564,7 +573,7 @@ function AgentFocusHostedFallbackSections({
 	return (
 		<AgentSectionList
 			agentId={agentId}
-			sections={HOSTED_AGENT_SECTIONS}
+			sections={HOSTED_AGENT_FALLBACK_SECTIONS}
 			activeSection={activeSection}
 			onNavigate={onNavigate}
 		/>
@@ -1129,7 +1138,7 @@ function FocusRailContent({
 								<SortableAgentRailItem
 									key={agent.id}
 									agent={agent}
-									active={activeAgentId === agent.env?.id}
+									active={activeAgentId === agentTileRouteId(agent)}
 									onNavigate={onRailAgentNavigate}
 									onClickCapture={onRailAgentClickCapture}
 									onPointerDownCapture={recordRailPointerStart}

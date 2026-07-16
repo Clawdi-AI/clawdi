@@ -3,7 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { Link } from "@tanstack/react-router";
 import { ArrowUpRight } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
@@ -87,14 +87,14 @@ export interface AgentTile {
 	statusLabel: string;
 	/** Used to compute the "N active now" count in the card description. */
 	lastSeenAt?: string | null;
-	/** Primary click target. Points at the in-app env detail
-	 * page (`/agents/{env_id}`) when an env is available — for both
-	 * self-managed and hosted tiles with a registered env, so the
-	 * sessions/skills/memory experience stays unified. Hosted tiles without a
-	 * registered env are non-navigable instead of putting a deployment id in an
-	 * agent route. `external` reflects whichever applies. */
+	/** Primary click target. Points at the in-app env detail page
+	 * (`/agents/{env_id}`). Hosted tiles derive this identity from deployment
+	 * config even while the cloud-api projection is absent. A hosted deployment
+	 * with no minted env id remains non-navigable. */
 	href: string | null;
 	external?: boolean;
+	/** Optional card-level action supplied by the owning integration. */
+	action?: ReactNode;
 	/** Optional hosted remediation target retained for surfaces that open
 	 * status dialogs. Tiles render daemon status as a non-interactive dot. */
 	manageHref?: string;
@@ -303,7 +303,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 				}
 				meta={meta.length > 0 ? meta : undefined}
 				titleAdornment={sourcePill}
-				className="min-w-0 flex-1"
+				className={cn("min-w-0 flex-1", tile.action && "pr-8")}
 			/>
 			{onClawdi && tile.secondaryStatus ? (
 				<div
@@ -322,6 +322,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 					className="pointer-events-none absolute right-3 top-3.5 size-3.5 text-muted-foreground"
 				/>
 			) : null}
+			{tile.action ? <div className="absolute top-2 right-2">{tile.action}</div> : null}
 		</div>
 	);
 	const linkClassName = cn(
