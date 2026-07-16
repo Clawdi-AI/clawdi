@@ -1357,7 +1357,9 @@ export interface components {
              * @constant
              */
             billing_term_months: 1;
-            deploy_config: components["schemas"]["V2HostedDeployRequest"];
+            deploy_config?: components["schemas"]["V2HostedDeployRequest"] | null;
+            /** Upgrade Deployment Id */
+            upgrade_deployment_id?: string | null;
         };
         /** V2WalletComputeActivateResponse */
         V2WalletComputeActivateResponse: {
@@ -1372,7 +1374,7 @@ export interface components {
              */
             funding_source: "wallet";
             /** Deploy Request Id */
-            deploy_request_id: string;
+            deploy_request_id?: string | null;
             /** Deployment Id */
             deployment_id?: string | null;
             /** Charge Ledger Id */
@@ -1419,12 +1421,12 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "deploy_request_funding_conflict" | "idempotency_key_reused" | "open_refund_debt";
+            code: "deploy_request_funding_conflict" | "idempotency_key_reused";
         };
         /** V2WalletComputeConflictErrorResponse */
         V2WalletComputeConflictErrorResponse: {
             /** Detail */
-            detail: components["schemas"]["V2WalletComputeConflictCodeDetail"] | components["schemas"]["V2WalletComputeRetryErrorDetail"] | string;
+            detail: components["schemas"]["V2WalletComputeConflictCodeDetail"] | components["schemas"]["V2WalletComputeOpenRefundDebtDetail"] | components["schemas"]["V2WalletComputeRetryErrorDetail"] | string;
         };
         /** V2WalletComputeInsufficientErrorDetail */
         V2WalletComputeInsufficientErrorDetail: {
@@ -1444,6 +1446,16 @@ export interface components {
         V2WalletComputeInsufficientErrorResponse: {
             detail: components["schemas"]["V2WalletComputeInsufficientErrorDetail"];
         };
+        /** V2WalletComputeOpenRefundDebtDetail */
+        V2WalletComputeOpenRefundDebtDetail: {
+            /**
+             * Code
+             * @constant
+             */
+            code: "open_refund_debt";
+            /** Outstanding Debt Credits */
+            outstanding_debt_credits: string;
+        };
         /** V2WalletComputePlanChangeRequest */
         V2WalletComputePlanChangeRequest: {
             /** Subscription Id */
@@ -1462,11 +1474,6 @@ export interface components {
             current_plan_slug: string;
             /** Target Plan Slug */
             target_plan_slug: string;
-            /**
-             * Change Kind
-             * @enum {string}
-             */
-            change_kind: "upgrade" | "downgrade";
             /** Status */
             status: string;
             /**
@@ -1474,24 +1481,12 @@ export interface components {
              * Format: date-time
              */
             effective_at: string;
-            /**
-             * Period Start
-             * Format: date-time
-             */
-            period_start: string;
-            /**
-             * Period End
-             * Format: date-time
-             */
-            period_end: string;
-            /** Prorated Delta Cents */
-            prorated_delta_cents: number;
-            /** Prorated Delta Credits */
-            prorated_delta_credits: string;
+            /** Amount Cents */
+            amount_cents: number;
+            /** Amount Credits */
+            amount_credits: string;
             /** Points Per Usd */
             points_per_usd: number;
-            /** Charge Ledger Id */
-            charge_ledger_id?: string | null;
             /** Pending Plan Slug */
             pending_plan_slug?: string | null;
         };
@@ -1587,7 +1582,7 @@ export interface components {
              * Code
              * @enum {string}
              */
-            code: "wallet_balance_refresh_failed" | "wallet_compute_charge_failed" | "wallet_compute_upstream_failed" | "resize_failed_retryable";
+            code: "wallet_balance_refresh_failed" | "wallet_compute_charge_failed" | "wallet_compute_upstream_failed";
             /** Failure Code */
             failure_code?: string | null;
             /**
@@ -1623,11 +1618,15 @@ export interface components {
         V2WalletLedgerResponse: {
             /** Items */
             items: components["schemas"]["V2WalletLedgerItemResponse"][];
+            /** Has More */
+            has_more: boolean;
         };
         /** V2WalletResponse */
         V2WalletResponse: {
             /** Balance Credits */
             balance_credits: number;
+            /** Overdraft Credits */
+            overdraft_credits: number;
             /** Balance Snapshot At */
             balance_snapshot_at?: string | null;
             /**
@@ -2514,15 +2513,6 @@ export interface operations {
                     "application/json": components["schemas"]["V2WalletComputePlanChangeResponse"];
                 };
             };
-            /** @description The wallet balance cannot cover the plan change. */
-            402: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2WalletComputeInsufficientErrorResponse"];
-                };
-            };
             /** @description The plan change conflicts with current billing state. */
             409: {
                 headers: {
@@ -2539,15 +2529,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-            /** @description The wallet charge or deployment resize is retryable. */
-            502: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2WalletComputeUpstreamErrorResponse"];
                 };
             };
         };
