@@ -10,6 +10,25 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.54
+
+Package: `clawdi@0.12.10-beta.54`
+
+### Fixed
+
+- Fixed a hosted runtime reboot deadlock: persistently enabled runtime user
+  units referenced a convergence-generated environment file that only exists
+  after boot-time convergence, tripping the systemd start limit and blocking
+  the official installer's restart. Units now declare the dependency with
+  `ConditionPathExists`, convergence clears failed unit state, and the
+  converged drop-in and environment file are written before the official
+  installer runs, so deployments created by earlier CLI versions self-heal on
+  their next restart without manual intervention.
+- Hosted convergence no longer fails on hosts without a reachable systemd user
+  bus when reloading the user manager before official service installs.
+- Vault reads and writes now use a stable identity across operations.
+- Runtime bridge assets are cached by content hash for reliable serving.
+
 ## Clawdi CLI v0.12.10-beta.53
 
 Package: `clawdi@0.12.10-beta.53`
