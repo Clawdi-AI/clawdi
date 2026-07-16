@@ -6,11 +6,14 @@ type HostedAgentTileStatus = typeof import("@/hosted/use-hosted-agent-tiles").ho
 type DeploymentToTiles = typeof import("@/hosted/use-hosted-agent-tiles").deploymentToTiles;
 type HostedRuntimeStatusView =
 	typeof import("@/hosted/use-hosted-agent-tiles").hostedRuntimeStatusView;
+type ResolveAgentDeployment =
+	typeof import("@/hosted/agents/deployment-hooks").resolveAgentDeployment;
 type Env = components["schemas"]["AgentResponse"];
 
 let getTileStatus: HostedAgentTileStatus | null = null;
 let getDeploymentToTiles: DeploymentToTiles | null = null;
 let getRuntimeStatusView: HostedRuntimeStatusView | null = null;
+let getAgentDeploymentResolution: ResolveAgentDeployment | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -20,6 +23,8 @@ beforeAll(async () => {
 	getTileStatus = module.hostedAgentTileStatus;
 	getDeploymentToTiles = module.deploymentToTiles;
 	getRuntimeStatusView = module.hostedRuntimeStatusView;
+	const deploymentHooks = await import("@/hosted/agents/deployment-hooks");
+	getAgentDeploymentResolution = deploymentHooks.resolveAgentDeployment;
 });
 
 function hostedAgentTileStatus(rawStatus: string) {
@@ -42,6 +47,15 @@ function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = [])
 		deployment,
 		new Map(envs.map((item) => [item.id.toLowerCase(), item])),
 	);
+}
+
+function resolveAgentDeployment(
+	deployments: readonly HostedDeployment[],
+	environmentId: string,
+	deploymentSelector?: string,
+) {
+	if (!getAgentDeploymentResolution) throw new Error("resolveAgentDeployment was not loaded");
+	return getAgentDeploymentResolution(deployments, environmentId, deploymentSelector);
 }
 
 function env(overrides: Partial<Env> = {}): Env {
@@ -132,8 +146,10 @@ describe("deploymentToTiles", () => {
 
 		expect(tiles.map((tile) => tile.agentType)).toEqual(["openclaw"]);
 		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
-		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi`);
-		expect(tiles[0]?.manageHref).toBe(`/agents/${openclawEnv.id}/settings?source=on-clawdi`);
+		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi&d=dep_123`);
+		expect(tiles[0]?.manageHref).toBe(
+			`/agents/${openclawEnv.id}/settings?source=on-clawdi&d=dep_123`,
+		);
 	});
 
 	test("projects dunning state as the hosted tile secondary status", () => {
@@ -212,7 +228,7 @@ describe("deploymentToTiles", () => {
 		expect(tile).toMatchObject({
 			id: "dep_123",
 			source: "on-clawdi",
-			href: `/agents/${environmentId}?source=on-clawdi`,
+			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
 			env: null,
 			secondaryStatus: {
 				label: "Failure: startup_probe_failing; restart_count=2",
@@ -249,6 +265,44 @@ describe("deploymentToTiles", () => {
 		});
 		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
+	});
+});
+
+describe("resolveAgentDeployment", () => {
+	const sharedEnvironmentId = "66666666-6666-4666-8666-666666666666";
+	const newer = deployment(
+		{ id: "dep_newer", name: "Newer twin", created_at: "2026-07-15T00:00:00Z" },
+		{ clawdi_cloud_environments: { openclaw: sharedEnvironmentId } },
+	);
+	const older = deployment(
+		{ id: "dep_older", name: "Older twin", created_at: "2026-07-14T00:00:00Z" },
+		{ clawdi_cloud_environments: { openclaw: sharedEnvironmentId } },
+	);
+
+	test("keeps the common unambiguous environment join behavior", () => {
+		const resolution = resolveAgentDeployment([newer], sharedEnvironmentId);
+
+		expect(resolution.match?.deployment.id).toBe("dep_newer");
+		expect(resolution.match?.runtime).toBe("openclaw");
+		expect(resolution.ambiguousMatches).toEqual([]);
+	});
+
+	test("detects every deployment sharing an environment instead of picking newest", () => {
+		const resolution = resolveAgentDeployment([newer, older], sharedEnvironmentId);
+
+		expect(resolution.match).toBeNull();
+		expect(resolution.ambiguousMatches.map((match) => match.deployment.id)).toEqual([
+			"dep_newer",
+			"dep_older",
+		]);
+	});
+
+	test("prefers an explicit deployment selector within the environment matches", () => {
+		const resolution = resolveAgentDeployment([newer, older], sharedEnvironmentId, "dep_older");
+
+		expect(resolution.match?.deployment.id).toBe("dep_older");
+		expect(resolution.match?.runtime).toBe("openclaw");
+		expect(resolution.ambiguousMatches).toEqual([]);
 	});
 });
 

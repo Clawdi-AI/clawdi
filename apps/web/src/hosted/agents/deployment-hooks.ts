@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { deleteDeploymentToastDecision } from "@/hosted/agents/delete-deployment-toast.logic";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import type {
+	HostedDeployment,
 	RebindAgentAiProviderRequest,
 	SetAgentEnabledRequest,
 } from "@/hosted/billing/contracts";
@@ -53,23 +54,16 @@ function toastAgentLanguageTimezoneError(error: unknown) {
 /**
  * Resolve the hosted deployment that backs a cloud-api environment, joined via
  * `config_info.clawdi_cloud_environments[runtime] === environmentId` (same join
- * the agent tiles use). Returns null for self-managed (CLI) agents.
+ * the agent tiles use). Duplicate joins remain unresolved until an explicit
+ * deployment selector is present.
  */
-export function useAgentDeployment(environmentId: string) {
-	const query = useHostedDeployments({ pollWalletDunningFor: environmentId });
-	const match = useMemo(() => {
-		const target = environmentId.toLowerCase();
-		for (const d of query.data ?? []) {
-			// Direct deployment-id match: the post-deploy redirect lands on
-			// `/agents/<deployment.id>` because cloud-api env ids aren't minted
-			// until provisioning finishes — resolve by id, not just the env join.
-			if (d.id.toLowerCase() === target) return { deployment: d, runtime: null };
-			const envs = d.config_info?.clawdi_cloud_environments ?? {};
-			const runtime = Object.entries(envs).find(([, v]) => (v ?? "").toLowerCase() === target);
-			if (runtime) return { deployment: d, runtime: runtime[0] };
-		}
-		return null;
-	}, [query.data, environmentId]);
+export function useAgentDeployment(environmentId: string, deploymentSelector?: string | null) {
+	const query = useHostedDeployments({ pollWalletDunningFor: deploymentSelector ?? environmentId });
+	const resolution = useMemo(
+		() => resolveAgentDeployment(query.data ?? [], environmentId, deploymentSelector),
+		[query.data, environmentId, deploymentSelector],
+	);
+	const match = resolution.match;
 
 	// The env id to drive per-env queries (sessions, channel links). For an
 	// env-id route it's the route param itself; for a deployment-id route
@@ -85,12 +79,56 @@ export function useAgentDeployment(environmentId: string) {
 	return {
 		deployment: match?.deployment ?? null,
 		matchedRuntime: match?.runtime ?? null,
+		ambiguousMatches: resolution.ambiguousMatches,
 		environmentId: resolvedEnvId,
 		isLoading: query.isLoading,
 		isFetching: query.isFetching,
 		error: query.error,
 		refetch: query.refetch,
 	};
+}
+
+export type AgentDeploymentMatch = {
+	deployment: HostedDeployment;
+	runtime: string | null;
+};
+
+export type AgentDeploymentResolution = {
+	match: AgentDeploymentMatch | null;
+	ambiguousMatches: AgentDeploymentMatch[];
+};
+
+export function resolveAgentDeployment(
+	deployments: readonly HostedDeployment[],
+	environmentId: string,
+	deploymentSelector?: string | null,
+): AgentDeploymentResolution {
+	const target = environmentId.toLowerCase();
+	// Direct deployment-id match: the post-deploy redirect lands on
+	// `/agents/<deployment.id>` because cloud-api env ids aren't minted until
+	// provisioning finishes — resolve by id, not just the env join.
+	const direct = deployments.find((deployment) => deployment.id.toLowerCase() === target);
+	if (direct) {
+		return { match: { deployment: direct, runtime: null }, ambiguousMatches: [] };
+	}
+
+	const matches: AgentDeploymentMatch[] = [];
+	for (const deployment of deployments) {
+		const envs = deployment.config_info?.clawdi_cloud_environments ?? {};
+		const runtime = Object.entries(envs).find(
+			([, value]) => (value ?? "").toLowerCase() === target,
+		);
+		if (runtime) matches.push({ deployment, runtime: runtime[0] });
+	}
+
+	if (deploymentSelector) {
+		const selector = deploymentSelector.toLowerCase();
+		const selected = matches.find((item) => item.deployment.id.toLowerCase() === selector);
+		if (selected) return { match: selected, ambiguousMatches: [] };
+	}
+
+	if (matches.length === 1) return { match: matches[0], ambiguousMatches: [] };
+	return { match: null, ambiguousMatches: matches };
 }
 
 export function useSetAgentLanguageTimezone() {
