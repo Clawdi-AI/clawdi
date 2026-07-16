@@ -13,7 +13,12 @@ import { useCallback } from "react";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
 	CheckoutRequest,
+	CheckoutResult,
 	ComputeFixPaymentRequest,
+	ComputePlanChangeQuoteRequest,
+	ComputePlanChangeRequest,
+	ComputePlanChangeResponse,
+	ComputeRetryRequest,
 	ComputeSubscriptionActionResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
@@ -21,6 +26,9 @@ import type {
 	HostedDeployment,
 	PortalRequest,
 	WalletAutoReloadRequest,
+	WalletComputeActivateRequest,
+	WalletComputeActivateResponse,
+	WalletComputeQuoteRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
@@ -38,6 +46,21 @@ type CreateDeploymentMutationVariables = {
 	body: DeployRequest;
 	idempotencyKey: string;
 };
+
+type CreateSubscriptionMutationVariables =
+	| {
+			fundingSource: "stripe";
+			body: CheckoutRequest;
+			idempotencyKey: string;
+	  }
+	| {
+			fundingSource: "wallet";
+			body: WalletComputeActivateRequest;
+	  };
+
+type CreateSubscriptionMutationResult =
+	| { fundingSource: "stripe"; data: CheckoutResult }
+	| { fundingSource: "wallet"; data: WalletComputeActivateResponse };
 
 const CHECKOUT_RETURN_DEPLOYMENT_PARAMS = ["deployment_id", "upgrade_deployment_id"] as const;
 const CHECKOUT_RETURN_MARKER_PARAMS = [
@@ -225,6 +248,79 @@ export function useCheckout() {
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });
+		},
+	});
+}
+
+export function useCreateSubscription() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation<CreateSubscriptionMutationResult, Error, CreateSubscriptionMutationVariables>({
+		mutationFn: async (variables) =>
+			variables.fundingSource === "stripe"
+				? {
+						fundingSource: "stripe",
+						data: await client.checkout(variables.body, variables.idempotencyKey),
+					}
+				: {
+						fundingSource: "wallet",
+						data: await client.activateWalletSubscription(variables.body),
+					},
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: billingKeys.wallet });
+			qc.invalidateQueries({ queryKey: ["billing", "history"] });
+		},
+	});
+}
+
+export function useWalletComputeQuote(
+	body: WalletComputeQuoteRequest | null,
+	{ enabled = true }: { enabled?: boolean } = {},
+) {
+	const client = useBillingClient();
+	return useBillingQuery({
+		queryKey: body
+			? billingKeys.walletQuote(body.plan_slug, body.billing_term_months)
+			: ["billing", "wallet-quote", "disabled"],
+		queryFn: () => {
+			if (!body) throw new Error("Wallet quote request is unavailable.");
+			return client.quoteWalletSubscription(body);
+		},
+		enabled: isDeployApiConfigured() && enabled && body !== null,
+		staleTime: 30_000,
+	});
+}
+
+export function useQuotePlanChange() {
+	const client = useBillingClient();
+	return useMutation({
+		mutationFn: (body: ComputePlanChangeQuoteRequest) => client.quotePlanChange(body),
+	});
+}
+
+export function useChangePlan() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation<ComputePlanChangeResponse, Error, ComputePlanChangeRequest>({
+		mutationFn: (body) => client.changePlan(body),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: billingKeys.wallet });
+			qc.invalidateQueries({ queryKey: ["billing", "history"] });
+		},
+	});
+}
+
+export function useRetrySubscription() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (body: ComputeRetryRequest) => client.retrySubscription(body),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: billingKeys.wallet });
+			qc.invalidateQueries({ queryKey: ["billing", "history"] });
 		},
 	});
 }

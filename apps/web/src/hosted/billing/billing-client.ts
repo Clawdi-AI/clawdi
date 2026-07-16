@@ -7,6 +7,9 @@ import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type {
 	CheckoutRequest,
 	ComputeFixPaymentRequest,
+	ComputePlanChangeQuoteRequest,
+	ComputePlanChangeRequest,
+	ComputeRetryRequest,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
 	DeployRequest,
@@ -15,6 +18,8 @@ import type {
 	RuntimeAgentType,
 	SetAgentEnabledRequest,
 	WalletAutoReloadRequest,
+	WalletComputeActivateRequest,
+	WalletComputeQuoteRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
@@ -125,6 +130,16 @@ export function useBillingClient() {
 						headers: { "Idempotency-Key": idempotencyKey },
 					}),
 				),
+			quoteWalletSubscription: async (body: WalletComputeQuoteRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/quote", { body })),
+			activateWalletSubscription: async (body: WalletComputeActivateRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/wallet/activate", { body })),
+			quotePlanChange: async (body: ComputePlanChangeQuoteRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/plan/quote", { body })),
+			changePlan: async (body: ComputePlanChangeRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/plan/change", { body })),
+			retrySubscription: async (body: ComputeRetryRequest) =>
+				unwrapDeploy(await api.POST("/v2/subscription/retry", { body })),
 			cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
 			fixPayment: async (body: ComputeFixPaymentRequest) =>
