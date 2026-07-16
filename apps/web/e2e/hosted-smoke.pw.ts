@@ -85,7 +85,17 @@ const includedBasicDeployment = {
 	status: "running",
 	created_at: "2026-07-15T00:00:00Z",
 	upgrade_available: true,
-	compute_subscription: null,
+	compute_subscription: {
+		subscription_id: 7,
+		status: "active",
+		funding_source: null,
+		payment_state: "ok",
+		billing_term_months: 1,
+		price_cents: 0,
+		currency: "usd",
+		cancel_at_period_end: false,
+		current_period_end: "2026-08-15T00:00:00Z",
+	},
 	config_info: {
 		compute_plan_slug: "compute_basic",
 		mux_enabled: false,
@@ -107,12 +117,15 @@ const paidBasicDeployment = {
 	id: "hdep_paid",
 	name: "Paid Basic",
 	compute_subscription: {
+		subscription_id: 42,
 		status: "active",
+		funding_source: "stripe",
 		payment_state: "ok",
 		billing_term_months: 12,
 		price_cents: 8_640,
 		currency: "usd",
 		cancel_at_period_end: false,
+		current_period_end: "2027-07-15T00:00:00Z",
 	},
 };
 
@@ -120,6 +133,10 @@ const performanceDeployment = {
 	...paidBasicDeployment,
 	id: "hdep_performance",
 	name: "Performance agent",
+	compute_subscription: {
+		...paidBasicDeployment.compute_subscription,
+		price_cents: 18_000,
+	},
 	config_info: {
 		...paidBasicDeployment.config_info,
 		compute_plan_slug: "compute_performance",
@@ -264,6 +281,46 @@ const walletPastDueDeployment = {
 	},
 };
 
+const cardPastDueDeployment = {
+	...paidBasicDeployment,
+	id: "hdep_card_due",
+	name: "Card-funded Basic",
+	compute_subscription: {
+		...paidBasicDeployment.compute_subscription,
+		status: "past_due",
+		payment_state: "past_due",
+		latest_failed_invoice_id: "in_card_open",
+		latest_failed_invoice_hosted_url: null,
+		next_payment_attempt_at: "2026-07-16T00:00:00Z",
+	},
+};
+
+const terminalFallbackDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_terminal_fallback",
+	name: "Fallback Basic",
+	upgrade_available: false,
+	compute_subscription: null,
+	last_funding_event: {
+		type: "compute_subscription_fallback",
+		funding_source: "stripe",
+		reason: "payment_failure",
+		prior_plan_slug: "compute_performance",
+		occurred_at: "2026-07-16T00:00:00Z",
+	},
+};
+
+const cancelPendingBasicDeployment = {
+	...paidBasicDeployment,
+	id: "hdep_cancel_pending",
+	name: "Cancel-pending Basic",
+	compute_subscription: {
+		...paidBasicDeployment.compute_subscription,
+		cancel_at_period_end: true,
+		cancel_at: "2027-07-15T00:00:00Z",
+	},
+};
+
 const walletAnnualDeployment = {
 	...paidBasicDeployment,
 	id: "hdep_wallet_created",
@@ -275,6 +332,114 @@ const walletAnnualDeployment = {
 		current_period_end: "2027-07-15T00:00:00Z",
 	},
 };
+
+function walletSubscriptionQuote({
+	planSlug,
+	billingTermMonths,
+	termPriceCents,
+	exactDebitCredits,
+	balanceBeforeCredits,
+	balanceAfterCredits,
+}: {
+	planSlug: "compute_basic" | "compute_performance";
+	billingTermMonths: 1 | 12;
+	termPriceCents: number;
+	exactDebitCredits: string;
+	balanceBeforeCredits: string;
+	balanceAfterCredits: string;
+}) {
+	return {
+		plan_slug: planSlug,
+		billing_term_months: billingTermMonths,
+		funding_source: "wallet",
+		currency: "usd",
+		term_price_cents: termPriceCents,
+		preview_invoice_id: `upcoming_${planSlug}_${billingTermMonths}`,
+		expires_at: "2026-07-16T00:15:00Z",
+		debit_credits: exactDebitCredits,
+		points_per_usd: 1_000,
+		balance_before_credits: balanceBeforeCredits,
+		balance_after_credits: balanceAfterCredits,
+	};
+}
+
+function planChangeQuoteResponse({
+	operationId,
+	subscriptionId,
+	fundingSource,
+	currentPlanSlug,
+	targetPlanSlug,
+	currentBillingTermMonths,
+	targetBillingTermMonths,
+	changeKind,
+	effectiveAt,
+	amountCents,
+	amountCredits,
+}: {
+	operationId: string;
+	subscriptionId: number;
+	fundingSource: "stripe" | "wallet";
+	currentPlanSlug: "compute_basic" | "compute_performance";
+	targetPlanSlug: "compute_basic" | "compute_performance";
+	currentBillingTermMonths: 1 | 12;
+	targetBillingTermMonths: 1 | 12;
+	changeKind: "immediate_upgrade" | "scheduled_downgrade";
+	effectiveAt: string;
+	amountCents: number;
+	amountCredits: string | null;
+}) {
+	return {
+		operation_id: operationId,
+		subscription_id: subscriptionId,
+		funding_source: fundingSource,
+		current_plan_slug: currentPlanSlug,
+		target_plan_slug: targetPlanSlug,
+		current_billing_term_months: currentBillingTermMonths,
+		target_billing_term_months: targetBillingTermMonths,
+		change_kind: changeKind,
+		status: "quoted",
+		effective_at: effectiveAt,
+		proration_date: "2026-07-16T00:00:00Z",
+		expires_at: "2026-07-16T00:15:00Z",
+		amount_cents: amountCents,
+		amount_credits: amountCredits,
+		points_per_usd: fundingSource === "wallet" ? 1_000 : null,
+		currency: "usd",
+		stripe_invoice_preview_id: "in_preview_browser",
+	};
+}
+
+function planChangeResponse({
+	operationId,
+	subscriptionId,
+	fundingSource,
+	currentPlanSlug,
+	targetPlanSlug,
+	targetBillingTermMonths,
+	status,
+	effectiveAt,
+}: {
+	operationId: string;
+	subscriptionId: number;
+	fundingSource: "stripe" | "wallet";
+	currentPlanSlug: "compute_basic" | "compute_performance";
+	targetPlanSlug: "compute_basic" | "compute_performance";
+	targetBillingTermMonths: 1 | 12;
+	status: "awaiting_payment" | "awaiting_projection" | "scheduled" | "complete";
+	effectiveAt: string;
+}) {
+	return {
+		operation_id: operationId,
+		subscription_id: subscriptionId,
+		funding_source: fundingSource,
+		current_plan_slug: currentPlanSlug,
+		target_plan_slug: targetPlanSlug,
+		target_billing_term_months: targetBillingTermMonths,
+		status,
+		effective_at: effectiveAt,
+		funding_invoice_id: status === "scheduled" ? null : "in_plan_browser",
+	};
+}
 
 type StubResponse = { body: unknown; status: number; delayMs?: number };
 
@@ -296,6 +461,7 @@ type HostedApiStubOptions = {
 	canUsePlanCBilling?: boolean;
 	cancelRequests?: string[];
 	checkoutRequests?: string[];
+	checkoutResponses?: StubResponse[];
 	cloudAgentOverrides?: Record<string, unknown>;
 	cloudAgents?: readonly unknown[];
 	cloudAgentsResponse?: StubResponse;
@@ -312,21 +478,24 @@ type HostedApiStubOptions = {
 	ledgerResponses?: unknown[];
 	plans?: readonly unknown[];
 	planCMutationRequests?: string[];
+	planChangeRequests?: string[];
+	planChangeResponses?: unknown[];
+	planQuoteRequests?: string[];
+	planQuoteResponses?: unknown[];
 	restartRequests?: string[];
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
+	resumeRequests?: string[];
+	subscriptionQuoteRequests?: string[];
+	subscriptionQuoteResponses?: unknown[];
 	startError?: { status: number; detail: string };
 	startRequests?: string[];
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
-	walletActivateRequests?: string[];
-	walletActivateResponses?: StubResponse[];
-	walletQuoteRequests?: string[];
-	walletQuoteResponses?: unknown[];
 	walletState?: typeof walletState;
 	onTopUpSuccess?: () => void;
-	onWalletActivateSuccess?: () => void;
+	onWalletCheckoutSuccess?: () => void;
 };
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
@@ -391,54 +560,101 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			});
 		}
 		if (p === "/v2/subscription/checkout" && r.request().method() === "POST") {
-			options.checkoutRequests?.push(r.request().postData() ?? "");
-			return fulfillJson(r, {
-				flow_type: "checkout_session",
-				action_url: null,
-				checkout_url: "http://127.0.0.1:3100/deploy?mockCheckout=browser",
-				client_secret: null,
-			});
+			const requestBody = r.request().postData() ?? "";
+			options.checkoutRequests?.push(requestBody);
+			const request = JSON.parse(requestBody) as { funding_source?: string };
+			const response =
+				options.checkoutResponses?.shift() ??
+				(request.funding_source === "wallet"
+					? {
+							status: 200,
+							body: {
+								flow_type: "subscription_activation",
+								funding_source: "wallet",
+								checkout_url: "",
+								subscription_id: 42,
+								invoice_id: "in_wallet_browser",
+								deploy_request_id: "wallet-compute-deploy-browser",
+								deployment_id: "hdep_wallet_created",
+								debited_credits: "86400",
+								balance_after_credits: "13600",
+								current_period_start: "2026-07-15T00:00:00Z",
+								current_period_end: "2027-07-15T00:00:00Z",
+								entitled_until: "2027-07-15T00:00:00Z",
+							},
+						}
+					: {
+							status: 200,
+							body: {
+								flow_type: "checkout_session",
+								funding_source: "stripe",
+								action_url: null,
+								checkout_url: "#mock-checkout",
+								client_secret: null,
+							},
+						});
+			if (response.status < 400 && request.funding_source === "wallet") {
+				options.onWalletCheckoutSuccess?.();
+			}
+			return fulfillJson(r, response.body, response.status);
 		}
-		if (p === "/v2/subscription/wallet/quote" && r.request().method() === "POST") {
-			options.walletQuoteRequests?.push(r.request().postData() ?? "");
-			const response = options.walletQuoteResponses?.shift() ?? {
-				plan_slug: "compute_basic",
-				billing_term_months: 1,
-				monthly_price_cents: 900,
-				monthly_price_credits: "9000",
-				points_per_usd: 1_000,
-				first_charge_cents: 900,
-				first_charge_credits: "9000",
-				period_start: "2026-07-15T00:00:00Z",
-				period_end: "2026-08-15T00:00:00Z",
-				balance_credits: "25000",
-				post_charge_balance_estimate_credits: "16000",
-				warnings: [],
+		if (p === "/v2/subscription/quote" && r.request().method() === "POST") {
+			options.subscriptionQuoteRequests?.push(r.request().postData() ?? "");
+			const response =
+				options.subscriptionQuoteResponses?.shift() ??
+				walletSubscriptionQuote({
+					planSlug: "compute_basic",
+					billingTermMonths: 1,
+					termPriceCents: 900,
+					exactDebitCredits: "9000",
+					balanceBeforeCredits: "25000",
+					balanceAfterCredits: "16000",
+				});
+			return isStubResponse(response)
+				? fulfillJson(r, response.body, response.status)
+				: fulfillJson(r, response);
+		}
+		if (p === "/v2/subscription/plan/quote" && r.request().method() === "POST") {
+			options.planQuoteRequests?.push(r.request().postData() ?? "");
+			const response = options.planQuoteResponses?.shift() ?? {
+				operation_id: "op_plan_browser",
+				subscription_id: 42,
+				funding_source: "stripe",
+				current_plan_slug: "compute_basic",
+				target_plan_slug: "compute_performance",
+				current_billing_term_months: 1,
+				target_billing_term_months: 1,
+				change_kind: "immediate_upgrade",
+				status: "quoted",
+				effective_at: "2026-07-16T00:00:00Z",
+				proration_date: "2026-07-16T00:00:00Z",
+				expires_at: "2026-07-16T00:15:00Z",
+				amount_cents: 1_000,
+				amount_credits: null,
+				points_per_usd: null,
+				currency: "usd",
+				stripe_invoice_preview_id: "in_preview_browser",
 			};
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
 				: fulfillJson(r, response);
 		}
-		if (p === "/v2/subscription/wallet/activate" && r.request().method() === "POST") {
-			options.walletActivateRequests?.push(r.request().postData() ?? "");
-			const response = options.walletActivateResponses?.shift() ?? {
-				status: 200,
-				body: {
-					subscription_id: 42,
-					status: "active",
-					funding_source: "wallet",
-					deploy_request_id: "wallet-compute-deploy-browser",
-					deployment_id: "hdep_wallet_created",
-					charge_ledger_id: "ledger_wallet_browser",
-					charged_credits: "9000",
-					post_charge_balance_credits: "16000",
-					current_period_start: "2026-07-15T00:00:00Z",
-					current_period_end: "2026-08-15T00:00:00Z",
-					entitled_until: "2026-08-15T00:00:00Z",
-				},
+		if (p === "/v2/subscription/plan/change" && r.request().method() === "POST") {
+			options.planChangeRequests?.push(r.request().postData() ?? "");
+			const response = options.planChangeResponses?.shift() ?? {
+				operation_id: "op_plan_browser",
+				subscription_id: 42,
+				funding_source: "stripe",
+				current_plan_slug: "compute_basic",
+				target_plan_slug: "compute_performance",
+				target_billing_term_months: 1,
+				status: "complete",
+				effective_at: "2026-07-16T00:00:00Z",
+				funding_invoice_id: "in_plan_browser",
 			};
-			if (response.status < 400) options.onWalletActivateSuccess?.();
-			return fulfillJson(r, response.body, response.status);
+			return isStubResponse(response)
+				? fulfillJson(r, response.body, response.status)
+				: fulfillJson(r, response);
 		}
 		if (p === "/v2/wallet/topup" && r.request().method() === "POST") {
 			options.topUpRequests?.push(r.request().postData() ?? "");
@@ -482,6 +698,16 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				cancel_at_period_end: true,
 				current_period_end: "2026-08-15T00:00:00Z",
 				cancel_at: "2026-08-15T00:00:00Z",
+			});
+		}
+		if (p === "/v2/subscription/resume" && r.request().method() === "POST") {
+			options.resumeRequests?.push(r.request().postData() ?? "");
+			return fulfillJson(r, {
+				status: "active",
+				billing_term_months: 12,
+				cancel_at_period_end: false,
+				current_period_end: "2027-07-15T00:00:00Z",
+				cancel_at: null,
 			});
 		}
 		if (p.endsWith("/restart") && r.request().method() === "POST") {
@@ -664,7 +890,7 @@ test("Plan C gate off keeps read-only UI usable and sends no billing mutation", 
 	const planCMutationRequests: string[] = [];
 	await stubHostedApi(page, {
 		canUsePlanCBilling: false,
-		deployments: [includedBasicDeployment, paidBasicDeployment],
+		deployments: [includedBasicDeployment, paidBasicDeployment, terminalFallbackDeployment],
 		plans: [basicPlan, performancePlan],
 		planCMutationRequests,
 	});
@@ -684,6 +910,14 @@ test("Plan C gate off keeps read-only UI usable and sends no billing mutation", 
 	await expect(page.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Resume subscription" })).toHaveCount(0);
 	await expect(page.getByText(/Plan changes are unavailable/)).toBeVisible();
+
+	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toBeDisabled();
+	await expect(page.getByText(/Paid compute actions are unavailable/)).toBeVisible();
+
+	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+	await expect(page.getByRole("button", { name: "Start a new subscription" })).toBeDisabled();
+	await expect(page.getByText(/Paid compute actions are unavailable/)).toBeVisible();
 
 	expect(
 		planCMutationRequests,
@@ -1005,6 +1239,7 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({
 		plan_slug: "compute_basic",
 		billing_term_months: 12,
+		funding_source: "stripe",
 		deploy_config: { compute_plan_slug: "compute_basic" },
 	});
 	expect(errors, `paid Basic checkout: ${errors.join(" | ")}`).toEqual([]);
@@ -1016,39 +1251,31 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 	const errors = collectBrowserErrors(page);
 	const checkoutRequests: string[] = [];
 	const deployments: unknown[] = [includedBasicDeployment];
-	const walletActivateRequests: string[] = [];
-	const walletQuoteRequests: string[] = [];
+	const subscriptionQuoteRequests: string[] = [];
 	await stubHostedApi(page, {
 		checkoutRequests,
 		deployments,
 		plans: [basicPlan, performancePlan],
-		walletActivateRequests,
-		walletQuoteRequests,
-		walletQuoteResponses: [
-			{
-				plan_slug: "compute_basic",
-				billing_term_months: 12,
-				monthly_price_cents: 900,
-				monthly_price_credits: "9000",
-				points_per_usd: 1_000,
-				first_charge_cents: 8_640,
-				first_charge_credits: "86400",
-				period_start: "2026-07-15T00:00:00Z",
-				period_end: "2027-07-15T00:00:00Z",
-				balance_credits: "100000",
-				post_charge_balance_estimate_credits: "13600",
-				warnings: [],
-			},
+		subscriptionQuoteRequests,
+		subscriptionQuoteResponses: [
+			walletSubscriptionQuote({
+				planSlug: "compute_basic",
+				billingTermMonths: 12,
+				termPriceCents: 8_640,
+				exactDebitCredits: "86400",
+				balanceBeforeCredits: "100000",
+				balanceAfterCredits: "13600",
+			}),
 		],
 		walletState: { ...walletState, balance_credits: 100_000 },
-		onWalletActivateSuccess: () => deployments.push(walletAnnualDeployment),
+		onWalletCheckoutSuccess: () => deployments.push(walletAnnualDeployment),
 	});
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
 	await page.getByRole("button", { name: /Annual.*%/ }).click();
 	await page.getByRole("button", { name: /Wallet balance/ }).click();
-	await expect.poll(() => walletQuoteRequests.length).toBe(1);
+	await expect.poll(() => subscriptionQuoteRequests.length).toBe(1);
 	const equation = page.getByTestId("wallet-debit-equation");
 	await expect(equation).toContainText("Balance before");
 	await expect(equation).toContainText("100,000 credits");
@@ -1059,52 +1286,437 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 	await expect(equation).toContainText("13,600 credits");
 
 	await page.getByRole("button", { name: "Pay $86.40 from Wallet & deploy" }).click();
-	await expect.poll(() => walletActivateRequests.length).toBe(1);
-	const quote = JSON.parse(walletQuoteRequests[0] ?? "{}");
-	const activation = JSON.parse(walletActivateRequests[0] ?? "{}");
+	await expect.poll(() => checkoutRequests.length).toBe(1);
+	const quote = JSON.parse(subscriptionQuoteRequests[0] ?? "{}");
+	const activation = JSON.parse(checkoutRequests[0] ?? "{}");
 	expect(quote).toEqual({
 		plan_slug: "compute_basic",
 		billing_term_months: 12,
+		funding_source: "wallet",
 	});
 	expect(activation).toMatchObject({
 		plan_slug: "compute_basic",
 		billing_term_months: 12,
+		funding_source: "wallet",
 		deploy_config: { compute_plan_slug: "compute_basic" },
+		quote: {
+			funding_source: "wallet",
+			term_price_cents: 8_640,
+			debit_credits: "86400",
+			balance_after_credits: "13600",
+		},
 	});
-	expect(activation.deploy_config.deploy_request_id).toMatch(/^wallet-compute-deploy-/);
-	expect(checkoutRequests).toEqual([]);
 	await expect(page).toHaveURL(/\/agents\/hdep_wallet_created(?:\?|\/)/);
 	expect(errors, `wallet annual deploy: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("included Basic starts annual Performance checkout without direct tier switching", async ({
+test("included Basic uses unified card quote and change without creating a second subscription", async ({
 	page,
 }) => {
+	const errors = collectBrowserErrors(page);
 	const checkoutRequests: string[] = [];
+	const planChangeRequests: string[] = [];
+	const planQuoteRequests: string[] = [];
+	const subscriptionQuoteRequests: string[] = [];
 	await stubHostedApi(page, {
 		checkoutRequests,
 		deployments: [includedBasicDeployment],
+		planChangeRequests,
+		planChangeResponses: [
+			planChangeResponse({
+				operationId: "op_free_card",
+				subscriptionId: 7,
+				fundingSource: "stripe",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				targetBillingTermMonths: 12,
+				status: "complete",
+				effectiveAt: "2026-07-16T00:00:00Z",
+			}),
+		],
+		planQuoteRequests,
+		planQuoteResponses: [
+			planChangeQuoteResponse({
+				operationId: "op_free_card",
+				subscriptionId: 7,
+				fundingSource: "stripe",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				currentBillingTermMonths: 1,
+				targetBillingTermMonths: 12,
+				changeKind: "immediate_upgrade",
+				effectiveAt: "2026-07-16T00:00:00Z",
+				amountCents: 18_000,
+				amountCredits: null,
+			}),
+		],
 		plans: [basicPlan, performancePlan],
+		subscriptionQuoteRequests,
 	});
 	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
-	const errors = collectBrowserErrors(page);
 
 	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Change billing term" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Restart", exact: true })).toBeEnabled();
 	await expect(page.getByRole("button", { name: "Stop", exact: true })).toBeEnabled();
 	await expect(page.getByRole("button", { name: "Start", exact: true })).toHaveCount(0);
 
-	await page.getByRole("button", { name: /Annual/ }).click();
 	await page.getByRole("button", { name: "Upgrade to Performance" }).click();
+	const changeDialog = page.getByRole("dialog");
+	await expect(
+		changeDialog.getByText("Change compute subscription", { exact: true }),
+	).toBeVisible();
+	await changeDialog.getByRole("button", { name: /Annual/ }).click();
+	await changeDialog.getByRole("button", { name: "Review change" }).click();
+
+	await expect.poll(() => planQuoteRequests.length).toBe(1);
+	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
+		subscription_id: 7,
+		target_plan_slug: "compute_performance",
+		target_billing_term_months: 12,
+		funding_source: "stripe",
+	});
+	await expect(changeDialog.getByText("Confirm immediate upgrade", { exact: true })).toBeVisible();
+	await expect(changeDialog.getByText("$180.00", { exact: true })).toBeVisible();
+	await changeDialog.getByRole("button", { name: "Confirm upgrade" }).click();
+
+	await expect.poll(() => planChangeRequests.length).toBe(1);
+	expect(JSON.parse(planChangeRequests[0] ?? "{}")).toEqual({
+		operation_id: "op_free_card",
+	});
+	expect(checkoutRequests).toEqual([]);
+	expect(subscriptionQuoteRequests).toEqual([]);
+	await expect(page.getByText("Plan change started", { exact: true })).toBeVisible();
+	expect(errors, `included Basic card upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("included Basic uses unified wallet quote and change with exact debit", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const checkoutRequests: string[] = [];
+	const planChangeRequests: string[] = [];
+	const planQuoteRequests: string[] = [];
+	const subscriptionQuoteRequests: string[] = [];
+	await stubHostedApi(page, {
+		checkoutRequests,
+		deployments: [includedBasicDeployment],
+		planChangeRequests,
+		planChangeResponses: [
+			planChangeResponse({
+				operationId: "op_free_wallet",
+				subscriptionId: 7,
+				fundingSource: "wallet",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				targetBillingTermMonths: 1,
+				status: "awaiting_projection",
+				effectiveAt: "2026-07-16T00:00:00Z",
+			}),
+		],
+		planQuoteRequests,
+		planQuoteResponses: [
+			planChangeQuoteResponse({
+				operationId: "op_free_wallet",
+				subscriptionId: 7,
+				fundingSource: "wallet",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				currentBillingTermMonths: 1,
+				targetBillingTermMonths: 1,
+				changeKind: "immediate_upgrade",
+				effectiveAt: "2026-07-16T00:00:00Z",
+				amountCents: 1_900,
+				amountCredits: "19000",
+			}),
+		],
+		plans: [basicPlan, performancePlan],
+		subscriptionQuoteRequests,
+	});
+	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+
+	await page.getByRole("button", { name: "Upgrade to Performance" }).click();
+	const changeDialog = page.getByRole("dialog");
+	await changeDialog.getByRole("button", { name: "Wallet", exact: true }).click();
+	const review = changeDialog.getByRole("button", { name: "Review change" });
+	await expect(review).toBeEnabled();
+	await review.click();
+
+	await expect.poll(() => planQuoteRequests.length).toBe(1);
+	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
+		subscription_id: 7,
+		target_plan_slug: "compute_performance",
+		target_billing_term_months: 1,
+		funding_source: "wallet",
+	});
+	const equation = changeDialog.getByTestId("wallet-debit-equation");
+	await expect(equation).toContainText("25,000 credits");
+	await expect(equation).toContainText("19,000 credits");
+	await expect(equation).toContainText("6,000 credits");
+	await changeDialog.getByRole("button", { name: "Confirm upgrade" }).click();
+
+	await expect.poll(() => planChangeRequests.length).toBe(1);
+	expect(JSON.parse(planChangeRequests[0] ?? "{}")).toEqual({
+		operation_id: "op_free_wallet",
+	});
+	expect(checkoutRequests).toEqual([]);
+	expect(subscriptionQuoteRequests).toEqual([]);
+	await expect(page.getByText("Plan change started", { exact: true })).toBeVisible();
+	expect(errors, `included Basic wallet upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("paid card subscription confirms an immediate quoted upgrade", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const planChangeRequests: string[] = [];
+	const planQuoteRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [paidBasicDeployment],
+		planChangeRequests,
+		planChangeResponses: [
+			planChangeResponse({
+				operationId: "op_paid_card",
+				subscriptionId: 42,
+				fundingSource: "stripe",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				targetBillingTermMonths: 12,
+				status: "complete",
+				effectiveAt: "2026-07-16T00:00:00Z",
+			}),
+		],
+		planQuoteRequests,
+		planQuoteResponses: [
+			planChangeQuoteResponse({
+				operationId: "op_paid_card",
+				subscriptionId: 42,
+				fundingSource: "stripe",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				currentBillingTermMonths: 12,
+				targetBillingTermMonths: 12,
+				changeKind: "immediate_upgrade",
+				effectiveAt: "2026-07-16T00:00:00Z",
+				amountCents: 9_360,
+				amountCredits: null,
+			}),
+		],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+
+	await page.getByRole("button", { name: "Change plan or billing term" }).click();
+	const changeDialog = page.getByRole("dialog");
+	await expect(changeDialog.getByText("Funding source: Card", { exact: true })).toBeVisible();
+	await changeDialog.getByRole("button", { name: "Review change" }).click();
+	await expect.poll(() => planQuoteRequests.length).toBe(1);
+	await expect(changeDialog.getByText("$93.60", { exact: true })).toBeVisible();
+	await changeDialog.getByRole("button", { name: "Confirm upgrade" }).click();
+
+	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
+		subscription_id: 42,
+		target_plan_slug: "compute_performance",
+		target_billing_term_months: 12,
+		funding_source: "stripe",
+	});
+	await expect.poll(() => planChangeRequests.length).toBe(1);
+	expect(JSON.parse(planChangeRequests[0] ?? "{}")).toEqual({
+		operation_id: "op_paid_card",
+	});
+	expect(errors, `paid card upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("paid wallet subscription confirms an immediate quoted upgrade", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const planChangeRequests: string[] = [];
+	const planQuoteRequests: string[] = [];
+	const subscriptionQuoteRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [walletActiveDeployment],
+		planChangeRequests,
+		planChangeResponses: [
+			planChangeResponse({
+				operationId: "op_paid_wallet",
+				subscriptionId: 42,
+				fundingSource: "wallet",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				targetBillingTermMonths: 1,
+				status: "awaiting_projection",
+				effectiveAt: "2026-07-16T00:00:00Z",
+			}),
+		],
+		planQuoteRequests,
+		planQuoteResponses: [
+			planChangeQuoteResponse({
+				operationId: "op_paid_wallet",
+				subscriptionId: 42,
+				fundingSource: "wallet",
+				currentPlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				currentBillingTermMonths: 1,
+				targetBillingTermMonths: 1,
+				changeKind: "immediate_upgrade",
+				effectiveAt: "2026-07-16T00:00:00Z",
+				amountCents: 1_000,
+				amountCredits: "10000",
+			}),
+		],
+		plans: [basicPlan, performancePlan],
+		subscriptionQuoteRequests,
+	});
+	await gotoHostedAgentSettings(page, "hdep_wallet_due", "Basic");
+
+	await page.getByRole("button", { name: "Change plan or billing term" }).click();
+	const changeDialog = page.getByRole("dialog");
+	await expect(changeDialog.getByText("Funding source: Wallet", { exact: true })).toBeVisible();
+	const review = changeDialog.getByRole("button", { name: "Review change" });
+	await expect(review).toBeEnabled();
+	await review.click();
+	await expect.poll(() => planQuoteRequests.length).toBe(1);
+	const equation = changeDialog.getByTestId("wallet-debit-equation");
+	await expect(equation).toContainText("25,000 credits");
+	await expect(equation).toContainText("10,000 credits");
+	await expect(equation).toContainText("15,000 credits");
+	await changeDialog.getByRole("button", { name: "Confirm upgrade" }).click();
+
+	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
+		subscription_id: 42,
+		target_plan_slug: "compute_performance",
+		target_billing_term_months: 1,
+		funding_source: "wallet",
+	});
+	await expect.poll(() => planChangeRequests.length).toBe(1);
+	expect(JSON.parse(planChangeRequests[0] ?? "{}")).toEqual({
+		operation_id: "op_paid_wallet",
+	});
+	expect(subscriptionQuoteRequests).toEqual([]);
+	expect(errors, `paid wallet upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("paid Performance schedules its quoted downgrade for the effective date", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const planChangeRequests: string[] = [];
+	const planQuoteRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [performanceDeployment],
+		planChangeRequests,
+		planChangeResponses: [
+			planChangeResponse({
+				operationId: "op_downgrade",
+				subscriptionId: 42,
+				fundingSource: "stripe",
+				currentPlanSlug: "compute_performance",
+				targetPlanSlug: "compute_basic",
+				targetBillingTermMonths: 12,
+				status: "scheduled",
+				effectiveAt: "2027-07-15T00:00:00Z",
+			}),
+		],
+		planQuoteRequests,
+		planQuoteResponses: [
+			planChangeQuoteResponse({
+				operationId: "op_downgrade",
+				subscriptionId: 42,
+				fundingSource: "stripe",
+				currentPlanSlug: "compute_performance",
+				targetPlanSlug: "compute_basic",
+				currentBillingTermMonths: 12,
+				targetBillingTermMonths: 12,
+				changeKind: "scheduled_downgrade",
+				effectiveAt: "2027-07-15T00:00:00Z",
+				amountCents: 0,
+				amountCredits: null,
+			}),
+		],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_performance", "Performance");
+
+	await page.getByRole("button", { name: "Change plan or billing term" }).click();
+	const changeDialog = page.getByRole("dialog");
+	await changeDialog.getByRole("button", { name: "Review change" }).click();
+	await expect.poll(() => planQuoteRequests.length).toBe(1);
+	await expect(changeDialog.getByRole("heading", { name: "Schedule downgrade" })).toBeVisible();
+	await expect(changeDialog.getByText("No charge today", { exact: true })).toBeVisible();
+	await expect(changeDialog).toContainText("Jul 15, 2027");
+	await changeDialog.getByRole("button", { name: "Schedule downgrade" }).click();
+
+	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
+		subscription_id: 42,
+		target_plan_slug: "compute_basic",
+		target_billing_term_months: 12,
+		funding_source: "stripe",
+	});
+	await expect.poll(() => planChangeRequests.length).toBe(1);
+	expect(JSON.parse(planChangeRequests[0] ?? "{}")).toEqual({
+		operation_id: "op_downgrade",
+	});
+	await expect(page.getByText("Downgrade scheduled", { exact: true })).toBeVisible();
+	expect(errors, `scheduled downgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("pending cancellation blocks plan changes and resumes through the primary CTA", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const planChangeRequests: string[] = [];
+	const planQuoteRequests: string[] = [];
+	const resumeRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [cancelPendingBasicDeployment],
+		planChangeRequests,
+		planQuoteRequests,
+		plans: [basicPlan, performancePlan],
+		resumeRequests,
+	});
+	await gotoHostedAgentSettings(page, "hdep_cancel_pending", "Basic");
+
+	await expect(page.getByRole("button", { name: "Change plan or billing term" })).toHaveCount(0);
+	await expect(page.getByText(/Resume this subscription before changing/)).toBeVisible();
+	await page.getByRole("button", { name: "Resume subscription" }).click();
+
+	await expect.poll(() => resumeRequests.length).toBe(1);
+	expect(JSON.parse(resumeRequests[0] ?? "{}")).toEqual({
+		deployment_id: "hdep_cancel_pending",
+	});
+	expect(planQuoteRequests).toEqual([]);
+	expect(planChangeRequests).toEqual([]);
+	await expect(page.getByText("Subscription resumed", { exact: true })).toBeVisible();
+	expect(errors, `pending cancellation resume: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("terminal fallback starts a new subscription against the fallback deployment", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const checkoutRequests: string[] = [];
+	await stubHostedApi(page, {
+		checkoutRequests,
+		deployments: [terminalFallbackDeployment],
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
+
+	await expect(page.getByText("Compute subscription ended", { exact: true })).toBeVisible();
+	await expect(
+		page.getByRole("alert").getByRole("button", { name: "Start a new subscription" }),
+	).toBeVisible();
+	const startNewButton = page
+		.locator("#compute-plan-controls")
+		.getByRole("button", { name: "Start a new subscription" });
+	await expect(startNewButton).toBeVisible();
+	await startNewButton.click();
+	const createDialog = page.getByRole("dialog");
+	await expect(createDialog.getByText("Start a new subscription", { exact: true })).toBeVisible();
+	await expect(createDialog.locator("#subscription-create-plan")).toContainText("Performance");
+	await createDialog.getByRole("button", { name: "Continue to card checkout" }).click();
+
 	await expect.poll(() => checkoutRequests.length).toBe(1);
 	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({
 		plan_slug: "compute_performance",
-		billing_term_months: 12,
-		upgrade_deployment_id: "hdep_included",
+		billing_term_months: 1,
+		funding_source: "stripe",
+		upgrade_deployment_id: "hdep_terminal_fallback",
 	});
-	expect(errors, `included Basic upgrade: ${errors.join(" | ")}`).toEqual([]);
+	expect(errors, `terminal fallback reactivation: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("included Basic checkout abandonment preserves the current plan", async ({ page }) => {
@@ -1144,7 +1756,7 @@ test("paid Basic cancellation stays conditional with the included slot vacant or
 		if (label === "occupied") deployments.push(includedBasicDeployment);
 		if (index > 0) await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
 
-		await expect(page.getByRole("button", { name: "Change billing term" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Change plan or billing term" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
 		await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toHaveCount(0);
 
@@ -1182,7 +1794,7 @@ test("paid Performance exposes subscription actions without a direct Basic switc
 	await gotoHostedAgentSettings(page, "hdep_performance", "Performance");
 	const errors = collectBrowserErrors(page);
 
-	await expect(page.getByRole("button", { name: "Change billing term" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Change plan or billing term" })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Cancel subscription" })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: /switch|downgrade/i })).toHaveCount(0);
@@ -1287,17 +1899,17 @@ test("Stripe invoice history shows both rails, receipts, and hides free invoices
 						hosted_invoice_url: "https://invoice.stripe.test/in_1",
 					},
 					{
-						id: "stripe:in_free",
+						id: "stripe:in_zero_proration",
 						funding_source: "stripe",
 						compute_subscription_id: 10,
-						plan_slug: "compute_basic",
+						plan_slug: "compute_performance",
 						status: "paid",
 						amount_cents: 0,
 						currency: "usd",
 						created: "2026-07-13T00:00:00Z",
-						stripe_invoice_id: "in_free",
-						stripe_invoice_number: "CLAWDI-FREE-1",
-						hosted_invoice_url: "https://invoice.stripe.test/in_free",
+						stripe_invoice_id: "in_zero_proration",
+						stripe_invoice_number: "CLAWDI-PRORATION-1",
+						hosted_invoice_url: "https://invoice.stripe.test/in_zero_proration",
 					},
 				],
 				has_more: true,
@@ -1339,10 +1951,10 @@ test("Stripe invoice history shows both rails, receipts, and hides free invoices
 		billingTable.locator('a[href="https://invoice.stripe.test/in_wallet"]'),
 	).toBeVisible();
 	await expect(billingTable.locator('a[href="https://invoice.stripe.test/in_1"]')).toBeVisible();
-	await expect(billingTable.locator('a[href="https://invoice.stripe.test/in_free"]')).toHaveCount(
-		0,
-	);
-	await expect(billingTable.getByText("$0.00", { exact: true })).toHaveCount(0);
+	await expect(
+		billingTable.locator('a[href="https://invoice.stripe.test/in_zero_proration"]'),
+	).toBeVisible();
+	await expect(billingTable.getByText("$0.00", { exact: true })).toBeVisible();
 	await settingsDialog.getByRole("button", { name: "Load more" }).click();
 	await expect.poll(() => billingHistoryRequests.length).toBe(2);
 	await expect(
@@ -1641,6 +2253,30 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 	await expect(page.getByText("Wallet", { exact: true })).toBeVisible();
 	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 2_500 });
 	expect(errors, `wallet open-invoice top-up: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("card past due uses Fix payment instead of wallet recovery", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const fixPaymentRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [cardPastDueDeployment],
+		fixPaymentRequests,
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_card_due", "Basic");
+
+	const pastDueAlert = page.getByRole("alert").filter({ hasText: "Payment past due" });
+	await expect(pastDueAlert).toBeVisible();
+	await expect(pastDueAlert).toContainText("Update the card payment method");
+	await expect(pastDueAlert.getByRole("button", { name: "Fix payment" })).toBeVisible();
+	await expect(pastDueAlert.getByRole("button", { name: "Top up" })).toHaveCount(0);
+
+	await pastDueAlert.getByRole("button", { name: "Fix payment" }).click();
+	await expect.poll(() => fixPaymentRequests.length).toBe(1);
+	expect(JSON.parse(fixPaymentRequests[0] ?? "{}")).toEqual({
+		deployment_id: "hdep_card_due",
+	});
+	expect(errors, `card payment recovery: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("compute plans keep signup credits without advertising subscription credit grants", async ({
