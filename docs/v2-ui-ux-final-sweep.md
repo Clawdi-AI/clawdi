@@ -118,7 +118,7 @@ on core flows.
 ### F2 — Managed rebind (#696) can leave stale "Bound" BYOK providers in the AI tab — fast-follow (verify)
 
 `hosted-agent-detail.tsx:1226-1285` builds the rebind body correctly (managed-only →
-`provider_ids: ["clawdi-v2"]`, `auth_kind: "managed"`, no bootstrap), but
+`provider_ids: ["clawdi-managed-v2"]`, `auth_kind: "managed"`, no bootstrap), but
 `useSetAgentAiProvider` (`deployment-hooks.ts:124-143`) only calls
 `invalidateDeploymentSnapshots` once on success — unlike `useDeploymentLifecycle`
 and `useSetAgentLanguageTimezone`, it does **not** schedule a settling refresh.

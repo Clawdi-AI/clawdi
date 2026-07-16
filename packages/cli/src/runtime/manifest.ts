@@ -1985,6 +1985,8 @@ function agentTargetProjectionInput(
 	const providerIdMap = new Map<string, string>();
 	const providers = input.catalog.providers.map((provider) => {
 		if (provider.managed_by !== "clawdi") return provider;
+		// TODO(#425): Remove legacy projection handling after hosted#892 is deployed
+		// everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
 		const id =
 			CLAWDI_MANAGED_PROVIDER_IDS.has(provider.id) || provider.id.startsWith("clawdi-managed")
 				? provider.id

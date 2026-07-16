@@ -342,6 +342,8 @@ async def admin_upsert_clawdi_managed_ai_provider(
     Hosted deploy orchestration only needs to install the fixed
     Clawdi-managed OpenAI-compatible chat provider and rotate its key.
     """
+    # TODO(#425): Remove legacy v2 route acceptance after hosted#892 is deployed
+    # everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
     if provider_id not in V2_MANAGED_AI_PROVIDER_IDS:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
     target = await _resolve_or_create_user(db, body.target_clerk_id)
