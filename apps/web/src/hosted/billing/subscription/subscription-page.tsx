@@ -37,7 +37,7 @@ export function SubscriptionPage() {
 
 	async function openBillingPortal() {
 		try {
-			const res = await portal.mutateAsync({ flow: "billing_portal" });
+			const res = await portal.mutateAsync({});
 			if (res.url || res.portal_url) {
 				window.location.href = res.url || res.portal_url;
 				return;

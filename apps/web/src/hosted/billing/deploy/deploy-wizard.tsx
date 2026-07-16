@@ -42,7 +42,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { PlanCBillingUnavailableNotice } from "@/hosted/billing/components/plan-c-unavailable-notice";
 import {
-	buildHostedCheckoutFallbackRequest,
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
 	findNewDeploymentId,
@@ -56,13 +55,9 @@ import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
 import type {
 	BillingOffer,
-	CheckoutRequest,
 	ComputePlanSlug,
 	DeployRequest,
 	Plan,
-	WalletComputeActivateRequest,
-	WalletComputeQuoteRequest,
-	WalletComputeQuoteResponse,
 } from "@/hosted/billing/contracts";
 import {
 	DEFAULT_DEPLOY_AI_ACCESS_MODE,
@@ -110,8 +105,8 @@ import {
 	useHostedDeployments,
 	usePlans,
 	useResolveDeploymentRequest,
+	useSubscriptionCreateQuote,
 	useWallet,
-	useWalletComputeQuote,
 } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
@@ -120,6 +115,11 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
+import type {
+	SubscriptionBillingTermMonths,
+	SubscriptionCreateRequestView,
+	SubscriptionCreateSelection,
+} from "@/hosted/billing/subscription/subscription-create-adapter";
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
@@ -133,6 +133,7 @@ import {
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
+import { walletDebitShortfallCredits } from "@/hosted/billing/wallet/wallet-debit-summary";
 import { runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
@@ -169,7 +170,7 @@ type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: string;
 	previousDeploymentIds: string[];
-	request: CheckoutRequest;
+	request: SubscriptionCreateRequestView;
 	summary: StripeCheckoutSummary;
 	tierLabel: "Basic" | "Performance";
 };
@@ -196,9 +197,7 @@ const EMPTY_WALLET_TOP_UP_CONTEXT: WalletTopUpContext = {
 	blockedChargeCredits: null,
 };
 
-function supportedBillingTerm(
-	value: number,
-): WalletComputeQuoteRequest["billing_term_months"] | null {
+function supportedBillingTerm(value: number): SubscriptionBillingTermMonths | null {
 	return value === 1 || value === 12 ? value : null;
 }
 
@@ -206,14 +205,6 @@ function decimalCredits(value: unknown): number | null {
 	if (typeof value !== "string" && typeof value !== "number") return null;
 	const parsed = Number(value);
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
-
-function walletQuoteShortfallCredits(
-	quote: WalletComputeQuoteResponse | null | undefined,
-): number | null {
-	if (!quote) return null;
-	const balanceAfter = Number(quote.post_charge_balance_estimate_credits);
-	return Number.isFinite(balanceAfter) && balanceAfter < 0 ? -balanceAfter : null;
 }
 
 const aiProviderErrorNormalizer: ApiErrorNormalizer = {
@@ -431,7 +422,7 @@ export function DeployWizard() {
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const runAction = useActionLock();
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
-	const walletActivationAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const deployAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const checkoutReturnRef = useRef<string | null>(null);
 	const createdProviderGuardRef = useRef<{ providerId: string; dataUpdatedAt: number } | null>(
@@ -521,22 +512,23 @@ export function DeployWizard() {
 	const walletDisabledReason = walletBillingTerm
 		? null
 		: "Wallet subscriptions support Monthly and Annual billing.";
-	const walletQuoteRequest: WalletComputeQuoteRequest | null =
+	const subscriptionCreateSelection: SubscriptionCreateSelection | null =
 		paidSelection && walletBillingTerm
 			? {
-					plan_slug: paidSelection.computePlanSlug,
-					billing_term_months: walletBillingTerm,
+					planSlug: paidSelection.computePlanSlug,
+					billingTermMonths: walletBillingTerm,
+					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
 				}
 			: null;
 	const wallet = useWallet({
 		enabled: hostedAccess.canUsePlanCBilling && paymentMethod === "wallet",
 	});
-	const walletQuote = useWalletComputeQuote(walletQuoteRequest, {
+	const subscriptionCreateQuote = useSubscriptionCreateQuote(subscriptionCreateSelection, {
 		enabled: hostedAccess.canUsePlanCBilling && paymentMethod === "wallet",
 	});
-	const walletShortfallCredits = walletQuoteShortfallCredits(walletQuote.data);
-	const walletHasRefundDebt = walletQuote.data?.warnings?.includes("open_refund_debt") ?? false;
-	const walletInsufficient = walletShortfallCredits !== null || walletHasRefundDebt;
+	const walletDebit = subscriptionCreateQuote.data?.walletDebit ?? null;
+	const walletShortfallCredits = walletDebitShortfallCredits(walletDebit);
+	const walletInsufficient = walletShortfallCredits !== null;
 	const basicUnavailable =
 		includedSlotPending || !!deployments.error || basicSelection.mode === "unavailable";
 
@@ -557,7 +549,10 @@ export function DeployWizard() {
 		!submitting &&
 		(!paidSelection ||
 			paymentMethod === "card" ||
-			(!!walletQuote.data && !walletQuote.isFetching && !walletQuote.error && !walletInsufficient));
+			(!!walletDebit &&
+				!subscriptionCreateQuote.isFetching &&
+				!subscriptionCreateQuote.error &&
+				!walletInsufficient));
 
 	function selectCreatedProvider(providerId: string) {
 		createdProviderGuardRef.current = {
@@ -798,7 +793,7 @@ export function DeployWizard() {
 		refundDebtCredits?: number | null;
 		blockedChargeCredits?: number | null;
 	}) {
-		const pointsPerUsd = walletQuote.data?.points_per_usd ?? wallet.data?.points_per_usd ?? 0;
+		const pointsPerUsd = walletDebit?.pointsPerUsd ?? wallet.data?.points_per_usd ?? 0;
 		setWalletTopUpContext({
 			initialAmountCents: topUpAmountCentsForCreditShortfall(shortfallCredits, pointsPerUsd),
 			refundDebtCredits,
@@ -809,17 +804,16 @@ export function DeployWizard() {
 
 	function handleWalletCreateError(error: unknown): boolean {
 		const detail = billingErrorDetail(error);
-		const code = detail?.code;
-		if (code === "insufficient_wallet_balance" || code === "insufficient_balance") {
+		if (detail?.code === "insufficient_wallet_balance" || detail?.code === "insufficient_balance") {
 			openWalletTopUp({ shortfallCredits: decimalCredits(detail.shortfall_credits) });
 			toast.error("Not enough AI Credits", {
 				description: "Top up the shortfall, then review a fresh wallet quote.",
 			});
 			return true;
 		}
-		if (code === "open_refund_debt") {
+		if (detail?.code === "open_refund_debt") {
 			const refundDebtCredits = decimalCredits(detail.outstanding_debt_credits);
-			const blockedChargeCredits = decimalCredits(walletQuote.data?.first_charge_credits);
+			const blockedChargeCredits = decimalCredits(walletDebit?.exactDebitCredits);
 			openWalletTopUp({
 				shortfallCredits:
 					refundDebtCredits === null ? null : refundDebtCredits + (blockedChargeCredits ?? 0),
@@ -853,9 +847,13 @@ export function DeployWizard() {
 		return null;
 	}
 
-	async function fallbackToHostedCheckout(request: CheckoutRequest) {
-		const hostedBody = buildHostedCheckoutFallbackRequest(request);
-		const fingerprint = idempotencyFingerprint(hostedBody);
+	async function fallbackToHostedCheckout(request: SubscriptionCreateRequestView) {
+		const fingerprint = idempotencyFingerprint({
+			selection: request.selection,
+			target: request.target,
+			uiMode: "hosted",
+			quote: request.quote,
+		});
 		checkoutAttemptRef.current = idempotencyAttemptFor(
 			checkoutAttemptRef.current,
 			"subscription-checkout-hosted-fallback",
@@ -864,8 +862,8 @@ export function DeployWizard() {
 		);
 		const outcome = await createSubscription
 			.mutateAsync({
-				fundingSource: "stripe",
-				body: hostedBody,
+				...request,
+				uiMode: "hosted",
 				idempotencyKey: checkoutAttemptRef.current.key,
 			})
 			.catch((error: unknown) => {
@@ -875,8 +873,10 @@ export function DeployWizard() {
 				}
 				throw error;
 			});
-		if (outcome.fundingSource !== "stripe") return;
-		if (redirectTo(checkoutRedirectUrl(outcome.data))) return;
+		if (outcome.flowType !== "checkout") {
+			throw new Error("Hosted card fallback returned an activation flow.");
+		}
+		if (redirectTo(checkoutRedirectUrl(outcome.checkout))) return;
 		throw new Error("No checkout URL was returned.");
 	}
 
@@ -925,46 +925,48 @@ export function DeployWizard() {
 					});
 					return;
 				}
+				const selection: SubscriptionCreateSelection = {
+					planSlug: paidSelection.computePlanSlug,
+					billingTermMonths,
+					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
+				};
+				const target = { kind: "new_deployment", deployConfig } as const;
 				if (paymentMethod === "wallet") {
-					const requestWithoutId: WalletComputeActivateRequest = {
-						plan_slug: paidSelection.computePlanSlug,
-						billing_term_months: billingTermMonths,
-						deploy_config: deployConfig,
-					};
-					const fingerprint = idempotencyFingerprint(requestWithoutId);
+					const fingerprint = idempotencyFingerprint({ selection, target });
 					const attempt = idempotencyAttemptFor(
-						walletActivationAttemptRef.current,
-						"wallet-compute-deploy",
+						walletCreateAttemptRef.current,
+						"subscription-wallet-deploy",
 						fingerprint,
 						newIdempotencyKey,
 					);
-					walletActivationAttemptRef.current = attempt;
-					const body: WalletComputeActivateRequest = {
-						...requestWithoutId,
-						deploy_config: {
-							...deployConfig,
-							deploy_request_id: attempt.key,
-						},
-					};
+					walletCreateAttemptRef.current = attempt;
 					const outcome = await createSubscription
-						.mutateAsync({ fundingSource: "wallet", body })
+						.mutateAsync({
+							selection,
+							target,
+							uiMode: CHECKOUT_ELEMENTS_UI_MODE,
+							idempotencyKey: attempt.key,
+							quote: subscriptionCreateQuote.data ?? null,
+						})
 						.catch((error: unknown) => {
 							if (isIdempotencyKeyReusedError(error)) {
-								forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
-								walletActivationAttemptRef.current = null;
+								forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
+								walletCreateAttemptRef.current = null;
 							}
 							throw error;
 						});
-					if (outcome.fundingSource !== "wallet") return;
-					forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
-					walletActivationAttemptRef.current = null;
+					if (outcome.flowType !== "subscription_activation") {
+						throw new Error("Wallet subscription returned a checkout flow.");
+					}
+					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
+					walletCreateAttemptRef.current = null;
 					const deploymentId = await resolveWalletDeploymentId(
-						outcome.data.deployment_id,
-						outcome.data.deploy_request_id,
+						outcome.deploymentId,
+						outcome.deployRequestId,
 					);
 					if (deploymentId) {
 						toast.success("Deploying your agent", {
-							description: `${formatCents(walletQuote.data?.first_charge_cents ?? paidSelection.offer.price_cents)} was paid with AI Credits.`,
+							description: `${formatCents(walletDebit?.exactDebitCents ?? paidSelection.offer.price_cents)} was paid with AI Credits.`,
 						});
 						void router.navigate({
 							href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
@@ -977,13 +979,7 @@ export function DeployWizard() {
 					void router.navigate({ href: "/" });
 					return;
 				}
-				const body: CheckoutRequest = {
-					plan_slug: paidSelection.computePlanSlug,
-					billing_term_months: billingTermMonths,
-					ui_mode: CHECKOUT_ELEMENTS_UI_MODE,
-					deploy_config: deployConfig,
-				};
-				const checkoutFingerprint = idempotencyFingerprint(body);
+				const checkoutFingerprint = idempotencyFingerprint({ selection, target });
 				checkoutAttemptRef.current = idempotencyAttemptFor(
 					checkoutAttemptRef.current,
 					"subscription-checkout",
@@ -992,9 +988,11 @@ export function DeployWizard() {
 				);
 				const outcome = await createSubscription
 					.mutateAsync({
-						fundingSource: "stripe",
-						body,
+						selection,
+						target,
+						uiMode: CHECKOUT_ELEMENTS_UI_MODE,
 						idempotencyKey: checkoutAttemptRef.current.key,
+						quote: subscriptionCreateQuote.data ?? null,
 					})
 					.catch((error: unknown) => {
 						if (isIdempotencyKeyReusedError(error)) {
@@ -1003,13 +1001,21 @@ export function DeployWizard() {
 						}
 						throw error;
 					});
-				if (outcome.fundingSource !== "stripe") return;
-				const result = outcome.data;
+				if (outcome.flowType !== "checkout") {
+					throw new Error("Card subscription returned an activation flow.");
+				}
+				const result = outcome.checkout;
 				if (hasCheckoutClientSecret(result)) {
 					setCheckoutSession({
 						clientSecret: result.client_secret,
 						previousDeploymentIds: (deployments.data ?? []).map((deployment) => deployment.id),
-						request: body,
+						request: {
+							selection,
+							target,
+							uiMode: CHECKOUT_ELEMENTS_UI_MODE,
+							idempotencyKey: checkoutAttemptRef.current.key,
+							quote: subscriptionCreateQuote.data ?? null,
+						},
 						summary: computeCheckoutSummary({
 							offer: paidSelection.offer,
 							plan: paidSelection.plan,
@@ -1066,12 +1072,12 @@ export function DeployWizard() {
 		? "Deployment unavailable"
 		: paidSelection
 			? paymentMethod === "wallet"
-				? walletQuote.isFetching
+				? subscriptionCreateQuote.isFetching
 					? "Getting wallet quote…"
 					: walletInsufficient
 						? "Top up to deploy"
-						: walletQuote.data
-							? `Pay ${formatCents(walletQuote.data.first_charge_cents)} from Wallet & deploy`
+						: walletDebit
+							? `Pay ${formatCents(walletDebit.exactDebitCents)} from Wallet & deploy`
 							: "Review wallet quote"
 				: "Continue to checkout"
 			: "Deploy agent";
@@ -1414,41 +1420,31 @@ export function DeployWizard() {
 
 								{paymentMethod === "wallet" ? (
 									<div className="flex flex-col gap-3">
-										{walletQuote.isFetching && !walletQuote.data ? (
+										{subscriptionCreateQuote.isFetching && !subscriptionCreateQuote.data ? (
 											<p className="text-sm text-muted-foreground" role="status">
 												Getting the exact wallet debit…
 											</p>
-										) : walletQuote.error ? (
+										) : subscriptionCreateQuote.error ? (
 											<ApiErrorPanel
 												normalizer={billingErrorNormalizer}
-												error={walletQuote.error}
-												onRetry={() => void walletQuote.refetch()}
-												title="Couldn’t get wallet quote"
+												error={subscriptionCreateQuote.error}
+												onRetry={() => void subscriptionCreateQuote.refetch()}
+												title="Couldn’t get subscription quote"
 											/>
-										) : walletQuote.data ? (
+										) : walletDebit ? (
 											<>
 												<WalletDebitEquation
-													balanceBeforeCredits={walletQuote.data.balance_credits}
-													exactDebitCredits={walletQuote.data.first_charge_credits}
-													exactDebitCents={walletQuote.data.first_charge_cents}
-													balanceAfterCredits={
-														walletQuote.data.post_charge_balance_estimate_credits
-													}
+													balanceBeforeCredits={walletDebit.balanceBeforeCredits}
+													exactDebitCredits={walletDebit.exactDebitCredits}
+													exactDebitCents={walletDebit.exactDebitCents}
+													balanceAfterCredits={walletDebit.balanceAfterCredits}
 												/>
 												{walletInsufficient ? (
 													<Alert variant="destructive">
 														<TriangleAlert aria-hidden />
-														<AlertTitle>
-															{walletHasRefundDebt
-																? "Wallet refund debt must be repaid"
-																: "Not enough AI Credits"}
-														</AlertTitle>
+														<AlertTitle>Not enough AI Credits</AlertTitle>
 														<AlertDescription className="flex flex-col items-start gap-3">
-															<span>
-																{walletHasRefundDebt
-																	? "Top up before starting this subscription. New funds repay refund debt first."
-																	: "Top up the shortfall, then review a fresh wallet quote."}
-															</span>
+															<span>Top up the shortfall, then review a fresh wallet quote.</span>
 															<Button
 																type="button"
 																size="sm"
@@ -1462,15 +1458,6 @@ export function DeployWizard() {
 															>
 																<WalletCards data-icon="inline-start" /> Top up AI Credits
 															</Button>
-														</AlertDescription>
-													</Alert>
-												) : walletQuote.data.warnings?.includes("low_coverage") ? (
-													<Alert>
-														<TriangleAlert aria-hidden />
-														<AlertTitle>Low wallet reserve after payment</AlertTitle>
-														<AlertDescription>
-															The subscription can start, but consider topping up before its next
-															invoice.
 														</AlertDescription>
 													</Alert>
 												) : null}
@@ -1592,7 +1579,7 @@ export function DeployWizard() {
 					initialAmountCents={walletTopUpContext.initialAmountCents}
 					refundDebtCredits={walletTopUpContext.refundDebtCredits}
 					blockedChargeCredits={walletTopUpContext.blockedChargeCredits}
-					onComplete={() => void walletQuote.refetch()}
+					onComplete={() => void subscriptionCreateQuote.refetch()}
 				/>
 			) : null}
 			<StripeCheckoutDialog

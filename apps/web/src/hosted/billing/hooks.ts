@@ -12,8 +12,6 @@ import {
 import { useCallback } from "react";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
-	CheckoutRequest,
-	CheckoutResult,
 	ComputeFixPaymentRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
@@ -26,13 +24,20 @@ import type {
 	HostedDeployment,
 	PortalRequest,
 	WalletAutoReloadRequest,
-	WalletComputeActivateRequest,
-	WalletComputeActivateResponse,
-	WalletComputeQuoteRequest,
 	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/query-keys";
+import {
+	type SubscriptionCreateOutcomeView,
+	type SubscriptionCreateQuoteView,
+	type SubscriptionCreateRequestView,
+	type SubscriptionCreateSelection,
+	subscriptionCreateOutcome,
+	subscriptionCreateQuoteRequest,
+	subscriptionCreateQuoteView,
+	subscriptionCreateRequest,
+} from "@/hosted/billing/subscription/subscription-create-adapter";
 import { deploymentRefetchInterval } from "@/hosted/deployment-status";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
@@ -41,21 +46,6 @@ type CreateDeploymentMutationVariables = {
 	body: DeployRequest;
 	idempotencyKey: string;
 };
-
-type CreateSubscriptionMutationVariables =
-	| {
-			fundingSource: "stripe";
-			body: CheckoutRequest;
-			idempotencyKey: string;
-	  }
-	| {
-			fundingSource: "wallet";
-			body: WalletComputeActivateRequest;
-	  };
-
-type CreateSubscriptionMutationResult =
-	| { fundingSource: "stripe"; data: CheckoutResult }
-	| { fundingSource: "wallet"; data: WalletComputeActivateResponse };
 
 const CHECKOUT_RETURN_DEPLOYMENT_PARAMS = ["deployment_id", "upgrade_deployment_id"] as const;
 const CHECKOUT_RETURN_MARKER_PARAMS = [
@@ -237,17 +227,13 @@ export function usePlans() {
 export function useCreateSubscription() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
-	return useMutation<CreateSubscriptionMutationResult, Error, CreateSubscriptionMutationVariables>({
-		mutationFn: async (variables) =>
-			variables.fundingSource === "stripe"
-				? {
-						fundingSource: "stripe",
-						data: await client.checkout(variables.body, variables.idempotencyKey),
-					}
-				: {
-						fundingSource: "wallet",
-						data: await client.activateWalletSubscription(variables.body),
-					},
+	return useMutation<SubscriptionCreateOutcomeView, Error, SubscriptionCreateRequestView>({
+		mutationFn: async (request) => {
+			const apiRequest = subscriptionCreateRequest(request);
+			return subscriptionCreateOutcome(
+				await client.checkout(apiRequest.body, apiRequest.idempotencyKey),
+			);
+		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });
@@ -257,20 +243,27 @@ export function useCreateSubscription() {
 	});
 }
 
-export function useWalletComputeQuote(
-	body: WalletComputeQuoteRequest | null,
+export function useSubscriptionCreateQuote(
+	selection: SubscriptionCreateSelection | null,
 	{ enabled = true }: { enabled?: boolean } = {},
 ) {
 	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: body
-			? billingKeys.walletQuote(body.plan_slug, body.billing_term_months)
-			: ["billing", "wallet-quote", "disabled"],
-		queryFn: () => {
-			if (!body) throw new Error("Wallet quote request is unavailable.");
-			return client.quoteWalletSubscription(body);
+	const quoteBody = subscriptionCreateQuoteRequest(selection);
+	return useBillingQuery<SubscriptionCreateQuoteView>({
+		queryKey: selection
+			? billingKeys.subscriptionCreateQuote(
+					selection.planSlug,
+					selection.billingTermMonths,
+					selection.fundingSource,
+				)
+			: ["billing", "subscription-create-quote", "disabled"],
+		queryFn: async () => {
+			if (!selection || !quoteBody) {
+				throw new Error("Subscription creation quote is unavailable.");
+			}
+			return subscriptionCreateQuoteView(selection, await client.quoteSubscription(quoteBody));
 		},
-		enabled: isDeployApiConfigured() && enabled && body !== null,
+		enabled: isDeployApiConfigured() && enabled && quoteBody !== null,
 		staleTime: 30_000,
 	});
 }

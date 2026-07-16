@@ -12,6 +12,7 @@ describe("stripe checkout logic", () => {
 	test("prefers the action_url for hosted fallback redirects", () => {
 		const result: CheckoutResult = {
 			flow_type: "checkout_session",
+			funding_source: "stripe",
 			action_url: "https://checkout.stripe.com/primary",
 			checkout_url: "https://checkout.stripe.com/secondary",
 			client_secret: null,
@@ -23,6 +24,7 @@ describe("stripe checkout logic", () => {
 	test("detects elements checkout responses from a client secret", () => {
 		const result: CheckoutResult = {
 			flow_type: "checkout_session",
+			funding_source: "stripe",
 			action_url: null,
 			checkout_url: "",
 			client_secret: "cs_test_elements",
@@ -39,6 +41,7 @@ describe("stripe checkout logic", () => {
 		const request: CheckoutRequest = {
 			plan_slug: "compute_basic",
 			billing_term_months: 12,
+			funding_source: "stripe",
 			ui_mode: CHECKOUT_ELEMENTS_UI_MODE,
 			deploy_config: {
 				compute_plan_slug: "compute_basic",
