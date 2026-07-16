@@ -249,7 +249,10 @@ export function SubscriptionCreateDialog({
 				description: "No checkout URL was returned. Please try again.",
 			});
 		} catch (error) {
-			if (fundingSource === "wallet" && handleWalletCreateError(error)) return;
+			if (fundingSource === "wallet") {
+				void createQuote.refetch();
+				if (handleWalletCreateError(error)) return;
+			}
 			if (isIdempotencyKeyReusedError(error) && createAttemptRef.current) {
 				forgetIdempotencyAttempt(
 					"subscription-terminal-fallback",

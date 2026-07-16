@@ -1061,7 +1061,10 @@ export function DeployWizard() {
 				href: agentSectionHref(deployment.id, "overview", "source=on-clawdi"),
 			});
 		} catch (e) {
-			if (paymentMethod === "wallet" && handleWalletCreateError(e)) return;
+			if (paymentMethod === "wallet") {
+				void subscriptionCreateQuote.refetch();
+				if (handleWalletCreateError(e)) return;
+			}
 			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });
 		} finally {
 			setSubmitting(false);
