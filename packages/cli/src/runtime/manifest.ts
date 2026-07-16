@@ -29,7 +29,14 @@ import type {
 	AiProviderModel,
 	AiProviderType,
 } from "@clawdi/shared";
-import { isAiProviderApiMode, isAiProviderType } from "@clawdi/shared";
+import {
+	CLAWDI_MANAGED_PROVIDER_IDS,
+	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_PROVIDER_ID,
+	isAiProviderApiMode,
+	isAiProviderType,
+} from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import {
@@ -1978,12 +1985,18 @@ function agentTargetProjectionInput(
 	const providerIdMap = new Map<string, string>();
 	const providers = input.catalog.providers.map((provider) => {
 		if (provider.managed_by !== "clawdi") return provider;
-		const id = provider.id.startsWith("clawdi-managed") ? provider.id : "clawdi-managed";
+		const id =
+			CLAWDI_MANAGED_PROVIDER_IDS.has(provider.id) || provider.id.startsWith("clawdi-managed")
+				? provider.id
+				: CLAWDI_MANAGED_V1_PROVIDER_ID;
 		providerIdMap.set(provider.id, id);
 		return {
 			...provider,
 			id,
-			api_mode: id === "clawdi-managed-v2" ? "openai_chat" : "openai_responses",
+			api_mode:
+				id === CLAWDI_MANAGED_V2_PROVIDER_ID || id === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
+					? "openai_chat"
+					: "openai_responses",
 		} satisfies AiProviderCatalog["providers"][number];
 	});
 	const primaryProviderId = providerIdMap.get(input.primaryModel.provider_id);

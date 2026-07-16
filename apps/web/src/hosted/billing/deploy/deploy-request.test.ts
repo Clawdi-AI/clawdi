@@ -24,9 +24,9 @@ describe("buildHostedDeployRequest", () => {
 			timezone: null,
 			ai_provider_id: null,
 			ai_provider_auth_kind: "managed",
-			provider_ids: ["clawdi-managed-v2"],
+			provider_ids: ["clawdi-v2"],
 			primary_model: {
-				provider_id: "clawdi-managed-v2",
+				provider_id: "clawdi-v2",
 				model: "gpt-5.5",
 			},
 			config: {

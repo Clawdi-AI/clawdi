@@ -15,6 +15,10 @@ from httpx import ASGITransport
 from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
+from app.services.managed_ai_provider import (
+    V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_MANAGED_AI_PROVIDER_ID,
+)
 
 _ADMIN_KEY = "test-admin-secret-do-not-use-in-prod"
 # Shared header dict for the bulk of tests that exercise the happy-path
@@ -681,15 +685,18 @@ async def test_admin_revoke_unknown_key(admin_client):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "route_provider_id",
+    [V2_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID],
+)
 async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
-    admin_client, db_session, seed_user
+    admin_client, db_session, seed_user, route_provider_id: str
 ):
     from sqlalchemy import select
 
     from app.models.ai_provider import AiProvider, AiProviderAuthPayload
     from app.services.managed_ai_provider import (
         MANAGED_AI_PROVIDER_API_MODE,
-        MANAGED_AI_PROVIDER_ID,
         MANAGED_AI_PROVIDER_RUNTIME_ENV,
     )
     from app.services.vault_crypto import decrypt
@@ -707,7 +714,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
         }
     ]
     r = await admin_client.put(
-        "/v1/admin/ai-providers/clawdi-managed-v2",
+        f"/v1/admin/ai-providers/{route_provider_id}",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -722,7 +729,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     assert r.json() == {
         "owner_user_id": str(seed_user.id),
         "owner_clerk_id": seed_user.clerk_id,
-        "provider_id": MANAGED_AI_PROVIDER_ID,
+        "provider_id": route_provider_id,
         "api_mode": MANAGED_AI_PROVIDER_API_MODE,
         "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
         "base_url": "https://ai-gateway.clawdi.ai/v1",
@@ -734,7 +741,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
         await db_session.execute(
             select(AiProvider).where(
                 AiProvider.owner_user_id == seed_user.id,
-                AiProvider.provider_id == MANAGED_AI_PROVIDER_ID,
+                AiProvider.provider_id == route_provider_id,
             )
         )
     ).scalar_one()
@@ -752,7 +759,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
         await db_session.execute(
             select(AiProviderAuthPayload).where(
                 AiProviderAuthPayload.owner_user_id == seed_user.id,
-                AiProviderAuthPayload.provider_id == MANAGED_AI_PROVIDER_ID,
+                AiProviderAuthPayload.provider_id == route_provider_id,
                 AiProviderAuthPayload.auth_profile == "default",
             )
         )
@@ -761,6 +768,21 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     assert payload.source == "managed"
     assert payload.payload_metadata == {"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV}
     assert decrypt(payload.encrypted_payload, payload.nonce) == raw_key
+
+
+@pytest.mark.asyncio
+async def test_admin_upsert_managed_ai_provider_rejects_unknown_id(admin_client, seed_user):
+    response = await admin_client.put(
+        "/v1/admin/ai-providers/not-clawdi-managed",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-unsupported-provider",
+        },
+    )
+
+    assert response.status_code == 404, response.text
 
 
 @pytest.mark.asyncio
@@ -799,7 +821,7 @@ async def test_admin_managed_ai_provider_rejects_models_outside_hosted_wire_cont
     model: dict,
 ):
     response = await admin_client.put(
-        "/v1/admin/ai-providers/clawdi-managed-v2",
+        f"/v1/admin/ai-providers/{V2_MANAGED_AI_PROVIDER_ID}",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -823,7 +845,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
     from app.services.vault_crypto import decrypt
 
     first = await admin_client.put(
-        "/v1/admin/ai-providers/clawdi-managed-v2",
+        f"/v1/admin/ai-providers/{MANAGED_AI_PROVIDER_ID}",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -834,7 +856,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
     assert first.status_code == 200, first.text
     second_key = "sk-second-admin-managed-secret"
     second = await admin_client.put(
-        "/v1/admin/ai-providers/clawdi-managed-v2",
+        f"/v1/admin/ai-providers/{MANAGED_AI_PROVIDER_ID}",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,
@@ -881,7 +903,7 @@ async def test_admin_upsert_managed_ai_provider_rotates_existing_payload(
 async def test_admin_upsert_managed_ai_provider_rejects_invalid_base_url(admin_client, seed_user):
     raw_key = "sk-invalid-url-secret"
     r = await admin_client.put(
-        "/v1/admin/ai-providers/clawdi-managed-v2",
+        f"/v1/admin/ai-providers/{V2_MANAGED_AI_PROVIDER_ID}",
         headers=_AUTH,
         json={
             "target_clerk_id": seed_user.clerk_id,

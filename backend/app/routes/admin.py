@@ -84,8 +84,8 @@ from app.services.channels import (
 )
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_API_MODE,
-    MANAGED_AI_PROVIDER_ID,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    V2_MANAGED_AI_PROVIDER_IDS,
     upsert_clawdi_managed_provider,
 )
 from app.services.sync_events import (
@@ -327,10 +327,11 @@ async def admin_revoke_api_key(
 
 
 @router.put(
-    f"/ai-providers/{MANAGED_AI_PROVIDER_ID}",
+    "/ai-providers/{provider_id}",
     response_model=AdminManagedAiProviderResponse,
 )
 async def admin_upsert_clawdi_managed_ai_provider(
+    provider_id: str,
     body: AdminManagedAiProviderUpsert,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
@@ -341,11 +342,14 @@ async def admin_upsert_clawdi_managed_ai_provider(
     Hosted deploy orchestration only needs to install the fixed
     Clawdi-managed OpenAI-compatible chat provider and rotate its key.
     """
+    if provider_id not in V2_MANAGED_AI_PROVIDER_IDS:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     try:
         provider = await upsert_clawdi_managed_provider(
             db,
             user=target,
+            provider_id=provider_id,
             base_url=body.base_url,
             api_key=body.api_key.get_secret_value(),
             default_model=body.default_model,
@@ -371,11 +375,11 @@ async def admin_upsert_clawdi_managed_ai_provider(
         actor_type="admin",
         action="ai_provider.managed.upsert",
         resource_type="ai_provider",
-        resource_id=MANAGED_AI_PROVIDER_ID,
+        resource_id=provider.provider_id,
         target_user_id=target.id,
         source="api.admin",
         details={
-            "provider_id": MANAGED_AI_PROVIDER_ID,
+            "provider_id": provider.provider_id,
             "api_mode": MANAGED_AI_PROVIDER_API_MODE,
             "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
             "models": provider.models,

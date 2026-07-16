@@ -12,14 +12,18 @@ from app.services.vault_crypto import encrypt
 
 V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
 V1_MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
-V2_MANAGED_AI_PROVIDER_ID = "clawdi-managed-v2"
+V2_MANAGED_AI_PROVIDER_ID = "clawdi-v2"
+V2_LEGACY_MANAGED_AI_PROVIDER_ID = "clawdi-managed-v2"
+V2_MANAGED_AI_PROVIDER_IDS = frozenset(
+    {V2_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID}
+)
 V2_MANAGED_AI_PROVIDER_API_MODE = "openai_chat"
 
 # The admin managed-provider path is owned by hosted v2. V1 writes its provider
 # through the user AI Provider endpoint with the v1-specific id/mode above.
 MANAGED_AI_PROVIDER_ID = V2_MANAGED_AI_PROVIDER_ID
 MANAGED_AI_PROVIDER_API_MODE = V2_MANAGED_AI_PROVIDER_API_MODE
-MANAGED_AI_PROVIDER_IDS = frozenset({V1_MANAGED_AI_PROVIDER_ID, V2_MANAGED_AI_PROVIDER_ID})
+MANAGED_AI_PROVIDER_IDS = frozenset({V1_MANAGED_AI_PROVIDER_ID, *V2_MANAGED_AI_PROVIDER_IDS})
 MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY"
 MANAGED_AI_PROVIDER_TYPE = "custom_openai_compatible"
 MANAGED_AI_PROVIDER_LABEL = "Clawdi managed"
@@ -29,7 +33,7 @@ MANAGED_AI_PROVIDER_PROFILE = "default"
 def managed_provider_api_mode(provider_id: str) -> str | None:
     if provider_id == V1_MANAGED_AI_PROVIDER_ID:
         return V1_MANAGED_AI_PROVIDER_API_MODE
-    if provider_id == V2_MANAGED_AI_PROVIDER_ID:
+    if provider_id in V2_MANAGED_AI_PROVIDER_IDS:
         return V2_MANAGED_AI_PROVIDER_API_MODE
     return None
 
@@ -44,6 +48,7 @@ async def upsert_clawdi_managed_provider(
     db: AsyncSession,
     *,
     user: User,
+    provider_id: str = MANAGED_AI_PROVIDER_ID,
     base_url: str,
     api_key: str,
     default_model: str | None = None,
@@ -51,7 +56,9 @@ async def upsert_clawdi_managed_provider(
     label: str | None = None,
     capabilities: dict | None = None,
 ) -> AiProvider:
-    """Upsert the single first-party managed AI provider contract for a user."""
+    """Upsert a first-party v2 managed AI provider contract for a user."""
+    if provider_id not in V2_MANAGED_AI_PROVIDER_IDS:
+        raise ValueError("unsupported managed provider id")
     validate_managed_provider_base_url(base_url)
     normalized_base_url = base_url.strip()
     if not api_key:
@@ -60,13 +67,13 @@ async def upsert_clawdi_managed_provider(
         await db.execute(
             select(AiProvider).where(
                 AiProvider.owner_user_id == user.id,
-                AiProvider.provider_id == MANAGED_AI_PROVIDER_ID,
+                AiProvider.provider_id == provider_id,
             )
         )
     ).scalar_one_or_none()
     provider = existing or AiProvider(
         owner_user_id=user.id,
-        provider_id=MANAGED_AI_PROVIDER_ID,
+        provider_id=provider_id,
     )
     provider.type = MANAGED_AI_PROVIDER_TYPE
     provider.label = label or MANAGED_AI_PROVIDER_LABEL
@@ -90,7 +97,7 @@ async def upsert_clawdi_managed_provider(
         await db.execute(
             select(AiProviderAuthPayload).where(
                 AiProviderAuthPayload.owner_user_id == user.id,
-                AiProviderAuthPayload.provider_id == MANAGED_AI_PROVIDER_ID,
+                AiProviderAuthPayload.provider_id == provider_id,
                 AiProviderAuthPayload.auth_profile == MANAGED_AI_PROVIDER_PROFILE,
             )
         )
@@ -98,7 +105,7 @@ async def upsert_clawdi_managed_provider(
     if payload is None:
         payload = AiProviderAuthPayload(
             owner_user_id=user.id,
-            provider_id=MANAGED_AI_PROVIDER_ID,
+            provider_id=provider_id,
             auth_profile=MANAGED_AI_PROVIDER_PROFILE,
             kind="api_key",
             source="managed",
@@ -119,7 +126,7 @@ async def upsert_clawdi_managed_provider(
         update(AiProviderAuthPayload)
         .where(
             AiProviderAuthPayload.owner_user_id == user.id,
-            AiProviderAuthPayload.provider_id == MANAGED_AI_PROVIDER_ID,
+            AiProviderAuthPayload.provider_id == provider_id,
             AiProviderAuthPayload.auth_profile != MANAGED_AI_PROVIDER_PROFILE,
             AiProviderAuthPayload.archived_at.is_(None),
         )

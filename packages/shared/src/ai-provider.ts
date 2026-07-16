@@ -166,11 +166,13 @@ export const CODEX_OAUTH_MODEL_CATALOG: readonly AiProviderModel[] = [
 
 export const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
 const CLAWDI_MANAGED_V1_API_MODE = "openai_responses";
-export const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-managed-v2";
+export const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-v2";
+export const CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID = "clawdi-managed-v2";
 const CLAWDI_MANAGED_V2_API_MODE = "openai_chat";
 export const CLAWDI_MANAGED_PROVIDER_IDS: ReadonlySet<string> = new Set([
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 ]);
 const CLAWDI_MANAGED_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY";
 const CLAWDI_MANAGED_PLACEHOLDER_RUNTIME_ENV = "OPENAI_API_KEY";
@@ -369,7 +371,12 @@ function validateManagedProviderContract(
 
 function clawdiManagedApiMode(providerId: string): AiProviderApiMode | null {
 	if (providerId === CLAWDI_MANAGED_V1_PROVIDER_ID) return CLAWDI_MANAGED_V1_API_MODE;
-	if (providerId === CLAWDI_MANAGED_V2_PROVIDER_ID) return CLAWDI_MANAGED_V2_API_MODE;
+	if (
+		providerId === CLAWDI_MANAGED_V2_PROVIDER_ID ||
+		providerId === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
+	) {
+		return CLAWDI_MANAGED_V2_API_MODE;
+	}
 	return null;
 }
 

@@ -2838,9 +2838,9 @@ chmod +x "$HOME/.local/bin/hermes"
 							home,
 							args: ["--json", "--no-onboard"],
 						},
-						provider_ids: ["clawdi-managed-v2"],
+						provider_ids: ["clawdi-v2"],
 						primary_model: {
-							provider_id: "clawdi-managed-v2",
+							provider_id: "clawdi-v2",
 							model: "gpt-5.5",
 						},
 					},
@@ -2849,7 +2849,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					system: { home },
 					providers: {
-						"clawdi-managed-v2": {
+						"clawdi-v2": {
 							kind: "openai-compatible",
 							baseUrl: "https://ai-gateway.example.test/v1",
 							model: "gpt-5.5",
@@ -2880,10 +2880,8 @@ chmod +x "$HOME/.local/bin/hermes"
 
 		expect(convergence.installErrors).toEqual([]);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
-		expect(patch.agents.defaults.model.primary).toBe("clawdi-managed-v2/gpt-5.5");
-		expect(patch.models.providers["clawdi-managed-v2"].baseUrl).toBe(
-			"https://ai-gateway.example.test/v1",
-		);
+		expect(patch.agents.defaults.model.primary).toBe("clawdi-v2/gpt-5.5");
+		expect(patch.models.providers["clawdi-v2"].baseUrl).toBe("https://ai-gateway.example.test/v1");
 	});
 
 	it("reconciles hosted provider projections when the selected provider changes", () => {
