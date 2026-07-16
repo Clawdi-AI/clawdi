@@ -254,15 +254,6 @@ export function useFixPayment() {
 	});
 }
 
-export function useComputeInvoices(limit = 12) {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.invoices(limit),
-		queryFn: () => client.getInvoices(limit),
-		staleTime: 60_000,
-	});
-}
-
 export function useComputeBillingHistory(limit = 20) {
 	const client = useBillingClient();
 	return useInfiniteQuery({
