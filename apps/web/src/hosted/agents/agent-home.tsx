@@ -59,6 +59,7 @@ export function AgentHome({
 		environmentId: resolvedEnvId,
 		matchedRuntime,
 		ambiguousMatches,
+		membershipResolved,
 		isLoading,
 		isFetching,
 		error,
@@ -103,13 +104,37 @@ export function AgentHome({
 		void refetch();
 	};
 
+	// No route may be classified as connected until deployment membership has
+	// produced at least one authoritative snapshot. A 403/network failure is not
+	// an empty deployment list.
+	if (!membershipResolved && !deployment && ambiguousMatches.length === 0) {
+		if (error) {
+			return (
+				<div
+					data-hosted="true"
+					className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-4 px-4 py-2 lg:px-6`}
+				>
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
+						error={error}
+						onRetry={() => {
+							void refetch();
+						}}
+						title="Clawdi Cloud inventory unavailable"
+					/>
+				</div>
+			);
+		}
+		return <ConnectedAgentDetailSkeleton hosted />;
+	}
+
 	// Hold a skeleton until the deployment lookup settles, so a hosted agent
 	// doesn't flash the connected detail (and fire its queries) first.
 	if (isLoading || (requestedHostedAgent && !deployment && isFetching)) {
 		return <ConnectedAgentDetailSkeleton hosted />;
 	}
 
-	if (error && requestedHostedAgent) {
+	if (error && requestedHostedAgent && !deployment) {
 		return (
 			<div
 				data-hosted="true"

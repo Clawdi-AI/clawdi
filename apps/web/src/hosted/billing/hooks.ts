@@ -30,7 +30,7 @@ import type {
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/query-keys";
-import { shouldPollDeployments } from "@/hosted/deployment-status";
+import { deploymentRefetchInterval } from "@/hosted/deployment-status";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
 
@@ -476,9 +476,13 @@ export function useHostedDeployments({
 		enabled: isDeployApiConfigured() && enabled,
 		queryFn: () => client.listDeployments(),
 		refetchInterval: (q) => {
-			if (shouldPollDeployments(q.state.data)) return 10_000;
-			return walletDunningRefetchIntervalFor(q.state.data, pollWalletDunningFor);
+			const inventoryInterval = deploymentRefetchInterval(q.state.data);
+			const walletInterval = walletDunningRefetchIntervalFor(q.state.data, pollWalletDunningFor);
+			return typeof walletInterval === "number"
+				? Math.min(inventoryInterval, walletInterval)
+				: inventoryInterval;
 		},
+		refetchIntervalInBackground: false,
 	});
 }
 
@@ -488,9 +492,9 @@ export function useCreateDeployment() {
 	return useMutation({
 		mutationFn: ({ body, idempotencyKey }: CreateDeploymentMutationVariables) =>
 			client.createDeployment(body, idempotencyKey),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: ["agents"] });
+		onSettled: () => {
+			void qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			void qc.invalidateQueries({ queryKey: ["agents"] });
 		},
 	});
 }

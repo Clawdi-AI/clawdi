@@ -32,7 +32,6 @@ import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
-import { ConnectedAgentDetailSkeleton } from "@/components/dashboard/connected-agent-detail";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
@@ -168,6 +167,12 @@ import {
 	isRunningStatus,
 	parseDeploymentStatus,
 } from "@/hosted/deployment-status";
+import {
+	canOpenHostedRuntimeUi,
+	type HostedProjectionResolution,
+	missingProjectionRefetchInterval,
+	resolveHostedAgentProjection,
+} from "@/hosted/hosted-agent-resolution";
 import { type HostedRuntime, runtimeConsoleUrl, runtimeDisplayName } from "@/hosted/runtimes";
 import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
@@ -210,7 +215,6 @@ import {
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
-import { isApiNotFoundError } from "@/lib/api-errors";
 import type { SessionListItem } from "@/lib/api-schemas";
 import { formatModelLabel, formatShortDate } from "@/lib/format";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -434,9 +438,21 @@ export function HostedAgentDetail({
 				}),
 			),
 		enabled: cloudEnvironmentId,
+		refetchInterval: (query) =>
+			missingProjectionRefetchInterval(
+				query.state.error,
+				deployment.status,
+				query.state.fetchFailureCount,
+			),
+		refetchIntervalInBackground: false,
 	});
-	const agent = agentQuery.data;
-	const agentProjectionMissing = cloudEnvironmentId && isApiNotFoundError(agentQuery.error);
+	const projection = resolveHostedAgentProjection({
+		enabled: cloudEnvironmentId,
+		data: agentQuery.data,
+		error: agentQuery.error,
+		isPending: agentQuery.isPending,
+	});
+	const agent = projection.status === "resolved" ? projection.data : null;
 	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
@@ -465,31 +481,15 @@ export function HostedAgentDetail({
 
 	const sessions = useQuery({
 		...sessionListQueryOptions(api, { environment_id: environmentId, page_size: 20 }),
-		enabled: deploymentRunning && Boolean(agent),
+		enabled: deploymentRunning && projection.status === "resolved",
 	});
-
-	if (agentQuery.isLoading && deploymentRunning && cloudEnvironmentId) {
-		return <ConnectedAgentDetailSkeleton hosted />;
-	}
-
-	if (!deploymentRunning || agentProjectionMissing) {
-		return (
-			<DeploymentCentricDetail
-				deployment={deployment}
-				runtime={runtime}
-				environmentId={environmentId}
-				agentProjectionMissing={agentProjectionMissing}
-				section={activeTab}
-			/>
-		);
-	}
 
 	const activeNavItem = HOSTED_AGENT_NAV_META[activeTab];
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
 	const headerActions =
-		activeTab === "skills" ? (
+		activeTab === "skills" && projection.status === "resolved" ? (
 			<Button
 				render={<Link to="/skills" search={{ target: environmentId }} />}
 				nativeButton={false}
@@ -499,7 +499,7 @@ export function HostedAgentDetail({
 				<Plus />
 				Install skills
 			</Button>
-		) : consoleUrl ? (
+		) : canOpenHostedRuntimeUi(deployment.status, consoleUrl) ? (
 			<RuntimeUiOpenButton
 				deployment={deployment}
 				label={runtimeBrowserUiLabel(runtime)}
@@ -533,6 +533,13 @@ export function HostedAgentDetail({
 					/>
 				)}
 				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
+				<HostedProjectionNotice
+					projection={projection}
+					isFetching={agentQuery.isFetching}
+					onRetry={() => {
+						void agentQuery.refetch();
+					}}
+				/>
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{activeTab === "overview" ? (
 						<OverviewTab
@@ -540,6 +547,8 @@ export function HostedAgentDetail({
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							runtime={runtime}
 							isPerformance={isPerformance}
+							showDeploymentActions={projection.status !== "resolved" || !deploymentRunning}
+							projectionAvailable={projection.status === "resolved"}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
 							sessionsError={sessions.error}
@@ -552,37 +561,112 @@ export function HostedAgentDetail({
 					) : null}
 					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
 					{activeTab === "sessions" ? (
-						<HostedAgentSessionsTab environmentId={environmentId} />
+						projection.status === "resolved" ? (
+							<HostedAgentSessionsTab environmentId={environmentId} />
+						) : (
+							<ProjectionDependentUnavailable label="Sessions" />
+						)
 					) : null}
 					{activeTab === "skills" ? (
-						agentQuery.error ? (
-							<ApiErrorPanel
-								error={agentQuery.error}
-								onRetry={() => {
-									void agentQuery.refetch();
-								}}
-								title="Couldn't load agent skills"
-							/>
-						) : (
+						projection.status === "resolved" ? (
 							<AgentSkillsTab
 								agentId={environmentId}
 								agentProjectId={agent?.default_project_id}
-								isResolvingAgentProject={agentQuery.isLoading && isCloudEnvId(environmentId)}
+								isResolvingAgentProject={false}
 							/>
+						) : (
+							<ProjectionDependentUnavailable label="Skills" />
 						)
 					) : null}
 					{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
-					{activeTab === "channels" ? <ChannelsTab environmentId={environmentId} /> : null}
+					{activeTab === "channels" ? (
+						projection.status === "resolved" ? (
+							<ChannelsTab environmentId={environmentId} />
+						) : (
+							<ProjectionDependentUnavailable label="Channels" />
+						)
+					) : null}
 					{activeTab === "settings" ? (
 						<HostedAgentSettingsTab
 							environmentId={environmentId}
 							deployment={deployment}
 							runtime={runtime}
+							projectionAvailable={projection.status === "resolved"}
 						/>
 					) : null}
 				</div>
 			</section>
 		</div>
+	);
+}
+
+function HostedProjectionNotice({
+	projection,
+	isFetching,
+	onRetry,
+}: {
+	projection: HostedProjectionResolution<components["schemas"]["AgentResponse"]>;
+	isFetching: boolean;
+	onRetry: () => void;
+}) {
+	if (projection.status === "resolved") return null;
+	if (projection.status === "error") {
+		return (
+			<ApiErrorPanel
+				error={projection.error}
+				onRetry={onRetry}
+				title="Agent sync service unavailable"
+			/>
+		);
+	}
+	if (projection.status === "missing") {
+		return (
+			<Alert data-hosted="true">
+				<AlertCircle />
+				<AlertTitle>Agent sync record unavailable</AlertTitle>
+				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+					<span>
+						Deployment controls remain available; Runtime UI and Terminal continue to follow
+						deployment status. Sessions, skills, profile, and channels will recover when the cloud
+						projection catches up.
+					</span>
+					<Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
+						{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
+						Check again
+					</Button>
+				</AlertDescription>
+			</Alert>
+		);
+	}
+	if (projection.status === "loading") {
+		return (
+			<Alert data-hosted="true">
+				<Spinner className="size-4" />
+				<AlertTitle>Loading synced agent data</AlertTitle>
+				<AlertDescription>
+					Deployment-owned controls are ready while the cloud projection resolves.
+				</AlertDescription>
+			</Alert>
+		);
+	}
+	return (
+		<Alert data-hosted="true">
+			<AlertCircle />
+			<AlertTitle>Agent sync identity pending</AlertTitle>
+			<AlertDescription>
+				This deployment has not published an agent identity yet. Deployment controls remain
+				available while provisioning continues.
+			</AlertDescription>
+		</Alert>
+	);
+}
+
+function ProjectionDependentUnavailable({ label }: { label: string }) {
+	return (
+		<EmptyState
+			title={`${label} unavailable`}
+			description="This section depends on the synced agent record. Deployment-owned controls remain available."
+		/>
 	);
 }
 
@@ -768,115 +852,13 @@ function OverviewFailedPanel({
 	);
 }
 
-function DeploymentCentricDetail({
-	deployment,
-	runtime,
-	environmentId,
-	agentProjectionMissing,
-	section,
-}: {
-	deployment: HostedDeployment;
-	runtime: Runtime;
-	environmentId: string;
-	agentProjectionMissing: boolean;
-	section: HostedAgentTab;
-}) {
-	const status = parseDeploymentStatus(deployment.status);
-	const canRestart = canRestartDeployment(status);
-	const canStart = canStartDeployment(status);
-	const failed = status.kind === "failed";
-	const stoppedComputeSettings = status.kind === "stopped" && section === "settings";
-
-	if (stoppedComputeSettings) {
-		return (
-			<div
-				data-hosted="true"
-				className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}
-			>
-				<section className="flex flex-col gap-4">
-					<PageHeader
-						title="Settings"
-						description="Compute plan, billing, and lifecycle controls."
-						icon={<Settings className="size-4 text-muted-foreground" />}
-						status={<AgentSourceBadge source="hosted" compact />}
-					/>
-					<ComputeDunningBanner deployment={deployment} />
-					<ComputeSettingsSections deployment={deployment} />
-				</section>
-			</div>
-		);
-	}
-
-	return (
-		<div
-			data-hosted="true"
-			className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}
-		>
-			<section className="flex flex-col gap-5">
-				<PageHeader
-					title="Overview"
-					description="Deployment status and recovery controls."
-					icon={<Info className="size-4 text-muted-foreground" />}
-					status={<AgentSourceBadge source="hosted" compact />}
-				/>
-				{agentProjectionMissing ? (
-					<Alert data-hosted="true">
-						<AlertCircle />
-						<AlertTitle>Agent sync record unavailable</AlertTitle>
-						<AlertDescription>
-							The hosted deployment still claims agent {environmentId}, but its synced agent record
-							is missing. Runtime UI, terminal, sessions, and other agent data will become available
-							after the agent reconnects.
-						</AlertDescription>
-					</Alert>
-				) : status.kind === "stopped" ? (
-					<Alert data-hosted="true">
-						<AlertCircle />
-						<AlertTitle>Hosted compute is stopped</AlertTitle>
-						<AlertDescription>
-							The agent record is retained, but Runtime UI, terminal, sessions, and daemon status
-							are unavailable until compute starts again.
-						</AlertDescription>
-					</Alert>
-				) : isProvisioningStatus(status) ? (
-					<OverviewProvisioningPanel status={status} />
-				) : null}
-				{failed ? (
-					<OverviewFailedPanel deployment={deployment} restartLabel="Retry startup" />
-				) : null}
-				<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-					<StatCard label="Status" value={deploymentStatusLabel(status)} />
-					<StatCard
-						label="Compute plan"
-						value={computeTierLabel(deployment.config_info?.compute_plan_slug)}
-					/>
-					<StatCard label="Created" value={formatShortDate(deployment.created_at)} />
-					<StatCard label="Runtime" value={runtimeDisplayName(runtime)} />
-				</div>
-				<SettingsSection
-					title="Deployment actions"
-					description={
-						agentProjectionMissing
-							? "Manage compute while synced agent data is unavailable."
-							: "Manage this hosted deployment while live agent tools are unavailable."
-					}
-				>
-					<div className="flex flex-wrap gap-2.5">
-						{canRestart && !failed ? <RestartComputeAction deployment={deployment} /> : null}
-						{canStart && !failed ? <StartComputeAction deployment={deployment} /> : null}
-						<DeleteComputeAction deployment={deployment} />
-					</div>
-				</SettingsSection>
-			</section>
-		</div>
-	);
-}
-
 function OverviewTab({
 	deployment,
 	agent,
 	runtime,
 	isPerformance,
+	showDeploymentActions,
+	projectionAvailable,
 	sessions,
 	sessionsLoading,
 	sessionsError,
@@ -887,6 +869,8 @@ function OverviewTab({
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	runtime: Runtime;
 	isPerformance: boolean;
+	showDeploymentActions: boolean;
+	projectionAvailable: boolean;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
 	sessionsError: unknown;
@@ -912,7 +896,9 @@ function OverviewTab({
 			{isProvisioningStatus(deploymentStatus) ? (
 				<OverviewProvisioningPanel status={deploymentStatus} />
 			) : null}
-			{deploymentStatus.kind === "failed" ? <OverviewFailedPanel deployment={deployment} /> : null}
+			{deploymentStatus.kind === "failed" ? (
+				<OverviewFailedPanel deployment={deployment} restartLabel="Retry startup" />
+			) : null}
 			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
 				<StatCard
 					label="Status"
@@ -927,7 +913,13 @@ function OverviewTab({
 			</div>
 			<div>
 				<div className="mb-2 text-sm font-medium">Recent sessions</div>
-				{sessionsError ? (
+				{!projectionAvailable ? (
+					<EmptyState
+						variant="inset"
+						title="Sessions unavailable"
+						description="Sessions depend on the synced agent record and will recover when it becomes available."
+					/>
+				) : sessionsError ? (
 					<ApiErrorPanel
 						error={sessionsError}
 						onRetry={onRetrySessions}
@@ -944,7 +936,29 @@ function OverviewTab({
 					/>
 				)}
 			</div>
+			{showDeploymentActions ? <OverviewDeploymentActions deployment={deployment} /> : null}
 		</div>
+	);
+}
+
+function OverviewDeploymentActions({ deployment }: { deployment: HostedDeployment }) {
+	const status = parseDeploymentStatus(deployment.status);
+	const failed = status.kind === "failed";
+	return (
+		<SettingsSection
+			title="Deployment actions"
+			description="Manage hosted compute independently of synced agent data."
+		>
+			<div className="flex flex-wrap gap-2.5">
+				{canRestartDeployment(status) && !failed ? (
+					<RestartComputeAction deployment={deployment} />
+				) : null}
+				{canStartDeployment(status) && !failed ? (
+					<StartComputeAction deployment={deployment} />
+				) : null}
+				<DeleteComputeAction deployment={deployment} />
+			</div>
+		</SettingsSection>
 	);
 }
 
@@ -1011,25 +1025,42 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
+	const canOpenRuntimeUi = canOpenHostedRuntimeUi(deployment.status, url);
 	const redemption = useCreateRuntimeUiRedemption();
 	const [frameUrl, setFrameUrl] = useState<string | null>(null);
+	const [frameError, setFrameError] = useState<Error | null>(null);
+	const [redemptionAttempt, setRedemptionAttempt] = useState(0);
+	const startedRedemptionRef = useRef<string | null>(null);
 
 	useEffect(() => {
+		if (!canOpenRuntimeUi || !url) {
+			startedRedemptionRef.current = null;
+			setFrameUrl(null);
+			setFrameError(null);
+			return;
+		}
+		const attemptKey = `${deployment.id}:${url}:${redemptionAttempt}`;
+		if (startedRedemptionRef.current === attemptKey) return;
+		startedRedemptionRef.current = attemptKey;
 		setFrameUrl(null);
-		if (!isRunning || !url) return;
-		let cancelled = false;
+		setFrameError(null);
 		redemption
 			.mutateAsync({ id: deployment.id })
 			.then((result) => {
-				if (!cancelled) setFrameUrl(result.url);
+				if (startedRedemptionRef.current === attemptKey) setFrameUrl(result.url);
 			})
-			.catch(() => {
-				if (!cancelled) setFrameUrl(null);
+			.catch((error: unknown) => {
+				if (startedRedemptionRef.current !== attemptKey) return;
+				setFrameError(error instanceof Error ? error : new Error("Runtime UI redemption failed"));
 			});
-		return () => {
-			cancelled = true;
-		};
-	}, [deployment.id, isRunning, redemption.mutateAsync, url]);
+	}, [canOpenRuntimeUi, deployment.id, redemption.mutateAsync, redemptionAttempt, url]);
+
+	const retryRedemption = () => {
+		redemption.reset();
+		setFrameUrl(null);
+		setFrameError(null);
+		setRedemptionAttempt((attempt) => attempt + 1);
+	};
 
 	// Not running yet — the runtime UI and bridge only exist once the agent boots.
 	if (!isRunning) {
@@ -1077,7 +1108,18 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 		>
 			{/* Desktop: embed the live UI. Mobile is too cramped, so offer the
 			    full-screen link instead. */}
-			{frameUrl ? (
+			{frameError ? (
+				<div className="flex min-h-[420px] flex-1 items-center justify-center p-6">
+					<div className="w-full max-w-xl">
+						<ApiErrorPanel
+							error={frameError}
+							onRetry={retryRedemption}
+							normalizer={billingErrorNormalizer}
+							title="Couldn't load Runtime UI"
+						/>
+					</div>
+				</div>
+			) : frameUrl ? (
 				<iframe
 					key={`${runtime}:${frameUrl}`}
 					src={frameUrl}
@@ -1090,20 +1132,22 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 					<Spinner className="size-4 text-muted-foreground" />
 				</div>
 			)}
-			<div className="flex min-h-[420px] flex-1 flex-col items-center justify-center gap-3 p-6 text-center sm:hidden">
-				<p className="text-sm text-muted-foreground">
-					This runtime UI is best viewed full screen on a small screen.
-				</p>
-				<RuntimeUiOpenButton
-					deployment={deployment}
-					label={browserUiLabel}
-					variant="outline"
-					size="sm"
-				>
-					Open {browserUiLabel}
-					<Maximize2 className="size-3.5" />
-				</RuntimeUiOpenButton>
-			</div>
+			{frameError ? null : (
+				<div className="flex min-h-[420px] flex-1 flex-col items-center justify-center gap-3 p-6 text-center sm:hidden">
+					<p className="text-sm text-muted-foreground">
+						This runtime UI is best viewed full screen on a small screen.
+					</p>
+					<RuntimeUiOpenButton
+						deployment={deployment}
+						label={browserUiLabel}
+						variant="outline"
+						size="sm"
+					>
+						Open {browserUiLabel}
+						<Maximize2 className="size-3.5" />
+					</RuntimeUiOpenButton>
+				</div>
+			)}
 		</LiveToolFrame>
 	);
 }
@@ -2148,14 +2192,20 @@ function HostedAgentSettingsTab({
 	environmentId,
 	deployment,
 	runtime,
+	projectionAvailable,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	runtime: Runtime;
+	projectionAvailable: boolean;
 }) {
 	return (
 		<div className="flex flex-col gap-10">
-			<AgentSettingsPanel environmentId={environmentId} />
+			{projectionAvailable ? (
+				<AgentSettingsPanel environmentId={environmentId} />
+			) : (
+				<ProjectionDependentUnavailable label="Profile settings" />
+			)}
 			<LanguageTimezoneSettingsSection deployment={deployment} runtime={runtime} />
 			<ComputeSettingsSections deployment={deployment} />
 		</div>

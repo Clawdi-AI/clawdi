@@ -66,6 +66,7 @@ describe("selectUnifiedAgentList", () => {
 			hostedTiles: [hostedTile],
 			claimedEnvIds: new Set([claimed.id.toLowerCase()]),
 			legacyEnvIds: new Set([legacy.id.toLowerCase()]),
+			hostedInventoryStatus: "resolved",
 			showLegacyAgents: true,
 		});
 
@@ -78,7 +79,7 @@ describe("selectUnifiedAgentList", () => {
 		expect(selection.tiles.some((tile) => tile.id === claimed.id)).toBe(false);
 	});
 
-	test("keeps hosted membership while legacy ownership is unresolved", () => {
+	test("keeps known hosted membership but withholds connected classification while ownership is unresolved", () => {
 		const claimed = env("11111111-1111-4111-8111-111111111111", "claimed-cloud-env");
 		const connected = env("33333333-3333-4333-8333-333333333333", "connected-env");
 		const hostedTile: AgentTile = {
@@ -97,10 +98,78 @@ describe("selectUnifiedAgentList", () => {
 			hostedTiles: [hostedTile],
 			claimedEnvIds: new Set([claimed.id.toLowerCase()]),
 			legacyEnvIds: null,
+			hostedInventoryStatus: "resolved",
 			showLegacyAgents: true,
 		});
 
-		expect(selection.tiles.map((tile) => tile.id)).toEqual(["dep_starting", connected.id]);
+		expect(selection.tiles.map((tile) => tile.id)).toEqual(["dep_starting"]);
+		expect(selection.connectedTiles).toEqual([]);
+		expect(selection.membershipResolved).toBe(false);
+	});
+
+	test("never reclassifies cloud projections while deployment membership is unresolved", () => {
+		const possibleHostedProjection = env(
+			"11111111-1111-4111-8111-111111111111",
+			"possible-hosted-projection",
+		);
+		const selection = selectUnifiedAgentList({
+			cloudEnvs: [possibleHostedProjection],
+			hostedTiles: [],
+			claimedEnvIds: new Set(),
+			legacyEnvIds: new Set(),
+			hostedInventoryStatus: "loading",
+			showLegacyAgents: false,
+		});
+
+		expect(selection.tiles).toEqual([]);
+		expect(selection.connectedTiles).toEqual([]);
+		expect(selection.membershipResolved).toBe(false);
+	});
+
+	test("retains known hosted membership without classifying other projections after refresh failure", () => {
+		const claimed = env("11111111-1111-4111-8111-111111111111", "claimed-cloud-env");
+		const unknown = env("33333333-3333-4333-8333-333333333333", "unknown-projection");
+		const hostedTile: AgentTile = {
+			id: "dep_running",
+			source: "on-clawdi",
+			name: "OpenClaw",
+			agentType: "openclaw",
+			statusLabel: "Running",
+			href: `/agents/${claimed.id}?source=on-clawdi&d=dep_running`,
+			active: true,
+			env: claimed,
+		};
+		const selection = selectUnifiedAgentList({
+			cloudEnvs: [claimed, unknown],
+			hostedTiles: [hostedTile],
+			claimedEnvIds: new Set([claimed.id.toLowerCase()]),
+			legacyEnvIds: new Set(),
+			hostedInventoryStatus: "error",
+			showLegacyAgents: false,
+		});
+
+		expect(selection.tiles.map((tile) => [tile.id, tile.source])).toEqual([
+			["dep_running", "on-clawdi"],
+		]);
+		expect(selection.connectedTiles).toEqual([]);
+		expect(selection.membershipResolved).toBe(false);
+	});
+
+	test("classifies projections as connected only after an authoritative empty snapshot", () => {
+		const connected = env("33333333-3333-4333-8333-333333333333", "connected-env");
+		const selection = selectUnifiedAgentList({
+			cloudEnvs: [connected],
+			hostedTiles: [],
+			claimedEnvIds: new Set(),
+			legacyEnvIds: new Set(),
+			hostedInventoryStatus: "resolved",
+			showLegacyAgents: false,
+		});
+
+		expect(selection.tiles.map((tile) => [tile.id, tile.source])).toEqual([
+			[connected.id, "self-managed"],
+		]);
+		expect(selection.membershipResolved).toBe(true);
 	});
 });
 
@@ -111,7 +180,8 @@ describe("unified list consumers", () => {
 		const homepage = readFileSync(resolve(srcDir, "hosted/hosted-agents-section.tsx"), "utf8");
 
 		expect(sidebar).toContain('import("@/hosted/use-unified-agent-list")');
-		expect(sidebar).toContain("hostedAgentTiles ?? []");
+		expect(sidebar).toContain("hostedMembershipResolved");
+		expect(sidebar).toContain("activeAgentTile");
 		expect(homepage).toContain("useUnifiedAgentList({");
 		expect(homepage).not.toContain("connectedAgentTilesForHostedView");
 		expect(homepage).not.toContain("useHostedAgentTiles({");

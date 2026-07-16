@@ -10,6 +10,7 @@ describe("agentOwnershipKindFromId", () => {
 		const ownership = {
 			cloudEnvIds: new Set(["aaaa"]),
 			legacyEnvIds: new Set(["bbbb"]),
+			isResolved: true,
 		};
 
 		expect(agentOwnershipKindFromId("AAAA", ownership)).toBe("cloud");
@@ -21,6 +22,7 @@ describe("agentOwnershipKindFromId", () => {
 		const ownership = {
 			cloudEnvIds: new Set(["aaaa"]),
 			legacyEnvIds: new Set(["bbbb"]),
+			isResolved: true,
 		};
 
 		expect(agentOwnershipKindFromId("  AAAA  ", ownership)).toBe("cloud");
@@ -31,21 +33,32 @@ describe("agentOwnershipKindFromId", () => {
 		}
 	});
 
-	it("defaults to connected while ownership is unknown", () => {
-		// Cosmetic fallback only — destructive consumers (Disconnect) must
-		// additionally require a non-null (resolved) ownership value.
-		expect(agentOwnershipKindFromId("aaaa", null)).toBe("connected");
-		expect(agentOwnershipKindFromId(null, null)).toBe("connected");
+	it("preserves unresolved ownership instead of guessing connected", () => {
+		expect(agentOwnershipKindFromId("aaaa", null)).toBe("unresolved");
+		expect(agentOwnershipKindFromId(null, null)).toBe("unresolved");
 	});
 
 	it("resolved empty ownership classifies everything as connected", () => {
 		expect(agentOwnershipKindFromId("aaaa", EMPTY_AGENT_OWNERSHIP)).toBe("connected");
 	});
 
+	it("retains known ownership while leaving unknown ids unresolved from a stale snapshot", () => {
+		const ownership = {
+			cloudEnvIds: new Set(["aaaa"]),
+			legacyEnvIds: new Set(["bbbb"]),
+			isResolved: false,
+		};
+
+		expect(agentOwnershipKindFromId("aaaa", ownership)).toBe("cloud");
+		expect(agentOwnershipKindFromId("bbbb", ownership)).toBe("legacy");
+		expect(agentOwnershipKindFromId("cccc", ownership)).toBe("unresolved");
+	});
+
 	it("prefers cloud when both sets contain the same environment", () => {
 		const ownership = {
 			cloudEnvIds: new Set(["aaaa"]),
 			legacyEnvIds: new Set(["aaaa"]),
+			isResolved: true,
 		};
 
 		expect(agentOwnershipKindFromId("aaaa", ownership)).toBe("cloud");
@@ -106,14 +119,22 @@ describe("agentDisconnectUnavailable", () => {
 			agentDisconnectUnavailable({
 				envId: "aaaa",
 				explicitIdentity: false,
-				ownership: { cloudEnvIds: new Set(["aaaa"]), legacyEnvIds: new Set() },
+				ownership: {
+					cloudEnvIds: new Set(["aaaa"]),
+					legacyEnvIds: new Set(),
+					isResolved: true,
+				},
 			}),
 		).toBe(true);
 		expect(
 			agentDisconnectUnavailable({
 				envId: "aaaa",
 				explicitIdentity: false,
-				ownership: { cloudEnvIds: new Set(), legacyEnvIds: new Set(["aaaa"]) },
+				ownership: {
+					cloudEnvIds: new Set(),
+					legacyEnvIds: new Set(["aaaa"]),
+					isResolved: true,
+				},
 			}),
 		).toBe(true);
 	});

@@ -236,7 +236,7 @@ export function HostedUnavailableBanner({
 			error={error}
 			onRetry={onRetry}
 			normalizer={normalizer}
-			title="Couldn't load Clawdi Cloud agents"
+			title="Clawdi Cloud inventory unavailable"
 		/>
 	);
 }

@@ -6,8 +6,9 @@ import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billin
 import { BillingApiError, billingQueryRetry } from "@/hosted/billing/errors";
 // (BillingApiError kept for the retry policy only — a 404 is not worth
 // retrying, but it is NOT a definitive answer either; see useLegacyEnvIds.)
-import { billingKeys, useHostedDeployments } from "@/hosted/billing/hooks";
-import { claimedEnvIdsFromDeployments } from "@/hosted/use-hosted-agent-tiles";
+import { billingKeys } from "@/hosted/billing/hooks";
+import { claimedEnvIdsFromDeployments } from "@/hosted/hosted-agent-resolution";
+import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import type { AgentOwnership } from "@/lib/agent-ownership";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
@@ -55,31 +56,32 @@ export function useLegacyEnvIds(): ReadonlySet<string> | null {
  * Reports cloud-api environment ids managed by hosted-only control planes.
  *
  * The OSS dashboard receives only this neutral ownership context. Deploy API
- * reads stay quarantined in `apps/web/src/hosted/`. Only successful data
- * resolves a set; every error — 404 (route not deployed yet) included —
- * leaves ownership `null` so destructive actions fail closed while cosmetic
- * consumers fall back to connected.
+ * reads stay quarantined in `apps/web/src/hosted/`. A successful inventory
+ * resolves connected classification. During loading or an error, last-known
+ * external ids remain classified while every unknown id fails closed as
+ * unresolved.
  */
 export function HostedAgentOwnershipSensor({
 	onChange,
 }: {
 	onChange: (ownership: AgentOwnership | null) => void;
 }) {
-	const cloudQuery = useHostedDeployments();
+	const cloudInventory = useHostedDeploymentInventory();
 	const legacyEnvIds = useLegacyEnvIds();
 
-	const cloudEnvIds = useMemo(() => {
-		if (!isDeployApiConfigured()) return EMPTY_ENV_IDS;
-		// Fresh/stale data resolves; errors or pending leave the set
-		// UNRESOLVED so destructive consumers fail closed.
-		if (cloudQuery.data) return claimedEnvIdsFromDeployments(cloudQuery.data);
-		return null;
-	}, [cloudQuery.data, cloudQuery.error, cloudQuery.isPending]);
+	const cloudEnvIds = useMemo(
+		() => claimedEnvIdsFromDeployments(cloudInventory.deployments ?? []),
+		[cloudInventory.deployments],
+	);
 
-	const ownership = useMemo<AgentOwnership | null>(() => {
-		if (!cloudEnvIds || !legacyEnvIds) return null;
-		return { cloudEnvIds, legacyEnvIds };
-	}, [cloudEnvIds, legacyEnvIds]);
+	const ownership = useMemo<AgentOwnership>(
+		() => ({
+			cloudEnvIds,
+			legacyEnvIds: legacyEnvIds ?? EMPTY_ENV_IDS,
+			isResolved: cloudInventory.status === "resolved" && legacyEnvIds !== null,
+		}),
+		[cloudEnvIds, cloudInventory.status, legacyEnvIds],
+	);
 
 	useEffect(() => {
 		onChange(ownership);
