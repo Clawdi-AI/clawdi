@@ -230,15 +230,27 @@ describe("deploymentToTiles", () => {
 			source: "on-clawdi",
 			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
 			env: null,
+			contextLabel: "hosted-test",
 			secondaryStatus: {
 				label: "Failure: startup_probe_failing; restart_count=2",
 				title: failureReason,
 				textClass: "text-destructive-muted-foreground font-medium",
 			},
 		});
-		expect(tile?.manageHref).toBeUndefined();
+		expect(tile?.manageHref).toBe(`/agents/${environmentId}/settings?source=on-clawdi&d=dep_123`);
 		expect(tile?.action).toBeUndefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
+	});
+
+	test("removes deleted deployments from tiles and detail membership", () => {
+		const environmentId = "55555555-5555-4555-8555-555555555555";
+		const deleted = deployment(
+			{ status: "deleted" },
+			{ clawdi_cloud_environments: { openclaw: environmentId } },
+		);
+
+		expect(hostedDeploymentToTiles(deleted)).toEqual([]);
+		expect(resolveAgentDeployment([deleted], environmentId).match).toBeNull();
 	});
 
 	test("keeps a deployment without an env identity non-navigable but exposes delete", () => {

@@ -1,21 +1,13 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { useQuery } from "@tanstack/react-query";
 import { createElement, useMemo } from "react";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import type { AgentTile } from "@/components/dashboard/agents-card";
-import {
-	DaemonStatusBadge,
-	type DaemonStatusVisual,
-	daemonStatusVisual,
-} from "@/components/dashboard/daemon-status";
+import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
-import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import { computeDunningTileStatus } from "@/hosted/billing/components/compute-dunning.logic";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
-import { billingQueryRetry, isNetworkError } from "@/hosted/billing/errors";
-import { billingKeys } from "@/hosted/billing/hooks";
 import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-management";
 import {
 	compactDeploymentFailureReason,
@@ -28,15 +20,20 @@ import {
 	deploymentStatusTone,
 	isRunningStatus,
 	parseDeploymentStatus,
-	shouldPollDeployments,
 } from "@/hosted/deployment-status";
+import {
+	claimedEnvIdsFromDeployments,
+	isHostedDeploymentMember,
+} from "@/hosted/hosted-agent-resolution";
 import { HostedDeploymentTileDeleteAction } from "@/hosted/hosted-deployment-tile-action";
 import { deploymentRuntime, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
-import { normalizeAgentEnvId } from "@/lib/agent-ownership";
+import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
 type DeploymentStatusInput = Pick<HostedDeployment, "status" | "failure_reason">;
+
+const EMPTY_DEPLOYMENTS: HostedDeployment[] = [];
 
 const COMPUTE_DOT_TONE: Record<DeploymentStatusTone, string> = {
 	success: "bg-success ring-2 ring-success/20",
@@ -112,23 +109,6 @@ export function hostedRuntimeStatusView(
 }
 
 /**
- * Env ids claimed by Cloud deploy-API deployments (lower-cased —
- * see the case note on `envById`). Shared by the tile dedup here and
- * the sidebar's cloud-vs-legacy chrome classification so the two can
- * never disagree about which externally managed env is a Cloud agent.
- */
-export function claimedEnvIdsFromDeployments(
-	deployments: readonly HostedDeployment[],
-): Set<string> {
-	const s = new Set<string>();
-	for (const d of deployments) {
-		const envId = runtimeEnvironmentId(d.config_info);
-		if (envId) s.add(envId.toLowerCase());
-	}
-	return s;
-}
-
-/**
  * Bridges hosted deploy API `Deployment` records to the unified `AgentTile`
  * shape rendered by `AgentsCard`. Hosted-side projection lives here so
  * `AgentsCard` itself never imports from `@/hosted/*`.
@@ -150,21 +130,8 @@ export function useHostedAgentTiles({
 	cloudEnvs: Env[];
 	includeDeployments?: boolean;
 }) {
-	const client = useBillingClient();
-	// Not configured (preview/self-hosted mirror pointing at the default
-	// localhost deploy API) → don't fetch, don't error-banner. See
-	// isDeployApiConfigured.
-	const configured = isDeployApiConfigured();
-	const query = useQuery<HostedDeployment[], Error>({
-		queryKey: billingKeys.deployments,
-		enabled: configured && includeDeployments,
-		queryFn: () => client.listDeployments(),
-		retry: billingQueryRetry,
-		// Poll while deployments are unsettled. The deploy API status is a string,
-		// so unknown future states are treated as non-terminal until a settled
-		// state arrives.
-		refetchInterval: (q) => (shouldPollDeployments(q.state.data) ? 10_000 : false),
-	});
+	const inventory = useHostedDeploymentInventory({ enabled: includeDeployments });
+	const deployments = inventory.deployments ?? EMPTY_DEPLOYMENTS;
 
 	// Memoize the env-by-id index so the tile join is O(N+M) instead
 	// of O(N×M) on every render of the hosted-agent grid.
@@ -181,16 +148,14 @@ export function useHostedAgentTiles({
 		return m;
 	}, [cloudEnvs]);
 
-	// Both `tiles` and `claimedEnvIds` derive from `query.data`. Memoize
+	// Both `tiles` and `claimedEnvIds` derive from the last resolved inventory. Memoize
 	// them so refetchInterval (10s for transient deployments) doesn't
 	// rebuild N×M JSX trees on every poll when nothing actually changed.
 	// TanStack Query gives the same `data` reference back on no-op
 	// refetches, so the memo deps stay stable.
 	const tiles = useMemo<AgentTile[]>(() => {
-		return includeDeployments
-			? (query.data ?? []).flatMap((d) => deploymentToTiles(d, envById))
-			: [];
-	}, [includeDeployments, query.data, envById]);
+		return includeDeployments ? deployments.flatMap((d) => deploymentToTiles(d, envById)) : [];
+	}, [deployments, includeDeployments, envById]);
 
 	// Env ids that are owned by a hosted deployment. The dashboard
 	// excludes these from its self-managed grid so a hosted deployment's env
@@ -200,26 +165,18 @@ export function useHostedAgentTiles({
 	// case-sensitivity defense as `envById`.
 	const claimedEnvIds = useMemo(() => {
 		if (!includeDeployments) return new Set<string>();
-		return claimedEnvIdsFromDeployments(query.data ?? []);
-	}, [includeDeployments, query.data]);
-
-	// CORS/network-level failures (fetch throws TypeError before any HTTP
-	// response is readable) mean this origin can't talk to the deploy API
-	// at all. That is "hosted isn't available here," not an outage: stay
-	// silent. Readable HTTP errors (5xx/4xx from an allowed origin) keep
-	// the banner — those are real failures on hosts where the integration
-	// genuinely works.
-	const unreachableFromOrigin = isNetworkError(query.error);
+		return claimedEnvIdsFromDeployments(deployments);
+	}, [deployments, includeDeployments]);
 
 	return {
-		hasExistingDeployments: includeDeployments && hasExistingCloudDeployments(query.data),
+		inventoryStatus: inventory.status,
+		hasExistingDeployments:
+			includeDeployments && hasExistingCloudDeployments(inventory.deployments),
 		tiles,
 		claimedEnvIds,
-		// Disabled queries report isLoading=true forever in v5 (status
-		// stays 'pending'); mask both flags when we never fetch.
-		isLoading: configured && includeDeployments ? query.isLoading : false,
-		error: configured && includeDeployments && !unreachableFromOrigin ? query.error : null,
-		refetch: query.refetch,
+		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
+		error: inventory.error,
+		refetch: inventory.refetch,
 	};
 }
 
@@ -229,6 +186,7 @@ export function useHostedAgentTiles({
  * only decorates the tile with daemon sync state and presentation metadata.
  */
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
+	if (!isHostedDeploymentMember(d)) return [];
 	const runtime = deploymentRuntime(d);
 	const slug = deploymentDisplayName(d.name);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
@@ -241,9 +199,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.id,
 	};
 	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
-	const settingsHref = matchedEnv
-		? agentSectionHref(matchedEnv.id, "settings", routeQuery)
-		: undefined;
+	const settingsHref = envId ? agentSectionHref(envId, "settings", routeQuery) : undefined;
 	const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
 	const contextLabel = slug !== name ? slug : null;
 	const runtimeStatus = hostedRuntimeStatusView(d, matchedEnv ?? null);
@@ -298,125 +254,4 @@ export function hostedAgentTileStatus(rawStatus: string): { label: string; activ
 		label: deploymentStatusLabel(status),
 		active: isRunningStatus(status),
 	};
-}
-
-export function HostedFocusRuntimeStatusBadge({
-	env,
-	manageHref,
-	compact = false,
-	tooltipDetail,
-}: {
-	env: Env;
-	manageHref?: string;
-	compact?: boolean;
-	tooltipDetail?: string;
-}) {
-	const hosted = useHostedAgentTiles({ cloudEnvs: [env] });
-	const envId = normalizeAgentEnvId(env.id);
-	const tile = hosted.tiles.find((item) => normalizeAgentEnvId(item.env?.id) === envId);
-	if (!tile?.statusDot) {
-		if (hosted.isLoading) return createLoadingStatus(compact);
-		return createElement(DaemonStatusBadge, {
-			env,
-			source: "on-clawdi",
-			manageHref,
-			compact,
-			tooltipDetail,
-		});
-	}
-
-	return createElement(
-		"span",
-		{
-			className: "inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap text-muted-foreground",
-			title: tile.secondaryStatus?.title ?? tile.statusDot.label,
-		},
-		createElement("span", {
-			key: "dot",
-			"aria-hidden": true,
-			className: `inline-block size-1.5 shrink-0 rounded-full ${tile.statusDot.dotClass}`,
-		}),
-		createElement(
-			"span",
-			{
-				key: "primary",
-				className: "whitespace-nowrap",
-			},
-			tile.statusDot.label,
-		),
-		createSecondarySyncStatus({
-			key: "secondary",
-			tile,
-			env,
-			manageHref,
-			tooltipDetail,
-		}),
-	);
-}
-
-function createLoadingStatus(compact: boolean) {
-	return createElement(
-		"span",
-		{
-			className: "inline-flex items-center gap-1.5 whitespace-nowrap text-muted-foreground",
-		},
-		createElement("span", {
-			key: "dot",
-			"aria-hidden": true,
-			className:
-				"inline-block size-1.5 rounded-full border border-muted-foreground/50 bg-transparent",
-		}),
-		createElement("span", { key: "label" }, compact ? "Loading" : "Loading status"),
-	);
-}
-
-function createSecondarySyncStatus({
-	key,
-	tile,
-	env,
-	manageHref,
-	tooltipDetail,
-}: {
-	key: string;
-	tile: AgentTile;
-	env: Env;
-	manageHref?: string;
-	tooltipDetail?: string;
-}) {
-	if (!tile.secondaryStatus) return null;
-	const label = tile.secondaryStatus.label;
-	return createElement(
-		"span",
-		{
-			key,
-			className: "inline-flex min-w-0 items-center gap-1.5",
-		},
-		createElement(
-			"span",
-			{
-				key: "separator",
-				className: "text-muted-foreground/70",
-				"aria-hidden": true,
-			},
-			"·",
-		),
-		tile.env
-			? createElement(DaemonStatusBadge, {
-					key: "badge",
-					env,
-					source: "on-clawdi",
-					manageHref,
-					tooltipDetail,
-					showDot: false,
-					labelOverride: label,
-				})
-			: createElement(
-					"span",
-					{
-						key: "text",
-						className: tile.secondaryStatus.textClass ?? "text-muted-foreground",
-					},
-					label,
-				),
-	);
 }

@@ -9,6 +9,7 @@ import {
 	selfManagedAgentTiles,
 } from "@/components/dashboard/agents-card";
 import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
+import type { HostedInventoryStatus } from "@/hosted/hosted-agent-resolution";
 import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 import { useHostedAgentTiles } from "@/hosted/use-hosted-agent-tiles";
 import { normalizeAgentEnvId } from "@/lib/agent-ownership";
@@ -21,6 +22,7 @@ export interface UnifiedAgentListSelection {
 	tiles: AgentTile[];
 	hostedTiles: AgentTile[];
 	connectedTiles: AgentTile[];
+	membershipResolved: boolean;
 }
 
 /**
@@ -35,14 +37,27 @@ export function selectUnifiedAgentList({
 	hostedTiles,
 	claimedEnvIds,
 	legacyEnvIds,
+	hostedInventoryStatus,
 	showLegacyAgents,
 }: {
 	cloudEnvs: Env[];
 	hostedTiles: AgentTile[];
 	claimedEnvIds: ReadonlySet<string>;
 	legacyEnvIds: ReadonlySet<string> | null;
+	hostedInventoryStatus: HostedInventoryStatus;
 	showLegacyAgents: boolean;
 }): UnifiedAgentListSelection {
+	const membershipResolved =
+		hostedInventoryStatus === "resolved" && (!showLegacyAgents || legacyEnvIds !== null);
+	if (!membershipResolved) {
+		return {
+			tiles: hostedTiles,
+			hostedTiles,
+			connectedTiles: [],
+			membershipResolved: false,
+		};
+	}
+
 	const legacyConnectedTiles =
 		showLegacyAgents && legacyEnvIds
 			? legacyConnectedAgentTiles(cloudEnvs, legacyEnvIds, claimedEnvIds)
@@ -56,6 +71,7 @@ export function selectUnifiedAgentList({
 		tiles: [...hostedTiles, ...connectedTiles],
 		hostedTiles,
 		connectedTiles,
+		membershipResolved: true,
 	};
 }
 
@@ -90,14 +106,23 @@ export function useUnifiedAgentList({
 				hostedTiles: hosted.tiles,
 				claimedEnvIds: hosted.claimedEnvIds,
 				legacyEnvIds,
+				hostedInventoryStatus: hosted.inventoryStatus,
 				showLegacyAgents,
 			}),
-		[cloudEnvs, hosted.claimedEnvIds, hosted.tiles, legacyEnvIds, showLegacyAgents],
+		[
+			cloudEnvs,
+			hosted.claimedEnvIds,
+			hosted.inventoryStatus,
+			hosted.tiles,
+			legacyEnvIds,
+			showLegacyAgents,
+		],
 	);
 
 	return {
 		...selection,
 		hasExistingDeployments: hosted.hasExistingDeployments,
+		inventoryStatus: hosted.inventoryStatus,
 		isLoading:
 			(showCloudDeployments && hosted.isLoading) ||
 			(showLegacyAgents && resolvedLegacyEnvIds === null),
@@ -115,7 +140,7 @@ export function HostedUnifiedAgentListSensor({
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
-	onChange: (tiles: AgentTile[] | null) => void;
+	onChange: (tiles: AgentTile[] | null, membershipResolved: boolean) => void;
 }) {
 	const unified = useUnifiedAgentList({
 		cloudEnvs,
@@ -124,9 +149,9 @@ export function HostedUnifiedAgentListSensor({
 	});
 
 	useEffect(() => {
-		onChange(unified.tiles);
-	}, [onChange, unified.tiles]);
-	useEffect(() => () => onChange(null), [onChange]);
+		onChange(unified.tiles, unified.membershipResolved);
+	}, [onChange, unified.membershipResolved, unified.tiles]);
+	useEffect(() => () => onChange(null, false), [onChange]);
 
 	return null;
 }
@@ -140,7 +165,10 @@ export function HostedFleetSummary({
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
-	children: (summary: AgentFleetSummary) => ReactNode;
+	children: (
+		summary: AgentFleetSummary,
+		state: { membershipResolved: boolean; error: Error | null; isLoading: boolean },
+	) => ReactNode;
 }) {
 	const unified = useUnifiedAgentList({
 		cloudEnvs,
@@ -148,5 +176,9 @@ export function HostedFleetSummary({
 		showLegacyAgents,
 	});
 	const summary = useMemo(() => fleetSummaryFromTiles(unified.tiles), [unified.tiles]);
-	return children(summary);
+	return children(summary, {
+		membershipResolved: unified.membershipResolved,
+		error: unified.error,
+		isLoading: unified.isLoading,
+	});
 }

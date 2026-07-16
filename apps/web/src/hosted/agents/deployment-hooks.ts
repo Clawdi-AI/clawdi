@@ -6,20 +6,21 @@ import { toast } from "sonner";
 import { deleteDeploymentToastDecision } from "@/hosted/agents/delete-deployment-toast.logic";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import type {
-	HostedDeployment,
 	RebindAgentAiProviderRequest,
 	SetAgentEnabledRequest,
 } from "@/hosted/billing/contracts";
 import { normalizeHostedLanguage } from "@/hosted/billing/deploy/language-timezone-controls";
 import { BillingApiError, normalizeBillingError, toastBillingError } from "@/hosted/billing/errors";
-import { billingKeys, useHostedDeployments } from "@/hosted/billing/hooks";
+import { billingKeys } from "@/hosted/billing/hooks";
+import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
+import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 
 const SETTLING_REFRESH_DELAYS_MS = [2_000, 10_000, 20_000, 30_000] as const;
 
-function invalidateDeploymentSnapshots(qc: QueryClient) {
-	qc.invalidateQueries({ queryKey: billingKeys.deployments });
-	qc.invalidateQueries({ queryKey: ["agents"] });
+export function invalidateDeploymentSnapshots(qc: QueryClient) {
+	void qc.invalidateQueries({ queryKey: billingKeys.deployments });
+	void qc.invalidateQueries({ queryKey: ["agents"] });
 }
 
 function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
@@ -58,10 +59,12 @@ function toastAgentLanguageTimezoneError(error: unknown) {
  * deployment selector is present.
  */
 export function useAgentDeployment(environmentId: string, deploymentSelector?: string | null) {
-	const query = useHostedDeployments({ pollWalletDunningFor: deploymentSelector ?? environmentId });
+	const inventory = useHostedDeploymentInventory({
+		pollWalletDunningFor: deploymentSelector ?? environmentId,
+	});
 	const resolution = useMemo(
-		() => resolveAgentDeployment(query.data ?? [], environmentId, deploymentSelector),
-		[query.data, environmentId, deploymentSelector],
+		() => resolveAgentDeployment(inventory.deployments ?? [], environmentId, deploymentSelector),
+		[inventory.deployments, environmentId, deploymentSelector],
 	);
 	const match = resolution.match;
 
@@ -81,55 +84,20 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 		matchedRuntime: match?.runtime ?? null,
 		ambiguousMatches: resolution.ambiguousMatches,
 		environmentId: resolvedEnvId,
-		isLoading: query.isLoading,
-		isFetching: query.isFetching,
-		error: query.error,
-		refetch: query.refetch,
+		inventoryStatus: inventory.status,
+		membershipResolved: inventory.status === "resolved",
+		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
+		isFetching: inventory.isFetching,
+		error: inventory.error,
+		refetch: inventory.refetch,
 	};
 }
 
-export type AgentDeploymentMatch = {
-	deployment: HostedDeployment;
-	runtime: string | null;
-};
-
-export type AgentDeploymentResolution = {
-	match: AgentDeploymentMatch | null;
-	ambiguousMatches: AgentDeploymentMatch[];
-};
-
-export function resolveAgentDeployment(
-	deployments: readonly HostedDeployment[],
-	environmentId: string,
-	deploymentSelector?: string | null,
-): AgentDeploymentResolution {
-	const target = environmentId.toLowerCase();
-	// Direct deployment-id match: the post-deploy redirect lands on
-	// `/agents/<deployment.id>` because cloud-api env ids aren't minted until
-	// provisioning finishes — resolve by id, not just the env join.
-	const direct = deployments.find((deployment) => deployment.id.toLowerCase() === target);
-	if (direct) {
-		return { match: { deployment: direct, runtime: null }, ambiguousMatches: [] };
-	}
-
-	const matches: AgentDeploymentMatch[] = [];
-	for (const deployment of deployments) {
-		const envs = deployment.config_info?.clawdi_cloud_environments ?? {};
-		const runtime = Object.entries(envs).find(
-			([, value]) => (value ?? "").toLowerCase() === target,
-		);
-		if (runtime) matches.push({ deployment, runtime: runtime[0] });
-	}
-
-	if (deploymentSelector) {
-		const selector = deploymentSelector.toLowerCase();
-		const selected = matches.find((item) => item.deployment.id.toLowerCase() === selector);
-		if (selected) return { match: selected, ambiguousMatches: [] };
-	}
-
-	if (matches.length === 1) return { match: matches[0], ambiguousMatches: [] };
-	return { match: null, ambiguousMatches: matches };
-}
+export type {
+	AgentDeploymentMatch,
+	AgentDeploymentResolution,
+} from "@/hosted/hosted-agent-resolution";
+export { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 
 export function useSetAgentLanguageTimezone() {
 	const client = useBillingClient();
@@ -149,14 +117,11 @@ export function useSetAgentLanguageTimezone() {
 			return client.setAgentLanguageTimezone(vars.id, vars.agentType, body);
 		},
 		onSuccess: () => {
-			invalidateDeploymentSnapshots(qc);
 			scheduleDeploymentSettlingRefresh(qc);
 			toast.success("Language and timezone updated");
 		},
-		onError: (error) => {
-			invalidateDeploymentSnapshots(qc);
-			toastAgentLanguageTimezoneError(error);
-		},
+		onError: toastAgentLanguageTimezoneError,
+		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});
 }
 
@@ -172,13 +137,8 @@ export function useSetAgentAiProvider() {
 		}) => {
 			return client.setAgentAiProvider(vars.id, vars.agentType, vars.body);
 		},
-		onSuccess: () => {
-			invalidateDeploymentSnapshots(qc);
-		},
-		onError: (error) => {
-			invalidateDeploymentSnapshots(qc);
-			toastAiProviderRebindError(error);
-		},
+		onError: toastAiProviderRebindError,
+		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});
 }
 
@@ -208,7 +168,6 @@ export function useDeploymentLifecycle() {
 			return client.startDeployment(vars.id);
 		},
 		onSuccess: (_d, vars) => {
-			invalidateDeploymentSnapshots(qc);
 			scheduleDeploymentSettlingRefresh(qc);
 			const msg =
 				vars.action === "restart"
@@ -219,7 +178,6 @@ export function useDeploymentLifecycle() {
 			toast.success(msg);
 		},
 		onError: (error) => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			if (isLifecycleStateConflict(error)) {
 				toast.error("Agent state changed", {
 					description:
@@ -229,6 +187,7 @@ export function useDeploymentLifecycle() {
 			}
 			toast.error("Couldn't update lifecycle", { description: normalizeBillingError(error) });
 		},
+		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});
 }
 
@@ -238,7 +197,6 @@ export function useDeleteDeployment() {
 	return useMutation({
 		mutationFn: (id: string) => client.deleteDeployment(id),
 		onSuccess: (result) => {
-			invalidateDeploymentSnapshots(qc);
 			scheduleDeploymentSettlingRefresh(qc);
 			const decision = deleteDeploymentToastDecision(result);
 			if (decision.tone === "warning") {
@@ -248,5 +206,6 @@ export function useDeleteDeployment() {
 			toast.success(decision.title, { description: decision.description });
 		},
 		onError: toastBillingError("Couldn't delete agent"),
+		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});
 }

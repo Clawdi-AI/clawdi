@@ -25,6 +25,9 @@ export type UnknownDeploymentStatus = {
 
 export type DeploymentStatus = KnownDeploymentStatusModel | UnknownDeploymentStatus;
 
+export const DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS = 10_000;
+export const DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS = 75_000;
+
 const KNOWN_STATUS_SET = new Set<string>(KNOWN_DEPLOYMENT_STATUSES);
 const LEGACY_STATUS_ALIASES = new Map<string, KnownDeploymentStatus>([["ready", "running"]]);
 
@@ -231,6 +234,18 @@ export function shouldPollDeployments(
 	return (items ?? []).some((deployment) =>
 		isTransitionalStatus(parseDeploymentStatus(deployment.status)),
 	);
+}
+
+/**
+ * Transitional deployments converge quickly; stable snapshots still reconcile
+ * periodically so changes made in another tab or control plane become visible.
+ */
+export function deploymentRefetchInterval(
+	items: readonly { status: string | null | undefined }[] | null | undefined,
+): number {
+	return shouldPollDeployments(items)
+		? DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS
+		: DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS;
 }
 
 function titleCaseStatus(raw: string): string {

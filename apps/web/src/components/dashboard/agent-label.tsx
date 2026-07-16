@@ -1,6 +1,7 @@
 import { Cloud, History, Laptop } from "lucide-react";
 import type { ReactNode } from "react";
 import { AgentIcon, type AgentIconSize } from "@/components/dashboard/agent-icon";
+import { Skeleton } from "@/components/ui/skeleton";
 import { StatusBadge } from "@/components/ui/status-badge";
 import {
 	type AgentOwnershipKind,
@@ -102,7 +103,8 @@ export function agentTypeLabel(type: string | null | undefined): string {
 
 export type AgentSourceKind = "hosted" | "connected";
 
-function sourceFromOwnershipKind(kind: AgentOwnershipKind): AgentSourceKind {
+function sourceFromOwnershipKind(kind: AgentOwnershipKind): AgentSourceKind | null {
+	if (kind === "unresolved") return null;
 	return kind === "cloud" ? "hosted" : "connected";
 }
 
@@ -244,11 +246,15 @@ export function AgentSourceBadgeForEnvironment({
 }) {
 	const ownership = useAgentOwnership();
 	const kind = ownershipKind ?? agentOwnershipKindFromId(env.id, ownership);
+	if (kind === "unresolved") {
+		return <Skeleton aria-label="Agent source loading" className="h-5 w-14 rounded-full" />;
+	}
 	if (kind === "legacy") {
 		if (iconOnly) return null;
 		return <LegacyAgentBadge compact={compact} className={className} />;
 	}
 	const source = sourceFromOwnershipKind(kind);
+	if (!source) return null;
 	if (source === "connected" && !showConnected) return null;
 	return (
 		<AgentSourceBadge source={source} compact={compact} iconOnly={iconOnly} className={className} />
@@ -265,7 +271,7 @@ export function agentTextLabel(
 	const identity = agentIdentity(env);
 	const source = sourceFromOwnershipKind(ownershipKind);
 	const parts = [
-		includeSource && source === "hosted" ? agentSourceLabel(source) : null,
+		includeSource && source === "hosted" ? agentSourceLabel("hosted") : null,
 		identity.primaryLabel,
 		identity.secondaryLabel,
 	].filter((part): part is string => Boolean(part));

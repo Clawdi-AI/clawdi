@@ -3,6 +3,9 @@ import {
 	canRestart,
 	canStart,
 	canStop,
+	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
+	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+	deploymentRefetchInterval,
 	deploymentStatusLabel,
 	deploymentStatusTone,
 	isRunningStatus,
@@ -119,5 +122,11 @@ describe("DeploymentStatus", () => {
 		expect(shouldPollDeployments([{ status: "new_backend_status" }])).toBe(true);
 		expect(shouldPollDeployments([])).toBe(false);
 		expect(shouldPollDeployments(undefined)).toBe(false);
+		expect(deploymentRefetchInterval([{ status: "running" }])).toBe(
+			DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
+		);
+		expect(deploymentRefetchInterval([{ status: "starting" }])).toBe(
+			DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+		);
 	});
 });

@@ -140,6 +140,17 @@ const failedMissingProjectionDeployment = {
 	},
 };
 
+const runningMissingProjectionDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_running_projection",
+	name: "Running projection agent",
+	hermes_control_ui_url: "https://runtime.example/hermes",
+	config_info: {
+		...includedBasicDeployment.config_info,
+		clawdi_cloud_environments: { hermes: missingProjectionEnvironmentId },
+	},
+};
+
 const retainedProjectionEnvironmentId = "66666666-6666-4666-8666-666666666666";
 const retainedProjectionFailureReason =
 	"startup_probe_failing; restart_count=4; runtime daemon exited and is no longer reachable";
@@ -337,12 +348,16 @@ type HostedApiStubOptions = {
 	checkoutRequests?: string[];
 	cloudAgentOverrides?: Record<string, unknown>;
 	cloudAgents?: readonly unknown[];
+	cloudAgentsResponse?: StubResponse;
+	cloudAgentErrors?: Record<string, { detail: string; status: number }>;
 	cloudAgentNotFoundIds?: readonly string[];
+	cloudAgentResponses?: Record<string, StubResponse[]>;
 	createRequests?: string[];
 	deleteRequests?: string[];
 	deployRequestStatusRequests?: string[];
 	deployRequestStatusResponses?: StubResponse[];
 	deployments?: readonly unknown[];
+	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
 	ledgerResponseForRequest?: (limit: number) => unknown;
 	ledgerRequests?: string[];
@@ -350,6 +365,8 @@ type HostedApiStubOptions = {
 	plans?: readonly unknown[];
 	retryRequests?: string[];
 	restartRequests?: string[];
+	runtimeUiRedemptionRequests?: string[];
+	runtimeUiRedemptionResponses?: StubResponse[];
 	walletRetryResponses?: StubResponse[];
 	startError?: { status: number; detail: string };
 	startRequests?: string[];
@@ -415,6 +432,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				: fulfillJson(r, response);
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
+			if (options.deploymentsResponse) {
+				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
+			}
 			return fulfillJson(r, deployments);
 		}
 		if (p.startsWith("/v2/deployments/by-request/") && r.request().method() === "GET") {
@@ -602,6 +622,14 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			options.restartRequests?.push(p);
 			return fulfillJson(r, { status: "starting" });
 		}
+		if (p.endsWith("/runtime-ui/redemption") && r.request().method() === "POST") {
+			options.runtimeUiRedemptionRequests?.push(p);
+			const response = options.runtimeUiRedemptionResponses?.shift() ?? {
+				status: 200,
+				body: { url: "https://runtime.example/ui?clawdi_code=browser" },
+			};
+			return fulfillJson(r, response.body, response.status);
+		}
 		if (p.endsWith("/start") && r.request().method() === "POST") {
 			options.startRequests?.push(r.request().postData() ?? "");
 			if (options.startError) {
@@ -619,9 +647,17 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	await page.route(`${CLOUD_API}/**`, (r) => {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/v1/me") return fulfillJson(r, me);
-		if (p === "/v1/agents") return fulfillJson(r, options.cloudAgents ?? []);
+		if (p === "/v1/agents") {
+			return options.cloudAgentsResponse
+				? fulfillJson(r, options.cloudAgentsResponse.body, options.cloudAgentsResponse.status)
+				: fulfillJson(r, options.cloudAgents ?? []);
+		}
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
+			const response = options.cloudAgentResponses?.[id]?.shift();
+			if (response) return fulfillJson(r, response.body, response.status);
+			const error = options.cloudAgentErrors?.[id];
+			if (error) return fulfillJson(r, { detail: error.detail }, error.status);
 			if (options.cloudAgentNotFoundIds?.includes(id)) {
 				return fulfillJson(r, { detail: "Agent not found" }, 404);
 			}
@@ -753,7 +789,7 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("env-keyed agent route keeps failed deployment recovery available without its projection", async ({
+test("env-keyed agent route keeps deployment capabilities available without its projection", async ({
 	page,
 }) => {
 	const restartRequests: string[] = [];
@@ -772,12 +808,12 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
 	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
-	await expect(main.getByText("Jul 15, 2026", { exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toHaveCount(0);
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toHaveCount(0);
-	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
 
 	await main.getByRole("button", { name: "Retry startup", exact: true }).click();
 	await page
@@ -796,7 +832,7 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_failed_projection"]);
 });
 
-test("failed deployment with a retained projection renders recovery without live agent sections", async ({
+test("failed deployment with a retained projection keeps status-authoritative navigation", async ({
 	page,
 }) => {
 	const restartRequests: string[] = [];
@@ -817,12 +853,11 @@ test("failed deployment with a retained projection renders recovery without live
 	await expect(main.getByText(retainedProjectionFailureReason, { exact: true })).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
 	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
-	await expect(main.getByText("Jul 15, 2026", { exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toHaveCount(0);
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toHaveCount(0);
-	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 
 	await main.getByRole("button", { name: "Retry startup", exact: true }).click();
 	await page
@@ -841,6 +876,86 @@ test("failed deployment with a retained projection renders recovery without live
 	await expect
 		.poll(() => deleteRequests)
 		.toEqual(["/v2/deployments/hdep_failed_retained_projection"]);
+});
+
+test("missing live projection recovers on Check again without losing deployment tools", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		cloudAgentResponses: {
+			[missingProjectionEnvironmentId]: [{ status: 404, body: { detail: "Agent not found" } }],
+		},
+	});
+
+	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
+	await main.getByRole("button", { name: "Check again", exact: true }).click();
+	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toHaveCount(0);
+	await expect(main.getByRole("heading", { name: "Overview" })).toBeVisible();
+});
+
+test("projection service errors stay visible while deployment tools remain available", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		cloudAgentsResponse: { status: 500, body: { detail: "agent list unavailable" } },
+		cloudAgentErrors: {
+			[missingProjectionEnvironmentId]: { status: 500, detail: "projection gateway failed" },
+		},
+	});
+
+	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect(main.getByText("Agent sync service unavailable", { exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
+	const renderErrors = errors.filter(
+		(error) => error.includes("Maximum update depth") || error.includes("Too many re-renders"),
+	);
+	expect(renderErrors, `projection failure render: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("Runtime UI redemption failure renders a retryable error instead of a permanent spinner", async ({
+	page,
+}) => {
+	const runtimeUiRedemptionRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		runtimeUiRedemptionRequests,
+		runtimeUiRedemptionResponses: [
+			{ status: 500, body: { detail: "redemption temporarily unavailable" } },
+			{ status: 200, body: { url: "https://runtime.example/hermes?clawdi_code=recovered" } },
+		],
+	});
+
+	await page.goto(`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
+	await expect(main.getByText("Couldn't load Runtime UI", { exact: true })).toBeVisible();
+	await main.getByRole("button", { name: "Retry", exact: true }).click();
+	await expect(main.getByText("Couldn't load Runtime UI", { exact: true })).toHaveCount(0);
+	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
+});
+
+test("revoked deployment inventory never reclassifies cloud projections as connected", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		cloudAgents: [sharedLegacyCloudAgent],
+		deploymentsResponse: { status: 403, body: { detail: "deployment access revoked" } },
+	});
+
+	await page.goto("/agents");
+	const main = page.locator("main");
+	await expect(main.getByText("Clawdi Cloud inventory unavailable", { exact: true })).toBeVisible();
+	await expect(main.getByText("shared-legacy-agent", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Connect your first agent", { exact: true })).toHaveCount(0);
 });
 
 test("shared legacy environment routes an older tile's actions to its deployment", async ({

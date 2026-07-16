@@ -185,9 +185,10 @@ export default function DashboardPage() {
 						showCloudDeployments={cloudDeploymentManagementEnabled}
 						showLegacyAgents={legacyHostedAgentsEnabled}
 					>
-						{(summary) =>
+						{(summary, state) =>
 							renderGreeting(summary, {
-								agentStatusUnavailable: Boolean(envsError) && summary.total === 0,
+								agentStatusUnavailable:
+									Boolean(envsError) || !state.membershipResolved || Boolean(state.error),
 							})
 						}
 					</HostedFleetSummary>

@@ -2,23 +2,23 @@
 
 import { createContext, createElement, type ReactNode, useContext } from "react";
 
-export type AgentOwnershipKind = "cloud" | "legacy" | "connected";
+export type AgentOwnershipKind = "cloud" | "legacy" | "connected" | "unresolved";
 
 export type AgentOwnership = {
 	/**
 	 * Environment ids managed by an external control plane.
 	 *
-	 * A `null` context strictly means "still resolving": the provider is
-	 * expecting ownership data that has not arrived yet. Cosmetic consumers
-	 * (badges, labels, section chrome) may fall back to "connected" while
-	 * resolving, but DESTRUCTIVE actions (Disconnect) must wait for a
-	 * non-null value. When no external control plane applies (OSS builds,
-	 * hosted users without hosted capabilities) the provider supplies
-	 * `EMPTY_AGENT_OWNERSHIP` — resolved, everything connected — so those
-	 * surfaces never wait.
+	 * A `null` context means the hosted sensor has not reported yet. A partial
+	 * last-known snapshot uses `isResolved: false`: ids already present in its
+	 * sets retain their ownership, while every other id stays unresolved instead
+	 * of being guessed as connected. Destructive actions follow the same rule.
+	 * When no external control plane applies, the provider supplies
+	 * `EMPTY_AGENT_OWNERSHIP` — resolved, everything connected.
 	 */
 	cloudEnvIds: ReadonlySet<string>;
 	legacyEnvIds: ReadonlySet<string>;
+	/** False keeps unknown ids unresolved while known ids retain their ownership. */
+	isResolved: boolean;
 };
 
 const EMPTY_ENV_ID_SET: ReadonlySet<string> = new Set();
@@ -27,6 +27,7 @@ const EMPTY_ENV_ID_SET: ReadonlySet<string> = new Set();
 export const EMPTY_AGENT_OWNERSHIP: AgentOwnership = {
 	cloudEnvIds: EMPTY_ENV_ID_SET,
 	legacyEnvIds: EMPTY_ENV_ID_SET,
+	isResolved: true,
 };
 
 const AgentOwnershipContext = createContext<AgentOwnership | null>(null);
@@ -55,10 +56,11 @@ export function agentOwnershipKindFromId(
 	ownership: AgentOwnership | null,
 ): AgentOwnershipKind {
 	const normalized = normalizeAgentEnvId(envId);
-	if (!normalized || !ownership) return "connected";
+	if (!ownership) return "unresolved";
+	if (!normalized) return ownership.isResolved ? "connected" : "unresolved";
 	if (ownership.cloudEnvIds.has(normalized)) return "cloud";
 	if (ownership.legacyEnvIds.has(normalized)) return "legacy";
-	return "connected";
+	return ownership.isResolved ? "connected" : "unresolved";
 }
 
 export function agentDisconnectUnavailable({
