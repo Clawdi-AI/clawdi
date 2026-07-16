@@ -1,10 +1,11 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { Gift, PartyPopper, Rocket } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import type { Plan } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -17,14 +18,13 @@ import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/ho
  * Renders for a new wallet user who hasn't deployed yet: it
  * confirms the AI Credits grant landed (reading the `grant_signup` ledger row)
  * and points them at the deploy wizard. Returns null once the user has an
- * agent or when the v2 billing reads are unavailable.
+ * agent. Read failures render a retry action instead of hiding onboarding.
  */
 function signupGrantCredits(plans: Plan[] | undefined): number {
 	return Math.max(0, ...(plans ?? []).map((plan) => plan.signup_grant_credits ?? 0));
 }
 
 export function WelcomeCreditsCard() {
-	const router = useRouter();
 	const wallet = useWallet();
 	const ledger = useWalletLedger(50);
 	const deployments = useHostedDeployments();
@@ -32,7 +32,19 @@ export function WelcomeCreditsCard() {
 
 	// Past onboarding — they already have at least one agent.
 	if ((deployments.data?.length ?? 0) > 0) return null;
-	if (ledger.isLoading || wallet.isLoading || deployments.isLoading) return null;
+	if (ledger.isLoading || wallet.isLoading || deployments.isLoading) {
+		return (
+			<Card data-hosted="true" aria-label="Loading welcome credits">
+				<CardContent className="flex items-center justify-between gap-4">
+					<div className="flex flex-1 flex-col gap-2">
+						<Skeleton className="h-5 w-56 max-w-full" />
+						<Skeleton className="h-4 w-96 max-w-full" />
+					</div>
+					<Skeleton className="h-9 w-32" />
+				</CardContent>
+			</Card>
+		);
+	}
 	const loadError = wallet.error ?? ledger.error ?? deployments.error;
 	if (loadError) {
 		return (
@@ -92,7 +104,7 @@ export function WelcomeCreditsCard() {
 				</div>
 				<div className="flex items-center gap-2">
 					{grantPending ? <Spinner className="size-4 text-muted-foreground" /> : null}
-					<Button onClick={() => void router.navigate({ href: "/deploy" })}>
+					<Button render={<Link to="/deploy" />} nativeButton={false}>
 						<Rocket /> Deploy an agent
 					</Button>
 				</div>

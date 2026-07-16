@@ -26,7 +26,11 @@ import {
 	type PaymentOutcome,
 	StripePaymentForm,
 } from "@/hosted/billing/wallet/stripe-payment-form";
-import { completeTopup, handleTopupStartResult } from "@/hosted/billing/wallet/top-up-dialog.logic";
+import {
+	completeTopup,
+	handleTopupStartResult,
+	validTopUpAmountCents,
+} from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
 	TOPUP_DEFAULT_CENTS,
 	TOPUP_INCREMENT_CENTS,
@@ -60,22 +64,22 @@ export function TopUpDialog({
 	const [step, setStep] = useState<Step>("amount");
 	const [dollars, setDollars] = useState(String(TOPUP_DEFAULT_CENTS / 100));
 	const [clientSecret, setClientSecret] = useState<string | null>(null);
+	const [amountTouched, setAmountTouched] = useState(false);
+	const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 	// One idempotency key per top-up ATTEMPT, reused across a retry of the same
 	// amount so a timeout-resubmit / double-tab can't create two PaymentIntents.
 	// Reset whenever the amount changes (a genuinely new attempt) or the dialog
 	// closes.
 	const topupKeyRef = useRef<string | null>(null);
 
-	const amountCents = Math.round(Number(dollars) * 100);
-	const valid =
-		Number.isFinite(amountCents) &&
-		amountCents >= TOPUP_MIN_CENTS &&
-		amountCents <= TOPUP_MAX_CENTS;
-	const amountInvalid = !valid && Boolean(dollars);
+	const amountCents = Number(dollars) * 100;
+	const valid = validTopUpAmountCents(amountCents);
+	const amountInvalid = amountTouched && !valid;
 	const credits = valid ? formatCredits((amountCents / 100) * wallet.points_per_usd) : "";
 
 	function setAmount(next: string) {
 		setDollars(next);
+		setAmountTouched(false);
 		// New amount = new attempt; mint a fresh key on the next Continue.
 		topupKeyRef.current = null;
 	}
@@ -83,10 +87,13 @@ export function TopUpDialog({
 	function reset() {
 		setStep("amount");
 		setClientSecret(null);
+		setAmountTouched(false);
+		setPaymentSubmitting(false);
 		topupKeyRef.current = null;
 	}
 
 	function close(next: boolean) {
+		if (!next && (topUp.isPending || paymentSubmitting)) return;
 		onOpenChange(next);
 	}
 
@@ -100,6 +107,7 @@ export function TopUpDialog({
 		// Guard double-submit: the button disables on pending, but a fast
 		// double-click could slip a second request through before it repaints.
 		if (!valid || topUp.isPending) return;
+		setAmountTouched(true);
 		topupKeyRef.current ??= newIdempotencyKey("topup");
 		try {
 			const result = await topUp.mutateAsync({
@@ -111,7 +119,9 @@ export function TopUpDialog({
 				resetAttempt: () => {
 					topupKeyRef.current = null;
 				},
-				closeDialog: () => close(false),
+				// Successful completion is not a dismiss attempt. Close directly so the
+				// in-flight guard cannot leave a completed payment dialog stranded open.
+				closeDialog: () => onOpenChange(false),
 				toastSuccess: toast.success,
 				toastError: toast.error,
 				onComplete,
@@ -138,7 +148,7 @@ export function TopUpDialog({
 			resetAttempt: () => {
 				topupKeyRef.current = null;
 			},
-			closeDialog: () => close(false),
+			closeDialog: () => onOpenChange(false),
 			toastSuccess: toast.success,
 			onComplete,
 		});
@@ -146,13 +156,17 @@ export function TopUpDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={close}>
-			<DialogContent className="sm:max-w-md" data-hosted="true">
+			<DialogContent
+				className="sm:max-w-md"
+				data-hosted="true"
+				showCloseButton={!topUp.isPending && !paymentSubmitting}
+			>
 				<DialogHeader>
 					<DialogTitle>Top up AI Credits</DialogTitle>
 					<DialogDescription>
 						{step === "amount"
 							? `Add between ${formatCents(TOPUP_MIN_CENTS)} and ${formatCents(TOPUP_MAX_CENTS)}. $1 = ${wallet.points_per_usd.toLocaleString()} credits.`
-							: "Enter your card details to complete the top-up."}
+							: `Enter your card details to pay ${formatCents(amountCents)}.`}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -177,6 +191,7 @@ export function TopUpDialog({
 									type="button"
 									size="sm"
 									variant={amountCents === preset ? "default" : "outline"}
+									aria-pressed={amountCents === preset}
 									onClick={() => setAmount(String(preset / 100))}
 								>
 									{formatCents(preset)}
@@ -201,18 +216,24 @@ export function TopUpDialog({
 									className="pl-6"
 									value={dollars}
 									onChange={(e) => setAmount(e.target.value)}
+									onBlur={() => setAmountTouched(true)}
 									aria-invalid={amountInvalid}
-									aria-describedby={amountInvalid ? "topup-amount-err" : undefined}
+									aria-describedby="topup-amount-help"
 								/>
 							</div>
-							{amountInvalid ? (
-								<p id="topup-amount-err" className="text-xs text-destructive">
-									Enter an amount between {formatCents(TOPUP_MIN_CENTS)} and{" "}
-									{formatCents(TOPUP_MAX_CENTS)}.
-								</p>
-							) : credits ? (
-								<p className="text-xs text-muted-foreground">You’ll get {credits}.</p>
-							) : null}
+							<p
+								id="topup-amount-help"
+								className={
+									amountInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+								}
+								aria-live="polite"
+							>
+								{amountInvalid
+									? `Enter a whole-dollar amount from ${formatCents(TOPUP_MIN_CENTS)} to ${formatCents(TOPUP_MAX_CENTS)}.`
+									: credits
+										? `You’ll get ${credits}. Whole-dollar amounts only.`
+										: `Enter a whole-dollar amount from ${formatCents(TOPUP_MIN_CENTS)} to ${formatCents(TOPUP_MAX_CENTS)}.`}
+							</p>
 						</div>
 						<div className="flex justify-end">
 							<Button onClick={() => runAction(onContinue)} disabled={!valid || topUp.isPending}>
@@ -221,7 +242,7 @@ export function TopUpDialog({
 										<Spinner /> Starting…
 									</>
 								) : (
-									"Continue"
+									`Continue with ${formatCents(amountCents)}`
 								)}
 							</Button>
 						</div>
@@ -231,6 +252,9 @@ export function TopUpDialog({
 						clientSecret={clientSecret}
 						onComplete={onPaid}
 						onCancel={() => setStep("amount")}
+						summary={`Top-up charge: ${formatCents(amountCents)}`}
+						submitLabel={`Pay ${formatCents(amountCents)}`}
+						onSubmittingChange={setPaymentSubmitting}
 					/>
 				) : null}
 			</DialogContent>

@@ -11,6 +11,21 @@ const LEDGER_FILTERS: readonly LedgerFilter[] = [
 	"refund",
 ];
 
+const LEDGER_OPERATION_LABELS: Record<string, string> = {
+	topup: "Top-up",
+	invoice: "Top-up",
+	x402: "On-chain top-up",
+	grant_signup: "Signup grant",
+	grant_subscription: "Credit grant",
+	grant_redemption: "Redeemed credits",
+	grant_referral: "Referral grant",
+	admin_adjust: "Adjustment",
+	proxy: "Usage",
+	compute_charge: "Compute charge",
+	compute_credit: "Compute reversal",
+	refund: "Refund",
+};
+
 export interface LedgerEmptyStateCopyInput {
 	entriesCount: number;
 	filter: LedgerFilter;
@@ -33,6 +48,10 @@ export function ledgerOperationGroup(op: string): LedgerFilter {
 	if (op === "compute_charge" || op === "compute_credit") return "compute";
 	if (op === "refund") return "refund";
 	return "all";
+}
+
+export function ledgerOperationLabel(op: string): string {
+	return LEDGER_OPERATION_LABELS[op] ?? "Other activity";
 }
 
 export function filteredLedgerEntries(

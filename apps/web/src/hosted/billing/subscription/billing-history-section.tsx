@@ -23,10 +23,17 @@ import { computeTierLabel } from "@/hosted/billing/subscription/subscription-uti
 import { formatShortDate } from "@/lib/format";
 
 function statusLabel(status: string): string {
-	return status
-		.split("_")
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-		.join(" ");
+	const known: Record<string, string> = {
+		applied: "Applied",
+		paid: "Paid",
+		refunded: "Refunded",
+		waived: "Waived",
+		void: "Void",
+		open: "Open",
+		draft: "Draft",
+		uncollectible: "Uncollectible",
+	};
+	return known[status] ?? "Unknown";
 }
 
 function statusTone(
@@ -50,10 +57,7 @@ function planLabel(planSlug: string): string {
 	if (planSlug === "compute_basic" || planSlug === "compute_performance") {
 		return computeTierLabel(planSlug);
 	}
-	return planSlug
-		.split("_")
-		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-		.join(" ");
+	return "Compute";
 }
 
 function InvoiceLink({ row }: { row: ComputeBillingHistoryItem }) {
@@ -65,7 +69,7 @@ function InvoiceLink({ row }: { row: ComputeBillingHistoryItem }) {
 			variant="outline"
 			size="sm"
 		>
-			Invoice <ExternalLink data-icon="inline-end" />
+			View invoice <ExternalLink data-icon="inline-end" />
 		</Button>
 	);
 }
@@ -175,7 +179,7 @@ export function BillingHistorySection() {
 							</TableBody>
 						</Table>
 					</div>
-					{history.hasNextPage ? (
+					{history.hasNextPage && !history.isFetchNextPageError ? (
 						<div className="flex justify-center">
 							<Button
 								variant="outline"
@@ -185,6 +189,14 @@ export function BillingHistorySection() {
 								{history.isFetchingNextPage ? "Loading…" : "Load more"}
 							</Button>
 						</div>
+					) : null}
+					{history.isFetchNextPageError ? (
+						<ApiErrorPanel
+							normalizer={billingErrorNormalizer}
+							error={history.error}
+							onRetry={() => void history.fetchNextPage()}
+							title="Couldn’t load more billing history"
+						/>
 					) : null}
 				</>
 			)}

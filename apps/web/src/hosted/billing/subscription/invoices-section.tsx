@@ -33,7 +33,8 @@ function invoiceStatusTone(
 ): "success" | "warning" | "destructive" | "neutral" {
 	if (status === "paid") return "success";
 	if (status === "open" || status === "draft") return "warning";
-	if (status === "uncollectible" || status === "void") return "destructive";
+	if (status === "uncollectible") return "destructive";
+	if (status === "void") return "neutral";
 	return "neutral";
 }
 
@@ -48,7 +49,7 @@ function InvoiceLink({ invoice }: { invoice: ComputeInvoice }) {
 			variant="outline"
 			size="sm"
 		>
-			Open
+			View invoice
 			<ExternalLink data-icon="inline-end" />
 		</Button>
 	);

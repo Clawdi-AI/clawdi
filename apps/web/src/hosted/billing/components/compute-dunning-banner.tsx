@@ -31,6 +31,7 @@ import {
 	useWalletComputeQuote,
 } from "@/hosted/billing/hooks";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
+import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { decimalCredits } from "@/hosted/billing/wallet/wallet-compute.logic";
@@ -49,6 +50,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	const fixPayment = useFixPayment();
 	const retryWallet = useRetryWalletCompute();
 	const activateWallet = useActivateWalletCompute();
+	const runAction = useActionLock();
 	const walletRecovery =
 		state?.ctaTarget === "wallet_retry" || state?.ctaTarget === "wallet_reactivate";
 	const wallet = useWallet({ enabled: walletRecovery });
@@ -109,7 +111,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				return;
 			}
 			toast.message("Payment update unavailable", {
-				description: res.message ?? "Please try again in a moment.",
+				description: "Refresh this page and try again in a moment.",
 			});
 		} catch (error) {
 			toast.error("Couldn’t open payment settings", {
@@ -210,7 +212,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 							: "border-info-muted bg-info-muted text-info-muted-foreground"
 				}
 			>
-				<BannerIcon />
+				<BannerIcon aria-hidden />
 				<AlertTitle>{state.title}</AlertTitle>
 				<AlertDescription className="flex flex-col items-start gap-3">
 					<span>{bannerDescription}</span>
@@ -228,7 +230,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 								<Button
 									size="sm"
 									variant="outline"
-									onClick={() => void handleWalletRetry()}
+									onClick={() => void runAction(handleWalletRetry)}
 									disabled={retryWallet.isPending || !state.subscriptionId}
 								>
 									{retryWallet.isPending ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
@@ -246,7 +248,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 							<Button
 								size="sm"
 								variant={destructive ? "destructive" : "default"}
-								onClick={() => void handleWalletReactivate()}
+								onClick={() => void runAction(handleWalletReactivate)}
 								disabled={activateWallet.isPending || !state.recoveryPlanSlug}
 							>
 								{activateWallet.isPending ? <Spinner /> : <RefreshCw data-icon="inline-start" />}
@@ -279,8 +281,8 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 						<Button
 							size="sm"
 							variant={destructive ? "destructive" : "default"}
-							onClick={() => void handleFixPayment()}
-							disabled={fixPayment.isPending && state.ctaTarget === "portal"}
+							onClick={() => void runAction(handleFixPayment)}
+							disabled={fixPayment.isPending}
 						>
 							{fixPayment.isPending && state.ctaTarget === "portal" ? (
 								<Spinner />

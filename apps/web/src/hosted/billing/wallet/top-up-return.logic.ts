@@ -46,7 +46,7 @@ export function walletTopupReturnToast(status: string | null | undefined): Walle
 		return {
 			kind: "success",
 			title: "Top-up complete",
-			description: "Your credits will appear in a moment.",
+			description: "Your AI Credits will appear in a moment.",
 		};
 	}
 	if (status === "processing") {

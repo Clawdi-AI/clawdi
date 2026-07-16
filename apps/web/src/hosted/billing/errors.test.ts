@@ -113,9 +113,12 @@ describe("normalizeBillingError", () => {
 		expect(normalizeBillingError(e)).toMatch(/balance is too low/i);
 	});
 
-	test("snake_case codes become readable, real sentences pass through", () => {
+	test("snake_case codes stay internal while real sentences pass through", () => {
 		expect(normalizeBillingError(new BillingApiError(400, "payment_method_required"))).toBe(
-			"Payment Method Required",
+			"Add a payment method and try again.",
+		);
+		expect(normalizeBillingError(new BillingApiError(400, "bridge_internal_17"))).not.toContain(
+			"bridge_internal_17",
 		);
 		expect(
 			normalizeBillingError(new BillingApiError(400, "That code has already been used.")),

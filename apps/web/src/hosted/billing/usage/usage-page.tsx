@@ -13,7 +13,7 @@ import { useUsage } from "@/hosted/billing/hooks";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "AI Credit consumption for the current reporting window across your agents.";
+const DESCRIPTION = "AI Credits usage for the current reporting window across your agents.";
 const USAGE_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 export function UsagePage() {
@@ -48,7 +48,7 @@ export function UsagePage() {
 	const windowLabel = `${formatShortDate(u.period_start)} – ${formatShortDate(u.period_end)}`;
 	const dailyChartLabel =
 		hasDailyBreakdown && firstDailyPoint && lastDailyPoint
-			? `Daily AI Credit usage returned for ${formatShortDate(firstDailyPoint.date)} to ${formatShortDate(lastDailyPoint.date)} within the ${windowLabel} reporting window.`
+			? `Daily AI Credits usage returned for ${formatShortDate(firstDailyPoint.date)} to ${formatShortDate(lastDailyPoint.date)} within the ${windowLabel} reporting window.`
 			: undefined;
 	const maxDay = Math.max(1, ...u.by_day.map((d) => d.credits));
 	const maxModel = Math.max(1, ...u.by_model.map((m) => m.credits));
@@ -105,15 +105,15 @@ export function UsagePage() {
 								{u.by_day.map((d) => (
 									<div
 										key={d.date}
-										title={`${d.date}: ${formatCredits(d.credits)} credits`}
+										title={`${formatShortDate(d.date)}: ${formatCredits(d.credits)}`}
 										className="flex-1 rounded-t bg-primary/70 transition-colors hover:bg-primary"
 										style={{ height: `${Math.max(2, (d.credits / maxDay) * 100)}%` }}
 									/>
 								))}
 							</div>
 							<div className="mt-1.5 flex justify-between text-2xs text-muted-foreground">
-								<span>{firstDailyPoint?.date.slice(5)}</span>
-								<span>{lastDailyPoint?.date.slice(5)}</span>
+								<span>{formatShortDate(firstDailyPoint?.date, { includeYear: false })}</span>
+								<span>{formatShortDate(lastDailyPoint?.date, { includeYear: false })}</span>
 							</div>
 							<table className="sr-only">
 								<caption>Daily consumption by day in the reporting window</caption>
@@ -148,25 +148,33 @@ export function UsagePage() {
 				<CardHeader>
 					<CardTitle className="text-base">By model</CardTitle>
 				</CardHeader>
-				<CardContent className="space-y-4">
-					{u.by_model.map((m) => (
-						<div key={`${m.provider ?? "managed"}:${m.model}`} className="space-y-1">
-							<div className="flex items-baseline justify-between gap-2 text-sm">
-								<span className="truncate font-medium">{m.model}</span>
-								<span className="shrink-0 tabular-nums">{formatCredits(m.credits)}</span>
+				<CardContent className="flex flex-col gap-4">
+					{u.by_model.length === 0 ? (
+						<EmptyState
+							variant="inset"
+							description="No model breakdown available"
+							className="py-4 md:p-4"
+						/>
+					) : (
+						u.by_model.map((m) => (
+							<div key={`${m.provider ?? "managed"}:${m.model}`} className="space-y-1">
+								<div className="flex items-baseline justify-between gap-2 text-sm">
+									<span className="truncate font-medium">{m.model}</span>
+									<span className="shrink-0 tabular-nums">{formatCredits(m.credits)}</span>
+								</div>
+								<div className="h-2 overflow-hidden rounded-full bg-muted">
+									<div
+										className="h-2 rounded-full bg-primary"
+										style={{ width: `${(m.credits / maxModel) * 100}%` }}
+									/>
+								</div>
+								<div className="text-xs text-muted-foreground">
+									{m.provider ? `${m.provider} · ` : ""}
+									{m.requests.toLocaleString()} requests
+								</div>
 							</div>
-							<div className="h-2 overflow-hidden rounded-full bg-muted">
-								<div
-									className="h-2 rounded-full bg-primary"
-									style={{ width: `${(m.credits / maxModel) * 100}%` }}
-								/>
-							</div>
-							<div className="text-xs text-muted-foreground">
-								{m.provider ? `${m.provider} · ` : ""}
-								{m.requests.toLocaleString()} requests
-							</div>
-						</div>
-					))}
+						))
+					)}
 				</CardContent>
 			</Card>
 		</div>
