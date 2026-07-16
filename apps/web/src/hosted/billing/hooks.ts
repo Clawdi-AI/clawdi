@@ -270,6 +270,7 @@ export function useCreateSubscription() {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });
 			qc.invalidateQueries({ queryKey: ["billing", "history"] });
+			qc.invalidateQueries({ queryKey: ["agents"] });
 		},
 	});
 }
@@ -482,6 +483,13 @@ export function useHostedDeployments({
 				: inventoryInterval;
 		},
 		refetchIntervalInBackground: false,
+	});
+}
+
+export function useResolveDeploymentRequest() {
+	const client = useBillingClient();
+	return useMutation({
+		mutationFn: (deployRequestId: string) => client.getDeploymentByRequest(deployRequestId),
 	});
 }
 

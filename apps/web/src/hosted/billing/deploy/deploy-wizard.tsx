@@ -32,6 +32,7 @@ import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
 	SelectTrigger,
 	SelectValue,
@@ -52,12 +53,16 @@ import {
 	type StripeCheckoutSummary,
 } from "@/hosted/billing/components/stripe-checkout-dialog";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
+import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
 import type {
 	BillingOffer,
 	CheckoutRequest,
 	ComputePlanSlug,
 	DeployRequest,
 	Plan,
+	WalletComputeActivateRequest,
+	WalletComputeQuoteRequest,
+	WalletComputeQuoteResponse,
 } from "@/hosted/billing/contracts";
 import {
 	DEFAULT_DEPLOY_AI_ACCESS_MODE,
@@ -84,20 +89,29 @@ import {
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
+	billingErrorDetail,
 	billingErrorNormalizer,
 	isIdempotencyKeyReusedError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
-import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
+import {
+	billingTermLabel,
+	billingTermSuffix,
+	formatCents,
+	formatCentsCompact,
+} from "@/hosted/billing/format";
 import {
 	checkoutReturnDeploymentId,
 	checkoutReturnMarker,
 	checkoutReturnWasCanceled,
-	useCheckout,
 	useCheckoutReturnRefresh,
 	useCreateDeployment,
+	useCreateSubscription,
 	useHostedDeployments,
 	usePlans,
+	useResolveDeploymentRequest,
+	useWallet,
+	useWalletComputeQuote,
 } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
@@ -106,10 +120,6 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
-import {
-	buildPlanCSubscriptionCreateIntent,
-	planCBillingTermMonths,
-} from "@/hosted/billing/subscription/subscription-create";
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
@@ -121,6 +131,8 @@ import {
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
@@ -168,11 +180,41 @@ type PaidDeploySelection = {
 	plan: Plan;
 	tierLabel: "Basic" | "Performance";
 };
+type WalletTopUpContext = {
+	initialAmountCents: number | null;
+	refundDebtCredits: number | null;
+	blockedChargeCredits: number | null;
+};
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const CUSTOM_MODEL_CHOICE = "__custom__";
+const EMPTY_WALLET_TOP_UP_CONTEXT: WalletTopUpContext = {
+	initialAmountCents: null,
+	refundDebtCredits: null,
+	blockedChargeCredits: null,
+};
+
+function supportedBillingTerm(
+	value: number,
+): WalletComputeQuoteRequest["billing_term_months"] | null {
+	return value === 1 || value === 12 ? value : null;
+}
+
+function decimalCredits(value: unknown): number | null {
+	if (typeof value !== "string" && typeof value !== "number") return null;
+	const parsed = Number(value);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function walletQuoteShortfallCredits(
+	quote: WalletComputeQuoteResponse | null | undefined,
+): number | null {
+	if (!quote) return null;
+	const balanceAfter = Number(quote.post_charge_balance_estimate_credits);
+	return Number.isFinite(balanceAfter) && balanceAfter < 0 ? -balanceAfter : null;
+}
 
 const aiProviderErrorNormalizer: ApiErrorNormalizer = {
 	isAuthError: isApiAuthError,
@@ -355,7 +397,7 @@ function computeStatusLine({
 	if (paymentMethod === "wallet") {
 		return {
 			tone: "muted",
-			message: "Wallet pays the first month now and renews this Performance agent monthly.",
+			message: "Wallet debits the exact server quote now and renews on the selected billing term.",
 		};
 	}
 
@@ -384,10 +426,12 @@ export function DeployWizard() {
 	const aiProviders = useAiProviders();
 	const channels = useChannels();
 	const createDeployment = useCreateDeployment();
-	const checkout = useCheckout();
+	const createSubscription = useCreateSubscription();
+	const resolveDeploymentRequest = useResolveDeploymentRequest();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const runAction = useActionLock();
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const walletActivationAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const deployAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const checkoutReturnRef = useRef<string | null>(null);
 	const createdProviderGuardRef = useRef<{ providerId: string; dataUpdatedAt: number } | null>(
@@ -411,6 +455,10 @@ export function DeployWizard() {
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
+	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
+	const [walletTopUpContext, setWalletTopUpContext] = useState<WalletTopUpContext>(
+		EMPTY_WALLET_TOP_UP_CONTEXT,
+	);
 
 	// Default language + timezone to the browser's after mount (avoids an SSR
 	// mismatch). Both stay explicitly unsettable back to the runtime default.
@@ -469,10 +517,26 @@ export function DeployWizard() {
 						tierLabel: "Basic",
 					}
 				: null;
-	const walletBillingTerm = planCBillingTermMonths(paidSelection?.billingTermMonths ?? 1);
+	const walletBillingTerm = supportedBillingTerm(paidSelection?.billingTermMonths ?? 1);
 	const walletDisabledReason = walletBillingTerm
 		? null
 		: "Wallet subscriptions support Monthly and Annual billing.";
+	const walletQuoteRequest: WalletComputeQuoteRequest | null =
+		paidSelection && walletBillingTerm
+			? {
+					plan_slug: paidSelection.computePlanSlug,
+					billing_term_months: walletBillingTerm,
+				}
+			: null;
+	const wallet = useWallet({
+		enabled: hostedAccess.canUsePlanCBilling && paymentMethod === "wallet",
+	});
+	const walletQuote = useWalletComputeQuote(walletQuoteRequest, {
+		enabled: hostedAccess.canUsePlanCBilling && paymentMethod === "wallet",
+	});
+	const walletShortfallCredits = walletQuoteShortfallCredits(walletQuote.data);
+	const walletHasRefundDebt = walletQuote.data?.warnings?.includes("open_refund_debt") ?? false;
+	const walletInsufficient = walletShortfallCredits !== null || walletHasRefundDebt;
 	const basicUnavailable =
 		includedSlotPending || !!deployments.error || basicSelection.mode === "unavailable";
 
@@ -491,7 +555,9 @@ export function DeployWizard() {
 		hostedAccess.canUsePlanCBilling &&
 		planReady &&
 		!submitting &&
-		(!paidSelection || paymentMethod === "card");
+		(!paidSelection ||
+			paymentMethod === "card" ||
+			(!!walletQuote.data && !walletQuote.isFetching && !walletQuote.error && !walletInsufficient));
 
 	function selectCreatedProvider(providerId: string) {
 		createdProviderGuardRef.current = {
@@ -723,6 +789,70 @@ export function DeployWizard() {
 		return false;
 	}
 
+	function openWalletTopUp({
+		shortfallCredits,
+		refundDebtCredits = null,
+		blockedChargeCredits = null,
+	}: {
+		shortfallCredits: number | null;
+		refundDebtCredits?: number | null;
+		blockedChargeCredits?: number | null;
+	}) {
+		const pointsPerUsd = walletQuote.data?.points_per_usd ?? wallet.data?.points_per_usd ?? 0;
+		setWalletTopUpContext({
+			initialAmountCents: topUpAmountCentsForCreditShortfall(shortfallCredits, pointsPerUsd),
+			refundDebtCredits,
+			blockedChargeCredits,
+		});
+		setWalletTopUpOpen(true);
+	}
+
+	function handleWalletCreateError(error: unknown): boolean {
+		const detail = billingErrorDetail(error);
+		const code = detail?.code;
+		if (code === "insufficient_wallet_balance" || code === "insufficient_balance") {
+			openWalletTopUp({ shortfallCredits: decimalCredits(detail.shortfall_credits) });
+			toast.error("Not enough AI Credits", {
+				description: "Top up the shortfall, then review a fresh wallet quote.",
+			});
+			return true;
+		}
+		if (code === "open_refund_debt") {
+			const refundDebtCredits = decimalCredits(detail.outstanding_debt_credits);
+			const blockedChargeCredits = decimalCredits(walletQuote.data?.first_charge_credits);
+			openWalletTopUp({
+				shortfallCredits:
+					refundDebtCredits === null ? null : refundDebtCredits + (blockedChargeCredits ?? 0),
+				refundDebtCredits,
+				blockedChargeCredits,
+			});
+			toast.error("Refund debt must be repaid", {
+				description: "Top up before starting this wallet subscription.",
+			});
+			return true;
+		}
+		return false;
+	}
+
+	async function resolveWalletDeploymentId(
+		deploymentId: string | null | undefined,
+		deployRequestId: string | null | undefined,
+	): Promise<string | null> {
+		if (deploymentId) return deploymentId;
+		if (!deployRequestId) return null;
+		for (let attempt = 0; attempt < 8; attempt += 1) {
+			const status = await resolveDeploymentRequest.mutateAsync(deployRequestId);
+			if (status.deployment_id) return status.deployment_id;
+			if (status.request_status === "failed" || status.request_status === "expired") {
+				return null;
+			}
+			if (attempt < 7) {
+				await new Promise((resolve) => setTimeout(resolve, 500));
+			}
+		}
+		return null;
+	}
+
 	async function fallbackToHostedCheckout(request: CheckoutRequest) {
 		const hostedBody = buildHostedCheckoutFallbackRequest(request);
 		const fingerprint = idempotencyFingerprint(hostedBody);
@@ -732,8 +862,9 @@ export function DeployWizard() {
 			fingerprint,
 			newIdempotencyKey,
 		);
-		const result = await checkout
+		const outcome = await createSubscription
 			.mutateAsync({
+				fundingSource: "stripe",
 				body: hostedBody,
 				idempotencyKey: checkoutAttemptRef.current.key,
 			})
@@ -744,7 +875,8 @@ export function DeployWizard() {
 				}
 				throw error;
 			});
-		if (redirectTo(checkoutRedirectUrl(result))) return;
+		if (outcome.fundingSource !== "stripe") return;
+		if (redirectTo(checkoutRedirectUrl(outcome.data))) return;
 		throw new Error("No checkout URL was returned.");
 	}
 
@@ -786,29 +918,70 @@ export function DeployWizard() {
 			if (!aiFields) return;
 			if (paidSelection) {
 				const deployConfig = buildDeployRequest(aiFields, paidSelection.computePlanSlug);
-				const createIntent = buildPlanCSubscriptionCreateIntent({
-					planSlug: paidSelection.computePlanSlug,
-					billingTermMonths: paidSelection.billingTermMonths,
-					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
-					deployConfig,
-				});
-				if (!createIntent) {
+				const billingTermMonths = supportedBillingTerm(paidSelection.billingTermMonths);
+				if (!billingTermMonths) {
 					toast.error("Billing term unavailable", {
 						description: "Choose Monthly or Annual billing before deploying.",
 					});
 					return;
 				}
-				if (createIntent.fundingSource === "wallet") {
-					// Final client wiring is intentionally deferred until the generated
-					// rail-neutral create contract lands. Never fall back to the removed
-					// wallet activation endpoint.
+				if (paymentMethod === "wallet") {
+					const requestWithoutId: WalletComputeActivateRequest = {
+						plan_slug: paidSelection.computePlanSlug,
+						billing_term_months: billingTermMonths,
+						deploy_config: deployConfig,
+					};
+					const fingerprint = idempotencyFingerprint(requestWithoutId);
+					const attempt = idempotencyAttemptFor(
+						walletActivationAttemptRef.current,
+						"wallet-compute-deploy",
+						fingerprint,
+						newIdempotencyKey,
+					);
+					walletActivationAttemptRef.current = attempt;
+					const body: WalletComputeActivateRequest = {
+						...requestWithoutId,
+						deploy_config: {
+							...deployConfig,
+							deploy_request_id: attempt.key,
+						},
+					};
+					const outcome = await createSubscription
+						.mutateAsync({ fundingSource: "wallet", body })
+						.catch((error: unknown) => {
+							if (isIdempotencyKeyReusedError(error)) {
+								forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
+								walletActivationAttemptRef.current = null;
+							}
+							throw error;
+						});
+					if (outcome.fundingSource !== "wallet") return;
+					forgetIdempotencyAttempt("wallet-compute-deploy", fingerprint);
+					walletActivationAttemptRef.current = null;
+					const deploymentId = await resolveWalletDeploymentId(
+						outcome.data.deployment_id,
+						outcome.data.deploy_request_id,
+					);
+					if (deploymentId) {
+						toast.success("Deploying your agent", {
+							description: `${formatCents(walletQuote.data?.first_charge_cents ?? paidSelection.offer.price_cents)} was paid with AI Credits.`,
+						});
+						void router.navigate({
+							href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
+						});
+						return;
+					}
+					toast.success("Wallet subscription active", {
+						description: "Your deployment is provisioning and will appear in Agents shortly.",
+					});
+					void router.navigate({ href: "/" });
 					return;
 				}
 				const body: CheckoutRequest = {
-					plan_slug: createIntent.planSlug,
-					billing_term_months: createIntent.billingTermMonths,
+					plan_slug: paidSelection.computePlanSlug,
+					billing_term_months: billingTermMonths,
 					ui_mode: CHECKOUT_ELEMENTS_UI_MODE,
-					deploy_config: createIntent.deployConfig,
+					deploy_config: deployConfig,
 				};
 				const checkoutFingerprint = idempotencyFingerprint(body);
 				checkoutAttemptRef.current = idempotencyAttemptFor(
@@ -817,8 +990,9 @@ export function DeployWizard() {
 					checkoutFingerprint,
 					newIdempotencyKey,
 				);
-				const result = await checkout
+				const outcome = await createSubscription
 					.mutateAsync({
+						fundingSource: "stripe",
 						body,
 						idempotencyKey: checkoutAttemptRef.current.key,
 					})
@@ -829,6 +1003,8 @@ export function DeployWizard() {
 						}
 						throw error;
 					});
+				if (outcome.fundingSource !== "stripe") return;
+				const result = outcome.data;
 				if (hasCheckoutClientSecret(result)) {
 					setCheckoutSession({
 						clientSecret: result.client_secret,
@@ -879,6 +1055,7 @@ export function DeployWizard() {
 				href: agentSectionHref(deployment.id, "overview", "source=on-clawdi"),
 			});
 		} catch (e) {
+			if (paymentMethod === "wallet" && handleWalletCreateError(e)) return;
 			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });
 		} finally {
 			setSubmitting(false);
@@ -889,7 +1066,13 @@ export function DeployWizard() {
 		? "Deployment unavailable"
 		: paidSelection
 			? paymentMethod === "wallet"
-				? "Wallet subscription unavailable"
+				? walletQuote.isFetching
+					? "Getting wallet quote…"
+					: walletInsufficient
+						? "Top up to deploy"
+						: walletQuote.data
+							? `Pay ${formatCents(walletQuote.data.first_charge_cents)} from Wallet & deploy`
+							: "Review wallet quote"
 				: "Continue to checkout"
 			: "Deploy agent";
 	const selectedProviderCount =
@@ -1230,14 +1413,70 @@ export function DeployWizard() {
 								</div>
 
 								{paymentMethod === "wallet" ? (
-									<Alert>
-										<TriangleAlert aria-hidden />
-										<AlertTitle>Wallet subscriptions are not ready yet</AlertTitle>
-										<AlertDescription>
-											The rail-neutral Plan C create contract is still syncing. No legacy wallet
-											payment request will be sent.
-										</AlertDescription>
-									</Alert>
+									<div className="flex flex-col gap-3">
+										{walletQuote.isFetching && !walletQuote.data ? (
+											<p className="text-sm text-muted-foreground" role="status">
+												Getting the exact wallet debit…
+											</p>
+										) : walletQuote.error ? (
+											<ApiErrorPanel
+												normalizer={billingErrorNormalizer}
+												error={walletQuote.error}
+												onRetry={() => void walletQuote.refetch()}
+												title="Couldn’t get wallet quote"
+											/>
+										) : walletQuote.data ? (
+											<>
+												<WalletDebitEquation
+													balanceBeforeCredits={walletQuote.data.balance_credits}
+													exactDebitCredits={walletQuote.data.first_charge_credits}
+													exactDebitCents={walletQuote.data.first_charge_cents}
+													balanceAfterCredits={
+														walletQuote.data.post_charge_balance_estimate_credits
+													}
+												/>
+												{walletInsufficient ? (
+													<Alert variant="destructive">
+														<TriangleAlert aria-hidden />
+														<AlertTitle>
+															{walletHasRefundDebt
+																? "Wallet refund debt must be repaid"
+																: "Not enough AI Credits"}
+														</AlertTitle>
+														<AlertDescription className="flex flex-col items-start gap-3">
+															<span>
+																{walletHasRefundDebt
+																	? "Top up before starting this subscription. New funds repay refund debt first."
+																	: "Top up the shortfall, then review a fresh wallet quote."}
+															</span>
+															<Button
+																type="button"
+																size="sm"
+																variant="outline"
+																disabled={!wallet.data}
+																onClick={() =>
+																	openWalletTopUp({
+																		shortfallCredits: walletShortfallCredits,
+																	})
+																}
+															>
+																<WalletCards data-icon="inline-start" /> Top up AI Credits
+															</Button>
+														</AlertDescription>
+													</Alert>
+												) : walletQuote.data.warnings?.includes("low_coverage") ? (
+													<Alert>
+														<TriangleAlert aria-hidden />
+														<AlertTitle>Low wallet reserve after payment</AlertTitle>
+														<AlertDescription>
+															The subscription can start, but consider topping up before its next
+															invoice.
+														</AlertDescription>
+													</Alert>
+												) : null}
+											</>
+										) : null}
+									</div>
 								) : null}
 							</div>
 						) : null}
@@ -1278,12 +1517,14 @@ export function DeployWizard() {
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
-									<SelectItem value="default">Default</SelectItem>
-									{LANGUAGE_OPTIONS.map((l) => (
-										<SelectItem key={l.code} value={l.code}>
-											{l.label}
-										</SelectItem>
-									))}
+									<SelectGroup>
+										<SelectItem value="default">Default</SelectItem>
+										{LANGUAGE_OPTIONS.map((l) => (
+											<SelectItem key={l.code} value={l.code}>
+												{l.label}
+											</SelectItem>
+										))}
+									</SelectGroup>
 								</SelectContent>
 							</Select>
 						</div>
@@ -1319,7 +1560,11 @@ export function DeployWizard() {
 						}
 						className="w-full sm:w-auto"
 					>
-						{submitting ? <Spinner /> : <Rocket />}
+						{submitting ? (
+							<Spinner data-icon="inline-start" />
+						) : (
+							<Rocket data-icon="inline-start" />
+						)}
 						{submitting ? "Working…" : deployLabel}
 					</Button>
 					{hostedAccess.canUsePlanCBilling ? null : (
@@ -1336,6 +1581,20 @@ export function DeployWizard() {
 				onOpenChange={setAddProviderOpen}
 				onCreated={selectCreatedProvider}
 			/>
+			{hostedAccess.canUsePlanCBilling && wallet.data ? (
+				<TopUpDialog
+					open={walletTopUpOpen}
+					onOpenChange={(open) => {
+						setWalletTopUpOpen(open);
+						if (!open) setWalletTopUpContext(EMPTY_WALLET_TOP_UP_CONTEXT);
+					}}
+					wallet={wallet.data}
+					initialAmountCents={walletTopUpContext.initialAmountCents}
+					refundDebtCredits={walletTopUpContext.refundDebtCredits}
+					blockedChargeCredits={walletTopUpContext.blockedChargeCredits}
+					onComplete={() => void walletQuote.refetch()}
+				/>
+			) : null}
 			<StripeCheckoutDialog
 				open={checkoutSession !== null}
 				onOpenChange={(next) => {
@@ -1424,16 +1683,18 @@ function PrimaryModelPicker({
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent>
-							{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
-								<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
-							) : null}
-							{customProviders
-								.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
-								.map((provider) => (
-									<SelectItem key={provider.provider_id} value={provider.provider_id}>
-										{provider.label ?? provider.provider_id}
-									</SelectItem>
-								))}
+							<SelectGroup>
+								{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
+									<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
+								) : null}
+								{customProviders
+									.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
+									.map((provider) => (
+										<SelectItem key={provider.provider_id} value={provider.provider_id}>
+											{provider.label ?? provider.provider_id}
+										</SelectItem>
+									))}
+							</SelectGroup>
 						</SelectContent>
 					</Select>
 				</div>
@@ -1452,12 +1713,14 @@ function PrimaryModelPicker({
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								{catalogModelIds.map((model) => (
-									<SelectItem key={model} value={model}>
-										{model}
-									</SelectItem>
-								))}
-								<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
+								<SelectGroup>
+									{catalogModelIds.map((model) => (
+										<SelectItem key={model} value={model}>
+											{model}
+										</SelectItem>
+									))}
+									<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
+								</SelectGroup>
 							</SelectContent>
 						</Select>
 					</div>

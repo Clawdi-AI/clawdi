@@ -264,6 +264,18 @@ const walletPastDueDeployment = {
 	},
 };
 
+const walletAnnualDeployment = {
+	...paidBasicDeployment,
+	id: "hdep_wallet_created",
+	name: "Annual Wallet Basic",
+	compute_subscription: {
+		...walletActiveDeployment.compute_subscription,
+		billing_term_months: 12,
+		price_cents: 8_640,
+		current_period_end: "2027-07-15T00:00:00Z",
+	},
+};
+
 type StubResponse = { body: unknown; status: number; delayMs?: number };
 
 function isStubResponse(value: unknown): value is StubResponse {
@@ -308,8 +320,13 @@ type HostedApiStubOptions = {
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
+	walletActivateRequests?: string[];
+	walletActivateResponses?: StubResponse[];
+	walletQuoteRequests?: string[];
+	walletQuoteResponses?: unknown[];
 	walletState?: typeof walletState;
 	onTopUpSuccess?: () => void;
+	onWalletActivateSuccess?: () => void;
 };
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
@@ -381,6 +398,47 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				checkout_url: "http://127.0.0.1:3100/deploy?mockCheckout=browser",
 				client_secret: null,
 			});
+		}
+		if (p === "/v2/subscription/wallet/quote" && r.request().method() === "POST") {
+			options.walletQuoteRequests?.push(r.request().postData() ?? "");
+			const response = options.walletQuoteResponses?.shift() ?? {
+				plan_slug: "compute_basic",
+				billing_term_months: 1,
+				monthly_price_cents: 900,
+				monthly_price_credits: "9000",
+				points_per_usd: 1_000,
+				first_charge_cents: 900,
+				first_charge_credits: "9000",
+				period_start: "2026-07-15T00:00:00Z",
+				period_end: "2026-08-15T00:00:00Z",
+				balance_credits: "25000",
+				post_charge_balance_estimate_credits: "16000",
+				warnings: [],
+			};
+			return isStubResponse(response)
+				? fulfillJson(r, response.body, response.status)
+				: fulfillJson(r, response);
+		}
+		if (p === "/v2/subscription/wallet/activate" && r.request().method() === "POST") {
+			options.walletActivateRequests?.push(r.request().postData() ?? "");
+			const response = options.walletActivateResponses?.shift() ?? {
+				status: 200,
+				body: {
+					subscription_id: 42,
+					status: "active",
+					funding_source: "wallet",
+					deploy_request_id: "wallet-compute-deploy-browser",
+					deployment_id: "hdep_wallet_created",
+					charge_ledger_id: "ledger_wallet_browser",
+					charged_credits: "9000",
+					post_charge_balance_credits: "16000",
+					current_period_start: "2026-07-15T00:00:00Z",
+					current_period_end: "2026-08-15T00:00:00Z",
+					entitled_until: "2026-08-15T00:00:00Z",
+				},
+			};
+			if (response.status < 400) options.onWalletActivateSuccess?.();
+			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/wallet/topup" && r.request().method() === "POST") {
 			options.topUpRequests?.push(r.request().postData() ?? "");
@@ -931,8 +989,7 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await expectNoQuarterlyCopy(page);
 	await annualTerm.click();
 	await expect(page.getByText("Wallet balance", { exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: /Wallet balance/ })).toHaveCount(0);
-	await expect(page.getByText(/Wallet-funded compute renews monthly/)).toBeVisible();
+	await expect(page.getByRole("button", { name: /Wallet balance/ })).toBeVisible();
 	await expect(
 		page.getByText(
 			/First active agent free · then \$7.2\/mo, billed \$86.4\/yr per additional agent/,
@@ -951,6 +1008,73 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 		deploy_config: { compute_plan_slug: "compute_basic" },
 	});
 	expect(errors, `paid Basic checkout: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("wallet annual quotes the exact debit and activates the created deployment", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const checkoutRequests: string[] = [];
+	const deployments: unknown[] = [includedBasicDeployment];
+	const walletActivateRequests: string[] = [];
+	const walletQuoteRequests: string[] = [];
+	await stubHostedApi(page, {
+		checkoutRequests,
+		deployments,
+		plans: [basicPlan, performancePlan],
+		walletActivateRequests,
+		walletQuoteRequests,
+		walletQuoteResponses: [
+			{
+				plan_slug: "compute_basic",
+				billing_term_months: 12,
+				monthly_price_cents: 900,
+				monthly_price_credits: "9000",
+				points_per_usd: 1_000,
+				first_charge_cents: 8_640,
+				first_charge_credits: "86400",
+				period_start: "2026-07-15T00:00:00Z",
+				period_end: "2027-07-15T00:00:00Z",
+				balance_credits: "100000",
+				post_charge_balance_estimate_credits: "13600",
+				warnings: [],
+			},
+		],
+		walletState: { ...walletState, balance_credits: 100_000 },
+		onWalletActivateSuccess: () => deployments.push(walletAnnualDeployment),
+	});
+	await page.goto("/deploy");
+	await page.waitForLoadState("networkidle");
+
+	await page.getByRole("button", { name: /Annual.*%/ }).click();
+	await page.getByRole("button", { name: /Wallet balance/ }).click();
+	await expect.poll(() => walletQuoteRequests.length).toBe(1);
+	const equation = page.getByTestId("wallet-debit-equation");
+	await expect(equation).toContainText("Balance before");
+	await expect(equation).toContainText("100,000 credits");
+	await expect(equation).toContainText("Exact debit");
+	await expect(equation).toContainText("86,400 credits");
+	await expect(equation).toContainText("$86.40");
+	await expect(equation).toContainText("Balance after");
+	await expect(equation).toContainText("13,600 credits");
+
+	await page.getByRole("button", { name: "Pay $86.40 from Wallet & deploy" }).click();
+	await expect.poll(() => walletActivateRequests.length).toBe(1);
+	const quote = JSON.parse(walletQuoteRequests[0] ?? "{}");
+	const activation = JSON.parse(walletActivateRequests[0] ?? "{}");
+	expect(quote).toEqual({
+		plan_slug: "compute_basic",
+		billing_term_months: 12,
+	});
+	expect(activation).toMatchObject({
+		plan_slug: "compute_basic",
+		billing_term_months: 12,
+		deploy_config: { compute_plan_slug: "compute_basic" },
+	});
+	expect(activation.deploy_config.deploy_request_id).toMatch(/^wallet-compute-deploy-/);
+	expect(checkoutRequests).toEqual([]);
+	await expect(page).toHaveURL(/\/agents\/hdep_wallet_created(?:\?|\/)/);
+	expect(errors, `wallet annual deploy: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("included Basic starts annual Performance checkout without direct tier switching", async ({
