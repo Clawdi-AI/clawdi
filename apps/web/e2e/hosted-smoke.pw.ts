@@ -316,9 +316,21 @@ const stripeFallbackDeployment = {
 	},
 };
 
-type StubResponse = { body: unknown; status: number };
+type StubResponse = { body: unknown; status: number; delayMs?: number };
+
+function isStubResponse(value: unknown): value is StubResponse {
+	return (
+		typeof value === "object" &&
+		value !== null &&
+		"body" in value &&
+		"status" in value &&
+		typeof value.status === "number"
+	);
+}
 
 type HostedApiStubOptions = {
+	autoReloadRequests?: string[];
+	autoReloadResponses?: StubResponse[];
 	billingHistoryRequests?: string[];
 	billingHistoryResponses?: unknown[];
 	cancelRequests?: string[];
@@ -354,6 +366,7 @@ type HostedApiStubOptions = {
 	walletPlanCancelResponses?: StubResponse[];
 	walletPlanQuoteRequests?: string[];
 	walletPlanQuoteResponses?: StubResponse[];
+	walletState?: typeof walletState;
 	onWalletActivateSuccess?: () => void;
 	onWalletPlanChangeSuccess?: () => void;
 	onWalletPlanCancelSuccess?: () => void;
@@ -368,22 +381,38 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const deployments = options.deployments ?? [];
 	const plans = options.plans ?? [];
+	let currentWallet = options.walletState ?? walletState;
 	// Deploy API (/me, /v2/*).
-	await page.route(`${DEPLOY_API}/**`, (r) => {
+	await page.route(`${DEPLOY_API}/**`, async (r) => {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/me" || p === "/v1/me") return fulfillJson(r, me);
 		if (p === "/v2/subscription/plans") return fulfillJson(r, plans);
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
-			return fulfillJson(r, walletState);
+			return fulfillJson(r, currentWallet);
+		}
+		if (p === "/v2/wallet/auto-reload" && r.request().method() === "PUT") {
+			const requestBody = r.request().postData() ?? "";
+			options.autoReloadRequests?.push(requestBody);
+			const response = options.autoReloadResponses?.shift();
+			if (response?.delayMs) {
+				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			}
+			if (response) {
+				if (response.status < 400) currentWallet = response.body as typeof walletState;
+				return fulfillJson(r, response.body, response.status);
+			}
+			const request = JSON.parse(requestBody) as Partial<typeof walletState>;
+			currentWallet = { ...currentWallet, ...request };
+			return fulfillJson(r, currentWallet);
 		}
 		if (p === "/v2/wallet/ledger" && r.request().method() === "GET") {
 			options.ledgerRequests?.push(r.request().url());
 			const limit = Number(new URL(r.request().url()).searchParams.get("limit"));
-			return fulfillJson(
-				r,
-				options.ledgerResponseForRequest?.(limit) ??
-					options.ledgerResponses?.shift() ?? { items: [], has_more: false },
-			);
+			const response = options.ledgerResponseForRequest?.(limit) ??
+				options.ledgerResponses?.shift() ?? { items: [], has_more: false };
+			return isStubResponse(response)
+				? fulfillJson(r, response.body, response.status)
+				: fulfillJson(r, response);
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			return fulfillJson(r, deployments);
@@ -539,6 +568,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					credits_added: 25_000,
 				},
 			};
+			if (response.delayMs) {
+				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			}
 			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/subscription/fix-payment" && r.request().method() === "POST") {
@@ -547,14 +579,14 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/subscription/billing-history" && r.request().method() === "GET") {
 			options.billingHistoryRequests?.push(r.request().url());
-			return fulfillJson(
-				r,
-				options.billingHistoryResponses?.shift() ?? {
-					data: [],
-					has_more: false,
-					next_cursor: null,
-				},
-			);
+			const response = options.billingHistoryResponses?.shift() ?? {
+				data: [],
+				has_more: false,
+				next_cursor: null,
+			};
+			return isStubResponse(response)
+				? fulfillJson(r, response.body, response.status)
+				: fulfillJson(r, response);
 		}
 		if (p === "/v2/subscription/cancel" && r.request().method() === "POST") {
 			options.cancelRequests?.push(r.request().postData() ?? "");
@@ -1776,6 +1808,10 @@ test("mixed billing history paginates wallet charges and Stripe invoices", async
 				next_cursor: "cursor_2",
 			},
 			{
+				status: 400,
+				body: { detail: "billing_history_backend_unavailable" },
+			},
+			{
 				data: [
 					{
 						id: "wallet:2",
@@ -1802,16 +1838,26 @@ test("mixed billing history paginates wallet charges and Stripe invoices", async
 	await expect(billingTable.locator('a[href="https://invoice.stripe.test/in_1"]')).toBeVisible();
 	await settingsDialog.getByRole("button", { name: "Load more" }).click();
 	await expect.poll(() => billingHistoryRequests.length).toBe(2);
+	await expect(
+		settingsDialog.getByText("Couldn’t load more billing history", { exact: true }),
+	).toBeVisible();
+	await expect(billingTable.getByText("Applied", { exact: true })).toBeVisible();
+	await settingsDialog.getByRole("button", { name: "Retry" }).click();
+	await expect.poll(() => billingHistoryRequests.length).toBe(3);
 	expect(new URL(billingHistoryRequests[1] ?? "http://invalid").searchParams.get("cursor")).toBe(
 		"cursor_2",
 	);
 	await expect(billingTable.getByText("Refunded", { exact: true })).toBeVisible();
 	await settingsDialog.screenshot({ path: "/tmp/mixed-billing-history.png" });
-	expect(errors, `mixed billing history: ${errors.join(" | ")}`).toEqual([]);
+	expect(
+		errors.filter((error) => !error.includes("status of 400")),
+		`mixed billing history: ${errors.join(" | ")}`,
+	).toEqual([]);
 });
 
 test("Wallet activity caps show-more requests at the ledger API limit", async ({ page }) => {
 	const ledgerRequests: string[] = [];
+	let expandedAttempts = 0;
 	const computeCharge = {
 		id: "ledger-compute-charge",
 		operation: "compute_charge",
@@ -1822,9 +1868,11 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	};
 	await stubHostedApi(page, {
 		ledgerRequests,
-		ledgerResponseForRequest: (limit) =>
-			limit === 50
-				? { items: [computeCharge], has_more: true }
+		ledgerResponseForRequest: (limit) => {
+			if (limit === 50) return { items: [computeCharge], has_more: true };
+			expandedAttempts += 1;
+			return expandedAttempts === 1
+				? { status: 400, body: { detail: "ledger_backend_unavailable" } }
 				: {
 						items: [
 							computeCharge,
@@ -1837,7 +1885,8 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 							},
 						],
 						has_more: true,
-					},
+					};
+		},
 		plans: [basicPlan, performancePlan],
 	});
 	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
@@ -1847,6 +1896,12 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	await expect(ledgerTable.getByText("Compute charge", { exact: true })).toBeVisible();
 	await settingsDialog.getByRole("button", { name: "Show more" }).click();
 	await expect.poll(() => ledgerRequests.length).toBe(2);
+	await expect(
+		settingsDialog.getByText("Couldn’t load more activity", { exact: true }),
+	).toBeVisible();
+	await expect(ledgerTable.getByText("Compute charge", { exact: true })).toBeVisible();
+	await settingsDialog.getByRole("button", { name: "Retry" }).click();
+	await expect.poll(() => ledgerRequests.length).toBe(3);
 	await expect(ledgerTable.getByText("Compute reversal", { exact: true })).toBeVisible();
 	await expect(settingsDialog.getByRole("button", { name: "Show more" })).toHaveCount(0);
 	await expect(settingsDialog).toContainText(
@@ -1856,7 +1911,154 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	const limits = ledgerRequests.map((url) => Number(new URL(url).searchParams.get("limit")));
 	expect([...new Set(limits)]).toEqual([50, 100]);
 	expect(limits.every((limit) => limit <= 100)).toBe(true);
-	expect(errors, `wallet ledger cap: ${errors.join(" | ")}`).toEqual([]);
+	expect(
+		errors.filter((error) => !error.includes("status of 400")),
+		`wallet ledger cap: ${errors.join(" | ")}`,
+	).toEqual([]);
+});
+
+test("auto-reload batches toggle and fields into one explicit save", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const autoReloadRequests: string[] = [];
+	const savedWallet = {
+		...walletState,
+		auto_reload_enabled: true,
+		auto_reload_threshold_credits: 7_500,
+		auto_reload_amount_cents: 3_000,
+		auto_reload_monthly_cap_cents: 12_500,
+	};
+	await stubHostedApi(page, {
+		autoReloadRequests,
+		autoReloadResponses: [
+			{
+				status: 400,
+				body: { detail: "Auto reload requires a default payment method" },
+				delayMs: 250,
+			},
+			{ status: 200, body: savedWallet },
+		],
+		plans: [basicPlan, performancePlan],
+	});
+	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
+	const card = settingsDialog.locator('[data-slot="card"]').filter({ hasText: "Auto-reload" });
+	const enabled = card.getByRole("switch", { name: "Enabled" });
+	const threshold = card.getByLabel("When balance is below (USD)");
+	const amount = card.getByLabel("Amount to add (USD)");
+	const cap = card.getByLabel("Monthly cap (USD)");
+	const save = card.getByRole("button", { name: "Save changes" });
+	const cancel = card.getByRole("button", { name: "Cancel changes" });
+
+	await expect(card.getByText("All changes saved", { exact: true })).toBeVisible();
+	await expect(save).toBeDisabled();
+	await expect(cancel).toBeDisabled();
+
+	await enabled.click();
+	await threshold.fill("7.50");
+	await amount.fill("30");
+	await cap.fill("125");
+	await expect(card.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	expect(autoReloadRequests).toEqual([]);
+
+	await cancel.click();
+	await expect(enabled).not.toBeChecked();
+	await expect(threshold).toHaveValue("5");
+	await expect(amount).toHaveValue("25");
+	await expect(cap).toHaveValue("100");
+	await expect(save).toBeDisabled();
+	expect(autoReloadRequests).toEqual([]);
+
+	await enabled.click();
+	await threshold.fill("7.50");
+	await amount.fill("30");
+	await cap.fill("125");
+	await settingsDialog.getByRole("button", { name: /^Compute/ }).click();
+	const discardDialog = page.getByRole("alertdialog");
+	await expect(discardDialog.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
+	await discardDialog.getByRole("button", { name: "Keep editing" }).click();
+	await expect(card).toBeVisible();
+
+	await card.screenshot({ path: "/tmp/auto-reload-dirty.png" });
+	await save.evaluate((button: HTMLButtonElement) => {
+		button.click();
+		button.click();
+	});
+	await expect(card.getByRole("button", { name: "Saving…" })).toBeDisabled();
+	await expect.poll(() => autoReloadRequests.length).toBe(1);
+	await expect(
+		card.getByText("Add a card before enabling auto-reload", { exact: true }),
+	).toBeVisible();
+	await expect(card.getByRole("button", { name: "Add a card" })).toBeVisible();
+	await expect(card.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await card.screenshot({ path: "/tmp/auto-reload-error.png" });
+
+	await save.click();
+	await expect.poll(() => autoReloadRequests.length).toBe(2);
+	await expect(card.getByText("All changes saved", { exact: true })).toBeVisible();
+	await expect(enabled).toBeChecked();
+	await expect(save).toBeDisabled();
+	await card.screenshot({ path: "/tmp/auto-reload-saved.png" });
+
+	for (const raw of autoReloadRequests) {
+		expect(JSON.parse(raw)).toEqual({
+			auto_reload_enabled: true,
+			auto_reload_threshold_credits: 7_500,
+			auto_reload_amount_cents: 3_000,
+			auto_reload_monthly_cap_cents: 12_500,
+		});
+	}
+	expect(
+		errors.filter((error) => !error.includes("status of 400")),
+		`auto-reload save: ${errors.join(" | ")}`,
+	).toEqual([]);
+});
+
+test("top-up validates the amount and blocks duplicate submission or close in flight", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const topUpRequests: string[] = [];
+	await stubHostedApi(page, {
+		topUpRequests,
+		topUpResponses: [
+			{
+				status: 200,
+				delayMs: 250,
+				body: {
+					status: "succeeded",
+					flow_type: "mock",
+					payment_intent_id: null,
+					client_secret: null,
+					credits_added: 40_000,
+				},
+			},
+		],
+		plans: [basicPlan, performancePlan],
+	});
+	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
+	await settingsDialog.getByRole("button", { name: "Top up" }).click();
+	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up AI Credits" });
+	const amount = topUpDialog.getByLabel("Amount (USD)");
+
+	await amount.fill("25.50");
+	await amount.blur();
+	await expect(
+		topUpDialog.getByText("Enter a whole-dollar amount from $10.00 to $2,000.00.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await amount.fill("40");
+	const submit = topUpDialog.getByRole("button", { name: "Continue with $40.00" });
+	await submit.evaluate((button: HTMLButtonElement) => {
+		button.click();
+		button.click();
+	});
+	await expect(topUpDialog.getByRole("button", { name: "Starting…" })).toBeDisabled();
+	await page.keyboard.press("Escape");
+	await expect(topUpDialog).toBeVisible();
+	await expect.poll(() => topUpRequests.length).toBe(1);
+	await expect(topUpDialog).toHaveCount(0);
+	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 4_000 });
+	expect(errors, `top-up interaction: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("top-up rotates its idempotency key after an explicit reuse conflict", async ({ page }) => {
@@ -1914,7 +2116,7 @@ test("Wallet summarizes compute commitment, coverage, renewal, and deployment li
 	await expect(settingsDialog.getByText("Monthly commitment", { exact: true })).toBeVisible();
 	await expect(settingsDialog.getByText("$9.00", { exact: true })).toBeVisible();
 	await expect(settingsDialog.getByText("Wallet Basic", { exact: true })).toBeVisible();
-	await expect(settingsDialog.getByText(/\$9 on Aug 15, 2026/)).toBeVisible();
+	await expect(settingsDialog.getByText(/\$9\.00 on Aug 15, 2026/)).toBeVisible();
 	const manage = settingsDialog.locator('a[href^="/agents/hdep_wallet/settings"]');
 	await expect(manage).toBeVisible();
 	await settingsDialog.screenshot({ path: "/tmp/wallet-compute-coverage.png" });
