@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
 	type AiProviderAuth,
+	CLAWDI_MANAGED_PROVIDER_IDS,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
 	CODEX_OAUTH_MODEL_CATALOG,
 	defaultAiProviderModels,
@@ -275,12 +277,15 @@ describe("validateAiProviderCatalog", () => {
 		);
 	});
 
-	test("accepts v2 Clawdi-managed providers in OpenAI chat mode", () => {
+	test.each([
+		CLAWDI_MANAGED_V2_PROVIDER_ID,
+		CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+	])("accepts v2 Clawdi-managed provider %s in OpenAI chat mode", (providerId) => {
 		const result = validateAiProviderCatalog({
 			schema_version: 1,
 			providers: [
 				{
-					id: "clawdi-managed-v2",
+					id: providerId,
 					type: "custom_openai_compatible",
 					base_url: "https://managed.example/v1",
 					models: [{ id: "gpt-5.5" }],
@@ -290,7 +295,7 @@ describe("validateAiProviderCatalog", () => {
 					runtime_env_name: "OPENAI_API_KEY",
 				},
 			],
-			defaults: { chat_provider_id: "clawdi-managed-v2" },
+			defaults: { chat_provider_id: providerId },
 		});
 
 		expect(result.valid).toBe(true);
@@ -345,13 +350,20 @@ describe("validateAiProviderCatalog", () => {
 });
 
 describe("isFirstPartyManagedAiProvider", () => {
-	test("matches first-party managed ids even when old rows are missing managed_by", () => {
+	test("matches every first-party managed id even when old rows are missing managed_by", () => {
 		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID })).toBe(
 			true,
 		);
 		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_V2_PROVIDER_ID })).toBe(
 			true,
 		);
+		expect(
+			isFirstPartyManagedAiProvider({
+				provider_id: CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+			}),
+		).toBe(true);
+		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_PROVIDER_ID)).toBe(true);
+		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID)).toBe(true);
 	});
 
 	test("matches managed_by clawdi for current rows", () => {

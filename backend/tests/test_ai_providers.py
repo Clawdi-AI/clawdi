@@ -13,6 +13,13 @@ from app.models.ai_provider import AiProvider
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.services import sync_events
+from app.services.managed_ai_provider import (
+    MANAGED_AI_PROVIDER_IDS,
+    V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_MANAGED_AI_PROVIDER_API_MODE,
+    V2_MANAGED_AI_PROVIDER_ID,
+    managed_provider_api_mode,
+)
 from tests.conftest import create_env_with_project
 
 _TEST_SYSTEM = {
@@ -21,6 +28,16 @@ _TEST_SYSTEM = {
     "workspace": "/home/clawdi/clawdi",
     "persistentPaths": ["/home/clawdi"],
 }
+
+
+@pytest.mark.parametrize(
+    "provider_id",
+    [V2_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID],
+)
+def test_v2_managed_ai_provider_ids_resolve_to_chat_mode(provider_id: str):
+    assert provider_id in MANAGED_AI_PROVIDER_IDS
+    assert managed_provider_api_mode(provider_id) == V2_MANAGED_AI_PROVIDER_API_MODE
+
 
 _VALID_AUTH_VARIANTS = [
     pytest.param(
@@ -633,23 +650,27 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
     assert legacy_model_prefix.status_code == 422, legacy_model_prefix.text
     assert "legacy openai-codex prefix" in legacy_model_prefix.text
 
-    managed = await client.post(
-        "/v1/ai-providers",
-        json={
-            "provider_id": "clawdi-managed-v2",
-            "type": "custom_openai_compatible",
-            "base_url": "https://managed.example/v1",
-            "models": [{"id": "gpt-5.5"}],
-            "api_mode": "openai_chat",
-            "auth": {"type": "api_key", "source": "managed"},
-            "managed_by": "clawdi",
-            "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
-        },
-    )
-    assert managed.status_code == 200, managed.text
-    assert managed.json()["provider_id"] == "clawdi-managed-v2"
-    assert managed.json()["api_mode"] == "openai_chat"
-    assert managed.json()["models"] == [{"id": "gpt-5.5"}]
+    for managed_provider_id in (
+        V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    ):
+        managed = await client.post(
+            "/v1/ai-providers",
+            json={
+                "provider_id": managed_provider_id,
+                "type": "custom_openai_compatible",
+                "base_url": "https://managed.example/v1",
+                "models": [{"id": "gpt-5.5"}],
+                "api_mode": "openai_chat",
+                "auth": {"type": "api_key", "source": "managed"},
+                "managed_by": "clawdi",
+                "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+            },
+        )
+        assert managed.status_code == 200, managed.text
+        assert managed.json()["provider_id"] == managed_provider_id
+        assert managed.json()["api_mode"] == "openai_chat"
+        assert managed.json()["models"] == [{"id": "gpt-5.5"}]
 
     v1_managed = await client.post(
         "/v1/ai-providers",
