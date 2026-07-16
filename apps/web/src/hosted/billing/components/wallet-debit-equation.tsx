@@ -10,13 +10,13 @@ function EquationValue({
 	secondary?: string;
 }) {
 	return (
-		<div className="min-w-0 flex-1 rounded-md bg-muted/50 px-3 py-2">
-			<div className="text-xs text-muted-foreground">{label}</div>
-			<div className="truncate font-medium tabular-nums">{formatExactCredits(credits)}</div>
+		<dl className="min-w-0 flex-1 rounded-md bg-muted/50 px-3 py-2">
+			<dt className="text-xs text-muted-foreground">{label}</dt>
+			<dd className="truncate font-medium tabular-nums">{formatExactCredits(credits)}</dd>
 			{secondary ? (
-				<div className="text-xs text-muted-foreground tabular-nums">{secondary}</div>
+				<dd className="text-xs text-muted-foreground tabular-nums">{secondary}</dd>
 			) : null}
-		</div>
+		</dl>
 	);
 }
 
@@ -31,14 +31,15 @@ export function WalletDebitEquation({
 	exactDebitCents: number;
 	balanceAfterCredits: string;
 }) {
+	const accessibleEquation = `${formatExactCredits(balanceBeforeCredits)} minus ${formatExactCredits(
+		exactDebitCredits,
+	)} equals ${formatExactCredits(balanceAfterCredits)}`;
 	return (
-		<fieldset
+		<figure
 			className="flex flex-col gap-1.5 rounded-lg border p-3 text-sm sm:flex-row sm:items-center"
-			aria-label={`${formatExactCredits(balanceBeforeCredits)} minus ${formatExactCredits(
-				exactDebitCredits,
-			)} equals ${formatExactCredits(balanceAfterCredits)}`}
 			data-testid="wallet-debit-equation"
 		>
+			<figcaption className="sr-only">{accessibleEquation}</figcaption>
 			<EquationValue label="Balance before" credits={balanceBeforeCredits} />
 			<span className="self-center text-muted-foreground" aria-hidden>
 				−
@@ -52,6 +53,6 @@ export function WalletDebitEquation({
 				=
 			</span>
 			<EquationValue label="Balance after" credits={balanceAfterCredits} />
-		</fieldset>
+		</figure>
 	);
 }
