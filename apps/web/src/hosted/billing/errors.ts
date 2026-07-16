@@ -249,9 +249,12 @@ export function normalizeBillingError(error: unknown): string {
 		if (typeof code === "string") {
 			return "The billing request could not be completed. Refresh and try again.";
 		}
-		// Snake_case error codes → readable text; pass through real sentences.
+		// A bare snake_case token is an internal error code, not product copy.
 		if (/^[a-z0-9_]+$/.test(error.detail)) {
-			return error.detail.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+			if (error.detail === "payment_method_required") {
+				return "Add a payment method and try again.";
+			}
+			return "The billing request could not be completed. Review the details and try again.";
 		}
 		return error.detail;
 	}

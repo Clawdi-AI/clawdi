@@ -1,6 +1,6 @@
 "use client";
 
-import { useLocation, useRouter } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import { Check, Coins, Cpu, Rocket, Sparkles, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +26,6 @@ import {
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
-import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { settingsQueryHref } from "@/lib/settings-routes";
 
 function partitionPlans(plans: Plan[]): { basic?: Plan; performance?: Plan } {
@@ -59,11 +58,9 @@ export function PlanComparison({
 	term?: number;
 	onTermChange?: (term: number) => void;
 } = {}) {
-	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = new URLSearchParams(searchStr);
 	const plansQuery = usePlans();
-	const runAction = useActionLock();
 	const [internalTerm, setInternalTerm] = useState(1);
 	const term = termProp ?? internalTerm;
 	const setTerm = onTermChange ?? setInternalTerm;
@@ -85,11 +82,6 @@ export function PlanComparison({
 	);
 	const basicOffer = basicOfferSelection?.offer ?? null;
 	const basicBillingTermMonths = basicOfferSelection?.billingTermMonths ?? term;
-
-	async function startPerformanceCheckout() {
-		if (!performance) return;
-		void router.navigate({ href: "/deploy" });
-	}
 
 	if (!plansQuery.data) return null;
 
@@ -172,9 +164,10 @@ export function PlanComparison({
 					</CardContent>
 					<CardFooter>
 						<Button
+							render={<Link to="/deploy" />}
+							nativeButton={false}
 							className="w-full"
 							variant="outline"
-							onClick={() => void router.navigate({ href: "/deploy" })}
 						>
 							<Rocket /> Deploy Basic agent
 						</Button>
@@ -238,8 +231,9 @@ export function PlanComparison({
 					</CardContent>
 					<CardFooter>
 						<Button
+							render={<Link to="/deploy" />}
+							nativeButton={false}
 							className="w-full"
-							onClick={() => runAction(startPerformanceCheckout)}
 							disabled={!performance}
 						>
 							Deploy Performance agent
@@ -280,11 +274,10 @@ export function PlanComparison({
 					</CardContent>
 					<CardFooter>
 						<Button
+							render={<Link to={settingsQueryHref("billing-wallet", searchParams)} />}
+							nativeButton={false}
 							className="w-full"
 							variant="outline"
-							onClick={() =>
-								void router.navigate({ href: settingsQueryHref("billing-wallet", searchParams) })
-							}
 						>
 							<Sparkles /> Open Wallet
 						</Button>

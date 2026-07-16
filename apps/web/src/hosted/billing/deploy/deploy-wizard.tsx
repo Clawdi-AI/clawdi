@@ -164,6 +164,7 @@ import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
 import { useChannels } from "@/hosted/v2/channels/channels-hooks";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 type Compute = "basic" | "performance";
@@ -1359,7 +1360,7 @@ export function DeployWizard() {
 												<div>
 													<div className="text-xs text-muted-foreground">Renews</div>
 													<div className="font-medium">
-														{new Date(walletQuote.data.period_end).toLocaleDateString()}
+														{formatShortDate(walletQuote.data.period_end)}
 													</div>
 												</div>
 												<div>

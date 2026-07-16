@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { CreditCard, Rocket } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -27,7 +27,6 @@ const SUBSCRIPTION_PAGE_CLASS = cn(
 );
 
 export function SubscriptionPage() {
-	const router = useRouter();
 	const plans = usePlans();
 	const portal = usePortal();
 	const runAction = useActionLock();
@@ -41,7 +40,7 @@ export function SubscriptionPage() {
 				return;
 			}
 			toast.message("Billing portal unavailable", {
-				description: res.message ?? "Please try again in a moment.",
+				description: "Refresh this page and try again in a moment.",
 			});
 		} catch (e) {
 			toast.error("Couldn’t open billing", { description: normalizeBillingError(e) });
@@ -91,7 +90,7 @@ export function SubscriptionPage() {
 						balance and managed-AI usage stay account-wide.
 					</p>
 					<div className="flex flex-wrap gap-2">
-						<Button onClick={() => void router.navigate({ href: "/deploy" })}>
+						<Button render={<Link to="/deploy" />} nativeButton={false}>
 							<Rocket /> Deploy hosted agent
 						</Button>
 						<Button

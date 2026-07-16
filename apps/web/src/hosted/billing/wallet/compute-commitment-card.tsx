@@ -11,7 +11,7 @@ import { StatusBadge } from "@/components/ui/status-badge";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import type { HostedDeployment, Plan, WalletState } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { formatCents, formatCentsCompact } from "@/hosted/billing/format";
+import { formatCents } from "@/hosted/billing/format";
 import { walletComputeCoverage } from "@/hosted/billing/wallet/wallet-compute.logic";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
@@ -50,6 +50,8 @@ export function ComputeCommitmentCard({
 				</div>
 				{isLoading ? (
 					<Skeleton className="h-6 w-28" />
+				) : coverage.deployments.length === 0 ? (
+					<StatusBadge status="neutral">No wallet compute</StatusBadge>
 				) : coverage.lowCoverage ? (
 					<StatusBadge status="warning">Under 1 month</StatusBadge>
 				) : (
@@ -123,8 +125,8 @@ export function ComputeCommitmentCard({
 											<CalendarClock className="size-3.5" aria-hidden />
 											{deployment.renews
 												? deployment.nextRenewalAt
-													? `${formatCentsCompact(deployment.priceCents)} on ${formatShortDate(deployment.nextRenewalAt)}`
-													: `${formatCentsCompact(deployment.priceCents)} monthly · renewal pending`
+													? `${formatCents(deployment.priceCents)} on ${formatShortDate(deployment.nextRenewalAt)}`
+													: `${formatCents(deployment.priceCents)} monthly · renewal pending`
 												: `Ends ${formatShortDate(deployment.nextRenewalAt)} · no renewal charge`}
 										</div>
 									</div>

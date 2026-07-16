@@ -1,7 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PageHeader } from "@/components/page-header";
@@ -33,7 +33,11 @@ const DESCRIPTION = "One balance for managed AI, wallet-funded compute, top-ups,
 const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 function scrollToAutoReload() {
-	document.getElementById("auto-reload")?.scrollIntoView({ behavior: "smooth", block: "center" });
+	const section = document.getElementById("auto-reload");
+	if (!section) return;
+	const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	section.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "center" });
+	window.requestAnimationFrame(() => document.getElementById("auto-reload-enabled")?.focus());
 }
 
 function showWalletTopupReturnToast(result: WalletTopupReturnToast) {
@@ -55,6 +59,9 @@ export function WalletPage() {
 	const queryClient = useQueryClient();
 	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
 	const ledger = useWalletLedger(ledgerLimit);
+	const lastLedgerDataRef = useRef(ledger.data);
+	if (ledger.data) lastLedgerDataRef.current = ledger.data;
+	const ledgerData = ledger.data ?? lastLedgerDataRef.current;
 	const [topUpOpen, setTopUpOpen] = useState(false);
 
 	useEffect(() => {
@@ -169,7 +176,7 @@ export function WalletPage() {
 				{shouldShowX402Card(w) ? <X402Card /> : null}
 			</div>
 
-			{ledger.error && !ledger.data ? (
+			{ledger.error && !ledgerData ? (
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={ledger.error}
@@ -177,15 +184,29 @@ export function WalletPage() {
 					onRetry={() => ledger.refetch()}
 				/>
 			) : (
-				<LedgerTable
-					entries={ledger.data?.items ?? []}
-					pointsPerUsd={w.points_per_usd}
-					isLoading={ledger.isLoading}
-					hasMore={ledger.data?.has_more ?? false}
-					atCap={ledgerLimit >= LEDGER_MAX_ROWS && (ledger.data?.has_more ?? false)}
-					isFetchingMore={ledger.isFetching}
-					onShowMore={() => setLedgerLimit((n) => Math.min(n + LEDGER_PAGE_SIZE, LEDGER_MAX_ROWS))}
-				/>
+				<>
+					<LedgerTable
+						entries={ledgerData?.items ?? []}
+						pointsPerUsd={w.points_per_usd}
+						isLoading={ledger.isLoading}
+						hasMore={ledgerData?.has_more ?? false}
+						atCap={ledgerLimit >= LEDGER_MAX_ROWS && (ledgerData?.has_more ?? false)}
+						isFetchingMore={ledger.isFetching}
+						onShowMore={
+							ledger.error
+								? undefined
+								: () => setLedgerLimit((n) => Math.min(n + LEDGER_PAGE_SIZE, LEDGER_MAX_ROWS))
+						}
+					/>
+					{ledger.error ? (
+						<ApiErrorPanel
+							normalizer={billingErrorNormalizer}
+							error={ledger.error}
+							title="Couldn’t load more activity"
+							onRetry={() => void ledger.refetch()}
+						/>
+					) : null}
+				</>
 			)}
 
 			<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} wallet={w} />

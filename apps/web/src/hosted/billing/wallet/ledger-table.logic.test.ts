@@ -4,6 +4,7 @@ import {
 	filteredLedgerEntries,
 	ledgerEmptyStateCopy,
 	ledgerOperationGroup,
+	ledgerOperationLabel,
 } from "./ledger-table.logic";
 
 function entry(overrides: Partial<WalletLedgerEntry> = {}): WalletLedgerEntry {
@@ -36,6 +37,10 @@ describe("filteredLedgerEntries", () => {
 				"compute",
 			).map((item) => item.operation),
 		).toEqual(["compute_charge"]);
+	});
+
+	test("does not expose an unknown backend operation token", () => {
+		expect(ledgerOperationLabel("bridge_internal_credit_v3")).toBe("Other activity");
 	});
 });
 

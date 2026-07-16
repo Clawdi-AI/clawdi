@@ -29,23 +29,9 @@ import {
 	isLedgerFilter,
 	type LedgerFilter,
 	ledgerEmptyStateCopy,
+	ledgerOperationLabel,
 } from "@/hosted/billing/wallet/ledger-table.logic";
 import { cn, relativeTime } from "@/lib/utils";
-
-const OPERATION_LABELS: Record<string, string> = {
-	topup: "Top-up",
-	invoice: "Top-up",
-	x402: "On-chain top-up",
-	grant_signup: "Signup grant",
-	grant_subscription: "Credit grant",
-	grant_redemption: "Redeemed credits",
-	grant_referral: "Referral grant",
-	admin_adjust: "Adjustment",
-	proxy: "Usage",
-	compute_charge: "Compute charge",
-	compute_credit: "Compute reversal",
-	refund: "Refund",
-};
 
 const STATUS_LABELS: Record<WalletLedgerStatus, string> = {
 	applied: "Applied",
@@ -71,10 +57,10 @@ function statusVariant(
 }
 
 function opLabel(op: string): string {
-	return OPERATION_LABELS[op] ?? op;
+	return ledgerOperationLabel(op);
 }
 function statusLabel(status: WalletLedgerStatus): string {
-	return STATUS_LABELS[status] ?? status;
+	return STATUS_LABELS[status] ?? "Unknown";
 }
 function signedAmount(entry: WalletLedgerEntry, pointsPerUsd: number): string {
 	const positive = entry.credits_amount >= 0;
