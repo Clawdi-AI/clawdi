@@ -11,8 +11,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-_TEST_SYSTEM = {
-}
+_TEST_SYSTEM = {}
 
 
 async def _register_env(client: httpx.AsyncClient, machine_id: str = "test-machine-1") -> str:
@@ -253,7 +252,7 @@ async def test_environments_mark_only_agents_with_hosted_runtime_state(
             deployment_id="hdep_test",
             instance_id="instance-test",
             generation=1,
-            cli_package_spec="clawdi@0.12.10-beta.54",
+            cli_package_spec="clawdi@0.12.10-beta.55",
             locale={"language": "en", "timezone": "UTC"},
             system=_TEST_SYSTEM,
             live_sync={"enabled": False, "agents": []},

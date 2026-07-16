@@ -190,7 +190,7 @@ const TEST_HOSTED_LOCALE = {
 	language: "en" as const,
 	timezone: "UTC",
 };
-const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.54";
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.55";
 const TEST_HOSTED_CODEX_SECRET_REF = "tool.codex.apiKey";
 const TEST_HOSTED_CODEX_SECRET_VALUES = {
 	[TEST_HOSTED_CODEX_SECRET_REF]: "sk-codex-tool",

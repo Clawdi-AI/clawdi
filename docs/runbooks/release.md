@@ -112,17 +112,24 @@ releases.
    version-derived standard channel points to it: `beta` for a prerelease or
    `latest` for a stable release. The Hosted image repository has a separate
    release boundary. An operator supplies the exact `clawdi@<semver>` package
-   spec to the Hosted image workflow. That workflow fails when the exact spec is
-   missing, verifies registry integrity, signatures, and provenance, and never
-   resolves an npm dist-tag. It runs the image/CLI pairing smoke before
-   publishing the image and does not call back into this workflow. The `beta`
-   tag is publication metadata, not an operator gate.
+   spec to the Hosted image workflow, which fails when the exact spec is
+   missing. For `clawdi@0.12.10-beta.55`, first run
+   `hosted-runtime-image-release.yml` with `validate_only=true`,
+   `runtime_image` set to the current digest-pinned image, and
+   `cli_package_spec=clawdi@0.12.10-beta.55`. It verifies registry integrity,
+   signatures, provenance, and the image/CLI pairing without ever resolving an
+   npm dist-tag or publishing an image. Reuse the validated digest. Build a new
+   image only if validate-only fails for a demonstrated image compatibility
+   reason. The Hosted HOME and manifest refactor changes no Dockerfile-copied
+   runtime-image input, so it does not by itself justify image churn. The
+   workflow does not call back into this workflow. The `beta` tag is publication
+   metadata, not an operator gate.
 
    Hosted rollout uses that same exact package spec in the Cloud manifest. The
    runtime never resolves an npm dist-tag.
 
    Hosted Codex is a CLI-owned tool-plane dependency pinned by the immutable
-   Clawdi CLI release. For `0.12.10-beta.54`, verify the audited exact package
+   Clawdi CLI release. For `0.12.10-beta.55`, verify the audited exact package
    and executable before activating Hosted:
 
    ```bash
@@ -144,7 +151,12 @@ releases.
 
    Agent deployment v2 is not live. Keep creation and runtime-state
    reconciliation disabled until the Hosted image contract, CLI version
-   `0.12.10-beta.54`, and the Cloud manifest contract are all deployed. Validate
+   `0.12.10-beta.55`, and the Cloud manifest contract are all deployed. Hosted
+   promotion must set `agent_v2_cli_package_spec` to the exact `.55` package
+   while retaining the validated existing `agent_v2_runtime_image` digest; if
+   that database setting is absent, write the already-validated existing
+   digest. Keep `clawdi_v2_enabled=false` and preserve existing environment
+   overrides. Validate
    one fresh deployment end to end through `/v1/runtime/manifest` and SSE before
    enabling v2. Do not add compatibility fields, aliases, or fallback package
    channels.

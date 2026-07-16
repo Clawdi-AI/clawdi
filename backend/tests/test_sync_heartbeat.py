@@ -39,9 +39,8 @@ from tests.hosted_runtime_fixtures import (
 )
 
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.54"
-_TEST_SYSTEM = {
-}
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
+_TEST_SYSTEM = {}
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -69,7 +68,7 @@ def _runtime_observed(
     source_revision: str = "a" * 64,
     reported_at: str | None = None,
     status: str = "ok",
-    active_cli_version: str | None = "0.12.10-beta.54",
+    active_cli_version: str | None = "0.12.10-beta.55",
     applied: bool = True,
     manifest_etag: str | None = None,
     applied_generation: int = 4,
@@ -627,7 +626,7 @@ async def test_v2_applied_authority_persists_and_drives_health(
     assert observation.observed_config_generation == 4
     assert observation.observed_manifest_etag == expected_runtime_bundle_v2_etag(source_revision)
     assert observation.observed_source_revision == source_revision
-    assert observation.diagnostics["activeCliVersion"] == "0.12.10-beta.54"
+    assert observation.diagnostics["activeCliVersion"] == "0.12.10-beta.55"
     healthy = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()
     assert healthy["health"] == {
         "status": "ok",

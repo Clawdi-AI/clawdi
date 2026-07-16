@@ -66,7 +66,7 @@ For transparent egress:
 ## Cloud Hosted Authority
 
 The Hosted rollout writer selects an exact CLI package spec. Cloud validates
-and persists it, enforces the Cloud-owned `0.12.10-beta.54` minimum, fixes the
+and persists it, enforces the Cloud-owned `0.12.10-beta.55` minimum, fixes the
 package source and official registry, and owns the public manifest projection.
 Remote Hosted state cannot provide a floating package, installer URL, installer
 args, source, or registry. Bootstrap tgz input is fixture-only, while generic
@@ -113,11 +113,14 @@ envelope to provide `setpriv` or numeric `gosu` and reserve the configured IDs.
   prerelease under the standard npm `beta` dist-tag. `beta` is
   non-authoritative publication metadata, not a Hosted rollout selector.
 - The Hosted image workflow takes an operator-supplied exact
-  `clawdi@<semver>` package spec and performs no npm dist-tag lookup. Production
-  rollout selection lives in persisted Hosted setting/config, and Cloud
-  constructs the public manifest from that exact selection. Neither repository
-  calls the other repository's Actions workflows. No legacy image controls or
-  old-state repair are part of this contract.
+  `clawdi@<semver>` package spec and performs no npm dist-tag lookup. A CLI-only
+  change first validates that package against the current digest-pinned image
+  and reuses the digest when the pairing smoke passes; it builds a new image
+  only after a validate-only failure demonstrates image incompatibility.
+  Production rollout selection lives in persisted Hosted setting/config, and
+  Cloud constructs the public manifest from that exact selection. Neither
+  repository calls the other repository's Actions workflows. No legacy image
+  controls or old-state repair are part of this contract.
 
 ## Related Documentation
 

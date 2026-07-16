@@ -41,7 +41,7 @@ import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
-const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.54";
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.55";
 const TEST_HOSTED_HOME = "/home/clawdi";
 const TEST_HOSTED_CODEX_TOOLING = {
 	codex: {
@@ -131,7 +131,7 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 		controlPlane: { cloudApiUrl: "https://cloud-api.example.test" },
 		clawdiCli: {
 			source: "npm:clawdi",
-			packageSpec: "clawdi@0.12.10-beta.54",
+			packageSpec: "clawdi@0.12.10-beta.55",
 			registry: "https://registry.npmjs.org",
 		},
 		providers: {
@@ -884,19 +884,19 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "wrong source",
 			clawdiCli: {
 				source: "npm:other",
-				packageSpec: "clawdi@0.12.10-beta.54",
+				packageSpec: "clawdi@0.12.10-beta.55",
 				registry: "https://registry.npmjs.org",
 			},
 		},
 		{
 			name: "missing registry",
-			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.12.10-beta.54" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.12.10-beta.55" },
 		},
 		{
 			name: "non-official registry",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.54",
+				packageSpec: "clawdi@0.12.10-beta.55",
 				registry: "https://registry.example.test",
 			},
 		},
@@ -904,7 +904,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			name: "dead managed flags",
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.54",
+				packageSpec: "clawdi@0.12.10-beta.55",
 				registry: "https://registry.npmjs.org",
 				managedConfig: true,
 				userEditableConfig: false,
@@ -933,7 +933,7 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
-		"clawdi@0.12.10-beta.54",
+		"clawdi@0.12.10-beta.55",
 		"clawdi@1.2.3-rc-1.2",
 		"clawdi@1.2.3",
 	])("accepts exact hosted CLI package spec %s", (packageSpec) => {
@@ -989,7 +989,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		"clawdi@01.2.3",
 		"./clawdi.tgz",
 		"/tmp/clawdi.tgz",
-		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.54.tgz",
+		"/usr/local/share/clawdi/bootstrap/clawdi-0.12.10-beta.55.tgz",
 		"/usr/local/share/clawdi/bootstrap/../clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/nested/clawdi.tgz",
 		"/usr/local/share/clawdi/bootstrap/clawdi..tgz",
@@ -1025,7 +1025,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.54",
+					packageSpec: "clawdi@0.12.10-beta.55",
 					registry: "https://registry.npmjs.org",
 				},
 				runtimes: {
@@ -1162,7 +1162,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.54",
+					packageSpec: "clawdi@0.12.10-beta.55",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
@@ -1247,7 +1247,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.54",
+				packageSpec: "clawdi@0.12.10-beta.55",
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: {
@@ -1286,7 +1286,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 				clawdiCli: {
 					source: "npm:clawdi",
-					packageSpec: "clawdi@0.12.10-beta.54",
+					packageSpec: "clawdi@0.12.10-beta.55",
 					registry: "https://registry.npmjs.org",
 				},
 				providers: {
