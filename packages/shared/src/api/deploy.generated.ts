@@ -1365,11 +1365,6 @@ export interface components {
              * @default 0
              */
             signup_grant_credits: number;
-            /**
-             * Subscription Grant Credits
-             * @default 0
-             */
-            subscription_grant_credits: number;
             /** Vcpu */
             vcpu: number;
             /** Ram Gb */
