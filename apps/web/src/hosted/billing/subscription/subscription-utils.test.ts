@@ -289,22 +289,12 @@ describe("compute subscription lifecycle presentation", () => {
 		});
 	});
 
-	test("does not claim an overdue pending plan boundary is still scheduled", () => {
-		expect(
-			pendingPlanScheduleCopy(
-				"compute_basic",
-				"2026-07-01T00:00:00Z",
-				"Jul 1, 2026",
-				Date.parse("2026-07-02T00:00:00Z"),
-			),
-		).toBe("Basic plan change is awaiting renewal processing.");
-		expect(
-			pendingPlanScheduleCopy(
-				"compute_basic",
-				"2026-08-01T00:00:00Z",
-				"Aug 1, 2026",
-				Date.parse("2026-07-02T00:00:00Z"),
-			),
-		).toBe("Basic scheduled for Aug 1, 2026.");
+	test("describes the server-projected schedule without local renewal state", () => {
+		expect(pendingPlanScheduleCopy("compute_basic", "2026-07-01T00:00:00Z", "Jul 1, 2026")).toBe(
+			"Basic scheduled for Jul 1, 2026.",
+		);
+		expect(pendingPlanScheduleCopy("compute_basic", "2026-08-01T00:00:00Z", "Aug 1, 2026")).toBe(
+			"Basic scheduled for Aug 1, 2026.",
+		);
 	});
 });

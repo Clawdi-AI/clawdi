@@ -187,14 +187,11 @@ export function pendingPlanScheduleCopy(
 	planSlug: ComputePlanSlug,
 	effectiveAt: string | null | undefined,
 	dateLabel: string,
-	now = Date.now(),
 ): string {
 	const planLabel = computeTierLabel(planSlug);
-	const effectiveMs = effectiveAt ? Date.parse(effectiveAt) : Number.NaN;
-	if (Number.isFinite(effectiveMs) && effectiveMs > now) {
-		return `${planLabel} scheduled for ${dateLabel}.`;
-	}
-	return `${planLabel} plan change is awaiting renewal processing.`;
+	return effectiveAt
+		? `${planLabel} scheduled for ${dateLabel}.`
+		: `${planLabel} scheduled for the next billing date.`;
 }
 
 export function computeTierLabel(

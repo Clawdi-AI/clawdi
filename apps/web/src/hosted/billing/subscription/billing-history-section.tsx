@@ -19,10 +19,7 @@ import type { ComputeBillingHistoryItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatCents } from "@/hosted/billing/format";
 import { useComputeBillingHistory } from "@/hosted/billing/hooks";
-import {
-	billingHistoryFundingLabel,
-	visibleBillingHistoryRows,
-} from "@/hosted/billing/subscription/billing-history.logic";
+import { billingHistoryFundingLabel } from "@/hosted/billing/subscription/billing-history.logic";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
 
@@ -80,9 +77,7 @@ function InvoiceLink({ row }: { row: ComputeBillingHistoryItem }) {
 
 export function BillingHistorySection() {
 	const history = useComputeBillingHistory(20);
-	const rows = visibleBillingHistoryRows(
-		history.data?.pages.flatMap((page) => page.data ?? []) ?? [],
-	);
+	const rows = history.data?.pages.flatMap((page) => page.data ?? []) ?? [];
 
 	return (
 		<section
