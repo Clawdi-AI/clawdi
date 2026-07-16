@@ -19,6 +19,10 @@ import type { ComputeBillingHistoryItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatCents } from "@/hosted/billing/format";
 import { useComputeBillingHistory } from "@/hosted/billing/hooks";
+import {
+	billingHistoryFundingLabel,
+	visibleBillingHistoryRows,
+} from "@/hosted/billing/subscription/billing-history.logic";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
 
@@ -61,7 +65,7 @@ function planLabel(planSlug: string): string {
 }
 
 function InvoiceLink({ row }: { row: ComputeBillingHistoryItem }) {
-	if (row.funding_source !== "stripe" || !row.hosted_invoice_url) return null;
+	if (!row.hosted_invoice_url) return null;
 	return (
 		<Button
 			render={<a href={row.hosted_invoice_url} target="_blank" rel="noopener noreferrer" />}
@@ -76,7 +80,9 @@ function InvoiceLink({ row }: { row: ComputeBillingHistoryItem }) {
 
 export function BillingHistorySection() {
 	const history = useComputeBillingHistory(20);
-	const rows = history.data?.pages.flatMap((page) => page.data ?? []) ?? [];
+	const rows = visibleBillingHistoryRows(
+		history.data?.pages.flatMap((page) => page.data ?? []) ?? [],
+	);
 
 	return (
 		<section
@@ -89,7 +95,7 @@ export function BillingHistorySection() {
 					Billing history
 				</h2>
 				<p className="text-sm text-muted-foreground">
-					Wallet charges and Stripe invoices for paid compute.
+					Stripe invoices for card and AI Credits compute subscriptions.
 				</p>
 			</div>
 
@@ -114,7 +120,7 @@ export function BillingHistorySection() {
 					variant="inset"
 					icon={Receipt}
 					title="No billing history yet"
-					description="Paid compute charges will appear here after the first collection."
+					description="Paid compute invoices will appear here after the first collection."
 				/>
 			) : (
 				<>
@@ -125,7 +131,7 @@ export function BillingHistorySection() {
 									<div className="font-medium">{planLabel(row.plan_slug)} compute</div>
 									<div className="mt-1 flex flex-wrap items-center gap-2">
 										<Badge variant="outline">
-											{row.funding_source === "wallet" ? "Wallet" : "Card"}
+											{billingHistoryFundingLabel(row.funding_source)}
 										</Badge>
 										<StatusBadge status={statusTone(row)}>{statusLabel(row.status)}</StatusBadge>
 									</div>
@@ -162,7 +168,7 @@ export function BillingHistorySection() {
 										<TableCell className="font-medium">{planLabel(row.plan_slug)}</TableCell>
 										<TableCell>
 											<Badge variant="outline">
-												{row.funding_source === "wallet" ? "Wallet" : "Card"}
+												{billingHistoryFundingLabel(row.funding_source)}
 											</Badge>
 										</TableCell>
 										<TableCell>
