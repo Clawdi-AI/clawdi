@@ -9,7 +9,6 @@ import type {
 	ComputeFixPaymentRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
-	ComputeRetryRequest,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionResumeRequest,
@@ -135,8 +134,6 @@ export function useBillingClient() {
 				unwrapDeploy(await api.POST("/v2/subscription/plan/quote", { body })),
 			changePlan: async (body: ComputePlanChangeRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/plan/change", { body })),
-			retrySubscription: async (body: ComputeRetryRequest) =>
-				unwrapDeploy(await api.POST("/v2/subscription/retry", { body })),
 			cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
 				unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
 			fixPayment: async (body: ComputeFixPaymentRequest) =>

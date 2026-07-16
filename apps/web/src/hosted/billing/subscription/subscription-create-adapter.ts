@@ -50,15 +50,8 @@ export type SubscriptionCreateOutcomeView =
 	  }
 	| {
 			flowType: "subscription_activation";
-			subscriptionId: number;
-			invoiceId: string | null;
 			deploymentId: string | null;
 			deployRequestId: string | null;
-			exactDebitCredits: string;
-			balanceAfterCredits: string;
-			periodStart: string;
-			periodEnd: string;
-			entitledUntil: string;
 	  };
 
 export function subscriptionCreateQuoteRequest(
@@ -79,6 +72,13 @@ function decimalString(value: string | null | undefined, field: string): string 
 	return value;
 }
 
+function requiredQuoteNumber(value: number | null | undefined, field: string): number {
+	if (value === null || value === undefined) {
+		throw new Error(`Subscription quote is missing ${field}.`);
+	}
+	return value;
+}
+
 export function subscriptionCreateQuoteView(
 	selection: SubscriptionCreateSelection,
 	quote: ComputeSubscriptionQuoteResponse,
@@ -93,7 +93,7 @@ export function subscriptionCreateQuoteView(
 						quote.balance_after_credits,
 						"the post-debit wallet balance",
 					),
-					pointsPerUsd: requiredNumber(quote.points_per_usd, "the wallet conversion rate"),
+					pointsPerUsd: requiredQuoteNumber(quote.points_per_usd, "the wallet conversion rate"),
 				}
 			: null;
 	return {
@@ -127,35 +127,13 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 	return { body, idempotencyKey: request.idempotencyKey };
 }
 
-function requiredNumber(value: number | null | undefined, field: string): number {
-	if (value === null || value === undefined) {
-		throw new Error(`Subscription activation is missing ${field}.`);
-	}
-	return value;
-}
-
-function requiredString(value: string | null | undefined, field: string): string {
-	if (!value) throw new Error(`Subscription activation is missing ${field}.`);
-	return value;
-}
-
 export function subscriptionCreateOutcome(result: CheckoutResult): SubscriptionCreateOutcomeView {
 	if (result.flow_type !== "subscription_activation") {
 		return { flowType: "checkout", checkout: result };
 	}
 	return {
 		flowType: "subscription_activation",
-		subscriptionId: requiredNumber(result.subscription_id, "the subscription id"),
-		invoiceId: result.invoice_id ?? null,
 		deploymentId: result.deployment_id ?? null,
 		deployRequestId: result.deploy_request_id ?? null,
-		exactDebitCredits: requiredString(result.debited_credits, "the exact wallet debit"),
-		balanceAfterCredits: requiredString(
-			result.balance_after_credits,
-			"the post-debit wallet balance",
-		),
-		periodStart: requiredString(result.current_period_start, "the period start"),
-		periodEnd: requiredString(result.current_period_end, "the period end"),
-		entitledUntil: requiredString(result.entitled_until, "the entitlement end"),
 	};
 }

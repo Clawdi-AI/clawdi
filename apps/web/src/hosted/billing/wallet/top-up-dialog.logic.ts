@@ -55,7 +55,7 @@ export function topUpAmountCentsForCreditShortfall(
 export function invalidateWalletActivity(queryClient: QueryClient): void {
 	queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
 	queryClient.invalidateQueries({ queryKey: ["billing", "ledger"] });
-	queryClient.invalidateQueries({ queryKey: ["billing", "wallet-quote"] });
+	queryClient.invalidateQueries({ queryKey: billingKeys.subscriptionCreateQuotes });
 	queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
 	queryClient.invalidateQueries({ queryKey: ["billing", "history"] });
 	queryClient.invalidateQueries({ queryKey: ["agents"] });

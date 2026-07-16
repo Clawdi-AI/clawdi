@@ -364,23 +364,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/subscription/retry": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Retry V2 Subscription */
-        post: operations["retry_v2_subscription_v2_subscription_retry_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v2/subscription/resume": {
         parameters: {
             query?: never;
@@ -843,34 +826,6 @@ export interface components {
         V2ComputePortalRequest: {
             /** Locale */
             locale?: string | null;
-        };
-        /** V2ComputeRetryRequest */
-        V2ComputeRetryRequest: {
-            /** Subscription Id */
-            subscription_id: number;
-            /** Invoice Id */
-            invoice_id?: string | null;
-        };
-        /** V2ComputeRetryResponse */
-        V2ComputeRetryResponse: {
-            /** Subscription Id */
-            subscription_id: number;
-            /** Status */
-            status: string;
-            /** Funding Source */
-            funding_source?: ("stripe" | "wallet") | null;
-            /** Invoice Id */
-            invoice_id?: string | null;
-            /** Invoice Status */
-            invoice_status?: string | null;
-            /** Current Period Start */
-            current_period_start?: string | null;
-            /** Current Period End */
-            current_period_end?: string | null;
-            /** Entitled Until */
-            entitled_until?: string | null;
-            /** Recovery Action */
-            recovery_action?: ("top_up" | "fix_payment" | "start_new") | null;
         };
         /** V2ComputeSubscriptionActionResponse */
         V2ComputeSubscriptionActionResponse: {
@@ -2320,39 +2275,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2ComputeSubscriptionQuoteResponse-Output"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    retry_v2_subscription_v2_subscription_retry_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["V2ComputeRetryRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2ComputeRetryResponse"];
                 };
             };
             /** @description Validation Error */

@@ -16,7 +16,6 @@ import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
 	ComputePlanChangeResponse,
-	ComputeRetryRequest,
 	ComputeSubscriptionActionResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
@@ -256,7 +255,7 @@ export function useSubscriptionCreateQuote(
 					selection.billingTermMonths,
 					selection.fundingSource,
 				)
-			: ["billing", "subscription-create-quote", "disabled"],
+			: [...billingKeys.subscriptionCreateQuotes, "disabled"],
 		queryFn: async () => {
 			if (!selection || !quoteBody) {
 				throw new Error("Subscription creation quote is unavailable.");
@@ -280,19 +279,6 @@ export function useChangePlan() {
 	const qc = useQueryClient();
 	return useMutation<ComputePlanChangeResponse, Error, ComputePlanChangeRequest>({
 		mutationFn: (body) => client.changePlan(body),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: ["billing", "history"] });
-		},
-	});
-}
-
-export function useRetrySubscription() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (body: ComputeRetryRequest) => client.retrySubscription(body),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });

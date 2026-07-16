@@ -112,28 +112,18 @@ describe("subscription creation adapter", () => {
 		});
 	});
 
-	test("normalizes unified wallet activation results", () => {
+	test("projects only the wallet activation fields consumed by the UI", () => {
 		const activation: CheckoutResult = {
 			flow_type: "subscription_activation",
 			funding_source: "wallet",
 			checkout_url: "",
-			subscription_id: 42,
-			invoice_id: "in_42",
 			deploy_request_id: "subscription-create-test",
 			deployment_id: "hdep_created",
-			debited_credits: "180000",
-			balance_after_credits: "20000.25",
-			current_period_start: "2026-07-16T00:00:00Z",
-			current_period_end: "2027-07-16T00:00:00Z",
-			entitled_until: "2027-07-16T00:00:00Z",
 		};
-		expect(subscriptionCreateOutcome(activation)).toMatchObject({
+		expect(subscriptionCreateOutcome(activation)).toEqual({
 			flowType: "subscription_activation",
-			subscriptionId: 42,
-			invoiceId: "in_42",
 			deploymentId: "hdep_created",
-			exactDebitCredits: "180000",
-			balanceAfterCredits: "20000.25",
+			deployRequestId: "subscription-create-test",
 		});
 	});
 });

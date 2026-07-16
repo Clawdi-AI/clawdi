@@ -1,4 +1,4 @@
-import type { CheckoutRequest, CheckoutResult, HostedDeployment } from "@/hosted/billing/contracts";
+import type { CheckoutResult, HostedDeployment } from "@/hosted/billing/contracts";
 
 export const CHECKOUT_ELEMENTS_UI_MODE = "custom";
 
@@ -10,10 +10,6 @@ export function hasCheckoutClientSecret(
 	result: CheckoutResult,
 ): result is CheckoutResult & { client_secret: string } {
 	return typeof result.client_secret === "string" && result.client_secret.length > 0;
-}
-
-export function buildHostedCheckoutFallbackRequest(request: CheckoutRequest): CheckoutRequest {
-	return { ...request, ui_mode: "hosted" };
 }
 
 export function findNewDeploymentId(

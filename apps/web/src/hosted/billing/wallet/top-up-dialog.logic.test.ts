@@ -23,6 +23,9 @@ function queryClientWithWalletActivity(): QueryClient {
 	const qc = new QueryClient();
 	qc.setQueryData(billingKeys.wallet, { balance_cents: 1_000 });
 	qc.setQueryData(billingKeys.ledger(50), { items: [] });
+	qc.setQueryData(billingKeys.subscriptionCreateQuote("compute_basic", 1, "wallet"), {
+		term_price_cents: 1_500,
+	});
 	qc.setQueryData(billingKeys.deployments, []);
 	qc.setQueryData(billingKeys.billingHistory(20), { pages: [] });
 	qc.setQueryData(["agents"], []);
@@ -57,6 +60,10 @@ describe("handleTopupStartResult", () => {
 
 		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.ledger(50))?.isInvalidated).toBe(true);
+		expect(
+			qc.getQueryState(billingKeys.subscriptionCreateQuote("compute_basic", 1, "wallet"))
+				?.isInvalidated,
+		).toBe(true);
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.billingHistory(20))?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
