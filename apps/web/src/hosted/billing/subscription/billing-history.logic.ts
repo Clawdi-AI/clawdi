@@ -4,7 +4,7 @@ import type { ComputeBillingHistoryItem } from "@/hosted/billing/contracts";
 export function visibleBillingHistoryRows(
 	rows: readonly ComputeBillingHistoryItem[],
 ): ComputeBillingHistoryItem[] {
-	return rows.filter((row) => row.amount_cents !== 0 && Boolean(row.stripe_invoice_id));
+	return rows.filter((row) => Boolean(row.stripe_invoice_id));
 }
 
 export function billingHistoryFundingLabel(

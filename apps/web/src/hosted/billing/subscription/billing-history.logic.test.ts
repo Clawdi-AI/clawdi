@@ -26,10 +26,18 @@ describe("visibleBillingHistoryRows", () => {
 		expect(visibleBillingHistoryRows([card, wallet])).toEqual([card, wallet]);
 	});
 
-	test("hides free invoices and legacy wallet-charge rows", () => {
+	test("keeps a server-visible $0 Stripe plan-change invoice", () => {
+		const zeroProration = invoice({
+			id: "in_zero_proration",
+			amount_cents: 0,
+			stripe_invoice_id: "in_zero_proration",
+		});
+		expect(visibleBillingHistoryRows([zeroProration])).toEqual([zeroProration]);
+	});
+
+	test("rejects non-invoice legacy wallet-charge rows", () => {
 		expect(
 			visibleBillingHistoryRows([
-				invoice({ id: "in_free", amount_cents: 0 }),
 				invoice({ id: "wallet_charge_1", funding_source: "wallet", stripe_invoice_id: null }),
 			]),
 		).toEqual([]);
