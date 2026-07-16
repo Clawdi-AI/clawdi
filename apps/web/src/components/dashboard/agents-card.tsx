@@ -87,13 +87,13 @@ export interface AgentTile {
 	statusLabel: string;
 	/** Used to compute the "N active now" count in the card description. */
 	lastSeenAt?: string | null;
-	/** Primary click target. Always points at the in-app env detail
+	/** Primary click target. Points at the in-app env detail
 	 * page (`/agents/{env_id}`) when an env is available — for both
 	 * self-managed and hosted tiles with a registered env, so the
-	 * sessions/skills/memory experience stays unified. Uses the in-app
-	 * deployment-id route for hosted tiles whose cloud-api env has not
-	 * been registered yet. `external` reflects whichever applies. */
-	href: string;
+	 * sessions/skills/memory experience stays unified. Hosted tiles without a
+	 * registered env are non-navigable instead of putting a deployment id in an
+	 * agent route. `external` reflects whichever applies. */
+	href: string | null;
 	external?: boolean;
 	/** Optional hosted remediation target retained for surfaces that open
 	 * status dialogs. Tiles render daemon status as a non-interactive dot. */
@@ -331,6 +331,14 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	const linkStatus = [statusDot.label, tile.secondaryStatus?.label].filter(Boolean).join(", ");
 	const linkLabel = `Open ${tile.name}. Status: ${linkStatus}`;
 
+	if (!tile.href) {
+		return (
+			<div className="block h-full rounded-lg text-inherit" title={`Status: ${linkStatus}`}>
+				{card}
+			</div>
+		);
+	}
+
 	if (tile.external) {
 		return (
 			<a
@@ -366,7 +374,7 @@ function agentTileActivityLabel(tile: AgentTile): string | null {
 	return null;
 }
 
-function compareAgentTiles(a: AgentTile, b: AgentTile): number {
+export function compareAgentTiles(a: AgentTile, b: AgentTile): number {
 	if (a.env && b.env) return compareAgentEnvironments(a.env, b.env);
 	const aOrder = a.sortOrder ?? Number.MAX_SAFE_INTEGER;
 	const bOrder = b.sortOrder ?? Number.MAX_SAFE_INTEGER;

@@ -5,25 +5,20 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentSourceBadge } from "@/components/dashboard/agent-label";
 import {
 	AgentsCard,
-	type AgentTile,
 	AgentTileGrid,
 	HostedUnavailableBanner,
 } from "@/components/dashboard/agents-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { SectionLabel } from "@/components/section-label";
-import { useLegacyEnvIds } from "@/hosted/agents/ownership-sensor";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import {
-	connectedAgentTilesForHostedView,
-	useHostedAgentTiles,
-} from "@/hosted/use-hosted-agent-tiles";
+import { useUnifiedAgentList } from "@/hosted/use-unified-agent-list";
 
 type Env = components["schemas"]["AgentResponse"];
 
 /**
  * Hosted-only branch of the dashboard's agent panel.
  *
- * Wraps `useHostedAgentTiles` (cross-origin to the deploy API) and the
+ * Wraps `useUnifiedAgentList` (cross-origin to the deploy API) and the
  * AgentsCard / OnboardingCard render decision into one component so the
  * entire hosted code path — including the cross-origin client and the
  * empty-state coupling between hosted and self-managed counts — can be
@@ -44,7 +39,6 @@ type Env = components["schemas"]["AgentResponse"];
  * inherits no extra spacing.
  */
 export function HostedAgentsSection({
-	selfManagedTiles,
 	envsLoading,
 	selfManagedError,
 	onRetrySelfManaged,
@@ -53,7 +47,6 @@ export function HostedAgentsSection({
 	showCloudDeployments = true,
 	showLegacyAgents = false,
 }: {
-	selfManagedTiles: AgentTile[];
 	envsLoading: boolean;
 	selfManagedError?: unknown;
 	onRetrySelfManaged?: () => void;
@@ -70,34 +63,25 @@ export function HostedAgentsSection({
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
 }) {
-	const hosted = useHostedAgentTiles({
+	const unified = useUnifiedAgentList({
 		cloudEnvs,
-		includeDeployments: showCloudDeployments,
-	});
-	const legacyEnvIds = useLegacyEnvIds();
-	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
-	const hostedDeploymentsLoading = showCloudDeployments && hosted.isLoading;
-	const connectedTiles = connectedAgentTilesForHostedView({
-		selfManagedTiles,
-		claimedEnvIds: hosted.claimedEnvIds,
-		legacyEnvIds,
-		cloudEnvs,
+		showCloudDeployments,
 		showLegacyAgents,
 	});
-	const agentTiles: AgentTile[] = [...hosted.tiles, ...connectedTiles];
+	const connectedTiles = unified.connectedTiles;
+	const agentTiles = unified.tiles;
 	// Empty state must consider BOTH sources of agents. Hidden behind
-	// `!hosted.error` so a transient hosted-fetch failure surfaces in
+	// `!unified.error` so a transient hosted-fetch failure surfaces in
 	// AgentsCard's error banner instead of dropping silently into the
 	// onboarding hero.
 	const isEmptyState =
 		!envsLoading &&
 		!selfManagedError &&
 		selfManagedCount === 0 &&
-		hosted.tiles.length === 0 &&
+		unified.hostedTiles.length === 0 &&
 		connectedTiles.length === 0 &&
-		!hostedDeploymentsLoading &&
-		!legacyOwnershipLoading &&
-		!hosted.error;
+		!unified.isLoading &&
+		!unified.error;
 	return (
 		<div data-hosted="true">
 			{isEmptyState ? (
@@ -109,10 +93,10 @@ export function HostedAgentsSection({
 					error={selfManagedError}
 					onRetry={onRetrySelfManaged}
 					hostedStatus={{
-						isLoading: hostedDeploymentsLoading || legacyOwnershipLoading,
-						error: hosted.error,
+						isLoading: unified.isLoading,
+						error: unified.error,
 						onRetry: () => {
-							void hosted.refetch();
+							void unified.refetch();
 						},
 						normalizer: billingErrorNormalizer,
 					}}
@@ -132,13 +116,11 @@ export function HostedAgentsSection({
  * secondary CTA.
  */
 export function HostedSecondaryCTA({
-	selfManagedCount,
 	envsLoading,
 	cloudEnvs,
 	showCloudDeployments = true,
 	showLegacyAgents = false,
 }: {
-	selfManagedCount: number;
 	envsLoading: boolean;
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
@@ -147,26 +129,16 @@ export function HostedSecondaryCTA({
 	// Reuses the same hosted deployments TanStack Query cache
 	// as `HostedAgentsSection` so passing cloudEnvs here is just
 	// re-running the join, not re-fetching.
-	const hosted = useHostedAgentTiles({
+	const unified = useUnifiedAgentList({
 		cloudEnvs,
-		includeDeployments: showCloudDeployments,
-	});
-	const legacyEnvIds = useLegacyEnvIds();
-	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
-	const hostedDeploymentsLoading = showCloudDeployments && hosted.isLoading;
-	const legacyConnectedTiles = connectedAgentTilesForHostedView({
-		selfManagedTiles: [],
-		claimedEnvIds: hosted.claimedEnvIds,
-		legacyEnvIds,
-		cloudEnvs,
+		showCloudDeployments,
 		showLegacyAgents,
 	});
-	const hasAnyAgent =
-		selfManagedCount > 0 || hosted.tiles.length > 0 || legacyConnectedTiles.length > 0;
+	const hasAnyAgent = unified.tiles.length > 0;
 	if (hasAnyAgent) return <OnboardingCard variant="additional-agent" />;
 	// Loading: don't flash an empty slot then pop in. Wait for pending
 	// sources only when none has already proven there is an agent.
-	if (envsLoading || hostedDeploymentsLoading || legacyOwnershipLoading) return null;
+	if (envsLoading || unified.isLoading) return null;
 	return null;
 }
 
@@ -175,7 +147,6 @@ export function HostedSecondaryCTA({
  * each; self-managed and legacy hosted agents get their own section.
  */
 export function HostedAgentsByCompute({
-	selfManagedTiles,
 	envsLoading,
 	selfManagedError,
 	onRetrySelfManaged,
@@ -184,7 +155,6 @@ export function HostedAgentsByCompute({
 	showCloudDeployments = true,
 	showLegacyAgents = false,
 }: {
-	selfManagedTiles: AgentTile[];
 	envsLoading: boolean;
 	selfManagedError?: unknown;
 	onRetrySelfManaged?: () => void;
@@ -193,21 +163,13 @@ export function HostedAgentsByCompute({
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
 }) {
-	const hosted = useHostedAgentTiles({
+	const unified = useUnifiedAgentList({
 		cloudEnvs,
-		includeDeployments: showCloudDeployments,
-	});
-	const legacyEnvIds = useLegacyEnvIds();
-	const legacyOwnershipLoading = showLegacyAgents && legacyEnvIds === null;
-	const hostedDeploymentsLoading = showCloudDeployments && hosted.isLoading;
-	const hostedTiles = hosted.tiles;
-	const connectedTiles = connectedAgentTilesForHostedView({
-		selfManagedTiles,
-		claimedEnvIds: hosted.claimedEnvIds,
-		legacyEnvIds,
-		cloudEnvs,
+		showCloudDeployments,
 		showLegacyAgents,
 	});
+	const hostedTiles = unified.hostedTiles;
+	const connectedTiles = unified.connectedTiles;
 
 	const isEmptyState =
 		!envsLoading &&
@@ -215,9 +177,8 @@ export function HostedAgentsByCompute({
 		selfManagedCount === 0 &&
 		hostedTiles.length === 0 &&
 		connectedTiles.length === 0 &&
-		!hostedDeploymentsLoading &&
-		!legacyOwnershipLoading &&
-		!hosted.error;
+		!unified.isLoading &&
+		!unified.error;
 	if (isEmptyState) {
 		return (
 			<div data-hosted="true">
@@ -227,7 +188,7 @@ export function HostedAgentsByCompute({
 	}
 
 	if (
-		(envsLoading || hostedDeploymentsLoading || legacyOwnershipLoading) &&
+		(envsLoading || unified.isLoading) &&
 		hostedTiles.length === 0 &&
 		connectedTiles.length === 0
 	) {
@@ -270,11 +231,11 @@ export function HostedAgentsByCompute({
 				</section>
 			) : null}
 
-			{hosted.error ? (
+			{unified.error ? (
 				<HostedUnavailableBanner
-					error={hosted.error}
+					error={unified.error}
 					onRetry={() => {
-						void hosted.refetch();
+						void unified.refetch();
 					}}
 					normalizer={billingErrorNormalizer}
 				/>

@@ -1,20 +1,16 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
-import type { AgentTile } from "@/components/dashboard/agents-card";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 
 type HostedAgentTileStatus = typeof import("@/hosted/use-hosted-agent-tiles").hostedAgentTileStatus;
 type DeploymentToTiles = typeof import("@/hosted/use-hosted-agent-tiles").deploymentToTiles;
 type HostedRuntimeStatusView =
 	typeof import("@/hosted/use-hosted-agent-tiles").hostedRuntimeStatusView;
-type UnifiedHostedAgentTiles =
-	typeof import("@/hosted/use-hosted-agent-tiles").unifiedHostedAgentTiles;
 type Env = components["schemas"]["AgentResponse"];
 
 let getTileStatus: HostedAgentTileStatus | null = null;
 let getDeploymentToTiles: DeploymentToTiles | null = null;
 let getRuntimeStatusView: HostedRuntimeStatusView | null = null;
-let getUnifiedHostedAgentTiles: UnifiedHostedAgentTiles | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -24,7 +20,6 @@ beforeAll(async () => {
 	getTileStatus = module.hostedAgentTileStatus;
 	getDeploymentToTiles = module.deploymentToTiles;
 	getRuntimeStatusView = module.hostedRuntimeStatusView;
-	getUnifiedHostedAgentTiles = module.unifiedHostedAgentTiles;
 });
 
 function hostedAgentTileStatus(rawStatus: string) {
@@ -47,11 +42,6 @@ function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = [])
 		deployment,
 		new Map(envs.map((item) => [item.id.toLowerCase(), item])),
 	);
-}
-
-function unifiedHostedAgentTiles(args: Parameters<UnifiedHostedAgentTiles>[0]) {
-	if (!getUnifiedHostedAgentTiles) throw new Error("unifiedHostedAgentTiles was not loaded");
-	return getUnifiedHostedAgentTiles(args);
 }
 
 function env(overrides: Partial<Env> = {}): Env {
@@ -116,20 +106,6 @@ function deployment(
 	};
 }
 
-function agentTile(overrides: Partial<AgentTile> = {}): AgentTile {
-	return {
-		id: "11111111-1111-4111-8111-111111111111",
-		source: "self-managed",
-		name: "connected-agent",
-		agentType: "openclaw",
-		statusLabel: "Never seen",
-		href: "/agents/11111111-1111-4111-8111-111111111111",
-		active: false,
-		env: null,
-		...overrides,
-	};
-}
-
 describe("deploymentToTiles", () => {
 	test("renders only the selected runtime even when stale environment mappings remain", () => {
 		const openclawEnv = env({
@@ -156,6 +132,8 @@ describe("deploymentToTiles", () => {
 
 		expect(tiles.map((tile) => tile.agentType)).toEqual(["openclaw"]);
 		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
+		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi`);
+		expect(tiles[0]?.manageHref).toBe(`/agents/${openclawEnv.id}/settings?source=on-clawdi`);
 	});
 
 	test("projects dunning state as the hosted tile secondary status", () => {
@@ -216,7 +194,7 @@ describe("deploymentToTiles", () => {
 		});
 	});
 
-	test("routes a failed never-provisioned deployment by deployment id so delete stays reachable", () => {
+	test("keeps an unmatched deployment non-navigable instead of emitting an agent route", () => {
 		const failureReason = "startup_probe_failing; restart_count=2";
 		const [tile] = hostedDeploymentToTiles(
 			deployment(
@@ -233,8 +211,7 @@ describe("deploymentToTiles", () => {
 		expect(tile).toMatchObject({
 			id: "dep_123",
 			source: "on-clawdi",
-			href: "/agents/dep_123",
-			manageHref: "/agents/dep_123/settings",
+			href: null,
 			env: null,
 			secondaryStatus: {
 				label: "Failure: startup_probe_failing; restart_count=2",
@@ -242,47 +219,8 @@ describe("deploymentToTiles", () => {
 				textClass: "text-destructive-muted-foreground font-medium",
 			},
 		});
-	});
-});
-
-describe("unifiedHostedAgentTiles", () => {
-	test("keeps hosted tiles visible while legacy ownership is unresolved", () => {
-		const claimedEnv = "33333333-3333-4333-8333-333333333333";
-		const hostedTile = agentTile({
-			id: "dep_failed",
-			source: "on-clawdi",
-			name: "OpenClaw",
-			href: "/agents/dep_failed",
-			manageHref: "/agents/dep_failed/settings",
-			statusLabel: "Failed",
-			secondaryStatus: {
-				label: "Failure: startup_probe_failing",
-				title: "startup_probe_failing",
-				textClass: "text-destructive-muted-foreground font-medium",
-			},
-		});
-		const claimedSelfManaged = agentTile({
-			id: claimedEnv,
-			name: "cloud-env",
-			href: `/agents/${claimedEnv}`,
-		});
-		const connected = agentTile({
-			id: "44444444-4444-4444-8444-444444444444",
-			name: "connected-agent",
-			href: "/agents/44444444-4444-4444-8444-444444444444",
-		});
-
-		const tiles = unifiedHostedAgentTiles({
-			selfManagedTiles: [claimedSelfManaged, connected],
-			hostedTiles: [hostedTile],
-			claimedEnvIds: new Set([claimedEnv.toLowerCase()]),
-			legacyEnvIds: null,
-			cloudEnvs: [],
-			showLegacyAgents: true,
-		});
-
-		expect(tiles.map((tile) => tile.id)).toEqual(["dep_failed", connected.id]);
-		expect(tiles[0]?.secondaryStatus?.label).toBe("Failure: startup_probe_failing");
+		expect(tile?.manageHref).toBeUndefined();
+		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 });
 

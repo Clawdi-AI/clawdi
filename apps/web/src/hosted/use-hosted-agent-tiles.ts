@@ -2,14 +2,9 @@
 
 import type { components } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
-import { createElement, type ReactNode, useMemo } from "react";
+import { createElement, useMemo } from "react";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
-import {
-	type AgentFleetSummary,
-	type AgentTile,
-	fleetSummaryFromTiles,
-	isAgentActive,
-} from "@/components/dashboard/agents-card";
+import { type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
 import {
 	DaemonStatusBadge,
 	type DaemonStatusVisual,
@@ -35,15 +30,12 @@ import {
 	parseDeploymentStatus,
 	shouldPollDeployments,
 } from "@/hosted/deployment-status";
-import { legacyConnectedAgentTiles } from "@/hosted/legacy-agent-tiles";
 import { deploymentRuntime, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
-import { normalizeAgentEnvId, useAgentOwnership } from "@/lib/agent-ownership";
+import { normalizeAgentEnvId } from "@/lib/agent-ownership";
 import { agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
 type DeploymentStatusInput = Pick<HostedDeployment, "status" | "failure_reason">;
-
-const EMPTY_ENV_IDS: ReadonlySet<string> = new Set();
 
 const COMPUTE_DOT_TONE: Record<DeploymentStatusTone, string> = {
 	success: "bg-success ring-2 ring-success/20",
@@ -240,15 +232,15 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 	const slug = deploymentDisplayName(d.name);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
 	// Hosted env join: the selected hosted runtime registers one cloud-api env
-	// via the admin endpoint. If it is not minted yet, route by deployment id.
+	// via the admin endpoint. Without that env there is no resolvable agent route.
 	const envId = runtimeEnvironmentId(d.config_info, runtime);
 	const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
 	const detailHref = matchedEnv
 		? agentSectionHref(matchedEnv.id, "overview", "source=on-clawdi")
-		: agentSectionHref(d.id);
+		: null;
 	const settingsHref = matchedEnv
 		? agentSectionHref(matchedEnv.id, "settings", "source=on-clawdi")
-		: agentSectionHref(d.id, "settings");
+		: undefined;
 	const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
 	const contextLabel = slug !== name ? slug : null;
 	const runtimeStatus = hostedRuntimeStatusView(d, matchedEnv ?? null);
@@ -300,107 +292,6 @@ export function hostedAgentTileStatus(rawStatus: string): { label: string; activ
 		label: deploymentStatusLabel(status),
 		active: isRunningStatus(status),
 	};
-}
-
-export function unifiedHostedAgentTiles({
-	selfManagedTiles,
-	hostedTiles,
-	claimedEnvIds,
-	legacyEnvIds,
-	cloudEnvs,
-	showLegacyAgents,
-}: {
-	selfManagedTiles: AgentTile[];
-	hostedTiles: AgentTile[];
-	claimedEnvIds: ReadonlySet<string>;
-	legacyEnvIds: ReadonlySet<string> | null;
-	cloudEnvs: Env[];
-	showLegacyAgents: boolean;
-}): AgentTile[] {
-	return [
-		...hostedTiles,
-		...connectedAgentTilesForHostedView({
-			selfManagedTiles,
-			claimedEnvIds,
-			legacyEnvIds,
-			cloudEnvs,
-			showLegacyAgents,
-		}),
-	];
-}
-
-export function connectedAgentTilesForHostedView({
-	selfManagedTiles,
-	claimedEnvIds,
-	legacyEnvIds,
-	cloudEnvs,
-	showLegacyAgents,
-}: {
-	selfManagedTiles: AgentTile[];
-	claimedEnvIds: ReadonlySet<string>;
-	legacyEnvIds: ReadonlySet<string> | null;
-	cloudEnvs: Env[];
-	showLegacyAgents: boolean;
-}): AgentTile[] {
-	const legacyConnectedTiles = showLegacyAgents
-		? legacyEnvIds
-			? legacyConnectedAgentTiles(cloudEnvs, legacyEnvIds, claimedEnvIds)
-			: []
-		: [];
-	const dedupedSelfManaged = selfManagedTiles.filter(
-		(tile) =>
-			!isOwnedEnvId(tile.id, claimedEnvIds, showLegacyAgents ? legacyEnvIds : EMPTY_ENV_IDS),
-	);
-	return [...legacyConnectedTiles, ...dedupedSelfManaged];
-}
-
-function isOwnedEnvId(
-	id: string,
-	claimedEnvIds: ReadonlySet<string>,
-	legacyEnvIds: ReadonlySet<string> | null,
-): boolean {
-	const envId = normalizeAgentEnvId(id);
-	return Boolean(envId && (claimedEnvIds.has(envId) || legacyEnvIds?.has(envId)));
-}
-
-export function HostedFleetSummary({
-	selfManagedTiles,
-	cloudEnvs,
-	showCloudDeployments = true,
-	showLegacyAgents = false,
-	children,
-}: {
-	selfManagedTiles: AgentTile[];
-	cloudEnvs: Env[];
-	showCloudDeployments?: boolean;
-	showLegacyAgents?: boolean;
-	children: (summary: AgentFleetSummary) => ReactNode;
-}) {
-	const hosted = useHostedAgentTiles({
-		cloudEnvs,
-		includeDeployments: showCloudDeployments,
-	});
-	const ownership = useAgentOwnership();
-	const legacyEnvIds = showLegacyAgents ? (ownership?.legacyEnvIds ?? null) : EMPTY_ENV_IDS;
-	const tiles = useMemo(() => {
-		return unifiedHostedAgentTiles({
-			selfManagedTiles,
-			hostedTiles: hosted.tiles,
-			claimedEnvIds: hosted.claimedEnvIds,
-			legacyEnvIds,
-			cloudEnvs,
-			showLegacyAgents,
-		});
-	}, [
-		cloudEnvs,
-		hosted.claimedEnvIds,
-		hosted.tiles,
-		legacyEnvIds,
-		selfManagedTiles,
-		showLegacyAgents,
-	]);
-	const summary = useMemo(() => fleetSummaryFromTiles(tiles), [tiles]);
-	return children(summary);
 }
 
 export function HostedFocusRuntimeStatusBadge({
