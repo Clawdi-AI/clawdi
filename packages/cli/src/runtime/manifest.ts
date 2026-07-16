@@ -2116,6 +2116,41 @@ function applyHostedAiProviderProjection(
 	return { path: null, revision: null, providerIds: [] };
 }
 
+function previewHostedAiProviderProjectionRevision(
+	name: string,
+	observation: RuntimeInstallObservation,
+	manifest: RuntimeManifest,
+	workspaceRoot: string,
+	previousProviderIds: readonly string[],
+	managedPrimaryModelOverrides: Partial<Record<string, AgentPrimaryModel>>,
+): string | null {
+	if (
+		name !== "hermes" ||
+		!observation.enabled ||
+		observation.status === "install_failed" ||
+		!observation.commandPath
+	) {
+		return null;
+	}
+	const projectionInput = agentTargetProjectionInput(
+		hostedAiProviderCatalog(manifest, name, {
+			primaryModelOverride: managedPrimaryModelOverrides[name],
+		}),
+	);
+	assertHostedProviderProjectionMode(name, manifest, projectionInput);
+	if (manifest.runtimes[name]?.providerMode === "configured" && !projectionInput) {
+		return null;
+	}
+	return applyHostedHermesAiProviderProjection(
+		observation,
+		projectionInput,
+		previousProviderIds,
+		projectionSystemHome(manifest) ?? process.env.HOME ?? "",
+		workspaceRoot,
+		false,
+	).revision;
+}
+
 function applyHostedCodexManagedProviderProjection(
 	manifest: RuntimeManifest,
 	home: string,
@@ -2333,15 +2368,16 @@ function applyHostedHermesAiProviderProjection(
 	previousProviderIds: readonly string[],
 	home: string,
 	workspaceRoot: string,
+	apply = true,
 ): HostedAiProviderProjectionResult {
 	const configPath = join(home, ".hermes", "config.yaml");
 	if (!projectionInput) {
-		if (previousProviderIds.length > 0) removeHermesModelProviderPlugin(home);
+		if (apply && previousProviderIds.length > 0) removeHermesModelProviderPlugin(home);
 		const deletedProviderIds = existingHermesProviderIds(
 			configPath,
 			staleProviderIds(new Set(previousProviderIds), new Set()),
 		);
-		if (deletedProviderIds.length > 0) {
+		if (apply && deletedProviderIds.length > 0) {
 			mergeHermesConfig(configPath, hermesProviderDeletePatch(deletedProviderIds));
 			makeRuntimeUserOwned(configPath);
 		}
@@ -2359,7 +2395,7 @@ function applyHostedHermesAiProviderProjection(
 	if (!commandPath) return { path: null, revision: null, providerIds: [] };
 	const version = detectHermesInstalledVersion(commandPath, home, workspaceRoot);
 	if (!supportsHermesModelProviderPlugins(version)) {
-		removeHermesModelProviderPlugin(home);
+		if (apply) removeHermesModelProviderPlugin(home);
 		const projection = buildAgentTargetProjection(
 			"hermes",
 			projectionInput.catalog,
@@ -2373,8 +2409,10 @@ function applyHostedHermesAiProviderProjection(
 			staleProviderIds(new Set(previousProviderIds), new Set(activeProviderIds)),
 		);
 		const patchContent = mergeHermesProviderDeletes(file.content, deletedProviderIds);
-		mergeHermesConfig(configPath, patchContent);
-		makeRuntimeUserOwned(configPath);
+		if (apply) {
+			mergeHermesConfig(configPath, patchContent);
+			makeRuntimeUserOwned(configPath);
+		}
 		return {
 			path: configPath,
 			providerIds: activeProviderIds,
@@ -2389,7 +2427,6 @@ function applyHostedHermesAiProviderProjection(
 		projectionInput.catalog,
 		projectionInput.primaryModel,
 	);
-	const pluginDir = syncHermesModelProviderPlugin(home, pluginProjection.pluginFiles);
 	const activeProviderIds = [...hermesProjectedProviderIds(projectionInput, "plugin")].sort();
 	const deletedProviderIds = staleProviderIds(
 		new Set(previousProviderIds),
@@ -2400,8 +2437,13 @@ function applyHostedHermesAiProviderProjection(
 		pluginProjection.modelPatch,
 		existingDeletedProviderIds,
 	);
-	mergeHermesConfig(configPath, modelPatch);
-	makeRuntimeUserOwned(configPath);
+	const pluginDir = apply
+		? syncHermesModelProviderPlugin(home, pluginProjection.pluginFiles)
+		: hermesModelProviderPluginDir(home);
+	if (apply) {
+		mergeHermesConfig(configPath, modelPatch);
+		makeRuntimeUserOwned(configPath);
+	}
 	return {
 		path: pluginDir,
 		providerIds: activeProviderIds,
@@ -4589,6 +4631,17 @@ function resetFailedRuntimeUserService(name: string, paths: RuntimePaths, cwd: s
 	}
 }
 
+function reloadRuntimeUserManager(paths: RuntimePaths, cwd: string): void {
+	ensureConfiguredRuntimeUserManagerReady();
+	runRuntimeUserCommand(
+		process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl",
+		["--user", "daemon-reload"],
+		"",
+		paths.userHome,
+		cwd,
+	);
+}
+
 function uninstallOfficialRuntimeUserService(input: {
 	unitName: string;
 	paths: RuntimePaths;
@@ -4714,22 +4767,12 @@ function runtimeManifestUrlEnv(sourcePath: string): string {
 	return process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim() || "";
 }
 
-function writeSystemdUnits(
-	runtimePrograms: RuntimeSystemdUserProgram[],
-	egressProgram: RuntimeEgressSystemdProgram | null,
-	egressIdentity: RuntimeEgressIdentity | null,
-	manifest: RuntimeManifest,
+function runtimeSystemdCommonEnvironment(
 	sourcePath: string,
 	paths: RuntimePaths,
-	workspaceRoot: string,
-	daemonAuthTokenFile: string | null,
-	secretValues: Record<string, string> | undefined,
-	providerProjectionRevisions: Partial<Record<string, string | null>>,
-): { systemUnits: string[]; userUnits: string[] } {
+): Record<string, string> {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const runtimeBridgeToken = hostedRuntimeBridgeToken();
-	const bridgeSurfaceSpecs = runtimeBridgeSurfaceSpecsForManifest(manifest);
-	const commonEnvironment = {
+	return {
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_AUTH_ENV: process.env.CLAWDI_RUNTIME_AUTH_ENV?.trim() ?? "",
@@ -4742,6 +4785,79 @@ function writeSystemdUnits(
 		[RUNTIME_BRIDGE_SURFACES_ENV]: "",
 		PATH: runtimeSystemdPath(paths),
 	};
+}
+
+function writeRuntimeSystemdUserProgram(input: {
+	program: RuntimeSystemdUserProgram;
+	commonEnvironment: Record<string, string>;
+	manifest: RuntimeManifest;
+	paths: RuntimePaths;
+	secretValues: Record<string, string> | undefined;
+	providerProjectionRevisions: Partial<Record<string, string | null>>;
+}): string {
+	const { program } = input;
+	const name = runtimeSystemdProgramName(program);
+	const unitName = systemdUnitFileName(name);
+	const env = {
+		...input.commonEnvironment,
+		...program.env,
+		...(input.manifest.locale ? { TZ: input.manifest.locale.timezone } : {}),
+		CLAWDI_AUTH_TOKEN: "",
+		CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
+			input.manifest,
+			program,
+			input.secretValues,
+			input.providerProjectionRevisions,
+		),
+		...(officialRuntimeServiceDescriptorForProgram(program)?.unitEnv?.(unitName) ?? {}),
+	};
+	if (officialRuntimeServiceInstallArgs(program)) {
+		return writeSystemdUserDropIn({
+			paths: input.paths,
+			name,
+			command: program.command,
+			args: program.args,
+			cwd: program.cwd,
+			env,
+		});
+	}
+	return writeSystemdUserUnit({
+		paths: input.paths,
+		name,
+		description: `Clawdi hosted ${program.runtime}${program.service ? ` ${program.service}` : ""}`,
+		command: program.command,
+		args: program.args,
+		cwd: program.cwd,
+		env,
+	});
+}
+
+function officialRuntimeSystemdPrograms(
+	programs: RuntimeSystemdUserProgram[],
+): RuntimeSystemdUserProgram[] {
+	const byServiceName = new Map<string, RuntimeSystemdUserProgram>();
+	for (const program of programs) {
+		const serviceName = officialRuntimeSystemdProgramName(program);
+		if (serviceName) byServiceName.set(serviceName, program);
+	}
+	return [...byServiceName.values()];
+}
+
+function writeSystemdUnits(
+	runtimePrograms: RuntimeSystemdUserProgram[],
+	egressProgram: RuntimeEgressSystemdProgram | null,
+	egressIdentity: RuntimeEgressIdentity | null,
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	workspaceRoot: string,
+	daemonAuthTokenFile: string | null,
+	secretValues: Record<string, string> | undefined,
+	providerProjectionRevisions: Partial<Record<string, string | null>>,
+	commonEnvironment: Record<string, string>,
+): { systemUnits: string[]; userUnits: string[] } {
+	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	const runtimeBridgeToken = hostedRuntimeBridgeToken();
+	const bridgeSurfaceSpecs = runtimeBridgeSurfaceSpecsForManifest(manifest);
 	const systemUnits: string[] = [];
 	const shouldRunBridge = bridgeSurfaceSpecs.length > 0;
 	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;
@@ -4822,44 +4938,16 @@ function writeSystemdUnits(
 	}
 
 	for (const program of runtimePrograms) {
-		const unitName = systemdUnitFileName(runtimeSystemdProgramName(program));
-		const runtimeEnvironment = {
-			...commonEnvironment,
-			...program.env,
-			...(manifest.locale ? { TZ: manifest.locale.timezone } : {}),
-			CLAWDI_AUTH_TOKEN: "",
-			CLAWDI_RUNTIME_REV: runtimeSystemdProgramRevision(
-				manifest,
+		userUnits.push(
+			writeRuntimeSystemdUserProgram({
 				program,
+				commonEnvironment,
+				manifest,
+				paths,
 				secretValues,
 				providerProjectionRevisions,
-			),
-			...(officialRuntimeServiceDescriptorForProgram(program)?.unitEnv?.(unitName) ?? {}),
-		};
-		if (officialRuntimeServiceInstallArgs(program)) {
-			userUnits.push(
-				writeSystemdUserDropIn({
-					paths,
-					name: runtimeSystemdProgramName(program),
-					command: program.command,
-					args: program.args,
-					cwd: program.cwd,
-					env: runtimeEnvironment,
-				}),
-			);
-		} else {
-			userUnits.push(
-				writeSystemdUserUnit({
-					paths,
-					name: runtimeSystemdProgramName(program),
-					description: `Clawdi hosted ${program.runtime}${program.service ? ` ${program.service}` : ""}`,
-					command: program.command,
-					args: program.args,
-					cwd: program.cwd,
-					env: runtimeEnvironment,
-				}),
-			);
-		}
+			}),
+		);
 	}
 
 	removeStaleSystemdSystemUnits(paths, systemUnits);
@@ -4920,6 +5008,7 @@ function planRuntimeSystemdUserPrograms(input: {
 	secretValues: Record<string, string> | undefined;
 	observations: Map<string, RuntimeInstallObservation>;
 	egressProfileBundlePath: string | null;
+	egress: RuntimeEgressSystemdProgram | null;
 }): RuntimeSystemdUserProgram[] {
 	const programs: RuntimeSystemdUserProgram[] = [];
 	for (const [name, runtime] of Object.entries(input.manifest.runtimes).sort(([a], [b]) =>
@@ -4963,7 +5052,7 @@ function planRuntimeSystemdUserPrograms(input: {
 				config: runConfig,
 				paths: input.paths,
 				secretValues: input.secretValues,
-				egress: null,
+				egress: input.egress,
 			});
 			if (program) programs.push(program);
 		}
@@ -4996,7 +5085,7 @@ function planRuntimeSystemdUserPrograms(input: {
 				config: serviceRunConfig,
 				paths: input.paths,
 				secretValues: input.secretValues,
-				egress: null,
+				egress: input.egress,
 			});
 			if (program) programs.push(program);
 		}
@@ -5531,6 +5620,7 @@ export function convergeRuntimeManifest(
 		secretValues,
 		observations,
 		egressProfileBundlePath: plannedEgressProfileBundlePath,
+		egress: null,
 	});
 	validateRuntimeSystemdProgramsPlan(plannedRuntimePrograms);
 	observations.clear();
@@ -5622,14 +5712,6 @@ export function convergeRuntimeManifest(
 	const liveSnapshot = captureRuntimeLiveSnapshot(manifest, paths, workspaceRoot);
 	let systemdActivationAttempted = false;
 	try {
-		const installedOfficialServices = new Set<string>();
-		for (const program of plannedRuntimePrograms) {
-			const serviceName = officialRuntimeSystemdProgramName(program);
-			if (!serviceName || installedOfficialServices.has(serviceName)) continue;
-			installedOfficialServices.add(serviceName);
-			const error = installOfficialRuntimeUserService({ ...program, cwd: paths.userHome }, paths);
-			if (error) throw new Error(error);
-		}
 		const plannedUserUnits = plannedRuntimePrograms.map((program) =>
 			join(paths.systemdUserRoot, systemdUnitFileName(runtimeSystemdProgramName(program))),
 		);
@@ -5751,7 +5833,47 @@ export function convergeRuntimeManifest(
 		writeProviderHealthStatus(manifest, load.secretValues, paths);
 		const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 		const writtenRunConfigIds = new Set<string>();
+		runtimeSystemdUserPrograms.push(
+			...planRuntimeSystemdUserPrograms({
+				manifest,
+				paths,
+				workspaceRoot,
+				generatedAt,
+				secretValues,
+				observations,
+				egressProfileBundlePath,
+				egress: egressSystemdProgram,
+			}),
+		);
 		const providerProjectionRevisions: Partial<Record<string, string | null>> = {};
+		for (const [name] of runtimeEntries) {
+			const observation = observations.get(name);
+			if (!observation) throw new Error(`runtime ${name} install observation is missing`);
+			providerProjectionRevisions[name] = previewHostedAiProviderProjectionRevision(
+				name,
+				observation,
+				manifest,
+				workspaceRoot,
+				previousProjectedProviderIds[name] ?? [],
+				managedPrimaryModelOverrides,
+			);
+		}
+		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(load.sourcePath, paths);
+		if (shouldInstallOfficialRuntimeServices()) {
+			for (const program of officialRuntimeSystemdPrograms(runtimeSystemdUserPrograms)) {
+				writeRuntimeSystemdUserProgram({
+					program,
+					commonEnvironment: commonSystemdEnvironment,
+					manifest,
+					paths,
+					secretValues,
+					providerProjectionRevisions,
+				});
+				reloadRuntimeUserManager(paths, paths.userHome);
+				const error = installOfficialRuntimeUserService({ ...program, cwd: paths.userHome }, paths);
+				if (error) throw new Error(error);
+			}
+		}
 		try {
 			const codexProjection = applyHostedCodexManagedProviderProjection(
 				manifest,
@@ -5828,7 +5950,6 @@ export function convergeRuntimeManifest(
 					previousProjectedProviderIds[name] ?? [],
 					managedPrimaryModelOverrides,
 				);
-				providerProjectionRevisions[name] = providerProjection.revision;
 				projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {
 				installErrors.push(
@@ -5896,17 +6017,6 @@ export function convergeRuntimeManifest(
 			const runConfigPath = writeRuntimeRunConfig(runConfig, paths);
 			runConfigs.push(runConfigPath);
 			writtenRunConfigIds.add(runtimeRunConfigId(runtimeName));
-			if (runtime.enabled && shouldRunRuntime(name, manifest)) {
-				const program = buildRuntimeSystemdUserProgram({
-					config: runConfig,
-					paths,
-					secretValues,
-					egress: egressSystemdProgram,
-				});
-				if (program) {
-					runtimeSystemdUserPrograms.push(program);
-				}
-			}
 			for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 				const service = runtimeServiceNameSchema.parse(serviceName);
 				const serviceRunSettings = mergeRuntimeServiceEnvWithProviderPlaceholders(
@@ -5935,15 +6045,6 @@ export function convergeRuntimeManifest(
 				const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
 				runConfigs.push(serviceRunConfigPath);
 				writtenRunConfigIds.add(runtimeRunConfigId(runtimeName, service));
-				const program = buildRuntimeSystemdUserProgram({
-					config: serviceRunConfig,
-					paths,
-					secretValues,
-					egress: egressSystemdProgram,
-				});
-				if (program) {
-					runtimeSystemdUserPrograms.push(program);
-				}
 			}
 
 			const semaphorePath = join(semRoot, `${name}.enabled`);
@@ -5965,12 +6066,12 @@ export function convergeRuntimeManifest(
 			egressSystemdProgram,
 			egressIdentity,
 			manifest,
-			load.sourcePath,
 			paths,
 			workspaceRoot,
 			daemonAuthTokenFile,
 			secretValues,
 			providerProjectionRevisions,
+			commonSystemdEnvironment,
 		);
 
 		const bootFinished = join(instanceRoot, "boot-finished");
