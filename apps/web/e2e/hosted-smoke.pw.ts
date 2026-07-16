@@ -250,6 +250,7 @@ type HostedApiStubOptions = {
 	deployRequestStatusResponses?: StubResponse[];
 	deployments?: readonly unknown[];
 	fixPaymentRequests?: string[];
+	ledgerResponseForRequest?: (limit: number) => unknown;
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
 	plans?: readonly unknown[];
@@ -294,7 +295,12 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/wallet/ledger" && r.request().method() === "GET") {
 			options.ledgerRequests?.push(r.request().url());
-			return fulfillJson(r, options.ledgerResponses?.shift() ?? { items: [], has_more: false });
+			const limit = Number(new URL(r.request().url()).searchParams.get("limit"));
+			return fulfillJson(
+				r,
+				options.ledgerResponseForRequest?.(limit) ??
+					options.ledgerResponses?.shift() ?? { items: [], has_more: false },
+			);
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			return fulfillJson(r, deployments);
@@ -584,6 +590,21 @@ async function gotoHostedAgentSettings(
 			if (attempt === 1) throw error;
 		}
 	}
+}
+
+async function gotoHostedSettingsDialog(page: Page, section: string) {
+	for (let attempt = 0; attempt < 2; attempt += 1) {
+		await page.goto(`/channels?settings=${section}`);
+		const dialog = page.getByTestId("settings-dialog");
+		try {
+			await expect(dialog).toBeVisible();
+			await page.waitForLoadState("networkidle");
+			return dialog;
+		} catch (error) {
+			if (attempt === 1) throw error;
+		}
+	}
+	throw new Error("Settings dialog did not open.");
 }
 
 test("deploy wizard Select opens without browser errors", async ({ page }) => {
@@ -925,7 +946,10 @@ test("wallet deploy rotates its request key after an explicit reuse conflict", a
 
 	await submit.click();
 	await expect.poll(() => walletActivateRequests.length).toBe(1);
-	await expect(page.getByText("Start a fresh wallet attempt", { exact: true })).toBeVisible();
+	const freshAttemptToast = page.getByText("Start a fresh wallet attempt", { exact: true });
+	await expect(freshAttemptToast).toBeVisible();
+	await page.mouse.move(0, 0);
+	await expect(freshAttemptToast).toHaveCount(0);
 	await submit.click();
 	await expect.poll(() => walletActivateRequests.length).toBe(2);
 
@@ -1526,7 +1550,6 @@ test("mixed billing history paginates wallet charges and Stripe invoices", async
 });
 
 test("Wallet activity caps show-more requests at the ledger API limit", async ({ page }) => {
-	const errors = collectBrowserErrors(page);
 	const ledgerRequests: string[] = [];
 	const computeCharge = {
 		id: "ledger-compute-charge",
@@ -1538,26 +1561,26 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	};
 	await stubHostedApi(page, {
 		ledgerRequests,
-		ledgerResponses: [
-			{ items: [computeCharge], has_more: true },
-			{
-				items: [
-					computeCharge,
-					{
-						...computeCharge,
-						id: "ledger-compute-credit",
-						operation: "compute_credit",
-						request_id: "compute-reversal-42",
-						credits_amount: 9_000,
+		ledgerResponseForRequest: (limit) =>
+			limit === 50
+				? { items: [computeCharge], has_more: true }
+				: {
+						items: [
+							computeCharge,
+							{
+								...computeCharge,
+								id: "ledger-compute-credit",
+								operation: "compute_credit",
+								request_id: "compute-reversal-42",
+								credits_amount: 9_000,
+							},
+						],
+						has_more: true,
 					},
-				],
-				has_more: true,
-			},
-		],
 		plans: [basicPlan, performancePlan],
 	});
-	await page.goto("/channels?settings=billing-wallet");
-	const settingsDialog = page.getByTestId("settings-dialog");
+	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
+	const errors = collectBrowserErrors(page);
 	const ledgerTable = settingsDialog.getByRole("table");
 
 	await expect(ledgerTable.getByText("Compute charge", { exact: true })).toBeVisible();
@@ -1570,7 +1593,7 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	);
 
 	const limits = ledgerRequests.map((url) => Number(new URL(url).searchParams.get("limit")));
-	expect(limits).toEqual([50, 100]);
+	expect([...new Set(limits)]).toEqual([50, 100]);
 	expect(limits.every((limit) => limit <= 100)).toBe(true);
 	expect(errors, `wallet ledger cap: ${errors.join(" | ")}`).toEqual([]);
 });

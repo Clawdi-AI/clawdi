@@ -8,6 +8,7 @@ import {
 	checkoutReturnWasCanceled,
 	refreshCheckoutReturnQueries,
 	shouldPollWalletDunningFor,
+	walletDunningRefetchIntervalFor,
 } from "@/hosted/billing/hooks";
 
 function deployment(
@@ -181,6 +182,22 @@ describe("shouldPollWalletDunningFor", () => {
 			active.compute_subscription.current_period_end = "2026-08-16T00:00:00Z";
 		}
 		expect(shouldPollWalletDunningFor([active], active.id, now)).toBe(false);
+		expect(walletDunningRefetchIntervalFor([active], active.id, now)).toBe(2_000_000_000);
+	});
+
+	test("schedules a wake-up before a future collection boundary", () => {
+		const active = deployment({
+			status: "active",
+			funding_source: "wallet",
+			payment_state: "ok",
+			billing_term_months: 1,
+			price_cents: 900,
+			currency: "usd",
+			cancel_at_period_end: false,
+			current_period_end: "2026-07-16T00:10:00Z",
+		});
+		active.id = "hdep_active";
+		expect(walletDunningRefetchIntervalFor([active], active.id, now)).toBe(540_000);
 	});
 
 	test("does not poll terminal wallet states", () => {

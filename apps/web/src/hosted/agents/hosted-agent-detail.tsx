@@ -2477,7 +2477,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				});
 				return;
 			}
-			toast.error("Couldn’t cancel scheduled downgrade", {
+			toast.error("Couldn’t cancel scheduled plan change", {
 				description: normalizeBillingError(error),
 			});
 			throw error;
