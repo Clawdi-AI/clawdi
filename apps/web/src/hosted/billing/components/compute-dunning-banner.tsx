@@ -126,6 +126,10 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				description: "Paid compute is active again.",
 			});
 		} catch (error) {
+			const debtCredits =
+				error instanceof BillingApiError && error.status === 409
+					? walletRefundDebtCredits(error)
+					: null;
 			if (error instanceof BillingApiError && error.status === 402) {
 				const detail = walletComputeErrorDetail(error);
 				const shortfall =
@@ -135,20 +139,22 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				setTopUpCredits(Number.isFinite(shortfall) ? shortfall : null);
 				setRefundDebtCredits(null);
 				setTopUpOpen(true);
-			} else if (error instanceof BillingApiError && error.status === 409) {
-				const debtCredits = walletRefundDebtCredits(error);
-				if (debtCredits !== null) {
-					setRefundDebtCredits(debtCredits);
-					setTopUpCredits(debtCredits + blockedChargeCredits);
-					setTopUpOpen(true);
-				}
+			} else if (debtCredits !== null) {
+				setRefundDebtCredits(debtCredits);
+				setTopUpCredits(debtCredits + blockedChargeCredits);
+				setTopUpOpen(true);
 			}
-			toast.error("Couldn’t retry wallet payment", {
-				description:
-					error instanceof BillingApiError && error.status === 409
-						? "Another billing action is in progress, or this payment no longer needs recovery. Refresh and try again."
-						: normalizeBillingError(error),
-			});
+			toast.error(
+				debtCredits !== null ? "Top up to clear refund debt" : "Couldn’t retry wallet payment",
+				{
+					description:
+						debtCredits !== null
+							? "New Wallet funds repay refund debt before the blocked compute charge."
+							: error instanceof BillingApiError && error.status === 409
+								? "Another billing action is in progress, or this payment no longer needs recovery. Refresh and try again."
+								: normalizeBillingError(error),
+				},
+			);
 		}
 	}
 

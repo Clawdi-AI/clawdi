@@ -171,6 +171,21 @@ const walletPastDueDeployment = {
 	},
 };
 
+const walletUnpaidDeployment = {
+	...walletBasicDeployment,
+	id: "hdep_wallet_unpaid",
+	name: "Wallet unpaid agent",
+	compute_subscription: {
+		...walletBasicDeployment.compute_subscription,
+		subscription_id: 44,
+		status: "unpaid",
+		payment_state: "unpaid",
+		pending_plan_slug: "compute_performance",
+		last_collection_failure_code: "insufficient_balance",
+		recovery_action: "top_up",
+	},
+};
+
 const walletPlanDeployment = {
 	...walletBasicDeployment,
 	id: "hdep_wallet_plan",
@@ -1135,9 +1150,7 @@ test("wallet dunning shows grace recovery without Stripe portal actions", async 
 	expect(errors, `wallet dunning: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("wallet retry distinguishes insufficient balance from a collection conflict", async ({
-	page,
-}) => {
+test("wallet retry opens top-up for balance shortfalls and refund debt", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const retryRequests: string[] = [];
 	const topUpRequests: string[] = [];
@@ -1160,7 +1173,12 @@ test("wallet retry distinguishes insufficient balance from a collection conflict
 			},
 			{
 				status: 409,
-				body: { detail: "Wallet compute collection is already in progress." },
+				body: {
+					detail: {
+						code: "open_refund_debt",
+						outstanding_debt_credits: "2500.5",
+					},
+				},
 			},
 		],
 	});
@@ -1179,16 +1197,54 @@ test("wallet retry distinguishes insufficient balance from a collection conflict
 	).toHaveCount(0);
 	await page.getByRole("button", { name: "Retry payment" }).click();
 	await expect(
-		page.getByText(
-			"Another billing action is in progress, or this payment no longer needs recovery. Refresh and try again.",
-			{ exact: true },
-		),
+		page.getByRole("dialog").getByText("Refund debt is repaid first", { exact: true }),
 	).toBeVisible();
+	await expect(page.getByLabel("Amount (USD)")).toHaveValue("12");
+	await expect(page.getByText("Top up to clear refund debt", { exact: true })).toBeVisible();
 	expect(retryRequests).toHaveLength(2);
 	expect(
 		errors.filter((error) => !error.includes("status of 402") && !error.includes("status of 409")),
 		`wallet retry errors: ${errors.join(" | ")}`,
 	).toEqual([]);
+});
+
+test("wallet unpaid subscription reactivates the plan due after terminal dunning", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const deployments: unknown[] = [walletUnpaidDeployment];
+	const walletActivateRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments,
+		plans: [basicPlan, performancePlan],
+		walletActivateRequests,
+		onWalletActivateSuccess: () =>
+			deployments.splice(0, 1, {
+				...performanceDeployment,
+				id: "hdep_wallet_unpaid",
+				name: "Wallet unpaid agent",
+				compute_subscription: {
+					...walletBasicDeployment.compute_subscription,
+					subscription_id: 45,
+					price_cents: 1_900,
+				},
+			}),
+	});
+	await gotoHostedAgentSettings(page, "hdep_wallet_unpaid", "Basic");
+
+	const alert = page.getByRole("alert").filter({ hasText: "Wallet compute funding ended" });
+	await expect(alert).toContainText("Reactivate Performance compute to start a new subscription.");
+	await expect(page.getByRole("button", { name: "Reactivate Performance" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Retry payment" })).toHaveCount(0);
+	await page.getByRole("button", { name: "Reactivate Performance" }).click();
+	await expect.poll(() => walletActivateRequests.length).toBe(1);
+	expect(JSON.parse(walletActivateRequests[0] ?? "{}")).toEqual({
+		plan_slug: "compute_performance",
+		billing_term_months: 1,
+		upgrade_deployment_id: "hdep_wallet_unpaid",
+	});
+	await expect(page.getByText("Wallet compute funding ended", { exact: true })).toHaveCount(0);
+	expect(errors, `wallet unpaid recovery: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("wallet fallback explains the failed Performance payment and offers re-activation", async ({
