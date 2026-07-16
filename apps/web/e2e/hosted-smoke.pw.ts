@@ -236,6 +236,34 @@ const walletState = {
 	points_per_usd: 1_000,
 };
 
+const walletActiveDeployment = {
+	...paidBasicDeployment,
+	id: "hdep_wallet_due",
+	name: "Wallet-funded Basic",
+	compute_subscription: {
+		subscription_id: 42,
+		status: "active",
+		funding_source: "wallet",
+		payment_state: "ok",
+		billing_term_months: 1,
+		price_cents: 900,
+		currency: "usd",
+		cancel_at_period_end: false,
+		current_period_end: "2026-08-15T00:00:00Z",
+	},
+};
+
+const walletPastDueDeployment = {
+	...walletActiveDeployment,
+	compute_subscription: {
+		...walletActiveDeployment.compute_subscription,
+		status: "past_due",
+		payment_state: "past_due",
+		latest_failed_invoice_id: "in_wallet_open",
+		next_payment_attempt_at: "2026-07-16T00:00:00Z",
+	},
+};
+
 type StubResponse = { body: unknown; status: number; delayMs?: number };
 
 function isStubResponse(value: unknown): value is StubResponse {
@@ -281,6 +309,7 @@ type HostedApiStubOptions = {
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
 	walletState?: typeof walletState;
+	onTopUpSuccess?: () => void;
 };
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
@@ -369,6 +398,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			if (response.delayMs) {
 				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
 			}
+			if (response.status < 400) options.onTopUpSuccess?.();
 			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/subscription/fix-payment" && r.request().method() === "POST") {
@@ -1453,6 +1483,40 @@ test("top-up rotates its idempotency key after an explicit reuse conflict", asyn
 		errors.filter((error) => !error.includes("status of 409")),
 		`top-up key rotation: ${errors.join(" | ")}`,
 	).toEqual([]);
+});
+
+test("wallet top-up completion refreshes an automatically paid open invoice", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const deployments: unknown[] = [walletPastDueDeployment];
+	const topUpRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments,
+		plans: [basicPlan, performancePlan],
+		topUpRequests,
+		onTopUpSuccess: () => deployments.splice(0, 1, walletActiveDeployment),
+	});
+	await gotoHostedAgentSettings(page, "hdep_wallet_due", "Basic");
+
+	const pastDueAlert = page.getByRole("alert").filter({ hasText: "Wallet payment past due" });
+	await expect(pastDueAlert).toBeVisible();
+	await expect(pastDueAlert).toContainText(
+		"Stripe will keep the invoice open while funds are short",
+	);
+	await expect(pastDueAlert.getByRole("button", { name: "Top up" })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Fix payment" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: /Retry payment/ })).toHaveCount(0);
+
+	await pastDueAlert.getByRole("button", { name: "Top up" }).click();
+	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up AI Credits" });
+	await expect(topUpDialog).toBeVisible();
+	await topUpDialog.getByRole("button", { name: "Continue with $25.00" }).click();
+
+	await expect.poll(() => topUpRequests.length).toBe(1);
+	await expect(page.getByText("Top-up complete", { exact: true })).toBeVisible();
+	await expect(pastDueAlert).toHaveCount(0);
+	await expect(page.getByText("Wallet", { exact: true })).toBeVisible();
+	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 2_500 });
+	expect(errors, `wallet open-invoice top-up: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("compute plans keep signup credits without advertising subscription credit grants", async ({
