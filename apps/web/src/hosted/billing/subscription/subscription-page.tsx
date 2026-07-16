@@ -10,6 +10,7 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
+import { PlanCBillingUnavailableNotice } from "@/hosted/billing/components/plan-c-unavailable-notice";
 import { SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { usePlans, usePortal } from "@/hosted/billing/hooks";
@@ -17,6 +18,7 @@ import { BillingHistorySection } from "@/hosted/billing/subscription/billing-his
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { WelcomeCreditsCard } from "@/hosted/billing/subscription/welcome-credits-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION =
@@ -29,6 +31,7 @@ const SUBSCRIPTION_PAGE_CLASS = cn(
 export function SubscriptionPage() {
 	const plans = usePlans();
 	const portal = usePortal();
+	const hostedAccess = useHostedProductAccess();
 	const runAction = useActionLock();
 	const [term, setTerm] = useState(1);
 
@@ -76,6 +79,10 @@ export function SubscriptionPage() {
 
 			<WelcomeCreditsCard />
 
+			{hostedAccess.isLoading || hostedAccess.canUsePlanCBilling ? null : (
+				<PlanCBillingUnavailableNotice />
+			)}
+
 			<Card data-hosted="true">
 				<CardHeader>
 					<CardTitle>Compute is managed per agent</CardTitle>
@@ -90,13 +97,19 @@ export function SubscriptionPage() {
 						balance and managed-AI usage stay account-wide.
 					</p>
 					<div className="flex flex-wrap gap-2">
-						<Button render={<Link to="/deploy" />} nativeButton={false}>
-							<Rocket /> Deploy hosted agent
-						</Button>
+						{hostedAccess.canUsePlanCBilling ? (
+							<Button render={<Link to="/deploy" />} nativeButton={false}>
+								<Rocket /> Deploy hosted agent
+							</Button>
+						) : (
+							<Button disabled>
+								<Rocket /> Deploy hosted agent
+							</Button>
+						)}
 						<Button
 							variant="outline"
 							onClick={() => runAction(openBillingPortal)}
-							disabled={portal.isPending}
+							disabled={portal.isPending || !hostedAccess.canUsePlanCBilling}
 						>
 							{portal.isPending ? <Spinner /> : <CreditCard />} Open billing portal
 						</Button>
@@ -106,7 +119,11 @@ export function SubscriptionPage() {
 
 			<BillingHistorySection />
 
-			<PlanComparison term={term} onTermChange={setTerm} />
+			<PlanComparison
+				term={term}
+				onTermChange={setTerm}
+				canUsePlanCBilling={hostedAccess.canUsePlanCBilling}
+			/>
 		</div>
 	);
 }
