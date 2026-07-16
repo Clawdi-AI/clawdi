@@ -31,7 +31,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	const fixPayment = useFixPayment();
 	const runAction = useActionLock();
 	const wallet = useWallet({
-		enabled: hostedAccess.canUsePlanCBilling && state?.ctaTarget === "top_up",
+		enabled: state?.ctaTarget === "top_up",
 	});
 	const [topUpOpen, setTopUpOpen] = useState(false);
 
@@ -52,7 +52,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 		.join(" ");
 
 	async function handleFixPayment() {
-		if (!state || !hostedAccess.canUsePlanCBilling) return;
+		if (!state) return;
 		if (state.ctaTarget === "invoice" && state.invoiceUrl) {
 			window.location.href = state.invoiceUrl;
 			return;
@@ -94,10 +94,10 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				<AlertDescription className="flex flex-col items-start gap-3">
 					<span>{bannerDescription}</span>
 					{hostedAccess.isLoading ? null : !hostedAccess.canUsePlanCBilling &&
-						state.ctaTarget !== "none" ? (
+						state.ctaTarget === "start_new" ? (
 						<span className="text-xs text-muted-foreground">
-							Billing actions are unavailable while the new billing system is rolling out. This
-							deployment remains visible and manageable.
+							Starting a new subscription is temporarily unavailable. This deployment remains
+							visible and manageable.
 						</span>
 					) : state.ctaTarget === "top_up" ? (
 						<Button
@@ -173,7 +173,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 					) : null}
 				</AlertDescription>
 			</Alert>
-			{hostedAccess.canUsePlanCBilling && wallet.data ? (
+			{wallet.data ? (
 				<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} wallet={wallet.data} />
 			) : null}
 		</>

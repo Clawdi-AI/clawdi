@@ -77,8 +77,7 @@ export function planChangeUnavailableReason({
 	status: string;
 	subscriptionId: number | null;
 }): string | null {
-	if (!canUsePlanCBilling)
-		return "Plan changes are unavailable while the new billing system rolls out.";
+	if (!canUsePlanCBilling) return "Plan changes are temporarily unavailable.";
 	if (cancelAtPeriodEnd)
 		return "Resume this subscription before changing its plan or billing term.";
 	if (!subscriptionId)

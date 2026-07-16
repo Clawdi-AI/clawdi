@@ -457,6 +457,11 @@ export function DeployWizard() {
 		setTimezone((tz) => tz || browserTimezone());
 		setLanguage((lang) => lang || browserLanguage());
 	}, []);
+	useEffect(() => {
+		if (hostedAccess.isLoading || hostedAccess.canUsePlanCBilling) return;
+		setCheckoutSession(null);
+		setWalletTopUpOpen(false);
+	}, [hostedAccess.canUsePlanCBilling, hostedAccess.isLoading]);
 	const tzOptions = useMemo(() => {
 		const all = supportedTimezones();
 		if (timezone && !all.includes(timezone)) return [timezone, ...all];
@@ -784,6 +789,15 @@ export function DeployWizard() {
 		return false;
 	}
 
+	async function recheckPlanCBilling(): Promise<boolean> {
+		const available = await hostedAccess.recheckPlanCBilling();
+		if (!available) {
+			setCheckoutSession(null);
+			setWalletTopUpOpen(false);
+		}
+		return available;
+	}
+
 	function openWalletTopUp({
 		shortfallCredits,
 		refundDebtCredits = null,
@@ -848,6 +862,7 @@ export function DeployWizard() {
 	}
 
 	async function fallbackToHostedCheckout(request: SubscriptionCreateRequestView) {
+		if (!(await recheckPlanCBilling())) return;
 		const fingerprint = idempotencyFingerprint({
 			selection: request.selection,
 			target: request.target,
@@ -911,9 +926,10 @@ export function DeployWizard() {
 	}
 
 	async function onDeploy() {
-		if (!hostedAccess.canUsePlanCBilling || !canSubmit) return;
+		if (!canSubmit) return;
 		setSubmitting(true);
 		try {
+			if (!(await recheckPlanCBilling())) return;
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
 			if (paidSelection) {
@@ -1072,7 +1088,7 @@ export function DeployWizard() {
 	}
 
 	const deployLabel = !hostedAccess.canUsePlanCBilling
-		? "Deployment unavailable"
+		? "Deployment temporarily unavailable"
 		: paidSelection
 			? paymentMethod === "wallet"
 				? subscriptionCreateQuote.isFetching
@@ -1139,7 +1155,7 @@ export function DeployWizard() {
 					description="Choose the execution engine and AI provider for this hosted deployment."
 				/>
 				{hostedAccess.isLoading || hostedAccess.canUsePlanCBilling ? null : (
-					<PlanCBillingUnavailableNotice description="You can review compute options, providers, and channels, but this account cannot start a new Plan C deployment during the current billing rollout." />
+					<PlanCBillingUnavailableNotice description="New deployments are temporarily unavailable. You can still review compute options, providers, channels, and existing agents." />
 				)}
 
 				<SettingsSection
@@ -1559,7 +1575,7 @@ export function DeployWizard() {
 					</Button>
 					{hostedAccess.canUsePlanCBilling ? null : (
 						<span id="plan-c-deploy-unavailable" className="sr-only">
-							Plan C deployment is not enabled for this account.
+							New deployments are temporarily unavailable.
 						</span>
 					)}
 				</div>
@@ -1586,7 +1602,7 @@ export function DeployWizard() {
 				/>
 			) : null}
 			<StripeCheckoutDialog
-				open={checkoutSession !== null}
+				open={checkoutSession !== null && hostedAccess.canUsePlanCBilling}
 				onOpenChange={(next) => {
 					if (!next) setCheckoutSession(null);
 				}}
@@ -1594,6 +1610,7 @@ export function DeployWizard() {
 				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
 				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
 				summary={checkoutSession?.summary ?? null}
+				onBeforeConfirm={recheckPlanCBilling}
 				onComplete={() =>
 					void handleCheckoutComplete(
 						checkoutSession?.previousDeploymentIds ?? [],

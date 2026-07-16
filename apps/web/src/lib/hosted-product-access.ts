@@ -49,5 +49,10 @@ export function useHostedProductAccess() {
 		isFetching: enabled && query.isFetching,
 		error: query.error,
 		refetch: query.refetch,
+		recheckPlanCBilling: async () => {
+			const result = await query.refetch();
+			if (result.error) throw result.error;
+			return hostedProductAccessFromProfile(result.data).canUsePlanCBilling;
+		},
 	};
 }

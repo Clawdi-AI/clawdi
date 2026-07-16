@@ -109,7 +109,7 @@ export function SubscriptionPage() {
 						<Button
 							variant="outline"
 							onClick={() => runAction(openBillingPortal)}
-							disabled={portal.isPending || !hostedAccess.canUsePlanCBilling}
+							disabled={portal.isPending}
 						>
 							{portal.isPending ? <Spinner /> : <CreditCard />} Open billing portal
 						</Button>

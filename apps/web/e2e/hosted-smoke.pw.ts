@@ -300,7 +300,7 @@ const terminalFallbackDeployment = {
 	id: "hdep_terminal_fallback",
 	name: "Fallback Basic",
 	upgrade_available: false,
-	compute_subscription: null,
+	compute_subscription: { ...includedBasicDeployment.compute_subscription },
 	last_funding_event: {
 		type: "compute_subscription_fallback",
 		funding_source: "stripe",
@@ -459,6 +459,8 @@ type HostedApiStubOptions = {
 	billingHistoryRequests?: string[];
 	billingHistoryResponses?: unknown[];
 	canUsePlanCBilling?: boolean;
+	planBillingCapability?: { enabled: boolean };
+	productAccessRequests?: string[];
 	cancelRequests?: string[];
 	checkoutRequests?: string[];
 	checkoutResponses?: StubResponse[];
@@ -514,7 +516,11 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			options.planCMutationRequests?.push(`${method} ${p}`);
 		}
 		if (p === "/me" || p === "/v1/me") {
-			return fulfillJson(r, hostedUser(options.canUsePlanCBilling ?? true));
+			options.productAccessRequests?.push(`DEPLOY ${p}`);
+			return fulfillJson(
+				r,
+				hostedUser(options.planBillingCapability?.enabled ?? options.canUsePlanCBilling ?? true),
+			);
 		}
 		if (p === "/v2/subscription/plans") return fulfillJson(r, plans);
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
@@ -739,7 +745,11 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	await page.route(`${CLOUD_API}/**`, (r) => {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/v1/me") {
-			return fulfillJson(r, hostedUser(options.canUsePlanCBilling ?? true));
+			options.productAccessRequests?.push(`CLOUD ${p}`);
+			return fulfillJson(
+				r,
+				hostedUser(options.planBillingCapability?.enabled ?? options.canUsePlanCBilling ?? true),
+			);
 		}
 		if (p === "/v1/agents") {
 			return options.cloudAgentsResponse
@@ -822,6 +832,51 @@ function collectBrowserErrors(page: Page): string[] {
 	return errors;
 }
 
+async function stubStripeCheckout(page: Page) {
+	await page.addInitScript(() => {
+		const stripeWindow = window as typeof window & { __stripeConfirmCalls?: number };
+		stripeWindow.__stripeConfirmCalls = 0;
+		const paymentElement = {
+			destroy() {},
+			mount(node: HTMLElement) {
+				node.textContent = "Mock secure payment form";
+			},
+			off() {},
+			on() {},
+			update() {},
+		};
+		const checkoutSdk = {
+			changeAppearance() {},
+			createPaymentElement: () => paymentElement,
+			loadActions: async () => ({
+				type: "success",
+				actions: {
+					confirm: async () => {
+						stripeWindow.__stripeConfirmCalls = (stripeWindow.__stripeConfirmCalls ?? 0) + 1;
+						return { type: "success", session: { status: { type: "complete" } } };
+					},
+					getSession: () => ({ canConfirm: true, status: { type: "open" } }),
+				},
+			}),
+			loadFonts: async () => {},
+			on() {},
+		};
+		const stripe = {
+			_registerWrapper() {},
+			confirmCardPayment: async () => ({}),
+			createPaymentMethod: async () => ({}),
+			createToken: async () => ({}),
+			elements: () => ({}),
+			initCheckoutElementsSdk: () => checkoutSdk,
+			registerAppInfo() {},
+		};
+		Object.defineProperty(window, "Stripe", {
+			configurable: true,
+			value: Object.assign(() => stripe, { version: "dahlia" }),
+		});
+	});
+}
+
 async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: string) {
 	const box = await locator.boundingBox();
 	expect(box, `${label} should render a layout box`).not.toBeNull();
@@ -883,22 +938,36 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("Plan C gate off keeps read-only UI usable and sends no billing mutation", async ({
+test("Plan C gate off blocks acquisition while existing subscriptions remain serviceable", async ({
 	page,
 }) => {
 	const errors = collectBrowserErrors(page);
 	const planCMutationRequests: string[] = [];
+	const cancelRequests: string[] = [];
+	const fixPaymentRequests: string[] = [];
+	const resumeRequests: string[] = [];
 	await stubHostedApi(page, {
 		canUsePlanCBilling: false,
-		deployments: [includedBasicDeployment, paidBasicDeployment, terminalFallbackDeployment],
+		cancelRequests,
+		deployments: [
+			includedBasicDeployment,
+			paidBasicDeployment,
+			cancelPendingBasicDeployment,
+			cardPastDueDeployment,
+			terminalFallbackDeployment,
+		],
+		fixPaymentRequests,
 		plans: [basicPlan, performancePlan],
 		planCMutationRequests,
+		resumeRequests,
 	});
 
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 	await expect(page.getByTestId("plan-c-unavailable")).toBeVisible();
-	await expect(page.getByRole("button", { name: "Deployment unavailable" })).toBeDisabled();
+	await expect(
+		page.getByRole("button", { name: "Deployment temporarily unavailable" }),
+	).toBeDisabled();
 	await expect(page.getByText("Card subscription", { exact: true })).toBeVisible();
 	await expect(page.getByText("Wallet balance", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: /^Card subscription/ })).toHaveCount(0);
@@ -906,24 +975,103 @@ test("Plan C gate off keeps read-only UI usable and sends no billing mutation", 
 
 	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
 	await expect(page.getByText("Basic compute", { exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Change plan or billing term" })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Change plan or billing term" })).toBeDisabled();
+	await expect(page.getByRole("button", { name: "Cancel subscription" })).toBeEnabled();
 	await expect(page.getByRole("button", { name: "Resume subscription" })).toHaveCount(0);
-	await expect(page.getByText(/Plan changes are unavailable/)).toBeVisible();
+	await expect(page.getByText("Plan changes are temporarily unavailable.")).toBeVisible();
+	await page.getByRole("button", { name: "Cancel subscription" }).click();
+	await page.getByRole("alertdialog").getByRole("button", { name: "Cancel at period end" }).click();
+	await expect.poll(() => cancelRequests.length).toBe(1);
+
+	await gotoHostedAgentSettings(page, "hdep_cancel_pending", "Basic");
+	await expect(page.getByRole("button", { name: "Resume subscription" })).toBeEnabled();
+	await page.getByRole("button", { name: "Resume subscription" }).click();
+	await expect.poll(() => resumeRequests.length).toBe(1);
+
+	await gotoHostedAgentSettings(page, "hdep_card_due", "Basic");
+	const pastDueAlert = page.getByRole("alert").filter({ hasText: "Payment past due" });
+	await expect(pastDueAlert.getByRole("button", { name: "Fix payment" })).toBeEnabled();
+	await pastDueAlert.getByRole("button", { name: "Fix payment" }).click();
+	await expect.poll(() => fixPaymentRequests.length).toBe(1);
 
 	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
 	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toBeDisabled();
-	await expect(page.getByText(/Paid compute actions are unavailable/)).toBeVisible();
+	await expect(page.getByText("Upgrades are temporarily unavailable.")).toBeVisible();
 
 	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
 	await expect(page.getByRole("button", { name: "Start a new subscription" })).toBeDisabled();
-	await expect(page.getByText(/Paid compute actions are unavailable/)).toBeVisible();
+	await expect(page.getByText("New subscriptions are temporarily unavailable.")).toBeVisible();
 
 	expect(
 		planCMutationRequests,
-		"gate-off UI must not call unified or deleted legacy Plan C mutation routes",
-	).toEqual([]);
+		"gate-off UI must allow servicing mutations but no acquisition or plan-change mutations",
+	).toEqual([
+		"POST /v2/subscription/cancel",
+		"POST /v2/subscription/resume",
+		"POST /v2/subscription/fix-payment",
+	]);
 	expect(errors, `Plan C gate off: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("embedded checkout rechecks Plan C capability before confirm", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const capability = { enabled: true };
+	const checkoutRequests: string[] = [];
+	const createRequests: string[] = [];
+	const productAccessRequests: string[] = [];
+	await stubStripeCheckout(page);
+	await stubHostedApi(page, {
+		checkoutRequests,
+		checkoutResponses: [
+			{
+				status: 200,
+				body: {
+					flow_type: "checkout_session",
+					funding_source: "stripe",
+					action_url: null,
+					checkout_url: "",
+					client_secret: "cs_test_plan_c_flip",
+				},
+			},
+		],
+		createRequests,
+		deployments: [includedBasicDeployment],
+		planBillingCapability: capability,
+		plans: [basicPlan, performancePlan],
+		productAccessRequests,
+	});
+
+	await page.goto("/deploy");
+	await page.waitForLoadState("networkidle");
+	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(1);
+	const checkoutDialog = page.getByRole("dialog", { name: /Complete Basic checkout/ });
+	await expect(checkoutDialog).toBeVisible();
+	await expect(checkoutDialog.getByText("Mock secure payment form", { exact: true })).toBeVisible();
+	await expect(checkoutDialog.getByRole("button", { name: "Subscribe" })).toBeEnabled();
+
+	const accessChecksBeforeConfirm = productAccessRequests.filter(
+		(request) => request === "DEPLOY /v1/me",
+	).length;
+	capability.enabled = false;
+	await checkoutDialog.getByRole("button", { name: "Subscribe" }).click();
+
+	await expect
+		.poll(() => productAccessRequests.filter((request) => request === "DEPLOY /v1/me").length)
+		.toBe(accessChecksBeforeConfirm + 1);
+	await expect(checkoutDialog).toHaveCount(0);
+	await expect(page.getByTestId("plan-c-unavailable")).toBeVisible();
+	await expect(
+		page.getByRole("button", { name: "Deployment temporarily unavailable" }),
+	).toBeDisabled();
+	expect(
+		await page.evaluate(
+			() => (window as typeof window & { __stripeConfirmCalls?: number }).__stripeConfirmCalls ?? 0,
+		),
+	).toBe(0);
+	expect(checkoutRequests).toHaveLength(1);
+	expect(createRequests).toEqual([]);
+	expect(errors, `mid-checkout Plan C flip: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("env-keyed agent route keeps failed deployment recovery available without its projection", async ({

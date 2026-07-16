@@ -32,6 +32,7 @@ export type StripeCheckoutSummary = {
 type StripeCheckoutDialogProps = {
 	clientSecret: string | null;
 	description: string;
+	onBeforeConfirm: () => Promise<boolean>;
 	onComplete: () => void;
 	onFallback: () => Promise<void>;
 	onOpenChange: (open: boolean) => void;
@@ -155,10 +156,12 @@ function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | nu
 }
 
 function CheckoutElementForm({
+	onBeforeConfirm,
 	onComplete,
 	onLoadError,
 	onSubmittingChange,
 }: {
+	onBeforeConfirm: () => Promise<boolean>;
 	onComplete: () => void;
 	onLoadError: (message: string) => void;
 	onSubmittingChange: (submitting: boolean) => void;
@@ -210,6 +213,17 @@ function CheckoutElementForm({
 		setSubmitting(true);
 		onSubmittingChange(true);
 		setError(null);
+		try {
+			if (!(await onBeforeConfirm())) {
+				setError("Checkout is temporarily unavailable. No payment was submitted.");
+				finishSubmitting();
+				return;
+			}
+		} catch {
+			setError("We couldn’t verify checkout availability. Please try again.");
+			finishSubmitting();
+			return;
+		}
 		try {
 			const result = await checkout.confirm({ redirect: "if_required" });
 			if (result.type === "error") {
@@ -265,6 +279,7 @@ function CheckoutElementForm({
 export function StripeCheckoutDialog({
 	clientSecret,
 	description,
+	onBeforeConfirm,
 	onComplete,
 	onFallback,
 	onOpenChange,
@@ -393,6 +408,7 @@ export function StripeCheckoutDialog({
 						options={providerOptions}
 					>
 						<CheckoutElementForm
+							onBeforeConfirm={onBeforeConfirm}
 							onComplete={completeCheckout}
 							onLoadError={handleProviderLoadError}
 							onSubmittingChange={setCheckoutSubmitting}

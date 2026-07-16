@@ -2312,8 +2312,8 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
 	const wallet = useWallet({
 		enabled:
-			hostedAccess.canUsePlanCBilling &&
-			(deployment.compute_subscription?.funding_source === "wallet" || planChangeOpen),
+			deployment.compute_subscription?.funding_source === "wallet" ||
+			(hostedAccess.canUsePlanCBilling && planChangeOpen),
 	});
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
@@ -2332,10 +2332,12 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const isIncludedBasic = fundingMode === "included_basic";
 	const isPaidCompute = fundingMode === "subscription";
 	const isWalletFunded = fundingSource === "wallet";
-	const hasWalletFallback =
-		!currentSubscription && deployment.last_funding_event?.funding_source === "wallet";
-	const hasTerminalFallback =
-		!currentSubscription && deployment.last_funding_event?.type === "compute_subscription_fallback";
+	const terminalFundingEvent =
+		isIncludedBasic && deployment.last_funding_event?.type === "compute_subscription_fallback"
+			? deployment.last_funding_event
+			: null;
+	const hasWalletFallback = terminalFundingEvent?.funding_source === "wallet";
+	const hasTerminalFallback = terminalFundingEvent !== null;
 	const subscriptionId = computeSubscriptionId(currentSubscription);
 	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
 	const tierLabel = computeTierLabel(computePlanSlug);
@@ -2416,7 +2418,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const upgradeUnavailableMessage = plans.isLoading
 		? "Checking Performance availability…"
 		: !hostedAccess.canUsePlanCBilling
-			? "Paid compute actions are unavailable while the new billing system rolls out."
+			? "Upgrades are temporarily unavailable."
 			: !perfPlan
 				? "Performance compute is unavailable right now."
 				: isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped"
@@ -2425,7 +2427,9 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const createUnavailableMessage = plans.isLoading
 		? "Checking paid compute availability…"
 		: !hostedAccess.canUsePlanCBilling
-			? "Paid compute actions are unavailable while the new billing system rolls out."
+			? hasTerminalFallback
+				? "New subscriptions are temporarily unavailable."
+				: "Upgrades are temporarily unavailable."
 			: hasTerminalFallback && !(basicPlan || perfPlan)
 				? "Paid compute plans are unavailable right now."
 				: isIncludedBasic && planChangeUnavailable
@@ -2455,6 +2459,13 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			});
 		});
 	}, [deployment.id, refreshCheckoutReturn, router, searchStr]);
+	useEffect(() => {
+		if (hostedAccess.isLoading || hostedAccess.canUsePlanCBilling) return;
+		setSubscriptionCreateOpen(false);
+		setPlanChangeOpen(false);
+		setPlanChangeQuote(null);
+		setWalletTopUpOpen(false);
+	}, [hostedAccess.canUsePlanCBilling, hostedAccess.isLoading]);
 
 	function setPlanChangeDialogOpen(open: boolean) {
 		setPlanChangeOpen(open);
@@ -2473,6 +2484,10 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			return;
 		}
 		try {
+			if (!(await hostedAccess.recheckPlanCBilling())) {
+				setPlanChangeDialogOpen(false);
+				return;
+			}
 			const quote = await quotePlanChange.mutateAsync({
 				subscription_id: subscriptionId,
 				...selection,
@@ -2486,8 +2501,12 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	}
 
 	async function confirmPlanChange(operationId: string) {
-		if (!hostedAccess.canUsePlanCBilling || !planChangeQuote) return;
+		if (!planChangeQuote) return;
 		try {
+			if (!(await hostedAccess.recheckPlanCBilling())) {
+				setPlanChangeDialogOpen(false);
+				return;
+			}
 			const result = await changePlan.mutateAsync({ operation_id: operationId });
 			if (result.status === "scheduled") {
 				toast.success("Downgrade scheduled", {
@@ -2528,7 +2547,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	}
 
 	async function cancelComputeSubscription() {
-		if (!hostedAccess.canUsePlanCBilling || !subscriptionCancelable || subscriptionCancelPending) {
+		if (!subscriptionCancelable || subscriptionCancelPending) {
 			return;
 		}
 		try {
@@ -2547,7 +2566,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	}
 
 	async function resumeComputeSubscription() {
-		if (!hostedAccess.canUsePlanCBilling || !subscriptionCancelable || !subscriptionCancelPending) {
+		if (!subscriptionCancelable || !subscriptionCancelPending) {
 			return;
 		}
 		try {
@@ -2569,7 +2588,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 
 	return (
 		<div className="flex flex-col gap-9">
-			{hostedAccess.canUsePlanCBilling && wallet.data ? (
+			{wallet.data ? (
 				<TopUpDialog
 					open={walletTopUpOpen}
 					onOpenChange={(open) => {
@@ -2708,9 +2727,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 							</div>
 						) : isPaidCompute && currentSubscription ? (
 							<div className="flex w-full flex-col gap-2 lg:w-72">
-								{!hostedAccess.canUsePlanCBilling ? (
-									<p className="text-xs text-muted-foreground">{planChangeUnavailable}</p>
-								) : subscriptionCancelPending ? (
+								{subscriptionCancelPending ? (
 									<>
 										<Button
 											type="button"

@@ -28,6 +28,7 @@ export default defineConfig({
 			VITE_CLAWDI_DEPLOY_API_URL: "http://127.0.0.1:8001",
 			VITE_DEV_AUTH_BYPASS: "true",
 			VITE_DEV_AUTH_TOKEN: "dev-bypass",
+			VITE_STRIPE_PUBLISHABLE_KEY: "pk_test_browser",
 		},
 	},
 	projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],

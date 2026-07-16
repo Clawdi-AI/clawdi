@@ -143,8 +143,9 @@ export function SubscriptionCreateDialog({
 	const walletShortfallCredits = walletDebitShortfallCredits(walletDebit);
 	const walletInsufficient = walletShortfallCredits !== null;
 	const isPending = createSubscription.isPending;
-	const submitLabel =
-		fundingSource === "wallet" && walletDebit
+	const submitLabel = !hostedAccess.canUsePlanCBilling
+		? "Temporarily unavailable"
+		: fundingSource === "wallet" && walletDebit
 			? `Pay ${formatCents(walletDebit.exactDebitCents)} from Wallet`
 			: fundingSource === "wallet"
 				? "Review wallet quote"
@@ -165,6 +166,12 @@ export function SubscriptionCreateDialog({
 		setWalletTopUpOpen(false);
 		setWalletTopUpAmountCents(null);
 	}, [initialBillingTermMonths, initialPlanSlug, open, plans]);
+
+	useEffect(() => {
+		if (open && !hostedAccess.isLoading && !hostedAccess.canUsePlanCBilling) {
+			onOpenChange(false);
+		}
+	}, [hostedAccess.canUsePlanCBilling, hostedAccess.isLoading, onOpenChange, open]);
 
 	function updatePlan(value: string | null) {
 		const nextPlanSlug = computePlanSlug(value);
@@ -216,13 +223,17 @@ export function SubscriptionCreateDialog({
 		}
 		const target = { kind: "terminal_fallback", deploymentId } as const;
 		const fingerprint = idempotencyFingerprint({ selection: createSelection, target });
-		createAttemptRef.current = idempotencyAttemptFor(
-			createAttemptRef.current,
-			"subscription-terminal-fallback",
-			fingerprint,
-			newIdempotencyKey,
-		);
 		try {
+			if (!(await hostedAccess.recheckPlanCBilling())) {
+				onOpenChange(false);
+				return;
+			}
+			createAttemptRef.current = idempotencyAttemptFor(
+				createAttemptRef.current,
+				"subscription-terminal-fallback",
+				fingerprint,
+				newIdempotencyKey,
+			);
 			const outcome = await createSubscription.mutateAsync({
 				selection: createSelection,
 				target,
@@ -432,7 +443,7 @@ export function SubscriptionCreateDialog({
 				</DialogContent>
 			</Dialog>
 
-			{hostedAccess.canUsePlanCBilling && wallet.data ? (
+			{wallet.data ? (
 				<TopUpDialog
 					open={walletTopUpOpen}
 					onOpenChange={setWalletTopUpOpen}

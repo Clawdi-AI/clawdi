@@ -60,7 +60,7 @@ describe("plan change selection", () => {
 });
 
 describe("planChangeUnavailableReason", () => {
-	test("fails closed for the rollout gate", () => {
+	test("fails closed with a temporary unavailability reason", () => {
 		expect(
 			planChangeUnavailableReason({
 				canUsePlanCBilling: false,
@@ -68,7 +68,7 @@ describe("planChangeUnavailableReason", () => {
 				status: "active",
 				subscriptionId: 42,
 			}),
-		).toContain("rolls out");
+		).toBe("Plan changes are temporarily unavailable.");
 	});
 
 	test("requires pending cancellation to be resumed first", () => {

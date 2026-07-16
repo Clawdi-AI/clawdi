@@ -2,7 +2,7 @@ import { Info } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 export function PlanCBillingUnavailableNotice({
-	description = "You can still review existing agents and billing history. New deploys, subscription changes, and payment recovery will return when this billing rollout is enabled for your account.",
+	description = "New deployments, subscriptions, and plan changes are temporarily unavailable. Existing agents, subscriptions, payment recovery, and billing history remain available.",
 }: {
 	description?: string;
 }) {
