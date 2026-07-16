@@ -543,9 +543,8 @@ const hostedLiveSyncSchema = z
 		}
 	});
 
-export const hostedRuntimeManifestSchema = z
+const hostedRuntimeManifestBaseSchema = z
 	.object({
-		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
 		runtime: hostedRuntimeChoiceSchema,
 		deploymentId: z.string().min(1),
 		environmentId: z.string().min(1),
@@ -561,7 +560,6 @@ export const hostedRuntimeManifestSchema = z
 			})
 			.strict(),
 		controlPlane: hostedControlPlaneSchema,
-		clawdiCli: hostedCliPayloadPolicySchema,
 		egressEngine: egressEngineSchema.strict().optional(),
 		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
 		bridge: hostedRuntimeBridgeSchema.optional(),
@@ -578,96 +576,127 @@ export const hostedRuntimeManifestSchema = z
 			})
 			.strict(),
 	})
+	.strict();
+
+type HostedRuntimeManifestBase = z.infer<typeof hostedRuntimeManifestBaseSchema>;
+
+function validateHostedRuntimeManifest(
+	manifest: HostedRuntimeManifestBase,
+	ctx: z.RefinementCtx,
+): void {
+	const runtimeKeys = Object.keys(manifest.runtimes);
+	const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
+	if (!manifest.runtimes[manifest.runtime]) {
+		ctx.addIssue({
+			code: "custom",
+			message: `runtimes.${manifest.runtime} must be present for selected runtime`,
+			path: ["runtimes", manifest.runtime],
+		});
+	}
+	for (const key of unexpectedRuntimeKeys) {
+		ctx.addIssue({
+			code: "custom",
+			message: "hosted runtime manifests must declare exactly one selected runtime",
+			path: ["runtimes", key],
+		});
+	}
+	if (manifest.runtimes[manifest.runtime]?.enabled !== true) {
+		ctx.addIssue({
+			code: "custom",
+			message: "selected runtime must be enabled",
+			path: ["runtimes", manifest.runtime, "enabled"],
+		});
+	}
+	const selectedRuntime = manifest.runtimes[manifest.runtime];
+	if (selectedRuntime) {
+		const providerIds = new Set(selectedRuntime.provider_ids);
+		for (const providerId of providerIds) {
+			if (!Object.hasOwn(manifest.providers, providerId)) {
+				ctx.addIssue({
+					code: "custom",
+					message: "runtime provider must have a matching provider projection",
+					path: ["providers", providerId],
+				});
+			}
+		}
+		for (const providerId of Object.keys(manifest.providers)) {
+			if (!providerIds.has(providerId)) {
+				ctx.addIssue({
+					code: "custom",
+					message: "provider projection must be selected by the runtime",
+					path: ["providers", providerId],
+				});
+			}
+		}
+	}
+	const surfaces = manifest.bridge?.surfaces ?? [];
+	if (manifest.runtime === "openclaw" && surfaces.length > 0) {
+		const surface = surfaces.at(0);
+		if (
+			surfaces.length !== 1 ||
+			surface?.name !== "openclaw" ||
+			surface?.kind !== "control-ui" ||
+			surface?.listenPort !== 28789 ||
+			surface?.upstreamHost !== "127.0.0.1" ||
+			surface?.upstreamPort !== 18789
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "openclaw bridge surface must be openclaw control-ui 28789 -> 127.0.0.1:18789",
+				path: ["bridge", "surfaces"],
+			});
+		}
+	}
+	if (manifest.runtime === "hermes") {
+		if (surfaces.length !== 1) {
+			ctx.addIssue({
+				code: "custom",
+				message: "hermes must declare exactly one bridge surface",
+				path: ["bridge", "surfaces"],
+			});
+			return;
+		}
+		const surface = surfaces.at(0);
+		if (
+			surface?.name !== "hermes" ||
+			surface?.kind !== "control-ui" ||
+			surface?.listenPort !== 28793 ||
+			surface?.upstreamHost !== "127.0.0.1" ||
+			surface?.upstreamPort !== 9119
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "hermes bridge surface must be hermes control-ui 28793 -> 127.0.0.1:9119",
+				path: ["bridge", "surfaces", 0],
+			});
+		}
+	}
+}
+
+const hostedRuntimeManifestV1Schema = hostedRuntimeManifestBaseSchema
+	.safeExtend({
+		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
+		clawdiCli: hostedCliPayloadPolicySchema,
+	})
 	.strict()
-	.superRefine((manifest, ctx) => {
-		const runtimeKeys = Object.keys(manifest.runtimes);
-		const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
-		if (!manifest.runtimes[manifest.runtime]) {
-			ctx.addIssue({
-				code: "custom",
-				message: `runtimes.${manifest.runtime} must be present for selected runtime`,
-				path: ["runtimes", manifest.runtime],
-			});
-		}
-		for (const key of unexpectedRuntimeKeys) {
-			ctx.addIssue({
-				code: "custom",
-				message: "hosted runtime manifests must declare exactly one selected runtime",
-				path: ["runtimes", key],
-			});
-		}
-		if (manifest.runtimes[manifest.runtime]?.enabled !== true) {
-			ctx.addIssue({
-				code: "custom",
-				message: "selected runtime must be enabled",
-				path: ["runtimes", manifest.runtime, "enabled"],
-			});
-		}
-		const selectedRuntime = manifest.runtimes[manifest.runtime];
-		if (selectedRuntime) {
-			const providerIds = new Set(selectedRuntime.provider_ids);
-			for (const providerId of providerIds) {
-				if (!Object.hasOwn(manifest.providers, providerId)) {
-					ctx.addIssue({
-						code: "custom",
-						message: "runtime provider must have a matching provider projection",
-						path: ["providers", providerId],
-					});
-				}
-			}
-			for (const providerId of Object.keys(manifest.providers)) {
-				if (!providerIds.has(providerId)) {
-					ctx.addIssue({
-						code: "custom",
-						message: "provider projection must be selected by the runtime",
-						path: ["providers", providerId],
-					});
-				}
-			}
-		}
-		const surfaces = manifest.bridge?.surfaces ?? [];
-		if (manifest.runtime === "openclaw" && surfaces.length > 0) {
-			const surface = surfaces.at(0);
-			if (
-				surfaces.length !== 1 ||
-				surface?.name !== "openclaw" ||
-				surface?.kind !== "control-ui" ||
-				surface?.listenPort !== 28789 ||
-				surface?.upstreamHost !== "127.0.0.1" ||
-				surface?.upstreamPort !== 18789
-			) {
-				ctx.addIssue({
-					code: "custom",
-					message: "openclaw bridge surface must be openclaw control-ui 28789 -> 127.0.0.1:18789",
-					path: ["bridge", "surfaces"],
-				});
-			}
-		}
-		if (manifest.runtime === "hermes") {
-			if (surfaces.length !== 1) {
-				ctx.addIssue({
-					code: "custom",
-					message: "hermes must declare exactly one bridge surface",
-					path: ["bridge", "surfaces"],
-				});
-				return;
-			}
-			const surface = surfaces.at(0);
-			if (
-				surface?.name !== "hermes" ||
-				surface?.kind !== "control-ui" ||
-				surface?.listenPort !== 28793 ||
-				surface?.upstreamHost !== "127.0.0.1" ||
-				surface?.upstreamPort !== 9119
-			) {
-				ctx.addIssue({
-					code: "custom",
-					message: "hermes bridge surface must be hermes control-ui 28793 -> 127.0.0.1:9119",
-					path: ["bridge", "surfaces", 0],
-				});
-			}
-		}
-	});
+	.superRefine(validateHostedRuntimeManifest);
+
+const hostedRuntimeManifestV2Schema = hostedRuntimeManifestBaseSchema
+	.safeExtend({
+		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v2"),
+		generation: z.number().int().positive(),
+		manifestETag: z.string().min(1).max(128),
+		applyReceiptId: z.string().min(16).max(128),
+		bootNonce: z.string().min(16).max(128),
+		clawdiCli: hostedCliPayloadPolicySchema,
+	})
+	.strict()
+	.superRefine(validateHostedRuntimeManifest);
+
+export const hostedRuntimeManifestSchema = z.discriminatedUnion("schemaVersion", [
+	hostedRuntimeManifestV1Schema,
+	hostedRuntimeManifestV2Schema,
+]);
 
 export const hostedRuntimeManifestResponseSchema = z
 	.object({
@@ -692,9 +721,30 @@ export const hostedRuntimeManifestResponseSchema = z
 		}
 	});
 
-const hostedRuntimeManifestFixtureSchema = hostedRuntimeManifestSchema.safeExtend({
-	clawdiCli: hostedFixtureCliPayloadPolicySchema,
-});
+const hostedRuntimeManifestFixtureV1Schema = hostedRuntimeManifestBaseSchema
+	.safeExtend({
+		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
+		clawdiCli: hostedFixtureCliPayloadPolicySchema,
+	})
+	.strict()
+	.superRefine(validateHostedRuntimeManifest);
+
+const hostedRuntimeManifestFixtureV2Schema = hostedRuntimeManifestBaseSchema
+	.safeExtend({
+		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v2"),
+		generation: z.number().int().positive(),
+		manifestETag: z.string().min(1).max(128),
+		applyReceiptId: z.string().min(16).max(128),
+		bootNonce: z.string().min(16).max(128),
+		clawdiCli: hostedFixtureCliPayloadPolicySchema,
+	})
+	.strict()
+	.superRefine(validateHostedRuntimeManifest);
+
+const hostedRuntimeManifestFixtureSchema = z.discriminatedUnion("schemaVersion", [
+	hostedRuntimeManifestFixtureV1Schema,
+	hostedRuntimeManifestFixtureV2Schema,
+]);
 
 export const hostedRuntimeManifestFixtureResponseSchema = z
 	.object({

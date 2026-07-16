@@ -1299,6 +1299,13 @@ function commitRuntimeAppliedState(input: {
 			etag: input.etag,
 			sourceRevision: input.sourceRevision,
 			generation: input.convergence.manifest.generation,
+			...(input.load.applyIdentity
+				? {
+						manifestETag: input.load.applyIdentity.manifestETag,
+						applyReceiptId: input.load.applyIdentity.applyReceiptId,
+						bootNonce: input.load.applyIdentity.bootNonce,
+					}
+				: {}),
 			contentIdentity: runtimeAppliedContentIdentity(input.load),
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,

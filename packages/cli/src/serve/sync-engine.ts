@@ -65,6 +65,7 @@ import {
 } from "../lib/skills-lock";
 import { tarSkillDir } from "../lib/tar";
 import { getCliVersion } from "../lib/version";
+import { HostedRuntimeHeartbeatSession } from "../runtime/heartbeat-observation";
 import { readHostedRuntimeObserved } from "../runtime/observed";
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
@@ -150,6 +151,9 @@ interface EngineOpts {
 }
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
+	const runtimeHeartbeatSession = new HostedRuntimeHeartbeatSession({
+		environmentId: opts.environmentId,
+	});
 	// Pass the engine's abort signal so any in-flight HTTP call
 	// (heartbeat, project refresh, skill download, etc.) unwinds
 	// immediately when SSE auth fails or shutdown is requested,
@@ -817,7 +821,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			},
 			triggerAuthFailureAbort,
 		),
-		heartbeatLoop(opts, api, queue, opts.abort, () => ({
+		heartbeatLoop(opts, api, queue, runtimeHeartbeatSession, opts.abort, () => ({
 			last_revision_seen: lastSeenRevision,
 			last_sync_error: lastSyncError,
 		})),
@@ -2232,6 +2236,7 @@ async function heartbeatLoop(
 	opts: EngineOpts,
 	api: ApiClient,
 	queue: RetryQueue,
+	runtimeHeartbeatSession: HostedRuntimeHeartbeatSession,
 	abort: AbortSignal,
 	snapshot: () => { last_revision_seen: number | null; last_sync_error: string | null },
 ): Promise<void> {
@@ -2239,25 +2244,34 @@ async function heartbeatLoop(
 	const send = async () => {
 		const fields = snapshot();
 		const dropped = queue.drainDroppedDelta();
-		const runtimeObserved = readHostedRuntimeObserved();
 		try {
-			await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
-				params: { path: { agent_id: opts.environmentId } },
-				body: {
-					// Peak since boot rather than sampled current
-					// depth — see the comment on the auth-failure
-					// final heartbeat above. Backend takes max
-					// across reports, so a monotonically-rising
-					// high-water mark from the daemon makes the
-					// dashboard's `queue_depth_high_water_since_start`
-					// converge to the actual peak.
-					queue_depth: queue.highWaterMark,
-					dropped_count_delta: dropped,
-					last_revision_seen: fields.last_revision_seen,
-					last_sync_error: fields.last_sync_error,
-					...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
-				},
-			});
+			const bufferedRuntimeObserved = runtimeHeartbeatSession.nextEvent();
+			const runtimeObserved = bufferedRuntimeObserved?.event ?? readHostedRuntimeObserved();
+			unwrap(
+				await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
+					params: { path: { agent_id: opts.environmentId } },
+					body: {
+						// Peak since boot rather than sampled current
+						// depth — see the comment on the auth-failure
+						// final heartbeat above. Backend takes max
+						// across reports, so a monotonically-rising
+						// high-water mark from the daemon makes the
+						// dashboard's `queue_depth_high_water_since_start`
+						// converge to the actual peak.
+						queue_depth: queue.highWaterMark,
+						dropped_count_delta: dropped,
+						last_revision_seen: fields.last_revision_seen,
+						last_sync_error: fields.last_sync_error,
+						...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
+					},
+				}),
+			);
+			if (
+				bufferedRuntimeObserved &&
+				!runtimeHeartbeatSession.acknowledge(bufferedRuntimeObserved.event.eventId)
+			) {
+				throw new Error("runtime heartbeat acknowledgement did not match the buffered event");
+			}
 			heartbeatFailureStreak = 0;
 			await touchHealthFile(opts.adapter.agentType);
 		} catch (e) {

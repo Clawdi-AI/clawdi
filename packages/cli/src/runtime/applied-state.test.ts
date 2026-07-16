@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
 	runtimeAppliedStateSchema,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
@@ -58,6 +59,43 @@ describe("runtime applied state", () => {
 				...state,
 				projectedProviderIds: { openclaw: ["default", "default"] },
 			}).success,
+		).toBe(false);
+	});
+
+	test("accepts the frozen apply identity only as a complete bounded tuple", () => {
+		const state = appliedStateFixture();
+		const complete = {
+			...state,
+			manifestETag: '"manifest-generation-7"',
+			applyReceiptId: "apply-receipt-0007",
+			bootNonce: "boot-nonce-000007",
+		};
+		expect(runtimeAppliedStateSchema.safeParse(complete).success).toBe(true);
+		expect(runtimeAppliedApplyIdentity(runtimeAppliedStateSchema.parse(complete))).toEqual({
+			generation: 7,
+			manifestETag: '"manifest-generation-7"',
+			applyReceiptId: "apply-receipt-0007",
+			bootNonce: "boot-nonce-000007",
+		});
+		expect(runtimeAppliedApplyIdentity(runtimeAppliedStateSchema.parse(state))).toBeNull();
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				manifestETag: '"manifest-generation-7"',
+			}).success,
+		).toBe(false);
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...complete,
+				applyReceiptId: "too-short",
+			}).success,
+		).toBe(false);
+		expect(runtimeAppliedStateSchema.safeParse({ ...complete, generation: 0 }).success).toBe(false);
+		expect(
+			runtimeAppliedStateSchema.safeParse({ ...complete, manifestETag: "m".repeat(129) }).success,
+		).toBe(false);
+		expect(
+			runtimeAppliedStateSchema.safeParse({ ...complete, bootNonce: "n".repeat(129) }).success,
 		).toBe(false);
 	});
 
