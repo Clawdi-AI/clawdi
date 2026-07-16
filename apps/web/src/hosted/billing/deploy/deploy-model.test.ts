@@ -17,6 +17,19 @@ function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 	};
 }
 
+function includedSubscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+	return {
+		subscription_id: 7,
+		status: "active",
+		funding_source: null,
+		payment_state: "ok",
+		billing_term_months: 1,
+		price_cents: 0,
+		currency: "usd",
+		cancel_at_period_end: false,
+	};
+}
+
 function deployment({
 	status,
 	computePlanSlug = "compute_basic",
@@ -77,6 +90,11 @@ function plan(priceCents: number): Plan {
 describe("usesActiveIncludedBasicSlot", () => {
 	test("counts active free-funded Basic deployments", () => {
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "running" })])).toBe(true);
+		expect(
+			usesActiveIncludedBasicSlot([
+				deployment({ status: "running", computeSubscription: includedSubscription() }),
+			]),
+		).toBe(true);
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "starting" })])).toBe(true);
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "failed" })])).toBe(true);
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "deleting" })])).toBe(true);

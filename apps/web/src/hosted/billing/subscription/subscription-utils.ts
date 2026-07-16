@@ -51,12 +51,23 @@ export type ComputeFundingMode = "included_basic" | "subscription" | "unknown";
 
 export type ComputeFundingSource = "included_basic" | "stripe" | "wallet" | "unknown";
 
+export function isIncludedBasicSubscription(
+	planSlug: string | null | undefined,
+	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+): boolean {
+	return (
+		isBasicCompute(planSlug) &&
+		(!computeSubscription ||
+			(computeSubscription.funding_source == null && computeSubscription.price_cents === 0))
+	);
+}
+
 export function computeFundingMode(
 	planSlug: string | null | undefined,
 	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
 ): ComputeFundingMode {
+	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
 	if (computeSubscription) return "subscription";
-	if (isBasicCompute(planSlug)) return "included_basic";
 	return "unknown";
 }
 
@@ -64,11 +75,11 @@ export function computeFundingSource(
 	planSlug: string | null | undefined,
 	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
 ): ComputeFundingSource {
+	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
 	if (computeSubscription?.funding_source === "wallet") return "wallet";
 	// Additive rollout compatibility: subscriptions from the pre-wallet
 	// deployment projection had no funding_source and were necessarily Stripe.
 	if (computeSubscription) return "stripe";
-	if (isBasicCompute(planSlug) && !computeSubscription) return "included_basic";
 	return "unknown";
 }
 

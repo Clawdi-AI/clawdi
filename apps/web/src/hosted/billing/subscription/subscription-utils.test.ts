@@ -12,6 +12,7 @@ import {
 	isComputeSubscriptionCancelable,
 	isComputeSubscriptionRenewing,
 	isComputeSubscriptionTermChangeable,
+	isIncludedBasicSubscription,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
@@ -52,6 +53,19 @@ function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 		payment_state: "ok",
 		billing_term_months: 1,
 		price_cents: 900,
+		currency: "usd",
+		cancel_at_period_end: false,
+	};
+}
+
+function includedSubscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+	return {
+		subscription_id: 7,
+		status: "active",
+		funding_source: null,
+		payment_state: "ok",
+		billing_term_months: 1,
+		price_cents: 0,
 		currency: "usd",
 		cancel_at_period_end: false,
 	};
@@ -100,9 +114,11 @@ describe("compute tier naming", () => {
 });
 
 describe("compute funding", () => {
-	test("derives included and paid Basic from subscription presence", () => {
+	test("derives included and paid Basic from the generated funding projection", () => {
 		expect(computeFundingMode(COMPUTE_BASIC_SLUG, null)).toBe("included_basic");
+		expect(computeFundingMode(COMPUTE_BASIC_SLUG, includedSubscription())).toBe("included_basic");
 		expect(computeFundingMode(COMPUTE_BASIC_SLUG, subscription())).toBe("subscription");
+		expect(isIncludedBasicSubscription(COMPUTE_BASIC_SLUG, includedSubscription())).toBe(true);
 	});
 
 	test("does not infer included funding for Performance without subscription state", () => {
@@ -111,6 +127,7 @@ describe("compute funding", () => {
 	});
 
 	test("distinguishes Stripe and Wallet subscription funding", () => {
+		expect(computeFundingSource(COMPUTE_BASIC_SLUG, includedSubscription())).toBe("included_basic");
 		expect(computeFundingSource(COMPUTE_BASIC_SLUG, subscription())).toBe("stripe");
 		expect(
 			computeFundingSource(COMPUTE_BASIC_SLUG, { ...subscription(), funding_source: "wallet" }),
