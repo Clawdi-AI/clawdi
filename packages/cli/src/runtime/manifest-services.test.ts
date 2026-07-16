@@ -51,19 +51,33 @@ function writeFakeGatewayCli(input: {
 	unitPath: string;
 	failInstall?: boolean;
 	failUninstall?: boolean;
+	requiredSystemdState?: {
+		dropInPath: string;
+		envPath: string;
+		snapshotPrefix: string;
+	};
 }): void {
+	const stateCheck = input.requiredSystemdState
+		? `test -f '${input.requiredSystemdState.envPath}'
+    test -f '${input.requiredSystemdState.dropInPath}'
+    grep -Fx 'ConditionPathExists=${input.requiredSystemdState.envPath}' '${input.requiredSystemdState.dropInPath}' >/dev/null
+    cp '${input.requiredSystemdState.envPath}' '${input.requiredSystemdState.snapshotPrefix}.env'
+    cp '${input.requiredSystemdState.dropInPath}' '${input.requiredSystemdState.snapshotPrefix}.conf'
+    printf '%s systemd state ready\\n' '${input.runtime}' >> '${input.logPath}'`
+		: "";
 	mkdirSync(dirname(input.path), { recursive: true });
 	writeFileSync(
 		input.path,
 		`#!/usr/bin/env bash
 set -euo pipefail
-printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
 case "$*" in
   "gateway install --force --json"|"gateway install --force"|"gateway install")
-    ${
-			input.failInstall
-				? "exit 41"
-				: `mkdir -p '${dirname(input.unitPath)}'
+	${stateCheck}
+	printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
+	${
+		input.failInstall
+			? "exit 41"
+			: `mkdir -p '${dirname(input.unitPath)}'
     cat > '${input.unitPath}' <<'EOF'
 [Unit]
 Description=Official gateway
@@ -71,11 +85,12 @@ Description=Official gateway
 [Service]
 ExecStart=official gateway run
 EOF`
-		}
-    ;;
+	}
+	;;
   "gateway uninstall")
-    ${input.failUninstall ? "exit 42" : `rm -f '${input.unitPath}'`}
-    ;;
+	printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
+	${input.failUninstall ? "exit 42" : `rm -f '${input.unitPath}'`}
+	;;
   *)
     printf 'unexpected ${input.runtime} command: %s\\n' "$*" >&2
     exit 64
@@ -86,12 +101,20 @@ esac
 	chmodSync(input.path, 0o700);
 }
 
-function writeFakeSystemctl(input: { path: string; logPath: string; exitCode?: number }): void {
+function writeFakeSystemctl(input: {
+	path: string;
+	logPath: string;
+	exitCode?: number;
+	resetFailedExitCode?: number;
+}): void {
 	mkdirSync(dirname(input.path), { recursive: true });
 	writeFileSync(
 		input.path,
 		`#!/usr/bin/env bash
 printf 'systemctl %s\\n' "$*" >> '${input.logPath}'
+if [[ "$*" == "--user reset-failed "* ]]; then
+  exit ${input.resetFailedExitCode ?? input.exitCode ?? 0}
+fi
 exit ${input.exitCode ?? 0}
 `,
 	);
@@ -317,6 +340,94 @@ describe("runtime manifest services", () => {
 		expect(existsSync(runtimeRunConfigPath("openclaw", paths))).toBe(false);
 	});
 
+	test("converges official service state before installers restart units", () => {
+		const paths = tempRuntimePaths();
+		const logPath = join(paths.runRoot, "official-service-commands.log");
+		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
+		writeFakeSystemctl({ path: systemctlCommand, logPath });
+		for (const [runtime, command] of [
+			["openclaw", openclawCommand],
+			["hermes", hermesCommand],
+		] as const) {
+			const name = `${runtime}-gateway`;
+			const dropInPath = join(paths.systemdUserRoot, `${name}.service.d`, "10-clawdi-hosted.conf");
+			const envPath = join(paths.systemdEnvRoot, `${name}.service.env`);
+			mkdirSync(dirname(dropInPath), { recursive: true });
+			writeFileSync(dropInPath, `[Service]\nEnvironmentFile=${envPath}\n`);
+			writeFakeGatewayCli({
+				path: command,
+				logPath,
+				runtime,
+				unitPath: join(paths.systemdUserRoot, `${name}.service`),
+				requiredSystemdState: {
+					dropInPath,
+					envPath,
+					snapshotPrefix: join(paths.runRoot, `${name}-installer-state`),
+				},
+			});
+		}
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "hdep_installer_order",
+			environmentId: "env_installer_order",
+			instanceId: "hri_installer_order",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			workspaceRoot: join(paths.userHome, "clawdi"),
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					run: runSettings(openclawCommand, ["gateway", "run"]),
+					services: {},
+				},
+				hermes: {
+					enabled: true,
+					run: runSettings(hermesCommand, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			recovery: {},
+		};
+
+		const result = convergeRuntimeManifest(
+			{
+				manifest,
+				source: "fixture-file",
+				sourcePath: "inline-installer-order",
+				offline: false,
+			},
+			paths,
+		);
+
+		expect(result.installErrors).toEqual([]);
+		expect(readFileSync(logPath, "utf8").trim().split("\n")).toEqual([
+			"systemctl --user daemon-reload",
+			"systemctl --user reset-failed hermes-gateway.service",
+			"hermes systemd state ready",
+			"hermes gateway install --force",
+			"systemctl --user daemon-reload",
+			"systemctl --user reset-failed openclaw-gateway.service",
+			"openclaw systemd state ready",
+			"openclaw gateway install --force --json",
+		]);
+		for (const name of ["openclaw-gateway", "hermes-gateway"]) {
+			expect(readFileSync(join(paths.runRoot, `${name}-installer-state.env`), "utf8")).toBe(
+				readFileSync(join(paths.systemdEnvRoot, `${name}.service.env`), "utf8"),
+			);
+			expect(readFileSync(join(paths.runRoot, `${name}-installer-state.conf`), "utf8")).toBe(
+				readFileSync(
+					join(paths.systemdUserRoot, `${name}.service.d`, "10-clawdi-hosted.conf"),
+					"utf8",
+				),
+			);
+		}
+	});
+
 	test("uninstalls stale official gateway services when manifest disables them", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
@@ -325,7 +436,7 @@ describe("runtime manifest services", () => {
 		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
-		writeFakeSystemctl({ path: systemctlCommand, logPath, exitCode: 37 });
+		writeFakeSystemctl({ path: systemctlCommand, logPath, resetFailedExitCode: 37 });
 		writeFakeGatewayCli({
 			path: openclawCommand,
 			logPath,
@@ -392,8 +503,10 @@ describe("runtime manifest services", () => {
 		expect(enabled.installErrors).toEqual([]);
 		expect(disabled.installErrors).toEqual([]);
 		expect(readFileSync(logPath, "utf8").trim().split("\n")).toEqual([
+			"systemctl --user daemon-reload",
 			"systemctl --user reset-failed hermes-gateway.service",
 			"hermes gateway install --force",
+			"systemctl --user daemon-reload",
 			"systemctl --user reset-failed openclaw-gateway.service",
 			"openclaw gateway install --force --json",
 			"hermes gateway uninstall",
@@ -545,12 +658,15 @@ cat > '${logPath}'
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 		const dropInPath = join(
 			paths.systemdUserRoot,
 			"openclaw-gateway.service.d",
 			"10-clawdi-hosted.conf",
 		);
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
+		writeFakeSystemctl({ path: systemctlCommand, logPath });
 		const manifest: RuntimeManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "hdep_install_failure",
@@ -629,7 +745,10 @@ cat > '${logPath}'
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
+		writeFakeSystemctl({ path: systemctlCommand, logPath });
 		writeFakeGatewayCli({
 			path: openclawCommand,
 			logPath,
