@@ -416,6 +416,9 @@ export function HostedAgentDetail({
 	const api = useApi();
 	const router = useRouter();
 	const ci = deployment.config_info;
+	const deploymentStatus = parseDeploymentStatus(deployment.status);
+	const deploymentRunning = isRunningStatus(deploymentStatus);
+	const cloudEnvironmentId = isCloudEnvId(environmentId);
 	const agentQuery = useQuery({
 		queryKey: ["agents", environmentId],
 		queryFn: async () =>
@@ -424,10 +427,10 @@ export function HostedAgentDetail({
 					params: { path: { agent_id: environmentId } },
 				}),
 			),
-		enabled: isCloudEnvId(environmentId),
+		enabled: cloudEnvironmentId,
 	});
 	const agent = agentQuery.data;
-	const agentProjectionMissing = isApiNotFoundError(agentQuery.error);
+	const agentProjectionMissing = cloudEnvironmentId && isApiNotFoundError(agentQuery.error);
 	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
@@ -456,19 +459,21 @@ export function HostedAgentDetail({
 
 	const sessions = useQuery({
 		...sessionListQueryOptions(api, { environment_id: environmentId, page_size: 20 }),
-		enabled: Boolean(agent),
+		enabled: deploymentRunning && Boolean(agent),
 	});
 
-	if (agentQuery.isLoading && isCloudEnvId(environmentId)) {
+	if (agentQuery.isLoading && deploymentRunning && cloudEnvironmentId) {
 		return <ConnectedAgentDetailSkeleton hosted />;
 	}
 
-	if (agentProjectionMissing) {
+	if (!deploymentRunning || agentProjectionMissing) {
 		return (
-			<MissingAgentProjectionDetail
+			<DeploymentCentricDetail
 				deployment={deployment}
 				runtime={runtime}
 				environmentId={environmentId}
+				agentProjectionMissing={agentProjectionMissing}
+				section={activeTab}
 			/>
 		);
 	}
@@ -757,19 +762,45 @@ function OverviewFailedPanel({
 	);
 }
 
-function MissingAgentProjectionDetail({
+function DeploymentCentricDetail({
 	deployment,
 	runtime,
 	environmentId,
+	agentProjectionMissing,
+	section,
 }: {
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	environmentId: string;
+	agentProjectionMissing: boolean;
+	section: HostedAgentTab;
 }) {
 	const status = parseDeploymentStatus(deployment.status);
 	const canRestart = canRestartDeployment(status);
 	const canStart = canStartDeployment(status);
 	const failed = status.kind === "failed";
+	const stoppedComputeSettings = status.kind === "stopped" && section === "settings";
+
+	if (stoppedComputeSettings) {
+		return (
+			<div
+				data-hosted="true"
+				className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}
+			>
+				<section className="flex flex-col gap-4">
+					<PageHeader
+						title="Settings"
+						description="Compute plan, billing, and lifecycle controls."
+						icon={<Settings className="size-4 text-muted-foreground" />}
+						status={<AgentSourceBadge source="hosted" compact />}
+					/>
+					<ComputeDunningBanner deployment={deployment} />
+					<ComputeSettingsSections deployment={deployment} />
+				</section>
+			</div>
+		);
+	}
+
 	return (
 		<div
 			data-hosted="true"
@@ -782,15 +813,28 @@ function MissingAgentProjectionDetail({
 					icon={<Info className="size-4 text-muted-foreground" />}
 					status={<AgentSourceBadge source="hosted" compact />}
 				/>
-				<Alert data-hosted="true">
-					<AlertCircle />
-					<AlertTitle>Agent sync record unavailable</AlertTitle>
-					<AlertDescription>
-						The hosted deployment still claims agent {environmentId}, but its synced agent record is
-						missing. Runtime UI, terminal, sessions, and other agent data will become available
-						after the agent reconnects.
-					</AlertDescription>
-				</Alert>
+				{agentProjectionMissing ? (
+					<Alert data-hosted="true">
+						<AlertCircle />
+						<AlertTitle>Agent sync record unavailable</AlertTitle>
+						<AlertDescription>
+							The hosted deployment still claims agent {environmentId}, but its synced agent record
+							is missing. Runtime UI, terminal, sessions, and other agent data will become available
+							after the agent reconnects.
+						</AlertDescription>
+					</Alert>
+				) : status.kind === "stopped" ? (
+					<Alert data-hosted="true">
+						<AlertCircle />
+						<AlertTitle>Hosted compute is stopped</AlertTitle>
+						<AlertDescription>
+							The agent record is retained, but Runtime UI, terminal, sessions, and daemon status
+							are unavailable until compute starts again.
+						</AlertDescription>
+					</Alert>
+				) : isProvisioningStatus(status) ? (
+					<OverviewProvisioningPanel status={status} />
+				) : null}
 				{failed ? (
 					<OverviewFailedPanel deployment={deployment} restartLabel="Retry startup" />
 				) : null}
@@ -805,7 +849,11 @@ function MissingAgentProjectionDetail({
 				</div>
 				<SettingsSection
 					title="Deployment actions"
-					description="Manage compute while synced agent data is unavailable."
+					description={
+						agentProjectionMissing
+							? "Manage compute while synced agent data is unavailable."
+							: "Manage this hosted deployment while live agent tools are unavailable."
+					}
 				>
 					<div className="flex flex-wrap gap-2.5">
 						{canRestart && !failed ? <RestartComputeAction deployment={deployment} /> : null}

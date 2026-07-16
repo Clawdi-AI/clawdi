@@ -4,7 +4,7 @@ import type { components } from "@clawdi/shared/api";
 import { useQuery } from "@tanstack/react-query";
 import { createElement, useMemo } from "react";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
-import { type AgentTile, isAgentActive } from "@/components/dashboard/agents-card";
+import type { AgentTile } from "@/components/dashboard/agents-card";
 import {
 	DaemonStatusBadge,
 	type DaemonStatusVisual,
@@ -81,7 +81,6 @@ export function hostedRuntimeStatusView(
 	const sync = env === undefined ? null : daemonStatusVisual(env, "on-clawdi");
 	const computeIsRunning = isRunningStatus(compute);
 	const failureReason = compute.kind === "failed" ? deploymentFailureReason(deployment) : null;
-	const envIsFresh = isAgentActive(env?.last_seen_at);
 	let secondary: HostedRuntimeStatusView["secondary"] = null;
 	if (failureReason) {
 		secondary = {
@@ -108,7 +107,7 @@ export function hostedRuntimeStatusView(
 			textClass: COMPUTE_TEXT_TONE[computeTone],
 		},
 		secondary,
-		active: computeIsRunning || envIsFresh,
+		active: computeIsRunning,
 	};
 }
 

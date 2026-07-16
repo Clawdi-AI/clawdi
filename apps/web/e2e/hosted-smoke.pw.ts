@@ -140,6 +140,21 @@ const failedMissingProjectionDeployment = {
 	},
 };
 
+const retainedProjectionEnvironmentId = "66666666-6666-4666-8666-666666666666";
+const retainedProjectionFailureReason =
+	"startup_probe_failing; restart_count=4; runtime daemon exited and is no longer reachable";
+const failedRetainedProjectionDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_failed_retained_projection",
+	name: "Failed retained projection agent",
+	status: "failed",
+	failure_reason: retainedProjectionFailureReason,
+	config_info: {
+		...includedBasicDeployment.config_info,
+		clawdi_cloud_environments: { hermes: retainedProjectionEnvironmentId },
+	},
+};
+
 const interruptedIdentitylessDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_creation_interrupted",
@@ -268,6 +283,7 @@ type HostedApiStubOptions = {
 	billingHistoryResponses?: unknown[];
 	cancelRequests?: string[];
 	checkoutRequests?: string[];
+	cloudAgentOverrides?: Record<string, unknown>;
 	cloudAgentNotFoundIds?: readonly string[];
 	createRequests?: string[];
 	deleteRequests?: string[];
@@ -556,6 +572,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				sync_enabled: true,
 				explicit_identity: true,
 				default_project_id: "project-hosted",
+				...options.cloudAgentOverrides,
 			});
 		}
 		if (p === "/v1/ai-providers") return fulfillJson(r, { providers: [] });
@@ -704,6 +721,53 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 		.getByRole("button", { name: "Delete compute", exact: true })
 		.click();
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_failed_projection"]);
+});
+
+test("failed deployment with a retained projection renders recovery without live agent sections", async ({
+	page,
+}) => {
+	const restartRequests: string[] = [];
+	const deleteRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [failedRetainedProjectionDeployment],
+		plans: [basicPlan, performancePlan],
+		cloudAgentOverrides: {
+			last_seen_at: new Date().toISOString(),
+			last_sync_error: "daemon unreachable: connection refused",
+		},
+		restartRequests,
+		deleteRequests,
+	});
+
+	await page.goto(`/agents/${retainedProjectionEnvironmentId}?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect(main.getByText(retainedProjectionFailureReason, { exact: true })).toBeVisible();
+	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
+	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
+	await expect(main.getByText("Jul 15, 2026", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toHaveCount(0);
+
+	await main.getByRole("button", { name: "Retry startup", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Retry startup", exact: true })
+		.click();
+	await expect
+		.poll(() => restartRequests)
+		.toEqual(["/v2/deployments/hdep_failed_retained_projection/restart"]);
+
+	await main.getByRole("button", { name: "Delete", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Delete compute", exact: true })
+		.click();
+	await expect
+		.poll(() => deleteRequests)
+		.toEqual(["/v2/deployments/hdep_failed_retained_projection"]);
 });
 
 test("identity-less interrupted deployment tile exposes delete", async ({ page }) => {
