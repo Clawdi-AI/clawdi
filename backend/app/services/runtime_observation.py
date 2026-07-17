@@ -72,6 +72,10 @@ class DecodedRuntimeObservationCursor:
     stream_position: int
 
 
+class _RuntimeObservationConsumerInitializationConflict(Exception):
+    """A concurrent repeatable-read snapshot initialized the same consumer."""
+
+
 def _utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
@@ -752,9 +756,68 @@ async def _initialize_expired_consumer(
         ),
         reset_barrier_at=now,
     )
-    db.add(cursor)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(cursor)
+            await db.flush()
+    except IntegrityError as exc:
+        # The conflicting row is not visible in this repeatable-read snapshot,
+        # even after the savepoint rolls back. The caller must end the snapshot
+        # and reselect the committed winner before returning its persisted 410.
+        raise _RuntimeObservationConsumerInitializationConflict from exc
     return _cursor_expired_error(cursor)
+
+
+async def _load_concurrently_initialized_consumer_error(
+    db: AsyncSession,
+    *,
+    environment_id: uuid.UUID,
+    owner_id: uuid.UUID,
+    deployment_id: str,
+    consumer_id: str,
+) -> RuntimeObservationProtocolError:
+    """Restart a lost initialization race and expose the committed boundary."""
+
+    for _attempt in range(2):
+        await db.rollback()
+        await db.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+        fence = await db.get(V2RuntimeEnvironmentFence, environment_id)
+        if fence is None or fence.owner_id != owner_id or fence.deployment_id != deployment_id:
+            raise RuntimeObservationProtocolError(
+                404,
+                "runtime_environment_not_found",
+                "runtime environment was not found",
+            )
+        cursor = (
+            await db.execute(
+                select(V2RuntimeObservationConsumerCursor)
+                .where(
+                    V2RuntimeObservationConsumerCursor.environment_id == environment_id,
+                    V2RuntimeObservationConsumerCursor.consumer_id == consumer_id,
+                )
+                .execution_options(populate_existing=True)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if cursor is not None:
+            return await _install_cursor_expiry_boundary(
+                db,
+                fence=fence,
+                cursor=cursor,
+            )
+        try:
+            return await _initialize_expired_consumer(
+                db,
+                fence=fence,
+                consumer_id=consumer_id,
+            )
+        except _RuntimeObservationConsumerInitializationConflict:
+            continue
+    raise RuntimeObservationProtocolError(
+        503,
+        "runtime_observation_consumer_initialization_unavailable",
+        "runtime observation consumer initialization could not be stabilized",
+    )
 
 
 async def register_runtime_observation_consumer(
@@ -931,11 +994,20 @@ async def read_runtime_observations(
         # A read for an unknown stable consumer is itself observable. Persist a
         # same-snapshot boundary so the caller can reset instead of receiving an
         # unresettable 410 with no high-water metadata.
-        raise await _initialize_expired_consumer(
-            db,
-            fence=fence,
-            consumer_id=consumer_id,
-        )
+        try:
+            raise await _initialize_expired_consumer(
+                db,
+                fence=fence,
+                consumer_id=consumer_id,
+            )
+        except _RuntimeObservationConsumerInitializationConflict:
+            raise await _load_concurrently_initialized_consumer_error(
+                db,
+                environment_id=environment_id,
+                owner_id=owner_id,
+                deployment_id=deployment_id,
+                consumer_id=consumer_id,
+            )
     try:
         decoded = _validate_cursor_for_consumer(
             after_cursor,
@@ -952,6 +1024,12 @@ async def read_runtime_observations(
             consumer_id=consumer_id,
         ) from exc
     high_water = fence.stream_high_water
+    if decoded.stream_position < fence.replay_floor_stream_position:
+        raise await _expire_invalid_cursor(
+            db,
+            fence=fence,
+            consumer_id=consumer_id,
+        )
     if decoded.stream_position > high_water:
         raise await _expire_invalid_cursor(
             db,

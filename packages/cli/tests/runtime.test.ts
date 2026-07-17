@@ -63,6 +63,7 @@ import {
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../src/runtime/paths";
 import { buildRuntimeRunConfig } from "../src/runtime/run-config";
+import { normalizeSecretValues } from "../src/runtime/secret-values";
 import {
 	buildRuntimeBootStatus,
 	writeRuntimeBootStatus,
@@ -1083,6 +1084,33 @@ function writeTestRuntimeAppliedState(
 	);
 }
 
+function writeOfflineStrictAppliedState(
+	paths: RuntimePaths,
+	manifest: RuntimeManifest,
+	contentSha256: string,
+): void {
+	writeRuntimeAppliedState(
+		{
+			schemaVersion: "clawdi.runtimeAppliedState.v2",
+			appliedAt: "2026-07-16T00:01:00.000Z",
+			instanceId: manifest.instanceId,
+			etag: '"transport-etag-offline"',
+			sourceRevision: "a".repeat(64),
+			generation: manifest.generation,
+			manifestETag: '"manifest-etag-offline"',
+			applyReceiptId: "apply-receipt-offline-0001",
+			bootNonce: "boot-nonce-offline-000001",
+			contentIdentity: {
+				sourcePath: "https://runtime.test/v1/runtime/manifest",
+				sha256: contentSha256,
+			},
+			providerIds: [],
+			projectedProviderIds: {},
+		},
+		paths,
+	);
+}
+
 function applyOpenClawProviderPatchLog(
 	patchLog: string,
 	initialProviders: Record<string, unknown>,
@@ -1514,7 +1542,7 @@ describe("runtime manifest datasource", () => {
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		const manifest = {
+		const manifest: RuntimeManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_offline_identity",
 			environmentId: "env_offline_identity",
@@ -1532,25 +1560,13 @@ describe("runtime manifest datasource", () => {
 		};
 		writeFileSync(join(state, "cache", "manifest.last-good.json"), JSON.stringify(manifest));
 		const paths = getRuntimePaths();
-		writeRuntimeAppliedState(
-			{
-				schemaVersion: "clawdi.runtimeAppliedState.v2",
-				appliedAt: "2026-07-16T00:01:00.000Z",
-				instanceId: manifest.instanceId,
-				etag: '"transport-etag-offline"',
-				sourceRevision: "a".repeat(64),
-				generation: manifest.generation,
-				manifestETag: '"manifest-etag-offline"',
-				applyReceiptId: "apply-receipt-offline-0001",
-				bootNonce: "boot-nonce-offline-000001",
-				contentIdentity: {
-					sourcePath: "https://runtime.test/v1/runtime/manifest",
-					sha256: "b".repeat(64),
-				},
-				providerIds: [],
-				projectedProviderIds: {},
-			},
+		writeOfflineStrictAppliedState(
 			paths,
+			manifest,
+			runtimeContentSha256({
+				manifest: normalizeManifestPayload(manifest).manifest,
+				secretValues: {},
+			}),
 		);
 		const loaded = await loadRuntimeManifest(paths);
 		if (!("manifest" in loaded)) {
@@ -1576,6 +1592,114 @@ describe("runtime manifest datasource", () => {
 			applyReceiptId: "apply-receipt-offline-0001",
 			bootNonce: "boot-nonce-offline-000001",
 		});
+	});
+
+	it("refuses strict-v2 offline identity restoration when cached manifest content changed", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_offline_content_mismatch",
+			environmentId: "env_offline_content_mismatch",
+			instanceId: "iid_offline_content_mismatch",
+			generation: 3,
+			issuedAt: "2026-07-16T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.12.10-beta.55",
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: { openclaw: { enabled: false } },
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		};
+		writeFileSync(join(state, "cache", "manifest.last-good.json"), JSON.stringify(manifest));
+		const paths = getRuntimePaths();
+		writeOfflineStrictAppliedState(
+			paths,
+			manifest,
+			runtimeContentSha256({
+				manifest: normalizeManifestPayload({
+					...manifest,
+					issuedAt: "2026-07-15T00:00:00Z",
+				}).manifest,
+				secretValues: {},
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(paths);
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected offline manifest mismatch failure");
+		expect(loaded.mode).toBe("repair");
+		expect(loaded.errors).toContain(
+			"cached manifest does not match the durable strict-v2 apply identity; refusing offline boot",
+		);
+	});
+
+	it("refuses strict-v2 offline identity restoration when cached secret content changed", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_offline_secret_mismatch",
+			environmentId: "env_offline_secret_mismatch",
+			instanceId: "iid_offline_secret_mismatch",
+			generation: 3,
+			issuedAt: "2026-07-16T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.12.10-beta.55",
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: { openclaw: { enabled: false } },
+			projection: {
+				providers: {
+					default: {
+						kind: "openai-compatible",
+						baseUrl: "https://sub2api.test/v1",
+						apiKeySecretRef: "provider.default.apiKey",
+					},
+				},
+			},
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		};
+		writeFileSync(join(state, "cache", "manifest.last-good.json"), JSON.stringify(manifest));
+		writeFileSync(
+			join(state, "cache", "runtime-secrets.last-good.json"),
+			JSON.stringify({ "provider.default.apiKey": "sk-new-cached-value" }),
+		);
+		const paths = getRuntimePaths();
+		writeOfflineStrictAppliedState(
+			paths,
+			manifest,
+			runtimeContentSha256({
+				manifest: normalizeManifestPayload(manifest).manifest,
+				secretValues: normalizeSecretValues({
+					"provider.default.apiKey": "sk-original-applied-value",
+				}),
+			}),
+		);
+
+		const loaded = await loadRuntimeManifest(paths);
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected offline secret mismatch failure");
+		expect(loaded.mode).toBe("repair");
+		expect(loaded.errors).toContain(
+			"cached manifest does not match the durable strict-v2 apply identity; refusing offline boot",
+		);
 	});
 
 	it("refuses last-good offline boot when cached secret values are missing", async () => {

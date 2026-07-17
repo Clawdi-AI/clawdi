@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { readRuntimeAppliedState, runtimeAppliedApplyIdentity } from "./applied-state";
+import {
+	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
+	runtimeContentSha256,
+} from "./applied-state";
 import type { RuntimeApplyIdentity } from "./apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
@@ -860,10 +864,14 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 		}
 		const appliedState = readRuntimeAppliedState(paths);
 		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
+		const cached = loadCachedSecretValues(paths);
+		if ("errors" in cached) return cached;
 		if (
 			cachedApplyIdentity &&
 			(appliedState?.generation !== manifest.generation ||
-				appliedState.instanceId !== manifest.instanceId)
+				appliedState.instanceId !== manifest.instanceId ||
+				appliedState.contentIdentity.sha256 !==
+					runtimeContentSha256({ manifest, secretValues: cached.secretValues }))
 		) {
 			return {
 				mode: "repair",
@@ -876,8 +884,6 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 		}
 		const secretRefs = manifestSecretRefs(manifest);
 		if (secretRefs.length > 0) {
-			const cached = loadCachedSecretValues(paths);
-			if ("errors" in cached) return cached;
 			const missingSecretRefs = manifestSecretRefsMissingValues(manifest, cached.secretValues);
 			if (missingSecretRefs.length === 0) {
 				return {
