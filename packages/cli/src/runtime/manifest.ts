@@ -62,7 +62,7 @@ import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import { isClawdiManagedProviderProjection, normalizeSecretRef } from "./hosted-egress-profiles";
 import {
 	buildManagedModelsEndpoint,
-	extractManagedLiveModelIds,
+	extractManagedLiveModels,
 	resolveManagedPrimaryModel,
 } from "./managed-model-resolution";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
@@ -1357,7 +1357,10 @@ function applyHostedLocaleProjection(
 export function hostedAiProviderCatalog(
 	manifest: RuntimeManifest,
 	runtimeName?: string,
-	options: { primaryModelOverride?: AgentPrimaryModel } = {},
+	options: {
+		primaryModelOverride?: AgentPrimaryModel;
+		managedModelsOverride?: readonly AiProviderModel[];
+	} = {},
 ): { catalog: AiProviderCatalog; primaryModel: AgentPrimaryModel } | null {
 	const providers = manifest.projection?.providers;
 	if (!providers || Object.keys(providers).length === 0) return null;
@@ -1381,6 +1384,7 @@ export function hostedAiProviderCatalog(
 			const models = hostedProviderModels(
 				input,
 				id === primaryModel.provider_id ? primaryModel : null,
+				id === primaryModel.provider_id ? options.managedModelsOverride : undefined,
 			);
 			return {
 				id,
@@ -1437,19 +1441,13 @@ function hostedRuntimePrimaryModel(
 function hostedProviderModels(
 	input: Record<string, unknown>,
 	primaryModel: AgentPrimaryModel | null,
+	managedModelsOverride?: readonly AiProviderModel[],
 ): NonNullable<AiProviderCatalog["providers"][number]["models"]> {
 	const providerApiMode = hostedProviderApiMode(input);
 	// Hosted wire rejects singular model; this fallback serves generic provider projections only.
 	const singularModel = stringValue(input.model);
-	if (hostedProviderManagedBy(input) === "clawdi") {
-		if (primaryModel) {
-			return [{ id: primaryModel.model, api_mode: providerApiMode }];
-		}
-		return singularModel ? [{ id: singularModel, api_mode: providerApiMode }] : [];
-	}
-
 	const rawModels = Array.isArray(input.models) ? input.models : [];
-	const models = rawModels
+	const manifestModels = rawModels
 		.map((model) => (recordValue(model) ? (model as Record<string, unknown>) : null))
 		.filter((model): model is Record<string, unknown> => model !== null)
 		.map((model) => {
@@ -1463,6 +1461,14 @@ function hostedProviderModels(
 			};
 		})
 		.filter((model): model is NonNullable<typeof model> => model !== null);
+	const manifestModelsById = new Map(manifestModels.map((model) => [model.id, model]));
+	const models = managedModelsOverride
+		? managedModelsOverride.map((model) => ({
+				...manifestModelsById.get(model.id),
+				...model,
+				id: model.id,
+			}))
+		: manifestModels;
 	if (singularModel && !models.some((model) => model.id === singularModel)) {
 		models.unshift({ id: singularModel, api_mode: providerApiMode });
 	}
@@ -1520,15 +1526,20 @@ function managedGatewayPrimaryModelTarget(
 	};
 }
 
-function resolveManagedGatewayPrimaryModelOverrides(
+interface ManagedGatewayModelOverrides {
+	primaryModels: Partial<Record<string, AgentPrimaryModel>>;
+	models: Partial<Record<string, AiProviderModel[]>>;
+}
+
+function resolveManagedGatewayModelOverrides(
 	manifest: RuntimeManifest,
 	enabledRuntimes: readonly string[],
 	home: string,
 	workspaceRoot: string,
 	egressSystemCaFile: string | null,
 	fetcher: ManagedGatewayModelListFetcher,
-): Partial<Record<string, AgentPrimaryModel>> {
-	const overrides: Partial<Record<string, AgentPrimaryModel>> = {};
+): ManagedGatewayModelOverrides {
+	const overrides: ManagedGatewayModelOverrides = { primaryModels: {}, models: {} };
 	const fetchCache = new Map<string, ManagedGatewayModelFetchResult>();
 	for (const runtimeName of enabledRuntimes) {
 		const target = managedGatewayPrimaryModelTarget(manifest, runtimeName);
@@ -1553,11 +1564,15 @@ function resolveManagedGatewayPrimaryModelOverrides(
 		}
 		const resolution = resolveManagedPrimaryModel({
 			seedModel: target.seedModel,
-			liveModelIds: fetchResult.status === "ok" ? fetchResult.modelIds : null,
+			liveModelIds:
+				fetchResult.status === "ok" ? fetchResult.models.map((model) => model.id) : null,
 		});
+		if (fetchResult.status === "ok" && fetchResult.models.length > 0) {
+			overrides.models[runtimeName] = fetchResult.models;
+		}
 		if (!resolution.resolvedModel) continue;
 		if (resolution.resolvedModel === target.seedModel) continue;
-		overrides[runtimeName] = {
+		overrides.primaryModels[runtimeName] = {
 			provider_id: target.providerId,
 			model: resolution.resolvedModel,
 		};
@@ -1628,7 +1643,7 @@ function fetchManagedGatewayModelList(
 	try {
 		const payload = JSON.parse(stdout) as { body?: string };
 		const body = payload.body ? JSON.parse(payload.body) : null;
-		return { status: "ok", endpoint, modelIds: extractManagedLiveModelIds(body) };
+		return { status: "ok", endpoint, models: extractManagedLiveModels(body) };
 	} catch (error) {
 		return {
 			status: "failed",
@@ -2026,7 +2041,7 @@ type ManagedGatewayModelFetchResult =
 	| {
 			status: "ok";
 			endpoint: string;
-			modelIds: string[];
+			models: AiProviderModel[];
 	  }
 	| {
 			status: "failed";
@@ -2074,14 +2089,15 @@ function applyHostedAiProviderProjection(
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
-	managedPrimaryModelOverrides: Partial<Record<string, AgentPrimaryModel>>,
+	managedModelOverrides: ManagedGatewayModelOverrides,
 ): HostedAiProviderProjectionResult {
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
 		return { path: null, revision: null, providerIds: [] };
 	}
 	const projectionInput = agentTargetProjectionInput(
 		hostedAiProviderCatalog(manifest, name, {
-			primaryModelOverride: managedPrimaryModelOverrides[name],
+			primaryModelOverride: managedModelOverrides.primaryModels[name],
+			managedModelsOverride: managedModelOverrides.models[name],
 		}),
 	);
 	assertHostedProviderProjectionMode(name, manifest, projectionInput);
@@ -2137,7 +2153,7 @@ function previewHostedAiProviderProjectionRevision(
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
-	managedPrimaryModelOverrides: Partial<Record<string, AgentPrimaryModel>>,
+	managedModelOverrides: ManagedGatewayModelOverrides,
 ): string | null {
 	if (
 		name !== "hermes" ||
@@ -2149,7 +2165,8 @@ function previewHostedAiProviderProjectionRevision(
 	}
 	const projectionInput = agentTargetProjectionInput(
 		hostedAiProviderCatalog(manifest, name, {
-			primaryModelOverride: managedPrimaryModelOverrides[name],
+			primaryModelOverride: managedModelOverrides.primaryModels[name],
+			managedModelsOverride: managedModelOverrides.models[name],
 		}),
 	);
 	assertHostedProviderProjectionMode(name, manifest, projectionInput);
@@ -2665,6 +2682,8 @@ function buildHermesHostedCompatibilityProviderModels(
 		const metadata: Record<string, unknown> = {};
 		const contextLength = positiveInteger(model.context_window);
 		if (contextLength !== undefined) metadata.context_length = contextLength;
+		const maxTokens = positiveInteger(model.max_tokens);
+		if (maxTokens !== undefined) metadata.max_tokens = maxTokens;
 		const supportsVision = hermesHostedSupportsVision(model);
 		if (supportsVision !== undefined) metadata.supports_vision = supportsVision;
 		const cost = hermesHostedModelCost(model.cost);
@@ -5408,7 +5427,7 @@ function validateRuntimeProjectionPlan(input: {
 	secretValues: Record<string, string> | undefined;
 	observations: Map<string, RuntimeInstallObservation>;
 	previousProjectedProviderIds: Record<string, string[]>;
-	managedPrimaryModelOverrides?: Partial<Record<string, AgentPrimaryModel>>;
+	managedModelOverrides?: ManagedGatewayModelOverrides;
 }): void {
 	const {
 		manifest,
@@ -5417,7 +5436,7 @@ function validateRuntimeProjectionPlan(input: {
 		secretValues,
 		observations,
 		previousProjectedProviderIds,
-		managedPrimaryModelOverrides,
+		managedModelOverrides,
 	} = input;
 	const home = projectionSystemHome(manifest) ?? paths.userHome;
 	const localeBlock = manifest.locale ? managedLocaleBlock(manifest.locale) : null;
@@ -5472,7 +5491,8 @@ function validateRuntimeProjectionPlan(input: {
 
 		const projectionInput = agentTargetProjectionInput(
 			hostedAiProviderCatalog(manifest, name, {
-				primaryModelOverride: managedPrimaryModelOverrides?.[name],
+				primaryModelOverride: managedModelOverrides?.primaryModels[name],
+				managedModelsOverride: managedModelOverrides?.models[name],
 			}),
 		);
 		assertHostedProviderProjectionMode(name, manifest, projectionInput);
@@ -5480,7 +5500,7 @@ function validateRuntimeProjectionPlan(input: {
 			manifest.runtimes[name]?.providerMode === "configured" && !projectionInput;
 		const projectionRequiresInstalledModelProbe =
 			projectionInput?.catalog.providers.some((provider) => provider.managed_by === "clawdi") &&
-			managedPrimaryModelOverrides === undefined;
+			managedModelOverrides === undefined;
 		if (name === "openclaw") {
 			if (projectionInput && !projectionRequiresInstalledModelProbe) {
 				const projection = buildAgentTargetProjection(
@@ -5711,7 +5731,7 @@ export function convergeRuntimeManifest(
 			),
 		});
 	}
-	const managedPrimaryModelOverrides = resolveManagedGatewayPrimaryModelOverrides(
+	const managedModelOverrides = resolveManagedGatewayModelOverrides(
 		manifest,
 		enabledRuntimes,
 		paths.userHome,
@@ -5726,7 +5746,7 @@ export function convergeRuntimeManifest(
 		secretValues,
 		observations,
 		previousProjectedProviderIds,
-		managedPrimaryModelOverrides,
+		managedModelOverrides,
 	});
 
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
@@ -5876,7 +5896,7 @@ export function convergeRuntimeManifest(
 				manifest,
 				workspaceRoot,
 				previousProjectedProviderIds[name] ?? [],
-				managedPrimaryModelOverrides,
+				managedModelOverrides,
 			);
 		}
 		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(load.sourcePath, paths);
@@ -5969,7 +5989,7 @@ export function convergeRuntimeManifest(
 					manifest,
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
-					managedPrimaryModelOverrides,
+					managedModelOverrides,
 				);
 				projectedProviderIds[name] = providerProjection.providerIds;
 			} catch (error) {

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	buildManagedModelsEndpoint,
 	extractManagedLiveModelIds,
+	extractManagedLiveModels,
 	resolveManagedPrimaryModel,
 } from "./managed-model-resolution";
 
@@ -61,5 +62,65 @@ describe("managed model resolution", () => {
 				data: [{ id: "gpt-5.5" }, { id: "gpt-5.6" }, { id: "gpt-5.6" }, { bad: true }],
 			}),
 		).toEqual(["gpt-5.5", "gpt-5.6"]);
+	});
+
+	test("preserves canonical capabilities and ignores unknown discovery fields", () => {
+		expect(
+			extractManagedLiveModels({
+				data: [
+					{
+						id: "k3",
+						label: "Kimi K3",
+						context_window: 262_144,
+						max_input_tokens: 229_376,
+						max_output_tokens: 32_768,
+						input_modalities: ["text", "image", "unknown", "image"],
+						supports_vision: true,
+						supports_tools: true,
+						supports_reasoning: true,
+						future_capability: { mode: "turbo" },
+					},
+					{
+						id: "kimi-for-coding",
+						context_window: 262_144,
+						max_input_tokens: 229_376,
+						max_tokens: 32_768,
+						supports_tools: true,
+					},
+					{
+						id: "kimi-for-coding-highspeed",
+						context_window: 262_144,
+						max_input_tokens: 229_376,
+						supports_tools: true,
+						unknown_extra: true,
+					},
+				],
+			}),
+		).toEqual([
+			{
+				id: "k3",
+				label: "Kimi K3",
+				context_window: 262_144,
+				max_input_tokens: 229_376,
+				max_tokens: 32_768,
+				input_modalities: ["text", "image"],
+				supports_vision: true,
+				supports_tools: true,
+				supports_reasoning: true,
+			},
+			{
+				id: "kimi-for-coding",
+				context_window: 262_144,
+				max_input_tokens: 229_376,
+				max_tokens: 32_768,
+				supports_tools: true,
+			},
+			{
+				id: "kimi-for-coding-highspeed",
+				context_window: 262_144,
+				max_input_tokens: 229_376,
+				supports_tools: true,
+			},
+		]);
 	});
 });

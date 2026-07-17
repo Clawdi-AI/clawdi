@@ -2755,7 +2755,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		);
 	});
 
-	it("preserves Clawdi-managed provider ownership when projecting hosted providers", () => {
+	it("preserves canonical managed model capabilities through live discovery", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -2809,7 +2809,7 @@ chmod +x "$HOME/.local/bin/hermes"
 						provider_ids: ["clawdi-v2"],
 						primary_model: {
 							provider_id: "clawdi-v2",
-							model: "gpt-5.5",
+							model: "k3",
 						},
 					},
 				},
@@ -2820,12 +2820,13 @@ chmod +x "$HOME/.local/bin/hermes"
 						"clawdi-v2": {
 							kind: "openai-compatible",
 							baseUrl: "https://ai-gateway.example.test/v1",
-							model: "gpt-5.5",
+							model: "k3",
 							models: [
 								{
-									id: "gpt-5.5",
-									context_window: 272000,
-									max_tokens: 128000,
+									id: "k3",
+									context_window: 262144,
+									max_input_tokens: 229376,
+									max_tokens: 32768,
 									input_modalities: ["text", "image"],
 									supports_vision: true,
 									supports_tools: true,
@@ -2844,12 +2845,65 @@ chmod +x "$HOME/.local/bin/hermes"
 			},
 		};
 
-		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths(), {
+			managedGatewayModelListFetcher: () => ({
+				status: "ok",
+				endpoint: "https://ai-gateway.example.test/v1/models",
+				models: [
+					{ id: "k3" },
+					{
+						id: "kimi-for-coding",
+						context_window: 262144,
+						max_input_tokens: 229376,
+						max_tokens: 32768,
+						input_modalities: ["text", "image"],
+						supports_tools: true,
+						supports_reasoning: true,
+					},
+					{
+						id: "kimi-for-coding-highspeed",
+						context_window: 262144,
+						max_input_tokens: 229376,
+						input_modalities: ["text"],
+						supports_tools: true,
+						supports_reasoning: true,
+					},
+				],
+			}),
+		});
 
 		expect(convergence.installErrors).toEqual([]);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
-		expect(patch.agents.defaults.model.primary).toBe("clawdi-v2/gpt-5.5");
+		expect(patch.agents.defaults.model.primary).toBe("clawdi-v2/k3");
 		expect(patch.models.providers["clawdi-v2"].baseUrl).toBe("https://ai-gateway.example.test/v1");
+		expect(patch.models.providers["clawdi-v2"].models).toEqual([
+			{
+				id: "k3",
+				name: "k3",
+				input: ["text", "image"],
+				reasoning: true,
+				compat: { supportsTools: true },
+				contextWindow: 262144,
+				maxTokens: 32768,
+			},
+			{
+				id: "kimi-for-coding",
+				name: "kimi-for-coding",
+				input: ["text", "image"],
+				reasoning: true,
+				compat: { supportsTools: true },
+				contextWindow: 262144,
+				maxTokens: 32768,
+			},
+			{
+				id: "kimi-for-coding-highspeed",
+				name: "kimi-for-coding-highspeed",
+				input: ["text"],
+				reasoning: true,
+				compat: { supportsTools: true },
+				contextWindow: 262144,
+			},
+		]);
 	});
 
 	it("reconciles hosted provider projections when the selected provider changes", () => {
@@ -3464,7 +3518,7 @@ exit 0
 		);
 		expect(kimiModel.context_length).toBe(262144);
 		expect(kimiModel.supports_vision).toBe(true);
-		expect(kimiModel.max_tokens).toBeUndefined();
+		expect(kimiModel.max_tokens).toBe(32768);
 		const hermesPlugin = readHermesModelProviderPluginFile(home, "__init__.py");
 		const hermesPluginYaml = readHermesModelProviderPluginFile(home, "plugin.yaml");
 		expect(hermesPlugin).toContain('name="clawdi-hermes"');

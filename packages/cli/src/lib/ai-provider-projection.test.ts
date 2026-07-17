@@ -118,4 +118,76 @@ describe("AI provider projection", () => {
 		expect(hermes.files[0]?.content).toContain("cache_read_cost_per_million: 0.06");
 		expect(hermes.files[0]?.content).toContain("cache_write_cost_per_million: 0");
 	});
+
+	test("maps managed model capabilities without inventing a missing output cap", () => {
+		const catalog: AiProviderCatalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: "clawdi-v2",
+					type: "custom_openai_compatible",
+					base_url: "https://api.example.test/v1",
+					api_mode: "openai_chat",
+					auth: { type: "api_key", source: "managed" },
+					managed_by: "clawdi",
+					runtime_env_name: "OPENAI_API_KEY",
+					models: [
+						{
+							id: "k3",
+							context_window: 262_144,
+							max_input_tokens: 229_376,
+							max_tokens: 32_768,
+							input_modalities: ["text", "image"],
+							supports_tools: true,
+							supports_reasoning: true,
+						},
+						{
+							id: "kimi-for-coding-highspeed",
+							context_window: 262_144,
+							max_input_tokens: 229_376,
+							input_modalities: ["text"],
+							supports_tools: false,
+							supports_reasoning: false,
+						},
+					],
+				},
+			],
+			defaults: { chat_provider_id: "clawdi-v2" },
+		};
+
+		const openclaw = buildAgentTargetProjection("openclaw", catalog, {
+			provider_id: "clawdi-v2",
+			model: "k3",
+		});
+		const openclawPatch = JSON.parse(openclaw.files[0]?.content ?? "{}") as {
+			models?: { providers?: Record<string, { models?: Array<Record<string, unknown>> }> };
+		};
+		const openclawModels = openclawPatch.models?.providers?.["clawdi-v2"]?.models ?? [];
+		expect(openclawModels[0]).toMatchObject({
+			id: "k3",
+			contextWindow: 262_144,
+			maxTokens: 32_768,
+			input: ["text", "image"],
+			reasoning: true,
+			compat: { supportsTools: true },
+		});
+		expect(openclawModels[1]).toMatchObject({
+			id: "kimi-for-coding-highspeed",
+			contextWindow: 262_144,
+			input: ["text"],
+			reasoning: false,
+			compat: { supportsTools: false },
+		});
+		expect(openclawModels[1]?.maxTokens).toBeUndefined();
+
+		const hermes = buildAgentTargetProjection("hermes", catalog, {
+			provider_id: "clawdi-v2",
+			model: "k3",
+		});
+		expect(hermes.files[0]?.content).toContain("context_length: 262144");
+		expect(hermes.files[0]?.content).toContain("max_tokens: 32768");
+		const highspeedBlock = hermes.files[0]?.content.split('"kimi-for-coding-highspeed":')[1];
+		expect(highspeedBlock).toContain("context_length: 262144");
+		expect(highspeedBlock).not.toContain("max_tokens:");
+	});
 });

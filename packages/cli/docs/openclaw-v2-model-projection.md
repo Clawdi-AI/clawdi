@@ -2,7 +2,23 @@
 
 Date: 2026-07-07
 
-## Verdict
+Status: resolved in the CLI on 2026-07-17. This document retains the original
+investigation below for context. Current hosted convergence:
+
+- preserves canonical manifest `models[]` entries for Clawdi-managed providers;
+- parses canonical capability fields from managed `/v1/models` discovery and
+  ignores unknown discovery fields;
+- merges ID-only discovery entries with same-ID manifest metadata;
+- maps `context_window`, `max_tokens`, input modalities, reasoning, and tool
+  support to OpenClaw-native fields; and
+- omits `maxTokens` when the catalog has no explicit output cap.
+
+`max_tokens` remains the canonical Clawdi output-cap field.
+`max_output_tokens` is accepted only as a discovery wire alias, while
+`max_input_tokens` is preserved catalog metadata and is not treated as an
+output limit.
+
+## Original verdict
 
 For v2 hosted runtime manifests that carry only the current single-model provider
 contract (`baseUrl`, `model`, `apiMode`, `runtimeEnvName`, `apiKeySecretRef`),
@@ -153,7 +169,7 @@ The bundled fallback config carries `max_output_tokens`
 and the overlay config schema validates that field
 (`/home/kingsley/clawdi-hosted/infra/v2/sub2api/metadata-overlay/internal/config/config.go:16`).
 
-## Recommendation
+## Original recommendation (implemented)
 
 Add capability enrichment inside the CLI before `buildAgentTargetProjection(...)`
 is called for hosted OpenClaw runtime projection. The smallest insertion point is

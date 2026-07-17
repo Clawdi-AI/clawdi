@@ -395,6 +395,7 @@ const hostedProviderModelSchema = z
 		supports_tools: z.boolean().optional(),
 		supports_reasoning: z.boolean().optional(),
 		context_window: z.number().int().positive().optional(),
+		max_input_tokens: z.number().int().positive().optional(),
 		max_tokens: z.number().int().positive().optional(),
 		cost: hostedProviderModelCostSchema.optional(),
 		capabilities: hostedProviderCapabilitiesSchema.optional(),

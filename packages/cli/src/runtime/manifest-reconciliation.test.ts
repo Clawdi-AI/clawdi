@@ -246,6 +246,53 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toBe(false);
 	});
 
+	test("accepts and preserves canonical hosted model capability fields", () => {
+		const parsed = hostedRuntimeManifestSchema.parse(
+			hostedManifestFixture({
+				providers: {
+					default: {
+						kind: "openai-compatible",
+						type: "custom_openai_compatible",
+						baseUrl: "https://provider.example.test/v1",
+						apiMode: "openai_chat",
+						managed_by: "clawdi",
+						runtimeEnvName: "OPENAI_API_KEY",
+						models: [
+							{
+								id: "k3",
+								context_window: 262_144,
+								max_input_tokens: 229_376,
+								max_tokens: 32_768,
+								input_modalities: ["text", "image"],
+								supports_tools: true,
+								supports_reasoning: true,
+							},
+						],
+					},
+				},
+				runtimes: {
+					openclaw: hostedRuntimeFixture({
+						primary_model: { provider_id: "default", model: "k3" },
+					}),
+				},
+			}),
+		);
+		const manifest = hostedManifestToRuntimeManifest(parsed);
+		expect(manifest.projection?.providers?.default).toMatchObject({
+			models: [
+				{
+					id: "k3",
+					context_window: 262_144,
+					max_input_tokens: 229_376,
+					max_tokens: 32_768,
+					input_modalities: ["text", "image"],
+					supports_tools: true,
+					supports_reasoning: true,
+				},
+			],
+		});
+	});
+
 	test.each([
 		["enabled without agents", { enabled: true, agents: [] }],
 		[
@@ -1454,7 +1501,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).not.toContain("sk-managed");
 	});
 
-	test("projects managed hosted providers with only the live primary model seed", () => {
+	test("preserves managed hosted provider model capabilities after primary resolution", () => {
 		const paths = tempRuntimePaths();
 		const manifest = baseManifest(
 			paths,
@@ -1463,7 +1510,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					enabled: true,
 					run: runSettings("openclaw", ["gateway", "run"]),
 					provider_ids: ["default"],
-					primary_model: { provider_id: "default", model: "gpt-live" },
+					primary_model: { provider_id: "default", model: "k3" },
 					services: {},
 				},
 			},
@@ -1474,8 +1521,19 @@ describe("runtime manifest reconciliation invariants", () => {
 							type: "custom_openai_compatible",
 							managed_by: "clawdi",
 							baseUrl: "https://api.example.test/v1",
-							model: "gpt-legacy",
-							models: [{ id: "stale-a" }, { id: "stale-b" }],
+							models: [
+								{
+									id: "k3",
+									context_window: 262_144,
+									max_input_tokens: 229_376,
+									max_tokens: 32_768,
+									input_modalities: ["text", "image"],
+									supports_tools: true,
+									supports_reasoning: true,
+								},
+								{ id: "kimi-for-coding" },
+								{ id: "kimi-for-coding-highspeed", context_window: 262_144 },
+							],
 							apiMode: "openai_chat",
 							runtimeEnvName: "OPENAI_API_KEY",
 							apiKeySecretRef: "secret://providers/default/api-key",
@@ -1486,9 +1544,19 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 
 		const projection = hostedAiProviderCatalog(manifest, "openclaw");
-		expect(projection?.primaryModel).toEqual({ provider_id: "default", model: "gpt-live" });
+		expect(projection?.primaryModel).toEqual({ provider_id: "default", model: "k3" });
 		expect(projection?.catalog.providers[0]?.models).toEqual([
-			{ id: "gpt-live", api_mode: "openai_chat" },
+			{
+				id: "k3",
+				context_window: 262_144,
+				max_input_tokens: 229_376,
+				max_tokens: 32_768,
+				input_modalities: ["text", "image"],
+				supports_tools: true,
+				supports_reasoning: true,
+			},
+			{ id: "kimi-for-coding" },
+			{ id: "kimi-for-coding-highspeed", context_window: 262_144 },
 		]);
 	});
 
@@ -1614,7 +1682,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		]);
 	});
 
-	test("applies a managed primary model override to the hosted provider seed projection", () => {
+	test("merges a discovered managed catalog with matching wire capabilities", () => {
 		const paths = tempRuntimePaths();
 		const manifest = baseManifest(
 			paths,
@@ -1634,6 +1702,21 @@ describe("runtime manifest reconciliation invariants", () => {
 							managed_by: "clawdi",
 							baseUrl: "https://api.example.test/v1",
 							apiMode: "openai_chat",
+							models: [
+								{
+									id: "kimi-for-coding",
+									context_window: 262_144,
+									max_input_tokens: 229_376,
+									max_tokens: 32_768,
+									supports_tools: true,
+								},
+								{
+									id: "kimi-for-coding-highspeed",
+									context_window: 262_144,
+									max_input_tokens: 229_376,
+									supports_tools: true,
+								},
+							],
 							apiKeySecretRef: "secret://providers/default/api-key",
 						},
 					},
@@ -1642,11 +1725,35 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 
 		const projection = hostedAiProviderCatalog(manifest, "openclaw", {
-			primaryModelOverride: { provider_id: "default", model: "gpt-5.6" },
+			primaryModelOverride: { provider_id: "default", model: "kimi-for-coding-highspeed" },
+			managedModelsOverride: [
+				{ id: "kimi-for-coding" },
+				{
+					id: "kimi-for-coding-highspeed",
+					context_window: 262_144,
+					max_input_tokens: 229_376,
+					supports_tools: true,
+				},
+			],
 		});
-		expect(projection?.primaryModel).toEqual({ provider_id: "default", model: "gpt-5.6" });
+		expect(projection?.primaryModel).toEqual({
+			provider_id: "default",
+			model: "kimi-for-coding-highspeed",
+		});
 		expect(projection?.catalog.providers[0]?.models).toEqual([
-			{ id: "gpt-5.6", api_mode: "openai_chat" },
+			{
+				id: "kimi-for-coding",
+				context_window: 262_144,
+				max_input_tokens: 229_376,
+				max_tokens: 32_768,
+				supports_tools: true,
+			},
+			{
+				id: "kimi-for-coding-highspeed",
+				context_window: 262_144,
+				max_input_tokens: 229_376,
+				supports_tools: true,
+			},
 		]);
 	});
 

@@ -108,7 +108,14 @@ describe("validateAiProviderCatalog", () => {
 					type: "openai",
 					base_url: "https://api.openai.com/v1",
 					auth: { type: "secret_ref" },
-					models: [{ id: "gpt-5.2", context_window: "large", supports_tools: "yes" }],
+					models: [
+						{
+							id: "gpt-5.2",
+							context_window: "large",
+							max_input_tokens: "large",
+							supports_tools: "yes",
+						},
+					],
 				},
 			],
 		} as never);
@@ -120,6 +127,9 @@ describe("validateAiProviderCatalog", () => {
 		expect(result.errors).toContain("Provider openai-alt has unsupported secret ref.");
 		expect(result.errors).toContain(
 			"Provider openai-alt model gpt-5.2 has invalid context_window.",
+		);
+		expect(result.errors).toContain(
+			"Provider openai-alt model gpt-5.2 has invalid max_input_tokens.",
 		);
 		expect(result.errors).toContain(
 			"Provider openai-alt model gpt-5.2 has invalid supports_tools.",
@@ -139,6 +149,7 @@ describe("validateAiProviderCatalog", () => {
 						{
 							id: "gpt-5.5",
 							alias: "GPT-5.5",
+							max_input_tokens: 128_000,
 							cost: { input: 5, output: 30, cache_read: 0.5, cache_write: 0 },
 						},
 					],

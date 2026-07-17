@@ -70,6 +70,7 @@ export interface AiProviderModel {
 	supports_tools?: boolean;
 	supports_reasoning?: boolean;
 	context_window?: number;
+	max_input_tokens?: number;
 	max_tokens?: number;
 	cost?: AiProviderModelCost;
 	capabilities?: AiProviderCapabilities;
@@ -525,6 +526,12 @@ function validateModels(prefix: string, models: unknown, errors: string[]): void
 			(typeof model.context_window !== "number" || model.context_window < 0)
 		) {
 			errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid context_window.`);
+		}
+		if (
+			model.max_input_tokens !== undefined &&
+			(typeof model.max_input_tokens !== "number" || model.max_input_tokens < 0)
+		) {
+			errors.push(`Provider ${prefix} model ${id || "<missing>"} has invalid max_input_tokens.`);
 		}
 		if (
 			model.max_tokens !== undefined &&

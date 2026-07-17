@@ -21,7 +21,8 @@ consume the same field names or shapes.
   `max_output_tokens`, and `supports_vision`.
 - Hermes does not use user/project per-model `supports_tools` or
   `supports_reasoning` as runtime gates.
-- Neither agent uses `max_input_tokens` as the LLM runtime budget field.
+- Neither agent uses `max_input_tokens` as the LLM runtime budget field, but
+  Clawdi preserves it in the canonical catalog for protocol fidelity.
 
 For a canonical Clawdi v2 managed-provider schema, the fields worth carrying are:
 
@@ -29,6 +30,7 @@ For a canonical Clawdi v2 managed-provider schema, the fields worth carrying are
 {
   id: string;
   context_window?: number;
+  max_input_tokens?: number; // preserved metadata; not an output cap
   max_tokens?: number; // output cap; keep current name unless doing a migration
   input_modalities?: Array<"text" | "image" | "video" | "audio">;
   supports_vision?: boolean;
@@ -37,11 +39,11 @@ For a canonical Clawdi v2 managed-provider schema, the fields worth carrying are
 }
 ```
 
-Do not add `max_input_tokens` for agent projection. It is redundant with the
-context window for these consumers. Do not add a separate `max_output_tokens`
-unless we intentionally migrate from the current `max_tokens` catalog field; for
-agent projection, `max_tokens` already means output cap and maps to the right
-agent-specific names.
+Do not project `max_input_tokens` as an agent output limit. Do not add a separate
+canonical `max_output_tokens` field unless we intentionally migrate from the
+current `max_tokens` catalog field; discovery may accept `max_output_tokens` as
+a wire alias and normalize it to `max_tokens`. If the output cap is absent, the
+projection must omit it rather than infer one.
 
 ## Field Matrix
 
@@ -115,15 +117,17 @@ fields that can be mapped into real agent behavior:
 | --- | --- | --- |
 | `id` | `id` | model id |
 | `context_window` | `contextWindow` | `context_length` |
+| `max_input_tokens` | preserve only | preserve only |
 | `max_tokens` | `maxTokens` | `model.max_tokens` or provider `max_output_tokens` |
 | `input_modalities` | `input` | derive `supports_vision` when `image` is present |
 | `supports_vision` | derive/confirm `input` contains `image`; do not emit raw field | `supports_vision` |
 | `supports_tools` | `compat.supportsTools` | do not project for runtime |
 | `supports_reasoning` | `reasoning` | do not project for runtime |
 
-Not recommended:
+Not recommended for runtime projection:
 
-- `max_input_tokens`: no useful agent runtime consumer in either target.
+- `max_input_tokens`: no useful agent runtime consumer in either target; keep it
+  in the Clawdi catalog without mapping it to an output cap.
 - A duplicate `max_output_tokens` next to `max_tokens`: useful only if we choose
   to rename the existing output-cap field. For now, `max_tokens` is already the
   output cap in Clawdi and can map to each target's native field.
@@ -139,6 +143,6 @@ Yes, add more than the already projected `context_window`, `max_tokens`, and
   `compat.supportsTools`.
 - Add `supports_reasoning` if OpenClaw is a target, and project it as
   `reasoning`.
-- Do not add `max_input_tokens`.
+- Preserve `max_input_tokens`, but do not project it as a runtime budget.
 - Do not add `max_output_tokens` as a second output-cap field unless we decide
   to migrate away from the existing `max_tokens` name.
