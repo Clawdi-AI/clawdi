@@ -5691,7 +5691,8 @@ export function convergeRuntimeManifest(
 	let codexCli: Record<string, string> | null = null;
 	if (
 		hostedCodexManagedProvider(manifest) ||
-		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1"
+		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1" ||
+		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v2"
 	) {
 		try {
 			codexCli = ensureHostedCodexCli(paths);

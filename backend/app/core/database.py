@@ -34,6 +34,20 @@ async def get_runtime_snapshot_session() -> AsyncGenerator[AsyncSession, None]:
         yield session
 
 
+async def get_runtime_observation_session() -> AsyncGenerator[AsyncSession, None]:
+    """Open one repeatable-read observation snapshot that may persist expiry.
+
+    Successful reads remain side-effect free. A known consumer presenting an
+    unknown or stale cursor must, however, atomically persist its explicit reset
+    boundary before returning the fail-closed protocol error, so this snapshot
+    cannot be PostgreSQL read-only.
+    """
+
+    async with async_session_factory() as session:
+        await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+        yield session
+
+
 @asynccontextmanager
 async def runtime_snapshot_session() -> AsyncIterator[AsyncSession]:
     """Open the consistent read-only snapshot shared by runtime renderers."""

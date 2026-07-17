@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, ForeignKeyConstraint, String
 from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -10,6 +10,21 @@ from app.models.base import Base, TimestampMixin
 
 class ApiKey(Base, TimestampMixin):
     __tablename__ = "api_keys"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["environment_id", "runtime_deployment_id"],
+            [
+                "v2_runtime_environment_fences.environment_id",
+                "v2_runtime_environment_fences.deployment_id",
+            ],
+            name="fk_api_keys_runtime_environment_fence",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint(
+            "runtime_deployment_id IS NULL OR (managed AND environment_id IS NOT NULL)",
+            name="ck_api_keys_runtime_deployment_binding",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(
@@ -46,3 +61,9 @@ class ApiKey(Base, TimestampMixin):
         ForeignKey("agent_environments.id", ondelete="CASCADE"),
         index=True,
     )
+
+    # Immutable strict-v2 authority minted only after the matching runtime
+    # environment fence exists. Legacy managed keys keep this NULL and can
+    # never gain companion-ingestion authority merely because a fence appears
+    # later for their environment.
+    runtime_deployment_id: Mapped[str | None] = mapped_column(String(200), index=True)

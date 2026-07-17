@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { z } from "zod";
 import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
 import { cacheRuntimeLastGoodManifest } from "./manifest";
 import {
@@ -63,6 +64,45 @@ describe("hosted runtime bundle v2", () => {
 			normalizeHostedRuntimeBundleV2({
 				...raw,
 				channelBindings: [{ ...binding, provider: "whatsapp" }],
+			}),
+		).toThrow();
+	});
+
+	test("accepts the additive manifest v2 apply identity without changing manifest v1", () => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		const v1 = normalizeHostedRuntimeBundleV2(raw);
+		const v2 = normalizeHostedRuntimeBundleV2({
+			...raw,
+			manifest: {
+				...manifest,
+				schemaVersion: "clawdi.hosted-runtime.manifest.v2",
+				manifestETag: '"frozen-manifest-generation-1"',
+				applyReceiptId: "apply-receipt-0001",
+				bootNonce: "boot-nonce-000001",
+			},
+		});
+
+		expect(v1.applyIdentity).toBeUndefined();
+		expect(v2.applyIdentity).toEqual({
+			generation: v2.manifest.generation,
+			manifestETag: '"frozen-manifest-generation-1"',
+			applyReceiptId: "apply-receipt-0001",
+			bootNonce: "boot-nonce-000001",
+		});
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					schemaVersion: "clawdi.hosted-runtime.manifest.v2",
+					generation: 0,
+					manifestETag: '"frozen-manifest-generation-0"',
+					applyReceiptId: "apply-receipt-0000",
+					bootNonce: "boot-nonce-000000",
+				},
 			}),
 		).toThrow();
 	});

@@ -43,6 +43,7 @@ export interface RuntimePaths {
 	bootRoot: string;
 	bootStatus: string;
 	runtimeWatchStatus: string;
+	runtimeHeartbeatRoot: string;
 	cloudStatus: string;
 	cloudResult: string;
 	instanceRoot: string;
@@ -155,6 +156,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		bootRoot,
 		bootStatus: join(cacheRoot, "boot-status.json"),
 		runtimeWatchStatus: join(serviceStateRoot, "status", "runtime-watch.json"),
+		runtimeHeartbeatRoot: join(serviceStateRoot, "heartbeat"),
 		cloudStatus: join(bootRoot, "status.json"),
 		cloudResult: join(bootRoot, "result.json"),
 		instanceRoot,

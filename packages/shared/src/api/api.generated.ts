@@ -832,6 +832,10 @@ export interface paths {
          * @description Daemon writes its liveness state here every cycle. Extreme-
          *     light endpoint: validate ownership / env-id binding, update a
          *     handful of columns, commit. No heavy queries.
+         *
+         *     Strict-v2 companion identity is an authenticated guest report from the
+         *     per-deployment runtime credential. It is readiness authority for this
+         *     protocol, but it is not attestation-bound instance identity.
          */
         post: operations["sync_heartbeat_v1_agents__agent_id__sync_heartbeat_post"];
         delete?: never;
@@ -1789,6 +1793,97 @@ export interface paths {
         post?: never;
         /** Platform Delete Runtime State */
         delete: operations["platform_delete_runtime_state_v1_platform_agents__agent_id__runtime_state_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/agents/{agent_id}/runtime-environment/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Platform Retire Runtime Environment */
+        post: operations["platform_retire_runtime_environment_v1_platform_agents__agent_id__runtime_environment_retire_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/agents/{agent_id}/runtime-observation-consumers/register": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Platform Register Runtime Observation Consumer */
+        post: operations["platform_register_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_register_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/agents/{agent_id}/runtime-observations/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Platform Read Runtime Observations
+         * @description Read credential-authenticated guest reports for the Hosted controller.
+         *
+         *     The readiness authority is the authenticated guest report from the
+         *     per-deployment runtime credential. It is not attestation-bound instance identity.
+         */
+        post: operations["platform_read_runtime_observations_v1_platform_agents__agent_id__runtime_observations_read_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/agents/{agent_id}/runtime-observation-consumers/ack": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Platform Ack Runtime Observation Consumer */
+        post: operations["platform_ack_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_ack_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/platform/agents/{agent_id}/runtime-observation-consumers/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Platform Reset Runtime Observation Consumer */
+        post: operations["platform_reset_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_reset_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -4667,6 +4762,18 @@ export interface components {
             convergeError?: string | null;
             /** Truncated */
             truncated?: boolean | null;
+            /** Applyreceiptid */
+            applyReceiptId?: string | null;
+            /** Bootnonce */
+            bootNonce?: string | null;
+            /** Bootsessionid */
+            bootSessionId?: string | null;
+            /** Sequence */
+            sequence?: number | null;
+            /** Eventid */
+            eventId?: string | null;
+            /** Capturedat */
+            capturedAt?: string | null;
         };
         /** HostedRuntimePrimaryModel */
         HostedRuntimePrimaryModel: {
@@ -4981,6 +5088,8 @@ export interface components {
              * Format: uuid
              */
             environment_id: string;
+            /** Deployment Id */
+            deployment_id: string;
             /** Scopes */
             scopes?: string[];
         };
@@ -5019,6 +5128,67 @@ export interface components {
             kind: "clerk" | "partner_tenant";
             /** Ref */
             ref: string;
+        };
+        /** PlatformRuntimeApplyIdentity */
+        PlatformRuntimeApplyIdentity: {
+            /** Generation */
+            generation: number;
+            /** Manifestetag */
+            manifestETag: string;
+            /** Applyreceiptid */
+            applyReceiptId: string;
+            /** Bootnonce */
+            bootNonce: string;
+        };
+        /** PlatformRuntimeEnvironmentRetire */
+        PlatformRuntimeEnvironmentRetire: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Expected Deployment Id */
+            expected_deployment_id: string;
+            /** Retirement Id */
+            retirement_id: string;
+        };
+        /** PlatformRuntimeObservationConsumerAck */
+        PlatformRuntimeObservationConsumerAck: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Deployment Id */
+            deployment_id: string;
+            /** Consumer Id */
+            consumer_id: string;
+            /** Cursor */
+            cursor: string;
+        };
+        /** PlatformRuntimeObservationConsumerRegister */
+        PlatformRuntimeObservationConsumerRegister: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Deployment Id */
+            deployment_id: string;
+            /** Consumer Id */
+            consumer_id: string;
+        };
+        /** PlatformRuntimeObservationConsumerReset */
+        PlatformRuntimeObservationConsumerReset: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Deployment Id */
+            deployment_id: string;
+            /** Consumer Id */
+            consumer_id: string;
+        };
+        /** PlatformRuntimeObservationRead */
+        PlatformRuntimeObservationRead: {
+            owner: components["schemas"]["PlatformOwner"];
+            /** Deployment Id */
+            deployment_id: string;
+            /** Consumer Id */
+            consumer_id: string;
+            expectedApplyIdentity: components["schemas"]["PlatformRuntimeApplyIdentity"];
+            /** Aftercursor */
+            afterCursor: string;
+            /**
+             * Limit
+             * @default 100
+             */
+            limit: number;
         };
         /** PlatformRuntimeStateResponse */
         PlatformRuntimeStateResponse: {
@@ -5225,6 +5395,176 @@ export interface components {
             owner_name: string | null;
             /** Owner Avatar Url */
             owner_avatar_url: string | null;
+        };
+        /** RuntimeEnvironmentRetirementReceipt */
+        RuntimeEnvironmentRetirementReceipt: {
+            /** Retirementreceiptid */
+            retirementReceiptId: string;
+            /** Retirementid */
+            retirementId: string;
+            /** Environmentid */
+            environmentId: string;
+            /** Deploymentid */
+            deploymentId: string;
+            /**
+             * Retiredat
+             * Format: date-time
+             */
+            retiredAt: string;
+            /** Finalcursor */
+            finalCursor: string;
+            /** Finalsessionhighwatermarks */
+            finalSessionHighWaterMarks: {
+                [key: string]: number;
+            };
+        };
+        /** RuntimeObservationApplyIdentityResponse */
+        RuntimeObservationApplyIdentityResponse: {
+            /** Generation */
+            generation: number;
+            /** Manifestetag */
+            manifestETag: string;
+            /** Applyreceiptid */
+            applyReceiptId: string;
+            /** Bootnonce */
+            bootNonce: string;
+        };
+        /** RuntimeObservationConsumerResetResponse */
+        RuntimeObservationConsumerResetResponse: {
+            /** Environmentid */
+            environmentId: string;
+            /** Deploymentid */
+            deploymentId: string;
+            /** Consumerid */
+            consumerId: string;
+            /** Cursor */
+            cursor: string;
+            /** Acknowledgedat */
+            acknowledgedAt?: string | null;
+            resetBoundary: components["schemas"]["RuntimeObservationResetBoundary"];
+            /** Sessionhighwatermarks */
+            sessionHighWaterMarks: {
+                [key: string]: number;
+            };
+        };
+        /** RuntimeObservationConsumerResponse */
+        RuntimeObservationConsumerResponse: {
+            /** Environmentid */
+            environmentId: string;
+            /** Deploymentid */
+            deploymentId: string;
+            /** Consumerid */
+            consumerId: string;
+            /** Cursor */
+            cursor: string;
+            /** Acknowledgedat */
+            acknowledgedAt?: string | null;
+        };
+        /** RuntimeObservationEventResponse */
+        RuntimeObservationEventResponse: {
+            runtimeIdentity: components["schemas"]["RuntimeObservationIdentityResponse"];
+            /** Sequence */
+            sequence: number;
+            /**
+             * Capturedat
+             * Format: date-time
+             */
+            capturedAt: string;
+            /**
+             * Receivedat
+             * Format: date-time
+             */
+            receivedAt: string;
+            /**
+             * Freshnessdeadline
+             * Format: date-time
+             */
+            freshnessDeadline: string;
+            evidenceReference: components["schemas"]["RuntimeObservationEvidenceReference"];
+            /** Payloadhash */
+            payloadHash: string;
+            /**
+             * Health
+             * @enum {string}
+             */
+            health: "ok" | "error" | "unknown";
+            diagnostics: components["schemas"]["JsonValue"];
+        };
+        /** RuntimeObservationEvidenceReference */
+        RuntimeObservationEvidenceReference: {
+            /** Eventid */
+            eventId: string;
+            /** Cursor */
+            cursor: string;
+        };
+        /** RuntimeObservationHeadResponse */
+        RuntimeObservationHeadResponse: {
+            runtimeIdentity: components["schemas"]["RuntimeObservationIdentityResponse"];
+            /** Sequence */
+            sequence: number;
+            /** Capturedat */
+            capturedAt: string | null;
+            /** Freshnessdeadline */
+            freshnessDeadline: string | null;
+            evidenceReference: components["schemas"]["RuntimeObservationEvidenceReference"];
+            /** Payloadhash */
+            payloadHash: string;
+            /** Health */
+            health: ("ok" | "error" | "unknown") | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "active" | "retired";
+        };
+        /**
+         * RuntimeObservationIdentityResponse
+         * @description Guest-reported identity authenticated by a per-deployment credential.
+         *
+         *     This is the protocol's readiness authority, not attestation-bound instance
+         *     identity.
+         */
+        RuntimeObservationIdentityResponse: {
+            /** Generation */
+            generation: number;
+            /** Manifestetag */
+            manifestETag: string;
+            /** Applyreceiptid */
+            applyReceiptId: string;
+            /** Bootnonce */
+            bootNonce: string;
+            /** Bootsessionid */
+            bootSessionId: string;
+        };
+        /** RuntimeObservationReadResponse */
+        RuntimeObservationReadResponse: {
+            /** Environmentid */
+            environmentId: string;
+            /** Deploymentid */
+            deploymentId: string;
+            /** Consumerid */
+            consumerId: string;
+            expectedApplyIdentity: components["schemas"]["RuntimeObservationApplyIdentityResponse"];
+            /** Heads */
+            heads: components["schemas"]["RuntimeObservationHeadResponse"][];
+            /** Events */
+            events: components["schemas"]["RuntimeObservationEventResponse"][];
+            /** Streamhighwatercursor */
+            streamHighWaterCursor: string;
+            /** Nextcursor */
+            nextCursor: string;
+            /** Hasmore */
+            hasMore: boolean;
+        };
+        /** RuntimeObservationResetBoundary */
+        RuntimeObservationResetBoundary: {
+            /** Cursor */
+            cursor: string;
+            /**
+             * Barrierat
+             * Format: date-time
+             */
+            barrierAt: string;
         };
         /** RuntimeObservedConfigResponse */
         RuntimeObservedConfigResponse: {
@@ -9933,6 +10273,197 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_retire_runtime_environment_v1_platform_agents__agent_id__runtime_environment_retire_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformRuntimeEnvironmentRetire"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeEnvironmentRetirementReceipt"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_register_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_register_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformRuntimeObservationConsumerRegister"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservationConsumerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_read_runtime_observations_v1_platform_agents__agent_id__runtime_observations_read_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformRuntimeObservationRead"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservationReadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_ack_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_ack_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformRuntimeObservationConsumerAck"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservationConsumerResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    platform_reset_runtime_observation_consumer_v1_platform_agents__agent_id__runtime_observation_consumers_reset_post: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Admin-Key"?: string | null;
+                Authorization?: string | null;
+            };
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PlatformRuntimeObservationConsumerReset"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservationConsumerResetResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

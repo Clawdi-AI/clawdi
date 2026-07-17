@@ -67,6 +67,7 @@ class PlatformAgentCreate(PlatformMutationBody):
 class PlatformApiKeyCreate(PlatformMutationBody):
     label: str = Field(min_length=1, max_length=200)
     environment_id: UUID
+    deployment_id: str = Field(min_length=1, max_length=200)
     scopes: list[str] = Field(default_factory=lambda: list(PLATFORM_RUNTIME_KEY_SCOPES))
 
     @field_validator("scopes")
@@ -139,3 +140,41 @@ class PlatformRuntimeStateResponse(BaseModel):
     deployment_id: str
     instance_id: str
     generation: int
+
+
+class PlatformRuntimeEnvironmentRetire(PlatformMutationBody):
+    expected_deployment_id: str = Field(min_length=1, max_length=200)
+    retirement_id: str = Field(min_length=1, max_length=200)
+
+
+class PlatformRuntimeObservationConsumerRegister(PlatformMutationBody):
+    deployment_id: str = Field(min_length=1, max_length=200)
+    consumer_id: str = Field(min_length=1, max_length=200)
+
+
+class PlatformRuntimeObservationConsumerAck(PlatformMutationBody):
+    deployment_id: str = Field(min_length=1, max_length=200)
+    consumer_id: str = Field(min_length=1, max_length=200)
+    cursor: str = Field(min_length=1, max_length=2000)
+
+
+class PlatformRuntimeObservationConsumerReset(PlatformMutationBody):
+    deployment_id: str = Field(min_length=1, max_length=200)
+    consumer_id: str = Field(min_length=1, max_length=200)
+
+
+class PlatformRuntimeApplyIdentity(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generation: int = Field(ge=1)
+    manifest_etag: str = Field(alias="manifestETag", min_length=1, max_length=1024)
+    apply_receipt_id: str = Field(alias="applyReceiptId", min_length=16, max_length=128)
+    boot_nonce: str = Field(alias="bootNonce", min_length=16, max_length=128)
+
+
+class PlatformRuntimeObservationRead(PlatformMutationBody):
+    deployment_id: str = Field(min_length=1, max_length=200)
+    consumer_id: str = Field(min_length=1, max_length=200)
+    expected_apply_identity: PlatformRuntimeApplyIdentity = Field(alias="expectedApplyIdentity")
+    after_cursor: str = Field(alias="afterCursor", min_length=1, max_length=2000)
+    limit: int = Field(default=100, ge=1, le=500)

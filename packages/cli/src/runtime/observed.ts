@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { getCliVersion } from "../lib/version";
-import { readRuntimeAppliedState } from "./applied-state";
+import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
 import { normalizeSecretRef } from "./hosted-egress-profiles";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
@@ -15,7 +15,7 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 type ObservedStatus = "ok" | "error" | "unknown";
-type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"];
+export type HostedRuntimeObserved = components["schemas"]["HostedRuntimeObservedV2"];
 type HostedRuntimeObservedBoot = components["schemas"]["HostedRuntimeObservedBootV1"];
 type HostedRuntimeObservedCli = components["schemas"]["HostedRuntimeObservedCliV1"];
 type HostedRuntimeObservedProviderPayload =
@@ -28,17 +28,22 @@ const SYSTEMD_STATUS_TIMEOUT_MS = 1_000;
 
 export function readHostedRuntimeObserved(
 	paths: RuntimePaths = getRuntimePaths(),
+	options: {
+		reportedAt?: string;
+		appliedState?: RuntimeAppliedState | null;
+	} = {},
 ): HostedRuntimeObserved | null {
 	if (paths.mode !== "hosted") return null;
 	const boot = readRuntimeBootStatus(paths);
-	const appliedState = readRuntimeAppliedState(paths);
+	const appliedState =
+		options.appliedState === undefined ? readRuntimeAppliedState(paths) : options.appliedState;
 	const watchStatus = readJsonRecord(paths.runtimeWatchStatus);
 	const cliBootstrap = readJsonRecord(paths.cliBootstrapStatus);
 	const systemd = readSystemdObserved(paths);
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
 		? {
-				etag: appliedState.etag,
+				etag: appliedState.manifestETag ?? appliedState.etag,
 				sourceRevision: appliedState.sourceRevision,
 				generation: appliedState.generation,
 				instanceId: appliedState.instanceId,
@@ -48,7 +53,7 @@ export function readHostedRuntimeObserved(
 
 	const observed: HostedRuntimeObserved = {
 		schemaVersion: "clawdi.hostedRuntimeObserved.v2",
-		reportedAt: new Date().toISOString(),
+		reportedAt: options.reportedAt ?? new Date().toISOString(),
 		runtimeMode: paths.mode,
 		status: observedStatus(boot.status, watchStatus, systemd, providers, appliedAuthority !== null),
 		activeCliVersion: getCliVersion(),

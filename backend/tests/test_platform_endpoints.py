@@ -17,6 +17,7 @@ from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.platform_idempotency import PlatformMutationIdempotency
+from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.session import AgentEnvironment
 from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
 from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES
@@ -232,6 +233,7 @@ async def test_platform_mutations_require_idempotency_key(platform_client, seed_
             {
                 "label": "unknown-owner",
                 "environment_id": str(uuid.uuid4()),
+                "deployment_id": "unknown-owner-deployment",
                 "scopes": list(PLATFORM_RUNTIME_KEY_SCOPES),
             },
         ),
@@ -296,6 +298,7 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     runtime_state = await db_session.get(HostedRuntimeState, agent_id)
     assert runtime_state is not None
     assert runtime_state.tools == _TEST_TOOLS
+    assert await db_session.get(V2RuntimeEnvironmentFence, agent_id) is None
 
     minted = await platform_client.post(
         "/v1/platform/auth/keys",
@@ -304,6 +307,7 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
             "owner": owner,
             "label": "platform-runtime",
             "environment_id": str(agent_id),
+            "deployment_id": "deployment-1",
         },
     )
     assert minted.status_code == 200, minted.text
@@ -312,8 +316,13 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     assert api_key is not None
     assert api_key.user_id == seed_user.id
     assert api_key.environment_id == agent_id
+    assert api_key.runtime_deployment_id == "deployment-1"
     assert api_key.scopes == list(PLATFORM_RUNTIME_KEY_SCOPES)
     assert api_key.managed is True
+    fence = await db_session.get(V2RuntimeEnvironmentFence, agent_id)
+    assert fence is not None
+    assert fence.deployment_id == "deployment-1"
+    assert fence.state == "active"
 
     revoked = await platform_client.request(
         "DELETE",
@@ -549,6 +558,7 @@ async def test_platform_partner_tenant_resolves_null_clerk_principal(
                 "owner": owner,
                 "label": "partner-runtime",
                 "environment_id": str(agent_id),
+                "deployment_id": "partner-deployment",
                 "scopes": ["sessions:write", "skills:read"],
             },
         )
@@ -630,6 +640,7 @@ async def test_platform_existing_resources_reject_owner_mismatch(
                     "owner": owner,
                     "label": "cross-owner",
                     "environment_id": str(other_agent.id),
+                    "deployment_id": "cross-owner-deployment",
                     "scopes": list(PLATFORM_RUNTIME_KEY_SCOPES),
                 },
             ),
@@ -745,6 +756,7 @@ async def test_platform_idempotency_replays_every_mutation_without_second_side_e
         "owner": owner,
         "label": "idempotent-key",
         "environment_id": str(agent_id),
+        "deployment_id": "deployment-1",
         "scopes": list(PLATFORM_RUNTIME_KEY_SCOPES),
     }
     mint_headers = _headers("idem-key-mint")
@@ -910,12 +922,22 @@ async def test_platform_routes_are_canonical_and_exposed_in_openapi(platform_cli
         "/v1/platform/agents",
         "/v1/platform/agents/{agent_id}",
         "/v1/platform/agents/{agent_id}/runtime-state",
+        "/v1/platform/agents/{agent_id}/runtime-environment/retire",
+        "/v1/platform/agents/{agent_id}/runtime-observation-consumers/register",
+        "/v1/platform/agents/{agent_id}/runtime-observation-consumers/ack",
+        "/v1/platform/agents/{agent_id}/runtime-observation-consumers/reset",
+        "/v1/platform/agents/{agent_id}/runtime-observations/read",
         "/v1/platform/auth/keys",
         "/v1/platform/auth/keys/{key_id}",
         "/v1/platform/oauth/token",
     }
     assert all(not path.startswith("/api/platform") for path in paths)
     assert set(paths["/v1/platform/agents/{agent_id}/runtime-state"]) == {"put", "delete"}
+    observation_description = paths["/v1/platform/agents/{agent_id}/runtime-observations/read"][
+        "post"
+    ]["description"]
+    assert "authenticated guest report" in observation_description
+    assert "not attestation-bound instance identity" in observation_description
 
     missing_alias = await platform_client.post(
         "/api/platform/agents",

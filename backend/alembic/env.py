@@ -19,6 +19,7 @@ from app.models import (  # noqa: F401 - register models
     project_invitation,
     project_membership,
     project_share_link,
+    runtime_observation,
     session,
     session_permission,
     skill,

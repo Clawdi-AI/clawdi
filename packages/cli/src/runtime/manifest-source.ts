@@ -1,7 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { readRuntimeAppliedState } from "./applied-state";
+import {
+	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
+	runtimeContentSha256,
+} from "./applied-state";
+import type { RuntimeApplyIdentity } from "./apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
@@ -34,6 +39,7 @@ export interface RuntimeManifestLoad {
 	secretValues?: Record<string, string>;
 	channelBindings?: RuntimeBundleChannelBinding[];
 	sourceRevision?: string;
+	applyIdentity?: RuntimeApplyIdentity;
 	// Original datasource manifest before local runtime projections are applied.
 	sourceManifest?: RuntimeManifest;
 	etag?: string;
@@ -93,6 +99,7 @@ export function normalizeHostedRuntimeBundleV2(value: unknown): RuntimeManifestL
 		secretValues: normalizeSecretValues(bundle.secretValues),
 		channelBindings: bundle.channelBindings,
 		sourceRevision: bundle.sourceRevision,
+		applyIdentity: hostedManifestApplyIdentity(bundle.manifest),
 	};
 }
 
@@ -231,6 +238,7 @@ function normalizeRemoteManifestPayload(
 	secretValues?: Record<string, string>;
 	channelBindings?: RuntimeBundleChannelBinding[];
 	sourceRevision?: string;
+	applyIdentity?: RuntimeApplyIdentity;
 } {
 	if (paths.mode !== "hosted") return normalizeManifestPayload(value);
 	const hostedResponse = hostedRuntimeBundleV2Schema.parse(value);
@@ -239,6 +247,7 @@ function normalizeRemoteManifestPayload(
 		secretValues: normalizeSecretValues(hostedResponse.secretValues),
 		channelBindings: hostedResponse.channelBindings,
 		sourceRevision: hostedResponse.sourceRevision,
+		applyIdentity: hostedManifestApplyIdentity(hostedResponse.manifest),
 	};
 }
 
@@ -248,12 +257,14 @@ function normalizeManifestFixturePayload(
 ): {
 	manifest: RuntimeManifest;
 	secretValues?: Record<string, string>;
+	applyIdentity?: RuntimeApplyIdentity;
 } {
 	if (paths.mode === "hosted") {
 		const hostedResponse = hostedRuntimeManifestFixtureResponseSchema.parse(value);
 		return {
 			manifest: hostedManifestToRuntimeManifest(hostedResponse.manifest),
 			secretValues: normalizeSecretValues(hostedResponse.secretValues),
+			applyIdentity: hostedManifestApplyIdentity(hostedResponse.manifest),
 		};
 	}
 	const internal = manifestSchema.safeParse(value);
@@ -264,6 +275,7 @@ function normalizeManifestFixturePayload(
 		return {
 			manifest: hostedManifestToRuntimeManifest(hostedResponse.data.manifest),
 			secretValues: normalizeSecretValues(hostedResponse.data.secretValues),
+			applyIdentity: hostedManifestApplyIdentity(hostedResponse.data.manifest),
 		};
 	}
 	if (looksLikeHostedManifestResponse(value)) {
@@ -275,10 +287,12 @@ function normalizeManifestFixturePayload(
 
 function looksLikeHostedManifestResponse(value: unknown): boolean {
 	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-	const manifest = (value as Record<string, unknown>).manifest;
+	const manifest = Reflect.get(value, "manifest");
 	if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) return false;
+	const schemaVersion = Reflect.get(manifest, "schemaVersion");
 	return (
-		(manifest as Record<string, unknown>).schemaVersion === "clawdi.hosted-runtime.manifest.v1"
+		schemaVersion === "clawdi.hosted-runtime.manifest.v1" ||
+		schemaVersion === "clawdi.hosted-runtime.manifest.v2"
 	);
 }
 
@@ -525,6 +539,18 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 			cacheManifest: hosted.recovery.cacheManifest,
 			allowOfflineBoot: hosted.recovery.allowOfflineBoot,
 		},
+	};
+}
+
+function hostedManifestApplyIdentity(
+	hosted: HostedRuntimeManifest,
+): RuntimeApplyIdentity | undefined {
+	if (hosted.schemaVersion !== "clawdi.hosted-runtime.manifest.v2") return undefined;
+	return {
+		generation: hosted.generation,
+		manifestETag: hosted.manifestETag,
+		applyReceiptId: hosted.applyReceiptId,
+		bootNonce: hosted.bootNonce,
 	};
 }
 
@@ -836,10 +862,28 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 				errors: semanticErrors.map((error) => `cached ${error}`),
 			};
 		}
+		const appliedState = readRuntimeAppliedState(paths);
+		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
+		const cached = loadCachedSecretValues(paths);
+		if ("errors" in cached) return cached;
+		if (
+			cachedApplyIdentity &&
+			(appliedState?.generation !== manifest.generation ||
+				appliedState.instanceId !== manifest.instanceId ||
+				appliedState.contentIdentity.sha256 !==
+					runtimeContentSha256({ manifest, secretValues: cached.secretValues }))
+		) {
+			return {
+				mode: "repair",
+				stage: "local",
+				errors: [
+					"cached manifest does not match the durable strict-v2 apply identity; refusing offline boot",
+				],
+				activeGeneration: appliedState?.generation ?? null,
+			};
+		}
 		const secretRefs = manifestSecretRefs(manifest);
 		if (secretRefs.length > 0) {
-			const cached = loadCachedSecretValues(paths);
-			if ("errors" in cached) return cached;
 			const missingSecretRefs = manifestSecretRefsMissingValues(manifest, cached.secretValues);
 			if (missingSecretRefs.length === 0) {
 				return {
@@ -848,6 +892,7 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 					sourcePath: paths.manifestLastGood,
 					offline: true,
 					secretValues: cached.secretValues,
+					...(cachedApplyIdentity ? { applyIdentity: cachedApplyIdentity } : {}),
 				};
 			}
 			return {
@@ -863,6 +908,7 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 			source: "last-good-cache",
 			sourcePath: paths.manifestLastGood,
 			offline: true,
+			...(cachedApplyIdentity ? { applyIdentity: cachedApplyIdentity } : {}),
 		};
 	} catch (error) {
 		return {
@@ -950,6 +996,7 @@ function validateLoadedManifest(
 		secretValues?: Record<string, string>;
 		channelBindings?: RuntimeBundleChannelBinding[];
 		sourceRevision?: string;
+		applyIdentity?: RuntimeApplyIdentity;
 	},
 	paths: RuntimePaths,
 	source: RuntimeManifestLoad["source"],
@@ -983,5 +1030,6 @@ function validateLoadedManifest(
 		secretValues: normalized.secretValues,
 		channelBindings: normalized.channelBindings,
 		sourceRevision: normalized.sourceRevision,
+		applyIdentity: normalized.applyIdentity,
 	};
 }

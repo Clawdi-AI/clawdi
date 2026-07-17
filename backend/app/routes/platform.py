@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import invalidate_api_key_auth_cache
-from app.core.database import get_session
+from app.core.database import get_runtime_observation_session, get_session
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
@@ -26,10 +26,21 @@ from app.schemas.platform import (
     PlatformApiKeyCreate,
     PlatformMutationBody,
     PlatformOwner,
+    PlatformRuntimeEnvironmentRetire,
+    PlatformRuntimeObservationConsumerAck,
+    PlatformRuntimeObservationConsumerRegister,
+    PlatformRuntimeObservationConsumerReset,
+    PlatformRuntimeObservationRead,
     PlatformRuntimeStateResponse,
     PlatformRuntimeStateUpsert,
 )
 from app.schemas.platform_oauth import PlatformOAuthErrorResponse, PlatformOAuthTokenResponse
+from app.schemas.runtime_observation import (
+    RuntimeEnvironmentRetirementReceipt,
+    RuntimeObservationConsumerResetResponse,
+    RuntimeObservationConsumerResponse,
+    RuntimeObservationReadResponse,
+)
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
@@ -51,6 +62,16 @@ from app.services.platform_workload_auth import (
     get_platform_workload_key_resolver,
     issue_platform_workload_token,
     require_platform_mutation_auth,
+)
+from app.services.runtime_observation import (
+    RuntimeApplyIdentity,
+    RuntimeObservationProtocolError,
+    acknowledge_runtime_observation_cursor,
+    provision_runtime_environment_fence,
+    read_runtime_observations,
+    register_runtime_observation_consumer,
+    reset_runtime_observation_consumer,
+    retire_runtime_environment,
 )
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
@@ -107,6 +128,10 @@ def _oauth_error_response(exc: PlatformOAuthProtocolError) -> JSONResponse:
         content=body.model_dump(),
         headers=headers,
     )
+
+
+def _raise_runtime_observation_error(exc: RuntimeObservationProtocolError) -> NoReturn:
+    raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
 
 
 def _oauth_form_value(form: Any, name: str) -> str:
@@ -311,6 +336,26 @@ async def _resolve_owner(
             idempotency_key=idempotency_key,
         )
         raise AssertionError("unreachable")
+    return user
+
+
+async def _resolve_owner_read(db: AsyncSession, owner: PlatformOwner) -> User:
+    """Resolve a read principal without creating mutation/audit side effects."""
+
+    if owner.kind == PRINCIPAL_KIND_CLERK:
+        filters = (
+            User.principal_kind == PRINCIPAL_KIND_CLERK,
+            User.clerk_id == owner.ref,
+        )
+    else:
+        filters = (
+            User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+            User.partner_tenant_ref == owner.ref,
+            User.clerk_id.is_(None),
+        )
+    user = (await db.execute(select(User).where(*filters))).scalar_one_or_none()
+    if user is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Owner not found")
     return user
 
 
@@ -877,6 +922,230 @@ async def platform_delete_runtime_state(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.post(
+    "/agents/{agent_id}/runtime-environment/retire",
+    response_model=RuntimeEnvironmentRetirementReceipt,
+)
+async def platform_retire_runtime_environment(
+    agent_id: UUID,
+    body: PlatformRuntimeEnvironmentRetire,
+    request: Request,
+    idempotency_key: IdempotencyKey,
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_mutation_auth("platform:runtime-state:write")
+    ),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeEnvironmentRetirementReceipt | Response:
+    action = "runtime_environment.retire"
+    owner = await _resolve_owner(
+        db,
+        owner=body.owner,
+        resource_type="runtime_environment_fence",
+        resource_id=str(agent_id),
+        action=action,
+        request=request,
+        idempotency_key=idempotency_key,
+    )
+    request_hash, replay = await _begin_mutation(
+        db,
+        operation="runtime_environment.retire",
+        idempotency_key=idempotency_key,
+        request_payload={"agent_id": str(agent_id), **body.model_dump(mode="json")},
+        owner=body.owner,
+        owner_user_id=owner.id,
+        resource_type="runtime_environment_fence",
+        resource_id=str(agent_id),
+        action=action,
+        request=request,
+    )
+    if replay is not None:
+        return _replay_response(replay)
+    try:
+        receipt_values = await retire_runtime_environment(
+            db,
+            environment_id=agent_id,
+            expected_deployment_id=body.expected_deployment_id,
+            retirement_id=body.retirement_id,
+            owner_id=owner.id,
+        )
+    except RuntimeObservationProtocolError as exc:
+        await _reject(
+            db,
+            status_code=exc.status_code,
+            detail=exc.detail(),
+            result=exc.code,
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="runtime_environment_fence",
+            resource_id=str(agent_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=agent_id,
+        )
+        raise AssertionError("unreachable")
+    receipt = RuntimeEnvironmentRetirementReceipt.model_validate(receipt_values)
+    await _complete_mutation(
+        db,
+        operation="runtime_environment.retire",
+        idempotency_key=idempotency_key,
+        request_hash=request_hash,
+        owner=body.owner,
+        owner_user_id=owner.id,
+        resource_type="runtime_environment_fence",
+        resource_id=str(agent_id),
+        action=action,
+        request=request,
+        response_status=status.HTTP_200_OK,
+        response_body=receipt,
+        environment_id=agent_id,
+        audit_details={
+            "deployment_id": body.expected_deployment_id,
+            "retirement_id": body.retirement_id,
+            "retirement_receipt_id": receipt.retirement_receipt_id,
+        },
+    )
+    return receipt
+
+
+@router.post(
+    "/agents/{agent_id}/runtime-observation-consumers/register",
+    response_model=RuntimeObservationConsumerResponse,
+)
+async def platform_register_runtime_observation_consumer(
+    agent_id: UUID,
+    body: PlatformRuntimeObservationConsumerRegister,
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_mutation_auth("platform:runtime-observations:read")
+    ),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservationConsumerResponse:
+    owner = await _resolve_owner_read(db, body.owner)
+    try:
+        values = await register_runtime_observation_consumer(
+            db,
+            environment_id=agent_id,
+            owner_id=owner.id,
+            deployment_id=body.deployment_id,
+            consumer_id=body.consumer_id,
+        )
+    except RuntimeObservationProtocolError as exc:
+        if exc.code == "observation_cursor_expired":
+            await db.commit()
+        else:
+            await db.rollback()
+        _raise_runtime_observation_error(exc)
+    await db.commit()
+    return RuntimeObservationConsumerResponse.model_validate(values)
+
+
+@router.post(
+    "/agents/{agent_id}/runtime-observations/read",
+    response_model=RuntimeObservationReadResponse,
+)
+async def platform_read_runtime_observations(
+    agent_id: UUID,
+    body: PlatformRuntimeObservationRead,
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_mutation_auth("platform:runtime-observations:read")
+    ),
+    db: AsyncSession = Depends(get_runtime_observation_session),
+) -> RuntimeObservationReadResponse:
+    """Read credential-authenticated guest reports for the Hosted controller.
+
+    The readiness authority is the authenticated guest report from the
+    per-deployment runtime credential. It is not attestation-bound instance identity.
+    """
+
+    owner = await _resolve_owner_read(db, body.owner)
+    identity = body.expected_apply_identity
+    try:
+        values = await read_runtime_observations(
+            db,
+            environment_id=agent_id,
+            owner_id=owner.id,
+            deployment_id=body.deployment_id,
+            consumer_id=body.consumer_id,
+            expected_apply_identity=RuntimeApplyIdentity(
+                generation=identity.generation,
+                manifest_etag=identity.manifest_etag,
+                apply_receipt_id=identity.apply_receipt_id,
+                boot_nonce=identity.boot_nonce,
+            ),
+            after_cursor=body.after_cursor,
+            limit=body.limit,
+        )
+    except RuntimeObservationProtocolError as exc:
+        if exc.code == "observation_cursor_expired":
+            # A known invalid cursor installs its explicit reset boundary in
+            # this same repeatable-read transaction before the 410 is visible.
+            await db.commit()
+        else:
+            await db.rollback()
+        _raise_runtime_observation_error(exc)
+    return RuntimeObservationReadResponse.model_validate(values)
+
+
+@router.post(
+    "/agents/{agent_id}/runtime-observation-consumers/ack",
+    response_model=RuntimeObservationConsumerResponse,
+)
+async def platform_ack_runtime_observation_consumer(
+    agent_id: UUID,
+    body: PlatformRuntimeObservationConsumerAck,
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_mutation_auth("platform:runtime-observations:read")
+    ),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservationConsumerResponse:
+    owner = await _resolve_owner_read(db, body.owner)
+    try:
+        values = await acknowledge_runtime_observation_cursor(
+            db,
+            environment_id=agent_id,
+            owner_id=owner.id,
+            deployment_id=body.deployment_id,
+            consumer_id=body.consumer_id,
+            opaque_cursor=body.cursor,
+        )
+    except RuntimeObservationProtocolError as exc:
+        if exc.code == "observation_cursor_expired":
+            await db.commit()
+        else:
+            await db.rollback()
+        _raise_runtime_observation_error(exc)
+    await db.commit()
+    return RuntimeObservationConsumerResponse.model_validate(values)
+
+
+@router.post(
+    "/agents/{agent_id}/runtime-observation-consumers/reset",
+    response_model=RuntimeObservationConsumerResetResponse,
+)
+async def platform_reset_runtime_observation_consumer(
+    agent_id: UUID,
+    body: PlatformRuntimeObservationConsumerReset,
+    _auth: PlatformMutationAuth = Depends(
+        require_platform_mutation_auth("platform:runtime-observations:read")
+    ),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservationConsumerResetResponse:
+    owner = await _resolve_owner_read(db, body.owner)
+    try:
+        values = await reset_runtime_observation_consumer(
+            db,
+            environment_id=agent_id,
+            owner_id=owner.id,
+            deployment_id=body.deployment_id,
+            consumer_id=body.consumer_id,
+        )
+    except RuntimeObservationProtocolError as exc:
+        await db.rollback()
+        _raise_runtime_observation_error(exc)
+    await db.commit()
+    return RuntimeObservationConsumerResetResponse.model_validate(values)
+
+
 @router.post("/auth/keys", response_model=ApiKeyCreated)
 async def platform_mint_api_key(
     body: PlatformApiKeyCreate,
@@ -918,12 +1187,36 @@ async def platform_mint_api_key(
         request=request,
         idempotency_key=idempotency_key,
     )
+    try:
+        await provision_runtime_environment_fence(
+            db,
+            environment_id=body.environment_id,
+            owner_id=owner.id,
+            deployment_id=body.deployment_id,
+        )
+    except RuntimeObservationProtocolError as exc:
+        await _reject(
+            db,
+            status_code=exc.status_code,
+            detail=exc.detail(),
+            result=exc.code,
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="runtime_environment_fence",
+            resource_id=str(body.environment_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=body.environment_id,
+        )
+        raise AssertionError("unreachable")
     minted = await mint_api_key(
         db,
         user_id=owner.id,
         label=body.label,
         scopes=body.scopes,
         environment_id=body.environment_id,
+        runtime_deployment_id=body.deployment_id,
         managed=True,
         commit=False,
     )

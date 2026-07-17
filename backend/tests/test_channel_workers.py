@@ -8,6 +8,7 @@ from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.discord_gateway_worker import DiscordGatewayWorker
+from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 from app.workers.channels import ChannelWorkerHealth, _handle_health_request, build_channel_workers
 
 
@@ -19,6 +20,7 @@ def test_channel_worker_stack_runs_delivery_webhook_gateway_and_retention_worker
         ChannelWebhookDeliveryWorker,
         DiscordGatewayWorker,
         ChannelMessageRetentionWorker,
+        RuntimeObservationRetentionWorker,
     )
 
 

@@ -25,6 +25,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.api_key import ApiKey
+from app.models.runtime_observation import (
+    RUNTIME_ENVIRONMENT_ACTIVE,
+    V2RuntimeEnvironmentFence,
+)
 from app.models.session import AgentEnvironment
 
 
@@ -52,6 +56,7 @@ async def mint_api_key(
     label: str,
     scopes: list[str] | None = None,
     environment_id: UUID | None = None,
+    runtime_deployment_id: str | None = None,
     managed: bool = False,
     commit: bool = True,
 ) -> MintedKey:
@@ -69,6 +74,10 @@ async def mint_api_key(
     `environment_id` binds the key to a single AgentEnvironment.
     A leaked deploy-key from pod A then can't write into pod B's
     resources on the same account — narrows the blast radius.
+
+    `runtime_deployment_id` is the immutable strict-v2 authority. It is
+    accepted only for a managed environment-bound key whose pre-provisioned
+    fence matches the same owner and deployment in this transaction.
     """
     # Defense-in-depth: every route caller already checks env
     # ownership before calling this service, but the service
@@ -88,6 +97,23 @@ async def mint_api_key(
                 f"environment {environment_id} is not owned by user {user_id}; "
                 "refusing to mint cross-tenant deploy key"
             )
+    if runtime_deployment_id is not None:
+        if not managed or environment_id is None:
+            raise ValueError("runtime_deployment_id requires a managed environment-bound API key")
+        fence = (
+            await db.execute(
+                select(V2RuntimeEnvironmentFence).where(
+                    V2RuntimeEnvironmentFence.environment_id == environment_id,
+                    V2RuntimeEnvironmentFence.owner_id == user_id,
+                    V2RuntimeEnvironmentFence.deployment_id == runtime_deployment_id,
+                    V2RuntimeEnvironmentFence.state == RUNTIME_ENVIRONMENT_ACTIVE,
+                )
+            )
+        ).scalar_one_or_none()
+        if fence is None:
+            raise ValueError(
+                "runtime deployment credential requires a matching active environment fence"
+            )
     raw, key_hash, key_prefix = _generate()
     api_key = ApiKey(
         user_id=user_id,
@@ -96,6 +122,7 @@ async def mint_api_key(
         label=label,
         scopes=scopes,
         environment_id=environment_id,
+        runtime_deployment_id=runtime_deployment_id,
         managed=managed,
     )
     db.add(api_key)

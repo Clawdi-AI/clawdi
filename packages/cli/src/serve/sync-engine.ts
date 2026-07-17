@@ -65,6 +65,7 @@ import {
 } from "../lib/skills-lock";
 import { tarSkillDir } from "../lib/tar";
 import { getCliVersion } from "../lib/version";
+import { HostedRuntimeHeartbeatSession } from "../runtime/heartbeat-observation";
 import { readHostedRuntimeObserved } from "../runtime/observed";
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
@@ -150,6 +151,9 @@ interface EngineOpts {
 }
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
+	const runtimeHeartbeatSession = new HostedRuntimeHeartbeatSession({
+		environmentId: opts.environmentId,
+	});
 	// Pass the engine's abort signal so any in-flight HTTP call
 	// (heartbeat, project refresh, skill download, etc.) unwinds
 	// immediately when SSE auth fails or shutdown is requested,
@@ -817,7 +821,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			},
 			triggerAuthFailureAbort,
 		),
-		heartbeatLoop(opts, api, queue, opts.abort, () => ({
+		heartbeatLoop(opts, api, queue, runtimeHeartbeatSession, opts.abort, () => ({
 			last_revision_seen: lastSeenRevision,
 			last_sync_error: lastSyncError,
 		})),
@@ -935,6 +939,19 @@ export function lastSyncErrorForSseReconnect(
 
 export function classifyHeartbeatFailure(consecutiveFailures: number): FailureClassification {
 	return consecutiveFailures <= TRANSIENT_HEARTBEAT_FAILURES ? "transient" : "sustained";
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isSafelyTerminalRuntimeObservationFailure(result: {
+	error?: unknown;
+	response: { status: number };
+}): boolean {
+	if (result.response.status !== 422 || !isUnknownRecord(result.error)) return false;
+	const detail = result.error.detail;
+	return isUnknownRecord(detail) && detail.code === "runtime_observation_captured_at_too_old";
 }
 
 /**
@@ -2232,6 +2249,7 @@ async function heartbeatLoop(
 	opts: EngineOpts,
 	api: ApiClient,
 	queue: RetryQueue,
+	runtimeHeartbeatSession: HostedRuntimeHeartbeatSession,
 	abort: AbortSignal,
 	snapshot: () => { last_revision_seen: number | null; last_sync_error: string | null },
 ): Promise<void> {
@@ -2239,9 +2257,10 @@ async function heartbeatLoop(
 	const send = async () => {
 		const fields = snapshot();
 		const dropped = queue.drainDroppedDelta();
-		const runtimeObserved = readHostedRuntimeObserved();
 		try {
-			await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
+			const bufferedRuntimeObserved = runtimeHeartbeatSession.nextEvent();
+			const runtimeObserved = bufferedRuntimeObserved?.event ?? readHostedRuntimeObserved();
+			const response = await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
 				params: { path: { agent_id: opts.environmentId } },
 				body: {
 					// Peak since boot rather than sampled current
@@ -2258,6 +2277,25 @@ async function heartbeatLoop(
 					...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
 				},
 			});
+			if (bufferedRuntimeObserved && isSafelyTerminalRuntimeObservationFailure(response)) {
+				if (!runtimeHeartbeatSession.retireTerminallyStale(bufferedRuntimeObserved.event.eventId)) {
+					throw new Error("terminally stale runtime heartbeat did not match the buffered event");
+				}
+				queue.restoreDroppedDelta(dropped);
+				heartbeatFailureStreak = 0;
+				log.warn("engine.runtime_observation_retired_stale", {
+					event_id: bufferedRuntimeObserved.event.eventId,
+					captured_at: bufferedRuntimeObserved.event.capturedAt,
+				});
+				return;
+			}
+			unwrap(response);
+			if (
+				bufferedRuntimeObserved &&
+				!runtimeHeartbeatSession.acknowledge(bufferedRuntimeObserved.event.eventId)
+			) {
+				throw new Error("runtime heartbeat acknowledgement did not match the buffered event");
+			}
 			heartbeatFailureStreak = 0;
 			await touchHealthFile(opts.adapter.agentType);
 		} catch (e) {
