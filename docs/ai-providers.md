@@ -50,12 +50,17 @@ responses remain supported. Canonical fields from discovery are merged with
 same-ID manifest entries, so an ID-only response does not erase manifest
 capabilities. Unknown discovery fields are ignored.
 
-`max_tokens` is the canonical output-cap field. Discovery also accepts
+`context_window` is the canonical context field. Discovery accepts the Sub2API
+overlay's `context_length` as an OpenAI-compatible wire alias and normalizes it
+to `context_window`; when both are present, canonical `context_window` wins.
+
+`max_tokens` is the canonical output-cap field. Discovery accepts
 `max_output_tokens` as an OpenAI-compatible wire alias and normalizes it to
-`max_tokens`. `max_input_tokens` is preserved as catalog metadata but is not
-used as an output cap. If neither output-cap field is present, the CLI omits the
-runtime output limit instead of deriving one from the context window or input
-limit.
+`max_tokens`; when both are present, canonical `max_tokens` wins.
+`max_input_tokens` is preserved as catalog metadata but is not used as an
+output cap. If neither output-cap field is present, the CLI omits the runtime
+output limit instead of deriving one from the context window or input limit.
+No other overlay fields are treated as aliases.
 
 Agent apply status:
 

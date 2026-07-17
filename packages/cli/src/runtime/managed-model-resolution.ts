@@ -58,7 +58,11 @@ function extractManagedLiveModel(value: unknown): AiProviderModel | null {
 	for (const field of ["supports_vision", "supports_tools", "supports_reasoning"] as const) {
 		if (typeof value[field] === "boolean") model[field] = value[field];
 	}
-	const contextWindow = positiveInteger(value.context_window);
+	// context_window is canonical. The Sub2API metadata overlay exposes the
+	// OpenAI-compatible context_length alias, so use it only when canonical data
+	// is absent.
+	const contextWindow =
+		positiveInteger(value.context_window) ?? positiveInteger(value.context_length);
 	if (contextWindow !== undefined) model.context_window = contextWindow;
 	const maxInputTokens = positiveInteger(value.max_input_tokens);
 	if (maxInputTokens !== undefined) model.max_input_tokens = maxInputTokens;

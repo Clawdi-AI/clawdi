@@ -260,7 +260,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						models: [
 							{
 								id: "k3",
-								context_window: 262_144,
+								context_window: 1_048_576,
 								max_input_tokens: 229_376,
 								max_tokens: 32_768,
 								input_modalities: ["text", "image"],
@@ -282,7 +282,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			models: [
 				{
 					id: "k3",
-					context_window: 262_144,
+					context_window: 1_048_576,
 					max_input_tokens: 229_376,
 					max_tokens: 32_768,
 					input_modalities: ["text", "image"],
@@ -1524,7 +1524,7 @@ describe("runtime manifest reconciliation invariants", () => {
 							models: [
 								{
 									id: "k3",
-									context_window: 262_144,
+									context_window: 1_048_576,
 									max_input_tokens: 229_376,
 									max_tokens: 32_768,
 									input_modalities: ["text", "image"],
@@ -1548,7 +1548,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(projection?.catalog.providers[0]?.models).toEqual([
 			{
 				id: "k3",
-				context_window: 262_144,
+				context_window: 1_048_576,
 				max_input_tokens: 229_376,
 				max_tokens: 32_768,
 				input_modalities: ["text", "image"],

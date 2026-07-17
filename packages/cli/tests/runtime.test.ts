@@ -2824,7 +2824,7 @@ chmod +x "$HOME/.local/bin/hermes"
 							models: [
 								{
 									id: "k3",
-									context_window: 262144,
+									context_window: 1048576,
 									max_input_tokens: 229376,
 									max_tokens: 32768,
 									input_modalities: ["text", "image"],
@@ -2883,7 +2883,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				input: ["text", "image"],
 				reasoning: true,
 				compat: { supportsTools: true },
-				contextWindow: 262144,
+				contextWindow: 1048576,
 				maxTokens: 32768,
 			},
 			{

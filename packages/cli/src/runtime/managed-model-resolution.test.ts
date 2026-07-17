@@ -71,7 +71,7 @@ describe("managed model resolution", () => {
 					{
 						id: "k3",
 						label: "Kimi K3",
-						context_window: 262_144,
+						context_length: 1_048_576,
 						max_input_tokens: 229_376,
 						max_output_tokens: 32_768,
 						input_modalities: ["text", "image", "unknown", "image"],
@@ -100,7 +100,7 @@ describe("managed model resolution", () => {
 			{
 				id: "k3",
 				label: "Kimi K3",
-				context_window: 262_144,
+				context_window: 1_048_576,
 				max_input_tokens: 229_376,
 				max_tokens: 32_768,
 				input_modalities: ["text", "image"],
@@ -120,6 +120,28 @@ describe("managed model resolution", () => {
 				context_window: 262_144,
 				max_input_tokens: 229_376,
 				supports_tools: true,
+			},
+		]);
+	});
+
+	test("prefers canonical limits over OpenAI-compatible discovery aliases", () => {
+		expect(
+			extractManagedLiveModels({
+				data: [
+					{
+						id: "canonical-wins",
+						context_window: 1_048_576,
+						context_length: 262_144,
+						max_tokens: 32_768,
+						max_output_tokens: 16_384,
+					},
+				],
+			}),
+		).toEqual([
+			{
+				id: "canonical-wins",
+				context_window: 1_048_576,
+				max_tokens: 32_768,
 			},
 		]);
 	});

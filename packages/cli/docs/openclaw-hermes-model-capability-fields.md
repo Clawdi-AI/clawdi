@@ -45,6 +45,11 @@ current `max_tokens` catalog field; discovery may accept `max_output_tokens` as
 a wire alias and normalize it to `max_tokens`. If the output cap is absent, the
 projection must omit it rather than infer one.
 
+At managed discovery only, `context_length` and `max_output_tokens` are accepted
+as Sub2API/OpenAI-compatible wire aliases for canonical `context_window` and
+`max_tokens`. Canonical fields take precedence when both forms are present; no
+other overlay aliases are inferred.
+
 ## Field Matrix
 
 | Candidate field | OpenClaw reads and acts? | Hermes reads and acts? | Projection verdict |
