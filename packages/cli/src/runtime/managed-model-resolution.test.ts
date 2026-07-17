@@ -72,8 +72,7 @@ describe("managed model resolution", () => {
 						id: "k3",
 						label: "Kimi K3",
 						context_length: 1_048_576,
-						max_input_tokens: 229_376,
-						max_output_tokens: 32_768,
+						max_input_tokens: 1_048_576,
 						input_modalities: ["text", "image", "unknown", "image"],
 						supports_vision: true,
 						supports_tools: true,
@@ -83,14 +82,13 @@ describe("managed model resolution", () => {
 					{
 						id: "kimi-for-coding",
 						context_window: 262_144,
-						max_input_tokens: 229_376,
-						max_tokens: 32_768,
+						max_input_tokens: 262_144,
 						supports_tools: true,
 					},
 					{
 						id: "kimi-for-coding-highspeed",
 						context_window: 262_144,
-						max_input_tokens: 229_376,
+						max_input_tokens: 262_144,
 						supports_tools: true,
 						unknown_extra: true,
 					},
@@ -101,8 +99,7 @@ describe("managed model resolution", () => {
 				id: "k3",
 				label: "Kimi K3",
 				context_window: 1_048_576,
-				max_input_tokens: 229_376,
-				max_tokens: 32_768,
+				max_input_tokens: 1_048_576,
 				input_modalities: ["text", "image"],
 				supports_vision: true,
 				supports_tools: true,
@@ -111,14 +108,13 @@ describe("managed model resolution", () => {
 			{
 				id: "kimi-for-coding",
 				context_window: 262_144,
-				max_input_tokens: 229_376,
-				max_tokens: 32_768,
+				max_input_tokens: 262_144,
 				supports_tools: true,
 			},
 			{
 				id: "kimi-for-coding-highspeed",
 				context_window: 262_144,
-				max_input_tokens: 229_376,
+				max_input_tokens: 262_144,
 				supports_tools: true,
 			},
 		]);
@@ -135,6 +131,12 @@ describe("managed model resolution", () => {
 						max_tokens: 32_768,
 						max_output_tokens: 16_384,
 					},
+					{
+						id: "generic-output-alias",
+						context_length: 400_000,
+						max_input_tokens: 350_000,
+						max_output_tokens: 16_384,
+					},
 				],
 			}),
 		).toEqual([
@@ -142,6 +144,12 @@ describe("managed model resolution", () => {
 				id: "canonical-wins",
 				context_window: 1_048_576,
 				max_tokens: 32_768,
+			},
+			{
+				id: "generic-output-alias",
+				context_window: 400_000,
+				max_input_tokens: 350_000,
+				max_tokens: 16_384,
 			},
 		]);
 	});

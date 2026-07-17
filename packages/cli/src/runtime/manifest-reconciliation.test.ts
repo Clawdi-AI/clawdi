@@ -261,8 +261,7 @@ describe("runtime manifest reconciliation invariants", () => {
 							{
 								id: "k3",
 								context_window: 1_048_576,
-								max_input_tokens: 229_376,
-								max_tokens: 32_768,
+								max_input_tokens: 1_048_576,
 								input_modalities: ["text", "image"],
 								supports_tools: true,
 								supports_reasoning: true,
@@ -283,8 +282,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				{
 					id: "k3",
 					context_window: 1_048_576,
-					max_input_tokens: 229_376,
-					max_tokens: 32_768,
+					max_input_tokens: 1_048_576,
 					input_modalities: ["text", "image"],
 					supports_tools: true,
 					supports_reasoning: true,
@@ -1525,8 +1523,7 @@ describe("runtime manifest reconciliation invariants", () => {
 								{
 									id: "k3",
 									context_window: 1_048_576,
-									max_input_tokens: 229_376,
-									max_tokens: 32_768,
+									max_input_tokens: 1_048_576,
 									input_modalities: ["text", "image"],
 									supports_tools: true,
 									supports_reasoning: true,
@@ -1549,8 +1546,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			{
 				id: "k3",
 				context_window: 1_048_576,
-				max_input_tokens: 229_376,
-				max_tokens: 32_768,
+				max_input_tokens: 1_048_576,
 				input_modalities: ["text", "image"],
 				supports_tools: true,
 				supports_reasoning: true,
@@ -1706,14 +1702,13 @@ describe("runtime manifest reconciliation invariants", () => {
 								{
 									id: "kimi-for-coding",
 									context_window: 262_144,
-									max_input_tokens: 229_376,
-									max_tokens: 32_768,
+									max_input_tokens: 262_144,
 									supports_tools: true,
 								},
 								{
 									id: "kimi-for-coding-highspeed",
 									context_window: 262_144,
-									max_input_tokens: 229_376,
+									max_input_tokens: 262_144,
 									supports_tools: true,
 								},
 							],
@@ -1731,7 +1726,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				{
 					id: "kimi-for-coding-highspeed",
 					context_window: 262_144,
-					max_input_tokens: 229_376,
+					max_input_tokens: 262_144,
 					supports_tools: true,
 				},
 			],
@@ -1744,14 +1739,13 @@ describe("runtime manifest reconciliation invariants", () => {
 			{
 				id: "kimi-for-coding",
 				context_window: 262_144,
-				max_input_tokens: 229_376,
-				max_tokens: 32_768,
+				max_input_tokens: 262_144,
 				supports_tools: true,
 			},
 			{
 				id: "kimi-for-coding-highspeed",
 				context_window: 262_144,
-				max_input_tokens: 229_376,
+				max_input_tokens: 262_144,
 				supports_tools: true,
 			},
 		]);

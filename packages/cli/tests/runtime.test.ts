@@ -2825,8 +2825,7 @@ chmod +x "$HOME/.local/bin/hermes"
 								{
 									id: "k3",
 									context_window: 1048576,
-									max_input_tokens: 229376,
-									max_tokens: 32768,
+									max_input_tokens: 1048576,
 									input_modalities: ["text", "image"],
 									supports_vision: true,
 									supports_tools: true,
@@ -2854,8 +2853,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					{
 						id: "kimi-for-coding",
 						context_window: 262144,
-						max_input_tokens: 229376,
-						max_tokens: 32768,
+						max_input_tokens: 262144,
 						input_modalities: ["text", "image"],
 						supports_tools: true,
 						supports_reasoning: true,
@@ -2863,7 +2861,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					{
 						id: "kimi-for-coding-highspeed",
 						context_window: 262144,
-						max_input_tokens: 229376,
+						max_input_tokens: 262144,
 						input_modalities: ["text"],
 						supports_tools: true,
 						supports_reasoning: true,
@@ -2884,7 +2882,6 @@ chmod +x "$HOME/.local/bin/hermes"
 				reasoning: true,
 				compat: { supportsTools: true },
 				contextWindow: 1048576,
-				maxTokens: 32768,
 			},
 			{
 				id: "kimi-for-coding",
@@ -2893,7 +2890,6 @@ chmod +x "$HOME/.local/bin/hermes"
 				reasoning: true,
 				compat: { supportsTools: true },
 				contextWindow: 262144,
-				maxTokens: 32768,
 			},
 			{
 				id: "kimi-for-coding-highspeed",

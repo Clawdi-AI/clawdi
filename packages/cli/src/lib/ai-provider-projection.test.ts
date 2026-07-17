@@ -137,18 +137,17 @@ describe("AI provider projection", () => {
 							{
 								id: "k3",
 								context_length: 1_048_576,
-								max_input_tokens: 229_376,
+								max_input_tokens: 1_048_576,
 							},
 							{
 								id: "kimi-for-coding",
 								context_length: 262_144,
-								max_input_tokens: 229_376,
-								max_output_tokens: 32_768,
+								max_input_tokens: 262_144,
 							},
 							{
 								id: "kimi-for-coding-highspeed",
 								context_length: 262_144,
-								max_input_tokens: 229_376,
+								max_input_tokens: 262_144,
 							},
 						],
 					}),
@@ -173,8 +172,8 @@ describe("AI provider projection", () => {
 		expect(openclawModels[1]).toMatchObject({
 			id: "kimi-for-coding",
 			contextWindow: 262_144,
-			maxTokens: 32_768,
 		});
+		expect(openclawModels[1]?.maxTokens).toBeUndefined();
 		expect(openclawModels[2]).toMatchObject({
 			id: "kimi-for-coding-highspeed",
 			contextWindow: 262_144,
@@ -192,9 +191,53 @@ describe("AI provider projection", () => {
 			.split('"kimi-for-coding":')[1]
 			?.split('"kimi-for-coding-highspeed":')[0];
 		expect(codingBlock).toContain("context_length: 262144");
-		expect(codingBlock).toContain("max_tokens: 32768");
+		expect(codingBlock).not.toContain("max_tokens:");
 		const highspeedBlock = hermes.files[0]?.content.split('"kimi-for-coding-highspeed":')[1];
 		expect(highspeedBlock).toContain("context_length: 262144");
 		expect(highspeedBlock).not.toContain("max_tokens:");
+	});
+
+	test("normalizes a generic max_output_tokens discovery alias for both targets", () => {
+		const catalog: AiProviderCatalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: "clawdi-v2",
+					type: "custom_openai_compatible",
+					base_url: "https://api.example.test/v1",
+					api_mode: "openai_chat",
+					auth: { type: "api_key", source: "managed" },
+					managed_by: "clawdi",
+					runtime_env_name: "OPENAI_API_KEY",
+					models: extractManagedLiveModels({
+						data: [
+							{
+								id: "generic-output-alias",
+								context_length: 400_000,
+								max_input_tokens: 350_000,
+								max_output_tokens: 16_384,
+							},
+						],
+					}),
+				},
+			],
+			defaults: { chat_provider_id: "clawdi-v2" },
+		};
+
+		const primaryModel = { provider_id: "clawdi-v2", model: "generic-output-alias" };
+		const openclaw = buildAgentTargetProjection("openclaw", catalog, primaryModel);
+		const openclawPatch = JSON.parse(openclaw.files[0]?.content ?? "{}") as {
+			models?: { providers?: Record<string, { models?: Array<Record<string, unknown>> }> };
+		};
+		expect(openclawPatch.models?.providers?.["clawdi-v2"]?.models?.[0]).toMatchObject({
+			id: "generic-output-alias",
+			contextWindow: 400_000,
+			maxTokens: 16_384,
+		});
+
+		const hermes = buildAgentTargetProjection("hermes", catalog, primaryModel);
+		expect(hermes.files[0]?.content).toContain('"generic-output-alias":');
+		expect(hermes.files[0]?.content).toContain("context_length: 400000");
+		expect(hermes.files[0]?.content).toContain("max_tokens: 16384");
 	});
 });
