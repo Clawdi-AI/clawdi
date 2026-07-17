@@ -243,6 +243,60 @@ async def test_admin_mint_accepts_managed_flag(admin_client, db_session, seed_us
 
 
 @pytest.mark.asyncio
+async def test_admin_managed_environment_key_preserves_legacy_shape_and_v2_opt_in(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    import uuid
+
+    from app.models.runtime_observation import V2RuntimeEnvironmentFence
+    from tests.conftest import create_env_with_project
+
+    legacy_environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"legacy-managed-{uuid.uuid4().hex}",
+        machine_name="legacy-managed",
+    )
+    strict_v2_environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"strict-v2-managed-{uuid.uuid4().hex}",
+        machine_name="strict-v2-managed",
+    )
+
+    legacy = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "label": "legacy-managed-environment",
+            "environment_id": str(legacy_environment.id),
+            "managed": True,
+        },
+    )
+    strict_v2 = await admin_client.post(
+        "/v1/admin/auth/keys",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "label": "strict-v2-managed-environment",
+            "environment_id": str(strict_v2_environment.id),
+            "deployment_id": "deployment-strict-v2",
+            "managed": True,
+        },
+    )
+
+    assert legacy.status_code == 200, legacy.text
+    assert strict_v2.status_code == 200, strict_v2.text
+    assert await db_session.get(V2RuntimeEnvironmentFence, legacy_environment.id) is None
+    fence = await db_session.get(V2RuntimeEnvironmentFence, strict_v2_environment.id)
+    assert fence is not None
+    assert fence.deployment_id == "deployment-strict-v2"
+
+
+@pytest.mark.asyncio
 async def test_admin_mint_accepts_arbitrary_scopes(admin_client, db_session, seed_user):
     """No allowlist ceiling: callers can mint keys carrying any API
     permission they want (vault:resolve, sessions:read, etc.). Trust

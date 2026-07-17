@@ -13,7 +13,8 @@ from sqlalchemy import create_engine, inspect
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 REVISION = "f1a7c3d9e2b4"
-HEAD_REVISION = "c7e4a9b2d6f1"
+HEAD_REVISION = "4c8f2a1d7e9b"
+RUNTIME_OBSERVATION_DOWN_REVISION = "c7e4a9b2d6f1"
 MIGRATION_FILENAME = f"{REVISION}_finalize_unlaunched_agent_v2_schema.py"
 
 
@@ -57,7 +58,8 @@ def test_agent_v2_final_schema_migration_is_single_head() -> None:
     scripts = ScriptDirectory.from_config(config)
 
     assert scripts.get_heads() == [HEAD_REVISION]
-    assert scripts.get_revision(HEAD_REVISION).down_revision == REVISION
+    assert scripts.get_revision(HEAD_REVISION).down_revision == RUNTIME_OBSERVATION_DOWN_REVISION
+    assert scripts.get_revision(RUNTIME_OBSERVATION_DOWN_REVISION).down_revision == REVISION
     assert scripts.get_revision(REVISION).down_revision == "f3a1c7d9e2b4"
 
 

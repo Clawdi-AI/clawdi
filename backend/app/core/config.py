@@ -140,6 +140,17 @@ class Settings(BaseSettings):
     vault_encryption_key: str = ""
     encryption_key: str = ""  # For JWT signing (MCP bridge tokens)
 
+    # Strict-v2 runtime observation companion. Cursor tokens are encrypted and
+    # opaque to Hosted; empty uses encryption_key so existing deployments need
+    # no additional secret before adopting the protocol.
+    runtime_observation_cursor_key: str = ""
+    runtime_observation_freshness_seconds: int = 90
+    runtime_observation_max_future_skew_seconds: int = 300
+    runtime_observation_max_capture_age_days: int = 30
+    runtime_observation_replay_horizon_days: int = 7
+    runtime_observation_hard_retention_days: int = 30
+    runtime_observation_cleanup_batch_size: int = 500
+
     # Admin endpoints (POST/DELETE /v1/admin/auth/keys) auth.
     # Empty string disables them entirely (returns 503). Set in
     # production to a strong secret (e.g. `openssl rand -hex 32`)

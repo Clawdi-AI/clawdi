@@ -37,6 +37,7 @@ PLATFORM_WORKLOAD_SCOPES = (
     "platform:runtime-state:write",
     "platform:keys:mint",
     "platform:keys:revoke",
+    "platform:runtime-observations:read",
 )
 
 _PRIVATE_JWK_FIELDS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})

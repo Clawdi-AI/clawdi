@@ -54,7 +54,7 @@ class PlatformWorkloadClient(Base, TimestampMixin):
             "cardinality(allowed_scopes) > 0 AND allowed_scopes <@ "
             "ARRAY['platform:agents:create','platform:agents:delete',"
             "'platform:runtime-state:write','platform:keys:mint',"
-            "'platform:keys:revoke']::varchar[]",
+            "'platform:keys:revoke','platform:runtime-observations:read']::varchar[]",
             name="ck_platform_workload_clients_allowed_scopes",
         ),
     )

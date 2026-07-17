@@ -17,7 +17,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.config import settings
-from app.core.database import get_session
+from app.core.database import get_runtime_observation_session, get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
@@ -127,6 +127,7 @@ async def workload_harness(db_session, seed_user) -> AsyncIterator[WorkloadHarne
     settings.platform_workload_token_endpoint = ""
     settings.platform_workload_issuer = "clawdi-cloud-platform-test"
     app.dependency_overrides[get_session] = _override_get_session
+    app.dependency_overrides[get_runtime_observation_session] = _override_get_session
     app.dependency_overrides[get_platform_workload_key_resolver] = _override_resolver
     try:
         async with httpx.AsyncClient(
@@ -552,7 +553,7 @@ async def test_oauth_storage_failures_are_503(
 
 
 @pytest.mark.asyncio
-async def test_workload_tokens_cover_exact_six_route_scope_mapping(
+async def test_workload_tokens_cover_platform_route_scope_mapping(
     workload_harness,
     seed_user,
     db_session,
@@ -584,11 +585,110 @@ async def test_workload_tokens_cover_exact_six_route_scope_mapping(
             "owner": owner,
             "label": "workload-managed",
             "environment_id": str(agent_id),
+            "deployment_id": "deployment-workload",
             "scopes": list(PLATFORM_RUNTIME_KEY_SCOPES),
         },
     )
     assert minted.status_code == 200, minted.text
     key_id = minted.json()["id"]
+
+    observation_token = await _access_token(
+        workload_harness,
+        "platform:runtime-observations:read",
+    )
+    wrong_scope = await workload_harness.client.post(
+        f"/v1/platform/agents/{agent_id}/runtime-observation-consumers/register",
+        headers=_workload_headers(runtime_token, "workload-observation-wrong-scope"),
+        json={
+            "owner": owner,
+            "deployment_id": "deployment-workload",
+            "consumer_id": "wrong-scope-consumer",
+        },
+    )
+    assert wrong_scope.status_code == 403, wrong_scope.text
+
+    registered = await workload_harness.client.post(
+        f"/v1/platform/agents/{agent_id}/runtime-observation-consumers/register",
+        headers=_workload_headers(observation_token, "workload-observation-register"),
+        json={
+            "owner": owner,
+            "deployment_id": "deployment-workload",
+            "consumer_id": "hosted-controller",
+        },
+    )
+    assert registered.status_code == 200, registered.text
+    initial_cursor = registered.json()["cursor"]
+    observations = await workload_harness.client.post(
+        f"/v1/platform/agents/{agent_id}/runtime-observations/read",
+        headers=_workload_headers(observation_token, "workload-observation-read"),
+        json={
+            "owner": owner,
+            "deployment_id": "deployment-workload",
+            "consumer_id": "hosted-controller",
+            "expectedApplyIdentity": {
+                "generation": 1,
+                "manifestETag": '"manifest-etag-0001"',
+                "applyReceiptId": "apply-receipt-00000001",
+                "bootNonce": "boot-nonce-0000000001",
+            },
+            "afterCursor": initial_cursor,
+            "limit": 100,
+        },
+    )
+    assert observations.status_code == 200, observations.text
+    observation_body = observations.json()
+    assert observation_body["events"] == []
+    assert observation_body["heads"] == []
+    assert observation_body["streamHighWaterCursor"].startswith("clawdi-ro-v1.")
+
+    acknowledged = await workload_harness.client.post(
+        f"/v1/platform/agents/{agent_id}/runtime-observation-consumers/ack",
+        headers=_workload_headers(observation_token, "workload-observation-ack"),
+        json={
+            "owner": owner,
+            "deployment_id": "deployment-workload",
+            "consumer_id": "hosted-controller",
+            "cursor": observation_body["streamHighWaterCursor"],
+        },
+    )
+    assert acknowledged.status_code == 200, acknowledged.text
+
+    invalid_cursor_body = {
+        "owner": owner,
+        "deployment_id": "deployment-workload",
+        "consumer_id": "hosted-controller",
+        "expectedApplyIdentity": {
+            "generation": 1,
+            "manifestETag": '"manifest-etag-0001"',
+            "applyReceiptId": "apply-receipt-00000001",
+            "bootNonce": "boot-nonce-0000000001",
+        },
+        "afterCursor": "clawdi-ro-v1.invalid",
+        "limit": 100,
+    }
+    expired = await workload_harness.client.post(
+        f"/v1/platform/agents/{agent_id}/runtime-observations/read",
+        headers=_workload_headers(observation_token, "workload-observation-expired"),
+        json=invalid_cursor_body,
+    )
+    assert expired.status_code == 410, expired.text
+    assert expired.json()["detail"]["code"] == "observation_cursor_expired"
+    assert expired.json()["detail"]["resetBoundary"] is not None
+
+    reset = await workload_harness.client.post(
+        f"/v1/platform/agents/{agent_id}/runtime-observation-consumers/reset",
+        headers=_workload_headers(observation_token, "workload-observation-reset"),
+        json={
+            "owner": owner,
+            "deployment_id": "deployment-workload",
+            "consumer_id": "hosted-controller",
+        },
+    )
+    assert reset.status_code == 200, reset.text
+    assert (
+        reset.json()["resetBoundary"]["cursor"]
+        == (expired.json()["detail"]["resetBoundary"]["cursor"])
+    )
 
     revoke_token = await _access_token(workload_harness, "platform:keys:revoke")
     revoked = await workload_harness.client.request(

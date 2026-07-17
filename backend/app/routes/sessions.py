@@ -38,6 +38,7 @@ from app.models.session_permission import (
 from app.schemas.common import Paginated
 from app.schemas.runtime import validate_hosted_runtime_desired_state
 from app.schemas.runtime_observed import (
+    RUNTIME_OBSERVATION_COMPANION_FIELDS,
     HostedRuntimeObserved,
     HostedRuntimeObservedProviderPayload,
     HostedRuntimeObservedV2,
@@ -79,6 +80,10 @@ from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
 from app.services.memory_provider import get_memory_provider
+from app.services.runtime_observation import (
+    RuntimeObservationProtocolError,
+    ingest_runtime_observation,
+)
 from app.services.runtime_source import (
     RuntimeSourceError,
     expected_runtime_bundle_v2_etag,
@@ -1396,6 +1401,8 @@ def _bounded_runtime_observed(value: object) -> object:
         raise ValueError("runtime_observed must be valid UTF-8 JSON") from exc
     if encoded_size <= _MAX_RUNTIME_OBSERVED_BYTES:
         return value
+    if RUNTIME_OBSERVATION_COMPANION_FIELDS.intersection(value):
+        raise ValueError("companion runtime_observed payload exceeded size limit")
     return {
         "schemaVersion": "clawdi.hostedRuntimeObserved.v2",
         "reportedAt": datetime.now(UTC).isoformat(),
@@ -1472,6 +1479,10 @@ async def sync_heartbeat(
     """Daemon writes its liveness state here every cycle. Extreme-
     light endpoint: validate ownership / env-id binding, update a
     handful of columns, commit. No heavy queries.
+
+    Strict-v2 companion identity is an authenticated guest report from the
+    per-deployment runtime credential. It is readiness authority for this
+    protocol, but it is not attestation-bound instance identity.
     """
     env = (
         await db.execute(
@@ -1483,6 +1494,28 @@ async def sync_heartbeat(
     ).scalar_one_or_none()
     if env is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent environment not found")
+
+    runtime_observed = body.runtime_observed
+    if (
+        runtime_observed is not None
+        and runtime_observed.is_companion_event
+        and (
+            not auth.is_cli
+            or auth.api_key is None
+            or not auth.api_key.managed
+            or auth.api_key.environment_id != agent_id
+        )
+    ):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "runtime_observation_credential_mismatch",
+                "message": (
+                    "companion runtime observations require the managed "
+                    "environment-bound runtime credential"
+                ),
+            },
+        )
 
     # If the deploy-key is bound to a specific env, refuse calls
     # for any other env. Resource-level project alone wasn't enough
@@ -1514,12 +1547,24 @@ async def sync_heartbeat(
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
-    runtime_observed = body.runtime_observed
+    companion_accepted = False
     hosted_state = None
     observation = None
     runtime_observed_values = None
     observed_changed = False
-    if runtime_observed is not None:
+    if runtime_observed is not None and runtime_observed.is_companion_event:
+        try:
+            await ingest_runtime_observation(
+                db,
+                environment_id=agent_id,
+                value=runtime_observed,
+                received_at=now,
+            )
+        except RuntimeObservationProtocolError as exc:
+            await db.rollback()
+            raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
+        companion_accepted = True
+    elif runtime_observed is not None:
         runtime_observed_values = _runtime_observed_columns(
             runtime_observed,
             observed_at=now,
@@ -1548,6 +1593,7 @@ async def sync_heartbeat(
         or bool(body.dropped_count_delta)
         or not env.sync_enabled
         or observed_changed
+        or companion_accepted
     )
     # Even with no state change, refresh last_sync_at on a bounded
     # cadence. The dashboard freshness cutoff is 90s; 40s keeps new

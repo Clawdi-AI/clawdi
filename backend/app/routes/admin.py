@@ -88,6 +88,10 @@ from app.services.managed_ai_provider import (
     V2_MANAGED_AI_PROVIDER_IDS,
     upsert_clawdi_managed_provider,
 )
+from app.services.runtime_observation import (
+    RuntimeObservationProtocolError,
+    provision_runtime_environment_fence,
+)
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_provider_runtime_manifest_changed,
@@ -215,6 +219,13 @@ async def admin_mint_api_key(
     # tooling that only needs to push sessions); the route doesn't
     # impose a ceiling.
     try:
+        if body.managed and env_uuid is not None and body.deployment_id is not None:
+            await provision_runtime_environment_fence(
+                db,
+                environment_id=env_uuid,
+                owner_id=target.id,
+                deployment_id=body.deployment_id,
+            )
         minted = await mint_api_key(
             db,
             user_id=target.id,
@@ -227,6 +238,9 @@ async def admin_mint_api_key(
             # untrackable, unrevokable credential.
             commit=False,
         )
+    except RuntimeObservationProtocolError as e:
+        await db.rollback()
+        raise HTTPException(status_code=e.status_code, detail=e.detail()) from e
     except ValueError as e:
         # `mint_api_key` raises ValueError for cross-tenant
         # environment_id (env not owned by target user). Surface

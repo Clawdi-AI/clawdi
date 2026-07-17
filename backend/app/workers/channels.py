@@ -12,6 +12,7 @@ from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.discord_gateway_worker import DiscordGatewayWorker
+from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -113,6 +114,7 @@ def build_channel_workers() -> tuple[
     ChannelWebhookDeliveryWorker,
     DiscordGatewayWorker,
     ChannelMessageRetentionWorker,
+    RuntimeObservationRetentionWorker,
 ]:
     """Build the Clawdi-owned channel worker stack.
 
@@ -124,6 +126,7 @@ def build_channel_workers() -> tuple[
         ChannelWebhookDeliveryWorker(async_session_factory),
         DiscordGatewayWorker(async_session_factory, lock_engine=engine),
         ChannelMessageRetentionWorker(async_session_factory),
+        RuntimeObservationRetentionWorker(async_session_factory),
     )
 
 
