@@ -941,6 +941,19 @@ export function classifyHeartbeatFailure(consecutiveFailures: number): FailureCl
 	return consecutiveFailures <= TRANSIENT_HEARTBEAT_FAILURES ? "transient" : "sustained";
 }
 
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isSafelyTerminalRuntimeObservationFailure(result: {
+	error?: unknown;
+	response: { status: number };
+}): boolean {
+	if (result.response.status !== 422 || !isUnknownRecord(result.error)) return false;
+	const detail = result.error.detail;
+	return isUnknownRecord(detail) && detail.code === "runtime_observation_captured_at_too_old";
+}
+
 /**
  * Returns true when the failure is something that won't fix itself
  * by trying again later — typically a request the server rejected
@@ -2247,25 +2260,36 @@ async function heartbeatLoop(
 		try {
 			const bufferedRuntimeObserved = runtimeHeartbeatSession.nextEvent();
 			const runtimeObserved = bufferedRuntimeObserved?.event ?? readHostedRuntimeObserved();
-			unwrap(
-				await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
-					params: { path: { agent_id: opts.environmentId } },
-					body: {
-						// Peak since boot rather than sampled current
-						// depth — see the comment on the auth-failure
-						// final heartbeat above. Backend takes max
-						// across reports, so a monotonically-rising
-						// high-water mark from the daemon makes the
-						// dashboard's `queue_depth_high_water_since_start`
-						// converge to the actual peak.
-						queue_depth: queue.highWaterMark,
-						dropped_count_delta: dropped,
-						last_revision_seen: fields.last_revision_seen,
-						last_sync_error: fields.last_sync_error,
-						...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
-					},
-				}),
-			);
+			const response = await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
+				params: { path: { agent_id: opts.environmentId } },
+				body: {
+					// Peak since boot rather than sampled current
+					// depth — see the comment on the auth-failure
+					// final heartbeat above. Backend takes max
+					// across reports, so a monotonically-rising
+					// high-water mark from the daemon makes the
+					// dashboard's `queue_depth_high_water_since_start`
+					// converge to the actual peak.
+					queue_depth: queue.highWaterMark,
+					dropped_count_delta: dropped,
+					last_revision_seen: fields.last_revision_seen,
+					last_sync_error: fields.last_sync_error,
+					...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
+				},
+			});
+			if (bufferedRuntimeObserved && isSafelyTerminalRuntimeObservationFailure(response)) {
+				if (!runtimeHeartbeatSession.retireTerminallyStale(bufferedRuntimeObserved.event.eventId)) {
+					throw new Error("terminally stale runtime heartbeat did not match the buffered event");
+				}
+				queue.restoreDroppedDelta(dropped);
+				heartbeatFailureStreak = 0;
+				log.warn("engine.runtime_observation_retired_stale", {
+					event_id: bufferedRuntimeObserved.event.eventId,
+					captured_at: bufferedRuntimeObserved.event.capturedAt,
+				});
+				return;
+			}
+			unwrap(response);
 			if (
 				bufferedRuntimeObserved &&
 				!runtimeHeartbeatSession.acknowledge(bufferedRuntimeObserved.event.eventId)

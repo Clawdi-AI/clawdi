@@ -12,6 +12,7 @@ import {
 	heartbeatDelayMs,
 	isAuthFailure,
 	isOversizedUploadError,
+	isSafelyTerminalRuntimeObservationFailure,
 	isSkillSyncServerEvent,
 	lastSyncErrorForSseReconnect,
 	projectRefreshDelayMs,
@@ -93,6 +94,30 @@ describe("live-sync transient failure classification", () => {
 		expect(classifyHeartbeatFailure(1)).toBe("transient");
 		expect(classifyHeartbeatFailure(3)).toBe("transient");
 		expect(classifyHeartbeatFailure(4)).toBe("sustained");
+	});
+
+	it("retires only the explicit terminal stale-observation protocol code", () => {
+		expect(
+			isSafelyTerminalRuntimeObservationFailure({
+				response: { status: 422 },
+				error: {
+					detail: { code: "runtime_observation_captured_at_too_old" },
+				},
+			}),
+		).toBe(true);
+		for (const [status, code] of [
+			[409, "runtime_observation_identity_conflict"],
+			[409, "runtime_observation_event_conflict"],
+			[422, "runtime_observation_captured_at_in_future"],
+			[422, "runtime_observation_identity_conflict"],
+		] as const) {
+			expect(
+				isSafelyTerminalRuntimeObservationFailure({
+					response: { status },
+					error: { detail: { code } },
+				}),
+			).toBe(false);
+		}
 	});
 });
 

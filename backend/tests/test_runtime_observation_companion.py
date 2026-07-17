@@ -24,16 +24,20 @@ from app.models.runtime_observation import (
     V2RuntimeObservationInbox,
 )
 from app.schemas.runtime_observed import HostedRuntimeObservedV2
+from app.services.api_key import mint_api_key
 from app.services.runtime_observation import (
     RuntimeApplyIdentity,
     RuntimeObservationProtocolError,
+    acknowledge_runtime_observation_cursor,
     expire_runtime_observation_payloads,
-    ingest_runtime_observation,
     provision_runtime_environment_fence,
     read_runtime_observations,
     register_runtime_observation_consumer,
     reset_runtime_observation_consumer,
     retire_runtime_environment,
+)
+from app.services.runtime_observation import (
+    ingest_runtime_observation as _ingest_runtime_observation,
 )
 from tests.conftest import create_env_with_project
 
@@ -41,6 +45,23 @@ _DEPLOYMENT_ID = "deployment-observation-companion"
 _APPLY_RECEIPT_ID = "apply-receipt-00000001"
 _BOOT_NONCE = "boot-nonce-0000000001"
 _MANIFEST_ETAG = '"manifest-etag-0001"'
+
+
+async def ingest_runtime_observation(
+    db: AsyncSession,
+    *,
+    environment_id: uuid.UUID,
+    value: HostedRuntimeObservedV2,
+    received_at: datetime | None = None,
+    credential_deployment_id: str = _DEPLOYMENT_ID,
+):
+    return await _ingest_runtime_observation(
+        db,
+        environment_id=environment_id,
+        credential_deployment_id=credential_deployment_id,
+        value=value,
+        received_at=received_at,
+    )
 
 
 @dataclass(frozen=True)
@@ -121,7 +142,7 @@ async def _provision_environment(
 
 
 @pytest.mark.asyncio
-async def test_identity_and_monotonicity_conflicts_never_enter_inbox(
+async def test_unique_regressions_enter_inbox_without_regressing_head(
     db_session: AsyncSession,
     seed_user,
 ):
@@ -163,25 +184,21 @@ async def test_identity_and_monotonicity_conflicts_never_enter_inbox(
     assert identity_error.value.code == "runtime_observation_identity_conflict"
     await db_session.rollback()
 
-    with pytest.raises(RuntimeObservationProtocolError) as sequence_error:
-        await ingest_runtime_observation(
-            db_session,
-            environment_id=environment.id,
-            value=_payload(sequence=2, captured_at=base + timedelta(seconds=2)),
-            received_at=base + timedelta(seconds=5),
-        )
-    assert sequence_error.value.code == "runtime_observation_sequence_regression"
-    await db_session.rollback()
-
-    with pytest.raises(RuntimeObservationProtocolError) as capture_error:
-        await ingest_runtime_observation(
-            db_session,
-            environment_id=environment.id,
-            value=_payload(sequence=4, captured_at=base + timedelta(seconds=2)),
-            received_at=base + timedelta(seconds=5),
-        )
-    assert capture_error.value.code == "runtime_observation_captured_at_regression"
-    await db_session.rollback()
+    lower_sequence = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(sequence=2, captured_at=base + timedelta(seconds=2)),
+        received_at=base + timedelta(seconds=5),
+    )
+    regressing_capture = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(sequence=4, captured_at=base + timedelta(seconds=2)),
+        received_at=base + timedelta(seconds=5),
+    )
+    assert lower_sequence.duplicate is False
+    assert regressing_capture.duplicate is False
+    await db_session.commit()
 
     with pytest.raises(RuntimeObservationProtocolError) as restamp_error:
         await ingest_runtime_observation(
@@ -197,16 +214,20 @@ async def test_identity_and_monotonicity_conflicts_never_enter_inbox(
     assert restamp_error.value.code == "runtime_observation_event_conflict"
     await db_session.rollback()
 
-    inbox_count = await db_session.scalar(
-        select(func.count())
-        .select_from(V2RuntimeObservationInbox)
-        .where(V2RuntimeObservationInbox.environment_id == environment.id)
+    inbox_sequences = list(
+        (
+            await db_session.execute(
+                select(V2RuntimeObservationInbox.sequence)
+                .where(V2RuntimeObservationInbox.environment_id == environment.id)
+                .order_by(V2RuntimeObservationInbox.id)
+            )
+        ).scalars()
     )
     head = await db_session.get(
         V2RuntimeObservationHead,
         {"environment_id": environment.id, "boot_session_id": "boot-session-0001"},
     )
-    assert inbox_count == 2
+    assert inbox_sequences == [1, 3, 2, 4]
     assert head is not None
     assert head.highest_sequence == 3
     assert head.captured_at == base + timedelta(seconds=3)
@@ -484,6 +505,174 @@ async def test_cursor_expiry_is_explicit_and_cleanup_never_silently_advances(
 
 
 @pytest.mark.asyncio
+async def test_replay_horizon_purge_waits_for_every_required_consumer_ack(
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    captured = datetime.now(UTC) - timedelta(days=8)
+    registrations = {}
+    for consumer_id in ("controller-a", "controller-b"):
+        registrations[consumer_id] = await register_runtime_observation_consumer(
+            db_session,
+            environment_id=environment.id,
+            owner_id=seed_user.id,
+            deployment_id=_DEPLOYMENT_ID,
+            consumer_id=consumer_id,
+        )
+    event = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(captured_at=captured),
+        received_at=captured,
+    )
+    await db_session.commit()
+
+    async def read_and_ack(consumer_id: str) -> None:
+        page = await read_runtime_observations(
+            db_session,
+            environment_id=environment.id,
+            owner_id=seed_user.id,
+            deployment_id=_DEPLOYMENT_ID,
+            consumer_id=consumer_id,
+            expected_apply_identity=_expected_identity(),
+            after_cursor=registrations[consumer_id]["cursor"],
+            limit=100,
+        )
+        await acknowledge_runtime_observation_cursor(
+            db_session,
+            environment_id=environment.id,
+            owner_id=seed_user.id,
+            deployment_id=_DEPLOYMENT_ID,
+            consumer_id=consumer_id,
+            opaque_cursor=page["streamHighWaterCursor"],
+        )
+        await db_session.commit()
+
+    await read_and_ack("controller-a")
+    assert (
+        await expire_runtime_observation_payloads(
+            db_session,
+            now=captured + timedelta(days=8),
+        )
+        == 0
+    )
+    await db_session.commit()
+
+    await read_and_ack("controller-b")
+    assert (
+        await expire_runtime_observation_payloads(
+            db_session,
+            now=captured + timedelta(days=8),
+        )
+        == 1
+    )
+    await db_session.commit()
+    fence = await db_session.get(V2RuntimeEnvironmentFence, environment.id)
+    assert fence is not None
+    assert fence.replay_floor_stream_position == event.stream_position
+    assert fence.replay_floor_session_high_waters == {"boot-session-0001": 1}
+
+
+@pytest.mark.asyncio
+async def test_late_and_unknown_consumers_get_persisted_reset_boundaries(
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    captured = datetime.now(UTC) - timedelta(days=8)
+    initial = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="initial-controller",
+    )
+    event = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(captured_at=captured),
+        received_at=captured,
+    )
+    page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="initial-controller",
+        expected_apply_identity=_expected_identity(),
+        after_cursor=initial["cursor"],
+        limit=100,
+    )
+    await acknowledge_runtime_observation_cursor(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="initial-controller",
+        opaque_cursor=page["streamHighWaterCursor"],
+    )
+    await db_session.commit()
+    assert (
+        await expire_runtime_observation_payloads(
+            db_session,
+            now=captured + timedelta(days=8),
+        )
+        == 1
+    )
+    await db_session.commit()
+
+    with pytest.raises(RuntimeObservationProtocolError) as late:
+        await register_runtime_observation_consumer(
+            db_session,
+            environment_id=environment.id,
+            owner_id=seed_user.id,
+            deployment_id=_DEPLOYMENT_ID,
+            consumer_id="late-controller",
+        )
+    assert late.value.code == "observation_cursor_expired"
+    assert late.value.metadata is not None
+    assert late.value.metadata["resetBoundary"] is not None
+    assert late.value.metadata["sessionHighWaterMarks"] == {"boot-session-0001": 1}
+    await db_session.commit()
+
+    with pytest.raises(RuntimeObservationProtocolError) as unknown:
+        await read_runtime_observations(
+            db_session,
+            environment_id=environment.id,
+            owner_id=seed_user.id,
+            deployment_id=_DEPLOYMENT_ID,
+            consumer_id="unknown-controller",
+            expected_apply_identity=_expected_identity(),
+            after_cursor="unknown-cursor",
+            limit=100,
+        )
+    assert unknown.value.code == "observation_cursor_expired"
+    assert unknown.value.metadata is not None
+    assert unknown.value.metadata["resetBoundary"] is not None
+    assert unknown.value.metadata["sessionHighWaterMarks"] == {"boot-session-0001": 1}
+    await db_session.commit()
+
+    for consumer_id in ("late-controller", "unknown-controller"):
+        cursor = await db_session.get(
+            V2RuntimeObservationConsumerCursor,
+            {"environment_id": environment.id, "consumer_id": consumer_id},
+        )
+        assert cursor is not None
+        assert cursor.state == "expired"
+        assert cursor.expiry_boundary_stream_position == event.stream_position
+        reset = await reset_runtime_observation_consumer(
+            db_session,
+            environment_id=environment.id,
+            owner_id=seed_user.id,
+            deployment_id=_DEPLOYMENT_ID,
+            consumer_id=consumer_id,
+        )
+        assert reset["sessionHighWaterMarks"] == {"boot-session-0001": 1}
+        await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_concurrent_cas_winner_cannot_be_regressed(
     engine,
     db_session: AsyncSession,
@@ -491,42 +680,29 @@ async def test_concurrent_cas_winner_cannot_be_regressed(
 ):
     environment, _ = await _provision_environment(db_session, seed_user)
     base = datetime.now(UTC)
-    await ingest_runtime_observation(
-        db_session,
-        environment_id=environment.id,
-        value=_payload(sequence=1, captured_at=base),
-        received_at=base,
-    )
-    await db_session.commit()
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    start = asyncio.Event()
 
-    async with session_factory() as high_session:
-        await ingest_runtime_observation(
-            high_session,
-            environment_id=environment.id,
-            value=_payload(sequence=3, captured_at=base + timedelta(seconds=3)),
-            received_at=base + timedelta(seconds=3),
-        )
+    async def ingest_sequence(sequence: int):
+        async with session_factory() as session:
+            await start.wait()
+            result = await ingest_runtime_observation(
+                session,
+                environment_id=environment.id,
+                value=_payload(
+                    sequence=sequence,
+                    captured_at=base + timedelta(seconds=sequence),
+                ),
+                received_at=base + timedelta(seconds=sequence),
+            )
+            await session.commit()
+            return result
 
-        async def ingest_lower() -> str:
-            async with session_factory() as low_session:
-                try:
-                    await ingest_runtime_observation(
-                        low_session,
-                        environment_id=environment.id,
-                        value=_payload(sequence=2, captured_at=base + timedelta(seconds=2)),
-                        received_at=base + timedelta(seconds=4),
-                    )
-                except RuntimeObservationProtocolError as exc:
-                    await low_session.rollback()
-                    return exc.code
-                raise AssertionError("lower sequence unexpectedly committed")
-
-        lower = asyncio.create_task(ingest_lower())
-        await asyncio.sleep(0.05)
-        assert not lower.done()
-        await high_session.commit()
-        assert await asyncio.wait_for(lower, timeout=5) == "runtime_observation_sequence_regression"
+    lower = asyncio.create_task(ingest_sequence(2))
+    higher = asyncio.create_task(ingest_sequence(3))
+    start.set()
+    results = await asyncio.wait_for(asyncio.gather(lower, higher), timeout=5)
+    assert all(not result.duplicate for result in results)
 
     head = await db_session.get(
         V2RuntimeObservationHead,
@@ -535,6 +711,105 @@ async def test_concurrent_cas_winner_cannot_be_regressed(
     await db_session.refresh(head)
     assert head.highest_sequence == 3
     assert head.captured_at == base + timedelta(seconds=3)
+    inbox_sequences = list(
+        (
+            await db_session.execute(
+                select(V2RuntimeObservationInbox.sequence)
+                .where(V2RuntimeObservationInbox.environment_id == environment.id)
+                .order_by(V2RuntimeObservationInbox.sequence)
+            )
+        ).scalars()
+    )
+    assert inbox_sequences == [2, 3]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_first_session_binding_rejects_losing_identity(
+    engine,
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    start = asyncio.Event()
+
+    async def bind(apply_receipt_id: str, event_id: str) -> str:
+        async with session_factory() as session:
+            await start.wait()
+            try:
+                await ingest_runtime_observation(
+                    session,
+                    environment_id=environment.id,
+                    value=_payload(
+                        sequence=1,
+                        event_id=event_id,
+                        apply_receipt_id=apply_receipt_id,
+                    ),
+                )
+                await session.commit()
+                return "accepted"
+            except RuntimeObservationProtocolError as exc:
+                await session.rollback()
+                return exc.code
+
+    first = asyncio.create_task(bind(_APPLY_RECEIPT_ID, "binding-event-0001"))
+    second = asyncio.create_task(bind("different-apply-receipt", "binding-event-0002"))
+    start.set()
+    outcomes = await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
+    assert sorted(outcomes) == ["accepted", "runtime_observation_identity_conflict"]
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(V2RuntimeObservationInbox)
+            .where(V2RuntimeObservationInbox.environment_id == environment.id)
+        )
+        == 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_cross_environment_event_id_collision_is_structured(
+    engine,
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment_a, _ = await _provision_environment(db_session, seed_user)
+    environment_b, _ = await _provision_environment(db_session, seed_user)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    start = asyncio.Event()
+    shared_event_id = "globally-colliding-event-id"
+
+    async def ingest(environment_id: uuid.UUID, boot_session_id: str) -> str:
+        async with session_factory() as session:
+            await start.wait()
+            try:
+                await ingest_runtime_observation(
+                    session,
+                    environment_id=environment_id,
+                    value=_payload(
+                        boot_session_id=boot_session_id,
+                        event_id=shared_event_id,
+                    ),
+                )
+                await session.commit()
+                return "accepted"
+            except RuntimeObservationProtocolError as exc:
+                await session.rollback()
+                return exc.code
+
+    first = asyncio.create_task(ingest(environment_a.id, "collision-session-a"))
+    second = asyncio.create_task(ingest(environment_b.id, "collision-session-b"))
+    start.set()
+    outcomes = await asyncio.wait_for(asyncio.gather(first, second), timeout=5)
+    assert sorted(outcomes) == ["accepted", "runtime_observation_event_conflict"]
+    assert (
+        await db_session.scalar(
+            select(func.count())
+            .select_from(V2RuntimeObservationInbox)
+            .where(V2RuntimeObservationInbox.event_id == shared_event_id)
+        )
+        == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -646,6 +921,7 @@ async def test_companion_heartbeat_requires_bound_managed_key_and_skips_legacy_w
         managed=False,
         scopes=["skills:write"],
     )
+    accepted_payload = _payload(captured_at=datetime.now(UTC))
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         yield db_session
@@ -665,9 +941,27 @@ async def test_companion_heartbeat_requires_bound_managed_key_and_skips_legacy_w
                 json={"runtime_observed": _payload().model_dump(mode="json", by_alias=True)},
             )
             runtime_key.managed = True
-            response = await client.post(
+            legacy_managed_response = await client.post(
                 f"/v1/agents/{environment.id}/sync-heartbeat",
                 json={"runtime_observed": _payload().model_dump(mode="json", by_alias=True)},
+            )
+            runtime_key.runtime_deployment_id = _DEPLOYMENT_ID
+            response = await client.post(
+                f"/v1/agents/{environment.id}/sync-heartbeat",
+                json={"runtime_observed": accepted_payload.model_dump(mode="json", by_alias=True)},
+            )
+            duplicate_response = await client.post(
+                f"/v1/agents/{environment.id}/sync-heartbeat",
+                json={"runtime_observed": accepted_payload.model_dump(mode="json", by_alias=True)},
+            )
+            stale_buffered_response = await client.post(
+                f"/v1/agents/{environment.id}/sync-heartbeat",
+                json={
+                    "runtime_observed": _payload(
+                        sequence=2,
+                        captured_at=accepted_payload.captured_at - timedelta(seconds=1),
+                    ).model_dump(mode="json", by_alias=True)
+                },
             )
             runtime_key.environment_id = unfenced_environment_id
             unfenced_response = await client.post(
@@ -677,7 +971,10 @@ async def test_companion_heartbeat_requires_bound_managed_key_and_skips_legacy_w
     finally:
         app.dependency_overrides.clear()
     assert unmanaged_response.status_code == 403, unmanaged_response.text
+    assert legacy_managed_response.status_code == 403, legacy_managed_response.text
     assert response.status_code == 204, response.text
+    assert duplicate_response.status_code == 204, duplicate_response.text
+    assert stale_buffered_response.status_code == 204, stale_buffered_response.text
     assert unfenced_response.status_code == 409, unfenced_response.text
     assert unfenced_response.json()["detail"]["code"] == "runtime_environment_fence_missing"
     assert await db_session.get(HostedRuntimeConfigObservation, environment.id) is None
@@ -687,8 +984,11 @@ async def test_companion_heartbeat_requires_bound_managed_key_and_skips_legacy_w
             .select_from(V2RuntimeObservationInbox)
             .where(V2RuntimeObservationInbox.environment_id == environment.id)
         )
-        == 1
+        == 2
     )
+    stored_environment = await db_session.get(type(unfenced_environment), environment.id)
+    assert stored_environment is not None
+    assert stored_environment.last_sync_at is None
 
 
 @pytest.mark.asyncio
@@ -712,6 +1012,7 @@ async def test_runtime_credential_cannot_report_for_another_deployment(
     runtime_key_a = ApiKey(
         user_id=seed_user.id,
         environment_id=environment_a.id,
+        runtime_deployment_id=deployment_a,
         managed=True,
         scopes=["skills:write"],
     )
@@ -768,3 +1069,87 @@ async def test_runtime_credential_cannot_report_for_another_deployment(
         ).all()
     )
     assert counts == {environment_a.id: 1}
+
+
+@pytest.mark.asyncio
+async def test_real_minted_bearer_requires_immutable_runtime_deployment_binding(
+    db_session: AsyncSession,
+    seed_user,
+) -> None:
+    deployment_a = "deployment-minted-bearer-a"
+    deployment_b = "deployment-minted-bearer-b"
+    environment_a, _ = await _provision_environment(
+        db_session,
+        seed_user,
+        deployment_id=deployment_a,
+    )
+    environment_b, _ = await _provision_environment(
+        db_session,
+        seed_user,
+        deployment_id=deployment_b,
+    )
+    legacy = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        label="legacy-managed-runtime",
+        scopes=["skills:write"],
+        environment_id=environment_a.id,
+        managed=True,
+        commit=False,
+    )
+    strict = await mint_api_key(
+        db_session,
+        user_id=seed_user.id,
+        label="strict-v2-runtime",
+        scopes=["skills:write"],
+        environment_id=environment_a.id,
+        runtime_deployment_id=deployment_a,
+        managed=True,
+        commit=False,
+    )
+    await db_session.commit()
+
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    app.dependency_overrides[get_session] = override_session
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            legacy_rejected = await client.post(
+                f"/v1/agents/{environment_a.id}/sync-heartbeat",
+                headers={"Authorization": f"Bearer {legacy.raw_key}"},
+                json={
+                    "runtime_observed": _payload(
+                        boot_session_id="legacy-minted-session",
+                    ).model_dump(mode="json", by_alias=True)
+                },
+            )
+            accepted = await client.post(
+                f"/v1/agents/{environment_a.id}/sync-heartbeat",
+                headers={"Authorization": f"Bearer {strict.raw_key}"},
+                json={
+                    "runtime_observed": _payload(
+                        boot_session_id="strict-minted-session",
+                    ).model_dump(mode="json", by_alias=True)
+                },
+            )
+            cross_deployment = await client.post(
+                f"/v1/agents/{environment_b.id}/sync-heartbeat",
+                headers={"Authorization": f"Bearer {strict.raw_key}"},
+                json={
+                    "runtime_observed": _payload(
+                        boot_session_id="strict-cross-deployment-session",
+                    ).model_dump(mode="json", by_alias=True)
+                },
+            )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert legacy_rejected.status_code == 403, legacy_rejected.text
+    assert legacy_rejected.json()["detail"]["code"] == ("runtime_observation_credential_mismatch")
+    assert accepted.status_code == 204, accepted.text
+    assert cross_deployment.status_code == 403, cross_deployment.text
+    assert cross_deployment.json()["detail"]["code"] == ("runtime_observation_credential_mismatch")

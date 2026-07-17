@@ -232,6 +232,7 @@ async def admin_mint_api_key(
             label=body.label,
             scopes=body.scopes,
             environment_id=env_uuid,
+            runtime_deployment_id=body.deployment_id,
             managed=body.managed,
             # Key row and its audit event must land in one transaction:
             # a key that exists without the caller learning its id is an
@@ -277,6 +278,7 @@ async def admin_mint_api_key(
             "key_prefix": api_key.key_prefix,
             "managed": api_key.managed,
             "has_environment_binding": api_key.environment_id is not None,
+            "has_runtime_deployment_binding": api_key.runtime_deployment_id is not None,
             "scope_count": None if api_key.scopes is None else len(api_key.scopes),
         },
     )

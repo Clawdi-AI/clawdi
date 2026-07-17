@@ -1,6 +1,6 @@
-from typing import Self
+from typing import Annotated, Self
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -48,6 +48,14 @@ class Settings(BaseSettings):
     def _normalize_loaded_env_values(self) -> Self:
         if "BEGIN PUBLIC KEY" in self.clerk_pem_public_key:
             self.clerk_pem_public_key = _normalize_pem_env_value(self.clerk_pem_public_key)
+        if (
+            self.runtime_observation_hard_retention_days
+            < self.runtime_observation_replay_horizon_days
+        ):
+            raise ValueError(
+                "runtime_observation_hard_retention_days must be greater than or equal to "
+                "runtime_observation_replay_horizon_days"
+            )
         return self
 
     app_name: str = "clawdi"
@@ -144,12 +152,12 @@ class Settings(BaseSettings):
     # opaque to Hosted; empty uses encryption_key so existing deployments need
     # no additional secret before adopting the protocol.
     runtime_observation_cursor_key: str = ""
-    runtime_observation_freshness_seconds: int = 90
-    runtime_observation_max_future_skew_seconds: int = 300
-    runtime_observation_max_capture_age_days: int = 30
-    runtime_observation_replay_horizon_days: int = 7
-    runtime_observation_hard_retention_days: int = 30
-    runtime_observation_cleanup_batch_size: int = 500
+    runtime_observation_freshness_seconds: Annotated[int, Field(gt=0, le=86_400)] = 90
+    runtime_observation_max_future_skew_seconds: Annotated[int, Field(gt=0, le=86_400)] = 300
+    runtime_observation_max_capture_age_days: Annotated[int, Field(gt=0, le=365)] = 30
+    runtime_observation_replay_horizon_days: Annotated[int, Field(gt=0, le=365)] = 7
+    runtime_observation_hard_retention_days: Annotated[int, Field(gt=0, le=3_650)] = 30
+    runtime_observation_cleanup_batch_size: Annotated[int, Field(gt=0, le=10_000)] = 500
 
     # Admin endpoints (POST/DELETE /v1/admin/auth/keys) auth.
     # Empty string disables them entirely (returns 503). Set in

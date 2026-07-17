@@ -17,7 +17,12 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { runtimeAppliedContentIdentity, runtimeInit, runtimeWatch } from "../src/commands/runtime";
+import {
+	commitRuntimeAppliedState,
+	runtimeAppliedContentIdentity,
+	runtimeInit,
+	runtimeWatch,
+} from "../src/commands/runtime";
 import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
@@ -1498,6 +1503,79 @@ describe("runtime manifest datasource", () => {
 		} finally {
 			restore();
 		}
+	});
+
+	it("preserves the exact strict-v2 apply identity through offline load and state commit", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		mkdirSync(join(state, "cache"), { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const manifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_offline_identity",
+			environmentId: "env_offline_identity",
+			instanceId: "iid_offline_identity",
+			generation: 3,
+			issuedAt: "2026-07-16T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.12.10-beta.55",
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: { openclaw: { enabled: false } },
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		};
+		writeFileSync(join(state, "cache", "manifest.last-good.json"), JSON.stringify(manifest));
+		const paths = getRuntimePaths();
+		writeRuntimeAppliedState(
+			{
+				schemaVersion: "clawdi.runtimeAppliedState.v2",
+				appliedAt: "2026-07-16T00:01:00.000Z",
+				instanceId: manifest.instanceId,
+				etag: '"transport-etag-offline"',
+				sourceRevision: "a".repeat(64),
+				generation: manifest.generation,
+				manifestETag: '"manifest-etag-offline"',
+				applyReceiptId: "apply-receipt-offline-0001",
+				bootNonce: "boot-nonce-offline-000001",
+				contentIdentity: {
+					sourcePath: "https://runtime.test/v1/runtime/manifest",
+					sha256: "b".repeat(64),
+				},
+				providerIds: [],
+				projectedProviderIds: {},
+			},
+			paths,
+		);
+		const loaded = await loadRuntimeManifest(paths);
+		if (!("manifest" in loaded)) {
+			throw new Error(`expected offline manifest load success: ${loaded.errors.join("; ")}`);
+		}
+		expect(loaded.applyIdentity).toEqual({
+			generation: 3,
+			manifestETag: '"manifest-etag-offline"',
+			applyReceiptId: "apply-receipt-offline-0001",
+			bootNonce: "boot-nonce-offline-000001",
+		});
+		const convergence = convergeRuntimeManifest(loaded, paths, { cacheLastGood: false });
+		commitRuntimeAppliedState({
+			load: loaded,
+			paths,
+			etag: '"transport-etag-offline-reapplied"',
+			sourceRevision: "c".repeat(64),
+			convergence,
+		});
+		expect(readRuntimeAppliedState(paths)).toMatchObject({
+			generation: 3,
+			manifestETag: '"manifest-etag-offline"',
+			applyReceiptId: "apply-receipt-offline-0001",
+			bootNonce: "boot-nonce-offline-000001",
+		});
 	});
 
 	it("refuses last-good offline boot when cached secret values are missing", async () => {

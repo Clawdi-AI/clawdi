@@ -199,6 +199,48 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
+	test("clamps capture time to the durable boot-session high-water", () => {
+		const paths = tempRuntimePaths();
+		writeRuntimeAppliedState(companionAppliedState(7), paths);
+		const session = new HostedRuntimeHeartbeatSession({
+			environmentId: "env_clock_regression",
+			paths,
+			now: clockSequence(["2026-07-16T05:00:00.000Z", "2026-07-16T04:59:00.000Z"]),
+			createId: idSequence(["boot-session-0001", "event-0000000001", "event-0000000002"]),
+		});
+		const first = session.nextEvent();
+		if (!first) throw new Error("expected first event");
+		expect(first.event.capturedAt).toBe("2026-07-16T05:00:00.000Z");
+		expect(session.acknowledge(first.event.eventId)).toBe(true);
+
+		const second = session.nextEvent();
+		if (!second) throw new Error("expected second event");
+		expect(second.event.sequence).toBe(2);
+		expect(second.event.capturedAt).toBe("2026-07-16T05:00:00.000Z");
+		expect(second.event.reportedAt).toBe(second.event.capturedAt);
+		const durable: unknown = JSON.parse(
+			readFileSync(runtimeHeartbeatObservationStatePath(paths, "env_clock_regression"), "utf-8"),
+		);
+		expect(durable).toMatchObject({ lastCapturedAt: "2026-07-16T05:00:00.000Z" });
+	});
+
+	test("retires only the matching terminally stale buffered event", () => {
+		const paths = tempRuntimePaths();
+		writeRuntimeAppliedState(companionAppliedState(7), paths);
+		const session = new HostedRuntimeHeartbeatSession({
+			environmentId: "env_terminal_stale",
+			paths,
+			now: clockSequence(["2026-06-01T00:00:00.000Z", "2026-07-16T00:00:00.000Z"]),
+			createId: idSequence(["boot-session-0001", "stale-event-0001", "fresh-event-0002"]),
+		});
+		const stale = session.nextEvent();
+		if (!stale) throw new Error("expected stale buffered event");
+		expect(session.retireTerminallyStale("different-event")).toBe(false);
+		expect(session.nextEvent()).toEqual(stale);
+		expect(session.retireTerminallyStale(stale.event.eventId)).toBe(true);
+		expect(session.nextEvent()).not.toEqual(stale);
+	});
+
 	test("does not advance in-memory sequence when buffering fails to persist", () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);

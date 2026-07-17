@@ -52,6 +52,11 @@ class V2RuntimeEnvironmentFence(Base, TimestampMixin):
             name="ck_v2_runtime_environment_fences_stream_high_water",
         ),
         CheckConstraint(
+            "replay_floor_stream_position >= 0 AND "
+            "replay_floor_stream_position <= stream_high_water",
+            name="ck_v2_runtime_environment_fences_replay_floor",
+        ),
+        CheckConstraint(
             "(state = 'active' AND retirement_id IS NULL "
             "AND retirement_receipt_id IS NULL AND retirement_receipt IS NULL "
             "AND retired_at IS NULL AND final_cursor IS NULL "
@@ -78,6 +83,19 @@ class V2RuntimeEnvironmentFence(Base, TimestampMixin):
         BigInteger,
         default=0,
         server_default="0",
+        nullable=False,
+    )
+    replay_floor_stream_position: Mapped[int] = mapped_column(
+        BigInteger,
+        default=0,
+        server_default="0",
+        nullable=False,
+    )
+    replay_floor_advanced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    replay_floor_session_high_waters: Mapped[JsonValue] = mapped_column(
+        JSONB(none_as_null=True),
+        default=dict,
+        server_default="{}",
         nullable=False,
     )
     retirement_id: Mapped[str | None] = mapped_column(String(200))

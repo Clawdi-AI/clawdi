@@ -250,6 +250,9 @@ async def test_admin_managed_environment_key_preserves_legacy_shape_and_v2_opt_i
 ):
     import uuid
 
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
     from app.models.runtime_observation import V2RuntimeEnvironmentFence
     from tests.conftest import create_env_with_project
 
@@ -294,6 +297,16 @@ async def test_admin_managed_environment_key_preserves_legacy_shape_and_v2_opt_i
     fence = await db_session.get(V2RuntimeEnvironmentFence, strict_v2_environment.id)
     assert fence is not None
     assert fence.deployment_id == "deployment-strict-v2"
+    legacy_key = (
+        await db_session.execute(select(ApiKey).where(ApiKey.label == "legacy-managed-environment"))
+    ).scalar_one()
+    strict_key = (
+        await db_session.execute(
+            select(ApiKey).where(ApiKey.label == "strict-v2-managed-environment")
+        )
+    ).scalar_one()
+    assert legacy_key.runtime_deployment_id is None
+    assert strict_key.runtime_deployment_id == "deployment-strict-v2"
 
 
 @pytest.mark.asyncio

@@ -56,6 +56,7 @@ class _CachedApiKeyAuth:
     label: str
     scopes: tuple[str, ...] | None
     environment_id: UUID | None
+    runtime_deployment_id: str | None
     managed: bool
     expires_at: datetime | None
     user_clerk_id: str | None
@@ -86,6 +87,7 @@ class _CachedApiKeyAuth:
             label=self.label,
             scopes=list(self.scopes) if self.scopes is not None else None,
             environment_id=self.environment_id,
+            runtime_deployment_id=self.runtime_deployment_id,
             managed=self.managed,
             expires_at=self.expires_at,
             revoked_at=None,
@@ -139,6 +141,7 @@ def _cache_api_key_auth(
             label=api_key.label,
             scopes=tuple(api_key.scopes) if api_key.scopes is not None else None,
             environment_id=api_key.environment_id,
+            runtime_deployment_id=api_key.runtime_deployment_id,
             managed=api_key.managed,
             expires_at=api_key.expires_at,
             user_clerk_id=user.clerk_id,

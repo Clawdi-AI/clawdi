@@ -1030,7 +1030,10 @@ async def platform_register_runtime_observation_consumer(
             consumer_id=body.consumer_id,
         )
     except RuntimeObservationProtocolError as exc:
-        await db.rollback()
+        if exc.code == "observation_cursor_expired":
+            await db.commit()
+        else:
+            await db.rollback()
         _raise_runtime_observation_error(exc)
     await db.commit()
     return RuntimeObservationConsumerResponse.model_validate(values)
@@ -1213,6 +1216,7 @@ async def platform_mint_api_key(
         label=body.label,
         scopes=body.scopes,
         environment_id=body.environment_id,
+        runtime_deployment_id=body.deployment_id,
         managed=True,
         commit=False,
     )

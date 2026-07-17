@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { readRuntimeAppliedState } from "./applied-state";
+import { readRuntimeAppliedState, runtimeAppliedApplyIdentity } from "./applied-state";
 import type { RuntimeApplyIdentity } from "./apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
@@ -858,6 +858,22 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 				errors: semanticErrors.map((error) => `cached ${error}`),
 			};
 		}
+		const appliedState = readRuntimeAppliedState(paths);
+		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
+		if (
+			cachedApplyIdentity &&
+			(appliedState?.generation !== manifest.generation ||
+				appliedState.instanceId !== manifest.instanceId)
+		) {
+			return {
+				mode: "repair",
+				stage: "local",
+				errors: [
+					"cached manifest does not match the durable strict-v2 apply identity; refusing offline boot",
+				],
+				activeGeneration: appliedState?.generation ?? null,
+			};
+		}
 		const secretRefs = manifestSecretRefs(manifest);
 		if (secretRefs.length > 0) {
 			const cached = loadCachedSecretValues(paths);
@@ -870,6 +886,7 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 					sourcePath: paths.manifestLastGood,
 					offline: true,
 					secretValues: cached.secretValues,
+					...(cachedApplyIdentity ? { applyIdentity: cachedApplyIdentity } : {}),
 				};
 			}
 			return {
@@ -885,6 +902,7 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 			source: "last-good-cache",
 			sourcePath: paths.manifestLastGood,
 			offline: true,
+			...(cachedApplyIdentity ? { applyIdentity: cachedApplyIdentity } : {}),
 		};
 	} catch (error) {
 		return {

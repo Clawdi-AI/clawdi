@@ -1282,7 +1282,7 @@ export function runtimeAppliedContentIdentity(
 	};
 }
 
-function commitRuntimeAppliedState(input: {
+export function commitRuntimeAppliedState(input: {
 	load: RuntimeManifestLoad;
 	paths: RuntimePaths;
 	etag: string;

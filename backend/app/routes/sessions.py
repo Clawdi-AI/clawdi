@@ -1496,15 +1496,13 @@ async def sync_heartbeat(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "agent environment not found")
 
     runtime_observed = body.runtime_observed
-    if (
-        runtime_observed is not None
-        and runtime_observed.is_companion_event
-        and (
-            not auth.is_cli
-            or auth.api_key is None
-            or not auth.api_key.managed
-            or auth.api_key.environment_id != agent_id
-        )
+    is_companion_event = runtime_observed is not None and runtime_observed.is_companion_event
+    if is_companion_event and (
+        not auth.is_cli
+        or auth.api_key is None
+        or not auth.api_key.managed
+        or auth.api_key.environment_id != agent_id
+        or auth.api_key.runtime_deployment_id is None
     ):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
@@ -1547,23 +1545,24 @@ async def sync_heartbeat(
     now = datetime.now(UTC)
     new_error = body.last_sync_error
     new_revision = body.last_revision_seen
-    companion_accepted = False
     hosted_state = None
     observation = None
     runtime_observed_values = None
     observed_changed = False
-    if runtime_observed is not None and runtime_observed.is_companion_event:
+    if is_companion_event:
+        if auth.api_key is None or auth.api_key.runtime_deployment_id is None:
+            raise AssertionError("strict-v2 credential validation must precede ingestion")
         try:
             await ingest_runtime_observation(
                 db,
                 environment_id=agent_id,
+                credential_deployment_id=auth.api_key.runtime_deployment_id,
                 value=runtime_observed,
                 received_at=now,
             )
         except RuntimeObservationProtocolError as exc:
             await db.rollback()
             raise HTTPException(status_code=exc.status_code, detail=exc.detail()) from exc
-        companion_accepted = True
     elif runtime_observed is not None:
         runtime_observed_values = _runtime_observed_columns(
             runtime_observed,
@@ -1593,19 +1592,21 @@ async def sync_heartbeat(
         or bool(body.dropped_count_delta)
         or not env.sync_enabled
         or observed_changed
-        or companion_accepted
     )
     # Even with no state change, refresh last_sync_at on a bounded
     # cadence. The dashboard freshness cutoff is 90s; 40s keeps new
     # 60s clients live while preventing old 30s clients from writing
     # on every heartbeat.
     last = env.last_sync_at
-    needs_freshness_refresh = (
+    needs_freshness_refresh = not is_companion_event and (
         last is None or now - _as_utc(last) > _HEARTBEAT_FRESHNESS_WRITE_INTERVAL
     )
     if not has_state_change and not needs_freshness_refresh:
+        if is_companion_event:
+            await db.commit()
         return
-    env.last_sync_at = now
+    if not is_companion_event:
+        env.last_sync_at = now
     env.last_sync_error = new_error
     if new_revision is not None:
         env.last_revision_seen = new_revision

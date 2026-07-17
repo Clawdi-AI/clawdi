@@ -147,6 +147,7 @@ const heartbeatStateSchema = z
 		environmentId: z.string().min(1),
 		bootIdentity: persistedBootIdentitySchema,
 		nextSequence: positiveSafeIntegerSchema,
+		lastCapturedAt: isoTimestampSchema.nullable().optional(),
 		pending: pendingEventSchema.nullable(),
 	})
 	.strict();
@@ -205,6 +206,7 @@ export class HostedRuntimeHeartbeatSession {
 			environmentId: options.environmentId,
 			bootIdentity: this.currentBootIdentity,
 			nextSequence: 1,
+			lastCapturedAt: null,
 			pending: this.state?.pending ?? null,
 		};
 		writeState(this.statePath, this.state);
@@ -217,7 +219,13 @@ export class HostedRuntimeHeartbeatSession {
 			throw new Error("runtime heartbeat sequence exhausted for this boot session");
 		}
 
-		const capturedAt = isoNow(this.now());
+		const observedNow = this.now();
+		const durableCaptureFloor = this.state.lastCapturedAt
+			? new Date(this.state.lastCapturedAt)
+			: null;
+		const capturedAt = isoNow(
+			durableCaptureFloor && observedNow < durableCaptureFloor ? durableCaptureFloor : observedNow,
+		);
 		const snapshot = readHostedRuntimeObserved(this.paths, {
 			reportedAt: capturedAt,
 			appliedState: this.capturedAppliedState,
@@ -240,6 +248,7 @@ export class HostedRuntimeHeartbeatSession {
 		const candidate = {
 			...this.state,
 			nextSequence: this.state.nextSequence + 1,
+			lastCapturedAt: capturedAt,
 			pending,
 		};
 		writeState(this.statePath, candidate);
@@ -248,6 +257,14 @@ export class HostedRuntimeHeartbeatSession {
 	}
 
 	acknowledge(eventId: string): boolean {
+		return this.clearPending(eventId);
+	}
+
+	retireTerminallyStale(eventId: string): boolean {
+		return this.clearPending(eventId);
+	}
+
+	private clearPending(eventId: string): boolean {
 		if (!this.state?.pending) return false;
 		const pending = decodePendingEvent(this.state.pending);
 		if (pending.event.eventId !== eventId) return false;

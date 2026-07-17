@@ -316,6 +316,7 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     assert api_key is not None
     assert api_key.user_id == seed_user.id
     assert api_key.environment_id == agent_id
+    assert api_key.runtime_deployment_id == "deployment-1"
     assert api_key.scopes == list(PLATFORM_RUNTIME_KEY_SCOPES)
     assert api_key.managed is True
     fence = await db_session.get(V2RuntimeEnvironmentFence, agent_id)

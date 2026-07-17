@@ -25,6 +25,19 @@ def upgrade() -> None:
         sa.Column("deployment_id", sa.String(length=200), nullable=False),
         sa.Column("state", sa.String(length=16), server_default="active", nullable=False),
         sa.Column("stream_high_water", sa.BigInteger(), server_default="0", nullable=False),
+        sa.Column(
+            "replay_floor_stream_position",
+            sa.BigInteger(),
+            server_default="0",
+            nullable=False,
+        ),
+        sa.Column("replay_floor_advanced_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "replay_floor_session_high_waters",
+            postgresql.JSONB(astext_type=sa.Text()),
+            server_default=sa.text("'{}'::jsonb"),
+            nullable=False,
+        ),
         sa.Column("retirement_id", sa.String(length=200), nullable=True),
         sa.Column("retirement_receipt_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column(
@@ -61,6 +74,11 @@ def upgrade() -> None:
             name="ck_v2_runtime_environment_fences_stream_high_water",
         ),
         sa.CheckConstraint(
+            "replay_floor_stream_position >= 0 AND "
+            "replay_floor_stream_position <= stream_high_water",
+            name="ck_v2_runtime_environment_fences_replay_floor",
+        ),
+        sa.CheckConstraint(
             "(state = 'active' AND retirement_id IS NULL "
             "AND retirement_receipt_id IS NULL AND retirement_receipt IS NULL "
             "AND retired_at IS NULL AND final_cursor IS NULL "
@@ -88,6 +106,29 @@ def upgrade() -> None:
         op.f("ix_v2_runtime_environment_fences_deployment_id"),
         "v2_runtime_environment_fences",
         ["deployment_id"],
+    )
+
+    op.add_column(
+        "api_keys",
+        sa.Column("runtime_deployment_id", sa.String(length=200), nullable=True),
+    )
+    op.create_index(
+        op.f("ix_api_keys_runtime_deployment_id"),
+        "api_keys",
+        ["runtime_deployment_id"],
+    )
+    op.create_check_constraint(
+        "ck_api_keys_runtime_deployment_binding",
+        "api_keys",
+        "runtime_deployment_id IS NULL OR (managed AND environment_id IS NOT NULL)",
+    )
+    op.create_foreign_key(
+        "fk_api_keys_runtime_environment_fence",
+        "api_keys",
+        "v2_runtime_environment_fences",
+        ["environment_id", "runtime_deployment_id"],
+        ["environment_id", "deployment_id"],
+        ondelete="RESTRICT",
     )
 
     op.create_table(
@@ -357,6 +398,18 @@ def downgrade() -> None:
         table_name="v2_runtime_observation_inbox",
     )
     op.drop_table("v2_runtime_observation_inbox")
+    op.drop_constraint(
+        "fk_api_keys_runtime_environment_fence",
+        "api_keys",
+        type_="foreignkey",
+    )
+    op.drop_constraint(
+        "ck_api_keys_runtime_deployment_binding",
+        "api_keys",
+        type_="check",
+    )
+    op.drop_index(op.f("ix_api_keys_runtime_deployment_id"), table_name="api_keys")
+    op.drop_column("api_keys", "runtime_deployment_id")
     op.drop_index(
         op.f("ix_v2_runtime_environment_fences_deployment_id"),
         table_name="v2_runtime_environment_fences",
