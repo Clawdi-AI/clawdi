@@ -5,19 +5,65 @@ on:
   pull_request:
     paths:
       - "docker/**"
+      - ".dockerignore"
       - "docker-compose.test.yml"
       - "scripts/test.sh"
       - "package.json"
       - "bun.lock"
+      - "turbo.json"
+      - "tsconfig.base.json"
+      - "apps/web/package.json"
+      - "apps/web/bunfig.toml"
+      - "apps/web/tsconfig.json"
+      - "apps/web/tsr.config.json"
+      - "apps/web/vite.config.ts"
+      - "apps/web/src/hosted/oss-clean.test.ts"
+      - "packages/cli/package.json"
+      - "packages/cli/tsconfig.json"
+      - "packages/cli/tests/clean-test-runner.test.ts"
+      - "packages/cli/tests/smoke.test.ts"
+      - "packages/shared/package.json"
+      - "packages/shared/tsconfig.json"
+      - "packages/whatsapp-baileys-sidecar/package.json"
+      - "packages/whatsapp-baileys-sidecar/tsconfig.json"
+      - "backend/alembic.ini"
+      - "backend/alembic/**"
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
+      - "backend/tests/conftest.py"
+      - "backend/tests/test_smoke.py"
       - ".github/workflows/clean-test-runner-ci.yml"
   push:
     branches: [main]
     paths:
       - "docker/**"
+      - ".dockerignore"
       - "docker-compose.test.yml"
       - "scripts/test.sh"
       - "package.json"
       - "bun.lock"
+      - "turbo.json"
+      - "tsconfig.base.json"
+      - "apps/web/package.json"
+      - "apps/web/bunfig.toml"
+      - "apps/web/tsconfig.json"
+      - "apps/web/tsr.config.json"
+      - "apps/web/vite.config.ts"
+      - "apps/web/src/hosted/oss-clean.test.ts"
+      - "packages/cli/package.json"
+      - "packages/cli/tsconfig.json"
+      - "packages/cli/tests/clean-test-runner.test.ts"
+      - "packages/cli/tests/smoke.test.ts"
+      - "packages/shared/package.json"
+      - "packages/shared/tsconfig.json"
+      - "packages/whatsapp-baileys-sidecar/package.json"
+      - "packages/whatsapp-baileys-sidecar/tsconfig.json"
+      - "backend/alembic.ini"
+      - "backend/alembic/**"
+      - "backend/pyproject.toml"
+      - "backend/uv.lock"
+      - "backend/tests/conftest.py"
+      - "backend/tests/test_smoke.py"
       - ".github/workflows/clean-test-runner-ci.yml"
 
 permissions:
@@ -54,9 +100,5 @@ jobs:
           tags: ${{ env.TEST_RUNNER_IMAGE }}
           cache-from: type=gha,scope=clawdi-test-runner
           cache-to: type=gha,mode=max,scope=clawdi-test-runner
-      - name: Default clean runner smoke
-        run: scripts/test.sh all tests/test_smoke.py
-      - name: Web clean runner
-        run: scripts/test.sh web
-      - name: CLI clean runner
-        run: scripts/test.sh cli
+      - name: Clean runner CI profile
+        run: scripts/test.sh ci

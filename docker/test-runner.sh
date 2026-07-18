@@ -50,6 +50,7 @@ run_js() {
 	install_js
 	bun run typecheck
 	bun run --cwd apps/web test
+	bun test packages/shared/src
 	bun run --cwd packages/whatsapp-baileys-sidecar test
 	bun run --cwd packages/cli test
 }
@@ -85,6 +86,23 @@ run_backend() {
 	)
 }
 
+run_ci() {
+	if [[ $# -gt 0 ]]; then
+		echo "Suite 'ci' does not accept extra arguments" >&2
+		exit 2
+	fi
+
+	install_js
+	bun run typecheck
+	bun test packages/cli/tests/clean-test-runner.test.ts
+	bun run --cwd apps/web test src/hosted/oss-clean.test.ts
+	bun run --cwd apps/web build:oss
+	bun test packages/shared/src
+	bun run --cwd packages/whatsapp-baileys-sidecar test
+	bun run --cwd packages/cli test tests/smoke.test.ts
+	run_backend tests/test_smoke.py
+}
+
 copy_repo
 
 case "$suite" in
@@ -108,9 +126,12 @@ case "$suite" in
 	backend)
 		run_backend "$@"
 		;;
+	ci)
+		run_ci "$@"
+		;;
 	*)
 		echo "Unknown test suite: $suite" >&2
-		echo "Usage: scripts/test.sh [all|js|cli|web|backend] [suite args...]" >&2
+		echo "Usage: scripts/test.sh [all|ci|js|cli|web|backend] [suite args...]" >&2
 		exit 2
 		;;
 esac

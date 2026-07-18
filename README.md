@@ -337,7 +337,8 @@ read-only during test execution:
 ```bash
 scripts/test.sh          # JS typecheck/tests, then backend pytest
 bun run test             # same clean Docker runner
-scripts/test.sh js       # JS typecheck + web/sidecar/CLI tests
+scripts/test.sh ci       # focused CI harness profile; not a product test replacement
+scripts/test.sh js       # JS typecheck + web/shared/sidecar/CLI tests
 scripts/test.sh cli      # CLI typecheck + full CLI tests
 scripts/test.sh web      # web typecheck + tests + OSS build only
 scripts/test.sh backend  # Alembic + backend pytest against throwaway Postgres
@@ -352,6 +353,13 @@ build cache are reused by the Docker daemon. It does not force `CLAWDI_HOME`, so
 tests can still isolate Clawdi state through the same home/config paths as the
 product. Backend tests use a temporary `pgvector/pgvector:0.8.1-pg16` Postgres
 service and do not reuse the dev database.
+
+Clean Test Runner CI uses the first-class `ci` profile to exercise the runner
+contract in one container without repeating the full web and CLI product
+suites. The normal `all`, `js`, `web`, `cli`, and `backend` entrypoints retain
+their comprehensive behavior. See
+[`docs/clean-test-runner.md`](docs/clean-test-runner.md) for the exact focused
+suite, measured resource envelope, and override variables.
 
 For a focused CLI pytest-style argument pass-through, append paths after the
 suite name, for example `scripts/test.sh cli tests/api-client.test.ts`. The
