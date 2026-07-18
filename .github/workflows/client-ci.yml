@@ -199,7 +199,9 @@ jobs:
         run: bun test --isolate --max-concurrency=1 packages/cli
 
   build:
-    needs: [changes, typecheck]
+    # This job starts from its own checkout and consumes no typecheck artifact,
+    # so build and typecheck are independent required gates.
+    needs: changes
     if: >-
       github.event_name != 'schedule' && (
         needs.changes.outputs.web == 'true' ||

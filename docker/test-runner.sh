@@ -46,29 +46,43 @@ install_backend() {
 	)
 }
 
-run_js() {
-	install_js
+workspace_typecheck() {
 	bun run typecheck
-	bun run --cwd apps/web test
-	bun run --cwd packages/whatsapp-baileys-sidecar test
-	bun run --cwd packages/cli test
 }
 
-run_cli() {
-	install_js
-	bun run --cwd packages/cli typecheck
-	bun run --cwd packages/cli test "$@"
-}
-
-run_web() {
-	install_js
+web_typecheck() {
 	bun run --cwd apps/web typecheck
+}
+
+web_tests() {
 	bun run --cwd apps/web test "$@"
+}
+
+web_build() {
 	bun run --cwd apps/web build:oss
 }
 
-run_backend() {
-	install_backend
+cli_typecheck() {
+	bun run --cwd packages/cli typecheck
+}
+
+cli_tests() {
+	bun run --cwd packages/cli test "$@"
+}
+
+shared_tests() {
+	bun test packages/shared/src
+}
+
+sidecar_tests() {
+	bun run --cwd packages/whatsapp-baileys-sidecar test
+}
+
+runner_contract_tests() {
+	bun test packages/cli/tests/clean-test-runner.test.ts
+}
+
+backend_tests() {
 	(
 		cd backend
 		: "${DATABASE_URL:?DATABASE_URL must be set for backend tests}"
@@ -83,6 +97,51 @@ run_backend() {
 		uv run alembic upgrade head
 		uv run pytest -q "$@"
 	)
+}
+
+run_js() {
+	install_js
+	workspace_typecheck
+	web_tests
+	shared_tests
+	sidecar_tests
+	cli_tests
+}
+
+run_cli() {
+	install_js
+	cli_typecheck
+	cli_tests "$@"
+}
+
+run_web() {
+	install_js
+	web_typecheck
+	web_tests "$@"
+	web_build
+}
+
+run_backend() {
+	install_backend
+	backend_tests "$@"
+}
+
+run_ci() {
+	if [[ $# -gt 0 ]]; then
+		echo "Suite 'ci' does not accept extra arguments" >&2
+		exit 2
+	fi
+
+	install_js
+	workspace_typecheck
+	runner_contract_tests
+	web_tests src/hosted/oss-clean.test.ts
+	web_build
+	shared_tests
+	sidecar_tests
+	cli_tests tests/smoke.test.ts
+	install_backend
+	backend_tests tests/test_smoke.py
 }
 
 copy_repo
@@ -108,9 +167,12 @@ case "$suite" in
 	backend)
 		run_backend "$@"
 		;;
+	ci)
+		run_ci "$@"
+		;;
 	*)
 		echo "Unknown test suite: $suite" >&2
-		echo "Usage: scripts/test.sh [all|js|cli|web|backend] [suite args...]" >&2
+		echo "Usage: scripts/test.sh [all|ci|js|cli|web|backend] [suite args...]" >&2
 		exit 2
 		;;
 esac

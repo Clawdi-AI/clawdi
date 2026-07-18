@@ -5,6 +5,11 @@ services:
       context: .
       dockerfile: docker/test-runner.Dockerfile
     user: "1000:1000"
+    cpus: ${CLAWDI_TEST_RUNNER_CPUS:-8}
+    mem_limit: ${CLAWDI_TEST_RUNNER_MEMORY_LIMIT:-4g}
+    memswap_limit: ${CLAWDI_TEST_RUNNER_MEMORY_LIMIT:-4g}
+    mem_swappiness: 0
+    pids_limit: ${CLAWDI_TEST_RUNNER_PIDS_LIMIT:-512}
     environment:
       HOME: /tmp/clawdi-home
       CLAWDI_NO_AUTO_UPDATE: "1"
@@ -28,6 +33,11 @@ services:
 
   postgres:
     image: pgvector/pgvector:0.8.1-pg16
+    cpus: ${CLAWDI_TEST_POSTGRES_CPUS:-2}
+    mem_limit: ${CLAWDI_TEST_POSTGRES_MEMORY_LIMIT:-1g}
+    memswap_limit: ${CLAWDI_TEST_POSTGRES_MEMORY_LIMIT:-1g}
+    mem_swappiness: 0
+    pids_limit: ${CLAWDI_TEST_POSTGRES_PIDS_LIMIT:-256}
     environment:
       POSTGRES_DB: clawdi_test
       POSTGRES_USER: clawdi

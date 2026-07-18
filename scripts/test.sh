@@ -11,11 +11,11 @@ if [[ $# -gt 0 ]]; then
 fi
 
 case "$suite" in
-	all|backend|js|cli|web)
+	all|backend|ci|js|cli|web)
 		;;
 	*)
 		echo "Unknown test suite: $suite" >&2
-		echo "Usage: scripts/test.sh [all|js|cli|web|backend] [suite args...]" >&2
+		echo "Usage: scripts/test.sh [all|ci|js|cli|web|backend] [suite args...]" >&2
 		exit 2
 		;;
 esac
@@ -40,7 +40,7 @@ if [[ "${CLAWDI_TEST_RUNNER_SKIP_BUILD:-0}" != "1" ]]; then
 fi
 
 case "$suite" in
-	all|backend)
+	all|backend|ci)
 		"${compose[@]}" run --rm test-runner "$suite" "$@"
 		;;
 	js|cli|web)
