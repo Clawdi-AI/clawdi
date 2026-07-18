@@ -58,7 +58,7 @@ from app.services.whatsapp_baileys import (
     whatsapp_message_proto_bytes,
 )
 
-pytestmark = pytest.mark.usefixtures("channel_agent")
+pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 
 
 class _FakeMediaResponse:

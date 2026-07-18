@@ -11,6 +11,8 @@ from app.services.discord_gateway_worker import DiscordGatewayWorker
 from app.services.runtime_observation_retention_worker import RuntimeObservationRetentionWorker
 from app.workers.channels import ChannelWorkerHealth, _handle_health_request, build_channel_workers
 
+pytestmark = pytest.mark.committed_db
+
 
 def test_channel_worker_stack_runs_delivery_webhook_gateway_and_retention_workers():
     workers = build_channel_workers()

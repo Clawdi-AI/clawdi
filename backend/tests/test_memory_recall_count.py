@@ -13,6 +13,7 @@ import pytest
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
 async def test_agent_search_bumps_access_count(cli_client: httpx.AsyncClient):
     created = await cli_client.post(
         "/v1/memories",

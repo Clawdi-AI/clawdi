@@ -81,7 +81,8 @@ async def test_dashboard_stats_uses_bounded_database_round_trips(
         _context,
         _executemany,
     ) -> None:
-        statements.append(statement)
+        if not statement.lstrip().startswith(("SAVEPOINT", "RELEASE SAVEPOINT")):
+            statements.append(statement)
 
     event.listen(engine.sync_engine, "before_cursor_execute", before_cursor_execute)
     try:
@@ -180,7 +181,8 @@ async def test_projects_list_uses_single_query_for_dashboard_user(
         _context,
         _executemany,
     ) -> None:
-        statements.append(statement)
+        if not statement.lstrip().startswith(("SAVEPOINT", "RELEASE SAVEPOINT")):
+            statements.append(statement)
 
     event.listen(engine.sync_engine, "before_cursor_execute", before_cursor_execute)
     try:

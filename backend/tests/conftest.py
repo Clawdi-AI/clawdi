@@ -4,11 +4,13 @@ Strategy:
 - Hit the *real* Postgres (with pgvector + pg_trgm) provisioned by CI. Mocking
   the DB would diverge from production for vector / trigram queries and cascade
   semantics.
-- Each test gets an ``AsyncClient`` with ``get_auth`` and ``get_session``
-  overridden to point at an on-the-fly test user + session.
-- We deliberately skip nested-SAVEPOINT rollback isolation: async SQLAlchemy +
-  asyncpg doesn't cleanly support it and our smoke tests are self-contained
-  enough that per-test cleanup is cheaper than transactional gymnastics.
+- Most tests run inside an outer transaction.  The ORM session joins it with
+  ``create_savepoint``, so application commits remain test-local and teardown
+  is one rollback.  Tests that need committed visibility from independent
+  connections use the ``committed_db`` lane (or ``committed_db_session``
+  directly) explicitly.
+- Each test gets an ``AsyncClient`` with scoped dependency overrides pointing
+  at its deterministic test user and session.
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ import secrets
 import socket
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, contextmanager
+from hashlib import sha256
 
 import httpx
 import pytest
@@ -39,6 +43,57 @@ _TEST_PUBLIC_DNS_HOSTS = {
     "graph.facebook.com",
 }
 _TEST_PUBLIC_DNS_SUFFIXES = (".example", ".test")
+_COMMITTED_DB_MODULES = {
+    "test_project_isolation.py",
+    "test_project_visibility_shared.py",
+    "test_runtime_manifest.py",
+    "test_runtime_observation_companion.py",
+    "test_share_redeem_routes.py",
+    "test_skills.py",
+    "test_sync_events.py",
+    "test_sync_heartbeat.py",
+}
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Route modules with pervasive cross-connection contracts to the commit lane."""
+    committed = pytest.mark.committed_db
+    for item in items:
+        if item.path.name in _COMMITTED_DB_MODULES:
+            item.add_marker(committed)
+
+
+def worker_test_identity(nodeid: str, worker: str) -> str:
+    digest = sha256(nodeid.encode()).hexdigest()[:16]
+    return f"{worker}-{digest}"
+
+
+@pytest.fixture
+def test_identity(request: pytest.FixtureRequest) -> str:
+    """Stable, worker-qualified identity for rows owned by one test."""
+    return worker_test_identity(request.node.nodeid, os.getenv("PYTEST_XDIST_WORKER", "main"))
+
+
+@pytest.fixture(autouse=True)
+def _restore_dependency_overrides():
+    """Restore the exact pre-test FastAPI override map, including nesting."""
+    previous = dict(app.dependency_overrides)
+    try:
+        yield
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)
+
+
+@contextmanager
+def _dependency_overrides(overrides):
+    previous = dict(app.dependency_overrides)
+    app.dependency_overrides.update(overrides)
+    try:
+        yield
+    finally:
+        app.dependency_overrides.clear()
+        app.dependency_overrides.update(previous)
 
 
 @pytest.fixture(autouse=True)
@@ -107,10 +162,50 @@ async def engine():
 
 
 @pytest_asyncio.fixture
-async def db_session(engine) -> AsyncIterator[AsyncSession]:
+async def db_session(engine, request: pytest.FixtureRequest) -> AsyncIterator[AsyncSession]:
+    """Rollback-isolated session whose commits stay inside the outer transaction.
+
+    This is SQLAlchemy's documented test-suite recipe. PostgreSQL/asyncpg have
+    real SAVEPOINT support, unlike SQLite drivers with incomplete SAVEPOINT
+    handling: https://docs.sqlalchemy.org/en/20/orm/session_transaction.html
+    """
+    if request.node.get_closest_marker("committed_db"):
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        async with sessionmaker() as session:
+            yield session
+        return
+
+    async with rollback_session(engine) as session:
+        yield session
+
+
+@asynccontextmanager
+async def rollback_session(engine) -> AsyncIterator[AsyncSession]:
+    """Own an outer transaction and always roll it back, including on errors."""
+    async with engine.connect() as connection:
+        transaction = await connection.begin()
+        session = AsyncSession(
+            bind=connection,
+            expire_on_commit=False,
+            join_transaction_mode="create_savepoint",
+        )
+        try:
+            yield session
+        finally:
+            await session.close()
+            if transaction.is_active:
+                await transaction.rollback()
+
+
+@pytest_asyncio.fixture
+async def committed_db_session(engine) -> AsyncIterator[AsyncSession]:
+    """Independent-connection lane for commit visibility and concurrency tests."""
     sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
     async with sessionmaker() as session:
-        yield session
+        try:
+            yield session
+        finally:
+            await session.rollback()
 
 
 async def create_env_with_project(
@@ -166,8 +261,10 @@ async def create_env_with_project(
 
 
 @pytest_asyncio.fixture
-async def seed_user(db_session: AsyncSession) -> User:
-    """A throwaway user row scoped to one test, cleaned up in teardown.
+async def seed_user(
+    db_session: AsyncSession, test_identity: str, request: pytest.FixtureRequest
+) -> User:
+    """A deterministic user row scoped to one rollback-isolated test.
 
     Mirrors the auto-create flow in `_auth_via_clerk_jwt`: every user
     must have a Personal project so the default-project resolver has a
@@ -177,8 +274,8 @@ async def seed_user(db_session: AsyncSession) -> User:
     from app.models.project import PROJECT_KIND_PERSONAL, Project
 
     user = User(
-        clerk_id=f"test_{uuid.uuid4().hex[:12]}",
-        email=f"test_{uuid.uuid4().hex[:8]}@clawdi.local",
+        clerk_id=f"test_{test_identity}",
+        email=f"test-{test_identity}@clawdi.local",
         name="Test User",
     )
     db_session.add(user)
@@ -196,10 +293,9 @@ async def seed_user(db_session: AsyncSession) -> User:
     try:
         yield user
     finally:
-        # Best-effort cleanup so the test DB doesn't grow unbounded. Cascade
-        # FKs handle related rows; the user row itself is the root.
-        await db_session.delete(user)
-        await db_session.commit()
+        if request.node.get_closest_marker("committed_db"):
+            await db_session.delete(user)
+            await db_session.commit()
 
 
 @pytest_asyncio.fixture
@@ -310,16 +406,16 @@ async def client(db_session: AsyncSession, seed_user: User) -> AsyncIterator[htt
         # in the public route works in tests.
         return AuthContext(user=seed_user)
 
-    app.dependency_overrides[get_session] = _override_get_session
-    app.dependency_overrides[get_auth] = _override_get_auth
-    app.dependency_overrides[get_auth_short_session] = _override_get_auth
-    app.dependency_overrides[optional_web_auth] = _override_optional_web_auth
-    try:
+    overrides = {
+        get_session: _override_get_session,
+        get_auth: _override_get_auth,
+        get_auth_short_session: _override_get_auth,
+        optional_web_auth: _override_optional_web_auth,
+    }
+    with _dependency_overrides(overrides):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
-    finally:
-        app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture
@@ -341,14 +437,15 @@ async def anon_client(
     async def _override_optional_web_auth() -> None:
         return None
 
-    app.dependency_overrides[get_session] = _override_get_session
-    app.dependency_overrides[optional_web_auth] = _override_optional_web_auth
-    try:
+    with _dependency_overrides(
+        {
+            get_session: _override_get_session,
+            optional_web_auth: _override_optional_web_auth,
+        }
+    ):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
-    finally:
-        app.dependency_overrides.clear()
 
 
 @pytest_asyncio.fixture
@@ -369,12 +466,13 @@ async def cli_client(db_session: AsyncSession, seed_user: User) -> AsyncIterator
         # to the routes we exercise. See app.core.auth.require_cli_auth.
         return AuthContext(user=seed_user, api_key=ApiKey(user_id=seed_user.id))
 
-    app.dependency_overrides[get_session] = _override_get_session
-    app.dependency_overrides[get_auth] = _override_get_auth
-    app.dependency_overrides[get_auth_short_session] = _override_get_auth
-    try:
+    with _dependency_overrides(
+        {
+            get_session: _override_get_session,
+            get_auth: _override_get_auth,
+            get_auth_short_session: _override_get_auth,
+        }
+    ):
         transport = ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
-    finally:
-        app.dependency_overrides.clear()
