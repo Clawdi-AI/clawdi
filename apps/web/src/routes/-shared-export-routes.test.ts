@@ -1,9 +1,13 @@
 import { describe, expect, it } from "bun:test";
-import { routeTree } from "@/routeTree.gen";
+import { readFileSync } from "node:fs";
 
 describe("shared export routes", () => {
 	it("preserves extension-style public export URLs", () => {
-		const paths = Object.values(routeTree.children ?? {}).map((route) => route.options.path);
+		const generatedRouteTree = readFileSync(
+			new URL("../routeTree.gen.ts", import.meta.url),
+			"utf8",
+		);
+		const paths = [...generatedRouteTree.matchAll(/\bpath:\s*'([^']+)'/g)].map((match) => match[1]);
 
 		expect(paths).toContain("/s/{$id}.md");
 		expect(paths).toContain("/s/{$id}.json");
