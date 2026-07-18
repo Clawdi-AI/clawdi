@@ -357,7 +357,9 @@ service and do not reuse the dev database.
 Clean Test Runner CI uses the first-class `ci` profile to exercise the runner
 contract in one container without repeating the full web and CLI product
 suites. The normal `all`, `js`, `web`, `cli`, and `backend` entrypoints retain
-their comprehensive behavior. See
+their comprehensive behavior. Core runner changes can use the workflow's
+manual `suite=all` dispatch gate without adding full-suite duplication to
+routine pull requests. See
 [`docs/clean-test-runner.md`](docs/clean-test-runner.md) for the exact focused
 suite, measured resource envelope, and override variables.
 

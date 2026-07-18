@@ -23,6 +23,28 @@ function occurrences(source: string, value: string): number {
 	return source.split(value).length - 1;
 }
 
+const compositionFunctions = new Set([
+	"install_js",
+	"install_backend",
+	"workspace_typecheck",
+	"web_typecheck",
+	"web_tests",
+	"web_build",
+	"cli_typecheck",
+	"cli_tests",
+	"shared_tests",
+	"sidecar_tests",
+	"runner_contract_tests",
+	"backend_tests",
+]);
+
+function calledCompositionFunctions(shellFunction: string): string[] {
+	return shellFunction
+		.split("\n")
+		.map((line) => line.trim().split(/[ (]/, 1)[0])
+		.filter((name) => compositionFunctions.has(name));
+}
+
 describe("client workflow contract", () => {
 	test("keeps build and typecheck as independent required gates", () => {
 		const typecheckJob = section(clientWorkflow, "  typecheck:\n", "  cli-test:\n");
@@ -74,37 +96,149 @@ describe("clean runner suite contract", () => {
 		expect(dispatch).toContain('run_ci "$@"');
 	});
 
-	test("leaves normal all and JS suites comprehensive", () => {
-		const runJs = section(innerRunner, "run_js() {\n", "run_cli() {\n");
-		for (const command of [
-			"bun run typecheck",
-			"bun run --cwd apps/web test",
-			"bun test packages/shared/src",
-			"bun run --cwd packages/whatsapp-baileys-sidecar test",
-			"bun run --cwd packages/cli test",
-		]) {
-			expect(runJs).toContain(command);
+	test("composes public and focused suites from single command primitives", () => {
+		const primitives = [
+			{
+				name: "workspace_typecheck",
+				next: "web_typecheck",
+				commands: ["bun run typecheck"],
+			},
+			{
+				name: "web_typecheck",
+				next: "web_tests",
+				commands: ["bun run --cwd apps/web typecheck"],
+			},
+			{
+				name: "web_tests",
+				next: "web_build",
+				commands: ['bun run --cwd apps/web test "$@"'],
+			},
+			{
+				name: "web_build",
+				next: "cli_typecheck",
+				commands: ["bun run --cwd apps/web build:oss"],
+			},
+			{
+				name: "cli_typecheck",
+				next: "cli_tests",
+				commands: ["bun run --cwd packages/cli typecheck"],
+			},
+			{
+				name: "cli_tests",
+				next: "shared_tests",
+				commands: ['bun run --cwd packages/cli test "$@"'],
+			},
+			{
+				name: "shared_tests",
+				next: "sidecar_tests",
+				commands: ["bun test packages/shared/src"],
+			},
+			{
+				name: "sidecar_tests",
+				next: "runner_contract_tests",
+				commands: ["bun run --cwd packages/whatsapp-baileys-sidecar test"],
+			},
+			{
+				name: "runner_contract_tests",
+				next: "backend_tests",
+				commands: ["bun test packages/cli/tests/clean-test-runner.test.ts"],
+			},
+			{
+				name: "backend_tests",
+				next: "run_js",
+				commands: ["uv run alembic upgrade head", 'uv run pytest -q "$@"'],
+			},
+		];
+
+		for (const primitive of primitives) {
+			const body = section(innerRunner, `${primitive.name}() {\n`, `${primitive.next}() {\n`);
+			for (const command of primitive.commands) {
+				expect(body).toContain(command);
+				expect(occurrences(innerRunner, command)).toBe(1);
+			}
+		}
+
+		const wrappers = [
+			{
+				body: section(innerRunner, "run_js() {\n", "run_cli() {\n"),
+				calls: [
+					"install_js",
+					"workspace_typecheck",
+					"web_tests",
+					"shared_tests",
+					"sidecar_tests",
+					"cli_tests",
+				],
+			},
+			{
+				body: section(innerRunner, "run_cli() {\n", "run_web() {\n"),
+				calls: ["install_js", "cli_typecheck", "cli_tests"],
+			},
+			{
+				body: section(innerRunner, "run_web() {\n", "run_backend() {\n"),
+				calls: ["install_js", "web_typecheck", "web_tests", "web_build"],
+			},
+			{
+				body: section(innerRunner, "run_backend() {\n", "run_ci() {\n"),
+				calls: ["install_backend", "backend_tests"],
+			},
+			{
+				body: section(innerRunner, "run_ci() {\n", "copy_repo\n"),
+				calls: [
+					"install_js",
+					"workspace_typecheck",
+					"runner_contract_tests",
+					"web_tests",
+					"web_build",
+					"shared_tests",
+					"sidecar_tests",
+					"cli_tests",
+					"install_backend",
+					"backend_tests",
+				],
+			},
+		];
+
+		for (const wrapper of wrappers) {
+			expect(calledCompositionFunctions(wrapper.body)).toEqual(wrapper.calls);
+			expect(wrapper.body).not.toMatch(/^\s*(?:bun|uv)\b/m);
+		}
+
+		for (const [primitive, useCount] of [
+			["workspace_typecheck", 3],
+			["web_tests", 4],
+			["web_build", 3],
+			["cli_tests", 4],
+			["shared_tests", 3],
+			["sidecar_tests", 3],
+			["backend_tests", 3],
+		] as const) {
+			expect(occurrences(innerRunner, primitive)).toBe(useCount);
 		}
 	});
 
-	test("runs the focused CI profile once without duplicate product suites", () => {
-		const runCi = section(innerRunner, "run_ci() {\n", "copy_repo\n");
-		for (const command of [
-			"bun run typecheck",
-			"bun test packages/cli/tests/clean-test-runner.test.ts",
-			"bun run --cwd apps/web test src/hosted/oss-clean.test.ts",
-			"bun run --cwd apps/web build:oss",
-			"bun test packages/shared/src",
-			"bun run --cwd packages/whatsapp-baileys-sidecar test",
-			"bun run --cwd packages/cli test tests/smoke.test.ts",
-			"run_backend tests/test_smoke.py",
-		]) {
-			expect(runCi).toContain(command);
-		}
+	test("runs focused CI routinely and exposes full all as a manual gate", () => {
+		expect(cleanRunnerWorkflow).toContain('description: "Clean runner suite to execute"');
+		expect(cleanRunnerWorkflow).toContain("default: ci");
+		expect(cleanRunnerWorkflow).toContain("          - ci\n          - all");
 
-		expect(cleanRunnerWorkflow).toContain("run: scripts/test.sh ci");
-		expect(occurrences(cleanRunnerWorkflow, "run: scripts/test.sh")).toBe(1);
-		expect(cleanRunnerWorkflow).not.toContain("scripts/test.sh all");
+		const focusedStep = section(
+			cleanRunnerWorkflow,
+			"      - name: Clean runner CI profile\n",
+			"      - name: Full clean runner suite\n",
+		);
+		const fullStep = cleanRunnerWorkflow.slice(
+			cleanRunnerWorkflow.indexOf("      - name: Full clean runner suite\n"),
+		);
+		expect(focusedStep).toContain(
+			"if: github.event_name != 'workflow_dispatch' || inputs.suite == 'ci'",
+		);
+		expect(focusedStep).toContain("run: scripts/test.sh ci");
+		expect(fullStep).toContain(
+			"if: github.event_name == 'workflow_dispatch' && inputs.suite == 'all'",
+		);
+		expect(fullStep).toContain("run: scripts/test.sh all");
+		expect(occurrences(cleanRunnerWorkflow, "run: scripts/test.sh")).toBe(2);
 		expect(cleanRunnerWorkflow).not.toContain("scripts/test.sh web");
 		expect(cleanRunnerWorkflow).not.toContain("scripts/test.sh cli");
 	});

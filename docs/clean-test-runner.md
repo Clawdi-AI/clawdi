@@ -36,8 +36,46 @@ Product workflows remain responsible for their full product suites. The
 focused profile is intentionally rejected if extra arguments are supplied so
 its selection cannot drift through an undocumented CI-only shell argument.
 
+The shell implementation defines each package command once in a lower-level
+primitive. The public `js`, `web`, `cli`, and `backend` wrappers and the `ci`
+profile compose those same primitives with full or focused arguments. Install
+steps remain in the wrappers, so every entrypoint installs JavaScript and
+backend dependencies at most once per container.
+
 Done: `scripts/test.sh ci` exits 0 and reports passing contract, web, shared,
 sidecar, CLI, and backend smoke tests.
+
+## Dynamic and static coverage
+
+Pull requests and pushes dynamically execute `scripts/test.sh ci`. That runs
+the shared workspace-typecheck, web-test, web-build, shared-test,
+sidecar-test, CLI-test, and backend-test primitives. Web, CLI, and backend use
+the focused files listed above; shared and sidecar remain complete.
+
+The lightweight contract test statically verifies the composition layer:
+
+- Every package command is owned by exactly one primitive.
+- Public wrappers and `ci` call those primitives in the expected order.
+- Focused arguments appear only at the `ci` composition boundary.
+- Public suite dispatch, workflow selection, paths, and resources remain
+  present.
+
+Routine pull requests do not dynamically invoke every public wrapper or rerun
+the full web, CLI, and backend product suites. For a core runner change,
+Clean Test Runner CI exposes a deliberate full-suite workflow-dispatch gate:
+
+```bash
+gh workflow run clean-test-runner-ci.yml --ref <branch> -f suite=all
+```
+
+The dispatch runs `scripts/test.sh all` in the same built runner image and
+measured Compose envelope. Its default choice remains `ci`. This is manual
+rather than scheduled because product workflows already run the full product
+suites; automatically repeating them on a calendar would add cost without
+being tied to a runner change.
+
+Done: the dispatched `docker-runner` job exits 0 and its `Full clean runner
+suite` step reports the full web, shared, sidecar, CLI, and backend counts.
 
 ## Client CI gate independence
 
