@@ -375,6 +375,7 @@ async def test_admin_mint_api_key_writes_control_plane_audit(admin_client, db_se
 
 
 @pytest.mark.asyncio
+@pytest.mark.committed_db
 async def test_admin_mint_api_key_rolls_back_key_when_audit_fails(
     admin_client, engine, seed_user, monkeypatch
 ):
@@ -410,6 +411,11 @@ async def test_admin_mint_api_key_rolls_back_key_when_audit_fails(
     # visible here was committed before the audit event — the exact
     # orphan this test guards against.
     async with async_sessionmaker(engine, expire_on_commit=False)() as fresh:
+        # Prove this test is in the real-commit lane: the independently
+        # connected observer must see the fixture user before checking the
+        # failed mutation. Otherwise an outer test transaction could hide
+        # both a broken early commit and the setup row.
+        assert await fresh.get(type(seed_user), seed_user.id) is not None
         orphan = (
             await fresh.execute(
                 select(ApiKey).where(ApiKey.user_id == seed_user.id, ApiKey.label == "orphan-check")

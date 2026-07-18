@@ -91,7 +91,7 @@ from app.services.discord_gateway_worker import (
 from app.services.discord_rate_limiter import DiscordRateLimiter
 from app.services.telegram_rate_limiter import telegram_rate_limiter
 
-pytestmark = pytest.mark.usefixtures("channel_agent")
+pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 
 TELEGRAM_AGENT_TOKEN_RE = re.compile(r"^[1-9][0-9]{8}:[A-Za-z0-9_-]{32,}$")
 

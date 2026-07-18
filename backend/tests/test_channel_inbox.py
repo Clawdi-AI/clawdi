@@ -32,6 +32,8 @@ from app.services.channels import (
     wait_for_channel_inbox_events,
 )
 
+pytestmark = pytest.mark.committed_db
+
 
 async def _create_account_and_binding(
     db: AsyncSession,

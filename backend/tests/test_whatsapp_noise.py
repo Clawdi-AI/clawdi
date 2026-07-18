@@ -71,7 +71,7 @@ from app.services.whatsapp_shared_runtime import (
     unregister_whatsapp_shared_bot_transport,
 )
 
-pytestmark = pytest.mark.usefixtures("channel_agent")
+pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 
 
 class _FakeWhatsAppMediaUploadResponse:

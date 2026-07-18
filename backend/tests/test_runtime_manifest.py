@@ -60,6 +60,8 @@ from tests.hosted_runtime_fixtures import (
     canonical_hosted_runtime_state,
 )
 
+pytestmark = pytest.mark.committed_db
+
 _ADMIN_KEY = "runtime-state-admin-secret"
 _AUTH = {"X-Admin-Key": _ADMIN_KEY}
 TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}

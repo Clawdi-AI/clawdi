@@ -38,6 +38,8 @@ from tests.hosted_runtime_fixtures import (
     ensure_canonical_codex_tool_provider,
 )
 
+pytestmark = pytest.mark.committed_db
+
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
 _TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
 _TEST_SYSTEM = {}

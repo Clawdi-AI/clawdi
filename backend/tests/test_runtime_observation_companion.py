@@ -42,6 +42,8 @@ from app.services.runtime_observation import (
 )
 from tests.conftest import create_env_with_project
 
+pytestmark = pytest.mark.committed_db
+
 _DEPLOYMENT_ID = "deployment-observation-companion"
 _APPLY_RECEIPT_ID = "apply-receipt-00000001"
 _BOOT_NONCE = "boot-nonce-0000000001"

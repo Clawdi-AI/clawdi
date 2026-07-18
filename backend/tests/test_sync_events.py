@@ -30,6 +30,8 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services import sync_events
 
+pytestmark = pytest.mark.committed_db
+
 
 @pytest.mark.asyncio
 async def test_stream_returns_when_revoked_event_set():
