@@ -1,19 +1,23 @@
 # CLI Node Test Runner Upstream Evaluation
 
-Status: proposed evidence and prototype constraints (2026-07-18)
+Status: completed evaluation evidence (2026-07-18)
 
-## Decision
+## Outcome
 
-Prototype **Vitest 4.1.10 on Node**, using its `forks` pool, file isolation, and
-one worker as the equivalence baseline. Do not choose Node's built-in test
-runner for the first prototype, and do not change the committed runner until
-the repository benchmark demonstrates complete test and coverage equivalence,
-stability, and either a meaningful speed improvement or material production
-runtime fidelity.
+This document records the upstream research and acceptance plan that preceded
+the prototype. The prototype is complete, and
+[ADR-0004](../adr/0004-keep-bun-for-cli-tests.md) accepts the measured outcome:
+retain Bun 1.3.14 with serial file isolation for the CLI suite.
 
-This is a conditional decision, not approval to migrate. Bun remains the
-package manager and the `bun build --target node` build contract. A valid final
-outcome is to retain `bun test` if Vitest does not clear the measured gates.
+The pre-prototype recommendation was to evaluate **Vitest 4.1.10 on Node** with
+its `forks` pool, file isolation, and one worker as the equivalence baseline.
+The observed serial prototype did not clear the plan's gates: it discovered
+976 rather than 1,011 tests, reported deterministic failures and pending tests,
+and took about twice as long as the passing Bun baseline. The faster four-fork
+run had the same incomplete and failing counts, so it was not a valid
+comparison. ADR-0004 owns the detailed measurements and final decision; this
+document retains the upstream rationale that selected and constrained the
+prototype.
 
 ## Pinned facts
 
@@ -110,9 +114,11 @@ including “Test runner execution model” and “Collecting code coverage”.
 `node:test` remains a reasonable future candidate if dependency removal becomes
 a goal, but it is not the maintainability-first choice for this evaluation.
 
-## Prototype and acceptance contract
+## Pre-prototype plan and acceptance contract
 
-Use an exact `vitest@4.1.10` / `@vitest/coverage-v8@4.1.10` pair and a checked-in
+The following was the plan used to evaluate the candidate. It is historical
+acceptance evidence, not remaining implementation work. The prototype used an
+exact `vitest@4.1.10` / `@vitest/coverage-v8@4.1.10` pair and a checked-in
 configuration with:
 
 - Node environment, `pool: "forks"`, `isolate: true`, and one worker for the
@@ -127,8 +133,9 @@ configuration with:
 - failure on unhandled errors/rejections, open handles, or worker teardown
   failures rather than suppressing them.
 
-Benchmark Bun serial, Vitest serial, and only demonstrably safe bounded Vitest
-fork counts in the same pinned Docker image and cgroup limits. Include warmup,
+The plan required benchmarking Bun serial, Vitest serial, and only
+demonstrably safe bounded Vitest fork counts in the same pinned Docker image
+and cgroup limits. It required warmup,
 at least five measured full runs per configuration, wall time, peak cgroup
 memory, peak/current PID counts, exit status, discovered files/tests, and raw
 logs. Alternate runner order or document cache controls. Run the built Node
@@ -151,7 +158,8 @@ Migration gates:
    production-faithful. Runtime fidelity alone may justify a modest slowdown,
    but the measured trade-off must be recorded in the final ADR.
 
-If these gates fail, remove the prototype changes and record “retain Bun” with
-the benchmark evidence. In particular, do not force parallelism after the
-previous Bun epoll/stdout worker race; Vitest parallelism is a separate
-configuration requiring its own safety evidence.
+These gates failed, so the prototype changes were removed and ADR-0004 records
+“retain Bun” with the benchmark evidence. In particular, the evaluation did
+not force parallelism after the previous Bun epoll/stdout worker race; Vitest
+parallelism was treated as a separate configuration requiring its own safety
+evidence.

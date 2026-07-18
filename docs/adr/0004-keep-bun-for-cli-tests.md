@@ -19,7 +19,8 @@ mock, fake-timer, or snapshot APIs.
 
 The runtime contract is not limited to that import:
 
-- Six files use `Bun.spawn` (14 references) or `Bun.serve` (8 references).
+- Six files contain 12 `Bun.spawn` call sites plus two `ReturnType` references;
+  four E2E files each contain one `Bun.serve` call and one type reference.
 - The Hermes adapter test uses `bun:sqlite` to read its real fixture database.
 - Four files use Bun's `import.meta.dir` extension.
 - Tests use Bun-specific `toBeString` (three calls) and `toStartWith` (one call)
@@ -132,8 +133,14 @@ fidelity benefit.
 
 ## Reconsideration Criteria
 
-Re-evaluate only when the suite no longer depends on Bun runtime APIs, or when a
-Node runner prototype passes all 1,011 tests and the same coverage gates across
-repeated serial runs. Any future parallel configuration must independently prove
-stable results under the 8 CPU, 4 GiB, 512 PID limit and must not reintroduce the
-known Bun epoll/stdout worker race.
+The runner decision is based on Bun 1.3.14 and the current suite; it is not a
+permanent ban on Bun parallelism. Re-evaluate a Node runner when the suite no
+longer depends on Bun runtime APIs, or when a Node prototype passes all 1,011
+tests and the same coverage gates across repeated serial runs.
+
+Re-evaluate Bun parallel workers after a pinned Bun upgrade only when a minimal
+reproduction or upstream evidence shows that the epoll/stdout worker race is
+fixed. Then rerun repeated full-suite equivalence benchmarks under the 8 CPU,
+4 GiB, 512 PID limit and require identical test and coverage gates, stable
+stdout/child-process completion, and no flakes, leaks, or resource-limit
+failures before changing the serial configuration.

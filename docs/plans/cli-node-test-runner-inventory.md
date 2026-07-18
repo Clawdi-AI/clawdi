@@ -102,7 +102,9 @@ shutdown. These are real-server tests, not mocked fetch tests.
 
 ### Child processes and runtime identity
 
-Six files use `Bun.spawn` (12 call sites total):
+Six files use `Bun.spawn` (12 call sites total). Two additional
+`ReturnType<typeof Bun.spawn>` annotations in the daemon E2E bring the raw text
+search to 14 references; the ADR reports both definitions explicitly.
 
 - `tests/smoke.test.ts` (five)
 - `tests/commands/agent-projects.test.ts` (two)
