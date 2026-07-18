@@ -21,7 +21,7 @@ The runtime contract is not limited to that import:
 
 - Six files use `Bun.spawn` (14 references) or `Bun.serve` (8 references).
 - The Hermes adapter test uses `bun:sqlite` to read its real fixture database.
-- Three files use Bun's `import.meta.dir` extension.
+- Four files use Bun's `import.meta.dir` extension.
 - Tests use Bun-specific `toBeString` (three calls) and `toStartWith` (one call)
   matchers.
 - Smoke and command-help tests deliberately run the TypeScript source entry
