@@ -12,6 +12,8 @@ import pytest
 from app.core.auth import AuthContext
 from app.core.project import project_ids_visible_to
 
+pytestmark = pytest.mark.committed_db
+
 
 @pytest.mark.asyncio
 async def test_clerk_jwt_sees_owned_and_shared_projects(db_session, seed_user, seed_project):

@@ -41,6 +41,8 @@ from app.models.user import User
 from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.services.agent_environments import local_machine_registration_key
 
+pytestmark = pytest.mark.committed_db
+
 
 async def _override_factory(db_session: AsyncSession, user: User, api_key: ApiKey | None = None):
     async def _session_override() -> AsyncIterator[AsyncSession]:

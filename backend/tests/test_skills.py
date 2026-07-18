@@ -17,6 +17,8 @@ import pytest
 
 from app.services.tar_utils import tar_from_content
 
+pytestmark = pytest.mark.committed_db
+
 
 @pytest.mark.asyncio
 async def test_skill_upload_happy_path(client: httpx.AsyncClient, project_id: str):

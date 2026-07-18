@@ -43,24 +43,6 @@ _TEST_PUBLIC_DNS_HOSTS = {
     "graph.facebook.com",
 }
 _TEST_PUBLIC_DNS_SUFFIXES = (".example", ".test")
-_COMMITTED_DB_MODULES = {
-    "test_project_isolation.py",
-    "test_project_visibility_shared.py",
-    "test_runtime_manifest.py",
-    "test_runtime_observation_companion.py",
-    "test_share_redeem_routes.py",
-    "test_skills.py",
-    "test_sync_events.py",
-    "test_sync_heartbeat.py",
-}
-
-
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Route modules with pervasive cross-connection contracts to the commit lane."""
-    committed = pytest.mark.committed_db
-    for item in items:
-        if item.path.name in _COMMITTED_DB_MODULES:
-            item.add_marker(committed)
 
 
 def worker_test_identity(nodeid: str, worker: str) -> str:

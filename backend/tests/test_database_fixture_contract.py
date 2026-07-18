@@ -1,5 +1,7 @@
 """Contracts for the PostgreSQL application-test fixture architecture."""
 
+from uuid import uuid4
+
 import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -13,7 +15,8 @@ pytestmark = pytest.mark.asyncio
 
 
 async def test_commit_inside_test_remains_usable(db_session: AsyncSession):
-    user = User(clerk_id="fixture-commit", email="fixture-commit@example.test")
+    nonce = uuid4().hex
+    user = User(clerk_id=f"fixture-commit-{nonce}", email=f"fixture-commit-{nonce}@example.test")
     db_session.add(user)
     await db_session.commit()
 
@@ -23,7 +26,8 @@ async def test_commit_inside_test_remains_usable(db_session: AsyncSession):
 async def test_application_commit_is_hidden_from_independent_connection(
     engine, db_session: AsyncSession
 ):
-    user = User(clerk_id="fixture-hidden", email="fixture-hidden@example.test")
+    nonce = uuid4().hex
+    user = User(clerk_id=f"fixture-hidden-{nonce}", email=f"fixture-hidden-{nonce}@example.test")
     db_session.add(user)
     await db_session.commit()
 
@@ -35,10 +39,11 @@ async def test_application_commit_is_hidden_from_independent_connection(
 
 
 async def test_rollback_session_cleans_up_after_exception(engine):
-    clerk_id = "fixture-exception"
+    nonce = uuid4().hex
+    clerk_id = f"fixture-exception-{nonce}"
     with pytest.raises(RuntimeError, match="fixture failure"):
         async with rollback_session(engine) as session:
-            session.add(User(clerk_id=clerk_id, email="fixture-exception@example.test"))
+            session.add(User(clerk_id=clerk_id, email=f"fixture-exception-{nonce}@example.test"))
             await session.commit()
             raise RuntimeError("fixture failure")
 
@@ -75,8 +80,9 @@ async def test_worker_identity_is_stable_and_worker_isolated():
 async def test_committed_lane_is_visible_to_independent_connections(
     engine, committed_db_session: AsyncSession
 ):
-    clerk_id = "fixture-committed-lane"
-    user = User(clerk_id=clerk_id, email="fixture-committed-lane@example.test")
+    nonce = uuid4().hex
+    clerk_id = f"fixture-committed-lane-{nonce}"
+    user = User(clerk_id=clerk_id, email=f"fixture-committed-lane-{nonce}@example.test")
     committed_db_session.add(user)
     await committed_db_session.commit()
 

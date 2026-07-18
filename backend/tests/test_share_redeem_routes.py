@@ -23,6 +23,8 @@ from app.models.share_redeem_attempt import ShareRedeemAttempt
 from app.models.user import User
 from app.services.sharing import generate_share_token, hash_share_token
 
+pytestmark = pytest.mark.committed_db
+
 
 def test_share_redeem_client_ip_trusts_forwarded_headers_only_when_enabled(monkeypatch):
     from types import SimpleNamespace
