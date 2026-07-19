@@ -1,8 +1,11 @@
-import type { DeploymentDetailsInfo, HostedDeployment } from "@/hosted/billing/contracts";
+import { v5 as uuidv5 } from "uuid";
+import type { HostedDeployment } from "@/hosted/billing/contracts";
 
 export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
 export type HostedRuntime = (typeof HOSTED_RUNTIMES)[number];
 export const DEFAULT_HOSTED_RUNTIME: HostedRuntime = "openclaw";
+
+const CLOUD_AGENT_ID_NAMESPACE = "e016a4c8-7943-4ae9-9c53-5f1a5db9f3e1";
 
 const RUNTIME_ORDER = new Map<HostedRuntime, number>(
 	HOSTED_RUNTIMES.map((runtime, index) => [runtime, index]),
@@ -41,33 +44,23 @@ export function sortHostedRuntimes(values: Iterable<string>): HostedRuntime[] {
 	);
 }
 
-export function configRuntime(configInfo: DeploymentDetailsInfo | null | undefined): HostedRuntime {
-	const runtime = configInfo?.runtime;
-	return runtime && isHostedRuntime(runtime) ? runtime : DEFAULT_HOSTED_RUNTIME;
-}
-
 export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {
-	return configRuntime(deployment.config_info);
+	return deployment.resource.spec.runtime;
 }
 
 export function runtimeEnvironmentId(
-	configInfo: DeploymentDetailsInfo | null | undefined,
-	runtime: HostedRuntime = configRuntime(configInfo),
-): string | undefined {
-	return configInfo?.clawdi_cloud_environments?.[runtime];
+	deployment: HostedDeployment,
+	runtime: HostedRuntime = deploymentRuntime(deployment),
+): string {
+	return uuidv5(`${deployment.resource.id}:${runtime}`, CLOUD_AGENT_ID_NAMESPACE);
 }
 
 export function runtimeConsoleUrl(
 	deployment: HostedDeployment,
 	runtime: HostedRuntime = deploymentRuntime(deployment),
-): string | null | undefined {
-	if (deployment.native_url) return deployment.native_url;
-	if (runtime === "openclaw") return deployment.openclaw_control_ui_url;
-	return deployment.hermes_control_ui_url;
-}
-
-export function deploymentRuntimes(deployment: HostedDeployment): HostedRuntime[] {
-	return [deploymentRuntime(deployment)];
+): string | null {
+	const endpoints = deployment.resource.status.endpoints;
+	return endpoints.find((endpoint) => endpoint.name === runtime)?.url ?? endpoints[0]?.url ?? null;
 }
 
 export function defaultDeploymentRuntime(deployment: HostedDeployment): HostedRuntime {

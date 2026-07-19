@@ -1,11 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import type { ComputePlanSlug, HostedDeployment, Plan } from "@/hosted/billing/contracts";
+import type {
+	ComputePlanSlug,
+	HostedComputeSubscription,
+	HostedDeploymentStatus,
+	Plan,
+} from "@/hosted/billing/contracts";
 import {
 	resolveBasicDeploySelection,
 	usesActiveIncludedBasicSlot,
 } from "@/hosted/billing/deploy/deploy-model";
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
-function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+function subscription(): HostedComputeSubscription {
 	return {
 		status: "active",
 		funding_source: "stripe",
@@ -17,7 +23,7 @@ function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 	};
 }
 
-function includedSubscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+function includedSubscription(): HostedComputeSubscription {
 	return {
 		subscription_id: 7,
 		status: "active",
@@ -34,35 +40,27 @@ function deployment({
 	status,
 	computePlanSlug = "compute_basic",
 	computeSubscription = includedSubscription(),
+	occupiesSlot = true,
 }: {
-	status: string;
+	status: HostedDeploymentStatus["summary_state"];
 	computePlanSlug?: ComputePlanSlug;
-	computeSubscription?: HostedDeployment["compute_subscription"];
-}): HostedDeployment {
-	return {
+	computeSubscription?: HostedComputeSubscription;
+	occupiesSlot?: boolean;
+}) {
+	return hostedDeploymentFixture({
 		id: `hdep_${status}_${computePlanSlug}`,
-		user_id: "usr_test",
 		name: "Test agent",
-		app_id: "v2-test",
 		status,
-		created_at: "2026-06-24T00:00:00Z",
-		upgrade_available: false,
-		compute_subscription: computeSubscription,
-		config_info: {
+		createdAt: "2026-06-24T00:00:00Z",
+		computeSubscription,
+		fundingFact: {
+			fact_kind: "funding_ready",
+			commercial_revision: 1,
 			compute_plan_slug: computePlanSlug,
-			mux_enabled: false,
-			telegram_mux_enabled: false,
-			discord_mux_enabled: false,
-			whatsapp_mux_enabled: false,
-			imessage_mux_enabled: false,
-			kobb_available: false,
-			ai_provider_auth_kind: "managed",
-			runtime: "openclaw",
-			clawdi_cloud_environments: {},
-			ai_provider_bindings: {},
-			public_ports: [],
+			emitted_at: "2026-06-24T00:00:00Z",
 		},
-	};
+		occupiesSlot,
+	});
 }
 
 function plan(priceCents: number): Plan {
@@ -87,16 +85,14 @@ function plan(priceCents: number): Plan {
 }
 
 describe("usesActiveIncludedBasicSlot", () => {
-	test("counts active free-funded Basic deployments", () => {
+	test("uses the hosted API slot occupancy projection", () => {
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "running" })])).toBe(true);
-		expect(usesActiveIncludedBasicSlot([deployment({ status: "starting" })])).toBe(true);
-		expect(usesActiveIncludedBasicSlot([deployment({ status: "failed" })])).toBe(true);
-		expect(usesActiveIncludedBasicSlot([deployment({ status: "deleting" })])).toBe(true);
+		expect(
+			usesActiveIncludedBasicSlot([deployment({ status: "running", occupiesSlot: false })]),
+		).toBe(false);
 	});
 
-	test("ignores inactive, paid-funded Basic, and Performance deployments", () => {
-		expect(usesActiveIncludedBasicSlot([deployment({ status: "stopped" })])).toBe(false);
-		expect(usesActiveIncludedBasicSlot([deployment({ status: "deleted" })])).toBe(false);
+	test("ignores paid-funded Basic and Performance deployments", () => {
 		expect(
 			usesActiveIncludedBasicSlot([
 				deployment({ status: "running", computeSubscription: subscription() }),
@@ -177,46 +173,5 @@ describe("resolveBasicDeploySelection", () => {
 				billingTermMonths: 1,
 			}),
 		).toEqual({ mode: "unavailable", reason: "offers_missing" });
-	});
-});
-
-/**
- * The active-state half of the funding-slot contract. Every row must match the
- * deploy API occupancy predicate; subscription-backed Basic is excluded before
- * this predicate runs because it does not consume included funding.
- */
-describe("usesActiveIncludedBasicSlot agrees with the backend occupancy predicate", () => {
-	const cases: Array<{ status: string; failureReason: string | null; occupies: boolean }> = [
-		{ status: "running", failureReason: null, occupies: true },
-		{ status: "starting", failureReason: null, occupies: true },
-		{ status: "creating", failureReason: null, occupies: true },
-		{ status: "deleting", failureReason: null, occupies: true },
-		{ status: "stopped", failureReason: null, occupies: false },
-		{ status: "deleted", failureReason: null, occupies: false },
-		{ status: "failed", failureReason: "backend_status=not_found", occupies: false },
-		{
-			status: "failed",
-			failureReason: "backend_status=not_found; statefulset missing",
-			occupies: false,
-		},
-		{ status: "failed", failureReason: "creation_interrupted", occupies: false },
-		{ status: "failed", failureReason: "startup_probe_failing; restart_count=2", occupies: true },
-		{ status: "failed", failureReason: null, occupies: true },
-		{ status: "some_future_state", failureReason: null, occupies: true },
-	];
-
-	for (const { status, failureReason, occupies } of cases) {
-		test(`${status} / ${failureReason ?? "no reason"} → ${occupies ? "occupies" : "available"}`, () => {
-			const candidate = { ...deployment({ status }), failure_reason: failureReason };
-			expect(usesActiveIncludedBasicSlot([candidate])).toBe(occupies);
-		});
-	}
-
-	test("excludes subscription-backed Basic before applying occupancy", () => {
-		const candidate = {
-			...deployment({ status: "running", computeSubscription: subscription() }),
-			failure_reason: null,
-		};
-		expect(usesActiveIncludedBasicSlot([candidate])).toBe(false);
 	});
 });

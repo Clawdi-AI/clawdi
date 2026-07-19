@@ -850,7 +850,7 @@ export function DeployWizard() {
 		if (!deployRequestId) return null;
 		for (let attempt = 0; attempt < 8; attempt += 1) {
 			const status = await resolveDeploymentRequest.mutateAsync(deployRequestId);
-			if (status.deployment_id) return status.deployment_id;
+			if (status.lineage_tail?.deployment_id) return status.lineage_tail.deployment_id;
 			if (status.request_status === "failed" || status.request_status === "expired") {
 				return null;
 			}
@@ -1024,7 +1024,9 @@ export function DeployWizard() {
 				if (hasCheckoutClientSecret(result)) {
 					setCheckoutSession({
 						clientSecret: result.client_secret,
-						previousDeploymentIds: (deployments.data ?? []).map((deployment) => deployment.id),
+						previousDeploymentIds: (deployments.data ?? []).map(
+							(deployment) => deployment.resource.id,
+						),
 						request: {
 							selection,
 							target,

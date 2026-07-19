@@ -1,6 +1,11 @@
 "use client";
 
-import { type DeployPaths, extractApiDetail } from "@clawdi/shared/api";
+import {
+	type DeployPaths,
+	extractApiDetail,
+	unwrapDeploymentEventStreamSnapshotHandoff,
+	unwrapDeploymentList,
+} from "@clawdi/shared/api";
 import createClient from "openapi-fetch";
 import { useMemo } from "react";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
@@ -14,6 +19,7 @@ import type {
 	ComputeSubscriptionResumeRequest,
 	DeployRequest,
 	HostedDeployment,
+	HostedEventStreamSnapshotHandoff,
 	PortalRequest,
 	RuntimeAgentType,
 	SetAgentEnabledRequest,
@@ -148,7 +154,15 @@ export function useBillingClient() {
 			getLegacyAgentEnvironments: async () => unwrapDeploy(await api.GET("/v1/agent-environments")),
 
 			listDeployments: async (): Promise<HostedDeployment[]> =>
-				unwrapDeploy(await api.GET("/v2/deployments")),
+				unwrapDeploymentList(unwrapDeploy(await api.GET("/v2/deployments"))),
+			listEventStreamHandoff: async (): Promise<HostedEventStreamSnapshotHandoff> =>
+				unwrapDeploymentEventStreamSnapshotHandoff(
+					unwrapDeploy(
+						await api.GET("/v2/deployments", {
+							params: { query: { eventStreamHandoff: true } },
+						}),
+					),
+				),
 			getDeploymentByRequest: async (deployRequestId: string) =>
 				unwrapDeploy(
 					await api.GET("/v2/deployments/by-request/{deploy_request_id}", {

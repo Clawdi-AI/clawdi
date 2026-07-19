@@ -225,14 +225,14 @@ function DeploymentChooser({
 			<div className="grid max-w-2xl gap-2">
 				{matches.map((match) => {
 					const { deployment } = match;
-					const name = deploymentDisplayName(deployment.name);
+					const name = deploymentDisplayName(deployment.resource.spec.name);
 					const query = {
 						...agentDeploymentRouteQuery(searchStr),
-						[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: deployment.id,
+						[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: deployment.resource.id,
 					};
 					return (
 						<Link
-							key={deployment.id}
+							key={deployment.resource.id}
 							to={agentSectionHref(environmentId, section, query)}
 							aria-label={`Open ${name}`}
 							className={cn(
@@ -245,8 +245,10 @@ function DeploymentChooser({
 								icon={<AgentIcon agent={match.runtime} size="lg" />}
 								title={name}
 								meta={[
-									deploymentStatusLabel(parseDeploymentStatus(deployment.status)),
-									`Created ${formatShortDate(deployment.created_at)}`,
+									deploymentStatusLabel(
+										parseDeploymentStatus(deployment.resource.status.summary_state),
+									),
+									`Created ${formatShortDate(deployment.resource.metadata.createdAt)}`,
 								]}
 								titleAdornment={
 									<ChevronRight className="size-4 text-muted-foreground/60" aria-hidden />

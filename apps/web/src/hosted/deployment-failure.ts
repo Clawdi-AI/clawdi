@@ -1,7 +1,11 @@
 const DEFAULT_FAILURE_REASON_MAX_LENGTH = 96;
 
-export function deploymentFailureReason(input: { failure_reason?: string | null }): string | null {
-	const reason = input.failure_reason?.replace(/\s+/g, " ").trim();
+export function deploymentFailureReason(input: {
+	failure?: { detail: string; conditionMessage: string } | null;
+}): string | null {
+	const reason = (input.failure?.detail ?? input.failure?.conditionMessage ?? "")
+		.replace(/\s+/g, " ")
+		.trim();
 	return reason ? reason : null;
 }
 

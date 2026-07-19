@@ -18,6 +18,6 @@ export function findNewDeploymentId(
 ): string | null {
 	if (!deployments?.length) return null;
 	const previousIds = new Set(previousDeploymentIds);
-	const created = deployments.find((deployment) => !previousIds.has(deployment.id));
-	return created?.id ?? null;
+	const created = deployments.find((deployment) => !previousIds.has(deployment.resource.id));
+	return created?.resource.id ?? null;
 }

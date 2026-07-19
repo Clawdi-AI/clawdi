@@ -5,7 +5,8 @@ import {
 	findNewDeploymentId,
 	hasCheckoutClientSecret,
 } from "@/hosted/billing/components/stripe-checkout.logic";
-import type { CheckoutResult, HostedDeployment } from "@/hosted/billing/contracts";
+import type { CheckoutResult } from "@/hosted/billing/contracts";
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 describe("stripe checkout logic", () => {
 	test("prefers the action_url for hosted fallback redirects", () => {
@@ -37,7 +38,10 @@ describe("stripe checkout logic", () => {
 	});
 
 	test("finds a deployment created after checkout completes", () => {
-		const deployments = [{ id: "dep_old" }, { id: "dep_new" }] as HostedDeployment[];
+		const deployments = [
+			hostedDeploymentFixture({ id: "dep_old" }),
+			hostedDeploymentFixture({ id: "dep_new" }),
+		];
 
 		expect(findNewDeploymentId(["dep_old"], deployments)).toBe("dep_new");
 		expect(findNewDeploymentId(["dep_old", "dep_new"], deployments)).toBeNull();

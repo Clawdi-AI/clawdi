@@ -26,10 +26,17 @@ export type ComputeSubscriptionQuoteResponse = Schemas["V2ComputeSubscriptionQuo
 export type ComputeSubscriptionResumeRequest = Schemas["V2ComputeSubscriptionResumeRequest"];
 export type DeleteDeploymentResult = Schemas["V2DeploymentDeleteResponse"];
 export type DeployRequest = Schemas["V2HostedDeployRequest"];
-export type DeploymentDetailsInfo = Schemas["V2HostedDeploymentDetailsInfo"];
-export type HostedDeployment = Schemas["V2HostedDeploymentResponse"];
-export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestStatusResponse"];
-export type HostedFundingEvent = Schemas["V2HostedFundingEventInfo"];
+export type HostedDeployment = Schemas["V2HostedDeploymentReadResponse"];
+export type HostedDeploymentSpec = Schemas["HostedDeploymentSpec"];
+export type HostedDeploymentResource = Schemas["HostedDeploymentResource"];
+export type HostedDeploymentStatus = Schemas["HostedDeploymentStatus"];
+export type HostedComputeSubscription = NonNullable<
+	NonNullable<HostedDeployment["commercial_display"]>["compute_subscription"]
+>;
+export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadResponse"];
+export type HostedEventStreamSnapshotHandoff = Schemas["EventStreamSnapshotHandoff"];
+export type HostedFundingFact = Schemas["V2HostedCommercialFundingFactInfo"];
+export type HostedRuntimeConfiguration = Schemas["RuntimeConfiguration"];
 export type RuntimeUiRedemption = Schemas["V2DeploymentRuntimeUiRedemptionResponse"];
 export type HostedUser = Schemas["V1UserResponse"];
 export type HostedConfigRequest = Schemas["V2HostedConfigRequest"];

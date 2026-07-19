@@ -4,7 +4,6 @@ import {
 	computeFundingMode,
 	selectExplicitOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
-import { occupiesComputeSlot } from "@/hosted/deployment-status";
 
 export type BasicDeploySelection =
 	| {
@@ -28,13 +27,13 @@ export function usesActiveIncludedBasicSlot(deployments: HostedDeployment[] | un
 	return (deployments ?? []).some((deployment) => {
 		if (
 			computeFundingMode(
-				deployment.config_info?.compute_plan_slug,
-				deployment.compute_subscription,
+				deployment.commercial_display?.latest_funding_fact?.compute_plan_slug,
+				deployment.commercial_display?.compute_subscription,
 			) !== "included_basic"
 		) {
 			return false;
 		}
-		return occupiesComputeSlot(deployment);
+		return deployment.compute_slot_occupancy.occupies_slot;
 	});
 }
 

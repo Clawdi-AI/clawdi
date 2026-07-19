@@ -1,13 +1,13 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { createElement, useMemo } from "react";
+import { useMemo } from "react";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { computeDunningTileStatus } from "@/hosted/billing/components/compute-dunning.logic";
-import type { HostedDeployment } from "@/hosted/billing/contracts";
+import type { HostedDeployment, HostedDeploymentStatus } from "@/hosted/billing/contracts";
 import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-management";
 import {
 	compactDeploymentFailureReason,
@@ -25,13 +25,15 @@ import {
 	claimedEnvIdsFromDeployments,
 	isHostedDeploymentMember,
 } from "@/hosted/hosted-agent-resolution";
-import { HostedDeploymentTileDeleteAction } from "@/hosted/hosted-deployment-tile-action";
 import { deploymentRuntime, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
-type DeploymentStatusInput = Pick<HostedDeployment, "status" | "failure_reason">;
+type DeploymentStatusInput = {
+	failure?: HostedDeploymentStatus["failure"];
+	summary_state: string;
+};
 
 const EMPTY_DEPLOYMENTS: HostedDeployment[] = [];
 
@@ -72,7 +74,7 @@ export function hostedRuntimeStatusView(
 	deployment: DeploymentStatusInput,
 	env: Env | null | undefined,
 ): HostedRuntimeStatusView {
-	const compute = parseDeploymentStatus(deployment.status);
+	const compute = parseDeploymentStatus(deployment.summary_state);
 	const computeLabel = deploymentStatusLabel(compute);
 	const computeTone = deploymentStatusTone(compute);
 	const sync = env === undefined ? null : daemonStatusVisual(env, "on-clawdi");
@@ -115,9 +117,9 @@ export function hostedRuntimeStatusView(
  *
  * `cloudEnvs` is the cloud-api environments list the parent already
  * fetches for the self-managed grid; passing it through lets each
- * hosted tile attach its matching `EnvironmentResponse` (joined via
- * `deployment.config_info.clawdi_cloud_environments[agent_type] ===
- * env.id`). With the join, the same `DaemonStatusBadge` that powers
+ * hosted tile attach its matching `EnvironmentResponse` (joined via the
+ * deployment/runtime identity frozen by the hosted control plane). With the
+ * join, the same `DaemonStatusBadge` that powers
  * self-managed tiles' "Synced 2m ago" label fires on hosted tiles too
  * — hosted runtimes register cloud-api envs with their own daemon, so
  * the data is the same shape; only the "Clawdi" pill distinguishes
@@ -181,34 +183,34 @@ export function useHostedAgentTiles({
 }
 
 /**
- * One deployment renders as one hosted agent tile. The selected runtime decides
- * which config env id owns the detail route. A matching cloud-api environment
- * only decorates the tile with daemon sync state and presentation metadata.
+ * One deployment renders as one hosted agent tile. Its control-plane id and
+ * runtime deterministically identify the matching Cloud API agent. A matching
+ * projection decorates the tile with daemon sync state and presentation metadata.
  */
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	if (!isHostedDeploymentMember(d)) return [];
 	const runtime = deploymentRuntime(d);
-	const slug = deploymentDisplayName(d.name);
+	const slug = deploymentDisplayName(d.resource.spec.name);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
-	// The deployment config owns the stable agent identity. The cloud-api env
+	// The deployment resource owns the stable agent identity. The cloud-api env
 	// join only decorates the tile and may legitimately lag or be missing.
-	const envId = runtimeEnvironmentId(d.config_info, runtime);
-	const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
+	const envId = runtimeEnvironmentId(d, runtime);
+	const matchedEnv = envById.get(envId.toLowerCase());
 	const routeQuery = {
 		source: "on-clawdi",
-		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.id,
+		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.resource.id,
 	};
-	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
-	const settingsHref = envId ? agentSectionHref(envId, "settings", routeQuery) : undefined;
+	const detailHref = agentSectionHref(envId, "overview", routeQuery);
+	const settingsHref = agentSectionHref(envId, "settings", routeQuery);
 	const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
 	const contextLabel = slug !== name ? slug : null;
-	const runtimeStatus = hostedRuntimeStatusView(d, matchedEnv ?? null);
+	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv ?? null);
 	const dunningStatus = computeDunningTileStatus(d);
 	const failureReasonStatus =
 		runtimeStatus.secondary?.kind === "failure_reason" ? runtimeStatus.secondary : null;
 	return [
 		{
-			id: d.id,
+			id: d.resource.id,
 			source: "on-clawdi" as const,
 			name,
 			avatarUrl: matchedEnv?.avatar_url ?? null,
@@ -219,9 +221,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			href: detailHref,
 			external: false,
-			action: envId
-				? undefined
-				: createElement(HostedDeploymentTileDeleteAction, { deployment: d }),
+			action: undefined,
 			manageHref: settingsHref,
 			active: runtimeStatus.active,
 			statusDot: {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { BillingOffer, HostedDeployment, Plan } from "@/hosted/billing/contracts";
+import type { BillingOffer, HostedComputeSubscription, Plan } from "@/hosted/billing/contracts";
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
@@ -45,7 +45,7 @@ function plan(overrides: Partial<Plan> & Pick<Plan, "slug" | "price_cents">): Pl
 	};
 }
 
-function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+function subscription(): HostedComputeSubscription {
 	return {
 		status: "active",
 		funding_source: "stripe",
@@ -57,7 +57,7 @@ function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 	};
 }
 
-function includedSubscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+function includedSubscription(): HostedComputeSubscription {
 	return {
 		subscription_id: 7,
 		status: "active",

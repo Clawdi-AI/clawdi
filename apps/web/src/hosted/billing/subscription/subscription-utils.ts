@@ -3,7 +3,7 @@ import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
 	type ComputePlanSlug,
-	type HostedDeployment,
+	type HostedComputeSubscription,
 	type Plan,
 } from "@/hosted/billing/contracts";
 
@@ -53,7 +53,7 @@ export type ComputeFundingSource = "included_basic" | "stripe" | "wallet" | "unk
 
 export function isIncludedBasicSubscription(
 	planSlug: string | null | undefined,
-	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+	computeSubscription: HostedComputeSubscription | null | undefined,
 ): boolean {
 	return (
 		isBasicCompute(planSlug) &&
@@ -65,7 +65,7 @@ export function isIncludedBasicSubscription(
 
 export function computeFundingMode(
 	planSlug: string | null | undefined,
-	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+	computeSubscription: HostedComputeSubscription | null | undefined,
 ): ComputeFundingMode {
 	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
 	if (computeSubscription) return "subscription";
@@ -74,7 +74,7 @@ export function computeFundingMode(
 
 export function computeFundingSource(
 	planSlug: string | null | undefined,
-	computeSubscription: HostedDeployment["compute_subscription"] | null | undefined,
+	computeSubscription: HostedComputeSubscription | null | undefined,
 ): ComputeFundingSource {
 	if (isIncludedBasicSubscription(planSlug, computeSubscription)) return "included_basic";
 	if (computeSubscription?.funding_source === "wallet") return "wallet";
@@ -85,7 +85,7 @@ export function computeFundingSource(
 }
 
 export function computeSubscriptionId(
-	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+	subscription: HostedComputeSubscription | null | undefined,
 ): number | null {
 	if (!subscription) return null;
 	return typeof subscription.subscription_id === "number" &&
@@ -96,7 +96,7 @@ export function computeSubscriptionId(
 }
 
 export function pendingComputePlanSlug(
-	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+	subscription: HostedComputeSubscription | null | undefined,
 ): ComputePlanSlug | null {
 	if (!subscription) return null;
 	return subscription.pending_plan_slug === COMPUTE_BASIC_SLUG ||
@@ -108,7 +108,7 @@ export function pendingComputePlanSlug(
 const COMPUTE_RENEWING_STATUSES = new Set(["trialing", "active", "past_due"]);
 
 export function isComputeSubscriptionRenewing(
-	subscription: HostedDeployment["compute_subscription"] | null | undefined,
+	subscription: HostedComputeSubscription | null | undefined,
 ): boolean {
 	if (!subscription || subscription.cancel_at_period_end) return false;
 	return (
@@ -125,7 +125,7 @@ export type ComputeSubscriptionLifecycle = {
 };
 
 export function computeSubscriptionLifecycle(
-	subscription: NonNullable<HostedDeployment["compute_subscription"]>,
+	subscription: HostedComputeSubscription,
 ): ComputeSubscriptionLifecycle {
 	const status = subscription.status.toLowerCase();
 	const canceledAt = subscription.canceled_at ?? subscription.current_period_end ?? null;

@@ -53,10 +53,9 @@ function toastAgentLanguageTimezoneError(error: unknown) {
 }
 
 /**
- * Resolve the hosted deployment that backs a cloud-api environment, joined via
- * `config_info.clawdi_cloud_environments[runtime] === environmentId` (same join
- * the agent tiles use). Duplicate joins remain unresolved until an explicit
- * deployment selector is present.
+ * Resolve the hosted deployment that backs a cloud-api environment using the
+ * deterministic deployment/runtime identity shared with the agent tiles. An
+ * explicit deployment selector disambiguates duplicate inventory rows.
  */
 export function useAgentDeployment(environmentId: string, deploymentSelector?: string | null) {
 	const inventory = useHostedDeploymentInventory({
@@ -70,13 +69,11 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 
 	// The env id to drive per-env queries (sessions, channel links). For an
 	// env-id route it's the route param itself; for a deployment-id route
-	// (post-deploy redirect) resolve to a real cloud-api env id from the
-	// deployment, falling back to the route param while provisioning hasn't
-	// minted env ids yet.
+	// (post-deploy redirect) resolve it from the deployment identity.
 	const resolvedEnvId = useMemo(() => {
 		if (!match || match.runtime) return environmentId;
 		const runtime = deploymentRuntime(match.deployment);
-		return runtimeEnvironmentId(match.deployment.config_info, runtime) || environmentId;
+		return runtimeEnvironmentId(match.deployment, runtime);
 	}, [match, environmentId]);
 
 	return {

@@ -38,7 +38,7 @@ export class HostedInventoryUnavailableError extends Error {
 
 /** Deleted deployments stop owning an agent as soon as the deploy API says so. */
 export function isHostedDeploymentMember(deployment: HostedDeployment): boolean {
-	return parseDeploymentStatus(deployment.status).kind !== "deleted";
+	return parseDeploymentStatus(deployment.resource.status.summary_state).kind !== "deleted";
 }
 
 export function hostedDeploymentMembers(
@@ -54,8 +54,7 @@ export function claimedEnvIdsFromDeployments(
 	const environmentIds = new Set<string>();
 	for (const deployment of deployments) {
 		if (!isHostedDeploymentMember(deployment)) continue;
-		const environmentId = runtimeEnvironmentId(deployment.config_info);
-		if (environmentId) environmentIds.add(environmentId.toLowerCase());
+		environmentIds.add(runtimeEnvironmentId(deployment).toLowerCase());
 	}
 	return environmentIds;
 }
@@ -78,23 +77,22 @@ export function resolveAgentDeployment(
 ): AgentDeploymentResolution {
 	const members = hostedDeploymentMembers(deployments);
 	const target = environmentId.toLowerCase();
-	const direct = members.find((deployment) => deployment.id.toLowerCase() === target);
+	const direct = members.find((deployment) => deployment.resource.id.toLowerCase() === target);
 	if (direct) {
 		return { match: { deployment: direct, runtime: null }, ambiguousMatches: [] };
 	}
 
 	const matches: AgentDeploymentMatch[] = [];
 	for (const deployment of members) {
-		const environments = deployment.config_info?.clawdi_cloud_environments ?? {};
-		const runtime = Object.entries(environments).find(
-			([, value]) => (value ?? "").toLowerCase() === target,
-		);
-		if (runtime) matches.push({ deployment, runtime: runtime[0] });
+		const runtime = deployment.resource.spec.runtime;
+		if (runtimeEnvironmentId(deployment, runtime).toLowerCase() === target) {
+			matches.push({ deployment, runtime });
+		}
 	}
 
 	if (deploymentSelector) {
 		const selector = deploymentSelector.toLowerCase();
-		const selected = matches.find((item) => item.deployment.id.toLowerCase() === selector);
+		const selected = matches.find((item) => item.deployment.resource.id.toLowerCase() === selector);
 		if (selected) return { match: selected, ambiguousMatches: [] };
 	}
 

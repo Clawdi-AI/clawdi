@@ -1,58 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { hostedEnvironmentHref } from "@/hosted/billing/deployment-links";
-
-function deployment(envs: Record<string, string> | null): HostedDeployment {
-	return {
-		id: "dep_123",
-		user_id: "user_123",
-		name: "openclaw-test",
-		app_id: "app_123",
-		backend: null,
-		status: "creating",
-		endpoints: [],
-		openclaw_control_ui_url: null,
-		hermes_control_ui_url: null,
-		config_info: envs
-			? {
-					compute_plan_slug: "compute_basic",
-					mux_enabled: true,
-					telegram_mux_enabled: false,
-					discord_mux_enabled: false,
-					whatsapp_mux_enabled: false,
-					imessage_mux_enabled: false,
-					kobb_available: false,
-					primary_model: null,
-					ai_provider_id: null,
-					ai_provider_auth_kind: "managed",
-					public_ports: [],
-					runtime: "openclaw",
-					clawdi_cloud_environments: envs,
-					vcpu: null,
-					ram_gb: null,
-					disk_gb: null,
-				}
-			: null,
-		created_at: "2026-06-22T00:00:00Z",
-		upgrade_available: false,
-	};
-}
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 describe("hostedEnvironmentHref", () => {
-	test("links to the minted cloud environment when available", () => {
-		expect(hostedEnvironmentHref(deployment({ openclaw: "env 1" }))).toBe(
-			"/agents/env%201?source=on-clawdi&d=dep_123",
+	test("links to the deterministic Cloud API environment identity", () => {
+		expect(hostedEnvironmentHref(hostedDeploymentFixture({ id: "dep_123" }))).toBe(
+			"/agents/21637a57-08b6-598a-8369-870ddc5ee4a2?source=on-clawdi&d=dep_123",
 		);
 	});
 
-	test("ignores stale Codex mappings when execution runtime environments exist", () => {
+	test("includes the selected runtime in the environment identity", () => {
 		expect(
-			hostedEnvironmentHref(deployment({ openclaw: "env openclaw", codex: "env codex" })),
-		).toBe("/agents/env%20openclaw?source=on-clawdi&d=dep_123");
-	});
-
-	test("does not treat the deployment id as an agent environment id", () => {
-		expect(hostedEnvironmentHref(deployment(null))).toBeNull();
-		expect(hostedEnvironmentHref(deployment({}))).toBeNull();
+			hostedEnvironmentHref(hostedDeploymentFixture({ id: "dep_123", runtime: "hermes" })),
+		).toBe("/agents/d1dbf281-8cd4-50f5-b909-b595e0accd83?source=on-clawdi&d=dep_123");
 	});
 });
