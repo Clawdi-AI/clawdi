@@ -23,7 +23,7 @@ import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { settingsQueryHref } from "@/lib/settings-routes";
-import { computeDunningState } from "./compute-dunning.logic";
+import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
 
 export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
 	const state = computeDunningState(deployment);
@@ -39,8 +39,12 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 
 	const destructive = state.tone === "destructive";
 	const bannerDescription = [
-		state.fallbackOccurredAt && state.fallbackPlanLabel
-			? `${state.fallbackPlanLabel} funding ended on ${formatShortDate(state.fallbackOccurredAt)}.`
+		state.fallbackOccurredAt && state.fallbackPlanLabel && state.fallbackReason
+			? fallbackReasonSentence(
+					state.fallbackReason,
+					state.fallbackPlanLabel,
+					formatShortDate(state.fallbackOccurredAt),
+				)
 			: null,
 		state.description,
 	]
