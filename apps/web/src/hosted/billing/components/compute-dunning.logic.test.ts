@@ -6,28 +6,43 @@ import type {
 	HostedFundingFact,
 } from "@/hosted/billing/contracts";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
-import { computeDunningState, computeDunningTileStatus } from "./compute-dunning.logic";
+import {
+	computeDunningState,
+	computeDunningTileStatus,
+	fallbackReasonSentence,
+} from "./compute-dunning.logic";
 
 function deployment({
 	computeSubscription = null,
-	computePlanSlug,
+	currentPlanSlug = "compute_basic",
 	factKind,
+	fundingSource = "stripe",
+	reason = "payment_failure",
+	priorPlanSlug = "compute_performance",
 	status = "running",
 }: {
 	computeSubscription?: HostedComputeSubscription | null;
-	computePlanSlug?: ComputePlanSlug;
+	currentPlanSlug?: ComputePlanSlug;
 	factKind?: HostedFundingFact["fact_kind"];
+	fundingSource?: NonNullable<HostedFundingFact["funding_source"]>;
+	reason?: NonNullable<HostedFundingFact["reason"]>;
+	priorPlanSlug?: ComputePlanSlug;
 	status?: HostedDeploymentStatus["summary_state"];
 } = {}) {
 	return hostedDeploymentFixture({
 		status,
+		currentPlanSlug,
 		computeSubscription,
 		fundingFact: factKind
 			? {
 					fact_kind: factKind,
 					commercial_revision: 2,
-					compute_plan_slug: factKind === "funding_ready" ? computePlanSlug : null,
-					emitted_at: "2026-07-18T12:00:00Z",
+					compute_plan_slug: factKind === "funding_ready" ? currentPlanSlug : null,
+					funding_source: factKind === "funding_revoked" ? fundingSource : null,
+					reason: factKind === "funding_revoked" ? reason : null,
+					prior_plan_slug: factKind === "funding_revoked" ? priorPlanSlug : null,
+					occurred_at: "2026-07-18T12:00:00Z",
+					emitted_at: "2026-07-18T12:05:00Z",
 				}
 			: null,
 	});
@@ -53,6 +68,14 @@ function subscription(
 	};
 }
 
+function includedSubscription(): HostedComputeSubscription {
+	return subscription({
+		subscription_id: 7,
+		funding_source: null,
+		price_cents: 0,
+	});
+}
+
 describe("computeDunningState", () => {
 	test("returns null without an active billing problem", () => {
 		expect(computeDunningState(deployment())).toBeNull();
@@ -68,12 +91,12 @@ describe("computeDunningState", () => {
 					payment_state: "past_due",
 					recovery_action: "top_up",
 				}),
-				computePlanSlug: "compute_performance",
-				factKind: "funding_ready",
+				currentPlanSlug: "compute_performance",
 			}),
 		);
 
 		expect(state).toMatchObject({
+			fundingSource: "wallet",
 			recoveryAction: "top_up",
 			ctaTarget: "top_up",
 		});
@@ -88,6 +111,7 @@ describe("computeDunningState", () => {
 			computeSubscription: subscription({ status: "past_due", payment_state: "past_due" }),
 		});
 		expect(computeDunningState(deploymentWithPastDueCard)).toMatchObject({
+			fundingSource: "stripe",
 			recoveryAction: "fix_payment",
 			ctaTarget: "fix_payment",
 		});
@@ -125,8 +149,7 @@ describe("computeDunningState", () => {
 					payment_state: "requires_action",
 					pending_plan_slug: "compute_basic",
 				}),
-				computePlanSlug: "compute_performance",
-				factKind: "funding_ready",
+				currentPlanSlug: "compute_performance",
 			}),
 		);
 		expect(state?.description).toContain("keep Basic compute active");
@@ -142,11 +165,11 @@ describe("computeDunningState", () => {
 						funding_source: fundingSource,
 						payment_state: "unpaid",
 					}),
-					computePlanSlug: "compute_basic",
-					factKind: "funding_ready",
+					currentPlanSlug: "compute_basic",
 				}),
 			);
 			expect(state).toMatchObject({
+				fundingSource,
 				recoveryAction: "start_new",
 				ctaTarget: "start_new",
 				tileTextClass: "text-destructive",
@@ -155,24 +178,31 @@ describe("computeDunningState", () => {
 		}
 	});
 
-	test("uses the latest funding_revoked fact for detached recovery", () => {
+	test("uses authoritative fallback provenance for detached recovery", () => {
 		const running = computeDunningState(
 			deployment({
+				computeSubscription: includedSubscription(),
 				factKind: "funding_revoked",
+				fundingSource: "wallet",
+				priorPlanSlug: "compute_performance",
 			}),
 		);
 		expect(running).toMatchObject({
 			paymentState: "unpaid",
+			fundingSource: "wallet",
 			recoveryAction: "start_new",
 			ctaTarget: "start_new",
 			fallbackOccurredAt: "2026-07-18T12:00:00Z",
-			fallbackPlanLabel: "Paid compute",
-			recoveryPlanSlug: null,
+			fallbackPlanLabel: "Performance compute",
+			fallbackReason: "payment_failure",
+			recoveryPlanSlug: "compute_performance",
 		});
+		expect(running?.fallbackOccurredAt).not.toBe("2026-07-18T12:05:00Z");
 		expect(running?.description).toContain("now using included Basic");
 
 		const stopped = computeDunningState(
 			deployment({
+				computeSubscription: includedSubscription(),
 				factKind: "funding_revoked",
 				status: "stopped",
 			}),
@@ -180,15 +210,79 @@ describe("computeDunningState", () => {
 		expect(stopped?.description).toContain("No included Basic slot was available");
 	});
 
-	test("ignores funding_ready after recovery", () => {
+	test("does not recover a detached or already recovered subscription", () => {
+		expect(computeDunningState(deployment({ factKind: "funding_revoked" }))).toBeNull();
 		expect(
 			computeDunningState(
 				deployment({
 					computeSubscription: subscription({ funding_source: "wallet" }),
-					computePlanSlug: "compute_performance",
-					factKind: "funding_ready",
+					currentPlanSlug: "compute_performance",
+					factKind: "funding_revoked",
 				}),
 			),
 		).toBeNull();
+	});
+
+	test("keeps non-payment fallback presentation reason-specific", () => {
+		const cases = [
+			{
+				reason: "canceled" as const,
+				tone: "neutral",
+				secondaryTarget: null,
+				title: "Compute subscription ended",
+			},
+			{
+				reason: "refunded" as const,
+				tone: "neutral",
+				secondaryTarget: "billing_history",
+				title: "Compute payment refunded",
+			},
+			{
+				reason: "disputed" as const,
+				tone: "warning",
+				secondaryTarget: "support",
+				title: "Compute payment disputed",
+			},
+			{
+				reason: "admin_forced" as const,
+				tone: "neutral",
+				secondaryTarget: "support",
+				title: "Compute funding changed",
+			},
+		] as const;
+
+		for (const { reason, ...expected } of cases) {
+			const state = computeDunningState(
+				deployment({
+					computeSubscription: includedSubscription(),
+					factKind: "funding_revoked",
+					reason,
+				}),
+			);
+			expect(state).toMatchObject({
+				...expected,
+				fallbackReason: reason,
+				ctaTarget: "start_new",
+				recoveryAction: "start_new",
+			});
+		}
+	});
+
+	test("writes factual, reason-specific fallback sentences", () => {
+		expect(fallbackReasonSentence("payment_failure", "Performance compute", "Jul 18")).toBe(
+			"This agent fell back from Performance compute because payment failed on Jul 18.",
+		);
+		expect(fallbackReasonSentence("canceled", "Performance compute", "Jul 18")).toContain(
+			"you canceled the subscription",
+		);
+		expect(fallbackReasonSentence("refunded", "Performance compute", "Jul 18")).toContain(
+			"Review Billing history",
+		);
+		expect(fallbackReasonSentence("disputed", "Performance compute", "Jul 18")).toContain(
+			"contact support",
+		);
+		expect(fallbackReasonSentence("admin_forced", "Performance compute", "Jul 18")).toContain(
+			"changed by an administrator",
+		);
 	});
 });

@@ -2,7 +2,10 @@ export const KNOWN_DEPLOYMENT_STATUSES = [
 	"creating",
 	"starting",
 	"running",
+	"stopping",
 	"stopped",
+	"restarting",
+	"updating",
 	"failed",
 	"deleting",
 	"deleted",
@@ -53,8 +56,14 @@ export function deploymentStatusLabel(status: DeploymentStatus): string {
 			return "Starting";
 		case "running":
 			return "Running";
+		case "stopping":
+			return "Stopping";
 		case "stopped":
 			return "Stopped";
+		case "restarting":
+			return "Restarting";
+		case "updating":
+			return "Updating";
 		case "failed":
 			return "Failed";
 		case "deleting":
@@ -71,6 +80,8 @@ export function deploymentStatusLabel(status: DeploymentStatus): string {
 export function deploymentStatusTone(status: DeploymentStatus): DeploymentStatusTone {
 	switch (status.kind) {
 		case "running":
+		case "restarting":
+		case "updating":
 			return "success";
 		case "failed":
 			return "destructive";
@@ -79,6 +90,7 @@ export function deploymentStatusTone(status: DeploymentStatus): DeploymentStatus
 			return "neutral";
 		case "creating":
 		case "starting":
+		case "stopping":
 		case "deleting":
 			return "info";
 		case "unknown":
@@ -91,9 +103,12 @@ export function deploymentStatusTone(status: DeploymentStatus): DeploymentStatus
 export function isRunningStatus(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "running":
+		case "restarting":
+		case "updating":
 			return true;
 		case "creating":
 		case "starting":
+		case "stopping":
 		case "stopped":
 		case "failed":
 		case "deleting":
@@ -114,6 +129,9 @@ export function isTerminalStatus(status: DeploymentStatus): boolean {
 			return true;
 		case "creating":
 		case "starting":
+		case "stopping":
+		case "restarting":
+		case "updating":
 		case "deleting":
 		case "unknown":
 			return false;
@@ -126,6 +144,9 @@ export function isTransitionalStatus(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "creating":
 		case "starting":
+		case "stopping":
+		case "restarting":
+		case "updating":
 		case "deleting":
 		case "unknown":
 			return true;
@@ -147,6 +168,9 @@ export function canStart(status: DeploymentStatus): boolean {
 		case "creating":
 		case "starting":
 		case "running":
+		case "stopping":
+		case "restarting":
+		case "updating":
 		case "deleting":
 		case "deleted":
 		case "unknown":
@@ -160,8 +184,11 @@ export function canStop(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "running":
 		case "starting":
+		case "restarting":
+		case "updating":
 			return true;
 		case "creating":
+		case "stopping":
 		case "stopped":
 		case "failed":
 		case "deleting":
@@ -178,8 +205,11 @@ export function canRestart(status: DeploymentStatus): boolean {
 		case "running":
 		case "starting":
 		case "failed":
+		case "restarting":
+		case "updating":
 			return true;
 		case "creating":
+		case "stopping":
 		case "stopped":
 		case "deleting":
 		case "deleted":

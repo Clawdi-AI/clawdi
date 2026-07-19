@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
-import { deploymentRuntime, runtimeConsoleUrl, runtimeEnvironmentId } from "@/hosted/runtimes";
+import {
+	deploymentRuntime,
+	runtimeAiProviderAuthKind,
+	runtimeConsoleUrl,
+	runtimeEnvironmentId,
+} from "@/hosted/runtimes";
 
 describe("deploymentRuntime", () => {
 	test("returns the selected execution runtime", () => {
@@ -12,7 +17,12 @@ describe("deploymentRuntime", () => {
 			runtimeConsoleUrl(
 				hostedDeploymentFixture({
 					runtime: "openclaw",
-					endpoints: [{ name: "endpoint-1", url: "https://app-18789.example/control/" }],
+					runtimeUiEndpoint: {
+						runtime: "openclaw",
+						role: "control_ui",
+						url: "https://app-18789.example/control/",
+						requires_bridge_token: true,
+					},
 				}),
 			),
 		).toBe("https://app-18789.example/control/");
@@ -20,10 +30,46 @@ describe("deploymentRuntime", () => {
 			runtimeConsoleUrl(
 				hostedDeploymentFixture({
 					runtime: "hermes",
-					endpoints: [{ name: "endpoint-1", url: "https://app-9119.example/dashboard" }],
+					runtimeUiEndpoint: {
+						runtime: "hermes",
+						role: "control_ui",
+						url: "https://app-9119.example/dashboard",
+						requires_bridge_token: true,
+					},
 				}),
 			),
 		).toBe("https://app-9119.example/dashboard");
+	});
+
+	test("does not fall back to an unrelated resource endpoint", () => {
+		expect(
+			runtimeConsoleUrl(
+				hostedDeploymentFixture({
+					endpoints: [{ name: "app", url: "https://app.example" }],
+				}),
+			),
+		).toBeNull();
+	});
+});
+
+describe("runtimeAiProviderAuthKind", () => {
+	test("reads the authoritative per-runtime mode even when providers are empty", () => {
+		const deployment = hostedDeploymentFixture({
+			runtimeConfiguration: { providers: [], features: [] },
+			aiProviderAuthKinds: { openclaw: "unmanaged" },
+		});
+
+		expect(runtimeAiProviderAuthKind(deployment)).toBe("unmanaged");
+	});
+
+	test("keeps every hosted authentication mode distinct", () => {
+		for (const authKind of ["managed", "api_key", "codex_oauth"] as const) {
+			expect(
+				runtimeAiProviderAuthKind(
+					hostedDeploymentFixture({ aiProviderAuthKinds: { openclaw: authKind } }),
+				),
+			).toBe(authKind);
+		}
 	});
 });
 

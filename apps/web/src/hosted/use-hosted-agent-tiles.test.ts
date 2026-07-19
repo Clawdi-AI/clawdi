@@ -94,13 +94,13 @@ function env(overrides: Partial<Env> = {}): Env {
 
 function deploymentFailure(reason: string): NonNullable<HostedDeploymentStatus["failure"]> {
 	return {
-		type: "https://api.clawdi.ai/problems/deployment-failed",
-		title: "Deployment failed",
-		status: 500,
-		detail: reason,
+		type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+		title: reason,
+		status: 504,
+		detail: "The runtime did not report ready before the startup deadline.",
 		instance: "dep_123",
-		code: "deployment_failed",
-		conditionReason: "DeploymentFailed",
+		code: "runtime_readiness_timeout",
+		conditionReason: "RuntimeReadinessTimeout",
 		conditionMessage: reason,
 		observedGeneration: 1,
 	};
@@ -130,14 +130,7 @@ function deployment(
 		runtime,
 		cloudEnvironments: overrides.environmentId === null ? {} : { [runtime]: environmentId },
 		computeSubscription: overrides.computeSubscription,
-		fundingFact: overrides.computePlanSlug
-			? {
-					fact_kind: "funding_ready",
-					commercial_revision: 1,
-					compute_plan_slug: overrides.computePlanSlug,
-					emitted_at: "2026-06-22T00:00:00Z",
-				}
-			: undefined,
+		currentPlanSlug: overrides.computePlanSlug,
 		failure: overrides.failureReason ? deploymentFailure(overrides.failureReason) : undefined,
 	});
 }

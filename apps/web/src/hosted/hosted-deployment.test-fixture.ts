@@ -26,6 +26,9 @@ type HostedDeploymentFixtureOptions = {
 	upgradeAvailable?: boolean;
 	acceptedOperation?: HostedDeployment["accepted_operation"];
 	cloudEnvironments?: HostedDeployment["clawdi_cloud_environments"];
+	aiProviderAuthKinds?: HostedDeployment["ai_provider_auth_kinds"];
+	runtimeUiEndpoint?: HostedDeployment["runtime_ui_endpoint"];
+	currentPlanSlug?: HostedDeployment["current_plan_slug"];
 };
 
 const DEFAULT_CREATED_AT = "2026-01-01T00:00:00Z";
@@ -37,6 +40,7 @@ export function hostedDeploymentFixture(
 	const occupiesSlot = options.occupiesSlot ?? true;
 	const backingInfrastructure =
 		options.backingInfrastructure ?? (occupiesSlot ? "present" : "absent");
+	const runtime = options.runtime ?? "openclaw";
 
 	return {
 		resource: {
@@ -54,7 +58,7 @@ export function hostedDeploymentFixture(
 			spec: {
 				schema_version: 1,
 				desired_lifecycle: options.desiredLifecycle ?? "running",
-				runtime: options.runtime ?? "openclaw",
+				runtime,
 				runtime_version: options.runtimeVersion ?? "latest",
 				name: options.name ?? "Test deployment",
 				resources: options.resources ?? { vcpu: 1, memory_mib: 1024, disk_gib: 10 },
@@ -80,11 +84,14 @@ export function hostedDeploymentFixture(
 			},
 		},
 		clawdi_cloud_environments: options.cloudEnvironments,
+		ai_provider_auth_kinds: options.aiProviderAuthKinds ?? { [runtime]: "managed" },
+		runtime_ui_endpoint: options.runtimeUiEndpoint,
 		accepted_operation: options.acceptedOperation,
 		commercial_display: {
 			compute_subscription: options.computeSubscription ?? null,
 			latest_funding_fact: options.fundingFact ?? null,
 		},
+		current_plan_slug: options.currentPlanSlug ?? "compute_basic",
 		upgrade_available: options.upgradeAvailable ?? false,
 		compute_slot_occupancy: {
 			occupies_slot: occupiesSlot,

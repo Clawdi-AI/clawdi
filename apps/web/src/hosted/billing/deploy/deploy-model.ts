@@ -27,7 +27,7 @@ export function usesActiveIncludedBasicSlot(deployments: HostedDeployment[] | un
 	return (deployments ?? []).some((deployment) => {
 		if (
 			computeFundingMode(
-				deployment.commercial_display?.latest_funding_fact?.compute_plan_slug,
+				deployment.current_plan_slug,
 				deployment.commercial_display?.compute_subscription,
 			) !== "included_basic"
 		) {

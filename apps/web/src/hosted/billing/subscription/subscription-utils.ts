@@ -105,6 +105,26 @@ export function pendingComputePlanSlug(
 		: null;
 }
 
+export function resolveSubscriptionCreatePlanSlug(
+	priorPlanSlug: string | null | undefined,
+	{
+		basicAvailable,
+		performanceAvailable,
+	}: { basicAvailable: boolean; performanceAvailable: boolean },
+): ComputePlanSlug {
+	const preferredPlanSlug =
+		priorPlanSlug === COMPUTE_BASIC_SLUG || priorPlanSlug === COMPUTE_PERFORMANCE_SLUG
+			? priorPlanSlug
+			: COMPUTE_PERFORMANCE_SLUG;
+	if (preferredPlanSlug === COMPUTE_PERFORMANCE_SLUG && !performanceAvailable && basicAvailable) {
+		return COMPUTE_BASIC_SLUG;
+	}
+	if (preferredPlanSlug === COMPUTE_BASIC_SLUG && !basicAvailable && performanceAvailable) {
+		return COMPUTE_PERFORMANCE_SLUG;
+	}
+	return preferredPlanSlug;
+}
+
 const COMPUTE_RENEWING_STATUSES = new Set(["trialing", "active", "past_due"]);
 
 export function isComputeSubscriptionRenewing(

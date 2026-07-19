@@ -1,3 +1,4 @@
+import type { Deployment, DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route, test } from "@playwright/test";
 
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
@@ -22,6 +23,10 @@ const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 // Must match the API hosts configured in playwright.hosted.config.ts.
 const CLOUD_API = "http://127.0.0.1:8000";
 const DEPLOY_API = "http://127.0.0.1:8001";
+
+type DeploymentMutationFixture = Deployment & {
+	config_info: NonNullable<Deployment["config_info"]>;
+};
 
 const basicPlan = {
 	slug: "compute_basic",
@@ -77,7 +82,7 @@ const performancePlan = {
 	],
 };
 
-const includedBasicDeployment = {
+const includedBasicDeployment: DeploymentMutationFixture = {
 	id: "hdep_included",
 	user_id: "usr_browser",
 	name: "Included Basic",
@@ -307,6 +312,7 @@ const terminalFallbackDeployment = {
 		reason: "payment_failure",
 		prior_plan_slug: "compute_performance",
 		occurred_at: "2026-07-16T00:00:00Z",
+		subscription_id: 42,
 	},
 };
 
@@ -441,6 +447,180 @@ function planChangeResponse({
 	};
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDeploymentMutationFixture(value: unknown): value is DeploymentMutationFixture {
+	return (
+		isRecord(value) &&
+		typeof value.id === "string" &&
+		typeof value.user_id === "string" &&
+		typeof value.name === "string" &&
+		typeof value.app_id === "string" &&
+		typeof value.status === "string" &&
+		typeof value.created_at === "string" &&
+		isRecord(value.config_info) &&
+		typeof value.config_info.compute_plan_slug === "string" &&
+		(value.config_info.runtime === "openclaw" || value.config_info.runtime === "hermes")
+	);
+}
+
+function readSummaryState(status: string): DeploymentRead["resource"]["status"]["summary_state"] {
+	switch (status) {
+		case "creating":
+		case "starting":
+		case "running":
+		case "stopping":
+		case "stopped":
+		case "restarting":
+		case "updating":
+		case "deleting":
+		case "deleted":
+		case "failed":
+			return status;
+		case "provisioning":
+			return "creating";
+		case "ready":
+			return "running";
+		default:
+			throw new Error(`Unsupported deployment fixture status: ${status}`);
+	}
+}
+
+function readProviderAuthKind(
+	value: string | null | undefined,
+): DeploymentRead["ai_provider_auth_kinds"][string] {
+	switch (value) {
+		case "unmanaged":
+		case "managed":
+		case "api_key":
+		case "codex_oauth":
+			return value;
+		default:
+			throw new Error(`Unsupported deployment fixture provider mode: ${value ?? "missing"}`);
+	}
+}
+
+function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): DeploymentRead {
+	const config = deployment.config_info;
+	const runtime = config.runtime;
+	if (runtime !== "openclaw" && runtime !== "hermes") {
+		throw new Error(`Unsupported deployment fixture runtime: ${runtime}`);
+	}
+	const summaryState = readSummaryState(deployment.status);
+	const backingInfrastructure =
+		summaryState === "stopped" || summaryState === "deleted" ? "absent" : "present";
+	const runtimeBinding = config.ai_provider_bindings?.[runtime];
+	const providerAuthKind = readProviderAuthKind(
+		runtimeBinding?.auth_kind ?? config.ai_provider_auth_kind,
+	);
+	const runtimeUiUrl =
+		runtime === "openclaw" ? deployment.openclaw_control_ui_url : deployment.hermes_control_ui_url;
+	const failure = deployment.failure_reason
+		? {
+				type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+				title: deployment.failure_reason,
+				status: 504,
+				detail: "The runtime did not become ready before the startup deadline.",
+				instance: deployment.id,
+				code: "runtime_readiness_timeout",
+				phase: "readiness",
+				retryable: true,
+				conditionReason: "RuntimeReadinessTimeout",
+				conditionMessage: deployment.failure_reason,
+				observedGeneration: 1,
+			}
+		: null;
+	const fundingFact = deployment.last_funding_event
+		? {
+				fact_kind: "funding_revoked" as const,
+				commercial_revision: 1,
+				compute_subscription_id: deployment.last_funding_event.subscription_id,
+				compute_plan_slug: null,
+				funding_source: deployment.last_funding_event.funding_source,
+				reason: deployment.last_funding_event.reason,
+				prior_plan_slug: deployment.last_funding_event.prior_plan_slug,
+				occurred_at: deployment.last_funding_event.occurred_at,
+				emitted_at: deployment.last_funding_event.occurred_at,
+			}
+		: null;
+
+	return {
+		resource: {
+			id: deployment.id,
+			owner_user_id: deployment.user_id,
+			commercial_revision: 1,
+			deployment_target: "saas",
+			metadata: {
+				generation: 1,
+				manifestETag: `etag_${deployment.id}`,
+				resourceVersion: `rv_${deployment.id}`,
+				createdAt: deployment.created_at,
+				updatedAt: deployment.created_at,
+			},
+			spec: {
+				schema_version: 1,
+				desired_lifecycle:
+					summaryState === "stopped"
+						? "stopped"
+						: summaryState === "deleted"
+							? "deleted"
+							: "running",
+				runtime,
+				runtime_version: "latest",
+				name: deployment.name,
+				resources: {
+					vcpu: config.compute_plan_slug === "compute_performance" ? 4 : 2,
+					memory_mib: config.compute_plan_slug === "compute_performance" ? 8192 : 4096,
+					disk_gib: config.compute_plan_slug === "compute_performance" ? 40 : 20,
+				},
+				agents: [],
+				ports: [],
+				runtime_configuration: { providers: [], features: [] },
+				rollout_nonce: 0,
+				secret_references: [],
+			},
+			status: {
+				summary_state: summaryState,
+				observedGeneration: 1,
+				conditions: [],
+				failure,
+				backing_infrastructure: backingInfrastructure,
+				driver_acknowledged_generation: 1,
+				driver_applied_generation: 1,
+				driver_observation_sequence: 1,
+				endpoints: (deployment.endpoints ?? []).map((url, index) => ({
+					name: `endpoint-${index + 1}`,
+					url,
+				})),
+			},
+		},
+		clawdi_cloud_environments: config.clawdi_cloud_environments ?? {},
+		ai_provider_auth_kinds: { [runtime]: providerAuthKind },
+		runtime_ui_endpoint: runtimeUiUrl
+			? { runtime, role: "control_ui", url: runtimeUiUrl, requires_bridge_token: true }
+			: null,
+		accepted_operation: null,
+		commercial_display: {
+			compute_subscription: deployment.compute_subscription ?? null,
+			latest_funding_fact: fundingFact,
+		},
+		current_plan_slug: config.compute_plan_slug,
+		upgrade_available: deployment.upgrade_available,
+		compute_slot_occupancy: {
+			occupies_slot: backingInfrastructure === "present",
+			backing_infra: backingInfrastructure,
+			reason:
+				backingInfrastructure === "present" ? "backing_infra_present" : "authoritative_absence",
+		},
+	};
+}
+
+function readDeploymentFixture(value: unknown): unknown {
+	return isDeploymentMutationFixture(value) ? mutationDeploymentReadFixture(value) : value;
+}
+
 type StubResponse = { body: unknown; status: number; delayMs?: number };
 
 function isStubResponse(value: unknown): value is StubResponse {
@@ -554,7 +734,16 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			if (options.deploymentsResponse) {
 				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
 			}
-			return fulfillJson(r, deployments);
+			return fulfillJson(r, deployments.map(readDeploymentFixture));
+		}
+		if (p.startsWith("/v2/deployments/") && r.request().method() === "GET") {
+			const deploymentId = decodeURIComponent(p.slice("/v2/deployments/".length));
+			const deployment = deployments.find(
+				(candidate) => isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+			);
+			return deployment
+				? fulfillJson(r, readDeploymentFixture(deployment))
+				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		if (p === "/v2/deployments" && r.request().method() === "POST") {
 			options.createRequests?.push(r.request().postData() ?? "");

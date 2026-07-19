@@ -1,4 +1,4 @@
-import type { HostedDeployment } from "@/hosted/billing/contracts";
+import type { AiProviderAuthKind, HostedDeployment } from "@/hosted/billing/contracts";
 
 export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
 export type HostedRuntime = (typeof HOSTED_RUNTIMES)[number];
@@ -56,8 +56,15 @@ export function runtimeConsoleUrl(
 	deployment: HostedDeployment,
 	runtime: HostedRuntime = deploymentRuntime(deployment),
 ): string | null {
-	const endpoints = deployment.resource.status.endpoints;
-	return endpoints.find((endpoint) => endpoint.name === runtime)?.url ?? endpoints[0]?.url ?? null;
+	const endpoint = deployment.runtime_ui_endpoint;
+	return endpoint?.runtime === runtime && endpoint.role === "control_ui" ? endpoint.url : null;
+}
+
+export function runtimeAiProviderAuthKind(
+	deployment: HostedDeployment,
+	runtime: HostedRuntime = deploymentRuntime(deployment),
+): AiProviderAuthKind | undefined {
+	return deployment.ai_provider_auth_kinds[runtime];
 }
 
 export function defaultDeploymentRuntime(deployment: HostedDeployment): HostedRuntime {

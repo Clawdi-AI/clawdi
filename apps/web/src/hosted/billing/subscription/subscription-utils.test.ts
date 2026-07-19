@@ -17,6 +17,7 @@ import {
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
 	resolvePerformancePlan,
+	resolveSubscriptionCreatePlanSlug,
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
@@ -97,6 +98,38 @@ describe("compute plan resolvers", () => {
 
 		expect(resolveBasicPlan([otherPaid, basic])).toBe(basic);
 		expect(resolveBasicPlan([otherPaid])).toBeUndefined();
+	});
+});
+
+describe("resolveSubscriptionCreatePlanSlug", () => {
+	test("defaults resubscribe to the authoritative prior plan", () => {
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_BASIC_SLUG, {
+				basicAvailable: true,
+				performanceAvailable: true,
+			}),
+		).toBe(COMPUTE_BASIC_SLUG);
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_PERFORMANCE_SLUG, {
+				basicAvailable: true,
+				performanceAvailable: true,
+			}),
+		).toBe(COMPUTE_PERFORMANCE_SLUG);
+	});
+
+	test("uses the other saleable plan only when the prior plan is unavailable", () => {
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_BASIC_SLUG, {
+				basicAvailable: false,
+				performanceAvailable: true,
+			}),
+		).toBe(COMPUTE_PERFORMANCE_SLUG);
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_PERFORMANCE_SLUG, {
+				basicAvailable: true,
+				performanceAvailable: false,
+			}),
+		).toBe(COMPUTE_BASIC_SLUG);
 	});
 });
 

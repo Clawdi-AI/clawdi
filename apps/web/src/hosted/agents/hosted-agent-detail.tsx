@@ -116,6 +116,7 @@ import {
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
 	resolvePerformancePlan,
+	resolveSubscriptionCreatePlanSlug,
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
@@ -137,7 +138,12 @@ import {
 	missingProjectionRefetchInterval,
 	resolveHostedAgentProjection,
 } from "@/hosted/hosted-agent-resolution";
-import { type HostedRuntime, runtimeConsoleUrl, runtimeDisplayName } from "@/hosted/runtimes";
+import {
+	type HostedRuntime,
+	runtimeAiProviderAuthKind,
+	runtimeConsoleUrl,
+	runtimeDisplayName,
+} from "@/hosted/runtimes";
 import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
@@ -180,7 +186,7 @@ import {
 } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { formatModelLabel, formatShortDate } from "@/lib/format";
+import { formatMemoryMib, formatModelLabel, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
@@ -429,9 +435,7 @@ export function HostedAgentDetail({
 		section: activeTab,
 	});
 
-	const isPerformance =
-		deployment.commercial_display?.latest_funding_fact?.compute_plan_slug ===
-		COMPUTE_PERFORMANCE_SLUG;
+	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const scopedSessionLink = (sessionId: string) => ({
@@ -869,7 +873,7 @@ function OverviewTab({
 				<StatCard label="Model" value={model} />
 				<StatCard
 					label="Resources"
-					value={`${spec.resources.vcpu} vCPU · ${spec.resources.memory_mib / 1024} GB`}
+					value={`${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)}`}
 				/>
 			</div>
 			<div>
@@ -1428,8 +1432,7 @@ function AiProviderTab({
 				(provider) => provider.provider_id === configuredPrimaryModel.provider_id,
 			)
 		: undefined;
-	const currentAuthKind =
-		primaryConfiguredProvider?.auth_kind ?? configuredProviders[0]?.auth_kind ?? "managed";
+	const currentAuthKind = runtimeAiProviderAuthKind(deployment, runtime);
 	const initialMode: AiBindingMode = currentAuthKind === "unmanaged" ? "unmanaged" : "configured";
 	const legacyProviderRef =
 		currentAuthKind === "unmanaged" ? null : (primaryConfiguredProvider?.provider_id ?? null);
@@ -2335,7 +2338,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const primaryLifecycleAction: "stop" | "start" = canStop ? "stop" : "start";
 	const canRunPrimaryLifecycleAction = canStop || canStart;
 	const fundingFact = deployment.commercial_display?.latest_funding_fact;
-	const rawComputePlanSlug = fundingFact?.compute_plan_slug;
+	const rawComputePlanSlug = deployment.current_plan_slug;
 	const computePlanSlug =
 		rawComputePlanSlug === COMPUTE_BASIC_SLUG || rawComputePlanSlug === COMPUTE_PERFORMANCE_SLUG
 			? rawComputePlanSlug
@@ -2346,7 +2349,10 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const isIncludedBasic = fundingMode === "included_basic";
 	const isPaidCompute = fundingMode === "subscription";
 	const isWalletFunded = fundingSource === "wallet";
-	const hasTerminalFallback = fundingFact?.fact_kind === "funding_revoked";
+	const terminalFundingFact =
+		isIncludedBasic && fundingFact?.fact_kind === "funding_revoked" ? fundingFact : null;
+	const hasWalletFallback = terminalFundingFact?.funding_source === "wallet";
+	const hasTerminalFallback = terminalFundingFact !== null;
 	const subscriptionId = computeSubscriptionId(currentSubscription);
 	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
 	const tierLabel = computeTierLabel(computePlanSlug);
@@ -2412,8 +2418,13 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 		planChangeUnavailable === null;
 	const canStartNewSubscription =
 		hostedAccess.canUsePlanCBilling && hasTerminalFallback && !!(basicPlan || perfPlan);
-	const subscriptionCreatePlanSlug =
-		perfPlan || !basicPlan ? COMPUTE_PERFORMANCE_SLUG : COMPUTE_BASIC_SLUG;
+	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
+		terminalFundingFact?.prior_plan_slug,
+		{
+			basicAvailable: !!basicPlan,
+			performanceAvailable: !!perfPlan,
+		},
+	);
 	const upgradeUnavailableMessage = plans.isLoading
 		? "Checking Performance availability…"
 		: !hostedAccess.canUsePlanCBilling
@@ -2647,6 +2658,10 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 							{isPaidCompute ? (
 								<Badge variant="outline" className="font-normal text-muted-foreground">
 									{isWalletFunded ? "Wallet" : "Card"}
+								</Badge>
+							) : hasWalletFallback ? (
+								<Badge variant="outline" className="font-normal text-muted-foreground">
+									Wallet fallback
 								</Badge>
 							) : null}
 						</div>

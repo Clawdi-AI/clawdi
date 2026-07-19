@@ -52,13 +52,9 @@ function deployment({
 		name: "Test agent",
 		status,
 		createdAt: "2026-06-24T00:00:00Z",
+		currentPlanSlug: computePlanSlug,
 		computeSubscription,
-		fundingFact: {
-			fact_kind: "funding_ready",
-			commercial_revision: 1,
-			compute_plan_slug: computePlanSlug,
-			emitted_at: "2026-06-24T00:00:00Z",
-		},
+		fundingFact: null,
 		occupiesSlot,
 	});
 }
@@ -85,7 +81,7 @@ function plan(priceCents: number): Plan {
 }
 
 describe("usesActiveIncludedBasicSlot", () => {
-	test("uses the hosted API slot occupancy projection", () => {
+	test("uses current_plan_slug and slot occupancy without a funding fact", () => {
 		expect(usesActiveIncludedBasicSlot([deployment({ status: "running" })])).toBe(true);
 		expect(
 			usesActiveIncludedBasicSlot([deployment({ status: "running", occupiesSlot: false })]),

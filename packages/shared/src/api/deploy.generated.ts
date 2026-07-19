@@ -1458,6 +1458,17 @@ export interface components {
             compute_subscription_id?: number | null;
             /** Compute Plan Slug */
             compute_plan_slug?: string | null;
+            /** Funding Source */
+            funding_source?: ("stripe" | "wallet") | null;
+            /** Reason */
+            reason?: ("payment_failure" | "canceled" | "refunded" | "disputed" | "admin_forced") | null;
+            /** Prior Plan Slug */
+            prior_plan_slug?: string | null;
+            /**
+             * Occurred At
+             * Format: date-time
+             */
+            occurred_at: string;
             /** Spec Resources */
             spec_resources?: {
                 [key: string]: unknown;
@@ -1733,8 +1744,21 @@ export interface components {
             clawdi_cloud_environments?: {
                 [key: string]: string;
             };
+            /**
+             * Ai Provider Auth Kinds
+             * @description Authoritative per-runtime AI provider authentication modes from the persisted provider binding.
+             */
+            ai_provider_auth_kinds: {
+                [key: string]: "unmanaged" | "managed" | "api_key" | "codex_oauth";
+            };
+            runtime_ui_endpoint?: components["schemas"]["V2HostedRuntimeUiEndpointInfo"] | null;
             accepted_operation?: components["schemas"]["LongRunningOperation"] | null;
             commercial_display?: components["schemas"]["V2HostedDeploymentCommercialDisplay"];
+            /**
+             * Current Plan Slug
+             * @description Authoritative current effective compute plan stored on the deployment; present even when no commercial funding fact exists.
+             */
+            current_plan_slug: string;
             /**
              * Upgrade Available
              * @default false
@@ -1819,6 +1843,28 @@ export interface components {
             prior_plan_slug: string;
             /** Subscription Id */
             subscription_id: number;
+        };
+        /** V2HostedRuntimeUiEndpointInfo */
+        V2HostedRuntimeUiEndpointInfo: {
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "openclaw" | "hermes";
+            /**
+             * Role
+             * @default control_ui
+             * @constant
+             */
+            role: "control_ui";
+            /** Url */
+            url: string;
+            /**
+             * Requires Bridge Token
+             * @default true
+             * @constant
+             */
+            requires_bridge_token: true;
         };
         /** V2HostedUsageDay */
         V2HostedUsageDay: {
