@@ -25,6 +25,7 @@ type HostedDeploymentFixtureOptions = {
 	occupiesSlot?: boolean;
 	upgradeAvailable?: boolean;
 	acceptedOperation?: HostedDeployment["accepted_operation"];
+	cloudEnvironments?: HostedDeployment["clawdi_cloud_environments"];
 };
 
 const DEFAULT_CREATED_AT = "2026-01-01T00:00:00Z";
@@ -78,6 +79,7 @@ export function hostedDeploymentFixture(
 				endpoints: options.endpoints ?? [],
 			},
 		},
+		clawdi_cloud_environments: options.cloudEnvironments,
 		accepted_operation: options.acceptedOperation,
 		commercial_display: {
 			compute_subscription: options.computeSubscription ?? null,

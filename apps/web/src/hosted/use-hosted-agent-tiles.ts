@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { useMemo } from "react";
+import { createElement, useMemo } from "react";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
@@ -25,6 +25,7 @@ import {
 	claimedEnvIdsFromDeployments,
 	isHostedDeploymentMember,
 } from "@/hosted/hosted-agent-resolution";
+import { HostedDeploymentTileDeleteAction } from "@/hosted/hosted-deployment-tile-action";
 import { deploymentRuntime, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
@@ -118,8 +119,8 @@ export function hostedRuntimeStatusView(
  * `cloudEnvs` is the cloud-api environments list the parent already
  * fetches for the self-managed grid; passing it through lets each
  * hosted tile attach its matching `EnvironmentResponse` (joined via the
- * deployment/runtime identity frozen by the hosted control plane). With the
- * join, the same `DaemonStatusBadge` that powers
+ * stored environment id projected by the deploy API). With the join, the same
+ * `DaemonStatusBadge` that powers
  * self-managed tiles' "Synced 2m ago" label fires on hosted tiles too
  * — hosted runtimes register cloud-api envs with their own daemon, so
  * the data is the same shape; only the "Clawdi" pill distinguishes
@@ -183,25 +184,25 @@ export function useHostedAgentTiles({
 }
 
 /**
- * One deployment renders as one hosted agent tile. Its control-plane id and
- * runtime deterministically identify the matching Cloud API agent. A matching
- * projection decorates the tile with daemon sync state and presentation metadata.
+ * One deployment renders as one hosted agent tile. The selected runtime's stored
+ * environment id owns the detail route. A matching projection decorates the tile
+ * with daemon sync state and presentation metadata.
  */
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	if (!isHostedDeploymentMember(d)) return [];
 	const runtime = deploymentRuntime(d);
 	const slug = deploymentDisplayName(d.resource.spec.name);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
-	// The deployment resource owns the stable agent identity. The cloud-api env
+	// The deploy API projects the stable agent identity. The cloud-api env
 	// join only decorates the tile and may legitimately lag or be missing.
 	const envId = runtimeEnvironmentId(d, runtime);
-	const matchedEnv = envById.get(envId.toLowerCase());
+	const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
 	const routeQuery = {
 		source: "on-clawdi",
 		[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: d.resource.id,
 	};
-	const detailHref = agentSectionHref(envId, "overview", routeQuery);
-	const settingsHref = agentSectionHref(envId, "settings", routeQuery);
+	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
+	const settingsHref = envId ? agentSectionHref(envId, "settings", routeQuery) : undefined;
 	const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
 	const contextLabel = slug !== name ? slug : null;
 	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv ?? null);
@@ -221,7 +222,9 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			href: detailHref,
 			external: false,
-			action: undefined,
+			action: envId
+				? undefined
+				: createElement(HostedDeploymentTileDeleteAction, { deployment: d }),
 			manageHref: settingsHref,
 			active: runtimeStatus.active,
 			statusDot: {

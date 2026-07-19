@@ -1,11 +1,8 @@
-import { v5 as uuidv5 } from "uuid";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 
 export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
 export type HostedRuntime = (typeof HOSTED_RUNTIMES)[number];
 export const DEFAULT_HOSTED_RUNTIME: HostedRuntime = "openclaw";
-
-const CLOUD_AGENT_ID_NAMESPACE = "e016a4c8-7943-4ae9-9c53-5f1a5db9f3e1";
 
 const RUNTIME_ORDER = new Map<HostedRuntime, number>(
 	HOSTED_RUNTIMES.map((runtime, index) => [runtime, index]),
@@ -51,8 +48,8 @@ export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {
 export function runtimeEnvironmentId(
 	deployment: HostedDeployment,
 	runtime: HostedRuntime = deploymentRuntime(deployment),
-): string {
-	return uuidv5(`${deployment.resource.id}:${runtime}`, CLOUD_AGENT_ID_NAMESPACE);
+): string | undefined {
+	return deployment.clawdi_cloud_environments?.[runtime];
 }
 
 export function runtimeConsoleUrl(

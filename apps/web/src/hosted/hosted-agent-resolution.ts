@@ -54,7 +54,8 @@ export function claimedEnvIdsFromDeployments(
 	const environmentIds = new Set<string>();
 	for (const deployment of deployments) {
 		if (!isHostedDeploymentMember(deployment)) continue;
-		environmentIds.add(runtimeEnvironmentId(deployment).toLowerCase());
+		const environmentId = runtimeEnvironmentId(deployment);
+		if (environmentId) environmentIds.add(environmentId.toLowerCase());
 	}
 	return environmentIds;
 }
@@ -85,7 +86,7 @@ export function resolveAgentDeployment(
 	const matches: AgentDeploymentMatch[] = [];
 	for (const deployment of members) {
 		const runtime = deployment.resource.spec.runtime;
-		if (runtimeEnvironmentId(deployment, runtime).toLowerCase() === target) {
+		if (runtimeEnvironmentId(deployment, runtime)?.toLowerCase() === target) {
 			matches.push({ deployment, runtime });
 		}
 	}

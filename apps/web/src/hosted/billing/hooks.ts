@@ -407,7 +407,7 @@ export function billingRecoveryRefetchIntervalFor(
 	const deployment = (deployments ?? []).find((candidate) => {
 		const matchesTarget =
 			candidate.resource.id.toLowerCase() === target ||
-			runtimeEnvironmentId(candidate).toLowerCase() === target;
+			runtimeEnvironmentId(candidate)?.toLowerCase() === target;
 		return matchesTarget;
 	});
 	const subscription = deployment?.commercial_display?.compute_subscription;

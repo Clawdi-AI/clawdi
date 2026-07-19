@@ -54,8 +54,8 @@ function toastAgentLanguageTimezoneError(error: unknown) {
 
 /**
  * Resolve the hosted deployment that backs a cloud-api environment using the
- * deterministic deployment/runtime identity shared with the agent tiles. An
- * explicit deployment selector disambiguates duplicate inventory rows.
+ * stored environment id projected by the deploy API. An explicit deployment
+ * selector disambiguates duplicate inventory rows.
  */
 export function useAgentDeployment(environmentId: string, deploymentSelector?: string | null) {
 	const inventory = useHostedDeploymentInventory({
@@ -69,11 +69,12 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 
 	// The env id to drive per-env queries (sessions, channel links). For an
 	// env-id route it's the route param itself; for a deployment-id route
-	// (post-deploy redirect) resolve it from the deployment identity.
+	// (post-deploy redirect) resolve to the stored cloud-api env id, falling back
+	// to the route param while provisioning has not projected an env id yet.
 	const resolvedEnvId = useMemo(() => {
 		if (!match || match.runtime) return environmentId;
 		const runtime = deploymentRuntime(match.deployment);
-		return runtimeEnvironmentId(match.deployment, runtime);
+		return runtimeEnvironmentId(match.deployment, runtime) || environmentId;
 	}, [match, environmentId]);
 
 	return {

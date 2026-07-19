@@ -6,7 +6,6 @@ import type {
 	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
-import { runtimeEnvironmentId } from "@/hosted/runtimes";
 
 type HostedAgentTileStatus = typeof import("@/hosted/use-hosted-agent-tiles").hostedAgentTileStatus;
 type DeploymentToTiles = typeof import("@/hosted/use-hosted-agent-tiles").deploymentToTiles;
@@ -117,14 +116,19 @@ function deployment(
 		computeSubscription?: HostedComputeSubscription;
 		computePlanSlug?: "compute_basic" | "compute_performance";
 		failureReason?: string;
+		environmentId?: string | null;
 	} = {},
 ): HostedDeployment {
+	const id = overrides.id ?? "dep_123";
+	const runtime = overrides.runtime ?? "openclaw";
+	const environmentId = overrides.environmentId ?? `env_${id}_${runtime}`;
 	return hostedDeploymentFixture({
-		id: overrides.id ?? "dep_123",
+		id,
 		name: overrides.name ?? "hosted-test",
 		status: overrides.status,
 		createdAt: overrides.createdAt ?? "2026-06-22T00:00:00Z",
-		runtime: overrides.runtime,
+		runtime,
+		cloudEnvironments: overrides.environmentId === null ? {} : { [runtime]: environmentId },
 		computeSubscription: overrides.computeSubscription,
 		fundingFact: overrides.computePlanSlug
 			? {
@@ -140,9 +144,10 @@ function deployment(
 
 describe("deploymentToTiles", () => {
 	test("renders the runtime selected by the deployment spec", () => {
-		const hostedDeployment = deployment({ runtime: "openclaw" });
+		const environmentId = "env-openclaw";
+		const hostedDeployment = deployment({ runtime: "openclaw", environmentId });
 		const openclawEnv = env({
-			id: runtimeEnvironmentId(hostedDeployment),
+			id: environmentId,
 			name: "hosted-openclaw",
 			default_name: "hosted-openclaw",
 			machine_name: "hosted-openclaw",
@@ -220,8 +225,8 @@ describe("deploymentToTiles", () => {
 
 	test("links by deployment env identity when the cloud-api projection is missing", () => {
 		const failureReason = "startup_probe_failing; restart_count=2";
-		const hostedDeployment = deployment({ status: "failed", failureReason });
-		const environmentId = runtimeEnvironmentId(hostedDeployment);
+		const environmentId = "env-failed-openclaw";
+		const hostedDeployment = deployment({ status: "failed", failureReason, environmentId });
 		const [tile] = hostedDeploymentToTiles(hostedDeployment);
 
 		expect(tile).toMatchObject({
@@ -242,51 +247,72 @@ describe("deploymentToTiles", () => {
 	});
 
 	test("removes deleted deployments from tiles and detail membership", () => {
-		const deleted = deployment({ status: "deleted" });
-		const environmentId = runtimeEnvironmentId(deleted);
+		const environmentId = "env-deleted-openclaw";
+		const deleted = deployment({ status: "deleted", environmentId });
 
 		expect(hostedDeploymentToTiles(deleted)).toEqual([]);
 		expect(resolveAgentDeployment([deleted], environmentId).match).toBeNull();
 	});
 
-	test("keeps a deployment navigable while its Cloud API projection is pending", () => {
+	test("keeps a deployment without an env identity non-navigable but exposes delete", () => {
 		const hostedDeployment = deployment({
 			status: "failed",
 			failureReason: "creation_interrupted",
+			environmentId: null,
 		});
-		const environmentId = runtimeEnvironmentId(hostedDeployment);
 		const [tile] = hostedDeploymentToTiles(hostedDeployment);
 
 		expect(tile).toMatchObject({
 			id: "dep_123",
-			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
+			href: null,
 			env: null,
 			secondaryStatus: {
 				label: "Failure: creation_interrupted",
 				title: "creation_interrupted",
 			},
 		});
-		expect(tile?.action).toBeUndefined();
+		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 });
 
 describe("resolveAgentDeployment", () => {
+	const sharedEnvironmentId = "env-shared-openclaw";
 	const newer = deployment({
 		id: "dep_newer",
 		name: "Newer twin",
 		createdAt: "2026-07-15T00:00:00Z",
+		environmentId: sharedEnvironmentId,
 	});
 	const older = deployment({
 		id: "dep_older",
 		name: "Older twin",
 		createdAt: "2026-07-14T00:00:00Z",
+		environmentId: sharedEnvironmentId,
 	});
 
-	test("resolves a deployment from its deterministic environment identity", () => {
-		const resolution = resolveAgentDeployment([newer, older], runtimeEnvironmentId(newer));
+	test("resolves a deployment from its stored environment identity", () => {
+		const resolution = resolveAgentDeployment([newer], sharedEnvironmentId);
 
 		expect(resolution.match?.deployment.resource.id).toBe("dep_newer");
+		expect(resolution.match?.runtime).toBe("openclaw");
+		expect(resolution.ambiguousMatches).toEqual([]);
+	});
+
+	test("detects every deployment sharing an environment instead of picking newest", () => {
+		const resolution = resolveAgentDeployment([newer, older], sharedEnvironmentId);
+
+		expect(resolution.match).toBeNull();
+		expect(resolution.ambiguousMatches.map((match) => match.deployment.resource.id)).toEqual([
+			"dep_newer",
+			"dep_older",
+		]);
+	});
+
+	test("prefers an explicit deployment selector within the environment matches", () => {
+		const resolution = resolveAgentDeployment([newer, older], sharedEnvironmentId, "dep_older");
+
+		expect(resolution.match?.deployment.resource.id).toBe("dep_older");
 		expect(resolution.match?.runtime).toBe("openclaw");
 		expect(resolution.ambiguousMatches).toEqual([]);
 	});

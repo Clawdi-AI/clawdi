@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
-import { deploymentRuntime, runtimeConsoleUrl } from "@/hosted/runtimes";
+import { deploymentRuntime, runtimeConsoleUrl, runtimeEnvironmentId } from "@/hosted/runtimes";
 
 describe("deploymentRuntime", () => {
 	test("returns the selected execution runtime", () => {
@@ -24,5 +24,21 @@ describe("deploymentRuntime", () => {
 				}),
 			),
 		).toBe("https://app-9119.example/dashboard");
+	});
+});
+
+describe("runtimeEnvironmentId", () => {
+	test("reads the stored environment id from the top-level read projection", () => {
+		const deployment = hostedDeploymentFixture({
+			runtime: "hermes",
+			cloudEnvironments: { hermes: "env-hermes" },
+		});
+
+		expect(runtimeEnvironmentId(deployment)).toBe("env-hermes");
+		expect(runtimeEnvironmentId(deployment, "openclaw")).toBeUndefined();
+	});
+
+	test("returns undefined when the backend has not projected an environment id", () => {
+		expect(runtimeEnvironmentId(hostedDeploymentFixture())).toBeUndefined();
 	});
 });

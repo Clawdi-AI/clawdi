@@ -1729,6 +1729,10 @@ export interface components {
         /** V2HostedDeploymentReadResponse */
         V2HostedDeploymentReadResponse: {
             resource: components["schemas"]["HostedDeploymentResource"];
+            /** Clawdi Cloud Environments */
+            clawdi_cloud_environments?: {
+                [key: string]: string;
+            };
             accepted_operation?: components["schemas"]["LongRunningOperation"] | null;
             commercial_display?: components["schemas"]["V2HostedDeploymentCommercialDisplay"];
             /**
