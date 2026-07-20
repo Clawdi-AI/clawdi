@@ -7,6 +7,13 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
 
+RUNTIME_DEPLOYMENT_KEY_SCOPES = (
+    "runtime-observations:write",
+    "sessions:write",
+    "skills:read",
+    "skills:write",
+)
+
 
 class ApiKey(Base, TimestampMixin):
     __tablename__ = "api_keys"
@@ -21,7 +28,11 @@ class ApiKey(Base, TimestampMixin):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "runtime_deployment_id IS NULL OR (managed AND environment_id IS NOT NULL)",
+            "runtime_deployment_id IS NULL OR (managed AND environment_id IS NOT NULL "
+            "AND scopes IS NOT NULL AND cardinality(scopes) > 0 AND scopes <@ "
+            "ARRAY['runtime-observations:write','sessions:write',"
+            "'skills:read','skills:write']::varchar[] "
+            "AND 'runtime-observations:write' = ANY(scopes))",
             name="ck_api_keys_runtime_deployment_binding",
         ),
     )

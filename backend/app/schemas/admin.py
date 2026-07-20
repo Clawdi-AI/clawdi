@@ -108,11 +108,6 @@ class AdminApiKeyCreate(BaseModel):
     `environment_id` is optional — if set, the minted key is bound
     to that env (deploy-key semantics). If null, the key is unbound.
 
-    `deployment_id` opts an environment-bound managed key into the strict-v2
-    runtime observation protocol. Legacy managed keys remain valid without it;
-    those keys cannot submit strict-v2 observations because no environment
-    fence is provisioned.
-
     `scopes` is optional — same API-permission semantics as the user-facing
     `ApiKeyCreate`: `None` means full account access (the default
     for both user-self-mint and admin-mint). Pass an explicit list
@@ -125,18 +120,8 @@ class AdminApiKeyCreate(BaseModel):
     target_clerk_id: AdminClerkId
     label: str
     environment_id: str | None = None
-    deployment_id: str | None = Field(default=None, min_length=1, max_length=200)
     scopes: list[str] | None = None
     managed: bool = False
-
-    @model_validator(mode="after")
-    def validate_v2_runtime_binding(self) -> AdminApiKeyCreate:
-        is_v2_runtime_key = self.managed and self.environment_id is not None
-        if self.deployment_id is not None and not is_v2_runtime_key:
-            raise ValueError(
-                "deployment_id is only valid for managed environment-bound runtime keys"
-            )
-        return self
 
 
 class AdminRuntimeStateUpsert(BaseModel):

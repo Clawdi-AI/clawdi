@@ -40,10 +40,16 @@ hidden from public OpenAPI.
 
 Legacy `/api/*` mounts are hidden aliases for clients built before the `/v1`
 prefix migration. `backend/app/main.py` mounts every versioned router once under
-`/v1` and once under `/api` with `include_in_schema=False`.
+`/v1` and, where compatibility requires it, once under `/api` with
+`include_in_schema=False`.
 `backend/tests/test_api_version_alias.py` enforces that every `/v1` route has
-the `/api` alias and that public OpenAPI advertises only `/v1/*` plus
-`/health`.
+the expected `/api` alias.
+
+The declarative runtime observation companion is the one direct clean-v2
+surface. Its provisioning, ingestion, retirement, and consumer operations are
+mounted only under `/v2/runtime/*`; they have no `/v1` or `/api` alias. Public
+OpenAPI therefore advertises `/v1/*`, the explicit `/v2/runtime/*` companion,
+and `/health`.
 
 ## Additive-only contract
 
@@ -75,7 +81,8 @@ workflow in [`backend-development.md`](backend-development.md#generated-api-clie
 and commit the generated file with the schema change.
 
 Because `/api/*` aliases and admin routes are hidden from public OpenAPI, the
-generated client should use `/v1/*` paths only.
+generated client should use `/v1/*` paths for legacy contracts and direct
+`/v2/runtime/*` paths for the runtime observation companion.
 
 ## API change playbook
 

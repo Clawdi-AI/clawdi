@@ -42,6 +42,7 @@ from app.routes.platform import router as platform_router
 from app.routes.projects import router as projects_router
 from app.routes.public_sessions import router as public_sessions_router
 from app.routes.runtime import router as runtime_router
+from app.routes.runtime_observation_v2 import router as runtime_observation_v2_router
 from app.routes.search import router as search_router
 from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
@@ -285,6 +286,9 @@ for _router in _VERSIONED_ROUTERS:
     app.include_router(_router, prefix="/v1")
     if _router not in (runtime_router, platform_router):
         app.include_router(_router, prefix="/api", include_in_schema=False)
+# The declarative runtime observation companion is a clean-v2 contract. It is
+# mounted directly and intentionally has neither a /v1 nor a hidden /api alias.
+app.include_router(runtime_observation_v2_router)
 # Scope skill reads predate the Scope -> Project migration and only
 # exist for old binaries; legacy /api alias only.
 app.include_router(skills_scope_router, prefix="/api", include_in_schema=False)

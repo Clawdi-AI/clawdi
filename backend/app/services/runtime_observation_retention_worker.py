@@ -24,9 +24,9 @@ class RuntimeObservationRetentionWorker:
 
     async def run_once(self) -> int:
         async with self._sessionmaker() as db:
-            deleted = await expire_runtime_observation_payloads(db)
+            compacted = await expire_runtime_observation_payloads(db)
             await db.commit()
-            return deleted
+            return compacted
 
     async def run_forever(self, stop: asyncio.Event | None = None) -> None:
         stop_event = stop or asyncio.Event()

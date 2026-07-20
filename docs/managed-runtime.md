@@ -3,8 +3,8 @@
 | Field | Value |
 | --- | --- |
 | Status | Public runtime contract |
-| Last updated | 2026-07-12 |
-| Owner | CLI runtime layer |
+| Last updated | 2026-07-20 |
+| Owner | CLI runtime and cloud-api layers |
 
 This document describes the public Clawdi CLI and dashboard contract for managed
 runtime environments. It intentionally avoids deployment-specific topology,
@@ -52,6 +52,82 @@ The public contract does not cover:
 - tenant or billing policy;
 - internal service implementation;
 - image build pipelines or platform rollout details.
+
+## Cloud API Runtime Observation Companion
+
+The declarative v2 runtime adds an observation companion without changing the
+existing v1 daemon heartbeat or observation writer. A deployment-bound runtime
+API key sends credential-authenticated evidence to the direct `/v2` runtime
+router; cloud-api appends evidence and never writes a Hosted deployment status.
+
+Cloud-api reuses these existing runtime primitives:
+
+- `AgentEnvironment.id` as the stable environment identity;
+- managed, environment-bound `ApiKey` authentication with the dedicated
+  `runtime-observations:write` scope for the runtime credential;
+- platform workload OAuth, mutation idempotency, and control-plane audit events
+  for Hosted-facing provisioning and retirement calls;
+- PostgreSQL transactions and `FOR UPDATE` locks for ingestion and retirement
+  serialization.
+
+`POST /v1/agents/{agent_id}/sync-heartbeat` remains the frozen v1 liveness and
+latest-observation transport. It neither accepts strict-v2 identity fields nor
+reads or writes companion tables. Strict-v2 ingestion is
+`POST /v2/runtime/environments/{environment_id}/observations`; it writes only
+the companion inbox, fence high-water, and boot-session head.
+
+Four PostgreSQL tables form the additive companion boundary:
+
+| Table | Contract |
+| --- | --- |
+| `v2_runtime_environment_fences` | Permanent environment/owner/deployment binding, active or retired state, replay floor, and immutable final retirement receipt/high-waters. |
+| `v2_runtime_observation_inbox` | Immutable accepted identities with the five-field boot identity, boot-scoped sequence, global event id, timestamps, payload hash, and health. Private diagnostic payloads may be compacted in place after retention eligibility, while identity and hash columns remain permanently unique. |
+| `v2_runtime_observation_heads` | One immutable boot-session binding with non-regressing accepted sequence, stream position, capture time, and freshness; retirement compacts it to a tombstone. |
+| `v2_runtime_observation_consumer_cursors` | Environment-and-consumer ACK state, replay horizon, and explicit fail-closed expiry/reset boundary used by safe prefix retention. |
+
+Strict-v2 credential provisioning is only available through
+workload-authenticated `POST /v2/runtime/auth/keys`. The legacy admin and
+platform v1 key APIs keep their original wire shape and cannot create a fence
+or deployment-bound credential. The database requires every deployment-bound
+key to be managed, environment-bound, explicitly scoped, to include
+`runtime-observations:write`, and to stay within the runtime scope ceiling.
+
+Hosted-facing `/v2` registration, read, acknowledgement, and reset calls require
+the dedicated `platform:runtime-observations:consume` workload scope. The
+consumer identity is the authenticated workload `client_id`, and immutable
+owner/deployment authority is resolved from the environment fence rather than
+caller-selected request data, so opaque cursors cannot cross consumers or
+environments. Retirement separately requires
+`platform:runtime-environments:retire`; provisioning requires
+`platform:keys:mint`. The legacy global `X-Admin-Key` is not a fallback for any
+of these `/v2` operations.
+
+Ingestion locks the permanent environment fence and rejects a retired binding
+before it inspects or creates a boot-session head. Retirement uses the same
+fence lock, freezes all session high-waters, persists the final cursor and
+receipt, writes one durable control-plane transition audit, and tombstones all
+heads atomically. Replaying the same retirement ID returns the persisted
+receipt; a different ID or deployment binding conflicts. V1 agent deletion and
+key revocation retain their pre-companion behavior and do not consult the v2
+fence. Trusted Hosted controller ordering obtains the retirement receipt before
+using those existing teardown surfaces; the permanent fence itself is never
+deleted.
+
+Retention advances the replay floor only across a contiguous per-environment
+stream prefix. Every row in a normal replay-horizon prefix must be old enough
+and acknowledged by every required active consumer. Hard retention may expire
+lagging consumers explicitly, but it still stops at the first younger stream
+position, preventing a preserved lower id from being silently skipped. Eligible
+rows are compacted in place: private diagnostics are scrubbed and
+`payload_purged_at` records the one-way transition, while event ID,
+environment/session/sequence identity, payload hash, timestamps, and uniqueness
+constraints remain. Replay-floor maintenance may advance monotonically after
+retirement without changing the immutable receipt or final high-water fields.
+When the hard cap expires or advances a consumer boundary, retention writes a
+redacted system audit in the same transaction as the cursor and compaction.
+Active heads must reference their exact inbox stream position, and a retired
+fence's final position must equal its frozen stream high-water at the database
+boundary.
 
 ## Core Architecture
 

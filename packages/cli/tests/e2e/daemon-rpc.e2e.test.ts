@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
@@ -24,6 +25,8 @@ interface Fixture {
 	home: string;
 	clawdiHome: string;
 	stateDir: string;
+	serviceStateDir: string;
+	runDir: string;
 	codexHome: string;
 }
 
@@ -70,7 +73,16 @@ beforeAll(() => {
 			}
 
 			if (req.method === "POST" && url.pathname === `/v1/agents/${ENV_ID}/sync-heartbeat`) {
-				return json({ ok: true });
+				return new Response(null, { status: 204 });
+			}
+
+			if (
+				req.method === "POST" &&
+				url.pathname === `/v2/runtime/environments/${ENV_ID}/observations`
+			) {
+				// A v2 transport failure must not poison the independent v1
+				// liveness heartbeat or prevent its health-file update.
+				return json({ detail: "temporary v2 failure" }, 503);
 			}
 
 			return json({ detail: "not found" }, 404);
@@ -153,6 +165,29 @@ if (process.platform !== "win32") {
 				expect(apiCalls.some((call) => call.path === `/v1/agents/${ENV_ID}/sync-heartbeat`)).toBe(
 					true,
 				);
+				expect(
+					apiCalls.some((call) => call.path === `/v2/runtime/environments/${ENV_ID}/observations`),
+				).toBe(true);
+				const heartbeat = apiCalls.find(
+					(call) => call.path === `/v1/agents/${ENV_ID}/sync-heartbeat`,
+				);
+				const observation = apiCalls.find(
+					(call) => call.path === `/v2/runtime/environments/${ENV_ID}/observations`,
+				);
+				if (!isRecord(heartbeat?.body) || !isRecord(observation?.body)) {
+					throw new Error("expected separate v1 heartbeat and v2 observation bodies");
+				}
+				const heartbeatBody = heartbeat.body;
+				if (!isRecord(heartbeatBody.runtime_observed)) {
+					throw new Error("expected legacy runtime observation in v1 heartbeat");
+				}
+				const legacyObserved = heartbeatBody.runtime_observed;
+				expect(legacyObserved.bootSessionId).toBeUndefined();
+				expect(legacyObserved.eventId).toBeUndefined();
+				const observationBody = observation.body;
+				expect(observationBody.bootSessionId).toBeString();
+				expect(observationBody.eventId).toBeString();
+				expect(existsSync(join(fixture.stateDir, "codex", "health"))).toBe(true);
 				expect(apiCalls.every((call) => call.auth === `Bearer ${API_KEY}`)).toBe(true);
 			} catch (error) {
 				failure = error;
@@ -175,6 +210,62 @@ if (process.platform !== "win32") {
 				);
 			}
 		}, 20_000);
+
+		it("keeps v1 heartbeat healthy when v2 durable state initialization fails", async () => {
+			const fixture = createFixture();
+			const heartbeatRoot = join(fixture.serviceStateDir, "heartbeat");
+			const environmentKey = createHash("sha256").update(ENV_ID).digest("hex");
+			mkdirSync(heartbeatRoot, { recursive: true });
+			writeFileSync(join(heartbeatRoot, `${environmentKey}.json`), "{corrupt-v2-state\n");
+			const daemon = startDaemon(fixture);
+			const daemonStdout = new Response(daemon.stdout).text();
+			const daemonStderr = new Response(daemon.stderr).text();
+			let failure: unknown;
+			let daemonStdoutText = "";
+			let daemonStderrText = "";
+
+			try {
+				await waitFor(
+					() =>
+						apiCalls.some((call) => call.path === `/v1/agents/${ENV_ID}/sync-heartbeat`) &&
+						existsSync(join(fixture.stateDir, "codex", "health")),
+				);
+				const heartbeat = apiCalls.find(
+					(call) => call.path === `/v1/agents/${ENV_ID}/sync-heartbeat`,
+				);
+				if (!isRecord(heartbeat?.body) || !isRecord(heartbeat.body.runtime_observed)) {
+					throw new Error("expected frozen v1 heartbeat observation body");
+				}
+				expect(heartbeat.body.runtime_observed.bootSessionId).toBeUndefined();
+				expect(heartbeat.body.runtime_observed.eventId).toBeUndefined();
+				expect(
+					apiCalls.some((call) => call.path === `/v2/runtime/environments/${ENV_ID}/observations`),
+				).toBe(false);
+				const exited = await Promise.race([
+					daemon.exited.then(() => true),
+					sleep(100).then(() => false),
+				]);
+				expect(exited).toBe(false);
+			} catch (error) {
+				failure = error;
+			} finally {
+				await stopDaemon(daemon);
+				[daemonStdoutText, daemonStderrText] = await Promise.all([daemonStdout, daemonStderr]);
+				rmSync(fixture.root, { recursive: true, force: true });
+			}
+			if (failure) {
+				throw new Error(
+					[
+						failure instanceof Error ? failure.message : String(failure),
+						"daemon stdout:",
+						daemonStdoutText.trim() || "(empty)",
+						"daemon stderr:",
+						daemonStderrText.trim() || "(empty)",
+					].join("\n"),
+				);
+			}
+			expect(daemonStderrText).toContain("engine.runtime_observation_failed");
+		}, 20_000);
 	});
 }
 
@@ -183,6 +274,8 @@ function createFixture(): Fixture {
 	const home = join(root, "home");
 	const clawdiHome = join(root, "clawdi-state");
 	const stateDir = join(root, "serve-state");
+	const serviceStateDir = join(root, "service-state");
+	const runDir = join(root, "run");
 	const codexHome = join(home, ".codex");
 	mkdirSync(join(clawdiHome, "environments"), { recursive: true });
 	mkdirSync(join(codexHome, "skills"), { recursive: true });
@@ -191,7 +284,28 @@ function createFixture(): Fixture {
 		join(clawdiHome, "environments", "codex.json"),
 		`${JSON.stringify({ id: ENV_ID })}\n`,
 	);
-	return { root, home, clawdiHome, stateDir, codexHome };
+	mkdirSync(join(serviceStateDir, "status"), { recursive: true });
+	writeFileSync(
+		join(serviceStateDir, "status", "runtime-applied.json"),
+		`${JSON.stringify({
+			schemaVersion: "clawdi.runtimeAppliedState.v2",
+			appliedAt: "2026-07-20T00:00:00.000Z",
+			instanceId: "daemon-rpc-runtime",
+			etag: '"transport-manifest"',
+			manifestETag: '"frozen-manifest"',
+			applyReceiptId: "apply-receipt-daemon-rpc",
+			bootNonce: "boot-nonce-daemon-rpc-01",
+			sourceRevision: "a".repeat(64),
+			generation: 1,
+			contentIdentity: {
+				sourcePath: "https://runtime.test/v1/runtime/manifest",
+				sha256: "b".repeat(64),
+			},
+			providerIds: ["managed"],
+			projectedProviderIds: { codex: ["managed"] },
+		})}\n`,
+	);
+	return { root, home, clawdiHome, stateDir, serviceStateDir, runDir, codexHome };
 }
 
 function startDaemon(fixture: Fixture): ReturnType<typeof Bun.spawn> {
@@ -232,6 +346,10 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 		CLAWDI_NO_AUTO_UPDATE: "1",
 		CLAWDI_NO_UPDATE_CHECK: "1",
 		CLAWDI_SERVE_MODE: "container",
+		CLAWDI_RUNTIME_MODE: "hosted",
+		CLAWDI_RUNTIME_HOME: fixture.home,
+		CLAWDI_RUN_DIR: fixture.runDir,
+		CLAWDI_SERVICE_STATE_DIR: fixture.serviceStateDir,
 		CLAWDI_STATE_DIR: fixture.stateDir,
 		CODEX_HOME: fixture.codexHome,
 		CI: "true",

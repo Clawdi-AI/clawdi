@@ -231,6 +231,7 @@ Core tables verified under `backend/app/models/`:
 | `agent_environments` | Stable Agent identities plus refreshable machine metadata, labels, daemon observability, and fixed Agent Project id. |
 | `hosted_runtime_states` | Runtime desired CONFIG state keyed to an Agent identity for hosted surfaces and local mock flows. |
 | `hosted_runtime_config_observations` | Daemon-reported CONFIG convergence with `observed_at`, observed config generation, observed manifest ETag, and validated diagnostics JSONB; distinct from hosted provider COMPUTE observations. |
+| `v2_runtime_environment_fences`, `v2_runtime_observation_inbox`, `v2_runtime_observation_heads`, `v2_runtime_observation_consumer_cursors` | Additive declarative-v2 runtime evidence under direct `/v2/runtime/*` routes, permanent retirement fencing, boot-session high-waters/tombstones, and Hosted workload-bound replay cursors. Retention compacts private inbox payloads in place while permanent identity rows preserve event/session uniqueness. The existing v1 heartbeat and observation table remain unchanged. |
 | `projects`, `project_memberships`, `project_share_links`, `project_invitations`, `share_redeem_attempts` | Project ownership, viewer access, share links, directed invites, and redeem throttling/idempotency. |
 | `agent_project_bindings` | One fixed `primary` Agent Project plus ordered `context` attached Projects. |
 | `sessions`, `session_permissions` | Conversation metadata, object-store body pointer, public/user/email sharing permissions. |

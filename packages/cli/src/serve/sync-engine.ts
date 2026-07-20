@@ -151,9 +151,6 @@ interface EngineOpts {
 }
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
-	const runtimeHeartbeatSession = new HostedRuntimeHeartbeatSession({
-		environmentId: opts.environmentId,
-	});
 	// Pass the engine's abort signal so any in-flight HTTP call
 	// (heartbeat, project refresh, skill download, etc.) unwinds
 	// immediately when SSE auth fails or shutdown is requested,
@@ -821,10 +818,11 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			},
 			triggerAuthFailureAbort,
 		),
-		heartbeatLoop(opts, api, queue, runtimeHeartbeatSession, opts.abort, () => ({
+		heartbeatLoop(opts, api, queue, opts.abort, () => ({
 			last_revision_seen: lastSeenRevision,
 			last_sync_error: lastSyncError,
 		})),
+		runtimeObservationLoop(opts, api, opts.abort),
 		refreshDefaultProjectIdLoop(opts.abort),
 		// Safety-net periodic sessions rescan. After a 4xx drop we
 		// clear inFlightSessionHash, but the watcher only fires on
@@ -2249,7 +2247,6 @@ async function heartbeatLoop(
 	opts: EngineOpts,
 	api: ApiClient,
 	queue: RetryQueue,
-	runtimeHeartbeatSession: HostedRuntimeHeartbeatSession,
 	abort: AbortSignal,
 	snapshot: () => { last_revision_seen: number | null; last_sync_error: string | null },
 ): Promise<void> {
@@ -2257,10 +2254,9 @@ async function heartbeatLoop(
 	const send = async () => {
 		const fields = snapshot();
 		const dropped = queue.drainDroppedDelta();
+		const runtimeObserved = readHostedRuntimeObserved();
 		try {
-			const bufferedRuntimeObserved = runtimeHeartbeatSession.nextEvent();
-			const runtimeObserved = bufferedRuntimeObserved?.event ?? readHostedRuntimeObserved();
-			const response = await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
+			await api.POST("/v1/agents/{agent_id}/sync-heartbeat", {
 				params: { path: { agent_id: opts.environmentId } },
 				body: {
 					// Peak since boot rather than sampled current
@@ -2277,25 +2273,6 @@ async function heartbeatLoop(
 					...(runtimeObserved ? { runtime_observed: runtimeObserved } : {}),
 				},
 			});
-			if (bufferedRuntimeObserved && isSafelyTerminalRuntimeObservationFailure(response)) {
-				if (!runtimeHeartbeatSession.retireTerminallyStale(bufferedRuntimeObserved.event.eventId)) {
-					throw new Error("terminally stale runtime heartbeat did not match the buffered event");
-				}
-				queue.restoreDroppedDelta(dropped);
-				heartbeatFailureStreak = 0;
-				log.warn("engine.runtime_observation_retired_stale", {
-					event_id: bufferedRuntimeObserved.event.eventId,
-					captured_at: bufferedRuntimeObserved.event.capturedAt,
-				});
-				return;
-			}
-			unwrap(response);
-			if (
-				bufferedRuntimeObserved &&
-				!runtimeHeartbeatSession.acknowledge(bufferedRuntimeObserved.event.eventId)
-			) {
-				throw new Error("runtime heartbeat acknowledgement did not match the buffered event");
-			}
 			heartbeatFailureStreak = 0;
 			await touchHealthFile(opts.adapter.agentType);
 		} catch (e) {
@@ -2328,6 +2305,55 @@ async function heartbeatLoop(
 		// don't all heartbeat in the same wall-clock second. The
 		// upper bound stays inside the dashboard's 90s freshness
 		// window after the eager first beat.
+		await sleep(heartbeatDelayMs(), abort);
+		if (abort.aborted) return;
+		await send();
+	}
+}
+
+/** Send durable strict-v2 observations independently of legacy liveness. */
+async function runtimeObservationLoop(
+	opts: EngineOpts,
+	api: ApiClient,
+	abort: AbortSignal,
+): Promise<void> {
+	let runtimeHeartbeatSession: HostedRuntimeHeartbeatSession | null = null;
+	const send = async () => {
+		let buffered: ReturnType<HostedRuntimeHeartbeatSession["nextEvent"]> = null;
+		try {
+			runtimeHeartbeatSession ??= new HostedRuntimeHeartbeatSession({
+				environmentId: opts.environmentId,
+			});
+			buffered = runtimeHeartbeatSession.nextEvent();
+			if (!buffered) return;
+			const response = await api.POST("/v2/runtime/environments/{environment_id}/observations", {
+				params: { path: { environment_id: opts.environmentId } },
+				body: buffered.event,
+			});
+			if (isSafelyTerminalRuntimeObservationFailure(response)) {
+				if (!runtimeHeartbeatSession.retireTerminallyStale(buffered.event.eventId)) {
+					throw new Error("terminally stale runtime observation did not match buffered event");
+				}
+				log.warn("engine.runtime_observation_retired_stale", {
+					event_id: buffered.event.eventId,
+					captured_at: buffered.event.capturedAt,
+				});
+				return;
+			}
+			unwrap(response);
+			if (!runtimeHeartbeatSession.acknowledge(buffered.event.eventId)) {
+				throw new Error("runtime observation acknowledgement did not match buffered event");
+			}
+		} catch (error) {
+			log.info("engine.runtime_observation_failed", {
+				error: toErrorMessage(error),
+				...(buffered ? { event_id: buffered.event.eventId } : {}),
+			});
+		}
+	};
+
+	await send();
+	while (!abort.aborted) {
 		await sleep(heartbeatDelayMs(), abort);
 		if (abort.aborted) return;
 		await send();

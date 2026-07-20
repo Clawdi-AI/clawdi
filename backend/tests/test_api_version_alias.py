@@ -3,7 +3,8 @@
 Legacy routes are mounted canonically under /v1 and aliased under /api for
 clients built before the versioned-prefix migration. New contracts are
 canonical-only. The OpenAPI schema (which the web/CLI typed-client codegen
-consumes) must only advertise /v1.
+consumes) advertises legacy `/v1` plus the explicitly direct declarative-v2
+runtime companion; `/api` never aliases the v2 router.
 """
 
 import httpx
@@ -78,10 +79,18 @@ async def test_runtime_manifest_has_no_api_alias():
     assert response.status_code == 404
 
 
-def test_openapi_schema_only_advertises_v1():
+def test_openapi_schema_advertises_only_v1_and_direct_runtime_v2():
     spec = app.openapi()
-    non_v1 = [path for path in spec["paths"] if not path.startswith("/v1/")]
-    assert non_v1 == ["/health"], (
-        "the /api legacy alias (and anything else outside /v1) must stay out of "
-        f"the public OpenAPI schema, found: {non_v1}"
-    )
+    non_v1 = {path for path in spec["paths"] if not path.startswith("/v1/") and path != "/health"}
+    assert non_v1
+    assert all(path.startswith("/v2/runtime/") for path in non_v1)
+    assert all(not path.startswith("/api/") for path in spec["paths"])
+
+    routes = _routes_by_path()
+    for path in non_v1:
+        assert path not in {
+            f"/v1{path.removeprefix('/v2')}",
+            f"/api{path.removeprefix('/v2')}",
+        }
+        assert f"/v1{path.removeprefix('/v2')}" not in routes
+        assert f"/api{path.removeprefix('/v2')}" not in routes
