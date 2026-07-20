@@ -28,16 +28,18 @@ can land in this file under the same auth dep.
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import invalidate_api_key_auth_cache, require_admin_api_key
 from app.core.database import get_session
+from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.channel import (
     CHANNEL_PROVIDERS,
@@ -45,7 +47,11 @@ from app.models.channel import (
 )
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
-from app.models.user import PRINCIPAL_KIND_CLERK, User
+from app.models.user import (
+    PRINCIPAL_KIND_CLERK,
+    PRINCIPAL_KIND_PARTNER_TENANT,
+    User,
+)
 from app.schemas.admin import (
     AdminAgentCreate,
     AdminApiKeyCreate,
@@ -55,14 +61,18 @@ from app.schemas.admin import (
     AdminChannelUpdate,
     AdminChannelVisibility,
     AdminChannelWebhookSecretResponse,
+    AdminDeploymentManagedAiProviderResponse,
+    AdminDeploymentManagedAiProviderUpsert,
     AdminEnvironmentCreate,
     AdminManagedAiProviderResponse,
     AdminManagedAiProviderUpsert,
     AdminRuntimeStateResponse,
     AdminRuntimeStateUpsert,
 )
+from app.schemas.ai_provider import AiProviderDeleteResponse, ai_provider_auth_from_persistence
 from app.schemas.api_key import ApiKeyCreated, ApiKeyRevokeResponse
 from app.schemas.channel import ChannelCommandSyncRequest, ChannelCommandSyncResponse
+from app.schemas.platform import PlatformOwner
 from app.schemas.session import EnvironmentCreatedResponse
 from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
@@ -84,8 +94,16 @@ from app.services.channels import (
 )
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_API_MODE,
+    MANAGED_AI_PROVIDER_LABEL,
+    MANAGED_AI_PROVIDER_PROFILE,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    MANAGED_AI_PROVIDER_SCOPE,
+    MANAGED_AI_PROVIDER_TYPE,
     V2_MANAGED_AI_PROVIDER_IDS,
+    archive_clawdi_managed_provider,
+    find_clawdi_managed_provider,
+    is_v2_deployment_managed_provider_id,
+    lock_deployment_managed_provider_mutation,
     upsert_clawdi_managed_provider,
 )
 from app.services.runtime_observation import (
@@ -97,7 +115,10 @@ from app.services.sync_events import (
     queue_provider_runtime_manifest_changed,
     queue_runtime_manifest_changed,
 )
-from app.services.user_provisioning import lazy_create_user_with_personal_project
+from app.services.user_provisioning import (
+    lazy_create_partner_user_with_personal_project,
+    lazy_create_user_with_personal_project,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -152,6 +173,205 @@ async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:
     )
     logger.info("admin_lazy_create_user clerk_id=%s user_id=%s", clerk_id, user.id)
     return user
+
+
+async def _find_admin_owner(db: AsyncSession, owner: PlatformOwner) -> User:
+    if owner.kind == PRINCIPAL_KIND_CLERK:
+        filters = (
+            User.principal_kind == PRINCIPAL_KIND_CLERK,
+            User.clerk_id == owner.ref,
+        )
+    else:
+        filters = (
+            User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+            User.partner_tenant_ref == owner.ref,
+            User.clerk_id.is_(None),
+        )
+    target = (await db.execute(select(User).where(*filters))).scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Owner not found")
+    return target
+
+
+async def _resolve_or_create_admin_owner(db: AsyncSession, owner: PlatformOwner) -> User:
+    if owner.kind == PRINCIPAL_KIND_CLERK:
+        return await _resolve_or_create_user(db, owner.ref)
+
+    target = (
+        await db.execute(
+            select(User).where(
+                User.principal_kind == PRINCIPAL_KIND_PARTNER_TENANT,
+                User.partner_tenant_ref == owner.ref,
+                User.clerk_id.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if target is not None:
+        return target
+    return await lazy_create_partner_user_with_personal_project(
+        db,
+        partner_tenant_ref=owner.ref,
+        race_loser_status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+    )
+
+
+def _require_managed_provider_contract(provider: AiProvider) -> None:
+    if (
+        provider.type != MANAGED_AI_PROVIDER_TYPE
+        or provider.api_mode != MANAGED_AI_PROVIDER_API_MODE
+        or provider.auth_type != "api_key"
+        or provider.auth_ref is not None
+        or (provider.auth_metadata or {}).get("source") != "managed"
+        or provider.managed_by != "clawdi"
+        or provider.runtime_env_name != MANAGED_AI_PROVIDER_RUNTIME_ENV
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Stored managed AI provider contract is invalid",
+        )
+
+
+async def _admin_deployment_managed_provider_response(
+    db: AsyncSession,
+    *,
+    provider: AiProvider,
+    owner: PlatformOwner,
+    target: User,
+) -> AdminDeploymentManagedAiProviderResponse:
+    _require_managed_provider_contract(provider)
+    try:
+        auth = ai_provider_auth_from_persistence(
+            provider.auth_type,
+            provider.auth_ref,
+            provider.auth_metadata,
+        )
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Stored managed AI provider auth metadata is invalid",
+        ) from exc
+    has_api_key = (
+        await db.scalar(
+            select(AiProviderAuthPayload.id).where(
+                AiProviderAuthPayload.owner_user_id == target.id,
+                AiProviderAuthPayload.provider_id == provider.provider_id,
+                AiProviderAuthPayload.auth_profile == MANAGED_AI_PROVIDER_PROFILE,
+                AiProviderAuthPayload.kind == "api_key",
+                AiProviderAuthPayload.source == "managed",
+                AiProviderAuthPayload.archived_at.is_(None),
+            )
+        )
+        is not None
+    )
+    return AdminDeploymentManagedAiProviderResponse(
+        id=provider.id,
+        owner=owner,
+        owner_user_id=target.id,
+        owner_clerk_id=target.clerk_id,
+        provider_id=provider.provider_id,
+        scope=MANAGED_AI_PROVIDER_SCOPE,
+        type=MANAGED_AI_PROVIDER_TYPE,
+        label=provider.label or MANAGED_AI_PROVIDER_LABEL,
+        api_mode=provider.api_mode or "",
+        auth=auth,
+        managed_by="clawdi",
+        runtime_env_name=provider.runtime_env_name or "",
+        base_url=provider.base_url,
+        capabilities=provider.capabilities,
+        models=provider.models,
+        has_api_key=has_api_key,
+    )
+
+
+def _record_deployment_managed_provider_audit(
+    db: AsyncSession,
+    *,
+    action: str,
+    owner: PlatformOwner,
+    owner_user_id: UUID | None,
+    provider_id: str,
+    outcome: str,
+    provider_uuid: UUID | None = None,
+) -> None:
+    details: dict[str, Any] = {
+        "auth_method": "x_admin_key",
+        "owner": owner.model_dump(mode="json"),
+        "owner_user_id": str(owner_user_id) if owner_user_id is not None else None,
+        "provider_id": provider_id,
+        "outcome": outcome,
+    }
+    if provider_uuid is not None:
+        details["provider_uuid"] = str(provider_uuid)
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action=action,
+        resource_type="ai_provider",
+        resource_id=provider_id,
+        target_user_id=owner_user_id,
+        source="api.admin",
+        details=details,
+    )
+
+
+async def _find_deployment_managed_provider_owner(
+    db: AsyncSession,
+    *,
+    owner: PlatformOwner,
+    provider_id: str,
+    action: str,
+) -> User:
+    try:
+        return await _find_admin_owner(db, owner)
+    except HTTPException:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=None,
+            provider_id=provider_id,
+            outcome="failed",
+        )
+        await db.commit()
+        raise
+
+
+async def _raise_deployment_managed_provider_scope_denied(
+    db: AsyncSession,
+    *,
+    action: str,
+    owner: PlatformOwner,
+    owner_user_id: UUID,
+    provider_id: str,
+) -> None:
+    # Deliberately do not probe by provider id alone. A scoped miss is reported
+    # uniformly, so the admin contract neither leaks nor crosses another owner.
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
+        outcome="cross_owner_denied",
+    )
+    await db.commit()
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
+
+
+def _deployment_managed_provider_query_owner(
+    *,
+    kind: str | None,
+    ref: str | None,
+) -> PlatformOwner:
+    if kind is None or ref is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "owner is required")
+    try:
+        return PlatformOwner.model_validate({"kind": kind, "ref": ref})
+    except ValidationError as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "owner is invalid",
+        ) from exc
 
 
 async def _assert_admin_target_owns_environment(
@@ -342,27 +562,177 @@ async def admin_revoke_api_key(
     return ApiKeyRevokeResponse(status="revoked")
 
 
+@router.get(
+    "/ai-providers/{provider_id}",
+    response_model=AdminDeploymentManagedAiProviderResponse,
+    response_model_exclude_none=True,
+)
+async def admin_get_clawdi_managed_ai_provider(
+    provider_id: str,
+    owner_kind: Annotated[str | None, Query(alias="kind")] = None,
+    owner_ref: Annotated[str | None, Query(alias="ref")] = None,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminDeploymentManagedAiProviderResponse:
+    """Read one first-party managed provider within an explicit owner scope."""
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        raise HTTPException(
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+            "Method Not Allowed",
+            headers={"Allow": "PUT"},
+        )
+    owner = _deployment_managed_provider_query_owner(kind=owner_kind, ref=owner_ref)
+    action = "ai_provider.managed.read"
+    target = await _find_deployment_managed_provider_owner(
+        db,
+        owner=owner,
+        provider_id=provider_id,
+        action=action,
+    )
+    provider = await find_clawdi_managed_provider(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    if provider is None:
+        await _raise_deployment_managed_provider_scope_denied(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+        )
+    try:
+        response = await _admin_deployment_managed_provider_response(
+            db,
+            provider=provider,
+            owner=owner,
+            target=target,
+        )
+    except HTTPException:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            provider_uuid=provider.id,
+            outcome="failed",
+        )
+        await db.commit()
+        raise
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    await db.commit()
+    return response
+
+
 @router.put(
     "/ai-providers/{provider_id}",
-    response_model=AdminManagedAiProviderResponse,
+    response_model=AdminManagedAiProviderResponse | AdminDeploymentManagedAiProviderResponse,
 )
 async def admin_upsert_clawdi_managed_ai_provider(
     provider_id: str,
-    body: AdminManagedAiProviderUpsert,
+    body: AdminManagedAiProviderUpsert | AdminDeploymentManagedAiProviderUpsert,
     _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
-) -> AdminManagedAiProviderResponse:
+) -> AdminManagedAiProviderResponse | AdminDeploymentManagedAiProviderResponse:
     """Upsert the first-party managed AI provider for a target user.
 
     This intentionally does not expose a generic admin AI-provider write API.
-    Hosted deploy orchestration only needs to install the fixed
-    Clawdi-managed OpenAI-compatible chat provider and rotate its key.
+    Hosted deploy orchestration can install either the fixed imperative
+    provider or one deployment-scoped declarative provider and rotate its key.
     """
-    # TODO(#425): Remove legacy v2 route acceptance after hosted#892 is deployed
-    # everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
-    if provider_id not in V2_MANAGED_AI_PROVIDER_IDS:
+    if provider_id in V2_MANAGED_AI_PROVIDER_IDS:
+        if not isinstance(body, AdminManagedAiProviderUpsert):
+            raise HTTPException(
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
+                "target_clerk_id is required for fixed managed AI providers",
+            )
+        # Keep this branch byte-for-byte compatible with the original fixed
+        # clawdi-v2 / clawdi-managed-v2 admin contract.
+        target = await _resolve_or_create_user(db, body.target_clerk_id)
+        try:
+            provider = await upsert_clawdi_managed_provider(
+                db,
+                user=target,
+                provider_id=provider_id,
+                base_url=body.base_url,
+                api_key=body.api_key.get_secret_value(),
+                default_model=body.default_model,
+                models=(
+                    [model.model_dump(exclude_none=True) for model in body.models]
+                    if body.models is not None
+                    else None
+                ),
+                label=body.label,
+                capabilities=body.capabilities,
+            )
+        except ValueError as e:
+            raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
+
+        await queue_provider_runtime_manifest_changed(
+            db,
+            target.id,
+            provider.provider_id,
+        )
+        record_control_plane_audit(
+            db,
+            actor_type="admin",
+            action="ai_provider.managed.upsert",
+            resource_type="ai_provider",
+            resource_id=provider.provider_id,
+            target_user_id=target.id,
+            source="api.admin",
+            details={
+                "provider_id": provider.provider_id,
+                "api_mode": MANAGED_AI_PROVIDER_API_MODE,
+                "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
+                "models": provider.models,
+                "has_capabilities": body.capabilities is not None,
+            },
+        )
+        await db.commit()
+        await db.refresh(provider)
+        logger.info(
+            "admin_managed_ai_provider_upserted target_clerk_id=%s provider_id=%s",
+            body.target_clerk_id,
+            provider.provider_id,
+        )
+        return AdminManagedAiProviderResponse(
+            owner_user_id=target.id,
+            owner_clerk_id=target.clerk_id,
+            provider_id=provider.provider_id,
+            api_mode=provider.api_mode or "",
+            runtime_env_name=provider.runtime_env_name or "",
+            base_url=provider.base_url,
+            models=provider.models,
+            has_api_key=True,
+        )
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "managed AI provider not found")
-    target = await _resolve_or_create_user(db, body.target_clerk_id)
+    if not isinstance(body, AdminDeploymentManagedAiProviderUpsert):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "owner is required for deployment-scoped managed AI providers",
+        )
+    owner = body.owner
+    target = await _resolve_or_create_admin_owner(db, owner)
+    # This must precede the first provider/auth lookup in the upsert service.
+    await lock_deployment_managed_provider_mutation(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
     try:
         provider = await upsert_clawdi_managed_provider(
             db,
@@ -380,47 +750,157 @@ async def admin_upsert_clawdi_managed_ai_provider(
             capabilities=body.capabilities,
         )
     except ValueError as e:
+        _record_deployment_managed_provider_audit(
+            db,
+            action="ai_provider.managed.upsert",
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            outcome="failed",
+        )
+        await db.commit()
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
 
+    await db.flush()
     await queue_provider_runtime_manifest_changed(
         db,
         target.id,
         provider.provider_id,
     )
-
-    record_control_plane_audit(
+    _record_deployment_managed_provider_audit(
         db,
-        actor_type="admin",
         action="ai_provider.managed.upsert",
-        resource_type="ai_provider",
-        resource_id=provider.provider_id,
-        target_user_id=target.id,
-        source="api.admin",
-        details={
-            "provider_id": provider.provider_id,
-            "api_mode": MANAGED_AI_PROVIDER_API_MODE,
-            "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
-            "models": provider.models,
-            "has_capabilities": body.capabilities is not None,
-        },
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider.provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    _record_deployment_managed_provider_audit(
+        db,
+        action="ai_provider.managed.credential.rotate",
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider.provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
     )
     await db.commit()
     await db.refresh(provider)
     logger.info(
-        "admin_managed_ai_provider_upserted target_clerk_id=%s provider_id=%s",
-        body.target_clerk_id,
+        "admin_managed_ai_provider_upserted owner_kind=%s owner_ref=%s provider_id=%s",
+        owner.kind,
+        owner.ref,
         provider.provider_id,
     )
-    return AdminManagedAiProviderResponse(
-        owner_user_id=target.id,
-        owner_clerk_id=target.clerk_id,
-        provider_id=provider.provider_id,
-        api_mode=provider.api_mode or "",
-        runtime_env_name=provider.runtime_env_name or "",
-        base_url=provider.base_url,
-        models=provider.models,
-        has_api_key=True,
+    return await _admin_deployment_managed_provider_response(
+        db,
+        provider=provider,
+        owner=owner,
+        target=target,
     )
+
+
+@router.delete(
+    "/ai-providers/{provider_id}",
+    response_model=AiProviderDeleteResponse,
+)
+async def admin_delete_clawdi_managed_ai_provider(
+    provider_id: str,
+    owner_kind: Annotated[str | None, Query(alias="kind")] = None,
+    owner_ref: Annotated[str | None, Query(alias="ref")] = None,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AiProviderDeleteResponse:
+    """Archive one first-party managed provider within an explicit owner scope."""
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        raise HTTPException(
+            status.HTTP_405_METHOD_NOT_ALLOWED,
+            "Method Not Allowed",
+            headers={"Allow": "PUT"},
+        )
+    owner = _deployment_managed_provider_query_owner(kind=owner_kind, ref=owner_ref)
+    action = "ai_provider.managed.delete"
+    target = await _find_deployment_managed_provider_owner(
+        db,
+        owner=owner,
+        provider_id=provider_id,
+        action=action,
+    )
+    # Use the same transaction lock as PUT before checking archived state.
+    await lock_deployment_managed_provider_mutation(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    provider = await find_clawdi_managed_provider(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    if provider is None:
+        await _raise_deployment_managed_provider_scope_denied(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+        )
+    try:
+        _require_managed_provider_contract(provider)
+    except HTTPException:
+        _record_deployment_managed_provider_audit(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+            provider_uuid=provider.id,
+            outcome="failed",
+        )
+        await db.commit()
+        raise
+    archived = await archive_clawdi_managed_provider(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
+    if archived is None:
+        await _raise_deployment_managed_provider_scope_denied(
+            db,
+            action=action,
+            owner=owner,
+            owner_user_id=target.id,
+            provider_id=provider_id,
+        )
+    await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
+    _record_deployment_managed_provider_audit(
+        db,
+        action=action,
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    _record_deployment_managed_provider_audit(
+        db,
+        action="ai_provider.managed.credential.archive",
+        owner=owner,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+        provider_uuid=provider.id,
+        outcome="success",
+    )
+    await db.commit()
+    logger.info(
+        "admin_managed_ai_provider_deleted owner_kind=%s owner_ref=%s provider_id=%s",
+        owner.kind,
+        owner.ref,
+        provider_id,
+    )
+    return AiProviderDeleteResponse(status="deleted", provider_id=provider_id)
 
 
 @router.get("/channels", response_model=list[AdminChannelResponse])

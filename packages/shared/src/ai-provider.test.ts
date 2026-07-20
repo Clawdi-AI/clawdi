@@ -3,11 +3,13 @@ import {
 	type AiProviderAuth,
 	CLAWDI_MANAGED_PROVIDER_IDS,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX,
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
 	CODEX_OAUTH_MODEL_CATALOG,
 	defaultAiProviderModels,
 	defaultAiProviderRuntimeEnvName,
+	isClawdiManagedV2ProviderId,
 	isFirstPartyManagedAiProvider,
 	isProviderAuthProfileId,
 	validateAiProviderCatalog,
@@ -291,6 +293,7 @@ describe("validateAiProviderCatalog", () => {
 	test.each([
 		CLAWDI_MANAGED_V2_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+		`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
 	])("accepts v2 Clawdi-managed provider %s in OpenAI chat mode", (providerId) => {
 		const result = validateAiProviderCatalog({
 			schema_version: 1,
@@ -311,6 +314,16 @@ describe("validateAiProviderCatalog", () => {
 
 		expect(result.valid).toBe(true);
 		expect(result.errors).toEqual([]);
+	});
+
+	test.each([
+		"clawdi-v2-deployment-",
+		"clawdi-v2-deployment-0",
+		"clawdi-v2-deployment-01",
+		"clawdi-v2-deployment-invalid",
+		`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}${"9".repeat(43)}`,
+	])("rejects invalid deployment-scoped managed provider id %s", (providerId) => {
+		expect(isClawdiManagedV2ProviderId(providerId)).toBe(false);
 	});
 
 	test("accepts v1 Clawdi-managed providers in OpenAI responses mode", () => {
@@ -371,6 +384,11 @@ describe("isFirstPartyManagedAiProvider", () => {
 		expect(
 			isFirstPartyManagedAiProvider({
 				provider_id: CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+			}),
+		).toBe(true);
+		expect(
+			isFirstPartyManagedAiProvider({
+				provider_id: `${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
 			}),
 		).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_PROVIDER_ID)).toBe(true);
