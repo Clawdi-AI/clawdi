@@ -1,5 +1,6 @@
 {
-  "description": "Repository-owned pre-v2 byte baseline for the frozen v1 runtime observation surface.",
+  "description": "Repository-owned pre-v2 byte baseline for the frozen v1 runtime observation surface. Hashes were captured from source commit 704f81b4af51012ee4ca5dbc6a7ceab7c073fe62; the test does not read git history.",
+  "source_commit": "704f81b4af51012ee4ca5dbc6a7ceab7c073fe62",
   "files": {
     "backend/app/routes/sessions.py": {
       "symbols": {

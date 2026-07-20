@@ -2270,6 +2270,13 @@ async def test_v2_ingestion_route_auth_rejections_are_durably_audited(
     private_diagnostic = "private-internal-error-and-opaque-cursor-must-not-enter-audit"
     cases = (
         (
+            "runtime_credential_required",
+            None,
+            None,
+            None,
+            None,
+        ),
+        (
             "managed_credential_required",
             False,
             environment_id,
@@ -2309,16 +2316,18 @@ async def test_v2_ingestion_route_auth_rejections_are_durably_audited(
                 cases,
                 start=1,
             ):
-                runtime_key = ApiKey(
-                    id=uuid.uuid4(),
-                    user_id=seed_user.id,
-                    managed=managed,
-                    environment_id=bound_environment,
-                    runtime_deployment_id=deployment_id,
-                    scopes=scopes,
-                    key_hash=raw_credential,
-                    key_prefix="raw-route-prefix",
-                )
+                runtime_key = None
+                if managed is not None:
+                    runtime_key = ApiKey(
+                        id=uuid.uuid4(),
+                        user_id=seed_user.id,
+                        managed=managed,
+                        environment_id=bound_environment,
+                        runtime_deployment_id=deployment_id,
+                        scopes=scopes,
+                        key_hash=raw_credential,
+                        key_prefix="raw-route-prefix",
+                    )
                 auth_context = AuthContext(user=seed_user, api_key=runtime_key)
                 event_id = f"{event_prefix}-{reason}"
                 payload = _payload(
@@ -2335,9 +2344,14 @@ async def test_v2_ingestion_route_auth_rejections_are_durably_audited(
                 assert (
                     response.json()["detail"]["code"] == "runtime_observation_credential_mismatch"
                 )
+                principal_id = runtime_key.id if runtime_key is not None else seed_user.id
                 expected[event_id] = {
                     "reason": reason,
-                    "principal_id": str(runtime_key.id),
+                    "actor_type": ("runtime_deployment" if runtime_key is not None else "user"),
+                    "principal_id": str(principal_id),
+                    "runtime_principal_id": (
+                        str(runtime_key.id) if runtime_key is not None else None
+                    ),
                     "deployment_id": deployment_id,
                     "boot_session_id": payload.boot_session_id,
                     "sequence": payload.sequence,
@@ -2363,12 +2377,13 @@ async def test_v2_ingestion_route_auth_rejections_are_durably_audited(
     for event in audits:
         details = event.details
         expected_details = expected[details["event_id"]]
-        assert event.actor_type == "runtime_deployment"
+        assert event.actor_type == expected_details["actor_type"]
         assert event.actor_user_id == seed_user.id
         assert event.target_user_id == seed_user.id
+        assert details["principal_id"] is not None
         assert details == {
             "principal_id": expected_details["principal_id"],
-            "runtime_principal_id": expected_details["principal_id"],
+            "runtime_principal_id": expected_details["runtime_principal_id"],
             "environment_id": str(environment_id),
             "deployment_id": expected_details["deployment_id"],
             "boot_session_id": expected_details["boot_session_id"],

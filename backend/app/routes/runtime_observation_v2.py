@@ -96,6 +96,7 @@ async def require_runtime_observation_writer(
         _record_runtime_ingest_audit(
             db,
             actor_user_id=auth.user_id,
+            principal_id=api_key.id if api_key is not None else auth.user_id,
             runtime_principal_id=api_key.id if api_key is not None else None,
             deployment_id=(api_key.runtime_deployment_id if api_key is not None else None),
             environment_id=environment_id,
@@ -227,6 +228,7 @@ def _record_runtime_ingest_audit(
     db: AsyncSession,
     *,
     actor_user_id: UUID,
+    principal_id: UUID,
     runtime_principal_id: UUID | None,
     deployment_id: str | None,
     environment_id: UUID,
@@ -236,7 +238,7 @@ def _record_runtime_ingest_audit(
 ) -> None:
     record_control_plane_audit(
         db,
-        actor_type="runtime_deployment",
+        actor_type="runtime_deployment" if runtime_principal_id is not None else "user",
         actor_user_id=actor_user_id,
         target_user_id=actor_user_id,
         source="api.v2.runtime",
@@ -245,9 +247,7 @@ def _record_runtime_ingest_audit(
         resource_id=str(environment_id),
         environment_id=None,
         details={
-            "principal_id": (
-                str(runtime_principal_id) if runtime_principal_id is not None else None
-            ),
+            "principal_id": str(principal_id),
             # Retain the initial companion audit field while exposing the
             # protocol-neutral principal name required by the v2 audit contract.
             "runtime_principal_id": (
@@ -423,6 +423,7 @@ async def ingest_runtime_observation_event(
             _record_runtime_ingest_audit(
                 db,
                 actor_user_id=actor_user_id,
+                principal_id=runtime_principal_id,
                 runtime_principal_id=runtime_principal_id,
                 deployment_id=deployment_id,
                 environment_id=environment_id,
@@ -436,6 +437,7 @@ async def ingest_runtime_observation_event(
             _record_runtime_ingest_audit(
                 db,
                 actor_user_id=actor_user_id,
+                principal_id=runtime_principal_id,
                 runtime_principal_id=runtime_principal_id,
                 deployment_id=deployment_id,
                 environment_id=environment_id,
