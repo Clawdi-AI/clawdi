@@ -43,7 +43,10 @@ export function readHostedRuntimeObserved(
 	const providers = readProviderObserved(paths);
 	const appliedAuthority = appliedState
 		? {
-				etag: appliedState.manifestETag ?? appliedState.etag,
+				etag:
+					options.appliedState === undefined
+						? appliedState.etag
+						: (appliedState.manifestETag ?? appliedState.etag),
 				sourceRevision: appliedState.sourceRevision,
 				generation: appliedState.generation,
 				instanceId: appliedState.instanceId,

@@ -88,10 +88,6 @@ from app.services.managed_ai_provider import (
     V2_MANAGED_AI_PROVIDER_IDS,
     upsert_clawdi_managed_provider,
 )
-from app.services.runtime_observation import (
-    RuntimeObservationProtocolError,
-    provision_runtime_environment_fence,
-)
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_provider_runtime_manifest_changed,
@@ -219,29 +215,18 @@ async def admin_mint_api_key(
     # tooling that only needs to push sessions); the route doesn't
     # impose a ceiling.
     try:
-        if body.managed and env_uuid is not None and body.deployment_id is not None:
-            await provision_runtime_environment_fence(
-                db,
-                environment_id=env_uuid,
-                owner_id=target.id,
-                deployment_id=body.deployment_id,
-            )
         minted = await mint_api_key(
             db,
             user_id=target.id,
             label=body.label,
             scopes=body.scopes,
             environment_id=env_uuid,
-            runtime_deployment_id=body.deployment_id,
             managed=body.managed,
             # Key row and its audit event must land in one transaction:
             # a key that exists without the caller learning its id is an
             # untrackable, unrevokable credential.
             commit=False,
         )
-    except RuntimeObservationProtocolError as e:
-        await db.rollback()
-        raise HTTPException(status_code=e.status_code, detail=e.detail()) from e
     except ValueError as e:
         # `mint_api_key` raises ValueError for cross-tenant
         # environment_id (env not owned by target user). Surface
@@ -278,7 +263,6 @@ async def admin_mint_api_key(
             "key_prefix": api_key.key_prefix,
             "managed": api_key.managed,
             "has_environment_binding": api_key.environment_id is not None,
-            "has_runtime_deployment_binding": api_key.runtime_deployment_id is not None,
             "scope_count": None if api_key.scopes is None else len(api_key.scopes),
         },
     )

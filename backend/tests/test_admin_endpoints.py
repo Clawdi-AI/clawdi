@@ -5,6 +5,7 @@ Auth via X-Admin-Key header (shared secret). Tests run against the
 we verify the gate as part of test surface, not bypass it.
 """
 
+import uuid
 from collections.abc import AsyncIterator
 
 import httpx
@@ -243,14 +244,13 @@ async def test_admin_mint_accepts_managed_flag(admin_client, db_session, seed_us
 
 
 @pytest.mark.asyncio
-async def test_admin_managed_environment_key_preserves_legacy_shape_and_v2_opt_in(
+async def test_admin_managed_environment_key_stays_legacy_and_rejects_v2_binding(
     admin_client,
     db_session,
     seed_user,
 ):
-    import uuid
 
-    from sqlalchemy import select
+    from sqlalchemy import func, select
 
     from app.models.api_key import ApiKey
     from app.models.runtime_observation import V2RuntimeEnvironmentFence
@@ -279,7 +279,7 @@ async def test_admin_managed_environment_key_preserves_legacy_shape_and_v2_opt_i
             "managed": True,
         },
     )
-    strict_v2 = await admin_client.post(
+    rejected_v2 = await admin_client.post(
         "/v1/admin/auth/keys",
         headers=_AUTH,
         json={
@@ -292,21 +292,20 @@ async def test_admin_managed_environment_key_preserves_legacy_shape_and_v2_opt_i
     )
 
     assert legacy.status_code == 200, legacy.text
-    assert strict_v2.status_code == 200, strict_v2.text
+    assert rejected_v2.status_code == 422, rejected_v2.text
+    assert any(error["loc"][-1] == "deployment_id" for error in rejected_v2.json()["detail"])
     assert await db_session.get(V2RuntimeEnvironmentFence, legacy_environment.id) is None
-    fence = await db_session.get(V2RuntimeEnvironmentFence, strict_v2_environment.id)
-    assert fence is not None
-    assert fence.deployment_id == "deployment-strict-v2"
+    assert await db_session.get(V2RuntimeEnvironmentFence, strict_v2_environment.id) is None
     legacy_key = (
         await db_session.execute(select(ApiKey).where(ApiKey.label == "legacy-managed-environment"))
     ).scalar_one()
-    strict_key = (
-        await db_session.execute(
-            select(ApiKey).where(ApiKey.label == "strict-v2-managed-environment")
-        )
-    ).scalar_one()
     assert legacy_key.runtime_deployment_id is None
-    assert strict_key.runtime_deployment_id == "deployment-strict-v2"
+    rejected_key_count = await db_session.scalar(
+        select(func.count())
+        .select_from(ApiKey)
+        .where(ApiKey.label == "strict-v2-managed-environment")
+    )
+    assert rejected_key_count == 0
 
 
 @pytest.mark.asyncio
@@ -438,7 +437,6 @@ async def test_admin_mint_lazy_creates_user(admin_client, db_session):
     """
     # Random per-run clerk_id — test DB is real Postgres and rows
     # persist across test runs; a hardcoded id would collide.
-    import uuid
 
     from sqlalchemy import select
 
@@ -523,7 +521,6 @@ async def test_admin_mint_lazy_create_handles_race(db_session):
     flush attempt and verifying the rollback+re-query path returns
     the row that the "winner" (separately seeded) wrote.
     """
-    import uuid
     from unittest.mock import AsyncMock
 
     from sqlalchemy.exc import IntegrityError
@@ -579,7 +576,6 @@ async def test_admin_mint_lazy_create_500s_when_winner_disappears(db_session):
     surface as 500 rather than 404 so the SaaS caller sees this is
     an operational anomaly, not a wrong-clerk_id payload.
     """
-    import uuid
     from unittest.mock import AsyncMock
 
     from fastapi import HTTPException
@@ -613,7 +609,6 @@ async def test_admin_lazy_create_creates_personal_project(db_session):
     alongside the User row. Downstream resolvers (sessions, skills,
     memories) all assume every user has one and 500 without it.
     JWT path enforces the same invariant; admin path must too."""
-    import uuid
 
     from sqlalchemy import select
 
@@ -748,7 +743,6 @@ async def test_admin_revoke_idempotent_on_already_revoked(admin_client, db_sessi
 @pytest.mark.asyncio
 async def test_admin_revoke_unknown_key(admin_client):
     """404 for a key id that doesn't exist."""
-    import uuid
 
     r = await admin_client.delete(
         f"/v1/admin/auth/keys/{uuid.uuid4()}",
@@ -990,7 +984,6 @@ async def test_admin_upsert_managed_ai_provider_rejects_invalid_base_url(admin_c
 
 @pytest.mark.asyncio
 async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_session, seed_user):
-    import uuid
 
     from sqlalchemy import select
 
@@ -1133,7 +1126,6 @@ async def test_admin_register_env_accepts_explicit_agent_id(
     admin_client, client, db_session, seed_user
 ):
     """Hosted registration owns the stable agent id. Machine fields are metadata."""
-    import uuid
 
     from sqlalchemy import select
 
@@ -1199,7 +1191,6 @@ async def test_admin_register_env_accepts_explicit_agent_id(
 async def test_admin_register_env_auto_assigns_explicit_default_names(
     admin_client, db_session, seed_user
 ):
-    import uuid
 
     from sqlalchemy import select
 
@@ -1276,7 +1267,6 @@ async def test_admin_register_env_auto_assigns_explicit_default_names(
 
 @pytest.mark.asyncio
 async def test_admin_register_env_rejects_default_name_request_field(admin_client, seed_user):
-    import uuid
 
     response = await admin_client.post(
         "/v1/admin/environments",
@@ -1298,7 +1288,6 @@ async def test_admin_register_env_rejects_default_name_request_field(admin_clien
 async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     admin_client, db_session, seed_user
 ):
-    import uuid
 
     from sqlalchemy import select
 
@@ -1403,7 +1392,6 @@ async def test_admin_register_env_explicit_agent_id_is_idempotent(
     admin_client, db_session, seed_user
 ):
     """Stable agent ids remain the identity while machine fields refresh."""
-    import uuid
 
     from sqlalchemy import select
 
@@ -1457,7 +1445,6 @@ async def test_admin_register_env_explicit_ids_allow_same_machine_metadata(
     admin_client, db_session, seed_user
 ):
     """Two hosted agents can share machine metadata without sharing identity."""
-    import uuid
 
     from sqlalchemy import select
 
@@ -1508,7 +1495,6 @@ async def test_admin_register_env_explicit_ids_allow_same_machine_metadata(
 async def test_admin_register_env_explicit_id_rejects_cross_tenant_id(
     admin_client, db_session, seed_user
 ):
-    import uuid
 
     from sqlalchemy import select
 
@@ -1731,7 +1717,6 @@ async def test_admin_register_env_lazy_creates_user(admin_client, db_session):
     SaaS calls admin_register_environment, gets 404, deploy
     proceeds without sync, and the user has no clue why their pod
     isn't showing up on cloud.clawdi.ai."""
-    import uuid
 
     from sqlalchemy import select
 

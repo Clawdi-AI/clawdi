@@ -11,7 +11,7 @@ from typing import Any
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import delete, func, select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +29,8 @@ from app.models.runtime_observation import (
     V2RuntimeObservationInbox,
 )
 from app.models.session import AgentEnvironment
-from app.schemas.runtime_observed import HostedRuntimeObservedV2
+from app.schemas.runtime_observation import RuntimeObservationEventV2
+from app.services.audit import record_control_plane_audit
 
 _CURSOR_PREFIX = "clawdi-ro-v1"
 _MAX_SAFE_INTEGER = 9_007_199_254_740_991
@@ -54,6 +55,15 @@ class RuntimeObservationIngestResult:
     event_id: str
     stream_position: int
     duplicate: bool
+    outcome: str
+
+
+@dataclass(frozen=True)
+class RuntimeEnvironmentRetirementResult:
+    receipt: dict[str, Any]
+    transitioned: bool
+    final_stream_position: int
+    final_session_high_waters: dict[str, int]
 
 
 @dataclass(frozen=True)
@@ -260,7 +270,7 @@ async def require_active_runtime_environment_fence(
     return fence
 
 
-def _canonical_observation_payload(value: HostedRuntimeObservedV2) -> tuple[dict[str, Any], str]:
+def _canonical_observation_payload(value: RuntimeObservationEventV2) -> tuple[dict[str, Any], str]:
     payload = value.model_dump(mode="json", by_alias=True, exclude_unset=True)
     encoded = json.dumps(
         payload,
@@ -271,11 +281,7 @@ def _canonical_observation_payload(value: HostedRuntimeObservedV2) -> tuple[dict
     return payload, hashlib.sha256(encoded).hexdigest()
 
 
-def _companion_identity(value: HostedRuntimeObservedV2) -> RuntimeApplyIdentity:
-    if not value.is_companion_event or value.applied is None:
-        raise ValueError("strict companion runtime observation is required")
-    if value.apply_receipt_id is None or value.boot_nonce is None:
-        raise ValueError("strict companion apply identity is incomplete")
+def _companion_identity(value: RuntimeObservationEventV2) -> RuntimeApplyIdentity:
     return RuntimeApplyIdentity(
         generation=value.applied.generation,
         manifest_etag=value.applied.etag,
@@ -301,19 +307,12 @@ async def ingest_runtime_observation(
     *,
     environment_id: uuid.UUID,
     credential_deployment_id: str,
-    value: HostedRuntimeObservedV2,
+    value: RuntimeObservationEventV2,
     received_at: datetime | None = None,
 ) -> RuntimeObservationIngestResult:
     """Append and CAS-advance one strict-v2 event under the environment fence."""
 
     identity = _companion_identity(value)
-    if (
-        value.boot_session_id is None
-        or value.sequence is None
-        or value.event_id is None
-        or value.captured_at is None
-    ):
-        raise ValueError("strict companion event identity is incomplete")
     now = _utc(received_at or datetime.now(UTC))
     captured_at = _utc(value.captured_at)
     future_skew = timedelta(seconds=settings.runtime_observation_max_future_skew_seconds)
@@ -404,6 +403,7 @@ async def ingest_runtime_observation(
                 event_id=existing.event_id,
                 stream_position=existing.id,
                 duplicate=True,
+                outcome="duplicate_replay",
             )
         raise RuntimeObservationProtocolError(
             409,
@@ -436,6 +436,7 @@ async def ingest_runtime_observation(
         boot_session_id=value.boot_session_id,
         sequence=value.sequence,
         event_id=value.event_id,
+        reported_at=_utc(value.reported_at),
         captured_at=captured_at,
         received_at=now,
         freshness_deadline=freshness_deadline,
@@ -455,6 +456,7 @@ async def ingest_runtime_observation(
         return await duplicate_or_conflict()
     fence.stream_high_water = inbox.id
     if head is None:
+        outcome = "accepted_head_created"
         head = V2RuntimeObservationHead(
             environment_id=environment_id,
             deployment_id=fence.deployment_id,
@@ -477,6 +479,7 @@ async def ingest_runtime_observation(
     elif value.sequence > head.highest_sequence and (
         head.captured_at is None or captured_at >= _utc(head.captured_at)
     ):
+        outcome = "accepted_head_advanced"
         # Every unique correctly-bound event is immutable inbox evidence. Only
         # the compact head has a monotonic CAS rule; lower sequence or regressing
         # capture time remains historical and cannot replace the current head.
@@ -488,11 +491,16 @@ async def ingest_runtime_observation(
         head.captured_at = captured_at
         head.freshness_deadline = freshness_deadline
         head.health = value.status
+    elif value.sequence <= head.highest_sequence:
+        outcome = "accepted_non_advance_sequence"
+    else:
+        outcome = "accepted_non_advance_captured_at"
     await db.flush()
     return RuntimeObservationIngestResult(
         event_id=value.event_id,
         stream_position=inbox.id,
         duplicate=False,
+        outcome=outcome,
     )
 
 
@@ -529,7 +537,7 @@ async def retire_runtime_environment(
     retirement_id: str,
     owner_id: uuid.UUID | None = None,
     retired_at: datetime | None = None,
-) -> dict[str, Any]:
+) -> RuntimeEnvironmentRetirementResult:
     """Idempotently retire and tombstone an environment under the ingestion lock."""
 
     now = _utc(retired_at or datetime.now(UTC))
@@ -561,7 +569,12 @@ async def retire_runtime_environment(
         )
     if fence.state == RUNTIME_ENVIRONMENT_RETIRED:
         if fence.retirement_id == retirement_id and isinstance(fence.retirement_receipt, dict):
-            return fence.retirement_receipt
+            return RuntimeEnvironmentRetirementResult(
+                receipt=fence.retirement_receipt,
+                transitioned=False,
+                final_stream_position=fence.final_stream_position or 0,
+                final_session_high_waters=dict(fence.final_session_high_waters or {}),
+            )
         raise RuntimeObservationProtocolError(
             409,
             "runtime_environment_retirement_conflict",
@@ -591,13 +604,15 @@ async def retire_runtime_environment(
         stream_position=final_position,
     )
     receipt: dict[str, Any] = {
-        "retirementReceiptId": str(receipt_id),
+        "environmentReference": str(environment_id),
+        "expectedDeploymentBinding": expected_deployment_id,
         "retirementId": retirement_id,
-        "environmentId": str(environment_id),
-        "deploymentId": expected_deployment_id,
-        "retiredAt": now.isoformat(),
+        "retiredAt": now.isoformat().replace("+00:00", "Z"),
         "finalCursor": final_cursor,
-        "finalSessionHighWaterMarks": high_waters,
+        "finalSessionHighWaterMarks": [
+            {"bootSessionId": boot_session_id, "sequence": sequence}
+            for boot_session_id, sequence in high_waters.items()
+        ],
     }
     fence.state = RUNTIME_ENVIRONMENT_RETIRED
     fence.retirement_id = retirement_id
@@ -615,7 +630,12 @@ async def retire_runtime_environment(
         head.health = None
         head.tombstoned_at = now
     await db.flush()
-    return receipt
+    return RuntimeEnvironmentRetirementResult(
+        receipt=receipt,
+        transitioned=True,
+        final_stream_position=final_position,
+        final_session_high_waters=high_waters,
+    )
 
 
 def _cursor_expiry_metadata(
@@ -869,11 +889,20 @@ async def register_runtime_observation_consumer(
         # Retention has already removed history. Starting at zero would look
         # like a complete replay while silently skipping deleted evidence, so
         # a late stable consumer must persist and observe a reset barrier first.
-        raise await _initialize_expired_consumer(
-            db,
-            fence=fence,
-            consumer_id=consumer_id,
-        )
+        try:
+            raise await _initialize_expired_consumer(
+                db,
+                fence=fence,
+                consumer_id=consumer_id,
+            )
+        except _RuntimeObservationConsumerInitializationConflict:
+            raise await _load_concurrently_initialized_consumer_error(
+                db,
+                environment_id=environment_id,
+                owner_id=owner_id,
+                deployment_id=deployment_id,
+                consumer_id=consumer_id,
+            )
     epoch = uuid.uuid4()
     opaque = encode_runtime_observation_cursor(
         environment_id=environment_id,
@@ -1201,7 +1230,20 @@ async def acknowledge_runtime_observation_cursor(
         )
     ).scalar_one_or_none()
     if cursor is None:
-        raise _cursor_expired_error(None)
+        try:
+            raise await _initialize_expired_consumer(
+                db,
+                fence=fence,
+                consumer_id=consumer_id,
+            )
+        except _RuntimeObservationConsumerInitializationConflict:
+            raise await _load_concurrently_initialized_consumer_error(
+                db,
+                environment_id=environment_id,
+                owner_id=owner_id,
+                deployment_id=deployment_id,
+                consumer_id=consumer_id,
+            )
     try:
         decoded = _validate_cursor_for_consumer(
             opaque_cursor,
@@ -1325,7 +1367,7 @@ async def expire_runtime_observation_payloads(
     now: datetime | None = None,
     batch_size: int | None = None,
 ) -> int:
-    """Bounded retention cleanup that never silently deletes unacked history."""
+    """Compact a bounded, contiguous eligible prefix without deleting identity rows."""
 
     current = _utc(now or datetime.now(UTC))
     replay_cutoff = current - timedelta(days=settings.runtime_observation_replay_horizon_days)
@@ -1335,7 +1377,10 @@ async def expire_runtime_observation_payloads(
         (
             await db.execute(
                 select(V2RuntimeObservationInbox.environment_id)
-                .where(V2RuntimeObservationInbox.received_at < replay_cutoff)
+                .where(
+                    V2RuntimeObservationInbox.received_at < replay_cutoff,
+                    V2RuntimeObservationInbox.payload_purged_at.is_(None),
+                )
                 .distinct()
                 .order_by(V2RuntimeObservationInbox.environment_id)
                 .limit(limit)
@@ -1344,7 +1389,7 @@ async def expire_runtime_observation_payloads(
         .scalars()
         .all()
     )
-    deleted_count = 0
+    compacted_count = 0
     for environment_id in environment_ids:
         fence = (
             await db.execute(
@@ -1370,93 +1415,116 @@ async def expire_runtime_observation_payloads(
             .scalars()
             .all()
         )
-        if not consumers:
-            # No durable required-consumer acknowledgement means no safe purge.
-            continue
-        replay_position = int(
-            (
-                await db.scalar(
-                    select(func.coalesce(func.max(V2RuntimeObservationInbox.id), 0)).where(
-                        V2RuntimeObservationInbox.environment_id == environment_id,
-                        V2RuntimeObservationInbox.received_at < replay_cutoff,
-                    )
-                )
-            )
-            or 0
-        )
         safe_position = (
             min(
                 consumer.acked_stream_position
                 for consumer in consumers
                 if consumer.state == RUNTIME_OBSERVATION_CURSOR_ACTIVE
             )
-            if all(consumer.state == RUNTIME_OBSERVATION_CURSOR_ACTIVE for consumer in consumers)
+            if consumers
+            and all(consumer.state == RUNTIME_OBSERVATION_CURSOR_ACTIVE for consumer in consumers)
             else 0
         )
-        purge_through = min(replay_position, safe_position)
-        hard_position = int(
-            (
-                await db.scalar(
-                    select(func.coalesce(func.max(V2RuntimeObservationInbox.id), 0)).where(
-                        V2RuntimeObservationInbox.environment_id == environment_id,
-                        V2RuntimeObservationInbox.received_at < hard_cutoff,
-                    )
-                )
-            )
-            or 0
-        )
-        if hard_position > purge_through:
-            high_waters = await _load_session_high_waters(db, environment_id)
-            for consumer in consumers:
-                if consumer.acked_stream_position >= hard_position:
-                    continue
-                barrier_cursor = encode_runtime_observation_cursor(
-                    environment_id=environment_id,
-                    consumer_id=consumer.consumer_id,
-                    cursor_epoch=consumer.cursor_epoch,
-                    stream_position=hard_position,
-                )
-                consumer.state = RUNTIME_OBSERVATION_CURSOR_EXPIRED
-                consumer.expired_at = current
-                consumer.expiry_boundary_stream_position = hard_position
-                consumer.expiry_boundary_cursor = barrier_cursor
-                consumer.expiry_session_high_waters = high_waters
-                consumer.reset_barrier_at = current
-            purge_through = hard_position
-        if purge_through <= 0:
-            continue
-        ids = list(
+        candidates = list(
             (
                 await db.execute(
-                    select(V2RuntimeObservationInbox.id)
+                    select(V2RuntimeObservationInbox)
                     .where(
                         V2RuntimeObservationInbox.environment_id == environment_id,
-                        V2RuntimeObservationInbox.id <= purge_through,
+                        V2RuntimeObservationInbox.id > fence.replay_floor_stream_position,
+                        V2RuntimeObservationInbox.payload_purged_at.is_(None),
                     )
                     .order_by(V2RuntimeObservationInbox.id)
-                    .limit(limit - deleted_count)
+                    .limit(limit - compacted_count)
                 )
             )
             .scalars()
             .all()
         )
+        ids: list[int] = []
+        hard_cap_forced = False
+        for event in candidates:
+            hard_cap_eligible = _utc(event.received_at) < hard_cutoff
+            replay_eligible = (
+                bool(consumers)
+                and _utc(event.received_at) < replay_cutoff
+                and event.id <= safe_position
+            )
+            if not hard_cap_eligible and not replay_eligible:
+                break
+            ids.append(event.id)
+            hard_cap_forced = hard_cap_forced or (hard_cap_eligible and not replay_eligible)
         if not ids:
             continue
+        purge_through = ids[-1]
+        if hard_cap_forced:
+            high_waters = await _load_session_high_waters(db, environment_id)
+            for consumer in consumers:
+                if consumer.acked_stream_position >= purge_through:
+                    continue
+                previous_state = consumer.state
+                previous_boundary = consumer.expiry_boundary_stream_position
+                barrier_cursor = encode_runtime_observation_cursor(
+                    environment_id=environment_id,
+                    consumer_id=consumer.consumer_id,
+                    cursor_epoch=consumer.cursor_epoch,
+                    stream_position=purge_through,
+                )
+                consumer.state = RUNTIME_OBSERVATION_CURSOR_EXPIRED
+                consumer.expired_at = current
+                consumer.expiry_boundary_stream_position = purge_through
+                consumer.expiry_boundary_cursor = barrier_cursor
+                consumer.expiry_session_high_waters = high_waters
+                consumer.reset_barrier_at = current
+                record_control_plane_audit(
+                    db,
+                    actor_type="system",
+                    source="runtime_observation.retention",
+                    action="runtime_observation.cursor_expired",
+                    resource_type="runtime_observation_consumer",
+                    resource_id=str(environment_id),
+                    # The permanent resource_id/details survive deletion of the
+                    # legacy AgentEnvironment row; no optional parent FK is set.
+                    environment_id=None,
+                    details={
+                        "actor_service": "runtime_observation_retention",
+                        "environment_id": str(environment_id),
+                        "deployment_id": fence.deployment_id,
+                        "consumer_id": consumer.consumer_id,
+                        "reason": "hard_retention",
+                        "outcome": (
+                            "expired"
+                            if previous_state == RUNTIME_OBSERVATION_CURSOR_ACTIVE
+                            else "expiry_boundary_advanced"
+                        ),
+                        "previous_state": previous_state,
+                        "new_state": RUNTIME_OBSERVATION_CURSOR_EXPIRED,
+                        "previous_boundary_stream_position": previous_boundary,
+                        "boundary_stream_position": purge_through,
+                        "stream_high_water": fence.stream_high_water,
+                        "session_high_water_marks": high_waters,
+                    },
+                )
         result = await db.execute(
-            delete(V2RuntimeObservationInbox).where(V2RuntimeObservationInbox.id.in_(ids))
+            update(V2RuntimeObservationInbox)
+            .where(
+                V2RuntimeObservationInbox.id.in_(ids),
+                V2RuntimeObservationInbox.received_at < replay_cutoff,
+                V2RuntimeObservationInbox.payload_purged_at.is_(None),
+            )
+            .values(diagnostics={}, payload_purged_at=current)
         )
-        deleted = result.rowcount or 0
-        if deleted:
+        compacted = result.rowcount or 0
+        if compacted:
             floor_position = max(ids)
             if floor_position > fence.replay_floor_stream_position:
+                floor_session_high_waters = await _load_session_high_waters(db, environment_id)
                 fence.replay_floor_stream_position = floor_position
                 fence.replay_floor_advanced_at = current
-                fence.replay_floor_session_high_waters = await _load_session_high_waters(
-                    db, environment_id
-                )
-        deleted_count += deleted
-        if deleted_count >= limit:
+                fence.replay_floor_session_high_waters = floor_session_high_waters
+        compacted_count += compacted
+        if compacted_count >= limit:
             break
-        _ = fence  # The environment lock is intentionally held through deletion.
+        _ = fence  # The environment lock is intentionally held through compaction.
     await db.flush()
-    return deleted_count
+    return compacted_count

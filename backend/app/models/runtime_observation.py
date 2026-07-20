@@ -14,6 +14,7 @@ from sqlalchemy import (
     String,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -65,6 +66,7 @@ class V2RuntimeEnvironmentFence(Base, TimestampMixin):
             "AND retirement_receipt_id IS NOT NULL AND retirement_receipt IS NOT NULL "
             "AND retired_at IS NOT NULL AND final_cursor IS NOT NULL "
             "AND final_stream_position IS NOT NULL "
+            "AND final_stream_position = stream_high_water "
             "AND final_session_high_waters IS NOT NULL)",
             name="ck_v2_runtime_environment_fences_retirement",
         ),
@@ -144,6 +146,10 @@ class V2RuntimeObservationInbox(Base):
             "payload_hash ~ '^[0-9a-f]{64}$'",
             name="ck_v2_runtime_observation_inbox_payload_hash",
         ),
+        CheckConstraint(
+            "payload_purged_at IS NULL OR diagnostics = '{}'::jsonb",
+            name="ck_v2_runtime_observation_inbox_payload_compaction",
+        ),
         Index(
             "ix_v2_runtime_observation_inbox_environment_stream",
             "environment_id",
@@ -152,6 +158,11 @@ class V2RuntimeObservationInbox(Base):
         Index(
             "ix_v2_runtime_observation_inbox_received_at",
             "received_at",
+        ),
+        Index(
+            "ix_v2_runtime_observation_inbox_pending_retention",
+            "received_at",
+            postgresql_where=text("payload_purged_at IS NULL"),
         ),
     )
 
@@ -165,6 +176,7 @@ class V2RuntimeObservationInbox(Base):
     boot_session_id: Mapped[str] = mapped_column(String(128), nullable=False)
     sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     event_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    reported_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     received_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -175,6 +187,7 @@ class V2RuntimeObservationInbox(Base):
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     health: Mapped[str] = mapped_column(String(16), nullable=False)
     diagnostics: Mapped[JsonValue] = mapped_column(JSONB(none_as_null=True), nullable=False)
+    payload_purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class V2RuntimeObservationHead(Base, TimestampMixin):
@@ -210,7 +223,9 @@ class V2RuntimeObservationHead(Base, TimestampMixin):
             name="ck_v2_runtime_observation_heads_state",
         ),
         CheckConstraint(
-            "(state = 'active' AND latest_event_id IS NOT NULL AND captured_at IS NOT NULL "
+            "(state = 'active' AND latest_inbox_id IS NOT NULL "
+            "AND latest_stream_position = latest_inbox_id "
+            "AND latest_event_id IS NOT NULL AND captured_at IS NOT NULL "
             "AND freshness_deadline IS NOT NULL AND health IS NOT NULL "
             "AND tombstoned_at IS NULL) "
             "OR (state = 'retired' AND latest_inbox_id IS NULL "

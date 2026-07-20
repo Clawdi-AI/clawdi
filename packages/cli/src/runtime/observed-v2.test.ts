@@ -29,6 +29,9 @@ describe("hosted runtime observed v2", () => {
 				appliedAt: "2026-07-13T06:00:00.000Z",
 				instanceId: "hri_observed",
 				etag: '"bundle-applied"',
+				manifestETag: '"frozen-companion-manifest"',
+				applyReceiptId: "apply-receipt-observed-v2",
+				bootNonce: "boot-nonce-observed-v2-01",
 				sourceRevision: "a".repeat(64),
 				generation: 9,
 				contentIdentity: {

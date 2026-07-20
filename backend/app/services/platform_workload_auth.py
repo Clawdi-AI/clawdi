@@ -37,7 +37,8 @@ PLATFORM_WORKLOAD_SCOPES = (
     "platform:runtime-state:write",
     "platform:keys:mint",
     "platform:keys:revoke",
-    "platform:runtime-observations:read",
+    "platform:runtime-observations:consume",
+    "platform:runtime-environments:retire",
 )
 
 _PRIVATE_JWK_FIELDS = frozenset({"d", "p", "q", "dp", "dq", "qi", "oth", "k"})
@@ -682,7 +683,7 @@ def _credential_values(request: Request, name: str) -> list[str]:
     return request.headers.getlist(name)
 
 
-def require_platform_mutation_auth(required_scope: str):
+def _require_platform_auth(required_scope: str, *, allow_legacy_admin: bool):
     if required_scope not in PLATFORM_WORKLOAD_SCOPES:
         raise ValueError(f"unsupported platform workload scope: {required_scope}")
 
@@ -737,6 +738,11 @@ def require_platform_mutation_auth(required_scope: str):
                     status.HTTP_400_BAD_REQUEST,
                     "multiple credentials are not allowed",
                 )
+            if not allow_legacy_admin:
+                raise HTTPException(
+                    status.HTTP_401_UNAUTHORIZED,
+                    "platform workload credentials are required",
+                )
             if not settings.platform_legacy_admin_auth_enabled:
                 raise HTTPException(
                     status.HTTP_401_UNAUTHORIZED,
@@ -747,8 +753,25 @@ def require_platform_mutation_auth(required_scope: str):
             request.state.platform_mutation_auth = auth
             return auth
 
-        if settings.platform_legacy_admin_auth_enabled:
+        if allow_legacy_admin and settings.platform_legacy_admin_auth_enabled:
             await require_admin_api_key(x_admin_key=x_admin_key)
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "platform credentials are required")
+        detail = (
+            "platform credentials are required"
+            if allow_legacy_admin
+            else "platform workload credentials are required"
+        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail)
 
     return dependency
+
+
+def require_platform_mutation_auth(required_scope: str):
+    """Authenticate a workload token or the explicitly enabled legacy admin key."""
+
+    return _require_platform_auth(required_scope, allow_legacy_admin=True)
+
+
+def require_platform_workload_auth(required_scope: str):
+    """Authenticate only a scoped platform workload access token."""
+
+    return _require_platform_auth(required_scope, allow_legacy_admin=False)

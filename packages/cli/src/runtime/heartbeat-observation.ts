@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { components } from "@clawdi/shared/api";
 import { z } from "zod";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import {
@@ -9,7 +10,7 @@ import {
 	runtimeAppliedApplyIdentity,
 } from "./applied-state";
 import { runtimeApplyIdentitySchema } from "./apply-identity";
-import { type HostedRuntimeObserved, readHostedRuntimeObserved } from "./observed";
+import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 
 const positiveSafeIntegerSchema = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -85,14 +86,7 @@ const observedSupervisorSchema = z
 	})
 	.strict();
 
-export type HostedRuntimeObservedEvent = HostedRuntimeObserved & {
-	applyReceiptId: string;
-	bootNonce: string;
-	bootSessionId: string;
-	sequence: number;
-	eventId: string;
-	capturedAt: string;
-};
+export type HostedRuntimeObservedEvent = components["schemas"]["RuntimeObservationEventV2"];
 
 const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = z
 	.object({
@@ -109,7 +103,7 @@ const hostedRuntimeObservedEventSchema: z.ZodType<HostedRuntimeObservedEvent> = 
 		providers: z.record(z.string(), z.record(z.string(), z.unknown())).nullable().optional(),
 		error: z.string().nullable().optional(),
 		convergeError: z.string().nullable().optional(),
-		truncated: z.boolean().nullable().optional(),
+		truncated: z.literal(false).nullable().optional(),
 		applyReceiptId: z.string().min(16).max(128),
 		bootNonce: z.string().min(16).max(128),
 		bootSessionId: z.string().min(1).max(128),
@@ -231,7 +225,7 @@ export class HostedRuntimeHeartbeatSession {
 			appliedState: this.capturedAppliedState,
 		});
 		if (!snapshot) return null;
-		const event: HostedRuntimeObservedEvent = {
+		const event = hostedRuntimeObservedEventSchema.parse({
 			...snapshot,
 			applyReceiptId: this.currentBootIdentity.applyReceiptId,
 			bootNonce: this.currentBootIdentity.bootNonce,
@@ -239,7 +233,7 @@ export class HostedRuntimeHeartbeatSession {
 			sequence: this.state.nextSequence,
 			eventId: nonEmptyId(this.createId(), "runtime heartbeat event ID"),
 			capturedAt,
-		};
+		});
 		const payloadJson = serializeObservedEvent(event);
 		const pending = {
 			payloadJson,
