@@ -2007,11 +2007,20 @@ async def test_v2_ingestion_only_writes_companion_tables_and_requires_dedicated_
 
 @pytest.mark.committed_db
 @pytest.mark.asyncio
-async def test_v2_ingestion_audits_non_advance_and_committed_rejections_without_payload(
+async def test_v2_ingestion_audits_every_service_rejection_without_private_payload(
     db_session: AsyncSession,
     seed_user,
 ) -> None:
     environment, _ = await _provision_environment(db_session, seed_user)
+    unfenced_environment = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-observation-unfenced-{uuid.uuid4().hex}",
+        machine_name="runtime-observation-unfenced",
+        agent_type="openclaw",
+        os="linux",
+    )
+    unfenced_environment_id = unfenced_environment.id
     environment_id = environment.id
     owner_id = seed_user.id
     runtime_key = ApiKey(
@@ -2035,11 +2044,48 @@ async def test_v2_ingestion_audits_non_advance_and_committed_rejections_without_
     base = datetime.now(UTC)
     event_prefix = f"audit-{environment_id}"
     path = f"/v2/runtime/environments/{environment_id}/observations"
+    raw_credential = "raw-runtime-credential-must-not-enter-audit"
+    private_diagnostic = "private-diagnostic-and-opaque-cursor-must-not-enter-audit"
     try:
         async with httpx.AsyncClient(
             transport=ASGITransport(app=app),
             base_url="http://test",
+            headers={"Authorization": f"Bearer {raw_credential}"},
         ) as client:
+            future = await client.post(
+                path,
+                json=_payload(
+                    event_id=f"{event_prefix}-future",
+                    captured_at=base + timedelta(days=1),
+                    error=private_diagnostic,
+                ).model_dump(mode="json", by_alias=True),
+            )
+            too_old = await client.post(
+                path,
+                json=_payload(
+                    event_id=f"{event_prefix}-too-old",
+                    captured_at=base - timedelta(days=365),
+                    error=private_diagnostic,
+                ).model_dump(mode="json", by_alias=True),
+            )
+            runtime_key.runtime_deployment_id = "different-credential-deployment"
+            credential_mismatch = await client.post(
+                path,
+                json=_payload(
+                    event_id=f"{event_prefix}-credential",
+                    error=private_diagnostic,
+                ).model_dump(mode="json", by_alias=True),
+            )
+            runtime_key.runtime_deployment_id = _DEPLOYMENT_ID
+            runtime_key.environment_id = unfenced_environment_id
+            fence_missing = await client.post(
+                f"/v2/runtime/environments/{unfenced_environment_id}/observations",
+                json=_payload(
+                    event_id=f"{event_prefix}-fence-missing",
+                    error=private_diagnostic,
+                ).model_dump(mode="json", by_alias=True),
+            )
+            runtime_key.environment_id = environment_id
             for payload in (
                 _payload(sequence=1, event_id=f"{event_prefix}-1", captured_at=base),
                 _payload(
@@ -2112,6 +2158,14 @@ async def test_v2_ingestion_audits_non_advance_and_committed_rejections_without_
     finally:
         app.dependency_overrides.clear()
 
+    assert future.status_code == 422
+    assert future.json()["detail"]["code"] == "runtime_observation_captured_at_in_future"
+    assert too_old.status_code == 422
+    assert too_old.json()["detail"]["code"] == "runtime_observation_captured_at_too_old"
+    assert credential_mismatch.status_code == 403
+    assert credential_mismatch.json()["detail"]["code"] == "runtime_observation_credential_mismatch"
+    assert fence_missing.status_code == 409
+    assert fence_missing.json()["detail"]["code"] == "runtime_environment_fence_missing"
     assert non_advance.status_code == 200
     assert non_advance.json()["outcome"] == "accepted_non_advance_sequence"
     assert captured_at_regression.status_code == 200
@@ -2125,28 +2179,50 @@ async def test_v2_ingestion_audits_non_advance_and_committed_rejections_without_
     audits = list(
         (
             await db_session.execute(
-                select(ControlPlaneAuditEvent)
-                .where(
+                select(ControlPlaneAuditEvent).where(
                     ControlPlaneAuditEvent.source == "api.v2.runtime",
                     ControlPlaneAuditEvent.action == "runtime_observation.ingest",
-                    ControlPlaneAuditEvent.resource_id == str(environment_id),
+                    ControlPlaneAuditEvent.details["event_id"].astext.like(f"{event_prefix}%"),
                 )
-                .order_by(ControlPlaneAuditEvent.created_at)
             )
         )
         .scalars()
         .all()
     )
-    assert [event.details["outcome"] for event in audits] == [
-        "accepted_non_advance_sequence",
-        "accepted_non_advance_captured_at",
-        "runtime_observation_identity_conflict",
-        "runtime_observation_event_conflict",
-        "runtime_environment_retired",
-    ]
+    expected_outcomes = {
+        f"{event_prefix}-future": "runtime_observation_captured_at_in_future",
+        f"{event_prefix}-too-old": "runtime_observation_captured_at_too_old",
+        f"{event_prefix}-credential": "runtime_observation_credential_mismatch",
+        f"{event_prefix}-fence-missing": "runtime_environment_fence_missing",
+        f"{event_prefix}-2": "accepted_non_advance_sequence",
+        f"{event_prefix}-captured-regression": "accepted_non_advance_captured_at",
+        f"{event_prefix}-rebind": "runtime_observation_identity_conflict",
+        f"{event_prefix}-conflict": "runtime_observation_event_conflict",
+        f"{event_prefix}-retired": "runtime_environment_retired",
+    }
+    assert {event.details["event_id"]: event.details["outcome"] for event in audits} == (
+        expected_outcomes
+    )
+    for event in audits:
+        details = event.details
+        assert event.actor_user_id == owner_id
+        assert event.target_user_id == owner_id
+        assert details["principal_id"] == str(runtime_key.id)
+        assert details["runtime_principal_id"] == str(runtime_key.id)
+        assert details["environment_id"] == event.resource_id
+        assert details["deployment_id"] in {
+            _DEPLOYMENT_ID,
+            "different-credential-deployment",
+        }
+        assert details["boot_session_id"]
+        assert details["sequence"] >= 1
+        assert details["event_id"] in expected_outcomes
     serialized_audits = json.dumps([event.details for event in audits], sort_keys=True)
     assert "private-" not in serialized_audits
     assert "diagnostics" not in serialized_audits
+    assert raw_credential not in serialized_audits
+    assert "opaque-cursor" not in serialized_audits
+    assert "runtime environment fence does not exist" not in serialized_audits
     inbox_events = list(
         (
             await db_session.execute(
@@ -2168,3 +2244,142 @@ async def test_v2_ingestion_audits_non_advance_and_committed_rejections_without_
     )
     assert head is not None
     assert head.highest_sequence == 3
+
+
+@pytest.mark.committed_db
+@pytest.mark.asyncio
+async def test_v2_ingestion_route_auth_rejections_are_durably_audited(
+    db_session: AsyncSession,
+    seed_user,
+) -> None:
+    environment, _ = await _provision_environment(db_session, seed_user)
+    environment_id = environment.id
+    path = f"/v2/runtime/environments/{environment_id}/observations"
+    event_prefix = f"route-auth-audit-{environment_id}"
+    auth_context: AuthContext
+
+    async def override_session() -> AsyncIterator[AsyncSession]:
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return auth_context
+
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+    raw_credential = "raw-route-credential-must-not-enter-audit"
+    private_diagnostic = "private-internal-error-and-opaque-cursor-must-not-enter-audit"
+    cases = (
+        (
+            "managed_credential_required",
+            False,
+            environment_id,
+            _DEPLOYMENT_ID,
+            ["runtime-observations:write"],
+        ),
+        (
+            "scope_missing",
+            True,
+            environment_id,
+            _DEPLOYMENT_ID,
+            ["skills:write"],
+        ),
+        (
+            "environment_binding_mismatch",
+            True,
+            uuid.uuid4(),
+            _DEPLOYMENT_ID,
+            ["runtime-observations:write"],
+        ),
+        (
+            "deployment_binding_missing",
+            True,
+            environment_id,
+            None,
+            ["runtime-observations:write"],
+        ),
+    )
+    expected: dict[str, dict[str, object]] = {}
+    try:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"Authorization": f"Bearer {raw_credential}"},
+        ) as client:
+            for index, (reason, managed, bound_environment, deployment_id, scopes) in enumerate(
+                cases,
+                start=1,
+            ):
+                runtime_key = ApiKey(
+                    id=uuid.uuid4(),
+                    user_id=seed_user.id,
+                    managed=managed,
+                    environment_id=bound_environment,
+                    runtime_deployment_id=deployment_id,
+                    scopes=scopes,
+                    key_hash=raw_credential,
+                    key_prefix="raw-route-prefix",
+                )
+                auth_context = AuthContext(user=seed_user, api_key=runtime_key)
+                event_id = f"{event_prefix}-{reason}"
+                payload = _payload(
+                    boot_session_id=f"route-auth-boot-{index}",
+                    sequence=index,
+                    event_id=event_id,
+                    error=private_diagnostic,
+                )
+                response = await client.post(
+                    path,
+                    json=payload.model_dump(mode="json", by_alias=True),
+                )
+                assert response.status_code == 403
+                assert (
+                    response.json()["detail"]["code"] == "runtime_observation_credential_mismatch"
+                )
+                expected[event_id] = {
+                    "reason": reason,
+                    "principal_id": str(runtime_key.id),
+                    "deployment_id": deployment_id,
+                    "boot_session_id": payload.boot_session_id,
+                    "sequence": payload.sequence,
+                }
+    finally:
+        app.dependency_overrides.clear()
+
+    audits = list(
+        (
+            await db_session.execute(
+                select(ControlPlaneAuditEvent).where(
+                    ControlPlaneAuditEvent.source == "api.v2.runtime",
+                    ControlPlaneAuditEvent.action == "runtime_observation.ingest",
+                    ControlPlaneAuditEvent.resource_id == str(environment_id),
+                    ControlPlaneAuditEvent.details["event_id"].astext.like(f"{event_prefix}%"),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert len(audits) == len(cases)
+    for event in audits:
+        details = event.details
+        expected_details = expected[details["event_id"]]
+        assert event.actor_type == "runtime_deployment"
+        assert event.actor_user_id == seed_user.id
+        assert event.target_user_id == seed_user.id
+        assert details == {
+            "principal_id": expected_details["principal_id"],
+            "runtime_principal_id": expected_details["principal_id"],
+            "environment_id": str(environment_id),
+            "deployment_id": expected_details["deployment_id"],
+            "boot_session_id": expected_details["boot_session_id"],
+            "sequence": expected_details["sequence"],
+            "event_id": details["event_id"],
+            "outcome": "runtime_observation_credential_mismatch",
+            "rejection_reason": expected_details["reason"],
+        }
+    serialized_audits = json.dumps([event.details for event in audits], sort_keys=True)
+    assert raw_credential not in serialized_audits
+    assert "private-" not in serialized_audits
+    assert "opaque-cursor" not in serialized_audits
+    assert "internal-error" not in serialized_audits
+    assert "diagnostics" not in serialized_audits

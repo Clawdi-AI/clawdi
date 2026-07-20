@@ -1,0 +1,52 @@
+{
+  "description": "Repository-owned pre-v2 byte baseline for the frozen v1 runtime observation surface.",
+  "files": {
+    "backend/app/routes/sessions.py": {
+      "symbols": {
+        "SyncHeartbeatRequest": "97884bde6519f318060fc3a225267c4d108f682eb48ad51600e573bf3c4ad42c",
+        "_as_utc": "5e660f3c4020cd2315665280e5ff0c34e9637baea63d51eaa07cf38f8e5a9e32",
+        "_bounded_runtime_observed": "5fee3f44c8fa11fc6e512f9268c8af86493a28e3f9f3860afb4b39e8219fd9ed",
+        "_clawdi_cli_version": "125be894dc6bfd71aa368b7d73915c2db1fb0c6bf9a81d0773231b98f7034c21",
+        "_enabled_runtime_names": "1d021fe0c53e177e5bab55cfcc8e7e1238a756485a19f55381703f4a26bd182b",
+        "_runtime_desired_provider_binding": "7858ddc84afc6ab443a6ffd1b813fa6f5ba32f95bdaa5fb963f9b20de3d07182",
+        "_runtime_observation_changed": "cbdc70aa77d22401b0fe2d5c993d877e1cf3473b4a70c7bd977bb49828e7d510",
+        "_runtime_observed_columns": "f15b64220432788b8db254339b336581bfe4d25d4da66f03b52a9d43c3775e9a",
+        "_runtime_observed_comparison_value": "7ef13736f4e82ddf8adc887746cae9ee18ce06ab9f7b67bc447cc92dd9817efa",
+        "_runtime_observed_desired": "df413587a7fc04f3c2c5a307cc214994af362605ed99080e50f44fa7c3718581",
+        "_runtime_observed_diagnostics": "16cad5f1a8f19aff55e7a189d6a27300c89ac2a2d4136829f29f1ac4d1ee5203",
+        "_runtime_observed_health": "ae05a09ea1093bddf0b12c8d16d19938f1b2bd9289335e010f297fb280ef54bc",
+        "_runtime_observed_provider_health": "09163dc80fb3ad1262888b26bb1112de122e88e0a30e21fc502679ffbee79660",
+        "_runtime_observed_provider_reasons": "3ec8cbf00837a6c33f7d2fe8bfe2415c0cba80faddf46b85f62e948d700b61ba",
+        "_runtime_observed_provider_status": "f83854879fa63585f1734b814f8e3230269f53d9fec69faf3c3036bc4fa97935",
+        "_runtime_observed_response": "8ef8aae004cb5bef49162dc40ffbf195d5bb9d621d963cdefbbf7441cd5bae27",
+        "_runtime_observed_summary": "a81dcb71c60b6c15e8ac850d1ed1cea0dac338923c01da1afa6616d049b9c68a",
+        "_validated_runtime_observed_diagnostics": "4e6bf338bbc8657b7a76e39abf4a32c63852069f966c2414a5c9f16d3231aa75",
+        "get_environment_runtime_observed": "8e5ce544ba94b70dc05fa1f6cae638b8b0cb851d62dbbf025e21aec94bafd010",
+        "list_environment_runtime_observed": "1c07db398c99892163b6c9415d9155378f7191c01a7920a0e2804b55f09027a4",
+        "sync_heartbeat": "52471a426362351eb96b5f5b213513336feaa878510f949f1ba396ac7e5fbaae"
+      }
+    },
+    "backend/app/routes/platform.py": {
+      "forbidden_route_fragments": [
+        "runtime-environment",
+        "runtime-observation"
+      ],
+      "symbols": {
+        "platform_mint_api_key": "20413a24e58c71d38bd4ce985e80fe10eff7c54c79e4b258ee87aba006db097b"
+      }
+    },
+    "backend/app/schemas/platform.py": {
+      "forbidden_symbol_prefixes": [
+        "PlatformRuntimeApplyIdentity",
+        "PlatformRuntimeEnvironmentRetire",
+        "PlatformRuntimeObservation"
+      ],
+      "symbols": {
+        "PlatformApiKeyCreate": "d71a8e1ade8b887083c466a8221d2c655aaecf0d17b9ef9a9cb27ba709ee5ae5"
+      }
+    },
+    "backend/app/schemas/runtime_observed.py": {
+      "whole_file_sha256": "7272efb1be898bf83d704a5bb8c40c65ce9fb61fb6bbfb1c1698a325a0e1c5d2"
+    }
+  }
+}

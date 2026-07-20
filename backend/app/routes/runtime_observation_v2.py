@@ -61,13 +61,6 @@ IdempotencyKey = Annotated[
     Header(alias="Idempotency-Key", min_length=1, max_length=200),
 ]
 
-_AUDITED_INGEST_REJECTIONS = frozenset(
-    {
-        "runtime_environment_retired",
-        "runtime_observation_identity_conflict",
-        "runtime_observation_event_conflict",
-    }
-)
 _NON_ADVANCING_OUTCOMES = frozenset(
     {
         "accepted_non_advance_sequence",
@@ -78,28 +71,49 @@ _NON_ADVANCING_OUTCOMES = frozenset(
 
 async def require_runtime_observation_writer(
     environment_id: UUID,
+    body: RuntimeObservationEventV2,
     auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
 ) -> AuthContext:
     """Require one explicit, narrow deployment credential for v2 ingestion."""
 
     api_key = auth.api_key
-    if (
-        not auth.is_cli
-        or api_key is None
-        or not api_key.managed
-        or api_key.environment_id != environment_id
-        or api_key.runtime_deployment_id is None
-        or api_key.scopes is None
-        or RUNTIME_OBSERVATION_WRITE_SCOPE not in api_key.scopes
-    ):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            detail={
-                "code": "runtime_observation_credential_mismatch",
-                "message": "a deployment-bound v2 runtime observation credential is required",
-            },
+    rejection_reason: str | None = None
+    if not auth.is_cli or api_key is None:
+        rejection_reason = "runtime_credential_required"
+    elif not api_key.managed:
+        rejection_reason = "managed_credential_required"
+    elif api_key.environment_id != environment_id:
+        rejection_reason = "environment_binding_mismatch"
+    elif api_key.runtime_deployment_id is None:
+        rejection_reason = "deployment_binding_missing"
+    elif api_key.scopes is None or RUNTIME_OBSERVATION_WRITE_SCOPE not in api_key.scopes:
+        rejection_reason = "scope_missing"
+    if rejection_reason is None:
+        return auth
+
+    try:
+        _record_runtime_ingest_audit(
+            db,
+            actor_user_id=auth.user_id,
+            runtime_principal_id=api_key.id if api_key is not None else None,
+            deployment_id=(api_key.runtime_deployment_id if api_key is not None else None),
+            environment_id=environment_id,
+            value=body,
+            outcome="runtime_observation_credential_mismatch",
+            rejection_reason=rejection_reason,
         )
-    return auth
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        detail={
+            "code": "runtime_observation_credential_mismatch",
+            "message": "a deployment-bound v2 runtime observation credential is required",
+        },
+    )
 
 
 async def _resolve_owner(db: AsyncSession, owner: PlatformOwner) -> User:
@@ -213,11 +227,12 @@ def _record_runtime_ingest_audit(
     db: AsyncSession,
     *,
     actor_user_id: UUID,
-    runtime_principal_id: UUID,
-    deployment_id: str,
+    runtime_principal_id: UUID | None,
+    deployment_id: str | None,
     environment_id: UUID,
     value: RuntimeObservationEventV2,
     outcome: str,
+    rejection_reason: str | None = None,
 ) -> None:
     record_control_plane_audit(
         db,
@@ -230,13 +245,21 @@ def _record_runtime_ingest_audit(
         resource_id=str(environment_id),
         environment_id=None,
         details={
-            "runtime_principal_id": str(runtime_principal_id),
+            "principal_id": (
+                str(runtime_principal_id) if runtime_principal_id is not None else None
+            ),
+            # Retain the initial companion audit field while exposing the
+            # protocol-neutral principal name required by the v2 audit contract.
+            "runtime_principal_id": (
+                str(runtime_principal_id) if runtime_principal_id is not None else None
+            ),
             "environment_id": str(environment_id),
             "deployment_id": deployment_id,
             "boot_session_id": value.boot_session_id,
             "sequence": value.sequence,
             "event_id": value.event_id,
             "outcome": outcome,
+            **({"rejection_reason": rejection_reason} if rejection_reason else {}),
         },
     )
 
@@ -409,21 +432,20 @@ async def ingest_runtime_observation_event(
         await db.commit()
     except RuntimeObservationProtocolError as exc:
         await db.rollback()
-        if exc.code in _AUDITED_INGEST_REJECTIONS:
-            try:
-                _record_runtime_ingest_audit(
-                    db,
-                    actor_user_id=actor_user_id,
-                    runtime_principal_id=runtime_principal_id,
-                    deployment_id=deployment_id,
-                    environment_id=environment_id,
-                    value=body,
-                    outcome=exc.code,
-                )
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                raise
+        try:
+            _record_runtime_ingest_audit(
+                db,
+                actor_user_id=actor_user_id,
+                runtime_principal_id=runtime_principal_id,
+                deployment_id=deployment_id,
+                environment_id=environment_id,
+                value=body,
+                outcome=exc.code,
+            )
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
         _raise_protocol_error(exc)
     except Exception:
         await db.rollback()
