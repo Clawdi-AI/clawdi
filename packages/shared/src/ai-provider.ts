@@ -168,6 +168,8 @@ export const CODEX_OAUTH_MODEL_CATALOG: readonly AiProviderModel[] = [
 export const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
 const CLAWDI_MANAGED_V1_API_MODE = "openai_responses";
 export const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-v2";
+export const CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX = "clawdi-v2-deployment-";
+const CLAWDI_MANAGED_PROVIDER_MAX_ID_LENGTH = 63;
 // TODO(#425): Remove this legacy alias after hosted#892 is deployed everywhere and no
 // dev/self-hosted binding still uses clawdi-managed-v2.
 export const CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID = "clawdi-managed-v2";
@@ -192,11 +194,31 @@ export interface AiProviderManagedIdentity {
 	managed_by?: string | null;
 }
 
+export function isClawdiManagedV2ProviderId(providerId: string): boolean {
+	if (
+		providerId === CLAWDI_MANAGED_V2_PROVIDER_ID ||
+		providerId === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
+	) {
+		return true;
+	}
+	if (
+		providerId.length > CLAWDI_MANAGED_PROVIDER_MAX_ID_LENGTH ||
+		!providerId.startsWith(CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX)
+	) {
+		return false;
+	}
+	const deploymentId = providerId.slice(CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX.length);
+	return /^[1-9][0-9]*$/.test(deploymentId);
+}
+
+export function isClawdiManagedProviderId(providerId: string): boolean {
+	return providerId === CLAWDI_MANAGED_V1_PROVIDER_ID || isClawdiManagedV2ProviderId(providerId);
+}
+
 export function isFirstPartyManagedAiProvider(provider: AiProviderManagedIdentity): boolean {
 	const id = provider.provider_id ?? provider.id;
 	return (
-		provider.managed_by === "clawdi" ||
-		(typeof id === "string" && CLAWDI_MANAGED_PROVIDER_IDS.has(id))
+		provider.managed_by === "clawdi" || (typeof id === "string" && isClawdiManagedProviderId(id))
 	);
 }
 
@@ -341,7 +363,7 @@ function validateManagedProviderContract(
 	errors: string[],
 ): void {
 	const isManagedContract =
-		CLAWDI_MANAGED_PROVIDER_IDS.has(provider.id) || provider.managed_by === "clawdi";
+		isClawdiManagedProviderId(provider.id) || provider.managed_by === "clawdi";
 	if (!isManagedContract) return;
 
 	const expectedApiMode = clawdiManagedApiMode(provider.id);
@@ -349,7 +371,7 @@ function validateManagedProviderContract(
 		errors.push(
 			`Provider ${prefix} managed_by clawdi must use id ${Array.from(CLAWDI_MANAGED_PROVIDER_IDS)
 				.sort()
-				.join(" or ")}.`,
+				.join(" or ")}, or ${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}<deployment_id>.`,
 		);
 	}
 	if (provider.managed_by !== "clawdi") {
@@ -378,10 +400,7 @@ function clawdiManagedApiMode(providerId: string): AiProviderApiMode | null {
 	if (providerId === CLAWDI_MANAGED_V1_PROVIDER_ID) return CLAWDI_MANAGED_V1_API_MODE;
 	// TODO(#425): Remove legacy mode resolution after hosted#892 is deployed everywhere
 	// and no dev/self-hosted binding still uses clawdi-managed-v2.
-	if (
-		providerId === CLAWDI_MANAGED_V2_PROVIDER_ID ||
-		providerId === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
-	) {
+	if (isClawdiManagedV2ProviderId(providerId)) {
 		return CLAWDI_MANAGED_V2_API_MODE;
 	}
 	return null;

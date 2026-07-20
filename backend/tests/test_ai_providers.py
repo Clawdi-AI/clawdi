@@ -14,10 +14,11 @@ from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.services import sync_events
 from app.services.managed_ai_provider import (
-    MANAGED_AI_PROVIDER_IDS,
+    V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_API_MODE,
     V2_MANAGED_AI_PROVIDER_ID,
+    is_v2_managed_provider_id,
     managed_provider_api_mode,
 )
 from tests.conftest import create_env_with_project
@@ -27,11 +28,36 @@ _TEST_SYSTEM = {}
 
 @pytest.mark.parametrize(
     "provider_id",
-    [V2_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID],
+    [
+        V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    ],
 )
 def test_v2_managed_ai_provider_ids_resolve_to_chat_mode(provider_id: str):
-    assert provider_id in MANAGED_AI_PROVIDER_IDS
+    assert is_v2_managed_provider_id(provider_id)
     assert managed_provider_api_mode(provider_id) == V2_MANAGED_AI_PROVIDER_API_MODE
+
+
+def test_v1_provider_mode_resolution_does_not_accept_deployment_scoped_ids():
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42"
+
+    assert is_v2_managed_provider_id(provider_id)
+    assert managed_provider_api_mode(provider_id) is None
+
+
+@pytest.mark.parametrize(
+    "provider_id",
+    [
+        "clawdi-v2-deployment-",
+        "clawdi-v2-deployment-0",
+        "clawdi-v2-deployment-01",
+        "clawdi-v2-deployment-not-a-number",
+        f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}{'9' * 43}",
+    ],
+)
+def test_v2_managed_ai_provider_rejects_invalid_deployment_ids(provider_id: str):
+    assert not is_v2_managed_provider_id(provider_id)
+    assert managed_provider_api_mode(provider_id) is None
 
 
 _VALID_AUTH_VARIANTS = [

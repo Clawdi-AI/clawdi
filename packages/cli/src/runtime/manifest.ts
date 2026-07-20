@@ -30,12 +30,10 @@ import type {
 	AiProviderType,
 } from "@clawdi/shared";
 import {
-	CLAWDI_MANAGED_PROVIDER_IDS,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
-	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
-	CLAWDI_MANAGED_V2_PROVIDER_ID,
 	isAiProviderApiMode,
 	isAiProviderType,
+	isClawdiManagedV2ProviderId,
 } from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
@@ -2003,17 +2001,16 @@ function agentTargetProjectionInput(
 		// TODO(#425): Remove legacy projection handling after hosted#892 is deployed
 		// everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
 		const id =
-			CLAWDI_MANAGED_PROVIDER_IDS.has(provider.id) || provider.id.startsWith("clawdi-managed")
+			isClawdiManagedV2ProviderId(provider.id) ||
+			provider.id === CLAWDI_MANAGED_V1_PROVIDER_ID ||
+			provider.id.startsWith("clawdi-managed")
 				? provider.id
 				: CLAWDI_MANAGED_V1_PROVIDER_ID;
 		providerIdMap.set(provider.id, id);
 		return {
 			...provider,
 			id,
-			api_mode:
-				id === CLAWDI_MANAGED_V2_PROVIDER_ID || id === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
-					? "openai_chat"
-					: "openai_responses",
+			api_mode: isClawdiManagedV2ProviderId(id) ? "openai_chat" : "openai_responses",
 		} satisfies AiProviderCatalog["providers"][number];
 	});
 	const primaryProviderId = providerIdMap.get(input.primaryModel.provider_id);

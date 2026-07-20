@@ -41,7 +41,7 @@ from app.schemas.runtime import (
     validate_hosted_runtime_desired_state,
 )
 from app.services.managed_ai_provider import (
-    MANAGED_AI_PROVIDER_IDS,
+    is_managed_provider_id,
     managed_provider_api_mode,
 )
 from app.services.vault_crypto import decrypt
@@ -467,7 +467,7 @@ def _provider_entry(provider: AiProvider, *, secret_ref: str | None) -> dict[str
         "type": provider.type,
         "baseUrl": provider.base_url,
     }
-    managed = provider.provider_id in MANAGED_AI_PROVIDER_IDS or (
+    managed = is_managed_provider_id(provider.provider_id) or (
         provider.managed_by == "clawdi"
         and provider.auth_type == "api_key"
         and (provider.auth_metadata or {}).get("source") == "managed"
