@@ -31,12 +31,18 @@ _TEST_SYSTEM = {}
     [
         V2_MANAGED_AI_PROVIDER_ID,
         V2_LEGACY_MANAGED_AI_PROVIDER_ID,
-        f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42",
     ],
 )
 def test_v2_managed_ai_provider_ids_resolve_to_chat_mode(provider_id: str):
     assert is_v2_managed_provider_id(provider_id)
     assert managed_provider_api_mode(provider_id) == V2_MANAGED_AI_PROVIDER_API_MODE
+
+
+def test_v1_provider_mode_resolution_does_not_accept_deployment_scoped_ids():
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42"
+
+    assert is_v2_managed_provider_id(provider_id)
+    assert managed_provider_api_mode(provider_id) is None
 
 
 @pytest.mark.parametrize(

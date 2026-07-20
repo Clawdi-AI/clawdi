@@ -66,7 +66,7 @@ def managed_provider_api_mode(provider_id: str) -> str | None:
         return V1_MANAGED_AI_PROVIDER_API_MODE
     # TODO(#425): Remove legacy v2 mode resolution after hosted#892 is deployed
     # everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
-    if is_v2_managed_provider_id(provider_id):
+    if provider_id in V2_MANAGED_AI_PROVIDER_IDS:
         return V2_MANAGED_AI_PROVIDER_API_MODE
     return None
 

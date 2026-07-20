@@ -5,6 +5,8 @@ Auth via X-Admin-Key header (shared secret). Tests run against the
 we verify the gate as part of test surface, not bypass it.
 """
 
+import json
+from collections import Counter
 from collections.abc import AsyncIterator
 from uuid import UUID
 
@@ -789,6 +791,17 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
             "supports_reasoning": True,
         }
     ]
+    wire_models = [
+        {
+            "id": "gpt-5.4-mini",
+            "max_tokens": 128000,
+            "context_window": 272000,
+            "supports_tools": True,
+            "supports_vision": True,
+            "input_modalities": ["text", "image"],
+            "supports_reasoning": True,
+        }
+    ]
     r = await admin_client.put(
         f"/v1/admin/ai-providers/{route_provider_id}",
         headers=_AUTH,
@@ -802,25 +815,18 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     )
     assert r.status_code == 200, r.text
     assert raw_key not in r.text
-    response = r.json()
-    provider_uuid = response.pop("id")
-    assert str(UUID(provider_uuid)) == provider_uuid
-    assert response == {
-        "owner": {"kind": "clerk", "ref": seed_user.clerk_id},
+    expected_response = {
         "owner_user_id": str(seed_user.id),
         "owner_clerk_id": seed_user.clerk_id,
         "provider_id": route_provider_id,
-        "scope": "account_global",
-        "type": "custom_openai_compatible",
-        "label": "Clawdi managed",
         "api_mode": MANAGED_AI_PROVIDER_API_MODE,
-        "auth": {"type": "api_key", "source": "managed", "profile": "default"},
-        "managed_by": "clawdi",
         "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
         "base_url": "https://ai-gateway.clawdi.ai/v1",
-        "models": managed_models,
+        "models": wire_models,
         "has_api_key": True,
     }
+    assert r.json() == expected_response
+    assert r.content == json.dumps(expected_response, separators=(",", ":")).encode()
 
     provider = (
         await db_session.execute(
@@ -854,9 +860,75 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     assert payload.payload_metadata == {"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV}
     assert decrypt(payload.encrypted_payload, payload.nonce) == raw_key
 
+    for method in (admin_client.get, admin_client.delete):
+        unchanged_method_response = await method(
+            f"/v1/admin/ai-providers/{route_provider_id}",
+            headers=_AUTH,
+        )
+        assert unchanged_method_response.status_code == 405
+        assert unchanged_method_response.headers["allow"] == "PUT"
+        assert unchanged_method_response.content == b'{"detail":"Method Not Allowed"}'
+
+    from app.models.audit import ControlPlaneAuditEvent
+
+    event = (
+        await db_session.execute(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.action == "ai_provider.managed.upsert",
+                ControlPlaneAuditEvent.resource_id == route_provider_id,
+            )
+        )
+    ).scalar_one()
+    assert event.actor_type == "admin"
+    assert event.target_user_id == seed_user.id
+    assert event.source == "api.admin"
+    audit_models = [{**managed_models[0], "max_tokens": "[REDACTED]"}]
+    assert event.details == {
+        "provider_id": route_provider_id,
+        "api_mode": MANAGED_AI_PROVIDER_API_MODE,
+        "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
+        "models": audit_models,
+        "has_capabilities": False,
+    }
+
 
 @pytest.mark.asyncio
-async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped(
+async def test_admin_fixed_managed_ai_provider_preserves_null_models_wire_response(
+    admin_client,
+    seed_user,
+):
+    from app.services.managed_ai_provider import (
+        MANAGED_AI_PROVIDER_API_MODE,
+        MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    )
+
+    response = await admin_client.put(
+        f"/v1/admin/ai-providers/{V2_MANAGED_AI_PROVIDER_ID}",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-fixed-null-models",
+        },
+    )
+
+    expected = {
+        "owner_user_id": str(seed_user.id),
+        "owner_clerk_id": seed_user.clerk_id,
+        "provider_id": V2_MANAGED_AI_PROVIDER_ID,
+        "api_mode": MANAGED_AI_PROVIDER_API_MODE,
+        "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
+        "base_url": "https://ai-gateway.clawdi.ai/v1",
+        "models": None,
+        "has_api_key": True,
+    }
+    assert response.status_code == 200, response.text
+    assert response.json() == expected
+    assert response.content == json.dumps(expected, separators=(",", ":")).encode()
+
+
+@pytest.mark.asyncio
+async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped_and_audited(
     admin_client,
     db_session,
     seed_user,
@@ -864,6 +936,7 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped(
     from sqlalchemy import select
 
     from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+    from app.models.audit import ControlPlaneAuditEvent
     from app.models.user import User
 
     provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42"
@@ -934,6 +1007,16 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped(
     )
     assert cross_owner_delete.status_code == 404, cross_owner_delete.text
 
+    still_active = (
+        await db_session.execute(
+            select(AiProvider).where(
+                AiProvider.owner_user_id == seed_user.id,
+                AiProvider.provider_id == provider_id,
+            )
+        )
+    ).scalar_one()
+    assert still_active.archived_at is None
+
     deleted = await admin_client.delete(
         f"/v1/admin/ai-providers/{provider_id}",
         headers=_AUTH,
@@ -960,6 +1043,44 @@ async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped(
     ).scalar_one()
     assert provider.archived_at is not None
     assert payload.archived_at is not None
+
+    audit_events = (
+        (
+            await db_session.execute(
+                select(ControlPlaneAuditEvent).where(
+                    ControlPlaneAuditEvent.resource_type == "ai_provider",
+                    ControlPlaneAuditEvent.resource_id == provider_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert Counter(
+        (event.action, event.details["outcome"], event.target_user_id) for event in audit_events
+    ) == Counter(
+        [
+            ("ai_provider.managed.upsert", "success", seed_user.id),
+            ("ai_provider.managed.credential.rotate", "success", seed_user.id),
+            ("ai_provider.managed.read", "success", seed_user.id),
+            ("ai_provider.managed.read", "cross_owner_denied", other.id),
+            ("ai_provider.managed.delete", "cross_owner_denied", other.id),
+            ("ai_provider.managed.delete", "success", seed_user.id),
+            ("ai_provider.managed.credential.archive", "success", seed_user.id),
+        ]
+    )
+    expected_owners = {
+        seed_user.id: owner,
+        other.id: other_owner,
+    }
+    for event in audit_events:
+        assert event.actor_type == "admin"
+        assert event.source == "api.admin"
+        assert event.created_at is not None
+        assert event.details["auth_method"] == "x_admin_key"
+        assert event.details["owner"] == expected_owners[event.target_user_id]
+        assert event.details["owner_user_id"] == str(event.target_user_id)
+        assert event.details["provider_id"] == provider_id
 
 
 @pytest.mark.asyncio
