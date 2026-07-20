@@ -2958,6 +2958,7 @@ chmod +x "$HOME/.local/bin/hermes"
 	});
 
 	it("preserves canonical managed model capabilities through live discovery", () => {
+		const providerId = "clawdi-v2-deployment-42";
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -3008,9 +3009,9 @@ chmod +x "$HOME/.local/bin/hermes"
 							home,
 							args: ["--json", "--no-onboard"],
 						},
-						provider_ids: ["clawdi-v2"],
+						provider_ids: [providerId],
 						primary_model: {
-							provider_id: "clawdi-v2",
+							provider_id: providerId,
 							model: "k3",
 						},
 					},
@@ -3019,7 +3020,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					system: { home },
 					providers: {
-						"clawdi-v2": {
+						[providerId]: {
 							kind: "openai-compatible",
 							baseUrl: "https://ai-gateway.example.test/v1",
 							model: "k3",
@@ -3074,9 +3075,9 @@ chmod +x "$HOME/.local/bin/hermes"
 
 		expect(convergence.installErrors).toEqual([]);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
-		expect(patch.agents.defaults.model.primary).toBe("clawdi-v2/k3");
-		expect(patch.models.providers["clawdi-v2"].baseUrl).toBe("https://ai-gateway.example.test/v1");
-		expect(patch.models.providers["clawdi-v2"].models).toEqual([
+		expect(patch.agents.defaults.model.primary).toBe(`${providerId}/k3`);
+		expect(patch.models.providers[providerId].baseUrl).toBe("https://ai-gateway.example.test/v1");
+		expect(patch.models.providers[providerId].models).toEqual([
 			{
 				id: "k3",
 				name: "k3",

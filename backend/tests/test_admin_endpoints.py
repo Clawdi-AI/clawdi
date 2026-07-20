@@ -6,6 +6,7 @@ we verify the gate as part of test surface, not bypass it.
 """
 
 from collections.abc import AsyncIterator
+from uuid import UUID
 
 import httpx
 import pytest
@@ -16,6 +17,8 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
 from app.services.managed_ai_provider import (
+    MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY,
+    V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_ID,
 )
@@ -799,11 +802,20 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     )
     assert r.status_code == 200, r.text
     assert raw_key not in r.text
-    assert r.json() == {
+    response = r.json()
+    provider_uuid = response.pop("id")
+    assert str(UUID(provider_uuid)) == provider_uuid
+    assert response == {
+        "owner": {"kind": "clerk", "ref": seed_user.clerk_id},
         "owner_user_id": str(seed_user.id),
         "owner_clerk_id": seed_user.clerk_id,
         "provider_id": route_provider_id,
+        "scope": "account_global",
+        "type": "custom_openai_compatible",
+        "label": "Clawdi managed",
         "api_mode": MANAGED_AI_PROVIDER_API_MODE,
+        "auth": {"type": "api_key", "source": "managed", "profile": "default"},
+        "managed_by": "clawdi",
         "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
         "base_url": "https://ai-gateway.clawdi.ai/v1",
         "models": managed_models,
@@ -841,6 +853,245 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     assert payload.source == "managed"
     assert payload.payload_metadata == {"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV}
     assert decrypt(payload.encrypted_payload, payload.nonce) == raw_key
+
+
+@pytest.mark.asyncio
+async def test_admin_deployment_managed_ai_provider_lifecycle_is_owner_scoped(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from sqlalchemy import select
+
+    from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+    from app.models.user import User
+
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42"
+    marker = "provisioning-intent-42"
+    owner = {"kind": "clerk", "ref": seed_user.clerk_id}
+    created = await admin_client.put(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        json={
+            "owner": owner,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-deployment-owner-one",
+            "models": [{"id": "gpt-5.5"}],
+            "capabilities": {
+                "chat": True,
+                MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY: marker,
+            },
+        },
+    )
+    assert created.status_code == 200, created.text
+    created_body = created.json()
+    assert str(UUID(created_body["id"])) == created_body["id"]
+    assert created_body == {
+        "id": created_body["id"],
+        "owner": owner,
+        "owner_user_id": str(seed_user.id),
+        "owner_clerk_id": seed_user.clerk_id,
+        "provider_id": provider_id,
+        "scope": "account_global",
+        "type": "custom_openai_compatible",
+        "label": "Clawdi managed",
+        "api_mode": "openai_chat",
+        "auth": {"type": "api_key", "source": "managed", "profile": "default"},
+        "managed_by": "clawdi",
+        "runtime_env_name": "CLAWDI_MANAGED_OPENAI_API_KEY",
+        "base_url": "https://ai-gateway.clawdi.ai/v1",
+        "capabilities": {
+            "chat": True,
+            MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY: marker,
+        },
+        "models": [{"id": "gpt-5.5"}],
+        "has_api_key": True,
+    }
+
+    discovered = await admin_client.get(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        params=owner,
+    )
+    assert discovered.status_code == 200, discovered.text
+    assert discovered.json() == created_body
+
+    other = User(clerk_id="managed_provider_other_owner")
+    db_session.add(other)
+    await db_session.flush()
+    other_owner = {"kind": "clerk", "ref": other.clerk_id}
+
+    cross_owner_get = await admin_client.get(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        params=other_owner,
+    )
+    assert cross_owner_get.status_code == 404, cross_owner_get.text
+    cross_owner_delete = await admin_client.delete(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        params=other_owner,
+    )
+    assert cross_owner_delete.status_code == 404, cross_owner_delete.text
+
+    deleted = await admin_client.delete(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        params=owner,
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {"status": "deleted", "provider_id": provider_id}
+
+    provider = (
+        await db_session.execute(
+            select(AiProvider).where(
+                AiProvider.owner_user_id == seed_user.id,
+                AiProvider.provider_id == provider_id,
+            )
+        )
+    ).scalar_one()
+    payload = (
+        await db_session.execute(
+            select(AiProviderAuthPayload).where(
+                AiProviderAuthPayload.owner_user_id == seed_user.id,
+                AiProviderAuthPayload.provider_id == provider_id,
+            )
+        )
+    ).scalar_one()
+    assert provider.archived_at is not None
+    assert payload.archived_at is not None
+
+
+@pytest.mark.asyncio
+async def test_admin_deployment_managed_ai_provider_puts_are_isolated_per_owner(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    from sqlalchemy import select
+
+    from app.models.ai_provider import AiProviderAuthPayload
+    from app.models.user import User
+    from app.services.vault_crypto import decrypt
+
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}84"
+    other = User(clerk_id="managed_provider_second_owner")
+    db_session.add(other)
+    await db_session.flush()
+
+    responses = []
+    for user, raw_key in (
+        (seed_user, "sk-owner-one"),
+        (other, "sk-owner-two"),
+    ):
+        response = await admin_client.put(
+            f"/v1/admin/ai-providers/{provider_id}",
+            headers=_AUTH,
+            json={
+                "owner": {"kind": "clerk", "ref": user.clerk_id},
+                "base_url": "https://ai-gateway.clawdi.ai/v1",
+                "api_key": raw_key,
+            },
+        )
+        assert response.status_code == 200, response.text
+        responses.append(response.json())
+
+    assert responses[0]["id"] != responses[1]["id"]
+    payloads = (
+        (
+            await db_session.execute(
+                select(AiProviderAuthPayload).where(
+                    AiProviderAuthPayload.owner_user_id.in_([seed_user.id, other.id]),
+                    AiProviderAuthPayload.provider_id == provider_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {
+        (payload.owner_user_id, decrypt(payload.encrypted_payload, payload.nonce))
+        for payload in payloads
+    } == {
+        (seed_user.id, "sk-owner-one"),
+        (other.id, "sk-owner-two"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_admin_deployment_managed_ai_provider_requires_unambiguous_owner(
+    admin_client,
+    seed_user,
+):
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}126"
+    missing_put = await admin_client.put(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        json={
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-missing-owner",
+        },
+    )
+    legacy_owner_put = await admin_client.put(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        json={
+            "target_clerk_id": seed_user.clerk_id,
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-legacy-owner-not-accepted",
+        },
+    )
+    ambiguous_put = await admin_client.put(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        json={
+            "owner": {"kind": "clerk", "ref": seed_user.clerk_id},
+            "target_clerk_id": "different_owner",
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-ambiguous-owner",
+        },
+    )
+    missing_get = await admin_client.get(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+    )
+    missing_delete = await admin_client.delete(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+    )
+
+    assert missing_put.status_code == 422, missing_put.text
+    assert legacy_owner_put.status_code == 422, legacy_owner_put.text
+    assert ambiguous_put.status_code == 422, ambiguous_put.text
+    assert missing_get.status_code == 422, missing_get.text
+    assert missing_delete.status_code == 422, missing_delete.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_id",
+    [
+        "clawdi-v2-deployment-0",
+        "clawdi-v2-deployment-not-a-number",
+        f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}{'9' * 43}",
+    ],
+)
+async def test_admin_upsert_rejects_invalid_deployment_managed_provider_id(
+    admin_client,
+    seed_user,
+    provider_id,
+):
+    response = await admin_client.put(
+        f"/v1/admin/ai-providers/{provider_id}",
+        headers=_AUTH,
+        json={
+            "owner": {"kind": "clerk", "ref": seed_user.clerk_id},
+            "base_url": "https://ai-gateway.clawdi.ai/v1",
+            "api_key": "sk-invalid-deployment-provider-id",
+        },
+    )
+
+    assert response.status_code == 404, response.text
 
 
 @pytest.mark.asyncio

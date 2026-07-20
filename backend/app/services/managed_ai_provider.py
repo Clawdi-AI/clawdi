@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, datetime
 from urllib.parse import urlparse
+from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +15,8 @@ from app.services.vault_crypto import encrypt
 V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
 V1_MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
 V2_MANAGED_AI_PROVIDER_ID = "clawdi-v2"
+V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX = "clawdi-v2-deployment-"
+V2_MANAGED_AI_PROVIDER_MAX_ID_LENGTH = 63
 # TODO(#425): Remove this legacy alias and transition accept-set after hosted#892
 # is deployed everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
 V2_LEGACY_MANAGED_AI_PROVIDER_ID = "clawdi-managed-v2"
@@ -32,6 +36,29 @@ MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY"
 MANAGED_AI_PROVIDER_TYPE = "custom_openai_compatible"
 MANAGED_AI_PROVIDER_LABEL = "Clawdi managed"
 MANAGED_AI_PROVIDER_PROFILE = "default"
+MANAGED_AI_PROVIDER_SCOPE = "account_global"
+MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY = "clawdi_provisioning_discovery_key"
+
+_V2_DEPLOYMENT_ID_RE = re.compile(r"^[1-9][0-9]*$")
+
+
+def is_v2_deployment_managed_provider_id(provider_id: str) -> bool:
+    if len(provider_id) > V2_MANAGED_AI_PROVIDER_MAX_ID_LENGTH or not provider_id.startswith(
+        V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX
+    ):
+        return False
+    deployment_id = provider_id.removeprefix(V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX)
+    return _V2_DEPLOYMENT_ID_RE.fullmatch(deployment_id) is not None
+
+
+def is_v2_managed_provider_id(provider_id: str) -> bool:
+    return provider_id in V2_MANAGED_AI_PROVIDER_IDS or is_v2_deployment_managed_provider_id(
+        provider_id
+    )
+
+
+def is_managed_provider_id(provider_id: str) -> bool:
+    return provider_id == V1_MANAGED_AI_PROVIDER_ID or is_v2_managed_provider_id(provider_id)
 
 
 def managed_provider_api_mode(provider_id: str) -> str | None:
@@ -39,7 +66,7 @@ def managed_provider_api_mode(provider_id: str) -> str | None:
         return V1_MANAGED_AI_PROVIDER_API_MODE
     # TODO(#425): Remove legacy v2 mode resolution after hosted#892 is deployed
     # everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
-    if provider_id in V2_MANAGED_AI_PROVIDER_IDS:
+    if is_v2_managed_provider_id(provider_id):
         return V2_MANAGED_AI_PROVIDER_API_MODE
     return None
 
@@ -65,7 +92,7 @@ async def upsert_clawdi_managed_provider(
     """Upsert a first-party v2 managed AI provider contract for a user."""
     # TODO(#425): Remove legacy v2 upsert acceptance after hosted#892 is deployed
     # everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
-    if provider_id not in V2_MANAGED_AI_PROVIDER_IDS:
+    if not is_v2_managed_provider_id(provider_id):
         raise ValueError("unsupported managed provider id")
     validate_managed_provider_base_url(base_url)
     normalized_base_url = base_url.strip()
@@ -139,5 +166,54 @@ async def upsert_clawdi_managed_provider(
             AiProviderAuthPayload.archived_at.is_(None),
         )
         .values(archived_at=datetime.now(UTC))
+    )
+    return provider
+
+
+async def find_clawdi_managed_provider(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+    include_archived: bool = False,
+) -> AiProvider | None:
+    """Find one managed provider without crossing its account boundary."""
+
+    if not is_v2_managed_provider_id(provider_id):
+        raise ValueError("unsupported managed provider id")
+    query = select(AiProvider).where(
+        AiProvider.owner_user_id == owner_user_id,
+        AiProvider.provider_id == provider_id,
+    )
+    if not include_archived:
+        query = query.where(AiProvider.archived_at.is_(None))
+    return (await db.execute(query)).scalar_one_or_none()
+
+
+async def archive_clawdi_managed_provider(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+) -> AiProvider | None:
+    """Archive managed provider metadata and encrypted auth for one owner."""
+
+    provider = await find_clawdi_managed_provider(
+        db,
+        owner_user_id=owner_user_id,
+        provider_id=provider_id,
+    )
+    if provider is None:
+        return None
+    archived_at = datetime.now(UTC)
+    provider.archived_at = archived_at
+    await db.execute(
+        update(AiProviderAuthPayload)
+        .where(
+            AiProviderAuthPayload.owner_user_id == owner_user_id,
+            AiProviderAuthPayload.provider_id == provider_id,
+            AiProviderAuthPayload.archived_at.is_(None),
+        )
+        .values(archived_at=archived_at)
     )
     return provider

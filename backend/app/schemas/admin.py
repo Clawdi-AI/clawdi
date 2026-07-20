@@ -22,7 +22,8 @@ from pydantic import (
     model_validator,
 )
 
-from app.schemas.ai_provider import AiProviderModel
+from app.schemas.ai_provider import AiProviderAuth, AiProviderModel
+from app.schemas.platform import PlatformOwner
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
@@ -211,7 +212,9 @@ class AdminManagedAiProviderUpsert(BaseModel):
 
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
-    target_clerk_id: str
+    owner: PlatformOwner | None = None
+    # Fixed/legacy callers keep the original target_clerk_id contract.
+    target_clerk_id: str | None = None
     base_url: str = Field(min_length=1, max_length=1000)
     api_key: SecretStr = Field(min_length=1)
     default_model: str | None = Field(default=None, max_length=300)
@@ -219,14 +222,28 @@ class AdminManagedAiProviderUpsert(BaseModel):
     label: str | None = Field(default=None, max_length=200)
     capabilities: dict[str, Any] | None = None
 
+    @model_validator(mode="after")
+    def _require_one_owner(self) -> AdminManagedAiProviderUpsert:
+        if (self.owner is None) == (self.target_clerk_id is None):
+            raise ValueError("exactly one of owner or target_clerk_id is required")
+        return self
+
 
 class AdminManagedAiProviderResponse(BaseModel):
+    id: UUID
+    owner: PlatformOwner
     owner_user_id: UUID
     owner_clerk_id: str | None
     provider_id: str
+    scope: Literal["account_global"]
+    type: Literal["custom_openai_compatible"]
+    label: str
     api_mode: str
+    auth: AiProviderAuth
+    managed_by: Literal["clawdi"]
     runtime_env_name: str
     base_url: str
+    capabilities: dict[str, Any] | None = None
     models: list[dict[str, Any]] | None = None
     has_api_key: bool
 

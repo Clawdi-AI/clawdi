@@ -43,6 +43,8 @@ from app.schemas.ai_provider import (
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_IDS,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
+    is_managed_provider_id,
     managed_provider_api_mode,
 )
 from app.services.sync_events import queue_provider_runtime_manifest_changed
@@ -897,7 +899,7 @@ def _validate_provider_models(body: AiProviderUpsert | AiProviderResponse) -> li
         if model_id in seen:
             errors.append(f"duplicate model id: {model_id}")
         seen.add(model_id)
-        if model_id.startswith("openai-codex/") and body.provider_id not in MANAGED_AI_PROVIDER_IDS:
+        if model_id.startswith("openai-codex/") and not is_managed_provider_id(body.provider_id):
             errors.append(
                 "model ids must use the OpenAI model id without the legacy openai-codex prefix"
             )
@@ -907,7 +909,7 @@ def _validate_provider_models(body: AiProviderUpsert | AiProviderResponse) -> li
 
 
 def _validate_managed_provider_contract(body: AiProviderUpsert | AiProviderResponse) -> list[str]:
-    is_managed_contract = body.provider_id in MANAGED_AI_PROVIDER_IDS or body.managed_by == "clawdi"
+    is_managed_contract = is_managed_provider_id(body.provider_id) or body.managed_by == "clawdi"
     if not is_managed_contract:
         return []
 
@@ -915,7 +917,10 @@ def _validate_managed_provider_contract(body: AiProviderUpsert | AiProviderRespo
     expected_api_mode = managed_provider_api_mode(body.provider_id)
     if expected_api_mode is None:
         allowed_ids = ", ".join(sorted(MANAGED_AI_PROVIDER_IDS))
-        errors.append(f"managed Clawdi provider must use provider_id one of: {allowed_ids}")
+        errors.append(
+            "managed Clawdi provider must use provider_id one of: "
+            f"{allowed_ids}, or {V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}<deployment_id>"
+        )
     if body.managed_by != "clawdi":
         errors.append("managed Clawdi provider must be managed_by clawdi")
     if body.type != "custom_openai_compatible":
