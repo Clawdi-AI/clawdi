@@ -103,6 +103,7 @@ from app.services.managed_ai_provider import (
     archive_clawdi_managed_provider,
     find_clawdi_managed_provider,
     is_v2_deployment_managed_provider_id,
+    lock_deployment_managed_provider_mutation,
     upsert_clawdi_managed_provider,
 )
 from app.services.runtime_observation import (
@@ -726,6 +727,12 @@ async def admin_upsert_clawdi_managed_ai_provider(
         )
     owner = body.owner
     target = await _resolve_or_create_admin_owner(db, owner)
+    # This must precede the first provider/auth lookup in the upsert service.
+    await lock_deployment_managed_provider_mutation(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
+    )
     try:
         provider = await upsert_clawdi_managed_provider(
             db,
@@ -820,6 +827,12 @@ async def admin_delete_clawdi_managed_ai_provider(
         owner=owner,
         provider_id=provider_id,
         action=action,
+    )
+    # Use the same transaction lock as PUT before checking archived state.
+    await lock_deployment_managed_provider_mutation(
+        db,
+        owner_user_id=target.id,
+        provider_id=provider_id,
     )
     provider = await find_clawdi_managed_provider(
         db,

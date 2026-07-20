@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from urllib.parse import urlparse
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
@@ -75,6 +75,24 @@ def validate_managed_provider_base_url(base_url: str) -> None:
     parsed = urlparse(base_url.strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError("base_url must be an http(s) URL")
+
+
+async def lock_deployment_managed_provider_mutation(
+    db: AsyncSession,
+    *,
+    owner_user_id: UUID,
+    provider_id: str,
+) -> None:
+    """Serialize deployment-provider PUT/DELETE for one owner scope.
+
+    The transaction lock identity matches the provider uniqueness boundary and
+    remains held through provider/auth writes, audit insertion, and commit.
+    """
+
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        raise ValueError("unsupported deployment managed provider id")
+    lock_name = f"managed-ai-provider:{owner_user_id}:{provider_id}"
+    await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
 
 
 async def upsert_clawdi_managed_provider(
