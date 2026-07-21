@@ -223,39 +223,6 @@ async def _access_token(harness: WorkloadHarness, scope: str) -> str:
     return response.json()["access_token"]
 
 
-async def _add_workload_client(
-    harness: WorkloadHarness,
-    db_session,
-    *,
-    allowed_scopes: list[str],
-) -> WorkloadHarness:
-    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-    client_id = f"hosted-workload-{uuid.uuid4().hex}"
-    client_kid = f"client-{uuid.uuid4().hex}"
-    credential = PlatformWorkloadClient(
-        client_id=client_id,
-        assertion_kid=client_kid,
-        assertion_algorithm="RS256",
-        public_jwk=_public_jwk(private_key, kid=client_kid),
-        status=PLATFORM_WORKLOAD_CLIENT_ACTIVE,
-        allowed_scopes=allowed_scopes,
-        token_version=1,
-    )
-    db_session.add(credential)
-    await db_session.commit()
-    await db_session.refresh(credential)
-    return WorkloadHarness(
-        client=harness.client,
-        credential=credential,
-        client_id=client_id,
-        client_kid=client_kid,
-        client_private_key=private_key,
-        signing_private_key=harness.signing_private_key,
-        signing_key=harness.signing_key,
-        resolver=harness.resolver,
-    )
-
-
 def _workload_headers(token: str, idempotency_key: str) -> dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
@@ -587,7 +554,7 @@ async def test_oauth_storage_failures_are_503(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("operation", ["provision", "retire", "register", "read", "ack", "reset"])
-async def test_companion_routes_reject_legacy_admin_fallback(
+async def test_companion_routes_require_and_accept_admin_key(
     workload_harness,
     seed_user,
     db_session,
@@ -600,9 +567,9 @@ async def test_companion_routes_reject_legacy_admin_fallback(
         db_session,
         user_id=seed_user.id,
         machine_id=f"admin-fallback-{uuid.uuid4().hex}",
-        machine_name="admin-fallback",
+        machine_name="admin-key-companion",
     )
-    deployment_id = f"deployment-admin-forbidden-{uuid.uuid4().hex}"
+    deployment_id = f"deployment-admin-key-{uuid.uuid4().hex}"
     if operation != "provision":
         await provision_runtime_environment_fence(
             db_session,
@@ -614,7 +581,7 @@ async def test_companion_routes_reject_legacy_admin_fallback(
 
     path = "/v2/runtime/auth/keys"
     payload: dict[str, Any] = {
-        "label": "forbidden-admin-runtime",
+        "label": "admin-key-runtime",
         "environmentId": str(environment.id),
         "deploymentId": deployment_id,
     }
@@ -622,7 +589,7 @@ async def test_companion_routes_reject_legacy_admin_fallback(
         path = f"/v2/runtime/environments/{environment.id}/retire"
         payload = {
             "expectedDeploymentBinding": deployment_id,
-            "retirementId": "retirement-admin-forbidden",
+            "retirementId": f"retirement-admin-key-{environment.id}",
         }
     elif operation == "register":
         path = f"/v2/runtime/environments/{environment.id}/observation-consumers/register"
@@ -645,14 +612,79 @@ async def test_companion_routes_reject_legacy_admin_fallback(
         path = f"/v2/runtime/environments/{environment.id}/observation-consumers/reset"
         payload = {}
 
-    response = await workload_harness.client.post(
+    request_body = {"owner": _owner(seed_user), **payload} if operation == "provision" else payload
+    idempotency_key = f"admin-auth-{uuid.uuid4()}"
+    missing = await workload_harness.client.post(
         path,
-        headers={"X-Admin-Key": _ADMIN_KEY, "Idempotency-Key": f"admin-{uuid.uuid4()}"},
-        json={"owner": _owner(seed_user), **payload} if operation == "provision" else payload,
+        headers={"Idempotency-Key": idempotency_key},
+        json=request_body,
+    )
+    invalid = await workload_harness.client.post(
+        path,
+        headers={"X-Admin-Key": "invalid", "Idempotency-Key": idempotency_key},
+        json=request_body,
+    )
+    workload_token = await _access_token(workload_harness, "platform:keys:mint")
+    oauth_only = await workload_harness.client.post(
+        path,
+        headers={
+            "Authorization": f"Bearer {workload_token}",
+            "Idempotency-Key": idempotency_key,
+        },
+        json=request_body,
     )
 
-    assert response.status_code == 401, response.text
-    assert response.json() == {"detail": "platform workload credentials are required"}
+    assert missing.status_code == invalid.status_code == oauth_only.status_code == 401
+    assert missing.json() == invalid.json() == oauth_only.json() == {"detail": "invalid admin auth"}
+
+    settings.platform_legacy_admin_auth_enabled = False
+    admin_headers = {
+        "X-Admin-Key": _ADMIN_KEY,
+        "Idempotency-Key": idempotency_key,
+    }
+    valid_body = request_body
+    if operation in {"read", "ack", "reset"}:
+        registered = await workload_harness.client.post(
+            f"/v2/runtime/environments/{environment.id}/observation-consumers/register",
+            headers={"X-Admin-Key": _ADMIN_KEY},
+            json={},
+        )
+        assert registered.status_code == 200, registered.text
+        if operation == "read":
+            path = f"/v2/runtime/environments/{environment.id}/observations/read"
+            payload = {
+                "expectedApplyIdentity": {
+                    "generation": 1,
+                    "manifestETag": '"manifest-etag-0001"',
+                    "applyReceiptId": "apply-receipt-00000001",
+                    "bootNonce": "boot-nonce-0000000001",
+                },
+                "afterCursor": registered.json()["cursor"],
+            }
+        elif operation == "ack":
+            path = f"/v2/runtime/environments/{environment.id}/observation-consumers/ack"
+            payload = {"cursor": registered.json()["cursor"]}
+        else:
+            expired = await workload_harness.client.post(
+                f"/v2/runtime/environments/{environment.id}/observations/read",
+                headers={"X-Admin-Key": _ADMIN_KEY},
+                json={
+                    "expectedApplyIdentity": {
+                        "generation": 1,
+                        "manifestETag": '"manifest-etag-0001"',
+                        "applyReceiptId": "apply-receipt-00000001",
+                        "bootNonce": "boot-nonce-0000000001",
+                    },
+                    "afterCursor": "clawdi-ro-v1.invalid",
+                },
+            )
+            assert expired.status_code == 410, expired.text
+            path = f"/v2/runtime/environments/{environment.id}/observation-consumers/reset"
+            payload = {}
+        valid_body = payload
+    response = await workload_harness.client.post(path, headers=admin_headers, json=valid_body)
+
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.asyncio
@@ -686,10 +718,12 @@ async def test_v2_provision_precedes_narrow_key_and_retirement_replays_exact_rec
         return await original_mint(db, **kwargs)
 
     monkeypatch.setattr(v2_routes, "mint_api_key", assert_fence_precedes_key)
-    mint_token = await _access_token(workload_harness, "platform:keys:mint")
     minted = await workload_harness.client.post(
         "/v2/runtime/auth/keys",
-        headers=_workload_headers(mint_token, f"mint-{environment_id}"),
+        headers={
+            "X-Admin-Key": _ADMIN_KEY,
+            "Idempotency-Key": f"mint-{environment_id}",
+        },
         json={
             "owner": _owner(seed_user),
             "label": "strict-v2-runtime",
@@ -703,17 +737,28 @@ async def test_v2_provision_precedes_narrow_key_and_retirement_replays_exact_rec
     assert key.runtime_deployment_id == deployment_id
     assert key.scopes == list(RUNTIME_DEPLOYMENT_KEY_SCOPES)
     assert "runtime-observations:write" in key.scopes
+    provision_audit = (
+        await db_session.execute(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.source == "api.v2.runtime",
+                ControlPlaneAuditEvent.action == "runtime_environment.provision",
+                ControlPlaneAuditEvent.resource_id == str(environment_id),
+            )
+        )
+    ).scalar_one()
+    assert provision_audit.actor_type == "admin"
+    assert provision_audit.details["auth_method"] == "x_admin_key"
+    assert "workload_client_id" not in provision_audit.details
 
-    retire_token = await _access_token(
-        workload_harness,
-        "platform:runtime-environments:retire",
-    )
     path = f"/v2/runtime/environments/{environment_id}/retire"
     body = {
         "expectedDeploymentBinding": deployment_id,
         "retirementId": f"retirement-{environment_id}",
     }
-    first_headers = _workload_headers(retire_token, f"retire-first-{environment_id}")
+    first_headers = {
+        "X-Admin-Key": _ADMIN_KEY,
+        "Idempotency-Key": f"retire-first-{environment_id}",
+    }
     original_record_audit = v2_routes.record_control_plane_audit
 
     def fail_transition_audit(db, **kwargs):
@@ -740,7 +785,10 @@ async def test_v2_provision_precedes_narrow_key_and_retirement_replays_exact_rec
     )
     domain_replay = await workload_harness.client.post(
         path,
-        headers=_workload_headers(retire_token, f"retire-domain-replay-{environment_id}"),
+        headers={
+            "X-Admin-Key": _ADMIN_KEY,
+            "Idempotency-Key": f"retire-domain-replay-{environment_id}",
+        },
         json=body,
     )
 
@@ -790,29 +838,50 @@ async def test_v2_provision_precedes_narrow_key_and_retirement_replays_exact_rec
     assert len(transition_audits) == 1
     assert len(replay_audits) == 1
     transition = transition_audits[0]
-    assert transition.actor_type == "platform_workload"
-    assert transition.details["workload_client_id"] == workload_harness.client_id
+    assert transition.actor_type == "admin"
+    assert transition.details["auth_method"] == "x_admin_key"
+    assert "workload_client_id" not in transition.details
+    assert "workload_principal_id" not in transition.details
     assert transition.details["retirement_receipt_id"] == str(fence.retirement_receipt_id)
     assert transition.details["previous_state"] == "active"
     assert transition.details["new_state"] == "retired"
 
     conflicting = await workload_harness.client.post(
         path,
-        headers=_workload_headers(retire_token, f"retire-conflict-{environment_id}"),
+        headers={
+            "X-Admin-Key": _ADMIN_KEY,
+            "Idempotency-Key": f"retire-conflict-{environment_id}",
+        },
         json={**body, "retirementId": f"other-{environment_id}"},
     )
     assert conflicting.status_code == 409, conflicting.text
     assert conflicting.json()["detail"]["code"] == "runtime_environment_retirement_conflict"
+    rejection_audit = (
+        await db_session.execute(
+            select(ControlPlaneAuditEvent).where(
+                ControlPlaneAuditEvent.source == "api.v2.runtime",
+                ControlPlaneAuditEvent.action == "runtime_environment.retire",
+                ControlPlaneAuditEvent.resource_id == str(environment_id),
+                ControlPlaneAuditEvent.details["outcome"].astext
+                == "runtime_environment_retirement_conflict",
+            )
+        )
+    ).scalar_one()
+    assert rejection_audit.actor_type == "admin"
+    assert rejection_audit.details["auth_method"] == "x_admin_key"
 
 
 @pytest.mark.asyncio
-async def test_observation_consumer_identity_is_bound_to_workload_principal(
+async def test_observation_consumer_identity_is_bound_to_admin_actor(
     workload_harness,
     seed_user,
     db_session,
 ):
     from app.models.runtime_observation import V2RuntimeObservationConsumerCursor
-    from app.services.runtime_observation import provision_runtime_environment_fence
+    from app.services.runtime_observation import (
+        provision_runtime_environment_fence,
+        register_runtime_observation_consumer,
+    )
     from tests.conftest import create_env_with_project
 
     environment = await create_env_with_project(
@@ -830,20 +899,21 @@ async def test_observation_consumer_identity_is_bound_to_workload_principal(
     )
     await db_session.commit()
 
-    scope = "platform:runtime-observations:consume"
-    consumer_b = await _add_workload_client(
-        workload_harness,
+    foreign = await register_runtime_observation_consumer(
         db_session,
-        allowed_scopes=[scope],
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=deployment_id,
+        consumer_id="foreign-controller",
     )
-    token_a = await _access_token(workload_harness, scope)
-    token_b = await _access_token(consumer_b, scope)
+    await db_session.commit()
     path = f"/v2/runtime/environments/{environment.id}"
+    admin_headers = {"X-Admin-Key": _ADMIN_KEY}
     common: dict[str, str] = {}
 
     caller_supplied_binding = await workload_harness.client.post(
         f"{path}/observation-consumers/register",
-        headers=_workload_headers(token_a, "caller-binding-forbidden"),
+        headers=admin_headers,
         json={"owner": _owner(seed_user), "deploymentId": deployment_id},
     )
     assert caller_supplied_binding.status_code == 422, caller_supplied_binding.text
@@ -852,19 +922,13 @@ async def test_observation_consumer_identity_is_bound_to_workload_principal(
         "deploymentId",
     }
 
-    registered_a = await workload_harness.client.post(
+    registered = await workload_harness.client.post(
         f"{path}/observation-consumers/register",
-        headers=_workload_headers(token_a, "register-a"),
+        headers=admin_headers,
         json=common,
     )
-    registered_b = await workload_harness.client.post(
-        f"{path}/observation-consumers/register",
-        headers=_workload_headers(token_b, "register-b"),
-        json=common,
-    )
-    assert registered_a.status_code == registered_b.status_code == 200
-    assert registered_a.json()["consumerId"] == workload_harness.client_id
-    assert registered_b.json()["consumerId"] == consumer_b.client_id
+    assert registered.status_code == 200, registered.text
+    assert registered.json()["consumerId"] == "hosted-controller"
 
     apply_identity = {
         "generation": 1,
@@ -874,11 +938,11 @@ async def test_observation_consumer_identity_is_bound_to_workload_principal(
     }
     cross_read = await workload_harness.client.post(
         f"{path}/observations/read",
-        headers=_workload_headers(token_a, "cross-read"),
+        headers=admin_headers,
         json={
             **common,
             "expectedApplyIdentity": apply_identity,
-            "afterCursor": registered_b.json()["cursor"],
+            "afterCursor": foreign["cursor"],
         },
     )
     assert cross_read.status_code == 410, cross_read.text
@@ -886,14 +950,14 @@ async def test_observation_consumer_identity_is_bound_to_workload_principal(
 
     cross_ack = await workload_harness.client.post(
         f"{path}/observation-consumers/ack",
-        headers=_workload_headers(token_a, "cross-ack"),
-        json={**common, "cursor": registered_b.json()["cursor"]},
+        headers=admin_headers,
+        json={**common, "cursor": foreign["cursor"]},
     )
     assert cross_ack.status_code == 410, cross_ack.text
     assert cross_ack.json()["detail"]["code"] == "observation_cursor_expired"
     expired_a = await db_session.get(
         V2RuntimeObservationConsumerCursor,
-        {"environment_id": environment.id, "consumer_id": workload_harness.client_id},
+        {"environment_id": environment.id, "consumer_id": "hosted-controller"},
     )
     assert expired_a is not None
     await db_session.refresh(expired_a)
@@ -912,50 +976,51 @@ async def test_observation_consumer_identity_is_bound_to_workload_principal(
         ).scalars()
     )
     assert [event.details["operation"] for event in expiry_audits] == ["read", "ack"]
-    assert all(
-        event.details["consumer_id"] == workload_harness.client_id for event in expiry_audits
-    )
-    assert registered_b.json()["cursor"] not in json.dumps(
+    assert all(event.actor_type == "admin" for event in expiry_audits)
+    assert all(event.details["auth_method"] == "x_admin_key" for event in expiry_audits)
+    assert all(event.details["consumer_id"] == "hosted-controller" for event in expiry_audits)
+    assert all("workload_client_id" not in event.details for event in expiry_audits)
+    assert foreign["cursor"] not in json.dumps(
         [event.details for event in expiry_audits],
         sort_keys=True,
     )
 
     caller_controlled_reset = await workload_harness.client.post(
         f"{path}/observation-consumers/reset",
-        headers=_workload_headers(token_a, "cross-reset-forbidden"),
-        json={**common, "consumer_id": consumer_b.client_id},
+        headers=admin_headers,
+        json={**common, "consumer_id": "foreign-controller"},
     )
     assert caller_controlled_reset.status_code == 422, caller_controlled_reset.text
     assert any(
         error["loc"][-1] == "consumer_id" for error in caller_controlled_reset.json()["detail"]
     )
 
-    reset_a = await workload_harness.client.post(
+    reset = await workload_harness.client.post(
         f"{path}/observation-consumers/reset",
-        headers=_workload_headers(token_a, "reset-a"),
+        headers=admin_headers,
         json=common,
     )
-    assert reset_a.status_code == 200, reset_a.text
-    assert reset_a.json()["consumerId"] == workload_harness.client_id
+    assert reset.status_code == 200, reset.text
+    assert reset.json()["consumerId"] == "hosted-controller"
 
-    own_read_b = await workload_harness.client.post(
+    own_read = await workload_harness.client.post(
         f"{path}/observations/read",
-        headers=_workload_headers(token_b, "read-b"),
+        headers=admin_headers,
         json={
             **common,
             "expectedApplyIdentity": apply_identity,
-            "afterCursor": registered_b.json()["cursor"],
+            "afterCursor": reset.json()["cursor"],
         },
     )
-    assert own_read_b.status_code == 200, own_read_b.text
-    cursor_b = await db_session.get(
+    assert own_read.status_code == 200, own_read.text
+    cursor = await db_session.get(
         V2RuntimeObservationConsumerCursor,
-        {"environment_id": environment.id, "consumer_id": consumer_b.client_id},
+        {"environment_id": environment.id, "consumer_id": "hosted-controller"},
     )
-    assert cursor_b is not None
-    assert cursor_b.state == "active"
-    assert cursor_b.acked_stream_position == 0
-    assert cursor_b.reset_at is None
+    assert cursor is not None
+    assert cursor.state == "active"
+    assert cursor.acked_stream_position == 0
+    assert cursor.reset_at is not None
 
 
 @pytest.mark.asyncio
