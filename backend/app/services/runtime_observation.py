@@ -1273,7 +1273,7 @@ async def acknowledge_runtime_observation_cursor(
             "runtime observation acknowledgement cannot regress",
         )
     now = _utc(acknowledged_at or datetime.now(UTC))
-    if decoded.stream_position > cursor.acked_stream_position:
+    if decoded.stream_position >= cursor.acked_stream_position:
         cursor.acked_stream_position = decoded.stream_position
         cursor.acked_cursor = opaque_cursor
         cursor.acknowledged_at = now
