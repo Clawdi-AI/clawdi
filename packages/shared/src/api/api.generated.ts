@@ -11824,7 +11824,6 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -11896,7 +11895,6 @@ export interface operations {
             header: {
                 "Idempotency-Key": string;
                 "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -11934,7 +11932,6 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -11972,7 +11969,6 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -12010,7 +12006,6 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
             };
             path: {
                 environment_id: string;
@@ -12048,7 +12043,6 @@ export interface operations {
             query?: never;
             header?: {
                 "X-Admin-Key"?: string | null;
-                Authorization?: string | null;
             };
             path: {
                 environment_id: string;

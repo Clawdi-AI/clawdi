@@ -65,8 +65,8 @@ Cloud-api reuses these existing runtime primitives:
 - `AgentEnvironment.id` as the stable environment identity;
 - managed, environment-bound `ApiKey` authentication with the dedicated
   `runtime-observations:write` scope for the runtime credential;
-- platform workload OAuth, mutation idempotency, and control-plane audit events
-  for Hosted-facing provisioning and retirement calls;
+- the first-party `X-Admin-Key` gate, mutation idempotency, and control-plane
+  audit events for Hosted-facing provisioning and retirement calls;
 - PostgreSQL transactions and `FOR UPDATE` locks for ingestion and retirement
   serialization.
 
@@ -86,21 +86,20 @@ Four PostgreSQL tables form the additive companion boundary:
 | `v2_runtime_observation_consumer_cursors` | Environment-and-consumer ACK state, replay horizon, and explicit fail-closed expiry/reset boundary used by safe prefix retention. |
 
 Strict-v2 credential provisioning is only available through
-workload-authenticated `POST /v2/runtime/auth/keys`. The legacy admin and
-platform v1 key APIs keep their original wire shape and cannot create a fence
-or deployment-bound credential. The database requires every deployment-bound
-key to be managed, environment-bound, explicitly scoped, to include
+admin-authenticated `POST /v2/runtime/auth/keys`. The admin and platform v1 key
+APIs keep their original wire shape and cannot create a fence or
+deployment-bound credential. The database requires every deployment-bound key
+to be managed, environment-bound, explicitly scoped, to include
 `runtime-observations:write`, and to stay within the runtime scope ceiling.
 
-Hosted-facing `/v2` registration, read, acknowledgement, and reset calls require
-the dedicated `platform:runtime-observations:consume` workload scope. The
-consumer identity is the authenticated workload `client_id`, and immutable
+Hosted-facing `/v2` registration, read, acknowledgement, reset, retirement, and
+provisioning calls all require the first-party `X-Admin-Key`. The server binds
+observation cursors to its fixed Hosted controller identity, and immutable
 owner/deployment authority is resolved from the environment fence rather than
 caller-selected request data, so opaque cursors cannot cross consumers or
-environments. Retirement separately requires
-`platform:runtime-environments:retire`; provisioning requires
-`platform:keys:mint`. The legacy global `X-Admin-Key` is not a fallback for any
-of these `/v2` operations.
+environments. Platform workload OAuth remains separate, default-closed
+infrastructure for the future resale platform surface; it is not on this v2
+data-plane path.
 
 Ingestion locks the permanent environment fence and rejects a retired binding
 before it inspects or creates a boot-session head. Retirement uses the same

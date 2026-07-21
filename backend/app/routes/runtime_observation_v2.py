@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth
+from app.core.auth import AuthContext, get_auth, require_admin_api_key
 from app.core.database import get_runtime_observation_session, get_session
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.user import PRINCIPAL_KIND_CLERK, PRINCIPAL_KIND_PARTNER_TENANT, User
@@ -38,10 +38,6 @@ from app.services.platform_contract import (
     read_platform_replay,
     store_platform_response,
 )
-from app.services.platform_workload_auth import (
-    PlatformMutationAuth,
-    require_platform_workload_auth,
-)
 from app.services.runtime_observation import (
     RuntimeApplyIdentity,
     RuntimeObservationProtocolError,
@@ -67,6 +63,8 @@ _NON_ADVANCING_OUTCOMES = frozenset(
         "accepted_non_advance_captured_at",
     }
 )
+
+_HOSTED_RUNTIME_CONSUMER_ID = "hosted-controller"
 
 
 async def require_runtime_observation_writer(
@@ -184,16 +182,9 @@ def _replay_response(replay: PlatformReplay) -> JSONResponse:
     return _CanonicalJSONResponse(status_code=replay.status_code, content=replay.body)
 
 
-def _workload_identity(auth: PlatformMutationAuth) -> tuple[str, str]:
-    if auth.kind != "workload" or auth.client_id is None or auth.credential_id is None:
-        raise RuntimeError("v2 runtime control-plane routes require workload identity")
-    return auth.client_id, str(auth.credential_id)
-
-
-def _record_workload_audit(
+def _record_admin_audit(
     db: AsyncSession,
     *,
-    auth: PlatformMutationAuth,
     action: str,
     target_user_id: UUID,
     environment_id: UUID,
@@ -201,10 +192,9 @@ def _record_workload_audit(
     outcome: str,
     details: dict[str, Any] | None = None,
 ) -> None:
-    client_id, principal_id = _workload_identity(auth)
     record_control_plane_audit(
         db,
-        actor_type="platform_workload",
+        actor_type="admin",
         target_user_id=target_user_id,
         source="api.v2.runtime",
         action=action,
@@ -214,8 +204,7 @@ def _record_workload_audit(
         # environment UUID remains in resource_id and safe details.
         environment_id=None,
         details={
-            "workload_client_id": client_id,
-            "workload_principal_id": principal_id,
+            "auth_method": "x_admin_key",
             "environment_id": str(environment_id),
             "deployment_id": deployment_id,
             "outcome": outcome,
@@ -267,16 +256,14 @@ def _record_runtime_ingest_audit(
 def _record_cursor_expiry_audit(
     db: AsyncSession,
     *,
-    auth: PlatformMutationAuth,
     target_user_id: UUID,
     environment_id: UUID,
     deployment_id: str,
     operation: str,
 ) -> None:
-    client_id, principal_id = _workload_identity(auth)
     record_control_plane_audit(
         db,
-        actor_type="platform_workload",
+        actor_type="admin",
         target_user_id=target_user_id,
         source="api.v2.runtime",
         action="runtime_observation.cursor_expired",
@@ -284,9 +271,8 @@ def _record_cursor_expiry_audit(
         resource_id=str(environment_id),
         environment_id=None,
         details={
-            "workload_client_id": client_id,
-            "workload_principal_id": principal_id,
-            "consumer_id": client_id,
+            "auth_method": "x_admin_key",
+            "consumer_id": _HOSTED_RUNTIME_CONSUMER_ID,
             "environment_id": str(environment_id),
             "deployment_id": deployment_id,
             "operation": operation,
@@ -323,7 +309,7 @@ async def _load_fence_binding(
 async def create_runtime_deployment_key(
     body: RuntimeDeploymentKeyCreate,
     idempotency_key: IdempotencyKey,
-    auth: PlatformMutationAuth = Depends(require_platform_workload_auth("platform:keys:mint")),
+    _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     owner = await _resolve_owner(db, body.owner)
@@ -365,9 +351,8 @@ async def create_runtime_deployment_key(
             raw_key=minted.raw_key,
         )
         response_body = _canonical_response_body(response)
-        _record_workload_audit(
+        _record_admin_audit(
             db,
-            auth=auth,
             action="runtime_environment.provision",
             target_user_id=owner.id,
             environment_id=body.environment_id,
@@ -467,9 +452,7 @@ async def retire_runtime_environment_endpoint(
     environment_id: UUID,
     body: RuntimeEnvironmentRetireRequest,
     idempotency_key: IdempotencyKey,
-    auth: PlatformMutationAuth = Depends(
-        require_platform_workload_auth("platform:runtime-environments:retire")
-    ),
+    _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> JSONResponse:
     binding = await _load_fence_binding(db, environment_id=environment_id)
@@ -498,9 +481,8 @@ async def retire_runtime_environment_endpoint(
         receipt = RuntimeEnvironmentRetirementReceipt.model_validate(result.receipt)
         response_body = _canonical_response_body(receipt)
         if result.transitioned:
-            _record_workload_audit(
+            _record_admin_audit(
                 db,
-                auth=auth,
                 action="runtime_environment.retire",
                 target_user_id=binding_owner_id,
                 environment_id=environment_id,
@@ -518,9 +500,8 @@ async def retire_runtime_environment_endpoint(
                 },
             )
         else:
-            _record_workload_audit(
+            _record_admin_audit(
                 db,
-                auth=auth,
                 action="runtime_environment.retire_replay",
                 target_user_id=binding_owner_id,
                 environment_id=environment_id,
@@ -546,9 +527,8 @@ async def retire_runtime_environment_endpoint(
     except RuntimeObservationProtocolError as exc:
         await db.rollback()
         try:
-            _record_workload_audit(
+            _record_admin_audit(
                 db,
-                auth=auth,
                 action="runtime_environment.retire",
                 target_user_id=binding_owner_id,
                 environment_id=environment_id,
@@ -571,7 +551,6 @@ async def _commit_cursor_expiry_or_rollback(
     db: AsyncSession,
     *,
     exc: RuntimeObservationProtocolError,
-    auth: PlatformMutationAuth,
     owner_id: UUID,
     environment_id: UUID,
     deployment_id: str,
@@ -583,7 +562,6 @@ async def _commit_cursor_expiry_or_rollback(
     try:
         _record_cursor_expiry_audit(
             db,
-            auth=auth,
             target_user_id=owner_id,
             environment_id=environment_id,
             deployment_id=deployment_id,
@@ -603,27 +581,23 @@ async def _commit_cursor_expiry_or_rollback(
 async def register_runtime_observation_consumer_endpoint(
     environment_id: UUID,
     body: RuntimeObservationConsumerRequest,
-    auth: PlatformMutationAuth = Depends(
-        require_platform_workload_auth("platform:runtime-observations:consume")
-    ),
+    _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservationConsumerResponse:
     binding = await _load_fence_binding(db, environment_id=environment_id)
-    client_id, _ = _workload_identity(auth)
     try:
         values = await register_runtime_observation_consumer(
             db,
             environment_id=environment_id,
             owner_id=binding.owner_id,
             deployment_id=binding.deployment_id,
-            consumer_id=client_id,
+            consumer_id=_HOSTED_RUNTIME_CONSUMER_ID,
         )
         await db.commit()
     except RuntimeObservationProtocolError as exc:
         await _commit_cursor_expiry_or_rollback(
             db,
             exc=exc,
-            auth=auth,
             owner_id=binding.owner_id,
             environment_id=environment_id,
             deployment_id=binding.deployment_id,
@@ -639,13 +613,10 @@ async def register_runtime_observation_consumer_endpoint(
 async def read_runtime_observations_endpoint(
     environment_id: UUID,
     body: RuntimeObservationReadRequest,
-    auth: PlatformMutationAuth = Depends(
-        require_platform_workload_auth("platform:runtime-observations:consume")
-    ),
+    _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_runtime_observation_session),
 ) -> RuntimeObservationReadResponse:
     binding = await _load_fence_binding(db, environment_id=environment_id)
-    client_id, _ = _workload_identity(auth)
     expected = body.expected_apply_identity
     try:
         values = await read_runtime_observations(
@@ -653,7 +624,7 @@ async def read_runtime_observations_endpoint(
             environment_id=environment_id,
             owner_id=binding.owner_id,
             deployment_id=binding.deployment_id,
-            consumer_id=client_id,
+            consumer_id=_HOSTED_RUNTIME_CONSUMER_ID,
             expected_apply_identity=RuntimeApplyIdentity(
                 generation=expected.generation,
                 manifest_etag=expected.manifest_etag,
@@ -667,7 +638,6 @@ async def read_runtime_observations_endpoint(
         await _commit_cursor_expiry_or_rollback(
             db,
             exc=exc,
-            auth=auth,
             owner_id=binding.owner_id,
             environment_id=environment_id,
             deployment_id=binding.deployment_id,
@@ -683,20 +653,17 @@ async def read_runtime_observations_endpoint(
 async def acknowledge_runtime_observation_consumer_endpoint(
     environment_id: UUID,
     body: RuntimeObservationConsumerAckRequest,
-    auth: PlatformMutationAuth = Depends(
-        require_platform_workload_auth("platform:runtime-observations:consume")
-    ),
+    _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservationConsumerResponse:
     binding = await _load_fence_binding(db, environment_id=environment_id)
-    client_id, _ = _workload_identity(auth)
     try:
         values = await acknowledge_runtime_observation_cursor(
             db,
             environment_id=environment_id,
             owner_id=binding.owner_id,
             deployment_id=binding.deployment_id,
-            consumer_id=client_id,
+            consumer_id=_HOSTED_RUNTIME_CONSUMER_ID,
             opaque_cursor=body.cursor,
         )
         await db.commit()
@@ -704,7 +671,6 @@ async def acknowledge_runtime_observation_consumer_endpoint(
         await _commit_cursor_expiry_or_rollback(
             db,
             exc=exc,
-            auth=auth,
             owner_id=binding.owner_id,
             environment_id=environment_id,
             deployment_id=binding.deployment_id,
@@ -720,20 +686,17 @@ async def acknowledge_runtime_observation_consumer_endpoint(
 async def reset_runtime_observation_consumer_endpoint(
     environment_id: UUID,
     body: RuntimeObservationConsumerRequest,
-    auth: PlatformMutationAuth = Depends(
-        require_platform_workload_auth("platform:runtime-observations:consume")
-    ),
+    _: None = Depends(require_admin_api_key),
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservationConsumerResetResponse:
     binding = await _load_fence_binding(db, environment_id=environment_id)
-    client_id, _ = _workload_identity(auth)
     try:
         values = await reset_runtime_observation_consumer(
             db,
             environment_id=environment_id,
             owner_id=binding.owner_id,
             deployment_id=binding.deployment_id,
-            consumer_id=client_id,
+            consumer_id=_HOSTED_RUNTIME_CONSUMER_ID,
         )
         await db.commit()
     except RuntimeObservationProtocolError as exc:
