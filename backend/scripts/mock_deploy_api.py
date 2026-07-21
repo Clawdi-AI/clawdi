@@ -182,6 +182,7 @@ def _deployment(
         "app_id": DEV_V2_APP_ID,
         "backend": "mock",
         "status": status,
+        "failure_reason": None,
         "endpoints": [
             "https://codex.dev-preview.local",
             "https://openclaw.dev-preview.local",
@@ -191,6 +192,19 @@ def _deployment(
         "openclaw_control_ui_url": "https://openclaw.dev-preview.local",
         "hermes_control_ui_url": "https://hermes.dev-preview.local",
         "config_info": config_info or _base_config(),
+        "compute_subscription": {
+            "id": f"sub_{deployment_id}",
+            "status": "active",
+            "payment_state": "ok",
+            "billing_term_months": 1,
+            "currency": "usd",
+            "current_period_end": _iso(_now() + timedelta(days=23)),
+            "cancel_at_period_end": False,
+            "cancel_at": None,
+            "latest_failed_invoice_id": None,
+            "latest_failed_invoice_hosted_url": None,
+            "next_payment_attempt_at": None,
+        },
         "created_at": _iso(created),
         "upgrade_available": False,
         "agent_version": "v2-dev",
@@ -199,6 +213,13 @@ def _deployment(
 
 
 DEPLOYMENTS: dict[str, dict[str, Any]] = {DEV_V2_DEPLOYMENT_ID: _deployment()}
+
+
+def _deployment_or_404(deployment_id: str) -> dict[str, Any]:
+    deployment = DEPLOYMENTS.get(deployment_id)
+    if deployment is None:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+    return deployment
 
 app = FastAPI(title="Clawdi local deploy API mock")
 app.add_middleware(
@@ -229,6 +250,11 @@ async def me() -> dict[str, Any]:
     }
 
 
+@app.get("/agent-environments")
+async def list_v1_agent_environments() -> dict[str, Any]:
+    return {"environment_ids": []}
+
+
 @app.get("/v2/deployments")
 async def list_deployments() -> list[dict[str, Any]]:
     return list(DEPLOYMENTS.values())
@@ -245,7 +271,7 @@ async def create_deployment(request: Request) -> dict[str, Any]:
         enabled_optional.append("hermes")
     agents = ["codex", *enabled_optional]
     config = _base_config()
-    config["compute_plan_slug"] = body.get("compute_plan_slug", "compute_free")
+    config["compute_plan_slug"] = body.get("compute_plan_slug", "compute_basic")
     config["enable_openclaw"] = "openclaw" in enabled_optional
     config["enable_hermes"] = "hermes" in enabled_optional
     config["onboarded_agents"] = agents
@@ -274,7 +300,7 @@ async def create_deployment(request: Request) -> dict[str, Any]:
     created = _deployment(
         deployment_id=deployment_id,
         name=body.get("assistant_name") or f"dev-agent-{deployment_id[-4:]}",
-        status="provisioning",
+        status="creating",
         config_info=config,
     )
     DEPLOYMENTS[deployment_id] = created
@@ -283,15 +309,13 @@ async def create_deployment(request: Request) -> dict[str, Any]:
 
 @app.get("/v2/deployments/{deployment_id}")
 async def get_deployment(deployment_id: str) -> dict[str, Any]:
-    deployment = DEPLOYMENTS.get(deployment_id)
-    if deployment is None:
-        raise HTTPException(status_code=404, detail="Deployment not found")
+    deployment = _deployment_or_404(deployment_id)
     return deployment
 
 
 @app.patch("/v2/deployments/{deployment_id}")
 async def update_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
-    deployment = await get_deployment(deployment_id)
+    deployment = _deployment_or_404(deployment_id)
     body = await request.json()
     next_name = body.get("name") or body.get("assistant_name")
     if isinstance(next_name, str) and next_name.strip():
@@ -311,7 +335,7 @@ async def set_agent_enabled(
     agent_type: str,
     request: Request,
 ) -> dict[str, Any]:
-    deployment = await get_deployment(deployment_id)
+    deployment = _deployment_or_404(deployment_id)
     body = await request.json()
     enabled = bool(body.get("enabled"))
     config = deployment["config_info"]
@@ -346,7 +370,7 @@ async def set_agent_ai_provider(
     agent_type: str,
     request: Request,
 ) -> dict[str, Any]:
-    deployment = await get_deployment(deployment_id)
+    deployment = _deployment_or_404(deployment_id)
     body = await request.json()
     if agent_type not in {"codex", "openclaw", "hermes"}:
         raise HTTPException(status_code=400, detail="Unsupported runtime")
@@ -377,7 +401,7 @@ async def set_agent_ai_provider(
 @app.post("/v2/deployments/{deployment_id}/onboard-agent")
 async def onboard_agent(deployment_id: str, request: Request) -> dict[str, Any]:
     body = await request.json()
-    deployment = await get_deployment(deployment_id)
+    deployment = _deployment_or_404(deployment_id)
     agent_type = body.get("agent_type", "openclaw")
     if agent_type not in {"codex", "openclaw", "hermes"}:
         raise HTTPException(status_code=400, detail="Unsupported runtime")
@@ -466,7 +490,7 @@ async def create_terminal_session(
     deployment_id: str,
     request: Request,
 ) -> dict[str, Any]:
-    deployment = await get_deployment(deployment_id)
+    deployment = _deployment_or_404(deployment_id)
     if deployment.get("status") not in {"running", "ready"}:
         raise HTTPException(
             status_code=409,
@@ -479,6 +503,15 @@ async def create_terminal_session(
         "deployment_id": deployment_id,
         "websocket_url": websocket_url,
         "expires_at": _iso(_now() + timedelta(minutes=30)),
+    }
+
+
+@app.post("/v2/deployments/{deployment_id}/runtime-ui/redemption")
+async def create_runtime_ui_redemption(deployment_id: str) -> dict[str, Any]:
+    _deployment_or_404(deployment_id)
+    return {
+        "url": f"{_web_base_url()}/agents/{deployment_id}?mockRuntime=1",
+        "expires_at": _iso(_now() + timedelta(minutes=5)),
     }
 
 
@@ -540,21 +573,21 @@ def _mock_terminal_command(command: str) -> str:
 
 @app.post("/v2/deployments/{deployment_id}/restart")
 async def restart_deployment(deployment_id: str) -> dict[str, Any]:
-    deployment = await get_deployment(deployment_id)
+    deployment = _deployment_or_404(deployment_id)
     deployment["status"] = "running"
     return {"status": "restarting", "upgrade_task_id": None, "upgrade_status": None}
 
 
 @app.post("/v2/deployments/{deployment_id}/stop")
 async def stop_deployment(deployment_id: str) -> dict[str, Any]:
-    deployment = await get_deployment(deployment_id)
+    deployment = _deployment_or_404(deployment_id)
     deployment["status"] = "stopped"
     return {"status": "stopped", "upgrade_task_id": None, "upgrade_status": None}
 
 
 @app.post("/v2/deployments/{deployment_id}/start")
 async def start_deployment(deployment_id: str) -> dict[str, Any]:
-    deployment = await get_deployment(deployment_id)
+    deployment = _deployment_or_404(deployment_id)
     deployment["status"] = "running"
     return {"status": "starting", "upgrade_task_id": None, "upgrade_status": None}
 
@@ -563,8 +596,8 @@ async def start_deployment(deployment_id: str) -> dict[str, Any]:
 async def plans() -> list[dict[str, Any]]:
     return [
         {
-            "slug": "compute_free",
-            "name": "Free",
+            "slug": "compute_basic",
+            "name": "Basic",
             "price_cents": 0,
             "points_per_usd": 100,
             "signup_grant_credits": 500,
@@ -573,7 +606,14 @@ async def plans() -> list[dict[str, Any]]:
             "ram_gb": 2,
             "disk_size": 20,
             "instance_type": "dev-free",
-            "offers": [],
+            "offers": [
+                {
+                    "billing_term_months": 1,
+                    "price_cents": 0,
+                    "effective_monthly_price_cents": 0,
+                    "discount_percent": 0,
+                }
+            ],
         },
         {
             "slug": "compute_performance",
@@ -624,6 +664,92 @@ async def portal() -> dict[str, Any]:
     }
 
 
+@app.post("/v2/subscription/cancel")
+async def cancel_subscription(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    deployment_id = body.get("deployment_id") if isinstance(body, dict) else None
+    if isinstance(deployment_id, str) and deployment_id:
+        deployment = DEPLOYMENTS.get(deployment_id)
+        subscription = deployment.get("compute_subscription") if deployment else None
+        if isinstance(subscription, dict):
+            subscription["cancel_at_period_end"] = True
+    return {
+        "status": "active",
+        "cancel_at_period_end": True,
+        "billing_term_months": 1,
+        "current_period_end": _iso(_now() + timedelta(days=23)),
+    }
+
+
+@app.post("/v2/subscription/resume")
+async def resume_subscription(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    deployment_id = body.get("deployment_id") if isinstance(body, dict) else None
+    if isinstance(deployment_id, str) and deployment_id:
+        deployment = DEPLOYMENTS.get(deployment_id)
+        subscription = deployment.get("compute_subscription") if deployment else None
+        if isinstance(subscription, dict):
+            subscription["cancel_at_period_end"] = False
+    return {
+        "status": "active",
+        "cancel_at_period_end": False,
+        "billing_term_months": 1,
+        "current_period_end": _iso(_now() + timedelta(days=23)),
+    }
+
+
+@app.post("/v2/subscription/fix-payment")
+async def fix_payment() -> dict[str, Any]:
+    portal_url = f"{_web_base_url()}/?settings=billing-plan&mockFixPayment=1"
+    return {
+        "url": portal_url,
+        "portal_url": portal_url,
+        "status": "mock",
+    }
+
+
+@app.get("/v2/subscription/invoices")
+async def invoices() -> dict[str, Any]:
+    now = _now()
+    return {
+        "data": [
+            {
+                "id": "in_dev_performance",
+                "number": "E2E-0001",
+                "status": "paid",
+                "amount_cents": 1900,
+                "currency": "usd",
+                "hosted_invoice_url": f"{_web_base_url()}/?mockInvoice=1",
+                "created": _iso(now - timedelta(days=7)),
+            }
+        ],
+        "has_more": False,
+        "next_starting_after": None,
+    }
+
+
+@app.get("/v2/subscription/billing-history")
+async def billing_history() -> dict[str, Any]:
+    now = _now()
+    return {
+        "data": [
+            {
+                "id": "stripe:in_dev_performance",
+                "funding_source": "stripe",
+                "compute_subscription_id": 1,
+                "plan_slug": "compute_performance",
+                "status": "paid",
+                "amount_cents": 1900,
+                "currency": "usd",
+                "created": _iso(now - timedelta(days=7)),
+                "hosted_invoice_url": f"{_web_base_url()}/?mockInvoice=1",
+            }
+        ],
+        "has_more": False,
+        "next_cursor": None,
+    }
+
+
 @app.get("/v2/usage")
 async def usage() -> dict[str, Any]:
     today = _now().date()
@@ -654,6 +780,7 @@ async def wallet() -> dict[str, Any]:
         "balance_credits": 4200,
         "balance_snapshot_at": _iso(_now()),
         "payment_mode": "card",
+        "x402_enabled": False,
         "auto_reload_enabled": True,
         "auto_reload_threshold_credits": 1000,
         "auto_reload_amount_cents": 1000,
