@@ -674,15 +674,7 @@ function validateHostedRuntimeManifest(
 	}
 }
 
-const hostedRuntimeManifestV1Schema = hostedRuntimeManifestBaseSchema
-	.safeExtend({
-		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
-		clawdiCli: hostedCliPayloadPolicySchema,
-	})
-	.strict()
-	.superRefine(validateHostedRuntimeManifest);
-
-const hostedRuntimeManifestV2Schema = hostedRuntimeManifestBaseSchema
+export const hostedRuntimeManifestSchema = hostedRuntimeManifestBaseSchema
 	.safeExtend({
 		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v2"),
 		generation: z.number().int().positive(),
@@ -693,11 +685,6 @@ const hostedRuntimeManifestV2Schema = hostedRuntimeManifestBaseSchema
 	})
 	.strict()
 	.superRefine(validateHostedRuntimeManifest);
-
-export const hostedRuntimeManifestSchema = z.discriminatedUnion("schemaVersion", [
-	hostedRuntimeManifestV1Schema,
-	hostedRuntimeManifestV2Schema,
-]);
 
 export const hostedRuntimeManifestResponseSchema = z
 	.object({
@@ -722,14 +709,6 @@ export const hostedRuntimeManifestResponseSchema = z
 		}
 	});
 
-const hostedRuntimeManifestFixtureV1Schema = hostedRuntimeManifestBaseSchema
-	.safeExtend({
-		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
-		clawdiCli: hostedFixtureCliPayloadPolicySchema,
-	})
-	.strict()
-	.superRefine(validateHostedRuntimeManifest);
-
 const hostedRuntimeManifestFixtureV2Schema = hostedRuntimeManifestBaseSchema
 	.safeExtend({
 		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v2"),
@@ -741,15 +720,9 @@ const hostedRuntimeManifestFixtureV2Schema = hostedRuntimeManifestBaseSchema
 	})
 	.strict()
 	.superRefine(validateHostedRuntimeManifest);
-
-const hostedRuntimeManifestFixtureSchema = z.discriminatedUnion("schemaVersion", [
-	hostedRuntimeManifestFixtureV1Schema,
-	hostedRuntimeManifestFixtureV2Schema,
-]);
-
 export const hostedRuntimeManifestFixtureResponseSchema = z
 	.object({
-		manifest: hostedRuntimeManifestFixtureSchema,
+		manifest: hostedRuntimeManifestFixtureV2Schema,
 		secretValues: z.record(z.string().min(1), z.string()).default({}),
 	})
 	.strict();

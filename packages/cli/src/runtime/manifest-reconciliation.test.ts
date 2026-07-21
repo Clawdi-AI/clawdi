@@ -42,6 +42,7 @@ const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
 const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.55";
+const HOSTED_MANIFEST_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.manifest.v2";
 const TEST_HOSTED_HOME = "/home/clawdi";
 const TEST_HOSTED_CODEX_TOOLING = {
 	codex: {
@@ -118,7 +119,10 @@ function baseManifest(
 
 function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
 	return {
-		schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+		schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+		manifestETag: '"manifest-generation-1"',
+		applyReceiptId: "apply-receipt-00000001",
+		bootNonce: "boot-nonce-000000000001",
 		minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 		runtime: "openclaw",
 		deploymentId: "hdep_locale",
@@ -858,7 +862,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(() =>
 			normalizeManifestPayload({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+					manifestETag: '"manifest-generation-1"',
+					applyReceiptId: "apply-receipt-00000001",
+					bootNonce: "boot-nonce-000000000001",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "hdep_missing_cli_policy",
@@ -959,7 +966,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(() =>
 			normalizeManifestPayload({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+					manifestETag: '"manifest-generation-1"',
+					applyReceiptId: "apply-receipt-00000001",
+					bootNonce: "boot-nonce-000000000001",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "hdep_invalid_cli_policy",
@@ -1055,7 +1065,10 @@ describe("runtime manifest reconciliation invariants", () => {
 	test("normalizes hosted manifest responses into runtime desired state without embedding secrets", () => {
 		const hostedResponse = {
 			manifest: {
-				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+				manifestETag: '"manifest-generation-7"',
+				applyReceiptId: "apply-receipt-00000007",
+				bootNonce: "boot-nonce-000000000007",
 				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_normalize",
@@ -1193,7 +1206,10 @@ describe("runtime manifest reconciliation invariants", () => {
 	test("rejects a missing explicit runtime even with one runtime entry", () => {
 		expect(
 			hostedRuntimeManifestSchema.safeParse({
-				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+				manifestETag: '"manifest-generation-1"',
+				applyReceiptId: "apply-receipt-00000001",
+				bootNonce: "boot-nonce-000000000001",
 				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				deploymentId: "hdep_infer_runtime",
 				environmentId: "env_infer_runtime",
@@ -1278,7 +1294,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		],
 	])("rejects unknown hosted manifest fields at the %s", (_name, addUnknownField) => {
 		const cleanManifest = {
-			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+			manifestETag: '"manifest-generation-1"',
+			applyReceiptId: "apply-receipt-00000001",
+			bootNonce: "boot-nonce-000000000001",
 			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 			runtime: "openclaw",
 			deploymentId: "hdep_forward_compat",
@@ -1316,7 +1335,10 @@ describe("runtime manifest reconciliation invariants", () => {
 	test("rejects hosted manifests that still declare multiple execution runtimes", () => {
 		expect(() =>
 			hostedRuntimeManifestSchema.parse({
-				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+				manifestETag: '"manifest-generation-1"',
+				applyReceiptId: "apply-receipt-00000001",
+				bootNonce: "boot-nonce-000000000001",
 				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "hdep_multi",
@@ -1573,7 +1595,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			{
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					providers: {
 						[providerKey]: {
 							type: "custom_openai_compatible",
@@ -1604,7 +1626,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			{
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					providers: {
 						default: {
 							type: "custom_openai_compatible",

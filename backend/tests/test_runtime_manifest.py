@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -209,7 +209,13 @@ async def admin_client(db_session) -> AsyncIterator[httpx.AsyncClient]:
         settings.admin_api_key = original_admin_key
 
 
-async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
+async def _runtime_client(
+    db_session,
+    seed_user,
+    api_key: ApiKey | None,
+    *,
+    runtime_environment_id: UUID | None = None,
+):
     provider = await db_session.scalar(
         select(AiProvider).where(
             AiProvider.owner_user_id == seed_user.id,
@@ -231,10 +237,24 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     app.dependency_overrides[get_runtime_snapshot_session] = _override_get_session
     app.dependency_overrides[get_auth] = _override_get_auth
     transport = ASGITransport(app=app)
+    bound_environment_id = api_key.environment_id if api_key is not None else None
+    runtime_state_environment_id = bound_environment_id or runtime_environment_id
+    runtime_state = (
+        await db_session.get(HostedRuntimeState, runtime_state_environment_id)
+        if runtime_state_environment_id is not None
+        else None
+    )
+    generation = runtime_state.generation if runtime_state is not None else 1
     return httpx.AsyncClient(
         transport=transport,
         base_url="http://test",
-        headers={"Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE},
+        headers={
+            "Accept": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+            "X-Clawdi-Runtime-Generation": str(generation),
+            "X-Clawdi-Runtime-Manifest-ETag": f'"hosted-generation-{generation}"',
+            "X-Clawdi-Runtime-Apply-Receipt-ID": f"apply-receipt-{generation:08d}",
+            "X-Clawdi-Runtime-Boot-Nonce": f"boot-nonce-{generation:012d}",
+        },
     )
 
 
@@ -833,7 +853,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert response.headers["cache-control"] == "no-store"
     payload = response.json()
     manifest = payload["manifest"]
-    assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
+    assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v2"
     assert manifest["minimumCliVersion"] == "0.12.10-beta.55"
     assert manifest["runtime"] == "openclaw"
     assert set(manifest["runtimes"]) == {"openclaw"}
@@ -851,6 +871,9 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert manifest["environmentId"] == str(env.id)
     assert manifest["instanceId"] == expected["instance_id"]
     assert manifest["generation"] == expected["generation"]
+    assert manifest["manifestETag"] == f'"hosted-generation-{expected["generation"]}"'
+    assert manifest["applyReceiptId"] == f"apply-receipt-{expected['generation']:08d}"
+    assert manifest["bootNonce"] == f"boot-nonce-{expected['generation']:012d}"
     assert manifest["controlPlane"] == {
         "cloudApiUrl": settings.public_api_url.rstrip("/"),
     }
@@ -873,6 +896,47 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert not_modified.headers["etag"] == etag
     assert not_modified.headers["cache-control"] == "no-store"
     assert not_modified.content == b""
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_binds_request_apply_identity_without_changing_content_etag(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-identity-{uuid4().hex[:8]}",
+        machine_name="Runtime identity",
+        agent_type="openclaw",
+    )
+    expected = await _write_runtime_state(admin_client, str(env.id))
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        first = await client.get("/v1/runtime/manifest")
+        second = await client.get(
+            "/v1/runtime/manifest",
+            headers={
+                "X-Clawdi-Runtime-Apply-Receipt-ID": "apply-receipt-replacement-0001",
+                "X-Clawdi-Runtime-Boot-Nonce": "boot-nonce-replacement-000001",
+            },
+        )
+        mismatched_generation = await client.get(
+            "/v1/runtime/manifest",
+            headers={"X-Clawdi-Runtime-Generation": str(expected["generation"] + 1)},
+        )
+    app.dependency_overrides.clear()
+
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.headers["etag"] == second.headers["etag"]
+    assert first.json()["sourceRevision"] == second.json()["sourceRevision"]
+    assert first.json()["manifest"]["applyReceiptId"] != second.json()["manifest"]["applyReceiptId"]
+    assert first.json()["manifest"]["bootNonce"] != second.json()["manifest"]["bootNonce"]
+    assert mismatched_generation.status_code == 409
+    assert "generation does not match" in mismatched_generation.text
 
 
 @pytest.mark.asyncio
@@ -4076,7 +4140,12 @@ async def test_runtime_manifest_allows_unbound_cli_key_with_explicit_environment
     await _write_runtime_state(admin_client, str(env.id))
 
     api_key = ApiKey(user_id=seed_user.id, label="unbound")
-    async with await _runtime_client(db_session, seed_user, api_key) as client:
+    async with await _runtime_client(
+        db_session,
+        seed_user,
+        api_key,
+        runtime_environment_id=env.id,
+    ) as client:
         response = await client.get(
             "/v1/runtime/manifest",
             params={"environment_id": str(env.id)},
@@ -4209,7 +4278,12 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
     await _write_runtime_state(admin_client, str(env.id))
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=None, managed=True, label="hosted")
-    async with await _runtime_client(db_session, seed_user, api_key) as client:
+    async with await _runtime_client(
+        db_session,
+        seed_user,
+        api_key,
+        runtime_environment_id=env.id,
+    ) as client:
         response = await client.get(
             "/v1/runtime/manifest",
             params={"environment_id": str(env.id)},
@@ -4240,7 +4314,12 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
     provider.label = "Presentation-only label"
     await db_session.commit()
 
-    async with await _runtime_client(db_session, seed_user, api_key) as client:
+    async with await _runtime_client(
+        db_session,
+        seed_user,
+        api_key,
+        runtime_environment_id=env.id,
+    ) as client:
         presentation_only = await client.get(
             "/v1/runtime/manifest",
             params={"environment_id": str(env.id)},
@@ -4271,7 +4350,12 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
     )
     await db_session.commit()
 
-    async with await _runtime_client(db_session, seed_user, api_key) as client:
+    async with await _runtime_client(
+        db_session,
+        seed_user,
+        api_key,
+        runtime_environment_id=env.id,
+    ) as client:
         rotated = await client.get(
             "/v1/runtime/manifest",
             params={"environment_id": str(env.id)},

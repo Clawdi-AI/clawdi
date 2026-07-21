@@ -9469,7 +9469,12 @@ export interface operations {
             query?: {
                 environment_id?: string | null;
             };
-            header?: never;
+            header: {
+                "X-Clawdi-Runtime-Generation": number;
+                "X-Clawdi-Runtime-Manifest-ETag": string;
+                "X-Clawdi-Runtime-Apply-Receipt-ID": string;
+                "X-Clawdi-Runtime-Boot-Nonce": string;
+            };
             path?: never;
             cookie?: never;
         };

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -20,6 +20,13 @@ const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];
 
+beforeEach(() => {
+	process.env.CLAWDI_RUNTIME_GENERATION = "7";
+	process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = '"manifest-generation-7"';
+	process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = "apply-receipt-00000007";
+	process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-000000000007";
+});
+
 afterEach(() => {
 	process.env = { ...originalEnv };
 	globalThis.fetch = originalFetch;
@@ -33,7 +40,7 @@ describe("hosted runtime bundle v2", () => {
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
-			"ab3ff081e3c46844c080c455e35d79aa886b92afa2c4195c8c1ecc99e60d7202",
+			"bdac51f2f1b837cc64dcf34c7fc58f9bfb3156ad710bb1493de27d649c137ada",
 		);
 		expect(projected.secretValues).toMatchObject(
 			(raw as { secretValues: Record<string, string> }).secretValues,
@@ -68,30 +75,25 @@ describe("hosted runtime bundle v2", () => {
 		).toThrow();
 	});
 
-	test("accepts the additive manifest v2 apply identity without changing manifest v1", () => {
+	test("requires one strict manifest v2 apply identity", () => {
 		const raw = z
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		const v1 = normalizeHostedRuntimeBundleV2(raw);
-		const v2 = normalizeHostedRuntimeBundleV2({
-			...raw,
-			manifest: {
-				...manifest,
-				schemaVersion: "clawdi.hosted-runtime.manifest.v2",
-				manifestETag: '"frozen-manifest-generation-1"',
-				applyReceiptId: "apply-receipt-0001",
-				bootNonce: "boot-nonce-000001",
-			},
-		});
+		const v2 = normalizeHostedRuntimeBundleV2(raw);
 
-		expect(v1.applyIdentity).toBeUndefined();
 		expect(v2.applyIdentity).toEqual({
 			generation: v2.manifest.generation,
-			manifestETag: '"frozen-manifest-generation-1"',
-			applyReceiptId: "apply-receipt-0001",
-			bootNonce: "boot-nonce-000001",
+			manifestETag: '"manifest-generation-7"',
+			applyReceiptId: "apply-receipt-00000007",
+			bootNonce: "boot-nonce-000000000007",
 		});
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: { ...manifest, schemaVersion: "clawdi.hosted-runtime.manifest.v3" },
+			}),
+		).toThrow();
 		expect(() =>
 			normalizeHostedRuntimeBundleV2({
 				...raw,
@@ -124,6 +126,10 @@ describe("hosted runtime bundle v2", () => {
 				const headers = new Headers(init?.headers);
 				expect(headers.get("accept")).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
 				expect(headers.get("if-none-match")).toBe('"bundle-1"');
+				expect(headers.get("x-clawdi-runtime-generation")).toBe("7");
+				expect(headers.get("x-clawdi-runtime-manifest-etag")).toBe('"manifest-generation-7"');
+				expect(headers.get("x-clawdi-runtime-apply-receipt-id")).toBe("apply-receipt-00000007");
+				expect(headers.get("x-clawdi-runtime-boot-nonce")).toBe("boot-nonce-000000000007");
 				return new Response(null, { status: 304, headers: { etag: '"bundle-1"' } });
 			},
 			{ preconnect: () => undefined },
@@ -186,9 +192,49 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe('"bundle-golden"');
 		expect(loaded.sourceRevision).toBe(
-			"ab3ff081e3c46844c080c455e35d79aa886b92afa2c4195c8c1ecc99e60d7202",
+			"bdac51f2f1b837cc64dcf34c7fc58f9bfb3156ad710bb1493de27d649c137ada",
 		);
 		expect(loaded.channelBindings).toHaveLength(1);
+	});
+
+	test("rejects a response tuple that differs from the boot environment", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-identity-mismatch-"));
+		roots.push(root);
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		process.env.CLAWDI_RUN_DIR = join(root, "run");
+		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
+		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		const paths = getRuntimePaths({ mode: "hosted" });
+		globalThis.fetch = Object.assign(
+			async () =>
+				new Response(
+					JSON.stringify({
+						...raw,
+						manifest: { ...manifest, applyReceiptId: "apply-receipt-different-0007" },
+					}),
+					{
+						status: 200,
+						headers: {
+							"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+							etag: '"bundle-mismatched-identity"',
+						},
+					},
+				),
+			{ preconnect: () => undefined },
+		);
+
+		const loaded = await loadRemoteRuntimeManifest(paths);
+
+		expect(loaded).toMatchObject({ mode: "manifest-rejected", stage: "network" });
+		expect("errors" in loaded ? loaded.errors[0] : "").toContain(
+			"runtime manifest apply identity does not match the boot environment",
+		);
 	});
 
 	test("caches the effective projected manifest and only the scoped secret map", () => {

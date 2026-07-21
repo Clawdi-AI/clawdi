@@ -6,7 +6,11 @@ import {
 	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
 } from "./applied-state";
-import type { RuntimeApplyIdentity } from "./apply-identity";
+import {
+	type RuntimeApplyIdentity,
+	readRuntimeApplyIdentityFromEnv,
+	runtimeApplyIdentityHeaders,
+} from "./apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
@@ -233,6 +237,7 @@ export function normalizeManifestPayload(value: unknown): {
 function normalizeRemoteManifestPayload(
 	value: unknown,
 	paths: RuntimePaths,
+	expectedApplyIdentity?: RuntimeApplyIdentity,
 ): {
 	manifest: RuntimeManifest;
 	secretValues?: Record<string, string>;
@@ -242,12 +247,16 @@ function normalizeRemoteManifestPayload(
 } {
 	if (paths.mode !== "hosted") return normalizeManifestPayload(value);
 	const hostedResponse = hostedRuntimeBundleV2Schema.parse(value);
+	const applyIdentity = hostedManifestApplyIdentity(hostedResponse.manifest);
+	if (!expectedApplyIdentity || !sameApplyIdentity(applyIdentity, expectedApplyIdentity)) {
+		throw new Error("runtime manifest apply identity does not match the boot environment");
+	}
 	return {
 		manifest: hostedManifestToRuntimeManifest(hostedResponse.manifest),
 		secretValues: normalizeSecretValues(hostedResponse.secretValues),
 		channelBindings: hostedResponse.channelBindings,
 		sourceRevision: hostedResponse.sourceRevision,
-		applyIdentity: hostedManifestApplyIdentity(hostedResponse.manifest),
+		applyIdentity,
 	};
 }
 
@@ -290,10 +299,7 @@ function looksLikeHostedManifestResponse(value: unknown): boolean {
 	const manifest = Reflect.get(value, "manifest");
 	if (typeof manifest !== "object" || manifest === null || Array.isArray(manifest)) return false;
 	const schemaVersion = Reflect.get(manifest, "schemaVersion");
-	return (
-		schemaVersion === "clawdi.hosted-runtime.manifest.v1" ||
-		schemaVersion === "clawdi.hosted-runtime.manifest.v2"
-	);
+	return schemaVersion === "clawdi.hosted-runtime.manifest.v2";
 }
 
 function rawGeneration(value: unknown): number | null {
@@ -367,6 +373,7 @@ async function fetchRuntimeManifestPayload(
 			url: string;
 			raw: unknown;
 			etag?: string;
+			applyIdentity?: RuntimeApplyIdentity;
 	  }
 	| {
 			url: string;
@@ -380,6 +387,7 @@ async function fetchRuntimeManifestPayload(
 		throw new Error(`missing ${runtimeAuthTokenFileLabel(paths)}`);
 	}
 	const url = source.url;
+	const applyIdentity = paths.mode === "hosted" ? readRuntimeApplyIdentityFromEnv() : undefined;
 	const timeoutMs =
 		Number.parseInt(process.env.CLAWDI_RUNTIME_MANIFEST_TIMEOUT_MS ?? "", 10) ||
 		source.timeoutMs ||
@@ -392,6 +400,7 @@ async function fetchRuntimeManifestPayload(
 			headers: {
 				accept: paths.mode === "hosted" ? HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE : "application/json",
 				authorization: `Bearer ${token}`,
+				...(applyIdentity ? runtimeApplyIdentityHeaders(applyIdentity) : {}),
 				...(opts.ifNoneMatch ? { "if-none-match": opts.ifNoneMatch } : {}),
 			},
 			signal: controller.signal,
@@ -420,7 +429,7 @@ async function fetchRuntimeManifestPayload(
 			}
 			if (!etag) throw new Error("runtime bundle response is missing its strong ETag");
 		}
-		return { url, raw: await response.json(), etag };
+		return { url, raw: await response.json(), etag, applyIdentity };
 	} finally {
 		clearTimeout(timer);
 	}
@@ -460,7 +469,7 @@ export async function loadRemoteRuntimeManifest(
 		sourceRevision?: string;
 	};
 	try {
-		normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
+		normalized = normalizeRemoteManifestPayload(fetched.raw, paths, fetched.applyIdentity);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",
@@ -542,16 +551,22 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 	};
 }
 
-function hostedManifestApplyIdentity(
-	hosted: HostedRuntimeManifest,
-): RuntimeApplyIdentity | undefined {
-	if (hosted.schemaVersion !== "clawdi.hosted-runtime.manifest.v2") return undefined;
+function hostedManifestApplyIdentity(hosted: HostedRuntimeManifest): RuntimeApplyIdentity {
 	return {
 		generation: hosted.generation,
 		manifestETag: hosted.manifestETag,
 		applyReceiptId: hosted.applyReceiptId,
 		bootNonce: hosted.bootNonce,
 	};
+}
+
+function sameApplyIdentity(left: RuntimeApplyIdentity, right: RuntimeApplyIdentity): boolean {
+	return (
+		left.generation === right.generation &&
+		left.manifestETag === right.manifestETag &&
+		left.applyReceiptId === right.applyReceiptId &&
+		left.bootNonce === right.bootNonce
+	);
 }
 
 function hostedRuntimeProviderBinding(
@@ -736,7 +751,12 @@ export async function loadRuntimeManifest(
 		};
 	}
 	if (!manifestPath) {
-		let fetched: { url: string; raw: unknown; etag?: string };
+		let fetched: {
+			url: string;
+			raw: unknown;
+			etag?: string;
+			applyIdentity?: RuntimeApplyIdentity;
+		};
 		try {
 			const result = await fetchRuntimeManifestPayload(paths);
 			if ("notModified" in result) {
@@ -760,7 +780,7 @@ export async function loadRuntimeManifest(
 
 		let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
 		try {
-			normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
+			normalized = normalizeRemoteManifestPayload(fetched.raw, paths, fetched.applyIdentity);
 		} catch (error) {
 			return {
 				mode: "manifest-rejected",

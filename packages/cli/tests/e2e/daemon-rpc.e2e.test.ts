@@ -1,6 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -9,14 +18,25 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const cliRoot = join(here, "..", "..");
 const srcEntry = join(cliRoot, "src", "index.ts");
-const ENV_ID = "env-daemon-rpc-e2e";
+const ENV_ID = "20000000-0000-0000-0000-000000000007";
 const PROJECT_ID = "project-daemon-rpc-e2e";
 const API_KEY = "daemon-rpc-e2e-key";
+const GENERATION = 7;
+const MANIFEST_ETAG = '"controller-manifest-generation-7"';
+const APPLY_RECEIPT_ID = "apply-receipt-daemon-rpc-0007";
+const BOOT_NONCE = "boot-nonce-daemon-rpc-000007";
+const SOURCE_REVISION = "c".repeat(64);
+const BUNDLE_ETAG = `"sha256:${SOURCE_REVISION}"`;
+const RUNTIME_BUNDLE_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json";
 
 interface ApiCall {
 	method: string;
 	path: string;
 	auth: string | null;
+	runtimeGeneration: string | null;
+	runtimeManifestETag: string | null;
+	runtimeApplyReceiptId: string | null;
+	runtimeBootNonce: string | null;
 	body?: unknown;
 }
 
@@ -45,8 +65,19 @@ beforeAll(() => {
 				method: req.method,
 				path: `${url.pathname}${url.search}`,
 				auth: req.headers.get("authorization"),
+				runtimeGeneration: req.headers.get("x-clawdi-runtime-generation"),
+				runtimeManifestETag: req.headers.get("x-clawdi-runtime-manifest-etag"),
+				runtimeApplyReceiptId: req.headers.get("x-clawdi-runtime-apply-receipt-id"),
+				runtimeBootNonce: req.headers.get("x-clawdi-runtime-boot-nonce"),
 				body,
 			});
+
+			if (req.method === "GET" && url.pathname === "/v1/runtime/manifest") {
+				return json(runtimeBundle(server.url.origin), 200, {
+					"content-type": RUNTIME_BUNDLE_MEDIA_TYPE,
+					etag: BUNDLE_ETAG,
+				});
+			}
 
 			if (req.method === "GET" && url.pathname === `/v1/agents/${ENV_ID}`) {
 				return json({
@@ -80,9 +111,14 @@ beforeAll(() => {
 				req.method === "POST" &&
 				url.pathname === `/v2/runtime/environments/${ENV_ID}/observations`
 			) {
-				// A v2 transport failure must not poison the independent v1
-				// liveness heartbeat or prevent its health-file update.
-				return json({ detail: "temporary v2 failure" }, 503);
+				if (!isRecord(body) || typeof body.eventId !== "string") {
+					return json({ detail: "invalid observation" }, 422);
+				}
+				return json({
+					eventId: body.eventId,
+					streamPosition: 1,
+					outcome: "accepted_head_created",
+				});
 			}
 
 			return json({ detail: "not found" }, 404);
@@ -108,8 +144,46 @@ beforeEach(() => {
 
 if (process.platform !== "win32") {
 	describe("daemon RPC process e2e", () => {
-		it("serves daemon RPC over the configured HTTP port", async () => {
+		it("persists a real runtime init tuple and posts it through the real daemon", async () => {
 			const fixture = createFixture();
+			const appliedStatePath = join(fixture.serviceStateDir, "status", "runtime-applied.json");
+			expect(existsSync(appliedStatePath)).toBe(false);
+			const initialized = await runCli(fixture, ["runtime", "init", "--non-interactive", "--json"]);
+			if (initialized.code !== 0) {
+				throw new Error(
+					`runtime init failed (${initialized.code})\nstdout:\n${initialized.stdout}\nstderr:\n${initialized.stderr}`,
+				);
+			}
+			expect(initialized.code).toBe(0);
+			expect(initialized.stderr).toBe("");
+			const initializedStatus = JSON.parse(initialized.stdout) as { status?: string };
+			expect(initializedStatus.status).toBe("ok");
+			const appliedState = JSON.parse(readFileSync(appliedStatePath, "utf-8")) as {
+				generation?: number;
+				etag?: string;
+				manifestETag?: string;
+				applyReceiptId?: string;
+				bootNonce?: string;
+			};
+			expect(appliedState).toMatchObject({
+				generation: GENERATION,
+				etag: BUNDLE_ETAG,
+				manifestETag: MANIFEST_ETAG,
+				applyReceiptId: APPLY_RECEIPT_ID,
+				bootNonce: BOOT_NONCE,
+			});
+			expect(appliedState.etag).not.toBe(appliedState.manifestETag);
+
+			const manifestRequest = apiCalls.find(
+				(call) => call.method === "GET" && call.path === "/v1/runtime/manifest",
+			);
+			expect(manifestRequest).toMatchObject({
+				runtimeGeneration: String(GENERATION),
+				runtimeManifestETag: MANIFEST_ETAG,
+				runtimeApplyReceiptId: APPLY_RECEIPT_ID,
+				runtimeBootNonce: BOOT_NONCE,
+			});
+
 			const daemon = startDaemon(fixture);
 			const daemonStdout = new Response(daemon.stdout).text();
 			const [stderrReady, stderrText] = daemon.stderr.tee();
@@ -185,8 +259,17 @@ if (process.platform !== "win32") {
 				expect(legacyObserved.bootSessionId).toBeUndefined();
 				expect(legacyObserved.eventId).toBeUndefined();
 				const observationBody = observation.body;
+				expect(observationBody.schemaVersion).toBe("clawdi.hostedRuntimeObserved.v2");
+				expect(observationBody.applyReceiptId).toBe(APPLY_RECEIPT_ID);
+				expect(observationBody.bootNonce).toBe(BOOT_NONCE);
 				expect(observationBody.bootSessionId).toBeString();
+				expect(observationBody.sequence).toBe(1);
 				expect(observationBody.eventId).toBeString();
+				if (!isRecord(observationBody.applied)) {
+					throw new Error("expected strict v2 applied observation authority");
+				}
+				expect(observationBody.applied.generation).toBe(GENERATION);
+				expect(observationBody.applied.etag).toBe(MANIFEST_ETAG);
 				expect(existsSync(join(fixture.stateDir, "codex", "health"))).toBe(true);
 				expect(apiCalls.every((call) => call.auth === `Bearer ${API_KEY}`)).toBe(true);
 			} catch (error) {
@@ -213,6 +296,7 @@ if (process.platform !== "win32") {
 
 		it("keeps v1 heartbeat healthy when v2 durable state initialization fails", async () => {
 			const fixture = createFixture();
+			writeAppliedStateFixture(fixture);
 			const heartbeatRoot = join(fixture.serviceStateDir, "heartbeat");
 			const environmentKey = createHash("sha256").update(ENV_ID).digest("hex");
 			mkdirSync(heartbeatRoot, { recursive: true });
@@ -284,28 +368,67 @@ function createFixture(): Fixture {
 		join(clawdiHome, "environments", "codex.json"),
 		`${JSON.stringify({ id: ENV_ID })}\n`,
 	);
-	mkdirSync(join(serviceStateDir, "status"), { recursive: true });
+	seedRuntimeDependencies(home, serviceStateDir);
+	return { root, home, clawdiHome, stateDir, serviceStateDir, runDir, codexHome };
+}
+
+function writeAppliedStateFixture(fixture: Fixture): void {
+	mkdirSync(join(fixture.serviceStateDir, "status"), { recursive: true });
 	writeFileSync(
-		join(serviceStateDir, "status", "runtime-applied.json"),
+		join(fixture.serviceStateDir, "status", "runtime-applied.json"),
 		`${JSON.stringify({
 			schemaVersion: "clawdi.runtimeAppliedState.v2",
 			appliedAt: "2026-07-20T00:00:00.000Z",
 			instanceId: "daemon-rpc-runtime",
-			etag: '"transport-manifest"',
-			manifestETag: '"frozen-manifest"',
-			applyReceiptId: "apply-receipt-daemon-rpc",
-			bootNonce: "boot-nonce-daemon-rpc-01",
-			sourceRevision: "a".repeat(64),
-			generation: 1,
+			etag: BUNDLE_ETAG,
+			manifestETag: MANIFEST_ETAG,
+			applyReceiptId: APPLY_RECEIPT_ID,
+			bootNonce: BOOT_NONCE,
+			sourceRevision: SOURCE_REVISION,
+			generation: GENERATION,
 			contentIdentity: {
-				sourcePath: "https://runtime.test/v1/runtime/manifest",
+				sourcePath: `${server.url.origin}/v1/runtime/manifest`,
 				sha256: "b".repeat(64),
 			},
 			providerIds: ["managed"],
 			projectedProviderIds: { codex: ["managed"] },
 		})}\n`,
 	);
-	return { root, home, clawdiHome, stateDir, serviceStateDir, runDir, codexHome };
+}
+
+function seedRuntimeDependencies(home: string, serviceStateDir: string): void {
+	const openclaw = join(home, ".openclaw", "bin", "openclaw");
+	mkdirSync(join(home, ".openclaw", "bin"), { recursive: true });
+	writeFileSync(openclaw, "#!/bin/sh\ncat >/dev/null || true\nexit 0\n");
+	chmodSync(openclaw, 0o700);
+
+	const active = join(serviceStateDir, "bin", "clawdi");
+	const target = join(serviceStateDir, "npm", "bin", "clawdi");
+	mkdirSync(join(serviceStateDir, "status"), { recursive: true });
+	mkdirSync(join(serviceStateDir, "bin"), { recursive: true });
+	mkdirSync(join(serviceStateDir, "npm", "bin"), { recursive: true });
+	writeFileSync(
+		target,
+		`#!/bin/sh
+if [ "\${1:-}" = "--version" ]; then echo 0.12.10-beta.55; exit 0; fi
+exit 0
+`,
+	);
+	chmodSync(target, 0o700);
+	symlinkSync(target, active);
+	writeFileSync(
+		join(serviceStateDir, "status", "cli-bootstrap.json"),
+		`${JSON.stringify({
+			status: "installed",
+			source: "npm",
+			packageSpec: "clawdi@0.12.10-beta.55",
+			registry: "https://registry.npmjs.org",
+			npmPrefix: join(serviceStateDir, "npm"),
+			activePath: active,
+			activeTarget: target,
+			version: "0.12.10-beta.55",
+		})}\n`,
+	);
 }
 
 function startDaemon(fixture: Fixture): ReturnType<typeof Bun.spawn> {
@@ -348,6 +471,14 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 		CLAWDI_SERVE_MODE: "container",
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_HOME: fixture.home,
+		CLAWDI_RUNTIME_MANIFEST_URL: `${server.url.origin}/v1/runtime/manifest`,
+		CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
+		CLAWDI_RUNTIME_GENERATION: String(GENERATION),
+		CLAWDI_RUNTIME_MANIFEST_ETAG: MANIFEST_ETAG,
+		CLAWDI_RUNTIME_APPLY_RECEIPT_ID: APPLY_RECEIPT_ID,
+		CLAWDI_RUNTIME_BOOT_NONCE: BOOT_NONCE,
+		CLAWDI_SYSTEMD_APPLY: "0",
+		CLAWDI_CODEX_INSTALL_DISABLED: "1",
 		CLAWDI_RUN_DIR: fixture.runDir,
 		CLAWDI_SERVICE_STATE_DIR: fixture.serviceStateDir,
 		CLAWDI_STATE_DIR: fixture.stateDir,
@@ -357,6 +488,77 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 		NO_COLOR: "1",
 		PATH: process.env.PATH ?? "",
 		TMPDIR: tmpdir(),
+	};
+}
+
+function runtimeBundle(apiUrl: string): Record<string, unknown> {
+	return {
+		schemaVersion: "clawdi.hosted-runtime.bundle.v2",
+		sourceRevision: SOURCE_REVISION,
+		manifest: {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v2",
+			minimumCliVersion: "0.12.10-beta.55",
+			runtime: "openclaw",
+			deploymentId: "dep-daemon-rpc-e2e",
+			environmentId: ENV_ID,
+			instanceId: "daemon-rpc-runtime",
+			generation: GENERATION,
+			manifestETag: MANIFEST_ETAG,
+			applyReceiptId: APPLY_RECEIPT_ID,
+			bootNonce: BOOT_NONCE,
+			issuedAt: "2026-07-20T00:00:00.000Z",
+			locale: { language: "en", timezone: "UTC" },
+			system: {},
+			controlPlane: { cloudApiUrl: apiUrl },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.12.10-beta.55",
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					install: { source: "official" },
+					providerMode: "configured",
+					provider_ids: ["managed"],
+					primary_model: { provider_id: "managed", model: "gpt-test" },
+					run: { args: ["gateway", "run"], env: {}, prependPath: [] },
+					services: {},
+				},
+			},
+			providers: {
+				managed: {
+					kind: "openai-compatible",
+					type: "openai",
+					baseUrl: "https://provider.test/v1",
+					apiMode: "openai_chat",
+					apiKeySecretRef: "tool.codex.apiKey",
+				},
+			},
+			terminalTooling: {
+				codex: {
+					enabled: true,
+					provider_id: "managed",
+					primary_model: { provider_id: "managed", model: "gpt-test" },
+					provider: {
+						kind: "openai-compatible",
+						type: "custom_openai_compatible",
+						baseUrl: "https://provider.test/v1",
+						apiMode: "openai_responses",
+						managed_by: "clawdi",
+						runtimeEnvName: "OPENAI_API_KEY",
+						apiKeySecretRef: "tool.codex.apiKey",
+					},
+				},
+			},
+			liveSync: {
+				enabled: true,
+				agents: [{ agentType: "codex", environmentId: ENV_ID }],
+			},
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		},
+		channelBindings: [],
+		secretValues: { "tool.codex.apiKey": "sk-daemon-rpc-e2e" },
 	};
 }
 

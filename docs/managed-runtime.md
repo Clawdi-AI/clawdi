@@ -333,6 +333,15 @@ map, and deterministic `sourceRevision`. Missing or unsupported media types
 return `406`; the CLI does not fall back to another representation or a second
 `/v1/channels` request.
 
+Hosted manifest requests also require the complete controller-selected apply
+identity in `X-Clawdi-Runtime-Generation`,
+`X-Clawdi-Runtime-Manifest-ETag`,
+`X-Clawdi-Runtime-Apply-Receipt-ID`, and `X-Clawdi-Runtime-Boot-Nonce`.
+The control plane rejects a generation that does not match desired state and
+renders the same tuple into the strict inner
+`clawdi.hosted-runtime.manifest.v2`. The CLI rejects a response whose tuple
+does not exactly match its boot environment.
+
 Bundle responses identify the vendor media type and return `Vary: Accept`.
 Negotiation `406` responses also return `Vary: Accept` and
 `Cache-Control: no-store`, so errors are not reused across media types.
@@ -342,10 +351,10 @@ validator without decrypting secrets in the health summary.
 
 The CLI normalizes these wire contracts into the desired-state shape:
 
-- `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
-  shape served only from `/v1/runtime/manifest`. It requires explicit `runtime`
-  and `environmentId` fields and rejects unknown fields instead of accepting
-  compatibility payloads. `system`, `controlPlane`, `clawdiCli`, `runtimes`,
+- `clawdi.hosted-runtime.manifest.v2` is the only hosted control-plane inner
+  manifest shape served from `/v1/runtime/manifest`. It requires the complete
+  apply identity plus explicit `runtime` and `environmentId` fields and rejects
+  unknown fields. `system`, `controlPlane`, `clawdiCli`, `runtimes`,
   `providers`, `liveSync`, and `recovery` are required. `egressProfiles`, `mcp`,
   and `tools` remain explicit optional projections.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
@@ -356,6 +365,7 @@ Normalization maps hosted fields into the internal shape:
 | Hosted field | Internal purpose |
 | --- | --- |
 | `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
+| `manifestETag`, `applyReceiptId`, `bootNonce` | Controller-selected apply identity, persisted only with a successful convergence and used by direct-v2 runtime evidence |
 | `runtime` | Required selected compute runtime; exactly one enabled `openclaw` or `hermes` entry must match it |
 | `locale.language`, `locale.timezone` | Required supported language and valid IANA timezone |
 | `system.openclawControlUiAllowedOrigins` | Optional control-plane-selected, validated HTTP(S) origins for the OpenClaw gateway Control UI patch |
@@ -473,6 +483,11 @@ required installers before Apply, and commits last-good, remote ETags, and
 `status/runtime-applied.json` only after managed files and systemd state apply
 successfully. A recoverable Apply failure restores the previous Clawdi-owned
 files and systemd declaration and leaves those authority records unchanged.
+The durable applied state keeps the bundle transport ETag separate from the
+controller manifest ETag. The daemon snapshots the latter with generation,
+receipt ID, and boot nonce, creates the boot-session and event identities
+locally, and sends direct-v2 evidence without a feature flag or v1 heartbeat
+translation.
 Last-good remains an offline recovery cache; `runtime-applied.json` is the
 online record of the applied instance, config generation, content identity,
 source manifest provider IDs, and the target-specific projected provider ID map

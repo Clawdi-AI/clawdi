@@ -13,6 +13,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import HostedCodexProviderProjection
 from app.services.runtime_source import (
+    RuntimeManifestApplyIdentity,
     RuntimeSourceBatch,
     RuntimeSourceError,
     RuntimeSourceRow,
@@ -29,6 +30,12 @@ ACCOUNT_ID = UUID("50000000-0000-0000-0000-000000000005")
 LINK_ID = UUID("60000000-0000-0000-0000-000000000006")
 PREFIX_COLLISION_ACCOUNT_ID = UUID("50000000-0000-ffff-0000-000000000007")
 PREFIX_COLLISION_LINK_ID = UUID("60000000-0000-0000-0000-000000000008")
+APPLY_IDENTITY = RuntimeManifestApplyIdentity(
+    generation=7,
+    manifest_etag='"manifest-generation-7"',
+    apply_receipt_id="apply-receipt-00000007",
+    boot_nonce="boot-nonce-000000000007",
+)
 
 
 def test_runtime_bundle_v2_etag_is_derived_from_source_revision() -> None:
@@ -243,7 +250,7 @@ def test_unmanaged_runtime_tool_secret_uses_auth_payload_without_user_vault_refs
         vault_key_identity="platform-key-generation-1",
         decrypt_secrets=True,
     )
-    bundle = render_runtime_bundle(source)
+    bundle = render_runtime_bundle(source, apply_identity=APPLY_IDENTITY)
 
     assert source.manifest["providers"] == {}
     assert source.manifest["runtimes"]["openclaw"]["providerMode"] == "unmanaged"
@@ -455,4 +462,6 @@ def test_runtime_bundle_matches_shared_golden(monkeypatch) -> None:
         decrypt_secrets=True,
     )
     fixture_path = Path(__file__).parents[2] / "test-fixtures/runtime-bundle-v2.golden.json"
-    assert render_runtime_bundle(source) == json.loads(fixture_path.read_text())
+    assert render_runtime_bundle(source, apply_identity=APPLY_IDENTITY) == json.loads(
+        fixture_path.read_text()
+    )

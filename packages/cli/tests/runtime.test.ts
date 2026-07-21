@@ -96,6 +96,10 @@ const ENV_KEYS = [
 	"CLAWDI_CODEX_INSTALL_TIMEOUT",
 	"CUSTOM_RUNTIME_TOKEN",
 	"CLAWDI_RUNTIME_MANIFEST_TIMEOUT_MS",
+	"CLAWDI_RUNTIME_GENERATION",
+	"CLAWDI_RUNTIME_MANIFEST_ETAG",
+	"CLAWDI_RUNTIME_APPLY_RECEIPT_ID",
+	"CLAWDI_RUNTIME_BOOT_NONCE",
 	"CLAWDI_API_URL",
 	"CLAWDI_SYSTEMD_APPLY",
 	"CLAWDI_SYSTEMD_SYSTEM_ROOT",
@@ -127,6 +131,7 @@ beforeEach(() => {
 	mkdirSync(root, { recursive: true });
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
+	setRuntimeApplyIdentityEnv(1);
 });
 
 afterEach(() => {
@@ -197,6 +202,7 @@ const TEST_HOSTED_LOCALE = {
 	timezone: "UTC",
 };
 const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.55";
+const HOSTED_MANIFEST_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.manifest.v2";
 const TEST_HOSTED_CODEX_SECRET_REF = "tool.codex.apiKey";
 const TEST_HOSTED_CODEX_SECRET_VALUES = {
 	[TEST_HOSTED_CODEX_SECRET_REF]: "sk-codex-tool",
@@ -284,6 +290,7 @@ function hostedRuntimeBundleResponse(
 	payload: HostedRuntimeResponseFixture,
 	options: { etag?: string; sourceRevision?: string } = {},
 ): Response {
+	const manifest = hostedManifestV2Fixture(payload.manifest);
 	const channelBindings = payload.channelBindings ?? [];
 	const secretValues = {
 		...TEST_HOSTED_CODEX_SECRET_VALUES,
@@ -292,7 +299,7 @@ function hostedRuntimeBundleResponse(
 	const sourceRevision =
 		options.sourceRevision ??
 		runtimeContentSha256({
-			manifest: payload.manifest,
+			manifest,
 			channelBindings,
 			secretValues,
 		});
@@ -307,7 +314,7 @@ function hostedRuntimeBundleResponse(
 		JSON.stringify({
 			schemaVersion: "clawdi.hosted-runtime.bundle.v2",
 			sourceRevision,
-			manifest: payload.manifest,
+			manifest,
 			channelBindings,
 			secretValues,
 		}),
@@ -321,6 +328,27 @@ function hostedRuntimeBundleResponse(
 	);
 }
 
+function hostedManifestV2Fixture(manifest: Record<string, unknown>): Record<string, unknown> {
+	const generation = manifest.generation;
+	if (typeof generation !== "number" || !Number.isSafeInteger(generation) || generation < 1) {
+		throw new Error("hosted manifest fixture generation must be a positive safe integer");
+	}
+	return {
+		...manifest,
+		schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+		manifestETag: `"manifest-generation-${generation}"`,
+		applyReceiptId: `apply-receipt-${String(generation).padStart(8, "0")}`,
+		bootNonce: `boot-nonce-${String(generation).padStart(12, "0")}`,
+	};
+}
+
+function setRuntimeApplyIdentityEnv(generation: number): void {
+	process.env.CLAWDI_RUNTIME_GENERATION = String(generation);
+	process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = `"manifest-generation-${generation}"`;
+	process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = `apply-receipt-${String(generation).padStart(8, "0")}`;
+	process.env.CLAWDI_RUNTIME_BOOT_NONCE = `boot-nonce-${String(generation).padStart(12, "0")}`;
+}
+
 function hostedRuntimeWatchLocalePayload(
 	home: string,
 	generation: number,
@@ -328,8 +356,7 @@ function hostedRuntimeWatchLocalePayload(
 	timezone = "Europe/Paris",
 ): HostedRuntimeResponseFixture {
 	return {
-		manifest: {
-			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+		manifest: hostedManifestV2Fixture({
 			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 			runtime: "openclaw",
 			deploymentId: "dep_watch_locale",
@@ -349,7 +376,7 @@ function hostedRuntimeWatchLocalePayload(
 			runtimes: {
 				openclaw: hostedOpenClawRuntime({}),
 			},
-		},
+		}),
 		secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
 	};
 }
@@ -372,8 +399,7 @@ function hostedCliManifestResponse(
 			}
 		: hostedRequiredState().providers.default;
 	return {
-		manifest: {
-			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+		manifest: hostedManifestV2Fixture({
 			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 			runtime: "openclaw",
 			deploymentId: "dep_cli_package_spec",
@@ -394,7 +420,7 @@ function hostedCliManifestResponse(
 			runtimes: {
 				openclaw: hostedOpenClawRuntime({}),
 			},
-		},
+		}),
 		secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
 	};
 }
@@ -786,7 +812,7 @@ function hostedHermesProviderLoad(home: string): RuntimeManifestLoad {
 				},
 			},
 			projection: {
-				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 				system: { home },
 				providers: {
 					hermes: {
@@ -930,7 +956,7 @@ function hostedProviderSwitchLoad(
 				},
 			},
 			projection: {
-				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 				system: { home, workspace: join(home, "clawdi") },
 				providers: HOSTED_PROVIDER_SWITCH_PROVIDERS,
 				terminalTooling,
@@ -1030,7 +1056,7 @@ function hostedSingleProviderModeLoad(
 			controlPlane: { apiUrl: "https://cloud-api.test" },
 			runtimes: { [runtimeName]: { ...runtime, install } },
 			projection: {
-				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 				system: { home, workspace: join(home, "clawdi") },
 				providers,
 				terminalTooling,
@@ -1750,6 +1776,7 @@ describe("runtime manifest datasource", () => {
 	});
 
 	it("fetches hosted-runtime manifests from a configured runtime source", async () => {
+		setRuntimeApplyIdentityEnv(3);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -1777,7 +1804,10 @@ describe("runtime manifest datasource", () => {
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-3"',
+							applyReceiptId: "apply-receipt-00000003",
+							bootNonce: "boot-nonce-000000000003",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_test",
@@ -2044,6 +2074,7 @@ describe("runtime manifest datasource", () => {
 	}
 
 	it("recovers hosted bridge token from pid1 env for Hermes runtime bridge exposure", async () => {
+		setRuntimeApplyIdentityEnv(4);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -2090,7 +2121,10 @@ chmod +x "$HOME/.local/bin/hermes"
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-4"',
+							applyReceiptId: "apply-receipt-00000004",
+							bootNonce: "boot-nonce-000000000004",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "hermes",
 							deploymentId: "dep_runtime_bridge",
@@ -2183,7 +2217,10 @@ chmod +x "$HOME/.local/bin/hermes"
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-1"',
+							applyReceiptId: "apply-receipt-00000001",
+							bootNonce: "boot-nonce-000000000001",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_chat_provider",
@@ -2282,7 +2319,10 @@ chmod +x "$HOME/.local/bin/hermes"
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-1"',
+							applyReceiptId: "apply-receipt-00000001",
+							bootNonce: "boot-nonce-000000000001",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_codex_provider",
@@ -2425,7 +2465,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					hermes: { enabled: false },
 				},
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					system: {
 						home,
 						openclawControlUiAllowedOrigins: ["https://app-v2-18789.k3s.example.test"],
@@ -2544,7 +2584,7 @@ chmod +x "$HOME/.local/bin/hermes"
 						hermes: { enabled: false },
 					},
 					projection: {
-						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 						system: { home },
 						providers: {},
 						terminalTooling: {
@@ -3017,7 +3057,7 @@ chmod +x "$HOME/.local/bin/hermes"
 					},
 				},
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					system: { home },
 					providers: {
 						[providerId]: {
@@ -3507,7 +3547,7 @@ exit 0
 					},
 				},
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					system: {
 						home,
 						openclawControlUiAllowedOrigins: ["https://app-v2-18789.k3s.example.test"],
@@ -3628,7 +3668,7 @@ exit 0
 					},
 				},
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					system: { home },
 					providers: {
 						openclaw: {
@@ -3901,7 +3941,7 @@ exit 0
 					},
 				},
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					system: { home },
 				},
 			},
@@ -4069,7 +4109,7 @@ exit 0
 					},
 				},
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					system: { home },
 					providers: {
 						openclaw: {
@@ -4147,7 +4187,7 @@ exit 0
 					},
 				},
 				projection: {
-					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					system: { home },
 					providers: {
 						openclaw: {
@@ -4254,7 +4294,7 @@ exit 0
 						},
 					},
 					projection: {
-						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+						sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v2",
 						system: { home },
 						providers: {
 							openclaw: {
@@ -4299,7 +4339,10 @@ exit 0
 			manifestPath,
 			JSON.stringify({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+					manifestETag: '"manifest-generation-5"',
+					applyReceiptId: "apply-receipt-00000005",
+					bootNonce: "boot-nonce-000000000005",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_hosted_provider_secret",
@@ -4468,7 +4511,10 @@ exit 64
 			manifestPath,
 			JSON.stringify({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+					manifestETag: '"manifest-generation-1"',
+					applyReceiptId: "apply-receipt-00000001",
+					bootNonce: "boot-nonce-000000000001",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_bridge_token",
@@ -4516,7 +4562,10 @@ exit 64
 			manifestPath,
 			JSON.stringify({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+					manifestETag: '"manifest-generation-1"',
+					applyReceiptId: "apply-receipt-00000001",
+					bootNonce: "boot-nonce-000000000001",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_bridge_token_explicit",
@@ -4590,7 +4639,10 @@ exit 64
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-1"',
+							applyReceiptId: "apply-receipt-00000001",
+							bootNonce: "boot-nonce-000000000001",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "hermes",
 							deploymentId: "dep_custom_auth",
@@ -4656,7 +4708,10 @@ exit 64
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-1"',
+							applyReceiptId: "apply-receipt-00000001",
+							bootNonce: "boot-nonce-000000000001",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_same_token",
@@ -4690,7 +4745,10 @@ exit 64
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-2"',
+							applyReceiptId: "apply-receipt-00000002",
+							bootNonce: "boot-nonce-000000000002",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_same_token",
@@ -5210,6 +5268,7 @@ exit 64
 	});
 
 	it("runtime watch wakes on its own manifest SSE signal and restarts only the runtime unit", async () => {
+		setRuntimeApplyIdentityEnv(2);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5319,6 +5378,7 @@ exit 0
 	});
 
 	it("runtime watch keeps polling after SSE authentication failure", async () => {
+		setRuntimeApplyIdentityEnv(2);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5366,6 +5426,7 @@ exit 0
 		"authentication failure",
 		"task completion",
 	])("runtime watch re-subscribes after SSE %s with unchanged connection identity", async (completionMode) => {
+		setRuntimeApplyIdentityEnv(2);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5434,6 +5495,7 @@ exit 0
 	});
 
 	it("runtime watch applies remote changes, tracks systemd unit changes, and saves the new ETag", async () => {
+		setRuntimeApplyIdentityEnv(12);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5483,7 +5545,10 @@ printf 'ActiveState=active\\nSubState=running\\n'
 							schemaVersion: "clawdi.hosted-runtime.bundle.v2",
 							sourceRevision: "a".repeat(64),
 							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+								manifestETag: '"manifest-generation-12"',
+								applyReceiptId: "apply-receipt-00000012",
+								bootNonce: "boot-nonce-000000000012",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_watch",
@@ -5586,6 +5651,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 	});
 
 	it("runtime watch advances applied generation on a generation-only manifest update", async () => {
+		setRuntimeApplyIdentityEnv(30);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5636,6 +5702,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 
 			generation = 31;
 			manifestEtag = '"manifest-generation-31"';
+			setRuntimeApplyIdentityEnv(31);
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
 
@@ -5657,6 +5724,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 	});
 
 	it("runtime watch does not advance last-good or applied authority when systemd apply fails", async () => {
+		setRuntimeApplyIdentityEnv(13);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5742,7 +5810,10 @@ exit 42
 					hostedRuntimeBundleResponse(
 						{
 							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+								manifestETag: '"manifest-generation-13"',
+								applyReceiptId: "apply-receipt-00000013",
+								bootNonce: "boot-nonce-000000000013",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_watch_systemd_failure",
@@ -5797,6 +5868,7 @@ exit 42
 	});
 
 	it("runtime watch trusts the committed v2 authority after a manifest 304", async () => {
+		setRuntimeApplyIdentityEnv(22);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5814,7 +5886,10 @@ exit 42
 			schemaVersion: "clawdi.hosted-runtime.bundle.v2",
 			sourceRevision: "d".repeat(64),
 			manifest: {
-				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+				manifestETag: '"manifest-generation-22"',
+				applyReceiptId: "apply-receipt-00000022",
+				bootNonce: "boot-nonce-000000000022",
 				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "dep_watch_secret",
@@ -6022,6 +6097,7 @@ exit 64
 	});
 
 	it("runtime watch retries datasource failures and applies after recovery", async () => {
+		setRuntimeApplyIdentityEnv(18);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6090,7 +6166,10 @@ exit 64
 					hostedRuntimeBundleResponse(
 						{
 							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+								manifestETag: '"manifest-generation-18"',
+								applyReceiptId: "apply-receipt-00000018",
+								bootNonce: "boot-nonce-000000000018",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_watch_recovery",
@@ -6608,6 +6687,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 	});
 
 	it("runtime watch installs changed CLI package specs and marks itself for re-exec", async () => {
+		setRuntimeApplyIdentityEnv(13);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6684,7 +6764,10 @@ chmod +x "$prefix/bin/clawdi"
 					hostedRuntimeBundleResponse(
 						{
 							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+								manifestETag: '"manifest-generation-13"',
+								applyReceiptId: "apply-receipt-00000013",
+								bootNonce: "boot-nonce-000000000013",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_cli_update",
@@ -6753,6 +6836,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch reapplies transparent egress across CLI self-upgrade", async () => {
+		setRuntimeApplyIdentityEnv(2);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6909,7 +6993,10 @@ printf 'ActiveState=active\\nSubState=running\\n'
 					hostedRuntimeBundleResponse(
 						{
 							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+								manifestETag: '"manifest-generation-2"',
+								applyReceiptId: "apply-receipt-00000002",
+								bootNonce: "boot-nonce-000000000002",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_cli_mitm",
@@ -7313,6 +7400,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch self-heal applies an exact hosted CLI version without npm view", async () => {
+		setRuntimeApplyIdentityEnv(30);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7391,7 +7479,10 @@ chmod +x "$prefix/bin/clawdi"
 		);
 		const manifestPayload = {
 			manifest: {
-				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+				manifestETag: '"manifest-generation-30"',
+				applyReceiptId: "apply-receipt-00000030",
+				bootNonce: "boot-nonce-000000000030",
 				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 				runtime: "openclaw",
 				deploymentId: "dep_cli_self_heal",
@@ -7495,6 +7586,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch keeps self re-exec when convergence fails after CLI install", async () => {
+		setRuntimeApplyIdentityEnv(16);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7589,7 +7681,10 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					hostedRuntimeBundleResponse(
 						{
 							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+								manifestETag: '"manifest-generation-16"',
+								applyReceiptId: "apply-receipt-00000016",
+								bootNonce: "boot-nonce-000000000016",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_cli_update_converge_failure",
@@ -7652,6 +7747,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 	});
 
 	it("rolls back a CLI upgrade when first converge fails for an already-applied manifest", async () => {
+		setRuntimeApplyIdentityEnv(18);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7729,7 +7825,10 @@ chmod +x "$prefix/bin/clawdi"
 		const paths = getRuntimePaths();
 		const oldTarget = readlinkSync(paths.cliManagedBin);
 		const manifest = {
-			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+			manifestETag: '"manifest-generation-18"',
+			applyReceiptId: "apply-receipt-00000018",
+			bootNonce: "boot-nonce-000000000018",
 			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 			runtime: "openclaw",
 			deploymentId: "dep_cli_rollback",
@@ -7837,6 +7936,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime watch does not converge or apply systemd when CLI install fails", async () => {
+		setRuntimeApplyIdentityEnv(17);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7879,7 +7979,10 @@ chmod +x "$prefix/bin/clawdi"
 					hostedRuntimeBundleResponse(
 						{
 							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+								manifestETag: '"manifest-generation-17"',
+								applyReceiptId: "apply-receipt-00000017",
+								bootNonce: "boot-nonce-000000000017",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_cli_update_failure",
@@ -7939,6 +8042,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runs CLI update before blocking desired state below minimumCliVersion", async () => {
+		setRuntimeApplyIdentityEnv(19);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8008,7 +8112,10 @@ chmod +x "$prefix/bin/clawdi"
 					hostedRuntimeBundleResponse(
 						{
 							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+								manifestETag: '"manifest-generation-19"',
+								applyReceiptId: "apply-receipt-00000019",
+								bootNonce: "boot-nonce-000000000019",
 								runtime: "openclaw",
 								deploymentId: "dep_min_cli",
 								environmentId: "env_min_cli",
@@ -8427,6 +8534,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("runtime init applies remote channel desired state during first boot", async () => {
+		setRuntimeApplyIdentityEnv(7);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -8497,7 +8605,10 @@ exit 64
 					hostedRuntimeBundleResponse(
 						{
 							manifest: {
-								schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+								schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+								manifestETag: '"manifest-generation-7"',
+								applyReceiptId: "apply-receipt-00000007",
+								bootNonce: "boot-nonce-000000000007",
 								minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 								runtime: "openclaw",
 								deploymentId: "dep_init",
@@ -8629,6 +8740,7 @@ exit 64
 	});
 
 	it("runtime init records malformed bundle channel references as a boot error", async () => {
+		setRuntimeApplyIdentityEnv(7);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -9795,7 +9907,10 @@ exit 64
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-1"',
+							applyReceiptId: "apply-receipt-00000001",
+							bootNonce: "boot-nonce-000000000001",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "hermes",
 							deploymentId: "dep_workspace",
@@ -9922,7 +10037,10 @@ exit 64
 			manifestPath,
 			JSON.stringify({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+					manifestETag: '"manifest-generation-1"',
+					applyReceiptId: "apply-receipt-00000001",
+					bootNonce: "boot-nonce-000000000001",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "hermes",
 					deploymentId: "dep_legacy_api_url",
@@ -9993,7 +10111,10 @@ exit 64
 			manifestPath,
 			JSON.stringify({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+					manifestETag: '"manifest-generation-1"',
+					applyReceiptId: "apply-receipt-00000001",
+					bootNonce: "boot-nonce-000000000001",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "hermes",
 					deploymentId: "dep_runtime_workspace",
@@ -11066,7 +11187,10 @@ exit 64
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-1"',
+							applyReceiptId: "apply-receipt-00000001",
+							bootNonce: "boot-nonce-000000000001",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_manifest_only",
@@ -11104,6 +11228,7 @@ exit 64
 	});
 
 	it("converges remote manifests without caching secret values", async () => {
+		setRuntimeApplyIdentityEnv(4);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -11122,7 +11247,10 @@ exit 64
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-4"',
+							applyReceiptId: "apply-receipt-00000004",
+							bootNonce: "boot-nonce-000000000004",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_test",
@@ -11397,6 +11525,7 @@ exit 64
 	});
 
 	it("registers live-sync environments and starts one hosted daemon", async () => {
+		setRuntimeApplyIdentityEnv(9);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -11414,7 +11543,10 @@ exit 64
 				response: () =>
 					hostedRuntimeBundleResponse({
 						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+							schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+							manifestETag: '"manifest-generation-9"',
+							applyReceiptId: "apply-receipt-00000009",
+							bootNonce: "boot-nonce-000000000009",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "openclaw",
 							deploymentId: "dep_sync",
@@ -11520,7 +11652,10 @@ exit 64
 			manifestPath,
 			JSON.stringify({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+					manifestETag: '"manifest-generation-1"',
+					applyReceiptId: "apply-receipt-00000001",
+					bootNonce: "boot-nonce-000000000001",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
 					deploymentId: "dep_no_secret_ref",
@@ -11573,7 +11708,10 @@ exit 64
 			manifestPath,
 			JSON.stringify({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: HOSTED_MANIFEST_V2_SCHEMA_VERSION,
+					manifestETag: '"manifest-generation-1"',
+					applyReceiptId: "apply-receipt-00000001",
+					bootNonce: "boot-nonce-000000000001",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "hermes",
 					deploymentId: "dep_bad_mitm",

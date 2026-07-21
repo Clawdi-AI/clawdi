@@ -19,6 +19,9 @@
 		"deploymentId": "dep_test",
 		"environmentId": "20000000-0000-0000-0000-000000000002",
 		"generation": 7,
+		"manifestETag": "\"manifest-generation-7\"",
+		"applyReceiptId": "apply-receipt-00000007",
+		"bootNonce": "boot-nonce-000000000007",
 		"instanceId": "hri_test",
 		"issuedAt": "2026-07-13T00:00:00+00:00",
 		"liveSync": {
@@ -69,7 +72,7 @@
 				"services": {}
 			}
 		},
-		"schemaVersion": "clawdi.hosted-runtime.manifest.v1",
+		"schemaVersion": "clawdi.hosted-runtime.manifest.v2",
 		"system": {},
 		"terminalTooling": {
 			"codex": {
@@ -97,5 +100,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "ab3ff081e3c46844c080c455e35d79aa886b92afa2c4195c8c1ecc99e60d7202"
+	"sourceRevision": "bdac51f2f1b837cc64dcf34c7fc58f9bfb3156ad710bb1493de27d649c137ada"
 }

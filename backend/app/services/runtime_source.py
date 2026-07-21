@@ -48,6 +48,7 @@ from app.services.vault_crypto import decrypt
 
 RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
+RUNTIME_MANIFEST_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.manifest.v2"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "OPENAI_API_KEY"
 _CODEX_TOOL_SECRET_REF = "tool.codex.apiKey"
@@ -90,6 +91,14 @@ class RenderedRuntimeSource:
     channel_bindings: list[dict[str, str]]
     secret_values: dict[str, str]
     source_revision: str
+
+
+@dataclass(frozen=True)
+class RuntimeManifestApplyIdentity:
+    generation: int
+    manifest_etag: str
+    apply_receipt_id: str
+    boot_nonce: str
 
 
 @dataclass(frozen=True)
@@ -330,7 +339,7 @@ def render_runtime_source(
     }
 
     manifest: dict[str, Any] = {
-        "schemaVersion": "clawdi.hosted-runtime.manifest.v1",
+        "schemaVersion": RUNTIME_MANIFEST_V2_SCHEMA_VERSION,
         "deploymentId": state.deployment_id,
         "environmentId": str(environment_id),
         "instanceId": state.instance_id,
@@ -423,11 +432,25 @@ def render_runtime_source(
     return RenderedRuntimeSource(manifest, bindings, secrets, source_revision)
 
 
-def render_runtime_bundle(source: RenderedRuntimeSource) -> dict[str, Any]:
+def render_runtime_bundle(
+    source: RenderedRuntimeSource,
+    *,
+    apply_identity: RuntimeManifestApplyIdentity,
+) -> dict[str, Any]:
+    if apply_identity.generation != source.manifest["generation"]:
+        raise RuntimeSourceError(
+            "Runtime apply identity generation does not match the desired manifest"
+        )
+    manifest = {
+        **source.manifest,
+        "manifestETag": apply_identity.manifest_etag,
+        "applyReceiptId": apply_identity.apply_receipt_id,
+        "bootNonce": apply_identity.boot_nonce,
+    }
     return {
         "schemaVersion": RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
         "sourceRevision": source.source_revision,
-        "manifest": source.manifest,
+        "manifest": manifest,
         "channelBindings": source.channel_bindings,
         "secretValues": source.secret_values,
     }

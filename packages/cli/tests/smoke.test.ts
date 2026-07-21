@@ -304,13 +304,16 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 			manifestPath,
 			JSON.stringify({
 				manifest: {
-					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+					schemaVersion: "clawdi.hosted-runtime.manifest.v2",
 					minimumCliVersion: "0.12.10-beta.55",
 					runtime: "openclaw",
 					deploymentId: "dep_strict_smoke",
 					environmentId: "env_strict_smoke",
 					instanceId: "iid_strict_smoke",
 					generation: 1,
+					manifestETag: '"manifest-generation-1"',
+					applyReceiptId: "apply-receipt-00000001",
+					bootNonce: "boot-nonce-000000000001",
 					issuedAt: "2026-07-12T00:00:00Z",
 					locale: { language: "en", timezone: "UTC" },
 					system: {},
