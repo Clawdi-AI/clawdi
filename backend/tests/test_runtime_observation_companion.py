@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.services.runtime_observation as runtime_observation_service
 from app.core.auth import AuthContext, get_auth
+from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
@@ -624,6 +625,56 @@ async def test_unknown_cursor_persists_fail_closed_reset_boundary(
     await db_session.commit()
     assert reset["resetBoundary"] == invalid.value.metadata["resetBoundary"]
     assert reset["sessionHighWaterMarks"] == {"boot-session-0001": 1}
+
+
+@pytest.mark.asyncio
+async def test_idempotent_reack_echoes_callers_fresh_cursor(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch,
+) -> None:
+    environment, _ = await _provision_environment(db_session, seed_user)
+    admin_key = "runtime-observation-admin-secret"
+    headers = {"X-Admin-Key": admin_key}
+    path = f"/v2/runtime/environments/{environment.id}/observation-consumers"
+    monkeypatch.setattr(settings, "admin_api_key", admin_key)
+
+    registration = await client.post(f"{path}/register", headers=headers, json={})
+    assert registration.status_code == 200, registration.text
+
+    event = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(),
+    )
+    await db_session.commit()
+
+    registered_cursor = runtime_observation_service.decode_runtime_observation_cursor(
+        registration.json()["cursor"]
+    )
+    first_cursor = runtime_observation_service.encode_runtime_observation_cursor(
+        environment_id=registered_cursor.environment_id,
+        consumer_id=registered_cursor.consumer_id,
+        cursor_epoch=registered_cursor.cursor_epoch,
+        stream_position=event.stream_position,
+    )
+    first_ack = await client.post(f"{path}/ack", headers=headers, json={"cursor": first_cursor})
+    assert first_ack.status_code == 200, first_ack.text
+    assert first_ack.json()["cursor"] == first_cursor
+
+    second_cursor = runtime_observation_service.encode_runtime_observation_cursor(
+        environment_id=registered_cursor.environment_id,
+        consumer_id=registered_cursor.consumer_id,
+        cursor_epoch=registered_cursor.cursor_epoch,
+        stream_position=event.stream_position,
+    )
+    assert second_cursor != first_cursor
+
+    second_ack = await client.post(f"{path}/ack", headers=headers, json={"cursor": second_cursor})
+
+    assert second_ack.status_code == 200, second_ack.text
+    assert second_ack.json()["cursor"] == second_cursor
 
 
 @pytest.mark.committed_db
