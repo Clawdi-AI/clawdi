@@ -2181,6 +2181,10 @@ chmod +x "$HOME/.local/bin/hermes"
 			const hermesDashboardEnv = readSystemdEnvFile(paths, "clawdi-hermes-dashboard");
 
 			expect(watchEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"');
+			expect(watchEnv).toContain('CLAWDI_RUNTIME_GENERATION="4"');
+			expect(watchEnv).toContain('CLAWDI_RUNTIME_MANIFEST_ETAG="\\"manifest-generation-4\\""');
+			expect(watchEnv).toContain('CLAWDI_RUNTIME_APPLY_RECEIPT_ID="apply-receipt-00000004"');
+			expect(watchEnv).toContain('CLAWDI_RUNTIME_BOOT_NONCE="boot-nonce-000000000004"');
 			expect(sidecarEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"');
 			expect(
 				convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),

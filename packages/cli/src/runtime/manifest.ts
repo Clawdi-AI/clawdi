@@ -56,6 +56,7 @@ import {
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState } from "./applied-state";
+import { type RuntimeApplyIdentity, runtimeApplyIdentityEnvironment } from "./apply-identity";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import { isClawdiManagedProviderProjection, normalizeSecretRef } from "./hosted-egress-profiles";
 import {
@@ -4807,6 +4808,7 @@ function runtimeManifestUrlEnv(sourcePath: string): string {
 function runtimeSystemdCommonEnvironment(
 	sourcePath: string,
 	paths: RuntimePaths,
+	applyIdentity: RuntimeApplyIdentity | undefined,
 ): Record<string, string> {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	return {
@@ -4817,6 +4819,7 @@ function runtimeSystemdCommonEnvironment(
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
 		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(sourcePath),
+		...(applyIdentity ? runtimeApplyIdentityEnvironment(applyIdentity) : {}),
 		[RUNTIME_BRIDGE_TOKEN_ENV]: "",
 		[RUNTIME_BRIDGE_LISTEN_HOST_ENV]: process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
 		[RUNTIME_BRIDGE_SURFACES_ENV]: "",
@@ -5896,7 +5899,11 @@ export function convergeRuntimeManifest(
 				managedModelOverrides,
 			);
 		}
-		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(load.sourcePath, paths);
+		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(
+			load.sourcePath,
+			paths,
+			load.applyIdentity,
+		);
 		if (shouldInstallOfficialRuntimeServices()) {
 			for (const program of officialRuntimeSystemdPrograms(runtimeSystemdUserPrograms)) {
 				writeRuntimeSystemdUserProgram({

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	RUNTIME_APPLY_IDENTITY_HEADERS,
 	readRuntimeApplyIdentityFromEnv,
+	runtimeApplyIdentityEnvironment,
 	runtimeApplyIdentityHeaders,
 } from "./apply-identity";
 
@@ -28,6 +29,7 @@ describe("runtime apply identity environment", () => {
 			[RUNTIME_APPLY_IDENTITY_HEADERS.applyReceiptId]: "apply-receipt-0007",
 			[RUNTIME_APPLY_IDENTITY_HEADERS.bootNonce]: "boot-nonce-000007",
 		});
+		expect(runtimeApplyIdentityEnvironment(identity)).toEqual(completeEnv);
 	});
 
 	test("rejects incomplete, non-canonical, and invalid tuples", () => {

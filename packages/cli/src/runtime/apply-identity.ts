@@ -67,6 +67,17 @@ export function runtimeApplyIdentityHeaders(
 	};
 }
 
+export function runtimeApplyIdentityEnvironment(
+	identity: RuntimeApplyIdentity,
+): Record<string, string> {
+	return {
+		[RUNTIME_APPLY_IDENTITY_ENV.generation]: String(identity.generation),
+		[RUNTIME_APPLY_IDENTITY_ENV.manifestETag]: identity.manifestETag,
+		[RUNTIME_APPLY_IDENTITY_ENV.applyReceiptId]: identity.applyReceiptId,
+		[RUNTIME_APPLY_IDENTITY_ENV.bootNonce]: identity.bootNonce,
+	};
+}
+
 function canonicalIdentityValue(min: number, max: number): z.ZodString {
 	return z
 		.string()
