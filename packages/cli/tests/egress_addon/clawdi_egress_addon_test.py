@@ -425,6 +425,58 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         )
         self.assertNotIn("real-agent-token", redacted)
 
+    def test_telegram_rewrite_keeps_non_secret_route_and_moves_credential_to_header(self):
+        egress = self.load(
+            [
+                {
+                    "id": "managed-telegram",
+                    "enabled": True,
+                    "kind": "http",
+                    "match": {
+                        "scheme": "https",
+                        "host": "api.telegram.org",
+                        "path": {
+                            "type": "secretRefPrefix",
+                            "secretRef": "secret://placeholder",
+                            "prefix": "/bot",
+                            "suffix": "/",
+                        },
+                    },
+                    "rewrite": {
+                        "upstreamBaseUrl": "https://cloud.test/v1/channels/telegram",
+                        "preservePath": True,
+                        "setHeaders": {
+                            "authorization": {
+                                "type": "secretRef",
+                                "secretRef": "secret://agent-token",
+                                "prefix": "Bearer ",
+                            }
+                        },
+                    },
+                    "logging": {"redactHeaders": ["authorization"], "redactUrlPatterns": []},
+                    "priority": 10,
+                }
+            ],
+            {
+                "secret://placeholder": "999999999:public-routing-id",
+                "secret://agent-token": "123456789:real-agent-token",
+            },
+        )
+        flow = Flow(
+            host="api.telegram.org",
+            path="/bot999999999:public-routing-id/sendMessage?chat_id=42",
+        )
+
+        decision = egress.apply_to_flow(flow)
+
+        self.assertEqual(decision.action, "http")
+        self.assertEqual(
+            flow.request.path,
+            "/v1/channels/telegram/bot999999999:public-routing-id/sendMessage?chat_id=42",
+        )
+        self.assertNotIn("real-agent-token", flow.request.path)
+        self.assertEqual(flow.request.headers["authorization"], "Bearer 123456789:real-agent-token")
+
     def test_websocket_profile_rewrites_upgrade_request(self):
         egress = self.load(
             [

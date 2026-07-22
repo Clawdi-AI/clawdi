@@ -97,7 +97,7 @@ def _payload(
             "reportedAt": captured.isoformat(),
             "runtimeMode": "hosted",
             "status": status,
-            "activeCliVersion": "0.12.10-beta.55",
+            "activeCliVersion": "0.12.10-beta.57",
             "applied": {
                 "etag": manifest_etag,
                 "sourceRevision": "a" * 64,
@@ -1980,7 +1980,7 @@ def _runtime_state(environment_id: uuid.UUID) -> HostedRuntimeState:
         deployment_id="legacy-hosted-runtime",
         instance_id="legacy-instance",
         generation=1,
-        cli_package_spec="@clawdi/cli@0.12.10-beta.55",
+        cli_package_spec="@clawdi/cli@0.12.10-beta.57",
         locale={"timezone": "UTC", "language": "en"},
         system={"packages": []},
         runtimes={"openclaw": {"enabled": True}},

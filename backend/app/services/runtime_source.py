@@ -40,6 +40,7 @@ from app.schemas.runtime import (
     validate_hosted_runtime_bridge,
     validate_hosted_runtime_desired_state,
 )
+from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
     is_managed_provider_id,
     managed_provider_api_mode,
@@ -372,7 +373,7 @@ def render_runtime_source(
     for account, link in channel_rows:
         if not link.encrypted_agent_token or not link.agent_token_nonce:
             raise RuntimeSourceError("Active runtime channel link has no token material")
-        account_key = f"clawdi_{account.id.hex}"
+        account_key = channel_runtime_account_key(account.id)
         agent_ref = f"secret://channels/{account.provider}/{account_key}/agent-token"
         placeholder_ref = f"secret://channels/{account.provider}/{account_key}/placeholder-token"
         bindings.append(
@@ -411,7 +412,9 @@ def render_runtime_source(
                 raise RuntimeSourceError(material.error_message) from exc
         for binding in bindings:
             placeholder_ref = binding["placeholderTokenSecretRef"]
-            secrets[placeholder_ref] = _placeholder(binding["provider"], binding["accountKey"])
+            secrets[placeholder_ref] = channel_runtime_placeholder_token(
+                binding["provider"], binding["accountKey"]
+            )
 
     descriptor = {
         "schemaVersion": RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
@@ -549,11 +552,6 @@ def _add_secret_source(
     if secret_ref in sources:
         raise RuntimeSourceError(f"Runtime secret reference collision: {secret_ref}")
     sources[secret_ref] = identity
-
-
-def _placeholder(provider: str, account_key: str) -> str:
-    suffix = hashlib.sha256(f"{provider}:{account_key}".encode()).hexdigest()[:32]
-    return f"999999999:{suffix}" if provider == CHANNEL_PROVIDER_TELEGRAM else f"clawdi_{suffix}"
 
 
 def runtime_manifest_issued_at(state: HostedRuntimeState) -> str:

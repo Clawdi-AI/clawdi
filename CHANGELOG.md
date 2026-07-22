@@ -10,6 +10,18 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.12.10-beta.57
+
+Package: `clawdi@0.12.10-beta.57`
+
+### Fixed
+
+- Managed Telegram method and file requests now keep agent-link credentials out
+  of Cloud request URLs while preserving standard Telegram Bot API client
+  behavior.
+- Managed runtime CA trust bundles are readable only by root and the runtime
+  user's primary group, including after an existing bundle is replaced.
+
 ## Clawdi CLI v0.12.10-beta.55
 
 Package: `clawdi@0.12.10-beta.55`

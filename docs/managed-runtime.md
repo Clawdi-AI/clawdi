@@ -300,6 +300,16 @@ ephemeral run directory so a sidecar restart does not change the trust root for
 already-running runtimes. Runtime programs receive only the CA certificate path
 as trust env; the private key path is not projected into runtime env.
 
+The combined system-plus-egress CA bundle is certificate-only trust material,
+but it is consumed by the non-root runtime processes through `NODE_EXTRA_CA_CERTS`,
+`REQUESTS_CA_BUNDLE`, and `SSL_CERT_FILE`. The root-owned sidecar therefore
+publishes it atomically as `root:<runtime primary group>` with mode `0640` on
+both creation and replacement. Making it root-only would break the declared
+runtime-user service model; making it world-readable would unnecessarily expose
+the managed trust projection to unrelated local users. The egress CA private key
+remains separate under the egress identity's private directory and is never
+group-readable by the runtime user.
+
 The sidecar bridge module is optional, not a replacement for official ports. If
 the platform exposes the official ports behind trusted ingress auth and the
 runtime native UI works with that auth/CORS/path policy, the bridge can be
@@ -728,6 +738,15 @@ Channel configuration follows the same rule: the open-source contract describes
 the local projection shape and validation rules, while service-specific channel
 control planes remain outside this repository.
 
+Telegram Bot API clients construct method and file URLs as
+`/bot<token>/...` and `/file/bot<token>/...`. Managed runtimes therefore give
+the client a Bot API-shaped, non-secret routing placeholder. The egress sidecar
+preserves that placeholder in the Cloud URL and injects the real agent-link
+credential as a redacted Bearer header; cloud-api authenticates the header and
+binds it to the placeholder before routing either request class. The Hosted CLI
+floor `0.12.10-beta.57` is the first version with this boundary, so an exact
+older CLI must not be selected for a deployment with managed Telegram bindings.
+
 ## Runtime UI And Terminal
 
 Hosted deployment pages expose two live surfaces:
@@ -804,7 +823,7 @@ The exact-only Hosted package, fixture-only bootstrap tgz, strict
 provider/install fields, and preserved generic desired-state behavior described
 above are the CLI boundary. The Hosted rollout writer selects
 `cli_package_spec`; Cloud validates and persists it, requires the exact version
-to be at least the Cloud-owned `0.12.10-beta.55` protocol floor, and owns the
+to be at least the Cloud-owned `0.12.10-beta.57` protocol floor, and owns the
 public manifest projection. Cloud fixes `clawdiCli.source` to `npm:clawdi` and
 `clawdiCli.registry` to `https://registry.npmjs.org`. Stored package state is
 revalidated on every read and fails closed with `409` when invalid or below the

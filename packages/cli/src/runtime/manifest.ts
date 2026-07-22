@@ -3165,8 +3165,8 @@ function hermesManagedChannelsPatch(
 					group_allowed_chats: ["*"],
 					require_mention: false,
 					extra: {
-						base_url: `${baseUrl}/v1/channels/telegram/bot`,
-						base_file_url: `${baseUrl}/v1/channels/telegram/file/bot`,
+						base_url: "https://api.telegram.org/bot",
+						base_file_url: "https://api.telegram.org/file/bot",
 					},
 				}
 			: { enabled: false },
@@ -3479,6 +3479,10 @@ function runtimeUserCommandEnv(
 }
 
 function runtimeUserGid(runtimeUser: string): number {
+	const explicit = Number.parseInt(process.env.CLAWDI_RUNTIME_GID?.trim() ?? "", 10);
+	if (Number.isInteger(explicit) && explicit >= 0 && explicit <= 4_294_967_295) {
+		return explicit;
+	}
 	const resolved = spawnSync("id", ["-g", runtimeUser], { encoding: "utf8" });
 	if (resolved.status === 0) {
 		const gid = Number.parseInt(resolved.stdout.trim(), 10);
@@ -3647,6 +3651,7 @@ function writeTransparentEgressEnvFile(input: {
 	paths: RuntimePaths;
 	runtimeUser: string;
 	runtimeUid: number;
+	runtimeGid: number;
 	egressUid: number;
 	egressGid: number;
 }): string | null {
@@ -3657,6 +3662,7 @@ function writeTransparentEgressEnvFile(input: {
 	const env: Record<string, string> = {
 		CLAWDI_RUNTIME_USER: input.runtimeUser,
 		CLAWDI_RUNTIME_UID: String(input.runtimeUid),
+		CLAWDI_RUNTIME_GID: String(input.runtimeGid),
 		CLAWDI_EGRESS_UID: String(input.egressUid),
 		CLAWDI_EGRESS_GID: String(input.egressGid),
 		CLAWDI_EGRESS_TRANSPARENT_PORT: String(input.program.transparentPort),
@@ -4089,6 +4095,7 @@ interface RuntimeEgressSystemdProgram {
 
 interface RuntimeEgressIdentity {
 	runtimeUid: number;
+	runtimeGid: number;
 	egressUid: number;
 	egressGid: number;
 }
@@ -5862,14 +5869,18 @@ export function convergeRuntimeManifest(
 			egressAddon,
 		);
 		const runtimeUid = egressSystemdProgram ? runtimeUserUid(runtimeUser) : 0;
+		const runtimeGid = egressSystemdProgram ? runtimeUserGid(runtimeUser) : 0;
 		const egressUid = egressSystemdProgram ? runtimeEgressUid() : 0;
 		const egressGid = egressSystemdProgram ? runtimeEgressGid() : 0;
-		const egressIdentity = egressSystemdProgram ? { runtimeUid, egressUid, egressGid } : null;
+		const egressIdentity = egressSystemdProgram
+			? { runtimeUid, runtimeGid, egressUid, egressGid }
+			: null;
 		const egressTransparentEnv = writeTransparentEgressEnvFile({
 			program: egressSystemdProgram,
 			paths,
 			runtimeUser,
 			runtimeUid,
+			runtimeGid,
 			egressUid,
 			egressGid,
 		});

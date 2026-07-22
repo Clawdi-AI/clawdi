@@ -51,6 +51,7 @@ describe("runtime transparent egress nftables", () => {
 				[
 					'CLAWDI_RUNTIME_USER="clawdi"',
 					'CLAWDI_RUNTIME_UID="10001"',
+					'CLAWDI_RUNTIME_GID="10004"',
 					'CLAWDI_EGRESS_UID="10002"',
 					'CLAWDI_EGRESS_GID="10003"',
 					'CLAWDI_EGRESS_TRANSPARENT_PORT="25080"',
@@ -77,6 +78,7 @@ describe("runtime transparent egress nftables", () => {
 
 			expect(config.runtimeUser).toBe("clawdi");
 			expect(config.runtimeUid).toBe(10001);
+			expect(config.runtimeGid).toBe(10004);
 			expect(config.egressUid).toBe(10002);
 			expect(config.egressGid).toBe(10003);
 			expect(config.transparentPort).toBe(26080);
@@ -92,6 +94,7 @@ describe("runtime transparent egress nftables", () => {
 		const base = {
 			CLAWDI_RUNTIME_USER: "clawdi",
 			CLAWDI_RUNTIME_UID: "10001",
+			CLAWDI_RUNTIME_GID: "10001",
 			CLAWDI_EGRESS_UID: "10002",
 			CLAWDI_EGRESS_GID: "10002",
 			CLAWDI_EGRESS_TRANSPARENT_PORT: "25080",

@@ -14,7 +14,7 @@ from app.services.runtime_source import expected_runtime_bundle_v2_etag
 
 _DEPRECATED_HOSTED_FIELDS = {"hosted_managed", "hosted_deployment_id"}
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
-_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.55"
+_TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
 _TEST_SYSTEM = {}
 
 
@@ -121,7 +121,7 @@ async def test_agent_and_environment_routes_share_non_deprecated_payloads(
         "reportedAt": datetime.now(UTC).isoformat(),
         "runtimeMode": "hosted",
         "status": "ok",
-        "activeCliVersion": "0.12.10-beta.55",
+        "activeCliVersion": "0.12.10-beta.57",
         "applied": {
             "etag": expected_runtime_bundle_v2_etag(source_revision),
             "sourceRevision": source_revision,
