@@ -14,6 +14,7 @@ type HostedDeploymentFixtureOptions = {
 	createdAt?: string;
 	runtime?: HostedDeploymentSpec["runtime"];
 	runtimeVersion?: string;
+	resourceVersion?: string;
 	desiredLifecycle?: HostedDeploymentSpec["desired_lifecycle"];
 	runtimeConfiguration?: HostedRuntimeConfiguration;
 	resources?: HostedDeploymentSpec["resources"];
@@ -51,7 +52,7 @@ export function hostedDeploymentFixture(
 			metadata: {
 				generation: 1,
 				manifestETag: "etag_test",
-				resourceVersion: "rv_test",
+				resourceVersion: options.resourceVersion ?? "rv_test",
 				createdAt,
 				updatedAt: createdAt,
 			},

@@ -83,7 +83,10 @@ describe("subscription creation adapter", () => {
 				billing_term_months: 12,
 				funding_source: "wallet",
 				ui_mode: "custom",
-				deploy_config: deployConfig,
+				deploy_config: {
+					...deployConfig,
+					deploy_request_id: "subscription-create-test",
+				},
 				quote: walletQuote,
 			},
 		});

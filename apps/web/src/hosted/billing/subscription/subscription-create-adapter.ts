@@ -118,7 +118,14 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 		funding_source: selection.fundingSource,
 		ui_mode: request.uiMode,
 		...(target.kind === "new_deployment"
-			? { deploy_config: target.deployConfig }
+			? {
+					deploy_config: {
+						...target.deployConfig,
+						// The post-#980 create path is funding-driven. Bind its pending
+						// deploy request to the same stable logical-intent key as checkout.
+						deploy_request_id: target.deployConfig.deploy_request_id ?? request.idempotencyKey,
+					},
+				}
 			: { upgrade_deployment_id: target.deploymentId }),
 		...(selection.fundingSource === "wallet" && request.quote
 			? { quote: request.quote.serverQuote }

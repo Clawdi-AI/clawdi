@@ -25,6 +25,8 @@ DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
 DEV_V2_MANAGED_PROVIDER_ID = "clawdi-v2"
 STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
+OPERATIONS: dict[str, dict[str, Any]] = {}
+DEPLOY_REQUESTS: dict[str, dict[str, Any]] = {}
 
 
 def _now() -> datetime:
@@ -314,9 +316,9 @@ def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
             "commercial_revision": 1,
             "deployment_target": "saas",
             "metadata": {
-                "generation": 1,
+                "generation": record.get("_generation", 1),
                 "manifestETag": f"etag_{record['id']}",
-                "resourceVersion": f"rv_{record['id']}",
+                "resourceVersion": record.get("_resource_version", f"rv_{record['id']}"),
                 "createdAt": record["created_at"],
                 "updatedAt": record["created_at"],
             },
@@ -427,9 +429,7 @@ async def list_deployments() -> list[dict[str, Any]]:
     return [_deployment_read_response(record) for record in DEPLOYMENTS.values()]
 
 
-@app.post("/v2/deployments")
-async def create_deployment(request: Request) -> dict[str, Any]:
-    body = await request.json()
+def _create_deployment_record(body: dict[str, Any]) -> dict[str, Any]:
     deployment_id = f"hdep_dev_{uuid.uuid4().hex[:8]}"
     enabled_optional = []
     if body.get("enable_openclaw", True):
@@ -474,6 +474,50 @@ async def create_deployment(request: Request) -> dict[str, Any]:
     return created
 
 
+def _require_mutation_headers(request: Request, deployment: dict[str, Any]) -> str:
+    idempotency_key = request.headers.get("Idempotency-Key")
+    if not idempotency_key:
+        raise HTTPException(status_code=400, detail="Idempotency-Key is required")
+    resource_version = deployment.get("_resource_version", f"rv_{deployment['id']}")
+    if request.headers.get("If-Match") != f'"{resource_version}"':
+        raise HTTPException(status_code=412, detail="resource_version_mismatch")
+    return idempotency_key
+
+
+def _accept_operation(
+    deployment: dict[str, Any],
+    *,
+    verb: str,
+    idempotency_key: str,
+) -> dict[str, Any]:
+    deployment["_generation"] = int(deployment.get("_generation", 1)) + 1
+    deployment["_resource_version"] = f"rv_{deployment['id']}_{uuid.uuid4().hex[:8]}"
+    now = _iso(_now())
+    operation_id = uuid.uuid5(
+        STABLE_UUID_NAMESPACE,
+        f"{deployment['id']}:{verb}:{idempotency_key}",
+    ).hex
+    operation = {
+        "name": f"operations/{operation_id}",
+        "metadata": {
+            "@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+            "deploymentId": deployment["id"],
+            "verb": verb,
+            "targetGeneration": deployment["_generation"],
+            "manifestETag": f"etag_{deployment['id']}",
+            "createTime": now,
+            "updateTime": now,
+        },
+        "done": True,
+        "response": {
+            "@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+            "deployment": _deployment_read_response(deployment)["resource"],
+        },
+    }
+    OPERATIONS[operation_id] = operation
+    return operation
+
+
 @app.get("/v2/deployments/{deployment_id}")
 async def get_deployment(deployment_id: str) -> dict[str, Any]:
     return _deployment_read_response(_get_deployment_record(deployment_id))
@@ -482,17 +526,28 @@ async def get_deployment(deployment_id: str) -> dict[str, Any]:
 @app.patch("/v2/deployments/{deployment_id}")
 async def update_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
     deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
     body = await request.json()
     next_name = body.get("name") or body.get("assistant_name")
     if isinstance(next_name, str) and next_name.strip():
         deployment["name"] = next_name.strip()
-    return deployment
+    return _accept_operation(
+        deployment,
+        verb="update",
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.delete("/v2/deployments/{deployment_id}")
-async def delete_deployment(deployment_id: str) -> dict[str, Any]:
-    existed = DEPLOYMENTS.pop(deployment_id, None) is not None
-    return {"status": "deleted" if existed else "missing", "cvm_deleted": existed}
+async def delete_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
+    deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
+    deployment["status"] = "deleted"
+    return _accept_operation(
+        deployment,
+        verb="delete",
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.patch("/v2/deployments/{deployment_id}/agents/{agent_type}")
@@ -729,24 +784,47 @@ def _mock_terminal_command(command: str) -> str:
 
 
 @app.post("/v2/deployments/{deployment_id}/restart")
-async def restart_deployment(deployment_id: str) -> dict[str, Any]:
+async def restart_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
     deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
     deployment["status"] = "running"
-    return {"status": "restarting", "upgrade_task_id": None, "upgrade_status": None}
+    return _accept_operation(
+        deployment,
+        verb="restart",
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.post("/v2/deployments/{deployment_id}/stop")
-async def stop_deployment(deployment_id: str) -> dict[str, Any]:
+async def stop_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
     deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
     deployment["status"] = "stopped"
-    return {"status": "stopped", "upgrade_task_id": None, "upgrade_status": None}
+    return _accept_operation(
+        deployment,
+        verb="stop",
+        idempotency_key=idempotency_key,
+    )
 
 
 @app.post("/v2/deployments/{deployment_id}/start")
-async def start_deployment(deployment_id: str) -> dict[str, Any]:
+async def start_deployment(deployment_id: str, request: Request) -> dict[str, Any]:
     deployment = _get_deployment_record(deployment_id)
+    idempotency_key = _require_mutation_headers(request, deployment)
     deployment["status"] = "running"
-    return {"status": "starting", "upgrade_task_id": None, "upgrade_status": None}
+    return _accept_operation(
+        deployment,
+        verb="start",
+        idempotency_key=idempotency_key,
+    )
+
+
+@app.get("/v2/operations/{operation_id}")
+async def get_operation(operation_id: str) -> dict[str, Any]:
+    operation = OPERATIONS.get(operation_id)
+    if operation is None:
+        raise HTTPException(status_code=404, detail="Operation not found")
+    return operation
 
 
 @app.get("/v2/subscription/plans")
@@ -763,7 +841,20 @@ async def plans() -> list[dict[str, Any]]:
             "ram_gb": 2,
             "disk_size": 20,
             "instance_type": "dev-free",
-            "offers": [],
+            "offers": [
+                {
+                    "billing_term_months": 1,
+                    "price_cents": 900,
+                    "effective_monthly_price_cents": 900,
+                    "discount_percent": 0,
+                },
+                {
+                    "billing_term_months": 12,
+                    "price_cents": 8640,
+                    "effective_monthly_price_cents": 720,
+                    "discount_percent": 20,
+                },
+            ],
         },
         {
             "slug": "compute_performance",
@@ -795,13 +886,56 @@ async def plans() -> list[dict[str, Any]]:
 
 
 @app.post("/v2/subscription/checkout")
-async def checkout() -> dict[str, Any]:
+async def checkout(request: Request) -> dict[str, Any]:
+    body = await request.json()
+    deploy_config = body.get("deploy_config")
+    deployment = None
+    deploy_request_id = None
+    if isinstance(deploy_config, dict):
+        deployment = _create_deployment_record(deploy_config)
+        deployment["status"] = "running"
+        deploy_request_id = deploy_config.get("deploy_request_id")
+        if isinstance(deploy_request_id, str) and deploy_request_id:
+            operation = _accept_operation(
+                deployment,
+                verb="create",
+                idempotency_key=deploy_request_id,
+            )
+            DEPLOY_REQUESTS[deploy_request_id] = {
+                "deploy_request_id": deploy_request_id,
+                "request_status": "succeeded",
+                "lineage_tail": {
+                    "deployment_id": deployment["id"],
+                    "lineage_version": 1,
+                    "lineage_state": "succeeded",
+                    "operation": operation,
+                },
+            }
+    if body.get("funding_source") == "wallet":
+        return {
+            "flow_type": "subscription_activation",
+            "funding_source": "wallet",
+            "action_url": None,
+            "checkout_url": "",
+            "deployment_id": deployment["id"] if deployment else None,
+            "deploy_request_id": deploy_request_id,
+        }
+    deployment_query = f"&deployment_id={deployment['id']}" if deployment is not None else ""
     return {
         "flow_type": "checkout_session",
+        "funding_source": "stripe",
         "action_url": None,
-        "checkout_url": f"{_web_base_url()}/deploy?mockCheckout=1",
+        "checkout_url": (f"{_web_base_url()}/deploy?mockCheckout=1{deployment_query}"),
         "client_secret": None,
     }
+
+
+@app.get("/v2/deployments/by-request/{deploy_request_id}")
+async def get_deployment_by_request(deploy_request_id: str) -> dict[str, Any]:
+    status = DEPLOY_REQUESTS.get(deploy_request_id)
+    if status is None:
+        raise HTTPException(status_code=404, detail="Deployment request not found")
+    return status
 
 
 @app.post("/v2/subscription/portal")

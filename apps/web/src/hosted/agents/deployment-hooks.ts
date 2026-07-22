@@ -3,15 +3,20 @@
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
-import { deleteDeploymentToastDecision } from "@/hosted/agents/delete-deployment-toast.logic";
 import { useBillingClient } from "@/hosted/billing/billing-client";
-import type {
-	RebindAgentAiProviderRequest,
-	SetAgentEnabledRequest,
-} from "@/hosted/billing/contracts";
-import { normalizeHostedLanguage } from "@/hosted/billing/deploy/language-timezone-controls";
-import { BillingApiError, normalizeBillingError, toastBillingError } from "@/hosted/billing/errors";
+import {
+	DeploymentConflictError,
+	isNetworkError,
+	normalizeBillingError,
+	toastBillingError,
+} from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
+import {
+	forgetIdempotencyAttempt,
+	idempotencyAttemptFor,
+	idempotencyFingerprint,
+	newIdempotencyKey,
+} from "@/hosted/billing/idempotency";
 import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
@@ -32,24 +37,29 @@ function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
 	}
 }
 
-function isLifecycleStateConflict(error: unknown): boolean {
-	if (!(error instanceof BillingApiError)) return false;
-	return (
-		error.status === 409 ||
-		/invalid[_\s-]?state|state conflict|conflict|not (running|stopped|ready)|already/i.test(
-			error.detail,
-		)
-	);
+async function runStableDeploymentIntent<T>(
+	prefix: string,
+	value: unknown,
+	run: (idempotencyKey: string) => Promise<T>,
+): Promise<T> {
+	const fingerprint = idempotencyFingerprint(value);
+	const attempt = idempotencyAttemptFor(null, prefix, fingerprint, newIdempotencyKey);
+	try {
+		const result = await run(attempt.key);
+		forgetIdempotencyAttempt(prefix, fingerprint);
+		return result;
+	} catch (error) {
+		// A transport timeout may have happened after acceptance. Preserve the
+		// intent key so a retry resumes the same LRO instead of issuing a new one.
+		if (!isNetworkError(error)) forgetIdempotencyAttempt(prefix, fingerprint);
+		throw error;
+	}
 }
 
-function toastAiProviderRebindError(error: unknown) {
-	toast.error("Couldn't update provider", { description: normalizeBillingError(error) });
-}
-
-function toastAgentLanguageTimezoneError(error: unknown) {
-	toast.error("Couldn't update language and timezone", {
-		description: normalizeBillingError(error),
-	});
+function toastDeploymentConflict(error: unknown): boolean {
+	if (!(error instanceof DeploymentConflictError)) return false;
+	toast.error("Agent state changed", { description: normalizeBillingError(error) });
+	return true;
 }
 
 /**
@@ -97,49 +107,6 @@ export type {
 } from "@/hosted/hosted-agent-resolution";
 export { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 
-export function useSetAgentLanguageTimezone() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: {
-			id: string;
-			agentType: string;
-			language: string;
-			timezone: string;
-		}) => {
-			const body: SetAgentEnabledRequest = {
-				enabled: true,
-				language: normalizeHostedLanguage(vars.language),
-				timezone: vars.timezone.trim() || null,
-			};
-			return client.setAgentLanguageTimezone(vars.id, vars.agentType, body);
-		},
-		onSuccess: () => {
-			scheduleDeploymentSettlingRefresh(qc);
-			toast.success("Language and timezone updated");
-		},
-		onError: toastAgentLanguageTimezoneError,
-		onSettled: () => invalidateDeploymentSnapshots(qc),
-	});
-}
-
-/** Re-bind the AI provider pool and primary model for deployment runtimes (live). */
-export function useSetAgentAiProvider() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: {
-			id: string;
-			agentType: string;
-			body: RebindAgentAiProviderRequest;
-		}) => {
-			return client.setAgentAiProvider(vars.id, vars.agentType, vars.body);
-		},
-		onError: toastAiProviderRebindError,
-		onSettled: () => invalidateDeploymentSnapshots(qc),
-	});
-}
-
 export function useCreateTerminalSession() {
 	const client = useBillingClient();
 	return useMutation({
@@ -160,29 +127,29 @@ export function useDeploymentLifecycle() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (vars: { id: string; action: "restart" | "stop" | "start" }) => {
-			if (vars.action === "restart") return client.restartDeployment(vars.id);
-			if (vars.action === "stop") return client.stopDeployment(vars.id);
-			return client.startDeployment(vars.id);
-		},
+		mutationFn: (vars: { id: string; action: "restart" | "stop" | "start" }) =>
+			runStableDeploymentIntent("deployment-lifecycle", vars, (idempotencyKey) => {
+				if (vars.action === "restart") {
+					return client.restartDeployment(vars.id, idempotencyKey);
+				}
+				return client.setDeploymentDesiredState(
+					vars.id,
+					vars.action === "start" ? "running" : "stopped",
+					idempotencyKey,
+				);
+			}),
 		onSuccess: (_d, vars) => {
 			scheduleDeploymentSettlingRefresh(qc);
 			const msg =
 				vars.action === "restart"
-					? "Restarting agent…"
+					? "Agent restarted"
 					: vars.action === "stop"
-						? "Stopping agent…"
-						: "Starting agent…";
+						? "Agent stopped"
+						: "Agent started";
 			toast.success(msg);
 		},
 		onError: (error) => {
-			if (isLifecycleStateConflict(error)) {
-				toast.error("Agent state changed", {
-					description:
-						"The deployment state changed before the action ran. We refreshed the controls.",
-				});
-				return;
-			}
+			if (toastDeploymentConflict(error)) return;
 			toast.error("Couldn't update lifecycle", { description: normalizeBillingError(error) });
 		},
 		onSettled: () => invalidateDeploymentSnapshots(qc),
@@ -193,17 +160,18 @@ export function useDeleteDeployment() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (id: string) => client.deleteDeployment(id),
-		onSuccess: (result) => {
+		mutationFn: (id: string) =>
+			runStableDeploymentIntent("deployment-delete", { action: "delete", id }, (key) =>
+				client.deleteDeployment(id, key),
+			),
+		onSuccess: () => {
 			scheduleDeploymentSettlingRefresh(qc);
-			const decision = deleteDeploymentToastDecision(result);
-			if (decision.tone === "warning") {
-				toast.warning(decision.title, { description: decision.description });
-				return;
-			}
-			toast.success(decision.title, { description: decision.description });
+			toast.success("Agent deleted");
 		},
-		onError: toastBillingError("Couldn't delete agent"),
+		onError: (error) => {
+			if (toastDeploymentConflict(error)) return;
+			toastBillingError("Couldn't delete agent")(error);
+		},
 		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});
 }

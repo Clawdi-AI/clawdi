@@ -19,7 +19,6 @@ import type {
 	ComputeSubscriptionActionResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
-	DeployRequest,
 	HostedComputeSubscription,
 	HostedDeployment,
 	PortalRequest,
@@ -42,11 +41,6 @@ import { deploymentRefetchInterval } from "@/hosted/deployment-status";
 import { runtimeEnvironmentId } from "@/hosted/runtimes";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
-
-type CreateDeploymentMutationVariables = {
-	body: DeployRequest;
-	idempotencyKey: string;
-};
 
 const CHECKOUT_RETURN_DEPLOYMENT_PARAMS = ["deployment_id", "upgrade_deployment_id"] as const;
 const CHECKOUT_RETURN_MARKER_PARAMS = [
@@ -460,19 +454,6 @@ export function useHostedDeployments({
 export function useResolveDeploymentRequest() {
 	const client = useBillingClient();
 	return useMutation({
-		mutationFn: (deployRequestId: string) => client.getDeploymentByRequest(deployRequestId),
-	});
-}
-
-export function useCreateDeployment() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: ({ body, idempotencyKey }: CreateDeploymentMutationVariables) =>
-			client.createDeployment(body, idempotencyKey),
-		onSettled: () => {
-			void qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			void qc.invalidateQueries({ queryKey: ["agents"] });
-		},
+		mutationFn: (deployRequestId: string) => client.waitForDeploymentRequest(deployRequestId),
 	});
 }

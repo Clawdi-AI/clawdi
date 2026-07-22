@@ -105,19 +105,8 @@ describe("usesActiveIncludedBasicSlot", () => {
 describe("resolveBasicDeploySelection", () => {
 	const basic = plan(900);
 
-	test("deploys compute_basic directly while included funding is available", () => {
-		expect(
-			resolveBasicDeploySelection({
-				includedSlotUsed: false,
-				basicPlan: basic,
-				billingTermMonths: 1,
-			}),
-		).toEqual({ mode: "direct", computePlanSlug: "compute_basic", plan: basic });
-	});
-
-	test("starts compute_basic checkout with the API offer after included funding is used", () => {
+	test("starts compute_basic checkout with the wizard-selected API offer", () => {
 		const selection = resolveBasicDeploySelection({
-			includedSlotUsed: true,
 			basicPlan: basic,
 			billingTermMonths: 1,
 		});
@@ -131,40 +120,20 @@ describe("resolveBasicDeploySelection", () => {
 		});
 	});
 
-	test("requires the canonical Basic plan for either funding path", () => {
+	test("requires the canonical Basic plan", () => {
 		expect(
 			resolveBasicDeploySelection({
-				includedSlotUsed: false,
-				basicPlan: undefined,
-				billingTermMonths: 1,
-			}),
-		).toEqual({ mode: "unavailable", reason: "plan_missing" });
-		expect(
-			resolveBasicDeploySelection({
-				includedSlotUsed: true,
 				basicPlan: undefined,
 				billingTermMonths: 1,
 			}),
 		).toEqual({ mode: "unavailable", reason: "plan_missing" });
 	});
 
-	test("requires a real API offer only when the included slot is occupied", () => {
+	test("requires a real API offer for the funding-driven create path", () => {
 		const basicWithoutOffers = { ...basic, offers: [] };
 
 		expect(
 			resolveBasicDeploySelection({
-				includedSlotUsed: false,
-				basicPlan: basicWithoutOffers,
-				billingTermMonths: 1,
-			}),
-		).toEqual({
-			mode: "direct",
-			computePlanSlug: "compute_basic",
-			plan: basicWithoutOffers,
-		});
-		expect(
-			resolveBasicDeploySelection({
-				includedSlotUsed: true,
 				basicPlan: basicWithoutOffers,
 				billingTermMonths: 1,
 			}),

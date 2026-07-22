@@ -58,8 +58,6 @@ import {
 	useCreateTerminalSession,
 	useDeleteDeployment,
 	useDeploymentLifecycle,
-	useSetAgentAiProvider,
-	useSetAgentLanguageTimezone,
 } from "@/hosted/agents/deployment-hooks";
 import {
 	HostedTerminalPanel,
@@ -71,14 +69,8 @@ import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
 	HostedDeployment,
-	RebindAgentAiProviderRequest,
 } from "@/hosted/billing/contracts";
-import {
-	LANGUAGE_OPTIONS,
-	LANGUAGE_SELECT_ITEMS,
-	supportedTimezones,
-	TimezoneCombobox,
-} from "@/hosted/billing/deploy/language-timezone-controls";
+import { LANGUAGE_OPTIONS } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
 	billingErrorDetail,
 	billingErrorNormalizer,
@@ -158,15 +150,9 @@ import {
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
-	primaryModelRef,
 	primaryModelValue,
 	providerChoiceFromRef,
-	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
-import {
-	aiProviderRuntimeId,
-	buildAiProviderPoolBootstrap,
-} from "@/hosted/v2/ai-providers/runtime-bootstrap";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -249,13 +235,6 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Settings,
 	},
 };
-/** Map an AI provider's auth type to the deploy `ai_provider_auth_kind`. */
-function aiAuthKind(provider: { auth: { type: string } }): "api_key" | "codex_oauth" {
-	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
-		? "codex_oauth"
-		: "api_key";
-}
-
 function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgentTab | null {
 	if (!value) return null;
 	return HOSTED_AGENT_SECTION_IDS.includes(value as HostedAgentTab) &&
@@ -1394,14 +1373,6 @@ function agentChoiceFromProviderRef(
 	return unresolvedProviderChoice(providerRef);
 }
 
-function agentProviderRefFromChoice(
-	choice: string,
-	providers: readonly AiProvider[],
-): string | null {
-	if (isUnresolvedProviderChoice(choice)) return unresolvedProviderRef(choice);
-	return providerRefFromChoice(choice, providers);
-}
-
 function providerCatalogDescription(provider: AiProvider): string {
 	const count = provider.models?.length ?? 0;
 	if (count === 0) return provider.base_url.replace(/^https?:\/\//, "");
@@ -1417,7 +1388,6 @@ function AiProviderTab({
 	runtime: Runtime;
 }) {
 	const providers = useAiProviders();
-	const setProvider = useSetAgentAiProvider();
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data?.providers ?? [];
 	const customProviders = useMemo(
@@ -1554,83 +1524,12 @@ function AiProviderTab({
 		}
 	}
 
-	function apply() {
-		if (bindingMode === "unmanaged") {
-			const body: RebindAgentAiProviderRequest = { ai_provider_auth_kind: "unmanaged" };
-			setProvider.mutate(
-				{ id: deployment.resource.id, agentType: runtime, body },
-				{
-					onSuccess: () =>
-						toast.success("Provider updated", {
-							description: "This runtime now expects provider setup inside the agent.",
-						}),
-				},
-			);
-			return;
-		}
-		const selectedChoices = normalizeSelectedProviderIds(selectedProviders, primaryProviderChoice);
-		const providerRefs = selectedChoices
-			.map((choice) => agentProviderRefFromChoice(choice, customProviders))
-			.filter((providerId): providerId is string => Boolean(providerId));
-		if (providerRefs.length !== selectedChoices.length) {
-			toast.error("Provider unavailable", {
-				description: "Refresh providers or choose Managed by Clawdi.",
-			});
-			return;
-		}
-		const configuredPrimaryProviderRef =
-			agentProviderRefFromChoice(primaryProviderChoice, customProviders) ?? MANAGED_PROVIDER_ID;
-		const nextPrimaryModel = primaryModelRef(configuredPrimaryProviderRef, primaryModel);
-		if (!nextPrimaryModel) {
-			toast.error("Primary model required", {
-				description: "Choose a catalog model or enter a model id.",
-			});
-			return;
-		}
-		const primaryProvider = customProviders.find(
-			(provider) => provider.provider_id === primaryProviderChoice,
-		);
-		const customSelectedProviders = selectedChoices
-			.filter((choice) => choice !== MANAGED_AI_CHOICE && !isUnresolvedProviderChoice(choice))
-			.map((choice) => customProviders.find((provider) => provider.provider_id === choice))
-			.filter((provider): provider is AiProvider => Boolean(provider));
-		const kind = primaryProvider ? aiAuthKind(primaryProvider) : "managed";
-		const body: RebindAgentAiProviderRequest = {
-			primary_model: nextPrimaryModel,
-			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
-			provider_ids: providerRefs,
-			ai_provider_auth_kind: kind,
-		};
-		if (customSelectedProviders.length > 0) {
-			const bootstrapSelectedProvider = primaryProvider ?? customSelectedProviders[0];
-			try {
-				body.ai_provider_bootstrap = buildAiProviderPoolBootstrap(
-					customSelectedProviders,
-					bootstrapSelectedProvider.provider_id,
-					aiAuthKind(bootstrapSelectedProvider),
-				);
-			} catch (error) {
-				toast.error("Provider unavailable", {
-					description:
-						error instanceof Error
-							? error.message
-							: "Refresh providers or choose Managed by Clawdi.",
-				});
-				return;
-			}
-		}
-		setProvider.mutate(
-			{ id: deployment.resource.id, agentType: runtime, body },
-			{
-				onSuccess: () =>
-					toast.success("Provider updated", { description: "Updating the runtime…" }),
-			},
-		);
-	}
-
 	return (
 		<div className="flex flex-col gap-4">
-			<LiveNote>Provider changes apply to the running runtime — no restart.</LiveNote>
+			<LiveNote>
+				Existing provider bindings are shown here. Choose providers in the deploy wizard while the
+				declarative update contract is being expanded.
+			</LiveNote>
 
 			<div className="flex flex-col gap-2">
 				<button
@@ -1749,27 +1648,7 @@ function AiProviderTab({
 			)}
 
 			<div className="flex items-center gap-2">
-				<Button
-					onClick={apply}
-					disabled={
-						!dirty ||
-						setProvider.isPending ||
-						(bindingMode === "configured" &&
-							providers.isLoading &&
-							selectedProviders.some((choice) => choice !== MANAGED_AI_CHOICE)) ||
-						(bindingMode === "configured" &&
-							!!providers.error &&
-							selectedProviders.some(
-								(choice) => choice !== MANAGED_AI_CHOICE && !isUnresolvedProviderChoice(choice),
-							))
-					}
-				>
-					{setProvider.isPending ? <Spinner className="size-3.5" /> : null}
-					{setProvider.isPending ? "Applying live…" : "Apply changes"}
-				</Button>
-				{setProvider.isPending ? (
-					<span className="text-xs text-muted-foreground">Updating the runtime…</span>
-				) : null}
+				<Button disabled>{dirty ? "Changes unavailable" : "No changes"}</Button>
 			</div>
 
 			<p className="text-xs text-muted-foreground">
@@ -2196,114 +2075,29 @@ function LanguageTimezoneSettingsSection({
 	deployment: HostedDeployment;
 	runtime: Runtime;
 }) {
-	const setLanguageTimezone = useSetAgentLanguageTimezone();
-	const runAction = useActionLock();
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const configLanguage = runtimeConfiguration.language ?? "";
 	const configTimezone = runtimeConfiguration.timezone ?? "";
-	const configIdentity = JSON.stringify([deployment.resource.id, configLanguage, configTimezone]);
-	const [syncedIdentity, setSyncedIdentity] = useState(configIdentity);
-	const [savedLanguage, setSavedLanguage] = useState(configLanguage);
-	const [savedTimezone, setSavedTimezone] = useState(configTimezone);
-	const [language, setLanguage] = useState(configLanguage);
-	const [timezone, setTimezone] = useState(configTimezone);
-	if (configIdentity !== syncedIdentity) {
-		setSyncedIdentity(configIdentity);
-		setSavedLanguage(configLanguage);
-		setSavedTimezone(configTimezone);
-		setLanguage(configLanguage);
-		setTimezone(configTimezone);
-	}
-	const tzOptions = useMemo(() => {
-		const all = supportedTimezones();
-		if (timezone && !all.includes(timezone)) return [timezone, ...all];
-		return all;
-	}, [timezone]);
 	const runtimeLabel = runtimeDisplayName(runtime);
-	const dirty = language !== savedLanguage || timezone !== savedTimezone;
-	const canSave = dirty && !setLanguageTimezone.isPending;
-
-	async function saveLanguageTimezone() {
-		if (!canSave) return;
-		await setLanguageTimezone.mutateAsync({
-			id: deployment.resource.id,
-			agentType: runtime,
-			language,
-			timezone,
-		});
-		setSavedLanguage(language);
-		setSavedTimezone(timezone);
-	}
-
-	function resetLanguageTimezone() {
-		setLanguage(savedLanguage);
-		setTimezone(savedTimezone);
-	}
+	const languageLabel =
+		LANGUAGE_OPTIONS.find((option) => option.code === configLanguage)?.label ?? "Runtime default";
 
 	return (
 		<SettingsSection
 			title="Language & timezone"
-			description="Set locale context for this hosted agent."
+			description="Locale context configured for this hosted agent."
 		>
 			<div className="flex max-w-2xl flex-col gap-4">
-				<LiveNote>{`Changes apply live to ${runtimeLabel}.`}</LiveNote>
+				<LiveNote>{`Current locale settings for ${runtimeLabel}. New settings are selected during deployment.`}</LiveNote>
 				<div className="grid gap-4 sm:grid-cols-2">
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="settings-agent-language">Language</Label>
-						<Select
-							items={LANGUAGE_SELECT_ITEMS}
-							value={language || "default"}
-							onValueChange={(value) => {
-								setLanguage(value === null || value === "default" ? "" : value);
-							}}
-						>
-							<SelectTrigger id="settings-agent-language">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectItem value="default">Default</SelectItem>
-								{LANGUAGE_OPTIONS.map((option) => (
-									<SelectItem key={option.code} value={option.code}>
-										{option.label}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
+					<div className="rounded-lg border bg-muted/30 p-3">
+						<div className="text-xs text-muted-foreground">Language</div>
+						<div className="mt-1 text-sm font-medium">{languageLabel}</div>
 					</div>
-					{tzOptions.length > 0 ? (
-						<div className="flex flex-col gap-1.5">
-							<Label htmlFor="settings-agent-timezone">Timezone</Label>
-							<TimezoneCombobox
-								id="settings-agent-timezone"
-								value={timezone}
-								onValueChange={setTimezone}
-								options={tzOptions}
-							/>
-						</div>
-					) : null}
-				</div>
-				<div className="flex flex-wrap items-center gap-2">
-					<Button
-						type="button"
-						size="sm"
-						disabled={!canSave}
-						onClick={() => void runAction(saveLanguageTimezone).catch(() => undefined)}
-					>
-						{setLanguageTimezone.isPending ? <Spinner className="size-3.5" /> : null}
-						Save changes
-					</Button>
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						disabled={!dirty || setLanguageTimezone.isPending}
-						onClick={resetLanguageTimezone}
-					>
-						Reset
-					</Button>
-					{setLanguageTimezone.isPending ? (
-						<span className="text-xs text-muted-foreground">Updating runtime settings…</span>
-					) : null}
+					<div className="rounded-lg border bg-muted/30 p-3">
+						<div className="text-xs text-muted-foreground">Timezone</div>
+						<div className="mt-1 text-sm font-medium">{configTimezone || "Runtime default"}</div>
+					</div>
 				</div>
 			</div>
 		</SettingsSection>

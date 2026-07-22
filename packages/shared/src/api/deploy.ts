@@ -23,8 +23,8 @@ export type { components as DeployComponents, paths as DeployPaths } from "./dep
 
 type S = DeployComponents["schemas"];
 
-export type Deployment = S["V2HostedDeploymentResponse"];
 export type DeploymentRead = S["V2HostedDeploymentReadResponse"];
+export type Deployment = DeploymentRead;
 export type DeployRequestRead = S["V2HostedDeployRequestReadResponse"];
 export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff"];
 
