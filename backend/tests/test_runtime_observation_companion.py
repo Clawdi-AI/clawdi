@@ -127,6 +127,15 @@ def _expected_identity() -> RuntimeApplyIdentity:
     )
 
 
+def _rotated_identity() -> RuntimeApplyIdentity:
+    return RuntimeApplyIdentity(
+        generation=2,
+        manifest_etag='"manifest-etag-0002"',
+        apply_receipt_id="apply-receipt-00000002",
+        boot_nonce="boot-nonce-0000000002",
+    )
+
+
 async def retire_runtime_environment(*args, **kwargs):
     return (await _retire_runtime_environment(*args, **kwargs)).receipt
 
@@ -1846,6 +1855,109 @@ async def test_snapshot_and_high_water_share_one_repeatable_read_snapshot(
     assert "streamPosition" not in incremental["events"][0]
     assert incremental["streamHighWaterCursor"].startswith("clawdi-ro-v1.")
     assert incremental["nextCursor"].startswith("clawdi-ro-v1.")
+
+
+@pytest.mark.asyncio
+async def test_short_tuple_filtered_page_does_not_skip_next_tuple_first_event(
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    base = datetime.now(UTC)
+    registration = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="tuple-rotation-controller",
+    )
+    first = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="tuple-one-session",
+            sequence=1,
+            captured_at=base,
+        ),
+        received_at=base,
+    )
+    rotated = _rotated_identity()
+    next_tuple = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="tuple-two-session",
+            sequence=1,
+            captured_at=base + timedelta(seconds=1),
+            generation=rotated.generation,
+            manifest_etag=rotated.manifest_etag,
+            apply_receipt_id=rotated.apply_receipt_id,
+            boot_nonce=rotated.boot_nonce,
+        ),
+        received_at=base + timedelta(seconds=1),
+    )
+    second = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="tuple-one-session",
+            sequence=2,
+            captured_at=base + timedelta(seconds=2),
+        ),
+        received_at=base + timedelta(seconds=2),
+    )
+
+    first_tuple_page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="tuple-rotation-controller",
+        expected_apply_identity=_expected_identity(),
+        after_cursor=registration["cursor"],
+        limit=100,
+    )
+
+    assert [event["sequence"] for event in first_tuple_page["events"]] == [1]
+    assert first_tuple_page["hasMore"] is False
+    assert (
+        runtime_observation_service.decode_runtime_observation_cursor(
+            first_tuple_page["nextCursor"]
+        ).stream_position
+        == first.stream_position
+    )
+    assert (
+        runtime_observation_service.decode_runtime_observation_cursor(
+            first_tuple_page["streamHighWaterCursor"]
+        ).stream_position
+        == second.stream_position
+    )
+    assert first.stream_position < next_tuple.stream_position < second.stream_position
+
+    rotated_page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="tuple-rotation-controller",
+        expected_apply_identity=rotated,
+        after_cursor=first_tuple_page["nextCursor"],
+        limit=100,
+    )
+    assert [event["sequence"] for event in rotated_page["events"]] == [1]
+    assert rotated_page["events"][0]["runtimeIdentity"]["bootSessionId"] == ("tuple-two-session")
+
+    resumed_first_tuple = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="tuple-rotation-controller",
+        expected_apply_identity=_expected_identity(),
+        after_cursor=rotated_page["nextCursor"],
+        limit=100,
+    )
+    assert [event["sequence"] for event in resumed_first_tuple["events"]] == [2]
 
 
 def _legacy_runtime_observed(value: RuntimeObservationEventV2) -> dict:

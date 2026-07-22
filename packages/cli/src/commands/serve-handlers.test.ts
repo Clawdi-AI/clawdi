@@ -10,7 +10,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { rejectUnsupportedOpts } from "./serve";
+import { adapterForType } from "../lib/select-adapter";
+import { rejectUnsupportedOpts, runDaemonWorkers } from "./serve";
 
 /**
  * Behavior tests for daemon singleton handler behavior:
@@ -92,6 +93,51 @@ describe("rejectUnsupportedOpts", () => {
 		).toThrow(ExitCalled);
 		expect(captured.stderr.join("\n")).toMatch(/--environment-id/);
 		expect(captured.stderr.join("\n")).not.toMatch(/--environmentId/);
+	});
+});
+
+describe("daemon worker ownership", () => {
+	it("starts one runtime observation producer for multiple live-sync targets", async () => {
+		const adapter = adapterForType("codex");
+		if (!adapter) throw new Error("expected codex adapter");
+		let producerStarts = 0;
+		let engineStarts = 0;
+		await runDaemonWorkers({
+			targets: [
+				{ agentType: "codex", adapter, environmentId: "env-one" },
+				{ agentType: "codex", adapter, environmentId: "env-two" },
+			],
+			abortController: new AbortController(),
+			forcePollWatcher: true,
+			runObservationProducer: async () => {
+				producerStarts += 1;
+			},
+			runEngine: async () => {
+				engineStarts += 1;
+			},
+		});
+
+		expect(producerStarts).toBe(1);
+		expect(engineStarts).toBe(2);
+	});
+
+	it("starts the runtime observation producer with liveSync agents=[]", async () => {
+		let producerStarts = 0;
+		let engineStarts = 0;
+		await runDaemonWorkers({
+			targets: [],
+			abortController: new AbortController(),
+			forcePollWatcher: true,
+			runObservationProducer: async () => {
+				producerStarts += 1;
+			},
+			runEngine: async () => {
+				engineStarts += 1;
+			},
+		});
+
+		expect(producerStarts).toBe(1);
+		expect(engineStarts).toBe(0);
 	});
 });
 

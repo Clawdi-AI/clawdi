@@ -68,40 +68,23 @@ describe("hosted runtime bundle v2", () => {
 		).toThrow();
 	});
 
-	test("accepts the additive manifest v2 apply identity without changing manifest v1", () => {
+	test("rejects response-carried apply identity and keeps the inner manifest v1-only", () => {
 		const raw = z
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		const v1 = normalizeHostedRuntimeBundleV2(raw);
-		const v2 = normalizeHostedRuntimeBundleV2({
-			...raw,
-			manifest: {
-				...manifest,
-				schemaVersion: "clawdi.hosted-runtime.manifest.v2",
-				manifestETag: '"frozen-manifest-generation-1"',
-				applyReceiptId: "apply-receipt-0001",
-				bootNonce: "boot-nonce-000001",
-			},
-		});
-
-		expect(v1.applyIdentity).toBeUndefined();
-		expect(v2.applyIdentity).toEqual({
-			generation: v2.manifest.generation,
-			manifestETag: '"frozen-manifest-generation-1"',
-			applyReceiptId: "apply-receipt-0001",
-			bootNonce: "boot-nonce-000001",
-		});
+		expect(normalizeHostedRuntimeBundleV2(raw).manifest.projection?.sourceSchemaVersion).toBe(
+			"clawdi.hosted-runtime.manifest.v1",
+		);
 		expect(() =>
 			normalizeHostedRuntimeBundleV2({
 				...raw,
 				manifest: {
 					...manifest,
 					schemaVersion: "clawdi.hosted-runtime.manifest.v2",
-					generation: 0,
-					manifestETag: '"frozen-manifest-generation-0"',
-					applyReceiptId: "apply-receipt-0000",
-					bootNonce: "boot-nonce-000000",
+					manifestETag: '"manifest-7"',
+					applyReceiptId: "apply-receipt-0007",
+					bootNonce: "boot-nonce-000007",
 				},
 			}),
 		).toThrow();
@@ -116,6 +99,10 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
 		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
+		process.env.CLAWDI_RUNTIME_GENERATION = "7";
+		process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = '"manifest-7"';
+		process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = "apply-receipt-0007";
+		process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-000007";
 		const paths = getRuntimePaths({ mode: "hosted" });
 		let requests = 0;
 		globalThis.fetch = Object.assign(
@@ -124,6 +111,10 @@ describe("hosted runtime bundle v2", () => {
 				const headers = new Headers(init?.headers);
 				expect(headers.get("accept")).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
 				expect(headers.get("if-none-match")).toBe('"bundle-1"');
+				expect(headers.get("x-clawdi-runtime-generation")).toBeNull();
+				expect(headers.get("x-clawdi-runtime-manifest-etag")).toBeNull();
+				expect(headers.get("x-clawdi-runtime-apply-receipt-id")).toBeNull();
+				expect(headers.get("x-clawdi-runtime-boot-nonce")).toBeNull();
 				return new Response(null, { status: 304, headers: { etag: '"bundle-1"' } });
 			},
 			{ preconnect: () => undefined },

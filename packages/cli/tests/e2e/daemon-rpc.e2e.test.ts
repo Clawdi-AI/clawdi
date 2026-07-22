@@ -264,7 +264,7 @@ if (process.platform !== "win32") {
 					].join("\n"),
 				);
 			}
-			expect(daemonStderrText).toContain("engine.runtime_observation_failed");
+			expect(daemonStderrText).toContain("daemon.runtime_observation_failed");
 		}, 20_000);
 	});
 }
@@ -342,12 +342,17 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 	return {
 		CLAWDI_API_URL: server.url.origin,
 		CLAWDI_AUTH_TOKEN: API_KEY,
+		CLAWDI_ENVIRONMENT_ID: ENV_ID,
 		CLAWDI_HOME: fixture.clawdiHome,
 		CLAWDI_NO_AUTO_UPDATE: "1",
 		CLAWDI_NO_UPDATE_CHECK: "1",
 		CLAWDI_SERVE_MODE: "container",
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_HOME: fixture.home,
+		CLAWDI_RUNTIME_GENERATION: "1",
+		CLAWDI_RUNTIME_MANIFEST_ETAG: '"frozen-manifest"',
+		CLAWDI_RUNTIME_APPLY_RECEIPT_ID: "apply-receipt-daemon-rpc",
+		CLAWDI_RUNTIME_BOOT_NONCE: "boot-nonce-daemon-rpc-01",
 		CLAWDI_RUN_DIR: fixture.runDir,
 		CLAWDI_SERVICE_STATE_DIR: fixture.serviceStateDir,
 		CLAWDI_STATE_DIR: fixture.stateDir,

@@ -9,7 +9,7 @@ import {
 	readRuntimeAppliedState,
 	runtimeAppliedApplyIdentity,
 } from "./applied-state";
-import { runtimeApplyIdentitySchema } from "./apply-identity";
+import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 
@@ -166,13 +166,15 @@ export class HostedRuntimeHeartbeatSession {
 	private state: PersistedHeartbeatState | null;
 	private readonly statePath: string;
 	private readonly paths: RuntimePaths;
-	private readonly capturedAppliedState: RuntimeAppliedState | null;
-	private readonly currentBootIdentity: PersistedBootIdentity | null;
+	private readonly environmentId: string;
+	private capturedAppliedState: RuntimeAppliedState | null = null;
+	private currentBootIdentity: PersistedBootIdentity | null = null;
 	private readonly now: () => Date;
 	private readonly createId: () => string;
 
 	constructor(options: HostedRuntimeHeartbeatOptions) {
 		this.paths = options.paths ?? getRuntimePaths();
+		this.environmentId = options.environmentId;
 		this.now = options.now ?? (() => new Date());
 		this.createId = options.createId ?? randomUUID;
 		this.statePath = runtimeHeartbeatObservationStatePath(this.paths, options.environmentId);
@@ -181,29 +183,47 @@ export class HostedRuntimeHeartbeatSession {
 			throw new Error("runtime heartbeat state environment binding does not match");
 		}
 
-		this.capturedAppliedState =
-			this.paths.mode === "hosted" ? readRuntimeAppliedState(this.paths) : null;
-		const applyIdentity = this.capturedAppliedState
-			? runtimeAppliedApplyIdentity(this.capturedAppliedState)
-			: null;
-		if (!applyIdentity) {
+		this.refreshAppliedState(true);
+	}
+
+	refreshAppliedState(forceNewBoot = false): boolean {
+		const appliedState = this.paths.mode === "hosted" ? readRuntimeAppliedState(this.paths) : null;
+		const applyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
+		if (!appliedState || !applyIdentity) {
+			this.capturedAppliedState = null;
 			this.currentBootIdentity = null;
-			return;
+			return false;
+		}
+		if (
+			!forceNewBoot &&
+			this.currentBootIdentity &&
+			sameApplyIdentity(this.currentBootIdentity, applyIdentity)
+		) {
+			this.capturedAppliedState = appliedState;
+			return false;
 		}
 
-		this.currentBootIdentity = {
+		const nextBootIdentity = {
 			...applyIdentity,
 			bootSessionId: nonEmptyId(this.createId(), "boot session ID"),
 		};
-		this.state = {
+		const pending = this.state?.pending ?? null;
+		const candidate: PersistedHeartbeatState = {
 			schemaVersion: "clawdi.runtimeHeartbeatObservation.v1",
-			environmentId: options.environmentId,
-			bootIdentity: this.currentBootIdentity,
+			environmentId: this.environmentId,
+			bootIdentity: nextBootIdentity,
 			nextSequence: 1,
 			lastCapturedAt: null,
-			pending: this.state?.pending ?? null,
+			pending:
+				pending && eventMatchesApplyIdentity(decodePendingEvent(pending).event, applyIdentity)
+					? pending
+					: null,
 		};
-		writeState(this.statePath, this.state);
+		writeState(this.statePath, candidate);
+		this.state = candidate;
+		this.capturedAppliedState = appliedState;
+		this.currentBootIdentity = nextBootIdentity;
+		return true;
 	}
 
 	nextEvent(): BufferedRuntimeObservedEvent | null {
@@ -344,4 +364,28 @@ function nonEmptyId(value: string, name: string): string {
 	const normalized = value.trim();
 	if (!normalized) throw new Error(`${name} must not be empty`);
 	return normalized;
+}
+
+function sameApplyIdentity(
+	left: Pick<PersistedBootIdentity, keyof RuntimeApplyIdentity>,
+	right: RuntimeApplyIdentity,
+): boolean {
+	return (
+		left.generation === right.generation &&
+		left.manifestETag === right.manifestETag &&
+		left.applyReceiptId === right.applyReceiptId &&
+		left.bootNonce === right.bootNonce
+	);
+}
+
+function eventMatchesApplyIdentity(
+	event: HostedRuntimeObservedEvent,
+	identity: RuntimeApplyIdentity,
+): boolean {
+	return (
+		event.applied.generation === identity.generation &&
+		event.applied.etag === identity.manifestETag &&
+		event.applyReceiptId === identity.applyReceiptId &&
+		event.bootNonce === identity.bootNonce
+	);
 }

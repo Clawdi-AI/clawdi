@@ -56,6 +56,7 @@ import {
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState } from "./applied-state";
+import { readRuntimeApplyIdentityFromEnv, runtimeApplyIdentityEnvironment } from "./apply-identity";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import { isClawdiManagedProviderProjection, normalizeSecretRef } from "./hosted-egress-profiles";
 import {
@@ -4901,10 +4902,11 @@ function writeSystemdUnits(
 	const activeEgressProgram = shouldRunEgress ? egressProgram : null;
 	const activeEgressIdentity = shouldRunEgress ? egressIdentity : null;
 	const shouldRunSidecar = shouldRunBridge || shouldRunEgress;
-	const shouldRunDaemon =
-		daemonAuthTokenFile !== null && desiredLiveSyncAgents(manifest).length > 0;
 	const userUnits: string[] = [];
 	const runtimeUid = shouldRunEgress ? runtimeUserUid(runtimeUser) : null;
+	const applyIdentityEnvironment = runtimeApplyIdentityEnvironment(
+		readRuntimeApplyIdentityFromEnv(),
+	);
 
 	if (daemonAuthTokenFile) {
 		systemUnits.push(
@@ -4917,6 +4919,7 @@ function writeSystemdUnits(
 				cwd: workspaceRoot,
 				env: {
 					...commonEnvironment,
+					...applyIdentityEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
 					[RUNTIME_BRIDGE_TOKEN_ENV]: runtimeBridgeToken,
 				},
@@ -4924,7 +4927,7 @@ function writeSystemdUnits(
 		);
 	}
 
-	if (shouldRunDaemon && daemonAuthTokenFile) {
+	if (daemonAuthTokenFile) {
 		systemUnits.push(
 			writeSystemdSystemUnit({
 				paths,
@@ -4935,6 +4938,8 @@ function writeSystemdUnits(
 				cwd: workspaceRoot,
 				env: {
 					...commonEnvironment,
+					...applyIdentityEnvironment,
+					CLAWDI_ENVIRONMENT_ID: manifest.environmentId,
 					CLAWDI_SERVE_MODE: "container",
 					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
 					CLAWDI_NO_AUTO_UPDATE: "1",
@@ -5688,8 +5693,7 @@ export function convergeRuntimeManifest(
 	let codexCli: Record<string, string> | null = null;
 	if (
 		hostedCodexManagedProvider(manifest) ||
-		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1" ||
-		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v2"
+		manifest.projection?.sourceSchemaVersion === "clawdi.hosted-runtime.manifest.v1"
 	) {
 		try {
 			codexCli = ensureHostedCodexCli(paths);

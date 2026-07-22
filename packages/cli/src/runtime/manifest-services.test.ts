@@ -316,6 +316,7 @@ describe("runtime manifest services", () => {
 			"hermes-gateway.service",
 		]);
 		expect(result.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1)).sort()).toEqual([
+			"clawdi-daemon.service",
 			"clawdi-runtime-sidecar.service",
 			"clawdi-runtime-watch.service",
 		]);
