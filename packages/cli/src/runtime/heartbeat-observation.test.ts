@@ -154,6 +154,71 @@ describe("hosted runtime heartbeat observation", () => {
 		});
 	});
 
+	test("re-reads the durable applied tuple and starts a new boot session after rotation", () => {
+		const paths = tempRuntimePaths();
+		writeRuntimeAppliedState(companionAppliedState(7), paths);
+		const session = new HostedRuntimeHeartbeatSession({
+			environmentId: "env_rotation",
+			paths,
+			now: clockSequence(["2026-07-16T01:00:00.000Z", "2026-07-16T01:01:00.000Z"]),
+			createId: idSequence([
+				"boot-session-0001",
+				"event-0000000001",
+				"boot-session-0002",
+				"event-0000000002",
+			]),
+		});
+		const first = session.nextEvent();
+		if (!first) throw new Error("expected first tuple event");
+		expect(session.acknowledge(first.event.eventId)).toBe(true);
+
+		writeRuntimeAppliedState(companionAppliedState(8), paths);
+		expect(session.refreshAppliedState()).toBe(true);
+		const rotated = session.nextEvent();
+		if (!rotated) throw new Error("expected rotated tuple event");
+		expect(rotated.event).toMatchObject({
+			applyReceiptId: "apply-receipt-0008",
+			bootNonce: "boot-nonce-000008",
+			bootSessionId: "boot-session-0002",
+			sequence: 1,
+			eventId: "event-0000000002",
+			applied: {
+				generation: 8,
+				etag: '"frozen-manifest-8"',
+			},
+		});
+	});
+
+	test("supersedes a pending old-tuple event instead of blocking rotation", () => {
+		const paths = tempRuntimePaths();
+		writeRuntimeAppliedState(companionAppliedState(7), paths);
+		const session = new HostedRuntimeHeartbeatSession({
+			environmentId: "env_pending_rotation",
+			paths,
+			now: clockSequence(["2026-07-16T01:00:00.000Z", "2026-07-16T01:01:00.000Z"]),
+			createId: idSequence([
+				"boot-session-0001",
+				"old-event-000001",
+				"boot-session-0002",
+				"new-event-000001",
+			]),
+		});
+		const oldPending = session.nextEvent();
+		if (!oldPending) throw new Error("expected old pending event");
+
+		writeRuntimeAppliedState(companionAppliedState(8), paths);
+		expect(session.refreshAppliedState()).toBe(true);
+		const rotated = session.nextEvent();
+		if (!rotated) throw new Error("expected rotated event");
+		expect(rotated.event.eventId).toBe("new-event-000001");
+		expect(rotated.event.eventId).not.toBe(oldPending.event.eventId);
+		expect(rotated.event).toMatchObject({
+			bootSessionId: "boot-session-0002",
+			sequence: 1,
+			applied: { generation: 8 },
+		});
+	});
+
 	test("persists one exact event across retries and restart until acknowledgement", () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);

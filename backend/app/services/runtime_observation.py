@@ -1065,12 +1065,6 @@ async def read_runtime_observations(
             fence=fence,
             consumer_id=consumer_id,
         )
-    identity_predicates = (
-        V2RuntimeObservationInbox.generation == expected_apply_identity.generation,
-        V2RuntimeObservationInbox.manifest_etag == expected_apply_identity.manifest_etag,
-        V2RuntimeObservationInbox.apply_receipt_id == expected_apply_identity.apply_receipt_id,
-        V2RuntimeObservationInbox.boot_nonce == expected_apply_identity.boot_nonce,
-    )
     events = list(
         (
             await db.execute(
@@ -1079,7 +1073,6 @@ async def read_runtime_observations(
                     V2RuntimeObservationInbox.environment_id == environment_id,
                     V2RuntimeObservationInbox.id > decoded.stream_position,
                     V2RuntimeObservationInbox.id <= high_water,
-                    *identity_predicates,
                 )
                 .order_by(V2RuntimeObservationInbox.id)
                 .limit(limit + 1)
@@ -1088,9 +1081,19 @@ async def read_runtime_observations(
         .scalars()
         .all()
     )
-    has_more = len(events) > limit
-    page = events[:limit]
-    next_position = page[-1].id if has_more and page else high_water
+    matching_prefix: list[V2RuntimeObservationInbox] = []
+    for event in events:
+        if (
+            event.generation != expected_apply_identity.generation
+            or event.manifest_etag != expected_apply_identity.manifest_etag
+            or event.apply_receipt_id != expected_apply_identity.apply_receipt_id
+            or event.boot_nonce != expected_apply_identity.boot_nonce
+        ):
+            break
+        matching_prefix.append(event)
+    has_more = len(matching_prefix) > limit
+    page = matching_prefix[:limit]
+    next_position = page[-1].id if page else decoded.stream_position
     heads = list(
         (
             await db.execute(

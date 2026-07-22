@@ -96,6 +96,10 @@ const ENV_KEYS = [
 	"CLAWDI_CODEX_INSTALL_TIMEOUT",
 	"CUSTOM_RUNTIME_TOKEN",
 	"CLAWDI_RUNTIME_MANIFEST_TIMEOUT_MS",
+	"CLAWDI_RUNTIME_GENERATION",
+	"CLAWDI_RUNTIME_MANIFEST_ETAG",
+	"CLAWDI_RUNTIME_APPLY_RECEIPT_ID",
+	"CLAWDI_RUNTIME_BOOT_NONCE",
 	"CLAWDI_API_URL",
 	"CLAWDI_SYSTEMD_APPLY",
 	"CLAWDI_SYSTEMD_SYSTEM_ROOT",
@@ -1533,7 +1537,7 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
-	it("preserves the exact strict-v2 apply identity through offline load and state commit", async () => {
+	it("does not reuse a cached strict-v2 tuple as new applied authority", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -1572,12 +1576,6 @@ describe("runtime manifest datasource", () => {
 		if (!("manifest" in loaded)) {
 			throw new Error(`expected offline manifest load success: ${loaded.errors.join("; ")}`);
 		}
-		expect(loaded.applyIdentity).toEqual({
-			generation: 3,
-			manifestETag: '"manifest-etag-offline"',
-			applyReceiptId: "apply-receipt-offline-0001",
-			bootNonce: "boot-nonce-offline-000001",
-		});
 		const convergence = convergeRuntimeManifest(loaded, paths, { cacheLastGood: false });
 		commitRuntimeAppliedState({
 			load: loaded,
@@ -1585,13 +1583,13 @@ describe("runtime manifest datasource", () => {
 			etag: '"transport-etag-offline-reapplied"',
 			sourceRevision: "c".repeat(64),
 			convergence,
+			applyIdentity: null,
 		});
-		expect(readRuntimeAppliedState(paths)).toMatchObject({
-			generation: 3,
-			manifestETag: '"manifest-etag-offline"',
-			applyReceiptId: "apply-receipt-offline-0001",
-			bootNonce: "boot-nonce-offline-000001",
-		});
+		const reapplied = readRuntimeAppliedState(paths);
+		expect(reapplied?.generation).toBe(3);
+		expect(reapplied?.manifestETag).toBeUndefined();
+		expect(reapplied?.applyReceiptId).toBeUndefined();
+		expect(reapplied?.bootNonce).toBeUndefined();
 	});
 
 	it("refuses strict-v2 offline identity restoration when cached manifest content changed", async () => {
@@ -5458,6 +5456,12 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		process.env.CLAWDI_RUNTIME_USER = "root";
+		process.env.CLAWDI_RUNTIME_GENERATION = "12";
+		process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = '"manifest-watch-12"';
+		process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = "apply-receipt-0012";
+		process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-000012";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -5531,12 +5535,21 @@ printf 'ActiveState=active\\nSubState=running\\n'
 
 		try {
 			await runtimeWatch({ once: true, json: true });
+			expect(process.exitCode).toBe(1);
+			expect(readRuntimeAppliedState(getRuntimePaths())).toBeNull();
+			const rejected = JSON.parse(logs.at(-1) ?? "{}");
+			expect(rejected.status).toBe("error");
+			expect(rejected.error).toContain("systemd apply did not activate");
+
+			process.env.CLAWDI_SYSTEMD_APPLY = "1";
+			process.exitCode = undefined;
+			await runtimeWatch({ once: true, json: true });
 
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
 				throw new Error(logs.join("\n"));
 			}
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(captured).toHaveLength(1);
+			expect(captured).toHaveLength(2);
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
 			expect(captured[0].headers.accept).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
@@ -5548,17 +5561,20 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				etag: '"etag-watch-12"',
 				sourceRevision: "a".repeat(64),
 				generation: 12,
+				manifestETag: '"manifest-watch-12"',
+				applyReceiptId: "apply-receipt-0012",
+				bootNonce: "boot-nonce-000012",
 				providerIds: ["default"],
 			});
-			const event = JSON.parse(logs[0]);
+			const event = JSON.parse(logs.at(-1) ?? "{}");
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(12);
 			expect(event.etag).toBe('"etag-watch-12"');
 			expect(event.convergence.appliedState).toBe(getRuntimePaths().appliedState);
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
-				applied: false,
-				systemUnitsChanged: ["clawdi-runtime-watch.service"],
+				applied: true,
+				systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-watch.service"],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 			const watchStatus = JSON.parse(
@@ -5577,7 +5593,15 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(readSystemdSystemUnit(paths, "clawdi-runtime-watch")).toContain(
 				'ExecStart="clawdi" "runtime" "watch"',
 			);
-			expect(readSystemdEnvFile(paths, "clawdi-runtime-watch")).not.toContain("file-runtime-token");
+			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
+			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
+			expect(watchEnv).not.toContain("file-runtime-token");
+			for (const unitEnv of [watchEnv, daemonEnv]) {
+				expect(unitEnv).toContain('CLAWDI_RUNTIME_GENERATION="12"');
+				expect(unitEnv).toContain('CLAWDI_RUNTIME_MANIFEST_ETAG="\\"manifest-watch-12\\""');
+				expect(unitEnv).toContain('CLAWDI_RUNTIME_APPLY_RECEIPT_ID="apply-receipt-0012"');
+				expect(unitEnv).toContain('CLAWDI_RUNTIME_BOOT_NONCE="boot-nonce-000012"');
+			}
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -6740,7 +6764,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: ["clawdi-runtime-watch.service"],
+				systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-watch.service"],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 		} finally {
@@ -6963,7 +6987,9 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(event.systemdApply.applied).toBe(true);
 			expect(event.systemdApply.systemUnitsChanged).toContain("clawdi-runtime-sidecar.service");
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-			expect(systemctlCalls).toContain("restart clawdi-runtime-sidecar.service");
+			expect(systemctlCalls).toContain(
+				"restart clawdi-daemon.service clawdi-runtime-sidecar.service",
+			);
 			const sidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 			const sidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 			const transparentEgressEnv = readFileSync(paths.egressTransparentEnv, "utf-8");
@@ -11103,7 +11129,7 @@ exit 64
 		}
 	});
 
-	it("converges remote manifests without caching secret values", async () => {
+	it("converges remote manifests and starts the observation daemon with liveSync agents=[]", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -11199,6 +11225,7 @@ exit 64
 			expect(convergence.outputs.processManager).toBe("systemd");
 			expect(convergence.outputs.systemdSystemUnits).toEqual([
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
+				join(paths.systemdSystemRoot, "clawdi-daemon.service"),
 				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
 			]);
 			expect(convergence.outputs.systemdUserUnits).toEqual([
@@ -11206,7 +11233,10 @@ exit 64
 			]);
 			const watchUnit = readSystemdSystemUnit(paths, "clawdi-runtime-watch");
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
+			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
 			expect(watchUnit).toContain('ExecStart="clawdi" "runtime" "watch"');
+			expect(daemonEnv).toContain('CLAWDI_ENVIRONMENT_ID="env_test"');
+			expect(daemonEnv).toContain('CLAWDI_SERVE_MODE="container"');
 			expect(watchUnit).not.toContain("sk-runtime");
 			expect(watchEnv).not.toContain("sk-runtime");
 			expect(readFileSync(join(state, "cache", "manifest.last-good.json"), "utf-8")).not.toContain(

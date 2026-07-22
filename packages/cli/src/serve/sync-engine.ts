@@ -65,8 +65,10 @@ import {
 } from "../lib/skills-lock";
 import { tarSkillDir } from "../lib/tar";
 import { getCliVersion } from "../lib/version";
-import { HostedRuntimeHeartbeatSession } from "../runtime/heartbeat-observation";
 import { readHostedRuntimeObserved } from "../runtime/observed";
+
+export { isSafelyTerminalRuntimeObservationFailure } from "../runtime/observation-producer";
+
 import { log, toErrorMessage } from "./log";
 import { getServeStateDir } from "./paths";
 import { type QueueItem, RetryQueue } from "./queue";
@@ -822,7 +824,6 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			last_revision_seen: lastSeenRevision,
 			last_sync_error: lastSyncError,
 		})),
-		runtimeObservationLoop(opts, api, opts.abort),
 		refreshDefaultProjectIdLoop(opts.abort),
 		// Safety-net periodic sessions rescan. After a 4xx drop we
 		// clear inFlightSessionHash, but the watcher only fires on
@@ -937,19 +938,6 @@ export function lastSyncErrorForSseReconnect(
 
 export function classifyHeartbeatFailure(consecutiveFailures: number): FailureClassification {
 	return consecutiveFailures <= TRANSIENT_HEARTBEAT_FAILURES ? "transient" : "sustained";
-}
-
-function isUnknownRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-export function isSafelyTerminalRuntimeObservationFailure(result: {
-	error?: unknown;
-	response: { status: number };
-}): boolean {
-	if (result.response.status !== 422 || !isUnknownRecord(result.error)) return false;
-	const detail = result.error.detail;
-	return isUnknownRecord(detail) && detail.code === "runtime_observation_captured_at_too_old";
 }
 
 /**
@@ -2305,55 +2293,6 @@ async function heartbeatLoop(
 		// don't all heartbeat in the same wall-clock second. The
 		// upper bound stays inside the dashboard's 90s freshness
 		// window after the eager first beat.
-		await sleep(heartbeatDelayMs(), abort);
-		if (abort.aborted) return;
-		await send();
-	}
-}
-
-/** Send durable strict-v2 observations independently of legacy liveness. */
-async function runtimeObservationLoop(
-	opts: EngineOpts,
-	api: ApiClient,
-	abort: AbortSignal,
-): Promise<void> {
-	let runtimeHeartbeatSession: HostedRuntimeHeartbeatSession | null = null;
-	const send = async () => {
-		let buffered: ReturnType<HostedRuntimeHeartbeatSession["nextEvent"]> = null;
-		try {
-			runtimeHeartbeatSession ??= new HostedRuntimeHeartbeatSession({
-				environmentId: opts.environmentId,
-			});
-			buffered = runtimeHeartbeatSession.nextEvent();
-			if (!buffered) return;
-			const response = await api.POST("/v2/runtime/environments/{environment_id}/observations", {
-				params: { path: { environment_id: opts.environmentId } },
-				body: buffered.event,
-			});
-			if (isSafelyTerminalRuntimeObservationFailure(response)) {
-				if (!runtimeHeartbeatSession.retireTerminallyStale(buffered.event.eventId)) {
-					throw new Error("terminally stale runtime observation did not match buffered event");
-				}
-				log.warn("engine.runtime_observation_retired_stale", {
-					event_id: buffered.event.eventId,
-					captured_at: buffered.event.capturedAt,
-				});
-				return;
-			}
-			unwrap(response);
-			if (!runtimeHeartbeatSession.acknowledge(buffered.event.eventId)) {
-				throw new Error("runtime observation acknowledgement did not match buffered event");
-			}
-		} catch (error) {
-			log.info("engine.runtime_observation_failed", {
-				error: toErrorMessage(error),
-				...(buffered ? { event_id: buffered.event.eventId } : {}),
-			});
-		}
-	};
-
-	await send();
-	while (!abort.aborted) {
 		await sleep(heartbeatDelayMs(), abort);
 		if (abort.aborted) return;
 		await send();

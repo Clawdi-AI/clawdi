@@ -41,6 +41,7 @@ import {
 } from "../lib/config";
 import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
+import { runRuntimeObservationProducer } from "../runtime/observation-producer";
 import { startAutoRestart } from "../serve/auto-restart";
 import {
 	type ControlRpcClientConfig,
@@ -203,7 +204,10 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		process.exit(1);
 	}
 
-	const targets = legacyRun ? [pickLegacyDaemonRunTarget(legacyRun)] : pickDaemonRunTargets();
+	const hostedRuntime = process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted";
+	const targets = legacyRun
+		? [pickLegacyDaemonRunTarget(legacyRun)]
+		: pickDaemonRunTargets({ allowEmpty: hostedRuntime });
 
 	log.info("serve.boot", {
 		mode,
@@ -260,17 +264,11 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 	});
 
 	try {
-		await Promise.all(
-			targets.map((target) =>
-				runSyncEngine({
-					environmentId: target.environmentId,
-					adapter: target.adapter,
-					abort: abort.signal,
-					abortController: abort,
-					forcePollWatcher: isContainer,
-				}),
-			),
-		);
+		await runDaemonWorkers({
+			targets,
+			abortController: abort,
+			forcePollWatcher: isContainer,
+		});
 	} catch (e) {
 		log.error("serve.fatal", { error: toErrorMessage(e) });
 		process.exit(1);
@@ -1740,7 +1738,7 @@ function isAgentType(s: string): s is AgentType {
 	return (AGENT_TYPES as readonly string[]).includes(s);
 }
 
-function pickDaemonRunTargets(): DaemonRunTarget[] {
+function pickDaemonRunTargets(options: { allowEmpty?: boolean } = {}): DaemonRunTarget[] {
 	const registered = listRegisteredAgentTypes();
 	const envAgent = process.env.CLAWDI_AGENT_TYPE;
 	const targets = registered.length > 0 ? registered : envAgent ? [envAgent] : [];
@@ -1753,6 +1751,7 @@ function pickDaemonRunTargets(): DaemonRunTarget[] {
 	}
 	if (registered.length === 0) {
 		if (!envAgent) {
+			if (options.allowEmpty) return [];
 			log.error("serve.no_agent", {
 				hint: "Run `clawdi setup` to register an agent on this machine, or set CLAWDI_AGENT_TYPE in a container.",
 			});
@@ -1777,6 +1776,29 @@ function pickDaemonRunTargets(): DaemonRunTarget[] {
 		}
 		return { agentType, adapter, environmentId };
 	});
+}
+
+export async function runDaemonWorkers(input: {
+	targets: DaemonRunTarget[];
+	abortController: AbortController;
+	forcePollWatcher: boolean;
+	runObservationProducer?: typeof runRuntimeObservationProducer;
+	runEngine?: typeof runSyncEngine;
+}): Promise<void> {
+	const producer = input.runObservationProducer ?? runRuntimeObservationProducer;
+	const engine = input.runEngine ?? runSyncEngine;
+	await Promise.all([
+		producer({ abort: input.abortController.signal }),
+		...input.targets.map((target) =>
+			engine({
+				environmentId: target.environmentId,
+				adapter: target.adapter,
+				abort: input.abortController.signal,
+				abortController: input.abortController,
+				forcePollWatcher: input.forcePollWatcher,
+			}),
+		),
+	]);
 }
 
 function pickAgent(explicit: string | undefined): {

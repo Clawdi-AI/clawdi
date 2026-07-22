@@ -27,6 +27,10 @@ import {
 	writeRuntimeAppliedState,
 } from "../runtime/applied-state";
 import {
+	type RuntimeApplyIdentity,
+	readRuntimeApplyIdentityFromEnv,
+} from "../runtime/apply-identity";
+import {
 	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
 	runtimeAuthTokenFileLabel,
@@ -1226,6 +1230,7 @@ interface RuntimeApplyOptions {
 	deferCliInstall?: boolean;
 	deferCliInstallReason?: string;
 	manifestIdentity?: RuntimeManifestIdentity;
+	requireSystemdApplied?: boolean;
 }
 
 interface RuntimeManifestIdentity {
@@ -1288,7 +1293,16 @@ export function commitRuntimeAppliedState(input: {
 	etag: string;
 	sourceRevision: string;
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
+	applyIdentity: RuntimeApplyIdentity | null;
 }): void {
+	if (
+		input.applyIdentity &&
+		input.applyIdentity.generation !== input.convergence.manifest.generation
+	) {
+		throw new Error(
+			`runtime apply identity generation ${input.applyIdentity.generation} does not match applied manifest generation ${input.convergence.manifest.generation}`,
+		);
+	}
 	const providerIds = runtimeSourceProviderIds(input.load.manifest);
 	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
 	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
@@ -1299,11 +1313,11 @@ export function commitRuntimeAppliedState(input: {
 			etag: input.etag,
 			sourceRevision: input.sourceRevision,
 			generation: input.convergence.manifest.generation,
-			...(input.load.applyIdentity
+			...(input.applyIdentity
 				? {
-						manifestETag: input.load.applyIdentity.manifestETag,
-						applyReceiptId: input.load.applyIdentity.applyReceiptId,
-						bootNonce: input.load.applyIdentity.bootNonce,
+						manifestETag: input.applyIdentity.manifestETag,
+						applyReceiptId: input.applyIdentity.applyReceiptId,
+						bootNonce: input.applyIdentity.bootNonce,
 					}
 				: {}),
 			contentIdentity: runtimeAppliedContentIdentity(input.load),
@@ -1848,6 +1862,7 @@ async function runtimeInitLocked(
 		try {
 			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded);
 			const contentRevision = runtimeAppliedContentIdentity(convergenceLoad).sha256;
+			const applyIdentity = readRuntimeApplyIdentityFromEnv();
 			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
 				authorityCommit: (convergence) =>
 					commitRuntimeAppliedState({
@@ -1856,11 +1871,13 @@ async function runtimeInitLocked(
 						etag: loaded.etag ?? `"sha256:${contentRevision}"`,
 						sourceRevision: loaded.sourceRevision ?? contentRevision,
 						convergence,
+						applyIdentity,
 					}),
 				manifestIdentity: {
 					generation: convergenceLoad.manifest.generation,
 					etag: loaded.etag ?? null,
 				},
+				requireSystemdApplied: applyIdentity !== null,
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
@@ -2100,6 +2117,7 @@ async function runtimeWatchTickLocked(
 			bundleEtag,
 			paths,
 		);
+		const applyIdentity = readRuntimeApplyIdentityFromEnv();
 		const applyResult = applyRuntimeDesiredState(loaded, paths, {
 			authorityCommit: (convergence) =>
 				commitRuntimeAppliedState({
@@ -2108,11 +2126,13 @@ async function runtimeWatchTickLocked(
 					etag: bundleEtag,
 					sourceRevision,
 					convergence,
+					applyIdentity,
 				}),
 			continueOnCliUpdateError: true,
 			deferCliInstall: opts.deferCliInstall,
 			deferCliInstallReason: opts.deferCliInstallReason,
 			manifestIdentity,
+			requireSystemdApplied: applyIdentity !== null,
 		});
 		if (applyResult.kind === "cli_update_failed") {
 			const error = applyResult.cliUpdate.error ?? "CLI update failed";
@@ -2244,7 +2264,12 @@ function applyRuntimeDesiredState(
 	};
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
-		commitAuthority: opts.authorityCommit,
+		commitAuthority: (committedConvergence) => {
+			if (opts.requireSystemdApplied && !systemdApply.applied) {
+				throw new Error("systemd apply did not activate the rendered runtime manifest");
+			}
+			opts.authorityCommit?.(committedConvergence);
+		},
 		systemdApply: {
 			activate: () => {
 				failedSystemdUnits = readSystemdUnitSnapshot(paths);
