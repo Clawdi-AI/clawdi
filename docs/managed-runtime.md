@@ -20,7 +20,7 @@ Related public docs:
 ## Scope
 
 The open-source CLI owns local runtime convergence, explicit `clawdi run`
-env-injection, generic/v1 runtime UI bridging, and diagnostics. It does not own
+env-injection, generic/self-hosted runtime UI bridging, and diagnostics. It does not own
 OpenClaw/Hermes binaries, native update flows, or runtime process behavior.
 The web app owns the hosted deployment dashboard surfaces, including Control UI
 and Terminal tabs. First-party hosted control planes may provide desired state,
@@ -42,7 +42,7 @@ The public contract covers:
 - exposing strict-v2 OpenClaw directly on its native `18789` gateway with
   official token and device authentication when the typed authorization
   capability is active;
-- retaining the optional OpenClaw sidecar bridge only for generic/v1 desired
+- retaining the optional OpenClaw sidecar bridge only for generic/self-hosted desired
   state that declares it;
 - exposing a dashboard Terminal contract for one deployment shell;
 - reporting status and diagnostics through runtime commands.
@@ -163,7 +163,7 @@ flowchart TB
         Watch[clawdi runtime watch]
         Daemon[clawdi daemon run]
         Sidecar[optional clawdi runtime sidecar]
-        Bridge[generic/v1 bridge module]
+        Bridge[generic/self-hosted bridge module]
         Egress[egress module]
     end
 
@@ -182,7 +182,7 @@ flowchart TB
     UserSystemd --> HermesDashboard
     UserSystemd --> OpenClaw
 
-    Bridge -->|generic/v1 Control UI proxy| OpenClaw
+    Bridge -->|generic/self-hosted Control UI proxy| OpenClaw
     Egress -. proxy URL + CA trust .-> HermesGateway
     Egress -. proxy URL + CA trust .-> HermesDashboard
     Egress -. proxy URL + CA trust .-> OpenClaw
@@ -288,7 +288,7 @@ and those modules keep explicit authority boundaries:
 | --- | --- | --- | --- | --- | --- |
 | manifest/watch | an auth token file exists | control-plane polling | Clawdi auth token from file | outbound API only | official runtime PID 1 |
 | live-sync daemon | `liveSync.agents` is non-empty | live sync and local daemon APIs | Clawdi auth token from file | local daemon surface | egress rewrite policy |
-| sidecar bridge module | a generic/v1 OpenClaw `bridge.surfaces` entry is present | browser reverse proxy | bridge token only | declared listen ports | outbound egress policy |
+| sidecar bridge module | a generic/self-hosted OpenClaw `bridge.surfaces` entry is present | browser reverse proxy | bridge token only | declared listen ports | outbound egress policy |
 | sidecar egress module | enabled egress profiles exist | runtime outbound proxy | profile bundle, CA cert/key under `$CLAWDI_RUN_DIR`, optional secret file | loopback/private proxy | live-sync/API authority |
 | official runtime program | runtime is enabled | normal runtime behavior | runtime-specific env/config only | official runtime ports | Clawdi auth secrets |
 
@@ -311,10 +311,10 @@ the managed trust projection to unrelated local users. The egress CA private key
 remains separate under the egress identity's private directory and is never
 group-readable by the runtime user.
 
-The sidecar bridge module is generic/v1 compatibility, not a replacement for
+The sidecar bridge module is generic/self-hosted support, not a replacement for
 official ports. Strict v2 forbids the entire `bridge` field. Its egress module
 starts independently and receives no `CLAWDI_RUNTIME_BRIDGE_*` environment when
-no legacy bridge surface is declared.
+no generic/self-hosted bridge surface is declared.
 
 ### Official Container Reference Research
 
@@ -329,7 +329,7 @@ hosted architecture while in-place official UI updates are a requirement:
 The Linux-like host can adopt these lessons without switching to container
 rollout updates: use separate official systemd user services when the runtime
 provides service installers for separate surfaces, retain OpenClaw loopback only
-for declared generic/v1 bridge mode, and require runtime-native auth when
+for declared generic/self-hosted bridge mode, and require runtime-native auth when
 exposing the official OpenClaw port directly.
 
 ## Manifest Shape
@@ -389,7 +389,7 @@ Normalization maps hosted fields into the internal shape:
 | Hosted filesystem defaults | Derived locally from Hosted `RuntimePaths`: HOME, workspace, persistence root, installer home, and explicit process/service cwd use `userHome`; obsolete external `system`/runtime path fields are rejected |
 | `providers.<id>` | Canonical Hosted provider projection: `kind` is exactly `openai-compatible`; normal entries also require `type` and `baseUrl`, while `provider_not_found` is the only reduced error entry |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
-| `bridge.surfaces` | Optional generic/v1 authenticated runtime surface mappings; forbidden in strict v2 |
+| `bridge.surfaces` | Optional generic/self-hosted authenticated runtime surface mappings; forbidden in every Hosted manifest |
 | `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids`; `{}` in unmanaged mode |
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with one Clawdi-managed provider metadata and secret reference, independent of runtime providers |
 | `mcp`, `tools` | Existing runtime MCP/tool projection input; unrelated tool fields remain pass-through and do not include terminal Codex |
@@ -528,14 +528,14 @@ not by an interactive user setup flow.
 manifest state using ETags, applies changes, records status, and falls back to
 last-good cached manifests only when recovery policy allows it. `runtime
 sidecar` is the single Clawdi support process for optional runtime-local modules:
-the generic/v1 bridge module exposes manifest-declared browser surfaces, and the
+the generic/self-hosted bridge module exposes manifest-declared browser surfaces, and the
 egress module proxies outbound runtime traffic when explicit egress profiles are
 enabled.
 
-Generic/v1 Hosted bridge surfaces are OpenClaw browser-facing runtime UIs. Each
+Generic/self-hosted bridge surfaces are OpenClaw browser-facing runtime UIs. Each
 surface declares its listen address, upstream target, protocol behavior, auth
 model, and header rewrite rules. The bridge must not become a generic
-arbitrary-port forwarder and cannot appear in strict v2. Terminal is deliberately
+arbitrary-port forwarder and cannot appear in any Hosted manifest. Terminal is deliberately
 out of scope because it is a shell-exec authorization path, not a browser UI
 proxy.
 
@@ -578,9 +578,9 @@ one URL fragment parameter, never a query. Runtime/auth mismatches, unsafe URLs,
 bridge-token requirements, or incomplete metadata are unavailable. Neither v2
 runtime uses an iframe or bridge redemption.
 
-Generic desired state and hosted manifest v1 retain the existing OpenClaw
-`28789 -> 127.0.0.1:18789` bridge contract for compatibility. This does not
-permit that bridge in strict v2, and Hermes remains an invalid bridge target.
+Generic/self-hosted `RuntimeManifest` retains bridge support. Every Hosted
+manifest schema rejects the entire `bridge` field and requires direct native
+authentication for the selected runtime.
 
 The Hermes contract was verified against NousResearch/hermes-agent commit
 [`8208fc52701332f213e6c51ebc0b610be00300de`](https://github.com/NousResearch/hermes-agent/tree/8208fc52701332f213e6c51ebc0b610be00300de),
@@ -704,7 +704,7 @@ EnvironmentFile="/run/clawdi/systemd/env/openclaw-gateway.service.env"
 ExecStart="/home/clawdi/.openclaw/bin/openclaw" "gateway" "run" "--allow-unconfigured" "--port" "18789" "--bind" "lan" "--force"
 ```
 
-When generic/v1 bridge surfaces or any egress profiles are enabled, systemd
+When generic/self-hosted bridge surfaces or any egress profiles are enabled, systemd
 runs the Clawdi sidecar. Its bridge and egress modules activate independently;
 an egress-only sidecar has no bridge environment. Egress interception uses a
 runtime-fetched `mitmdump` (mitmproxy) transparent gateway running under the
@@ -714,7 +714,7 @@ drop; the image does not need a named egress account. Engagement is a minimal
 nft redirect of the runtime UID's
 outbound :80/:443 to the local mitmproxy port (default-allow: non-profiled hosts
 pass through end-to-end against the real upstream CA); no forward-proxy env is
-injected. Generic/v1 bridge token/surface config and egress
+injected. Generic/self-hosted bridge token/surface config and egress
 profile/CA/secret config stay inside the sidecar. Runtime programs therefore
 receive only CA-trust env such as `NODE_EXTRA_CA_CERTS`,
 `REQUESTS_CA_BUNDLE`, and `SSL_CERT_FILE`; sidecar control env and secret-file
@@ -741,8 +741,8 @@ The strict manifest references the token only as
 `env://OPENCLAW_GATEWAY_TOKEN`; the resolved value is absent from manifest env
 and durable config. Missing token, native-auth capability, deployment policy,
 public origin, exact command, or auth-aware readiness metadata rejects the
-strict-v2 configuration before exposure. Generic/v1 OpenClaw retains its
-existing loopback and bridge behavior.
+strict-v2 configuration before exposure. Generic/self-hosted OpenClaw bridge
+behavior remains outside the Hosted contract.
 
 ## Official Update Compatibility
 
@@ -814,7 +814,7 @@ older CLI must not be selected for a deployment with managed Telegram bindings.
 Hosted deployment pages expose two live surfaces:
 
 - **Control UI** opens strict-v2 runtime-native authentication in a top-level
-  window. Generic/v1 OpenClaw may still use its declared sidecar bridge. The
+  window. Generic/self-hosted OpenClaw may still use its declared sidecar bridge. The
   surface is runtime-specific and labelled as `<Runtime> Control UI`.
 - **Terminal** opens a shell for the deployment. It is not split per agent; a
   deployment has one Terminal surface.
@@ -823,7 +823,7 @@ Hosted deployment pages expose two live surfaces:
 flowchart LR
     Dashboard[Dashboard] -->|Control UI URL| Ingress[Platform ingress]
     Ingress -->|direct mode| RuntimeUI[Official runtime UI port]
-    Ingress -->|generic/v1 only| Bridge[sidecar bridge module]
+    Ingress -->|generic/self-hosted only| Bridge[sidecar bridge module]
     Bridge --> RuntimeUI
     Dashboard -->|Terminal WebSocket| HostedAPI[Hosted API]
     HostedAPI --> Shell[Deployment shell<br/>default runtime user]
@@ -856,7 +856,7 @@ fallback for environments that reject custom WebSocket subprotocols.
   request rewriting.
 - Expose strict-v2 official runtime ports only when native auth and the typed
   deployment-authorization capability are active; otherwise fail closed.
-- Keep sidecar bridge auth limited to declared generic/v1 OpenClaw surfaces.
+- Keep sidecar bridge auth limited to declared generic/self-hosted OpenClaw surfaces.
 - Keep defensive validation at every boundary: manifests, provider references,
   channel descriptors, filesystem paths, and process launch arguments.
 - Remove `CLAWDI_AUTH_TOKEN` from agent child process environments unless that

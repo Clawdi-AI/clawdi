@@ -33,7 +33,7 @@ describe("hosted runtime bundle v2", () => {
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
-			"e9a133f280854c8407394d078972ee33a4ee6f97e00f05987a5598296ea60f0c",
+			"49c598c8c8327e23f36097302be99c91986dd398fe464f477ccb20a469bd9191",
 		);
 		expect(projected.secretValues).toMatchObject(
 			(raw as { secretValues: Record<string, string> }).secretValues,
@@ -177,7 +177,7 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe('"bundle-golden"');
 		expect(loaded.sourceRevision).toBe(
-			"e9a133f280854c8407394d078972ee33a4ee6f97e00f05987a5598296ea60f0c",
+			"49c598c8c8327e23f36097302be99c91986dd398fe464f477ccb20a469bd9191",
 		);
 		expect(loaded.channelBindings).toHaveLength(1);
 	});

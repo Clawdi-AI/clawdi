@@ -62,7 +62,12 @@ const TEST_HOSTED_CODEX_TOOLING = {
 };
 
 function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
-	return overrides;
+	return {
+		openclawControlUiAllowedOrigins: ["https://agent.example.test"],
+		openclawControlUiBasePath: "/control",
+		openclawGatewayAuth: hostedOpenClawNativeAuth(),
+		...overrides,
+	};
 }
 
 function hostedOpenClawNativeAuth(publicUrl = "https://agent.example.test/control") {
@@ -165,6 +170,21 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 				providerMode: "configured",
 				provider_ids: ["default"],
 				primary_model: { provider_id: "default", model: "gpt-test" },
+				run: {
+					args: [
+						"gateway",
+						"run",
+						"--allow-unconfigured",
+						"--port",
+						"18789",
+						"--bind",
+						"lan",
+						"--force",
+					],
+					secretEnv: {
+						OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+					},
+				},
 			},
 		},
 		...overrides,
@@ -178,6 +198,21 @@ function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<s
 		providerMode: "configured",
 		provider_ids: ["default"],
 		primary_model: { provider_id: "default", model: "gpt-test" },
+		run: {
+			args: [
+				"gateway",
+				"run",
+				"--allow-unconfigured",
+				"--port",
+				"18789",
+				"--bind",
+				"lan",
+				"--force",
+			],
+			secretEnv: {
+				OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+			},
+		},
 		...overrides,
 	};
 }
@@ -187,7 +222,7 @@ function hostedHermesManifestFixture(
 ): Record<string, unknown> {
 	return hostedManifestFixture({
 		runtime: "hermes",
-		system: hostedSystemFixture({
+		system: {
 			hermesDashboardAuth: {
 				mode: "password",
 				provider: "basic",
@@ -201,9 +236,10 @@ function hostedHermesManifestFixture(
 					capability: "hermes-basic-auth-v1",
 				},
 			},
-		}),
+		},
 		runtimes: {
 			hermes: hostedRuntimeFixture({
+				run: undefined,
 				services: {
 					dashboard: {
 						args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
@@ -294,12 +330,26 @@ afterEach(() => {
 });
 
 describe("runtime manifest reconciliation invariants", () => {
-	test("preserves the legacy hosted v1 Hermes bridge contract outside bundle v2", () => {
-		const legacy = hostedManifestFixture({
-			runtime: "hermes",
-			system: hostedSystemFixture(),
-			runtimes: { hermes: hostedRuntimeFixture() },
-			bridge: {
+	test.each([
+		[
+			"OpenClaw",
+			hostedOpenClawV2ManifestFixture(),
+			{
+				surfaces: [
+					{
+						name: "openclaw",
+						kind: "control-ui",
+						listenPort: 28789,
+						upstreamHost: "127.0.0.1",
+						upstreamPort: 18789,
+					},
+				],
+			},
+		],
+		[
+			"Hermes",
+			hostedHermesManifestFixture(),
+			{
 				surfaces: [
 					{
 						name: "hermes",
@@ -310,10 +360,19 @@ describe("runtime manifest reconciliation invariants", () => {
 					},
 				],
 			},
-		});
-
-		expect(hostedRuntimeManifestSchema.safeParse(legacy).success).toBe(true);
-		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(legacy).success).toBe(false);
+		],
+	] as const)("rejects a bridge in every hosted %s manifest schema", (_name, valid, bridge) => {
+		expect(hostedRuntimeManifestSchema.safeParse(valid).success).toBe(true);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(valid).success).toBe(true);
+		const withBridge = { ...valid, bridge };
+		expect(hostedRuntimeManifestSchema.safeParse(withBridge).success).toBe(false);
+		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(withBridge).success).toBe(false);
+		expect(
+			hostedRuntimeManifestResponseSchema.safeParse({
+				manifest: withBridge,
+				secretValues: {},
+			}).success,
+		).toBe(false);
 	});
 
 	test("requires typed native token and device auth for hosted OpenClaw v2", () => {
@@ -398,7 +457,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					},
 				}),
 			).success,
-		).toBe(true);
+		).toBe(false);
 	});
 	test("requires official Basic auth and direct 9119 exposure for hosted Hermes v2", () => {
 		const valid = hostedHermesManifestFixture();
@@ -830,12 +889,32 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			},
 			projection: { providers: { default: { model: "legacy-model" } } },
+			bridge: {
+				surfaces: [
+					{
+						name: "openclaw",
+						kind: "control-ui",
+						listenPort: 28789,
+						upstreamHost: "127.0.0.1",
+						upstreamPort: 18789,
+					},
+				],
+			},
 			recovery: {},
 		});
 
 		expect(parsed.runtimes.custom.install?.args).toEqual([]);
 		expect(parsed.runtimes.custom.updateChannel).toBe("stable");
 		expect(parsed.projection?.providers?.default).toEqual({ model: "legacy-model" });
+		expect(parsed.bridge?.surfaces).toEqual([
+			{
+				name: "openclaw",
+				kind: "control-ui",
+				listenPort: 28789,
+				upstreamHost: "127.0.0.1",
+				upstreamPort: 18789,
+			},
+		]);
 	});
 
 	test.each([
@@ -1025,6 +1104,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const patchPath = join(paths.serviceStateRoot, "openclaw-gateway-patch.json");
 		const allowedOrigins = ["https://app-v2-18789.k3s.example.test"];
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -1046,13 +1126,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					openclawControlUiAllowedOrigins: allowedOrigins,
 				}),
 				runtimes: {
-					openclaw: {
-						enabled: true,
-						install: { source: "official" },
-						providerMode: "configured",
-						provider_ids: ["default"],
-						primary_model: { provider_id: "default", model: "gpt-test" },
-					},
+					openclaw: hostedRuntimeFixture(),
 				},
 			}),
 		);
@@ -1067,9 +1141,14 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(result.installErrors).toEqual([]);
 		expect(JSON.parse(readFileSync(patchPath, "utf8"))).toMatchObject({
 			gateway: {
+				port: 18789,
+				bind: "lan",
+				auth: { mode: "token", token: null },
 				controlUi: {
 					allowedOrigins,
-					dangerouslyDisableDeviceAuth: true,
+					allowInsecureAuth: false,
+					dangerouslyAllowHostHeaderOriginFallback: false,
+					dangerouslyDisableDeviceAuth: false,
 				},
 			},
 		});
@@ -1382,8 +1461,8 @@ describe("runtime manifest reconciliation invariants", () => {
 								"gateway",
 								"run",
 								"--allow-unconfigured",
-								"--auth",
-								"token",
+								"--port",
+								"18789",
 								"--bind",
 								"lan",
 								"--force",
@@ -1396,7 +1475,6 @@ describe("runtime manifest reconciliation invariants", () => {
 						},
 					},
 				},
-				bridge: { surfaces: [] },
 				providers: {
 					default: {
 						kind: "openai-compatible",
@@ -1464,8 +1542,8 @@ describe("runtime manifest reconciliation invariants", () => {
 			"gateway",
 			"run",
 			"--allow-unconfigured",
-			"--auth",
-			"token",
+			"--port",
+			"18789",
 			"--bind",
 			"lan",
 			"--force",
@@ -1473,7 +1551,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(normalized.manifest.runtimes.openclaw.run?.secretEnv).toEqual({
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
 		});
-		expect(normalized.manifest.bridge?.surfaces).toEqual([]);
+		expect(normalized.manifest.bridge).toBeUndefined();
 		expect(normalized.manifest.projection?.providers).toEqual(hostedResponse.manifest.providers);
 		expect(normalized.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toContain(
 			"api-proxy",

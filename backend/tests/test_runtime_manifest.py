@@ -658,21 +658,41 @@ async def test_dashboard_dev_seed_runtime_state_validates_and_serves_manifest(
         "cacheManifest": True,
         "allowOfflineBoot": True,
     }
+    assert validated.bridge is None
+    if runtime == "hermes":
+        assert validated.system.hermesDashboardAuth is not None
+        assert validated.system.hermesDashboardAuth.provider == "basic"
+        assert validated.system.hermesDashboardAuth.activation.enabled is True
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
-    if runtime == "hermes":
-        assert response.status_code == 409, response.text
-        assert "activation must be explicitly enabled" in response.json()["detail"]
-        return
     assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["liveSync"] == {
+    assert response.headers["content-type"] == RUNTIME_BUNDLE_V2_MEDIA_TYPE
+    payload = response.json()
+    assert payload["schemaVersion"] == "clawdi.hosted-runtime.bundle.v2"
+    manifest = payload["manifest"]
+    assert manifest["runtime"] == runtime
+    assert "bridge" not in manifest
+    assert manifest["liveSync"] == {
         "enabled": True,
         "agents": [{"agentType": runtime, "environmentId": str(env.id)}],
     }
+    if runtime == "hermes":
+        assert manifest["system"]["hermesDashboardAuth"] == {
+            **TEST_HERMES_DASHBOARD_AUTH,
+            "publicUrl": "https://hermes.dev-preview.local",
+        }
+        assert manifest["runtimes"]["hermes"]["services"]["dashboard"]["args"] == [
+            "dashboard",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            "9119",
+            "--no-open",
+        ]
 
 
 @pytest.mark.asyncio
@@ -2073,19 +2093,14 @@ async def test_runtime_manifest_includes_egress_engine_pin(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("runtime", "bridge"),
-    [
-        ("openclaw", None),
-        ("openclaw", TEST_OPENCLAW_BRIDGE),
-        ("hermes", None),
-    ],
+    "runtime",
+    ["openclaw", "hermes"],
 )
-async def test_admin_runtime_state_accepts_final_hosted_egress_and_bridge_contract(
+async def test_admin_runtime_state_accepts_final_hosted_egress_contract_without_bridge(
     admin_client,
     db_session,
     seed_user,
     runtime,
-    bridge,
 ):
     env = await create_env_with_project(
         db_session,
@@ -2097,7 +2112,7 @@ async def test_admin_runtime_state_accepts_final_hosted_egress_and_bridge_contra
     body = _runtime_state_body(
         str(env.id),
         runtimes=_runtime_state(runtime),
-        bridge=bridge,
+        bridge=None,
         live_sync=_live_sync(str(env.id), runtime),
         egress_engine=TEST_EGRESS_ENGINE_PIN,
         egress_profiles=TEST_EGRESS_PROFILES,
@@ -2114,7 +2129,7 @@ async def test_admin_runtime_state_accepts_final_hosted_egress_and_bridge_contra
     assert state is not None
     assert state.egress_engine == TEST_EGRESS_ENGINE_PIN
     assert state.egress_profiles == TEST_EGRESS_PROFILES
-    assert state.bridge == bridge
+    assert state.bridge is None
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -2126,36 +2141,60 @@ async def test_admin_runtime_state_accepts_final_hosted_egress_and_bridge_contra
     assert manifest["runtime"] == runtime
     assert manifest["egressEngine"] == TEST_EGRESS_ENGINE_PIN
     assert manifest["egressProfiles"] == TEST_EGRESS_PROFILES
-    if bridge is None:
-        assert "bridge" not in manifest
-    else:
-        assert manifest["bridge"] == bridge
+    assert "bridge" not in manifest
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_includes_declared_bridge_surfaces(
-    admin_client,
+@pytest.mark.parametrize(
+    ("runtime", "bridge"),
+    [
+        ("openclaw", TEST_OPENCLAW_BRIDGE),
+        ("hermes", TEST_HERMES_BRIDGE),
+    ],
+)
+async def test_runtime_bundle_v2_rejects_preexisting_declared_bridge_surfaces(
     db_session,
     seed_user,
+    runtime,
+    bridge,
 ):
     env = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
-        machine_id=f"runtime-bridge-{uuid4().hex[:8]}",
-        machine_name="Runtime bridge",
-        agent_type="openclaw",
+        machine_id=f"runtime-v2-preexisting-bridge-{runtime}-{uuid4().hex[:8]}",
+        machine_name=f"Runtime v2 preexisting bridge {runtime}",
+        agent_type=runtime,
     )
-    bridge = TEST_OPENCLAW_BRIDGE
-    await _write_runtime_state(admin_client, str(env.id), bridge=bridge)
+    db_session.add(
+        canonical_hosted_runtime_state(
+            environment_id=env.id,
+            deployment_id=f"dep_{uuid4().hex}",
+            instance_id=f"hri_{uuid4().hex}",
+            generation=7,
+            cli_package_spec=TEST_CLI_PACKAGE_SPEC,
+            locale=TEST_LOCALE,
+            system=(
+                {**TEST_SYSTEM, "hermesDashboardAuth": TEST_HERMES_DASHBOARD_AUTH}
+                if runtime == "hermes"
+                else TEST_SYSTEM
+            ),
+            runtimes=_runtime_state(runtime),
+            bridge=bridge,
+            live_sync=_live_sync(str(env.id), runtime),
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        )
+    )
+    await db_session.commit()
 
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
-    assert response.status_code == 200, response.text
-    payload = response.json()
-    assert payload["manifest"]["bridge"] == bridge
+    assert response.status_code == 409, response.text
+    assert response.json() == {
+        "detail": "Hosted runtime bridge state does not match the selected runtime"
+    }
 
 
 @pytest.mark.asyncio
@@ -3461,7 +3500,9 @@ async def test_admin_runtime_state_rejects_invalid_egress_contract(
 @pytest.mark.parametrize(
     ("runtime", "bridge"),
     [
+        ("hermes", TEST_HERMES_BRIDGE),
         ("hermes", TEST_OPENCLAW_BRIDGE),
+        ("openclaw", TEST_OPENCLAW_BRIDGE),
         ("openclaw", TEST_HERMES_BRIDGE),
         (
             "openclaw",
@@ -3477,7 +3518,7 @@ async def test_admin_runtime_state_rejects_invalid_egress_contract(
         ),
     ],
 )
-async def test_admin_runtime_state_rejects_runtime_bridge_mismatch(
+async def test_admin_runtime_state_rejects_every_v2_bridge_before_persist(
     admin_client,
     db_session,
     seed_user,
@@ -3505,6 +3546,7 @@ async def test_admin_runtime_state_rejects_runtime_bridge_mismatch(
     )
 
     assert response.status_code == 422, response.text
+    assert await db_session.get(HostedRuntimeState, env.id) is None
 
 
 @pytest.mark.asyncio

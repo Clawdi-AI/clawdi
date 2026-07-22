@@ -231,7 +231,7 @@ def render_runtime_source(
         ) from exc
     runtime_name, runtime = _runtime(state.runtimes)
     try:
-        validate_hosted_runtime_bridge(runtime_name, bridge, native_auth=True)
+        validate_hosted_runtime_bridge(runtime_name, bridge)
     except ValueError as exc:
         raise RuntimeSourceError(
             "Hosted runtime bridge state does not match the selected runtime"

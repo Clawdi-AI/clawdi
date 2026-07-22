@@ -416,36 +416,11 @@ class HostedRuntimeBridge(_StrictHostedWireModel):
 
 
 def validate_hosted_runtime_bridge(
-    runtime: HostedRuntimeName,
+    _runtime: HostedRuntimeName,
     bridge: HostedRuntimeBridge | None,
-    *,
-    native_auth: bool = False,
 ) -> None:
-    surfaces = bridge.surfaces if bridge is not None else []
-    if native_auth:
-        if bridge is not None:
-            raise ValueError("v2 native runtime must not declare a bridge")
-        return
-    if not surfaces:
-        return
-    if len(surfaces) != 1:
-        raise ValueError(f"{runtime} must declare exactly one bridge surface")
-    surface = surfaces[0]
-    expected = {
-        "openclaw": ("openclaw", 28789, 18789),
-        "hermes": ("hermes", 28793, 9119),
-    }[runtime]
-    if (
-        surface.name != expected[0]
-        or surface.kind != "control-ui"
-        or surface.listenPort != expected[1]
-        or surface.upstreamHost != "127.0.0.1"
-        or surface.upstreamPort != expected[2]
-    ):
-        raise ValueError(
-            f"{runtime} bridge surface must be {runtime} control-ui "
-            f"{expected[1]} -> 127.0.0.1:{expected[2]}"
-        )
+    if bridge is not None:
+        raise ValueError("v2 native runtime must not declare a bridge")
 
 
 class HostedHermesDashboardActivation(BaseModel):

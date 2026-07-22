@@ -10120,9 +10120,6 @@ exit 64
 					runtimes: {
 						hermes: hostedHermesRuntime({}),
 					},
-					bridge: {
-						surfaces: [hostedHermesBridgeSurface()],
-					},
 				},
 				secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
 			}),

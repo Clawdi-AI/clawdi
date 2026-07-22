@@ -528,6 +528,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		hermesDashboardAuth: hosted.system.hermesDashboardAuth,
 		projection: {
 			sourceSchemaVersion: hosted.schemaVersion,
+			sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 			system: hosted.system,
 			providers: hosted.providers,
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),

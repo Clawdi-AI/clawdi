@@ -41,6 +41,30 @@ _TEST_HERMES_DASHBOARD_AUTH = {
         "capability": "hermes-basic-auth-v1",
     },
 }
+_TEST_RUNTIME_BRIDGES = {
+    "openclaw": {
+        "surfaces": [
+            {
+                "name": "openclaw",
+                "kind": "control-ui",
+                "listenPort": 28789,
+                "upstreamHost": "127.0.0.1",
+                "upstreamPort": 18789,
+            }
+        ]
+    },
+    "hermes": {
+        "surfaces": [
+            {
+                "name": "hermes",
+                "kind": "control-ui",
+                "listenPort": 28793,
+                "upstreamHost": "127.0.0.1",
+                "upstreamPort": 9119,
+            }
+        ]
+    },
+}
 _TEST_TOOLS = {
     "codex": {
         "enabled": True,
@@ -492,6 +516,56 @@ async def test_platform_runtime_only_state_is_explicitly_unmanaged(
     assert state.tools == _TEST_TOOLS
     if runtime_name == "hermes":
         assert state.bridge is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("runtime_name", ["openclaw", "hermes"])
+async def test_platform_runtime_state_rejects_every_v2_bridge_before_persist(
+    platform_client,
+    db_session,
+    seed_user,
+    runtime_name,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key=f"v2-bridge-agent-{runtime_name}-{uuid.uuid4()}",
+    )
+    assert created.status_code == 200, created.text
+    body = _runtime_body(owner, agent_id)
+    if runtime_name == "hermes":
+        runtime = next(iter(body["runtimes"].values()))
+        runtime["services"] = {
+            "dashboard": {
+                "args": [
+                    "dashboard",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "9119",
+                    "--no-open",
+                ]
+            }
+        }
+        body["runtimes"] = {"hermes": runtime}
+        body["system"] = {"hermesDashboardAuth": _TEST_HERMES_DASHBOARD_AUTH}
+        body["live_sync"] = {
+            "enabled": True,
+            "agents": [{"agentType": "hermes", "environmentId": str(agent_id)}],
+        }
+    body["bridge"] = _TEST_RUNTIME_BRIDGES[runtime_name]
+
+    response = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers(f"v2-bridge-state-{runtime_name}-{uuid.uuid4()}"),
+        json=body,
+    )
+
+    assert response.status_code == 422, response.text
+    assert await db_session.get(HostedRuntimeState, agent_id) is None
 
 
 @pytest.mark.asyncio

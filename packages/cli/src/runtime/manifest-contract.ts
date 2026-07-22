@@ -642,10 +642,9 @@ const hostedRuntimeManifestBaseSchema = z
 
 type HostedRuntimeManifestBase = z.infer<typeof hostedRuntimeManifestBaseSchema>;
 
-function validateHostedRuntimeManifestForMode(
+function validateHostedRuntimeManifest(
 	manifest: HostedRuntimeManifestBase,
 	ctx: z.RefinementCtx,
-	nativeAuth: boolean,
 ): void {
 	const runtimeKeys = Object.keys(manifest.runtimes);
 	const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
@@ -692,47 +691,10 @@ function validateHostedRuntimeManifestForMode(
 			}
 		}
 	}
-	const surfaces = manifest.bridge?.surfaces ?? [];
-	if (!nativeAuth && manifest.runtime === "openclaw" && surfaces.length > 0) {
-		const surface = surfaces.at(0);
-		if (
-			surfaces.length !== 1 ||
-			surface?.name !== "openclaw" ||
-			surface?.kind !== "control-ui" ||
-			surface?.listenPort !== 28789 ||
-			surface?.upstreamHost !== "127.0.0.1" ||
-			surface?.upstreamPort !== 18789
-		) {
-			ctx.addIssue({
-				code: "custom",
-				message: "openclaw bridge surface must be openclaw control-ui 28789 -> 127.0.0.1:18789",
-				path: ["bridge", "surfaces"],
-			});
-		}
-	}
-	if (!nativeAuth && manifest.runtime === "hermes") {
-		const surface = surfaces.at(0);
-		if (
-			surfaces.length !== 1 ||
-			surface?.name !== "hermes" ||
-			surface?.kind !== "control-ui" ||
-			surface?.listenPort !== 28793 ||
-			surface?.upstreamHost !== "127.0.0.1" ||
-			surface?.upstreamPort !== 9119
-		) {
-			ctx.addIssue({
-				code: "custom",
-				message: "hermes bridge surface must be hermes control-ui 28793 -> 127.0.0.1:9119",
-				path: ["bridge", "surfaces"],
-			});
-		}
-		return;
-	}
-	if (!nativeAuth) return;
 	if (manifest.bridge !== undefined) {
 		ctx.addIssue({
 			code: "custom",
-			message: "Hosted runtime bundle v2 must not declare a bridge",
+			message: "Hosted runtime manifests must not declare a bridge",
 			path: ["bridge"],
 		});
 	}
@@ -776,20 +738,6 @@ function validateHostedRuntimeManifestForMode(
 			path: ["system", "openclawGatewayAuth"],
 		});
 	}
-}
-
-function validateHostedRuntimeManifest(
-	manifest: HostedRuntimeManifestBase,
-	ctx: z.RefinementCtx,
-): void {
-	validateHostedRuntimeManifestForMode(manifest, ctx, false);
-}
-
-function validateHostedRuntimeBundleV2Manifest(
-	manifest: HostedRuntimeManifestBase,
-	ctx: z.RefinementCtx,
-): void {
-	validateHostedRuntimeManifestForMode(manifest, ctx, true);
 	validateHostedRuntimeManifestV2(manifest, ctx);
 }
 
@@ -914,7 +862,7 @@ export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSche
 		clawdiCli: hostedCliPayloadPolicySchema,
 	})
 	.strict()
-	.superRefine(validateHostedRuntimeBundleV2Manifest);
+	.superRefine(validateHostedRuntimeManifest);
 export const hostedRuntimeManifestResponseSchema = z
 	.object({
 		manifest: hostedRuntimeManifestSchema,
