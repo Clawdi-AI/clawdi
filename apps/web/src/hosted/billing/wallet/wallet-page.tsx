@@ -138,7 +138,8 @@ export function WalletPage() {
 	const w = wallet.data;
 	const walletComputeCount =
 		deployments.data?.filter(
-			(deployment) => deployment.compute_subscription?.funding_source === "wallet",
+			(deployment) =>
+				deployment.commercial_display?.compute_subscription?.funding_source === "wallet",
 		).length ?? 0;
 
 	return (

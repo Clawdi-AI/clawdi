@@ -22,7 +22,10 @@ describe("DeploymentStatus", () => {
 			"creating",
 			"starting",
 			"running",
+			"stopping",
 			"stopped",
+			"restarting",
+			"updating",
 			"failed",
 			"deleting",
 			"deleted",
@@ -56,7 +59,10 @@ describe("DeploymentStatus", () => {
 			["creating", "Provisioning", "info"],
 			["starting", "Starting", "info"],
 			["running", "Running", "success"],
+			["stopping", "Stopping", "info"],
 			["stopped", "Stopped", "neutral"],
+			["restarting", "Restarting", "success"],
+			["updating", "Updating", "success"],
 			["failed", "Failed", "destructive"],
 			["deleting", "Deleting", "info"],
 			["deleted", "Deleted", "neutral"],
@@ -76,7 +82,15 @@ describe("DeploymentStatus", () => {
 			expect(isTransitionalStatus(status)).toBe(false);
 		}
 
-		for (const raw of ["creating", "starting", "deleting", "future_status"]) {
+		for (const raw of [
+			"creating",
+			"starting",
+			"stopping",
+			"restarting",
+			"updating",
+			"deleting",
+			"future_status",
+		]) {
 			const status = parseDeploymentStatus(raw);
 			expect(isTerminalStatus(status)).toBe(false);
 			expect(isTransitionalStatus(status)).toBe(true);
@@ -88,7 +102,10 @@ describe("DeploymentStatus", () => {
 			["creating", false, false, false],
 			["starting", false, true, true],
 			["running", false, true, true],
+			["stopping", false, false, false],
 			["stopped", true, false, false],
+			["restarting", false, true, true],
+			["updating", false, true, true],
 			["failed", true, false, true],
 			["deleting", false, false, false],
 			["deleted", false, false, false],
@@ -97,7 +114,10 @@ describe("DeploymentStatus", () => {
 
 		expect(isRunningStatus(parseDeploymentStatus("running"))).toBe(true);
 		expect(isRunningStatus(parseDeploymentStatus("ready"))).toBe(true);
+		expect(isRunningStatus(parseDeploymentStatus("restarting"))).toBe(true);
+		expect(isRunningStatus(parseDeploymentStatus("updating"))).toBe(true);
 		expect(isRunningStatus(parseDeploymentStatus("stopped"))).toBe(false);
+		expect(isRunningStatus(parseDeploymentStatus("stopping"))).toBe(false);
 
 		for (const [raw, start, stop, restart] of expectations) {
 			const status = parseDeploymentStatus(raw);
@@ -118,6 +138,9 @@ describe("DeploymentStatus", () => {
 		).toBe(false);
 		expect(shouldPollDeployments([{ status: "running" }, { status: "creating" }])).toBe(true);
 		expect(shouldPollDeployments([{ status: "running" }, { status: "starting" }])).toBe(true);
+		expect(shouldPollDeployments([{ status: "running" }, { status: "stopping" }])).toBe(true);
+		expect(shouldPollDeployments([{ status: "running" }, { status: "restarting" }])).toBe(true);
+		expect(shouldPollDeployments([{ status: "running" }, { status: "updating" }])).toBe(true);
 		expect(shouldPollDeployments([{ status: "running" }, { status: "deleting" }])).toBe(true);
 		expect(shouldPollDeployments([{ status: "new_backend_status" }])).toBe(true);
 		expect(shouldPollDeployments([])).toBe(false);

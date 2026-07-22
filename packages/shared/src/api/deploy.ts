@@ -5,9 +5,10 @@
  *     bun --cwd apps/web run generate-deploy-api
  *
  * The default source is the local hosted API on `:50021`. To regenerate
- * against the live hosted contract that CI checks, run:
+ * against the contract selected for a coordinated rollout, serve that OpenAPI
+ * document locally and run:
  *
- *     DEPLOY_OPENAPI_SOURCE=https://api.clawdi.ai/openapi.json \
+ *     DEPLOY_OPENAPI_SOURCE=http://localhost:50021/openapi.json \
  *       bun --cwd apps/web run generate-deploy-api
  *
  * The generated file is intentionally a FILTERED subset of the hosted
@@ -22,4 +23,42 @@ export type { components as DeployComponents, paths as DeployPaths } from "./dep
 
 type S = DeployComponents["schemas"];
 
-export type Deployment = S["V2HostedDeploymentResponse"];
+export type DeploymentRead = S["V2HostedDeploymentReadResponse"];
+export type Deployment = DeploymentRead;
+export type DeployRequestRead = S["V2HostedDeployRequestReadResponse"];
+export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isDeploymentEventStreamSnapshotHandoff(
+	value: unknown,
+): value is DeploymentEventStreamSnapshotHandoff {
+	if (!isRecord(value)) return false;
+	return (
+		value.snapshot_isolation === "REPEATABLE READ" &&
+		value.read_only === true &&
+		Array.isArray(value.deployments) &&
+		Array.isArray(value.operations) &&
+		typeof value.event_stream_cursor === "string"
+	);
+}
+
+export function unwrapDeploymentList(
+	value: DeploymentRead[] | DeploymentEventStreamSnapshotHandoff,
+): DeploymentRead[] {
+	if (!Array.isArray(value)) {
+		throw new Error("Unexpected event-stream handoff response for deployment list request");
+	}
+	return value;
+}
+
+export function unwrapDeploymentEventStreamSnapshotHandoff(
+	value: DeploymentRead[] | DeploymentEventStreamSnapshotHandoff,
+): DeploymentEventStreamSnapshotHandoff {
+	if (!isDeploymentEventStreamSnapshotHandoff(value)) {
+		throw new Error("Unexpected deployment list response for event-stream handoff request");
+	}
+	return value;
+}

@@ -22,18 +22,22 @@ Local development (the default behind `bun --cwd apps/web run generate-deploy-ap
     DEPLOY_OPENAPI_SOURCE=http://localhost:50021/openapi.json \
       bun --cwd apps/web run generate-deploy-api
 
-Regenerating against the live hosted contract that CI checks:
+Regenerating against a reviewed checked-in hosted contract before coordinated
+deployment:
 
-    DEPLOY_OPENAPI_SOURCE=https://api.clawdi.ai/openapi.json \
+    cd /path/to/clawdi-hosted/backend
+    python3 -m http.server 50021
+    DEPLOY_OPENAPI_SOURCE=http://localhost:50021/openapi.json \
       bun --cwd apps/web run generate-deploy-api
 
 To consume a new endpoint, add its path + HTTP method to
 `KEEP_OPERATIONS_BY_PATH` and rerun the generate command. Schema closure is
 auto-discovered via `$ref` walks, so referenced types come along for free.
 
-Do not use clawdi-hosted's checked-in `backend/openapi.json` as a generation
-source. It can lag the live hosted contract, which would hide exactly the drift
-this guard is meant to catch.
+Use the contract source named by the rollout. A coordinated frontend/backend
+change may intentionally need clawdi-hosted's reviewed `backend/openapi.json`
+before that contract is live; routine post-deploy drift checks can still use the
+live endpoint.
 """
 
 from __future__ import annotations
@@ -48,16 +52,15 @@ from typing import Any
 KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v1/agent-environments": {"get"},
     "/v1/me": {"get"},
-    "/v2/deployments": {"get", "post"},
+    "/v2/deployments": {"get"},
     "/v2/deployments/by-request/{deploy_request_id}": {"get"},
     "/v2/deployments/{deployment_id}": {"get", "delete", "patch"},
-    "/v2/deployments/{deployment_id}/agents/{agent_type}": {"patch"},
-    "/v2/deployments/{deployment_id}/agents/{agent_type}/ai-provider": {"patch"},
     "/v2/deployments/{deployment_id}/terminal": {"post"},
     "/v2/deployments/{deployment_id}/runtime-ui/redemption": {"post"},
     "/v2/deployments/{deployment_id}/restart": {"post"},
     "/v2/deployments/{deployment_id}/start": {"post"},
     "/v2/deployments/{deployment_id}/stop": {"post"},
+    "/v2/operations/{operation_id}": {"get"},
     "/v2/subscription/checkout": {"post"},
     "/v2/subscription/cancel": {"post"},
     "/v2/subscription/fix-payment": {"post"},

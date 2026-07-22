@@ -2,7 +2,10 @@ export const KNOWN_DEPLOYMENT_STATUSES = [
 	"creating",
 	"starting",
 	"running",
+	"stopping",
 	"stopped",
+	"restarting",
+	"updating",
 	"failed",
 	"deleting",
 	"deleted",
@@ -53,8 +56,14 @@ export function deploymentStatusLabel(status: DeploymentStatus): string {
 			return "Starting";
 		case "running":
 			return "Running";
+		case "stopping":
+			return "Stopping";
 		case "stopped":
 			return "Stopped";
+		case "restarting":
+			return "Restarting";
+		case "updating":
+			return "Updating";
 		case "failed":
 			return "Failed";
 		case "deleting":
@@ -71,6 +80,8 @@ export function deploymentStatusLabel(status: DeploymentStatus): string {
 export function deploymentStatusTone(status: DeploymentStatus): DeploymentStatusTone {
 	switch (status.kind) {
 		case "running":
+		case "restarting":
+		case "updating":
 			return "success";
 		case "failed":
 			return "destructive";
@@ -79,6 +90,7 @@ export function deploymentStatusTone(status: DeploymentStatus): DeploymentStatus
 			return "neutral";
 		case "creating":
 		case "starting":
+		case "stopping":
 		case "deleting":
 			return "info";
 		case "unknown":
@@ -91,9 +103,12 @@ export function deploymentStatusTone(status: DeploymentStatus): DeploymentStatus
 export function isRunningStatus(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "running":
+		case "restarting":
+		case "updating":
 			return true;
 		case "creating":
 		case "starting":
+		case "stopping":
 		case "stopped":
 		case "failed":
 		case "deleting":
@@ -105,44 +120,6 @@ export function isRunningStatus(status: DeploymentStatus): boolean {
 	}
 }
 
-/**
- * Mirror of the deploy-API's `NO_BACKING_INFRA_FAILURE_REASONS`
- * (backend/app/v2/hosted/slot_occupancy.py). A deployment that failed for one
- * of these reasons has no k8s resources, so it holds no compute slot.
- */
-const NO_BACKING_INFRA_FAILURE_REASONS = new Set([
-	"backend_status=not_found",
-	"creation_interrupted",
-]);
-
-function failureReasonIndicatesNoBackingInfra(failureReason: string | null | undefined): boolean {
-	const normalized = failureReason?.trim().replace(/\s+/g, " ") ?? "";
-	if (!normalized) return false;
-	if (NO_BACKING_INFRA_FAILURE_REASONS.has(normalized)) return true;
-	return normalized.startsWith("backend_status=not_found;");
-}
-
-/**
- * Mirrors the deploy-API included-Basic-slot product predicate in `slot_occupancy.py`.
- * This is not the cluster tenant/disk reservation rule; stopped deployments
- * release a user's included Basic slot while their PVC may still reserve cluster space.
- */
-export function occupiesComputeSlot(deployment: {
-	status: string | null | undefined;
-	failure_reason?: string | null;
-	stopped_at?: string | null;
-	deleted_at?: string | null;
-}): boolean {
-	if (deployment.deleted_at) return false;
-	if (deployment.stopped_at) return false;
-	const status = parseDeploymentStatus(deployment.status);
-	if (status.kind === "deleted" || status.kind === "stopped") return false;
-	if (status.kind === "failed" && failureReasonIndicatesNoBackingInfra(deployment.failure_reason)) {
-		return false;
-	}
-	return true;
-}
-
 export function isTerminalStatus(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "running":
@@ -152,6 +129,9 @@ export function isTerminalStatus(status: DeploymentStatus): boolean {
 			return true;
 		case "creating":
 		case "starting":
+		case "stopping":
+		case "restarting":
+		case "updating":
 		case "deleting":
 		case "unknown":
 			return false;
@@ -164,6 +144,9 @@ export function isTransitionalStatus(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "creating":
 		case "starting":
+		case "stopping":
+		case "restarting":
+		case "updating":
 		case "deleting":
 		case "unknown":
 			return true;
@@ -185,6 +168,9 @@ export function canStart(status: DeploymentStatus): boolean {
 		case "creating":
 		case "starting":
 		case "running":
+		case "stopping":
+		case "restarting":
+		case "updating":
 		case "deleting":
 		case "deleted":
 		case "unknown":
@@ -198,8 +184,11 @@ export function canStop(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "running":
 		case "starting":
+		case "restarting":
+		case "updating":
 			return true;
 		case "creating":
+		case "stopping":
 		case "stopped":
 		case "failed":
 		case "deleting":
@@ -216,8 +205,11 @@ export function canRestart(status: DeploymentStatus): boolean {
 		case "running":
 		case "starting":
 		case "failed":
+		case "restarting":
+		case "updating":
 			return true;
 		case "creating":
+		case "stopping":
 		case "stopped":
 		case "deleting":
 		case "deleted":

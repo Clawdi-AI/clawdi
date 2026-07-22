@@ -1,3 +1,4 @@
+import type { DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route, test } from "@playwright/test";
 
 // HOSTED (Clawdi Cloud) smoke against the vite dev server with dev-auth-bypass
@@ -22,6 +23,46 @@ const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 // Must match the API hosts configured in playwright.hosted.config.ts.
 const CLOUD_API = "http://127.0.0.1:8000";
 const DEPLOY_API = "http://127.0.0.1:8001";
+
+type DeploymentComputeSubscription = NonNullable<
+	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
+>;
+
+type DeploymentMutationFixture = {
+	id: string;
+	user_id: string;
+	name: string;
+	app_id: string;
+	status: string;
+	created_at: string;
+	upgrade_available: boolean;
+	compute_subscription: DeploymentComputeSubscription | null;
+	config_info: {
+		compute_plan_slug: string;
+		runtime: "openclaw" | "hermes";
+		ai_provider_auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
+		ai_provider_bindings?: Record<string, { auth_kind?: string | null }>;
+		clawdi_cloud_environments?: Record<string, string>;
+		mux_enabled?: boolean;
+		telegram_mux_enabled?: boolean;
+		discord_mux_enabled?: boolean;
+		whatsapp_mux_enabled?: boolean;
+		imessage_mux_enabled?: boolean;
+		kobb_available?: boolean;
+		public_ports?: number[];
+	};
+	endpoints?: string[];
+	failure_reason?: string | null;
+	hermes_control_ui_url?: string | null;
+	openclaw_control_ui_url?: string | null;
+	last_funding_event?: {
+		funding_source: "stripe" | "wallet";
+		reason: "payment_failure" | "canceled" | "refunded" | "disputed" | "admin_forced";
+		prior_plan_slug: string;
+		occurred_at: string;
+		subscription_id: number;
+	} | null;
+};
 
 const basicPlan = {
 	slug: "compute_basic",
@@ -77,7 +118,7 @@ const performancePlan = {
 	],
 };
 
-const includedBasicDeployment = {
+const includedBasicDeployment: DeploymentMutationFixture = {
 	id: "hdep_included",
 	user_id: "usr_browser",
 	name: "Included Basic",
@@ -307,6 +348,7 @@ const terminalFallbackDeployment = {
 		reason: "payment_failure",
 		prior_plan_slug: "compute_performance",
 		occurred_at: "2026-07-16T00:00:00Z",
+		subscription_id: 42,
 	},
 };
 
@@ -441,6 +483,204 @@ function planChangeResponse({
 	};
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isDeploymentMutationFixture(value: unknown): value is DeploymentMutationFixture {
+	return (
+		isRecord(value) &&
+		typeof value.id === "string" &&
+		typeof value.user_id === "string" &&
+		typeof value.name === "string" &&
+		typeof value.app_id === "string" &&
+		typeof value.status === "string" &&
+		typeof value.created_at === "string" &&
+		isRecord(value.config_info) &&
+		typeof value.config_info.compute_plan_slug === "string" &&
+		(value.config_info.runtime === "openclaw" || value.config_info.runtime === "hermes")
+	);
+}
+
+function readSummaryState(status: string): DeploymentRead["resource"]["status"]["summary_state"] {
+	switch (status) {
+		case "creating":
+		case "starting":
+		case "running":
+		case "stopping":
+		case "stopped":
+		case "restarting":
+		case "updating":
+		case "deleting":
+		case "deleted":
+		case "failed":
+			return status;
+		case "provisioning":
+			return "creating";
+		case "ready":
+			return "running";
+		default:
+			throw new Error(`Unsupported deployment fixture status: ${status}`);
+	}
+}
+
+function readProviderAuthKind(
+	value: string | null | undefined,
+): DeploymentRead["ai_provider_auth_kinds"][string] {
+	switch (value) {
+		case "unmanaged":
+		case "managed":
+		case "api_key":
+		case "codex_oauth":
+			return value;
+		default:
+			throw new Error(`Unsupported deployment fixture provider mode: ${value ?? "missing"}`);
+	}
+}
+
+function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): DeploymentRead {
+	const config = deployment.config_info;
+	const runtime = config.runtime;
+	if (runtime !== "openclaw" && runtime !== "hermes") {
+		throw new Error(`Unsupported deployment fixture runtime: ${runtime}`);
+	}
+	const summaryState = readSummaryState(deployment.status);
+	const backingInfrastructure =
+		summaryState === "stopped" || summaryState === "deleted" ? "absent" : "present";
+	const runtimeBinding = config.ai_provider_bindings?.[runtime];
+	const providerAuthKind = readProviderAuthKind(
+		runtimeBinding?.auth_kind ?? config.ai_provider_auth_kind,
+	);
+	const runtimeUiUrl =
+		runtime === "openclaw" ? deployment.openclaw_control_ui_url : deployment.hermes_control_ui_url;
+	const failure = deployment.failure_reason
+		? {
+				type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+				title: deployment.failure_reason,
+				status: 504,
+				detail: "The runtime did not become ready before the startup deadline.",
+				instance: deployment.id,
+				code: "runtime_readiness_timeout",
+				phase: "readiness",
+				retryable: true,
+				conditionReason: "RuntimeReadinessTimeout",
+				conditionMessage: deployment.failure_reason,
+				observedGeneration: 1,
+			}
+		: null;
+	const fundingFact = deployment.last_funding_event
+		? {
+				fact_kind: "funding_revoked" as const,
+				commercial_revision: 1,
+				compute_subscription_id: deployment.last_funding_event.subscription_id,
+				compute_plan_slug: null,
+				funding_source: deployment.last_funding_event.funding_source,
+				reason: deployment.last_funding_event.reason,
+				prior_plan_slug: deployment.last_funding_event.prior_plan_slug,
+				occurred_at: deployment.last_funding_event.occurred_at,
+				emitted_at: deployment.last_funding_event.occurred_at,
+			}
+		: null;
+
+	return {
+		resource: {
+			id: deployment.id,
+			owner_user_id: deployment.user_id,
+			commercial_revision: 1,
+			deployment_target: "saas",
+			metadata: {
+				generation: 1,
+				manifestETag: `etag_${deployment.id}`,
+				resourceVersion: `rv_${deployment.id}`,
+				createdAt: deployment.created_at,
+				updatedAt: deployment.created_at,
+			},
+			spec: {
+				schema_version: 1,
+				desired_lifecycle:
+					summaryState === "stopped"
+						? "stopped"
+						: summaryState === "deleted"
+							? "deleted"
+							: "running",
+				runtime,
+				runtime_version: "latest",
+				name: deployment.name,
+				resources: {
+					vcpu: config.compute_plan_slug === "compute_performance" ? 4 : 2,
+					memory_mib: config.compute_plan_slug === "compute_performance" ? 8192 : 4096,
+					disk_gib: config.compute_plan_slug === "compute_performance" ? 40 : 20,
+				},
+				agents: [],
+				ports: [],
+				runtime_configuration: { providers: [], features: [] },
+				rollout_nonce: 0,
+				secret_references: [],
+			},
+			status: {
+				summary_state: summaryState,
+				observedGeneration: 1,
+				conditions: [],
+				failure,
+				backing_infrastructure: backingInfrastructure,
+				driver_acknowledged_generation: 1,
+				driver_applied_generation: 1,
+				driver_observation_sequence: 1,
+				endpoints: (deployment.endpoints ?? []).map((url, index) => ({
+					name: `endpoint-${index + 1}`,
+					url,
+				})),
+			},
+		},
+		clawdi_cloud_environments: config.clawdi_cloud_environments ?? {},
+		ai_provider_auth_kinds: { [runtime]: providerAuthKind },
+		runtime_ui_endpoint: runtimeUiUrl
+			? { runtime, role: "control_ui", url: runtimeUiUrl, requires_bridge_token: true }
+			: null,
+		accepted_operation: null,
+		commercial_display: {
+			compute_subscription: deployment.compute_subscription ?? null,
+			latest_funding_fact: fundingFact,
+		},
+		current_plan_slug: config.compute_plan_slug,
+		upgrade_available: deployment.upgrade_available,
+		compute_slot_occupancy: {
+			occupies_slot: backingInfrastructure === "present",
+			backing_infra: backingInfrastructure,
+			reason:
+				backingInfrastructure === "present" ? "backing_infra_present" : "authoritative_absence",
+		},
+	};
+}
+
+function completedDeploymentOperation(
+	deployment: DeploymentMutationFixture,
+	verb: "create" | "start" | "stop" | "restart" | "delete",
+) {
+	const resource = mutationDeploymentReadFixture(deployment).resource;
+	return {
+		name: `operations/e2e-${verb}-${resource.id}`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: resource.id,
+			verb,
+			targetGeneration: resource.metadata.generation + 1,
+			manifestETag: resource.metadata.manifestETag,
+			createTime: resource.metadata.updatedAt,
+			updateTime: resource.metadata.updatedAt,
+		},
+		done: true,
+		response: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
+			deployment: resource,
+		},
+	};
+}
+
+function readDeploymentFixture(value: unknown): unknown {
+	return isDeploymentMutationFixture(value) ? mutationDeploymentReadFixture(value) : value;
+}
+
 type StubResponse = { body: unknown; status: number; delayMs?: number };
 
 function isStubResponse(value: unknown): value is StubResponse {
@@ -470,7 +710,6 @@ type HostedApiStubOptions = {
 	cloudAgentErrors?: Record<string, { detail: string; status: number }>;
 	cloudAgentNotFoundIds?: readonly string[];
 	cloudAgentResponses?: Record<string, StubResponse[]>;
-	createRequests?: string[];
 	deleteRequests?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
@@ -508,6 +747,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const deployments = options.deployments ?? [];
 	const plans = options.plans ?? [];
 	let currentWallet = options.walletState ?? walletState;
+	const deploymentRequests = new Map<string, DeploymentMutationFixture>();
 	// Deploy API (/me, /v2/*).
 	await page.route(`${DEPLOY_API}/**`, async (r) => {
 		const p = new URL(r.request().url()).pathname;
@@ -554,21 +794,49 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			if (options.deploymentsResponse) {
 				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
 			}
-			return fulfillJson(r, deployments);
+			return fulfillJson(r, deployments.map(readDeploymentFixture));
 		}
-		if (p === "/v2/deployments" && r.request().method() === "POST") {
-			options.createRequests?.push(r.request().postData() ?? "");
-			return fulfillJson(r, {
-				...includedBasicDeployment,
-				id: "hdep_created",
-				name: "Created Basic",
-				status: "starting",
-			});
+		if (p.startsWith("/v2/deployments/by-request/") && r.request().method() === "GET") {
+			const deployRequestId = decodeURIComponent(p.slice("/v2/deployments/by-request/".length));
+			const deployment = deploymentRequests.get(deployRequestId);
+			return deployment
+				? fulfillJson(r, {
+						deploy_request_id: deployRequestId,
+						request_status: "succeeded",
+						lineage_tail: {
+							deployment_id: deployment.id,
+							lineage_version: 1,
+							lineage_state: "succeeded",
+							operation: completedDeploymentOperation(deployment, "create"),
+						},
+					})
+				: fulfillJson(r, { detail: "Deployment request not found" }, 404);
+		}
+		if (p.startsWith("/v2/deployments/") && r.request().method() === "GET") {
+			const deploymentId = decodeURIComponent(p.slice("/v2/deployments/".length));
+			const deployment = deployments.find(
+				(candidate): candidate is DeploymentMutationFixture =>
+					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+			);
+			return deployment
+				? fulfillJson(r, readDeploymentFixture(deployment))
+				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		if (p === "/v2/subscription/checkout" && r.request().method() === "POST") {
 			const requestBody = r.request().postData() ?? "";
 			options.checkoutRequests?.push(requestBody);
-			const request = JSON.parse(requestBody) as { funding_source?: string };
+			const request = JSON.parse(requestBody) as {
+				funding_source?: string;
+				deploy_config?: { deploy_request_id?: string };
+			};
+			const deployRequestId = request.deploy_config?.deploy_request_id;
+			const createdDeployment: DeploymentMutationFixture = {
+				...includedBasicDeployment,
+				id: request.funding_source === "wallet" ? "hdep_wallet_created" : "hdep_created",
+				name: "Created Basic",
+				status: "running",
+			};
+			if (deployRequestId) deploymentRequests.set(deployRequestId, createdDeployment);
 			const response =
 				options.checkoutResponses?.shift() ??
 				(request.funding_source === "wallet"
@@ -580,7 +848,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 								checkout_url: "",
 								subscription_id: 42,
 								invoice_id: "in_wallet_browser",
-								deploy_request_id: "wallet-compute-deploy-browser",
+								deploy_request_id: deployRequestId,
 								deployment_id: "hdep_wallet_created",
 								debited_credits: "86400",
 								balance_after_credits: "13600",
@@ -718,7 +986,14 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.endsWith("/restart") && r.request().method() === "POST") {
 			options.restartRequests?.push(p);
-			return fulfillJson(r, { status: "starting" });
+			const deploymentId = p.split("/")[3] ?? "";
+			const deployment = deployments.find(
+				(candidate): candidate is DeploymentMutationFixture =>
+					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+			);
+			return deployment
+				? fulfillJson(r, completedDeploymentOperation(deployment, "restart"), 202)
+				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		if (p.endsWith("/runtime-ui/redemption") && r.request().method() === "POST") {
 			options.runtimeUiRedemptionRequests?.push(p);
@@ -733,11 +1008,35 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			if (options.startError) {
 				return fulfillJson(r, { detail: options.startError.detail }, options.startError.status);
 			}
-			return fulfillJson(r, { status: "starting" });
+			const deploymentId = p.split("/")[3] ?? "";
+			const deployment = deployments.find(
+				(candidate): candidate is DeploymentMutationFixture =>
+					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+			);
+			return deployment
+				? fulfillJson(r, completedDeploymentOperation(deployment, "start"), 202)
+				: fulfillJson(r, { detail: "Deployment not found" }, 404);
+		}
+		if (p.endsWith("/stop") && r.request().method() === "POST") {
+			const deploymentId = p.split("/")[3] ?? "";
+			const deployment = deployments.find(
+				(candidate): candidate is DeploymentMutationFixture =>
+					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+			);
+			return deployment
+				? fulfillJson(r, completedDeploymentOperation(deployment, "stop"), 202)
+				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "DELETE") {
 			options.deleteRequests?.push(p);
-			return fulfillJson(r, { status: "deleted", cvm_deleted: true });
+			const deploymentId = p.slice("/v2/deployments/".length);
+			const deployment = deployments.find(
+				(candidate): candidate is DeploymentMutationFixture =>
+					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+			);
+			return deployment
+				? fulfillJson(r, completedDeploymentOperation(deployment, "delete"), 202)
+				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		return fulfillJson(r, {});
 	});
@@ -1017,7 +1316,6 @@ test("embedded checkout rechecks Plan C capability before confirm", async ({ pag
 	const errors = collectBrowserErrors(page);
 	const capability = { enabled: true };
 	const checkoutRequests: string[] = [];
-	const createRequests: string[] = [];
 	const productAccessRequests: string[] = [];
 	await stubStripeCheckout(page);
 	await stubHostedApi(page, {
@@ -1034,7 +1332,6 @@ test("embedded checkout rechecks Plan C capability before confirm", async ({ pag
 				},
 			},
 		],
-		createRequests,
 		deployments: [includedBasicDeployment],
 		planBillingCapability: capability,
 		plans: [basicPlan, performancePlan],
@@ -1070,7 +1367,6 @@ test("embedded checkout rechecks Plan C capability before confirm", async ({ pag
 		),
 	).toBe(0);
 	expect(checkoutRequests).toHaveLength(1);
-	expect(createRequests).toEqual([]);
 	expect(errors, `mid-checkout Plan C flip: ${errors.join(" | ")}`).toEqual([]);
 });
 
@@ -1319,34 +1615,32 @@ test("identity-less interrupted deployment tile exposes delete", async ({ page }
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_creation_interrupted"]);
 });
 
-test("paid-funded Basic leaves the included slot available for direct compute_basic deploy", async ({
-	page,
-}) => {
+test("Basic create always follows the wizard-selected funding path", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
-	const createRequests: string[] = [];
+	const checkoutRequests: string[] = [];
 	await page.setViewportSize({ width: 1_440, height: 1_100 });
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await stubHostedApi(page, {
-		createRequests,
+		checkoutRequests,
 		deployments: [paidBasicDeployment],
-		plans: [{ ...basicPlan, offers: [] }, performancePlan],
+		plans: [basicPlan, performancePlan],
 	});
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("First slot free", { exact: true })).toBeVisible();
-	await expect(
-		page.getByText(/First active agent free · paid additional agents unavailable/),
-	).toBeVisible();
+	await expect(page.getByText("$9/mo", { exact: true })).toBeVisible();
+	await expect(page.getByText(/2 vCPU \/ 4 GB · \$9\/mo/)).toBeVisible();
 	await expectNoQuarterlyCopy(page);
 	await capturePricingScreenshot(page, "/tmp/basic-paid-funded-slot-available-final.png");
 
-	await page.getByRole("button", { name: "Deploy agent" }).click();
-	await expect.poll(() => createRequests.length).toBe(1);
-	expect(JSON.parse(createRequests[0] ?? "{}")).toMatchObject({
-		compute_plan_slug: "compute_basic",
+	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(1);
+	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({
+		plan_slug: "compute_basic",
+		funding_source: "stripe",
+		deploy_config: { compute_plan_slug: "compute_basic" },
 	});
-	expect(errors, `direct Basic deploy: ${errors.join(" | ")}`).toEqual([]);
+	expect(errors, `funded Basic deploy: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("free-funded Basic uses annual compute_basic checkout when the included slot is occupied", async ({
@@ -1364,7 +1658,7 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("$9/mo additional", { exact: true })).toBeVisible();
+	await expect(page.getByText("$9/mo", { exact: true })).toBeVisible();
 	await expect(page.getByText("Monthly", { exact: true })).toBeVisible();
 	const annualTerm = page.getByRole("button", { name: /Annual.*%/ });
 	await expect(annualTerm).toBeVisible();
@@ -1372,14 +1666,8 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await annualTerm.click();
 	await expect(page.getByText("Wallet balance", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Wallet balance/ })).toBeVisible();
-	await expect(
-		page.getByText(
-			/First active agent free · then \$7.2\/mo, billed \$86.4\/yr per additional agent/,
-		),
-	).toBeVisible();
-	await expect(
-		page.getByText(/additional Basic agent at \$7.2\/mo, billed \$86.4\/yr/),
-	).toBeVisible();
+	await expect(page.getByText(/2 vCPU \/ 4 GB · \$7.2\/mo, billed \$86.4\/yr/)).toBeVisible();
+	await expect(page.getByText(/this Basic agent at \$7.2\/mo, billed \$86.4\/yr/)).toBeVisible();
 	await capturePricingScreenshot(page, "/tmp/basic-free-funded-slot-occupied-final.png");
 
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
@@ -1989,10 +2277,8 @@ test("occupied included Basic start surfaces the backend slot entitlement error"
 test("paid Basic checkout abandonment preserves the checkout-ready wizard", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const checkoutRequests: string[] = [];
-	const createRequests: string[] = [];
 	await stubHostedApi(page, {
 		checkoutRequests,
-		createRequests,
 		deployments: [includedBasicDeployment],
 		plans: [basicPlan, performancePlan],
 	});
@@ -2000,11 +2286,10 @@ test("paid Basic checkout abandonment preserves the checkout-ready wizard", asyn
 
 	await expect(page.getByText("Checkout canceled", { exact: true })).toBeVisible();
 	await expect(page.getByText("You were not charged. Your agent was not deployed.")).toBeVisible();
-	await expect(page.getByText("$9/mo additional", { exact: true })).toBeVisible();
+	await expect(page.getByText("$9/mo", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Continue to checkout" })).toBeVisible();
 	await expect(page.getByText("First slot free", { exact: true })).toHaveCount(0);
 	expect(checkoutRequests).toEqual([]);
-	expect(createRequests).toEqual([]);
 	expect(errors, `checkout abandonment: ${errors.join(" | ")}`).toEqual([]);
 });
 

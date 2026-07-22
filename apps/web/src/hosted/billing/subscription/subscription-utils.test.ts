@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { BillingOffer, HostedDeployment, Plan } from "@/hosted/billing/contracts";
+import type { BillingOffer, HostedComputeSubscription, Plan } from "@/hosted/billing/contracts";
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
@@ -17,6 +17,7 @@ import {
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
 	resolvePerformancePlan,
+	resolveSubscriptionCreatePlanSlug,
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
@@ -45,7 +46,7 @@ function plan(overrides: Partial<Plan> & Pick<Plan, "slug" | "price_cents">): Pl
 	};
 }
 
-function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+function subscription(): HostedComputeSubscription {
 	return {
 		status: "active",
 		funding_source: "stripe",
@@ -57,7 +58,7 @@ function subscription(): NonNullable<HostedDeployment["compute_subscription"]> {
 	};
 }
 
-function includedSubscription(): NonNullable<HostedDeployment["compute_subscription"]> {
+function includedSubscription(): HostedComputeSubscription {
 	return {
 		subscription_id: 7,
 		status: "active",
@@ -97,6 +98,38 @@ describe("compute plan resolvers", () => {
 
 		expect(resolveBasicPlan([otherPaid, basic])).toBe(basic);
 		expect(resolveBasicPlan([otherPaid])).toBeUndefined();
+	});
+});
+
+describe("resolveSubscriptionCreatePlanSlug", () => {
+	test("defaults resubscribe to the authoritative prior plan", () => {
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_BASIC_SLUG, {
+				basicAvailable: true,
+				performanceAvailable: true,
+			}),
+		).toBe(COMPUTE_BASIC_SLUG);
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_PERFORMANCE_SLUG, {
+				basicAvailable: true,
+				performanceAvailable: true,
+			}),
+		).toBe(COMPUTE_PERFORMANCE_SLUG);
+	});
+
+	test("uses the other saleable plan only when the prior plan is unavailable", () => {
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_BASIC_SLUG, {
+				basicAvailable: false,
+				performanceAvailable: true,
+			}),
+		).toBe(COMPUTE_PERFORMANCE_SLUG);
+		expect(
+			resolveSubscriptionCreatePlanSlug(COMPUTE_PERFORMANCE_SLUG, {
+				basicAvailable: true,
+				performanceAvailable: false,
+			}),
+		).toBe(COMPUTE_BASIC_SLUG);
 	});
 });
 

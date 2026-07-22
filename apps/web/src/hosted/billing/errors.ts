@@ -41,6 +41,18 @@ export class BillingApiError extends Error {
 	}
 }
 
+export const DEPLOYMENT_CONFLICT_MESSAGE =
+	"This agent changed in another session. We refreshed it; review the latest state and try again.";
+
+/** A declarative mutation still conflicted after its single fresh-read retry. */
+export class DeploymentConflictError extends Error {
+	constructor(options?: { cause?: unknown }) {
+		super(DEPLOYMENT_CONFLICT_MESSAGE);
+		this.name = "DeploymentConflictError";
+		if (options?.cause !== undefined) this.cause = options.cause;
+	}
+}
+
 function hasDetail(value: unknown): value is { detail: unknown } {
 	return typeof value === "object" && value !== null && "detail" in value;
 }
@@ -153,6 +165,7 @@ export function isInsufficientBalanceError(error: unknown): boolean {
  * internals; normalizes balance exhaustion to the product narrative.
  */
 export function normalizeBillingError(error: unknown): string {
+	if (error instanceof DeploymentConflictError) return DEPLOYMENT_CONFLICT_MESSAGE;
 	if (isInsufficientBalanceError(error)) {
 		return "Your AI Credits balance is too low. Top up or enable auto-reload before managed AI or wallet-funded compute is interrupted.";
 	}

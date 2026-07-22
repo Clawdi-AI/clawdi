@@ -12,7 +12,7 @@ import { useActionLock } from "@/hosted/billing/use-action-lock";
 export function HostedDeploymentTileDeleteAction({ deployment }: { deployment: HostedDeployment }) {
 	const deleteDeployment = useDeleteDeployment();
 	const runAction = useActionLock();
-	const name = deploymentDisplayName(deployment.name);
+	const name = deploymentDisplayName(deployment.resource.spec.name);
 
 	return (
 		<div data-hosted="true">
@@ -23,7 +23,7 @@ export function HostedDeploymentTileDeleteAction({ deployment }: { deployment: H
 				destructive
 				onConfirm={() =>
 					runAction(async () => {
-						await deleteDeployment.mutateAsync(deployment.id);
+						await deleteDeployment.mutateAsync(deployment.resource.id);
 					})
 				}
 			>

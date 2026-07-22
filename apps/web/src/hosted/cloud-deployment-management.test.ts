@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { cloudDeploymentManagementGate } from "@/hosted/cloud-deployment-management";
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 describe("cloudDeploymentManagementGate", () => {
 	test("keeps existing deployment management visible when new deploys are disabled", () => {
 		expect(
 			cloudDeploymentManagementGate({
 				canCreateCloudAgents: false,
-				deployments: [{ id: "dep_existing" }],
+				deployments: [hostedDeploymentFixture({ id: "dep_existing" })],
 			}),
 		).toEqual({
 			showExistingManagement: true,
@@ -30,7 +31,7 @@ describe("cloudDeploymentManagementGate", () => {
 		expect(
 			cloudDeploymentManagementGate({
 				canCreateCloudAgents: true,
-				deployments: [{ id: "dep_existing" }],
+				deployments: [hostedDeploymentFixture({ id: "dep_existing" })],
 			}),
 		).toEqual({
 			showExistingManagement: true,

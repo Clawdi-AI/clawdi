@@ -1,7 +1,8 @@
 import type {
 	ComputePlanSlug,
+	HostedComputeSubscription,
 	HostedDeployment,
-	HostedFundingEvent,
+	HostedFundingFact,
 } from "@/hosted/billing/contracts";
 import {
 	computeTierLabel,
@@ -9,12 +10,12 @@ import {
 	pendingComputePlanSlug,
 } from "@/hosted/billing/subscription/subscription-utils";
 
-type ComputeSubscription = NonNullable<HostedDeployment["compute_subscription"]>;
 type DunningDeployment = Pick<
 	HostedDeployment,
-	"compute_subscription" | "config_info" | "last_funding_event" | "status"
+	"commercial_display" | "current_plan_slug" | "resource"
 >;
-export type ComputePaymentState = ComputeSubscription["payment_state"];
+export type ComputePaymentState = HostedComputeSubscription["payment_state"];
+type FundingRevocationReason = NonNullable<HostedFundingFact["reason"]>;
 
 export type ComputeDunningState = {
 	paymentState: Exclude<ComputePaymentState, "ok">;
@@ -35,7 +36,7 @@ export type ComputeDunningState = {
 	secondaryTarget: "billing_history" | "support" | null;
 	fallbackOccurredAt: string | null;
 	fallbackPlanLabel: string | null;
-	fallbackReason: HostedFundingEvent["reason"] | null;
+	fallbackReason: FundingRevocationReason | null;
 	recoveryPlanSlug: ComputePlanSlug | null;
 	tileLabel: string;
 	tileTitle: string;
@@ -43,7 +44,7 @@ export type ComputeDunningState = {
 };
 
 export function fallbackReasonSentence(
-	reason: HostedFundingEvent["reason"],
+	reason: FundingRevocationReason,
 	planLabel: string,
 	dateLabel: string,
 ): string {
@@ -63,28 +64,23 @@ export function fallbackReasonSentence(
 
 function recoveryPlanSlugFor(
 	deployment: DunningDeployment,
-	subscription?: ComputeSubscription,
+	subscription?: HostedComputeSubscription,
 ): ComputePlanSlug | null {
-	if (subscription) {
-		return (
-			pendingComputePlanSlug(subscription) ?? deployment.config_info?.compute_plan_slug ?? null
-		);
-	}
-	const priorPlan = deployment.last_funding_event?.prior_plan_slug;
-	return priorPlan === "compute_basic" || priorPlan === "compute_performance" ? priorPlan : null;
+	const planSlug = subscription
+		? (pendingComputePlanSlug(subscription) ?? deployment.current_plan_slug)
+		: deployment.commercial_display?.latest_funding_fact?.prior_plan_slug;
+	return planSlug === "compute_basic" || planSlug === "compute_performance" ? planSlug : null;
 }
 
 function detachedFallbackState(deployment: DunningDeployment): ComputeDunningState | null {
-	const fallback = deployment.last_funding_event;
-	if (fallback?.type !== "compute_subscription_fallback") return null;
+	const fallback = deployment.commercial_display?.latest_funding_fact;
+	if (fallback?.fact_kind !== "funding_revoked") return null;
+	if (!fallback.reason || !fallback.funding_source) return null;
+	const recoveryPlanSlug = recoveryPlanSlugFor(deployment);
+	if (!recoveryPlanSlug) return null;
 
-	const fallbackPlanLabel =
-		fallback.prior_plan_slug === "compute_performance"
-			? "Performance compute"
-			: fallback.prior_plan_slug === "compute_basic"
-				? "Basic compute"
-				: "paid compute";
-	const stopped = deployment.status.toLowerCase() === "stopped";
+	const fallbackPlanLabel = `${computeTierLabel(recoveryPlanSlug)} compute`;
+	const stopped = deployment.resource.status.summary_state === "stopped";
 	const presentation = (() => {
 		switch (fallback.reason) {
 			case "payment_failure":
@@ -142,7 +138,7 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		fallbackOccurredAt: fallback.occurred_at,
 		fallbackPlanLabel,
 		fallbackReason: fallback.reason,
-		recoveryPlanSlug: recoveryPlanSlugFor(deployment),
+		recoveryPlanSlug,
 		ctaTarget: "start_new",
 		tileTitle: stopped
 			? `${fallbackPlanLabel} ended and the deployment stopped.`
@@ -151,12 +147,9 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 }
 
 export function computeDunningState(deployment: DunningDeployment): ComputeDunningState | null {
-	const subscription = deployment.compute_subscription ?? null;
+	const subscription = deployment.commercial_display?.compute_subscription ?? null;
 	const fallbackState = detachedFallbackState(deployment);
-	if (
-		fallbackState &&
-		isIncludedBasicSubscription(deployment.config_info?.compute_plan_slug, subscription)
-	) {
+	if (fallbackState && isIncludedBasicSubscription(deployment.current_plan_slug, subscription)) {
 		return fallbackState;
 	}
 	if (!subscription) return null;

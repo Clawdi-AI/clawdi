@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { HostedDeployment } from "@/hosted/billing/contracts";
+import type { HostedDeploymentStatus } from "@/hosted/billing/contracts";
 import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
 import {
 	canOpenHostedRuntimeUi,
@@ -8,40 +8,20 @@ import {
 	resolveHostedAgentProjection,
 	resolveHostedInventory,
 } from "@/hosted/hosted-agent-resolution";
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 import { ApiError } from "@/lib/api-errors";
 
-function deployment(status = "running", id = `dep_${status}`): HostedDeployment {
-	return {
+function deployment(
+	status: HostedDeploymentStatus["summary_state"] = "running",
+	id = `dep_${status}`,
+) {
+	return hostedDeploymentFixture({
 		id,
-		user_id: "user_123",
 		name: id,
-		app_id: "app_123",
-		backend: null,
 		status,
-		endpoints: [],
-		openclaw_control_ui_url: "https://runtime.example/ui",
-		hermes_control_ui_url: null,
-		config_info: {
-			compute_plan_slug: "compute_basic",
-			mux_enabled: true,
-			telegram_mux_enabled: false,
-			discord_mux_enabled: false,
-			whatsapp_mux_enabled: false,
-			imessage_mux_enabled: false,
-			kobb_available: false,
-			primary_model: null,
-			ai_provider_id: null,
-			ai_provider_auth_kind: "managed",
-			public_ports: [],
-			runtime: "openclaw",
-			clawdi_cloud_environments: {},
-			vcpu: null,
-			ram_gb: null,
-			disk_gb: null,
-		},
-		created_at: "2026-07-16T00:00:00Z",
-		upgrade_available: false,
-	};
+		createdAt: "2026-07-16T00:00:00Z",
+		endpoints: [{ name: "openclaw", url: "https://runtime.example/ui" }],
+	});
 }
 
 describe("hosted inventory resolution matrix", () => {
@@ -104,7 +84,7 @@ describe("hosted inventory resolution matrix", () => {
 
 		expect(result.status).toBe("error");
 		expect(result.hasSnapshot).toBe(true);
-		expect(result.deployments?.map((item) => item.id)).toEqual([running.id]);
+		expect(result.deployments?.map((item) => item.resource.id)).toEqual([running.resource.id]);
 		expect(hostedDeploymentMembers([deleted])).toEqual([]);
 	});
 

@@ -19,7 +19,7 @@ import type {
 	ComputeSubscriptionActionResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
-	DeployRequest,
+	HostedComputeSubscription,
 	HostedDeployment,
 	PortalRequest,
 	WalletAutoReloadRequest,
@@ -38,13 +38,9 @@ import {
 	subscriptionCreateRequest,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import { deploymentRefetchInterval } from "@/hosted/deployment-status";
+import { runtimeEnvironmentId } from "@/hosted/runtimes";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
-
-type CreateDeploymentMutationVariables = {
-	body: DeployRequest;
-	idempotencyKey: string;
-};
 
 const CHECKOUT_RETURN_DEPLOYMENT_PARAMS = ["deployment_id", "upgrade_deployment_id"] as const;
 const CHECKOUT_RETURN_MARKER_PARAMS = [
@@ -78,9 +74,9 @@ export function checkoutReturnDeploymentId(searchStr: string): string | null {
 }
 
 function subscriptionFromAction(
-	previous: HostedDeployment["compute_subscription"] | null | undefined,
+	previous: HostedComputeSubscription | null | undefined,
 	next: ComputeSubscriptionActionResult,
-): NonNullable<HostedDeployment["compute_subscription"]> {
+): HostedComputeSubscription {
 	const paymentState =
 		next.status === "past_due"
 			? (previous?.payment_state ?? "past_due")
@@ -114,11 +110,17 @@ function patchDeploymentSubscription(
 	if (!deployments) return deployments;
 	let patched = false;
 	const updated = deployments.map((deployment) => {
-		if (deployment.id !== deploymentId) return deployment;
+		if (deployment.resource.id !== deploymentId) return deployment;
 		patched = true;
 		return {
 			...deployment,
-			compute_subscription: subscriptionFromAction(deployment.compute_subscription, next),
+			commercial_display: {
+				...(deployment.commercial_display ?? {}),
+				compute_subscription: subscriptionFromAction(
+					deployment.commercial_display?.compute_subscription,
+					next,
+				),
+			},
 		};
 	});
 	return patched ? updated : deployments;
@@ -398,13 +400,11 @@ export function billingRecoveryRefetchIntervalFor(
 	if (!target) return false;
 	const deployment = (deployments ?? []).find((candidate) => {
 		const matchesTarget =
-			candidate.id.toLowerCase() === target ||
-			Object.values(candidate.config_info?.clawdi_cloud_environments ?? {}).some(
-				(environmentId) => environmentId?.toLowerCase() === target,
-			);
+			candidate.resource.id.toLowerCase() === target ||
+			runtimeEnvironmentId(candidate)?.toLowerCase() === target;
 		return matchesTarget;
 	});
-	const subscription = deployment?.compute_subscription;
+	const subscription = deployment?.commercial_display?.compute_subscription;
 	if (!subscription) return false;
 	return subscription.payment_state === "past_due" ||
 		subscription.payment_state === "requires_action"
@@ -434,7 +434,11 @@ export function useHostedDeployments({
 		enabled: isDeployApiConfigured() && enabled,
 		queryFn: () => client.listDeployments(),
 		refetchInterval: (q) => {
-			const inventoryInterval = deploymentRefetchInterval(q.state.data);
+			const inventoryInterval = deploymentRefetchInterval(
+				q.state.data?.map((deployment) => ({
+					status: deployment.resource.status.summary_state,
+				})),
+			);
 			const billingInterval = billingRecoveryRefetchIntervalFor(
 				q.state.data,
 				pollBillingRecoveryFor,
@@ -450,19 +454,6 @@ export function useHostedDeployments({
 export function useResolveDeploymentRequest() {
 	const client = useBillingClient();
 	return useMutation({
-		mutationFn: (deployRequestId: string) => client.getDeploymentByRequest(deployRequestId),
-	});
-}
-
-export function useCreateDeployment() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: ({ body, idempotencyKey }: CreateDeploymentMutationVariables) =>
-			client.createDeployment(body, idempotencyKey),
-		onSettled: () => {
-			void qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			void qc.invalidateQueries({ queryKey: ["agents"] });
-		},
+		mutationFn: (deployRequestId: string) => client.waitForDeploymentRequest(deployRequestId),
 	});
 }

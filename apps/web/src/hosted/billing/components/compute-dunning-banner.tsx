@@ -58,7 +58,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 			return;
 		}
 		try {
-			const result = await fixPayment.mutateAsync({ deployment_id: deployment.id });
+			const result = await fixPayment.mutateAsync({ deployment_id: deployment.resource.id });
 			const url = result.url || result.portal_url;
 			if (url) {
 				window.location.href = url;

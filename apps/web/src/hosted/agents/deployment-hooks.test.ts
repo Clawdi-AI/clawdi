@@ -35,8 +35,8 @@ describe("deployment mutation settlement", () => {
 			/onSettled: \(\) => invalidateDeploymentSnapshots\(qc\)/g,
 		);
 
-		// Language/timezone, AI provider, lifecycle, and delete all reconcile even
-		// when the request rejects or times out.
-		expect(settlementInvalidations).toHaveLength(4);
+		// Declarative lifecycle and delete both reconcile even when the request
+		// rejects or times out.
+		expect(settlementInvalidations).toHaveLength(2);
 	});
 });
