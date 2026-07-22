@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import json
 import re
 from datetime import UTC, datetime
@@ -48,7 +49,10 @@ from app.services.channels import (
     TELEGRAM_REF_CALLBACK_QUERY_ID,
     TELEGRAM_REF_FILE_ID,
     TELEGRAM_REF_FILE_PATH,
+    ChannelAgentContext,
     channel_agent_reference_exists,
+    channel_runtime_account_key,
+    channel_runtime_placeholder_token,
     decrypt_provider_token,
     drop_pending_telegram_updates,
     find_binding,
@@ -82,27 +86,28 @@ router = APIRouter(prefix="/channels/telegram", tags=["channels"])
 
 
 @router.api_route(
-    "/bot/{agent_token}/{method}",
+    "/bot/{routing_id}/{method}",
     methods=["GET", "POST"],
     include_in_schema=False,
     response_model=None,
 )
 @router.api_route(
-    "/bot{agent_token}/{method}",
+    "/bot{routing_id}/{method}",
     methods=["GET", "POST"],
     include_in_schema=False,
     response_model=None,
 )
 async def telegram_bot_api(
-    agent_token: str,
+    routing_id: str,
     method: str,
     request: Request,
+    authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
 ) -> dict[str, Any]:
-    agent = await resolve_channel_agent_by_token(
+    agent, agent_token = await _resolve_telegram_agent(
         db,
-        provider=CHANNEL_PROVIDER_TELEGRAM,
-        token=agent_token,
+        routing_id=routing_id,
+        authorization=authorization,
     )
     account = agent.account
     raw_body = await request.body()
@@ -303,24 +308,25 @@ async def telegram_bot_api(
 
 
 @router.get(
-    "/file/bot/{agent_token}/{file_path:path}",
+    "/file/bot/{routing_id}/{file_path:path}",
     include_in_schema=False,
     response_model=None,
 )
 @router.get(
-    "/file/bot{agent_token}/{file_path:path}",
+    "/file/bot{routing_id}/{file_path:path}",
     include_in_schema=False,
     response_model=None,
 )
 async def telegram_file_api(
-    agent_token: str,
+    routing_id: str,
     file_path: str,
+    authorization: str | None = Header(default=None),
     db: AsyncSession = Depends(get_session),
 ):
-    agent = await resolve_channel_agent_by_token(
+    agent, _agent_token = await _resolve_telegram_agent(
         db,
-        provider=CHANNEL_PROVIDER_TELEGRAM,
-        token=agent_token,
+        routing_id=routing_id,
+        authorization=authorization,
     )
     account = agent.account
     if not file_path or file_path.startswith("/"):
@@ -354,6 +360,45 @@ async def telegram_file_api(
         status_code=response.status_code,
         media_type=response.headers.get("content-type", "application/octet-stream"),
         headers=_telegram_passthrough_headers(response),
+    )
+
+
+async def _resolve_telegram_agent(
+    db: AsyncSession,
+    *,
+    routing_id: str,
+    authorization: str | None,
+) -> tuple[ChannelAgentContext, str]:
+    if authorization is None:
+        raise _telegram_agent_auth_error()
+    agent_token = _telegram_bearer_token(authorization)
+    agent = await resolve_channel_agent_by_token(
+        db,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        token=agent_token,
+    )
+    account_key = channel_runtime_account_key(agent.account.id)
+    expected_routing_id = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_TELEGRAM,
+        account_key,
+    )
+    if not hmac.compare_digest(routing_id, expected_routing_id):
+        raise _telegram_agent_auth_error()
+    return agent, agent_token
+
+
+def _telegram_bearer_token(authorization: str) -> str:
+    scheme, separator, value = authorization.partition(" ")
+    if separator and scheme.lower() == "bearer" and value.strip():
+        return value.strip()
+    raise _telegram_agent_auth_error()
+
+
+def _telegram_agent_auth_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="invalid telegram agent authorization",
+        headers={"WWW-Authenticate": "Bearer"},
     )
 
 

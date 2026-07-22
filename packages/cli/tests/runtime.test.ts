@@ -106,6 +106,7 @@ const ENV_KEYS = [
 	"CLAWDI_SYSTEMCTL_PATH",
 	"CLAWDI_RUNTIME_USER",
 	"CLAWDI_RUNTIME_UID",
+	"CLAWDI_RUNTIME_GID",
 	"CLAWDI_EGRESS_UID",
 	"CLAWDI_EGRESS_GID",
 	"OPENCLAW_GATEWAY_TOKEN",
@@ -200,7 +201,7 @@ const TEST_HOSTED_LOCALE = {
 	language: "en" as const,
 	timezone: "UTC",
 };
-const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.55";
+const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.57";
 const TEST_HOSTED_CODEX_SECRET_REF = "tool.codex.apiKey";
 const TEST_HOSTED_CODEX_SECRET_VALUES = {
 	[TEST_HOSTED_CODEX_SECRET_REF]: "sk-codex-tool",
@@ -1556,7 +1557,7 @@ describe("runtime manifest datasource", () => {
 			controlPlane: { apiUrl: "https://cloud-api.test" },
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.55",
+				packageSpec: "clawdi@0.12.10-beta.57",
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: { openclaw: { enabled: false } },
@@ -1611,7 +1612,7 @@ describe("runtime manifest datasource", () => {
 			controlPlane: { apiUrl: "https://cloud-api.test" },
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.55",
+				packageSpec: "clawdi@0.12.10-beta.57",
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: { openclaw: { enabled: false } },
@@ -1659,7 +1660,7 @@ describe("runtime manifest datasource", () => {
 			controlPlane: { apiUrl: "https://cloud-api.test" },
 			clawdiCli: {
 				source: "npm:clawdi",
-				packageSpec: "clawdi@0.12.10-beta.55",
+				packageSpec: "clawdi@0.12.10-beta.57",
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: { openclaw: { enabled: false } },
@@ -5204,6 +5205,7 @@ exit 64
 
 		expect(projected.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toEqual([
 			"native-telegram-clawdi_accttelegram-managed",
+			"native-telegram-clawdi_accttelegram-file-managed",
 		]);
 	});
 
@@ -8639,11 +8641,37 @@ exit 64
 			expect(cachedSecretsText).toContain("clawdi_");
 			expect(cachedSecretsText).not.toContain("agent-token-init");
 			expect(cachedSecretsText).not.toContain("discord-agent-token-init");
-			const profileBundle = readFileSync(join(state, "config", "egress", "profiles.json"), "utf-8");
-			expect(profileBundle).toContain("clawdi-native-channels");
-			expect(profileBundle).toContain("/v1/channels/telegram");
-			expect(profileBundle).toContain("replacementSecretRef");
-			expect(profileBundle).toContain("placeholder-token");
+			const profileBundleText = readFileSync(
+				join(state, "config", "egress", "profiles.json"),
+				"utf-8",
+			);
+			const profileBundle = JSON.parse(profileBundleText) as {
+				profiles: Array<Record<string, unknown>>;
+			};
+			const telegramProfiles = profileBundle.profiles.filter((profile) =>
+				String(profile.id).startsWith("native-telegram-"),
+			);
+			expect(telegramProfiles).toHaveLength(2);
+			expect(telegramProfiles.map((profile) => profile.match)).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({ pathPrefix: "/bot" }),
+					expect.objectContaining({ pathPrefix: "/file/bot" }),
+				]),
+			);
+			for (const profile of telegramProfiles) {
+				const rewrite = profile.rewrite as Record<string, unknown>;
+				expect(rewrite.pathReplace).toBeUndefined();
+				expect(rewrite.setHeaders).toEqual({
+					authorization: {
+						type: "secretRef",
+						secretRef: "secret://channels/telegram/clawdi_accttelegram/agent-token",
+						prefix: "Bearer ",
+					},
+				});
+			}
+			expect(profileBundleText).not.toContain("agent-token-init");
+			expect(profileBundleText).not.toContain("replacementSecretRef");
+			expect(profileBundleText).toContain("placeholder-token");
 			const status = JSON.parse(logs[0] ?? "{}");
 			expect(status.status).toBe("ok");
 			expect(status.activeGeneration).toBe(7);
@@ -8837,10 +8865,8 @@ exit 64
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("telegram:");
 		expect(hermesConfig).toContain("enabled: true");
-		expect(hermesConfig).toContain("base_url: https://cloud-api.test/v1/channels/telegram/bot");
-		expect(hermesConfig).toContain(
-			"base_file_url: https://cloud-api.test/v1/channels/telegram/file/bot",
-		);
+		expect(hermesConfig).toContain("base_url: https://api.telegram.org/bot");
+		expect(hermesConfig).toContain("base_file_url: https://api.telegram.org/file/bot");
 		expect(hermesConfig).toContain("discord:");
 		expect(hermesConfig).toContain("thread_require_mention: false");
 		expect(hermesConfig).not.toContain("telegram-agent-token");
@@ -10477,6 +10503,7 @@ exit 64
 		expect(runtimeSidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_USER="clawdi"');
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
+		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_GID="10001"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
@@ -10630,6 +10657,7 @@ exit 64
 		);
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_NFT_TABLE="clawdi_transparent_egress"');
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_UID="10001"');
+		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_GID="10001"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_UID="10002"');
 		expect(transparentEgressEnv).toContain('CLAWDI_EGRESS_GID="10002"');
 		expect(sidecarEnv).toContain(

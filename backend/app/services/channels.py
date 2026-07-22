@@ -172,6 +172,17 @@ def hash_token(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def channel_runtime_account_key(account_id: UUID) -> str:
+    return f"clawdi_{account_id.hex}"
+
+
+def channel_runtime_placeholder_token(provider: str, account_key: str) -> str:
+    suffix = hashlib.sha256(f"{provider}:{account_key}".encode()).hexdigest()[:32]
+    if provider == CHANNEL_PROVIDER_TELEGRAM:
+        return f"999999999:{suffix}"
+    return f"clawdi_{suffix}"
+
+
 def verify_hashed_token(raw: str, expected_hash: str) -> bool:
     return hmac.compare_digest(hash_token(raw), expected_hash)
 

@@ -17,6 +17,7 @@ export interface TransparentEgressEnvConfig {
 	envFile?: string;
 	runtimeUser: string;
 	runtimeUid: number;
+	runtimeGid: number;
 	egressUid: number;
 	egressGid: number;
 	transparentPort: number;
@@ -108,6 +109,8 @@ export function loadTransparentEgressEnvConfig(
 	}
 	const runtimeUser = requiredConfig(config, "CLAWDI_RUNTIME_USER");
 	const runtimeUid = numericConfig(config, "CLAWDI_RUNTIME_UID");
+	const runtimeGid = numericConfig(config, "CLAWDI_RUNTIME_GID");
+	validateLinuxId(runtimeGid, "CLAWDI_RUNTIME_GID");
 	const egressUid = positiveLinuxIdConfig(config, "CLAWDI_EGRESS_UID");
 	const egressGid = positiveLinuxIdConfig(config, "CLAWDI_EGRESS_GID");
 	const transparentPort = numericConfig(config, "CLAWDI_EGRESS_TRANSPARENT_PORT");
@@ -117,6 +120,7 @@ export function loadTransparentEgressEnvConfig(
 		envFile,
 		runtimeUser,
 		runtimeUid,
+		runtimeGid,
 		egressUid,
 		egressGid,
 		transparentPort,
@@ -210,8 +214,12 @@ function unquoteEnvValue(value: string): string {
 }
 
 function validateUid(value: number, name: string): void {
+	validateLinuxId(value, name);
+}
+
+function validateLinuxId(value: number, name: string): void {
 	if (!Number.isInteger(value) || value < 0 || value > 4_294_967_295) {
-		throw new Error(`${name} must be a numeric uid`);
+		throw new Error(`${name} must be a numeric Linux id`);
 	}
 }
 

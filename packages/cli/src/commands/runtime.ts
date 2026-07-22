@@ -3,12 +3,11 @@ import { randomUUID } from "node:crypto";
 import {
 	accessSync,
 	chmodSync,
+	chownSync,
 	constants,
 	existsSync,
-	mkdirSync,
 	readdirSync,
 	readFileSync,
-	writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import type { components } from "@clawdi/shared/api";
@@ -2788,17 +2787,18 @@ function waitForFile(path: string, timeoutMs: number, hasExited: () => boolean):
 	});
 }
 
-function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig): void {
+export function publishEgressSystemCaBundle(config: TransparentEgressEnvConfig): void {
 	if (config.systemCaBundle === SYSTEM_CA_BUNDLE) {
 		throw new Error("CLAWDI_EGRESS_SYSTEM_CA_BUNDLE must be a runtime-managed CA projection path");
 	}
 	const systemCa = readFileSync(SYSTEM_CA_BUNDLE, "utf-8");
 	const egressCa = readFileSync(config.caCertPath, "utf-8");
-	mkdirSync(dirname(config.systemCaBundle), { recursive: true });
-	writeFileSync(config.systemCaBundle, `${systemCa.trimEnd()}\n${egressCa.trimEnd()}\n`, {
-		mode: 0o644,
+	writePrivateFileAtomic(config.systemCaBundle, `${systemCa.trimEnd()}\n${egressCa.trimEnd()}\n`, {
+		mode: 0o640,
+		dirMode: 0o755,
 	});
-	chmodSync(config.systemCaBundle, 0o644);
+	if (runningAsRootCommand()) chownSync(config.systemCaBundle, 0, config.runtimeGid);
+	chmodSync(config.systemCaBundle, 0o640);
 }
 
 function runningAsRootCommand(): boolean {

@@ -22,6 +22,7 @@ from app.core.database import async_session_factory
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.session import AgentEnvironment
 from app.models.user import User
+from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 
 pytestmark = pytest.mark.skipif(
     os.getenv("CLAWDI_RUN_CHANNELS_BLACKBOX_E2E") != "1",
@@ -221,6 +222,18 @@ async def _create_channel(
     assert created["webhook_secret"]
     assert created["agent_token"]
     return created
+
+
+def _telegram_bot_path(account: dict[str, Any], method: str) -> str:
+    routing_id = channel_runtime_placeholder_token(
+        "telegram",
+        channel_runtime_account_key(uuid.UUID(account["id"])),
+    )
+    return f"/v1/channels/telegram/bot/{routing_id}/{method}"
+
+
+def _telegram_agent_headers(account: dict[str, Any]) -> dict[str, str]:
+    return {"Authorization": f"Bearer {account['agent_token']}"}
 
 
 async def _pair_telegram(
@@ -481,7 +494,9 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             )
             account_ids.extend([telegram["id"], discord["id"], imessage["id"], whatsapp["id"]])
 
-            legacy_tg = await client.get(f"/bot{telegram['agent_token']}/getMe")
+            legacy_tg = await client.get(
+                _telegram_bot_path(telegram, "getMe").removeprefix("/v1/channels/telegram")
+            )
             assert legacy_tg.status_code == 404
             legacy_discord = await client.get(
                 "/api/v10/gateway/bot",
@@ -540,7 +555,8 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             tg_me = await _request_json(
                 client,
                 "GET",
-                f"/v1/channels/telegram/bot/{telegram['agent_token']}/getMe",
+                _telegram_bot_path(telegram, "getMe"),
+                headers=_telegram_agent_headers(telegram),
             )
             assert tg_me["ok"] is True
             assert tg_me["result"]["username"] == f"e2e_bot_{run_id}"
@@ -548,7 +564,8 @@ async def test_channels_native_backend_blackbox_e2e() -> None:
             tg_updates = await _request_json(
                 client,
                 "GET",
-                f"/v1/channels/telegram/bot/{telegram['agent_token']}/getUpdates",
+                _telegram_bot_path(telegram, "getUpdates"),
+                headers=_telegram_agent_headers(telegram),
                 params={"offset": 11, "timeout": 0},
             )
             assert tg_updates["ok"] is True

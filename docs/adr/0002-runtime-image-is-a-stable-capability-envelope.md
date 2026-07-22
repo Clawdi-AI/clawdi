@@ -66,7 +66,7 @@ For transparent egress:
 ## Cloud Hosted Authority
 
 The Hosted rollout writer selects an exact CLI package spec. Cloud validates
-and persists it, enforces the Cloud-owned `0.12.10-beta.55` minimum, fixes the
+and persists it, enforces the Cloud-owned `0.12.10-beta.57` minimum, fixes the
 package source and official registry, and owns the public manifest projection.
 Remote Hosted state cannot provide a floating package, installer URL, installer
 args, source, or registry. Bootstrap tgz input is fixture-only, while generic

@@ -67,6 +67,8 @@ from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
 from app.services.channels import (
     ChannelAgentContext,
+    channel_runtime_account_key,
+    channel_runtime_placeholder_token,
     decrypt_agent_link_token,
     encrypt_optional_token,
     extract_discord_routing_key,
@@ -489,6 +491,37 @@ async def _create_paired_telegram_channel(
     ).json()
     await _pair_telegram_chat(client, created=created, chat_id=chat_id, chat_type=chat_type)
     return created
+
+
+def _telegram_bot_path(
+    channel: dict[str, Any],
+    method: str,
+    *,
+    account_id: str | None = None,
+    slash_variant: bool = True,
+) -> str:
+    resolved_account_id = account_id or str(channel["id"])
+    routing_id = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_TELEGRAM,
+        channel_runtime_account_key(UUID(resolved_account_id)),
+    )
+    separator = "/" if slash_variant else ""
+    return f"/v1/channels/telegram/bot{separator}{routing_id}/{method}"
+
+
+def _telegram_agent_headers(
+    channel: dict[str, Any],
+    extra: dict[str, str] | None = None,
+) -> dict[str, str]:
+    return {**(extra or {}), "Authorization": f"Bearer {channel['agent_token']}"}
+
+
+def _telegram_file_path(channel: dict[str, Any], file_path: str) -> str:
+    routing_id = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_TELEGRAM,
+        channel_runtime_account_key(UUID(str(channel["id"]))),
+    )
+    return f"/v1/channels/telegram/file/bot/{routing_id}/{file_path}"
 
 
 async def _pair_telegram_chat(
@@ -2632,7 +2665,8 @@ async def test_telegram_bot_api_get_updates_reads_paired_inbox(client: httpx.Asy
     )
 
     updates = await client.get(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
         params={"offset": 2},
     )
 
@@ -2671,11 +2705,13 @@ async def test_telegram_bot_api_accepts_official_bot_path_shape(client: httpx.As
     )
 
     updates = await client.get(
-        f"/v1/channels/telegram/bot{created['agent_token']}/getUpdates",
+        _telegram_bot_path(created, "getUpdates", slash_variant=False),
+        headers=_telegram_agent_headers(created),
         params={"offset": 3},
     )
     delete_webhook = await client.post(
-        f"/v1/channels/telegram/bot{created['agent_token']}/deleteWebhook",
+        _telegram_bot_path(created, "deleteWebhook", slash_variant=False),
+        headers=_telegram_agent_headers(created),
     )
 
     assert updates.status_code == 200
@@ -2683,6 +2719,40 @@ async def test_telegram_bot_api_accepts_official_bot_path_shape(client: httpx.As
     assert updates.json()["result"][0]["message"]["text"] == "official path"
     assert delete_webhook.status_code == 200
     assert delete_webhook.json() == {"ok": True, "result": True}
+
+
+@pytest.mark.asyncio
+async def test_telegram_managed_bot_api_keeps_credential_out_of_loggable_path(
+    client: httpx.AsyncClient,
+):
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-managed-auth",
+        chat_id="334",
+    )
+    routing_id = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_TELEGRAM,
+        channel_runtime_account_key(UUID(created["id"])),
+    )
+    path = f"/v1/channels/telegram/bot{routing_id}/getUpdates"
+    headers = {"Authorization": f"Bearer {created['agent_token']}"}
+
+    response = await client.get(path, headers=headers)
+    missing_header = await client.get(path)
+    old_secret_path = f"/v1/channels/telegram/bot{created['agent_token']}/getUpdates"
+    rejected_old_secret_path = await client.get(old_secret_path)
+    mismatched_route = await client.get(
+        f"/v1/channels/telegram/bot{routing_id}x/getUpdates",
+        headers=headers,
+    )
+
+    assert created["agent_token"] not in path
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert missing_header.status_code == 401
+    assert created["agent_token"] in old_secret_path
+    assert rejected_old_secret_path.status_code == 401
+    assert mismatched_route.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -2758,11 +2828,13 @@ async def test_telegram_repair_moves_chat_to_new_agent_link(
     assert str(messages[0].bot_agent_link_id) == workspace_pair["agent_link_id"]
 
     default_updates = await client.get(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
         params={"offset": 103},
     )
     workspace_updates = await client.get(
-        f"/v1/channels/telegram/bot/{workspace_pair['agent_token']}/getUpdates",
+        _telegram_bot_path(workspace_pair, "getUpdates", account_id=created["id"]),
+        headers=_telegram_agent_headers(workspace_pair),
         params={"offset": 103},
     )
     assert default_updates.status_code == 200
@@ -2945,15 +3017,18 @@ async def test_telegram_same_provider_multiple_bots_are_account_scoped(
     await pair_and_post(second, 301, "second bot update")
 
     first_updates = await client.get(
-        f"/v1/channels/telegram/bot/{first['agent_token']}/getUpdates",
+        _telegram_bot_path(first, "getUpdates"),
+        headers=_telegram_agent_headers(first),
         params={"offset": 202},
     )
     second_updates = await client.get(
-        f"/v1/channels/telegram/bot/{second['agent_token']}/getUpdates",
+        _telegram_bot_path(second, "getUpdates"),
+        headers=_telegram_agent_headers(second),
         params={"offset": 302},
     )
     first_token_cannot_read_second_bot = await client.get(
-        f"/v1/channels/telegram/bot/{first['agent_token']}/getUpdates",
+        _telegram_bot_path(first, "getUpdates"),
+        headers=_telegram_agent_headers(first),
         params={"offset": 302},
     )
     assert first_updates.status_code == 200
@@ -2988,7 +3063,8 @@ async def test_telegram_bot_api_get_updates_empty_allowed_updates_delivers_all(
     )
 
     updates = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
         json={"offset": 2, "allowed_updates": []},
     )
 
@@ -3019,7 +3095,8 @@ async def test_telegram_webhook_synthesizes_bot_command_entities(
         },
     )
     updates = await client.get(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
         params={"offset": 3},
     )
 
@@ -3067,7 +3144,8 @@ async def test_telegram_bot_api_get_updates_allowed_updates_drains_filtered_rows
     )
 
     updates = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
         json={"offset": 2, "allowed_updates": ["callback_query"]},
     )
     filtered_message = (
@@ -3180,7 +3258,8 @@ async def test_telegram_bot_api_get_updates_long_poll_times_out_empty(
     )
 
     updates = await client.get(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates",
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
         params={"offset": 2, "timeout": 1},
     )
 
@@ -3200,10 +3279,13 @@ async def test_telegram_bot_api_set_webhook_conflicts_with_get_updates(
     ).json()
 
     set_webhook = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent.example/webhook", "secret_token": "agent-secret"},
     )
-    get_updates = await client.get(f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates")
+    get_updates = await client.get(
+        _telegram_bot_path(created, "getUpdates"), headers=_telegram_agent_headers(created)
+    )
 
     assert set_webhook.status_code == 200
     assert set_webhook.json() == {"ok": True, "result": True}
@@ -3230,14 +3312,17 @@ async def test_telegram_agent_webhook_is_scoped_to_agent_link(
         second_channel_agent,
     )
     set_workspace_webhook = await client.post(
-        f"/v1/channels/telegram/bot/{workspace_pair['agent_token']}/setWebhook",
+        _telegram_bot_path(workspace_pair, "setWebhook", account_id=created["id"]),
+        headers=_telegram_agent_headers(workspace_pair),
         json={"url": "https://agent.example/workspace-hook"},
     )
     default_get_updates = await client.get(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates"
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
     )
     workspace_get_updates = await client.get(
-        f"/v1/channels/telegram/bot/{workspace_pair['agent_token']}/getUpdates"
+        _telegram_bot_path(workspace_pair, "getUpdates", account_id=created["id"]),
+        headers=_telegram_agent_headers(workspace_pair),
     )
     inbound = await client.post(
         f"/v1/channels/telegram/{created['id']}/webhook",
@@ -3252,7 +3337,8 @@ async def test_telegram_agent_webhook_is_scoped_to_agent_link(
         },
     )
     default_updates = await client.get(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates"
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
     )
 
     assert set_workspace_webhook.status_code == 200
@@ -3296,7 +3382,8 @@ async def test_telegram_get_me_proxies_provider_bot_identity(
     ).json()
 
     response = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getMe",
+        _telegram_bot_path(created, "getMe"),
+        headers=_telegram_agent_headers(created),
         json={},
     )
 
@@ -3315,11 +3402,13 @@ async def test_telegram_set_webhook_rejects_private_targets(client: httpx.AsyncC
     ).json()
 
     missing_url = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={},
     )
     private_url = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://127.0.0.1/hook"},
     )
 
@@ -3357,7 +3446,8 @@ async def test_telegram_set_webhook_rejects_private_dns_targets(
     ).json()
 
     response = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent-hook.example/hook"},
     )
 
@@ -3482,15 +3572,18 @@ async def test_telegram_bot_profile_shadow_is_account_scoped(client: httpx.Async
     ).json()
 
     set_name = await client.post(
-        f"/v1/channels/telegram/bot/{account_a['agent_token']}/setMyName",
+        _telegram_bot_path(account_a, "setMyName"),
+        headers=_telegram_agent_headers(account_a),
         json={"name": "Tenant A Bot"},
     )
     get_a = await client.post(
-        f"/v1/channels/telegram/bot/{account_a['agent_token']}/getMyName",
+        _telegram_bot_path(account_a, "getMyName"),
+        headers=_telegram_agent_headers(account_a),
         json={},
     )
     get_b = await client.post(
-        f"/v1/channels/telegram/bot/{account_b['agent_token']}/getMyName",
+        _telegram_bot_path(account_b, "getMyName"),
+        headers=_telegram_agent_headers(account_b),
         json={},
     )
 
@@ -3512,15 +3605,18 @@ async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
     )
 
     set_commands = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={"commands": [{"command": "start", "description": "Start"}]},
     )
     get_commands = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        _telegram_bot_path(created, "getMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={},
     )
     wrong_scope = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        _telegram_bot_path(created, "getMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={"scope": {"type": "chat", "chat_id": 99}},
     )
 
@@ -3545,41 +3641,49 @@ async def test_telegram_bot_commands_preserve_scope_language_and_delete(
     )
 
     default_en = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={"commands": [{"command": "start", "description": "Start"}]},
     )
     default_es = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={
             "language_code": "es",
             "commands": [{"command": "start", "description": "Inicio"}],
         },
     )
     chat_scope = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={
             "scope": {"type": "chat", "chat_id": "42"},
             "commands": [{"command": "deploy", "description": "Deploy"}],
         },
     )
     get_default_en = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        _telegram_bot_path(created, "getMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={},
     )
     get_default_es = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        _telegram_bot_path(created, "getMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={"language_code": "es"},
     )
     get_chat_scope = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        _telegram_bot_path(created, "getMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={"scope": {"type": "chat", "chat_id": "42"}},
     )
     deleted_es = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/deleteMyCommands",
+        _telegram_bot_path(created, "deleteMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={"language_code": "es"},
     )
     get_deleted_es = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getMyCommands",
+        _telegram_bot_path(created, "getMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={"language_code": "es"},
     )
 
@@ -3629,7 +3733,8 @@ async def test_telegram_set_my_commands_fans_out_to_bound_chats(
     await _pair_telegram_chat(client, created=created, chat_id="99", update_id=4)
 
     response = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={"commands": [{"command": "start", "description": "Start"}]},
     )
 
@@ -3651,7 +3756,8 @@ async def test_telegram_set_my_commands_fans_out_to_bound_chats(
 
     _FakeProviderClient.calls = []
     private_scope = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={
             "commands": [{"command": "start", "description": "Start"}],
             "scope": {"type": "all_private_chats"},
@@ -3663,7 +3769,8 @@ async def test_telegram_set_my_commands_fans_out_to_bound_chats(
 
     _FakeProviderClient.calls = []
     group_scope = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={
             "commands": [{"command": "group", "description": "Group"}],
             "scope": {"type": "all_group_chats"},
@@ -3678,7 +3785,8 @@ async def test_telegram_set_my_commands_fans_out_to_bound_chats(
 
     _FakeProviderClient.calls = []
     admin_scope = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={
             "commands": [{"command": "admin", "description": "Admin"}],
             "scope": {"type": "all_chat_administrators"},
@@ -3715,7 +3823,8 @@ async def test_telegram_pairing_replays_stored_broad_scope_commands(
     ).json()
     commands = [{"command": "welcome", "description": "Say hi"}]
     stored = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setMyCommands",
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
         json={"commands": commands},
     )
     assert stored.status_code == 200
@@ -3771,15 +3880,18 @@ async def test_telegram_generic_bot_api_proxies_only_bound_chats(
     await _pair_telegram_chat(client, created=created, chat_id="99", update_id=2)
 
     edit = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/editMessageText",
+        _telegram_bot_path(created, "editMessageText"),
+        headers=_telegram_agent_headers(created),
         json={"chat_id": 42, "message_id": 1, "text": "edited"},
     )
     copy = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/copyMessage",
+        _telegram_bot_path(created, "copyMessage"),
+        headers=_telegram_agent_headers(created),
         json={"chat_id": 42, "from_chat_id": 99, "message_id": 1},
     )
     blocked_reply = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/sendMessage",
+        _telegram_bot_path(created, "sendMessage"),
+        headers=_telegram_agent_headers(created),
         json={
             "chat_id": 42,
             "text": "reply",
@@ -3787,7 +3899,8 @@ async def test_telegram_generic_bot_api_proxies_only_bound_chats(
         },
     )
     no_chat = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/answerInlineQuery",
+        _telegram_bot_path(created, "answerInlineQuery"),
+        headers=_telegram_agent_headers(created),
         json={"inline_query_id": "inline-1", "results": []},
     )
 
@@ -3817,7 +3930,8 @@ async def test_telegram_multipart_reply_parameters_are_scope_checked(
     )
 
     response = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/sendPhoto",
+        _telegram_bot_path(created, "sendPhoto"),
+        headers=_telegram_agent_headers(created),
         data={
             "chat_id": "42",
             "caption": "photo",
@@ -3847,7 +3961,8 @@ async def test_telegram_multipart_attach_refs_are_rewritten_before_proxy(
     )
 
     response = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/sendPhoto",
+        _telegram_bot_path(created, "sendPhoto"),
+        headers=_telegram_agent_headers(created),
         data={"chat_id": "42", "photo": "attach://photo_file"},
         files={"photo_file": ("photo.png", b"PNGDATA", "image/png")},
     )
@@ -3878,13 +3993,15 @@ async def test_telegram_send_methods_are_rate_limited(
 
     for index in range(5):
         response = await client.post(
-            f"/v1/channels/telegram/bot/{created['agent_token']}/sendMessage",
+            _telegram_bot_path(created, "sendMessage"),
+            headers=_telegram_agent_headers(created),
             json={"chat_id": 42, "text": f"msg{index}"},
         )
         assert response.status_code == 200
 
     limited = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/sendMessage",
+        _telegram_bot_path(created, "sendMessage"),
+        headers=_telegram_agent_headers(created),
         json={"chat_id": 42, "text": "overflow"},
     )
 
@@ -3914,15 +4031,19 @@ async def test_telegram_delete_webhook_drop_pending_updates(client: httpx.AsyncC
         },
     )
     await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent.example/webhook"},
     )
 
     deleted = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/deleteWebhook",
+        _telegram_bot_path(created, "deleteWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"drop_pending_updates": True},
     )
-    updates = await client.get(f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates")
+    updates = await client.get(
+        _telegram_bot_path(created, "getUpdates"), headers=_telegram_agent_headers(created)
+    )
 
     assert deleted.status_code == 200
     assert updates.status_code == 200
@@ -3941,12 +4062,13 @@ async def test_channel_request_parsing_rejects_malformed_json_and_non_object_bod
     )
 
     malformed = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getMe",
+        _telegram_bot_path(created, "getMe"),
+        headers=_telegram_agent_headers(created, {"content-type": "application/json"}),
         content=b"{",
-        headers={"content-type": "application/json"},
     )
     non_object = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getMe",
+        _telegram_bot_path(created, "getMe"),
+        headers=_telegram_agent_headers(created),
         json=[],
     )
 
@@ -3979,15 +4101,19 @@ async def test_channel_request_parsing_accepts_form_encoded_wire_values(
         },
     )
     await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent.example/webhook"},
     )
 
     deleted = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/deleteWebhook",
+        _telegram_bot_path(created, "deleteWebhook"),
+        headers=_telegram_agent_headers(created),
         data={"drop_pending_updates": "true"},
     )
-    updates = await client.get(f"/v1/channels/telegram/bot/{created['agent_token']}/getUpdates")
+    updates = await client.get(
+        _telegram_bot_path(created, "getUpdates"), headers=_telegram_agent_headers(created)
+    )
 
     assert deleted.status_code == 200
     assert updates.json() == {"ok": True, "result": []}
@@ -4010,7 +4136,8 @@ async def test_telegram_agent_webhook_success_acks_inbox(
         provider_token=None,
     )
     set_webhook = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent.example/agent-hook", "secret_token": "agent-secret"},
     )
 
@@ -4058,7 +4185,8 @@ async def test_telegram_agent_webhook_5xx_defers_ack_to_worker(
         provider_token=None,
     )
     await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent.example/agent-hook"},
     )
 
@@ -4113,7 +4241,8 @@ async def test_telegram_agent_webhook_inactive_link_records_debug_health(
         provider_token=None,
     )
     await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent.example/agent-hook"},
     )
     link = await db_session.get(ChannelBotAgentLink, UUID(created["agent_link_id"]))
@@ -4188,7 +4317,8 @@ async def test_telegram_agent_webhook_4xx_does_not_ack_inbox(
         provider_token=None,
     )
     set_webhook = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent.example/agent-hook", "secret_token": "agent-secret"},
     )
 
@@ -4254,7 +4384,8 @@ async def test_telegram_agent_webhook_revalidates_dns_at_delivery(
         provider_token=None,
     )
     set_webhook = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent-hook.example/agent-hook"},
     )
 
@@ -4299,7 +4430,8 @@ async def test_telegram_webhook_worker_retries_failed_agent_delivery(
         provider_token=None,
     )
     await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent.example/agent-hook", "secret_token": "agent-secret"},
     )
     await client.post(
@@ -4365,7 +4497,8 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
         chat_id="4202",
     )
     await client.post(
-        f"/v1/channels/telegram/bot/{webhook_channel['agent_token']}/setWebhook",
+        _telegram_bot_path(webhook_channel, "setWebhook"),
+        headers=_telegram_agent_headers(webhook_channel),
         json={"url": "https://agent.example/agent-hook"},
     )
 
@@ -4449,7 +4582,8 @@ async def test_telegram_webhook_worker_drops_expired_agent_delivery(
         provider_token=None,
     )
     await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/setWebhook",
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
         json={"url": "https://agent.example/agent-hook"},
     )
     await client.post(
@@ -4515,11 +4649,13 @@ async def test_telegram_callback_query_answer_requires_recorded_reference(
     )
 
     owned = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/answerCallbackQuery",
+        _telegram_bot_path(created, "answerCallbackQuery"),
+        headers=_telegram_agent_headers(created),
         json={"callback_query_id": "cb-1", "text": "ok"},
     )
     unowned = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/answerCallbackQuery",
+        _telegram_bot_path(created, "answerCallbackQuery"),
+        headers=_telegram_agent_headers(created),
         json={"callback_query_id": "cb-other", "text": "ok"},
     )
 
@@ -4544,6 +4680,11 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
         name="telegram-file-ref",
         chat_id="42",
     )
+    routing_id = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_TELEGRAM,
+        channel_runtime_account_key(UUID(created["id"])),
+    )
+    managed_headers = {"Authorization": f"Bearer {created['agent_token']}"}
     await client.post(
         f"/v1/channels/telegram/{created['id']}/webhook",
         headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
@@ -4558,11 +4699,13 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
     )
 
     get_file = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getFile",
+        f"/v1/channels/telegram/bot/{routing_id}/getFile",
+        headers=managed_headers,
         json={"file_id": "file_1"},
     )
     unowned_file = await client.post(
-        f"/v1/channels/telegram/bot/{created['agent_token']}/getFile",
+        f"/v1/channels/telegram/bot/{routing_id}/getFile",
+        headers=managed_headers,
         json={"file_id": "file_other"},
     )
     _reset_fake_provider_client(
@@ -4570,11 +4713,12 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
         content=b"telegram-file",
         headers={"content-type": "text/plain"},
     )
-    download = await client.get(
+    download_path = f"/v1/channels/telegram/file/bot/{routing_id}/photos/file_1.jpg"
+    unowned_download_path = f"/v1/channels/telegram/file/bot/{routing_id}/photos/other.jpg"
+    download = await client.get(download_path, headers=managed_headers)
+    unowned_download = await client.get(unowned_download_path, headers=managed_headers)
+    rejected_old_secret_path = await client.get(
         f"/v1/channels/telegram/file/bot/{created['agent_token']}/photos/file_1.jpg"
-    )
-    unowned_download = await client.get(
-        f"/v1/channels/telegram/file/bot/{created['agent_token']}/photos/other.jpg"
     )
 
     assert get_file.status_code == 200
@@ -4583,6 +4727,9 @@ async def test_telegram_get_file_records_path_and_download_is_scoped(
     assert unowned_file.json()["description"] == "Forbidden: file_id is not bound to this bot"
     assert download.status_code == 200
     assert download.text == "telegram-file"
+    assert created["agent_token"] not in download_path
+    assert created["agent_token"] not in unowned_download_path
+    assert rejected_old_secret_path.status_code == 401
     assert _FakeProviderClient.calls[0]["url"].endswith(
         "/file/bot123456:telegram-secret/photos/file_1.jpg"
     )

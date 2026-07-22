@@ -429,39 +429,43 @@ function buildManagedChannelEgressProfiles(
 	for (const link of links) {
 		const idSuffix = `${link.account.provider}-${link.accountKey}`;
 		if (link.account.provider === "telegram") {
-			profiles.push({
-				id: `native-${idSuffix}-managed`,
-				enabled: true,
-				kind: "http",
-				match: {
-					scheme: "https",
-					host: "api.telegram.org",
-					pathPrefix: "/bot",
-					path: {
-						type: "secretRefPrefix",
-						secretRef: link.placeholderSecretRef,
-						prefix: "/bot",
-						suffix: "/",
+			for (const route of [
+				{ id: `native-${idSuffix}-managed`, pathPrefix: "/bot" },
+				{ id: `native-${idSuffix}-file-managed`, pathPrefix: "/file/bot" },
+			] as const) {
+				profiles.push({
+					id: route.id,
+					enabled: true,
+					kind: "http",
+					match: {
+						scheme: "https",
+						host: "api.telegram.org",
+						pathPrefix: route.pathPrefix,
+						path: {
+							type: "secretRefPrefix",
+							secretRef: link.placeholderSecretRef,
+							prefix: route.pathPrefix,
+							suffix: "/",
+						},
+						headers: {},
+						query: {},
 					},
-					headers: {},
-					query: {},
-				},
-				rewrite: {
-					upstreamBaseUrl: `${baseUrl}/v1/channels/telegram`,
-					preservePath: true,
-					pathReplace: {
-						type: "secretRefPrefix",
-						secretRef: link.placeholderSecretRef,
-						replacementSecretRef: link.secretRef,
-						prefix: "/bot",
-						suffix: "/",
+					rewrite: {
+						upstreamBaseUrl: `${baseUrl}/v1/channels/telegram`,
+						preservePath: true,
+						setHeaders: {
+							authorization: {
+								type: "secretRef",
+								secretRef: link.secretRef,
+								prefix: "Bearer ",
+							},
+						},
 					},
-					setHeaders: {},
-				},
-				logging: { redactHeaders: ["authorization"], redactUrlPatterns: ["/bot[^/]+"] },
-				priority: 100,
-				owner: "clawdi-native-channels",
-			});
+					logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+					priority: 100,
+					owner: "clawdi-native-channels",
+				});
+			}
 		}
 		if (link.account.provider === "discord") {
 			profiles.push({
