@@ -418,9 +418,15 @@ class HostedRuntimeBridge(_StrictHostedWireModel):
 def validate_hosted_runtime_bridge(
     runtime: HostedRuntimeName,
     bridge: HostedRuntimeBridge | None,
+    *,
+    native_auth: bool = False,
 ) -> None:
     surfaces = bridge.surfaces if bridge is not None else []
-    if runtime == "openclaw" and not surfaces:
+    if native_auth:
+        if bridge is not None:
+            raise ValueError("v2 native runtime must not declare a bridge")
+        return
+    if not surfaces:
         return
     if len(surfaces) != 1:
         raise ValueError(f"{runtime} must declare exactly one bridge surface")
@@ -442,10 +448,68 @@ def validate_hosted_runtime_bridge(
         )
 
 
+class HostedHermesDashboardActivation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: Literal[True]
+    capability: Literal["hermes-basic-auth-v1"]
+
+
+class HostedHermesDashboardAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["password"]
+    provider: Literal["basic"]
+    username: str = Field(min_length=1, max_length=128)
+    passwordSecretRef: Literal["env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"]
+    sessionSecretRef: Literal["env://HERMES_DASHBOARD_BASIC_AUTH_SECRET"]
+    sessionTtlSeconds: int = Field(default=43_200, ge=60, le=604_800)
+    publicUrl: str = Field(min_length=1)
+    activation: HostedHermesDashboardActivation
+
+    @field_validator("publicUrl")
+    @classmethod
+    def _validate_https_url(cls, value: str) -> str:
+        try:
+            parsed = urlsplit(value)
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("must be an HTTPS URL") from exc
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("must be an HTTPS URL without credentials, query, or fragment")
+        return value
+
+
+class HostedOpenClawGatewayActivation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: Literal[True]
+    capability: Literal["openclaw-native-auth-v1"]
+
+
+class HostedOpenClawGatewayAuth(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["token"]
+    tokenRef: Literal["env://OPENCLAW_GATEWAY_TOKEN"]
+    deviceAuthRequired: Literal[True]
+    activation: HostedOpenClawGatewayActivation
+
+
 class HostedRuntimeSystem(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     openclawControlUiAllowedOrigins: list[str] | None = None
+    openclawControlUiBasePath: str | None = None
+    openclawGatewayAuth: HostedOpenClawGatewayAuth | None = None
+    hermesDashboardAuth: HostedHermesDashboardAuth | None = None
 
     @field_validator("openclawControlUiAllowedOrigins")
     @classmethod
@@ -453,6 +517,15 @@ class HostedRuntimeSystem(BaseModel):
         if value is None:
             return None
         return [_validate_http_origin(origin) for origin in value]
+
+    @field_validator("openclawControlUiBasePath")
+    @classmethod
+    def _validate_base_path(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not re.fullmatch(r"/(?:[^/?#]+(?:/[^/?#]+)*)?", value):
+            raise ValueError("must be an absolute URL path without query or fragment")
+        return value
 
 
 class HostedRuntimeInstall(BaseModel):

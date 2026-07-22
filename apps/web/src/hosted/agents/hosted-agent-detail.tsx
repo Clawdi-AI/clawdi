@@ -12,7 +12,6 @@ import {
 	Link2,
 	Link2Off,
 	type LucideIcon,
-	Maximize2,
 	MonitorPlay,
 	Plus,
 	QrCode,
@@ -54,23 +53,40 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
-	useCreateRuntimeUiRedemption,
 	useCreateTerminalSession,
 	useDeleteDeployment,
 	useDeploymentLifecycle,
+	useSetAgentAiProvider,
+	useSetAgentLanguageTimezone,
 } from "@/hosted/agents/deployment-hooks";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
-import { openRuntimeUiWithRedemption } from "@/hosted/agents/runtime-ui-redemption";
+import {
+	browserHermesPasswordUiCopy,
+	browserOpenClawNativeUiCopy,
+} from "@/hosted/agents/runtime-ui-copy";
+import {
+	type HermesUiCredentials,
+	hermesUiCredentials,
+	openClawUiUrl,
+} from "@/hosted/agents/runtime-ui-credentials";
+import { useBillingClient } from "@/hosted/billing/billing-client";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
+import { CopyButton } from "@/hosted/billing/components/copy-button";
 import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
 	HostedDeployment,
+	RebindAgentAiProviderRequest,
 } from "@/hosted/billing/contracts";
-import { LANGUAGE_OPTIONS } from "@/hosted/billing/deploy/language-timezone-controls";
+import {
+	LANGUAGE_OPTIONS,
+	LANGUAGE_SELECT_ITEMS,
+	supportedTimezones,
+	TimezoneCombobox,
+} from "@/hosted/billing/deploy/language-timezone-controls";
 import {
 	billingErrorDetail,
 	billingErrorNormalizer,
@@ -108,7 +124,6 @@ import {
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
 	resolvePerformancePlan,
-	resolveSubscriptionCreatePlanSlug,
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
@@ -132,9 +147,9 @@ import {
 } from "@/hosted/hosted-agent-resolution";
 import {
 	type HostedRuntime,
-	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
 	runtimeDisplayName,
+	runtimeUiAuthFlow,
 } from "@/hosted/runtimes";
 import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
@@ -150,9 +165,15 @@ import {
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
+	primaryModelRef,
 	primaryModelValue,
 	providerChoiceFromRef,
+	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
+import {
+	aiProviderRuntimeId,
+	buildAiProviderPoolBootstrap,
+} from "@/hosted/v2/ai-providers/runtime-bootstrap";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -172,7 +193,7 @@ import {
 } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { formatMemoryMib, formatModelLabel, formatShortDate } from "@/lib/format";
+import { formatModelLabel, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
@@ -235,6 +256,13 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Settings,
 	},
 };
+/** Map an AI provider's auth type to the deploy `ai_provider_auth_kind`. */
+function aiAuthKind(provider: { auth: { type: string } }): "api_key" | "codex_oauth" {
+	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
+		? "codex_oauth"
+		: "api_key";
+}
+
 function parseHostedAgentTab(value: AgentSectionId | string | null): HostedAgentTab | null {
 	if (!value) return null;
 	return HOSTED_AGENT_SECTION_IDS.includes(value as HostedAgentTab) &&
@@ -269,7 +297,7 @@ function RestartComputeAction({
 }) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = parseDeploymentStatus(deployment.status);
 	const canRestart = canRestartDeployment(status);
 	return (
 		<ConfirmAction
@@ -278,7 +306,7 @@ function RestartComputeAction({
 			confirmLabel={label}
 			onConfirm={() =>
 				runAction(async () => {
-					await lifecycle.mutateAsync({ id: deployment.resource.id, action: "restart" });
+					await lifecycle.mutateAsync({ deployment, action: "restart" });
 				})
 			}
 		>
@@ -300,13 +328,13 @@ function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
 	const runAction = useActionLock();
 	return (
 		<ConfirmAction
-			title={`Delete ${deploymentDisplayName(deployment.resource.spec.name)}?`}
+			title={`Delete ${deploymentDisplayName(deployment.name)}?`}
 			description={<p>The hosted agent is torn down. This can’t be undone.</p>}
 			confirmLabel="Delete compute"
 			destructive
 			onConfirm={() =>
 				runAction(async () => {
-					await deleteDeployment.mutateAsync(deployment.resource.id);
+					await deleteDeployment.mutateAsync(deployment);
 					await router.navigate({ href: "/" });
 				})
 			}
@@ -322,7 +350,7 @@ function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
 function StartComputeAction({ deployment }: { deployment: HostedDeployment }) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = parseDeploymentStatus(deployment.status);
 	const canStart = canStartDeployment(status);
 	return (
 		<Button
@@ -331,7 +359,7 @@ function StartComputeAction({ deployment }: { deployment: HostedDeployment }) {
 			disabled={lifecycle.isPending || !canStart}
 			onClick={() =>
 				void runAction(async () => {
-					await lifecycle.mutateAsync({ id: deployment.resource.id, action: "start" });
+					await lifecycle.mutateAsync({ deployment, action: "start" });
 				}).catch(() => undefined)
 			}
 		>
@@ -375,7 +403,8 @@ export function HostedAgentDetail({
 }) {
 	const api = useApi();
 	const router = useRouter();
-	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const ci = deployment.config_info;
+	const deploymentStatus = parseDeploymentStatus(deployment.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const cloudEnvironmentId = isCloudEnvId(environmentId);
 	const agentQuery = useQuery({
@@ -390,7 +419,7 @@ export function HostedAgentDetail({
 		refetchInterval: (query) =>
 			missingProjectionRefetchInterval(
 				query.state.error,
-				deployment.resource.status.summary_state,
+				deployment.status,
 				query.state.fetchFailureCount,
 			),
 		refetchIntervalInBackground: false,
@@ -402,9 +431,7 @@ export function HostedAgentDetail({
 		isPending: agentQuery.isPending,
 	});
 	const agent = projection.status === "resolved" ? projection.data : null;
-	const name = agent
-		? agentDisplayName(agent)
-		: deploymentDisplayName(deployment.resource.spec.name);
+	const name = agent ? agentDisplayName(agent) : deploymentDisplayName(deployment.name);
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
@@ -414,8 +441,12 @@ export function HostedAgentDetail({
 		section: activeTab,
 	});
 
-	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
+	const isPerformance = ci?.compute_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
+	const runtimeUiHeaderCopy =
+		runtime === "hermes"
+			? browserHermesPasswordUiCopy().viewCredentials
+			: browserOpenClawNativeUiCopy().openControlUi;
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const scopedSessionLink = (sessionId: string) => ({
 		to: "/agents/$id/sessions/$sessionId" as const,
@@ -450,16 +481,26 @@ export function HostedAgentDetail({
 				<Plus />
 				Install skills
 			</Button>
-		) : canOpenHostedRuntimeUi(deployment.resource.status.summary_state, consoleUrl) ? (
-			<RuntimeUiOpenButton
-				deployment={deployment}
-				label={runtimeBrowserUiLabel(runtime)}
-				variant="outline"
-				size="sm"
-			>
-				Open {runtimeBrowserUiLabel(runtime)}
-				<ExternalLink className="size-3.5" />
-			</RuntimeUiOpenButton>
+		) : canOpenHostedRuntimeUi(deployment.status, consoleUrl) ? (
+			runtime === "hermes" ? (
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					onClick={() => {
+						void router.navigate({
+							href: agentSectionHref(environmentId, "console", searchStr),
+						});
+					}}
+				>
+					{runtimeUiHeaderCopy}
+				</Button>
+			) : (
+				<OpenClawRuntimeUiButton deployment={deployment} endpointUrl={consoleUrl ?? ""}>
+					{runtimeUiHeaderCopy}
+					<ExternalLink className="size-3.5" />
+				</OpenClawRuntimeUiButton>
+			)
 		) : null;
 
 	return (
@@ -496,6 +537,7 @@ export function HostedAgentDetail({
 						<OverviewTab
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
+							runtime={runtime}
 							isPerformance={isPerformance}
 							showDeploymentActions={projection.status !== "resolved" || !deploymentRunning}
 							projectionAvailable={projection.status === "resolved"}
@@ -703,7 +745,7 @@ function RuntimeStatusValue({
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 }) {
-	const status = hostedRuntimeStatusView(deployment.resource.status, agent);
+	const status = hostedRuntimeStatusView(deployment, agent);
 	return (
 		<div className="flex min-w-0 flex-col gap-1">
 			<span
@@ -759,8 +801,8 @@ function OverviewFailedPanel({
 	deployment: HostedDeployment;
 	restartLabel?: string;
 }) {
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
-	const failureReason = deploymentFailureReason(deployment.resource.status);
+	const status = parseDeploymentStatus(deployment.status);
+	const failureReason = deploymentFailureReason(deployment);
 	if (failureReason) {
 		return (
 			<Alert data-hosted="true" variant="destructive">
@@ -805,6 +847,7 @@ function OverviewFailedPanel({
 function OverviewTab({
 	deployment,
 	agent,
+	runtime,
 	isPerformance,
 	showDeploymentActions,
 	projectionAvailable,
@@ -816,6 +859,7 @@ function OverviewTab({
 }: {
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
+	runtime: Runtime;
 	isPerformance: boolean;
 	showDeploymentActions: boolean;
 	projectionAvailable: boolean;
@@ -828,9 +872,13 @@ function OverviewTab({
 		params: { id: string; sessionId: string };
 	};
 }) {
-	const spec = deployment.resource.spec;
-	const model = spec.runtime_configuration.primary_model?.model || "Managed default";
-	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const ci = deployment.config_info;
+	const binding = ci?.ai_provider_bindings?.[runtime];
+	const model =
+		primaryModelValue(binding?.primary_model) ||
+		primaryModelValue(ci?.primary_model) ||
+		"Managed default";
+	const deploymentStatus = parseDeploymentStatus(deployment.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
@@ -852,7 +900,7 @@ function OverviewTab({
 				<StatCard label="Model" value={model} />
 				<StatCard
 					label="Resources"
-					value={`${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)}`}
+					value={ci ? `${ci.vcpu ?? "—"} vCPU · ${ci.ram_gb ?? "—"} GB` : "—"}
 				/>
 			</div>
 			<div>
@@ -886,7 +934,7 @@ function OverviewTab({
 }
 
 function OverviewDeploymentActions({ deployment }: { deployment: HostedDeployment }) {
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = parseDeploymentStatus(deployment.status);
 	const failed = status.kind === "failed";
 	return (
 		<SettingsSection
@@ -908,37 +956,61 @@ function OverviewDeploymentActions({ deployment }: { deployment: HostedDeploymen
 
 // ── Runtime UI ───────────────────────────────────────────────────────────────
 
-function RuntimeUiOpenButton({
+function openBlankRuntimeUiPopup(): Window | null {
+	const popup = window.open("about:blank", "_blank");
+	if (popup) popup.opener = null;
+	return popup;
+}
+
+function OpenClawRuntimeUiButton({
 	deployment,
-	label,
 	children,
+	endpointUrl,
 	className,
 	variant = "outline",
 	size = "sm",
 }: {
 	deployment: HostedDeployment;
-	label: string;
 	children: React.ReactNode;
+	endpointUrl: string;
 	className?: string;
 	variant?: React.ComponentProps<typeof Button>["variant"];
 	size?: React.ComponentProps<typeof Button>["size"];
 }) {
-	const redemption = useCreateRuntimeUiRedemption();
-	const openUi = useCallback(async () => {
-		try {
-			const result = await openRuntimeUiWithRedemption({
-				redeem: () => redemption.mutateAsync({ id: deployment.resource.id }),
-				openPopup: (url, target, features) => window.open(url, target, features),
+	const client = useBillingClient();
+	const [isOpening, setIsOpening] = useState(false);
+	const copy = browserOpenClawNativeUiCopy();
+	const openUi = useCallback(() => {
+		if (runtimeUiAuthFlow(deployment) !== "openclaw_device" || !endpointUrl) {
+			toast.error(copy.credentialErrorTitle, {
+				description: copy.credentialErrorDescription,
 			});
-			if (result === "blocked") {
-				toast.error("Couldn't open runtime UI", {
-					description: "Your browser blocked the new window.",
-				});
-			}
-		} catch {
-			// useCreateRuntimeUiRedemption owns the user-facing error toast.
+			return;
 		}
-	}, [deployment.resource.id, redemption.mutateAsync]);
+		const popup = openBlankRuntimeUiPopup();
+		if (!popup) {
+			toast.error(copy.popupBlockedTitle, {
+				description: copy.popupBlockedDescription,
+			});
+			return;
+		}
+		setIsOpening(true);
+		void (async () => {
+			try {
+				const credentials = await client.getRuntimeUiCredentials(deployment.id);
+				const url = openClawUiUrl(credentials, endpointUrl);
+				if (!url) throw new Error("OpenClaw credential target mismatch");
+				popup.location.replace(url);
+			} catch {
+				popup.close();
+				toast.error(copy.credentialErrorTitle, {
+					description: copy.credentialErrorDescription,
+				});
+			} finally {
+				setIsOpening(false);
+			}
+		})();
+	}, [client, copy, deployment, endpointUrl]);
 
 	return (
 		<Button
@@ -946,67 +1018,189 @@ function RuntimeUiOpenButton({
 			variant={variant}
 			size={size}
 			className={className}
-			disabled={redemption.isPending}
-			aria-label={`Open ${label}`}
-			onClick={() => void openUi()}
+			aria-label={copy.openControlUi}
+			disabled={isOpening}
+			onClick={openUi}
 		>
-			{redemption.isPending ? <Spinner className="size-3.5" /> : null}
+			{isOpening ? <Spinner className="size-3.5" /> : null}
 			{children}
 		</Button>
 	);
 }
 
+function HermesCredentialField({
+	id,
+	label,
+	value,
+	copyLabel,
+	copiedMessage,
+	manualCopyMessage,
+}: {
+	id: string;
+	label: string;
+	value: string;
+	copyLabel: string;
+	copiedMessage: string;
+	manualCopyMessage: string;
+}) {
+	return (
+		<div className="space-y-1.5 text-left">
+			<Label htmlFor={id}>{label}</Label>
+			<div className="flex items-center gap-1 rounded-md border border-input bg-background pr-1">
+				<Input
+					id={id}
+					className="border-0 font-mono shadow-none focus-visible:ring-0"
+					value={value}
+					readOnly
+					autoComplete="off"
+					spellCheck={false}
+					onFocus={(event) => event.currentTarget.select()}
+				/>
+				<CopyButton
+					value={value}
+					label={copyLabel}
+					toastMessage={copiedMessage}
+					errorToastMessage={manualCopyMessage}
+				/>
+			</div>
+		</div>
+	);
+}
+
+function HermesCredentialsPanel({
+	deployment,
+	endpointUrl,
+}: {
+	deployment: HostedDeployment;
+	endpointUrl: string;
+}) {
+	const client = useBillingClient();
+	const copy = browserHermesPasswordUiCopy();
+	const [credentials, setCredentials] = useState<HermesUiCredentials | null>(null);
+	const [isLoading, setIsLoading] = useState(false);
+	const [hasCredentialError, setHasCredentialError] = useState(false);
+	const requestGeneration = useRef(0);
+
+	const clearCredentials = useCallback(() => {
+		requestGeneration.current += 1;
+		setCredentials(null);
+		setHasCredentialError(false);
+		setIsLoading(false);
+	}, []);
+
+	useEffect(() => {
+		clearCredentials();
+		return () => {
+			requestGeneration.current += 1;
+		};
+	}, [clearCredentials, deployment.id, endpointUrl]);
+
+	const loadCredentials = useCallback(() => {
+		const generation = requestGeneration.current + 1;
+		requestGeneration.current = generation;
+		setCredentials(null);
+		setHasCredentialError(false);
+		setIsLoading(true);
+		void (async () => {
+			try {
+				const response = await client.getRuntimeUiCredentials(deployment.id);
+				const selected = hermesUiCredentials(response, endpointUrl);
+				if (!selected) throw new Error("Hermes credential target mismatch");
+				if (requestGeneration.current === generation) setCredentials(selected);
+			} catch {
+				if (requestGeneration.current === generation) setHasCredentialError(true);
+			} finally {
+				if (requestGeneration.current === generation) setIsLoading(false);
+			}
+		})();
+	}, [client, deployment.id, endpointUrl]);
+
+	const openHermes = useCallback(() => {
+		if (!credentials) return;
+		window.open(credentials.url, "_blank", "noopener,noreferrer");
+	}, [credentials]);
+
+	return (
+		<div className="w-full max-w-xl space-y-4">
+			<div className="space-y-2">
+				<h3 className="font-medium">{copy.title}</h3>
+				<p className="text-sm text-muted-foreground">{copy.description}</p>
+			</div>
+			{hasCredentialError ? (
+				<Alert variant="destructive" className="text-left">
+					<AlertCircle />
+					<AlertTitle>{copy.credentialErrorTitle}</AlertTitle>
+					<AlertDescription>{copy.credentialErrorDescription}</AlertDescription>
+				</Alert>
+			) : null}
+			{credentials ? (
+				<div className="space-y-4">
+					<HermesCredentialField
+						id={`hermes-username-${deployment.id}`}
+						label={copy.username}
+						value={credentials.username}
+						copyLabel={copy.copyUsername}
+						copiedMessage={copy.usernameCopied}
+						manualCopyMessage={copy.manualCopy}
+					/>
+					<HermesCredentialField
+						id={`hermes-password-${deployment.id}`}
+						label={copy.password}
+						value={credentials.password}
+						copyLabel={copy.copyPassword}
+						copiedMessage={copy.passwordCopied}
+						manualCopyMessage={copy.manualCopy}
+					/>
+					<div className="flex flex-wrap justify-center gap-2">
+						<Button type="button" onClick={openHermes}>
+							{copy.openDashboard}
+							<ExternalLink className="size-3.5" />
+						</Button>
+						<Button type="button" variant="outline" onClick={clearCredentials}>
+							{copy.hideCredentials}
+						</Button>
+					</div>
+				</div>
+			) : (
+				<Button type="button" variant="outline" disabled={isLoading} onClick={loadCredentials}>
+					{isLoading ? <Spinner className="size-3.5" /> : null}
+					{isLoading ? copy.loadingCredentials : copy.showCredentials}
+				</Button>
+			)}
+		</div>
+	);
+}
+
+function OpenClawPairingHelp() {
+	const copy = browserOpenClawNativeUiCopy();
+	return (
+		<div className="rounded-md border bg-muted/30 p-4 text-left text-sm">
+			<p className="font-medium">{copy.pairingTitle}</p>
+			<p className="mt-1 text-muted-foreground">{copy.pairingDescription}</p>
+			<div className="mt-3 space-y-1 font-mono text-xs">
+				<div>{copy.pairingListCommand}</div>
+				<div>{copy.pairingApproveCommand}</div>
+			</div>
+			<p className="mt-3 font-medium">{copy.pairingWarning}</p>
+		</div>
+	);
+}
+
 /**
  * Live agent browser UI embedded inline. The deployment's selected runtime UI
- * URL points at owner-only exposure. When the runtime
- * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
- * the full-screen link is the alternate path.
+ * URL points at owner-only exposure. Native runtime authentication is opened
+ * top-level because neither official browser flow is proven safe in an iframe.
  */
 function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = parseDeploymentStatus(deployment.status);
 	const isRunning = isRunningStatus(status);
 	const isProvisioning = isProvisioningStatus(status);
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
-	const canOpenRuntimeUi = canOpenHostedRuntimeUi(deployment.resource.status.summary_state, url);
-	const redemption = useCreateRuntimeUiRedemption();
-	const [frameUrl, setFrameUrl] = useState<string | null>(null);
-	const [frameError, setFrameError] = useState<Error | null>(null);
-	const [redemptionAttempt, setRedemptionAttempt] = useState(0);
-	const startedRedemptionRef = useRef<string | null>(null);
+	const authMode = runtimeUiAuthFlow(deployment);
 
-	useEffect(() => {
-		if (!canOpenRuntimeUi || !url) {
-			startedRedemptionRef.current = null;
-			setFrameUrl(null);
-			setFrameError(null);
-			return;
-		}
-		const attemptKey = `${deployment.resource.id}:${url}:${redemptionAttempt}`;
-		if (startedRedemptionRef.current === attemptKey) return;
-		startedRedemptionRef.current = attemptKey;
-		setFrameUrl(null);
-		setFrameError(null);
-		redemption
-			.mutateAsync({ id: deployment.resource.id })
-			.then((result) => {
-				if (startedRedemptionRef.current === attemptKey) setFrameUrl(result.url);
-			})
-			.catch((error: unknown) => {
-				if (startedRedemptionRef.current !== attemptKey) return;
-				setFrameError(error instanceof Error ? error : new Error("Runtime UI redemption failed"));
-			});
-	}, [canOpenRuntimeUi, deployment.resource.id, redemption.mutateAsync, redemptionAttempt, url]);
-
-	const retryRedemption = () => {
-		redemption.reset();
-		setFrameUrl(null);
-		setFrameError(null);
-		setRedemptionAttempt((attempt) => attempt + 1);
-	};
-
-	// Not running yet — the runtime UI and bridge only exist once the agent boots.
+	// Not running yet — the runtime UI is available only once the agent boots.
 	if (!isRunning) {
 		return (
 			<EmptyState
@@ -1033,67 +1227,43 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 		);
 	}
 
-	return (
-		<LiveToolFrame
-			icon={MonitorPlay}
-			title={browserUiLabel}
-			action={
-				<RuntimeUiOpenButton
-					deployment={deployment}
-					label={browserUiLabel}
-					variant="outline"
-					size="sm"
-					className="hidden sm:inline-flex"
-				>
-					Open full screen
-					<Maximize2 className="size-3.5" />
-				</RuntimeUiOpenButton>
-			}
-		>
-			{/* Desktop: embed the live UI. Mobile is too cramped, so offer the
-			    full-screen link instead. */}
-			{frameError ? (
-				<div className="flex min-h-[420px] flex-1 items-center justify-center p-6">
-					<div className="w-full max-w-xl">
-						<ApiErrorPanel
-							error={frameError}
-							onRetry={retryRedemption}
-							normalizer={billingErrorNormalizer}
-							title="Couldn't load Runtime UI"
-						/>
-					</div>
+	if (authMode === "password" || authMode === "openclaw_device") {
+		const openClawCopy = browserOpenClawNativeUiCopy();
+		return (
+			<LiveToolFrame
+				icon={MonitorPlay}
+				title={browserUiLabel}
+				action={
+					runtime === "openclaw" ? (
+						<OpenClawRuntimeUiButton deployment={deployment} endpointUrl={url}>
+							{openClawCopy.openControlUi}
+							<ExternalLink className="size-3.5" />
+						</OpenClawRuntimeUiButton>
+					) : null
+				}
+			>
+				<div className="flex min-h-[420px] flex-1 items-center justify-center p-6 text-center">
+					{runtime === "hermes" ? (
+						<HermesCredentialsPanel key={deployment.id} deployment={deployment} endpointUrl={url} />
+					) : (
+						<div className="w-full max-w-xl space-y-4">
+							<div className="space-y-2">
+								<h3 className="font-medium">{openClawCopy.title}</h3>
+								<p className="text-sm text-muted-foreground">{openClawCopy.description}</p>
+							</div>
+							<OpenClawRuntimeUiButton deployment={deployment} endpointUrl={url}>
+								{openClawCopy.openControlUi}
+								<ExternalLink className="size-3.5" />
+							</OpenClawRuntimeUiButton>
+							<OpenClawPairingHelp />
+						</div>
+					)}
 				</div>
-			) : frameUrl ? (
-				<iframe
-					key={`${runtime}:${frameUrl}`}
-					src={frameUrl}
-					title={browserUiLabel}
-					className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
-					allow="clipboard-read; clipboard-write"
-				/>
-			) : (
-				<div className="hidden min-h-0 flex-1 items-center justify-center bg-background sm:flex">
-					<Spinner className="size-4 text-muted-foreground" />
-				</div>
-			)}
-			{frameError ? null : (
-				<div className="flex min-h-[420px] flex-1 flex-col items-center justify-center gap-3 p-6 text-center sm:hidden">
-					<p className="text-sm text-muted-foreground">
-						This runtime UI is best viewed full screen on a small screen.
-					</p>
-					<RuntimeUiOpenButton
-						deployment={deployment}
-						label={browserUiLabel}
-						variant="outline"
-						size="sm"
-					>
-						Open {browserUiLabel}
-						<Maximize2 className="size-3.5" />
-					</RuntimeUiOpenButton>
-				</div>
-			)}
-		</LiveToolFrame>
-	);
+			</LiveToolFrame>
+		);
+	}
+
+	return <EmptyState icon={MonitorPlay} title="Runtime UI authentication is unavailable" />;
 }
 
 function runtimeBrowserUiLabel(runtime: Runtime): string {
@@ -1161,17 +1331,17 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 }
 
 function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = parseDeploymentStatus(deployment.status);
 	const isRunning = isRunningStatus(status);
 	const isProvisioning = isProvisioningStatus(status);
-	const label = deploymentDisplayName(deployment.resource.spec.name);
+	const label = deploymentDisplayName(deployment.name);
 	const terminal = useCreateTerminalSession();
 	const { isPending: isOpeningTerminal, mutateAsync: createTerminalSession } = terminal;
 	const [websocketUrl, setWebsocketUrl] = useState<string | null>(null);
 	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("disconnected");
 	const [terminalFailure, setTerminalFailure] = useState<string | null>(null);
 	const autoStartedDeploymentRef = useRef<string | null>(null);
-	const currentDeploymentIdRef = useRef(deployment.resource.id);
+	const currentDeploymentIdRef = useRef(deployment.id);
 	const terminalRequestRef = useRef(0);
 
 	const startTerminal = useCallback(async () => {
@@ -1181,7 +1351,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 		setTerminalFailure(null);
 		setTerminalStatus("connecting");
 		try {
-			const session = await createTerminalSession({ id: deployment.resource.id });
+			const session = await createTerminalSession({ id: deployment.id });
 			if (terminalRequestRef.current !== requestId) return;
 			if (!session.websocket_url) {
 				setTerminalStatus("disconnected");
@@ -1197,16 +1367,16 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 			setTerminalStatus("disconnected");
 			setTerminalFailure("Couldn't open terminal. Try again.");
 		}
-	}, [createTerminalSession, deployment.resource.id, isOpeningTerminal, isRunning]);
+	}, [createTerminalSession, deployment.id, isOpeningTerminal, isRunning]);
 
 	useEffect(() => {
-		if (currentDeploymentIdRef.current === deployment.resource.id) return;
-		currentDeploymentIdRef.current = deployment.resource.id;
+		if (currentDeploymentIdRef.current === deployment.id) return;
+		currentDeploymentIdRef.current = deployment.id;
 		autoStartedDeploymentRef.current = null;
 		setWebsocketUrl(null);
 		setTerminalFailure(null);
 		setTerminalStatus("disconnected");
-	}, [deployment.resource.id]);
+	}, [deployment.id]);
 
 	useEffect(() => {
 		if (isRunning) return;
@@ -1218,17 +1388,10 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 
 	useEffect(() => {
 		if (!isRunning || websocketUrl || isOpeningTerminal || terminalFailure) return;
-		if (autoStartedDeploymentRef.current === deployment.resource.id) return;
-		autoStartedDeploymentRef.current = deployment.resource.id;
+		if (autoStartedDeploymentRef.current === deployment.id) return;
+		autoStartedDeploymentRef.current = deployment.id;
 		void startTerminal();
-	}, [
-		deployment.resource.id,
-		isOpeningTerminal,
-		isRunning,
-		startTerminal,
-		terminalFailure,
-		websocketUrl,
-	]);
+	}, [deployment.id, isOpeningTerminal, isRunning, startTerminal, terminalFailure, websocketUrl]);
 
 	const handleTerminalStatusChange = useCallback((status: HostedTerminalStatus) => {
 		setTerminalStatus(status);
@@ -1373,6 +1536,14 @@ function agentChoiceFromProviderRef(
 	return unresolvedProviderChoice(providerRef);
 }
 
+function agentProviderRefFromChoice(
+	choice: string,
+	providers: readonly AiProvider[],
+): string | null {
+	if (isUnresolvedProviderChoice(choice)) return unresolvedProviderRef(choice);
+	return providerRefFromChoice(choice, providers);
+}
+
 function providerCatalogDescription(provider: AiProvider): string {
 	const count = provider.models?.length ?? 0;
 	if (count === 0) return provider.base_url.replace(/^https?:\/\//, "");
@@ -1388,36 +1559,31 @@ function AiProviderTab({
 	runtime: Runtime;
 }) {
 	const providers = useAiProviders();
-	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
+	const setProvider = useSetAgentAiProvider();
+	const ci = deployment.config_info;
 	const list = providers.data?.providers ?? [];
 	const customProviders = useMemo(
 		() => list.filter((provider) => !isFirstPartyManagedAiProvider(provider)),
 		[list],
 	);
 	// Selected-runtime binding: the deployment owns one runtime in the v2 model.
-	const configuredProviders = runtimeConfiguration.providers;
-	const configuredPrimaryModel = runtimeConfiguration.primary_model;
-	const primaryConfiguredProvider = configuredPrimaryModel
-		? configuredProviders.find(
-				(provider) => provider.provider_id === configuredPrimaryModel.provider_id,
-			)
-		: undefined;
-	const currentAuthKind = runtimeAiProviderAuthKind(deployment, runtime);
+	const binding = ci?.ai_provider_bindings?.[runtime];
+	const currentAuthKind = binding?.auth_kind ?? ci?.ai_provider_auth_kind ?? "managed";
 	const initialMode: AiBindingMode = currentAuthKind === "unmanaged" ? "unmanaged" : "configured";
 	const legacyProviderRef =
-		currentAuthKind === "unmanaged" ? null : (primaryConfiguredProvider?.provider_id ?? null);
+		currentAuthKind === "unmanaged" ? null : (binding?.provider_id ?? ci?.ai_provider_id ?? null);
 	const rawProviderRefs =
 		currentAuthKind === "unmanaged"
 			? []
-			: configuredProviders.length > 0
-				? configuredProviders.map((provider) => provider.provider_id)
+			: binding?.provider_ids && binding.provider_ids.length > 0
+				? binding.provider_ids
 				: legacyProviderRef
 					? [legacyProviderRef]
 					: [MANAGED_PROVIDER_ID];
 	const primaryProviderRef =
 		currentAuthKind === "unmanaged"
 			? MANAGED_PROVIDER_ID
-			: (primaryModelProviderId(configuredPrimaryModel) ??
+			: (primaryModelProviderId(binding?.primary_model) ??
 				legacyProviderRef ??
 				rawProviderRefs[0] ??
 				MANAGED_PROVIDER_ID);
@@ -1440,7 +1606,8 @@ function AiProviderTab({
 	const currentModel =
 		currentAuthKind === "unmanaged"
 			? ""
-			: primaryModelValue(configuredPrimaryModel) ||
+			: primaryModelValue(binding?.primary_model) ||
+				primaryModelValue(ci?.primary_model) ||
 				firstModelForProvider(initialPrimaryChoice, list);
 
 	const [selectedProviders, setSelectedProviders] = useState<string[]>(initialProviderChoices);
@@ -1524,12 +1691,83 @@ function AiProviderTab({
 		}
 	}
 
+	function apply() {
+		if (bindingMode === "unmanaged") {
+			const body: RebindAgentAiProviderRequest = { ai_provider_auth_kind: "unmanaged" };
+			setProvider.mutate(
+				{ deployment, body },
+				{
+					onSuccess: () =>
+						toast.success("Provider updated", {
+							description: "This runtime now expects provider setup inside the agent.",
+						}),
+				},
+			);
+			return;
+		}
+		const selectedChoices = normalizeSelectedProviderIds(selectedProviders, primaryProviderChoice);
+		const providerRefs = selectedChoices
+			.map((choice) => agentProviderRefFromChoice(choice, customProviders))
+			.filter((providerId): providerId is string => Boolean(providerId));
+		if (providerRefs.length !== selectedChoices.length) {
+			toast.error("Provider unavailable", {
+				description: "Refresh providers or choose Managed by Clawdi.",
+			});
+			return;
+		}
+		const primaryProviderRef =
+			agentProviderRefFromChoice(primaryProviderChoice, customProviders) ?? MANAGED_PROVIDER_ID;
+		const nextPrimaryModel = primaryModelRef(primaryProviderRef, primaryModel);
+		if (!nextPrimaryModel) {
+			toast.error("Primary model required", {
+				description: "Choose a catalog model or enter a model id.",
+			});
+			return;
+		}
+		const primaryProvider = customProviders.find(
+			(provider) => provider.provider_id === primaryProviderChoice,
+		);
+		const customSelectedProviders = selectedChoices
+			.filter((choice) => choice !== MANAGED_AI_CHOICE && !isUnresolvedProviderChoice(choice))
+			.map((choice) => customProviders.find((provider) => provider.provider_id === choice))
+			.filter((provider): provider is AiProvider => Boolean(provider));
+		const kind = primaryProvider ? aiAuthKind(primaryProvider) : "managed";
+		const body: RebindAgentAiProviderRequest = {
+			primary_model: nextPrimaryModel,
+			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
+			provider_ids: providerRefs,
+			ai_provider_auth_kind: kind,
+		};
+		if (customSelectedProviders.length > 0) {
+			const bootstrapSelectedProvider = primaryProvider ?? customSelectedProviders[0];
+			try {
+				body.ai_provider_bootstrap = buildAiProviderPoolBootstrap(
+					customSelectedProviders,
+					bootstrapSelectedProvider.provider_id,
+					aiAuthKind(bootstrapSelectedProvider),
+				);
+			} catch (error) {
+				toast.error("Provider unavailable", {
+					description:
+						error instanceof Error
+							? error.message
+							: "Refresh providers or choose Managed by Clawdi.",
+				});
+				return;
+			}
+		}
+		setProvider.mutate(
+			{ deployment, body },
+			{
+				onSuccess: () =>
+					toast.success("Provider updated", { description: "Updating the runtime…" }),
+			},
+		);
+	}
+
 	return (
 		<div className="flex flex-col gap-4">
-			<LiveNote>
-				Existing provider bindings are shown here. Choose providers in the deploy wizard while the
-				declarative update contract is being expanded.
-			</LiveNote>
+			<LiveNote>Provider changes apply to the running runtime — no restart.</LiveNote>
 
 			<div className="flex flex-col gap-2">
 				<button
@@ -1648,7 +1886,27 @@ function AiProviderTab({
 			)}
 
 			<div className="flex items-center gap-2">
-				<Button disabled>{dirty ? "Changes unavailable" : "No changes"}</Button>
+				<Button
+					onClick={apply}
+					disabled={
+						!dirty ||
+						setProvider.isPending ||
+						(bindingMode === "configured" &&
+							providers.isLoading &&
+							selectedProviders.some((choice) => choice !== MANAGED_AI_CHOICE)) ||
+						(bindingMode === "configured" &&
+							!!providers.error &&
+							selectedProviders.some(
+								(choice) => choice !== MANAGED_AI_CHOICE && !isUnresolvedProviderChoice(choice),
+							))
+					}
+				>
+					{setProvider.isPending ? <Spinner className="size-3.5" /> : null}
+					{setProvider.isPending ? "Applying live…" : "Apply changes"}
+				</Button>
+				{setProvider.isPending ? (
+					<span className="text-xs text-muted-foreground">Updating the runtime…</span>
+				) : null}
 			</div>
 
 			<p className="text-xs text-muted-foreground">
@@ -2075,29 +2333,112 @@ function LanguageTimezoneSettingsSection({
 	deployment: HostedDeployment;
 	runtime: Runtime;
 }) {
-	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
-	const configLanguage = runtimeConfiguration.language ?? "";
-	const configTimezone = runtimeConfiguration.timezone ?? "";
+	const setLanguageTimezone = useSetAgentLanguageTimezone();
+	const runAction = useActionLock();
+	const configLanguage = deployment.config_info?.language ?? "";
+	const configTimezone = deployment.config_info?.timezone ?? "";
+	const configIdentity = JSON.stringify([deployment.id, configLanguage, configTimezone]);
+	const [syncedIdentity, setSyncedIdentity] = useState(configIdentity);
+	const [savedLanguage, setSavedLanguage] = useState(configLanguage);
+	const [savedTimezone, setSavedTimezone] = useState(configTimezone);
+	const [language, setLanguage] = useState(configLanguage);
+	const [timezone, setTimezone] = useState(configTimezone);
+	if (configIdentity !== syncedIdentity) {
+		setSyncedIdentity(configIdentity);
+		setSavedLanguage(configLanguage);
+		setSavedTimezone(configTimezone);
+		setLanguage(configLanguage);
+		setTimezone(configTimezone);
+	}
+	const tzOptions = useMemo(() => {
+		const all = supportedTimezones();
+		if (timezone && !all.includes(timezone)) return [timezone, ...all];
+		return all;
+	}, [timezone]);
 	const runtimeLabel = runtimeDisplayName(runtime);
-	const languageLabel =
-		LANGUAGE_OPTIONS.find((option) => option.code === configLanguage)?.label ?? "Runtime default";
+	const dirty = language !== savedLanguage || timezone !== savedTimezone;
+	const canSave = dirty && !setLanguageTimezone.isPending;
+
+	async function saveLanguageTimezone() {
+		if (!canSave) return;
+		await setLanguageTimezone.mutateAsync({
+			deployment,
+			language,
+			timezone,
+		});
+		setSavedLanguage(language);
+		setSavedTimezone(timezone);
+	}
+
+	function resetLanguageTimezone() {
+		setLanguage(savedLanguage);
+		setTimezone(savedTimezone);
+	}
 
 	return (
 		<SettingsSection
 			title="Language & timezone"
-			description="Locale context configured for this hosted agent."
+			description="Set locale context for this hosted agent."
 		>
 			<div className="flex max-w-2xl flex-col gap-4">
-				<LiveNote>{`Current locale settings for ${runtimeLabel}. New settings are selected during deployment.`}</LiveNote>
+				<LiveNote>{`Changes apply live to ${runtimeLabel}.`}</LiveNote>
 				<div className="grid gap-4 sm:grid-cols-2">
-					<div className="rounded-lg border bg-muted/30 p-3">
-						<div className="text-xs text-muted-foreground">Language</div>
-						<div className="mt-1 text-sm font-medium">{languageLabel}</div>
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor="settings-agent-language">Language</Label>
+						<Select
+							items={LANGUAGE_SELECT_ITEMS}
+							value={language || "default"}
+							onValueChange={(value) => {
+								setLanguage(value === null || value === "default" ? "" : value);
+							}}
+						>
+							<SelectTrigger id="settings-agent-language">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="default">Default</SelectItem>
+								{LANGUAGE_OPTIONS.map((option) => (
+									<SelectItem key={option.code} value={option.code}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
-					<div className="rounded-lg border bg-muted/30 p-3">
-						<div className="text-xs text-muted-foreground">Timezone</div>
-						<div className="mt-1 text-sm font-medium">{configTimezone || "Runtime default"}</div>
-					</div>
+					{tzOptions.length > 0 ? (
+						<div className="flex flex-col gap-1.5">
+							<Label htmlFor="settings-agent-timezone">Timezone</Label>
+							<TimezoneCombobox
+								id="settings-agent-timezone"
+								value={timezone}
+								onValueChange={setTimezone}
+								options={tzOptions}
+							/>
+						</div>
+					) : null}
+				</div>
+				<div className="flex flex-wrap items-center gap-2">
+					<Button
+						type="button"
+						size="sm"
+						disabled={!canSave}
+						onClick={() => void runAction(saveLanguageTimezone).catch(() => undefined)}
+					>
+						{setLanguageTimezone.isPending ? <Spinner className="size-3.5" /> : null}
+						Save changes
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						disabled={!dirty || setLanguageTimezone.isPending}
+						onClick={resetLanguageTimezone}
+					>
+						Reset
+					</Button>
+					{setLanguageTimezone.isPending ? (
+						<span className="text-xs text-muted-foreground">Updating runtime settings…</span>
+					) : null}
 				</div>
 			</div>
 		</SettingsSection>
@@ -2118,35 +2459,32 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
 	const wallet = useWallet({
 		enabled:
-			deployment.commercial_display?.compute_subscription?.funding_source === "wallet" ||
+			deployment.compute_subscription?.funding_source === "wallet" ||
 			(hostedAccess.canUsePlanCBilling && planChangeOpen),
 	});
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
 	const checkoutReturnRef = useRef<string | null>(null);
-	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const deploymentStatus = parseDeploymentStatus(deployment.status);
 	const canStop = canStopDeployment(deploymentStatus);
 	const canStart = canStartDeployment(deploymentStatus);
 	const canRestart = canRestartDeployment(deploymentStatus);
 	const primaryLifecycleAction: "stop" | "start" = canStop ? "stop" : "start";
 	const canRunPrimaryLifecycleAction = canStop || canStart;
-	const fundingFact = deployment.commercial_display?.latest_funding_fact;
-	const rawComputePlanSlug = deployment.current_plan_slug;
-	const computePlanSlug =
-		rawComputePlanSlug === COMPUTE_BASIC_SLUG || rawComputePlanSlug === COMPUTE_PERFORMANCE_SLUG
-			? rawComputePlanSlug
-			: undefined;
-	const currentSubscription = deployment.commercial_display?.compute_subscription;
+	const computePlanSlug = deployment.config_info?.compute_plan_slug;
+	const currentSubscription = deployment.compute_subscription;
 	const fundingMode = computeFundingMode(computePlanSlug, currentSubscription);
 	const fundingSource = computeFundingSource(computePlanSlug, currentSubscription);
 	const isIncludedBasic = fundingMode === "included_basic";
 	const isPaidCompute = fundingMode === "subscription";
 	const isWalletFunded = fundingSource === "wallet";
-	const terminalFundingFact =
-		isIncludedBasic && fundingFact?.fact_kind === "funding_revoked" ? fundingFact : null;
-	const hasWalletFallback = terminalFundingFact?.funding_source === "wallet";
-	const hasTerminalFallback = terminalFundingFact !== null;
+	const terminalFundingEvent =
+		isIncludedBasic && deployment.last_funding_event?.type === "compute_subscription_fallback"
+			? deployment.last_funding_event
+			: null;
+	const hasWalletFallback = terminalFundingEvent?.funding_source === "wallet";
+	const hasTerminalFallback = terminalFundingEvent !== null;
 	const subscriptionId = computeSubscriptionId(currentSubscription);
 	const pendingPlanSlug = pendingComputePlanSlug(currentSubscription);
 	const tierLabel = computeTierLabel(computePlanSlug);
@@ -2212,13 +2550,18 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 		planChangeUnavailable === null;
 	const canStartNewSubscription =
 		hostedAccess.canUsePlanCBilling && hasTerminalFallback && !!(basicPlan || perfPlan);
-	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
-		terminalFundingFact?.prior_plan_slug,
-		{
-			basicAvailable: !!basicPlan,
-			performanceAvailable: !!perfPlan,
-		},
-	);
+	const preferredSubscriptionCreatePlanSlug =
+		hasTerminalFallback &&
+		(deployment.last_funding_event?.prior_plan_slug === COMPUTE_BASIC_SLUG ||
+			deployment.last_funding_event?.prior_plan_slug === COMPUTE_PERFORMANCE_SLUG)
+			? deployment.last_funding_event.prior_plan_slug
+			: COMPUTE_PERFORMANCE_SLUG;
+	const subscriptionCreatePlanSlug =
+		preferredSubscriptionCreatePlanSlug === COMPUTE_PERFORMANCE_SLUG && !perfPlan && basicPlan
+			? COMPUTE_BASIC_SLUG
+			: preferredSubscriptionCreatePlanSlug === COMPUTE_BASIC_SLUG && !basicPlan && perfPlan
+				? COMPUTE_PERFORMANCE_SLUG
+				: preferredSubscriptionCreatePlanSlug;
 	const upgradeUnavailableMessage = plans.isLoading
 		? "Checking Performance availability…"
 		: !hostedAccess.canUsePlanCBilling
@@ -2251,7 +2594,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				return;
 			}
 			const deploymentId = checkoutReturnDeploymentId(searchStr);
-			if (deploymentId && deploymentId !== deployment.resource.id) {
+			if (deploymentId && deploymentId !== deployment.id) {
 				void router.navigate({
 					href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
 					replace: true,
@@ -2262,7 +2605,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				description: "We checked your deployments, subscription, and wallet.",
 			});
 		});
-	}, [deployment.resource.id, refreshCheckoutReturn, router, searchStr]);
+	}, [deployment.id, refreshCheckoutReturn, router, searchStr]);
 	useEffect(() => {
 		if (hostedAccess.isLoading || hostedAccess.canUsePlanCBilling) return;
 		setSubscriptionCreateOpen(false);
@@ -2355,7 +2698,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			return;
 		}
 		try {
-			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.resource.id });
+			const res = await cancelSubscription.mutateAsync({ deployment_id: deployment.id });
 			toast.success("Subscription cancellation scheduled", {
 				description: res.current_period_end
 					? `Cancellation takes effect ${formatShortDate(
@@ -2374,7 +2717,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			return;
 		}
 		try {
-			await resumeSubscription.mutateAsync({ deployment_id: deployment.resource.id });
+			await resumeSubscription.mutateAsync({ deployment_id: deployment.id });
 			toast.success("Subscription resumed");
 		} catch (error) {
 			toast.error("Couldn’t resume subscription", { description: normalizeBillingError(error) });
@@ -2382,11 +2725,11 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	}
 
 	async function runLifecycleAction(action: "restart" | "stop" | "start") {
-		await lifecycle.mutateAsync({ id: deployment.resource.id, action });
+		await lifecycle.mutateAsync({ deployment, action });
 	}
 
 	async function deleteCompute() {
-		await del.mutateAsync(deployment.resource.id);
+		await del.mutateAsync(deployment);
 		await router.navigate({ href: "/" });
 	}
 
@@ -2409,7 +2752,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 					open={subscriptionCreateOpen}
 					onOpenChange={setSubscriptionCreateOpen}
 					plans={plans.data ?? []}
-					deploymentId={deployment.resource.id}
+					deploymentId={deployment.id}
 					initialPlanSlug={subscriptionCreatePlanSlug}
 					initialBillingTermMonths={currentBillingTerm}
 				/>
@@ -2680,7 +3023,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 						</p>
 					</div>
 					<ConfirmAction
-						title={`Delete ${deploymentDisplayName(deployment.resource.spec.name)}?`}
+						title={`Delete ${deploymentDisplayName(deployment.name)}?`}
 						description={<p>The hosted agent is torn down. This can’t be undone.</p>}
 						confirmLabel="Delete compute"
 						destructive

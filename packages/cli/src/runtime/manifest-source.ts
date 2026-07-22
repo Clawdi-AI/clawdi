@@ -16,9 +16,9 @@ import {
 	type HostedRuntimeManifest,
 	hostedCliPayloadPolicySchema,
 	hostedFixtureCliPayloadPolicySchema,
+	hostedRuntimeBundleV2ManifestSchema,
 	hostedRuntimeManifestFixtureResponseSchema,
 	hostedRuntimeManifestResponseSchema,
-	hostedRuntimeManifestSchema,
 	manifestSchema,
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
@@ -65,7 +65,7 @@ const hostedRuntimeBundleV2Schema = z
 	.object({
 		schemaVersion: z.literal("clawdi.hosted-runtime.bundle.v2"),
 		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
-		manifest: hostedRuntimeManifestSchema,
+		manifest: hostedRuntimeBundleV2ManifestSchema,
 		channelBindings: z.array(runtimeBundleChannelBindingSchema),
 		secretValues: z.record(z.string(), z.string()),
 	})
@@ -90,13 +90,23 @@ const hostedRuntimeBundleV2Schema = z
 export function normalizeHostedRuntimeBundleV2(value: unknown): RuntimeManifestLoad {
 	const bundle = hostedRuntimeBundleV2Schema.parse(value);
 	return {
-		manifest: hostedManifestToRuntimeManifest(bundle.manifest),
+		manifest: markHostedRuntimeBundleV2(hostedManifestToRuntimeManifest(bundle.manifest)),
 		source: "remote-datasource",
 		sourcePath: "https://fixture.invalid/v1/runtime/manifest",
 		offline: false,
 		secretValues: normalizeSecretValues(bundle.secretValues),
 		channelBindings: bundle.channelBindings,
 		sourceRevision: bundle.sourceRevision,
+	};
+}
+
+function markHostedRuntimeBundleV2(manifest: RuntimeManifest): RuntimeManifest {
+	return {
+		...manifest,
+		projection: {
+			...(manifest.projection ?? {}),
+			sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+		},
 	};
 }
 
@@ -239,7 +249,7 @@ function normalizeRemoteManifestPayload(
 	if (paths.mode !== "hosted") return normalizeManifestPayload(value);
 	const hostedResponse = hostedRuntimeBundleV2Schema.parse(value);
 	return {
-		manifest: hostedManifestToRuntimeManifest(hostedResponse.manifest),
+		manifest: markHostedRuntimeBundleV2(hostedManifestToRuntimeManifest(hostedResponse.manifest)),
 		secretValues: normalizeSecretValues(hostedResponse.secretValues),
 		channelBindings: hostedResponse.channelBindings,
 		sourceRevision: hostedResponse.sourceRevision,
@@ -514,6 +524,8 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 			},
 		},
 		bridge: hosted.bridge,
+		openclawGatewayAuth: hosted.system.openclawGatewayAuth,
+		hermesDashboardAuth: hosted.system.hermesDashboardAuth,
 		projection: {
 			sourceSchemaVersion: hosted.schemaVersion,
 			system: hosted.system,
@@ -621,7 +633,12 @@ function validateManifestSemantics(
 			errors.push(`manifest runtime ${runtime} must be enabled`);
 		}
 		const surfaces = manifest.bridge?.surfaces ?? [];
-		if (runtime === "openclaw" && surfaces.length > 0) {
+		const isHostedV2 =
+			trustDomain !== "generic" &&
+			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+		if (isHostedV2 && manifest.bridge !== undefined) {
+			errors.push("Hosted runtime manifest v2 must not declare a bridge");
+		} else if (runtime === "openclaw" && surfaces.length > 0) {
 			const surface = surfaces[0];
 			if (
 				surfaces.length !== 1 ||
@@ -635,7 +652,97 @@ function validateManifestSemantics(
 				errors.push("openclaw bridge surface must be openclaw control-ui 28789 -> 127.0.0.1:18789");
 			}
 		}
-		if (runtime === "hermes") {
+		if (runtime === "openclaw" && isHostedV2) {
+			const auth = manifest.openclawGatewayAuth;
+			if (!auth) {
+				errors.push(
+					"OpenClaw v2 native Control UI requires official gateway token and device authentication",
+				);
+			}
+			if (auth?.activation.enabled !== true) {
+				errors.push("OpenClaw native auth activation must be explicitly enabled");
+			}
+			const system = manifest.projection?.system;
+			const origins =
+				typeof system === "object" && system !== null && !Array.isArray(system)
+					? (system as Record<string, unknown>).openclawControlUiAllowedOrigins
+					: null;
+			if (!Array.isArray(origins) || origins.length === 0) {
+				errors.push("OpenClaw v2 native Control UI requires an explicit public allowed origin");
+			}
+			const run = manifest.runtimes.openclaw?.run;
+			if (
+				JSON.stringify(run?.args) !==
+				JSON.stringify([
+					"gateway",
+					"run",
+					"--allow-unconfigured",
+					"--port",
+					"18789",
+					"--bind",
+					"lan",
+					"--force",
+				])
+			) {
+				errors.push("OpenClaw v2 gateway must bind directly to the pod network on port 18789");
+			}
+			if (run?.secretEnv?.OPENCLAW_GATEWAY_TOKEN !== auth?.tokenRef) {
+				errors.push("OpenClaw v2 gateway token must use the declared environment secret reference");
+			}
+			if (run?.env?.OPENCLAW_GATEWAY_TOKEN !== undefined) {
+				errors.push("OpenClaw v2 gateway token must not be embedded in manifest env");
+			}
+			for (const source of ["env", "secretEnv"] as const) {
+				for (const envName of Object.keys(run?.[source] ?? {})) {
+					if (envName.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
+						errors.push("OpenClaw v2 native Control UI must not receive bridge environment");
+					}
+				}
+			}
+			for (const service of Object.values(manifest.runtimes.openclaw?.services ?? {})) {
+				for (const source of ["env", "secretEnv"] as const) {
+					for (const envName of Object.keys(service[source] ?? {})) {
+						if (envName === "OPENCLAW_GATEWAY_TOKEN") {
+							errors.push("OpenClaw v2 gateway token must be scoped to the gateway run secretEnv");
+						}
+						if (envName.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
+							errors.push("OpenClaw v2 native Control UI must not receive bridge environment");
+						}
+					}
+				}
+			}
+			for (const provider of Object.values(manifest.projection?.providers ?? {})) {
+				if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
+				const envName = (provider as Record<string, unknown>).runtimeEnvName;
+				if (
+					envName === "OPENCLAW_GATEWAY_TOKEN" ||
+					(typeof envName === "string" && envName.startsWith("CLAWDI_RUNTIME_BRIDGE_"))
+				) {
+					errors.push(
+						"OpenClaw v2 provider environment must not target native auth or bridge controls",
+					);
+				}
+			}
+		}
+		if (runtime === "hermes" && isHostedV2) {
+			if (surfaces.length > 0)
+				errors.push("hermes direct dashboard must not declare bridge surfaces");
+			if (!manifest.hermesDashboardAuth) {
+				errors.push("hermes direct dashboard requires official password authentication");
+			}
+			if (manifest.hermesDashboardAuth?.activation.enabled !== true) {
+				errors.push("hermes password authentication must be explicitly enabled");
+			}
+			if (manifest.openclawGatewayAuth) {
+				errors.push("OpenClaw gateway auth is only valid for the OpenClaw runtime");
+			}
+			if (
+				JSON.stringify(manifest.runtimes.hermes?.services.dashboard?.args) !==
+				JSON.stringify(["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"])
+			) {
+				errors.push("hermes dashboard must bind directly to 0.0.0.0:9119");
+			}
+		} else if (runtime === "hermes") {
 			const surface = surfaces[0];
 			if (
 				surfaces.length !== 1 ||

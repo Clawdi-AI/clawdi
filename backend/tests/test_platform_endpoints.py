@@ -28,6 +28,19 @@ _ADMIN_AUTH = {"X-Admin-Key": _ADMIN_KEY}
 _TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
 _TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
 _TEST_SYSTEM = {}
+_TEST_HERMES_DASHBOARD_AUTH = {
+    "mode": "password",
+    "provider": "basic",
+    "username": "admin",
+    "passwordSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+    "sessionSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+    "sessionTtlSeconds": 43_200,
+    "publicUrl": "https://agent.example.test/hermes",
+    "activation": {
+        "enabled": True,
+        "capability": "hermes-basic-auth-v1",
+    },
+}
 _TEST_TOOLS = {
     "codex": {
         "enabled": True,
@@ -445,16 +458,22 @@ async def test_platform_runtime_only_state_is_explicitly_unmanaged(
     runtime.update({"providerMode": "unmanaged", "provider_ids": []})
     body["runtimes"] = {runtime_name: runtime}
     if runtime_name == "hermes":
-        body["bridge"] = {
-            "surfaces": [
-                {
-                    "name": "hermes",
-                    "kind": "control-ui",
-                    "listenPort": 28793,
-                    "upstreamHost": "127.0.0.1",
-                    "upstreamPort": 9119,
-                }
-            ]
+        runtime["services"] = {
+            "dashboard": {
+                "args": [
+                    "dashboard",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "9119",
+                    "--no-open",
+                ]
+            }
+        }
+        body["system"] = {"hermesDashboardAuth": _TEST_HERMES_DASHBOARD_AUTH}
+        body["live_sync"] = {
+            "enabled": True,
+            "agents": [{"agentType": "hermes", "environmentId": str(agent_id)}],
         }
 
     response = await platform_client.put(
@@ -471,6 +490,8 @@ async def test_platform_runtime_only_state_is_explicitly_unmanaged(
     assert persisted_runtime["provider_ids"] == []
     assert "primary_model" not in persisted_runtime
     assert state.tools == _TEST_TOOLS
+    if runtime_name == "hermes":
+        assert state.bridge is None
 
 
 @pytest.mark.asyncio

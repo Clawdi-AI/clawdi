@@ -67,7 +67,10 @@ import {
 	DEFAULT_DEPLOY_RUNTIME,
 	type DeployWizardAiAccessMode,
 } from "@/hosted/billing/deploy/deploy-defaults";
-import { resolveBasicDeploySelection } from "@/hosted/billing/deploy/deploy-model";
+import {
+	resolveBasicDeploySelection,
+	usesActiveIncludedBasicSlot,
+} from "@/hosted/billing/deploy/deploy-model";
 import {
 	buildHostedDeployRequest,
 	type DeployAiFields,
@@ -97,6 +100,7 @@ import {
 	checkoutReturnMarker,
 	checkoutReturnWasCanceled,
 	useCheckoutReturnRefresh,
+	useCreateDeployment,
 	useCreateSubscription,
 	useHostedDeployments,
 	usePlans,
@@ -293,6 +297,9 @@ function ChannelInfoTile({ channel }: { channel: ChannelAccount }) {
 
 interface ComputeStatusInput {
 	compute: Compute;
+	includedSlotPending: boolean;
+	includedSlotUsed: boolean;
+	deploymentsError: unknown;
 	basicSelection: ReturnType<typeof resolveBasicDeploySelection>;
 	basicOffer: BillingOffer | null;
 	perfOffer: BillingOffer | null;
@@ -334,12 +341,21 @@ function DeploySectionSkeleton({ columns = 2 }: { columns?: 2 | 3 }) {
 
 function computeStatusLine({
 	compute,
+	includedSlotPending,
+	includedSlotUsed,
+	deploymentsError,
 	basicSelection,
 	basicOffer,
 	perfOffer,
 	paymentMethod,
 }: ComputeStatusInput): { message: string; tone: "destructive" | "muted" } | null {
 	if (compute === "basic") {
+		if (deploymentsError) {
+			return {
+				tone: "destructive",
+				message: "Couldn’t verify your included Basic slot. Retry this page before deploying.",
+			};
+		}
 		if (basicSelection.mode === "unavailable") {
 			return {
 				tone: "destructive",
@@ -349,16 +365,25 @@ function computeStatusLine({
 						: "The Basic plan isn’t available from the billing service. Retry plans before deploying.",
 			};
 		}
-		if (basicOffer) {
+		if (includedSlotPending) {
+			return {
+				tone: "muted",
+				message: "Checking whether your included Basic slot is available before deployment.",
+			};
+		}
+		if (includedSlotUsed && basicOffer) {
 			return {
 				tone: "muted",
 				message:
 					paymentMethod === "wallet"
-						? `Wallet funds this Basic agent at ${recurringOfferLabel(basicOffer)}.`
-						: `Checkout opens here for this Basic agent at ${recurringOfferLabel(basicOffer)}.`,
+						? `Your included Basic slot is in use. Wallet funds this additional Basic agent at ${recurringOfferLabel(basicOffer)}.`
+						: `Your included Basic slot is in use. Checkout opens here for an additional Basic agent at ${recurringOfferLabel(basicOffer)}.`,
 			};
 		}
-		return null;
+		return {
+			tone: "muted",
+			message: "Your first active Basic agent is free. This deployment won’t open checkout.",
+		};
 	}
 	if (paymentMethod === "wallet") {
 		return {
@@ -391,12 +416,14 @@ export function DeployWizard() {
 	const deployments = useHostedDeployments();
 	const aiProviders = useAiProviders();
 	const channels = useChannels();
+	const createDeployment = useCreateDeployment();
 	const createSubscription = useCreateSubscription();
 	const resolveDeploymentRequest = useResolveDeploymentRequest();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const runAction = useActionLock();
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const deployAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const checkoutReturnRef = useRef<string | null>(null);
 	const createdProviderGuardRef = useRef<{ providerId: string; dataUpdatedAt: number } | null>(
 		null,
@@ -443,6 +470,8 @@ export function DeployWizard() {
 
 	const basicPlan = resolveBasicPlan(plans.data);
 	const perfPlan = resolvePerformancePlan(plans.data);
+	const includedSlotUsed = usesActiveIncludedBasicSlot(deployments.data);
+	const includedSlotPending = deployments.isLoading;
 	const basicOfferSelection = useMemo(
 		() => (basicPlan ? selectExplicitOfferForTerm(basicPlan, term) : null),
 		[basicPlan, term],
@@ -450,10 +479,11 @@ export function DeployWizard() {
 	const basicSelection = useMemo(
 		() =>
 			resolveBasicDeploySelection({
+				includedSlotUsed,
 				basicPlan,
 				billingTermMonths: term,
 			}),
-		[basicPlan, term],
+		[basicPlan, includedSlotUsed, term],
 	);
 	const perfOfferSelection = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
@@ -504,7 +534,8 @@ export function DeployWizard() {
 	const walletDebit = subscriptionCreateQuote.data?.walletDebit ?? null;
 	const walletShortfallCredits = walletDebitShortfallCredits(walletDebit);
 	const walletInsufficient = walletShortfallCredits !== null;
-	const basicUnavailable = basicSelection.mode === "unavailable";
+	const basicUnavailable =
+		includedSlotPending || !!deployments.error || basicSelection.mode === "unavailable";
 
 	const providerList = useMemo(
 		() =>
@@ -569,12 +600,17 @@ export function DeployWizard() {
 	}, [compute, plans.isSuccess, perfPlan]);
 
 	useEffect(() => {
-		const selectedOffer = compute === "performance" ? perfOfferSelection : basicOfferSelection;
+		const selectedOffer =
+			compute === "performance"
+				? perfOfferSelection
+				: includedSlotUsed
+					? basicOfferSelection
+					: null;
 		if (!selectedOffer || term === selectedOffer.billingTermMonths) {
 			return;
 		}
 		setTerm(selectedOffer.billingTermMonths);
-	}, [basicOfferSelection, compute, perfOfferSelection, term]);
+	}, [basicOfferSelection, compute, includedSlotUsed, perfOfferSelection, term]);
 
 	useEffect(() => {
 		if (paymentMethod === "wallet" && walletDisabledReason) setPaymentMethod("card");
@@ -810,9 +846,19 @@ export function DeployWizard() {
 		deploymentId: string | null | undefined,
 		deployRequestId: string | null | undefined,
 	): Promise<string | null> {
-		if (!deployRequestId) return deploymentId ?? null;
-		const resolved = await resolveDeploymentRequest.mutateAsync(deployRequestId);
-		return resolved.deploymentId || deploymentId || null;
+		if (deploymentId) return deploymentId;
+		if (!deployRequestId) return null;
+		for (let attempt = 0; attempt < 8; attempt += 1) {
+			const status = await resolveDeploymentRequest.mutateAsync(deployRequestId);
+			if (status.lineage_tail?.deployment_id) return status.lineage_tail.deployment_id;
+			if (status.request_status === "failed" || status.request_status === "expired") {
+				return null;
+			}
+			if (attempt < 7) {
+				await new Promise((resolve) => setTimeout(resolve, 500));
+			}
+		}
+		return null;
 	}
 
 	async function fallbackToHostedCheckout(request: SubscriptionCreateRequestView) {
@@ -852,32 +898,8 @@ export function DeployWizard() {
 	async function handleCheckoutComplete(
 		previousDeploymentIds: readonly string[],
 		tierLabel: "Basic" | "Performance",
-		request: SubscriptionCreateRequestView | null,
 	) {
 		setCheckoutSession(null);
-		let requestFingerprint: string | null = null;
-		if (request) {
-			requestFingerprint = idempotencyFingerprint({
-				selection: request.selection,
-				target: request.target,
-			});
-			try {
-				const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
-				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
-				checkoutAttemptRef.current = null;
-				toast.success("Deployment ready", {
-					description: `Your ${tierLabel} agent finished provisioning.`,
-				});
-				void router.navigate({
-					href: agentSectionHref(resolved.deploymentId, "overview", "source=on-clawdi"),
-					replace: true,
-				});
-				return;
-			} catch {
-				// Stripe may complete before its deploy request is visible. Fall back
-				// to the inventory refresh path and let normal polling pick it up.
-			}
-		}
 		let refreshedDeployments: Awaited<ReturnType<typeof refreshCheckoutReturn>>;
 		try {
 			refreshedDeployments = await refreshCheckoutReturn();
@@ -889,10 +911,6 @@ export function DeployWizard() {
 		}
 		const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
 		if (deploymentId) {
-			if (requestFingerprint) {
-				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
-				checkoutAttemptRef.current = null;
-			}
 			toast.success("Checkout complete", {
 				description: `Your ${tierLabel} deployment is provisioning now.`,
 			});
@@ -956,14 +974,14 @@ export function DeployWizard() {
 					if (outcome.flowType !== "subscription_activation") {
 						throw new Error("Wallet subscription returned a checkout flow.");
 					}
-					const deploymentId = await resolveWalletDeploymentId(
-						outcome.deploymentId,
-						outcome.deployRequestId ?? attempt.key,
-					);
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
 					walletCreateAttemptRef.current = null;
+					const deploymentId = await resolveWalletDeploymentId(
+						outcome.deploymentId,
+						outcome.deployRequestId,
+					);
 					if (deploymentId) {
-						toast.success("Agent deployed", {
+						toast.success("Deploying your agent", {
 							description: `${formatCents(walletDebit?.exactDebitCents ?? paidSelection.offer.price_cents)} was paid with AI Credits.`,
 						});
 						void router.navigate({
@@ -1006,9 +1024,7 @@ export function DeployWizard() {
 				if (hasCheckoutClientSecret(result)) {
 					setCheckoutSession({
 						clientSecret: result.client_secret,
-						previousDeploymentIds: (deployments.data ?? []).map(
-							(deployment) => deployment.resource.id,
-						),
+						previousDeploymentIds: (deployments.data ?? []).map((deployment) => deployment.id),
 						request: {
 							selection,
 							target,
@@ -1032,6 +1048,34 @@ export function DeployWizard() {
 				});
 				return;
 			}
+			if (compute !== "basic" || basicSelection.mode !== "direct") return;
+			const deployConfig = buildDeployRequest(aiFields, COMPUTE_BASIC_SLUG);
+			const deployFingerprint = idempotencyFingerprint(deployConfig);
+
+			deployAttemptRef.current = idempotencyAttemptFor(
+				deployAttemptRef.current,
+				"deploy",
+				deployFingerprint,
+				newIdempotencyKey,
+			);
+			const deploymentId = await createDeployment
+				.mutateAsync({
+					body: deployConfig,
+					idempotencyKey: deployAttemptRef.current.key,
+				})
+				.catch((error: unknown) => {
+					if (isIdempotencyKeyReusedError(error)) {
+						forgetIdempotencyAttempt("deploy", deployFingerprint);
+						deployAttemptRef.current = null;
+					}
+					throw error;
+				});
+			toast.success("Deploying your agent", {
+				description: "It’ll appear in your agents in a moment.",
+			});
+			void router.navigate({
+				href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
+			});
 		} catch (e) {
 			if (paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
@@ -1275,7 +1319,7 @@ export function DeployWizard() {
 
 				<SettingsSection
 					title="Compute"
-					description="Basic and Performance agents use per-deployment funding selected below."
+					description="Basic includes the first active deployment. Additional Basic and Performance agents are billed per deployment."
 				>
 					<div className="flex flex-col gap-3">
 						<div className="grid gap-2 sm:grid-cols-2">
@@ -1290,14 +1334,20 @@ export function DeployWizard() {
 								title="Basic"
 								description={
 									basicOffer
-										? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · ${recurringOfferLabel(basicOffer)}`
-										: "Basic funding unavailable"
+										? `First active agent free · then ${recurringOfferLabel(basicOffer)} per additional agent`
+										: "First active agent free · paid additional agents unavailable"
 								}
 								badge={
-									<Badge variant="secondary">
-										{basicOffer
-											? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo`
-											: "Unavailable"}
+									<Badge variant={includedSlotUsed ? "default" : "secondary"}>
+										{includedSlotPending
+											? "Checking slot"
+											: deployments.error
+												? "Slot unavailable"
+												: includedSlotUsed
+													? basicOffer
+														? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo additional`
+														: "Additional unavailable"
+													: "First slot free"}
 									</Badge>
 								}
 								disabled={basicUnavailable}
@@ -1328,11 +1378,14 @@ export function DeployWizard() {
 								disabled={!perfPlan}
 							/>
 						</div>
-						{(compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
+						{(compute === "performance" ? perfOffers : includedSlotUsed ? basicOffers : []).length >
+						1 ? (
 							<div className="flex flex-col gap-1.5 sm:max-w-xs">
 								<span className="text-xs text-muted-foreground">Billing term</span>
 								<TermSwitcher
-									offers={compute === "performance" ? perfOffers : basicOffers}
+									offers={
+										compute === "performance" ? perfOffers : includedSlotUsed ? basicOffers : []
+									}
 									value={compute === "performance" ? perfBillingTermMonths : basicBillingTermMonths}
 									onChange={setTerm}
 								/>
@@ -1435,6 +1488,9 @@ export function DeployWizard() {
 						) : null}
 						<ComputeStatusLine
 							compute={compute}
+							includedSlotPending={includedSlotPending}
+							includedSlotUsed={includedSlotUsed}
+							deploymentsError={deployments.error}
 							basicSelection={basicSelection}
 							basicOffer={basicOffer}
 							perfOffer={perfOffer}
@@ -1559,7 +1615,6 @@ export function DeployWizard() {
 					void handleCheckoutComplete(
 						checkoutSession?.previousDeploymentIds ?? [],
 						checkoutSession?.tierLabel ?? "Basic",
-						checkoutSession?.request ?? null,
 					)
 				}
 				onFallback={() =>

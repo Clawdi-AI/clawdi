@@ -125,6 +125,55 @@ export function renderHermesRuntimeLocale(content: string, timezone: string): st
 	return String(document);
 }
 
+export function mergeHermesDashboardBasicAuth(
+	configPath: string,
+	username: string,
+	sessionTtlSeconds: number,
+): void {
+	writeHermesConfig(
+		configPath,
+		renderHermesDashboardBasicAuth(
+			readHermesConfigContent(configPath),
+			username,
+			sessionTtlSeconds,
+		),
+	);
+}
+
+export function renderHermesDashboardBasicAuth(
+	content: string,
+	username: string,
+	sessionTtlSeconds: number,
+): string {
+	const document = parseHermesConfig(content, "Hermes config");
+	const root = document.toJS();
+	if (isPlainRecord(root) && root.dashboard !== undefined && !isPlainRecord(root.dashboard)) {
+		throw new Error("Hermes config field dashboard must be a YAML object.");
+	}
+	if (isPlainRecord(root) && root.plugins !== undefined && !isPlainRecord(root.plugins)) {
+		throw new Error("Hermes config field plugins must be a YAML object.");
+	}
+	if (!isPlainRecord(root) || !isPlainRecord(root.dashboard)) {
+		document.set("dashboard", document.createNode({}));
+	}
+	document.setIn(
+		["dashboard", "basic_auth"],
+		document.createNode({ username, session_ttl_seconds: sessionTtlSeconds }),
+	);
+	const plugins = isPlainRecord(root) && isPlainRecord(root.plugins) ? root.plugins : {};
+	const disabled = Array.isArray(plugins.disabled)
+		? plugins.disabled.filter((value): value is string => typeof value === "string")
+		: [];
+	const nextDisabled = new Set(disabled.filter((value) => value !== "dashboard_auth/basic"));
+	nextDisabled.add("dashboard_auth/nous");
+	nextDisabled.add("dashboard_auth/self_hosted");
+	if (!isPlainRecord(root) || !isPlainRecord(root.plugins)) {
+		document.set("plugins", document.createNode({}));
+	}
+	document.setIn(["plugins", "disabled"], [...nextDisabled].sort());
+	return String(document);
+}
+
 export function removeHermesMcpServer(configPath: string, name: string): void {
 	if (!existsSync(configPath)) return;
 	const existing = readHermesConfigContent(configPath);

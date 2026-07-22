@@ -211,11 +211,90 @@ const runningMissingProjectionDeployment = {
 	id: "hdep_running_projection",
 	name: "Running projection agent",
 	hermes_control_ui_url: "https://runtime.example/hermes",
+	runtime_ui_endpoint: {
+		runtime: "hermes",
+		role: "control_ui",
+		url: "https://runtime.example/hermes",
+		auth_mode: "password",
+		browser_mode: "top_level",
+	},
 	config_info: {
 		...includedBasicDeployment.config_info,
 		clawdi_cloud_environments: { hermes: missingProjectionEnvironmentId },
 	},
 };
+
+const openClawNativeEnvironmentId = "88888888-8888-4888-8888-888888888888";
+const runningOpenClawNativeDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_openclaw_native",
+	name: "OpenClaw native auth agent",
+	runtime_ui_endpoint: {
+		runtime: "openclaw",
+		role: "control_ui",
+		url: "https://runtime.example/openclaw/",
+		auth_mode: "openclaw_device",
+		browser_mode: "top_level",
+	},
+	config_info: {
+		...includedBasicDeployment.config_info,
+		runtime: "openclaw",
+		clawdi_cloud_environments: { openclaw: openClawNativeEnvironmentId },
+	},
+};
+
+function runtimeUiDeploymentRead(input: {
+	id: string;
+	name: string;
+	runtime: "openclaw" | "hermes";
+	environmentId: string;
+	endpoint: Record<string, unknown>;
+}) {
+	return {
+		resource: {
+			id: input.id,
+			owner_user_id: "usr_browser",
+			deploy_request_id: null,
+			deployment_target: "v2-browser",
+			metadata: {
+				generation: 1,
+				manifestETag: '"runtime-ui-e2e"',
+				resourceVersion: "1",
+				createdAt: "2026-07-15T00:00:00Z",
+				updatedAt: "2026-07-15T00:00:00Z",
+			},
+			spec: {
+				schema_version: 1,
+				desired_lifecycle: "running",
+				runtime: input.runtime,
+				runtime_version: "test",
+				name: input.name,
+				resources: { vcpu: 2, memory_mib: 4096, disk_gib: 20 },
+				agents: [],
+				ports: [],
+				runtime_configuration: { providers: [], primary_model: null },
+				rollout_nonce: 0,
+				secret_references: [],
+			},
+			status: {
+				summary_state: "running",
+				observedGeneration: 1,
+				conditions: [],
+				failure: null,
+				backing_infrastructure: "present",
+				driver_acknowledged_generation: 1,
+				driver_applied_generation: 1,
+				endpoints: [],
+			},
+		},
+		current_plan_slug: "compute_basic",
+		ai_provider_auth_kinds: { [input.runtime]: "managed" },
+		clawdi_cloud_environments: { [input.runtime]: input.environmentId },
+		commercial_display: null,
+		upgrade_available: false,
+		runtime_ui_endpoint: input.endpoint,
+	};
+}
 
 const retainedProjectionEnvironmentId = "66666666-6666-4666-8666-666666666666";
 const retainedProjectionFailureReason =
@@ -724,8 +803,7 @@ type HostedApiStubOptions = {
 	planQuoteRequests?: string[];
 	planQuoteResponses?: unknown[];
 	restartRequests?: string[];
-	runtimeUiRedemptionRequests?: string[];
-	runtimeUiRedemptionResponses?: StubResponse[];
+	runtimeUiCredentials?: Record<string, unknown>;
 	resumeRequests?: string[];
 	subscriptionQuoteRequests?: string[];
 	subscriptionQuoteResponses?: unknown[];
@@ -821,6 +899,16 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return deployment
 				? fulfillJson(r, readDeploymentFixture(deployment))
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
+		}
+		const runtimeUiCredentialMatch = p.match(
+			/^\/v2\/deployments\/([^/]+)\/runtime-ui\/credentials$/,
+		);
+		if (runtimeUiCredentialMatch && method === "POST") {
+			const deploymentId = runtimeUiCredentialMatch[1];
+			const credentials = deploymentId ? options.runtimeUiCredentials?.[deploymentId] : undefined;
+			return credentials
+				? fulfillJson(r, credentials)
+				: fulfillJson(r, { detail: "Runtime UI credential is unavailable" }, 409);
 		}
 		if (p === "/v2/subscription/checkout" && r.request().method() === "POST") {
 			const requestBody = r.request().postData() ?? "";
@@ -994,14 +1082,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return deployment
 				? fulfillJson(r, completedDeploymentOperation(deployment, "restart"), 202)
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
-		}
-		if (p.endsWith("/runtime-ui/redemption") && r.request().method() === "POST") {
-			options.runtimeUiRedemptionRequests?.push(p);
-			const response = options.runtimeUiRedemptionResponses?.shift() ?? {
-				status: 200,
-				body: { url: "https://runtime.example/ui?clawdi_code=browser" },
-			};
-			return fulfillJson(r, response.body, response.status);
 		}
 		if (p.endsWith("/start") && r.request().method() === "POST") {
 			options.startRequests?.push(r.request().postData() ?? "");
@@ -1502,26 +1582,63 @@ test("projection service errors stay visible while deployment tools remain avail
 	expect(renderErrors, `projection failure render: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("Runtime UI redemption failure renders a retryable error instead of a permanent spinner", async ({
-	page,
-}) => {
-	const runtimeUiRedemptionRequests: string[] = [];
+test("Hermes Runtime UI uses the official dashboard URL without a bridge", async ({ page }) => {
 	await stubHostedApi(page, {
-		deployments: [runningMissingProjectionDeployment],
-		runtimeUiRedemptionRequests,
-		runtimeUiRedemptionResponses: [
-			{ status: 500, body: { detail: "redemption temporarily unavailable" } },
-			{ status: 200, body: { url: "https://runtime.example/hermes?clawdi_code=recovered" } },
+		deployments: [
+			runtimeUiDeploymentRead({
+				id: runningMissingProjectionDeployment.id,
+				name: runningMissingProjectionDeployment.name,
+				runtime: "hermes",
+				environmentId: missingProjectionEnvironmentId,
+				endpoint: runningMissingProjectionDeployment.runtime_ui_endpoint,
+			}),
 		],
 	});
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
-	await expect(main.getByText("Couldn't load Runtime UI", { exact: true })).toBeVisible();
-	await main.getByRole("button", { name: "Retry", exact: true }).click();
-	await expect(main.getByText("Couldn't load Runtime UI", { exact: true })).toHaveCount(0);
-	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
+	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveCount(0);
+	await expect(
+		main.getByText("Open Hermes with your dashboard password", { exact: true }),
+	).toBeVisible();
+});
+
+test("OpenClaw Runtime UI uses a top-level native token handoff", async ({ page }) => {
+	await page
+		.context()
+		.route("https://runtime.example/**", (route) =>
+			route.fulfill({ status: 200, contentType: "text/html", body: "<title>OpenClaw</title>" }),
+		);
+	await stubHostedApi(page, {
+		deployments: [
+			runtimeUiDeploymentRead({
+				id: runningOpenClawNativeDeployment.id,
+				name: runningOpenClawNativeDeployment.name,
+				runtime: "openclaw",
+				environmentId: openClawNativeEnvironmentId,
+				endpoint: runningOpenClawNativeDeployment.runtime_ui_endpoint,
+			}),
+		],
+		runtimeUiCredentials: {
+			[runningOpenClawNativeDeployment.id]: {
+				runtime: "openclaw",
+				url: "https://runtime.example/openclaw/#token=browser-native-token",
+				auth_mode: "openclaw_device",
+				username: null,
+				password: null,
+			},
+		},
+	});
+
+	await page.goto(`/agents/${openClawNativeEnvironmentId}/console?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect(main.locator('iframe[title="OpenClaw Control UI"]')).toHaveCount(0);
+	await expect(main.getByText("Open OpenClaw in a new window", { exact: true })).toBeVisible();
+	const popupPromise = page.waitForEvent("popup");
+	await main.getByRole("button", { name: "Open OpenClaw Control UI", exact: true }).first().click();
+	const popup = await popupPromise;
+	await popup.waitForLoadState("domcontentloaded");
+	expect(popup.url()).toBe("https://runtime.example/openclaw/#token=browser-native-token");
 });
 
 test("revoked deployment inventory never reclassifies cloud projections as connected", async ({

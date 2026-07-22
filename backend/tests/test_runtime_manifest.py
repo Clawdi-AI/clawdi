@@ -132,6 +132,19 @@ TEST_HERMES_BRIDGE = {
         }
     ]
 }
+TEST_HERMES_DASHBOARD_AUTH = {
+    "mode": "password",
+    "provider": "basic",
+    "username": "admin",
+    "passwordSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+    "sessionSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+    "sessionTtlSeconds": 43_200,
+    "publicUrl": "https://agent.example.test/hermes",
+    "activation": {
+        "enabled": True,
+        "capability": "hermes-basic-auth-v1",
+    },
+}
 OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp")
 TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
 
@@ -317,6 +330,19 @@ def _runtime_state(
             "model": "gpt-5.5",
         }
     runtime.update(overrides)
+    if runtime_name == "hermes" and "services" not in overrides:
+        runtime["services"] = {
+            "dashboard": {
+                "args": [
+                    "dashboard",
+                    "--host",
+                    "0.0.0.0",
+                    "--port",
+                    "9119",
+                    "--no-open",
+                ]
+            }
+        }
     return {runtime_name: runtime}
 
 
@@ -334,6 +360,8 @@ def _runtime_state_body(environment_id: str, **overrides) -> dict:
         "tools": TEST_CODEX_TOOLS,
     }
     body.update(overrides)
+    if set(body["runtimes"]) == {"hermes"} and "system" not in overrides:
+        body["system"] = {**TEST_SYSTEM, "hermesDashboardAuth": TEST_HERMES_DASHBOARD_AUTH}
     return body
 
 
@@ -359,7 +387,7 @@ async def test_runtime_only_bundle_is_explicitly_unmanaged(
         admin_client,
         str(env.id),
         runtimes=_runtime_state(runtime_name, provider_mode="unmanaged"),
-        bridge=TEST_HERMES_BRIDGE if runtime_name == "hermes" else None,
+        bridge=None,
         live_sync=_live_sync(str(env.id), runtime_name),
     )
 
@@ -636,6 +664,10 @@ async def test_dashboard_dev_seed_runtime_state_validates_and_serves_manifest(
         response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
+    if runtime == "hermes":
+        assert response.status_code == 409, response.text
+        assert "activation must be explicitly enabled" in response.json()["detail"]
+        return
     assert response.status_code == 200, response.text
     assert response.json()["manifest"]["liveSync"] == {
         "enabled": True,
@@ -898,7 +930,8 @@ async def test_runtime_selection_changes_manifest_and_etag(
     assert first.status_code == 200, first.text
 
     body["runtimes"] = _runtime_state("hermes")
-    body["bridge"] = TEST_HERMES_BRIDGE
+    body["bridge"] = None
+    body["system"] = {**TEST_SYSTEM, "hermesDashboardAuth": TEST_HERMES_DASHBOARD_AUTH}
     body["live_sync"] = _live_sync(str(env.id), "hermes")
     body["generation"] = 8
     updated = await admin_client.put(
@@ -1904,7 +1937,6 @@ async def test_runtime_manifest_rejects_invalid_stored_egress_state(
 @pytest.mark.parametrize(
     ("runtime", "bridge"),
     [
-        ("hermes", None),
         ("hermes", TEST_OPENCLAW_BRIDGE),
         ("openclaw", TEST_HERMES_BRIDGE),
         (
@@ -2045,7 +2077,7 @@ async def test_runtime_manifest_includes_egress_engine_pin(
     [
         ("openclaw", None),
         ("openclaw", TEST_OPENCLAW_BRIDGE),
-        ("hermes", TEST_HERMES_BRIDGE),
+        ("hermes", None),
     ],
 )
 async def test_admin_runtime_state_accepts_final_hosted_egress_and_bridge_contract(
@@ -3429,7 +3461,6 @@ async def test_admin_runtime_state_rejects_invalid_egress_contract(
 @pytest.mark.parametrize(
     ("runtime", "bridge"),
     [
-        ("hermes", None),
         ("hermes", TEST_OPENCLAW_BRIDGE),
         ("openclaw", TEST_HERMES_BRIDGE),
         (

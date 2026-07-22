@@ -254,8 +254,10 @@ describe("runtime manifest services", () => {
 		expect(existsSync(join(paths.serviceStateRoot, "bin", "hermes+dashboard"))).toBe(false);
 	});
 
-	test("renders the Hermes single-runtime gateway, dashboard service, and bridge surface", () => {
+	test("renders the Hermes password dashboard without a bridge sidecar", () => {
 		const paths = tempRuntimePaths();
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "dashboard-password";
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "dashboard-session-secret";
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const manifest: RuntimeManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
@@ -267,6 +269,19 @@ describe("runtime manifest services", () => {
 			issuedAt: "2026-07-01T00:00:00.000Z",
 			workspaceRoot: join(paths.userHome, "clawdi"),
 			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			hermesDashboardAuth: {
+				mode: "password",
+				provider: "basic",
+				username: "admin",
+				passwordSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+				sessionSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+				sessionTtlSeconds: 43_200,
+				publicUrl: "https://agent.example.test/hermes",
+				activation: {
+					enabled: true,
+					capability: "hermes-basic-auth-v1",
+				},
+			},
 			runtimes: {
 				hermes: {
 					enabled: true,
@@ -275,24 +290,13 @@ describe("runtime manifest services", () => {
 						dashboard: runSettings("hermes", [
 							"dashboard",
 							"--host",
-							"127.0.0.1",
+							"0.0.0.0",
 							"--port",
 							"9119",
 							"--no-open",
 						]),
 					},
 				},
-			},
-			bridge: {
-				surfaces: [
-					{
-						name: "hermes",
-						kind: "control-ui",
-						listenPort: 28793,
-						upstreamHost: "127.0.0.1",
-						upstreamPort: 9119,
-					},
-				],
 			},
 			recovery: {},
 		};
@@ -317,7 +321,6 @@ describe("runtime manifest services", () => {
 		]);
 		expect(result.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1)).sort()).toEqual([
 			"clawdi-daemon.service",
-			"clawdi-runtime-sidecar.service",
 			"clawdi-runtime-watch.service",
 		]);
 		expect(readUserServiceConfig(paths, "hermes-gateway")).toContain(
@@ -328,16 +331,27 @@ describe("runtime manifest services", () => {
 			"utf8",
 		);
 		expect(dashboardUnit).toContain(
-			'ExecStart="hermes" "dashboard" "--host" "127.0.0.1" "--port" "9119" "--no-open"',
+			'ExecStart="hermes" "dashboard" "--host" "0.0.0.0" "--port" "9119" "--no-open"',
 		);
-		const sidecarEnv = readFileSync(
-			join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
+		const dashboardEnv = readFileSync(
+			join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env"),
 			"utf8",
 		);
-		expect(sidecarEnv).toContain("CLAWDI_RUNTIME_BRIDGE_SURFACES=");
-		expect(sidecarEnv).toContain('\\"name\\":\\"hermes\\"');
-		expect(sidecarEnv).toContain('\\"listenPort\\":28793');
-		expect(sidecarEnv).not.toContain('\\"name\\":\\"openclaw\\"');
+		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_USERNAME="admin"');
+		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"');
+		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"');
+		expect(dashboardEnv).toContain(
+			'HERMES_DASHBOARD_PUBLIC_URL="https://agent.example.test/hermes"',
+		);
+		const hermesConfig = readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8");
+		expect(hermesConfig).toContain("basic_auth:");
+		expect(hermesConfig).toContain("username: admin");
+		expect(hermesConfig).toContain("session_ttl_seconds: 43200");
+		expect(hermesConfig).toContain("dashboard_auth/nous");
+		expect(hermesConfig).toContain("dashboard_auth/self_hosted");
+		expect(hermesConfig).not.toContain("dashboard_auth/basic\n");
+		expect(hermesConfig).not.toContain("dashboard-password");
+		expect(hermesConfig).not.toContain("dashboard-session-secret");
 		expect(existsSync(runtimeRunConfigPath("openclaw", paths))).toBe(false);
 	});
 

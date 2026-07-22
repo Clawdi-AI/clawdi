@@ -64,13 +64,36 @@
 				},
 				"provider_ids": ["managed"],
 				"run": {
-					"args": ["gateway", "run"]
+					"args": [
+						"gateway",
+						"run",
+						"--allow-unconfigured",
+						"--port",
+						"18789",
+						"--bind",
+						"lan",
+						"--force"
+					],
+					"secretEnv": {
+						"OPENCLAW_GATEWAY_TOKEN": "env://OPENCLAW_GATEWAY_TOKEN"
+					}
 				},
 				"services": {}
 			}
 		},
 		"schemaVersion": "clawdi.hosted-runtime.manifest.v1",
-		"system": {},
+		"system": {
+			"openclawControlUiAllowedOrigins": ["https://agent.example.test"],
+			"openclawGatewayAuth": {
+				"mode": "token",
+				"tokenRef": "env://OPENCLAW_GATEWAY_TOKEN",
+				"deviceAuthRequired": true,
+				"activation": {
+					"enabled": true,
+					"capability": "openclaw-native-auth-v1"
+				}
+			}
+		},
 		"terminalTooling": {
 			"codex": {
 				"enabled": true,

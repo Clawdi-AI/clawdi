@@ -23,6 +23,58 @@ export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
 const semverSchema = z.string().min(1).refine(isValidSemver, "must be a semver string");
 
+function cleanHttpsUrl(value: string): URL | null {
+	try {
+		const url = new URL(value);
+		return url.protocol === "https:" && !url.username && !url.password && !url.search && !url.hash
+			? url
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+const hermesDashboardAuthSchema = z
+	.object({
+		mode: z.literal("password"),
+		provider: z.literal("basic"),
+		username: z.string().trim().min(1).max(128),
+		passwordSecretRef: z.literal("env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"),
+		sessionSecretRef: z.literal("env://HERMES_DASHBOARD_BASIC_AUTH_SECRET"),
+		sessionTtlSeconds: z.number().int().min(60).max(604_800).default(43_200),
+		publicUrl: z.string().url(),
+		activation: z
+			.object({
+				enabled: z.literal(true),
+				capability: z.literal("hermes-basic-auth-v1"),
+			})
+			.strict(),
+	})
+	.strict()
+	.superRefine((auth, ctx) => {
+		if (!cleanHttpsUrl(auth.publicUrl)) {
+			ctx.addIssue({
+				code: "custom",
+				message: "must be an HTTPS URL without credentials, query, or fragment",
+				path: ["publicUrl"],
+			});
+		}
+	});
+
+const openclawGatewayAuthSchema = z
+	.object({
+		mode: z.literal("token"),
+		tokenRef: z.literal("env://OPENCLAW_GATEWAY_TOKEN"),
+		deviceAuthRequired: z.literal(true),
+		activation: z
+			.object({
+				enabled: z.literal(true),
+				capability: z.literal("openclaw-native-auth-v1"),
+			})
+			.strict(),
+	})
+	.strict();
+
 export const HOSTED_LOCALE_LANGUAGES = [
 	"en",
 	"zh-CN",
@@ -178,6 +230,7 @@ const runtimeBridgeSchema = z.object({
 
 const runtimeProjectionSchema = z.object({
 	sourceSchemaVersion: z.string().min(1).optional(),
+	sourceBundleVersion: z.literal("clawdi.hosted-runtime.bundle.v2").optional(),
 	system: z.unknown().nullable().optional(),
 	providers: z.record(z.string().min(1), z.unknown()).optional(),
 	channels: z.record(z.string().min(1), z.unknown()).optional(),
@@ -206,6 +259,8 @@ const runtimeDesiredStateShape = {
 	egressEngine: egressEngineSchema.optional(),
 	runtimes: z.record(runtimeNameSchema, runtimeSchema),
 	bridge: runtimeBridgeSchema.optional(),
+	openclawGatewayAuth: openclawGatewayAuthSchema.optional(),
+	hermesDashboardAuth: hermesDashboardAuthSchema.optional(),
 	projection: runtimeProjectionSchema.optional(),
 	egressProfiles: egressProfileInputBundleSchema.optional(),
 	liveSync: liveSyncSchema.optional(),
@@ -558,6 +613,12 @@ const hostedRuntimeManifestBaseSchema = z
 		system: z
 			.object({
 				openclawControlUiAllowedOrigins: z.array(urlOriginSchema).optional(),
+				openclawControlUiBasePath: z
+					.string()
+					.regex(/^\/(?:[^/?#]+(?:\/[^/?#]+)*)?$/)
+					.optional(),
+				openclawGatewayAuth: openclawGatewayAuthSchema.optional(),
+				hermesDashboardAuth: hermesDashboardAuthSchema.optional(),
 			})
 			.strict(),
 		controlPlane: hostedControlPlaneSchema,
@@ -581,9 +642,10 @@ const hostedRuntimeManifestBaseSchema = z
 
 type HostedRuntimeManifestBase = z.infer<typeof hostedRuntimeManifestBaseSchema>;
 
-function validateHostedRuntimeManifest(
+function validateHostedRuntimeManifestForMode(
 	manifest: HostedRuntimeManifestBase,
 	ctx: z.RefinementCtx,
+	nativeAuth: boolean,
 ): void {
 	const runtimeKeys = Object.keys(manifest.runtimes);
 	const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
@@ -631,7 +693,7 @@ function validateHostedRuntimeManifest(
 		}
 	}
 	const surfaces = manifest.bridge?.surfaces ?? [];
-	if (manifest.runtime === "openclaw" && surfaces.length > 0) {
+	if (!nativeAuth && manifest.runtime === "openclaw" && surfaces.length > 0) {
 		const surface = surfaces.at(0);
 		if (
 			surfaces.length !== 1 ||
@@ -648,17 +710,10 @@ function validateHostedRuntimeManifest(
 			});
 		}
 	}
-	if (manifest.runtime === "hermes") {
-		if (surfaces.length !== 1) {
-			ctx.addIssue({
-				code: "custom",
-				message: "hermes must declare exactly one bridge surface",
-				path: ["bridge", "surfaces"],
-			});
-			return;
-		}
+	if (!nativeAuth && manifest.runtime === "hermes") {
 		const surface = surfaces.at(0);
 		if (
+			surfaces.length !== 1 ||
 			surface?.name !== "hermes" ||
 			surface?.kind !== "control-ui" ||
 			surface?.listenPort !== 28793 ||
@@ -668,7 +723,178 @@ function validateHostedRuntimeManifest(
 			ctx.addIssue({
 				code: "custom",
 				message: "hermes bridge surface must be hermes control-ui 28793 -> 127.0.0.1:9119",
-				path: ["bridge", "surfaces", 0],
+				path: ["bridge", "surfaces"],
+			});
+		}
+		return;
+	}
+	if (!nativeAuth) return;
+	if (manifest.bridge !== undefined) {
+		ctx.addIssue({
+			code: "custom",
+			message: "Hosted runtime bundle v2 must not declare a bridge",
+			path: ["bridge"],
+		});
+	}
+	if (manifest.runtime === "hermes") {
+		if (!manifest.system.hermesDashboardAuth) {
+			ctx.addIssue({
+				code: "custom",
+				message: "hermes direct dashboard requires official password authentication",
+				path: ["system", "hermesDashboardAuth"],
+			});
+		}
+		if (manifest.system.hermesDashboardAuth?.activation.enabled !== true) {
+			ctx.addIssue({
+				code: "custom",
+				message: "hermes password authentication must be explicitly enabled",
+				path: ["system", "hermesDashboardAuth", "activation", "enabled"],
+			});
+		}
+		const dashboardArgs = manifest.runtimes.hermes?.services.dashboard?.args;
+		if (
+			JSON.stringify(dashboardArgs) !==
+			JSON.stringify(["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"])
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: "hermes dashboard must bind directly to 0.0.0.0:9119",
+				path: ["runtimes", "hermes", "services", "dashboard", "args"],
+			});
+		}
+	} else if (manifest.system.hermesDashboardAuth) {
+		ctx.addIssue({
+			code: "custom",
+			message: "Hermes dashboard auth is only valid for the Hermes runtime",
+			path: ["system", "hermesDashboardAuth"],
+		});
+	}
+	if (manifest.runtime !== "openclaw" && manifest.system.openclawGatewayAuth) {
+		ctx.addIssue({
+			code: "custom",
+			message: "OpenClaw gateway auth is only valid for the OpenClaw runtime",
+			path: ["system", "openclawGatewayAuth"],
+		});
+	}
+}
+
+function validateHostedRuntimeManifest(
+	manifest: HostedRuntimeManifestBase,
+	ctx: z.RefinementCtx,
+): void {
+	validateHostedRuntimeManifestForMode(manifest, ctx, false);
+}
+
+function validateHostedRuntimeBundleV2Manifest(
+	manifest: HostedRuntimeManifestBase,
+	ctx: z.RefinementCtx,
+): void {
+	validateHostedRuntimeManifestForMode(manifest, ctx, true);
+	validateHostedRuntimeManifestV2(manifest, ctx);
+}
+
+function validateHostedRuntimeManifestV2(
+	manifest: HostedRuntimeManifestBase,
+	ctx: z.RefinementCtx,
+): void {
+	if (manifest.runtime !== "openclaw") return;
+	const auth = manifest.system.openclawGatewayAuth;
+	if (!manifest.system.openclawGatewayAuth) {
+		ctx.addIssue({
+			code: "custom",
+			message:
+				"OpenClaw v2 native Control UI requires official gateway token and device authentication",
+			path: ["system", "openclawGatewayAuth"],
+		});
+	}
+	if (auth?.activation.enabled !== true) {
+		ctx.addIssue({
+			code: "custom",
+			message: "OpenClaw native auth activation must be explicitly enabled",
+			path: ["system", "openclawGatewayAuth", "activation", "enabled"],
+		});
+	}
+	const allowedOrigins = manifest.system.openclawControlUiAllowedOrigins ?? [];
+	if (allowedOrigins.length === 0) {
+		ctx.addIssue({
+			code: "custom",
+			message: "OpenClaw v2 native Control UI requires an explicit public allowed origin",
+			path: ["system", "openclawControlUiAllowedOrigins"],
+		});
+	}
+	const run = manifest.runtimes.openclaw?.run;
+	const gatewayArgs = run?.args;
+	if (
+		JSON.stringify(gatewayArgs) !==
+		JSON.stringify([
+			"gateway",
+			"run",
+			"--allow-unconfigured",
+			"--port",
+			"18789",
+			"--bind",
+			"lan",
+			"--force",
+		])
+	) {
+		ctx.addIssue({
+			code: "custom",
+			message: "OpenClaw v2 gateway must bind directly to the pod network on port 18789",
+			path: ["runtimes", "openclaw", "run", "args"],
+		});
+	}
+	if (run?.secretEnv?.OPENCLAW_GATEWAY_TOKEN !== auth?.tokenRef) {
+		ctx.addIssue({
+			code: "custom",
+			message: "OpenClaw v2 gateway token must use the declared environment secret reference",
+			path: ["runtimes", "openclaw", "run", "secretEnv", "OPENCLAW_GATEWAY_TOKEN"],
+		});
+	}
+	if (run?.env?.OPENCLAW_GATEWAY_TOKEN !== undefined) {
+		ctx.addIssue({
+			code: "custom",
+			message: "OpenClaw v2 gateway token must not be embedded in manifest env",
+			path: ["runtimes", "openclaw", "run", "env", "OPENCLAW_GATEWAY_TOKEN"],
+		});
+	}
+	for (const source of ["env", "secretEnv"] as const) {
+		for (const envName of Object.keys(run?.[source] ?? {})) {
+			if (envName.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
+				ctx.addIssue({
+					code: "custom",
+					message: "OpenClaw v2 native Control UI must not receive bridge environment",
+					path: ["runtimes", "openclaw", "run", source, envName],
+				});
+			}
+		}
+	}
+	for (const [serviceName, service] of Object.entries(manifest.runtimes.openclaw?.services ?? {})) {
+		for (const source of ["env", "secretEnv"] as const) {
+			for (const envName of Object.keys(service[source] ?? {})) {
+				if (envName === "OPENCLAW_GATEWAY_TOKEN") {
+					ctx.addIssue({
+						code: "custom",
+						message: "OpenClaw v2 gateway token must be scoped to the gateway run secretEnv",
+						path: ["runtimes", "openclaw", "services", serviceName, source, envName],
+					});
+				}
+				if (envName.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
+					ctx.addIssue({
+						code: "custom",
+						message: "OpenClaw v2 native Control UI must not receive bridge environment",
+						path: ["runtimes", "openclaw", "services", serviceName, source, envName],
+					});
+				}
+			}
+		}
+	}
+	for (const [providerId, provider] of Object.entries(manifest.providers)) {
+		const envName = provider.runtimeEnvName;
+		if (envName === "OPENCLAW_GATEWAY_TOKEN" || envName?.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
+			ctx.addIssue({
+				code: "custom",
+				message: "OpenClaw v2 provider environment must not target native auth or bridge controls",
+				path: ["providers", providerId, "runtimeEnvName"],
 			});
 		}
 	}
@@ -682,6 +908,13 @@ export const hostedRuntimeManifestSchema = hostedRuntimeManifestBaseSchema
 	.strict()
 	.superRefine(validateHostedRuntimeManifest);
 
+export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSchema
+	.safeExtend({
+		schemaVersion: z.literal("clawdi.hosted-runtime.manifest.v1"),
+		clawdiCli: hostedCliPayloadPolicySchema,
+	})
+	.strict()
+	.superRefine(validateHostedRuntimeBundleV2Manifest);
 export const hostedRuntimeManifestResponseSchema = z
 	.object({
 		manifest: hostedRuntimeManifestSchema,

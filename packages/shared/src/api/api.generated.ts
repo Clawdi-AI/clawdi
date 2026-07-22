@@ -4554,6 +4554,84 @@ export interface components {
             /** Profiles */
             profiles?: components["schemas"]["HostedEgressProfile"][] | null;
         };
+        /** HostedHermesDashboardActivation */
+        HostedHermesDashboardActivation: {
+            /**
+             * Enabled
+             * @constant
+             */
+            enabled: true;
+            /**
+             * Capability
+             * @constant
+             */
+            capability: "hermes-basic-auth-v1";
+        };
+        /** HostedHermesDashboardAuth */
+        HostedHermesDashboardAuth: {
+            /**
+             * Mode
+             * @constant
+             */
+            mode: "password";
+            /**
+             * Provider
+             * @constant
+             */
+            provider: "basic";
+            /** Username */
+            username: string;
+            /**
+             * Passwordsecretref
+             * @constant
+             */
+            passwordSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD";
+            /**
+             * Sessionsecretref
+             * @constant
+             */
+            sessionSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET";
+            /**
+             * Sessionttlseconds
+             * @default 43200
+             */
+            sessionTtlSeconds: number;
+            /** Publicurl */
+            publicUrl: string;
+            activation: components["schemas"]["HostedHermesDashboardActivation"];
+        };
+        /** HostedOpenClawGatewayActivation */
+        HostedOpenClawGatewayActivation: {
+            /**
+             * Enabled
+             * @constant
+             */
+            enabled: true;
+            /**
+             * Capability
+             * @constant
+             */
+            capability: "openclaw-native-auth-v1";
+        };
+        /** HostedOpenClawGatewayAuth */
+        HostedOpenClawGatewayAuth: {
+            /**
+             * Mode
+             * @constant
+             */
+            mode: "token";
+            /**
+             * Tokenref
+             * @constant
+             */
+            tokenRef: "env://OPENCLAW_GATEWAY_TOKEN";
+            /**
+             * Deviceauthrequired
+             * @constant
+             */
+            deviceAuthRequired: true;
+            activation: components["schemas"]["HostedOpenClawGatewayActivation"];
+        };
         /** HostedRuntimeBridge */
         HostedRuntimeBridge: {
             /** Surfaces */
@@ -4824,6 +4902,10 @@ export interface components {
         HostedRuntimeSystem: {
             /** Openclawcontroluiallowedorigins */
             openclawControlUiAllowedOrigins?: string[] | null;
+            /** Openclawcontroluibasepath */
+            openclawControlUiBasePath?: string | null;
+            openclawGatewayAuth?: components["schemas"]["HostedOpenClawGatewayAuth"] | null;
+            hermesDashboardAuth?: components["schemas"]["HostedHermesDashboardAuth"] | null;
         };
         /** HostedRuntimeTools */
         HostedRuntimeTools: {

@@ -231,11 +231,25 @@ def render_runtime_source(
         ) from exc
     runtime_name, runtime = _runtime(state.runtimes)
     try:
-        validate_hosted_runtime_bridge(runtime_name, bridge)
+        validate_hosted_runtime_bridge(runtime_name, bridge, native_auth=True)
     except ValueError as exc:
         raise RuntimeSourceError(
             "Hosted runtime bridge state does not match the selected runtime"
         ) from exc
+    dashboard_auth = system.hermesDashboardAuth
+    if runtime_name == "hermes" and dashboard_auth is None:
+        raise RuntimeSourceError(
+            "Hermes direct dashboard requires official password authentication"
+        )
+    if runtime_name == "hermes" and dashboard_auth.activation.enabled is not True:
+        raise RuntimeSourceError("Hermes password authentication must be explicitly enabled")
+    if runtime_name == "hermes" and (
+        runtime.get("services", {}).get("dashboard", {}).get("args")
+        != ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"]
+    ):
+        raise RuntimeSourceError("Hermes dashboard must bind directly to 0.0.0.0:9119")
+    if runtime_name != "hermes" and dashboard_auth is not None:
+        raise RuntimeSourceError("Hermes dashboard auth is only valid for Hermes runtimes")
 
     providers: dict[str, Any] = {}
     secrets: dict[str, str] = {}
@@ -339,7 +353,9 @@ def render_runtime_source(
         "issuedAt": runtime_manifest_issued_at(state),
         "runtime": runtime_name,
         "locale": locale.model_dump(),
-        "system": system.model_dump(exclude_none=True, mode="json"),
+        "system": system.model_dump(
+            exclude={"hermesDashboardAuth"}, exclude_none=True, mode="json"
+        ),
         "controlPlane": {"cloudApiUrl": public_api_url.rstrip("/")},
         "clawdiCli": {
             "source": "npm:clawdi",
@@ -354,6 +370,10 @@ def render_runtime_source(
     }
     if bridge is not None:
         manifest["bridge"] = bridge.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+    if dashboard_auth is not None:
+        manifest["system"]["hermesDashboardAuth"] = dashboard_auth.model_dump(
+            exclude_none=True, mode="json"
+        )
     if egress_engine is not None:
         manifest["egressEngine"] = egress_engine.model_dump(
             exclude_none=True, exclude_unset=True, mode="json"
