@@ -804,6 +804,7 @@ type HostedApiStubOptions = {
 	planQuoteResponses?: unknown[];
 	restartRequests?: string[];
 	runtimeUiCredentials?: Record<string, unknown>;
+	runtimeUiCredentialRequests?: string[];
 	resumeRequests?: string[];
 	subscriptionQuoteRequests?: string[];
 	subscriptionQuoteResponses?: unknown[];
@@ -905,6 +906,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		);
 		if (runtimeUiCredentialMatch && method === "POST") {
 			const deploymentId = runtimeUiCredentialMatch[1];
+			options.runtimeUiCredentialRequests?.push(p);
 			const credentials = deploymentId ? options.runtimeUiCredentials?.[deploymentId] : undefined;
 			return credentials
 				? fulfillJson(r, credentials)
@@ -1582,7 +1584,122 @@ test("projection service errors stay visible while deployment tools remain avail
 	expect(renderErrors, `projection failure render: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("Hermes Runtime UI uses the official dashboard URL directly", async ({ page }) => {
+test("Hermes Runtime UI reveals selectable credentials before a synchronous top-level open", async ({
+	page,
+	context,
+}) => {
+	const password = "browser-hermes-password";
+	const runtimeUiCredentialRequests: string[] = [];
+	const errors = collectBrowserErrors(page);
+	await page.addInitScript(() => {
+		Object.defineProperty(navigator, "clipboard", {
+			configurable: true,
+			value: {
+				writeText: (value: string) =>
+					value === "admin"
+						? Promise.resolve()
+						: Promise.reject(new DOMException("clipboard blocked", "NotAllowedError")),
+			},
+		});
+	});
+	await context.route("https://runtime.example/**", (route) =>
+		route.fulfill({ status: 200, contentType: "text/html", body: "<title>Hermes</title>" }),
+	);
+	await stubHostedApi(page, {
+		deployments: [
+			runtimeUiDeploymentRead({
+				id: runningMissingProjectionDeployment.id,
+				name: runningMissingProjectionDeployment.name,
+				runtime: "hermes",
+				environmentId: missingProjectionEnvironmentId,
+				endpoint: runningMissingProjectionDeployment.runtime_ui_endpoint,
+			}),
+			runtimeUiDeploymentRead({
+				id: runningOpenClawNativeDeployment.id,
+				name: runningOpenClawNativeDeployment.name,
+				runtime: "openclaw",
+				environmentId: openClawNativeEnvironmentId,
+				endpoint: runningOpenClawNativeDeployment.runtime_ui_endpoint,
+			}),
+		],
+		runtimeUiCredentialRequests,
+		runtimeUiCredentials: {
+			[runningMissingProjectionDeployment.id]: {
+				runtime: "hermes",
+				url: "https://runtime.example/hermes",
+				auth_mode: "password",
+				username: "admin",
+				password,
+			},
+			[runningOpenClawNativeDeployment.id]: {
+				runtime: "openclaw",
+				url: "https://runtime.example/openclaw/#token=browser-native-token",
+				auth_mode: "openclaw_device",
+				username: null,
+				password: null,
+			},
+		},
+	});
+
+	await page.goto(`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveCount(0);
+	await expect(
+		main.getByText("Open Hermes with explicit credentials", { exact: true }),
+	).toBeVisible();
+	expect(runtimeUiCredentialRequests).toEqual([]);
+
+	await main.getByRole("button", { name: "Show Hermes credentials", exact: true }).click();
+	await expect
+		.poll(() => runtimeUiCredentialRequests)
+		.toEqual([`/v2/deployments/${runningMissingProjectionDeployment.id}/runtime-ui/credentials`]);
+	const usernameInput = main.getByLabel("Username", { exact: true });
+	const passwordInput = main.getByLabel("Password", { exact: true });
+	await expect(usernameInput).toHaveValue("admin");
+	await expect(passwordInput).toHaveValue(password);
+
+	await main.getByRole("button", { name: "Copy Hermes username", exact: true }).click();
+	await expect(page.getByText("Hermes username copied", { exact: true })).toBeVisible();
+	await main.getByRole("button", { name: "Copy Hermes password", exact: true }).click();
+	await expect(
+		page.getByText("Couldn’t copy — select the visible value and copy it manually.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(passwordInput).toHaveValue(password);
+
+	const popupPromise = context.waitForEvent("page");
+	await main.getByRole("button", { name: "Open Hermes Dashboard", exact: true }).click();
+	const popup = await popupPromise;
+	await popup.waitForLoadState("domcontentloaded");
+	expect(popup.url()).toBe("https://runtime.example/hermes");
+	expect(popup.url()).not.toContain(password);
+	expect(page.url()).not.toContain(password);
+	const persistedBrowserState = await page.evaluate(() => ({
+		localStorage: Object.values(localStorage),
+		sessionStorage: Object.values(sessionStorage),
+		history: history.state,
+	}));
+	expect(JSON.stringify(persistedBrowserState)).not.toContain(password);
+	expect(errors.join("\n")).not.toContain(password);
+
+	await main.getByRole("button", { name: "Hide credentials", exact: true }).click();
+	await expect(usernameInput).toHaveCount(0);
+	await expect(passwordInput).toHaveCount(0);
+	await main.getByRole("button", { name: "Show Hermes credentials", exact: true }).click();
+	await expect(main.getByLabel("Password", { exact: true })).toHaveValue(password);
+	await page.goto(`/agents/${openClawNativeEnvironmentId}/console?source=on-clawdi`);
+	expect(
+		await page
+			.locator("input")
+			.evaluateAll(
+				(inputs, secret) => inputs.some((input) => (input as HTMLInputElement).value === secret),
+				password,
+			),
+	).toBe(false);
+});
+
+test("Hermes credential failures show only catalog copy", async ({ page }) => {
 	await stubHostedApi(page, {
 		deployments: [
 			runtimeUiDeploymentRead({
@@ -1597,10 +1714,14 @@ test("Hermes Runtime UI uses the official dashboard URL directly", async ({ page
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveCount(0);
+	await main.getByRole("button", { name: "Show Hermes credentials", exact: true }).click();
+	await expect(main.getByText("Couldn’t load Hermes credentials", { exact: true })).toBeVisible();
 	await expect(
-		main.getByText("Open Hermes with your dashboard password", { exact: true }),
+		main.getByText("Select “Show Hermes credentials” to try again.", { exact: true }),
 	).toBeVisible();
+	await expect(main.getByText("Runtime UI credential is unavailable", { exact: true })).toHaveCount(
+		0,
+	);
 });
 
 test("OpenClaw Runtime UI uses a top-level native token handoff", async ({ page }) => {
@@ -1634,11 +1755,19 @@ test("OpenClaw Runtime UI uses a top-level native token handoff", async ({ page 
 	const main = page.locator("main");
 	await expect(main.locator('iframe[title="OpenClaw Control UI"]')).toHaveCount(0);
 	await expect(main.getByText("Open OpenClaw in a new window", { exact: true })).toBeVisible();
+	await expect(main.getByText("openclaw devices list", { exact: true })).toBeVisible();
+	await expect(
+		main.getByText("openclaw devices approve <requestId>", { exact: true }),
+	).toBeVisible();
+	await expect(
+		main.getByText("Do not auto-approve a request and do not use --latest.", { exact: true }),
+	).toBeVisible();
 	const popupPromise = page.waitForEvent("popup");
 	await main.getByRole("button", { name: "Open OpenClaw Control UI", exact: true }).first().click();
 	const popup = await popupPromise;
-	await popup.waitForLoadState("domcontentloaded");
-	expect(popup.url()).toBe("https://runtime.example/openclaw/#token=browser-native-token");
+	await expect
+		.poll(() => popup.url())
+		.toBe("https://runtime.example/openclaw/#token=browser-native-token");
 });
 
 test("revoked deployment inventory never reclassifies cloud projections as connected", async ({

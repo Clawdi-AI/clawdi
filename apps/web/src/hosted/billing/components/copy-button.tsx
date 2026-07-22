@@ -14,12 +14,17 @@ export function CopyButton({
 	value,
 	label,
 	toastMessage = "Copied to clipboard",
+	errorToastMessage,
 }: {
 	value: string;
 	label: string;
 	toastMessage?: string;
+	errorToastMessage?: string;
 }) {
-	const { copied, copy } = useCopyToClipboard({ success: toastMessage });
+	const { copied, copy } = useCopyToClipboard({
+		success: toastMessage,
+		error: errorToastMessage,
+	});
 
 	return (
 		<Button

@@ -1,33 +1,155 @@
-export interface RuntimeUiAuthCopy {
+export interface HermesPasswordUiCopy {
 	title: string;
 	description: string;
-	openSecureDashboard: string;
-	openHermesDashboard: string;
+	viewCredentials: string;
+	showCredentials: string;
+	loadingCredentials: string;
+	hideCredentials: string;
+	username: string;
+	password: string;
+	copyUsername: string;
+	copyPassword: string;
+	usernameCopied: string;
+	passwordCopied: string;
+	manualCopy: string;
+	openDashboard: string;
+	credentialErrorTitle: string;
+	credentialErrorDescription: string;
 }
 
-const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiAuthCopy> = {
+export interface OpenClawNativeUiCopy {
+	title: string;
+	description: string;
+	openControlUi: string;
+	pairingTitle: string;
+	pairingDescription: string;
+	pairingListCommand: string;
+	pairingApproveCommand: string;
+	pairingWarning: string;
+	credentialErrorTitle: string;
+	credentialErrorDescription: string;
+	popupBlockedTitle: string;
+	popupBlockedDescription: string;
+}
+
+interface RuntimeUiCopyCatalog {
+	hermes: HermesPasswordUiCopy;
+	openclaw: OpenClawNativeUiCopy;
+}
+
+const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 	en: {
-		title: "Open Hermes with your dashboard password",
-		description:
-			"Hermes opens in a new window. Your deployment password is copied automatically; sign in with username admin.",
-		openSecureDashboard: "Copy password & open",
-		openHermesDashboard: "Copy password & open Hermes",
+		hermes: {
+			title: "Open Hermes with explicit credentials",
+			description:
+				"First show the username and password. Copy each value explicitly, or select it and copy manually, then open Hermes and sign in.",
+			viewCredentials: "View Hermes credentials",
+			showCredentials: "Show Hermes credentials",
+			loadingCredentials: "Loading credentials…",
+			hideCredentials: "Hide credentials",
+			username: "Username",
+			password: "Password",
+			copyUsername: "Copy Hermes username",
+			copyPassword: "Copy Hermes password",
+			usernameCopied: "Hermes username copied",
+			passwordCopied: "Hermes password copied",
+			manualCopy: "Couldn’t copy — select the visible value and copy it manually.",
+			openDashboard: "Open Hermes Dashboard",
+			credentialErrorTitle: "Couldn’t load Hermes credentials",
+			credentialErrorDescription: "Select “Show Hermes credentials” to try again.",
+		},
+		openclaw: {
+			title: "Open OpenClaw in a new window",
+			description:
+				"OpenClaw uses its official token handoff and native device authentication in a top-level Control UI.",
+			openControlUi: "Open OpenClaw Control UI",
+			pairingTitle: "If the Control UI shows “pairing required”",
+			pairingDescription:
+				"Open Hosted Terminal, list pending devices, copy that browser’s exact requestId, then approve that requestId:",
+			pairingListCommand: "openclaw devices list",
+			pairingApproveCommand: "openclaw devices approve <requestId>",
+			pairingWarning: "Do not auto-approve a request and do not use --latest.",
+			credentialErrorTitle: "Couldn’t open OpenClaw",
+			credentialErrorDescription: "Please try again.",
+			popupBlockedTitle: "Couldn’t open OpenClaw",
+			popupBlockedDescription: "Your browser blocked the new window. Allow popups and try again.",
+		},
 	},
 	"zh-CN": {
-		title: "使用 Dashboard 密码打开 Hermes",
-		description: "Hermes 会在新窗口中打开。部署密码将自动复制，请使用用户名 admin 登录。",
-		openSecureDashboard: "复制密码并打开",
-		openHermesDashboard: "复制密码并打开 Hermes",
+		hermes: {
+			title: "使用显式凭据打开 Hermes",
+			description:
+				"先显示用户名和密码。请分别显式复制；若剪贴板不可用，也可选中可见内容手工复制。然后打开 Hermes 并登录。",
+			viewCredentials: "查看 Hermes 凭据",
+			showCredentials: "显示 Hermes 凭据",
+			loadingCredentials: "正在加载凭据…",
+			hideCredentials: "隐藏凭据",
+			username: "用户名",
+			password: "密码",
+			copyUsername: "复制 Hermes 用户名",
+			copyPassword: "复制 Hermes 密码",
+			usernameCopied: "已复制 Hermes 用户名",
+			passwordCopied: "已复制 Hermes 密码",
+			manualCopy: "无法复制——请选中可见内容并手工复制。",
+			openDashboard: "打开 Hermes Dashboard",
+			credentialErrorTitle: "无法加载 Hermes 凭据",
+			credentialErrorDescription: "请选择“显示 Hermes 凭据”重试。",
+		},
+		openclaw: {
+			title: "在新窗口中打开 OpenClaw",
+			description: "OpenClaw 在顶层 Control UI 中使用官方 token 交接和原生设备认证。",
+			openControlUi: "打开 OpenClaw Control UI",
+			pairingTitle: "如果 Control UI 显示“pairing required”",
+			pairingDescription:
+				"打开 Hosted Terminal，列出待配对设备，复制该浏览器对应的准确 requestId，再批准这个 requestId：",
+			pairingListCommand: "openclaw devices list",
+			pairingApproveCommand: "openclaw devices approve <requestId>",
+			pairingWarning: "不要自动批准请求，也不要使用 --latest。",
+			credentialErrorTitle: "无法打开 OpenClaw",
+			credentialErrorDescription: "请重试。",
+			popupBlockedTitle: "无法打开 OpenClaw",
+			popupBlockedDescription: "浏览器阻止了新窗口。请允许弹窗后重试。",
+		},
 	},
 	"zh-TW": {
-		title: "使用 Dashboard 密碼開啟 Hermes",
-		description: "Hermes 會在新視窗中開啟。部署密碼將自動複製，請使用使用者名稱 admin 登入。",
-		openSecureDashboard: "複製密碼並開啟",
-		openHermesDashboard: "複製密碼並開啟 Hermes",
+		hermes: {
+			title: "使用明確憑證開啟 Hermes",
+			description:
+				"先顯示使用者名稱和密碼。請分別明確複製；若剪貼簿無法使用，也可選取可見內容手動複製。然後開啟 Hermes 並登入。",
+			viewCredentials: "檢視 Hermes 憑證",
+			showCredentials: "顯示 Hermes 憑證",
+			loadingCredentials: "正在載入憑證…",
+			hideCredentials: "隱藏憑證",
+			username: "使用者名稱",
+			password: "密碼",
+			copyUsername: "複製 Hermes 使用者名稱",
+			copyPassword: "複製 Hermes 密碼",
+			usernameCopied: "已複製 Hermes 使用者名稱",
+			passwordCopied: "已複製 Hermes 密碼",
+			manualCopy: "無法複製——請選取可見內容並手動複製。",
+			openDashboard: "開啟 Hermes Dashboard",
+			credentialErrorTitle: "無法載入 Hermes 憑證",
+			credentialErrorDescription: "請選擇「顯示 Hermes 憑證」重試。",
+		},
+		openclaw: {
+			title: "在新視窗中開啟 OpenClaw",
+			description: "OpenClaw 在頂層 Control UI 中使用官方 token 交接和原生裝置驗證。",
+			openControlUi: "開啟 OpenClaw Control UI",
+			pairingTitle: "如果 Control UI 顯示「pairing required」",
+			pairingDescription:
+				"開啟 Hosted Terminal，列出待配對裝置，複製該瀏覽器對應的準確 requestId，再核准這個 requestId：",
+			pairingListCommand: "openclaw devices list",
+			pairingApproveCommand: "openclaw devices approve <requestId>",
+			pairingWarning: "不要自動核准請求，也不要使用 --latest。",
+			credentialErrorTitle: "無法開啟 OpenClaw",
+			credentialErrorDescription: "請重試。",
+			popupBlockedTitle: "無法開啟 OpenClaw",
+			popupBlockedDescription: "瀏覽器阻擋了新視窗。請允許彈出視窗後重試。",
+		},
 	},
 };
 
-export function hermesPasswordUiCopy(locale: string | undefined): RuntimeUiAuthCopy {
+function copyForLocale(locale: string | undefined): RuntimeUiCopyCatalog {
 	const normalized = locale?.replace("_", "-").toLowerCase() ?? "en";
 	if (normalized === "zh-tw" || normalized === "zh-hk" || normalized === "zh-hant") {
 		return COPY["zh-TW"];
@@ -36,34 +158,22 @@ export function hermesPasswordUiCopy(locale: string | undefined): RuntimeUiAuthC
 	return COPY.en;
 }
 
-export function browserHermesPasswordUiCopy(): RuntimeUiAuthCopy {
-	return hermesPasswordUiCopy(typeof navigator === "undefined" ? undefined : navigator.language);
+function browserLocale(): string | undefined {
+	return typeof navigator === "undefined" ? undefined : navigator.language;
 }
 
-export function browserOpenClawNativeUiCopy(): RuntimeUiAuthCopy {
-	const locale = typeof navigator === "undefined" ? undefined : navigator.language;
-	const normalized = locale?.replace("_", "-").toLowerCase() ?? "en";
-	if (normalized === "zh-tw" || normalized === "zh-hk" || normalized === "zh-hant") {
-		return {
-			title: "在新視窗中開啟 OpenClaw",
-			description: "OpenClaw 原生裝置驗證不可嵌入此頁面。請在新視窗中完成登入與裝置配對。",
-			openSecureDashboard: "開啟安全 Control UI",
-			openHermesDashboard: "開啟 OpenClaw Control UI",
-		};
-	}
-	if (normalized === "zh" || normalized.startsWith("zh-")) {
-		return {
-			title: "在新窗口中打开 OpenClaw",
-			description: "OpenClaw 原生设备验证不能嵌入此页面。请在新窗口中完成登录和设备配对。",
-			openSecureDashboard: "打开安全 Control UI",
-			openHermesDashboard: "打开 OpenClaw Control UI",
-		};
-	}
-	return {
-		title: "Open OpenClaw in a new window",
-		description:
-			"OpenClaw's native device authentication cannot be embedded here. Open the Control UI to authenticate and complete device pairing.",
-		openSecureDashboard: "Open secure Control UI",
-		openHermesDashboard: "Open OpenClaw Control UI",
-	};
+export function hermesPasswordUiCopy(locale: string | undefined): HermesPasswordUiCopy {
+	return copyForLocale(locale).hermes;
+}
+
+export function openClawNativeUiCopy(locale: string | undefined): OpenClawNativeUiCopy {
+	return copyForLocale(locale).openclaw;
+}
+
+export function browserHermesPasswordUiCopy(): HermesPasswordUiCopy {
+	return hermesPasswordUiCopy(browserLocale());
+}
+
+export function browserOpenClawNativeUiCopy(): OpenClawNativeUiCopy {
+	return openClawNativeUiCopy(browserLocale());
 }
