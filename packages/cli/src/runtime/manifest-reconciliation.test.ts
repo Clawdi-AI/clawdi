@@ -19,7 +19,6 @@ import {
 	runtimeLiveSnapshotPaths,
 	runtimeProgramRevision,
 	runtimeSecretValue,
-	runtimeSidecarProgramRevision,
 } from "./manifest";
 import {
 	hostedRuntimeBundleV2ManifestSchema,
@@ -331,40 +330,12 @@ afterEach(() => {
 
 describe("runtime manifest reconciliation invariants", () => {
 	test.each([
-		[
-			"OpenClaw",
-			hostedOpenClawV2ManifestFixture(),
-			{
-				surfaces: [
-					{
-						name: "openclaw",
-						kind: "control-ui",
-						listenPort: 28789,
-						upstreamHost: "127.0.0.1",
-						upstreamPort: 18789,
-					},
-				],
-			},
-		],
-		[
-			"Hermes",
-			hostedHermesManifestFixture(),
-			{
-				surfaces: [
-					{
-						name: "hermes",
-						kind: "control-ui",
-						listenPort: 28793,
-						upstreamHost: "127.0.0.1",
-						upstreamPort: 9119,
-					},
-				],
-			},
-		],
-	] as const)("rejects a bridge in every hosted %s manifest schema", (_name, valid, bridge) => {
+		["OpenClaw", hostedOpenClawV2ManifestFixture()],
+		["Hermes", hostedHermesManifestFixture()],
+	] as const)("rejects the removed bridge field in every hosted %s manifest schema", (_name, valid) => {
 		expect(hostedRuntimeManifestSchema.safeParse(valid).success).toBe(true);
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(valid).success).toBe(true);
-		const withBridge = { ...valid, bridge };
+		const withBridge = { ...valid, bridge: {} };
 		expect(hostedRuntimeManifestSchema.safeParse(withBridge).success).toBe(false);
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(withBridge).success).toBe(false);
 		expect(
@@ -395,29 +366,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		).openclawControlUiAllowedOrigins = ["https://other.example.test"];
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(mismatchedOrigin).success).toBe(true);
 
-		expect(
-			hostedRuntimeBundleV2ManifestSchema.safeParse({ ...valid, bridge: { surfaces: [] } }).success,
-		).toBe(false);
-		const bridgeEnvironment = structuredClone(valid);
-		(
-			bridgeEnvironment.runtimes as { openclaw: { run: { env: Record<string, string> } } }
-		).openclaw.run.env.CLAWDI_RUNTIME_BRIDGE_FRAME_ANCESTORS = "https://clawdi.example";
-		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(bridgeEnvironment).success).toBe(false);
-
-		const serviceBridgeEnvironment = structuredClone(valid);
-		(
-			serviceBridgeEnvironment.runtimes as {
-				openclaw: { services: Record<string, unknown> };
-			}
-		).openclaw.services = {
-			helper: {
-				env: { CLAWDI_RUNTIME_BRIDGE_TOKEN: "bridge-token" },
-			},
-		};
-		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(serviceBridgeEnvironment).success).toBe(
-			false,
-		);
-
 		const serviceGatewayTokenEnvironment = structuredClone(valid);
 		(
 			serviceGatewayTokenEnvironment.runtimes as {
@@ -431,33 +379,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(
 			hostedRuntimeBundleV2ManifestSchema.safeParse(serviceGatewayTokenEnvironment).success,
 		).toBe(false);
-
-		const providerBridgeEnvironment = structuredClone(valid);
-		(
-			providerBridgeEnvironment.providers as {
-				default: { runtimeEnvName?: string };
-			}
-		).default.runtimeEnvName = "CLAWDI_RUNTIME_BRIDGE_TOKEN";
-		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(providerBridgeEnvironment).success).toBe(
-			false,
-		);
-		expect(
-			hostedRuntimeManifestSchema.safeParse(
-				hostedManifestFixture({
-					bridge: {
-						surfaces: [
-							{
-								name: "openclaw",
-								kind: "control-ui",
-								listenPort: 28789,
-								upstreamHost: "127.0.0.1",
-								upstreamPort: 18789,
-							},
-						],
-					},
-				}),
-			).success,
-		).toBe(false);
 	});
 	test("requires official Basic auth and direct 9119 exposure for hosted Hermes v2", () => {
 		const valid = hostedHermesManifestFixture();
@@ -466,22 +387,6 @@ describe("runtime manifest reconciliation invariants", () => {
 			hostedRuntimeBundleV2ManifestSchema.safeParse({
 				...valid,
 				system: hostedSystemFixture(),
-			}).success,
-		).toBe(false);
-		expect(
-			hostedRuntimeBundleV2ManifestSchema.safeParse({
-				...valid,
-				bridge: {
-					surfaces: [
-						{
-							name: "hermes",
-							kind: "control-ui",
-							listenPort: 28793,
-							upstreamHost: "127.0.0.1",
-							upstreamPort: 9119,
-						},
-					],
-				},
 			}).success,
 		).toBe(false);
 		const inactive = structuredClone(valid);
@@ -889,32 +794,28 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			},
 			projection: { providers: { default: { model: "legacy-model" } } },
-			bridge: {
-				surfaces: [
-					{
-						name: "openclaw",
-						kind: "control-ui",
-						listenPort: 28789,
-						upstreamHost: "127.0.0.1",
-						upstreamPort: 18789,
-					},
-				],
-			},
 			recovery: {},
 		});
 
 		expect(parsed.runtimes.custom.install?.args).toEqual([]);
 		expect(parsed.runtimes.custom.updateChannel).toBe("stable");
 		expect(parsed.projection?.providers?.default).toEqual({ model: "legacy-model" });
-		expect(parsed.bridge?.surfaces).toEqual([
-			{
-				name: "openclaw",
-				kind: "control-ui",
-				listenPort: 28789,
-				upstreamHost: "127.0.0.1",
-				upstreamPort: 18789,
+	});
+
+	test("rejects rather than strips the removed bridge field in generic manifests", () => {
+		const paths = tempRuntimePaths();
+		const valid = baseManifest(paths, {
+			openclaw: {
+				enabled: true,
+				run: runSettings("openclaw", ["gateway", "run"]),
+				services: {},
 			},
-		]);
+		});
+		const result = manifestSchema.safeParse({ ...valid, bridge: {} });
+
+		expect(result.success).toBe(false);
+		if (result.success) throw new Error("expected removed bridge field rejection");
+		expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ["bridge"] }));
 	});
 
 	test.each([
@@ -1154,7 +1055,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		});
 	});
 
-	test("projects hosted OpenClaw v2 native auth without bridge or device bypass", () => {
+	test("projects hosted OpenClaw v2 native auth without device bypass", () => {
 		const paths = tempRuntimePaths();
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const patchPath = join(paths.serviceStateRoot, "openclaw-native-auth-patch.json");
@@ -1183,7 +1084,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
 			},
 		};
-		expect(normalized.bridge).toBeUndefined();
 		expect(() =>
 			convergeRuntimeManifest(
 				manifestLoad(normalized, "inline-hosted-openclaw-native-auth-missing-token"),
@@ -1223,7 +1123,6 @@ describe("runtime manifest reconciliation invariants", () => {
 			"utf8",
 		);
 		expect(gatewayEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token"');
-		expect(gatewayEnv).not.toContain("CLAWDI_RUNTIME_BRIDGE");
 		expect(result.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1))).not.toContain(
 			"clawdi-runtime-sidecar.service",
 		);
@@ -1551,7 +1450,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(normalized.manifest.runtimes.openclaw.run?.secretEnv).toEqual({
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
 		});
-		expect(normalized.manifest.bridge).toBeUndefined();
 		expect(normalized.manifest.projection?.providers).toEqual(hostedResponse.manifest.providers);
 		expect(normalized.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toContain(
 			"api-proxy",
@@ -1736,7 +1634,6 @@ describe("runtime manifest reconciliation invariants", () => {
 						run: { command: "hermes", args: ["gateway", "run"] },
 					},
 				},
-				bridge: { surfaces: [] },
 			}),
 		).toThrow("hosted runtime manifests must declare exactly one selected runtime");
 	});
@@ -1771,7 +1668,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					services: {},
 				},
 			},
-			{ runtime: "openclaw", bridge: { surfaces: [] } },
+			{ runtime: "openclaw" },
 		);
 
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-openclaw"), paths);
@@ -2125,7 +2022,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		]);
 	});
 
-	test("keeps runtime secret revisions separate from bridge sidecar revisions", () => {
+	test("keeps runtime secret revisions scoped to runtime programs", () => {
 		const paths = tempRuntimePaths();
 		const manifest = baseManifest(paths, {
 			openclaw: {
@@ -2152,12 +2049,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 		expect(runtimeProgramRevision(metadataOnlyChange, "openclaw", secretValues)).toBe(
 			runtimeRevision,
-		);
-
-		const sidecarRevision = runtimeSidecarProgramRevision(manifest, secretValues);
-		expect(runtimeSidecarProgramRevision(manifest, rotatedSecretValues)).toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(metadataOnlyChange, secretValues)).not.toBe(
-			sidecarRevision,
 		);
 	});
 

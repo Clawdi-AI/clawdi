@@ -193,7 +193,7 @@ const stoppedIncludedBasicDeployment = {
 
 const missingProjectionEnvironmentId = "55555555-5555-4555-8555-555555555555";
 const missingProjectionFailureReason =
-	"startup_probe_failing; restart_count=2; container failed readiness probe after the runtime bridge exhausted every startup attempt";
+	"startup_probe_failing; restart_count=2; container failed readiness probe after every startup attempt";
 const failedMissingProjectionDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_failed_projection",
@@ -1582,7 +1582,7 @@ test("projection service errors stay visible while deployment tools remain avail
 	expect(renderErrors, `projection failure render: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("Hermes Runtime UI uses the official dashboard URL without a bridge", async ({ page }) => {
+test("Hermes Runtime UI uses the official dashboard URL directly", async ({ page }) => {
 	await stubHostedApi(page, {
 		deployments: [
 			runtimeUiDeploymentRead({

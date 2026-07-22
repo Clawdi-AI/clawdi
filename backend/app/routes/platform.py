@@ -1044,7 +1044,6 @@ def _assign_runtime_state(
         name: runtime.model_dump(exclude_none=True, mode="json")
         for name, runtime in body.runtimes.items()
     }
-    state.bridge = _optional_runtime_model(body.bridge)
     state.live_sync = body.live_sync.model_dump(mode="json")
     state.recovery = body.recovery.model_dump(mode="json")
     state.egress_profiles = _optional_runtime_model(body.egress_profiles)
@@ -1071,7 +1070,6 @@ def _runtime_state_changed_fields(
         "system",
         "egress_engine",
         "runtimes",
-        "bridge",
         "live_sync",
         "recovery",
         "egress_profiles",
@@ -1091,7 +1089,7 @@ def _runtime_state_changed_fields(
                 name: runtime.model_dump(exclude_none=True, mode="json")
                 for name, runtime in body.runtimes.items()
             }
-        elif field in {"bridge", "egress_engine", "egress_profiles"}:
+        elif field in {"egress_engine", "egress_profiles"}:
             body_value = _optional_runtime_model(getattr(body, field))
         elif field in {"live_sync", "recovery"}:
             body_value = getattr(body, field).model_dump(mode="json")

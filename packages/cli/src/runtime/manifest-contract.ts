@@ -208,26 +208,6 @@ const liveSyncSchema = z.object({
 	agents: z.array(liveSyncAgentSchema).default([]),
 });
 
-const tcpPortSchema = z.number().int().min(1).max(65535);
-const runtimeBridgeSurfaceNameSchema = z
-	.string()
-	.min(1)
-	.max(64)
-	.regex(/^[a-z0-9][a-z0-9._-]*$/, "must be a lowercase surface id");
-
-export const runtimeBridgeSurfaceSchema = z.object({
-	name: runtimeBridgeSurfaceNameSchema,
-	kind: z.enum(["control-ui"]),
-	listenHost: z.string().min(1).optional(),
-	listenPort: tcpPortSchema,
-	upstreamHost: z.string().min(1).default("127.0.0.1"),
-	upstreamPort: tcpPortSchema,
-});
-
-const runtimeBridgeSchema = z.object({
-	surfaces: z.array(runtimeBridgeSurfaceSchema).default([]),
-});
-
 const runtimeProjectionSchema = z.object({
 	sourceSchemaVersion: z.string().min(1).optional(),
 	sourceBundleVersion: z.literal("clawdi.hosted-runtime.bundle.v2").optional(),
@@ -258,7 +238,6 @@ const runtimeDesiredStateShape = {
 	clawdiCli: cliPayloadPolicySchema.optional(),
 	egressEngine: egressEngineSchema.optional(),
 	runtimes: z.record(runtimeNameSchema, runtimeSchema),
-	bridge: runtimeBridgeSchema.optional(),
 	openclawGatewayAuth: openclawGatewayAuthSchema.optional(),
 	hermesDashboardAuth: hermesDashboardAuthSchema.optional(),
 	projection: runtimeProjectionSchema.optional(),
@@ -280,7 +259,7 @@ function addForbiddenFieldIssue(ctx: z.RefinementCtx, field: string, message?: s
 	});
 }
 
-export const manifestSchema = z
+const runtimeManifestSchema = z
 	.object({
 		schemaVersion: z.literal(RUNTIME_DESIRED_STATE_SCHEMA_VERSION),
 		...runtimeDesiredStateShape,
@@ -290,6 +269,20 @@ export const manifestSchema = z
 		if ("secrets" in manifest) addForbiddenFieldIssue(ctx, "secrets");
 	})
 	.transform(({ secrets: _secrets, ...manifest }) => manifest);
+
+export const manifestSchema = z
+	.unknown()
+	.superRefine((value, ctx) => {
+		if (
+			typeof value === "object" &&
+			value !== null &&
+			!Array.isArray(value) &&
+			Object.hasOwn(value, "bridge")
+		) {
+			addForbiddenFieldIssue(ctx, "bridge");
+		}
+	})
+	.pipe(runtimeManifestSchema);
 
 const hostedControlPlaneSchema = z
 	.object({
@@ -555,12 +548,6 @@ const hostedTerminalToolingSchema = z
 	})
 	.strict();
 
-const hostedRuntimeBridgeSchema = z
-	.object({
-		surfaces: z.array(runtimeBridgeSurfaceSchema.strict()).default([]),
-	})
-	.strict();
-
 const hostedLiveSyncAgentSchema = liveSyncAgentSchema
 	.extend({
 		agentType: z.enum(["openclaw", "hermes", "codex"]),
@@ -624,7 +611,6 @@ const hostedRuntimeManifestBaseSchema = z
 		controlPlane: hostedControlPlaneSchema,
 		egressEngine: egressEngineSchema.strict().optional(),
 		runtimes: z.record(runtimeNameSchema, hostedRuntimeEntrySchema),
-		bridge: hostedRuntimeBridgeSchema.optional(),
 		providers: z.record(z.string().min(1), hostedProviderSchema),
 		liveSync: hostedLiveSyncSchema,
 		egressProfiles: egressProfileInputBundleSchema.strict().optional(),
@@ -690,13 +676,6 @@ function validateHostedRuntimeManifest(
 				});
 			}
 		}
-	}
-	if (manifest.bridge !== undefined) {
-		ctx.addIssue({
-			code: "custom",
-			message: "Hosted runtime manifests must not declare a bridge",
-			path: ["bridge"],
-		});
 	}
 	if (manifest.runtime === "hermes") {
 		if (!manifest.system.hermesDashboardAuth) {
@@ -805,17 +784,6 @@ function validateHostedRuntimeManifestV2(
 			path: ["runtimes", "openclaw", "run", "env", "OPENCLAW_GATEWAY_TOKEN"],
 		});
 	}
-	for (const source of ["env", "secretEnv"] as const) {
-		for (const envName of Object.keys(run?.[source] ?? {})) {
-			if (envName.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
-				ctx.addIssue({
-					code: "custom",
-					message: "OpenClaw v2 native Control UI must not receive bridge environment",
-					path: ["runtimes", "openclaw", "run", source, envName],
-				});
-			}
-		}
-	}
 	for (const [serviceName, service] of Object.entries(manifest.runtimes.openclaw?.services ?? {})) {
 		for (const source of ["env", "secretEnv"] as const) {
 			for (const envName of Object.keys(service[source] ?? {})) {
@@ -826,22 +794,15 @@ function validateHostedRuntimeManifestV2(
 						path: ["runtimes", "openclaw", "services", serviceName, source, envName],
 					});
 				}
-				if (envName.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
-					ctx.addIssue({
-						code: "custom",
-						message: "OpenClaw v2 native Control UI must not receive bridge environment",
-						path: ["runtimes", "openclaw", "services", serviceName, source, envName],
-					});
-				}
 			}
 		}
 	}
 	for (const [providerId, provider] of Object.entries(manifest.providers)) {
 		const envName = provider.runtimeEnvName;
-		if (envName === "OPENCLAW_GATEWAY_TOKEN" || envName?.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
+		if (envName === "OPENCLAW_GATEWAY_TOKEN") {
 			ctx.addIssue({
 				code: "custom",
-				message: "OpenClaw v2 provider environment must not target native auth or bridge controls",
+				message: "OpenClaw v2 provider environment must not target native auth controls",
 				path: ["providers", providerId, "runtimeEnvName"],
 			});
 		}
@@ -905,5 +866,3 @@ export type RuntimeManifest = z.output<typeof manifestSchema>;
 export type RuntimeInstall = z.infer<typeof installSchema>;
 export type HostedRuntimeManifest = z.infer<typeof hostedRuntimeManifestSchema>;
 export type LiveSyncAgent = z.infer<typeof liveSyncAgentSchema>;
-export type RuntimeBridgeSurfaceInput = z.input<typeof runtimeBridgeSurfaceSchema>;
-export type RuntimeBridgeSurfaceSpec = z.output<typeof runtimeBridgeSurfaceSchema>;

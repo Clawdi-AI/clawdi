@@ -29,7 +29,6 @@ from app.schemas.runtime import (
     HostedCodexProviderProjection,
     HostedEgressEngine,
     HostedEgressProfiles,
-    HostedRuntimeBridge,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
     HostedRuntimeName,
@@ -37,7 +36,6 @@ from app.schemas.runtime import (
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
-    validate_hosted_runtime_bridge,
     validate_hosted_runtime_desired_state,
 )
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
@@ -201,12 +199,6 @@ def render_runtime_source(
             "is invalid or not configured"
         ) from exc
     try:
-        bridge = (
-            HostedRuntimeBridge.model_validate(state.bridge) if state.bridge is not None else None
-        )
-    except ValidationError as exc:
-        raise RuntimeSourceError("Hosted runtime bridge state is invalid") from exc
-    try:
         egress_engine = (
             HostedEgressEngine.model_validate(state.egress_engine)
             if state.egress_engine is not None
@@ -230,12 +222,6 @@ def render_runtime_source(
             "Hosted runtime CLI package spec is invalid or below the minimum version"
         ) from exc
     runtime_name, runtime = _runtime(state.runtimes)
-    try:
-        validate_hosted_runtime_bridge(runtime_name, bridge)
-    except ValueError as exc:
-        raise RuntimeSourceError(
-            "Hosted runtime bridge state does not match the selected runtime"
-        ) from exc
     dashboard_auth = system.hermesDashboardAuth
     if runtime_name == "hermes" and dashboard_auth is None:
         raise RuntimeSourceError(
@@ -368,8 +354,6 @@ def render_runtime_source(
         "recovery": recovery.model_dump(mode="json"),
         "minimumCliVersion": _AGENT_V2_MANIFEST_MINIMUM_CLI_VERSION,
     }
-    if bridge is not None:
-        manifest["bridge"] = bridge.model_dump(exclude_none=True, exclude_unset=True, mode="json")
     if dashboard_auth is not None:
         manifest["system"]["hermesDashboardAuth"] = dashboard_auth.model_dump(
             exclude_none=True, mode="json"

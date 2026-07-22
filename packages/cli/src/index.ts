@@ -62,8 +62,6 @@ Environment:
                            Hosted runtime manifest datasource URL
   CLAWDI_RUNTIME_AUTH_ENV  Name of the env var containing the hosted bearer credential
   CLAWDI_AUTH_TOKEN        Default deployment-selected hosted bearer credential
-  CLAWDI_RUNTIME_BRIDGE_TOKEN
-                           Hosted runtime bridge token for authenticated surfaces
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
   HERMES_HOME              Custom Hermes home (else ~/.hermes)
@@ -739,7 +737,7 @@ runtimeCmd
 
 runtimeCmd
 	.command("sidecar")
-	.description("Run hosted runtime support modules")
+	.description("Run the hosted runtime egress sidecar")
 	.action(async () => {
 		const { runtimeSidecar } = await import("./commands/runtime.js");
 		await runtimeSidecar();

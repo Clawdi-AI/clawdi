@@ -299,7 +299,6 @@ async def _create_hosted_runtime_graph(
                         ),
                     }
                 },
-                bridge=None,
                 live_sync={
                     "enabled": True,
                     "agents": [

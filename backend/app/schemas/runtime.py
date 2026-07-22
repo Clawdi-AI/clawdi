@@ -22,7 +22,6 @@ _ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _EGRESS_HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _EGRESS_PROFILE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_.]*$")
 _RUNTIME_SERVICE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-_RUNTIME_BRIDGE_SURFACE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _SHA256_PATTERN = re.compile(r"^[0-9A-Fa-f]{64}$")
 _SEMVER_CORE_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
 _SEMVER_PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -396,31 +395,6 @@ class HostedEgressProfile(_StrictHostedWireModel):
 
 class HostedEgressProfiles(_StrictHostedWireModel):
     profiles: list[HostedEgressProfile] | None = None
-
-
-class HostedRuntimeBridgeSurface(_StrictHostedWireModel):
-    name: str = Field(
-        min_length=1,
-        max_length=64,
-        pattern=_RUNTIME_BRIDGE_SURFACE_NAME_PATTERN.pattern,
-    )
-    kind: Literal["control-ui"]
-    listenHost: str | None = Field(default=None, min_length=1)
-    listenPort: int = Field(ge=1, le=65535)
-    upstreamHost: str | None = Field(default=None, min_length=1)
-    upstreamPort: int = Field(ge=1, le=65535)
-
-
-class HostedRuntimeBridge(_StrictHostedWireModel):
-    surfaces: list[HostedRuntimeBridgeSurface]
-
-
-def validate_hosted_runtime_bridge(
-    _runtime: HostedRuntimeName,
-    bridge: HostedRuntimeBridge | None,
-) -> None:
-    if bridge is not None:
-        raise ValueError("v2 native runtime must not declare a bridge")
 
 
 class HostedHermesDashboardActivation(BaseModel):

@@ -4632,29 +4632,6 @@ export interface components {
             deviceAuthRequired: true;
             activation: components["schemas"]["HostedOpenClawGatewayActivation"];
         };
-        /** HostedRuntimeBridge */
-        HostedRuntimeBridge: {
-            /** Surfaces */
-            surfaces: components["schemas"]["HostedRuntimeBridgeSurface"][];
-        };
-        /** HostedRuntimeBridgeSurface */
-        HostedRuntimeBridgeSurface: {
-            /** Name */
-            name: string;
-            /**
-             * Kind
-             * @constant
-             */
-            kind: "control-ui";
-            /** Listenhost */
-            listenHost?: string | null;
-            /** Listenport */
-            listenPort: number;
-            /** Upstreamhost */
-            upstreamHost?: string | null;
-            /** Upstreamport */
-            upstreamPort: number;
-        };
         /** HostedRuntimeConfiguredDesiredState */
         HostedRuntimeConfiguredDesiredState: {
             /**
@@ -5253,7 +5230,6 @@ export interface components {
             runtimes: {
                 [key: string]: components["schemas"]["HostedRuntimeConfiguredDesiredState"] | components["schemas"]["HostedRuntimeUnmanagedDesiredState"];
             };
-            bridge?: components["schemas"]["HostedRuntimeBridge"] | null;
             live_sync: components["schemas"]["HostedRuntimeLiveSync"];
             recovery: components["schemas"]["HostedRuntimeRecovery"];
             egress_profiles?: components["schemas"]["HostedEgressProfiles"] | null;

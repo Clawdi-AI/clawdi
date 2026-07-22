@@ -81,12 +81,6 @@ export {
 } from "./manifest-source";
 
 import {
-	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
-	RUNTIME_BRIDGE_SURFACES_ENV,
-	RUNTIME_BRIDGE_TOKEN_ENV,
-	runtimeBridgeSurfaceSpecsForManifest,
-} from "./bridge";
-import {
 	applyEgressTransparentRuntimeEnv,
 	MANAGED_EGRESS_PLACEHOLDER_VALUE,
 	SYSTEM_CA_BUNDLE,
@@ -4207,7 +4201,6 @@ function hashToUInt16(input: string): number {
 
 export function runtimeSidecarProgramRevision(
 	manifest: RuntimeManifest,
-	secretValues: Record<string, string> | undefined,
 	egressProgram: RuntimeEgressSystemdProgram | null = null,
 	egressIdentity: RuntimeEgressIdentity | null = null,
 ): string {
@@ -4216,9 +4209,7 @@ export function runtimeSidecarProgramRevision(
 	}
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
-		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
-		bridgeTokenPresent: Boolean(secretValues),
-		runtimeSidecar: "hosted-runtime-sidecar-v3",
+		runtimeSidecar: "hosted-runtime-sidecar-v4",
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		egress: egressProgram
@@ -4311,28 +4302,6 @@ function runtimeServiceProgramName(runtime: string, service: string): string {
 
 function systemdUnitNameSegment(value: string): string {
 	return value.replace(/[^A-Za-z0-9_-]+/g, "-");
-}
-
-function hostedRuntimeBridgeToken(): string {
-	const direct = process.env[RUNTIME_BRIDGE_TOKEN_ENV]?.trim();
-	if (direct) return direct;
-	return readProcEnvironmentValue(
-		process.env.CLAWDI_RUNTIME_PID1_ENVIRON_PATH?.trim() || "/proc/1/environ",
-		RUNTIME_BRIDGE_TOKEN_ENV,
-	);
-}
-
-function readProcEnvironmentValue(path: string, key: string): string {
-	try {
-		const raw = readFileSync(path);
-		const prefix = `${key}=`;
-		for (const part of raw.toString("utf8").split("\0")) {
-			if (part.startsWith(prefix)) return part.slice(prefix.length).trim();
-		}
-	} catch {
-		// Best effort: runtime managers can still run without hosted bridge access.
-	}
-	return "";
 }
 
 function runtimeSystemdPath(paths: RuntimePaths): string {
@@ -4845,7 +4814,6 @@ function runtimeManifestUrlEnv(sourcePath: string): string {
 function runtimeSystemdCommonEnvironment(
 	sourcePath: string,
 	paths: RuntimePaths,
-	manifest: RuntimeManifest,
 ): Record<string, string> {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const environment: Record<string, string> = {
@@ -4856,16 +4824,8 @@ function runtimeSystemdCommonEnvironment(
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
 		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(sourcePath),
-		[RUNTIME_BRIDGE_TOKEN_ENV]: "",
-		[RUNTIME_BRIDGE_LISTEN_HOST_ENV]: process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
-		[RUNTIME_BRIDGE_SURFACES_ENV]: "",
 		PATH: runtimeSystemdPath(paths),
 	};
-	if (manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2") {
-		delete environment[RUNTIME_BRIDGE_TOKEN_ENV];
-		delete environment[RUNTIME_BRIDGE_LISTEN_HOST_ENV];
-		delete environment[RUNTIME_BRIDGE_SURFACES_ENV];
-	}
 	return environment;
 }
 
@@ -4938,26 +4898,15 @@ function writeSystemdUnits(
 	commonEnvironment: Record<string, string>,
 ): { systemUnits: string[]; userUnits: string[] } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const runtimeBridgeToken = hostedRuntimeBridgeToken();
-	const bridgeSurfaceSpecs = runtimeBridgeSurfaceSpecsForManifest(manifest);
 	const systemUnits: string[] = [];
-	const shouldRunBridge = bridgeSurfaceSpecs.length > 0;
 	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;
 	const activeEgressProgram = shouldRunEgress ? egressProgram : null;
 	const activeEgressIdentity = shouldRunEgress ? egressIdentity : null;
-	const shouldRunSidecar = shouldRunBridge || shouldRunEgress;
 	const userUnits: string[] = [];
 	const runtimeUid = shouldRunEgress ? runtimeUserUid(runtimeUser) : null;
 	const applyIdentityEnvironment = runtimeApplyIdentityEnvironment(
 		readRuntimeApplyIdentityFromEnv(),
 	);
-	const sidecarCommonEnvironment = { ...commonEnvironment };
-	if (!shouldRunBridge) {
-		delete sidecarCommonEnvironment[RUNTIME_BRIDGE_TOKEN_ENV];
-		delete sidecarCommonEnvironment[RUNTIME_BRIDGE_LISTEN_HOST_ENV];
-		delete sidecarCommonEnvironment[RUNTIME_BRIDGE_SURFACES_ENV];
-	}
-
 	if (daemonAuthTokenFile) {
 		systemUnits.push(
 			writeSystemdSystemUnit({
@@ -4971,7 +4920,6 @@ function writeSystemdUnits(
 					...commonEnvironment,
 					...applyIdentityEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
-					...(shouldRunBridge ? { [RUNTIME_BRIDGE_TOKEN_ENV]: runtimeBridgeToken } : {}),
 				},
 			}),
 		);
@@ -5000,7 +4948,7 @@ function writeSystemdUnits(
 		);
 	}
 
-	if (shouldRunSidecar) {
+	if (activeEgressProgram) {
 		systemUnits.push(
 			writeSystemdSystemUnit({
 				paths,
@@ -5010,18 +4958,11 @@ function writeSystemdUnits(
 				args: ["runtime", "sidecar"],
 				cwd: workspaceRoot,
 				env: {
-					...sidecarCommonEnvironment,
+					...commonEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
-					CLAWDI_EGRESS_ENV_FILE: shouldRunEgress && egressProgram ? egressProgram.envFilePath : "",
-					...(shouldRunBridge
-						? {
-								[RUNTIME_BRIDGE_TOKEN_ENV]: runtimeBridgeToken,
-								[RUNTIME_BRIDGE_SURFACES_ENV]: JSON.stringify(bridgeSurfaceSpecs),
-							}
-						: {}),
+					CLAWDI_EGRESS_ENV_FILE: activeEgressProgram.envFilePath,
 					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
 						manifest,
-						secretValues,
 						activeEgressProgram,
 						activeEgressIdentity,
 					),
@@ -5993,11 +5934,7 @@ export function convergeRuntimeManifest(
 				managedModelOverrides,
 			);
 		}
-		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(
-			load.sourcePath,
-			paths,
-			manifest,
-		);
+		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(load.sourcePath, paths);
 		if (shouldInstallOfficialRuntimeServices()) {
 			for (const program of officialRuntimeSystemdPrograms(runtimeSystemdUserPrograms)) {
 				writeRuntimeSystemdUserProgram({

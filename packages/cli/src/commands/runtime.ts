@@ -34,7 +34,6 @@ import {
 	readRuntimeAuthToken,
 	runtimeAuthTokenFileLabel,
 } from "../runtime/auth-token";
-import { RUNTIME_BRIDGE_SURFACES_ENV, startRuntimeBridge } from "../runtime/bridge";
 import { applyRuntimeBundleChannelsToManifestLoad } from "../runtime/channels";
 import {
 	applyRuntimeCliDesiredState,
@@ -2509,34 +2508,20 @@ export async function runtimeSidecar(): Promise<void> {
 	if (detectRuntimeMode() !== "hosted") {
 		throw new Error("runtime sidecar is only available in hosted runtime mode");
 	}
-	const shouldStartBridge = Boolean(process.env[RUNTIME_BRIDGE_SURFACES_ENV]?.trim());
 	const shouldStartEgress = Boolean(process.env.CLAWDI_EGRESS_ENV_FILE?.trim());
-	if (!shouldStartBridge && !shouldStartEgress) {
-		throw new Error("runtime sidecar requires at least one configured module.");
+	if (!shouldStartEgress) {
+		throw new Error("runtime sidecar requires egress configuration.");
 	}
 
-	let bridge: Awaited<ReturnType<typeof startRuntimeBridge>> | null = null;
 	let egress: RuntimeEgressModule | null = null;
 	try {
 		if (shouldStartEgress) {
 			egress = await startRuntimeEgress();
 			console.error(`runtime sidecar egress module listening on 127.0.0.1:${egress.port}`);
 		}
-		if (shouldStartBridge) {
-			bridge = await startRuntimeBridge();
-			console.error(
-				`runtime sidecar bridge module listening on ${bridge.surfaces
-					.map(
-						(surface) =>
-							`${surface.listenHost}:${surface.listenPort}->${surface.upstreamHost}:${surface.upstreamPort}`,
-					)
-					.join(", ")}`,
-			);
-		}
 		notifySystemdReady("runtime sidecar ready");
 	} catch (error) {
 		egress?.close();
-		await bridge?.close();
 		throw error;
 	}
 
@@ -2546,7 +2531,6 @@ export async function runtimeSidecar(): Promise<void> {
 		await (egressExit ? Promise.race([shutdown, egressExit]) : shutdown);
 	} finally {
 		egress?.close();
-		await bridge?.close();
 		await egressExit?.catch(() => undefined);
 	}
 }

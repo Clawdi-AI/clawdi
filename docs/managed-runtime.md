@@ -42,8 +42,6 @@ The public contract covers:
 - exposing strict-v2 OpenClaw directly on its native `18789` gateway with
   official token and device authentication when the typed authorization
   capability is active;
-- retaining the optional OpenClaw sidecar bridge only for generic/self-hosted desired
-  state that declares it;
 - exposing a dashboard Terminal contract for one deployment shell;
 - reporting status and diagnostics through runtime commands.
 
@@ -163,7 +161,6 @@ flowchart TB
         Watch[clawdi runtime watch]
         Daemon[clawdi daemon run]
         Sidecar[optional clawdi runtime sidecar]
-        Bridge[generic/self-hosted bridge module]
         Egress[egress module]
     end
 
@@ -176,13 +173,11 @@ flowchart TB
     Systemd[systemd PID 1] --> Watch
     Systemd --> Daemon
     UserSystemd[systemd --user] --> Sidecar
-    Sidecar --> Bridge
     Sidecar --> Egress
     UserSystemd --> HermesGateway
     UserSystemd --> HermesDashboard
     UserSystemd --> OpenClaw
 
-    Bridge -->|generic/self-hosted Control UI proxy| OpenClaw
     Egress -. proxy URL + CA trust .-> HermesGateway
     Egress -. proxy URL + CA trust .-> HermesDashboard
     Egress -. proxy URL + CA trust .-> OpenClaw
@@ -251,8 +246,8 @@ deployment that needs both must use an official service installer for each
 runtime-owned unit. Until Hermes exposes an official dashboard service
 installer, the hosted default does not synthesize `hermes-dashboard.service`; an
 explicit compatibility unit, if required, must use a `clawdi-*` name. The
-Hermes dashboard is never a bridge target in Agent v2. It binds directly to
-`0.0.0.0:9119` and uses Hermes' bundled Basic authentication provider.
+Hermes dashboard binds directly to `0.0.0.0:9119` and uses Hermes' bundled
+Basic authentication provider.
 
 ### Runtime Host Contents
 
@@ -281,14 +276,13 @@ runtime commands still resolve to official binaries, so native commands such as
 ## Support Module Boundaries
 
 The Clawdi support programs run under the same process manager as the runtime
-programs. `clawdi runtime sidecar` is one support process with optional modules,
-and those modules keep explicit authority boundaries:
+programs. `clawdi runtime sidecar` is the egress support process and keeps an
+explicit authority boundary:
 
 | Module | Starts when | Direction | Sensitive input | Network exposure | Must not own |
 | --- | --- | --- | --- | --- | --- |
 | manifest/watch | an auth token file exists | control-plane polling | Clawdi auth token from file | outbound API only | official runtime PID 1 |
 | live-sync daemon | `liveSync.agents` is non-empty | live sync and local daemon APIs | Clawdi auth token from file | local daemon surface | egress rewrite policy |
-| sidecar bridge module | a generic/self-hosted OpenClaw `bridge.surfaces` entry is present | browser reverse proxy | bridge token only | declared listen ports | outbound egress policy |
 | sidecar egress module | enabled egress profiles exist | runtime outbound proxy | profile bundle, CA cert/key under `$CLAWDI_RUN_DIR`, optional secret file | loopback/private proxy | live-sync/API authority |
 | official runtime program | runtime is enabled | normal runtime behavior | runtime-specific env/config only | official runtime ports | Clawdi auth secrets |
 
@@ -311,11 +305,6 @@ the managed trust projection to unrelated local users. The egress CA private key
 remains separate under the egress identity's private directory and is never
 group-readable by the runtime user.
 
-The sidecar bridge module is generic/self-hosted support, not a replacement for
-official ports. Strict v2 forbids the entire `bridge` field. Its egress module
-starts independently and receives no `CLAWDI_RUNTIME_BRIDGE_*` environment when
-no generic/self-hosted bridge surface is declared.
-
 ### Official Container Reference Research
 
 Official runtime images are useful references, but they are not the primary
@@ -328,9 +317,8 @@ hosted architecture while in-place official UI updates are a requirement:
 
 The Linux-like host can adopt these lessons without switching to container
 rollout updates: use separate official systemd user services when the runtime
-provides service installers for separate surfaces, retain OpenClaw loopback only
-for declared generic/self-hosted bridge mode, and require runtime-native auth when
-exposing the official OpenClaw port directly.
+provides service installers for separate surfaces, and require runtime-native
+auth when exposing the official OpenClaw port directly.
 
 ## Manifest Shape
 
@@ -361,9 +349,8 @@ The CLI normalizes these wire contracts into the desired-state shape:
   consumed by `runtime init`.
 - `clawdi.hosted-runtime.bundle.v2` wraps an inner
   `clawdi.hosted-runtime.manifest.v1` and is marked locally after validation.
-  This strict Agent v2 path rejects `bridge` for both runtimes. OpenClaw also
-  requires typed native auth, the exact gateway command, and an environment
-  secret reference for the gateway token.
+  OpenClaw requires typed native auth, the exact gateway command, and an
+  environment secret reference for the gateway token.
 
 Normalization maps hosted fields into the internal shape:
 
@@ -389,7 +376,6 @@ Normalization maps hosted fields into the internal shape:
 | Hosted filesystem defaults | Derived locally from Hosted `RuntimePaths`: HOME, workspace, persistence root, installer home, and explicit process/service cwd use `userHome`; obsolete external `system`/runtime path fields are rejected |
 | `providers.<id>` | Canonical Hosted provider projection: `kind` is exactly `openai-compatible`; normal entries also require `type` and `baseUrl`, while `provider_not_found` is the only reduced error entry |
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
-| `bridge.surfaces` | Optional generic/self-hosted authenticated runtime surface mappings; forbidden in every Hosted manifest |
 | `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids`; `{}` in unmanaged mode |
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with one Clawdi-managed provider metadata and secret reference, independent of runtime providers |
 | `mcp`, `tools` | Existing runtime MCP/tool projection input; unrelated tool fields remain pass-through and do not include terminal Codex |
@@ -527,24 +513,12 @@ not by an interactive user setup flow.
 `runtime watch` is the long-running reconciliation loop. It refreshes remote
 manifest state using ETags, applies changes, records status, and falls back to
 last-good cached manifests only when recovery policy allows it. `runtime
-sidecar` is the single Clawdi support process for optional runtime-local modules:
-the generic/self-hosted bridge module exposes manifest-declared browser surfaces, and the
-egress module proxies outbound runtime traffic when explicit egress profiles are
+sidecar` runs outbound egress handling when explicit egress profiles are
 enabled.
-
-Generic/self-hosted bridge surfaces are OpenClaw browser-facing runtime UIs. Each
-surface declares its listen address, upstream target, protocol behavior, auth
-model, and header rewrite rules. The bridge must not become a generic
-arbitrary-port forwarder and cannot appear in any Hosted manifest. Terminal is deliberately
-out of scope because it is a shell-exec authorization path, not a browser UI
-proxy.
 
 ## Runtime UI Authentication
 
-Strict-v2 OpenClaw has no Clawdi bridge, redemption endpoint, bridge cookie,
-bridge health endpoint, HTML/header rewrite, prefix injector, or WebSocket
-mediator. Its manifest must omit `bridge`, bind the official gateway directly to
-the pod network with
+Strict-v2 OpenClaw binds the official gateway directly to the pod network with
 `gateway run --allow-unconfigured --port 18789 --bind lan --force`, and provide
 `OPENCLAW_GATEWAY_TOKEN` only through `run.secretEnv`. The local config patch
 sets official token auth, preserves device authentication, disables insecure
@@ -575,12 +549,7 @@ infer auth from the runtime name or fall back to legacy `native_url` fields.
 endpoint URLs contain no secret. The owner-checked credential response carries
 the Hermes password in its no-store response or the OpenClaw token in exactly
 one URL fragment parameter, never a query. Runtime/auth mismatches, unsafe URLs,
-bridge-token requirements, or incomplete metadata are unavailable. Neither v2
-runtime uses an iframe or bridge redemption.
-
-Generic/self-hosted `RuntimeManifest` retains bridge support. Every Hosted
-manifest schema rejects the entire `bridge` field and requires direct native
-authentication for the selected runtime.
+or incomplete metadata are unavailable. Neither v2 runtime uses an iframe.
 
 The Hermes contract was verified against NousResearch/hermes-agent commit
 [`8208fc52701332f213e6c51ebc0b610be00300de`](https://github.com/NousResearch/hermes-agent/tree/8208fc52701332f213e6c51ebc0b610be00300de),
@@ -606,7 +575,7 @@ All behavior evidence below is pinned to the newer exact `main` commit.
 | Dashboard URL discovery | [`docs/cli/dashboard.md` lines 20-42](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/cli/dashboard.md#L20-L42), [`src/commands/dashboard.ts` lines 33-118](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/commands/dashboard.ts#L33-L118) | Official JSON discovery reports resolved HTTP/WS URLs; the official handoff uses `#token=`, not a query token. |
 | Fragment and top-level browser flow | [`ui/src/app/startup-settings.ts` lines 91-172](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/ui/src/app/startup-settings.ts#L91-L172), [`docs/web/control-ui.md` lines 742-754](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L742-L754) | Query tokens are legacy, warned, and stripped; `gatewayUrl` is top-level-only, so Clawdi uses a top-level fragment handoff and no iframe. |
 | WebSocket auth | [`docs/concepts/architecture.md` lines 75-112](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/concepts/architecture.md#L75-L112) | The first frame is `connect`; shared-secret auth and device identity/pairing remain native OpenClaw protocol responsibilities. |
-| Auth-aware readiness | [`docs/gateway/embedding.md` lines 91-107](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/embedding.md#L91-L107), [`docs/gateway/index.md` lines 40-49](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/index.md#L40-L49) | A TCP or bridge `/health` check is insufficient. Readiness requires authenticated WS `connect` through `hello-ok`, equivalent to `gateway status --require-rpc`. |
+| Auth-aware readiness | [`docs/gateway/embedding.md` lines 91-107](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/embedding.md#L91-L107), [`docs/gateway/index.md` lines 40-49](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/index.md#L40-L49) | A TCP check is insufficient. Readiness requires authenticated WS `connect` through `hello-ok`, equivalent to `gateway status --require-rpc`. |
 | Base path/prefix | [`docs/web/control-ui.md` lines 10-15](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L10-L15) | Configure official `gateway.controlUi.basePath`; do not inject or rewrite browser paths. |
 | Service lifecycle | [`docs/cli/daemon.md` lines 13-47](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/cli/daemon.md#L13-L47) | Use official gateway install/start/stop/restart/status lifecycle and keep Clawdi ownership limited to its hosted drop-in/env. |
 
@@ -704,19 +673,17 @@ EnvironmentFile="/run/clawdi/systemd/env/openclaw-gateway.service.env"
 ExecStart="/home/clawdi/.openclaw/bin/openclaw" "gateway" "run" "--allow-unconfigured" "--port" "18789" "--bind" "lan" "--force"
 ```
 
-When generic/self-hosted bridge surfaces or any egress profiles are enabled, systemd
-runs the Clawdi sidecar. Its bridge and egress modules activate independently;
-an egress-only sidecar has no bridge environment. Egress interception uses a
-runtime-fetched `mitmdump` (mitmproxy) transparent gateway running under the
-explicit non-root `CLAWDI_EGRESS_UID` and `CLAWDI_EGRESS_GID` numeric identity
+When egress profiles are enabled, systemd runs the Clawdi sidecar. Egress
+interception uses a runtime-fetched `mitmdump` (mitmproxy) transparent gateway
+running under the explicit non-root `CLAWDI_EGRESS_UID` and
+`CLAWDI_EGRESS_GID` numeric identity
 (both default to `10002`). The CLI owns its paths, permissions, and privilege
 drop; the image does not need a named egress account. Engagement is a minimal
 nft redirect of the runtime UID's
 outbound :80/:443 to the local mitmproxy port (default-allow: non-profiled hosts
 pass through end-to-end against the real upstream CA); no forward-proxy env is
-injected. Generic/self-hosted bridge token/surface config and egress
-profile/CA/secret config stay inside the sidecar. Runtime programs therefore
-receive only CA-trust env such as `NODE_EXTRA_CA_CERTS`,
+injected. Egress profile/CA/secret config stays inside the sidecar. Runtime
+programs therefore receive only CA-trust env such as `NODE_EXTRA_CA_CERTS`,
 `REQUESTS_CA_BUNDLE`, and `SSL_CERT_FILE`; sidecar control env and secret-file
 paths stay out of the official runtime process.
 
@@ -741,8 +708,7 @@ The strict manifest references the token only as
 `env://OPENCLAW_GATEWAY_TOKEN`; the resolved value is absent from manifest env
 and durable config. Missing token, native-auth capability, deployment policy,
 public origin, exact command, or auth-aware readiness metadata rejects the
-strict-v2 configuration before exposure. Generic/self-hosted OpenClaw bridge
-behavior remains outside the Hosted contract.
+strict-v2 configuration before exposure.
 
 ## Official Update Compatibility
 
@@ -813,8 +779,7 @@ older CLI must not be selected for a deployment with managed Telegram bindings.
 
 Hosted deployment pages expose two live surfaces:
 
-- **Control UI** opens strict-v2 runtime-native authentication in a top-level
-  window. Generic/self-hosted OpenClaw may still use its declared sidecar bridge. The
+- **Control UI** opens runtime-native authentication in a top-level window. The
   surface is runtime-specific and labelled as `<Runtime> Control UI`.
 - **Terminal** opens a shell for the deployment. It is not split per agent; a
   deployment has one Terminal surface.
@@ -822,9 +787,7 @@ Hosted deployment pages expose two live surfaces:
 ```mermaid
 flowchart LR
     Dashboard[Dashboard] -->|Control UI URL| Ingress[Platform ingress]
-    Ingress -->|direct mode| RuntimeUI[Official runtime UI port]
-    Ingress -->|generic/self-hosted only| Bridge[sidecar bridge module]
-    Bridge --> RuntimeUI
+    Ingress --> RuntimeUI[Official runtime UI port]
     Dashboard -->|Terminal WebSocket| HostedAPI[Hosted API]
     HostedAPI --> Shell[Deployment shell<br/>default runtime user]
 ```
@@ -856,7 +819,6 @@ fallback for environments that reject custom WebSocket subprotocols.
   request rewriting.
 - Expose strict-v2 official runtime ports only when native auth and the typed
   deployment-authorization capability are active; otherwise fail closed.
-- Keep sidecar bridge auth limited to declared generic/self-hosted OpenClaw surfaces.
 - Keep defensive validation at every boundary: manifests, provider references,
   channel descriptors, filesystem paths, and process launch arguments.
 - Remove `CLAWDI_AUTH_TOKEN` from agent child process environments unless that
@@ -932,6 +894,5 @@ Primary implementation files:
 | Run config | `packages/cli/src/runtime/run-config.ts` |
 | Command execution | `packages/cli/src/commands/run.ts` |
 | CLI update policy | `packages/cli/src/runtime/cli-update.ts` |
-| Runtime bridge | `packages/cli/src/runtime/bridge.ts` |
 | Dashboard terminal | `apps/web/src/hosted/agents/hosted-terminal-panel.tsx` |
 | Dashboard hosted detail page | `apps/web/src/hosted/agents/hosted-agent-detail.tsx` |

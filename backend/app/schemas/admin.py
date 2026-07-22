@@ -19,7 +19,6 @@ from pydantic import (
     Field,
     SecretStr,
     field_validator,
-    model_validator,
 )
 
 from app.schemas.ai_provider import AiProviderAuth, AiProviderModel
@@ -27,7 +26,6 @@ from app.schemas.platform import PlatformOwner
 from app.schemas.runtime import (
     HostedEgressEngine,
     HostedEgressProfiles,
-    HostedRuntimeBridge,
     HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
@@ -35,7 +33,6 @@ from app.schemas.runtime import (
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
-    validate_hosted_runtime_bridge,
     validate_no_plaintext_tool_secrets,
 )
 
@@ -142,7 +139,6 @@ class AdminRuntimeStateUpsert(BaseModel):
     system: HostedRuntimeSystem
     egress_engine: HostedEgressEngine | None = None
     runtimes: dict[str, HostedRuntimeDesiredState]
-    bridge: HostedRuntimeBridge | None = None
     live_sync: HostedRuntimeLiveSync
     recovery: HostedRuntimeRecovery
     egress_profiles: HostedEgressProfiles | None = None
@@ -170,12 +166,6 @@ class AdminRuntimeStateUpsert(BaseModel):
         if len(value) != 1:
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
-
-    @model_validator(mode="after")
-    def _validate_runtime_bridge(self) -> AdminRuntimeStateUpsert:
-        runtime = next(iter(self.runtimes))
-        validate_hosted_runtime_bridge(runtime, self.bridge)
-        return self
 
     @field_validator("mcp")
     @classmethod

@@ -523,7 +523,6 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 				...hostedRuntimeProviderBinding(runtime),
 			},
 		},
-		bridge: hosted.bridge,
 		openclawGatewayAuth: hosted.system.openclawGatewayAuth,
 		hermesDashboardAuth: hosted.system.hermesDashboardAuth,
 		projection: {
@@ -633,26 +632,9 @@ function validateManifestSemantics(
 		if (manifest.runtimes[runtime]?.enabled !== true) {
 			errors.push(`manifest runtime ${runtime} must be enabled`);
 		}
-		const surfaces = manifest.bridge?.surfaces ?? [];
 		const isHostedV2 =
 			trustDomain !== "generic" &&
 			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
-		if (isHostedV2 && manifest.bridge !== undefined) {
-			errors.push("Hosted runtime manifest v2 must not declare a bridge");
-		} else if (runtime === "openclaw" && surfaces.length > 0) {
-			const surface = surfaces[0];
-			if (
-				surfaces.length !== 1 ||
-				!surface ||
-				surface.name !== "openclaw" ||
-				surface.kind !== "control-ui" ||
-				surface.listenPort !== 28789 ||
-				surface.upstreamHost !== "127.0.0.1" ||
-				surface.upstreamPort !== 18789
-			) {
-				errors.push("openclaw bridge surface must be openclaw control-ui 28789 -> 127.0.0.1:18789");
-			}
-		}
 		if (runtime === "openclaw" && isHostedV2) {
 			const auth = manifest.openclawGatewayAuth;
 			if (!auth) {
@@ -693,21 +675,11 @@ function validateManifestSemantics(
 			if (run?.env?.OPENCLAW_GATEWAY_TOKEN !== undefined) {
 				errors.push("OpenClaw v2 gateway token must not be embedded in manifest env");
 			}
-			for (const source of ["env", "secretEnv"] as const) {
-				for (const envName of Object.keys(run?.[source] ?? {})) {
-					if (envName.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
-						errors.push("OpenClaw v2 native Control UI must not receive bridge environment");
-					}
-				}
-			}
 			for (const service of Object.values(manifest.runtimes.openclaw?.services ?? {})) {
 				for (const source of ["env", "secretEnv"] as const) {
 					for (const envName of Object.keys(service[source] ?? {})) {
 						if (envName === "OPENCLAW_GATEWAY_TOKEN") {
 							errors.push("OpenClaw v2 gateway token must be scoped to the gateway run secretEnv");
-						}
-						if (envName.startsWith("CLAWDI_RUNTIME_BRIDGE_")) {
-							errors.push("OpenClaw v2 native Control UI must not receive bridge environment");
 						}
 					}
 				}
@@ -715,19 +687,12 @@ function validateManifestSemantics(
 			for (const provider of Object.values(manifest.projection?.providers ?? {})) {
 				if (!provider || typeof provider !== "object" || Array.isArray(provider)) continue;
 				const envName = (provider as Record<string, unknown>).runtimeEnvName;
-				if (
-					envName === "OPENCLAW_GATEWAY_TOKEN" ||
-					(typeof envName === "string" && envName.startsWith("CLAWDI_RUNTIME_BRIDGE_"))
-				) {
-					errors.push(
-						"OpenClaw v2 provider environment must not target native auth or bridge controls",
-					);
+				if (envName === "OPENCLAW_GATEWAY_TOKEN") {
+					errors.push("OpenClaw v2 provider environment must not target native auth controls");
 				}
 			}
 		}
 		if (runtime === "hermes" && isHostedV2) {
-			if (surfaces.length > 0)
-				errors.push("hermes direct dashboard must not declare bridge surfaces");
 			if (!manifest.hermesDashboardAuth) {
 				errors.push("hermes direct dashboard requires official password authentication");
 			}
@@ -742,19 +707,6 @@ function validateManifestSemantics(
 				JSON.stringify(["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"])
 			) {
 				errors.push("hermes dashboard must bind directly to 0.0.0.0:9119");
-			}
-		} else if (runtime === "hermes") {
-			const surface = surfaces[0];
-			if (
-				surfaces.length !== 1 ||
-				!surface ||
-				surface.name !== "hermes" ||
-				surface.kind !== "control-ui" ||
-				surface.listenPort !== 28793 ||
-				surface.upstreamHost !== "127.0.0.1" ||
-				surface.upstreamPort !== 9119
-			) {
-				errors.push("hermes runtime must declare bridge surface 28793 -> 127.0.0.1:9119");
 			}
 		}
 	}

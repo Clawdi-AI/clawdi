@@ -254,7 +254,7 @@ describe("runtime manifest services", () => {
 		expect(existsSync(join(paths.serviceStateRoot, "bin", "hermes+dashboard"))).toBe(false);
 	});
 
-	test("renders the Hermes password dashboard without a bridge sidecar", () => {
+	test("renders the Hermes password dashboard directly", () => {
 		const paths = tempRuntimePaths();
 		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "dashboard-password";
 		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "dashboard-session-secret";
