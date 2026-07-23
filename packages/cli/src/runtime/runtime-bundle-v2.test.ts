@@ -35,6 +35,9 @@ describe("hosted runtime bundle v2", () => {
 		expect(projected.sourceRevision).toBe(
 			"53fb9a4fa0f0a662090cc0f17f45000742c50e270ec08e98769d4ce07b6fbe26",
 		);
+		expect(projected.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
+			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+		});
 		expect(projected.secretValues).toMatchObject(
 			(raw as { secretValues: Record<string, string> }).secretValues,
 		);

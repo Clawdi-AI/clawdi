@@ -1,8 +1,28 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
-import { hermesUiCredentials, openClawUiUrl } from "@/hosted/agents/runtime-ui-credentials";
+import {
+	hermesCredentialsForGeneration,
+	hermesUiCredentials,
+	openClawUiUrl,
+	openSecureRuntimeWindow,
+} from "@/hosted/agents/runtime-ui-credentials";
 
 describe("runtime UI credential targeting", () => {
+	test("opens top-level runtime UIs without an opener", () => {
+		const calls: unknown[][] = [];
+		const popup = {
+			close() {},
+			location: { replace() {} },
+			opener: { unsafe: true },
+		};
+		const opened = openSecureRuntimeWindow((...args) => {
+			calls.push(args);
+			return popup;
+		});
+		expect(calls).toEqual([["about:blank", "_blank"]]);
+		expect(opened?.opener).toBeNull();
+	});
+
 	test("keeps Hermes credentials separate from its secret-free URL", () => {
 		const credentials: RuntimeUiCredentials = {
 			runtime: "hermes",
@@ -17,6 +37,16 @@ describe("runtime UI credential targeting", () => {
 			password: "deployment-password",
 		});
 		expect(credentials.url).not.toContain(credentials.password ?? "");
+	});
+
+	test("does not reuse Hermes credentials after deployment generation advances", () => {
+		const credentials = {
+			url: "https://runtime.example/hermes",
+			username: "admin",
+			password: "generation-one-password",
+		};
+		expect(hermesCredentialsForGeneration(credentials, 1, 1)).toBe(credentials);
+		expect(hermesCredentialsForGeneration(credentials, 1, 2)).toBeNull();
 	});
 
 	test("rejects credentials targeting a different published endpoint", () => {

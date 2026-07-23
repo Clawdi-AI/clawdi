@@ -17,6 +17,7 @@ import type {
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionResumeRequest,
+	DeploymentCreateRequest,
 	DeploymentDesiredLifecycle,
 	DeploymentOperation,
 	DeploymentUpdateRequest,
@@ -338,6 +339,27 @@ export function createBillingClient(
 		getOperation,
 		waitForDeploymentRequest,
 		waitForOperation,
+		createDeployment: async (
+			body: DeploymentCreateRequest,
+			idempotencyKey: string,
+		): Promise<DeploymentIntentResult> => {
+			const operation = await waitForOperation(
+				unwrapDeploy(
+					await api.POST("/v2/deployments", {
+						params: { header: { "Idempotency-Key": idempotencyKey } },
+						body,
+					}),
+				),
+			);
+			const deploymentId = deploymentIdFromOperation(operation);
+			if (!deploymentId) {
+				throw new BillingApiError(
+					502,
+					"The deployment service completed creation without a deployment.",
+				);
+			}
+			return { deploymentId, operation };
+		},
 		createTerminalSession: async (id: string) =>
 			unwrapDeploy(
 				await api.POST("/v2/deployments/{deployment_id}/terminal", {

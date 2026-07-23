@@ -170,6 +170,17 @@ const paidBasicDeployment = {
 	},
 };
 
+const openClawIncludedDeployment: DeploymentMutationFixture = {
+	...includedBasicDeployment,
+	id: "hdep_openclaw_included",
+	name: "OpenClaw included Basic",
+	openclaw_control_ui_url: "https://runtime.example/openclaw/",
+	config_info: {
+		...includedBasicDeployment.config_info,
+		runtime: "openclaw",
+	},
+};
+
 const performanceDeployment = {
 	...paidBasicDeployment,
 	id: "hdep_performance",
@@ -661,7 +672,7 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 
 function completedDeploymentOperation(
 	deployment: DeploymentMutationFixture,
-	verb: "create" | "start" | "stop" | "restart" | "delete",
+	verb: "create" | "start" | "stop" | "restart" | "delete" | "update",
 ) {
 	const resource = mutationDeploymentReadFixture(deployment).resource;
 	return {
@@ -716,6 +727,7 @@ type HostedApiStubOptions = {
 	cloudAgentErrors?: Record<string, { detail: string; status: number }>;
 	cloudAgentNotFoundIds?: readonly string[];
 	cloudAgentResponses?: Record<string, StubResponse[]>;
+	createDeploymentRequests?: Array<{ body: string; idempotencyKey: string | null }>;
 	deleteRequests?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
@@ -740,6 +752,11 @@ type HostedApiStubOptions = {
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
+	updateDeploymentRequests?: Array<{
+		body: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}>;
 	walletState?: typeof walletState;
 	onTopUpSuccess?: () => void;
 	onWalletCheckoutSuccess?: () => void;
@@ -801,6 +818,25 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
 			}
 			return fulfillJson(r, deployments.map(readDeploymentFixture));
+		}
+		if (p === "/v2/deployments" && r.request().method() === "POST") {
+			options.createDeploymentRequests?.push({
+				body: r.request().postData() ?? "",
+				idempotencyKey: r.request().headers()["idempotency-key"] ?? null,
+			});
+			return fulfillJson(
+				r,
+				completedDeploymentOperation(
+					{
+						...includedBasicDeployment,
+						id: "hdep_included_created",
+						name: "Created included Basic",
+						status: "running",
+					},
+					"create",
+				),
+				202,
+			);
 		}
 		if (p.startsWith("/v2/deployments/by-request/") && r.request().method() === "GET") {
 			const deployRequestId = decodeURIComponent(p.slice("/v2/deployments/by-request/".length));
@@ -989,6 +1025,25 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				current_period_end: "2027-07-15T00:00:00Z",
 				cancel_at: null,
 			});
+		}
+		if (
+			p.startsWith("/v2/deployments/") &&
+			!p.slice("/v2/deployments/".length).includes("/") &&
+			r.request().method() === "PATCH"
+		) {
+			const deploymentId = decodeURIComponent(p.slice("/v2/deployments/".length));
+			options.updateDeploymentRequests?.push({
+				body: r.request().postData() ?? "",
+				idempotencyKey: r.request().headers()["idempotency-key"] ?? null,
+				ifMatch: r.request().headers()["if-match"] ?? null,
+			});
+			const deployment = deployments.find(
+				(candidate): candidate is DeploymentMutationFixture =>
+					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+			);
+			return deployment
+				? fulfillJson(r, completedDeploymentOperation(deployment, "update"), 202)
+				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		if (p.endsWith("/restart") && r.request().method() === "POST") {
 			options.restartRequests?.push(p);
@@ -1247,6 +1302,73 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	await page.getByRole("option").first().click();
 	await page.waitForTimeout(150);
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("free Basic Deploy submits the declarative create contract", async ({ page }) => {
+	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
+	await stubHostedApi(page, {
+		plans: [basicPlan],
+		deployments: [],
+		createDeploymentRequests,
+	});
+	await page.goto("/deploy");
+
+	await page.getByRole("button", { name: "Deploy agent" }).click();
+	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
+	expect(createDeploymentRequests).toHaveLength(1);
+	expect(createDeploymentRequests[0]?.idempotencyKey).toMatch(/^deployment-create-/);
+	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+		compute_plan_slug: "compute_basic",
+		runtime: "hermes",
+	});
+});
+
+test("hosted locale settings submit canonical deployment PATCH", async ({ page }) => {
+	const updateDeploymentRequests: Array<{
+		body: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}> = [];
+	await stubHostedApi(page, {
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan],
+		updateDeploymentRequests,
+	});
+	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+
+	await page.locator("#hosted-agent-language").click();
+	await page.getByRole("option", { name: "Español" }).click();
+	await page.getByRole("button", { name: "Apply locale settings" }).click();
+	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
+
+	expect(updateDeploymentRequests[0]?.idempotencyKey).toMatch(/^deployment-update-/);
+	expect(updateDeploymentRequests[0]?.ifMatch).toBe('"rv_hdep_included"');
+	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+		language: "es",
+	});
+});
+
+test("hosted AI provider Apply submits canonical deployment PATCH", async ({ page }) => {
+	const updateDeploymentRequests: Array<{
+		body: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}> = [];
+	await stubHostedApi(page, {
+		deployments: [includedBasicDeployment],
+		updateDeploymentRequests,
+	});
+	await page.goto("/agents/hdep_included/model-provider?source=on-clawdi");
+
+	await page.getByRole("button", { name: /Configure inside agent/ }).click();
+	await page.getByRole("button", { name: "Apply provider settings" }).click();
+	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
+	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+		ai_provider_auth_kind: "unmanaged",
+		ai_provider_id: null,
+		provider_ids: [],
+		primary_model: null,
+	});
 });
 
 test("Plan C gate off blocks acquisition while existing subscriptions remain serviceable", async ({
@@ -1545,6 +1667,26 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toHaveCount(0);
 	await expect(main.locator('input[value="recovered-password"]')).toBeVisible();
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
+});
+
+test("OpenClaw Console surfaces the native device pairing completion workflow", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		deployments: [openClawIncludedDeployment],
+	});
+
+	await page.goto("/agents/hdep_openclaw_included/console?source=on-clawdi");
+	const main = page.locator("main");
+	await expect(main.getByText("If the Control UI shows “pairing required”")).toBeVisible();
+	await expect(main.getByText("openclaw devices list", { exact: true })).toBeVisible();
+	await expect(
+		main.getByText("openclaw devices approve <requestId>", { exact: true }),
+	).toBeVisible();
+	await expect(main.getByRole("link", { name: "Open Hosted Terminal" })).toHaveAttribute(
+		"href",
+		"/agents/hdep_openclaw_included/terminal",
+	);
 });
 
 test("revoked deployment inventory never reclassifies cloud projections as connected", async ({

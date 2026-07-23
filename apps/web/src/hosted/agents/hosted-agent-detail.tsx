@@ -38,7 +38,7 @@ import { SessionFeed } from "@/components/sessions/session-feed";
 import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { Input } from "@/components/ui/input";
@@ -57,24 +57,35 @@ import {
 	useCreateTerminalSession,
 	useDeleteDeployment,
 	useDeploymentLifecycle,
+	useUpdateDeployment,
 } from "@/hosted/agents/deployment-hooks";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
+import { browserOpenClawNativeUiCopy } from "@/hosted/agents/runtime-ui-copy";
 import {
 	type HermesUiCredentials,
+	hermesCredentialsForGeneration,
 	hermesUiCredentials,
 	openClawUiUrl,
+	openSecureRuntimeWindow,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
+	DeploymentUpdateRequest,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
-import { LANGUAGE_OPTIONS } from "@/hosted/billing/deploy/language-timezone-controls";
+import {
+	LANGUAGE_OPTIONS,
+	LANGUAGE_SELECT_ITEMS,
+	normalizeHostedLanguage,
+	supportedTimezones,
+	TimezoneCombobox,
+} from "@/hosted/billing/deploy/language-timezone-controls";
 import {
 	billingErrorDetail,
 	billingErrorNormalizer,
@@ -154,9 +165,16 @@ import {
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
+	primaryModelRef,
 	primaryModelValue,
 	providerChoiceFromRef,
+	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
+import {
+	aiProviderRuntimeId,
+	buildAiProviderPoolBootstrap,
+	type RuntimeAiProviderAuthKind,
+} from "@/hosted/v2/ai-providers/runtime-bootstrap";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -205,6 +223,12 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 ]);
 const CUSTOM_MODEL_CHOICE = "__custom__";
 const UNRESOLVED_PROVIDER_PREFIX = "unresolved:";
+
+function providerAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
+	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
+		? "codex_oauth"
+		: "api_key";
+}
 const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	overview: {
 		description: "Status, model, resources, and recent sessions.",
@@ -935,7 +959,7 @@ function RuntimeUiOpenButton({
 	const client = useBillingClient();
 	const [isPending, setIsPending] = useState(false);
 	const openUi = useCallback(async () => {
-		const popup = window.open("", "_blank");
+		const popup = openSecureRuntimeWindow(window.open.bind(window));
 		if (!popup) {
 			toast.error("Couldn't open runtime UI", {
 				description: "Your browser blocked the new window.",
@@ -985,8 +1009,21 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	const url = runtimeConsoleUrl(deployment, runtime);
 	const client = useBillingClient();
 	const [credentials, setCredentials] = useState<HermesUiCredentials | null>(null);
+	const [loadedCredentialGeneration, setLoadedCredentialGeneration] = useState<number | null>(null);
 	const [credentialError, setCredentialError] = useState<Error | null>(null);
 	const [isLoadingCredentials, setIsLoadingCredentials] = useState(false);
+	const openClawCopy = browserOpenClawNativeUiCopy();
+	const credentialGeneration = deployment.resource.metadata.generation;
+	useEffect(() => {
+		setCredentials(null);
+		setLoadedCredentialGeneration(null);
+		setCredentialError(null);
+	}, [credentialGeneration]);
+	const currentCredentials = hermesCredentialsForGeneration(
+		credentials,
+		loadedCredentialGeneration,
+		credentialGeneration,
+	);
 	const loadHermesCredentials = useCallback(async () => {
 		if (!url) return;
 		setIsLoadingCredentials(true);
@@ -996,12 +1033,13 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			const resolved = hermesUiCredentials(response, url);
 			if (!resolved) throw new Error("Runtime UI credential response was invalid");
 			setCredentials(resolved);
+			setLoadedCredentialGeneration(credentialGeneration);
 		} catch (error) {
 			setCredentialError(error instanceof Error ? error : new Error("Credential request failed"));
 		} finally {
 			setIsLoadingCredentials(false);
 		}
-	}, [client, deployment.resource.id, url]);
+	}, [client, credentialGeneration, deployment.resource.id, url]);
 
 	// Native runtime UI exposure exists only after the runtime is running.
 	if (!isRunning) {
@@ -1037,26 +1075,28 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 					<p className="text-sm text-muted-foreground">
 						{runtime === "hermes"
 							? "Hermes uses native password authentication in a top-level window."
-							: "OpenClaw uses its native token and device authentication in a top-level window."}
+							: openClawCopy.description}
 					</p>
 					{runtime === "hermes" ? (
-						credentials ? (
+						currentCredentials ? (
 							<div className="space-y-3 text-left">
 								<Label htmlFor={`hermes-username-${deployment.resource.id}`}>Username</Label>
 								<Input
 									id={`hermes-username-${deployment.resource.id}`}
 									readOnly
-									value={credentials.username}
+									value={currentCredentials.username}
 								/>
 								<Label htmlFor={`hermes-password-${deployment.resource.id}`}>Password</Label>
 								<Input
 									id={`hermes-password-${deployment.resource.id}`}
 									readOnly
-									value={credentials.password}
+									value={currentCredentials.password}
 								/>
 								<Button
 									type="button"
-									onClick={() => window.open(credentials.url, "_blank", "noopener,noreferrer")}
+									onClick={() =>
+										window.open(currentCredentials.url, "_blank", "noopener,noreferrer")
+									}
 								>
 									Open {browserUiLabel}
 									<ExternalLink className="size-3.5" />
@@ -1073,10 +1113,31 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 							</Button>
 						)
 					) : (
-						<RuntimeUiOpenButton deployment={deployment} endpointUrl={url} label={browserUiLabel}>
-							Open {browserUiLabel}
-							<Maximize2 className="size-3.5" />
-						</RuntimeUiOpenButton>
+						<div className="space-y-4 text-left">
+							<RuntimeUiOpenButton deployment={deployment} endpointUrl={url} label={browserUiLabel}>
+								{openClawCopy.openControlUi}
+								<Maximize2 className="size-3.5" />
+							</RuntimeUiOpenButton>
+							<Alert>
+								<TerminalSquare className="size-4" />
+								<AlertTitle>{openClawCopy.pairingTitle}</AlertTitle>
+								<AlertDescription className="space-y-3">
+									<p>{openClawCopy.pairingDescription}</p>
+									<div className="space-y-1 font-mono text-xs">
+										<div>{openClawCopy.pairingListCommand}</div>
+										<div>{openClawCopy.pairingApproveCommand}</div>
+									</div>
+									<p>{openClawCopy.pairingWarning}</p>
+									<Link
+										to="/agents/$id/$section"
+										params={{ id: deployment.resource.id, section: "terminal" }}
+										className={buttonVariants({ variant: "outline", size: "sm" })}
+									>
+										{openClawCopy.openHostedTerminal}
+									</Link>
+								</AlertDescription>
+							</Alert>
+						</div>
 					)}
 					{credentialError ? (
 						<ApiErrorPanel
@@ -1384,6 +1445,7 @@ function AiProviderTab({
 	runtime: Runtime;
 }) {
 	const providers = useAiProviders();
+	const updateDeployment = useUpdateDeployment();
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data?.providers ?? [];
 	const customProviders = useMemo(
@@ -1520,6 +1582,76 @@ function AiProviderTab({
 		}
 	}
 
+	function applyProviderSettings() {
+		if (bindingMode === "unmanaged") {
+			updateDeployment.mutate({
+				id: deployment.resource.id,
+				update: {
+					ai_provider_auth_kind: "unmanaged",
+					ai_provider_id: null,
+					provider_ids: [],
+					primary_model: null,
+					ai_provider_bootstrap: null,
+				},
+			});
+			return;
+		}
+		const normalizedChoices = normalizeSelectedProviderIds(
+			selectedProviders,
+			primaryProviderChoice,
+		);
+		const providerRefs = normalizedChoices
+			.map((choice) => providerRefFromChoice(choice, list))
+			.filter((providerId): providerId is string => Boolean(providerId));
+		if (providerRefs.length !== normalizedChoices.length) {
+			toast.error("Provider unavailable", {
+				description: "Refresh providers before applying these settings.",
+			});
+			return;
+		}
+		const primaryProviderRef =
+			providerRefFromChoice(primaryProviderChoice, list) ?? MANAGED_PROVIDER_ID;
+		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
+		if (!modelRef) {
+			toast.error("Primary model required");
+			return;
+		}
+		const primaryProvider = customProviders.find(
+			(provider) => provider.provider_id === primaryProviderChoice,
+		);
+		const selectedCustomProviders = customProviders.filter((provider) =>
+			normalizedChoices.includes(provider.provider_id),
+		);
+		const authKind = primaryProvider ? providerAuthKind(primaryProvider) : "managed";
+		const bootstrapProvider = primaryProvider ?? selectedCustomProviders[0];
+		let bootstrap: DeploymentUpdateRequest["ai_provider_bootstrap"] = null;
+		try {
+			bootstrap =
+				selectedCustomProviders.length > 0 && bootstrapProvider
+					? buildAiProviderPoolBootstrap(
+							selectedCustomProviders,
+							bootstrapProvider.provider_id,
+							providerAuthKind(bootstrapProvider),
+						)
+					: null;
+		} catch (error) {
+			toast.error("Provider configuration is invalid", {
+				description: error instanceof Error ? error.message : "Check provider configuration.",
+			});
+			return;
+		}
+		updateDeployment.mutate({
+			id: deployment.resource.id,
+			update: {
+				ai_provider_auth_kind: authKind,
+				ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
+				provider_ids: providerRefs,
+				primary_model: modelRef,
+				ai_provider_bootstrap: bootstrap,
+			},
+		});
+	}
+
 	return (
 		<div className="flex flex-col gap-4">
 			<LiveNote>
@@ -1644,7 +1776,10 @@ function AiProviderTab({
 			)}
 
 			<div className="flex items-center gap-2">
-				<Button disabled>{dirty ? "Changes unavailable" : "No changes"}</Button>
+				<Button disabled={!dirty || updateDeployment.isPending} onClick={applyProviderSettings}>
+					{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
+					{dirty ? "Apply provider settings" : "No changes"}
+				</Button>
 			</div>
 
 			<p className="text-xs text-muted-foreground">
@@ -2075,8 +2210,21 @@ function LanguageTimezoneSettingsSection({
 	const configLanguage = runtimeConfiguration.language ?? "";
 	const configTimezone = runtimeConfiguration.timezone ?? "";
 	const runtimeLabel = runtimeDisplayName(runtime);
-	const languageLabel =
-		LANGUAGE_OPTIONS.find((option) => option.code === configLanguage)?.label ?? "Runtime default";
+	const updateDeployment = useUpdateDeployment();
+	const localeIdentity = `${configLanguage}\0${configTimezone}`;
+	const [syncedLocaleIdentity, setSyncedLocaleIdentity] = useState(localeIdentity);
+	const [language, setLanguage] = useState(configLanguage);
+	const [timezone, setTimezone] = useState(configTimezone);
+	if (syncedLocaleIdentity !== localeIdentity) {
+		setSyncedLocaleIdentity(localeIdentity);
+		setLanguage(configLanguage);
+		setTimezone(configTimezone);
+	}
+	const timezoneOptions = useMemo(() => {
+		const options = supportedTimezones();
+		return timezone && !options.includes(timezone) ? [timezone, ...options] : options;
+	}, [timezone]);
+	const dirty = language !== configLanguage || timezone !== configTimezone;
 
 	return (
 		<SettingsSection
@@ -2084,16 +2232,54 @@ function LanguageTimezoneSettingsSection({
 			description="Locale context configured for this hosted agent."
 		>
 			<div className="flex max-w-2xl flex-col gap-4">
-				<LiveNote>{`Current locale settings for ${runtimeLabel}. New settings are selected during deployment.`}</LiveNote>
+				<LiveNote>{`Apply locale changes directly to this ${runtimeLabel} deployment.`}</LiveNote>
 				<div className="grid gap-4 sm:grid-cols-2">
-					<div className="rounded-lg border bg-muted/30 p-3">
-						<div className="text-xs text-muted-foreground">Language</div>
-						<div className="mt-1 text-sm font-medium">{languageLabel}</div>
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor="hosted-agent-language">Language</Label>
+						<Select
+							items={LANGUAGE_SELECT_ITEMS}
+							value={language || "default"}
+							onValueChange={(value) => setLanguage(value === "default" ? "" : (value ?? ""))}
+						>
+							<SelectTrigger id="hosted-agent-language" className="w-full">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="default">Runtime default</SelectItem>
+								{LANGUAGE_OPTIONS.map((option) => (
+									<SelectItem key={option.code} value={option.code}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
-					<div className="rounded-lg border bg-muted/30 p-3">
-						<div className="text-xs text-muted-foreground">Timezone</div>
-						<div className="mt-1 text-sm font-medium">{configTimezone || "Runtime default"}</div>
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor="hosted-agent-timezone">Timezone</Label>
+						<TimezoneCombobox
+							id="hosted-agent-timezone"
+							value={timezone}
+							onValueChange={setTimezone}
+							options={timezoneOptions}
+						/>
 					</div>
+				</div>
+				<div>
+					<Button
+						disabled={!dirty || updateDeployment.isPending}
+						onClick={() =>
+							updateDeployment.mutate({
+								id: deployment.resource.id,
+								update: {
+									language: normalizeHostedLanguage(language),
+									timezone: timezone.trim() || null,
+								},
+							})
+						}
+					>
+						{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
+						{dirty ? "Apply locale settings" : "No changes"}
+					</Button>
 				</div>
 			</div>
 		</SettingsSection>

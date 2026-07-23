@@ -26,6 +26,7 @@ export interface OpenClawNativeUiCopy {
 	pairingListCommand: string;
 	pairingApproveCommand: string;
 	pairingWarning: string;
+	openHostedTerminal: string;
 	credentialErrorTitle: string;
 	credentialErrorDescription: string;
 	popupBlockedTitle: string;
@@ -69,6 +70,7 @@ const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 			pairingListCommand: "openclaw devices list",
 			pairingApproveCommand: "openclaw devices approve <requestId>",
 			pairingWarning: "Do not auto-approve a request and do not use --latest.",
+			openHostedTerminal: "Open Hosted Terminal",
 			credentialErrorTitle: "Couldn’t open OpenClaw",
 			credentialErrorDescription: "Please try again.",
 			popupBlockedTitle: "Couldn’t open OpenClaw",
@@ -105,6 +107,7 @@ const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 			pairingListCommand: "openclaw devices list",
 			pairingApproveCommand: "openclaw devices approve <requestId>",
 			pairingWarning: "不要自动批准请求，也不要使用 --latest。",
+			openHostedTerminal: "打开 Hosted Terminal",
 			credentialErrorTitle: "无法打开 OpenClaw",
 			credentialErrorDescription: "请重试。",
 			popupBlockedTitle: "无法打开 OpenClaw",
@@ -141,6 +144,7 @@ const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 			pairingListCommand: "openclaw devices list",
 			pairingApproveCommand: "openclaw devices approve <requestId>",
 			pairingWarning: "不要自動核准請求，也不要使用 --latest。",
+			openHostedTerminal: "開啟 Hosted Terminal",
 			credentialErrorTitle: "無法開啟 OpenClaw",
 			credentialErrorDescription: "請重試。",
 			popupBlockedTitle: "無法開啟 OpenClaw",

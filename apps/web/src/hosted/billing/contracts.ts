@@ -25,6 +25,7 @@ export type ComputeSubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuot
 export type ComputeSubscriptionQuoteResponse = Schemas["V2ComputeSubscriptionQuoteResponse-Output"];
 export type ComputeSubscriptionResumeRequest = Schemas["V2ComputeSubscriptionResumeRequest"];
 export type DeploymentOperation = Schemas["LongRunningOperation"];
+export type DeploymentCreateRequest = Schemas["V2HostedDeployRequest"];
 export type DeploymentUpdateRequest = Schemas["V2UpdateDeploymentRequest"];
 export type DeploymentDesiredLifecycle = "running" | "stopped";
 export type DeployRequest = Schemas["V2HostedDeployRequest"];

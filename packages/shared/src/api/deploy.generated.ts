@@ -48,7 +48,8 @@ export interface paths {
         /** List V2 Deployments */
         get: operations["list_v2_deployments_v2_deployments_get"];
         put?: never;
-        post?: never;
+        /** Create V2 Deployment */
+        post: operations["create_v2_deployment_v2_deployments_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1967,6 +1968,67 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2HostedDeploymentReadResponse"][] | components["schemas"]["EventStreamSnapshotHandoff"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_v2_deployment_v2_deployments_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2HostedDeployRequest"];
+            };
+        };
+        responses: {
+            /** @description The declarative deployment creation was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    /** @description Owner-scoped status URL for the deployment request. */
+                    "Content-Location"?: string;
+                    /** @description Minimum seconds before polling the operation. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
             /** @description Validation Error */
