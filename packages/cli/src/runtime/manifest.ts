@@ -4901,6 +4901,21 @@ function officialRuntimeSystemdPrograms(
 	return [...byServiceName.values()];
 }
 
+function openClawGatewayTokenEnvironment(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): Record<string, string> {
+	const openClaw = manifest.runtimes.openclaw;
+	if (!openClaw?.enabled) return {};
+	const tokenRef = openClaw.run?.secretEnv?.[OPENCLAW_GATEWAY_TOKEN_ENV];
+	if (!tokenRef) return {};
+	const token = runtimeSecretValue(secretValues ?? {}, tokenRef);
+	if (!token) {
+		throw new Error(`Runtime secret ${tokenRef} for ${OPENCLAW_GATEWAY_TOKEN_ENV} is unavailable.`);
+	}
+	return { [OPENCLAW_GATEWAY_TOKEN_ENV]: token };
+}
+
 function writeSystemdUnits(
 	runtimePrograms: RuntimeSystemdUserProgram[],
 	egressProgram: RuntimeEgressSystemdProgram | null,
@@ -4935,6 +4950,7 @@ function writeSystemdUnits(
 				env: {
 					...commonEnvironment,
 					...applyIdentityEnvironment,
+					...openClawGatewayTokenEnvironment(manifest, secretValues),
 					CLAWDI_AUTH_TOKEN: "",
 				},
 			}),
