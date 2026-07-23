@@ -160,8 +160,10 @@ import {
 	firstModelForProvider,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
+	MANAGED_AI_CHOICE_OPTION,
 	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
+	modelChoiceOptions,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
@@ -1796,9 +1798,7 @@ function AgentPrimaryModelPicker({
 	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 	const primaryProviderItems = [
-		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
-			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
-			: []),
+		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? [MANAGED_AI_CHOICE_OPTION] : []),
 		...selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => ({
 			value: choice,
 			label: unresolvedProviderRef(choice),
@@ -1810,12 +1810,9 @@ function AgentPrimaryModelPicker({
 				label: provider.label ?? provider.provider_id,
 			})),
 	];
+	const catalogModelOptions = modelChoiceOptions(catalogModelIds, formatModelLabel);
 	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({
-			value: model,
-			label:
-				model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : formatModelLabel(model),
-		})),
+		...catalogModelOptions,
 		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
 	];
 	return (
@@ -1835,7 +1832,7 @@ function AgentPrimaryModelPicker({
 						</SelectTrigger>
 						<SelectContent>
 							{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
-								<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
+								<SelectItem value={MANAGED_AI_CHOICE}>{MANAGED_AI_CHOICE_OPTION.label}</SelectItem>
 							) : null}
 							{selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => (
 								<SelectItem key={choice} value={choice}>
@@ -1867,11 +1864,9 @@ function AgentPrimaryModelPicker({
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								{catalogModelIds.map((model) => (
-									<SelectItem key={model} value={model}>
-										{model === MANAGED_DEFAULT_MODEL_CHOICE
-											? "Hosted default (Luna)"
-											: formatModelLabel(model)}
+								{catalogModelOptions.map((option) => (
+									<SelectItem key={option.value} value={option.value}>
+										{option.label}
 									</SelectItem>
 								))}
 								<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>

@@ -3,6 +3,8 @@ import {
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
 	MANAGED_DEFAULT_MODEL_CHOICE,
+	MANAGED_DEFAULT_MODEL_CHOICE_LABEL,
+	modelChoiceOptions,
 	modelIdsForProvider,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
@@ -34,5 +36,14 @@ describe("model binding", () => {
 		];
 
 		expect(firstModelForProvider("openai-main", providers)).toBe("gpt-5.5");
+	});
+
+	test("labels the managed default without changing its sentinel value", () => {
+		expect(modelChoiceOptions([MANAGED_DEFAULT_MODEL_CHOICE])).toEqual([
+			{
+				value: MANAGED_DEFAULT_MODEL_CHOICE,
+				label: MANAGED_DEFAULT_MODEL_CHOICE_LABEL,
+			},
+		]);
 	});
 });

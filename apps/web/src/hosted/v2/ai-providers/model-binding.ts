@@ -2,8 +2,19 @@ import { CLAWDI_MANAGED_PROVIDER_IDS, CLAWDI_MANAGED_V2_PROVIDER_ID } from "@cla
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 export const MANAGED_AI_CHOICE = "__managed__";
+export const MANAGED_AI_CHOICE_LABEL = "Managed by Clawdi";
+export const MANAGED_AI_CHOICE_OPTION = {
+	value: MANAGED_AI_CHOICE,
+	label: MANAGED_AI_CHOICE_LABEL,
+} as const;
 export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_V2_PROVIDER_ID;
 export const MANAGED_DEFAULT_MODEL_CHOICE = "__hosted_default__";
+export const MANAGED_DEFAULT_MODEL_CHOICE_LABEL = "Hosted default (Luna)";
+
+export type ModelChoiceOption = {
+	value: string;
+	label: string;
+};
 
 export type PrimaryModelRef = {
 	provider_id: string;
@@ -81,6 +92,19 @@ export function modelIdsForProvider(choice: string, providers: readonly AiProvid
 	}
 	const provider = providers.find((item) => item.provider_id === choice);
 	return dedupeProviderIds((provider?.models ?? []).map((model) => model.id));
+}
+
+export function modelChoiceOptions(
+	models: readonly string[],
+	formatLabel: (model: string) => string = (model) => model,
+): ModelChoiceOption[] {
+	return models.map((model) => ({
+		value: model,
+		label:
+			model === MANAGED_DEFAULT_MODEL_CHOICE
+				? MANAGED_DEFAULT_MODEL_CHOICE_LABEL
+				: formatLabel(model),
+	}));
 }
 
 export function firstModelForProvider(choice: string, providers: readonly AiProvider[]): string {

@@ -142,8 +142,10 @@ import {
 	dedupeProviderIds,
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
+	MANAGED_AI_CHOICE_OPTION,
 	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
+	modelChoiceOptions,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelRef,
@@ -1603,7 +1605,7 @@ function providerCatalogDescription(provider: AiProvider): string {
 	return `${count} catalog models`;
 }
 
-function PrimaryModelPicker({
+export function PrimaryModelPicker({
 	providers,
 	customProviders,
 	selectedProviderChoices,
@@ -1623,9 +1625,7 @@ function PrimaryModelPicker({
 	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 	const primaryProviderItems = [
-		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
-			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
-			: []),
+		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? [MANAGED_AI_CHOICE_OPTION] : []),
 		...customProviders
 			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
 			.map((provider) => ({
@@ -1633,8 +1633,9 @@ function PrimaryModelPicker({
 				label: provider.label ?? provider.provider_id,
 			})),
 	];
+	const catalogModelOptions = modelChoiceOptions(catalogModelIds);
 	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({ value: model, label: model })),
+		...catalogModelOptions,
 		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
 	];
 	return (
@@ -1655,7 +1656,9 @@ function PrimaryModelPicker({
 						<SelectContent>
 							<SelectGroup>
 								{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
-									<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
+									<SelectItem value={MANAGED_AI_CHOICE}>
+										{MANAGED_AI_CHOICE_OPTION.label}
+									</SelectItem>
 								) : null}
 								{customProviders
 									.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
@@ -1684,9 +1687,9 @@ function PrimaryModelPicker({
 							</SelectTrigger>
 							<SelectContent>
 								<SelectGroup>
-									{catalogModelIds.map((model) => (
-										<SelectItem key={model} value={model}>
-											{model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : model}
+									{catalogModelOptions.map((option) => (
+										<SelectItem key={option.value} value={option.value}>
+											{option.label}
 										</SelectItem>
 									))}
 									<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
