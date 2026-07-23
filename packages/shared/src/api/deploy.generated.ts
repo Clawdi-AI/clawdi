@@ -1652,28 +1652,6 @@ export interface components {
              */
             requires_bridge_token: true;
         };
-        /** V2HostedRuntimeUiEndpointInfo */
-        V2HostedRuntimeUiEndpointInfo: {
-            /**
-             * Runtime
-             * @enum {string}
-             */
-            runtime: "openclaw" | "hermes";
-            /**
-             * Role
-             * @default control_ui
-             * @constant
-             */
-            role: "control_ui";
-            /** Url */
-            url: string;
-            /**
-             * Requires Bridge Token
-             * @default true
-             * @constant
-             */
-            requires_bridge_token: true;
-        };
         /** V2HostedUsageDay */
         V2HostedUsageDay: {
             /** Date */

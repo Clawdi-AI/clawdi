@@ -28,41 +28,157 @@ type DeploymentComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
 >;
 
-type DeploymentMutationFixture = {
+type DeploymentFundingFact = NonNullable<
+	NonNullable<DeploymentRead["commercial_display"]>["latest_funding_fact"]
+>;
+type DeploymentStatus = DeploymentRead["resource"]["status"]["summary_state"];
+type DeploymentRuntime = DeploymentRead["resource"]["spec"]["runtime"];
+type DeploymentCondition = NonNullable<DeploymentRead["resource"]["status"]["conditions"]>[number];
+
+type DeploymentFixtureOptions = {
 	id: string;
-	user_id: string;
 	name: string;
-	app_id: string;
-	status: string;
-	created_at: string;
-	upgrade_available: boolean;
-	compute_subscription: DeploymentComputeSubscription | null;
-	config_info: {
-		compute_plan_slug: string;
-		runtime: "openclaw" | "hermes";
-		ai_provider_auth_kind: "unmanaged" | "managed" | "api_key" | "codex_oauth";
-		ai_provider_bindings?: Record<string, { auth_kind?: string | null }>;
-		clawdi_cloud_environments?: Record<string, string>;
-		mux_enabled?: boolean;
-		telegram_mux_enabled?: boolean;
-		discord_mux_enabled?: boolean;
-		whatsapp_mux_enabled?: boolean;
-		imessage_mux_enabled?: boolean;
-		kobb_available?: boolean;
-		public_ports?: number[];
-	};
-	endpoints?: string[];
-	failure_reason?: string | null;
-	hermes_control_ui_url?: string | null;
-	openclaw_control_ui_url?: string | null;
-	last_funding_event?: {
-		funding_source: "stripe" | "wallet";
-		reason: "payment_failure" | "canceled" | "refunded" | "disputed" | "admin_forced";
-		prior_plan_slug: string;
-		occurred_at: string;
-		subscription_id: number;
-	} | null;
+	status?: DeploymentStatus;
+	createdAt?: string;
+	currentPlanSlug?: string;
+	computeSubscription?: DeploymentComputeSubscription | null;
+	upgradeAvailable?: boolean;
+	runtime?: DeploymentRuntime;
+	cloudEnvironments?: Record<string, string>;
+	providerAuthKind?: DeploymentRead["ai_provider_auth_kinds"][string];
+	runtimeUiUrl?: string | null;
+	failureTitle?: string | null;
+	fundingFact?: DeploymentFundingFact | null;
+	endpoints?: Array<{ name: string; url: string }>;
 };
+
+const DEFAULT_DEPLOYMENT_CREATED_AT = "2026-07-15T00:00:00Z";
+
+function deploymentCondition(
+	status: DeploymentStatus,
+	createdAt: string,
+	failureTitle: string | null,
+): DeploymentCondition {
+	if (failureTitle) {
+		return {
+			type: "Degraded",
+			status: "True",
+			observedGeneration: 1,
+			lastTransitionTime: createdAt,
+			reason: "RuntimeReadinessTimeout",
+			message: failureTitle,
+		};
+	}
+	if (status === "running") {
+		return {
+			type: "Ready",
+			status: "True",
+			observedGeneration: 1,
+			lastTransitionTime: createdAt,
+			reason: "RuntimeReady",
+			message: "Runtime is ready.",
+		};
+	}
+	return {
+		type: "Progressing",
+		status: status === "stopped" || status === "deleted" ? "False" : "True",
+		observedGeneration: 1,
+		lastTransitionTime: createdAt,
+		reason: status === "stopped" || status === "deleted" ? "RuntimeSettled" : "RuntimeConverging",
+		message:
+			status === "stopped" || status === "deleted"
+				? "Runtime reached its desired lifecycle."
+				: "Runtime is converging to its desired lifecycle.",
+	};
+}
+
+function deploymentFixture(options: DeploymentFixtureOptions): DeploymentRead {
+	const status = options.status ?? "running";
+	const createdAt = options.createdAt ?? DEFAULT_DEPLOYMENT_CREATED_AT;
+	const runtime = options.runtime ?? "hermes";
+	const currentPlanSlug = options.currentPlanSlug ?? "compute_basic";
+	const failureTitle = options.failureTitle ?? null;
+	const backingInfrastructure = status === "stopped" || status === "deleted" ? "absent" : "present";
+	const condition = deploymentCondition(status, createdAt, failureTitle);
+
+	return {
+		resource: {
+			id: options.id,
+			owner_user_id: "usr_browser",
+			commercial_revision: 1,
+			deployment_target: "saas",
+			metadata: {
+				generation: 1,
+				manifestETag: `etag_${options.id}`,
+				resourceVersion: `rv_${options.id}`,
+				createdAt,
+				updatedAt: createdAt,
+			},
+			spec: {
+				schema_version: 1,
+				desired_lifecycle:
+					status === "stopped" ? "stopped" : status === "deleted" ? "deleted" : "running",
+				runtime,
+				runtime_version: "latest",
+				name: options.name,
+				resources: {
+					vcpu: currentPlanSlug === "compute_performance" ? 4 : 2,
+					memory_mib: currentPlanSlug === "compute_performance" ? 8192 : 4096,
+					disk_gib: currentPlanSlug === "compute_performance" ? 40 : 20,
+				},
+				agents: [],
+				ports: [],
+				runtime_configuration: { providers: [], features: [] },
+				rollout_nonce: 0,
+				secret_references: [],
+			},
+			status: {
+				summary_state: status,
+				observedGeneration: 1,
+				conditions: [condition],
+				failure: failureTitle
+					? {
+							type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
+							title: failureTitle,
+							status: 504,
+							detail: "The runtime did not become ready before the startup deadline.",
+							instance: options.id,
+							code: "runtime_readiness_timeout",
+							phase: "readiness",
+							retryable: true,
+							conditionReason: condition.reason,
+							conditionMessage: condition.message,
+							observedGeneration: condition.observedGeneration,
+						}
+					: null,
+				backing_infrastructure: backingInfrastructure,
+				driver_acknowledged_generation: 1,
+				driver_applied_generation: 1,
+				driver_observation_sequence: 1,
+				endpoints: options.endpoints ?? [],
+				deleted_at: status === "deleted" ? createdAt : null,
+			},
+		},
+		clawdi_cloud_environments: options.cloudEnvironments ?? {},
+		ai_provider_auth_kinds: { [runtime]: options.providerAuthKind ?? "managed" },
+		runtime_ui_endpoint: options.runtimeUiUrl
+			? { runtime, role: "control_ui", url: options.runtimeUiUrl, requires_bridge_token: true }
+			: null,
+		accepted_operation: null,
+		commercial_display: {
+			compute_subscription: options.computeSubscription ?? null,
+			latest_funding_fact: options.fundingFact ?? null,
+		},
+		current_plan_slug: currentPlanSlug,
+		upgrade_available: options.upgradeAvailable ?? false,
+		compute_slot_occupancy: {
+			occupies_slot: backingInfrastructure === "present",
+			backing_infra: backingInfrastructure,
+			reason:
+				backingInfrastructure === "present" ? "backing_infra_present" : "authoritative_absence",
+		},
+	};
+}
 
 const basicPlan = {
 	slug: "compute_basic",
@@ -118,138 +234,117 @@ const performancePlan = {
 	],
 };
 
-const includedBasicDeployment: DeploymentMutationFixture = {
-	id: "hdep_included",
-	user_id: "usr_browser",
-	name: "Included Basic",
-	app_id: "v2-browser",
-	status: "running",
-	created_at: "2026-07-15T00:00:00Z",
-	upgrade_available: true,
-	compute_subscription: {
-		subscription_id: 7,
-		status: "active",
-		funding_source: null,
-		payment_state: "ok",
-		billing_term_months: 1,
-		price_cents: 0,
-		currency: "usd",
-		cancel_at_period_end: false,
-		current_period_end: "2026-08-15T00:00:00Z",
-	},
-	config_info: {
-		compute_plan_slug: "compute_basic",
-		mux_enabled: false,
-		telegram_mux_enabled: false,
-		discord_mux_enabled: false,
-		whatsapp_mux_enabled: false,
-		imessage_mux_enabled: false,
-		kobb_available: false,
-		ai_provider_auth_kind: "managed",
-		runtime: "hermes",
-		clawdi_cloud_environments: {},
-		ai_provider_bindings: {},
-		public_ports: [],
-	},
+const includedBasicSubscription: DeploymentComputeSubscription = {
+	subscription_id: 7,
+	status: "active",
+	funding_source: null,
+	payment_state: "ok",
+	billing_term_months: 1,
+	price_cents: 0,
+	currency: "usd",
+	cancel_at_period_end: false,
+	current_period_end: "2026-08-15T00:00:00Z",
 };
 
-const paidBasicDeployment = {
-	...includedBasicDeployment,
+const paidBasicSubscription: DeploymentComputeSubscription = {
+	subscription_id: 42,
+	status: "active",
+	funding_source: "stripe",
+	payment_state: "ok",
+	billing_term_months: 12,
+	price_cents: 8_640,
+	currency: "usd",
+	cancel_at_period_end: false,
+	current_period_end: "2027-07-15T00:00:00Z",
+};
+
+const walletBasicSubscription: DeploymentComputeSubscription = {
+	subscription_id: 42,
+	status: "active",
+	funding_source: "wallet",
+	payment_state: "ok",
+	billing_term_months: 1,
+	price_cents: 900,
+	currency: "usd",
+	cancel_at_period_end: false,
+	current_period_end: "2026-08-15T00:00:00Z",
+};
+
+const includedBasicDeployment = deploymentFixture({
+	id: "hdep_included",
+	name: "Included Basic",
+	upgradeAvailable: true,
+	computeSubscription: includedBasicSubscription,
+});
+
+const paidBasicDeployment = deploymentFixture({
 	id: "hdep_paid",
 	name: "Paid Basic",
-	compute_subscription: {
-		subscription_id: 42,
-		status: "active",
-		funding_source: "stripe",
-		payment_state: "ok",
-		billing_term_months: 12,
-		price_cents: 8_640,
-		currency: "usd",
-		cancel_at_period_end: false,
-		current_period_end: "2027-07-15T00:00:00Z",
-	},
-};
+	computeSubscription: paidBasicSubscription,
+});
 
-const performanceDeployment = {
-	...paidBasicDeployment,
+const performanceDeployment = deploymentFixture({
 	id: "hdep_performance",
 	name: "Performance agent",
-	compute_subscription: {
-		...paidBasicDeployment.compute_subscription,
-		price_cents: 18_000,
-	},
-	config_info: {
-		...paidBasicDeployment.config_info,
-		compute_plan_slug: "compute_performance",
-	},
-};
+	currentPlanSlug: "compute_performance",
+	computeSubscription: { ...paidBasicSubscription, price_cents: 18_000 },
+});
 
-const stoppedIncludedBasicDeployment = {
-	...includedBasicDeployment,
+const stoppedIncludedBasicDeployment = deploymentFixture({
 	id: "hdep_stopped",
 	name: "Stopped Basic",
 	status: "stopped",
-};
+	computeSubscription: includedBasicSubscription,
+});
 
 const missingProjectionEnvironmentId = "55555555-5555-4555-8555-555555555555";
 const missingProjectionFailureReason =
 	"startup_probe_failing; restart_count=2; container failed readiness probe after the runtime bridge exhausted every startup attempt";
-const failedMissingProjectionDeployment = {
-	...includedBasicDeployment,
+const failedMissingProjectionDeployment = deploymentFixture({
 	id: "hdep_failed_projection",
 	name: "Failed projection agent",
 	status: "failed",
-	failure_reason: missingProjectionFailureReason,
-	config_info: {
-		...includedBasicDeployment.config_info,
-		clawdi_cloud_environments: { hermes: missingProjectionEnvironmentId },
-	},
-};
+	failureTitle: missingProjectionFailureReason,
+	cloudEnvironments: { hermes: missingProjectionEnvironmentId },
+	computeSubscription: includedBasicSubscription,
+});
 
-const runningMissingProjectionDeployment = {
-	...includedBasicDeployment,
+const runningMissingProjectionDeployment = deploymentFixture({
 	id: "hdep_running_projection",
 	name: "Running projection agent",
-	hermes_control_ui_url: "https://runtime.example/hermes",
-	config_info: {
-		...includedBasicDeployment.config_info,
-		clawdi_cloud_environments: { hermes: missingProjectionEnvironmentId },
-	},
-};
+	runtimeUiUrl: "https://runtime.example/hermes",
+	cloudEnvironments: { hermes: missingProjectionEnvironmentId },
+	computeSubscription: includedBasicSubscription,
+});
 
 const retainedProjectionEnvironmentId = "66666666-6666-4666-8666-666666666666";
 const retainedProjectionFailureReason =
 	"startup_probe_failing; restart_count=4; runtime daemon exited and is no longer reachable";
-const failedRetainedProjectionDeployment = {
-	...includedBasicDeployment,
+const failedRetainedProjectionDeployment = deploymentFixture({
 	id: "hdep_failed_retained_projection",
 	name: "Failed retained projection agent",
 	status: "failed",
-	failure_reason: retainedProjectionFailureReason,
-	config_info: {
-		...includedBasicDeployment.config_info,
-		clawdi_cloud_environments: { hermes: retainedProjectionEnvironmentId },
-	},
-};
+	failureTitle: retainedProjectionFailureReason,
+	cloudEnvironments: { hermes: retainedProjectionEnvironmentId },
+	computeSubscription: includedBasicSubscription,
+});
 
 const sharedLegacyEnvironmentId = "77777777-7777-4777-8777-777777777777";
-const newerSharedEnvironmentDeployment = {
-	...includedBasicDeployment,
+const newerSharedEnvironmentDeployment = deploymentFixture({
 	id: "hdep_shared_newer",
 	name: "Newer twin",
-	created_at: "2026-07-15T00:00:00Z",
-	config_info: {
-		...includedBasicDeployment.config_info,
-		clawdi_cloud_environments: { hermes: sharedLegacyEnvironmentId },
-	},
-};
-const olderSharedEnvironmentDeployment = {
-	...newerSharedEnvironmentDeployment,
+	createdAt: "2026-07-15T00:00:00Z",
+	cloudEnvironments: { hermes: sharedLegacyEnvironmentId },
+	computeSubscription: includedBasicSubscription,
+});
+const olderSharedEnvironmentDeployment = deploymentFixture({
 	id: "hdep_shared_older",
 	name: "Older twin",
 	status: "stopped",
-	created_at: "2026-07-14T00:00:00Z",
-};
+	createdAt: "2026-07-14T00:00:00Z",
+	cloudEnvironments: { hermes: sharedLegacyEnvironmentId },
+	computeSubscription: includedBasicSubscription,
+});
 const sharedLegacyCloudAgent = {
 	id: sharedLegacyEnvironmentId,
 	name: "shared-legacy-agent",
@@ -272,13 +367,13 @@ const sharedLegacyCloudAgent = {
 	default_project_id: "project-hosted",
 };
 
-const interruptedIdentitylessDeployment = {
-	...includedBasicDeployment,
+const interruptedIdentitylessDeployment = deploymentFixture({
 	id: "hdep_creation_interrupted",
 	name: "Interrupted deployment",
 	status: "failed",
-	failure_reason: "creation_interrupted",
-};
+	failureTitle: "creation_interrupted",
+	computeSubscription: includedBasicSubscription,
+});
 
 const walletState = {
 	balance_credits: 25_000,
@@ -294,86 +389,74 @@ const walletState = {
 	points_per_usd: 1_000,
 };
 
-const walletActiveDeployment = {
-	...paidBasicDeployment,
+const walletActiveDeployment = deploymentFixture({
 	id: "hdep_wallet_due",
 	name: "Wallet-funded Basic",
-	compute_subscription: {
-		subscription_id: 42,
-		status: "active",
-		funding_source: "wallet",
-		payment_state: "ok",
-		billing_term_months: 1,
-		price_cents: 900,
-		currency: "usd",
-		cancel_at_period_end: false,
-		current_period_end: "2026-08-15T00:00:00Z",
-	},
-};
+	computeSubscription: walletBasicSubscription,
+});
 
-const walletPastDueDeployment = {
-	...walletActiveDeployment,
-	compute_subscription: {
-		...walletActiveDeployment.compute_subscription,
+const walletPastDueDeployment = deploymentFixture({
+	id: "hdep_wallet_due",
+	name: "Wallet-funded Basic",
+	computeSubscription: {
+		...walletBasicSubscription,
 		status: "past_due",
 		payment_state: "past_due",
 		latest_failed_invoice_id: "in_wallet_open",
 		next_payment_attempt_at: "2026-07-16T00:00:00Z",
 	},
-};
+});
 
-const cardPastDueDeployment = {
-	...paidBasicDeployment,
+const cardPastDueDeployment = deploymentFixture({
 	id: "hdep_card_due",
 	name: "Card-funded Basic",
-	compute_subscription: {
-		...paidBasicDeployment.compute_subscription,
+	computeSubscription: {
+		...paidBasicSubscription,
 		status: "past_due",
 		payment_state: "past_due",
 		latest_failed_invoice_id: "in_card_open",
 		latest_failed_invoice_hosted_url: null,
 		next_payment_attempt_at: "2026-07-16T00:00:00Z",
 	},
-};
+});
 
-const terminalFallbackDeployment = {
-	...includedBasicDeployment,
+const terminalFallbackDeployment = deploymentFixture({
 	id: "hdep_terminal_fallback",
 	name: "Fallback Basic",
-	upgrade_available: false,
-	compute_subscription: { ...includedBasicDeployment.compute_subscription },
-	last_funding_event: {
-		type: "compute_subscription_fallback",
+	computeSubscription: includedBasicSubscription,
+	fundingFact: {
+		fact_kind: "funding_revoked",
+		commercial_revision: 1,
+		compute_subscription_id: 42,
+		compute_plan_slug: null,
 		funding_source: "stripe",
 		reason: "payment_failure",
 		prior_plan_slug: "compute_performance",
 		occurred_at: "2026-07-16T00:00:00Z",
-		subscription_id: 42,
+		emitted_at: "2026-07-16T00:00:00Z",
 	},
-};
+});
 
-const cancelPendingBasicDeployment = {
-	...paidBasicDeployment,
+const cancelPendingBasicDeployment = deploymentFixture({
 	id: "hdep_cancel_pending",
 	name: "Cancel-pending Basic",
-	compute_subscription: {
-		...paidBasicDeployment.compute_subscription,
+	computeSubscription: {
+		...paidBasicSubscription,
 		cancel_at_period_end: true,
 		cancel_at: "2027-07-15T00:00:00Z",
 	},
-};
+});
 
-const walletAnnualDeployment = {
-	...paidBasicDeployment,
+const walletAnnualDeployment = deploymentFixture({
 	id: "hdep_wallet_created",
 	name: "Annual Wallet Basic",
-	compute_subscription: {
-		...walletActiveDeployment.compute_subscription,
+	computeSubscription: {
+		...walletBasicSubscription,
 		billing_term_months: 12,
 		price_cents: 8_640,
 		current_period_end: "2027-07-15T00:00:00Z",
 	},
-};
+});
 
 function walletSubscriptionQuote({
 	planSlug,
@@ -483,181 +566,11 @@ function planChangeResponse({
 	};
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isDeploymentMutationFixture(value: unknown): value is DeploymentMutationFixture {
-	return (
-		isRecord(value) &&
-		typeof value.id === "string" &&
-		typeof value.user_id === "string" &&
-		typeof value.name === "string" &&
-		typeof value.app_id === "string" &&
-		typeof value.status === "string" &&
-		typeof value.created_at === "string" &&
-		isRecord(value.config_info) &&
-		typeof value.config_info.compute_plan_slug === "string" &&
-		(value.config_info.runtime === "openclaw" || value.config_info.runtime === "hermes")
-	);
-}
-
-function readSummaryState(status: string): DeploymentRead["resource"]["status"]["summary_state"] {
-	switch (status) {
-		case "creating":
-		case "starting":
-		case "running":
-		case "stopping":
-		case "stopped":
-		case "restarting":
-		case "updating":
-		case "deleting":
-		case "deleted":
-		case "failed":
-			return status;
-		case "provisioning":
-			return "creating";
-		case "ready":
-			return "running";
-		default:
-			throw new Error(`Unsupported deployment fixture status: ${status}`);
-	}
-}
-
-function readProviderAuthKind(
-	value: string | null | undefined,
-): DeploymentRead["ai_provider_auth_kinds"][string] {
-	switch (value) {
-		case "unmanaged":
-		case "managed":
-		case "api_key":
-		case "codex_oauth":
-			return value;
-		default:
-			throw new Error(`Unsupported deployment fixture provider mode: ${value ?? "missing"}`);
-	}
-}
-
-function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): DeploymentRead {
-	const config = deployment.config_info;
-	const runtime = config.runtime;
-	if (runtime !== "openclaw" && runtime !== "hermes") {
-		throw new Error(`Unsupported deployment fixture runtime: ${runtime}`);
-	}
-	const summaryState = readSummaryState(deployment.status);
-	const backingInfrastructure =
-		summaryState === "stopped" || summaryState === "deleted" ? "absent" : "present";
-	const runtimeBinding = config.ai_provider_bindings?.[runtime];
-	const providerAuthKind = readProviderAuthKind(
-		runtimeBinding?.auth_kind ?? config.ai_provider_auth_kind,
-	);
-	const runtimeUiUrl =
-		runtime === "openclaw" ? deployment.openclaw_control_ui_url : deployment.hermes_control_ui_url;
-	const failure = deployment.failure_reason
-		? {
-				type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
-				title: deployment.failure_reason,
-				status: 504,
-				detail: "The runtime did not become ready before the startup deadline.",
-				instance: deployment.id,
-				code: "runtime_readiness_timeout",
-				phase: "readiness",
-				retryable: true,
-				conditionReason: "RuntimeReadinessTimeout",
-				conditionMessage: deployment.failure_reason,
-				observedGeneration: 1,
-			}
-		: null;
-	const fundingFact = deployment.last_funding_event
-		? {
-				fact_kind: "funding_revoked" as const,
-				commercial_revision: 1,
-				compute_subscription_id: deployment.last_funding_event.subscription_id,
-				compute_plan_slug: null,
-				funding_source: deployment.last_funding_event.funding_source,
-				reason: deployment.last_funding_event.reason,
-				prior_plan_slug: deployment.last_funding_event.prior_plan_slug,
-				occurred_at: deployment.last_funding_event.occurred_at,
-				emitted_at: deployment.last_funding_event.occurred_at,
-			}
-		: null;
-
-	return {
-		resource: {
-			id: deployment.id,
-			owner_user_id: deployment.user_id,
-			commercial_revision: 1,
-			deployment_target: "saas",
-			metadata: {
-				generation: 1,
-				manifestETag: `etag_${deployment.id}`,
-				resourceVersion: `rv_${deployment.id}`,
-				createdAt: deployment.created_at,
-				updatedAt: deployment.created_at,
-			},
-			spec: {
-				schema_version: 1,
-				desired_lifecycle:
-					summaryState === "stopped"
-						? "stopped"
-						: summaryState === "deleted"
-							? "deleted"
-							: "running",
-				runtime,
-				runtime_version: "latest",
-				name: deployment.name,
-				resources: {
-					vcpu: config.compute_plan_slug === "compute_performance" ? 4 : 2,
-					memory_mib: config.compute_plan_slug === "compute_performance" ? 8192 : 4096,
-					disk_gib: config.compute_plan_slug === "compute_performance" ? 40 : 20,
-				},
-				agents: [],
-				ports: [],
-				runtime_configuration: { providers: [], features: [] },
-				rollout_nonce: 0,
-				secret_references: [],
-			},
-			status: {
-				summary_state: summaryState,
-				observedGeneration: 1,
-				conditions: [],
-				failure,
-				backing_infrastructure: backingInfrastructure,
-				driver_acknowledged_generation: 1,
-				driver_applied_generation: 1,
-				driver_observation_sequence: 1,
-				endpoints: (deployment.endpoints ?? []).map((url, index) => ({
-					name: `endpoint-${index + 1}`,
-					url,
-				})),
-			},
-		},
-		clawdi_cloud_environments: config.clawdi_cloud_environments ?? {},
-		ai_provider_auth_kinds: { [runtime]: providerAuthKind },
-		runtime_ui_endpoint: runtimeUiUrl
-			? { runtime, role: "control_ui", url: runtimeUiUrl, requires_bridge_token: true }
-			: null,
-		accepted_operation: null,
-		commercial_display: {
-			compute_subscription: deployment.compute_subscription ?? null,
-			latest_funding_fact: fundingFact,
-		},
-		current_plan_slug: config.compute_plan_slug,
-		upgrade_available: deployment.upgrade_available,
-		compute_slot_occupancy: {
-			occupies_slot: backingInfrastructure === "present",
-			backing_infra: backingInfrastructure,
-			reason:
-				backingInfrastructure === "present" ? "backing_infra_present" : "authoritative_absence",
-		},
-	};
-}
-
 function completedDeploymentOperation(
-	deployment: DeploymentMutationFixture,
+	deployment: DeploymentRead,
 	verb: "create" | "start" | "stop" | "restart" | "delete",
 ) {
-	const resource = mutationDeploymentReadFixture(deployment).resource;
+	const resource = deployment.resource;
 	return {
 		name: `operations/e2e-${verb}-${resource.id}`,
 		metadata: {
@@ -675,10 +588,6 @@ function completedDeploymentOperation(
 			deployment: resource,
 		},
 	};
-}
-
-function readDeploymentFixture(value: unknown): unknown {
-	return isDeploymentMutationFixture(value) ? mutationDeploymentReadFixture(value) : value;
 }
 
 type StubResponse = { body: unknown; status: number; delayMs?: number };
@@ -711,7 +620,7 @@ type HostedApiStubOptions = {
 	cloudAgentNotFoundIds?: readonly string[];
 	cloudAgentResponses?: Record<string, StubResponse[]>;
 	deleteRequests?: string[];
-	deployments?: readonly unknown[];
+	deployments?: readonly DeploymentRead[];
 	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
 	ledgerResponseForRequest?: (limit: number) => unknown;
@@ -747,7 +656,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const deployments = options.deployments ?? [];
 	const plans = options.plans ?? [];
 	let currentWallet = options.walletState ?? walletState;
-	const deploymentRequests = new Map<string, DeploymentMutationFixture>();
+	const deploymentRequests = new Map<string, DeploymentRead>();
 	// Deploy API (/me, /v2/*).
 	await page.route(`${DEPLOY_API}/**`, async (r) => {
 		const p = new URL(r.request().url()).pathname;
@@ -794,7 +703,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			if (options.deploymentsResponse) {
 				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
 			}
-			return fulfillJson(r, deployments.map(readDeploymentFixture));
+			return fulfillJson(r, deployments);
 		}
 		if (p.startsWith("/v2/deployments/by-request/") && r.request().method() === "GET") {
 			const deployRequestId = decodeURIComponent(p.slice("/v2/deployments/by-request/".length));
@@ -804,7 +713,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 						deploy_request_id: deployRequestId,
 						request_status: "succeeded",
 						lineage_tail: {
-							deployment_id: deployment.id,
+							deployment_id: deployment.resource.id,
 							lineage_version: 1,
 							lineage_state: "succeeded",
 							operation: completedDeploymentOperation(deployment, "create"),
@@ -814,12 +723,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "GET") {
 			const deploymentId = decodeURIComponent(p.slice("/v2/deployments/".length));
-			const deployment = deployments.find(
-				(candidate): candidate is DeploymentMutationFixture =>
-					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
-			);
+			const deployment = deployments.find((candidate) => candidate.resource.id === deploymentId);
 			return deployment
-				? fulfillJson(r, readDeploymentFixture(deployment))
+				? fulfillJson(r, deployment)
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		if (p === "/v2/subscription/checkout" && r.request().method() === "POST") {
@@ -830,12 +736,12 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				deploy_config?: { deploy_request_id?: string };
 			};
 			const deployRequestId = request.deploy_config?.deploy_request_id;
-			const createdDeployment: DeploymentMutationFixture = {
-				...includedBasicDeployment,
+			const createdDeployment = deploymentFixture({
 				id: request.funding_source === "wallet" ? "hdep_wallet_created" : "hdep_created",
 				name: "Created Basic",
-				status: "running",
-			};
+				computeSubscription:
+					request.funding_source === "wallet" ? walletBasicSubscription : paidBasicSubscription,
+			});
 			if (deployRequestId) deploymentRequests.set(deployRequestId, createdDeployment);
 			const response =
 				options.checkoutResponses?.shift() ??
@@ -987,10 +893,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p.endsWith("/restart") && r.request().method() === "POST") {
 			options.restartRequests?.push(p);
 			const deploymentId = p.split("/")[3] ?? "";
-			const deployment = deployments.find(
-				(candidate): candidate is DeploymentMutationFixture =>
-					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
-			);
+			const deployment = deployments.find((candidate) => candidate.resource.id === deploymentId);
 			return deployment
 				? fulfillJson(r, completedDeploymentOperation(deployment, "restart"), 202)
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
@@ -1009,20 +912,14 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				return fulfillJson(r, { detail: options.startError.detail }, options.startError.status);
 			}
 			const deploymentId = p.split("/")[3] ?? "";
-			const deployment = deployments.find(
-				(candidate): candidate is DeploymentMutationFixture =>
-					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
-			);
+			const deployment = deployments.find((candidate) => candidate.resource.id === deploymentId);
 			return deployment
 				? fulfillJson(r, completedDeploymentOperation(deployment, "start"), 202)
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		if (p.endsWith("/stop") && r.request().method() === "POST") {
 			const deploymentId = p.split("/")[3] ?? "";
-			const deployment = deployments.find(
-				(candidate): candidate is DeploymentMutationFixture =>
-					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
-			);
+			const deployment = deployments.find((candidate) => candidate.resource.id === deploymentId);
 			return deployment
 				? fulfillJson(r, completedDeploymentOperation(deployment, "stop"), 202)
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
@@ -1030,10 +927,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "DELETE") {
 			options.deleteRequests?.push(p);
 			const deploymentId = p.slice("/v2/deployments/".length);
-			const deployment = deployments.find(
-				(candidate): candidate is DeploymentMutationFixture =>
-					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
-			);
+			const deployment = deployments.find((candidate) => candidate.resource.id === deploymentId);
 			return deployment
 				? fulfillJson(r, completedDeploymentOperation(deployment, "delete"), 202)
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
@@ -1686,7 +1580,7 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 }) => {
 	const errors = collectBrowserErrors(page);
 	const checkoutRequests: string[] = [];
-	const deployments: unknown[] = [includedBasicDeployment];
+	const deployments: DeploymentRead[] = [includedBasicDeployment];
 	const subscriptionQuoteRequests: string[] = [];
 	await stubHostedApi(page, {
 		checkoutRequests,
@@ -2179,7 +2073,7 @@ test("paid Basic cancellation stays conditional with the included slot vacant or
 	page,
 }) => {
 	const cancelRequests: string[] = [];
-	const deployments: unknown[] = [paidBasicDeployment];
+	const deployments: DeploymentRead[] = [paidBasicDeployment];
 	await stubHostedApi(page, {
 		cancelRequests,
 		deployments,
@@ -2656,7 +2550,7 @@ test("top-up rotates its idempotency key after an explicit reuse conflict", asyn
 
 test("wallet top-up completion refreshes an automatically paid open invoice", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
-	const deployments: unknown[] = [walletPastDueDeployment];
+	const deployments: DeploymentRead[] = [walletPastDueDeployment];
 	const topUpRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments,

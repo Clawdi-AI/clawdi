@@ -271,12 +271,59 @@ def _funding_fact(record: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _deployment_conditions(
+    *,
+    summary_state: str,
+    failure_reason: str | None,
+    transition_time: str,
+    observed_generation: int,
+) -> list[dict[str, Any]]:
+    if failure_reason:
+        return [
+            {
+                "type": "Degraded",
+                "status": "True",
+                "observedGeneration": observed_generation,
+                "lastTransitionTime": transition_time,
+                "reason": "RuntimeReadinessTimeout",
+                "message": failure_reason,
+            }
+        ]
+    if summary_state == "running":
+        return [
+            {
+                "type": "Ready",
+                "status": "True",
+                "observedGeneration": observed_generation,
+                "lastTransitionTime": transition_time,
+                "reason": "RuntimeReady",
+                "message": "Runtime is ready.",
+            }
+        ]
+    settled = summary_state in {"stopped", "deleted"}
+    return [
+        {
+            "type": "Progressing",
+            "status": "False" if settled else "True",
+            "observedGeneration": observed_generation,
+            "lastTransitionTime": transition_time,
+            "reason": "RuntimeSettled" if settled else "RuntimeConverging",
+            "message": (
+                "Runtime reached its desired lifecycle."
+                if settled
+                else "Runtime is converging to its desired lifecycle."
+            ),
+        }
+    ]
+
+
 def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
     config = record["config_info"]
     runtime = config.get("runtime")
     if runtime not in {"openclaw", "hermes"}:
         raise ValueError(f"Unsupported mock deployment runtime: {runtime!r}")
     summary_state = _summary_state(record["status"])
+    generation = int(record.get("_generation", 1))
     backing_infra = "absent" if summary_state in {"stopped", "deleted"} else "present"
     binding = (config.get("ai_provider_bindings") or {}).get(runtime) or {}
     provider_auth_kind = _read_provider_auth_kind(
@@ -287,7 +334,18 @@ def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
         if runtime == "openclaw"
         else record.get("hermes_control_ui_url")
     )
-    failure_reason = record.get("failure_reason")
+    failure_reason_value = record.get("failure_reason")
+    failure_reason = (
+        failure_reason_value
+        if isinstance(failure_reason_value, str) and failure_reason_value
+        else None
+    )
+    conditions = _deployment_conditions(
+        summary_state=summary_state,
+        failure_reason=failure_reason,
+        transition_time=record["created_at"],
+        observed_generation=generation,
+    )
     failure = (
         {
             "type": "https://api.clawdi.ai/problems/runtime-readiness-timeout",
@@ -300,9 +358,9 @@ def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
             "retryable": True,
             "conditionReason": "RuntimeReadinessTimeout",
             "conditionMessage": failure_reason,
-            "observedGeneration": 1,
+            "observedGeneration": generation,
         }
-        if isinstance(failure_reason, str) and failure_reason
+        if failure_reason
         else None
     )
     endpoints = [
@@ -316,7 +374,7 @@ def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
             "commercial_revision": 1,
             "deployment_target": "saas",
             "metadata": {
-                "generation": record.get("_generation", 1),
+                "generation": generation,
                 "manifestETag": f"etag_{record['id']}",
                 "resourceVersion": record.get("_resource_version", f"rv_{record['id']}"),
                 "createdAt": record["created_at"],
@@ -347,14 +405,19 @@ def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
             },
             "status": {
                 "summary_state": summary_state,
-                "observedGeneration": 1,
-                "conditions": [],
+                "observedGeneration": generation,
+                "conditions": conditions,
                 "failure": failure,
                 "backing_infrastructure": backing_infra,
-                "driver_acknowledged_generation": 1,
-                "driver_applied_generation": 1,
-                "driver_observation_sequence": 1,
+                "driver_acknowledged_generation": generation,
+                "driver_applied_generation": generation,
+                "driver_observation_sequence": generation,
                 "endpoints": endpoints,
+                "deleted_at": (
+                    record.get("_deleted_at", record["created_at"])
+                    if summary_state == "deleted"
+                    else None
+                ),
             },
         },
         "clawdi_cloud_environments": config.get("clawdi_cloud_environments") or {},
@@ -543,6 +606,7 @@ async def delete_deployment(deployment_id: str, request: Request) -> dict[str, A
     deployment = _get_deployment_record(deployment_id)
     idempotency_key = _require_mutation_headers(request, deployment)
     deployment["status"] = "deleted"
+    deployment["_deleted_at"] = _iso(_now())
     return _accept_operation(
         deployment,
         verb="delete",
