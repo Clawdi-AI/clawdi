@@ -702,6 +702,7 @@ type HostedApiStubOptions = {
 	planBillingCapability?: { enabled: boolean };
 	productAccessRequests?: string[];
 	cancelRequests?: string[];
+	cancelResponses?: StubResponse[];
 	checkoutRequests?: string[];
 	checkoutResponses?: StubResponse[];
 	cloudAgentOverrides?: Record<string, unknown>;
@@ -711,12 +712,14 @@ type HostedApiStubOptions = {
 	cloudAgentNotFoundIds?: readonly string[];
 	cloudAgentResponses?: Record<string, StubResponse[]>;
 	deleteRequests?: string[];
+	deleteResponses?: StubResponse[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
 	ledgerResponseForRequest?: (limit: number) => unknown;
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
+	mutationOrder?: string[];
 	plans?: readonly unknown[];
 	planCMutationRequests?: string[];
 	planChangeRequests?: string[];
@@ -966,6 +969,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/subscription/cancel" && r.request().method() === "POST") {
 			options.cancelRequests?.push(r.request().postData() ?? "");
+			options.mutationOrder?.push("cancel");
+			const response = options.cancelResponses?.shift();
+			if (response) return fulfillJson(r, response.body, response.status);
 			return fulfillJson(r, {
 				status: "active",
 				billing_term_months: 12,
@@ -1029,6 +1035,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "DELETE") {
 			options.deleteRequests?.push(p);
+			options.mutationOrder?.push("delete");
+			const response = options.deleteResponses?.shift();
+			if (response) return fulfillJson(r, response.body, response.status);
 			const deploymentId = p.slice("/v2/deployments/".length);
 			const deployment = deployments.find(
 				(candidate): candidate is DeploymentMutationFixture =>
@@ -1408,7 +1417,7 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await main.getByRole("button", { name: "Delete", exact: true }).click();
 	await page
 		.getByRole("alertdialog")
-		.getByRole("button", { name: "Delete compute", exact: true })
+		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_failed_projection"]);
 });
@@ -1452,7 +1461,7 @@ test("failed deployment with a retained projection keeps status-authoritative na
 	await main.getByRole("button", { name: "Delete", exact: true }).click();
 	await page
 		.getByRole("alertdialog")
-		.getByRole("button", { name: "Delete compute", exact: true })
+		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 	await expect
 		.poll(() => deleteRequests)
@@ -1567,7 +1576,7 @@ test("shared legacy environment routes an older tile's actions to its deployment
 	await main.getByRole("button", { name: "Delete", exact: true }).click();
 	await page
 		.getByRole("alertdialog")
-		.getByRole("button", { name: "Delete compute", exact: true })
+		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_shared_older"]);
@@ -1610,7 +1619,7 @@ test("identity-less interrupted deployment tile exposes delete", async ({ page }
 	await deleteAction.click();
 	await page
 		.getByRole("alertdialog")
-		.getByRole("button", { name: "Delete deployment", exact: true })
+		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_creation_interrupted"]);
 });
@@ -1641,6 +1650,51 @@ test("Basic create always follows the wizard-selected funding path", async ({ pa
 		deploy_config: { compute_plan_slug: "compute_basic" },
 	});
 	expect(errors, `funded Basic deploy: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("entitled card subscription activation shows reuse banner without checkout", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	const checkoutRequests: string[] = [];
+	await stubHostedApi(page, {
+		checkoutRequests,
+		checkoutResponses: [
+			{
+				status: 200,
+				body: {
+					flow_type: "subscription_activation",
+					funding_source: "stripe",
+					checkout_url: "",
+					deploy_request_id: "reuse-active-subscription",
+					current_period_end: "2027-07-15T00:00:00Z",
+					entitled_until: "2027-07-15T00:00:00Z",
+				},
+			},
+		],
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan, performancePlan],
+	});
+	await page.goto("/deploy");
+	await page.waitForLoadState("networkidle");
+
+	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	await expect.poll(() => checkoutRequests.length).toBe(1);
+	const banner = page.getByTestId("subscription-reuse-banner");
+	await expect(banner).toBeVisible();
+	await expect(banner).toContainText(
+		"Reusing your active subscription — valid until Jul 15, 2027, no additional charge.",
+	);
+	await expect(page.getByRole("dialog", { name: /Complete .* checkout/ })).toHaveCount(0);
+	await expect(page.getByText("Mock secure payment form", { exact: true })).toHaveCount(0);
+	await expect(
+		page.getByRole("button", { name: "Deployment started", exact: true }),
+	).toBeDisabled();
+	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({
+		funding_source: "stripe",
+		deploy_config: { compute_plan_slug: "compute_basic" },
+	});
+	expect(errors, `subscription reuse activation: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("free-funded Basic uses annual compute_basic checkout when the included slot is occupied", async ({
@@ -2218,6 +2272,130 @@ test("paid Basic cancellation stays conditional with the included slot vacant or
 		await expect(page.getByRole("button", { name: "Resume subscription" })).toBeVisible();
 	}
 	expect(errors, `paid Basic cancellation: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("paid agent deletion keeps the reusable subscription by default", async ({ page }) => {
+	const cancelRequests: string[] = [];
+	const deleteRequests: string[] = [];
+	const mutationOrder: string[] = [];
+	await stubHostedApi(page, {
+		cancelRequests,
+		deleteRequests,
+		deployments: [paidBasicDeployment],
+		mutationOrder,
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+
+	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
+	const dialog = page.getByRole("alertdialog");
+	await expect(dialog).toContainText("Keep subscription — redeploy reuses it, no re-charge.");
+	await expect(dialog).toContainText("Delete agent and cancel subscription");
+	const choices = dialog.getByRole("radio");
+	await expect(choices).toHaveCount(2);
+	await expect(choices.first()).toBeChecked();
+	await dialog
+		.getByRole("button", { name: "Delete agent (keep subscription)", exact: true })
+		.click();
+
+	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
+	expect(cancelRequests).toEqual([]);
+	expect(mutationOrder).toEqual(["delete"]);
+});
+
+test("paid agent deletion records cancellation before deployment teardown", async ({ page }) => {
+	const cancelRequests: string[] = [];
+	const deleteRequests: string[] = [];
+	const mutationOrder: string[] = [];
+	await stubHostedApi(page, {
+		cancelRequests,
+		deleteRequests,
+		deployments: [paidBasicDeployment],
+		mutationOrder,
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+
+	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
+	const dialog = page.getByRole("alertdialog");
+	await dialog.getByRole("radio").nth(1).check();
+	await dialog
+		.getByRole("button", { name: "Delete agent and cancel subscription", exact: true })
+		.click();
+
+	await expect.poll(() => mutationOrder).toEqual(["cancel", "delete"]);
+	expect(JSON.parse(cancelRequests[0] ?? "{}")).toEqual({ deployment_id: "hdep_paid" });
+	expect(deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
+});
+
+test("paid agent deletion does not teardown when cancellation fails", async ({ page }) => {
+	const cancelRequests: string[] = [];
+	const deleteRequests: string[] = [];
+	const mutationOrder: string[] = [];
+	await stubHostedApi(page, {
+		cancelRequests,
+		cancelResponses: [
+			{
+				status: 503,
+				body: { detail: "Cancellation service is temporarily unavailable." },
+			},
+		],
+		deleteRequests,
+		deployments: [paidBasicDeployment],
+		mutationOrder,
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+
+	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
+	const dialog = page.getByRole("alertdialog");
+	await dialog.getByRole("radio").nth(1).check();
+	await dialog
+		.getByRole("button", { name: "Delete agent and cancel subscription", exact: true })
+		.click();
+
+	await expect.poll(() => cancelRequests.length).toBe(1);
+	await expect(page.getByText("Couldn’t cancel subscription", { exact: true })).toBeVisible();
+	await expect(dialog).toBeVisible();
+	expect(deleteRequests).toEqual([]);
+	expect(mutationOrder).toEqual(["cancel"]);
+});
+
+test("paid agent deletion surfaces preserved cancellation when teardown fails", async ({
+	page,
+}) => {
+	const cancelRequests: string[] = [];
+	const deleteRequests: string[] = [];
+	const mutationOrder: string[] = [];
+	await stubHostedApi(page, {
+		cancelRequests,
+		deleteRequests,
+		deleteResponses: [
+			{
+				status: 503,
+				body: { detail: "Deployment teardown is temporarily unavailable." },
+			},
+		],
+		deployments: [paidBasicDeployment],
+		mutationOrder,
+		plans: [basicPlan, performancePlan],
+	});
+	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
+
+	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
+	const dialog = page.getByRole("alertdialog");
+	await dialog.getByRole("radio").nth(1).check();
+	await dialog
+		.getByRole("button", { name: "Delete agent and cancel subscription", exact: true })
+		.click();
+
+	await expect.poll(() => mutationOrder).toEqual(["cancel", "delete"]);
+	await expect(
+		page.getByText("Subscription cancellation kept; agent not deleted", { exact: true }),
+	).toBeVisible();
+	await expect(dialog).toBeVisible();
+	expect(JSON.parse(cancelRequests[0] ?? "{}")).toEqual({ deployment_id: "hdep_paid" });
+	expect(deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
 });
 
 test("paid Performance exposes subscription actions without a direct Basic switch", async ({

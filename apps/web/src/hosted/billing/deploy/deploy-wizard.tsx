@@ -157,6 +157,7 @@ import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
 import { useChannels } from "@/hosted/v2/channels/channels-hooks";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { cn } from "@/lib/utils";
 
@@ -181,6 +182,9 @@ type WalletTopUpContext = {
 	initialAmountCents: number | null;
 	refundDebtCredits: number | null;
 	blockedChargeCredits: number | null;
+};
+type SubscriptionReuseNotice = {
+	validUntil: string | null;
 };
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
@@ -416,6 +420,8 @@ export function DeployWizard() {
 	const [timezone, setTimezone] = useState("");
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
+	const [subscriptionReuseNotice, setSubscriptionReuseNotice] =
+		useState<SubscriptionReuseNotice | null>(null);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
@@ -521,6 +527,7 @@ export function DeployWizard() {
 		hostedAccess.canUsePlanCBilling &&
 		planReady &&
 		!submitting &&
+		subscriptionReuseNotice === null &&
 		(!paidSelection ||
 			paymentMethod === "card" ||
 			(!!walletDebit &&
@@ -806,6 +813,22 @@ export function DeployWizard() {
 		return false;
 	}
 
+	function showSubscriptionReuseNotice({
+		currentPeriodEnd,
+		entitledUntil,
+	}: {
+		currentPeriodEnd: string | null;
+		entitledUntil: string | null;
+	}) {
+		setCheckoutSession(null);
+		setSubscriptionReuseNotice({
+			validUntil: currentPeriodEnd ?? entitledUntil,
+		});
+		toast.success("Agent deployment started", {
+			description: "Your active subscription was reused without another charge.",
+		});
+	}
+
 	async function resolveWalletDeploymentId(
 		deploymentId: string | null | undefined,
 		deployRequestId: string | null | undefined,
@@ -842,8 +865,11 @@ export function DeployWizard() {
 				}
 				throw error;
 			});
-		if (outcome.flowType !== "checkout") {
-			throw new Error("Hosted card fallback returned an activation flow.");
+		if (outcome.flowType === "subscription_activation") {
+			forgetIdempotencyAttempt("subscription-checkout-hosted-fallback", fingerprint);
+			checkoutAttemptRef.current = null;
+			showSubscriptionReuseNotice(outcome);
+			return;
 		}
 		if (redirectTo(checkoutRedirectUrl(outcome.checkout))) return;
 		throw new Error("No checkout URL was returned.");
@@ -909,6 +935,7 @@ export function DeployWizard() {
 
 	async function onDeploy() {
 		if (!canSubmit) return;
+		setSubscriptionReuseNotice(null);
 		setSubmitting(true);
 		try {
 			if (!(await recheckPlanCBilling())) return;
@@ -999,8 +1026,11 @@ export function DeployWizard() {
 						}
 						throw error;
 					});
-				if (outcome.flowType !== "checkout") {
-					throw new Error("Card subscription returned an activation flow.");
+				if (outcome.flowType === "subscription_activation") {
+					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
+					checkoutAttemptRef.current = null;
+					showSubscriptionReuseNotice(outcome);
+					return;
 				}
 				const result = outcome.checkout;
 				if (hasCheckoutClientSecret(result)) {
@@ -1043,19 +1073,21 @@ export function DeployWizard() {
 		}
 	}
 
-	const deployLabel = !hostedAccess.canUsePlanCBilling
-		? "Deployment temporarily unavailable"
-		: paidSelection
-			? paymentMethod === "wallet"
-				? subscriptionCreateQuote.isFetching
-					? "Getting wallet quote…"
-					: walletInsufficient
-						? "Top up to deploy"
-						: walletDebit
-							? `Pay ${formatCents(walletDebit.exactDebitCents)} from Wallet & deploy`
-							: "Review wallet quote"
-				: "Continue to checkout"
-			: "Deploy agent";
+	const deployLabel = subscriptionReuseNotice
+		? "Deployment started"
+		: !hostedAccess.canUsePlanCBilling
+			? "Deployment temporarily unavailable"
+			: paidSelection
+				? paymentMethod === "wallet"
+					? subscriptionCreateQuote.isFetching
+						? "Getting wallet quote…"
+						: walletInsufficient
+							? "Top up to deploy"
+							: walletDebit
+								? `Pay ${formatCents(walletDebit.exactDebitCents)} from Wallet & deploy`
+								: "Review wallet quote"
+					: "Continue to checkout"
+				: "Deploy agent";
 	const selectedProviderCount =
 		aiAccessMode === "configured"
 			? normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice).length
@@ -1110,6 +1142,23 @@ export function DeployWizard() {
 					title="Deploy an Agent"
 					description="Choose the execution engine and AI provider for this hosted deployment."
 				/>
+				{subscriptionReuseNotice ? (
+					<Alert
+						data-testid="subscription-reuse-banner"
+						aria-live="polite"
+						className="border-emerald-500/35 bg-emerald-500/5"
+					>
+						<Sparkles />
+						<AlertTitle>Active subscription reused</AlertTitle>
+						<AlertDescription>
+							{subscriptionReuseNotice.validUntil
+								? `Reusing your active subscription — valid until ${formatShortDate(
+										subscriptionReuseNotice.validUntil,
+									)}, no additional charge.`
+								: "Reusing your active subscription — no additional charge."}
+						</AlertDescription>
+					</Alert>
+				) : null}
 				{hostedAccess.isLoading || hostedAccess.canUsePlanCBilling ? null : (
 					<PlanCBillingUnavailableNotice description="New deployments are temporarily unavailable. You can still review compute options, providers, channels, and existing agents." />
 				)}
