@@ -57,6 +57,7 @@ import type {
 	BillingOffer,
 	ComputePlanSlug,
 	DeployRequest,
+	ManagedModelCatalogItem,
 	Plan,
 } from "@/hosted/billing/contracts";
 import {
@@ -102,6 +103,7 @@ import {
 	useCheckoutReturnRefresh,
 	useCreateSubscription,
 	useHostedDeployments,
+	useManagedModelCatalog,
 	usePlans,
 	useResolveDeploymentRequest,
 	useSubscriptionCreateQuote,
@@ -144,6 +146,7 @@ import {
 	MANAGED_AI_CHOICE,
 	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
+	managedModelDisplayName,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelRef,
@@ -398,6 +401,7 @@ export function DeployWizard() {
 	const hostedAccess = useHostedProductAccess();
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
+	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useAiProviders();
 	const channels = useChannels();
 	const createSubscription = useCreateSubscription();
@@ -630,9 +634,15 @@ export function DeployWizard() {
 		const fallback = firstModelForProvider(
 			primaryProviderChoice,
 			aiProviders.data?.providers ?? [],
+			managedModelCatalog.data?.models ?? [],
 		);
 		if (fallback) setPrimaryModel(fallback);
-	}, [aiProviders.data?.providers, primaryModel, primaryProviderChoice]);
+	}, [
+		aiProviders.data?.providers,
+		managedModelCatalog.data?.models,
+		primaryModel,
+		primaryProviderChoice,
+	]);
 
 	function setComputeTier(next: Compute) {
 		setCompute(next);
@@ -645,9 +655,10 @@ export function DeployWizard() {
 	function setPrimaryProvider(choice: string) {
 		setAiAccessMode("configured");
 		const providers = aiProviders.data?.providers ?? [];
-		const previousCatalog = modelIdsForProvider(primaryProviderChoice, providers);
-		const nextCatalog = modelIdsForProvider(choice, providers);
-		const fallback = firstModelForProvider(choice, providers);
+		const managedModels = managedModelCatalog.data?.models ?? [];
+		const previousCatalog = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
+		const nextCatalog = modelIdsForProvider(choice, providers, managedModels);
+		const fallback = firstModelForProvider(choice, providers, managedModels);
 		setPrimaryProviderChoice(choice);
 		setAiProviderChoices((current) => normalizeSelectedProviderIds(current, choice));
 		setPrimaryModel((current) => {
@@ -1255,6 +1266,7 @@ export function DeployWizard() {
 					) : (
 						<PrimaryModelPicker
 							providers={aiProviders.data?.providers ?? []}
+							managedModels={managedModelCatalog.data?.models ?? []}
 							customProviders={providerList}
 							selectedProviderChoices={normalizeSelectedProviderIds(
 								aiProviderChoices,
@@ -1605,6 +1617,7 @@ function providerCatalogDescription(provider: AiProvider): string {
 
 function PrimaryModelPicker({
 	providers,
+	managedModels,
 	customProviders,
 	selectedProviderChoices,
 	primaryProviderChoice,
@@ -1613,6 +1626,7 @@ function PrimaryModelPicker({
 	onPrimaryModelChange,
 }: {
 	providers: readonly AiProvider[];
+	managedModels: readonly ManagedModelCatalogItem[];
 	customProviders: readonly AiProvider[];
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
@@ -1620,7 +1634,8 @@ function PrimaryModelPicker({
 	onPrimaryProviderChange: (choice: string) => void;
 	onPrimaryModelChange: (model: string) => void;
 }) {
-	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
+	const isManaged = primaryProviderChoice === MANAGED_AI_CHOICE;
+	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 	const primaryProviderItems = [
 		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
@@ -1634,8 +1649,16 @@ function PrimaryModelPicker({
 			})),
 	];
 	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({ value: model, label: model })),
-		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
+		...catalogModelIds.map((model) => ({
+			value: model,
+			label:
+				model === MANAGED_DEFAULT_MODEL_CHOICE
+					? "Hosted default (Luna)"
+					: isManaged
+						? (managedModelDisplayName(model, managedModels) ?? model)
+						: model,
+		})),
+		...(!isManaged ? [{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" }] : []),
 	];
 	return (
 		<div className="mt-4 flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
@@ -1686,10 +1709,16 @@ function PrimaryModelPicker({
 								<SelectGroup>
 									{catalogModelIds.map((model) => (
 										<SelectItem key={model} value={model}>
-											{model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : model}
+											{model === MANAGED_DEFAULT_MODEL_CHOICE
+												? "Hosted default (Luna)"
+												: isManaged
+													? (managedModelDisplayName(model, managedModels) ?? model)
+													: model}
 										</SelectItem>
 									))}
-									<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
+									{!isManaged ? (
+										<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
+									) : null}
 								</SelectGroup>
 							</SelectContent>
 						</Select>
@@ -1699,7 +1728,7 @@ function PrimaryModelPicker({
 			{/* The free-text model id is only needed when the catalog dropdown is
 			    on "Custom model" (or the provider has no catalog). When a catalog
 			    model is selected it just duplicates the dropdown, so hide it. */}
-			{modelChoice === CUSTOM_MODEL_CHOICE ? (
+			{!isManaged && modelChoice === CUSTOM_MODEL_CHOICE ? (
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="deploy-primary-model">
 						{catalogModelIds.length > 0 ? "Custom model" : "Primary model"}

@@ -52,6 +52,7 @@ from typing import Any
 KEEP_OPERATIONS_BY_PATH: dict[str, set[str]] = {
     "/v1/agent-environments": {"get"},
     "/v1/me": {"get"},
+    "/v2/ai-providers/managed/models": {"get"},
     "/v2/deployments": {"get", "post"},
     "/v2/deployments/by-request/{deploy_request_id}": {"get"},
     "/v2/deployments/{deployment_id}": {"get", "delete", "patch"},

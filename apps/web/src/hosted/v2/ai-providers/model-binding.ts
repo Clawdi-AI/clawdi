@@ -1,4 +1,5 @@
 import { CLAWDI_MANAGED_PROVIDER_IDS, CLAWDI_MANAGED_V2_PROVIDER_ID } from "@clawdi/shared";
+import type { ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 export const MANAGED_AI_CHOICE = "__managed__";
@@ -75,16 +76,34 @@ export function providerRefFromChoice(
 	return match?.provider_id ?? null;
 }
 
-export function modelIdsForProvider(choice: string, providers: readonly AiProvider[]): string[] {
+export function modelIdsForProvider(
+	choice: string,
+	providers: readonly AiProvider[],
+	managedModels: readonly ManagedModelCatalogItem[] = [],
+): string[] {
 	if (choice === MANAGED_AI_CHOICE) {
-		return [MANAGED_DEFAULT_MODEL_CHOICE];
+		return [
+			MANAGED_DEFAULT_MODEL_CHOICE,
+			...dedupeProviderIds(managedModels.map((model) => model.id)),
+		];
 	}
 	const provider = providers.find((item) => item.provider_id === choice);
 	return dedupeProviderIds((provider?.models ?? []).map((model) => model.id));
 }
 
-export function firstModelForProvider(choice: string, providers: readonly AiProvider[]): string {
-	const [first] = modelIdsForProvider(choice, providers);
+export function managedModelDisplayName(
+	modelId: string,
+	managedModels: readonly ManagedModelCatalogItem[],
+): string | null {
+	return managedModels.find((model) => model.id === modelId)?.display_name ?? null;
+}
+
+export function firstModelForProvider(
+	choice: string,
+	providers: readonly AiProvider[],
+	managedModels: readonly ManagedModelCatalogItem[] = [],
+): string {
+	const [first] = modelIdsForProvider(choice, providers, managedModels);
 	return first ?? (choice === MANAGED_AI_CHOICE ? MANAGED_DEFAULT_MODEL_CHOICE : "");
 }
 

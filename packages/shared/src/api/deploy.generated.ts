@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/ai-providers/managed/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get V2 Managed Model Catalog */
+        get: operations["get_v2_managed_model_catalog_v2_ai_providers_managed_models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/deployments": {
         parameters: {
             query?: never;
@@ -1717,6 +1734,20 @@ export interface components {
             /** By Day */
             by_day: components["schemas"]["V2HostedUsageDay"][];
         };
+        /** V2ManagedModelCatalogItem */
+        V2ManagedModelCatalogItem: {
+            /** Id */
+            id: string;
+            /** Display Name */
+            display_name: string;
+            /** Is Default */
+            is_default: boolean;
+        };
+        /** V2ManagedModelCatalogResponse */
+        V2ManagedModelCatalogResponse: {
+            /** Models */
+            models: components["schemas"]["V2ManagedModelCatalogItem"][];
+        };
         /** V2PlanResponse */
         V2PlanResponse: {
             /** Slug */
@@ -1941,6 +1972,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V1UserResponse"];
+                };
+            };
+        };
+    };
+    get_v2_managed_model_catalog_v2_ai_providers_managed_models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ManagedModelCatalogResponse"];
                 };
             };
         };

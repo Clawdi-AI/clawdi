@@ -157,6 +157,15 @@ export function useHostedUser() {
 	});
 }
 
+export function useManagedModelCatalog() {
+	const client = useBillingClient();
+	return useBillingQuery({
+		queryKey: billingKeys.managedModelCatalog,
+		queryFn: () => client.getManagedModelCatalog(),
+		staleTime: 5 * 60_000,
+	});
+}
+
 // ── Wallet ───────────────────────────────────────────────────────────────────
 
 /**

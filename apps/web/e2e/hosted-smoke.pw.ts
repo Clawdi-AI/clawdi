@@ -23,6 +23,15 @@ const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 const CLOUD_API = "http://127.0.0.1:8000";
 const DEPLOY_API = "http://127.0.0.1:8001";
 
+const managedModelCatalog = {
+	models: [
+		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
+		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false },
+		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false },
+		{ id: "gpt-5.5", display_name: "GPT-5.5", is_default: false },
+	],
+};
+
 type DeploymentComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
 >;
@@ -733,6 +742,7 @@ type HostedApiStubOptions = {
 	ledgerResponseForRequest?: (limit: number) => unknown;
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
+	managedModels?: typeof managedModelCatalog;
 	plans?: readonly unknown[];
 	planChangeRequests?: string[];
 	planChangeResponses?: unknown[];
@@ -776,6 +786,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, hostedUser(options.canCreateCloudAgents ?? true));
 		}
 		if (p === "/v2/subscription/plans") return fulfillJson(r, plans);
+		if (p === "/v2/ai-providers/managed/models") {
+			return fulfillJson(r, options.managedModels ?? managedModelCatalog);
+		}
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
 			return fulfillJson(r, currentWallet);
 		}
@@ -1264,6 +1277,37 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 		runtime: "hermes",
 	});
 	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).not.toHaveProperty("primary_model");
+});
+
+test("managed model picker lists the curated catalog without Custom or image models", async ({
+	page,
+}) => {
+	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
+	await stubHostedApi(page, {
+		plans: [basicPlan],
+		deployments: [],
+		createDeploymentRequests,
+	});
+	await page.goto("/deploy");
+
+	await page.locator("#deploy-catalog-model").click();
+	await expect(page.getByRole("option", { name: "Hosted default (Luna)" })).toBeVisible();
+	await expect(page.getByRole("option", { name: "Luna", exact: true })).toBeVisible();
+	await expect(page.getByRole("option", { name: "Sol", exact: true })).toBeVisible();
+	await expect(page.getByRole("option", { name: "Terra", exact: true })).toBeVisible();
+	await expect(page.getByRole("option", { name: "GPT-5.5", exact: true })).toBeVisible();
+	await expect(page.getByRole("option", { name: "Custom model" })).toHaveCount(0);
+	await expect(page.getByRole("option", { name: /gpt-image/i })).toHaveCount(0);
+
+	await page.getByRole("option", { name: "Sol", exact: true }).click();
+	await page.getByRole("button", { name: "Deploy agent" }).click();
+	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
+
+	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+		primary_model: {
+			model: "gpt-5.6-sol",
+		},
+	});
 });
 
 test("hosted locale settings submit canonical deployment PATCH", async ({ page }) => {
