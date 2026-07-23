@@ -73,8 +73,8 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain(
 			'npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
 		);
-		expect(cliPackage.version).toContain("-");
-		expect(expectedNpmTag(cliPackage.version)).toBe("beta");
+		expect(cliPackage.version).not.toContain("-");
+		expect(expectedNpmTag(cliPackage.version)).toBe("latest");
 		expect(expectedNpmTag("1.2.3-beta.1")).toBe("beta");
 		expect(expectedNpmTag("1.2.3")).toBe("latest");
 		expect(cliPackage.publishConfig).toEqual({ access: "public" });
@@ -107,6 +107,10 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow.indexOf("npm publish ")).toBeLessThan(
 			workflow.indexOf('release create "$tag"'),
 		);
+		expect(workflow).toContain('case "$NPM_TAG" in');
+		expect(workflow).toContain("args+=(--prerelease)");
+		expect(workflow).toContain("latest) ;;");
+		expect(workflow).toContain('echo "unsupported npm release tag: $NPM_TAG" >&2');
 		expect(workflow).not.toContain("pull_request:");
 	});
 

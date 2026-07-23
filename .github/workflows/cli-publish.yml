@@ -203,8 +203,17 @@ jobs:
             --notes "$notes"
             --generate-notes
             --latest=false
-            --prerelease
           )
+          case "$NPM_TAG" in
+            beta)
+              args+=(--prerelease)
+              ;;
+            latest) ;;
+            *)
+              echo "unsupported npm release tag: $NPM_TAG" >&2
+              exit 64
+              ;;
+          esac
           if [ -n "$previous" ]; then
             args+=(--notes-start-tag "$previous")
           fi
