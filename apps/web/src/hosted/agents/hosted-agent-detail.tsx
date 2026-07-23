@@ -2282,7 +2282,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const wallet = useWallet({
 		enabled:
 			deployment.commercial_display?.compute_subscription?.funding_source === "wallet" ||
-			(hostedAccess.canUsePlanCBilling && planChangeOpen),
+			(hostedAccess.canCreateCloudAgents && planChangeOpen),
 	});
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
@@ -2362,19 +2362,19 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const subscriptionCancelable = isComputeSubscriptionCancelable(currentSubscription);
 	const planChangeUnavailable = currentSubscription
 		? planChangeUnavailableReason({
-				canUsePlanCBilling: hostedAccess.canUsePlanCBilling,
+				canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
 				cancelAtPeriodEnd: subscriptionCancelPending,
 				status: currentSubscription.status,
 				subscriptionId,
 			})
 		: "Start a new subscription to change this deployment’s paid compute.";
 	const canUpgrade =
-		hostedAccess.canUsePlanCBilling &&
+		hostedAccess.canCreateCloudAgents &&
 		isIncludedBasic &&
 		deployment.upgrade_available &&
 		planChangeUnavailable === null;
 	const canStartNewSubscription =
-		hostedAccess.canUsePlanCBilling && hasTerminalFallback && !!(basicPlan || perfPlan);
+		hostedAccess.canCreateCloudAgents && hasTerminalFallback && !!(basicPlan || perfPlan);
 	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
 		terminalFundingFact?.prior_plan_slug,
 		{
@@ -2384,7 +2384,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	);
 	const upgradeUnavailableMessage = plans.isLoading
 		? "Checking Performance availability…"
-		: !hostedAccess.canUsePlanCBilling
+		: !hostedAccess.canCreateCloudAgents
 			? "Upgrades are temporarily unavailable."
 			: !perfPlan
 				? "Performance compute is unavailable right now."
@@ -2393,7 +2393,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 					: "Upgrade is available once this Basic agent is running or stopped.";
 	const createUnavailableMessage = plans.isLoading
 		? "Checking paid compute availability…"
-		: !hostedAccess.canUsePlanCBilling
+		: !hostedAccess.canCreateCloudAgents
 			? hasTerminalFallback
 				? "New subscriptions are temporarily unavailable."
 				: "Upgrades are temporarily unavailable."
@@ -2427,12 +2427,12 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 		});
 	}, [deployment.resource.id, refreshCheckoutReturn, router, searchStr]);
 	useEffect(() => {
-		if (hostedAccess.isLoading || hostedAccess.canUsePlanCBilling) return;
+		if (hostedAccess.isLoading || hostedAccess.canCreateCloudAgents) return;
 		setSubscriptionCreateOpen(false);
 		setPlanChangeOpen(false);
 		setPlanChangeQuote(null);
 		setWalletTopUpOpen(false);
-	}, [hostedAccess.canUsePlanCBilling, hostedAccess.isLoading]);
+	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading]);
 
 	function setPlanChangeDialogOpen(open: boolean) {
 		setPlanChangeOpen(open);
@@ -2447,11 +2447,11 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	}
 
 	async function requestPlanChangeQuote(selection: PlanChangeSelection) {
-		if (!hostedAccess.canUsePlanCBilling || !subscriptionId || planChangeUnavailable !== null) {
+		if (!hostedAccess.canCreateCloudAgents || !subscriptionId || planChangeUnavailable !== null) {
 			return;
 		}
 		try {
-			if (!(await hostedAccess.recheckPlanCBilling())) {
+			if (!(await hostedAccess.recheckCanCreateCloudAgents())) {
 				setPlanChangeDialogOpen(false);
 				return;
 			}
@@ -2470,7 +2470,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	async function confirmPlanChange(operationId: string) {
 		if (!planChangeQuote) return;
 		try {
-			if (!(await hostedAccess.recheckPlanCBilling())) {
+			if (!(await hostedAccess.recheckCanCreateCloudAgents())) {
 				setPlanChangeDialogOpen(false);
 				return;
 			}

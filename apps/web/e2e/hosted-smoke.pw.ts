@@ -9,12 +9,11 @@ import { expect, type Page, type Route, test } from "@playwright/test";
 // own modules live under /src/hosted/v2/... and a path glob would intercept
 // them and break module loading.
 
-function hostedUser(canUsePlanCBilling = true) {
+function hostedUser(canUseV2 = true) {
 	return {
 		capabilities: {
 			can_use_v1: false,
-			can_use_v2: true,
-			can_use_plan_c_billing: canUsePlanCBilling,
+			can_use_v2: canUseV2,
 		},
 	};
 }
@@ -715,8 +714,7 @@ type HostedApiStubOptions = {
 	autoReloadResponses?: StubResponse[];
 	billingHistoryRequests?: string[];
 	billingHistoryResponses?: unknown[];
-	canUsePlanCBilling?: boolean;
-	planBillingCapability?: { enabled: boolean };
+	canCreateCloudAgents?: boolean;
 	productAccessRequests?: string[];
 	cancelRequests?: string[];
 	checkoutRequests?: string[];
@@ -736,7 +734,6 @@ type HostedApiStubOptions = {
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
 	plans?: readonly unknown[];
-	planCMutationRequests?: string[];
 	planChangeRequests?: string[];
 	planChangeResponses?: unknown[];
 	planQuoteRequests?: string[];
@@ -774,16 +771,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	// Deploy API (/me, /v2/*).
 	await page.route(`${DEPLOY_API}/**`, async (r) => {
 		const p = new URL(r.request().url()).pathname;
-		const method = r.request().method();
-		if (method !== "GET" && (p === "/v2/deployments" || p.startsWith("/v2/subscription/"))) {
-			options.planCMutationRequests?.push(`${method} ${p}`);
-		}
 		if (p === "/me" || p === "/v1/me") {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
-			return fulfillJson(
-				r,
-				hostedUser(options.planBillingCapability?.enabled ?? options.canUsePlanCBilling ?? true),
-			);
+			return fulfillJson(r, hostedUser(options.canCreateCloudAgents ?? true));
 		}
 		if (p === "/v2/subscription/plans") return fulfillJson(r, plans);
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
@@ -1112,10 +1102,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/v1/me") {
 			options.productAccessRequests?.push(`CLOUD ${p}`);
-			return fulfillJson(
-				r,
-				hostedUser(options.planBillingCapability?.enabled ?? options.canUsePlanCBilling ?? true),
-			);
+			return fulfillJson(r, hostedUser(options.canCreateCloudAgents ?? true));
 		}
 		if (p === "/v1/agents") {
 			return options.cloudAgentsResponse
@@ -1196,51 +1183,6 @@ function collectBrowserErrors(page: Page): string[] {
 		errors.push(e.message);
 	});
 	return errors;
-}
-
-async function stubStripeCheckout(page: Page) {
-	await page.addInitScript(() => {
-		const stripeWindow = window as typeof window & { __stripeConfirmCalls?: number };
-		stripeWindow.__stripeConfirmCalls = 0;
-		const paymentElement = {
-			destroy() {},
-			mount(node: HTMLElement) {
-				node.textContent = "Mock secure payment form";
-			},
-			off() {},
-			on() {},
-			update() {},
-		};
-		const checkoutSdk = {
-			changeAppearance() {},
-			createPaymentElement: () => paymentElement,
-			loadActions: async () => ({
-				type: "success",
-				actions: {
-					confirm: async () => {
-						stripeWindow.__stripeConfirmCalls = (stripeWindow.__stripeConfirmCalls ?? 0) + 1;
-						return { type: "success", session: { status: { type: "complete" } } };
-					},
-					getSession: () => ({ canConfirm: true, status: { type: "open" } }),
-				},
-			}),
-			loadFonts: async () => {},
-			on() {},
-		};
-		const stripe = {
-			_registerWrapper() {},
-			confirmCardPayment: async () => ({}),
-			createPaymentMethod: async () => ({}),
-			createToken: async () => ({}),
-			elements: () => ({}),
-			initCheckoutElementsSdk: () => checkoutSdk,
-			registerAppInfo() {},
-		};
-		Object.defineProperty(window, "Stripe", {
-			configurable: true,
-			value: Object.assign(() => stripe, { version: "dahlia" }),
-		});
-	});
 }
 
 async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: string) {
@@ -1370,139 +1312,6 @@ test("hosted AI provider Apply submits canonical deployment PATCH", async ({ pag
 		provider_ids: [],
 		primary_model: null,
 	});
-});
-
-test("Plan C gate off blocks acquisition while existing subscriptions remain serviceable", async ({
-	page,
-}) => {
-	const errors = collectBrowserErrors(page);
-	const planCMutationRequests: string[] = [];
-	const cancelRequests: string[] = [];
-	const fixPaymentRequests: string[] = [];
-	const resumeRequests: string[] = [];
-	await stubHostedApi(page, {
-		canUsePlanCBilling: false,
-		cancelRequests,
-		deployments: [
-			includedBasicDeployment,
-			paidBasicDeployment,
-			cancelPendingBasicDeployment,
-			cardPastDueDeployment,
-			terminalFallbackDeployment,
-		],
-		fixPaymentRequests,
-		plans: [basicPlan, performancePlan],
-		planCMutationRequests,
-		resumeRequests,
-	});
-
-	await page.goto("/deploy");
-	await page.waitForLoadState("networkidle");
-	await expect(page.getByTestId("plan-c-unavailable")).toBeVisible();
-	await expect(
-		page.getByRole("button", { name: "Deployment temporarily unavailable" }),
-	).toBeDisabled();
-	await expect(page.getByText("Card subscription", { exact: true })).toBeVisible();
-	await expect(page.getByText("Wallet balance", { exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: /^Card subscription/ })).toHaveCount(0);
-	await expect(page.getByRole("button", { name: /^Wallet balance/ })).toHaveCount(0);
-
-	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
-	await expect(page.getByText("Basic compute", { exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Change plan or billing term" })).toBeDisabled();
-	await expect(page.getByRole("button", { name: "Cancel subscription" })).toBeEnabled();
-	await expect(page.getByRole("button", { name: "Resume subscription" })).toHaveCount(0);
-	await expect(page.getByText("Plan changes are temporarily unavailable.")).toBeVisible();
-	await page.getByRole("button", { name: "Cancel subscription" }).click();
-	await page.getByRole("alertdialog").getByRole("button", { name: "Cancel at period end" }).click();
-	await expect.poll(() => cancelRequests.length).toBe(1);
-
-	await gotoHostedAgentSettings(page, "hdep_cancel_pending", "Basic");
-	await expect(page.getByRole("button", { name: "Resume subscription" })).toBeEnabled();
-	await page.getByRole("button", { name: "Resume subscription" }).click();
-	await expect.poll(() => resumeRequests.length).toBe(1);
-
-	await gotoHostedAgentSettings(page, "hdep_card_due", "Basic");
-	const pastDueAlert = page.getByRole("alert").filter({ hasText: "Payment past due" });
-	await expect(pastDueAlert.getByRole("button", { name: "Fix payment" })).toBeEnabled();
-	await pastDueAlert.getByRole("button", { name: "Fix payment" }).click();
-	await expect.poll(() => fixPaymentRequests.length).toBe(1);
-
-	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
-	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toBeDisabled();
-	await expect(page.getByText("Upgrades are temporarily unavailable.")).toBeVisible();
-
-	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
-	await expect(page.getByRole("button", { name: "Start a new subscription" })).toBeDisabled();
-	await expect(page.getByText("New subscriptions are temporarily unavailable.")).toBeVisible();
-
-	expect(
-		planCMutationRequests,
-		"gate-off UI must allow servicing mutations but no acquisition or plan-change mutations",
-	).toEqual([
-		"POST /v2/subscription/cancel",
-		"POST /v2/subscription/resume",
-		"POST /v2/subscription/fix-payment",
-	]);
-	expect(errors, `Plan C gate off: ${errors.join(" | ")}`).toEqual([]);
-});
-
-test("embedded checkout rechecks Plan C capability before confirm", async ({ page }) => {
-	const errors = collectBrowserErrors(page);
-	const capability = { enabled: true };
-	const checkoutRequests: string[] = [];
-	const productAccessRequests: string[] = [];
-	await stubStripeCheckout(page);
-	await stubHostedApi(page, {
-		checkoutRequests,
-		checkoutResponses: [
-			{
-				status: 200,
-				body: {
-					flow_type: "checkout_session",
-					funding_source: "stripe",
-					action_url: null,
-					checkout_url: "",
-					client_secret: "cs_test_plan_c_flip",
-				},
-			},
-		],
-		deployments: [includedBasicDeployment],
-		planBillingCapability: capability,
-		plans: [basicPlan, performancePlan],
-		productAccessRequests,
-	});
-
-	await page.goto("/deploy");
-	await page.waitForLoadState("networkidle");
-	await page.getByRole("button", { name: "Continue to checkout" }).click();
-	await expect.poll(() => checkoutRequests.length).toBe(1);
-	const checkoutDialog = page.getByRole("dialog", { name: /Complete Basic checkout/ });
-	await expect(checkoutDialog).toBeVisible();
-	await expect(checkoutDialog.getByText("Mock secure payment form", { exact: true })).toBeVisible();
-	await expect(checkoutDialog.getByRole("button", { name: "Subscribe" })).toBeEnabled();
-
-	const accessChecksBeforeConfirm = productAccessRequests.filter(
-		(request) => request === "DEPLOY /v1/me",
-	).length;
-	capability.enabled = false;
-	await checkoutDialog.getByRole("button", { name: "Subscribe" }).click();
-
-	await expect
-		.poll(() => productAccessRequests.filter((request) => request === "DEPLOY /v1/me").length)
-		.toBe(accessChecksBeforeConfirm + 1);
-	await expect(checkoutDialog).toHaveCount(0);
-	await expect(page.getByTestId("plan-c-unavailable")).toBeVisible();
-	await expect(
-		page.getByRole("button", { name: "Deployment temporarily unavailable" }),
-	).toBeDisabled();
-	expect(
-		await page.evaluate(
-			() => (window as typeof window & { __stripeConfirmCalls?: number }).__stripeConfirmCalls ?? 0,
-		),
-	).toBe(0);
-	expect(checkoutRequests).toHaveLength(1);
-	expect(errors, `mid-checkout Plan C flip: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("env-keyed agent route keeps failed deployment recovery available without its projection", async ({

@@ -134,16 +134,16 @@ export function SubscriptionCreateDialog({
 				}
 			: null;
 	const wallet = useWallet({
-		enabled: open && hostedAccess.canUsePlanCBilling && fundingSource === "wallet",
+		enabled: open && hostedAccess.canCreateCloudAgents && fundingSource === "wallet",
 	});
 	const createQuote = useSubscriptionCreateQuote(createSelection, {
-		enabled: open && hostedAccess.canUsePlanCBilling && fundingSource === "wallet",
+		enabled: open && hostedAccess.canCreateCloudAgents && fundingSource === "wallet",
 	});
 	const walletDebit = createQuote.data?.walletDebit ?? null;
 	const walletShortfallCredits = walletDebitShortfallCredits(walletDebit);
 	const walletInsufficient = walletShortfallCredits !== null;
 	const isPending = createSubscription.isPending;
-	const submitLabel = !hostedAccess.canUsePlanCBilling
+	const submitLabel = !hostedAccess.canCreateCloudAgents
 		? "Temporarily unavailable"
 		: fundingSource === "wallet" && walletDebit
 			? `Pay ${formatCents(walletDebit.exactDebitCents)} from Wallet`
@@ -168,10 +168,10 @@ export function SubscriptionCreateDialog({
 	}, [initialBillingTermMonths, initialPlanSlug, open, plans]);
 
 	useEffect(() => {
-		if (open && !hostedAccess.isLoading && !hostedAccess.canUsePlanCBilling) {
+		if (open && !hostedAccess.isLoading && !hostedAccess.canCreateCloudAgents) {
 			onOpenChange(false);
 		}
-	}, [hostedAccess.canUsePlanCBilling, hostedAccess.isLoading, onOpenChange, open]);
+	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, onOpenChange, open]);
 
 	function updatePlan(value: string | null) {
 		const nextPlanSlug = computePlanSlug(value);
@@ -213,7 +213,7 @@ export function SubscriptionCreateDialog({
 
 	async function create() {
 		if (
-			!hostedAccess.canUsePlanCBilling ||
+			!hostedAccess.canCreateCloudAgents ||
 			!selectedOffer ||
 			!createSelection ||
 			isPending ||
@@ -224,7 +224,7 @@ export function SubscriptionCreateDialog({
 		const target = { kind: "terminal_fallback", deploymentId } as const;
 		const fingerprint = idempotencyFingerprint({ selection: createSelection, target });
 		try {
-			if (!(await hostedAccess.recheckPlanCBilling())) {
+			if (!(await hostedAccess.recheckCanCreateCloudAgents())) {
 				onOpenChange(false);
 				return;
 			}
@@ -278,7 +278,7 @@ export function SubscriptionCreateDialog({
 	}
 
 	const submitDisabled =
-		!hostedAccess.canUsePlanCBilling ||
+		!hostedAccess.canCreateCloudAgents ||
 		!selectedOffer ||
 		!createSelection ||
 		isPending ||

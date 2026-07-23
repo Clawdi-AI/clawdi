@@ -10,7 +10,6 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
-import { PlanCBillingUnavailableNotice } from "@/hosted/billing/components/plan-c-unavailable-notice";
 import { SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { usePlans, usePortal } from "@/hosted/billing/hooks";
@@ -79,10 +78,6 @@ export function SubscriptionPage() {
 
 			<WelcomeCreditsCard />
 
-			{hostedAccess.isLoading || hostedAccess.canUsePlanCBilling ? null : (
-				<PlanCBillingUnavailableNotice />
-			)}
-
 			<Card data-hosted="true">
 				<CardHeader>
 					<CardTitle>Compute is managed per agent</CardTitle>
@@ -97,7 +92,7 @@ export function SubscriptionPage() {
 						balance and managed-AI usage stay account-wide.
 					</p>
 					<div className="flex flex-wrap gap-2">
-						{hostedAccess.canUsePlanCBilling ? (
+						{hostedAccess.canCreateCloudAgents ? (
 							<Button render={<Link to="/deploy" />} nativeButton={false}>
 								<Rocket /> Deploy hosted agent
 							</Button>
@@ -122,7 +117,7 @@ export function SubscriptionPage() {
 			<PlanComparison
 				term={term}
 				onTermChange={setTerm}
-				canUsePlanCBilling={hostedAccess.canUsePlanCBilling}
+				canCreateCloudAgents={hostedAccess.canCreateCloudAgents}
 			/>
 		</div>
 	);

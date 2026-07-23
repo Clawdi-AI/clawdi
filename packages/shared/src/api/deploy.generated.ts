@@ -936,11 +936,6 @@ export interface components {
              * @default false
              */
             can_use_v2: boolean;
-            /**
-             * Can Use Plan C Billing
-             * @default false
-             */
-            can_use_plan_c_billing: boolean;
         };
         /** V1UserResponse */
         V1UserResponse: {
