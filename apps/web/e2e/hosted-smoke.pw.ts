@@ -1681,7 +1681,7 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 				body: {
 					runtime: "openclaw",
 					url: "https://runtime.example/openclaw/#token=gateway-token",
-					auth_mode: "token",
+					auth_mode: "openclaw_device",
 					token: "gateway-token",
 				},
 			},
@@ -1690,8 +1690,11 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 
 	await page.goto("/agents/hdep_openclaw_included/console?source=on-clawdi");
 	const main = page.locator("main");
+	const popupPromise = page.waitForEvent("popup");
 	await main.getByRole("button", { name: "Open OpenClaw Control UI" }).click();
+	const popup = await popupPromise;
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
+	expect(popup).toBeDefined();
 });
 
 test("revoked deployment inventory never reclassifies cloud projections as connected", async ({
