@@ -44,6 +44,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { deploymentDisplayName } from "@/hosted/agent-identity";
+import { isHostedRuntime } from "@/hosted/runtimes";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type {
 	ChannelActivityItem,
@@ -96,7 +98,14 @@ function findEnv(envs: EnvironmentList, agentId: string): Environment | null {
 	return envs?.find((e) => e.id === agentId) ?? null;
 }
 
-/** "machine · agent-type" label for an agent id, falling back to the raw id. */
+function runtimeNameFormatter(env: { agent_type?: string | null }) {
+	const runtime = env.agent_type;
+	return runtime && isHostedRuntime(runtime)
+		? (name: string) => deploymentDisplayName(name, runtime)
+		: undefined;
+}
+
+/** "machine · agent-type" label for an agent id, with a safe missing-agent fallback. */
 function envName(
 	envs: EnvironmentList,
 	agentId: string,
@@ -108,13 +117,16 @@ function envName(
 		? agentTextLabel(env, {
 				includeSource,
 				ownershipKind: agentOwnershipKindFromId(env.id, ownership),
+				formatName: runtimeNameFormatter(env),
 			})
-		: agentId;
+		: deploymentDisplayName(agentId);
 }
 
 function AgentName({ env, fallback }: { env: Environment | null; fallback: string }) {
 	const ownership = useAgentOwnership();
-	if (!env) return <span className="truncate text-sm font-medium">{fallback}</span>;
+	if (!env) {
+		return <span className="truncate text-sm font-medium">{deploymentDisplayName(fallback)}</span>;
+	}
 	const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
 	return (
 		<AgentLabel
@@ -124,6 +136,7 @@ function AgentName({ env, fallback }: { env: Environment | null; fallback: strin
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
 			size="sm"
+			formatName={runtimeNameFormatter(env)}
 			titleAdornment={
 				<AgentSourceBadgeForEnvironment env={env} ownershipKind={ownershipKind} compact />
 			}

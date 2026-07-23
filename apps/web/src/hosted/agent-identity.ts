@@ -1,3 +1,6 @@
+import type { HostedRuntime } from "@/hosted/runtimes";
+import { runtimeDisplayName } from "@/hosted/runtimes";
+
 /**
  * Shared identity/naming helpers for hosted deployments and their cloud-api
  * agent environments. Centralized so the agent detail view, the agent-home
@@ -11,6 +14,7 @@
  * a 422 against `/v1/sessions`.
  */
 const CLOUD_ENV_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const GENERATED_DEPLOYMENT_NAME_RE = /^deployment-create-/i;
 
 /** Whether `value` looks like a real cloud-api env id (UUID), not a deployment id. */
 export function isCloudEnvId(value: string): boolean {
@@ -21,8 +25,14 @@ export function isCloudEnvId(value: string): boolean {
  * Keep user-given deployment names intact while preserving the existing
  * runtime-prefix cleanup for generated runtime labels.
  */
-export function deploymentDisplayName(name: string): string {
+export function deploymentDisplayName(name: string, runtime?: HostedRuntime): string {
+	const fallback = runtime ? runtimeDisplayName(runtime) : "Clawdi Cloud agent";
 	const trimmed = name.trim();
-	if (!trimmed) return "Clawdi Cloud agent";
-	return trimmed.replace(/^(codex|openclaw|hermes)-/i, "") || trimmed;
+	if (!trimmed || GENERATED_DEPLOYMENT_NAME_RE.test(trimmed) || isCloudEnvId(trimmed)) {
+		return fallback;
+	}
+	const cleaned = trimmed.replace(/^(codex|openclaw|hermes)-/i, "");
+	return !cleaned || GENERATED_DEPLOYMENT_NAME_RE.test(cleaned) || isCloudEnvId(cleaned)
+		? fallback
+		: cleaned;
 }

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	defaultPlanChangeSelection,
 	isSamePlanChangeSelection,
+	performanceUpgradeUnavailableReason,
 	planChangeUnavailableReason,
 	walletBalanceAfterDebit,
 } from "./plan-change.logic";
@@ -99,5 +100,46 @@ describe("planChangeUnavailableReason", () => {
 				subscriptionId: 42,
 			}),
 		).toContain("Resolve the subscription status");
+	});
+});
+
+describe("performanceUpgradeUnavailableReason", () => {
+	const available = {
+		plansLoading: false,
+		canCreateCloudAgents: true,
+		isIncludedBasic: true,
+		performancePlanAvailable: true,
+		pendingPlanSlug: null,
+		planChangeUnavailable: null,
+		deploymentStatusSupportsUpgrade: true,
+		upgradeAvailable: true,
+	};
+
+	test("distinguishes each upgrade block from a pending upgrade", () => {
+		expect(performanceUpgradeUnavailableReason({ ...available, isIncludedBasic: false })).toContain(
+			"only available for included Basic",
+		);
+		expect(
+			performanceUpgradeUnavailableReason({ ...available, performancePlanAvailable: false }),
+		).toBe("Performance compute is unavailable right now.");
+		expect(
+			performanceUpgradeUnavailableReason({
+				...available,
+				planChangeUnavailable: "Subscription details are still syncing.",
+			}),
+		).toBe("Subscription details are still syncing.");
+		expect(
+			performanceUpgradeUnavailableReason({
+				...available,
+				pendingPlanSlug: "compute_performance",
+			}),
+		).toBe("An upgrade to Performance is already scheduled.");
+		expect(performanceUpgradeUnavailableReason({ ...available, upgradeAvailable: false })).toBe(
+			"This Basic agent is not currently eligible for an upgrade.",
+		);
+	});
+
+	test("returns no reason only when every upgrade condition is met", () => {
+		expect(performanceUpgradeUnavailableReason(available)).toBeNull();
 	});
 });

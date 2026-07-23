@@ -87,3 +87,38 @@ export function planChangeUnavailableReason({
 	}
 	return null;
 }
+
+export function performanceUpgradeUnavailableReason({
+	plansLoading,
+	canCreateCloudAgents,
+	isIncludedBasic,
+	performancePlanAvailable,
+	pendingPlanSlug,
+	planChangeUnavailable,
+	deploymentStatusSupportsUpgrade,
+	upgradeAvailable,
+}: {
+	plansLoading: boolean;
+	canCreateCloudAgents: boolean;
+	isIncludedBasic: boolean;
+	performancePlanAvailable: boolean;
+	pendingPlanSlug: ComputePlanSlug | null;
+	planChangeUnavailable: string | null;
+	deploymentStatusSupportsUpgrade: boolean;
+	upgradeAvailable: boolean;
+}): string | null {
+	if (plansLoading) return "Checking Performance availability…";
+	if (!isIncludedBasic)
+		return "Upgrade to Performance is only available for included Basic compute.";
+	if (!canCreateCloudAgents) return "Upgrades are temporarily unavailable.";
+	if (!performancePlanAvailable) return "Performance compute is unavailable right now.";
+	if (pendingPlanSlug === COMPUTE_PERFORMANCE_SLUG) {
+		return "An upgrade to Performance is already scheduled.";
+	}
+	if (planChangeUnavailable) return planChangeUnavailable;
+	if (!deploymentStatusSupportsUpgrade) {
+		return "Upgrade is available once this Basic agent is running or stopped.";
+	}
+	if (!upgradeAvailable) return "This Basic agent is not currently eligible for an upgrade.";
+	return null;
+}

@@ -12,7 +12,6 @@ import {
 	Link2,
 	Link2Off,
 	type LucideIcon,
-	Maximize2,
 	MonitorPlay,
 	Plus,
 	QrCode,
@@ -63,11 +62,11 @@ import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
-import { browserOpenClawNativeUiCopy } from "@/hosted/agents/runtime-ui-copy";
 import {
 	type HermesUiCredentials,
-	hermesCredentialsForGeneration,
 	hermesUiCredentials,
+	type OpenClawUiCredentials,
+	openClawUiCredentials,
 	openClawUiUrl,
 	openSecureRuntimeWindow,
 } from "@/hosted/agents/runtime-ui-credentials";
@@ -108,6 +107,7 @@ import {
 } from "@/hosted/billing/hooks";
 import {
 	type PlanChangeSelection,
+	performanceUpgradeUnavailableReason,
 	planChangeUnavailableReason,
 } from "@/hosted/billing/subscription/plan-change.logic";
 import { PlanChangeDialog } from "@/hosted/billing/subscription/plan-change-dialog";
@@ -335,7 +335,10 @@ function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
 	const runAction = useActionLock();
 	return (
 		<ConfirmAction
-			title={`Delete ${deploymentDisplayName(deployment.resource.spec.name)}?`}
+			title={`Delete ${deploymentDisplayName(
+				deployment.resource.spec.name,
+				deployment.resource.spec.runtime,
+			)}?`}
 			description={<p>The hosted agent is torn down. This can’t be undone.</p>}
 			confirmLabel="Delete compute"
 			destructive
@@ -438,8 +441,8 @@ export function HostedAgentDetail({
 	});
 	const agent = projection.status === "resolved" ? projection.data : null;
 	const name = agent
-		? agentDisplayName(agent)
-		: deploymentDisplayName(deployment.resource.spec.name);
+		? deploymentDisplayName(agentDisplayName(agent), runtime)
+		: deploymentDisplayName(deployment.resource.spec.name, runtime);
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const agentTitle = name === runtimeLabel ? name : `${name} · ${runtimeLabel}`;
 	const activeTab = parseHostedAgentTab(section) ?? "overview";
@@ -949,17 +952,21 @@ function OverviewDeploymentActions({ deployment }: { deployment: HostedDeploymen
 function RuntimeUiOpenButton({
 	deployment,
 	endpointUrl,
+	resolvedUrl,
 	label,
 	children,
 	className,
+	disabled = false,
 	variant = "outline",
 	size = "sm",
 }: {
 	deployment: HostedDeployment;
 	endpointUrl: string;
+	resolvedUrl?: string;
 	label: string;
 	children: React.ReactNode;
 	className?: string;
+	disabled?: boolean;
 	variant?: React.ComponentProps<typeof Button>["variant"];
 	size?: React.ComponentProps<typeof Button>["size"];
 }) {
@@ -971,6 +978,10 @@ function RuntimeUiOpenButton({
 			toast.error("Couldn't open runtime UI", {
 				description: "Your browser blocked the new window.",
 			});
+			return;
+		}
+		if (resolvedUrl) {
+			popup.location.replace(resolvedUrl);
 			return;
 		}
 		setIsPending(true);
@@ -985,7 +996,7 @@ function RuntimeUiOpenButton({
 		} finally {
 			setIsPending(false);
 		}
-	}, [client, deployment.resource.id, endpointUrl]);
+	}, [client, deployment.resource.id, endpointUrl, resolvedUrl]);
 
 	return (
 		<Button
@@ -993,7 +1004,7 @@ function RuntimeUiOpenButton({
 			variant={variant}
 			size={size}
 			className={className}
-			disabled={isPending}
+			disabled={disabled || isPending}
 			aria-label={`Open ${label}`}
 			onClick={() => void openUi()}
 		>
@@ -1003,10 +1014,10 @@ function RuntimeUiOpenButton({
 	);
 }
 
-/**
- * Native runtime dashboards are top-level only. Hermes exposes explicit Basic
- * credentials; OpenClaw receives its official token handoff in the URL fragment.
- */
+type ResolvedRuntimeUiCredentials =
+	| { runtime: "hermes"; value: HermesUiCredentials }
+	| { runtime: "openclaw"; value: OpenClawUiCredentials };
+
 function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const isRunning = isRunningStatus(status);
@@ -1015,40 +1026,87 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
 	const client = useBillingClient();
-	const [credentials, setCredentials] = useState<HermesUiCredentials | null>(null);
-	const [loadedCredentialGeneration, setLoadedCredentialGeneration] = useState<number | null>(null);
+	const [credentials, setCredentials] = useState<ResolvedRuntimeUiCredentials | null>(null);
+	const [showCredentials, setShowCredentials] = useState(false);
 	const [credentialError, setCredentialError] = useState<Error | null>(null);
 	const [isLoadingCredentials, setIsLoadingCredentials] = useState(false);
-	const openClawCopy = browserOpenClawNativeUiCopy();
-	const credentialGeneration = deployment.resource.metadata.generation;
-	useEffect(() => {
+	const credentialRequestRef = useRef(0);
+	const automaticCredentialKeyRef = useRef<string | null>(null);
+	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.generation}\0${runtime}\0${url ?? ""}`;
+	const [syncedCredentialIdentity, setSyncedCredentialIdentity] = useState(credentialIdentity);
+	if (credentialIdentity !== syncedCredentialIdentity) {
+		setSyncedCredentialIdentity(credentialIdentity);
+		credentialRequestRef.current += 1;
 		setCredentials(null);
-		setLoadedCredentialGeneration(null);
+		setShowCredentials(false);
 		setCredentialError(null);
-	}, [credentialGeneration]);
-	const currentCredentials = hermesCredentialsForGeneration(
-		credentials,
-		loadedCredentialGeneration,
-		credentialGeneration,
+		setIsLoadingCredentials(false);
+	}
+	const loadCredentials = useCallback(
+		async (reveal: boolean) => {
+			if (!url) return;
+			const requestId = credentialRequestRef.current + 1;
+			credentialRequestRef.current = requestId;
+			setIsLoadingCredentials(true);
+			setCredentialError(null);
+			try {
+				const response = await client.getRuntimeUiCredentials(deployment.resource.id);
+				let resolved: ResolvedRuntimeUiCredentials | null;
+				if (runtime === "hermes") {
+					const value = hermesUiCredentials(response, url);
+					resolved = value ? { runtime: "hermes", value } : null;
+				} else {
+					const value = openClawUiCredentials(response, url);
+					resolved = value ? { runtime: "openclaw", value } : null;
+				}
+				if (!resolved) throw new Error("Runtime UI credential response was invalid");
+				if (credentialRequestRef.current !== requestId) return;
+				setCredentials(resolved);
+				setShowCredentials(reveal);
+			} catch (error) {
+				if (credentialRequestRef.current !== requestId) return;
+				setCredentialError(error instanceof Error ? error : new Error("Credential request failed"));
+			} finally {
+				if (credentialRequestRef.current === requestId) setIsLoadingCredentials(false);
+			}
+		},
+		[client, deployment.resource.id, runtime, url],
 	);
-	const loadHermesCredentials = useCallback(async () => {
-		if (!url) return;
-		setIsLoadingCredentials(true);
-		setCredentialError(null);
-		try {
-			const response = await client.getRuntimeUiCredentials(deployment.resource.id);
-			const resolved = hermesUiCredentials(response, url);
-			if (!resolved) throw new Error("Runtime UI credential response was invalid");
-			setCredentials(resolved);
-			setLoadedCredentialGeneration(credentialGeneration);
-		} catch (error) {
-			setCredentialError(error instanceof Error ? error : new Error("Credential request failed"));
-		} finally {
-			setIsLoadingCredentials(false);
+	useEffect(() => {
+		const automaticCredentialKey = `${credentialIdentity}\0openclaw`;
+		if (
+			!isRunning ||
+			!url ||
+			runtime !== "openclaw" ||
+			credentials?.runtime === "openclaw" ||
+			credentialError ||
+			isLoadingCredentials ||
+			automaticCredentialKeyRef.current === automaticCredentialKey
+		) {
+			return;
 		}
-	}, [client, credentialGeneration, deployment.resource.id, url]);
+		automaticCredentialKeyRef.current = automaticCredentialKey;
+		void loadCredentials(false);
+	}, [
+		credentialIdentity,
+		credentialError,
+		credentials,
+		isLoadingCredentials,
+		isRunning,
+		loadCredentials,
+		runtime,
+		url,
+	]);
 
-	// Native runtime UI exposure exists only after the runtime is running.
+	const toggleCredentials = () => {
+		if (showCredentials) {
+			setShowCredentials(false);
+			return;
+		}
+		if (credentials?.runtime === runtime) setShowCredentials(true);
+		else void loadCredentials(true);
+	};
+
 	if (!isRunning) {
 		return (
 			<EmptyState
@@ -1074,67 +1132,111 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 			/>
 		);
 	}
+	const frameUrl =
+		runtime === "hermes"
+			? url
+			: credentials?.runtime === "openclaw"
+				? credentials.value.url
+				: undefined;
+	const runtimeActions = (
+		<>
+			<Button
+				type="button"
+				variant="outline"
+				size="sm"
+				disabled={isLoadingCredentials}
+				onClick={toggleCredentials}
+			>
+				{isLoadingCredentials ? <Spinner className="size-3.5" /> : null}
+				{showCredentials ? "Hide credentials" : "Show credentials"}
+			</Button>
+			{runtime === "openclaw" ? (
+				<RuntimeUiOpenButton
+					deployment={deployment}
+					endpointUrl={url}
+					resolvedUrl={credentials?.runtime === "openclaw" ? credentials.value.url : undefined}
+					label={browserUiLabel}
+					disabled={isLoadingCredentials}
+				>
+					Open in new window
+					<ExternalLink className="size-3.5" />
+				</RuntimeUiOpenButton>
+			) : (
+				<Button
+					render={<a href={url} target="_blank" rel="noopener noreferrer" />}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+				>
+					Open in new window
+					<ExternalLink className="size-3.5" />
+				</Button>
+			)}
+		</>
+	);
 
 	return (
-		<LiveToolFrame icon={MonitorPlay} title={browserUiLabel}>
-			<div className="flex min-h-[420px] flex-1 items-center justify-center p-6">
-				<div className="w-full max-w-xl space-y-4 text-center">
-					<p className="text-sm text-muted-foreground">
-						{runtime === "hermes"
-							? "Hermes uses native password authentication in a top-level window."
-							: openClawCopy.description}
-					</p>
-					{runtime === "hermes" ? (
-						currentCredentials ? (
-							<div className="space-y-3 text-left">
+		<LiveToolFrame icon={MonitorPlay} title={browserUiLabel} action={runtimeActions}>
+			{showCredentials ? (
+				<div className="grid shrink-0 gap-3 border-y bg-muted/20 p-4 sm:grid-cols-2 lg:px-6">
+					{credentials?.runtime === "hermes" ? (
+						<>
+							<div className="space-y-1.5">
 								<Label htmlFor={`hermes-username-${deployment.resource.id}`}>Username</Label>
 								<Input
 									id={`hermes-username-${deployment.resource.id}`}
 									readOnly
-									value={currentCredentials.username}
+									value={credentials.value.username}
 								/>
+							</div>
+							<div className="space-y-1.5">
 								<Label htmlFor={`hermes-password-${deployment.resource.id}`}>Password</Label>
 								<Input
 									id={`hermes-password-${deployment.resource.id}`}
 									readOnly
-									value={currentCredentials.password}
+									value={credentials.value.password}
 								/>
-								<Button
-									type="button"
-									onClick={() =>
-										window.open(currentCredentials.url, "_blank", "noopener,noreferrer")
-									}
-								>
-									Open {browserUiLabel}
-									<ExternalLink className="size-3.5" />
-								</Button>
 							</div>
-						) : (
-							<Button
-								type="button"
-								disabled={isLoadingCredentials}
-								onClick={() => void loadHermesCredentials()}
-							>
-								{isLoadingCredentials ? <Spinner className="size-3.5" /> : null}
-								Show Hermes credentials
-							</Button>
-						)
-					) : (
-						<RuntimeUiOpenButton deployment={deployment} endpointUrl={url} label={browserUiLabel}>
-							{openClawCopy.openControlUi}
-							<Maximize2 className="size-3.5" />
-						</RuntimeUiOpenButton>
-					)}
-					{credentialError ? (
-						<ApiErrorPanel
-							error={credentialError}
-							onRetry={() => void loadHermesCredentials()}
-							normalizer={billingErrorNormalizer}
-							title="Couldn't load Hermes credentials"
-						/>
+						</>
+					) : credentials?.runtime === "openclaw" ? (
+						<div className="space-y-1.5 sm:col-span-2">
+							<Label htmlFor={`openclaw-token-${deployment.resource.id}`}>Token</Label>
+							<Input
+								id={`openclaw-token-${deployment.resource.id}`}
+								readOnly
+								value={credentials.value.token}
+							/>
+						</div>
 					) : null}
 				</div>
-			</div>
+			) : null}
+			{credentialError ? (
+				<div
+					className={cn("p-4 lg:px-6", frameUrl ? "shrink-0" : "flex min-h-[420px] items-center")}
+				>
+					<div className="w-full">
+						<ApiErrorPanel
+							error={credentialError}
+							onRetry={() => void loadCredentials(runtime === "hermes")}
+							normalizer={billingErrorNormalizer}
+							title={`Couldn't load ${label} credentials`}
+						/>
+					</div>
+				</div>
+			) : null}
+			{frameUrl ? (
+				<iframe
+					key={`${runtime}:${frameUrl}`}
+					src={frameUrl}
+					title={browserUiLabel}
+					className="min-h-[420px] flex-1 border-0 bg-background"
+					allow="clipboard-read; clipboard-write"
+				/>
+			) : credentialError ? null : (
+				<div className="flex min-h-[420px] flex-1 items-center justify-center bg-background">
+					<Spinner className="size-4 text-muted-foreground" />
+				</div>
+			)}
 		</LiveToolFrame>
 	);
 }
@@ -1207,7 +1309,10 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const isRunning = isRunningStatus(status);
 	const isProvisioning = isProvisioningStatus(status);
-	const label = deploymentDisplayName(deployment.resource.spec.name);
+	const label = deploymentDisplayName(
+		deployment.resource.spec.name,
+		deployment.resource.spec.runtime,
+	);
 	const terminal = useCreateTerminalSession();
 	const { isPending: isOpeningTerminal, mutateAsync: createTerminalSession } = terminal;
 	const [websocketUrl, setWebsocketUrl] = useState<string | null>(null);
@@ -2193,10 +2298,11 @@ function HostedAgentSettingsTab({
 	runtime: Runtime;
 	projectionAvailable: boolean;
 }) {
+	const formatName = useCallback((name: string) => deploymentDisplayName(name, runtime), [runtime]);
 	return (
 		<div className="flex flex-col gap-10">
 			{projectionAvailable ? (
-				<AgentSettingsPanel environmentId={environmentId} />
+				<AgentSettingsPanel environmentId={environmentId} formatName={formatName} />
 			) : (
 				<ProjectionDependentUnavailable label="Profile settings" />
 			)}
@@ -2394,11 +2500,18 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				subscriptionId,
 			})
 		: "Start a new subscription to change this deployment’s paid compute.";
-	const canUpgrade =
-		hostedAccess.canCreateCloudAgents &&
-		isIncludedBasic &&
-		deployment.upgrade_available &&
-		planChangeUnavailable === null;
+	const upgradeUnavailableMessage = performanceUpgradeUnavailableReason({
+		plansLoading: plans.isLoading,
+		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
+		isIncludedBasic,
+		performancePlanAvailable: Boolean(perfPlan),
+		pendingPlanSlug,
+		planChangeUnavailable,
+		deploymentStatusSupportsUpgrade:
+			isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped",
+		upgradeAvailable: deployment.upgrade_available,
+	});
+	const canUpgrade = upgradeUnavailableMessage === null;
 	const canStartNewSubscription =
 		hostedAccess.canCreateCloudAgents && hasTerminalFallback && !!(basicPlan || perfPlan);
 	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
@@ -2408,15 +2521,6 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 			performanceAvailable: !!perfPlan,
 		},
 	);
-	const upgradeUnavailableMessage = plans.isLoading
-		? "Checking Performance availability…"
-		: !hostedAccess.canCreateCloudAgents
-			? "Upgrades are temporarily unavailable."
-			: !perfPlan
-				? "Performance compute is unavailable right now."
-				: isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped"
-					? "An upgrade may already be pending for this Basic agent."
-					: "Upgrade is available once this Basic agent is running or stopped.";
 	const createUnavailableMessage = plans.isLoading
 		? "Checking paid compute availability…"
 		: !hostedAccess.canCreateCloudAgents
@@ -2715,7 +2819,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 										<p className="text-xs text-muted-foreground">{createUnavailableMessage}</p>
 									)
 								) : canUpgrade ? null : (
-									<p className="text-xs text-muted-foreground">{createUnavailableMessage}</p>
+									<p className="text-xs text-muted-foreground">{upgradeUnavailableMessage}</p>
 								)}
 							</div>
 						) : isPaidCompute && currentSubscription ? (
@@ -2869,7 +2973,10 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 						</p>
 					</div>
 					<ConfirmAction
-						title={`Delete ${deploymentDisplayName(deployment.resource.spec.name)}?`}
+						title={`Delete ${deploymentDisplayName(
+							deployment.resource.spec.name,
+							deployment.resource.spec.runtime,
+						)}?`}
 						description={<p>The hosted agent is torn down. This can’t be undone.</p>}
 						confirmLabel="Delete compute"
 						destructive

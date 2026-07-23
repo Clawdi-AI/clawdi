@@ -266,14 +266,20 @@ export function agentTextLabel(
 	{
 		includeSource = true,
 		ownershipKind = "connected",
-	}: { includeSource?: boolean; ownershipKind?: AgentOwnershipKind } = {},
+		formatName,
+	}: {
+		includeSource?: boolean;
+		ownershipKind?: AgentOwnershipKind;
+		formatName?: (name: string) => string;
+	} = {},
 ): string {
 	const identity = agentIdentity(env);
 	const source = sourceFromOwnershipKind(ownershipKind);
+	const primaryLabel = formatName?.(identity.primaryLabel) ?? identity.primaryLabel;
 	const parts = [
 		includeSource && source === "hosted" ? agentSourceLabel("hosted") : null,
-		identity.primaryLabel,
-		identity.secondaryLabel,
+		primaryLabel,
+		identity.secondaryLabel !== primaryLabel ? identity.secondaryLabel : null,
 	].filter((part): part is string => Boolean(part));
 	return parts.join(" · ");
 }
@@ -367,6 +373,7 @@ export function AgentLabel({
 	meta,
 	titleAdornment,
 	className,
+	formatName,
 }: {
 	name?: string | null | undefined;
 	machineName: string | null | undefined;
@@ -391,6 +398,7 @@ export function AgentLabel({
 	 * subtitle wraps. */
 	titleAdornment?: ReactNode;
 	className?: string;
+	formatName?: (name: string) => string;
 }) {
 	const typeLabel = agentTypeLabel(type);
 	const identity = agentIdentity({
@@ -401,7 +409,8 @@ export function AgentLabel({
 		agent_type: type,
 	});
 	const cleanedMachine = cleanMachineName(machineName);
-	const titleText = primary === "type" ? typeLabel : identity.primaryLabel;
+	const rawTitleText = primary === "type" ? typeLabel : identity.primaryLabel;
+	const titleText = formatName?.(rawTitleText) ?? rawTitleText;
 	// The disambiguator is the OTHER field — when title is the type
 	// we surface the machine name (and vice versa). Suppressed if
 	// it'd duplicate the title (e.g. hosted tiles whose

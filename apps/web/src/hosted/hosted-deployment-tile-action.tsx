@@ -12,7 +12,10 @@ import { useActionLock } from "@/hosted/billing/use-action-lock";
 export function HostedDeploymentTileDeleteAction({ deployment }: { deployment: HostedDeployment }) {
 	const deleteDeployment = useDeleteDeployment();
 	const runAction = useActionLock();
-	const name = deploymentDisplayName(deployment.resource.spec.name);
+	const name = deploymentDisplayName(
+		deployment.resource.spec.name,
+		deployment.resource.spec.runtime,
+	);
 
 	return (
 		<div data-hosted="true">
