@@ -4845,6 +4845,19 @@ function runtimeSystemdCommonEnvironment(
 	return environment;
 }
 
+function runtimeWatchSecretEnvironment(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): Record<string, string> {
+	const tokenRef = manifest.runtimes.openclaw?.run?.secretEnv?.[OPENCLAW_GATEWAY_TOKEN_ENV];
+	if (!tokenRef) return {};
+	const token = resolveRuntimeSecretValue(secretValues ?? {}, tokenRef);
+	if (!token) {
+		throw new Error(`Runtime secret ${tokenRef} for ${OPENCLAW_GATEWAY_TOKEN_ENV} is unavailable.`);
+	}
+	return { [OPENCLAW_GATEWAY_TOKEN_ENV]: token };
+}
+
 function writeRuntimeSystemdUserProgram(input: {
 	program: RuntimeSystemdUserProgram;
 	commonEnvironment: Record<string, string>;
@@ -4935,6 +4948,7 @@ function writeSystemdUnits(
 				env: {
 					...commonEnvironment,
 					...applyIdentityEnvironment,
+					...runtimeWatchSecretEnvironment(manifest, secretValues),
 					CLAWDI_AUTH_TOKEN: "",
 				},
 			}),
