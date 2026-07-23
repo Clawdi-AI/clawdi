@@ -60,7 +60,7 @@ jobs:
       infra: ${{ steps.filter.outputs.infra }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: filter
         uses: dorny/paths-filter@v4
         with:
@@ -101,7 +101,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -156,7 +156,7 @@ jobs:
             echo "run=false" >> "$GITHUB_OUTPUT"
           fi
       - if: steps.guard.outputs.run == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
       - if: steps.guard.outputs.run == 'true'
         uses: ./.github/actions/setup-bun-ci
         with:
@@ -180,7 +180,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -211,7 +211,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -230,7 +230,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -245,7 +245,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}

@@ -84,7 +84,7 @@ jobs:
           fi
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ steps.source-ref.outputs.ref }}
           fetch-depth: 2
@@ -163,7 +163,7 @@ jobs:
 
       - name: Build and push backend image
         if: steps.runtime-changes.outputs.build == 'true'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: backend/Dockerfile
@@ -193,7 +193,7 @@ jobs:
 
       - name: Build and push web image
         if: steps.runtime-changes.outputs.build == 'true' && inputs.build_web
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/web/Dockerfile
@@ -243,7 +243,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.build.outputs.image_tag }}
 
@@ -292,7 +292,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.build.outputs.image_tag }}
 
