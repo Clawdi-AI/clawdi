@@ -57,6 +57,8 @@ export type SubscriptionCreateOutcomeView =
 			flowType: "subscription_activation";
 			deploymentId: string;
 			deployRequestId: string | null;
+			currentPeriodEnd: string | null;
+			entitledUntil: string | null;
 	  };
 
 export function subscriptionCreateQuoteRequest(
@@ -138,5 +140,7 @@ export function subscriptionCreateOutcome(result: CheckoutResult): SubscriptionC
 			"Wallet activation did not accept a deployment target.",
 		).deploymentId,
 		deployRequestId: result.deploy_request_id ?? null,
+		currentPeriodEnd: result.current_period_end ?? null,
+		entitledUntil: result.entitled_until ?? null,
 	};
 }
