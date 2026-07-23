@@ -318,7 +318,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 						openclawGatewayAuth: {
 							mode: "token",
 							tokenRef: "env://OPENCLAW_GATEWAY_TOKEN",
-							deviceAuthRequired: true,
+							deviceAuthRequired: false,
 							activation: {
 								enabled: true,
 								capability: "openclaw-native-auth-v1",

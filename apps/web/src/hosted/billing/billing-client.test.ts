@@ -91,41 +91,6 @@ describe("unwrapDeploy", () => {
 	});
 });
 
-describe("OpenClaw device pairing", () => {
-	it("lists pending request IDs and approves the exact selected request", async () => {
-		const requests: Request[] = [];
-		const client = testClient(async (request) => {
-			requests.push(request.clone());
-			if (request.method === "GET") {
-				return jsonResponse({
-					deployment_id: "hdep_test",
-					requests: [
-						{
-							request_id: "pair_request_123",
-							device_id: "browser_123",
-							scopes: [],
-						},
-					],
-				});
-			}
-			return jsonResponse({
-				deployment_id: "hdep_test",
-				request_id: "pair_request_123",
-				approved: true,
-			});
-		});
-
-		const listed = await client.listOpenClawPairingRequests("hdep_test");
-		expect(listed.requests[0]?.request_id).toBe("pair_request_123");
-		await client.approveOpenClawPairingRequest("hdep_test", "pair_request_123");
-
-		expect(new URL(requests[0]?.url ?? "").pathname).toEndWith(
-			"/runtime-ui/openclaw/pairing-requests",
-		);
-		expect(await requests[1]?.json()).toEqual({ request_id: "pair_request_123" });
-	});
-});
-
 describe("declarative deployment mutations", () => {
 	it("creates an included Basic deployment with an idempotency key and waits for its LRO", async () => {
 		const requests: Request[] = [];

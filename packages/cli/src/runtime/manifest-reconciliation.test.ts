@@ -74,7 +74,7 @@ function hostedOpenClawNativeAuth(publicUrl = "https://agent.example.test/contro
 	return {
 		mode: "token",
 		tokenRef: "env://OPENCLAW_GATEWAY_TOKEN",
-		deviceAuthRequired: true,
+		deviceAuthRequired: false,
 		activation: {
 			enabled: true,
 			capability: "openclaw-native-auth-v1",
@@ -346,7 +346,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toBe(false);
 	});
 
-	test("requires typed native token and device auth for hosted OpenClaw v2", () => {
+	test("requires typed native token auth for hosted OpenClaw v2", () => {
 		const valid = hostedOpenClawV2ManifestFixture();
 		expect(hostedRuntimeBundleV2ManifestSchema.safeParse(valid).success).toBe(true);
 
@@ -1049,13 +1049,13 @@ describe("runtime manifest reconciliation invariants", () => {
 					allowedOrigins,
 					allowInsecureAuth: false,
 					dangerouslyAllowHostHeaderOriginFallback: false,
-					dangerouslyDisableDeviceAuth: false,
+					dangerouslyDisableDeviceAuth: true,
 				},
 			},
 		});
 	});
 
-	test("projects hosted OpenClaw v2 native auth without device bypass", () => {
+	test("projects hosted OpenClaw v2 direct token auth with device auth disabled", () => {
 		const paths = tempRuntimePaths();
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const patchPath = join(paths.serviceStateRoot, "openclaw-native-auth-patch.json");
@@ -1113,7 +1113,7 @@ describe("runtime manifest reconciliation invariants", () => {
 					allowedOrigins: ["https://agent.example.test"],
 					allowInsecureAuth: false,
 					dangerouslyAllowHostHeaderOriginFallback: false,
-					dangerouslyDisableDeviceAuth: false,
+					dangerouslyDisableDeviceAuth: true,
 				},
 			},
 		});

@@ -126,40 +126,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/deployments/{deployment_id}/runtime-ui/openclaw/pairing-requests": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List V2 Openclaw Pairing Requests */
-        get: operations["list_v2_openclaw_pairing_requests_v2_deployments__deployment_id__runtime_ui_openclaw_pairing_requests_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v2/deployments/{deployment_id}/runtime-ui/openclaw/pairing-requests/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Approve V2 Openclaw Pairing Request */
-        post: operations["approve_v2_openclaw_pairing_request_v2_deployments__deployment_id__runtime_ui_openclaw_pairing_requests_approve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v2/deployments/{deployment_id}/restart": {
         parameters: {
             query?: never;
@@ -1756,60 +1722,6 @@ export interface components {
             /** By Day */
             by_day: components["schemas"]["V2HostedUsageDay"][];
         };
-        /** V2OpenClawPairingApproveRequest */
-        V2OpenClawPairingApproveRequest: {
-            /** Request Id */
-            request_id: string;
-        };
-        /** V2OpenClawPairingApproveResponse */
-        V2OpenClawPairingApproveResponse: {
-            /**
-             * Deployment Id
-             * Format: sqid
-             * @example hdep_K8fJ3pQm
-             */
-            deployment_id: string;
-            /** Request Id */
-            request_id: string;
-            /**
-             * Approved
-             * @default true
-             * @constant
-             */
-            approved: true;
-        };
-        /** V2OpenClawPairingRequest */
-        V2OpenClawPairingRequest: {
-            /** Request Id */
-            request_id: string;
-            /** Device Id */
-            device_id: string;
-            /** Display Name */
-            display_name?: string | null;
-            /** Client Id */
-            client_id?: string | null;
-            /** Client Mode */
-            client_mode?: string | null;
-            /** Role */
-            role?: string | null;
-            /** Scopes */
-            scopes?: string[];
-            /** Remote Ip */
-            remote_ip?: string | null;
-            /** Requested At Ms */
-            requested_at_ms?: number | null;
-        };
-        /** V2OpenClawPairingRequestsResponse */
-        V2OpenClawPairingRequestsResponse: {
-            /**
-             * Deployment Id
-             * Format: sqid
-             * @example hdep_K8fJ3pQm
-             */
-            deployment_id: string;
-            /** Requests */
-            requests: components["schemas"]["V2OpenClawPairingRequest"][];
-        };
         /** V2PlanResponse */
         V2PlanResponse: {
             /** Slug */
@@ -2393,72 +2305,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2HostedRuntimeUiCredentials"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_v2_openclaw_pairing_requests_v2_deployments__deployment_id__runtime_ui_openclaw_pairing_requests_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                deployment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2OpenClawPairingRequestsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    approve_v2_openclaw_pairing_request_v2_deployments__deployment_id__runtime_ui_openclaw_pairing_requests_approve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                deployment_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["V2OpenClawPairingApproveRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["V2OpenClawPairingApproveResponse"];
                 };
             };
             /** @description Validation Error */

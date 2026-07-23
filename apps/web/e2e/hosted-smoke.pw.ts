@@ -735,8 +735,6 @@ type HostedApiStubOptions = {
 	ledgerResponseForRequest?: (limit: number) => unknown;
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
-	openClawPairingRequests?: Array<Record<string, unknown>>;
-	openClawPairingApprovalRequests?: string[];
 	plans?: readonly unknown[];
 	planCMutationRequests?: string[];
 	planChangeRequests?: string[];
@@ -855,12 +853,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 						},
 					})
 				: fulfillJson(r, { detail: "Deployment request not found" }, 404);
-		}
-		if (p.endsWith("/runtime-ui/openclaw/pairing-requests") && r.request().method() === "GET") {
-			return fulfillJson(r, {
-				deployment_id: p.split("/")[3],
-				requests: options.openClawPairingRequests ?? [],
-			});
 		}
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "GET") {
 			const deploymentId = decodeURIComponent(p.slice("/v2/deployments/".length));
@@ -1077,25 +1069,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				},
 			};
 			return fulfillJson(r, response.body, response.status);
-		}
-		if (
-			p.endsWith("/runtime-ui/openclaw/pairing-requests/approve") &&
-			r.request().method() === "POST"
-		) {
-			const requestId = (r.request().postDataJSON() as { request_id?: string }).request_id ?? "";
-			options.openClawPairingApprovalRequests?.push(requestId);
-			if (options.openClawPairingRequests) {
-				options.openClawPairingRequests.splice(
-					0,
-					options.openClawPairingRequests.length,
-					...options.openClawPairingRequests.filter((request) => request.request_id !== requestId),
-				);
-			}
-			return fulfillJson(r, {
-				deployment_id: p.split("/")[3],
-				request_id: requestId,
-				approved: true,
-			});
 		}
 		if (p.endsWith("/start") && r.request().method() === "POST") {
 			options.startRequests?.push(r.request().postData() ?? "");
@@ -1697,42 +1670,28 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
 });
 
-test("OpenClaw Console surfaces the native device pairing completion workflow", async ({
-	page,
-}) => {
-	const openClawPairingApprovalRequests: string[] = [];
+test("OpenClaw Console opens through the direct gateway token handoff", async ({ page }) => {
+	const runtimeUiRedemptionRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments: [openClawIncludedDeployment],
-		openClawPairingApprovalRequests,
-		openClawPairingRequests: [
+		runtimeUiRedemptionRequests,
+		runtimeUiRedemptionResponses: [
 			{
-				request_id: "pair_request_browser_123",
-				device_id: "browser_device_123",
-				display_name: "OpenClaw Browser",
-				client_id: "openclaw-control-ui",
-				client_mode: "web",
-				role: "operator",
-				scopes: ["operator.read", "operator.write"],
-				remote_ip: "192.0.2.10",
-				requested_at_ms: 1_753_000_000_000,
+				status: 200,
+				body: {
+					runtime: "openclaw",
+					url: "https://runtime.example/openclaw/#token=gateway-token",
+					auth_mode: "token",
+					token: "gateway-token",
+				},
 			},
 		],
 	});
 
 	await page.goto("/agents/hdep_openclaw_included/console?source=on-clawdi");
 	const main = page.locator("main");
-	await expect(main.getByText("If the Control UI shows “pairing required”")).toBeVisible();
-	await expect(main.getByText("openclaw devices list", { exact: true })).toBeVisible();
-	await expect(
-		main.getByText("openclaw devices approve <requestId>", { exact: true }),
-	).toBeVisible();
-	await expect(main.getByText("pair_request_browser_123", { exact: true })).toBeVisible();
-	await main.getByRole("button", { name: "Approve this browser" }).click();
-	await expect.poll(() => openClawPairingApprovalRequests).toEqual(["pair_request_browser_123"]);
-	await expect(main.getByRole("link", { name: "Open Hosted Terminal" })).toHaveAttribute(
-		"href",
-		"/agents/hdep_openclaw_included/terminal",
-	);
+	await main.getByRole("button", { name: "Open OpenClaw Control UI" }).click();
+	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
 });
 
 test("revoked deployment inventory never reclassifies cloud projections as connected", async ({

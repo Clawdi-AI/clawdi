@@ -21,19 +21,6 @@ export interface OpenClawNativeUiCopy {
 	title: string;
 	description: string;
 	openControlUi: string;
-	pairingTitle: string;
-	pairingDescription: string;
-	pairingListCommand: string;
-	pairingApproveCommand: string;
-	pairingWarning: string;
-	openHostedTerminal: string;
-	pairingRequestId: string;
-	pairingApprove: string;
-	pairingApproving: string;
-	pairingEmpty: string;
-	pairingRefresh: string;
-	pairingLoadError: string;
-	pairingApproved: string;
 	credentialErrorTitle: string;
 	credentialErrorDescription: string;
 	popupBlockedTitle: string;
@@ -68,23 +55,8 @@ const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 		},
 		openclaw: {
 			title: "Open OpenClaw in a new window",
-			description:
-				"OpenClaw uses its official token handoff and native device authentication in a top-level Control UI.",
+			description: "OpenClaw uses its official gateway token in a top-level Control UI.",
 			openControlUi: "Open OpenClaw Control UI",
-			pairingTitle: "If the Control UI shows “pairing required”",
-			pairingDescription:
-				"Open Hosted Terminal, list pending devices, copy that browser’s exact requestId, then approve that requestId:",
-			pairingListCommand: "openclaw devices list",
-			pairingApproveCommand: "openclaw devices approve <requestId>",
-			pairingWarning: "Do not auto-approve a request and do not use --latest.",
-			openHostedTerminal: "Open Hosted Terminal",
-			pairingRequestId: "Request ID",
-			pairingApprove: "Approve this browser",
-			pairingApproving: "Approving…",
-			pairingEmpty: "No pending browser pairing request yet.",
-			pairingRefresh: "Check for pairing request",
-			pairingLoadError: "Couldn’t load pending pairing requests.",
-			pairingApproved: "Browser pairing approved. Return to the OpenClaw window.",
 			credentialErrorTitle: "Couldn’t open OpenClaw",
 			credentialErrorDescription: "Please try again.",
 			popupBlockedTitle: "Couldn’t open OpenClaw",
@@ -113,22 +85,8 @@ const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 		},
 		openclaw: {
 			title: "在新窗口中打开 OpenClaw",
-			description: "OpenClaw 在顶层 Control UI 中使用官方 token 交接和原生设备认证。",
+			description: "OpenClaw 在顶层 Control UI 中使用官方 gateway token。",
 			openControlUi: "打开 OpenClaw Control UI",
-			pairingTitle: "如果 Control UI 显示“pairing required”",
-			pairingDescription:
-				"打开 Hosted Terminal，列出待配对设备，复制该浏览器对应的准确 requestId，再批准这个 requestId：",
-			pairingListCommand: "openclaw devices list",
-			pairingApproveCommand: "openclaw devices approve <requestId>",
-			pairingWarning: "不要自动批准请求，也不要使用 --latest。",
-			openHostedTerminal: "打开 Hosted Terminal",
-			pairingRequestId: "请求 ID",
-			pairingApprove: "批准此浏览器",
-			pairingApproving: "正在批准…",
-			pairingEmpty: "尚无待处理的浏览器配对请求。",
-			pairingRefresh: "检查配对请求",
-			pairingLoadError: "无法加载待处理的配对请求。",
-			pairingApproved: "浏览器配对已批准。请返回 OpenClaw 窗口。",
 			credentialErrorTitle: "无法打开 OpenClaw",
 			credentialErrorDescription: "请重试。",
 			popupBlockedTitle: "无法打开 OpenClaw",
@@ -157,22 +115,8 @@ const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 		},
 		openclaw: {
 			title: "在新視窗中開啟 OpenClaw",
-			description: "OpenClaw 在頂層 Control UI 中使用官方 token 交接和原生裝置驗證。",
+			description: "OpenClaw 在頂層 Control UI 中使用官方 gateway token。",
 			openControlUi: "開啟 OpenClaw Control UI",
-			pairingTitle: "如果 Control UI 顯示「pairing required」",
-			pairingDescription:
-				"開啟 Hosted Terminal，列出待配對裝置，複製該瀏覽器對應的準確 requestId，再核准這個 requestId：",
-			pairingListCommand: "openclaw devices list",
-			pairingApproveCommand: "openclaw devices approve <requestId>",
-			pairingWarning: "不要自動核准請求，也不要使用 --latest。",
-			openHostedTerminal: "開啟 Hosted Terminal",
-			pairingRequestId: "請求 ID",
-			pairingApprove: "核准此瀏覽器",
-			pairingApproving: "正在核准…",
-			pairingEmpty: "尚無待處理的瀏覽器配對請求。",
-			pairingRefresh: "檢查配對請求",
-			pairingLoadError: "無法載入待處理的配對請求。",
-			pairingApproved: "瀏覽器配對已核准。請返回 OpenClaw 視窗。",
 			credentialErrorTitle: "無法開啟 OpenClaw",
 			credentialErrorDescription: "請重試。",
 			popupBlockedTitle: "無法開啟 OpenClaw",

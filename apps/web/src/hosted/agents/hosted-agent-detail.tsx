@@ -38,7 +38,7 @@ import { SessionFeed } from "@/components/sessions/session-feed";
 import { SettingsSection } from "@/components/settings-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
 import { Input } from "@/components/ui/input";
@@ -1014,27 +1014,6 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	const [isLoadingCredentials, setIsLoadingCredentials] = useState(false);
 	const openClawCopy = browserOpenClawNativeUiCopy();
 	const credentialGeneration = deployment.resource.metadata.generation;
-	const pairingRequests = useQuery({
-		queryKey: ["hosted-openclaw-pairing", deployment.resource.id],
-		queryFn: () => client.listOpenClawPairingRequests(deployment.resource.id),
-		enabled: runtime === "openclaw" && isRunning,
-		refetchInterval: runtime === "openclaw" && isRunning ? 2_000 : false,
-		retry: false,
-	});
-	const approvePairing = useMutation({
-		mutationFn: (requestId: string) =>
-			client.approveOpenClawPairingRequest(deployment.resource.id, requestId),
-		onSuccess: () => {
-			toast.success(openClawCopy.pairingApproved);
-			void pairingRequests.refetch();
-		},
-		onError: (error) => {
-			toast.error(openClawCopy.pairingLoadError, {
-				description: normalizeBillingError(error),
-			});
-			void pairingRequests.refetch();
-		},
-	});
 	useEffect(() => {
 		setCredentials(null);
 		setLoadedCredentialGeneration(null);
@@ -1134,84 +1113,10 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 							</Button>
 						)
 					) : (
-						<div className="space-y-4 text-left">
-							<RuntimeUiOpenButton deployment={deployment} endpointUrl={url} label={browserUiLabel}>
-								{openClawCopy.openControlUi}
-								<Maximize2 className="size-3.5" />
-							</RuntimeUiOpenButton>
-							<Alert>
-								<TerminalSquare className="size-4" />
-								<AlertTitle>{openClawCopy.pairingTitle}</AlertTitle>
-								<AlertDescription className="space-y-3">
-									<p>{openClawCopy.pairingDescription}</p>
-									<div className="space-y-1 font-mono text-xs">
-										<div>{openClawCopy.pairingListCommand}</div>
-										<div>{openClawCopy.pairingApproveCommand}</div>
-									</div>
-									<p>{openClawCopy.pairingWarning}</p>
-									{pairingRequests.error ? (
-										<div className="space-y-2 rounded-md border border-destructive/30 p-3">
-											<p className="text-sm text-destructive">{openClawCopy.pairingLoadError}</p>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												onClick={() => void pairingRequests.refetch()}
-											>
-												{openClawCopy.pairingRefresh}
-											</Button>
-										</div>
-									) : pairingRequests.data?.requests.length ? (
-										<div className="space-y-2">
-											{pairingRequests.data.requests.map((request) => (
-												<div
-													key={request.request_id}
-													className="space-y-2 rounded-md border bg-background p-3"
-												>
-													<div className="text-sm font-medium">
-														{request.display_name || request.client_id || request.device_id}
-													</div>
-													<div className="text-xs text-muted-foreground">
-														{openClawCopy.pairingRequestId}:{" "}
-														<code className="break-all">{request.request_id}</code>
-													</div>
-													<Button
-														type="button"
-														size="sm"
-														disabled={approvePairing.isPending}
-														onClick={() => approvePairing.mutate(request.request_id)}
-													>
-														{approvePairing.isPending
-															? openClawCopy.pairingApproving
-															: openClawCopy.pairingApprove}
-													</Button>
-												</div>
-											))}
-										</div>
-									) : (
-										<div className="space-y-2 rounded-md border bg-background p-3">
-											<p className="text-sm text-muted-foreground">{openClawCopy.pairingEmpty}</p>
-											<Button
-												type="button"
-												variant="outline"
-												size="sm"
-												disabled={pairingRequests.isFetching}
-												onClick={() => void pairingRequests.refetch()}
-											>
-												{openClawCopy.pairingRefresh}
-											</Button>
-										</div>
-									)}
-									<Link
-										to="/agents/$id/$section"
-										params={{ id: deployment.resource.id, section: "terminal" }}
-										className={buttonVariants({ variant: "outline", size: "sm" })}
-									>
-										{openClawCopy.openHostedTerminal}
-									</Link>
-								</AlertDescription>
-							</Alert>
-						</div>
+						<RuntimeUiOpenButton deployment={deployment} endpointUrl={url} label={browserUiLabel}>
+							{openClawCopy.openControlUi}
+							<Maximize2 className="size-3.5" />
+						</RuntimeUiOpenButton>
 					)}
 					{credentialError ? (
 						<ApiErrorPanel

@@ -638,9 +638,7 @@ function validateManifestSemantics(
 		if (runtime === "openclaw" && isHostedV2) {
 			const auth = manifest.openclawGatewayAuth;
 			if (!auth) {
-				errors.push(
-					"OpenClaw v2 native Control UI requires official gateway token and device authentication",
-				);
+				errors.push("OpenClaw v2 native Control UI requires official gateway token authentication");
 			}
 			if (auth?.activation.enabled !== true) {
 				errors.push("OpenClaw native auth activation must be explicitly enabled");

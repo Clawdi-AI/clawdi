@@ -65,7 +65,7 @@ const openclawGatewayAuthSchema = z
 	.object({
 		mode: z.literal("token"),
 		tokenRef: z.literal("env://OPENCLAW_GATEWAY_TOKEN"),
-		deviceAuthRequired: z.literal(true),
+		deviceAuthRequired: z.literal(false),
 		activation: z
 			.object({
 				enabled: z.literal(true),
@@ -729,8 +729,7 @@ function validateHostedRuntimeManifestV2(
 	if (!manifest.system.openclawGatewayAuth) {
 		ctx.addIssue({
 			code: "custom",
-			message:
-				"OpenClaw v2 native Control UI requires official gateway token and device authentication",
+			message: "OpenClaw v2 native Control UI requires official gateway token authentication",
 			path: ["system", "openclawGatewayAuth"],
 		});
 	}

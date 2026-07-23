@@ -3055,7 +3055,7 @@ function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, u
 													basePath: openClawControlUiBasePath(manifest),
 													allowInsecureAuth: false,
 													dangerouslyAllowHostHeaderOriginFallback: false,
-													dangerouslyDisableDeviceAuth: false,
+													dangerouslyDisableDeviceAuth: true,
 												}
 											: { dangerouslyDisableDeviceAuth: true }),
 									},
