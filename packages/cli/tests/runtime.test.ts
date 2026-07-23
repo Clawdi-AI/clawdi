@@ -5540,18 +5540,34 @@ exit 0
 		}
 	});
 
-	it("runtime watch applies remote changes, tracks systemd unit changes, and saves the new ETag", async () => {
+	it("runtime watch receives the gateway token and applies a live channel binding", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const sourcePath = join(root, "runtime-source.json");
 		const bin = join(root, "bin");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawPatch = join(root, "openclaw-watch-channel-patch.jsonl");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
-		seedOpenClawBinary(home);
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  cat >> '${openclawPatch}'
+  printf '\\n' >> '${openclawPatch}'
+  exit 0
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+`,
+		);
+		chmodSync(openclawBin, 0o700);
 		writeFileSync(
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
@@ -5571,6 +5587,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = '"manifest-watch-12"';
 		process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = "apply-receipt-0012";
 		process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-000012";
+		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token-watch";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -5628,8 +5645,22 @@ printf 'ActiveState=active\\nSubState=running\\n'
 									},
 								},
 							},
-							channelBindings: [],
-							secretValues: { "provider.default.apiKey": "sk-provider-watch" },
+							channelBindings: [
+								{
+									provider: "telegram",
+									accountKey: "clawdi_accttelegram",
+									agentTokenSecretRef: "secret://channels/telegram/clawdi_accttelegram/agent-token",
+									placeholderTokenSecretRef:
+										"secret://channels/telegram/clawdi_accttelegram/placeholder-token",
+								},
+							],
+							secretValues: {
+								"provider.default.apiKey": "sk-provider-watch",
+								"secret://channels/telegram/clawdi_accttelegram/agent-token":
+									"telegram-agent-token-watch",
+								"secret://channels/telegram/clawdi_accttelegram/placeholder-token":
+									"999999999:00000000000000000000000000000000",
+							},
 						}),
 						{
 							status: 200,
@@ -5704,7 +5735,17 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			);
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
+			const gatewayEnv = readSystemdEnvFile(paths, "openclaw-gateway");
+			expect(watchEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token-watch"');
+			expect(gatewayEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token-watch"');
 			expect(watchEnv).not.toContain("file-runtime-token");
+			const patchText = readFileSync(openclawPatch, "utf-8");
+			expect(patchText).toContain('"telegram"');
+			expect(patchText).toContain('"botToken"');
+			expect(patchText).toContain(
+				'"id": "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_ACCTTELEGRAM_AGENT_TOKEN"',
+			);
+			expect(patchText).not.toContain("telegram-agent-token-watch");
 			for (const unitEnv of [watchEnv, daemonEnv]) {
 				expect(unitEnv).toContain('CLAWDI_RUNTIME_GENERATION="12"');
 				expect(unitEnv).toContain('CLAWDI_RUNTIME_MANIFEST_ETAG="\\"manifest-watch-12\\""');
