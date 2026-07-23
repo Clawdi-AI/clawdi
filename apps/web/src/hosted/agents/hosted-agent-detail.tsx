@@ -53,10 +53,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
+import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
 	useCreateRuntimeUiRedemption,
 	useCreateTerminalSession,
-	useDeleteDeployment,
 	useDeploymentLifecycle,
 } from "@/hosted/agents/deployment-hooks";
 import {
@@ -296,26 +296,16 @@ function RestartComputeAction({
 
 function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
 	const router = useRouter();
-	const deleteDeployment = useDeleteDeployment();
-	const runAction = useActionLock();
 	return (
-		<ConfirmAction
-			title={`Delete ${deploymentDisplayName(deployment.resource.spec.name)}?`}
-			description={<p>The hosted agent is torn down. This can’t be undone.</p>}
-			confirmLabel="Delete compute"
-			destructive
-			onConfirm={() =>
-				runAction(async () => {
-					await deleteDeployment.mutateAsync(deployment.resource.id);
-					await router.navigate({ href: "/" });
-				})
-			}
+		<HostedDeploymentDeleteAction
+			deployment={deployment}
+			onDeleted={() => router.navigate({ href: "/" })}
 		>
-			<Button type="button" variant="destructive" size="sm" disabled={deleteDeployment.isPending}>
-				{deleteDeployment.isPending ? <Spinner /> : <Trash2 />}
+			<Button type="button" variant="destructive" size="sm">
+				<Trash2 />
 				Delete
 			</Button>
-		</ConfirmAction>
+		</HostedDeploymentDeleteAction>
 	);
 }
 
@@ -2109,7 +2099,6 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const hostedAccess = useHostedProductAccess();
 	const lifecycle = useDeploymentLifecycle();
-	const del = useDeleteDeployment();
 	const plans = usePlans();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const quotePlanChange = useQuotePlanChange();
@@ -2383,11 +2372,6 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 
 	async function runLifecycleAction(action: "restart" | "stop" | "start") {
 		await lifecycle.mutateAsync({ id: deployment.resource.id, action });
-	}
-
-	async function deleteCompute() {
-		await del.mutateAsync(deployment.resource.id);
-		await router.navigate({ href: "/" });
 	}
 
 	return (
@@ -2679,23 +2663,15 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 							Tears down this deployment and its agent runtime. This can’t be undone.
 						</p>
 					</div>
-					<ConfirmAction
-						title={`Delete ${deploymentDisplayName(deployment.resource.spec.name)}?`}
-						description={<p>The hosted agent is torn down. This can’t be undone.</p>}
-						confirmLabel="Delete compute"
-						destructive
-						onConfirm={() => runAction(deleteCompute)}
+					<HostedDeploymentDeleteAction
+						deployment={deployment}
+						onDeleted={() => router.navigate({ href: "/" })}
 					>
-						<Button
-							variant="outline"
-							size="sm"
-							className="text-destructive"
-							disabled={del.isPending}
-						>
+						<Button variant="outline" size="sm" className="text-destructive">
 							<Trash2 className="size-3.5" />
 							Delete
 						</Button>
-					</ConfirmAction>
+					</HostedDeploymentDeleteAction>
 				</div>
 			</SettingsSection>
 		</div>

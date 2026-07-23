@@ -52,6 +52,8 @@ export type SubscriptionCreateOutcomeView =
 			flowType: "subscription_activation";
 			deploymentId: string | null;
 			deployRequestId: string | null;
+			currentPeriodEnd: string | null;
+			entitledUntil: string | null;
 	  };
 
 export function subscriptionCreateQuoteRequest(
@@ -142,5 +144,7 @@ export function subscriptionCreateOutcome(result: CheckoutResult): SubscriptionC
 		flowType: "subscription_activation",
 		deploymentId: result.deployment_id ?? null,
 		deployRequestId: result.deploy_request_id ?? null,
+		currentPeriodEnd: result.current_period_end ?? null,
+		entitledUntil: result.entitled_until ?? null,
 	};
 }

@@ -115,18 +115,22 @@ describe("subscription creation adapter", () => {
 		});
 	});
 
-	test("projects only the wallet activation fields consumed by the UI", () => {
+	test("projects activation identity and entitlement fields consumed by the UI", () => {
 		const activation: CheckoutResult = {
 			flow_type: "subscription_activation",
 			funding_source: "wallet",
 			checkout_url: "",
 			deploy_request_id: "subscription-create-test",
 			deployment_id: "hdep_created",
+			current_period_end: "2027-07-15T00:00:00Z",
+			entitled_until: "2027-07-16T00:00:00Z",
 		};
 		expect(subscriptionCreateOutcome(activation)).toEqual({
 			flowType: "subscription_activation",
 			deploymentId: "hdep_created",
 			deployRequestId: "subscription-create-test",
+			currentPeriodEnd: "2027-07-15T00:00:00Z",
+			entitledUntil: "2027-07-16T00:00:00Z",
 		});
 	});
 });
