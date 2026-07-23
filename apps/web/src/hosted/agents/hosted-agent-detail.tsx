@@ -155,11 +155,14 @@ import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
+import { CatalogModelSelect } from "@/hosted/v2/ai-providers/catalog-model-select";
 import {
+	CUSTOM_MODEL_CHOICE,
 	dedupeProviderIds,
 	firstModelForProvider,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
+	MANAGED_AI_CHOICE_LABEL,
 	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
 	modelIdsForProvider,
@@ -225,7 +228,6 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"channels",
 	"settings",
 ]);
-const CUSTOM_MODEL_CHOICE = "__custom__";
 const UNRESOLVED_PROVIDER_PREFIX = "unresolved:";
 
 function providerAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
@@ -1797,7 +1799,7 @@ function AgentPrimaryModelPicker({
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 	const primaryProviderItems = [
 		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
-			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
+			? [{ value: MANAGED_AI_CHOICE, label: MANAGED_AI_CHOICE_LABEL }]
 			: []),
 		...selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => ({
 			value: choice,
@@ -1809,14 +1811,6 @@ function AgentPrimaryModelPicker({
 				value: provider.provider_id,
 				label: provider.label ?? provider.provider_id,
 			})),
-	];
-	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({
-			value: model,
-			label:
-				model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : formatModelLabel(model),
-		})),
-		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
 	];
 	return (
 		<div className="flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
@@ -1835,7 +1829,7 @@ function AgentPrimaryModelPicker({
 						</SelectTrigger>
 						<SelectContent>
 							{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
-								<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
+								<SelectItem value={MANAGED_AI_CHOICE}>{MANAGED_AI_CHOICE_LABEL}</SelectItem>
 							) : null}
 							{selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => (
 								<SelectItem key={choice} value={choice}>
@@ -1855,28 +1849,15 @@ function AgentPrimaryModelPicker({
 				{catalogModelIds.length > 0 ? (
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="agent-catalog-model">Catalog model</Label>
-						<Select
-							items={catalogModelItems}
+						<CatalogModelSelect
+							id="agent-catalog-model"
+							modelIds={catalogModelIds}
 							value={modelChoice}
-							onValueChange={(value) => {
-								if (!value) return;
-								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value);
-							}}
-						>
-							<SelectTrigger id="agent-catalog-model" className="w-full">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{catalogModelIds.map((model) => (
-									<SelectItem key={model} value={model}>
-										{model === MANAGED_DEFAULT_MODEL_CHOICE
-											? "Hosted default (Luna)"
-											: formatModelLabel(model)}
-									</SelectItem>
-								))}
-								<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
-							</SelectContent>
-						</Select>
+							onValueChange={(value) =>
+								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value)
+							}
+							formatModelLabel={formatModelLabel}
+						/>
 					</div>
 				) : null}
 			</div>

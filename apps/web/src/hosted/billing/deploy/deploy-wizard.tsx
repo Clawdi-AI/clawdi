@@ -138,10 +138,13 @@ import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog"
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
+import { CatalogModelSelect } from "@/hosted/v2/ai-providers/catalog-model-select";
 import {
+	CUSTOM_MODEL_CHOICE,
 	dedupeProviderIds,
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
+	MANAGED_AI_CHOICE_LABEL,
 	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
 	modelIdsForProvider,
@@ -189,7 +192,6 @@ const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
-const CUSTOM_MODEL_CHOICE = "__custom__";
 const EMPTY_WALLET_TOP_UP_CONTEXT: WalletTopUpContext = {
 	initialAmountCents: null,
 	refundDebtCredits: null,
@@ -1624,7 +1626,7 @@ function PrimaryModelPicker({
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 	const primaryProviderItems = [
 		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
-			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
+			? [{ value: MANAGED_AI_CHOICE, label: MANAGED_AI_CHOICE_LABEL }]
 			: []),
 		...customProviders
 			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
@@ -1632,10 +1634,6 @@ function PrimaryModelPicker({
 				value: provider.provider_id,
 				label: provider.label ?? provider.provider_id,
 			})),
-	];
-	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({ value: model, label: model })),
-		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
 	];
 	return (
 		<div className="mt-4 flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
@@ -1655,7 +1653,7 @@ function PrimaryModelPicker({
 						<SelectContent>
 							<SelectGroup>
 								{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
-									<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
+									<SelectItem value={MANAGED_AI_CHOICE}>{MANAGED_AI_CHOICE_LABEL}</SelectItem>
 								) : null}
 								{customProviders
 									.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
@@ -1671,28 +1669,14 @@ function PrimaryModelPicker({
 				{catalogModelIds.length > 0 ? (
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="deploy-catalog-model">Catalog model</Label>
-						<Select
-							items={catalogModelItems}
+						<CatalogModelSelect
+							id="deploy-catalog-model"
+							modelIds={catalogModelIds}
 							value={modelChoice}
-							onValueChange={(value) => {
-								if (!value) return;
-								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value);
-							}}
-						>
-							<SelectTrigger id="deploy-catalog-model" className="w-full">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectGroup>
-									{catalogModelIds.map((model) => (
-										<SelectItem key={model} value={model}>
-											{model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : model}
-										</SelectItem>
-									))}
-									<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
-								</SelectGroup>
-							</SelectContent>
-						</Select>
+							onValueChange={(value) =>
+								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value)
+							}
+						/>
 					</div>
 				) : null}
 			</div>

@@ -1,8 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import {
+	CUSTOM_MODEL_CHOICE,
+	CUSTOM_MODEL_CHOICE_LABEL,
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
+	MANAGED_AI_CHOICE_LABEL,
 	MANAGED_DEFAULT_MODEL_CHOICE,
+	MANAGED_DEFAULT_MODEL_CHOICE_LABEL,
+	modelChoiceOptions,
 	modelIdsForProvider,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
@@ -34,5 +39,16 @@ describe("model binding", () => {
 		];
 
 		expect(firstModelForProvider("openai-main", providers)).toBe("gpt-5.5");
+	});
+
+	test("builds friendly labels for reserved model choices", () => {
+		expect(modelChoiceOptions([MANAGED_DEFAULT_MODEL_CHOICE, MANAGED_AI_CHOICE])).toEqual([
+			{
+				value: MANAGED_DEFAULT_MODEL_CHOICE,
+				label: MANAGED_DEFAULT_MODEL_CHOICE_LABEL,
+			},
+			{ value: MANAGED_AI_CHOICE, label: MANAGED_AI_CHOICE_LABEL },
+			{ value: CUSTOM_MODEL_CHOICE, label: CUSTOM_MODEL_CHOICE_LABEL },
+		]);
 	});
 });
