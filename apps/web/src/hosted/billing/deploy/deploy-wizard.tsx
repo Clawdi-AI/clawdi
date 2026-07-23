@@ -69,6 +69,7 @@ import {
 	type DeployWizardAiAccessMode,
 } from "@/hosted/billing/deploy/deploy-defaults";
 import {
+	planCAccessAllowsDeploy,
 	resolveBasicDeploySelection,
 	usesActiveIncludedBasicSlot,
 } from "@/hosted/billing/deploy/deploy-model";
@@ -143,7 +144,7 @@ import {
 	dedupeProviderIds,
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
-	MANAGED_PRIMARY_MODEL_FALLBACK,
+	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
@@ -531,8 +532,12 @@ export function DeployWizard() {
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
+	const planCAccessAllowed = planCAccessAllowsDeploy(
+		hostedAccess.canUsePlanCBilling,
+		paidSelection ? "paid" : basicSelection,
+	);
 	const canSubmit =
-		hostedAccess.canUsePlanCBilling &&
+		planCAccessAllowed &&
 		planReady &&
 		!submitting &&
 		(!paidSelection ||
@@ -704,8 +709,10 @@ export function DeployWizard() {
 
 		const primaryProviderRef =
 			providerRefFromChoice(primaryProviderChoice, providerList) ?? MANAGED_PROVIDER_ID;
+		const usesHostedManagedDefault =
+			primaryProviderChoice === MANAGED_AI_CHOICE && primaryModel === MANAGED_DEFAULT_MODEL_CHOICE;
 		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
-		if (!modelRef) {
+		if (!modelRef && !usesHostedManagedDefault) {
 			toast.error("Primary model required", {
 				description: "Choose a catalog model or enter a model id.",
 			});
@@ -723,8 +730,8 @@ export function DeployWizard() {
 			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
 			ai_provider_auth_kind: primaryKind,
 			provider_ids: providerRefs,
-			primary_model: modelRef,
 		};
+		if (modelRef) body.primary_model = modelRef;
 		if (customProviders.length > 0) {
 			const bootstrapSelectedProvider = primaryProvider ?? customProviders[0];
 			const bootstrapKind = aiAuthKind(bootstrapSelectedProvider);
@@ -925,10 +932,10 @@ export function DeployWizard() {
 		if (!canSubmit) return;
 		setSubmitting(true);
 		try {
-			if (!(await recheckPlanCBilling())) return;
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
 			if (paidSelection) {
+				if (!(await recheckPlanCBilling())) return;
 				const deployConfig = buildDeployRequest(aiFields, paidSelection.computePlanSlug);
 				const billingTermMonths = supportedBillingTerm(paidSelection.billingTermMonths);
 				if (!billingTermMonths) {
@@ -1083,7 +1090,7 @@ export function DeployWizard() {
 		}
 	}
 
-	const deployLabel = !hostedAccess.canUsePlanCBilling
+	const deployLabel = !planCAccessAllowed
 		? "Deployment temporarily unavailable"
 		: paidSelection
 			? paymentMethod === "wallet"
@@ -1151,7 +1158,7 @@ export function DeployWizard() {
 					description="Choose the execution engine and AI provider for this hosted deployment."
 				/>
 				{hostedAccess.isLoading || hostedAccess.canUsePlanCBilling ? null : (
-					<PlanCBillingUnavailableNotice description="New deployments are temporarily unavailable. You can still review compute options, providers, channels, and existing agents." />
+					<PlanCBillingUnavailableNotice description="Paid deployments are temporarily unavailable. Your included Basic slot remains available." />
 				)}
 
 				<SettingsSection
@@ -1549,9 +1556,7 @@ export function DeployWizard() {
 						size="lg"
 						onClick={() => runAction(onDeploy)}
 						disabled={!canSubmit}
-						aria-describedby={
-							hostedAccess.canUsePlanCBilling ? undefined : "plan-c-deploy-unavailable"
-						}
+						aria-describedby={planCAccessAllowed ? undefined : "plan-c-deploy-unavailable"}
 						className="w-full sm:w-auto"
 					>
 						{submitting ? (
@@ -1561,9 +1566,9 @@ export function DeployWizard() {
 						)}
 						{submitting ? "Working…" : deployLabel}
 					</Button>
-					{hostedAccess.canUsePlanCBilling ? null : (
+					{planCAccessAllowed ? null : (
 						<span id="plan-c-deploy-unavailable" className="sr-only">
-							New deployments are temporarily unavailable.
+							Paid deployments are temporarily unavailable.
 						</span>
 					)}
 				</div>
@@ -1712,7 +1717,7 @@ function PrimaryModelPicker({
 								<SelectGroup>
 									{catalogModelIds.map((model) => (
 										<SelectItem key={model} value={model}>
-											{model}
+											{model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : model}
 										</SelectItem>
 									))}
 									<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
@@ -1734,11 +1739,7 @@ function PrimaryModelPicker({
 						id="deploy-primary-model"
 						value={primaryModel}
 						onChange={(event) => onPrimaryModelChange(event.target.value)}
-						placeholder={
-							primaryProviderChoice === MANAGED_AI_CHOICE
-								? MANAGED_PRIMARY_MODEL_FALLBACK
-								: "model id"
-						}
+						placeholder="model id"
 						autoComplete="off"
 						spellCheck={false}
 					/>

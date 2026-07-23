@@ -372,6 +372,22 @@ export function createBillingClient(
 					params: { path: { deployment_id: id } },
 				}),
 			),
+		listOpenClawPairingRequests: async (id: string) =>
+			unwrapDeploy(
+				await api.GET("/v2/deployments/{deployment_id}/runtime-ui/openclaw/pairing-requests", {
+					params: { path: { deployment_id: id } },
+				}),
+			),
+		approveOpenClawPairingRequest: async (id: string, requestId: string) =>
+			unwrapDeploy(
+				await api.POST(
+					"/v2/deployments/{deployment_id}/runtime-ui/openclaw/pairing-requests/approve",
+					{
+						params: { path: { deployment_id: id } },
+						body: { request_id: requestId },
+					},
+				),
+			),
 		setDeploymentDesiredState: async (
 			id: string,
 			desiredLifecycle: DeploymentDesiredLifecycle,

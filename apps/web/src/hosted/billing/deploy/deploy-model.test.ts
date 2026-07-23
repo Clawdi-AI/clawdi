@@ -6,6 +6,7 @@ import type {
 	Plan,
 } from "@/hosted/billing/contracts";
 import {
+	planCAccessAllowsDeploy,
 	resolveBasicDeploySelection,
 	usesActiveIncludedBasicSlot,
 } from "@/hosted/billing/deploy/deploy-model";
@@ -152,5 +153,22 @@ describe("resolveBasicDeploySelection", () => {
 				billingTermMonths: 1,
 			}),
 		).toEqual({ mode: "unavailable", reason: "offers_missing" });
+	});
+});
+
+describe("planCAccessAllowsDeploy", () => {
+	test("allows an included Basic slot whether the Plan C switch is on or off", () => {
+		const included = resolveBasicDeploySelection({
+			basicPlan: plan(900),
+			billingTermMonths: 1,
+			includedSlotAvailable: true,
+		});
+		expect(planCAccessAllowsDeploy(true, included)).toBeTrue();
+		expect(planCAccessAllowsDeploy(false, included)).toBeTrue();
+	});
+
+	test("keeps paid deployment behind the Plan C emergency switch", () => {
+		expect(planCAccessAllowsDeploy(true, "paid")).toBeTrue();
+		expect(planCAccessAllowsDeploy(false, "paid")).toBeFalse();
 	});
 });

@@ -97,15 +97,9 @@ export function SubscriptionPage() {
 						balance and managed-AI usage stay account-wide.
 					</p>
 					<div className="flex flex-wrap gap-2">
-						{hostedAccess.canUsePlanCBilling ? (
-							<Button render={<Link to="/deploy" />} nativeButton={false}>
-								<Rocket /> Deploy hosted agent
-							</Button>
-						) : (
-							<Button disabled>
-								<Rocket /> Deploy hosted agent
-							</Button>
-						)}
+						<Button render={<Link to="/deploy" />} nativeButton={false}>
+							<Rocket /> Deploy hosted agent
+						</Button>
 						<Button
 							variant="outline"
 							onClick={() => runAction(openBillingPortal)}

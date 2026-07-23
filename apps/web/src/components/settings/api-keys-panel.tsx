@@ -5,6 +5,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { Copy, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { SettingsPanelHeader } from "@/components/settings/settings-panel-header";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,7 +24,12 @@ export function ApiKeysPanel() {
 	const [newLabel, setNewLabel] = useState("");
 	const [createdKey, setCreatedKey] = useState<string | null>(null);
 
-	const { data: keys, isLoading } = useQuery({
+	const {
+		data: keys,
+		error,
+		isLoading,
+		refetch,
+	} = useQuery({
 		queryKey: ["api-keys"],
 		queryFn: async () => unwrap(await api.GET("/v1/auth/keys")),
 	});
@@ -211,21 +217,27 @@ export function ApiKeysPanel() {
 				</div>
 			) : null}
 
-			<div className="md:hidden">
-				<ApiKeysMobileList
-					keys={keys ?? []}
-					isLoading={isLoading}
-					isRevoking={revokeKey.isPending}
-					onRevoke={(keyId) => revokeKey.mutate(keyId)}
-				/>
-			</div>
-			<DataTable
-				columns={columns}
-				data={keys ?? []}
-				isLoading={isLoading}
-				emptyMessage="No API keys yet."
-				className="hidden md:block"
-			/>
+			{error ? (
+				<ApiErrorPanel error={error} onRetry={() => refetch()} title="Couldn’t load API keys" />
+			) : (
+				<>
+					<div className="md:hidden">
+						<ApiKeysMobileList
+							keys={keys ?? []}
+							isLoading={isLoading}
+							isRevoking={revokeKey.isPending}
+							onRevoke={(keyId) => revokeKey.mutate(keyId)}
+						/>
+					</div>
+					<DataTable
+						columns={columns}
+						data={keys ?? []}
+						isLoading={isLoading}
+						emptyMessage="No API keys yet."
+						className="hidden md:block"
+					/>
+				</>
+			)}
 		</div>
 	);
 }

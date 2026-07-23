@@ -27,6 +27,13 @@ export interface OpenClawNativeUiCopy {
 	pairingApproveCommand: string;
 	pairingWarning: string;
 	openHostedTerminal: string;
+	pairingRequestId: string;
+	pairingApprove: string;
+	pairingApproving: string;
+	pairingEmpty: string;
+	pairingRefresh: string;
+	pairingLoadError: string;
+	pairingApproved: string;
 	credentialErrorTitle: string;
 	credentialErrorDescription: string;
 	popupBlockedTitle: string;
@@ -71,6 +78,13 @@ const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 			pairingApproveCommand: "openclaw devices approve <requestId>",
 			pairingWarning: "Do not auto-approve a request and do not use --latest.",
 			openHostedTerminal: "Open Hosted Terminal",
+			pairingRequestId: "Request ID",
+			pairingApprove: "Approve this browser",
+			pairingApproving: "Approving…",
+			pairingEmpty: "No pending browser pairing request yet.",
+			pairingRefresh: "Check for pairing request",
+			pairingLoadError: "Couldn’t load pending pairing requests.",
+			pairingApproved: "Browser pairing approved. Return to the OpenClaw window.",
 			credentialErrorTitle: "Couldn’t open OpenClaw",
 			credentialErrorDescription: "Please try again.",
 			popupBlockedTitle: "Couldn’t open OpenClaw",
@@ -108,6 +122,13 @@ const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 			pairingApproveCommand: "openclaw devices approve <requestId>",
 			pairingWarning: "不要自动批准请求，也不要使用 --latest。",
 			openHostedTerminal: "打开 Hosted Terminal",
+			pairingRequestId: "请求 ID",
+			pairingApprove: "批准此浏览器",
+			pairingApproving: "正在批准…",
+			pairingEmpty: "尚无待处理的浏览器配对请求。",
+			pairingRefresh: "检查配对请求",
+			pairingLoadError: "无法加载待处理的配对请求。",
+			pairingApproved: "浏览器配对已批准。请返回 OpenClaw 窗口。",
 			credentialErrorTitle: "无法打开 OpenClaw",
 			credentialErrorDescription: "请重试。",
 			popupBlockedTitle: "无法打开 OpenClaw",
@@ -145,6 +166,13 @@ const COPY: Record<"en" | "zh-CN" | "zh-TW", RuntimeUiCopyCatalog> = {
 			pairingApproveCommand: "openclaw devices approve <requestId>",
 			pairingWarning: "不要自動核准請求，也不要使用 --latest。",
 			openHostedTerminal: "開啟 Hosted Terminal",
+			pairingRequestId: "請求 ID",
+			pairingApprove: "核准此瀏覽器",
+			pairingApproving: "正在核准…",
+			pairingEmpty: "尚無待處理的瀏覽器配對請求。",
+			pairingRefresh: "檢查配對請求",
+			pairingLoadError: "無法載入待處理的配對請求。",
+			pairingApproved: "瀏覽器配對已核准。請返回 OpenClaw 視窗。",
 			credentialErrorTitle: "無法開啟 OpenClaw",
 			credentialErrorDescription: "請重試。",
 			popupBlockedTitle: "無法開啟 OpenClaw",

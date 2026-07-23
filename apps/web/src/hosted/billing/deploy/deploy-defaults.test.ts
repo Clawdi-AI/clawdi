@@ -6,9 +6,12 @@ import {
 	DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 	DEFAULT_DEPLOY_RUNTIME,
 	defaultManagedDeployAiFields,
-	defaultManagedPrimaryModel,
 } from "@/hosted/billing/deploy/deploy-defaults";
-import { MANAGED_AI_CHOICE, MANAGED_PROVIDER_ID } from "@/hosted/v2/ai-providers/model-binding";
+import {
+	MANAGED_AI_CHOICE,
+	MANAGED_DEFAULT_MODEL_CHOICE,
+	MANAGED_PROVIDER_ID,
+} from "@/hosted/v2/ai-providers/model-binding";
 
 describe("deploy wizard defaults", () => {
 	test("default to the hermes runtime and managed AI mode", () => {
@@ -16,22 +19,16 @@ describe("deploy wizard defaults", () => {
 		expect(DEFAULT_DEPLOY_AI_ACCESS_MODE).toBe("configured");
 		expect(DEFAULT_DEPLOY_AI_PROVIDER_CHOICES).toEqual([MANAGED_AI_CHOICE]);
 		expect(DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE).toBe(MANAGED_AI_CHOICE);
-		expect(DEFAULT_DEPLOY_PRIMARY_MODEL).toBe("gpt-5.5");
+		expect(DEFAULT_DEPLOY_PRIMARY_MODEL).toBe(MANAGED_DEFAULT_MODEL_CHOICE);
 	});
 
-	test("build the explicit managed deploy fields used by the default wizard state", () => {
-		expect(defaultManagedPrimaryModel()).toEqual({
-			provider_id: MANAGED_PROVIDER_ID,
-			model: DEFAULT_DEPLOY_PRIMARY_MODEL,
-		});
+	test("omits primary_model so hosted resolves the canonical Luna default", () => {
 		expect(defaultManagedDeployAiFields()).toEqual({
 			ai_provider_id: null,
 			ai_provider_auth_kind: "managed",
 			provider_ids: [MANAGED_PROVIDER_ID],
-			primary_model: {
-				provider_id: MANAGED_PROVIDER_ID,
-				model: DEFAULT_DEPLOY_PRIMARY_MODEL,
-			},
 		});
+		expect(defaultManagedDeployAiFields()).not.toHaveProperty("primary_model");
+		expect(JSON.stringify(defaultManagedDeployAiFields())).not.toContain("gpt-5.5");
 	});
 });

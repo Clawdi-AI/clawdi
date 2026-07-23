@@ -6,7 +6,7 @@ import {
 import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
 
 describe("buildHostedDeployRequest", () => {
-	test("serializes the default wizard state with explicit hermes and managed AI", () => {
+	test("serializes managed defaults without overriding hosted Luna selection", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_basic",
 			runtime: DEFAULT_DEPLOY_RUNTIME,
@@ -25,16 +25,13 @@ describe("buildHostedDeployRequest", () => {
 			ai_provider_id: null,
 			ai_provider_auth_kind: "managed",
 			provider_ids: ["clawdi-v2"],
-			primary_model: {
-				provider_id: "clawdi-v2",
-				model: "gpt-5.5",
-			},
 			config: {
 				runtime: "hermes",
 				language: null,
 				timezone: null,
 			},
 		});
+		expect(request).not.toHaveProperty("primary_model");
 		expect("assistant_name" in request).toBe(false);
 		expect("assistant_name" in (request.config ?? {})).toBe(false);
 		expect("personality" in request).toBe(false);

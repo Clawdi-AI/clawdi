@@ -160,7 +160,7 @@ import {
 	firstModelForProvider,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
-	MANAGED_PRIMARY_MODEL_FALLBACK,
+	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
@@ -1014,6 +1014,27 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	const [isLoadingCredentials, setIsLoadingCredentials] = useState(false);
 	const openClawCopy = browserOpenClawNativeUiCopy();
 	const credentialGeneration = deployment.resource.metadata.generation;
+	const pairingRequests = useQuery({
+		queryKey: ["hosted-openclaw-pairing", deployment.resource.id],
+		queryFn: () => client.listOpenClawPairingRequests(deployment.resource.id),
+		enabled: runtime === "openclaw" && isRunning,
+		refetchInterval: runtime === "openclaw" && isRunning ? 2_000 : false,
+		retry: false,
+	});
+	const approvePairing = useMutation({
+		mutationFn: (requestId: string) =>
+			client.approveOpenClawPairingRequest(deployment.resource.id, requestId),
+		onSuccess: () => {
+			toast.success(openClawCopy.pairingApproved);
+			void pairingRequests.refetch();
+		},
+		onError: (error) => {
+			toast.error(openClawCopy.pairingLoadError, {
+				description: normalizeBillingError(error),
+			});
+			void pairingRequests.refetch();
+		},
+	});
 	useEffect(() => {
 		setCredentials(null);
 		setLoadedCredentialGeneration(null);
@@ -1128,6 +1149,59 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 										<div>{openClawCopy.pairingApproveCommand}</div>
 									</div>
 									<p>{openClawCopy.pairingWarning}</p>
+									{pairingRequests.error ? (
+										<div className="space-y-2 rounded-md border border-destructive/30 p-3">
+											<p className="text-sm text-destructive">{openClawCopy.pairingLoadError}</p>
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												onClick={() => void pairingRequests.refetch()}
+											>
+												{openClawCopy.pairingRefresh}
+											</Button>
+										</div>
+									) : pairingRequests.data?.requests.length ? (
+										<div className="space-y-2">
+											{pairingRequests.data.requests.map((request) => (
+												<div
+													key={request.request_id}
+													className="space-y-2 rounded-md border bg-background p-3"
+												>
+													<div className="text-sm font-medium">
+														{request.display_name || request.client_id || request.device_id}
+													</div>
+													<div className="text-xs text-muted-foreground">
+														{openClawCopy.pairingRequestId}:{" "}
+														<code className="break-all">{request.request_id}</code>
+													</div>
+													<Button
+														type="button"
+														size="sm"
+														disabled={approvePairing.isPending}
+														onClick={() => approvePairing.mutate(request.request_id)}
+													>
+														{approvePairing.isPending
+															? openClawCopy.pairingApproving
+															: openClawCopy.pairingApprove}
+													</Button>
+												</div>
+											))}
+										</div>
+									) : (
+										<div className="space-y-2 rounded-md border bg-background p-3">
+											<p className="text-sm text-muted-foreground">{openClawCopy.pairingEmpty}</p>
+											<Button
+												type="button"
+												variant="outline"
+												size="sm"
+												disabled={pairingRequests.isFetching}
+												onClick={() => void pairingRequests.refetch()}
+											>
+												{openClawCopy.pairingRefresh}
+											</Button>
+										</div>
+									)}
 									<Link
 										to="/agents/$id/$section"
 										params={{ id: deployment.resource.id, section: "terminal" }}
@@ -1505,7 +1579,7 @@ function AiProviderTab({
 	const [bindingMode, setBindingMode] = useState<AiBindingMode>(initialMode);
 	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(initialPrimaryChoice);
 	const [primaryModel, setPrimaryModel] = useState<string>(
-		currentModel || MANAGED_PRIMARY_MODEL_FALLBACK,
+		currentModel || MANAGED_DEFAULT_MODEL_CHOICE,
 	);
 
 	// Re-seed the form only when the server-side binding genuinely changes (the
@@ -1526,7 +1600,7 @@ function AiProviderTab({
 		setBindingMode(initialMode);
 		setSelectedProviders(initialProviderChoices);
 		setPrimaryProviderChoice(initialPrimaryChoice);
-		setPrimaryModel(currentModel || MANAGED_PRIMARY_MODEL_FALLBACK);
+		setPrimaryModel(currentModel || MANAGED_DEFAULT_MODEL_CHOICE);
 	}
 
 	const selectedIdentity = JSON.stringify(
@@ -1538,7 +1612,7 @@ function AiProviderTab({
 		(bindingMode === "configured" &&
 			(selectedIdentity !== initialSelectedIdentity ||
 				primaryProviderChoice !== initialPrimaryChoice ||
-				primaryModel !== (currentModel || MANAGED_PRIMARY_MODEL_FALLBACK)));
+				primaryModel !== (currentModel || MANAGED_DEFAULT_MODEL_CHOICE)));
 
 	function setPrimaryProvider(choice: string) {
 		setBindingMode("configured");
@@ -1828,7 +1902,11 @@ function AgentPrimaryModelPicker({
 			})),
 	];
 	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({ value: model, label: formatModelLabel(model) })),
+		...catalogModelIds.map((model) => ({
+			value: model,
+			label:
+				model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : formatModelLabel(model),
+		})),
 		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
 	];
 	return (
@@ -1882,7 +1960,9 @@ function AgentPrimaryModelPicker({
 							<SelectContent>
 								{catalogModelIds.map((model) => (
 									<SelectItem key={model} value={model}>
-										{formatModelLabel(model)}
+										{model === MANAGED_DEFAULT_MODEL_CHOICE
+											? "Hosted default (Luna)"
+											: formatModelLabel(model)}
 									</SelectItem>
 								))}
 								<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
@@ -1903,11 +1983,7 @@ function AgentPrimaryModelPicker({
 						id="agent-primary-model"
 						value={primaryModel}
 						onChange={(event) => onPrimaryModelChange(event.target.value)}
-						placeholder={
-							primaryProviderChoice === MANAGED_AI_CHOICE
-								? MANAGED_PRIMARY_MODEL_FALLBACK
-								: "model id"
-						}
+						placeholder="model id"
 						autoComplete="off"
 						spellCheck={false}
 					/>

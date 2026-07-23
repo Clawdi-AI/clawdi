@@ -19,6 +19,8 @@ describe("runtime password UI copy", () => {
 			expect(copy.pairingListCommand).toBe("openclaw devices list");
 			expect(copy.pairingApproveCommand).toBe("openclaw devices approve <requestId>");
 			expect(copy.pairingWarning).toContain("--latest");
+			expect(copy.pairingApprove).not.toBe("");
+			expect(copy.pairingRequestId).not.toBe("");
 		}
 	});
 });

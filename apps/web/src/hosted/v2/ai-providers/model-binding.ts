@@ -3,7 +3,7 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 export const MANAGED_AI_CHOICE = "__managed__";
 export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_V2_PROVIDER_ID;
-export const MANAGED_PRIMARY_MODEL_FALLBACK = "gpt-5.5";
+export const MANAGED_DEFAULT_MODEL_CHOICE = "__hosted_default__";
 
 export type PrimaryModelRef = {
 	provider_id: string;
@@ -34,7 +34,7 @@ export function primaryModelProviderId(value: PrimaryModelInput): string | null 
 export function primaryModelRef(providerId: string, model: string): PrimaryModelRef | null {
 	const provider_id = providerId.trim();
 	const value = model.trim();
-	if (!provider_id || !value) return null;
+	if (!provider_id || !value || value === MANAGED_DEFAULT_MODEL_CHOICE) return null;
 	return { provider_id, model: value };
 }
 
@@ -77,7 +77,7 @@ export function providerRefFromChoice(
 
 export function modelIdsForProvider(choice: string, providers: readonly AiProvider[]): string[] {
 	if (choice === MANAGED_AI_CHOICE) {
-		return [MANAGED_PRIMARY_MODEL_FALLBACK];
+		return [MANAGED_DEFAULT_MODEL_CHOICE];
 	}
 	const provider = providers.find((item) => item.provider_id === choice);
 	return dedupeProviderIds((provider?.models ?? []).map((model) => model.id));
@@ -85,7 +85,7 @@ export function modelIdsForProvider(choice: string, providers: readonly AiProvid
 
 export function firstModelForProvider(choice: string, providers: readonly AiProvider[]): string {
 	const [first] = modelIdsForProvider(choice, providers);
-	return first ?? (choice === MANAGED_AI_CHOICE ? MANAGED_PRIMARY_MODEL_FALLBACK : "");
+	return first ?? (choice === MANAGED_AI_CHOICE ? MANAGED_DEFAULT_MODEL_CHOICE : "");
 }
 
 export function normalizeSelectedProviderIds(
