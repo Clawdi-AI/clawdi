@@ -27,9 +27,12 @@ afterEach(() => {
 });
 
 describe("hosted runtime bundle v2", () => {
-	test("strictly parses the shared golden and projects channels in TypeScript", () => {
+	test("accepts the hosted-emitted gateway secret contract before projecting channels", () => {
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
 		const load = normalizeHostedRuntimeBundleV2(raw);
+		expect(load.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
+			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+		});
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
