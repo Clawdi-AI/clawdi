@@ -747,6 +747,7 @@ type HostedApiStubOptions = {
 	deleteRequests?: string[];
 	completedDeleteIds?: Set<string>;
 	deleteResponses?: StubResponse[];
+	deploymentListRequests?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
@@ -844,6 +845,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				: fulfillJson(r, response);
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
+			options.deploymentListRequests?.push(p);
 			if (options.deploymentsResponse) {
 				if (options.deploymentsResponse.delayMs) {
 					await new Promise((resolve) => setTimeout(resolve, options.deploymentsResponse?.delayMs));
@@ -1749,6 +1751,51 @@ test("projection service errors stay visible while deployment tools remain avail
 		(error) => error.includes("Maximum update depth") || error.includes("Too many re-renders"),
 	);
 	expect(renderErrors, `projection failure render: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("running deployment without a UI endpoint auto-opens the live UI when polling resolves", async ({
+	page,
+}) => {
+	const pendingRuntimeUiDeployment = {
+		...runningMissingProjectionDeployment,
+		id: "hdep_runtime_ui_settling",
+		name: "Runtime UI settling agent",
+		hermes_control_ui_url: null,
+	};
+	const readyRuntimeUiDeployment = {
+		...pendingRuntimeUiDeployment,
+		hermes_control_ui_url: "https://runtime.example/hermes",
+	};
+	const deployments: unknown[] = [pendingRuntimeUiDeployment];
+	const deploymentListRequests: string[] = [];
+	const runtimeUiRedemptionRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments,
+		deploymentListRequests,
+		runtimeUiRedemptionRequests,
+	});
+
+	await page.goto(`/agents/${pendingRuntimeUiDeployment.id}?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect(main.getByText("Starting the live UI…", { exact: true })).toBeVisible();
+	await expect(
+		main.getByText("Opening the live UI automatically…", { exact: false }),
+	).toBeVisible();
+	await expect(main.getByRole("button", { name: "Use Terminal now", exact: true })).toBeVisible();
+
+	deployments.splice(0, 1, readyRuntimeUiDeployment);
+
+	await expect
+		.poll(() => deploymentListRequests.length, { timeout: 10_000 })
+		.toBeGreaterThanOrEqual(2);
+	await expect(page).toHaveURL(
+		new RegExp(`/agents/${missingProjectionEnvironmentId}/console\\?source=on-clawdi$`),
+	);
+	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
+	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
+		"src",
+		"https://runtime.example/ui?clawdi_code=browser",
+	);
 });
 
 test("Runtime UI credential failure renders a retryable error instead of a permanent spinner", async ({
