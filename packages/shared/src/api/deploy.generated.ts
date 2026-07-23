@@ -1033,6 +1033,10 @@ export interface components {
             invoice_id?: string | null;
             /** Deployment Id */
             deployment_id?: string | null;
+            /** Deployment Name */
+            deployment_name?: string | null;
+            /** Metadata Generation */
+            metadata_generation?: number | null;
             /** Deploy Request Id */
             deploy_request_id?: string | null;
             /** Debited Credits */
@@ -2632,6 +2636,15 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2CheckoutResponse"];
+                };
+            };
+            /** @description Deployment desired state accepted */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };

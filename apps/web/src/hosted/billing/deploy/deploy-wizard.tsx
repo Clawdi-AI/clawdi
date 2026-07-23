@@ -826,15 +826,6 @@ export function DeployWizard() {
 		return false;
 	}
 
-	async function resolveWalletDeploymentId(
-		deploymentId: string | null | undefined,
-		deployRequestId: string | null | undefined,
-	): Promise<string | null> {
-		if (!deployRequestId) return deploymentId ?? null;
-		const resolved = await resolveDeploymentRequest.mutateAsync(deployRequestId);
-		return resolved.deploymentId || deploymentId || null;
-	}
-
 	async function fallbackToHostedCheckout(request: SubscriptionCreateRequestView) {
 		if (!(await recheckCanCreateCloudAgents())) return;
 		const fingerprint = idempotencyFingerprint({
@@ -976,25 +967,18 @@ export function DeployWizard() {
 					if (outcome.flowType !== "subscription_activation") {
 						throw new Error("Wallet subscription returned a checkout flow.");
 					}
-					const deploymentId = await resolveWalletDeploymentId(
-						outcome.deploymentId,
-						outcome.deployRequestId ?? attempt.key,
-					);
+					const deploymentId = outcome.deploymentId;
+					if (!deploymentId) {
+						throw new Error("Wallet activation did not accept a deployment target.");
+					}
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
 					walletCreateAttemptRef.current = null;
-					if (deploymentId) {
-						toast.success("Agent deployed", {
-							description: `${formatCents(walletDebit?.exactDebitCents ?? paidSelection.offer.price_cents)} was paid with AI Credits.`,
-						});
-						void router.navigate({
-							href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
-						});
-						return;
-					}
-					toast.success("Wallet subscription active", {
-						description: "Your deployment is provisioning and will appear in Agents shortly.",
+					toast.success("Agent deployed", {
+						description: `${formatCents(walletDebit?.exactDebitCents ?? paidSelection.offer.price_cents)} was paid with AI Credits.`,
 					});
-					void router.navigate({ href: "/" });
+					void router.navigate({
+						href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
+					});
 					return;
 				}
 				const checkoutFingerprint = idempotencyFingerprint({ selection, target });
