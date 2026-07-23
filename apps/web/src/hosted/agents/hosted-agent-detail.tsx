@@ -367,11 +367,15 @@ export function HostedAgentDetail({
 	deployment,
 	runtime,
 	section = "overview",
+	autoOpenRuntimeUi = false,
+	runtimeUiSettlingTimedOut = false,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	section?: AgentSectionId;
+	autoOpenRuntimeUi?: boolean;
+	runtimeUiSettlingTimedOut?: boolean;
 }) {
 	const api = useApi();
 	const router = useRouter();
@@ -417,6 +421,29 @@ export function HostedAgentDetail({
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
 	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const terminalHref = agentSectionHref(environmentId, "terminal", searchStr);
+
+	useEffect(() => {
+		if (
+			!autoOpenRuntimeUi ||
+			activeTab !== "overview" ||
+			!canOpenHostedRuntimeUi(deployment.resource.status.summary_state, consoleUrl)
+		) {
+			return;
+		}
+		void router.navigate({
+			href: agentSectionHref(environmentId, "console", searchStr),
+			replace: true,
+		});
+	}, [
+		activeTab,
+		autoOpenRuntimeUi,
+		consoleUrl,
+		deployment.resource.status.summary_state,
+		environmentId,
+		router,
+		searchStr,
+	]);
 	const scopedSessionLink = (sessionId: string) => ({
 		to: "/agents/$id/sessions/$sessionId" as const,
 		params: { id: environmentId, sessionId },
@@ -495,6 +522,7 @@ export function HostedAgentDetail({
 					{activeTab === "overview" ? (
 						<OverviewTab
 							deployment={deployment}
+							runtime={runtime}
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							isPerformance={isPerformance}
 							showDeploymentActions={projection.status !== "resolved" || !deploymentRunning}
@@ -504,10 +532,17 @@ export function HostedAgentDetail({
 							sessionsError={sessions.error}
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
+							terminalHref={terminalHref}
+							runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
 						/>
 					) : null}
 					{activeTab === "console" ? (
-						<ConsoleTab deployment={deployment} runtime={runtime} />
+						<ConsoleTab
+							deployment={deployment}
+							runtime={runtime}
+							terminalHref={terminalHref}
+							runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
+						/>
 					) : null}
 					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
 					{activeTab === "sessions" ? (
@@ -728,20 +763,126 @@ function RuntimeStatusValue({
 	);
 }
 
-function OverviewProvisioningPanel({ status }: { status: DeploymentStatus }) {
+type DeploymentReadinessStage = "provisioning" | "booting" | "ready";
+
+function deploymentReadinessStage(
+	status: HostedDeployment["resource"]["status"],
+	runtimeUiAvailable: boolean,
+): DeploymentReadinessStage {
+	if (runtimeUiAvailable) return "ready";
+	const computeReady = status.conditions.some(
+		(condition) => condition.type === "Ready" && condition.status === "True",
+	);
+	if (status.summary_state === "starting" || status.summary_state === "running" || computeReady) {
+		return "booting";
+	}
+	return "provisioning";
+}
+
+function DeploymentReadinessProgress({ stage }: { stage: DeploymentReadinessStage }) {
+	const steps = ["Provisioning", "Booting", "Ready"] as const;
+	const stageIndex = { provisioning: 0, booting: 1, ready: 2 }[stage];
 	return (
-		<div className="rounded-xl border border-info-muted bg-info-muted p-5 text-info-muted-foreground">
+		<ol aria-label="Deployment progress" className="mt-3 flex items-center gap-2 text-xs">
+			{steps.map((step, index) => {
+				const complete = index < stageIndex || stage === "ready";
+				const current = index === stageIndex && stage !== "ready";
+				return (
+					<li
+						key={step}
+						className={cn(
+							"flex items-center gap-1.5",
+							complete || current ? "font-medium text-foreground" : "text-muted-foreground",
+						)}
+						aria-current={current ? "step" : undefined}
+					>
+						<span
+							aria-hidden
+							className={cn(
+								"size-1.5 rounded-full",
+								complete ? "bg-success" : current ? "bg-info" : "bg-border",
+							)}
+						/>
+						{step}
+						{index < steps.length - 1 ? (
+							<span aria-hidden className="ml-0.5 text-border">
+								→
+							</span>
+						) : null}
+					</li>
+				);
+			})}
+		</ol>
+	);
+}
+
+function OverviewProvisioningPanel({
+	deployment,
+	runtime,
+	runtimeUiAvailable,
+	runtimeUiSettlingTimedOut,
+	terminalHref,
+}: {
+	deployment: HostedDeployment;
+	runtime: Runtime;
+	runtimeUiAvailable: boolean;
+	runtimeUiSettlingTimedOut: boolean;
+	terminalHref: string;
+}) {
+	const status = deployment.resource.status;
+	const stage = deploymentReadinessStage(status, runtimeUiAvailable);
+	const parsedStatus = parseDeploymentStatus(status.summary_state);
+	const browserUiLabel = runtimeBrowserUiLabel(runtime);
+	const title = runtimeUiSettlingTimedOut
+		? "Live UI is taking longer than expected"
+		: stage === "provisioning"
+			? "Provisioning your agent…"
+			: stage === "booting"
+				? status.summary_state === "running"
+					? "Starting the live UI…"
+					: "Booting your agent…"
+				: "Your agent is ready";
+	const description = runtimeUiSettlingTimedOut
+		? `${browserUiLabel} did not publish within the startup window. Automatic periodic checks will continue, and Terminal is available now.`
+		: stage === "provisioning"
+			? "Hosted compute is being prepared. This page updates automatically."
+			: stage === "booting"
+				? "Opening the live UI automatically… Terminal is available while the runtime finishes booting."
+				: "The live UI is ready to use.";
+	return (
+		<div
+			className={cn(
+				"rounded-xl border p-5",
+				runtimeUiSettlingTimedOut
+					? "border-warning/30 bg-warning-muted text-warning-muted-foreground"
+					: "border-info-muted bg-info-muted text-info-muted-foreground",
+			)}
+		>
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-start">
 				<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-info-muted bg-background">
-					<Spinner className="size-5" />
+					{runtimeUiSettlingTimedOut ? (
+						<AlertCircle className="size-5" />
+					) : (
+						<Spinner className="size-5" />
+					)}
 				</div>
-				<div className="min-w-0">
-					<h2 className="text-sm font-semibold text-foreground">{provisioningTitle(status)}</h2>
-					<p className="mt-1 text-sm">
-						Hosted compute is being prepared. This usually takes a couple of minutes, and this page
-						updates automatically.
-					</p>
-					<p className="mt-2 text-xs">Current status: {deploymentStatusLabel(status)}.</p>
+				<div className="min-w-0 flex-1">
+					<h2 className="text-sm font-semibold text-foreground">{title}</h2>
+					<p className="mt-1 text-sm">{description}</p>
+					<DeploymentReadinessProgress stage={stage} />
+					<p className="mt-2 text-xs">Current status: {deploymentStatusLabel(parsedStatus)}.</p>
+					{stage === "booting" ? (
+						<Button
+							render={<Link to={terminalHref} />}
+							nativeButton={false}
+							variant="outline"
+							size="sm"
+							className="mt-3"
+						>
+							<TerminalSquare className="size-3.5" />
+							Use Terminal now
+						</Button>
+					) : null}
 				</div>
 			</div>
 		</div>
@@ -804,6 +945,7 @@ function OverviewFailedPanel({
 
 function OverviewTab({
 	deployment,
+	runtime,
 	agent,
 	isPerformance,
 	showDeploymentActions,
@@ -813,8 +955,11 @@ function OverviewTab({
 	sessionsError,
 	onRetrySessions,
 	sessionLink,
+	terminalHref,
+	runtimeUiSettlingTimedOut,
 }: {
 	deployment: HostedDeployment;
+	runtime: Runtime;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	isPerformance: boolean;
 	showDeploymentActions: boolean;
@@ -827,18 +972,28 @@ function OverviewTab({
 		to: "/agents/$id/sessions/$sessionId";
 		params: { id: string; sessionId: string };
 	};
+	terminalHref: string;
+	runtimeUiSettlingTimedOut: boolean;
 }) {
 	const spec = deployment.resource.spec;
 	const model = spec.runtime_configuration.primary_model?.model || "Managed default";
 	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
+	const runtimeUiAvailable = Boolean(runtimeConsoleUrl(deployment, runtime));
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
 	return (
 		<div className="flex flex-col gap-5">
-			{isProvisioningStatus(deploymentStatus) ? (
-				<OverviewProvisioningPanel status={deploymentStatus} />
+			{isProvisioningStatus(deploymentStatus) ||
+			(deploymentStatus.kind === "running" && !runtimeUiAvailable) ? (
+				<OverviewProvisioningPanel
+					deployment={deployment}
+					runtime={runtime}
+					runtimeUiAvailable={runtimeUiAvailable}
+					runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
+					terminalHref={terminalHref}
+				/>
 			) : null}
 			{deploymentStatus.kind === "failed" ? (
 				<OverviewFailedPanel deployment={deployment} restartLabel="Retry startup" />
@@ -962,7 +1117,17 @@ function RuntimeUiOpenButton({
  * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
  * the full-screen link is the alternate path.
  */
-function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
+function ConsoleTab({
+	deployment,
+	runtime,
+	terminalHref,
+	runtimeUiSettlingTimedOut,
+}: {
+	deployment: HostedDeployment;
+	runtime: Runtime;
+	terminalHref: string;
+	runtimeUiSettlingTimedOut: boolean;
+}) {
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const isRunning = isRunningStatus(status);
 	const isProvisioning = isProvisioningStatus(status);
@@ -1026,9 +1191,28 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	if (!url) {
 		return (
 			<EmptyState
-				icon={MonitorPlay}
-				title="No Runtime UI URL yet"
-				description={`This ${label} runtime is running but hasn't published its browser UI endpoint yet. Check the Overview status shortly or use Terminal while it finishes.`}
+				icon={runtimeUiSettlingTimedOut ? AlertCircle : <Spinner className="size-5" />}
+				title={
+					runtimeUiSettlingTimedOut
+						? "Live UI is taking longer than expected"
+						: "Starting the live UI…"
+				}
+				description={
+					runtimeUiSettlingTimedOut
+						? `${label} did not publish its browser UI within the startup window. Automatic periodic checks will continue.`
+						: `Opening the live UI automatically… You can use Terminal right now while ${label} finishes booting.`
+				}
+				action={
+					<Button
+						render={<Link to={terminalHref} />}
+						nativeButton={false}
+						variant="outline"
+						size="sm"
+					>
+						<TerminalSquare className="size-3.5" />
+						Use Terminal now
+					</Button>
+				}
 			/>
 		);
 	}
