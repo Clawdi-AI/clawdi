@@ -2852,7 +2852,7 @@ function applyOpenClawHostedProviderProjection(
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
 	runRuntimeUserCommand(
 		command,
-		["config", "patch", "--stdin"],
+		["config", "patch", "--stdin", ...openClawProviderModelReplacementArgs(file.content)],
 		mergeOpenClawProviderDeletes(file.content, deletedProviderIds),
 		home,
 		workspaceRoot,
@@ -2898,6 +2898,19 @@ function openClawProviderIdsFromPatch(content: string): Set<string> {
 			.filter(([, value]) => value !== null)
 			.map(([providerId]) => providerId),
 	);
+}
+
+function openClawProviderModelReplacementArgs(content: string): string[] {
+	const parsed = JSON.parse(content) as unknown;
+	const root = recordValue(parsed);
+	const models = root ? recordValue(root.models) : null;
+	const providers = models ? recordValue(models.providers) : null;
+	if (!providers) return [];
+	return Object.entries(providers).flatMap(([providerId, provider]) => {
+		const providerConfig = recordValue(provider);
+		if (!providerConfig || !Array.isArray(providerConfig.models)) return [];
+		return ["--replace-path", `models.providers[${JSON.stringify(providerId)}].models`];
+	});
 }
 
 function mergeOpenClawProviderDeletes(

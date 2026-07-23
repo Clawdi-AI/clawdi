@@ -2470,7 +2470,7 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(convergence.installErrors).toEqual([]);
 		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
 			"config patch --stdin",
-			"config patch --stdin",
+			'config patch --stdin --replace-path models.providers["default"].models',
 		]);
 		expect(JSON.parse(readFileSync(openclawPatch, "utf-8"))).toEqual({
 			agents: {
@@ -2528,6 +2528,90 @@ chmod +x "$HOME/.local/bin/hermes"
 		expect(runConfig.secretEnv).toEqual({ OPENAI_API_KEY: "provider.default.apiKey" });
 		expect(runConfig.secretFilePath).toBe(join(run, "secrets", "runtimes", "openclaw.json"));
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
+	});
+
+	it("replaces OpenClaw provider models when the selected model changes", () => {
+		const home = join(root, "model-switch", "home", "clawdi");
+		const state = join(root, "model-switch", "var", "lib", "clawdi");
+		const run = join(root, "model-switch", "run", "clawdi");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawConfig = join(home, ".openclaw", "openclaw.json");
+		const providerPatch = join(root, "openclaw-model-switch-patch.json");
+		const commandLog = join(root, "openclaw-model-switch-command.txt");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(
+			openclawConfig,
+			`${JSON.stringify({
+				models: {
+					providers: {
+						"clawdi-managed": { models: [{ id: "luna" }] },
+					},
+				},
+			})}\n`,
+		);
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> '${commandLog}'
+if [ "\${1:-} \${2:-} \${3:-}" = "config patch --stdin" ]; then
+  cat > '${providerPatch}'
+  if grep -q '"models"' '${providerPatch}'; then
+    if [ "\${4:-}" != "--replace-path" ] || [ "\${5:-}" != 'models.providers["clawdi-managed"].models' ] || [ -n "\${6:-}" ]; then
+      echo 'Refusing to replace models.providers.clawdi-managed.models; use --merge or --replace intentionally.' >&2
+      exit 42
+    fi
+    cp '${providerPatch}' '${openclawConfig}'
+  fi
+  exit 0
+fi
+exit 0
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const loaded = hostedSingleProviderModeLoad(home, "openclaw", "configured", 2);
+		const providers = {
+			"clawdi-managed": {
+				...loaded.manifest.projection?.providers?.["clawdi-managed"],
+				model: "sol",
+				models: [{ id: "sol" }],
+			},
+		};
+		loaded.manifest = {
+			...loaded.manifest,
+			runtimes: {
+				openclaw: {
+					...loaded.manifest.runtimes.openclaw,
+					primary_model: { provider_id: "clawdi-managed", model: "sol" },
+				},
+			},
+			projection: {
+				...loaded.manifest.projection,
+				providers,
+			},
+			egressProfiles: hostedManifestEgressProfiles({
+				providers,
+				terminalTooling: loaded.manifest.projection?.terminalTooling,
+			}),
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		expect(readFileSync(commandLog, "utf-8")).toContain(
+			'config patch --stdin --replace-path models.providers["clawdi-managed"].models',
+		);
+		const appliedConfig = JSON.parse(readFileSync(openclawConfig, "utf-8"));
+		expect(appliedConfig.agents.defaults.model.primary).toBe("clawdi-managed/sol");
+		expect(appliedConfig.models.providers["clawdi-managed"].models).toEqual([
+			expect.objectContaining({ id: "sol" }),
+		]);
+		expect(JSON.stringify(appliedConfig)).not.toContain("luna");
 	});
 
 	it("writes Codex managed provider config from hosted runtime converge", () => {
@@ -3557,7 +3641,7 @@ exit 0
 		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
 			"gateway install --force --json",
 			"config patch --stdin",
-			"config patch --stdin",
+			'config patch --stdin --replace-path models.providers["default"].models',
 		]);
 		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-1.json"), "utf-8"))).toEqual({
 			gateway: {
