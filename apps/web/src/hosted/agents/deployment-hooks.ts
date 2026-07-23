@@ -4,6 +4,7 @@ import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-q
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { useBillingClient } from "@/hosted/billing/billing-client";
+import type { DeploymentUpdateRequest } from "@/hosted/billing/contracts";
 import {
 	DeploymentConflictError,
 	isNetworkError,
@@ -115,14 +116,6 @@ export function useCreateTerminalSession() {
 	});
 }
 
-export function useCreateRuntimeUiRedemption() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (vars: { id: string }) => client.createRuntimeUiRedemption(vars.id),
-		onError: toastBillingError("Couldn't open runtime UI"),
-	});
-}
-
 export function useDeploymentLifecycle() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
@@ -171,6 +164,28 @@ export function useDeleteDeployment() {
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
 			toastBillingError("Couldn't delete agent")(error);
+		},
+		onSettled: () => invalidateDeploymentSnapshots(qc),
+	});
+}
+
+export function useUpdateDeployment() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (vars: { id: string; update: DeploymentUpdateRequest }) =>
+			runStableDeploymentIntent("deployment-update", vars, (key) =>
+				client.updateDeployment(vars.id, vars.update, key),
+			),
+		onSuccess: () => {
+			scheduleDeploymentSettlingRefresh(qc);
+			toast.success("Agent settings updated");
+		},
+		onError: (error) => {
+			if (toastDeploymentConflict(error)) return;
+			toast.error("Couldn't update agent settings", {
+				description: normalizeBillingError(error),
+			});
 		},
 		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});

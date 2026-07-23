@@ -27,9 +27,64 @@ export type DeploymentRead = S["V2HostedDeploymentReadResponse"];
 export type Deployment = DeploymentRead;
 export type DeployRequestRead = S["V2HostedDeployRequestReadResponse"];
 export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff"];
+export type RuntimeUiAuthMode = "password" | "openclaw_device";
+export type RuntimeUiCredentials = S["V2HostedRuntimeUiCredentials"];
+export type RuntimeUiEndpointInfo = S["V2HostedRuntimeUiEndpointInfo"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function isRuntimeUiEndpointInfo(value: unknown): value is RuntimeUiEndpointInfo {
+	if (!isRecord(value)) return false;
+	return (
+		(value.runtime === "openclaw" || value.runtime === "hermes") &&
+		value.role === "control_ui" &&
+		typeof value.url === "string" &&
+		(value.auth_mode === "openclaw_device" || value.auth_mode === "password") &&
+		value.browser_mode === "top_level" &&
+		(value.runtime === "openclaw"
+			? value.auth_mode === "openclaw_device"
+			: value.auth_mode === "password") &&
+		isSafeRuntimeUiUrl(value.url, false)
+	);
+}
+
+export function isRuntimeUiCredentials(value: unknown): value is RuntimeUiCredentials {
+	if (!isRecord(value) || typeof value.url !== "string") return false;
+	if (value.runtime === "hermes") {
+		return (
+			value.auth_mode === "password" &&
+			value.username === "admin" &&
+			typeof value.password === "string" &&
+			Boolean(value.password.trim()) &&
+			isSafeRuntimeUiUrl(value.url, false)
+		);
+	}
+	return (
+		value.runtime === "openclaw" &&
+		value.auth_mode === "openclaw_device" &&
+		(value.username === undefined || value.username === null) &&
+		(value.password === undefined || value.password === null) &&
+		isSafeRuntimeUiUrl(value.url, true)
+	);
+}
+
+function isSafeRuntimeUiUrl(value: string, tokenFragment: boolean): boolean {
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "https:" || url.username || url.password || url.search) return false;
+		if (!tokenFragment) return url.hash === "";
+		const fragment = new URLSearchParams(url.hash.slice(1));
+		return (
+			url.hash.startsWith("#") &&
+			fragment.getAll("token").length === 1 &&
+			Boolean(fragment.get("token")?.trim()) &&
+			[...fragment.keys()].every((key) => key === "token")
+		);
+	} catch {
+		return false;
+	}
 }
 
 export function isDeploymentEventStreamSnapshotHandoff(

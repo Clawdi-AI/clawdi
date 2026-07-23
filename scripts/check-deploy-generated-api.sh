@@ -58,7 +58,33 @@ case "$spec_source" in
 		;;
 esac
 
-"$script_dir/generate-deploy-api.sh" "$raw_spec" "$expected_path"
+if ! bun -e '
+	const path = process.argv[1];
+	try {
+		const document = await Bun.file(path).json();
+		if (typeof document?.openapi !== "string") process.exit(1);
+	} catch {
+		process.exit(1);
+	}
+' "$raw_spec"; then
+	message="Hosted OpenAPI from $spec_source was not a valid OpenAPI document."
+	if [[ "$fetch_mode" == "warn" ]]; then
+		warn "$message Skipping drift check for this run."
+		exit 0
+	fi
+	echo "$message" >&2
+	exit 1
+fi
+
+if ! "$script_dir/generate-deploy-api.sh" "$raw_spec" "$expected_path"; then
+	message="Unable to generate the deploy client from hosted OpenAPI at $spec_source."
+	if [[ "$fetch_mode" == "warn" ]]; then
+		warn "$message Skipping drift check for this run."
+		exit 0
+	fi
+	echo "$message" >&2
+	exit 1
+fi
 
 if cmp -s "$committed_path" "$expected_path"; then
 	exit 0

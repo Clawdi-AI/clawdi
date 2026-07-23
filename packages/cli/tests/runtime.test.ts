@@ -30,11 +30,6 @@ import {
 } from "../src/runtime/applied-state";
 import { runtimeAuthEnvName } from "../src/runtime/auth-token";
 import {
-	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
-	RUNTIME_BRIDGE_SURFACES_ENV,
-	RUNTIME_BRIDGE_TOKEN_ENV,
-} from "../src/runtime/bridge";
-import {
 	applyRuntimeBundleChannelsToManifestLoad,
 	applyRuntimeChannelsToManifestLoad,
 } from "../src/runtime/channels";
@@ -90,7 +85,6 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
 	"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
 	"CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES",
-	"CLAWDI_RUNTIME_PID1_ENVIRON_PATH",
 	"CODEX_HOME",
 	"CLAWDI_CODEX_INSTALL_DISABLED",
 	"CLAWDI_CODEX_INSTALL_TIMEOUT",
@@ -110,9 +104,8 @@ const ENV_KEYS = [
 	"CLAWDI_EGRESS_UID",
 	"CLAWDI_EGRESS_GID",
 	"OPENCLAW_GATEWAY_TOKEN",
-	RUNTIME_BRIDGE_TOKEN_ENV,
-	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
-	RUNTIME_BRIDGE_SURFACES_ENV,
+	"HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+	"HERMES_DASHBOARD_BASIC_AUTH_SECRET",
 ] as const;
 
 type EnvKey = (typeof ENV_KEYS)[number];
@@ -132,6 +125,8 @@ beforeEach(() => {
 	mkdirSync(root, { recursive: true });
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
+	process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "test-hermes-dashboard-password";
+	process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "test-hermes-dashboard-session-secret";
 });
 
 afterEach(() => {
@@ -244,7 +239,42 @@ function hostedSystemFixture(
 	_workspace = join(_home, "clawdi"),
 	overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
-	return overrides;
+	return {
+		openclawControlUiAllowedOrigins: ["https://agent.example.test"],
+		openclawGatewayAuth: {
+			mode: "token",
+			tokenRef: "env://OPENCLAW_GATEWAY_TOKEN",
+			deviceAuthRequired: false,
+			activation: {
+				enabled: true,
+				capability: "openclaw-native-auth-v1",
+			},
+		},
+		...overrides,
+	};
+}
+
+function hostedHermesSystemFixture(
+	home: string,
+	workspace = join(home, "clawdi"),
+): Record<string, unknown> {
+	void home;
+	void workspace;
+	return {
+		hermesDashboardAuth: {
+			mode: "password",
+			provider: "basic",
+			username: "admin",
+			passwordSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+			sessionSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+			sessionTtlSeconds: 43_200,
+			publicUrl: "https://agent.example.test/hermes",
+			activation: {
+				enabled: true,
+				capability: "hermes-basic-auth-v1",
+			},
+		},
+	};
 }
 
 function runtimeWatchLocaleManifest(
@@ -289,6 +319,13 @@ function hostedRuntimeBundleResponse(
 	payload: HostedRuntimeResponseFixture,
 	options: { etag?: string; sourceRevision?: string } = {},
 ): Response {
+	const runtime = payload.manifest.runtime;
+	if (runtime === "openclaw") {
+		process.env.OPENCLAW_GATEWAY_TOKEN ??= "test-openclaw-gateway-token";
+	} else if (runtime === "hermes") {
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD ??= "test-hermes-dashboard-password";
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET ??= "test-hermes-dashboard-session-secret";
+	}
 	const channelBindings = payload.channelBindings ?? [];
 	const secretValues = {
 		...TEST_HOSTED_CODEX_SECRET_VALUES,
@@ -544,6 +581,7 @@ type HostedRuntimeFixtureEntry = {
 function hostedOpenClawRuntime(
 	overrides: Partial<HostedRuntimeFixtureEntry> = {},
 ): HostedRuntimeFixtureEntry {
+	process.env.OPENCLAW_GATEWAY_TOKEN ??= "test-openclaw-gateway-token";
 	const {
 		provider_ids = ["default"],
 		primary_model = { provider_id: provider_ids[0] ?? "default", model: "gpt-test" },
@@ -560,13 +598,16 @@ function hostedOpenClawRuntime(
 				"gateway",
 				"run",
 				"--allow-unconfigured",
-				"--auth",
-				"token",
+				"--port",
+				"18789",
 				"--bind",
 				"lan",
 				"--force",
 			],
 			env: {},
+			secretEnv: {
+				OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+			},
 			prependPath: [],
 		},
 		services: {},
@@ -595,22 +636,12 @@ function hostedHermesRuntime(
 		},
 		services: {
 			dashboard: {
-				args: ["dashboard", "--host", "127.0.0.1", "--port", "9119", "--no-open"],
+				args: ["dashboard", "--host", "0.0.0.0", "--port", "9119", "--no-open"],
 				env: {},
 				prependPath: [],
 			},
 		},
 		...entryOverrides,
-	};
-}
-
-function hostedHermesBridgeSurface() {
-	return {
-		name: "hermes",
-		kind: "control-ui",
-		listenPort: 28793,
-		upstreamHost: "127.0.0.1",
-		upstreamPort: 9119,
 	};
 }
 
@@ -1238,7 +1269,7 @@ describe("runtime paths", () => {
 });
 
 describe("runtime run config", () => {
-	it("starts Hermes dashboard on its default loopback port", () => {
+	it("keeps generic Hermes dashboard defaults on loopback", () => {
 		const config = buildRuntimeRunConfig({
 			runtime: "hermes",
 			enabled: true,
@@ -1786,7 +1817,7 @@ describe("runtime manifest datasource", () => {
 							generation: 3,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: {},
+							system: hostedSystemFixture(home),
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -2042,15 +2073,13 @@ describe("runtime manifest datasource", () => {
 		});
 	}
 
-	it("recovers hosted bridge token from pid1 env for Hermes runtime bridge exposure", async () => {
+	it("projects direct Hermes dashboard exposure", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const sourcePath = join(root, "runtime-source.json");
-		const pid1EnvPath = join(root, "pid1-environ");
 		const hermesInstaller = join(root, "install-hermes.sh");
 		mkdirSync(home, { recursive: true });
-		writeFileSync(pid1EnvPath, `PATH=/usr/bin\0${RUNTIME_BRIDGE_TOKEN_ENV}=bridge-token\0`);
 		writeFileSync(
 			hermesInstaller,
 			`#!/usr/bin/env bash
@@ -2072,7 +2101,6 @@ chmod +x "$HOME/.local/bin/hermes"
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
 		process.env.CLAWDI_RUNTIME_TEST_HERMES_INSTALLER = hermesInstaller;
-		process.env.CLAWDI_RUNTIME_PID1_ENVIRON_PATH = pid1EnvPath;
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -2092,14 +2120,14 @@ chmod +x "$HOME/.local/bin/hermes"
 							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 							runtime: "hermes",
-							deploymentId: "dep_runtime_bridge",
-							environmentId: "env_runtime_bridge",
+							deploymentId: "dep_direct_hermes",
+							environmentId: "env_direct_hermes",
 							...hostedRequiredState(),
-							instanceId: "iid_runtime_bridge",
+							instanceId: "iid_direct_hermes",
 							generation: 4,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: hostedSystemFixture(home, join(home, "managed-workspace")),
+							system: hostedHermesSystemFixture(home, join(home, "managed-workspace")),
 							controlPlane: {
 								cloudApiUrl: "https://cloud-api.test",
 							},
@@ -2110,9 +2138,6 @@ chmod +x "$HOME/.local/bin/hermes"
 							},
 							runtimes: {
 								hermes: hostedHermesRuntime({}),
-							},
-							bridge: {
-								surfaces: [hostedHermesBridgeSurface()],
 							},
 							providers: {
 								default: {
@@ -2140,17 +2165,12 @@ chmod +x "$HOME/.local/bin/hermes"
 			if (!("manifest" in loaded)) throw new Error("expected manifest load success");
 			const convergence = convergeRuntimeManifest(loaded, paths);
 			expect(convergence.installErrors).toEqual([]);
-			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
-			const sidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 			const hermesEnv = readSystemdEnvFile(paths, "hermes-gateway");
 			const hermesDashboardEnv = readSystemdEnvFile(paths, "clawdi-hermes-dashboard");
 
-			expect(watchEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"');
-			expect(sidecarEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-token"');
-			expect(
-				convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
-			).not.toContain("clawdi-runtime-bridge.service");
-			expect(hermesEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
+			expect(convergence.outputs.systemdSystemUnits).not.toContain(
+				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
+			);
 			expect(hermesEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
 			expect(hermesEnv).toContain('OPENAI_API_KEY="clawdi-egress-placeholder"');
 			expect(hermesDashboardEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
@@ -2452,8 +2472,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			"config patch --stdin",
 			"config patch --stdin",
 		]);
-		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
-		expect(JSON.parse(readFileSync(openclawOriginsPatch, "utf-8"))).toEqual({
+		expect(JSON.parse(readFileSync(openclawPatch, "utf-8"))).toEqual({
 			agents: {
 				defaults: {
 					userTimezone: "Europe/Paris",
@@ -2470,6 +2489,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				},
 			},
 		});
+		const patch = JSON.parse(readFileSync(openclawOriginsPatch, "utf-8"));
 		expect(patch.agents.defaults.model.primary).toBe("default/gpt-5.4-mini");
 		expect(patch.secrets).toEqual({
 			providers: {
@@ -3243,7 +3263,9 @@ exit 0
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", `${runtimeName}.json`), "utf-8"),
 		);
-		expect(runConfig.secretEnv).toEqual({});
+		expect(runConfig.secretEnv).toEqual(
+			runtimeName === "openclaw" ? { OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN" } : {},
+		);
 		expect(JSON.stringify(runConfig)).not.toContain("OPENAI_API_KEY");
 		expect(JSON.stringify(runConfig)).not.toContain("clawdi-egress-placeholder");
 		expect(existsSync(join(run, "secrets", "runtime-secrets.json"))).toBe(false);
@@ -3305,7 +3327,9 @@ exit 0
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
 		);
-		expect(runConfig.secretEnv).toEqual({});
+		expect(runConfig.secretEnv).toEqual({
+			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+		});
 		expect(JSON.stringify(runConfig)).not.toContain("OPENAI_API_KEY");
 		expect(existsSync(join(run, "secrets", "runtime-secrets.json"))).toBe(false);
 		expect(readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8")).toContain(
@@ -3535,7 +3559,7 @@ exit 0
 			"config patch --stdin",
 			"config patch --stdin",
 		]);
-		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-2.json"), "utf-8"))).toEqual({
+		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-1.json"), "utf-8"))).toEqual({
 			gateway: {
 				auth: {
 					mode: "token",
@@ -4356,7 +4380,9 @@ exit 0
 		);
 		expect(runConfig.env.CLAWDI_MANAGED_OPENAI_API_KEY).toBeUndefined();
 		expect(runConfig.env.OPENAI_API_KEY).toBe("clawdi-egress-placeholder");
-		expect(runConfig.secretEnv).toEqual({});
+		expect(runConfig.secretEnv).toEqual({
+			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+		});
 		expect(runConfig.secretFilePath).toBeNull();
 		expect(JSON.stringify(runConfig)).not.toContain("sk-runtime-provider");
 		expectExistingFileNotToContain(
@@ -4452,17 +4478,16 @@ exit 64
 		expect(providerHealth.providers.openclaw.reasons).toContain("api_key_secret_ref_missing");
 	});
 
-	it("does not infer runtime entries from the runtime bridge token", async () => {
+	it("loads only the selected hosted runtime entry", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
-		const manifestPath = join(root, "hosted-runtime-bridge-token.json");
+		const manifestPath = join(root, "hosted-runtime-selected-entry.json");
 		mkdirSync(home, { recursive: true });
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env[RUNTIME_BRIDGE_TOKEN_ENV] = "bridge-token";
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
@@ -4470,10 +4495,10 @@ exit 64
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
-					deploymentId: "dep_bridge_token",
-					environmentId: "env_bridge_token",
+					deploymentId: "dep_selected_runtime",
+					environmentId: "env_selected_runtime",
 					...hostedRequiredState(),
-					instanceId: "iid_bridge_token",
+					instanceId: "iid_selected_runtime",
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
@@ -4510,7 +4535,6 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env[RUNTIME_BRIDGE_TOKEN_ENV] = "bridge-token";
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
@@ -4518,10 +4542,10 @@ exit 64
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
 					runtime: "openclaw",
-					deploymentId: "dep_bridge_token_explicit",
-					environmentId: "env_bridge_token_explicit",
+					deploymentId: "dep_disabled_sibling",
+					environmentId: "env_disabled_sibling",
 					...hostedRequiredState(),
-					instanceId: "iid_bridge_token_explicit",
+					instanceId: "iid_disabled_sibling",
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
@@ -4599,7 +4623,7 @@ exit 64
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: hostedSystemFixture(home),
+							system: hostedHermesSystemFixture(home),
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							clawdiCli: {
 								source: "npm:clawdi",
@@ -4607,7 +4631,6 @@ exit 64
 								registry: "https://registry.npmjs.org",
 							},
 							runtimes: { hermes: hostedHermesRuntime() },
-							bridge: { surfaces: [hostedHermesBridgeSurface()] },
 						},
 						secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
 					}),
@@ -4616,7 +4639,7 @@ exit 64
 
 		try {
 			const loaded = await loadRuntimeManifest(getRuntimePaths());
-			expect("manifest" in loaded).toBe(true);
+			if (!("manifest" in loaded)) throw new Error(loaded.errors.join("\n"));
 			expect(captured[0].headers.authorization).toBe("Bearer bootstrap-token");
 			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe("bootstrap-token\n");
 		} finally {
@@ -9857,7 +9880,7 @@ exit 64
 							generation: 1,
 							issuedAt: "2026-06-06T00:00:00Z",
 							locale: TEST_HOSTED_LOCALE,
-							system: hostedSystemFixture(home, workspace),
+							system: hostedHermesSystemFixture(home, workspace),
 							controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 							clawdiCli: {
 								source: "npm:clawdi",
@@ -9867,7 +9890,6 @@ exit 64
 							runtimes: {
 								hermes: hostedHermesRuntime({}),
 							},
-							bridge: { surfaces: [hostedHermesBridgeSurface()] },
 						},
 						secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
 					}),
@@ -9959,9 +9981,6 @@ exit 64
 		expect(futureEnv).toContain('FUTURE_AGENT_MODE="hosted"');
 		expect(existsSync(join(run, "launch", "future-agent.sh"))).toBe(false);
 		expect(existsSync(join(run, "launch", "future-agent.env"))).toBe(false);
-		expect(convergence.outputs.systemdUserUnits).not.toContain(
-			join(paths.systemdUserRoot, "clawdi-runtime-bridge.service"),
-		);
 	});
 
 	it("rejects legacy hosted controlPlane apiUrl", async () => {
@@ -9994,7 +10013,6 @@ exit 64
 					runtimes: {
 						hermes: hostedHermesRuntime(),
 					},
-					bridge: { surfaces: [hostedHermesBridgeSurface()] },
 				},
 				secretValues: {},
 			}),
@@ -10041,6 +10059,8 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "test-hermes-dashboard-password";
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "test-hermes-dashboard-session-secret";
 		writeFileSync(
 			manifestPath,
 			JSON.stringify({
@@ -10055,7 +10075,7 @@ exit 64
 					generation: 1,
 					issuedAt: "2026-06-06T00:00:00Z",
 					locale: TEST_HOSTED_LOCALE,
-					system: hostedSystemFixture(home, join(home, "system-workspace")),
+					system: hostedHermesSystemFixture(home, join(home, "system-workspace")),
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -10065,7 +10085,6 @@ exit 64
 					runtimes: {
 						hermes: hostedHermesRuntime({}),
 					},
-					bridge: { surfaces: [hostedHermesBridgeSurface()] },
 				},
 				secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
 			}),
@@ -10089,7 +10108,7 @@ exit 64
 		expect(hermesDashboardRunConfig.defaultArgs).toEqual([
 			"dashboard",
 			"--host",
-			"127.0.0.1",
+			"0.0.0.0",
 			"--port",
 			"9119",
 			"--no-open",
@@ -10257,7 +10276,7 @@ exit 64
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).not.toContain("clawdi:");
 	});
 
-	it("does not add the hosted runtime sidecar without bridge surfaces or egress profiles", () => {
+	it("does not add the hosted runtime sidecar without egress profiles", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -10266,15 +10285,14 @@ exit 64
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
-		process.env[RUNTIME_BRIDGE_TOKEN_ENV] = "bridge-secret";
 
 		const convergence = convergeRuntimeManifest(
 			{
 				manifest: {
 					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_runtime_no_bridge",
-					environmentId: "env_runtime_no_bridge",
-					instanceId: "iid_runtime_no_bridge",
+					deploymentId: "dep_runtime_no_egress",
+					environmentId: "env_runtime_no_egress",
+					instanceId: "iid_runtime_no_egress",
 					generation: 1,
 					issuedAt: "2026-06-15T00:00:00Z",
 					controlPlane: { apiUrl: "https://cloud-api.test" },
@@ -10289,99 +10307,19 @@ exit 64
 					recovery: {},
 				},
 				source: "fixture-file",
-				sourcePath: "test://runtime-no-bridge",
+				sourcePath: "test://runtime-no-egress",
 				offline: false,
 				secretValues: {},
 			},
 			getRuntimePaths(),
 		);
 
-		expect(
-			convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
-		).not.toContain("clawdi-runtime-bridge.service");
 		expect(
 			convergence.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
 		).not.toContain("clawdi-runtime-sidecar.service");
 		expect(
 			convergence.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1)),
 		).not.toContain("clawdi-runtime-sidecar.service");
-	});
-
-	it("adds the hosted runtime sidecar bridge module for declared control UI surfaces", () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		mkdirSync(home, { recursive: true });
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env[RUNTIME_BRIDGE_TOKEN_ENV] = "bridge-secret";
-		process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV] = "10.42.0.20";
-
-		const convergence = convergeRuntimeManifest(
-			{
-				manifest: {
-					schemaVersion: "clawdi.runtimeDesiredState.v1",
-					deploymentId: "dep_runtime_bridge",
-					environmentId: "env_runtime_bridge",
-					instanceId: "iid_runtime_bridge",
-					generation: 1,
-					issuedAt: "2026-06-15T00:00:00Z",
-					controlPlane: { apiUrl: "https://cloud-api.test" },
-					runtimes: {
-						openclaw: { enabled: true },
-						hermes: { enabled: false },
-					},
-					bridge: {
-						surfaces: [
-							{
-								name: "openclaw",
-								kind: "control-ui",
-								listenPort: 28789,
-								upstreamPort: 18789,
-							},
-						],
-					},
-					recovery: {},
-				},
-				source: "fixture-file",
-				sourcePath: "test://runtime-bridge",
-				offline: false,
-				secretValues: {},
-			},
-			getRuntimePaths(),
-		);
-
-		const paths = getRuntimePaths();
-		const userUnitNames = convergence.outputs.systemdUserUnits.map((path) =>
-			path.split("/").at(-1),
-		);
-		const systemUnitNames = convergence.outputs.systemdSystemUnits.map((path) =>
-			path.split("/").at(-1),
-		);
-		expect(userUnitNames).not.toContain("clawdi-runtime-bridge.service");
-		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
-		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
-		const runtimeSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
-		const runtimeSidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
-		const openclawUnit = readSystemdUserServiceConfig(paths, "openclaw-gateway");
-		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
-		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
-		expect(runtimeSidecarEnv).toContain('CLAWDI_RUNTIME_BRIDGE_LISTEN_HOST="10.42.0.20"');
-		expect(runtimeSidecarEnv).toContain('CLAWDI_RUNTIME_REV="');
-		expect(runtimeSidecarEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN="bridge-secret"');
-		expect(runtimeSidecarEnv).toContain('CLAWDI_RUNTIME_BRIDGE_SURFACES="');
-		expect(runtimeSidecarEnv).toContain('\\"name\\":\\"openclaw\\"');
-		expect(runtimeSidecarEnv).toContain('\\"kind\\":\\"control-ui\\"');
-		expect(runtimeSidecarEnv).toContain('\\"listenPort\\":28789');
-		expect(runtimeSidecarEnv).not.toContain('\\"name\\":\\"hermes\\"');
-		expect(openclawEnv).toContain('CLAWDI_RUNTIME_BRIDGE_TOKEN=""');
-		expect(openclawEnv).toContain('CLAWDI_RUNTIME_BRIDGE_SURFACES=""');
-		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
-		expect(openclawUnit).not.toContain("clawdi run -- openclaw");
-		expect(openclawUnit).not.toContain("bridge-secret");
-		expect(openclawEnv).not.toContain("bridge-secret");
 	});
 
 	it("keeps provider secrets sidecar-only in the ephemeral run-dir config", () => {
@@ -10414,16 +10352,6 @@ exit 64
 							primary_model: { provider_id: "default", model: "gpt-5.5" },
 						},
 						hermes: { enabled: false },
-					},
-					bridge: {
-						surfaces: [
-							{
-								name: "openclaw",
-								kind: "control-ui",
-								listenPort: 28789,
-								upstreamPort: 18789,
-							},
-						],
 					},
 					projection: {
 						providers: {
@@ -10495,7 +10423,6 @@ exit 64
 		expect(convergence.outputs.systemdUserUnitRoot).toBe(join(home, ".config", "systemd", "user"));
 		expect(convergence.outputs.systemdSystemUnitRoot).toBe(paths.systemdSystemRoot);
 		expect(existsSync(join(state, "supervisor", "supervisord.conf"))).toBe(false);
-		expect(userUnitNames).not.toContain("clawdi-runtime-bridge.service");
 		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
 		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
 		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
@@ -10591,7 +10518,7 @@ exit 64
 		expect(openclawEnv).not.toContain("provider.default.apiKey");
 	});
 
-	it("runs egress as a transparent systemd engine with lifecycle nft redirect", () => {
+	it("runs the egress-only sidecar with a lifecycle nft redirect", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -11651,7 +11578,6 @@ exit 64
 					runtimes: {
 						hermes: hostedHermesRuntime(),
 					},
-					bridge: { surfaces: [hostedHermesBridgeSurface()] },
 					egressProfiles: {
 						profiles: [
 							{

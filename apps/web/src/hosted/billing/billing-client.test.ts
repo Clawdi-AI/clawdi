@@ -92,6 +92,35 @@ describe("unwrapDeploy", () => {
 });
 
 describe("declarative deployment mutations", () => {
+	it("creates an included Basic deployment with an idempotency key and waits for its LRO", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			const path = new URL(request.url).pathname;
+			if (path === "/v2/deployments" && request.method === "POST") {
+				return jsonResponse(operation({ id: "included-create", verb: "create" }), 202);
+			}
+			throw new Error(`Unexpected request: ${request.method} ${path}`);
+		});
+
+		const result = await client.createDeployment(
+			{
+				compute_plan_slug: "compute_basic",
+				runtime: "openclaw",
+				ai_provider_auth_kind: "managed",
+			},
+			"intent-included-create",
+		);
+
+		expect(result.deploymentId).toBe("hdep_test");
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.headers.get("Idempotency-Key")).toBe("intent-included-create");
+		expect(await requests[0]?.json()).toMatchObject({
+			compute_plan_slug: "compute_basic",
+			runtime: "openclaw",
+		});
+	});
+
 	it("creates a wallet-funded deployment and waits for its LRO", async () => {
 		const requests: Request[] = [];
 		const intentKey = "subscription-wallet-deploy-create-happy";

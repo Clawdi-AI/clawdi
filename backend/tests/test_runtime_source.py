@@ -51,7 +51,18 @@ def _batch(
         generation=7,
         cli_package_spec="clawdi@0.12.10-beta.57",
         locale={"language": "en", "timezone": "UTC"},
-        system={},
+        system={
+            "openclawControlUiAllowedOrigins": ["https://agent.example.test"],
+            "openclawGatewayAuth": {
+                "mode": "token",
+                "tokenRef": "env://OPENCLAW_GATEWAY_TOKEN",
+                "deviceAuthRequired": False,
+                "activation": {
+                    "enabled": True,
+                    "capability": "openclaw-native-auth-v1",
+                },
+            },
+        },
         runtimes={
             "openclaw": {
                 "enabled": True,
@@ -59,7 +70,19 @@ def _batch(
                 "provider_ids": ["managed"],
                 "primary_model": {"provider_id": "managed", "model": "gpt-test"},
                 "install": {"source": "official"},
-                "run": {"args": ["gateway", "run"]},
+                "run": {
+                    "args": [
+                        "gateway",
+                        "run",
+                        "--allow-unconfigured",
+                        "--port",
+                        "18789",
+                        "--bind",
+                        "lan",
+                        "--force",
+                    ],
+                    "secretEnv": {"OPENCLAW_GATEWAY_TOKEN": "env://OPENCLAW_GATEWAY_TOKEN"},
+                },
                 "services": {},
             }
         },

@@ -1359,7 +1359,6 @@ async def _admin_upsert_runtime_state(
             "cli_package_spec": body.cli_package_spec,
             "locale": body.locale.model_dump(),
             "enabled_runtimes": _enabled_runtime_names(desired_state["runtimes"]),
-            "has_bridge": body.bridge is not None,
             "has_mcp": body.mcp is not None,
             "has_tools": body.tools is not None,
             "changed_fields": changed_fields,
@@ -1561,7 +1560,6 @@ def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
             name: runtime.model_dump(exclude_none=True, mode="json")
             for name, runtime in body.runtimes.items()
         },
-        "bridge": optional_wire_value("bridge"),
         "live_sync": body.live_sync.model_dump(mode="json"),
         "recovery": body.recovery.model_dump(mode="json"),
         "egress_profiles": optional_wire_value("egress_profiles"),

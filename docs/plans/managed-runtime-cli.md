@@ -149,9 +149,8 @@ The support modules are not interchangeable:
 
 - `runtime watch` reconciles manifests and can use Clawdi API auth.
 - `daemon run` serves live sync only when live-sync agents are declared.
-- `runtime sidecar` hosts runtime-local support modules: the bridge module
-  proxies inbound browser Control UI surfaces, and the egress module proxies
-  outbound runtime traffic only when egress profiles are enabled.
+- `runtime sidecar` proxies outbound runtime traffic only when egress profiles
+  are enabled.
 
 Their tokens, network direction, and failure domains must stay visible in
 manifest state, status, and logs. The sidecar must not become a hidden wrapper
@@ -200,14 +199,8 @@ specific channel management remains outside this repository.
 
 ## Runtime UI And Terminal Notes
 
-The sidecar bridge module is the local authenticated bridge for
-manifest-declared runtime surfaces. The current hosted surfaces use
-`kind: "control-ui"` and the dashboard labels them as `<Runtime> Control UI`
-because each is a runtime-specific browser application.
-
-Bridge surfaces declare listen/upstream targets, protocol handling, auth
-behavior, and header rewrite rules explicitly. The bridge is not an arbitrary
-port forwarder. Terminal is not a bridge surface.
+The dashboard labels each runtime-specific browser application as
+`<Runtime> Control UI` and opens it with runtime-native authentication.
 
 The hosted Terminal is a dashboard/API contract, not a CLI command. The frontend
 requests a short-lived terminal WebSocket URL, moves fragment tokens into a
@@ -227,7 +220,7 @@ Runtime changes should include focused tests for:
 - direct systemd runtime command rendering;
 - interactive `clawdi run -- <command>` environment construction;
 - absence of newly generated runtime wrappers or launchers;
-- systemd unit rendering for watch, sidecar bridge/egress modules, daemon,
+- systemd unit rendering for watch, the egress sidecar, daemon,
   runtimes, and runtime-owned services;
 - terminal URL token transport and light/dark xterm theme behavior when web UI
   code changes.

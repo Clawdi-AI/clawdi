@@ -48,7 +48,8 @@ export interface paths {
         /** List V2 Deployments */
         get: operations["list_v2_deployments_v2_deployments_get"];
         put?: never;
-        post?: never;
+        /** Create V2 Deployment */
+        post: operations["create_v2_deployment_v2_deployments_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -108,7 +109,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v2/deployments/{deployment_id}/runtime-ui/redemption": {
+    "/v2/deployments/{deployment_id}/runtime-ui/credentials": {
         parameters: {
             query?: never;
             header?: never;
@@ -117,8 +118,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create V2 Deployment Runtime Ui Redemption */
-        post: operations["create_v2_deployment_runtime_ui_redemption_v2_deployments__deployment_id__runtime_ui_redemption_post"];
+        /** Create V2 Runtime Ui Credentials */
+        post: operations["create_v2_runtime_ui_credentials_v2_deployments__deployment_id__runtime_ui_credentials_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -793,6 +794,28 @@ export interface components {
              */
             "@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails";
         };
+        /**
+         * LifecycleProblemDetails
+         * @description RFC 7807 occurrence. ``code`` stays open for additive registry entries.
+         */
+        LifecycleProblemDetails: {
+            /** Type */
+            type: string;
+            /** Title */
+            title: string;
+            /** Status */
+            status: number;
+            /** Detail */
+            detail: string;
+            /** Instance */
+            instance: string;
+            /** Code */
+            code: string;
+            /** Phase */
+            phase?: string | null;
+            /** Retryable */
+            retryable?: boolean | null;
+        };
         /** LongRunningOperation */
         LongRunningOperation: {
             /** Name */
@@ -1359,16 +1382,6 @@ export interface components {
              */
             deployment_id: string;
         };
-        /** V2DeploymentRuntimeUiRedemptionResponse */
-        V2DeploymentRuntimeUiRedemptionResponse: {
-            /** Url */
-            url: string;
-            /**
-             * Expires At
-             * Format: date-time
-             */
-            expires_at: string;
-        };
         /** V2DeploymentTerminalSessionResponse */
         V2DeploymentTerminalSessionResponse: {
             /**
@@ -1630,6 +1643,25 @@ export interface components {
             upgrade_available: boolean;
             compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"];
         };
+        /** V2HostedRuntimeUiCredentials */
+        V2HostedRuntimeUiCredentials: {
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "openclaw" | "hermes";
+            /** Url */
+            url: string;
+            /**
+             * Auth Mode
+             * @enum {string}
+             */
+            auth_mode: "openclaw_device" | "password";
+            /** Username */
+            username?: string | null;
+            /** Password */
+            password?: string | null;
+        };
         /** V2HostedRuntimeUiEndpointInfo */
         V2HostedRuntimeUiEndpointInfo: {
             /**
@@ -1646,11 +1678,16 @@ export interface components {
             /** Url */
             url: string;
             /**
-             * Requires Bridge Token
-             * @default true
+             * Auth Mode
+             * @enum {string}
+             */
+            auth_mode: "openclaw_device" | "password";
+            /**
+             * Browser Mode
+             * @default top_level
              * @constant
              */
-            requires_bridge_token: true;
+            browser_mode: "top_level";
         };
         /** V2HostedUsageDay */
         V2HostedUsageDay: {
@@ -1738,6 +1775,21 @@ export interface components {
             name?: string | null;
             /** Runtime */
             runtime?: ("openclaw" | "hermes") | null;
+            /** Language */
+            language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
+            /** Timezone */
+            timezone?: string | null;
+            primary_model?: components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
+            /** Ai Provider Id */
+            ai_provider_id?: string | null;
+            /** Provider Ids */
+            provider_ids?: string[] | null;
+            /** Ai Provider Auth Kind */
+            ai_provider_auth_kind?: ("unmanaged" | "managed" | "api_key" | "codex_oauth") | null;
+            /** Ai Provider Bootstrap */
+            ai_provider_bootstrap?: {
+                [key: string]: unknown;
+            } | null;
         };
         /** V2WalletAutoReloadActionResponse */
         V2WalletAutoReloadActionResponse: {
@@ -1929,6 +1981,67 @@ export interface operations {
             };
         };
     };
+    create_v2_deployment_v2_deployments_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["V2HostedDeployRequest"];
+            };
+        };
+        responses: {
+            /** @description The declarative deployment creation was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    /** @description Owner-scoped status URL for the deployment request. */
+                    "Content-Location"?: string;
+                    /** @description Minimum seconds before polling the operation. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_v2_deploy_request_status_v2_deployments_by_request__deploy_request_id__get: {
         parameters: {
             query?: never;
@@ -1994,9 +2107,9 @@ export interface operations {
     delete_v2_deployment_v2_deployments__deployment_id__delete: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
-                "If-Match"?: string | null;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
             };
             path: {
                 deployment_id: string;
@@ -2016,6 +2129,35 @@ export interface operations {
                     "application/json": components["schemas"]["LongRunningOperation"];
                 };
             };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2025,14 +2167,23 @@ export interface operations {
                     "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
         };
     };
     update_v2_deployment_v2_deployments__deployment_id__patch: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
-                "If-Match"?: string | null;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
             };
             path: {
                 deployment_id: string;
@@ -2056,6 +2207,35 @@ export interface operations {
                     "application/json": components["schemas"]["LongRunningOperation"];
                 };
             };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2063,6 +2243,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
         };
@@ -2098,7 +2287,7 @@ export interface operations {
             };
         };
     };
-    create_v2_deployment_runtime_ui_redemption_v2_deployments__deployment_id__runtime_ui_redemption_post: {
+    create_v2_runtime_ui_credentials_v2_deployments__deployment_id__runtime_ui_credentials_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -2115,7 +2304,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2DeploymentRuntimeUiRedemptionResponse"];
+                    "application/json": components["schemas"]["V2HostedRuntimeUiCredentials"];
                 };
             };
             /** @description Validation Error */
@@ -2132,9 +2321,9 @@ export interface operations {
     restart_v2_deployment_v2_deployments__deployment_id__restart_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
-                "If-Match"?: string | null;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
             };
             path: {
                 deployment_id: string;
@@ -2154,6 +2343,35 @@ export interface operations {
                     "application/json": components["schemas"]["LongRunningOperation"];
                 };
             };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2161,6 +2379,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
         };
@@ -2168,9 +2395,9 @@ export interface operations {
     start_v2_deployment_v2_deployments__deployment_id__start_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
-                "If-Match"?: string | null;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
             };
             path: {
                 deployment_id: string;
@@ -2190,6 +2417,35 @@ export interface operations {
                     "application/json": components["schemas"]["LongRunningOperation"];
                 };
             };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2197,6 +2453,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
         };
@@ -2204,9 +2469,9 @@ export interface operations {
     stop_v2_deployment_v2_deployments__deployment_id__stop_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
-                "If-Match"?: string | null;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
             };
             path: {
                 deployment_id: string;
@@ -2226,6 +2491,35 @@ export interface operations {
                     "application/json": components["schemas"]["LongRunningOperation"];
                 };
             };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
             /** @description Validation Error */
             422: {
                 headers: {
@@ -2233,6 +2527,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
                 };
             };
         };

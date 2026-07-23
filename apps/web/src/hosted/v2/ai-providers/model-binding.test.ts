@@ -2,16 +2,15 @@ import { describe, expect, test } from "bun:test";
 import {
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
-	MANAGED_PRIMARY_MODEL_FALLBACK,
+	MANAGED_DEFAULT_MODEL_CHOICE,
 	modelIdsForProvider,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 describe("model binding", () => {
-	test("uses the default managed model fallback", () => {
-		expect(MANAGED_PRIMARY_MODEL_FALLBACK).toBe("gpt-5.5");
-		expect(firstModelForProvider(MANAGED_AI_CHOICE, [])).toBe("gpt-5.5");
-		expect(modelIdsForProvider(MANAGED_AI_CHOICE, [])).toEqual(["gpt-5.5"]);
+	test("uses an explicit hosted-default choice without guessing a model id", () => {
+		expect(firstModelForProvider(MANAGED_AI_CHOICE, [])).toBe(MANAGED_DEFAULT_MODEL_CHOICE);
+		expect(modelIdsForProvider(MANAGED_AI_CHOICE, [])).toEqual([MANAGED_DEFAULT_MODEL_CHOICE]);
 	});
 
 	test("uses the first catalog model for a selected provider", () => {

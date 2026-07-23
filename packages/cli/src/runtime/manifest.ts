@@ -45,6 +45,7 @@ import {
 import {
 	mergeHermesChannelConfig,
 	mergeHermesConfig,
+	mergeHermesDashboardBasicAuth,
 	mergeHermesMcpServer,
 	mergeHermesRuntimeLocale,
 	removeHermesMcpServer,
@@ -80,12 +81,6 @@ export {
 } from "./manifest-source";
 
 import {
-	RUNTIME_BRIDGE_LISTEN_HOST_ENV,
-	RUNTIME_BRIDGE_SURFACES_ENV,
-	RUNTIME_BRIDGE_TOKEN_ENV,
-	runtimeBridgeSurfaceSpecsForManifest,
-} from "./bridge";
-import {
 	applyEgressTransparentRuntimeEnv,
 	MANAGED_EGRESS_PLACEHOLDER_VALUE,
 	SYSTEM_CA_BUNDLE,
@@ -103,6 +98,7 @@ import {
 	isSupportedRuntimeName,
 	type RuntimeName,
 	type RuntimeRunConfig,
+	type RuntimeRunSettings,
 	type RuntimeServiceName,
 	runtimeManagedBinDir,
 	runtimeNameSchema,
@@ -1337,18 +1333,25 @@ function applyHostedLocaleProjection(
 	workspaceRoot: string,
 ): string | null {
 	const locale = manifest.locale;
-	if (!locale) return null;
-	const block = managedLocaleBlock(locale);
 	if (runtime === "openclaw") {
-		return updateManagedLocaleFile(join(workspaceRoot, "SOUL.md"), block);
+		return locale
+			? updateManagedLocaleFile(join(workspaceRoot, "SOUL.md"), managedLocaleBlock(locale))
+			: null;
 	}
 	if (runtime === "hermes") {
+		const auth = manifest.hermesDashboardAuth;
+		if (!auth && !locale) return null;
 		const hermesHome = join(home, ".hermes");
 		makeRuntimeUserPrivateDir(hermesHome);
 		const configPath = join(hermesHome, "config.yaml");
-		mergeHermesRuntimeLocale(configPath, locale.timezone);
+		if (auth) {
+			mergeHermesDashboardBasicAuth(configPath, auth.username, auth.sessionTtlSeconds);
+		}
+		if (locale) mergeHermesRuntimeLocale(configPath, locale.timezone);
 		makeRuntimeUserOwned(configPath);
-		return updateManagedLocaleFile(join(hermesHome, "SOUL.md"), block);
+		return locale
+			? updateManagedLocaleFile(join(hermesHome, "SOUL.md"), managedLocaleBlock(locale))
+			: null;
 	}
 	return null;
 }
@@ -2116,6 +2119,7 @@ function applyHostedAiProviderProjection(
 		);
 	}
 	if (name === "openclaw") {
+		applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
 		const activeProviderIds = projectionInput
 			? [...openClawProjectedProviderIds(projectionInput)].sort()
 			: [];
@@ -2139,7 +2143,6 @@ function applyHostedAiProviderProjection(
 				workspaceRoot,
 			);
 		}
-		applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
 		return { path: observation.commandPath, revision: null, providerIds: activeProviderIds };
 	}
 	return { path: null, revision: null, providerIds: [] };
@@ -3012,6 +3015,14 @@ function staleProviderIds(
 function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, unknown> | null {
 	const allowedOrigins = openClawControlUiAllowedOrigins(manifest);
 	const gatewayToken = process.env[OPENCLAW_GATEWAY_TOKEN_ENV]?.trim();
+	const isHostedV2 = manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+	const nativeAuth = isHostedV2 ? manifest.openclawGatewayAuth : undefined;
+	if (isHostedV2 && nativeAuth?.activation.enabled !== true) {
+		throw new Error("OpenClaw native auth capability is unavailable");
+	}
+	if (manifest.openclawGatewayAuth && !gatewayToken) {
+		throw new Error("OpenClaw native gateway token is unavailable");
+	}
 	if (allowedOrigins.length === 0 && !gatewayToken && !manifest.locale) return null;
 	return {
 		...(manifest.locale
@@ -3026,11 +3037,12 @@ function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, u
 		...(gatewayToken || allowedOrigins.length > 0
 			? {
 					gateway: {
+						...(nativeAuth ? { port: 18789, bind: "lan" } : {}),
 						...(gatewayToken
 							? {
 									auth: {
 										mode: "token",
-										token: gatewayToken,
+										...(nativeAuth ? { token: null } : { token: gatewayToken }),
 									},
 								}
 							: {}),
@@ -3038,10 +3050,14 @@ function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, u
 							? {
 									controlUi: {
 										allowedOrigins,
-										// Clawdi's runtime bridge owns browser auth for hosted Control UI
-										// traffic, so OpenClaw's local device-auth prompt would be a second
-										// owner gate behind the already-authenticated edge.
-										dangerouslyDisableDeviceAuth: true,
+										...(nativeAuth
+											? {
+													basePath: openClawControlUiBasePath(manifest),
+													allowInsecureAuth: false,
+													dangerouslyAllowHostHeaderOriginFallback: false,
+													dangerouslyDisableDeviceAuth: true,
+												}
+											: { dangerouslyDisableDeviceAuth: true }),
 									},
 								}
 							: {}),
@@ -3049,6 +3065,14 @@ function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, u
 				}
 			: {}),
 	};
+}
+
+function openClawControlUiBasePath(manifest: RuntimeManifest): string {
+	const system = manifest.projection?.system;
+	if (!isPlainRecord(system)) return "/";
+	const value = system.openclawControlUiBasePath;
+	if (typeof value !== "string" || !value.startsWith("/")) return "/";
+	return value === "/" ? "/" : value.replace(/\/$/, "");
 }
 
 function applyOpenClawGatewayHostedProjection(
@@ -4177,7 +4201,6 @@ function hashToUInt16(input: string): number {
 
 export function runtimeSidecarProgramRevision(
 	manifest: RuntimeManifest,
-	secretValues: Record<string, string> | undefined,
 	egressProgram: RuntimeEgressSystemdProgram | null = null,
 	egressIdentity: RuntimeEgressIdentity | null = null,
 ): string {
@@ -4186,9 +4209,7 @@ export function runtimeSidecarProgramRevision(
 	}
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
-		bridgeSurfaces: runtimeBridgeSurfaceSpecsForManifest(manifest),
-		bridgeTokenPresent: Boolean(secretValues),
-		runtimeSidecar: "hosted-runtime-sidecar-v3",
+		runtimeSidecar: "hosted-runtime-sidecar-v4",
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		egress: egressProgram
@@ -4281,28 +4302,6 @@ function runtimeServiceProgramName(runtime: string, service: string): string {
 
 function systemdUnitNameSegment(value: string): string {
 	return value.replace(/[^A-Za-z0-9_-]+/g, "-");
-}
-
-function hostedRuntimeBridgeToken(): string {
-	const direct = process.env[RUNTIME_BRIDGE_TOKEN_ENV]?.trim();
-	if (direct) return direct;
-	return readProcEnvironmentValue(
-		process.env.CLAWDI_RUNTIME_PID1_ENVIRON_PATH?.trim() || "/proc/1/environ",
-		RUNTIME_BRIDGE_TOKEN_ENV,
-	);
-}
-
-function readProcEnvironmentValue(path: string, key: string): string {
-	try {
-		const raw = readFileSync(path);
-		const prefix = `${key}=`;
-		for (const part of raw.toString("utf8").split("\0")) {
-			if (part.startsWith(prefix)) return part.slice(prefix.length).trim();
-		}
-	} catch {
-		// Best effort: runtime managers can still run without hosted bridge access.
-	}
-	return "";
 }
 
 function runtimeSystemdPath(paths: RuntimePaths): string {
@@ -4817,7 +4816,7 @@ function runtimeSystemdCommonEnvironment(
 	paths: RuntimePaths,
 ): Record<string, string> {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	return {
+	const environment: Record<string, string> = {
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_AUTH_ENV: process.env.CLAWDI_RUNTIME_AUTH_ENV?.trim() ?? "",
@@ -4825,11 +4824,9 @@ function runtimeSystemdCommonEnvironment(
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
 		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(sourcePath),
-		[RUNTIME_BRIDGE_TOKEN_ENV]: "",
-		[RUNTIME_BRIDGE_LISTEN_HOST_ENV]: process.env[RUNTIME_BRIDGE_LISTEN_HOST_ENV]?.trim() ?? "",
-		[RUNTIME_BRIDGE_SURFACES_ENV]: "",
 		PATH: runtimeSystemdPath(paths),
 	};
+	return environment;
 }
 
 function writeRuntimeSystemdUserProgram(input: {
@@ -4901,20 +4898,15 @@ function writeSystemdUnits(
 	commonEnvironment: Record<string, string>,
 ): { systemUnits: string[]; userUnits: string[] } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
-	const runtimeBridgeToken = hostedRuntimeBridgeToken();
-	const bridgeSurfaceSpecs = runtimeBridgeSurfaceSpecsForManifest(manifest);
 	const systemUnits: string[] = [];
-	const shouldRunBridge = bridgeSurfaceSpecs.length > 0;
 	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;
 	const activeEgressProgram = shouldRunEgress ? egressProgram : null;
 	const activeEgressIdentity = shouldRunEgress ? egressIdentity : null;
-	const shouldRunSidecar = shouldRunBridge || shouldRunEgress;
 	const userUnits: string[] = [];
 	const runtimeUid = shouldRunEgress ? runtimeUserUid(runtimeUser) : null;
 	const applyIdentityEnvironment = runtimeApplyIdentityEnvironment(
 		readRuntimeApplyIdentityFromEnv(),
 	);
-
 	if (daemonAuthTokenFile) {
 		systemUnits.push(
 			writeSystemdSystemUnit({
@@ -4928,7 +4920,6 @@ function writeSystemdUnits(
 					...commonEnvironment,
 					...applyIdentityEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
-					[RUNTIME_BRIDGE_TOKEN_ENV]: runtimeBridgeToken,
 				},
 			}),
 		);
@@ -4957,7 +4948,7 @@ function writeSystemdUnits(
 		);
 	}
 
-	if (shouldRunSidecar) {
+	if (activeEgressProgram) {
 		systemUnits.push(
 			writeSystemdSystemUnit({
 				paths,
@@ -4969,12 +4960,9 @@ function writeSystemdUnits(
 				env: {
 					...commonEnvironment,
 					CLAWDI_AUTH_TOKEN: "",
-					CLAWDI_EGRESS_ENV_FILE: shouldRunEgress && egressProgram ? egressProgram.envFilePath : "",
-					[RUNTIME_BRIDGE_TOKEN_ENV]: shouldRunBridge ? runtimeBridgeToken : "",
-					[RUNTIME_BRIDGE_SURFACES_ENV]: shouldRunBridge ? JSON.stringify(bridgeSurfaceSpecs) : "",
+					CLAWDI_EGRESS_ENV_FILE: activeEgressProgram.envFilePath,
 					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
 						manifest,
-						secretValues,
 						activeEgressProgram,
 						activeEgressIdentity,
 					),
@@ -5107,10 +5095,16 @@ function planRuntimeSystemdUserPrograms(input: {
 		}
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
+			const dashboardSettings = hermesDashboardServiceSettings(
+				input.manifest,
+				runtimeName,
+				service,
+				serviceSettings,
+			);
 			const serviceRunSettings = mergeRuntimeServiceEnvWithProviderPlaceholders(
 				name,
 				service,
-				serviceSettings,
+				dashboardSettings,
 				providerPlaceholderEnv,
 			);
 			const serviceSecretEnv = runtime.enabled
@@ -5140,6 +5134,34 @@ function planRuntimeSystemdUserPrograms(input: {
 		}
 	}
 	return programs;
+}
+
+function hermesDashboardServiceSettings(
+	manifest: RuntimeManifest,
+	runtime: RuntimeName,
+	service: RuntimeServiceName,
+	settings: RuntimeRunSettings,
+): RuntimeRunSettings {
+	if (runtime !== "hermes" || service !== "dashboard") return settings;
+	const auth = manifest.hermesDashboardAuth;
+	if (!auth) return settings;
+	if (!auth.activation.enabled) {
+		throw new Error("Hermes password authentication is disabled");
+	}
+	return {
+		...settings,
+		env: {
+			...(settings?.env ?? {}),
+			HERMES_DASHBOARD_BASIC_AUTH_USERNAME: auth.username,
+			HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS: String(auth.sessionTtlSeconds),
+			HERMES_DASHBOARD_PUBLIC_URL: auth.publicUrl,
+		},
+		secretEnv: {
+			...(settings?.secretEnv ?? {}),
+			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: auth.passwordSecretRef,
+			HERMES_DASHBOARD_BASIC_AUTH_SECRET: auth.sessionSecretRef,
+		},
+	};
 }
 
 function validateRuntimeSystemdProgramsPlan(programs: RuntimeSystemdUserProgram[]): void {

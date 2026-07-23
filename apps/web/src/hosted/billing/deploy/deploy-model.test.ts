@@ -105,6 +105,20 @@ describe("usesActiveIncludedBasicSlot", () => {
 describe("resolveBasicDeploySelection", () => {
 	const basic = plan(900);
 
+	test("uses the declarative included path while the Basic slot is available", () => {
+		expect(
+			resolveBasicDeploySelection({
+				basicPlan: basic,
+				billingTermMonths: 1,
+				includedSlotAvailable: true,
+			}),
+		).toEqual({
+			mode: "included",
+			computePlanSlug: "compute_basic",
+			plan: basic,
+		});
+	});
+
 	test("starts compute_basic checkout with the wizard-selected API offer", () => {
 		const selection = resolveBasicDeploySelection({
 			basicPlan: basic,

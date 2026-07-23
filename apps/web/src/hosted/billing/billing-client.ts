@@ -17,6 +17,7 @@ import type {
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionResumeRequest,
+	DeploymentCreateRequest,
 	DeploymentDesiredLifecycle,
 	DeploymentOperation,
 	DeploymentUpdateRequest,
@@ -338,15 +339,36 @@ export function createBillingClient(
 		getOperation,
 		waitForDeploymentRequest,
 		waitForOperation,
+		createDeployment: async (
+			body: DeploymentCreateRequest,
+			idempotencyKey: string,
+		): Promise<DeploymentIntentResult> => {
+			const operation = await waitForOperation(
+				unwrapDeploy(
+					await api.POST("/v2/deployments", {
+						params: { header: { "Idempotency-Key": idempotencyKey } },
+						body,
+					}),
+				),
+			);
+			const deploymentId = deploymentIdFromOperation(operation);
+			if (!deploymentId) {
+				throw new BillingApiError(
+					502,
+					"The deployment service completed creation without a deployment.",
+				);
+			}
+			return { deploymentId, operation };
+		},
 		createTerminalSession: async (id: string) =>
 			unwrapDeploy(
 				await api.POST("/v2/deployments/{deployment_id}/terminal", {
 					params: { path: { deployment_id: id } },
 				}),
 			),
-		createRuntimeUiRedemption: async (id: string) =>
+		getRuntimeUiCredentials: async (id: string) =>
 			unwrapDeploy(
-				await api.POST("/v2/deployments/{deployment_id}/runtime-ui/redemption", {
+				await api.POST("/v2/deployments/{deployment_id}/runtime-ui/credentials", {
 					params: { path: { deployment_id: id } },
 				}),
 			),
@@ -358,34 +380,29 @@ export function createBillingClient(
 			acceptDeploymentMutation(id, idempotencyKey, (headers) =>
 				desiredLifecycle === "running"
 					? api.POST("/v2/deployments/{deployment_id}/start", {
-							params: { path: { deployment_id: id } },
-							headers,
+							params: { path: { deployment_id: id }, header: headers },
 						})
 					: api.POST("/v2/deployments/{deployment_id}/stop", {
-							params: { path: { deployment_id: id } },
-							headers,
+							params: { path: { deployment_id: id }, header: headers },
 						}),
 			),
 		restartDeployment: async (id: string, idempotencyKey: string) =>
 			acceptDeploymentMutation(id, idempotencyKey, (headers) =>
 				api.POST("/v2/deployments/{deployment_id}/restart", {
-					params: { path: { deployment_id: id } },
-					headers,
+					params: { path: { deployment_id: id }, header: headers },
 				}),
 			),
 		updateDeployment: async (id: string, body: DeploymentUpdateRequest, idempotencyKey: string) =>
 			acceptDeploymentMutation(id, idempotencyKey, (headers) =>
 				api.PATCH("/v2/deployments/{deployment_id}", {
-					params: { path: { deployment_id: id } },
+					params: { path: { deployment_id: id }, header: headers },
 					body,
-					headers,
 				}),
 			),
 		deleteDeployment: async (id: string, idempotencyKey: string) =>
 			acceptDeploymentMutation(id, idempotencyKey, (headers) =>
 				api.DELETE("/v2/deployments/{deployment_id}", {
-					params: { path: { deployment_id: id } },
-					headers,
+					params: { path: { deployment_id: id }, header: headers },
 				}),
 			),
 	};

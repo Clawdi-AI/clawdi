@@ -27,14 +27,20 @@ afterEach(() => {
 });
 
 describe("hosted runtime bundle v2", () => {
-	test("strictly parses the shared golden and projects channels in TypeScript", () => {
+	test("accepts the hosted-emitted gateway secret contract before projecting channels", () => {
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
 		const load = normalizeHostedRuntimeBundleV2(raw);
+		expect(load.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
+			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+		});
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
-			"e9a133f280854c8407394d078972ee33a4ee6f97e00f05987a5598296ea60f0c",
+			"6a65e1da8ba5c467a1a6d65d1959431b72de7e596e5dbed0caada491e4dad5cd",
 		);
+		expect(projected.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
+			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+		});
 		expect(projected.secretValues).toMatchObject(
 			(raw as { secretValues: Record<string, string> }).secretValues,
 		);
@@ -177,7 +183,7 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe('"bundle-golden"');
 		expect(loaded.sourceRevision).toBe(
-			"e9a133f280854c8407394d078972ee33a4ee6f97e00f05987a5598296ea60f0c",
+			"6a65e1da8ba5c467a1a6d65d1959431b72de7e596e5dbed0caada491e4dad5cd",
 		);
 		expect(loaded.channelBindings).toHaveLength(1);
 	});

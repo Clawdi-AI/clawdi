@@ -315,7 +315,7 @@ part of normal laptop onboarding.
 | Command | What it does |
 | --- | --- |
 | `clawdi capabilities [--json]` | Show CLI feature surface, runtime mode, and policy restrictions |
-| `clawdi runtime init/watch/bridge/status/doctor` | Converge, watch, expose runtime bridge surfaces, inspect, and diagnose runtime state |
+| `clawdi runtime init/watch/status/doctor` | Converge, watch, inspect, and diagnose runtime state |
 | `clawdi runtime plan/apply/status --file <manifest>` | Preview, apply, and inspect channel runtime manifest projections |
 
 Runtime mode is detected from policy or runtime credentials. In managed mode,

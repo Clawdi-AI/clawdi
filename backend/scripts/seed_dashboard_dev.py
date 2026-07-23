@@ -245,7 +245,25 @@ async def _create_hosted_runtime_graph(
                 generation=3,
                 cli_package_spec=DEV_V2_CLI_PACKAGE_SPEC,
                 locale={"language": "en", "timezone": "UTC"},
-                system={},
+                system=(
+                    {
+                        "hermesDashboardAuth": {
+                            "mode": "password",
+                            "provider": "basic",
+                            "username": "admin",
+                            "passwordSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+                            "sessionSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+                            "sessionTtlSeconds": 43200,
+                            "publicUrl": "https://hermes.dev-preview.local",
+                            "activation": {
+                                "enabled": True,
+                                "capability": "hermes-basic-auth-v1",
+                            },
+                        }
+                    }
+                    if runtime == "hermes"
+                    else {}
+                ),
                 runtimes={
                     runtime: {
                         "enabled": True,
@@ -263,24 +281,24 @@ async def _create_hosted_runtime_graph(
                                 else ["gateway", "run"]
                             )
                         },
-                        "services": {},
+                        "services": (
+                            {
+                                "dashboard": {
+                                    "args": [
+                                        "dashboard",
+                                        "--host",
+                                        "0.0.0.0",
+                                        "--port",
+                                        "9119",
+                                        "--no-open",
+                                    ]
+                                }
+                            }
+                            if runtime == "hermes"
+                            else {}
+                        ),
                     }
                 },
-                bridge=(
-                    {
-                        "surfaces": [
-                            {
-                                "name": "hermes",
-                                "kind": "control-ui",
-                                "listenPort": 28793,
-                                "upstreamHost": "127.0.0.1",
-                                "upstreamPort": 9119,
-                            }
-                        ]
-                    }
-                    if runtime == "hermes"
-                    else None
-                ),
                 live_sync={
                     "enabled": True,
                     "agents": [

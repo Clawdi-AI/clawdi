@@ -22,7 +22,7 @@ this repository.
 - Direct systemd launch for managed daemon runtime processes using
   runtime-owned service names.
 - Clawdi support program boundaries for manifest watch, live sync, optional
-  bridge, optional egress, status, and diagnostics.
+  egress, status, and diagnostics.
 - Stable-image contract: runtime behavior is driven by manifest + CLI, not
   image-level per-agent wrappers.
 - The detailed ownership boundary is recorded in
@@ -32,7 +32,6 @@ this repository.
 - Systemd service rendering that starts official runtime binaries directly with
   manifest-derived args, cwd, and env when upstream service installers do not
   cover the complete hosted contract.
-- Sidecar bridge module for Control UI surfaces.
 - Hosted Terminal dashboard contract with xterm, tty-style framing, and
   WebSocket subprotocol token transport.
 - Sidecar profile validation and local sidecar lifecycle tests.

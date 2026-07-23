@@ -54,23 +54,38 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
-	useCreateRuntimeUiRedemption,
 	useCreateTerminalSession,
 	useDeleteDeployment,
 	useDeploymentLifecycle,
+	useUpdateDeployment,
 } from "@/hosted/agents/deployment-hooks";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
-import { openRuntimeUiWithRedemption } from "@/hosted/agents/runtime-ui-redemption";
+import { browserOpenClawNativeUiCopy } from "@/hosted/agents/runtime-ui-copy";
+import {
+	type HermesUiCredentials,
+	hermesCredentialsForGeneration,
+	hermesUiCredentials,
+	openClawUiUrl,
+	openSecureRuntimeWindow,
+} from "@/hosted/agents/runtime-ui-credentials";
+import { useBillingClient } from "@/hosted/billing/billing-client";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
+	DeploymentUpdateRequest,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
-import { LANGUAGE_OPTIONS } from "@/hosted/billing/deploy/language-timezone-controls";
+import {
+	LANGUAGE_OPTIONS,
+	LANGUAGE_SELECT_ITEMS,
+	normalizeHostedLanguage,
+	supportedTimezones,
+	TimezoneCombobox,
+} from "@/hosted/billing/deploy/language-timezone-controls";
 import {
 	billingErrorDetail,
 	billingErrorNormalizer,
@@ -145,14 +160,21 @@ import {
 	firstModelForProvider,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
-	MANAGED_PRIMARY_MODEL_FALLBACK,
+	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
+	primaryModelRef,
 	primaryModelValue,
 	providerChoiceFromRef,
+	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
+import {
+	aiProviderRuntimeId,
+	buildAiProviderPoolBootstrap,
+	type RuntimeAiProviderAuthKind,
+} from "@/hosted/v2/ai-providers/runtime-bootstrap";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -201,6 +223,12 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 ]);
 const CUSTOM_MODEL_CHOICE = "__custom__";
 const UNRESOLVED_PROVIDER_PREFIX = "unresolved:";
+
+function providerAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
+	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
+		? "codex_oauth"
+		: "api_key";
+}
 const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	overview: {
 		description: "Status, model, resources, and recent sessions.",
@@ -450,9 +478,12 @@ export function HostedAgentDetail({
 				<Plus />
 				Install skills
 			</Button>
-		) : canOpenHostedRuntimeUi(deployment.resource.status.summary_state, consoleUrl) ? (
+		) : runtime === "openclaw" &&
+			consoleUrl &&
+			canOpenHostedRuntimeUi(deployment.resource.status.summary_state, consoleUrl) ? (
 			<RuntimeUiOpenButton
 				deployment={deployment}
+				endpointUrl={consoleUrl}
 				label={runtimeBrowserUiLabel(runtime)}
 				variant="outline"
 				size="sm"
@@ -910,6 +941,7 @@ function OverviewDeploymentActions({ deployment }: { deployment: HostedDeploymen
 
 function RuntimeUiOpenButton({
 	deployment,
+	endpointUrl,
 	label,
 	children,
 	className,
@@ -917,28 +949,36 @@ function RuntimeUiOpenButton({
 	size = "sm",
 }: {
 	deployment: HostedDeployment;
+	endpointUrl: string;
 	label: string;
 	children: React.ReactNode;
 	className?: string;
 	variant?: React.ComponentProps<typeof Button>["variant"];
 	size?: React.ComponentProps<typeof Button>["size"];
 }) {
-	const redemption = useCreateRuntimeUiRedemption();
+	const client = useBillingClient();
+	const [isPending, setIsPending] = useState(false);
 	const openUi = useCallback(async () => {
-		try {
-			const result = await openRuntimeUiWithRedemption({
-				redeem: () => redemption.mutateAsync({ id: deployment.resource.id }),
-				openPopup: (url, target, features) => window.open(url, target, features),
+		const popup = openSecureRuntimeWindow(window.open.bind(window));
+		if (!popup) {
+			toast.error("Couldn't open runtime UI", {
+				description: "Your browser blocked the new window.",
 			});
-			if (result === "blocked") {
-				toast.error("Couldn't open runtime UI", {
-					description: "Your browser blocked the new window.",
-				});
-			}
-		} catch {
-			// useCreateRuntimeUiRedemption owns the user-facing error toast.
+			return;
 		}
-	}, [deployment.resource.id, redemption.mutateAsync]);
+		setIsPending(true);
+		try {
+			const credentials = await client.getRuntimeUiCredentials(deployment.resource.id);
+			const url = openClawUiUrl(credentials, endpointUrl);
+			if (!url) throw new Error("Runtime UI credential response was invalid");
+			popup.location.replace(url);
+		} catch {
+			popup.close();
+			toast.error("Couldn't open runtime UI", { description: "Please try again." });
+		} finally {
+			setIsPending(false);
+		}
+	}, [client, deployment.resource.id, endpointUrl]);
 
 	return (
 		<Button
@@ -946,21 +986,19 @@ function RuntimeUiOpenButton({
 			variant={variant}
 			size={size}
 			className={className}
-			disabled={redemption.isPending}
+			disabled={isPending}
 			aria-label={`Open ${label}`}
 			onClick={() => void openUi()}
 		>
-			{redemption.isPending ? <Spinner className="size-3.5" /> : null}
+			{isPending ? <Spinner className="size-3.5" /> : null}
 			{children}
 		</Button>
 	);
 }
 
 /**
- * Live agent browser UI embedded inline. The deployment's selected runtime UI
- * URL points at owner-only exposure. When the runtime
- * allows dashboard framing, the bridge cookie + WS work in-frame; otherwise
- * the full-screen link is the alternate path.
+ * Native runtime dashboards are top-level only. Hermes exposes explicit Basic
+ * credentials; OpenClaw receives its official token handoff in the URL fragment.
  */
 function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; runtime: Runtime }) {
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
@@ -969,44 +1007,41 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
-	const canOpenRuntimeUi = canOpenHostedRuntimeUi(deployment.resource.status.summary_state, url);
-	const redemption = useCreateRuntimeUiRedemption();
-	const [frameUrl, setFrameUrl] = useState<string | null>(null);
-	const [frameError, setFrameError] = useState<Error | null>(null);
-	const [redemptionAttempt, setRedemptionAttempt] = useState(0);
-	const startedRedemptionRef = useRef<string | null>(null);
-
+	const client = useBillingClient();
+	const [credentials, setCredentials] = useState<HermesUiCredentials | null>(null);
+	const [loadedCredentialGeneration, setLoadedCredentialGeneration] = useState<number | null>(null);
+	const [credentialError, setCredentialError] = useState<Error | null>(null);
+	const [isLoadingCredentials, setIsLoadingCredentials] = useState(false);
+	const openClawCopy = browserOpenClawNativeUiCopy();
+	const credentialGeneration = deployment.resource.metadata.generation;
 	useEffect(() => {
-		if (!canOpenRuntimeUi || !url) {
-			startedRedemptionRef.current = null;
-			setFrameUrl(null);
-			setFrameError(null);
-			return;
+		setCredentials(null);
+		setLoadedCredentialGeneration(null);
+		setCredentialError(null);
+	}, [credentialGeneration]);
+	const currentCredentials = hermesCredentialsForGeneration(
+		credentials,
+		loadedCredentialGeneration,
+		credentialGeneration,
+	);
+	const loadHermesCredentials = useCallback(async () => {
+		if (!url) return;
+		setIsLoadingCredentials(true);
+		setCredentialError(null);
+		try {
+			const response = await client.getRuntimeUiCredentials(deployment.resource.id);
+			const resolved = hermesUiCredentials(response, url);
+			if (!resolved) throw new Error("Runtime UI credential response was invalid");
+			setCredentials(resolved);
+			setLoadedCredentialGeneration(credentialGeneration);
+		} catch (error) {
+			setCredentialError(error instanceof Error ? error : new Error("Credential request failed"));
+		} finally {
+			setIsLoadingCredentials(false);
 		}
-		const attemptKey = `${deployment.resource.id}:${url}:${redemptionAttempt}`;
-		if (startedRedemptionRef.current === attemptKey) return;
-		startedRedemptionRef.current = attemptKey;
-		setFrameUrl(null);
-		setFrameError(null);
-		redemption
-			.mutateAsync({ id: deployment.resource.id })
-			.then((result) => {
-				if (startedRedemptionRef.current === attemptKey) setFrameUrl(result.url);
-			})
-			.catch((error: unknown) => {
-				if (startedRedemptionRef.current !== attemptKey) return;
-				setFrameError(error instanceof Error ? error : new Error("Runtime UI redemption failed"));
-			});
-	}, [canOpenRuntimeUi, deployment.resource.id, redemption.mutateAsync, redemptionAttempt, url]);
+	}, [client, credentialGeneration, deployment.resource.id, url]);
 
-	const retryRedemption = () => {
-		redemption.reset();
-		setFrameUrl(null);
-		setFrameError(null);
-		setRedemptionAttempt((attempt) => attempt + 1);
-	};
-
-	// Not running yet — the runtime UI and bridge only exist once the agent boots.
+	// Native runtime UI exposure exists only after the runtime is running.
 	if (!isRunning) {
 		return (
 			<EmptyState
@@ -1034,64 +1069,65 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 	}
 
 	return (
-		<LiveToolFrame
-			icon={MonitorPlay}
-			title={browserUiLabel}
-			action={
-				<RuntimeUiOpenButton
-					deployment={deployment}
-					label={browserUiLabel}
-					variant="outline"
-					size="sm"
-					className="hidden sm:inline-flex"
-				>
-					Open full screen
-					<Maximize2 className="size-3.5" />
-				</RuntimeUiOpenButton>
-			}
-		>
-			{/* Desktop: embed the live UI. Mobile is too cramped, so offer the
-			    full-screen link instead. */}
-			{frameError ? (
-				<div className="flex min-h-[420px] flex-1 items-center justify-center p-6">
-					<div className="w-full max-w-xl">
-						<ApiErrorPanel
-							error={frameError}
-							onRetry={retryRedemption}
-							normalizer={billingErrorNormalizer}
-							title="Couldn't load Runtime UI"
-						/>
-					</div>
-				</div>
-			) : frameUrl ? (
-				<iframe
-					key={`${runtime}:${frameUrl}`}
-					src={frameUrl}
-					title={browserUiLabel}
-					className="hidden min-h-0 flex-1 border-0 bg-background sm:block"
-					allow="clipboard-read; clipboard-write"
-				/>
-			) : (
-				<div className="hidden min-h-0 flex-1 items-center justify-center bg-background sm:flex">
-					<Spinner className="size-4 text-muted-foreground" />
-				</div>
-			)}
-			{frameError ? null : (
-				<div className="flex min-h-[420px] flex-1 flex-col items-center justify-center gap-3 p-6 text-center sm:hidden">
+		<LiveToolFrame icon={MonitorPlay} title={browserUiLabel}>
+			<div className="flex min-h-[420px] flex-1 items-center justify-center p-6">
+				<div className="w-full max-w-xl space-y-4 text-center">
 					<p className="text-sm text-muted-foreground">
-						This runtime UI is best viewed full screen on a small screen.
+						{runtime === "hermes"
+							? "Hermes uses native password authentication in a top-level window."
+							: openClawCopy.description}
 					</p>
-					<RuntimeUiOpenButton
-						deployment={deployment}
-						label={browserUiLabel}
-						variant="outline"
-						size="sm"
-					>
-						Open {browserUiLabel}
-						<Maximize2 className="size-3.5" />
-					</RuntimeUiOpenButton>
+					{runtime === "hermes" ? (
+						currentCredentials ? (
+							<div className="space-y-3 text-left">
+								<Label htmlFor={`hermes-username-${deployment.resource.id}`}>Username</Label>
+								<Input
+									id={`hermes-username-${deployment.resource.id}`}
+									readOnly
+									value={currentCredentials.username}
+								/>
+								<Label htmlFor={`hermes-password-${deployment.resource.id}`}>Password</Label>
+								<Input
+									id={`hermes-password-${deployment.resource.id}`}
+									readOnly
+									value={currentCredentials.password}
+								/>
+								<Button
+									type="button"
+									onClick={() =>
+										window.open(currentCredentials.url, "_blank", "noopener,noreferrer")
+									}
+								>
+									Open {browserUiLabel}
+									<ExternalLink className="size-3.5" />
+								</Button>
+							</div>
+						) : (
+							<Button
+								type="button"
+								disabled={isLoadingCredentials}
+								onClick={() => void loadHermesCredentials()}
+							>
+								{isLoadingCredentials ? <Spinner className="size-3.5" /> : null}
+								Show Hermes credentials
+							</Button>
+						)
+					) : (
+						<RuntimeUiOpenButton deployment={deployment} endpointUrl={url} label={browserUiLabel}>
+							{openClawCopy.openControlUi}
+							<Maximize2 className="size-3.5" />
+						</RuntimeUiOpenButton>
+					)}
+					{credentialError ? (
+						<ApiErrorPanel
+							error={credentialError}
+							onRetry={() => void loadHermesCredentials()}
+							normalizer={billingErrorNormalizer}
+							title="Couldn't load Hermes credentials"
+						/>
+					) : null}
 				</div>
-			)}
+			</div>
 		</LiveToolFrame>
 	);
 }
@@ -1388,6 +1424,7 @@ function AiProviderTab({
 	runtime: Runtime;
 }) {
 	const providers = useAiProviders();
+	const updateDeployment = useUpdateDeployment();
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data?.providers ?? [];
 	const customProviders = useMemo(
@@ -1447,7 +1484,7 @@ function AiProviderTab({
 	const [bindingMode, setBindingMode] = useState<AiBindingMode>(initialMode);
 	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(initialPrimaryChoice);
 	const [primaryModel, setPrimaryModel] = useState<string>(
-		currentModel || MANAGED_PRIMARY_MODEL_FALLBACK,
+		currentModel || MANAGED_DEFAULT_MODEL_CHOICE,
 	);
 
 	// Re-seed the form only when the server-side binding genuinely changes (the
@@ -1468,7 +1505,7 @@ function AiProviderTab({
 		setBindingMode(initialMode);
 		setSelectedProviders(initialProviderChoices);
 		setPrimaryProviderChoice(initialPrimaryChoice);
-		setPrimaryModel(currentModel || MANAGED_PRIMARY_MODEL_FALLBACK);
+		setPrimaryModel(currentModel || MANAGED_DEFAULT_MODEL_CHOICE);
 	}
 
 	const selectedIdentity = JSON.stringify(
@@ -1480,7 +1517,7 @@ function AiProviderTab({
 		(bindingMode === "configured" &&
 			(selectedIdentity !== initialSelectedIdentity ||
 				primaryProviderChoice !== initialPrimaryChoice ||
-				primaryModel !== (currentModel || MANAGED_PRIMARY_MODEL_FALLBACK)));
+				primaryModel !== (currentModel || MANAGED_DEFAULT_MODEL_CHOICE)));
 
 	function setPrimaryProvider(choice: string) {
 		setBindingMode("configured");
@@ -1522,6 +1559,76 @@ function AiProviderTab({
 		if (!next.includes(primaryProviderChoice)) {
 			setPrimaryProvider(next[0] ?? MANAGED_AI_CHOICE);
 		}
+	}
+
+	function applyProviderSettings() {
+		if (bindingMode === "unmanaged") {
+			updateDeployment.mutate({
+				id: deployment.resource.id,
+				update: {
+					ai_provider_auth_kind: "unmanaged",
+					ai_provider_id: null,
+					provider_ids: [],
+					primary_model: null,
+					ai_provider_bootstrap: null,
+				},
+			});
+			return;
+		}
+		const normalizedChoices = normalizeSelectedProviderIds(
+			selectedProviders,
+			primaryProviderChoice,
+		);
+		const providerRefs = normalizedChoices
+			.map((choice) => providerRefFromChoice(choice, list))
+			.filter((providerId): providerId is string => Boolean(providerId));
+		if (providerRefs.length !== normalizedChoices.length) {
+			toast.error("Provider unavailable", {
+				description: "Refresh providers before applying these settings.",
+			});
+			return;
+		}
+		const primaryProviderRef =
+			providerRefFromChoice(primaryProviderChoice, list) ?? MANAGED_PROVIDER_ID;
+		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
+		if (!modelRef) {
+			toast.error("Primary model required");
+			return;
+		}
+		const primaryProvider = customProviders.find(
+			(provider) => provider.provider_id === primaryProviderChoice,
+		);
+		const selectedCustomProviders = customProviders.filter((provider) =>
+			normalizedChoices.includes(provider.provider_id),
+		);
+		const authKind = primaryProvider ? providerAuthKind(primaryProvider) : "managed";
+		const bootstrapProvider = primaryProvider ?? selectedCustomProviders[0];
+		let bootstrap: DeploymentUpdateRequest["ai_provider_bootstrap"] = null;
+		try {
+			bootstrap =
+				selectedCustomProviders.length > 0 && bootstrapProvider
+					? buildAiProviderPoolBootstrap(
+							selectedCustomProviders,
+							bootstrapProvider.provider_id,
+							providerAuthKind(bootstrapProvider),
+						)
+					: null;
+		} catch (error) {
+			toast.error("Provider configuration is invalid", {
+				description: error instanceof Error ? error.message : "Check provider configuration.",
+			});
+			return;
+		}
+		updateDeployment.mutate({
+			id: deployment.resource.id,
+			update: {
+				ai_provider_auth_kind: authKind,
+				ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
+				provider_ids: providerRefs,
+				primary_model: modelRef,
+				ai_provider_bootstrap: bootstrap,
+			},
+		});
 	}
 
 	return (
@@ -1648,7 +1755,10 @@ function AiProviderTab({
 			)}
 
 			<div className="flex items-center gap-2">
-				<Button disabled>{dirty ? "Changes unavailable" : "No changes"}</Button>
+				<Button disabled={!dirty || updateDeployment.isPending} onClick={applyProviderSettings}>
+					{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
+					{dirty ? "Apply provider settings" : "No changes"}
+				</Button>
 			</div>
 
 			<p className="text-xs text-muted-foreground">
@@ -1697,7 +1807,11 @@ function AgentPrimaryModelPicker({
 			})),
 	];
 	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({ value: model, label: formatModelLabel(model) })),
+		...catalogModelIds.map((model) => ({
+			value: model,
+			label:
+				model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : formatModelLabel(model),
+		})),
 		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
 	];
 	return (
@@ -1751,7 +1865,9 @@ function AgentPrimaryModelPicker({
 							<SelectContent>
 								{catalogModelIds.map((model) => (
 									<SelectItem key={model} value={model}>
-										{formatModelLabel(model)}
+										{model === MANAGED_DEFAULT_MODEL_CHOICE
+											? "Hosted default (Luna)"
+											: formatModelLabel(model)}
 									</SelectItem>
 								))}
 								<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
@@ -1772,11 +1888,7 @@ function AgentPrimaryModelPicker({
 						id="agent-primary-model"
 						value={primaryModel}
 						onChange={(event) => onPrimaryModelChange(event.target.value)}
-						placeholder={
-							primaryProviderChoice === MANAGED_AI_CHOICE
-								? MANAGED_PRIMARY_MODEL_FALLBACK
-								: "model id"
-						}
+						placeholder="model id"
 						autoComplete="off"
 						spellCheck={false}
 					/>
@@ -2079,8 +2191,21 @@ function LanguageTimezoneSettingsSection({
 	const configLanguage = runtimeConfiguration.language ?? "";
 	const configTimezone = runtimeConfiguration.timezone ?? "";
 	const runtimeLabel = runtimeDisplayName(runtime);
-	const languageLabel =
-		LANGUAGE_OPTIONS.find((option) => option.code === configLanguage)?.label ?? "Runtime default";
+	const updateDeployment = useUpdateDeployment();
+	const localeIdentity = `${configLanguage}\0${configTimezone}`;
+	const [syncedLocaleIdentity, setSyncedLocaleIdentity] = useState(localeIdentity);
+	const [language, setLanguage] = useState(configLanguage);
+	const [timezone, setTimezone] = useState(configTimezone);
+	if (syncedLocaleIdentity !== localeIdentity) {
+		setSyncedLocaleIdentity(localeIdentity);
+		setLanguage(configLanguage);
+		setTimezone(configTimezone);
+	}
+	const timezoneOptions = useMemo(() => {
+		const options = supportedTimezones();
+		return timezone && !options.includes(timezone) ? [timezone, ...options] : options;
+	}, [timezone]);
+	const dirty = language !== configLanguage || timezone !== configTimezone;
 
 	return (
 		<SettingsSection
@@ -2088,16 +2213,54 @@ function LanguageTimezoneSettingsSection({
 			description="Locale context configured for this hosted agent."
 		>
 			<div className="flex max-w-2xl flex-col gap-4">
-				<LiveNote>{`Current locale settings for ${runtimeLabel}. New settings are selected during deployment.`}</LiveNote>
+				<LiveNote>{`Apply locale changes directly to this ${runtimeLabel} deployment.`}</LiveNote>
 				<div className="grid gap-4 sm:grid-cols-2">
-					<div className="rounded-lg border bg-muted/30 p-3">
-						<div className="text-xs text-muted-foreground">Language</div>
-						<div className="mt-1 text-sm font-medium">{languageLabel}</div>
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor="hosted-agent-language">Language</Label>
+						<Select
+							items={LANGUAGE_SELECT_ITEMS}
+							value={language || "default"}
+							onValueChange={(value) => setLanguage(value === "default" ? "" : (value ?? ""))}
+						>
+							<SelectTrigger id="hosted-agent-language" className="w-full">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="default">Runtime default</SelectItem>
+								{LANGUAGE_OPTIONS.map((option) => (
+									<SelectItem key={option.code} value={option.code}>
+										{option.label}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
 					</div>
-					<div className="rounded-lg border bg-muted/30 p-3">
-						<div className="text-xs text-muted-foreground">Timezone</div>
-						<div className="mt-1 text-sm font-medium">{configTimezone || "Runtime default"}</div>
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor="hosted-agent-timezone">Timezone</Label>
+						<TimezoneCombobox
+							id="hosted-agent-timezone"
+							value={timezone}
+							onValueChange={setTimezone}
+							options={timezoneOptions}
+						/>
 					</div>
+				</div>
+				<div>
+					<Button
+						disabled={!dirty || updateDeployment.isPending}
+						onClick={() =>
+							updateDeployment.mutate({
+								id: deployment.resource.id,
+								update: {
+									language: normalizeHostedLanguage(language),
+									timezone: timezone.trim() || null,
+								},
+							})
+						}
+					>
+						{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
+						{dirty ? "Apply locale settings" : "No changes"}
+					</Button>
 				</div>
 			</div>
 		</SettingsSection>

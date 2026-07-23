@@ -14,7 +14,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 REVISION = "d8f2a1c4b6e9"
-HEAD_REVISION = "a6d2f4c8b1e7"
+HEAD_REVISION = "b7e4d2a9c6f1"
+PREVIOUS_HEAD_REVISION = "a6d2f4c8b1e7"
 RUNTIME_OBSERVATION_DOWN_REVISION = "c7e4a9b2d6f1"
 WORKLOAD_OAUTH_DOWN_REVISION = "f1a7c3d9e2b4"
 CONFIG_OBSERVATION_REVISION = "f3a1c7d9e2b4"
@@ -40,7 +41,8 @@ def test_agent_v2_runtime_contract_migration_precedes_config_observation_migrati
     scripts = ScriptDirectory.from_config(config)
 
     assert scripts.get_heads() == [HEAD_REVISION]
-    assert scripts.get_revision(HEAD_REVISION).down_revision == "4c8f2a1d7e9b"
+    assert scripts.get_revision(HEAD_REVISION).down_revision == PREVIOUS_HEAD_REVISION
+    assert scripts.get_revision(PREVIOUS_HEAD_REVISION).down_revision == "4c8f2a1d7e9b"
     assert scripts.get_revision("4c8f2a1d7e9b").down_revision == RUNTIME_OBSERVATION_DOWN_REVISION
     assert (
         scripts.get_revision(RUNTIME_OBSERVATION_DOWN_REVISION).down_revision

@@ -40,6 +40,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useBillingClient } from "@/hosted/billing/billing-client";
 import { PlanCBillingUnavailableNotice } from "@/hosted/billing/components/plan-c-unavailable-notice";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
@@ -67,7 +68,10 @@ import {
 	DEFAULT_DEPLOY_RUNTIME,
 	type DeployWizardAiAccessMode,
 } from "@/hosted/billing/deploy/deploy-defaults";
-import { resolveBasicDeploySelection } from "@/hosted/billing/deploy/deploy-model";
+import {
+	resolveBasicDeploySelection,
+	usesActiveIncludedBasicSlot,
+} from "@/hosted/billing/deploy/deploy-model";
 import {
 	buildHostedDeployRequest,
 	type DeployAiFields,
@@ -139,7 +143,7 @@ import {
 	dedupeProviderIds,
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
-	MANAGED_PRIMARY_MODEL_FALLBACK,
+	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
@@ -349,6 +353,12 @@ function computeStatusLine({
 						: "The Basic plan isn’t available from the billing service. Retry plans before deploying.",
 			};
 		}
+		if (basicSelection.mode === "included") {
+			return {
+				tone: "muted",
+				message: "Your included Basic slot is available. No compute subscription is required.",
+			};
+		}
 		if (basicOffer) {
 			return {
 				tone: "muted",
@@ -392,11 +402,13 @@ export function DeployWizard() {
 	const aiProviders = useAiProviders();
 	const channels = useChannels();
 	const createSubscription = useCreateSubscription();
+	const billingClient = useBillingClient();
 	const resolveDeploymentRequest = useResolveDeploymentRequest();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const runAction = useActionLock();
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const includedCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const checkoutReturnRef = useRef<string | null>(null);
 	const createdProviderGuardRef = useRef<{ providerId: string; dataUpdatedAt: number } | null>(
 		null,
@@ -452,8 +464,10 @@ export function DeployWizard() {
 			resolveBasicDeploySelection({
 				basicPlan,
 				billingTermMonths: term,
+				includedSlotAvailable:
+					deployments.isSuccess && !usesActiveIncludedBasicSlot(deployments.data),
 			}),
-		[basicPlan, term],
+		[basicPlan, deployments.data, deployments.isSuccess, term],
 	);
 	const perfOfferSelection = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
@@ -690,8 +704,10 @@ export function DeployWizard() {
 
 		const primaryProviderRef =
 			providerRefFromChoice(primaryProviderChoice, providerList) ?? MANAGED_PROVIDER_ID;
+		const usesHostedManagedDefault =
+			primaryProviderChoice === MANAGED_AI_CHOICE && primaryModel === MANAGED_DEFAULT_MODEL_CHOICE;
 		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
-		if (!modelRef) {
+		if (!modelRef && !usesHostedManagedDefault) {
 			toast.error("Primary model required", {
 				description: "Choose a catalog model or enter a model id.",
 			});
@@ -709,8 +725,8 @@ export function DeployWizard() {
 			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
 			ai_provider_auth_kind: primaryKind,
 			provider_ids: providerRefs,
-			primary_model: modelRef,
 		};
+		if (modelRef) body.primary_model = modelRef;
 		if (customProviders.length > 0) {
 			const bootstrapSelectedProvider = primaryProvider ?? customProviders[0];
 			const bootstrapKind = aiAuthKind(bootstrapSelectedProvider);
@@ -1032,6 +1048,32 @@ export function DeployWizard() {
 				});
 				return;
 			}
+			const deployConfig = buildDeployRequest(aiFields, COMPUTE_BASIC_SLUG);
+			const fingerprint = idempotencyFingerprint(deployConfig);
+			const attempt = idempotencyAttemptFor(
+				includedCreateAttemptRef.current,
+				"deployment-create",
+				fingerprint,
+				newIdempotencyKey,
+			);
+			includedCreateAttemptRef.current = attempt;
+			const created = await billingClient
+				.createDeployment(deployConfig, attempt.key)
+				.catch((error: unknown) => {
+					if (isIdempotencyKeyReusedError(error)) {
+						forgetIdempotencyAttempt("deployment-create", fingerprint);
+						includedCreateAttemptRef.current = null;
+					}
+					throw error;
+				});
+			forgetIdempotencyAttempt("deployment-create", fingerprint);
+			includedCreateAttemptRef.current = null;
+			toast.success("Agent deployed", {
+				description: "Your included Basic deployment is provisioning now.",
+			});
+			void router.navigate({
+				href: agentSectionHref(created.deploymentId, "overview", "source=on-clawdi"),
+			});
 		} catch (e) {
 			if (paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
@@ -1289,15 +1331,19 @@ export function DeployWizard() {
 								}
 								title="Basic"
 								description={
-									basicOffer
-										? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · ${recurringOfferLabel(basicOffer)}`
-										: "Basic funding unavailable"
+									basicSelection.mode === "included"
+										? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · included slot`
+										: basicOffer
+											? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · ${recurringOfferLabel(basicOffer)}`
+											: "Basic funding unavailable"
 								}
 								badge={
 									<Badge variant="secondary">
-										{basicOffer
-											? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo`
-											: "Unavailable"}
+										{basicSelection.mode === "included"
+											? "Included"
+											: basicOffer
+												? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo`
+												: "Unavailable"}
 									</Badge>
 								}
 								disabled={basicUnavailable}
@@ -1328,7 +1374,7 @@ export function DeployWizard() {
 								disabled={!perfPlan}
 							/>
 						</div>
-						{(compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
+						{paidSelection && (compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
 							<div className="flex flex-col gap-1.5 sm:max-w-xs">
 								<span className="text-xs text-muted-foreground">Billing term</span>
 								<TermSwitcher
@@ -1668,7 +1714,7 @@ function PrimaryModelPicker({
 								<SelectGroup>
 									{catalogModelIds.map((model) => (
 										<SelectItem key={model} value={model}>
-											{model}
+											{model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : model}
 										</SelectItem>
 									))}
 									<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
@@ -1690,11 +1736,7 @@ function PrimaryModelPicker({
 						id="deploy-primary-model"
 						value={primaryModel}
 						onChange={(event) => onPrimaryModelChange(event.target.value)}
-						placeholder={
-							primaryProviderChoice === MANAGED_AI_CHOICE
-								? MANAGED_PRIMARY_MODEL_FALLBACK
-								: "model id"
-						}
+						placeholder="model id"
 						autoComplete="off"
 						spellCheck={false}
 					/>

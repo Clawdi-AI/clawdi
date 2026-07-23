@@ -35,8 +35,8 @@ describe("deployment mutation settlement", () => {
 			/onSettled: \(\) => invalidateDeploymentSnapshots\(qc\)/g,
 		);
 
-		// Declarative lifecycle and delete both reconcile even when the request
-		// rejects or times out.
-		expect(settlementInvalidations).toHaveLength(2);
+		// Declarative lifecycle, delete, and settings updates all reconcile even
+		// when the request rejects or times out.
+		expect(settlementInvalidations).toHaveLength(3);
 	});
 });

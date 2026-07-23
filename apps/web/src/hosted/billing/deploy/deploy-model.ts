@@ -7,6 +7,11 @@ import {
 
 export type BasicDeploySelection =
 	| {
+			mode: "included";
+			computePlanSlug: typeof COMPUTE_BASIC_SLUG;
+			plan: Plan;
+	  }
+	| {
 			mode: "checkout";
 			billingTermMonths: number;
 			computePlanSlug: typeof COMPUTE_BASIC_SLUG;
@@ -35,11 +40,20 @@ export function usesActiveIncludedBasicSlot(deployments: HostedDeployment[] | un
 export function resolveBasicDeploySelection({
 	basicPlan,
 	billingTermMonths,
+	includedSlotAvailable = false,
 }: {
 	basicPlan: Plan | undefined;
 	billingTermMonths: number;
+	includedSlotAvailable?: boolean;
 }): BasicDeploySelection {
 	if (!basicPlan) return { mode: "unavailable", reason: "plan_missing" };
+	if (includedSlotAvailable) {
+		return {
+			mode: "included",
+			computePlanSlug: COMPUTE_BASIC_SLUG,
+			plan: basicPlan,
+		};
+	}
 	const selection = selectExplicitOfferForTerm(basicPlan, billingTermMonths);
 	if (!selection) return { mode: "unavailable", reason: "offers_missing" };
 	return {

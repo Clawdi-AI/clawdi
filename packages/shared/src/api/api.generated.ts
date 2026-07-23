@@ -4554,28 +4554,83 @@ export interface components {
             /** Profiles */
             profiles?: components["schemas"]["HostedEgressProfile"][] | null;
         };
-        /** HostedRuntimeBridge */
-        HostedRuntimeBridge: {
-            /** Surfaces */
-            surfaces: components["schemas"]["HostedRuntimeBridgeSurface"][];
-        };
-        /** HostedRuntimeBridgeSurface */
-        HostedRuntimeBridgeSurface: {
-            /** Name */
-            name: string;
+        /** HostedHermesDashboardActivation */
+        HostedHermesDashboardActivation: {
             /**
-             * Kind
+             * Enabled
              * @constant
              */
-            kind: "control-ui";
-            /** Listenhost */
-            listenHost?: string | null;
-            /** Listenport */
-            listenPort: number;
-            /** Upstreamhost */
-            upstreamHost?: string | null;
-            /** Upstreamport */
-            upstreamPort: number;
+            enabled: true;
+            /**
+             * Capability
+             * @constant
+             */
+            capability: "hermes-basic-auth-v1";
+        };
+        /** HostedHermesDashboardAuth */
+        HostedHermesDashboardAuth: {
+            /**
+             * Mode
+             * @constant
+             */
+            mode: "password";
+            /**
+             * Provider
+             * @constant
+             */
+            provider: "basic";
+            /** Username */
+            username: string;
+            /**
+             * Passwordsecretref
+             * @constant
+             */
+            passwordSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD";
+            /**
+             * Sessionsecretref
+             * @constant
+             */
+            sessionSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET";
+            /**
+             * Sessionttlseconds
+             * @default 43200
+             */
+            sessionTtlSeconds: number;
+            /** Publicurl */
+            publicUrl: string;
+            activation: components["schemas"]["HostedHermesDashboardActivation"];
+        };
+        /** HostedOpenClawGatewayActivation */
+        HostedOpenClawGatewayActivation: {
+            /**
+             * Enabled
+             * @constant
+             */
+            enabled: true;
+            /**
+             * Capability
+             * @constant
+             */
+            capability: "openclaw-native-auth-v1";
+        };
+        /** HostedOpenClawGatewayAuth */
+        HostedOpenClawGatewayAuth: {
+            /**
+             * Mode
+             * @constant
+             */
+            mode: "token";
+            /**
+             * Tokenref
+             * @constant
+             */
+            tokenRef: "env://OPENCLAW_GATEWAY_TOKEN";
+            /**
+             * Deviceauthrequired
+             * @constant
+             */
+            deviceAuthRequired: false;
+            activation: components["schemas"]["HostedOpenClawGatewayActivation"];
         };
         /** HostedRuntimeConfiguredDesiredState */
         HostedRuntimeConfiguredDesiredState: {
@@ -4824,6 +4879,10 @@ export interface components {
         HostedRuntimeSystem: {
             /** Openclawcontroluiallowedorigins */
             openclawControlUiAllowedOrigins?: string[] | null;
+            /** Openclawcontroluibasepath */
+            openclawControlUiBasePath?: string | null;
+            openclawGatewayAuth?: components["schemas"]["HostedOpenClawGatewayAuth"] | null;
+            hermesDashboardAuth?: components["schemas"]["HostedHermesDashboardAuth"] | null;
         };
         /** HostedRuntimeTools */
         HostedRuntimeTools: {
@@ -5171,7 +5230,6 @@ export interface components {
             runtimes: {
                 [key: string]: components["schemas"]["HostedRuntimeConfiguredDesiredState"] | components["schemas"]["HostedRuntimeUnmanagedDesiredState"];
             };
-            bridge?: components["schemas"]["HostedRuntimeBridge"] | null;
             live_sync: components["schemas"]["HostedRuntimeLiveSync"];
             recovery: components["schemas"]["HostedRuntimeRecovery"];
             egress_profiles?: components["schemas"]["HostedEgressProfiles"] | null;

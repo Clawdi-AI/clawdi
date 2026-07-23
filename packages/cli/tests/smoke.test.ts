@@ -313,7 +313,18 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					generation: 1,
 					issuedAt: "2026-07-12T00:00:00Z",
 					locale: { language: "en", timezone: "UTC" },
-					system: {},
+					system: {
+						openclawControlUiAllowedOrigins: ["https://agent.example.test"],
+						openclawGatewayAuth: {
+							mode: "token",
+							tokenRef: "env://OPENCLAW_GATEWAY_TOKEN",
+							deviceAuthRequired: false,
+							activation: {
+								enabled: true,
+								capability: "openclaw-native-auth-v1",
+							},
+						},
+					},
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 					clawdiCli: {
 						source: "npm:clawdi",
@@ -326,6 +337,21 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 							install: { source: "official" },
 							providerMode: "unmanaged",
 							provider_ids: [],
+							run: {
+								args: [
+									"gateway",
+									"run",
+									"--allow-unconfigured",
+									"--port",
+									"18789",
+									"--bind",
+									"lan",
+									"--force",
+								],
+								secretEnv: {
+									OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+								},
+							},
 						},
 					},
 					providers: {},
@@ -363,6 +389,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 					CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
 					CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER: installer,
 					CLAWDI_CODEX_INSTALL_DISABLED: "1",
+					OPENCLAW_GATEWAY_TOKEN: "gateway-token",
 				},
 			);
 			expect(result.code).toBe(0);

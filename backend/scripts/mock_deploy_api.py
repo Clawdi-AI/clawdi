@@ -364,7 +364,6 @@ def _deployment_read_response(record: dict[str, Any]) -> dict[str, Any]:
                 "runtime": runtime,
                 "role": "control_ui",
                 "url": runtime_ui_url,
-                "requires_bridge_token": True,
             }
             if isinstance(runtime_ui_url, str) and runtime_ui_url
             else None

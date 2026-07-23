@@ -15,7 +15,6 @@ def test_mock_deployment_read_response_is_projected_from_flat_mutation_record() 
         "runtime": "openclaw",
         "role": "control_ui",
         "url": "https://openclaw.dev-preview.local",
-        "requires_bridge_token": True,
     }
     assert read["current_plan_slug"] == "compute_performance"
     assert read["commercial_display"]["latest_funding_fact"] is None

@@ -6,9 +6,14 @@ export type {
 	DeploymentRead,
 	DeployPaths,
 	DeployRequestRead,
+	RuntimeUiAuthMode,
+	RuntimeUiCredentials,
+	RuntimeUiEndpointInfo,
 } from "./deploy";
 export {
 	isDeploymentEventStreamSnapshotHandoff,
+	isRuntimeUiCredentials,
+	isRuntimeUiEndpointInfo,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "./deploy";
