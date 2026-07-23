@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
-import { cacheRuntimeLastGoodManifest } from "./manifest";
+import { cacheRuntimeLastGoodManifest, convergeRuntimeManifest } from "./manifest";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 	loadRemoteRuntimeManifest,
@@ -53,6 +53,96 @@ describe("hosted runtime bundle v2", () => {
 							source: "env",
 							provider: "default",
 							id: "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_50000000000000000000000000000005_AGENT_TOKEN",
+						},
+					},
+				},
+			},
+		});
+	});
+
+	test("keeps live-sync channel bindings applicable from the runtime watch service", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-watch-"));
+		roots.push(root);
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		process.env.CLAWDI_RUN_DIR = join(root, "run");
+		process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(root, "run", "systemd", "system");
+		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+		process.env.CLAWDI_HOME = join(root, "clawdi-home");
+		process.env.HOME = process.env.CLAWDI_RUNTIME_HOME;
+		process.env.CLAWDI_AUTH_TOKEN = "test-token";
+		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
+		process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
+		const paths = getRuntimePaths({ mode: "hosted" });
+		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const channelPatchPath = join(root, "openclaw-channel-patch.json");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(
+			openclawBin,
+			[
+				"#!/usr/bin/env bash",
+				"set -euo pipefail",
+				'if [[ "$1 $2 $3" == "config patch --stdin" ]]; then',
+				"  payload=$(cat)",
+				`  if [[ "$payload" == *'"channels"'* && "$payload" == *'"telegram"'* ]]; then`,
+				`    printf '%s\\n' "$payload" > '${channelPatchPath}'`,
+				"  fi",
+				"fi",
+				"",
+			].join("\n"),
+		);
+		chmodSync(openclawBin, 0o700);
+
+		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
+		const projected = applyRuntimeBundleChannelsToManifestLoad(normalizeHostedRuntimeBundleV2(raw));
+		const openclaw = structuredClone(projected.manifest.runtimes.openclaw);
+		openclaw.providerMode = "unmanaged";
+		openclaw.provider_ids = [];
+		delete openclaw.primary_model;
+		const projection = structuredClone(projected.manifest.projection);
+		if (!projection) throw new Error("runtime bundle projection is unavailable");
+		delete projection.providers;
+		delete projection.terminalTooling;
+		const load = {
+			...projected,
+			manifest: {
+				...projected.manifest,
+				runtimes: { openclaw },
+				projection,
+			},
+		};
+		const result = convergeRuntimeManifest(load, paths, {
+			managedGatewayModelListFetcher: ({ baseUrl }) => ({
+				status: "ok",
+				endpoint: `${baseUrl}/models`,
+				models: [{ id: "gpt-test" }],
+			}),
+		});
+
+		expect(result.installErrors).toEqual([]);
+		const watchUnit = readFileSync(
+			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
+			"utf-8",
+		);
+		const watchEnvPath = join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env");
+		expect(watchUnit).toContain(`EnvironmentFile=${watchEnvPath}`);
+		const gatewayTokenLine = 'OPENCLAW_GATEWAY_TOKEN="gateway-token"';
+		expect(readFileSync(watchEnvPath, "utf-8")).toContain(gatewayTokenLine);
+		expect(
+			readFileSync(join(paths.systemdEnvRoot, "openclaw-gateway.service.env"), "utf-8"),
+		).toContain(gatewayTokenLine);
+		expect(JSON.parse(readFileSync(channelPatchPath, "utf-8"))).toMatchObject({
+			channels: {
+				telegram: {
+					accounts: {
+						clawdi_50000000000000000000000000000005: {
+							enabled: true,
+							botToken: {
+								source: "env",
+								provider: "default",
+								id: "CLAWDI_CHANNEL_TELEGRAM_CLAWDI_50000000000000000000000000000005_AGENT_TOKEN",
+							},
 						},
 					},
 				},
