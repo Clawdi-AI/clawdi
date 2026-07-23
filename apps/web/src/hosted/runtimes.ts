@@ -1,5 +1,4 @@
-import { isRuntimeUiEndpointInfo, type RuntimeUiAuthMode } from "@clawdi/shared/api";
-import type { DeploymentDetailsInfo, HostedDeployment } from "@/hosted/billing/contracts";
+import type { AiProviderAuthKind, HostedDeployment } from "@/hosted/billing/contracts";
 
 export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
 export type HostedRuntime = (typeof HOSTED_RUNTIMES)[number];
@@ -32,24 +31,6 @@ export function runtimeBlurb(runtime: HostedRuntime): string {
 	return RUNTIME_META[runtime].blurb;
 }
 
-export interface RuntimeUiEndpoint {
-	runtime: HostedRuntime;
-	url: string;
-	authMode: RuntimeUiAuthMode;
-	browserMode: "top_level";
-}
-
-export function runtimeUiEndpoint(value: HostedDeployment): RuntimeUiEndpoint | null {
-	const raw = value.runtime_ui_endpoint;
-	if (!isRuntimeUiEndpointInfo(raw) || raw.runtime !== deploymentRuntime(value)) return null;
-	const { runtime, url, auth_mode: authMode, browser_mode: browserMode } = raw;
-	return { runtime, url, authMode, browserMode };
-}
-
-export function runtimeUiAuthFlow(deployment: HostedDeployment): RuntimeUiAuthMode | null {
-	return runtimeUiEndpoint(deployment)?.authMode ?? null;
-}
-
 export function sortHostedRuntimes(values: Iterable<string>): HostedRuntime[] {
 	const runtimes = new Set<HostedRuntime>();
 	for (const value of values) {
@@ -60,33 +41,30 @@ export function sortHostedRuntimes(values: Iterable<string>): HostedRuntime[] {
 	);
 }
 
-export function configRuntime(configInfo: DeploymentDetailsInfo | null | undefined): HostedRuntime {
-	const runtime = configInfo?.runtime;
-	return runtime && isHostedRuntime(runtime) ? runtime : DEFAULT_HOSTED_RUNTIME;
-}
-
 export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {
-	return configRuntime(deployment.config_info);
+	return deployment.resource.spec.runtime;
 }
 
 export function runtimeEnvironmentId(
-	configInfo: DeploymentDetailsInfo | null | undefined,
-	runtime: HostedRuntime = configRuntime(configInfo),
+	deployment: HostedDeployment,
+	runtime: HostedRuntime = deploymentRuntime(deployment),
 ): string | undefined {
-	return configInfo?.clawdi_cloud_environments?.[runtime];
+	return deployment.clawdi_cloud_environments?.[runtime];
 }
 
 export function runtimeConsoleUrl(
 	deployment: HostedDeployment,
 	runtime: HostedRuntime = deploymentRuntime(deployment),
 ): string | null {
-	const endpoint = runtimeUiEndpoint(deployment);
-	if (endpoint?.runtime === runtime) return endpoint.url;
-	return null;
+	const endpoint = deployment.runtime_ui_endpoint;
+	return endpoint?.runtime === runtime && endpoint.role === "control_ui" ? endpoint.url : null;
 }
 
-export function deploymentRuntimes(deployment: HostedDeployment): HostedRuntime[] {
-	return [deploymentRuntime(deployment)];
+export function runtimeAiProviderAuthKind(
+	deployment: HostedDeployment,
+	runtime: HostedRuntime = deploymentRuntime(deployment),
+): AiProviderAuthKind | undefined {
+	return deployment.ai_provider_auth_kinds[runtime];
 }
 
 export function defaultDeploymentRuntime(deployment: HostedDeployment): HostedRuntime {

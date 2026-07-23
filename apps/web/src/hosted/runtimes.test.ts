@@ -1,213 +1,92 @@
 import { describe, expect, test } from "bun:test";
-import type { HostedDeployment } from "@/hosted/billing/contracts";
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 import {
 	deploymentRuntime,
-	deploymentRuntimes,
+	runtimeAiProviderAuthKind,
 	runtimeConsoleUrl,
-	runtimeUiAuthFlow,
+	runtimeEnvironmentId,
 } from "@/hosted/runtimes";
-
-test("uses the persisted endpoint auth mode instead of inferring from runtime", () => {
-	const hermes = deployment(configInfo({ runtime: "hermes" }));
-	expect(
-		runtimeUiAuthFlow(
-			deploymentWithEndpoint(hermes, {
-				runtime: "hermes",
-				url: "https://agent.example.test/prefix",
-				auth_mode: "password",
-				browser_mode: "top_level",
-			}),
-		),
-	).toBe("password");
-	const openclaw = deployment(configInfo({ runtime: "openclaw" }));
-	expect(
-		runtimeUiAuthFlow(
-			deploymentWithEndpoint(openclaw, {
-				runtime: "openclaw",
-				url: "https://openclaw.example.test/",
-				auth_mode: "openclaw_device",
-				browser_mode: "top_level",
-			}),
-		),
-	).toBe("openclaw_device");
-	expect(runtimeUiAuthFlow(hermes)).toBeNull();
-	const prefixed = deploymentWithEndpoint(hermes, {
-		runtime: "hermes",
-		url: "https://dstack.example.test/deployments/agent/hermes",
-		auth_mode: "password",
-		browser_mode: "top_level",
-	});
-	expect(runtimeConsoleUrl(prefixed, "hermes")).toBe(
-		"https://dstack.example.test/deployments/agent/hermes",
-	);
-});
-
-test("fails closed on unsafe or mismatched native endpoint metadata", () => {
-	const openclaw = deployment(configInfo({ runtime: "openclaw" }));
-	const hermes = deployment(configInfo({ runtime: "hermes" }));
-
-	expect(
-		runtimeUiAuthFlow(
-			deploymentWithEndpoint(openclaw, {
-				runtime: "openclaw",
-				url: "https://openclaw.example.test/?token=logged-token",
-				auth_mode: "openclaw_device",
-				browser_mode: "top_level",
-			}),
-		),
-	).toBeNull();
-	expect(
-		runtimeUiAuthFlow(
-			deploymentWithEndpoint(openclaw, {
-				runtime: "openclaw",
-				url: "https://openclaw.example.test/#token=token&extra=value",
-				auth_mode: "openclaw_device",
-				browser_mode: "top_level",
-			}),
-		),
-	).toBeNull();
-	expect(
-		runtimeUiAuthFlow(
-			deploymentWithEndpoint(openclaw, {
-				runtime: "openclaw",
-				url: "https://openclaw.example.test/",
-				auth_mode: "password",
-				browser_mode: "top_level",
-			}),
-		),
-	).toBeNull();
-	expect(
-		runtimeUiAuthFlow(
-			deploymentWithEndpoint(hermes, {
-				runtime: "openclaw",
-				url: "https://openclaw.example.test/#token=token",
-				auth_mode: "openclaw_device",
-				browser_mode: "top_level",
-			}),
-		),
-	).toBeNull();
-});
-
-function deploymentWithEndpoint(
-	base: HostedDeployment,
-	runtimeUiEndpoint: {
-		runtime: "openclaw" | "hermes";
-		url: string;
-		auth_mode: "openclaw_device" | "password";
-		browser_mode: "top_level";
-	},
-): HostedDeployment {
-	const deploymentWithEndpoint = {
-		...base,
-		runtime_ui_endpoint: { role: "control_ui" as const, ...runtimeUiEndpoint },
-	};
-	return deploymentWithEndpoint;
-}
-
-function deployment(configInfo: HostedDeployment["config_info"]): HostedDeployment {
-	return {
-		id: "dep_123",
-		resource_version: "test-resource-version",
-		user_id: "user_123",
-		name: "hosted-test",
-		app_id: "app_123",
-		status: "running",
-		endpoints: [],
-		openclaw_control_ui_url: null,
-		hermes_control_ui_url: null,
-		config_info: configInfo,
-		created_at: "2026-06-22T00:00:00Z",
-		upgrade_available: false,
-	};
-}
-
-function configInfo(
-	overrides: Partial<NonNullable<HostedDeployment["config_info"]>>,
-): NonNullable<HostedDeployment["config_info"]> {
-	return {
-		compute_plan_slug: "compute_basic",
-		primary_model: null,
-		ai_provider_id: null,
-		ai_provider_auth_kind: "managed",
-		public_ports: [],
-		runtime: "openclaw",
-		clawdi_cloud_environments: {},
-		vcpu: null,
-		ram_gb: null,
-		disk_gb: null,
-		...overrides,
-	};
-}
 
 describe("deploymentRuntime", () => {
 	test("returns the selected execution runtime", () => {
+		expect(deploymentRuntime(hostedDeploymentFixture({ runtime: "hermes" }))).toBe("hermes");
+	});
+
+	test("selects the dashboard URL for the chosen runtime", () => {
 		expect(
-			deploymentRuntime(
-				deployment(
-					configInfo({
+			runtimeConsoleUrl(
+				hostedDeploymentFixture({
+					runtime: "openclaw",
+					runtimeUiEndpoint: {
+						runtime: "openclaw",
+						role: "control_ui",
+						url: "https://app-18789.example/control/",
+						auth_mode: "openclaw_device",
+						browser_mode: "top_level",
+					},
+				}),
+			),
+		).toBe("https://app-18789.example/control/");
+		expect(
+			runtimeConsoleUrl(
+				hostedDeploymentFixture({
+					runtime: "hermes",
+					runtimeUiEndpoint: {
 						runtime: "hermes",
-						clawdi_cloud_environments: {
-							hermes: "env-hermes",
-						},
-					}),
-				),
+						role: "control_ui",
+						url: "https://app-9119.example/dashboard",
+						auth_mode: "password",
+						browser_mode: "top_level",
+					},
+				}),
 			),
-		).toBe("hermes");
+		).toBe("https://app-9119.example/dashboard");
 	});
 
-	test("does not infer extra runtimes from stale environment mappings", () => {
+	test("does not fall back to an unrelated resource endpoint", () => {
 		expect(
-			deploymentRuntimes(
-				deployment(
-					configInfo({
-						runtime: "openclaw",
-						clawdi_cloud_environments: {
-							hermes: "env-hermes",
-							openclaw: "env-openclaw",
-						},
-					}),
-				),
+			runtimeConsoleUrl(
+				hostedDeploymentFixture({
+					endpoints: [{ name: "app", url: "https://app.example" }],
+				}),
 			),
-		).toEqual(["openclaw"]);
+		).toBeNull();
+	});
+});
+
+describe("runtimeAiProviderAuthKind", () => {
+	test("reads the authoritative per-runtime mode even when providers are empty", () => {
+		const deployment = hostedDeploymentFixture({
+			runtimeConfiguration: { providers: [], features: [] },
+			aiProviderAuthKinds: { openclaw: "unmanaged" },
+		});
+
+		expect(runtimeAiProviderAuthKind(deployment)).toBe("unmanaged");
 	});
 
-	test("does not surface Codex from stale hosted environment mappings", () => {
-		expect(
-			deploymentRuntimes(
-				deployment(
-					configInfo({
-						runtime: "openclaw",
-						clawdi_cloud_environments: {
-							codex: "env-codex",
-							openclaw: "env-openclaw",
-						},
-					}),
+	test("keeps every hosted authentication mode distinct", () => {
+		for (const authKind of ["managed", "api_key", "codex_oauth"] as const) {
+			expect(
+				runtimeAiProviderAuthKind(
+					hostedDeploymentFixture({ aiProviderAuthKinds: { openclaw: authKind } }),
 				),
-			),
-		).toEqual(["openclaw"]);
+			).toBe(authKind);
+		}
+	});
+});
+
+describe("runtimeEnvironmentId", () => {
+	test("reads the stored environment id from the top-level read projection", () => {
+		const deployment = hostedDeploymentFixture({
+			runtime: "hermes",
+			cloudEnvironments: { hermes: "env-hermes" },
+		});
+
+		expect(runtimeEnvironmentId(deployment)).toBe("env-hermes");
+		expect(runtimeEnvironmentId(deployment, "openclaw")).toBeUndefined();
 	});
 
-	test("does not fall back to legacy untyped runtime URLs", () => {
-		expect(
-			runtimeConsoleUrl({
-				...deployment(configInfo({ runtime: "openclaw" })),
-				native_url: "https://app-native.example/control/",
-				openclaw_control_ui_url: "https://app-18789.example/control/",
-			}),
-		).toBeNull();
-		expect(
-			runtimeConsoleUrl({
-				...deployment(configInfo({ runtime: "openclaw" })),
-				openclaw_control_ui_url: "https://app-18789.example/control/",
-				hermes_control_ui_url: "https://app-9119.example/dashboard",
-			}),
-		).toBeNull();
-		expect(
-			runtimeConsoleUrl({
-				...deployment(configInfo({ runtime: "hermes" })),
-				openclaw_control_ui_url: "https://app-18789.example/control/",
-				hermes_control_ui_url: "https://app-9119.example/dashboard",
-			}),
-		).toBeNull();
+	test("returns undefined when the backend has not projected an environment id", () => {
+		expect(runtimeEnvironmentId(hostedDeploymentFixture())).toBeUndefined();
 	});
 });

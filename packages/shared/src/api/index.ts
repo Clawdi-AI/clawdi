@@ -1,17 +1,21 @@
 export type { components, paths } from "./api.generated";
+export type {
+	DeployComponents,
+	Deployment,
+	DeploymentEventStreamSnapshotHandoff,
+	DeploymentRead,
+	DeployPaths,
+	DeployRequestRead,
+	RuntimeUiAuthMode,
+	RuntimeUiCredentials,
+	RuntimeUiEndpointInfo,
+} from "./deploy";
 export {
-	type DeployComponents,
-	type Deployment,
-	type DeploymentOperation,
-	type DeploymentResource,
-	type DeploymentUpdateRequest,
-	type DeployPaths,
-	type DeployRequestStatus,
+	isDeploymentEventStreamSnapshotHandoff,
 	isRuntimeUiCredentials,
 	isRuntimeUiEndpointInfo,
-	type RuntimeUiAuthMode,
-	type RuntimeUiCredentials,
-	type RuntimeUiEndpointInfo,
+	unwrapDeploymentEventStreamSnapshotHandoff,
+	unwrapDeploymentList,
 } from "./deploy";
 export { extractApiDetail } from "./error-detail";
 export * from "./schemas";
