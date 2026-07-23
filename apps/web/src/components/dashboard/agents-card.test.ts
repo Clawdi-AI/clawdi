@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import type { components } from "@clawdi/shared/api";
 import {
 	type AgentTile,
+	agentTileMatchesRouteId,
 	fleetSummaryFromTiles,
 	selfManagedAgentTiles,
 } from "@/components/dashboard/agents-card";
@@ -60,6 +61,26 @@ describe("selfManagedAgentTiles", () => {
 			name: "Launch runner",
 		});
 		expect("runtimeLabel" in tile).toBe(false);
+	});
+});
+
+describe("agentTileMatchesRouteId", () => {
+	it("matches hosted tiles by deployment id or projected environment id", () => {
+		const projected = env();
+		const tile: AgentTile = {
+			id: "hdep_paid",
+			source: "on-clawdi",
+			name: "Hosted agent",
+			agentType: "openclaw",
+			statusLabel: "Running",
+			href: `/agents/${projected.id}?source=on-clawdi&d=hdep_paid`,
+			active: true,
+			env: projected,
+		};
+
+		expect(agentTileMatchesRouteId(tile, "hdep_paid")).toBe(true);
+		expect(agentTileMatchesRouteId(tile, projected.id)).toBe(true);
+		expect(agentTileMatchesRouteId(tile, "hdep_other")).toBe(false);
 	});
 });
 

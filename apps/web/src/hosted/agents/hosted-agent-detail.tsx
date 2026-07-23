@@ -187,6 +187,10 @@ import {
 	useUnlinkAgentChannel,
 } from "@/hosted/v2/channels/channels-hooks";
 import {
+	channelProviderLinkingReady,
+	pairingCommand,
+} from "@/hosted/v2/channels/link-agent-dialog.logic";
+import {
 	type AgentSectionId,
 	agentSectionHref,
 	agentSectionLabel,
@@ -1928,7 +1932,9 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 			.flat()
 			.filter((b) => b.access === "public" && b.available)
 			.map((b) => ({ id: b.id, provider: b.provider, name: b.name }));
-		return [...mine, ...shared].filter((c) => !linkedIds.has(c.id));
+		return [...mine, ...shared].filter(
+			(c) => channelProviderLinkingReady(c.provider) && !linkedIds.has(c.id),
+		);
 	}, [channels.data, botPool.data, linkedIds]);
 	const linkableItems = linkable.map((channel) => ({
 		value: channel.id,
@@ -2146,8 +2152,11 @@ function LinkedChannelRow({
 			</div>
 			{code ? (
 				<div className="mt-2 rounded-md border border-primary/30 bg-primary/5 p-2 text-sm">
-					Send <span className="font-mono font-semibold tracking-wider">{code.code}</span> from the
-					chat to pair it.
+					Send{" "}
+					<span className="font-mono font-semibold tracking-wider">
+						{pairingCommand(code.code)}
+					</span>{" "}
+					from the chat to pair it.
 				</div>
 			) : null}
 		</div>

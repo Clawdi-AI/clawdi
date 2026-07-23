@@ -4,9 +4,12 @@ import asyncio
 import json
 import secrets
 import zlib
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
+import jwt
 from fastapi import (
     APIRouter,
     Depends,
@@ -53,7 +56,10 @@ from app.routes.channel_routers.shared import (
 from app.services.channels import (
     DISCORD_REF_INTERACTION_ID_TOKEN,
     DISCORD_REF_INTERACTION_TOKEN,
+    ChannelAgentContext,
     ack_channel_inbox_events,
+    channel_runtime_account_key,
+    channel_runtime_placeholder_token,
     dequeue_discord_gateway_events,
     discord_channel_scope_from_payload,
     discord_chat_from_payload,
@@ -67,6 +73,7 @@ from app.services.channels import (
     record_discord_interaction_references,
     record_inactive_bot_agent_link_event,
     record_inbound_messages_for_bindings,
+    resolve_channel_agent_by_identity,
     resolve_channel_agent_by_token,
     resolve_inbound_binding,
     send_channel_outbound_message,
@@ -80,6 +87,67 @@ router = APIRouter(prefix="/channels/discord", tags=["channels"])
 
 _DISCORD_GATEWAY_RESUME_BUFFER_SIZE = 100
 _DISCORD_GATEWAY_SESSIONS: dict[str, dict[str, Any]] = {}
+_DISCORD_GATEWAY_CAPABILITY_SUBJECT = "clawdi_discord_gateway"
+_DISCORD_GATEWAY_CAPABILITY_AUDIENCE = "clawdi_discord_gateway"
+
+
+@dataclass(frozen=True)
+class _DiscordGatewayCapability:
+    account_id: UUID
+    link_id: UUID
+    agent_token_hash: str
+
+
+def _discord_gateway_capability(agent: ChannelAgentContext) -> str:
+    agent_token_hash = agent.link.agent_token_hash
+    if not agent_token_hash or not settings.encryption_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="discord gateway credential unavailable",
+        )
+    return jwt.encode(
+        {
+            "sub": _DISCORD_GATEWAY_CAPABILITY_SUBJECT,
+            "aud": _DISCORD_GATEWAY_CAPABILITY_AUDIENCE,
+            "account_id": str(agent.account.id),
+            "link_id": str(agent.link.id),
+            "agent_token_hash": agent_token_hash,
+        },
+        settings.encryption_key,
+        algorithm="HS256",
+    )
+
+
+def _decode_discord_gateway_capability(raw: str) -> _DiscordGatewayCapability:
+    try:
+        payload = jwt.decode(
+            raw,
+            settings.encryption_key,
+            algorithms=["HS256"],
+            audience=_DISCORD_GATEWAY_CAPABILITY_AUDIENCE,
+        )
+        if payload.get("sub") != _DISCORD_GATEWAY_CAPABILITY_SUBJECT:
+            raise ValueError("invalid subject")
+        account_id = UUID(str(payload["account_id"]))
+        link_id = UUID(str(payload["link_id"]))
+        agent_token_hash = payload["agent_token_hash"]
+        if not isinstance(agent_token_hash, str) or not agent_token_hash:
+            raise ValueError("invalid credential fingerprint")
+    except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid discord gateway capability",
+        ) from exc
+    return _DiscordGatewayCapability(
+        account_id=account_id,
+        link_id=link_id,
+        agent_token_hash=agent_token_hash,
+    )
+
+
+def _discord_gateway_url(agent: ChannelAgentContext) -> str:
+    capability = quote(_discord_gateway_capability(agent), safe="")
+    return _public_ws_url(f"/v1/channels/discord/gateway/{capability}")
 
 
 @router.api_route(
@@ -105,7 +173,7 @@ async def discord_agent_rest(
     segments = [segment for segment in discord_path.strip("/").split("/") if segment]
     if segments in (["gateway"], ["gateway", "bot"]):
         return {
-            "url": _public_ws_url("/v1/channels/discord/gateway"),
+            "url": _discord_gateway_url(agent),
             "shards": 1,
             "session_start_limit": {
                 "total": 1000,
@@ -211,12 +279,22 @@ async def discord_agent_rest(
 
 @router.websocket("/gateway")
 @router.websocket("/gateway/")
-async def discord_agent_gateway(websocket: WebSocket) -> None:
+@router.websocket("/gateway/{path_capability}")
+async def discord_agent_gateway(
+    websocket: WebSocket,
+    path_capability: str | None = None,
+) -> None:
     await websocket.accept()
     encoding = websocket.query_params.get("encoding") or "json"
     compress = websocket.query_params.get("compress")
     if encoding != "json" or (compress is not None and compress != "zlib-stream"):
         await websocket.close(code=4012)
+        return
+    raw_capability = path_capability or websocket.query_params.get("capability")
+    try:
+        capability = _decode_discord_gateway_capability(raw_capability) if raw_capability else None
+    except HTTPException:
+        await websocket.close(code=4004)
         return
 
     compressor = zlib.compressobj(wbits=zlib.MAX_WBITS) if compress == "zlib-stream" else None
@@ -316,11 +394,29 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                 return
             async with async_session_factory() as db:
                 try:
-                    resolved_agent = await resolve_channel_agent_by_token(
-                        db,
-                        provider=CHANNEL_PROVIDER_DISCORD,
-                        token=token,
-                    )
+                    if capability is None:
+                        resolved_agent = await resolve_channel_agent_by_token(
+                            db,
+                            provider=CHANNEL_PROVIDER_DISCORD,
+                            token=token,
+                        )
+                    else:
+                        expected_placeholder = channel_runtime_placeholder_token(
+                            CHANNEL_PROVIDER_DISCORD,
+                            channel_runtime_account_key(capability.account_id),
+                        )
+                        if not secrets.compare_digest(token, expected_placeholder):
+                            raise HTTPException(
+                                status_code=status.HTTP_401_UNAUTHORIZED,
+                                detail="invalid discord gateway placeholder",
+                            )
+                        resolved_agent = await resolve_channel_agent_by_identity(
+                            db,
+                            provider=CHANNEL_PROVIDER_DISCORD,
+                            account_id=capability.account_id,
+                            link_id=capability.link_id,
+                            agent_token_hash=capability.agent_token_hash,
+                        )
                 except HTTPException:
                     if op == 6:
                         await send_gateway_frame({"op": 9, "d": False}, record=False)
@@ -412,7 +508,11 @@ async def discord_agent_gateway(websocket: WebSocket) -> None:
                         "d": {
                             "v": 10,
                             "session_id": session_id,
-                            "resume_gateway_url": _public_ws_url("/v1/channels/discord/gateway"),
+                            "resume_gateway_url": (
+                                _discord_gateway_url(resolved_agent)
+                                if capability is not None
+                                else _public_ws_url("/v1/channels/discord/gateway")
+                            ),
                             "user": _discord_bot_user(account),
                             "application": {"id": _discord_application_id(account)},
                             "guilds": [

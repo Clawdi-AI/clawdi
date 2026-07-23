@@ -19,6 +19,7 @@ import {
 	runtimeLiveSnapshotPaths,
 	runtimeProgramRevision,
 	runtimeSecretValue,
+	runtimeSidecarProgramRevision,
 } from "./manifest";
 import {
 	hostedRuntimeBundleV2ManifestSchema,
@@ -2042,6 +2043,38 @@ describe("runtime manifest reconciliation invariants", () => {
 			generation: 2,
 			issuedAt: "2026-07-01T00:01:00.000Z",
 		};
+		const egressManifest: RuntimeManifest = {
+			...manifest,
+			egressProfiles: {
+				profiles: [
+					{
+						id: "channel-token",
+						enabled: true,
+						kind: "http",
+						match: {
+							scheme: "https",
+							host: "api.example.test",
+							pathPrefix: "/",
+							headers: {},
+							query: {},
+						},
+						rewrite: {
+							upstreamBaseUrl: "https://upstream.example.test",
+							preservePath: true,
+							setHeaders: {
+								authorization: {
+									type: "secretRef",
+									secretRef: "secret://providers/default/api-key",
+									prefix: "Bearer ",
+								},
+							},
+						},
+						logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+						priority: 100,
+					},
+				],
+			},
+		};
 
 		const runtimeRevision = runtimeProgramRevision(manifest, "openclaw", secretValues);
 		expect(runtimeProgramRevision(manifest, "openclaw", rotatedSecretValues)).not.toBe(
@@ -2049,6 +2082,14 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 		expect(runtimeProgramRevision(metadataOnlyChange, "openclaw", secretValues)).toBe(
 			runtimeRevision,
+		);
+		const sidecarRevision = runtimeSidecarProgramRevision(manifest, secretValues);
+		expect(runtimeSidecarProgramRevision(manifest, rotatedSecretValues)).toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(egressManifest, rotatedSecretValues)).not.toBe(
+			runtimeSidecarProgramRevision(egressManifest, secretValues),
+		);
+		expect(runtimeSidecarProgramRevision(metadataOnlyChange, secretValues)).not.toBe(
+			sidecarRevision,
 		);
 	});
 

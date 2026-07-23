@@ -15,6 +15,14 @@ export const WHATSAPP_COMING_SOON_MESSAGE =
 
 const HERMES_SINGLE_LINK_PROVIDERS = new Set(["telegram", "discord"]);
 
+export function channelProviderLinkingReady(provider: string): boolean {
+	return provider !== "whatsapp" || WHATSAPP_LINKING_READY;
+}
+
+export function pairingCommand(code: string): string {
+	return `/bot_pair ${code}`;
+}
+
 export function shouldMintWhatsappTenantCredential(provider: string, agent: Agent): boolean {
 	return WHATSAPP_LINKING_READY && provider === "whatsapp" && agent !== null && agent !== undefined;
 }
@@ -30,7 +38,7 @@ export function linkAgentBlockReason({
 	existingAgentLinks: AgentChannelLink[];
 	accountId: string;
 }): string | null {
-	if (provider === "whatsapp" && !WHATSAPP_LINKING_READY) return WHATSAPP_COMING_SOON_MESSAGE;
+	if (!channelProviderLinkingReady(provider)) return WHATSAPP_COMING_SOON_MESSAGE;
 	if (selectedAgent?.agent_type !== "hermes") return null;
 	if (!HERMES_SINGLE_LINK_PROVIDERS.has(provider)) return null;
 

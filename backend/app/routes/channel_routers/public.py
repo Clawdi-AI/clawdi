@@ -83,6 +83,8 @@ from app.services.channels import (
     archive_bot_agent_link,
     archive_channel_account,
     channel_bot_link_limit,
+    channel_webhook_url,
+    configure_telegram_provider_webhook,
     create_pair_code,
     decrypt_agent_link_token,
     encrypt_optional_token,
@@ -537,6 +539,12 @@ async def create_channel(
     db.add(account)
     try:
         await db.flush()
+        if body.provider == CHANNEL_PROVIDER_TELEGRAM and body.provider_token:
+            await configure_telegram_provider_webhook(
+                provider_token=body.provider_token,
+                webhook_url=channel_webhook_url(account.id, body.provider),
+                webhook_secret=webhook_secret,
+            )
         link: ChannelBotAgentLink | None = None
         link_agent_token: str | None = None
         if initial_agent_id is not None:

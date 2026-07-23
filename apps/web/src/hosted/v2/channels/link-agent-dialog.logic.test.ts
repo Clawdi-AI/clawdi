@@ -1,9 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import {
+	channelProviderLinkingReady,
 	linkAgentBlockReason,
+	pairingCommand,
 	shouldMintWhatsappTenantCredential,
 	WHATSAPP_COMING_SOON_MESSAGE,
 } from "./link-agent-dialog.logic";
+
+describe("hosted channel instructions and gates", () => {
+	test("renders the exact command accepted by the channel backend", () => {
+		expect(pairingCommand("PAIRABC123")).toBe("/bot_pair PAIRABC123");
+	});
+
+	test("keeps unavailable providers out of direct agent linking", () => {
+		expect(channelProviderLinkingReady("telegram")).toBe(true);
+		expect(channelProviderLinkingReady("discord")).toBe(true);
+		expect(channelProviderLinkingReady("whatsapp")).toBe(false);
+	});
+});
 
 describe("linkAgentBlockReason", () => {
 	test("blocks WhatsApp for all selected runtime agents", () => {
