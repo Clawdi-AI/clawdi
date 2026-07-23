@@ -281,6 +281,32 @@ def test_runtime_provider_usage_includes_independent_codex_tool_ref() -> None:
     assert sync_events._runtime_state_may_use_provider(state, "unrelated") is False
 
 
+def test_stable_runtime_provider_usage_resolves_deployment_credential_identity() -> None:
+    state = HostedRuntimeState(
+        deployment_id="42",
+        runtimes={
+            "openclaw": {
+                "enabled": True,
+                "providerMode": "configured",
+                "provider_ids": ["clawdi-v2"],
+                "primary_model": {"provider_id": "clawdi-v2", "model": "gpt-5.5"},
+                "install": {"source": "official"},
+                "services": {},
+            }
+        },
+        tools={
+            "codex": {
+                "enabled": True,
+                "provider_id": "clawdi-v2",
+                "primary_model": {"provider_id": "clawdi-v2", "model": "gpt-5.5"},
+            }
+        },
+    )
+
+    assert sync_events._runtime_state_may_use_provider(state, "clawdi-v2-deployment-42") is True
+    assert sync_events._runtime_state_may_use_provider(state, "clawdi-v2-deployment-43") is False
+
+
 @pytest.mark.asyncio
 async def test_postgres_listener_delivers_remote_process_event(
     db_session: AsyncSession,

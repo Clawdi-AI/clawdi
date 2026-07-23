@@ -12,6 +12,7 @@ from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import HostedCodexProviderProjection
+from app.services.managed_ai_provider import V2_MANAGED_AI_PROVIDER_ID
 from app.services.runtime_source import (
     RuntimeSourceBatch,
     RuntimeSourceError,
@@ -206,6 +207,42 @@ def _add_prefix_colliding_channel(batch: RuntimeSourceBatch) -> None:
     batch.channels[ENV_ID] = (*batch.channels[ENV_ID], (account, link))
 
 
+def _use_deployment_scoped_managed_provider(
+    batch: RuntimeSourceBatch,
+    *,
+    bound_provider_id: str,
+) -> str:
+    deployment_provider_id = "clawdi-v2-deployment-42"
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    state.deployment_id = "42"
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = [bound_provider_id]
+    runtime["primary_model"] = {
+        "provider_id": bound_provider_id,
+        "model": "gpt-test",
+    }
+    state.runtimes = {"openclaw": runtime}
+    state.tools = {
+        "codex": {
+            "enabled": True,
+            "provider_id": bound_provider_id,
+            "primary_model": {
+                "provider_id": bound_provider_id,
+                "model": "gpt-test",
+            },
+        }
+    }
+
+    provider = batch.providers.pop((USER_ID, "managed"))
+    provider.provider_id = deployment_provider_id
+    batch.providers[(USER_ID, deployment_provider_id)] = provider
+    auth = batch.auth_payloads.pop((USER_ID, "managed", "default"))
+    auth.provider_id = deployment_provider_id
+    batch.auth_payloads[(USER_ID, deployment_provider_id, "default")] = auth
+    return deployment_provider_id
+
+
 def _render(batch: RuntimeSourceBatch):
     return render_runtime_source(
         batch,
@@ -300,6 +337,39 @@ def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None
     assert source.manifest["terminalTooling"]["codex"]["provider"]["apiMode"] == (
         "openai_responses"
     )
+
+
+@pytest.mark.parametrize(
+    "bound_provider_id",
+    [V2_MANAGED_AI_PROVIDER_ID, "clawdi-v2-deployment-42"],
+    ids=["stable-runtime-binding", "legacy-scoped-runtime-binding"],
+)
+def test_deployment_managed_provider_projects_stable_agent_identity(
+    bound_provider_id: str,
+) -> None:
+    batch = _batch()
+    deployment_provider_id = _use_deployment_scoped_managed_provider(
+        batch,
+        bound_provider_id=bound_provider_id,
+    )
+
+    source = _render(batch)
+    manifest = source.manifest
+
+    assert manifest["runtimes"]["openclaw"]["provider_ids"] == [V2_MANAGED_AI_PROVIDER_ID]
+    assert manifest["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": V2_MANAGED_AI_PROVIDER_ID,
+        "model": "gpt-test",
+    }
+    assert set(manifest["providers"]) == {V2_MANAGED_AI_PROVIDER_ID}
+    assert manifest["providers"][V2_MANAGED_AI_PROVIDER_ID]["apiKeySecretRef"] == (
+        "tool.codex.apiKey"
+    )
+    assert manifest["terminalTooling"]["codex"]["provider_id"] == (V2_MANAGED_AI_PROVIDER_ID)
+    assert manifest["terminalTooling"]["codex"]["primary_model"]["provider_id"] == (
+        V2_MANAGED_AI_PROVIDER_ID
+    )
+    assert deployment_provider_id not in json.dumps(manifest)
 
 
 @pytest.mark.parametrize(

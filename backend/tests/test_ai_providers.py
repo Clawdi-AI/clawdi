@@ -20,6 +20,8 @@ from app.services.managed_ai_provider import (
     V2_MANAGED_AI_PROVIDER_ID,
     is_v2_managed_provider_id,
     managed_provider_api_mode,
+    runtime_managed_provider_id,
+    v2_deployment_managed_provider_id,
 )
 from tests.conftest import create_env_with_project
 
@@ -43,6 +45,23 @@ def test_v1_provider_mode_resolution_does_not_accept_deployment_scoped_ids():
 
     assert is_v2_managed_provider_id(provider_id)
     assert managed_provider_api_mode(provider_id) is None
+
+
+def test_deployment_managed_provider_uses_stable_agent_facing_id():
+    provider_id = v2_deployment_managed_provider_id("42")
+
+    assert provider_id == f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42"
+    assert runtime_managed_provider_id(provider_id) == V2_MANAGED_AI_PROVIDER_ID
+    assert runtime_managed_provider_id(V2_LEGACY_MANAGED_AI_PROVIDER_ID) == (
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID
+    )
+
+
+@pytest.mark.parametrize("deployment_id", ["", "0", "01", "invalid", " 42"])
+def test_deployment_managed_provider_rejects_noncanonical_deployment_id(
+    deployment_id: str,
+):
+    assert v2_deployment_managed_provider_id(deployment_id) is None
 
 
 @pytest.mark.parametrize(

@@ -40,8 +40,11 @@ from app.schemas.runtime import (
 )
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
+    V2_MANAGED_AI_PROVIDER_ID,
     is_managed_provider_id,
     managed_provider_api_mode,
+    runtime_managed_provider_id,
+    v2_deployment_managed_provider_id,
 )
 from app.services.vault_crypto import decrypt
 
@@ -222,6 +225,8 @@ def render_runtime_source(
             "Hosted runtime CLI package spec is invalid or below the minimum version"
         ) from exc
     runtime_name, runtime = _runtime(state.runtimes)
+    bound_runtime_provider_ids = list(runtime["provider_ids"])
+    runtime = _agent_runtime_binding(runtime)
     dashboard_auth = system.hermesDashboardAuth
     if runtime_name == "hermes" and dashboard_auth is None:
         raise RuntimeSourceError(
@@ -242,19 +247,35 @@ def render_runtime_source(
     secret_sources: dict[str, dict[str, str]] = {}
     secret_materials: list[RuntimeSecretMaterial] = []
     codex_tool = tools.codex
-    provider_ids = set(runtime["provider_ids"])
-    provider_ids.add(codex_tool.provider_id)
+    codex_agent_provider_id = runtime_managed_provider_id(codex_tool.provider_id)
+    provider_sources: dict[str, str] = {}
+    for bound_provider_id in [*bound_runtime_provider_ids, codex_tool.provider_id]:
+        agent_provider_id = runtime_managed_provider_id(bound_provider_id)
+        source_provider_id = _provider_source_id(
+            batch,
+            user_id=user_id,
+            deployment_id=state.deployment_id,
+            bound_provider_id=bound_provider_id,
+        )
+        existing_source = provider_sources.get(agent_provider_id)
+        if existing_source is not None and existing_source != source_provider_id:
+            raise RuntimeSourceError(
+                f"multiple provider bindings project to agent provider {agent_provider_id}"
+            )
+        provider_sources[agent_provider_id] = source_provider_id
     provider_material: dict[str, dict[str, Any]] = {}
-    for provider_id in sorted(provider_ids):
-        provider = batch.providers.get((user_id, provider_id))
+    runtime_provider_ids = set(runtime["provider_ids"])
+    for agent_provider_id, source_provider_id in sorted(provider_sources.items()):
+        provider = batch.providers.get((user_id, source_provider_id))
+        is_codex_provider = agent_provider_id == codex_agent_provider_id
         if provider is None:
-            if provider_id == codex_tool.provider_id:
+            if is_codex_provider:
                 raise RuntimeSourceError("Hosted Codex tool provider is missing or archived")
-            consumer = runtime_name if provider_id in runtime["provider_ids"] else "codex tool"
-            provider_material[provider_id] = _unhealthy_provider(provider_id, consumer)
+            consumer = runtime_name if agent_provider_id in runtime_provider_ids else "codex tool"
+            provider_material[agent_provider_id] = _unhealthy_provider(agent_provider_id, consumer)
             continue
         payload = _selected_auth_payload(batch, provider)
-        if provider_id == codex_tool.provider_id and (
+        if is_codex_provider and (
             provider.managed_by != "clawdi"
             or payload is None
             or payload.kind != "api_key"
@@ -265,20 +286,20 @@ def render_runtime_source(
             )
         secret_ref = (
             _CODEX_TOOL_SECRET_REF
-            if payload is not None and provider_id == codex_tool.provider_id
-            else _provider_secret_ref(provider_id)
+            if payload is not None and is_codex_provider
+            else _provider_secret_ref(source_provider_id)
             if payload is not None
             else None
         )
         provider_entry = _provider_entry(provider, secret_ref=secret_ref)
-        if provider_id == codex_tool.provider_id and (
+        if is_codex_provider and (
             provider_entry.get("apiMode") not in _CODEX_PROVIDER_SOURCE_API_MODES
             or provider_entry.get("runtimeEnvName") != _MANAGED_PROVIDER_RUNTIME_ENV
         ):
             raise RuntimeSourceError(
                 "Hosted Codex tool provider must use a supported managed OpenAI projection"
             )
-        provider_material[provider_id] = provider_entry
+        provider_material[agent_provider_id] = provider_entry
         if payload is not None and secret_ref is not None:
             _add_secret_source(
                 secret_sources,
@@ -288,11 +309,7 @@ def render_runtime_source(
                     payload.encrypted_payload,
                     payload.nonce,
                     vault_key_identity,
-                    (
-                        "tool-codex-api-key"
-                        if provider_id == codex_tool.provider_id
-                        else "provider-api-key"
-                    ),
+                    ("tool-codex-api-key" if is_codex_provider else "provider-api-key"),
                 ),
             )
             secret_materials.append(
@@ -314,7 +331,7 @@ def render_runtime_source(
         mode="json",
     )
     codex_provider_input = {
-        **provider_material[codex_tool.provider_id],
+        **provider_material[codex_agent_provider_id],
         "apiMode": _CODEX_TOOL_API_MODE,
     }
     try:
@@ -325,7 +342,7 @@ def render_runtime_source(
         raise RuntimeSourceError("Hosted Codex tool provider projection is invalid") from exc
     terminal_tooling = {
         "codex": {
-            **codex_tool.model_dump(mode="json"),
+            **_agent_codex_tool(codex_tool.model_dump(mode="json")),
             "provider": codex_provider,
         }
     }
@@ -456,6 +473,49 @@ def _runtime(value: dict | None) -> tuple[HostedRuntimeName, dict[str, Any]]:
         raise RuntimeSourceError(f"hosted runtime state for {name} is invalid") from exc
     runtime_name: HostedRuntimeName = "hermes" if name == "hermes" else "openclaw"
     return runtime_name, desired.model_dump(exclude_none=True, mode="json")
+
+
+def _agent_runtime_binding(runtime: dict[str, Any]) -> dict[str, Any]:
+    provider_ids = [
+        runtime_managed_provider_id(provider_id) for provider_id in runtime["provider_ids"]
+    ]
+    if len(provider_ids) != len(set(provider_ids)):
+        raise RuntimeSourceError("multiple provider bindings project to one agent provider")
+    projected = {**runtime, "provider_ids": provider_ids}
+    primary_model = runtime.get("primary_model")
+    if isinstance(primary_model, dict):
+        projected["primary_model"] = {
+            **primary_model,
+            "provider_id": runtime_managed_provider_id(primary_model["provider_id"]),
+        }
+    return projected
+
+
+def _agent_codex_tool(codex_tool: dict[str, Any]) -> dict[str, Any]:
+    provider_id = runtime_managed_provider_id(codex_tool["provider_id"])
+    return {
+        **codex_tool,
+        "provider_id": provider_id,
+        "primary_model": {
+            **codex_tool["primary_model"],
+            "provider_id": provider_id,
+        },
+    }
+
+
+def _provider_source_id(
+    batch: RuntimeSourceBatch,
+    *,
+    user_id: UUID,
+    deployment_id: str,
+    bound_provider_id: str,
+) -> str:
+    if bound_provider_id != V2_MANAGED_AI_PROVIDER_ID:
+        return bound_provider_id
+    deployment_provider_id = v2_deployment_managed_provider_id(deployment_id)
+    if deployment_provider_id is not None and (user_id, deployment_provider_id) in batch.providers:
+        return deployment_provider_id
+    return bound_provider_id
 
 
 def _selected_auth_payload(

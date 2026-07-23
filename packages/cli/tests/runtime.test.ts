@@ -3062,6 +3062,7 @@ exit 0
 
 	it("preserves canonical managed model capabilities through live discovery", () => {
 		const providerId = "clawdi-v2-deployment-42";
+		const agentProviderId = "clawdi-v2";
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -3178,9 +3179,11 @@ exit 0
 
 		expect(convergence.installErrors).toEqual([]);
 		const patch = JSON.parse(readFileSync(openclawPatch, "utf-8"));
-		expect(patch.agents.defaults.model.primary).toBe(`${providerId}/k3`);
-		expect(patch.models.providers[providerId].baseUrl).toBe("https://ai-gateway.example.test/v1");
-		expect(patch.models.providers[providerId].models).toEqual([
+		expect(patch.agents.defaults.model.primary).toBe(`${agentProviderId}/k3`);
+		expect(patch.models.providers[agentProviderId].baseUrl).toBe(
+			"https://ai-gateway.example.test/v1",
+		);
+		expect(patch.models.providers[agentProviderId].models).toEqual([
 			{
 				id: "k3",
 				name: "k3",
@@ -3206,6 +3209,55 @@ exit 0
 				contextWindow: 262144,
 			},
 		]);
+		expect(JSON.stringify(patch)).not.toContain(providerId);
+	});
+
+	it("uses the stable managed provider name without doubling the Hermes plugin prefix", () => {
+		const scopedProviderId = "clawdi-v2-deployment-42";
+		const agentProviderId = "clawdi-v2";
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		writeHermesVersionBinary(home, "0.18.0");
+		const loaded = hostedHermesProviderLoad(home);
+		const provider = loaded.manifest.projection?.providers?.hermes;
+		if (!provider) throw new Error("expected Hermes provider fixture");
+		loaded.manifest.runtimes.hermes = {
+			...loaded.manifest.runtimes.hermes,
+			provider_ids: [scopedProviderId],
+			primary_model: {
+				provider_id: scopedProviderId,
+				model: "kimi/kimi-for-coding",
+			},
+		};
+		loaded.manifest.projection = {
+			...loaded.manifest.projection,
+			providers: {
+				[scopedProviderId]: {
+					...provider,
+					managed_by: "clawdi",
+					runtimeEnvName: "OPENAI_API_KEY",
+				},
+			},
+		};
+
+		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(convergence.installErrors).toEqual([]);
+		const config = readHermesConfigYaml(home);
+		const model = expectRecord(config.model, "Hermes managed model config");
+		expect(model.provider).toBe(agentProviderId);
+		const providers = expectRecord(config.providers, "Hermes managed providers config");
+		expect(providers[agentProviderId]).toBeDefined();
+		expect(providers[`clawdi-${agentProviderId}`]).toBeUndefined();
+		const plugin = readHermesModelProviderPluginFile(home, "__init__.py");
+		expect(plugin).toContain(`name="${agentProviderId}"`);
+		expect(plugin).not.toContain(`name="clawdi-${agentProviderId}"`);
+		expect(JSON.stringify(config)).not.toContain(scopedProviderId);
 	});
 
 	it("reconciles hosted provider projections when the selected provider changes", () => {
@@ -3216,6 +3268,14 @@ exit 0
 			{ id: "byok-to-byok", first: "byok-a", second: "byok-b" },
 		];
 		for (const providerCase of cases) {
+			const firstAgentProvider = providerCase.first;
+			const secondAgentProvider = providerCase.second;
+			const firstHermesProvider = firstAgentProvider.startsWith("clawdi-")
+				? firstAgentProvider
+				: `clawdi-${firstAgentProvider}`;
+			const secondHermesProvider = secondAgentProvider.startsWith("clawdi-")
+				? secondAgentProvider
+				: `clawdi-${secondAgentProvider}`;
 			const caseRoot = join(root, providerCase.id);
 			const home = join(caseRoot, "home", "clawdi");
 			const state = join(caseRoot, "var", "lib", "clawdi");
@@ -3276,10 +3336,10 @@ exit 0
 				},
 			});
 			expect(Object.keys(openclawProviders).sort()).toEqual(
-				["user-local", providerCase.second].sort(),
+				["user-local", secondAgentProvider].sort(),
 			);
-			expect(openclawProviders[providerCase.first]).toBeUndefined();
-			expect(openclawProviders[providerCase.second]).toMatchObject({
+			expect(openclawProviders[firstAgentProvider]).toBeUndefined();
+			expect(openclawProviders[secondAgentProvider]).toMatchObject({
 				baseUrl: `https://${providerCase.second}.provider.example.test/v1`,
 			});
 			expect(openclawProviders["user-local"]).toMatchObject({
@@ -3289,10 +3349,10 @@ exit 0
 			const hermesConfig = readHermesConfigYaml(home);
 			const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
 			expect(Object.keys(hermesProviders).sort()).toEqual(
-				["user-local", `clawdi-${providerCase.second}`].sort(),
+				["user-local", secondHermesProvider].sort(),
 			);
-			expect(hermesProviders[`clawdi-${providerCase.first}`]).toBeUndefined();
-			expect(hermesProviders[`clawdi-${providerCase.second}`]).toMatchObject({
+			expect(hermesProviders[firstHermesProvider]).toBeUndefined();
+			expect(hermesProviders[secondHermesProvider]).toMatchObject({
 				api: `https://${providerCase.second}.provider.example.test/v1`,
 			});
 			expect(hermesProviders["user-local"]).toMatchObject({
