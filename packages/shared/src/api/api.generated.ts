@@ -4629,7 +4629,7 @@ export interface components {
              * Deviceauthrequired
              * @constant
              */
-            deviceAuthRequired: true;
+            deviceAuthRequired: false;
             activation: components["schemas"]["HostedOpenClawGatewayActivation"];
         };
         /** HostedRuntimeConfiguredDesiredState */
