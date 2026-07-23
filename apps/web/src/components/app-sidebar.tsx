@@ -60,6 +60,7 @@ import {
 } from "@/components/dashboard/agent-label";
 import {
 	type AgentTile,
+	agentTileMatchesRouteId,
 	compareAgentTiles,
 	selfManagedAgentTiles,
 } from "@/components/dashboard/agents-card";
@@ -301,11 +302,6 @@ function agentTileChromeKind(tile: AgentTile): AgentChromeKind {
 	if (tile.source === "on-clawdi") return "cloud";
 	if (tile.source === "legacy-hosted") return "legacy";
 	return "connected";
-}
-
-function agentTileRouteId(tile: AgentTile): string | null {
-	if (tile.env) return tile.env.id;
-	return tile.href ? (parseAgentPathname(tile.href)?.agentId ?? null) : null;
 }
 
 function sameOrder(a: string[], b: string[]): boolean {
@@ -1162,7 +1158,7 @@ function FocusRailContent({
 								<SortableAgentRailItem
 									key={agent.id}
 									agent={agent}
-									active={activeAgentId === agentTileRouteId(agent)}
+									active={Boolean(activeAgentId && agentTileMatchesRouteId(agent, activeAgentId))}
 									onNavigate={onRailAgentNavigate}
 									onClickCapture={onRailAgentClickCapture}
 									onPointerDownCapture={recordRailPointerStart}
@@ -1702,7 +1698,7 @@ export function AppSidebar({
 		: hydratedEnvironments !== undefined;
 	const agents = unifiedAgentListEnabled ? (hostedAgentTiles ?? []) : selfManagedTiles;
 	const activeAgentTile = activeAgentId
-		? (agents.find((tile) => agentTileRouteId(tile) === activeAgentId) ?? null)
+		? (agents.find((tile) => agentTileMatchesRouteId(tile, activeAgentId)) ?? null)
 		: null;
 	const activeAgent = activeAgentId
 		? (hydratedEnvironments?.find((env) => env.id === activeAgentId) ?? null)

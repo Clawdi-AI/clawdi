@@ -58,6 +58,7 @@ from app.routes.channel_routers.discord import (
     _DISCORD_GATEWAY_SESSIONS,
     _discord_bound_guild_channels,
     _discord_bound_guilds,
+    _discord_gateway_url,
     _discord_guild_create_payload,
 )
 from app.services import channels as channel_service
@@ -654,6 +655,38 @@ async def test_create_channel_masks_provider_token(client: httpx.AsyncClient):
     assert "webhook_secret" not in listed.text
     assert "telegram-secret" not in listed.text
     assert "agent_token" not in listed.text
+
+
+@pytest.mark.asyncio
+async def test_create_telegram_channel_registers_provider_webhook(
+    client: httpx.AsyncClient,
+    monkeypatch,
+):
+    previous_public_api_url = settings.public_api_url
+    settings.public_api_url = "https://cloud.example.test"
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    try:
+        response = await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "auto-webhook",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    finally:
+        settings.public_api_url = previous_public_api_url
+
+    assert response.status_code == 201
+    created = response.json()
+    assert len(_FakeProviderClient.calls) == 1
+    call = _FakeProviderClient.calls[0]
+    assert call["url"].endswith("/bot123456:telegram-secret/setWebhook")
+    assert call["json"] == {
+        "url": created["webhook_url"],
+        "secret_token": created["webhook_secret"],
+    }
 
 
 def test_generate_telegram_agent_token_matches_bot_api_contract():
@@ -4756,8 +4789,31 @@ async def test_discord_rest_gateway_bot_uses_agent_token(client: httpx.AsyncClie
     )
 
     assert response.status_code == 200
-    assert response.json()["url"].endswith("/v1/channels/discord/gateway")
+    gateway_url = urlparse(response.json()["url"])
+    assert gateway_url.path.startswith("/v1/channels/discord/gateway/")
+    assert gateway_url.path.rpartition("/")[2]
     assert response.json()["shards"] == 1
+
+
+def test_discord_gateway_capability_accepts_runtime_placeholder(monkeypatch):
+    _install_discord_gateway_protocol_fakes(monkeypatch)
+    agent = _discord_gateway_protocol_agent()
+    websocket_path = urlparse(_discord_gateway_url(agent)).path
+    placeholder = channel_runtime_placeholder_token(
+        CHANNEL_PROVIDER_DISCORD,
+        channel_runtime_account_key(agent.account.id),
+    )
+
+    with TestClient(app) as sync_client:
+        with sync_client.websocket_connect(f"{websocket_path}?v=10&encoding=json") as websocket:
+            assert websocket.receive_json()["op"] == 10
+            websocket.send_json({"op": 2, "d": {"token": placeholder, "intents": 0}})
+            ready = websocket.receive_json()
+
+    assert ready["t"] == "READY"
+    resume_url = urlparse(ready["d"]["resume_gateway_url"])
+    assert resume_url.path.startswith("/v1/channels/discord/gateway/")
+    assert resume_url.path.rpartition("/")[2]
 
 
 @pytest.mark.asyncio
@@ -4779,7 +4835,9 @@ async def test_discord_rest_accepts_preserve_path_mitm_alias(client: httpx.Async
     )
 
     assert response.status_code == 200
-    assert response.json()["url"].endswith("/v1/channels/discord/gateway")
+    gateway_url = urlparse(response.json()["url"])
+    assert gateway_url.path.startswith("/v1/channels/discord/gateway/")
+    assert gateway_url.path.rpartition("/")[2]
 
 
 @pytest.mark.asyncio
@@ -6964,6 +7022,25 @@ async def test_discord_gateway_ready_guilds_come_from_active_bindings(
     }
 
 
+def _discord_gateway_protocol_agent() -> ChannelAgentContext:
+    account = ChannelAccount(
+        id=UUID("00000000-0000-0000-0000-0000000000dc"),
+        user_id=UUID("00000000-0000-0000-0000-0000000000dd"),
+        provider="discord",
+        name="discord-gateway-protocol",
+        webhook_secret_hash="unused",
+        config={"application_id": "discord-app-1"},
+    )
+    link = ChannelBotAgentLink(
+        id=UUID("00000000-0000-0000-0000-0000000000df"),
+        account_id=account.id,
+        user_id=account.user_id,
+        agent_id=UUID("00000000-0000-0000-0000-0000000000de"),
+        agent_token_hash="unused",
+    )
+    return ChannelAgentContext(account=account, link=link)
+
+
 def _install_discord_gateway_protocol_fakes(
     monkeypatch,
     *,
@@ -6973,23 +7050,26 @@ def _install_discord_gateway_protocol_fakes(
 
     async def fake_resolve_agent(db, *, provider: str, token: str) -> ChannelAgentContext:
         if provider == "discord" and token == "valid-discord-token":
-            account = ChannelAccount(
-                id=UUID("00000000-0000-0000-0000-0000000000dc"),
-                user_id=UUID("00000000-0000-0000-0000-0000000000dd"),
-                provider="discord",
-                name="discord-gateway-protocol",
-                webhook_secret_hash="unused",
-                config={"application_id": "discord-app-1"},
-            )
-            link = ChannelBotAgentLink(
-                id=UUID("00000000-0000-0000-0000-0000000000df"),
-                account_id=account.id,
-                user_id=account.user_id,
-                agent_id=UUID("00000000-0000-0000-0000-0000000000de"),
-                agent_token_hash="unused",
-            )
-            return ChannelAgentContext(account=account, link=link)
+            return _discord_gateway_protocol_agent()
         raise HTTPException(status_code=401, detail="invalid bot token")
+
+    async def fake_resolve_identity(
+        db,
+        *,
+        provider: str,
+        account_id: UUID,
+        link_id: UUID,
+        agent_token_hash: str,
+    ) -> ChannelAgentContext:
+        agent = _discord_gateway_protocol_agent()
+        if (
+            provider == "discord"
+            and account_id == agent.account.id
+            and link_id == agent.link.id
+            and agent_token_hash == agent.link.agent_token_hash
+        ):
+            return agent
+        raise HTTPException(status_code=401, detail="invalid bot identity")
 
     async def fake_bound_guilds(
         db,
@@ -7028,6 +7108,10 @@ def _install_discord_gateway_protocol_fakes(
     monkeypatch.setattr(
         "app.routes.channel_routers.discord.resolve_channel_agent_by_token",
         fake_resolve_agent,
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.discord.resolve_channel_agent_by_identity",
+        fake_resolve_identity,
     )
     monkeypatch.setattr(
         "app.routes.channel_routers.discord._discord_bound_guilds",

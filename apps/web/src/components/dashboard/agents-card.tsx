@@ -23,7 +23,7 @@ import {
 	EntityHeader,
 } from "@/components/entity-card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { agentSectionHref } from "@/lib/agent-routes";
+import { agentSectionHref, parseAgentPathname } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["AgentResponse"];
@@ -112,6 +112,11 @@ export interface AgentTile {
 	 * the same shape; hosted deployments without a registered env leave
 	 * this null. */
 	env?: Env | null;
+}
+
+export function agentTileMatchesRouteId(tile: AgentTile, routeId: string): boolean {
+	if (tile.id === routeId || tile.env?.id === routeId) return true;
+	return tile.href ? parseAgentPathname(tile.href)?.agentId === routeId : false;
 }
 
 export interface AgentFleetSummary {

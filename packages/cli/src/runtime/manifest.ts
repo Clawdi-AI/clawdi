@@ -4201,6 +4201,7 @@ function hashToUInt16(input: string): number {
 
 export function runtimeSidecarProgramRevision(
 	manifest: RuntimeManifest,
+	secretValues: Record<string, string>,
 	egressProgram: RuntimeEgressSystemdProgram | null = null,
 	egressIdentity: RuntimeEgressIdentity | null = null,
 ): string {
@@ -4212,6 +4213,8 @@ export function runtimeSidecarProgramRevision(
 		runtimeSidecar: "hosted-runtime-sidecar-v4",
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
+		egressProfiles: manifest.egressProfiles ?? null,
+		egressSecrets: scopedSecretValues(secretValues, egressSecretRefs(manifest)),
 		egress: egressProgram
 			? {
 					transparentPort: egressProgram.transparentPort,
@@ -4963,6 +4966,7 @@ function writeSystemdUnits(
 					CLAWDI_EGRESS_ENV_FILE: activeEgressProgram.envFilePath,
 					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
 						manifest,
+						secretValues ?? {},
 						activeEgressProgram,
 						activeEgressIdentity,
 					),

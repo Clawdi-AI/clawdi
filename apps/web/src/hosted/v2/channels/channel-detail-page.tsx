@@ -74,6 +74,7 @@ import {
 } from "@/hosted/v2/channels/channels-hooks";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import {
+	pairingCommand,
 	WHATSAPP_COMING_SOON_MESSAGE,
 	WHATSAPP_LINKING_READY,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
@@ -829,8 +830,8 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 							"Expired. Generate a new code."
 						) : (
 							<>
-								Send <span className="font-mono font-medium">{result.code}</span> from the chat you
-								want to pair. Expires {relativeTime(result.expires_at)}.
+								Send <span className="font-mono font-medium">{pairingCommand(result.code)}</span>{" "}
+								from the chat you want to pair. Expires {relativeTime(result.expires_at)}.
 							</>
 						)}
 					</p>

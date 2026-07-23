@@ -249,6 +249,36 @@ def channel_webhook_url(account_id: UUID, provider: str) -> str:
     return f"{settings.public_api_url.rstrip('/')}/v1/channels/{provider}/{account_id}/webhook"
 
 
+async def configure_telegram_provider_webhook(
+    *,
+    provider_token: str,
+    webhook_url: str,
+    webhook_secret: str,
+) -> None:
+    # Telegram requires an HTTPS webhook. Local development keeps the default
+    # localhost URL and can still exercise inbound routes directly.
+    if not webhook_url.lower().startswith("https://"):
+        return
+    base_url = settings.channel_telegram_api_base_url.strip().rstrip("/")
+    payload = await _post_provider_json(
+        channel=CHANNEL_PROVIDER_TELEGRAM,
+        method="setWebhook",
+        url=f"{base_url}/bot{provider_token}/setWebhook",
+        json_payload={
+            "url": webhook_url,
+            "secret_token": webhook_secret,
+        },
+        timeout_seconds=20.0,
+        unreachable_detail="telegram api unreachable",
+        rejected_detail="telegram bot token or webhook was rejected",
+    )
+    if payload.get("ok") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="telegram bot token or webhook was rejected",
+        )
+
+
 async def store_channel_secrets(
     db: AsyncSession,
     *,
@@ -818,6 +848,35 @@ async def resolve_channel_agent_by_token(
     row = result.one_or_none()
     if row is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bot token")
+    account, link = row
+    return ChannelAgentContext(account=account, link=link)
+
+
+async def resolve_channel_agent_by_identity(
+    db: AsyncSession,
+    *,
+    provider: str,
+    account_id: UUID,
+    link_id: UUID,
+    agent_token_hash: str,
+) -> ChannelAgentContext:
+    result = await db.execute(
+        select(ChannelAccount, ChannelBotAgentLink)
+        .join(ChannelBotAgentLink, ChannelBotAgentLink.account_id == ChannelAccount.id)
+        .where(
+            ChannelAccount.id == account_id,
+            ChannelAccount.provider == provider,
+            ChannelBotAgentLink.id == link_id,
+            ChannelBotAgentLink.agent_token_hash == agent_token_hash,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+            ChannelAccount.archived_at.is_(None),
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+        )
+    )
+    row = result.one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bot identity")
     account, link = row
     return ChannelAgentContext(account=account, link=link)
 
