@@ -56,7 +56,7 @@ def _batch(
             "openclawGatewayAuth": {
                 "mode": "token",
                 "tokenRef": "env://OPENCLAW_GATEWAY_TOKEN",
-                "deviceAuthRequired": True,
+                "deviceAuthRequired": False,
                 "activation": {
                     "enabled": True,
                     "capability": "openclaw-native-auth-v1",

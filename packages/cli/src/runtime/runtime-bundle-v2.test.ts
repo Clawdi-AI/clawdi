@@ -36,7 +36,7 @@ describe("hosted runtime bundle v2", () => {
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
-			"53fb9a4fa0f0a662090cc0f17f45000742c50e270ec08e98769d4ce07b6fbe26",
+			"6a65e1da8ba5c467a1a6d65d1959431b72de7e596e5dbed0caada491e4dad5cd",
 		);
 		expect(projected.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
@@ -183,7 +183,7 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe('"bundle-golden"');
 		expect(loaded.sourceRevision).toBe(
-			"53fb9a4fa0f0a662090cc0f17f45000742c50e270ec08e98769d4ce07b6fbe26",
+			"6a65e1da8ba5c467a1a6d65d1959431b72de7e596e5dbed0caada491e4dad5cd",
 		);
 		expect(loaded.channelBindings).toHaveLength(1);
 	});

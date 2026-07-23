@@ -448,7 +448,7 @@ class HostedOpenClawGatewayAuth(BaseModel):
 
     mode: Literal["token"]
     tokenRef: Literal["env://OPENCLAW_GATEWAY_TOKEN"]
-    deviceAuthRequired: Literal[True]
+    deviceAuthRequired: Literal[False]
     activation: HostedOpenClawGatewayActivation
 
 
