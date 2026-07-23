@@ -69,7 +69,6 @@ import {
 	type DeployWizardAiAccessMode,
 } from "@/hosted/billing/deploy/deploy-defaults";
 import {
-	planCAccessAllowsDeploy,
 	resolveBasicDeploySelection,
 	usesActiveIncludedBasicSlot,
 } from "@/hosted/billing/deploy/deploy-model";
@@ -532,12 +531,8 @@ export function DeployWizard() {
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
-	const planCAccessAllowed = planCAccessAllowsDeploy(
-		hostedAccess.canUsePlanCBilling,
-		paidSelection ? "paid" : basicSelection,
-	);
 	const canSubmit =
-		planCAccessAllowed &&
+		hostedAccess.canUsePlanCBilling &&
 		planReady &&
 		!submitting &&
 		(!paidSelection ||
@@ -932,10 +927,10 @@ export function DeployWizard() {
 		if (!canSubmit) return;
 		setSubmitting(true);
 		try {
+			if (!(await recheckPlanCBilling())) return;
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
 			if (paidSelection) {
-				if (!(await recheckPlanCBilling())) return;
 				const deployConfig = buildDeployRequest(aiFields, paidSelection.computePlanSlug);
 				const billingTermMonths = supportedBillingTerm(paidSelection.billingTermMonths);
 				if (!billingTermMonths) {
@@ -1090,7 +1085,7 @@ export function DeployWizard() {
 		}
 	}
 
-	const deployLabel = !planCAccessAllowed
+	const deployLabel = !hostedAccess.canUsePlanCBilling
 		? "Deployment temporarily unavailable"
 		: paidSelection
 			? paymentMethod === "wallet"
@@ -1158,7 +1153,7 @@ export function DeployWizard() {
 					description="Choose the execution engine and AI provider for this hosted deployment."
 				/>
 				{hostedAccess.isLoading || hostedAccess.canUsePlanCBilling ? null : (
-					<PlanCBillingUnavailableNotice description="Paid deployments are temporarily unavailable. Your included Basic slot remains available." />
+					<PlanCBillingUnavailableNotice description="New deployments are temporarily unavailable. You can still review compute options, providers, channels, and existing agents." />
 				)}
 
 				<SettingsSection
@@ -1556,7 +1551,9 @@ export function DeployWizard() {
 						size="lg"
 						onClick={() => runAction(onDeploy)}
 						disabled={!canSubmit}
-						aria-describedby={planCAccessAllowed ? undefined : "plan-c-deploy-unavailable"}
+						aria-describedby={
+							hostedAccess.canUsePlanCBilling ? undefined : "plan-c-deploy-unavailable"
+						}
 						className="w-full sm:w-auto"
 					>
 						{submitting ? (
@@ -1566,9 +1563,9 @@ export function DeployWizard() {
 						)}
 						{submitting ? "Working…" : deployLabel}
 					</Button>
-					{planCAccessAllowed ? null : (
+					{hostedAccess.canUsePlanCBilling ? null : (
 						<span id="plan-c-deploy-unavailable" className="sr-only">
-							Paid deployments are temporarily unavailable.
+							New deployments are temporarily unavailable.
 						</span>
 					)}
 				</div>

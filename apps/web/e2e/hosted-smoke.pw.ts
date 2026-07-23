@@ -1351,22 +1351,6 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).not.toHaveProperty("primary_model");
 });
 
-test("free Basic Deploy stays available while the Plan C switch is off", async ({ page }) => {
-	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
-	await stubHostedApi(page, {
-		canUsePlanCBilling: false,
-		plans: [basicPlan],
-		deployments: [],
-		createDeploymentRequests,
-	});
-	await page.goto("/deploy");
-
-	await expect(page.getByTestId("plan-c-unavailable")).toBeVisible();
-	await page.getByRole("button", { name: "Deploy agent" }).click();
-	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
-	expect(createDeploymentRequests).toHaveLength(1);
-});
-
 test("hosted locale settings submit canonical deployment PATCH", async ({ page }) => {
 	const updateDeploymentRequests: Array<{
 		body: string;

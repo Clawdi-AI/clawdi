@@ -37,13 +37,6 @@ export function usesActiveIncludedBasicSlot(deployments: HostedDeployment[] | un
 	});
 }
 
-export function planCAccessAllowsDeploy(
-	canUsePlanCBilling: boolean,
-	selection: BasicDeploySelection | "paid",
-): boolean {
-	return canUsePlanCBilling || (selection !== "paid" && selection.mode === "included");
-}
-
 export function resolveBasicDeploySelection({
 	basicPlan,
 	billingTermMonths,
