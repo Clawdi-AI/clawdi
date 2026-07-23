@@ -41,7 +41,6 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useBillingClient } from "@/hosted/billing/billing-client";
-import { PlanCBillingUnavailableNotice } from "@/hosted/billing/components/plan-c-unavailable-notice";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
@@ -442,11 +441,6 @@ export function DeployWizard() {
 		setTimezone((tz) => tz || browserTimezone());
 		setLanguage((lang) => lang || browserLanguage());
 	}, []);
-	useEffect(() => {
-		if (hostedAccess.isLoading || hostedAccess.canUsePlanCBilling) return;
-		setCheckoutSession(null);
-		setWalletTopUpOpen(false);
-	}, [hostedAccess.canUsePlanCBilling, hostedAccess.isLoading]);
 	const tzOptions = useMemo(() => {
 		const all = supportedTimezones();
 		if (timezone && !all.includes(timezone)) return [timezone, ...all];
@@ -510,10 +504,10 @@ export function DeployWizard() {
 				}
 			: null;
 	const wallet = useWallet({
-		enabled: hostedAccess.canUsePlanCBilling && paymentMethod === "wallet",
+		enabled: paymentMethod === "wallet",
 	});
 	const subscriptionCreateQuote = useSubscriptionCreateQuote(subscriptionCreateSelection, {
-		enabled: hostedAccess.canUsePlanCBilling && paymentMethod === "wallet",
+		enabled: paymentMethod === "wallet",
 	});
 	const walletDebit = subscriptionCreateQuote.data?.walletDebit ?? null;
 	const walletShortfallCredits = walletDebitShortfallCredits(walletDebit);
@@ -532,7 +526,6 @@ export function DeployWizard() {
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const planReady = !plans.isLoading && computePlanReady;
 	const canSubmit =
-		hostedAccess.canUsePlanCBilling &&
 		planReady &&
 		!submitting &&
 		(!paidSelection ||
@@ -769,8 +762,8 @@ export function DeployWizard() {
 		return false;
 	}
 
-	async function recheckPlanCBilling(): Promise<boolean> {
-		const available = await hostedAccess.recheckPlanCBilling();
+	async function recheckCanCreateCloudAgents(): Promise<boolean> {
+		const available = await hostedAccess.recheckCanCreateCloudAgents();
 		if (!available) {
 			setCheckoutSession(null);
 			setWalletTopUpOpen(false);
@@ -832,7 +825,7 @@ export function DeployWizard() {
 	}
 
 	async function fallbackToHostedCheckout(request: SubscriptionCreateRequestView) {
-		if (!(await recheckPlanCBilling())) return;
+		if (!(await recheckCanCreateCloudAgents())) return;
 		const fingerprint = idempotencyFingerprint({
 			selection: request.selection,
 			target: request.target,
@@ -927,7 +920,7 @@ export function DeployWizard() {
 		if (!canSubmit) return;
 		setSubmitting(true);
 		try {
-			if (!(await recheckPlanCBilling())) return;
+			if (!(await recheckCanCreateCloudAgents())) return;
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
 			if (paidSelection) {
@@ -1085,19 +1078,17 @@ export function DeployWizard() {
 		}
 	}
 
-	const deployLabel = !hostedAccess.canUsePlanCBilling
-		? "Deployment temporarily unavailable"
-		: paidSelection
-			? paymentMethod === "wallet"
-				? subscriptionCreateQuote.isFetching
-					? "Getting wallet quote…"
-					: walletInsufficient
-						? "Top up to deploy"
-						: walletDebit
-							? `Pay ${formatCents(walletDebit.exactDebitCents)} from Wallet & deploy`
-							: "Review wallet quote"
-				: "Continue to checkout"
-			: "Deploy agent";
+	const deployLabel = paidSelection
+		? paymentMethod === "wallet"
+			? subscriptionCreateQuote.isFetching
+				? "Getting wallet quote…"
+				: walletInsufficient
+					? "Top up to deploy"
+					: walletDebit
+						? `Pay ${formatCents(walletDebit.exactDebitCents)} from Wallet & deploy`
+						: "Review wallet quote"
+			: "Continue to checkout"
+		: "Deploy agent";
 	const selectedProviderCount =
 		aiAccessMode === "configured"
 			? normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice).length
@@ -1152,10 +1143,6 @@ export function DeployWizard() {
 					title="Deploy an Agent"
 					description="Choose the execution engine and AI provider for this hosted deployment."
 				/>
-				{hostedAccess.isLoading || hostedAccess.canUsePlanCBilling ? null : (
-					<PlanCBillingUnavailableNotice description="New deployments are temporarily unavailable. You can still review compute options, providers, channels, and existing agents." />
-				)}
-
 				<SettingsSection
 					title="Runtimes"
 					description="Choose one execution engine for this hosted compute."
@@ -1395,9 +1382,7 @@ export function DeployWizard() {
 								<div className="grid gap-2 sm:grid-cols-2">
 									<EntityChoiceCard
 										selected={paymentMethod === "card"}
-										onClick={
-											hostedAccess.canUsePlanCBilling ? () => setPaymentMethod("card") : undefined
-										}
+										onClick={() => setPaymentMethod("card")}
 										icon={
 											<IconChip tint="bg-muted text-muted-foreground">
 												<CreditCard />
@@ -1406,15 +1391,10 @@ export function DeployWizard() {
 										title="Card subscription"
 										description="Pay securely with Stripe and manage the subscription from billing settings."
 										badge={<Badge variant="secondary">Monthly or Annual</Badge>}
-										disabled={!hostedAccess.canUsePlanCBilling}
 									/>
 									<EntityChoiceCard
 										selected={paymentMethod === "wallet"}
-										onClick={
-											walletDisabledReason || !hostedAccess.canUsePlanCBilling
-												? undefined
-												: () => setPaymentMethod("wallet")
-										}
+										onClick={walletDisabledReason ? undefined : () => setPaymentMethod("wallet")}
 										icon={
 											<IconChip tint="bg-identity-6-bg text-identity-6-fg">
 												<WalletCards />
@@ -1426,7 +1406,7 @@ export function DeployWizard() {
 											"Debit the exact quoted amount from AI Credits, then renew on the selected term."
 										}
 										badge={<Badge variant="outline">Monthly or Annual</Badge>}
-										disabled={walletDisabledReason !== null || !hostedAccess.canUsePlanCBilling}
+										disabled={walletDisabledReason !== null}
 									/>
 								</div>
 
@@ -1551,9 +1531,6 @@ export function DeployWizard() {
 						size="lg"
 						onClick={() => runAction(onDeploy)}
 						disabled={!canSubmit}
-						aria-describedby={
-							hostedAccess.canUsePlanCBilling ? undefined : "plan-c-deploy-unavailable"
-						}
 						className="w-full sm:w-auto"
 					>
 						{submitting ? (
@@ -1563,11 +1540,6 @@ export function DeployWizard() {
 						)}
 						{submitting ? "Working…" : deployLabel}
 					</Button>
-					{hostedAccess.canUsePlanCBilling ? null : (
-						<span id="plan-c-deploy-unavailable" className="sr-only">
-							New deployments are temporarily unavailable.
-						</span>
-					)}
 				</div>
 			</div>
 
@@ -1577,7 +1549,7 @@ export function DeployWizard() {
 				onOpenChange={setAddProviderOpen}
 				onCreated={selectCreatedProvider}
 			/>
-			{hostedAccess.canUsePlanCBilling && wallet.data ? (
+			{wallet.data ? (
 				<TopUpDialog
 					open={walletTopUpOpen}
 					onOpenChange={(open) => {
@@ -1592,7 +1564,7 @@ export function DeployWizard() {
 				/>
 			) : null}
 			<StripeCheckoutDialog
-				open={checkoutSession !== null && hostedAccess.canUsePlanCBilling}
+				open={checkoutSession !== null}
 				onOpenChange={(next) => {
 					if (!next) setCheckoutSession(null);
 				}}
@@ -1600,7 +1572,7 @@ export function DeployWizard() {
 				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
 				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
 				summary={checkoutSession?.summary ?? null}
-				onBeforeConfirm={recheckPlanCBilling}
+				onBeforeConfirm={recheckCanCreateCloudAgents}
 				onComplete={() =>
 					void handleCheckoutComplete(
 						checkoutSession?.previousDeploymentIds ?? [],

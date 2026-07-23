@@ -52,13 +52,13 @@ function FeatureRow({ children }: { children: React.ReactNode }) {
 export function PlanComparison({
 	term: termProp,
 	onTermChange,
-	canUsePlanCBilling = false,
+	canCreateCloudAgents = false,
 }: {
 	/** When provided, the billing term is controlled by the parent so the
 	 * page's other TermSwitchers stay in sync (no two desynced toggles). */
 	term?: number;
 	onTermChange?: (term: number) => void;
-	canUsePlanCBilling?: boolean;
+	canCreateCloudAgents?: boolean;
 } = {}) {
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = new URLSearchParams(searchStr);
@@ -165,7 +165,7 @@ export function PlanComparison({
 						</ul>
 					</CardContent>
 					<CardFooter>
-						{canUsePlanCBilling ? (
+						{canCreateCloudAgents ? (
 							<Button
 								render={<Link to="/deploy" />}
 								nativeButton={false}
@@ -238,7 +238,7 @@ export function PlanComparison({
 						</ul>
 					</CardContent>
 					<CardFooter>
-						{canUsePlanCBilling ? (
+						{canCreateCloudAgents ? (
 							<Button
 								render={<Link to="/deploy" />}
 								nativeButton={false}

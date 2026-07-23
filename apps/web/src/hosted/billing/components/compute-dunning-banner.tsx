@@ -93,7 +93,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 				<AlertTitle>{state.title}</AlertTitle>
 				<AlertDescription className="flex flex-col items-start gap-3">
 					<span>{bannerDescription}</span>
-					{hostedAccess.isLoading ? null : !hostedAccess.canUsePlanCBilling &&
+					{hostedAccess.isLoading ? null : !hostedAccess.canCreateCloudAgents &&
 						state.ctaTarget === "start_new" ? (
 						<span className="text-xs text-muted-foreground">
 							Starting a new subscription is temporarily unavailable. This deployment remains

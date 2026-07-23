@@ -67,17 +67,17 @@ export function isSamePlanChangeSelection(
 }
 
 export function planChangeUnavailableReason({
-	canUsePlanCBilling,
+	canCreateCloudAgents,
 	cancelAtPeriodEnd,
 	status,
 	subscriptionId,
 }: {
-	canUsePlanCBilling: boolean;
+	canCreateCloudAgents: boolean;
 	cancelAtPeriodEnd: boolean;
 	status: string;
 	subscriptionId: number | null;
 }): string | null {
-	if (!canUsePlanCBilling) return "Plan changes are temporarily unavailable.";
+	if (!canCreateCloudAgents) return "Plan changes are temporarily unavailable.";
 	if (cancelAtPeriodEnd)
 		return "Resume this subscription before changing its plan or billing term.";
 	if (!subscriptionId)

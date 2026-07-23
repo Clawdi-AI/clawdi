@@ -63,7 +63,7 @@ describe("planChangeUnavailableReason", () => {
 	test("fails closed with a temporary unavailability reason", () => {
 		expect(
 			planChangeUnavailableReason({
-				canUsePlanCBilling: false,
+				canCreateCloudAgents: false,
 				cancelAtPeriodEnd: false,
 				status: "active",
 				subscriptionId: 42,
@@ -74,7 +74,7 @@ describe("planChangeUnavailableReason", () => {
 	test("requires pending cancellation to be resumed first", () => {
 		expect(
 			planChangeUnavailableReason({
-				canUsePlanCBilling: true,
+				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: true,
 				status: "active",
 				subscriptionId: 42,
@@ -85,7 +85,7 @@ describe("planChangeUnavailableReason", () => {
 	test("allows only active subscriptions with a server id", () => {
 		expect(
 			planChangeUnavailableReason({
-				canUsePlanCBilling: true,
+				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: false,
 				status: "active",
 				subscriptionId: 42,
@@ -93,7 +93,7 @@ describe("planChangeUnavailableReason", () => {
 		).toBeNull();
 		expect(
 			planChangeUnavailableReason({
-				canUsePlanCBilling: true,
+				canCreateCloudAgents: true,
 				cancelAtPeriodEnd: false,
 				status: "trialing",
 				subscriptionId: 42,
