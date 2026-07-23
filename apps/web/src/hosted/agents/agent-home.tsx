@@ -62,6 +62,7 @@ export function AgentHome({
 		membershipResolved,
 		isLoading,
 		isFetching,
+		runtimeUiSettlingTimedOut,
 		error,
 		refetch,
 	} = useAgentDeployment(environmentId, deploymentSelector);
@@ -176,6 +177,8 @@ export function AgentHome({
 				deployment={deployment}
 				runtime={runtime}
 				section={section}
+				autoOpenRuntimeUi={requestedFromCloudRedirect && environmentId === deployment.resource.id}
+				runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
 			/>
 		);
 	}
