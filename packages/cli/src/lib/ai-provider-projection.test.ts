@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	type AiProviderCatalog,
+	CLAWDI_MANAGED_PROVIDER_ID,
 	CODEX_OAUTH_MODEL_CATALOG,
 	defaultAiProviderApiMode,
 	defaultAiProviderBaseUrl,
@@ -46,6 +47,57 @@ const codexOAuthCatalog: AiProviderCatalog = {
 };
 
 describe("AI provider projection", () => {
+	test("projects the bare managed provider alias with the managed endpoint and key env", () => {
+		const catalog: AiProviderCatalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: CLAWDI_MANAGED_PROVIDER_ID,
+					type: "custom_openai_compatible",
+					label: "Managed by Clawdi",
+					base_url: "https://managed.example.test/v1",
+					api_mode: "openai_chat",
+					auth: { type: "api_key", source: "managed" },
+					managed_by: "clawdi",
+					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+					models: [{ id: "managed-model" }],
+				},
+			],
+			defaults: { chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID },
+		};
+		const primaryModel = {
+			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+			model: "managed-model",
+		};
+
+		const openclaw = buildAgentTargetProjection("openclaw", catalog, primaryModel);
+		expect(openclaw.provider_ids).toEqual([CLAWDI_MANAGED_PROVIDER_ID]);
+		expect(openclaw.primary_model).toEqual(primaryModel);
+		const openclawPatch = JSON.parse(openclaw.files[0]?.content ?? "{}") as {
+			agents?: { defaults?: { model?: { primary?: string } } };
+			models?: {
+				providers?: Record<string, { api?: string; apiKey?: { id?: string }; baseUrl?: string }>;
+			};
+		};
+		expect(openclawPatch.agents?.defaults?.model?.primary).toBe("clawdi/managed-model");
+		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]).toMatchObject({
+			baseUrl: "https://managed.example.test/v1",
+			apiKey: { id: "CLAWDI_MANAGED_OPENAI_API_KEY" },
+		});
+		// openai_chat is OpenClaw's default custom-provider mode and is intentionally omitted.
+		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]?.api).toBeUndefined();
+		expect(JSON.stringify(openclawPatch)).not.toContain("clawdi-v2");
+
+		const hermes = buildAgentTargetProjection("hermes", catalog, primaryModel);
+		expect(hermes.provider_ids).toEqual([CLAWDI_MANAGED_PROVIDER_ID]);
+		expect(hermes.files[0]?.content).toContain('provider: "custom:clawdi"');
+		expect(hermes.files[0]?.content).toContain('"clawdi":');
+		expect(hermes.files[0]?.content).toContain('api: "https://managed.example.test/v1"');
+		expect(hermes.files[0]?.content).toContain('transport: "chat_completions"');
+		expect(hermes.files[0]?.content).toContain('key_env: "CLAWDI_MANAGED_OPENAI_API_KEY"');
+		expect(hermes.files[0]?.content).not.toContain("clawdi-v2");
+	});
+
 	test("maps known BYOK OpenAI providers to all runtime targets without extra user fields", () => {
 		const openclaw = buildAgentTargetProjection("openclaw", byokOpenAiCatalog);
 		expect(openclaw.provider_ids).toEqual(["openai-main"]);

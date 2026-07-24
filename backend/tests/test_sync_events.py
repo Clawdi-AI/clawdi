@@ -29,6 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services import sync_events
+from app.services.managed_ai_provider import (
+    CLAWDI_MANAGED_PROVIDER_ID,
+    V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_MANAGED_AI_PROVIDER_ID,
+)
 
 pytestmark = pytest.mark.committed_db
 
@@ -279,6 +284,42 @@ def test_runtime_provider_usage_includes_independent_codex_tool_ref() -> None:
 
     assert sync_events._runtime_state_may_use_provider(state, "codex-managed") is True
     assert sync_events._runtime_state_may_use_provider(state, "unrelated") is False
+
+
+@pytest.mark.parametrize(
+    "bound_provider_id",
+    [
+        CLAWDI_MANAGED_PROVIDER_ID,
+        V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    ],
+)
+def test_managed_runtime_provider_usage_resolves_deployment_credential_identity(
+    bound_provider_id: str,
+) -> None:
+    state = HostedRuntimeState(
+        deployment_id="42",
+        runtimes={
+            "openclaw": {
+                "enabled": True,
+                "providerMode": "configured",
+                "provider_ids": [bound_provider_id],
+                "primary_model": {"provider_id": bound_provider_id, "model": "gpt-5.5"},
+                "install": {"source": "official"},
+                "services": {},
+            }
+        },
+        tools={
+            "codex": {
+                "enabled": True,
+                "provider_id": bound_provider_id,
+                "primary_model": {"provider_id": bound_provider_id, "model": "gpt-5.5"},
+            }
+        },
+    )
+
+    assert sync_events._runtime_state_may_use_provider(state, "clawdi-v2-deployment-42") is True
+    assert sync_events._runtime_state_may_use_provider(state, "clawdi-v2-deployment-43") is False
 
 
 @pytest.mark.asyncio

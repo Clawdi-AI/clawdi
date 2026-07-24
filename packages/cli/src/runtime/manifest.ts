@@ -30,6 +30,7 @@ import type {
 	AiProviderType,
 } from "@clawdi/shared";
 import {
+	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	isAiProviderApiMode,
 	isAiProviderType,
@@ -1559,8 +1560,11 @@ function resolveManagedGatewayModelOverrides(
 			});
 			fetchCache.set(cacheKey, fetchResult);
 			if (fetchResult.status === "failed") {
+				const loggedProviderId = isClawdiManagedV2ProviderId(target.providerId)
+					? CLAWDI_MANAGED_PROVIDER_ID
+					: target.providerId;
 				console.warn(
-					`managed model probe failed for ${runtimeName}/${target.providerId} at ${fetchResult.endpoint}: ${fetchResult.detail}; keeping configured seed`,
+					`managed model probe failed for ${runtimeName}/${loggedProviderId} at ${fetchResult.endpoint}: ${fetchResult.detail}; keeping configured seed`,
 				);
 			}
 		}
@@ -2002,12 +2006,9 @@ function agentTargetProjectionInput(
 	const providerIdMap = new Map<string, string>();
 	const providers = input.catalog.providers.map((provider) => {
 		if (provider.managed_by !== "clawdi") return provider;
-		// TODO(#425): Remove legacy projection handling after hosted#892 is deployed
-		// everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
-		const id =
-			isClawdiManagedV2ProviderId(provider.id) ||
-			provider.id === CLAWDI_MANAGED_V1_PROVIDER_ID ||
-			provider.id.startsWith("clawdi-managed")
+		const id = isClawdiManagedV2ProviderId(provider.id)
+			? CLAWDI_MANAGED_PROVIDER_ID
+			: provider.id === CLAWDI_MANAGED_V1_PROVIDER_ID || provider.id.startsWith("clawdi-managed")
 				? provider.id
 				: CLAWDI_MANAGED_V1_PROVIDER_ID;
 		providerIdMap.set(provider.id, id);
@@ -2809,6 +2810,12 @@ function hermesHostedPluginProviderName(providerId: string): string {
 		.toLowerCase()
 		.replace(/[^a-z0-9]+/g, "-")
 		.replace(/^-+|-+$/g, "");
+	if (
+		normalized === HERMES_MODEL_PROVIDER_PLUGIN_NAME ||
+		normalized.startsWith(`${HERMES_MODEL_PROVIDER_PLUGIN_NAME}-`)
+	) {
+		return normalized;
+	}
 	return `${HERMES_MODEL_PROVIDER_PLUGIN_NAME}-${normalized || "provider"}`;
 }
 

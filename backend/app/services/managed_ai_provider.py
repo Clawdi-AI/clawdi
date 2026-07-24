@@ -12,6 +12,8 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.user import User
 from app.services.vault_crypto import encrypt
 
+# Agent-facing alias only. Credential and catalog source rows keep their v2 ids below.
+CLAWDI_MANAGED_PROVIDER_ID = "clawdi"
 V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
 V1_MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
 V2_MANAGED_AI_PROVIDER_ID = "clawdi-v2"
@@ -51,6 +53,15 @@ def is_v2_deployment_managed_provider_id(provider_id: str) -> bool:
     return _V2_DEPLOYMENT_ID_RE.fullmatch(deployment_id) is not None
 
 
+def v2_deployment_managed_provider_id(deployment_id: str) -> str | None:
+    """Return the credential identity for a numeric hosted deployment id."""
+
+    if _V2_DEPLOYMENT_ID_RE.fullmatch(deployment_id) is None:
+        return None
+    provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}{deployment_id}"
+    return provider_id if len(provider_id) <= V2_MANAGED_AI_PROVIDER_MAX_ID_LENGTH else None
+
+
 def is_v2_managed_provider_id(provider_id: str) -> bool:
     return provider_id in V2_MANAGED_AI_PROVIDER_IDS or is_v2_deployment_managed_provider_id(
         provider_id
@@ -59,6 +70,16 @@ def is_v2_managed_provider_id(provider_id: str) -> bool:
 
 def is_managed_provider_id(provider_id: str) -> bool:
     return provider_id == V1_MANAGED_AI_PROVIDER_ID or is_v2_managed_provider_id(provider_id)
+
+
+def runtime_managed_provider_id(provider_id: str) -> str:
+    """Return the stable agent-facing id for a managed provider binding."""
+
+    return (
+        CLAWDI_MANAGED_PROVIDER_ID
+        if provider_id == CLAWDI_MANAGED_PROVIDER_ID or is_v2_managed_provider_id(provider_id)
+        else provider_id
+    )
 
 
 def managed_provider_api_mode(provider_id: str) -> str | None:

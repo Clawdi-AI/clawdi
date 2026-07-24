@@ -14,12 +14,16 @@ from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.services import sync_events
 from app.services.managed_ai_provider import (
+    CLAWDI_MANAGED_PROVIDER_ID,
+    V1_MANAGED_AI_PROVIDER_ID,
     V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_API_MODE,
     V2_MANAGED_AI_PROVIDER_ID,
     is_v2_managed_provider_id,
     managed_provider_api_mode,
+    runtime_managed_provider_id,
+    v2_deployment_managed_provider_id,
 )
 from tests.conftest import create_env_with_project
 
@@ -43,6 +47,34 @@ def test_v1_provider_mode_resolution_does_not_accept_deployment_scoped_ids():
 
     assert is_v2_managed_provider_id(provider_id)
     assert managed_provider_api_mode(provider_id) is None
+
+
+@pytest.mark.parametrize(
+    "provider_id",
+    [
+        V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+        f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42",
+        CLAWDI_MANAGED_PROVIDER_ID,
+    ],
+)
+def test_managed_v2_bindings_use_bare_agent_facing_id(provider_id: str):
+    assert runtime_managed_provider_id(provider_id) == CLAWDI_MANAGED_PROVIDER_ID
+
+
+def test_agent_facing_managed_id_is_not_a_credential_identity():
+    provider_id = v2_deployment_managed_provider_id("42")
+
+    assert provider_id == f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42"
+    assert not is_v2_managed_provider_id(CLAWDI_MANAGED_PROVIDER_ID)
+    assert runtime_managed_provider_id(V1_MANAGED_AI_PROVIDER_ID) == V1_MANAGED_AI_PROVIDER_ID
+
+
+@pytest.mark.parametrize("deployment_id", ["", "0", "01", "invalid", " 42"])
+def test_deployment_managed_provider_rejects_noncanonical_deployment_id(
+    deployment_id: str,
+):
+    assert v2_deployment_managed_provider_id(deployment_id) is None
 
 
 @pytest.mark.parametrize(

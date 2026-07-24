@@ -176,6 +176,26 @@ describe("runtime egress profile schema", () => {
 		]);
 	});
 
+	it("uses the stable managed id for deployment-scoped rewrite profile names", () => {
+		const bundle = hostedManifestEgressProfiles({
+			providers: {
+				"clawdi-v2-deployment-42": {
+					baseUrl: "https://ai-gateway.example.test/v1",
+					apiMode: "openai_chat",
+					managed_by: "clawdi",
+					apiKeySecretRef: "provider.clawdi-v2-deployment-42.apiKey",
+				},
+			},
+		});
+
+		expect(providerProfiles(bundle.profiles).map((profile) => profile.id)).toEqual([
+			"managed-provider-clawdi",
+		]);
+		expect(JSON.stringify(bundle.profiles)).not.toContain(
+			"managed-provider-clawdi-v2-deployment-42",
+		);
+	});
+
 	it("adds explicit runtime installer passthrough allowlist profiles", () => {
 		const profiles = runtimeInstallerEgressProfiles();
 		expect(profiles).toContainEqual(

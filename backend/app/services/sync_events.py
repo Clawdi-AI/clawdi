@@ -78,6 +78,12 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.runtime import HostedRuntimeTools, validate_hosted_runtime_desired_state
+from app.services.managed_ai_provider import (
+    CLAWDI_MANAGED_PROVIDER_ID,
+    is_v2_deployment_managed_provider_id,
+    runtime_managed_provider_id,
+    v2_deployment_managed_provider_id,
+)
 
 log = logging.getLogger(__name__)
 
@@ -341,7 +347,17 @@ def _runtime_state_may_use_provider(state: HostedRuntimeState, provider_id: str)
         tools = HostedRuntimeTools.model_validate(state.tools)
     except ValidationError:
         return False
-    return provider_id == tools.codex.provider_id
+    if provider_id == tools.codex.provider_id:
+        return True
+    if not is_v2_deployment_managed_provider_id(provider_id):
+        return False
+    if v2_deployment_managed_provider_id(state.deployment_id) != provider_id:
+        return False
+    runtime_provider_ids = {runtime_managed_provider_id(value) for value in runtime.provider_ids}
+    return (
+        CLAWDI_MANAGED_PROVIDER_ID in runtime_provider_ids
+        or runtime_managed_provider_id(tools.codex.provider_id) == CLAWDI_MANAGED_PROVIDER_ID
+    )
 
 
 async def bump_skills_revision(
