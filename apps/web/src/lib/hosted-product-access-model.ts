@@ -18,6 +18,30 @@ export interface HostedProductAccess {
 	canUseCloudAgents: boolean;
 }
 
+export type HostedProductAccessStatus = "unavailable" | "loading" | "error" | "allowed" | "denied";
+
+export function hostedProductAccessStatus({
+	enabled,
+	profile,
+	isFetching,
+	error,
+}: {
+	enabled: boolean;
+	profile: HostedProductAccessProfile | undefined;
+	isFetching: boolean;
+	error: unknown;
+}): HostedProductAccessStatus {
+	if (!enabled) return "unavailable";
+	// Fresh or cached successful data is authoritative, including an explicit
+	// denial. A failed background refresh must not erase the last known result.
+	if (profile !== undefined) {
+		return profile.capabilities?.can_use_v2 === true ? "allowed" : "denied";
+	}
+	if (isFetching) return "loading";
+	if (error) return "error";
+	return "loading";
+}
+
 export function hostedProductAccessFromProfile(
 	profile: HostedProductAccessProfile | undefined,
 ): HostedProductAccess {
