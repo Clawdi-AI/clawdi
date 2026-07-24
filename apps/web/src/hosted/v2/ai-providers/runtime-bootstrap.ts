@@ -30,13 +30,6 @@ export function aiProviderRuntimeId(provider: AiProvider): string {
 	return provider.provider_id;
 }
 
-export function buildAiProviderBootstrap(
-	provider: AiProvider,
-	authKind: RuntimeAiProviderAuthKind,
-): RuntimeAiProviderBootstrap {
-	return buildAiProviderPoolBootstrap([provider], provider.provider_id, authKind);
-}
-
 export function buildAiProviderPoolBootstrap(
 	providers: readonly AiProvider[],
 	selectedProviderId: string,

@@ -31,14 +31,6 @@ export function openSecureRuntimeWindow(openWindow: OpenRuntimeWindow): RuntimeW
 	return popup;
 }
 
-export function hermesCredentialsForGeneration(
-	credentials: HermesUiCredentials | null,
-	credentialGeneration: number | null,
-	deploymentGeneration: number,
-): HermesUiCredentials | null {
-	return credentialGeneration === deploymentGeneration ? credentials : null;
-}
-
 function targetsPublishedEndpoint(credentialUrl: string, endpointUrl: string): boolean {
 	try {
 		const credentialTarget = new URL(credentialUrl);

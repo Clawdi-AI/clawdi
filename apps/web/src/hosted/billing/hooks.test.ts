@@ -12,7 +12,6 @@ import {
 	checkoutReturnMarker,
 	checkoutReturnWasCanceled,
 	refreshCheckoutReturnQueries,
-	shouldPollBillingRecoveryFor,
 } from "@/hosted/billing/hooks";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
@@ -145,7 +144,7 @@ describe("refreshCheckoutReturnQueries", () => {
 	});
 });
 
-describe("shouldPollBillingRecoveryFor", () => {
+describe("billingRecoveryRefetchIntervalFor", () => {
 	test("polls only the visible past-due deployment", () => {
 		const due = deployment(
 			{
@@ -160,8 +159,8 @@ describe("shouldPollBillingRecoveryFor", () => {
 			},
 			"hdep_due",
 		);
-		expect(shouldPollBillingRecoveryFor([due], "hdep_due")).toBe(true);
-		expect(shouldPollBillingRecoveryFor([due], "hdep_other")).toBe(false);
+		expect(billingRecoveryRefetchIntervalFor([due], "hdep_due")).toBe(30_000);
+		expect(billingRecoveryRefetchIntervalFor([due], "hdep_other")).toBe(false);
 	});
 
 	test("does not derive polling from a local renewal boundary", () => {
@@ -178,7 +177,6 @@ describe("shouldPollBillingRecoveryFor", () => {
 			},
 			"hdep_active",
 		);
-		expect(shouldPollBillingRecoveryFor([active], active.resource.id)).toBe(false);
 		expect(billingRecoveryRefetchIntervalFor([active], active.resource.id)).toBe(false);
 	});
 
@@ -197,7 +195,7 @@ describe("shouldPollBillingRecoveryFor", () => {
 			},
 			"hdep_unpaid",
 		);
-		expect(shouldPollBillingRecoveryFor([unpaid], unpaid.resource.id)).toBe(false);
+		expect(billingRecoveryRefetchIntervalFor([unpaid], unpaid.resource.id)).toBe(false);
 	});
 });
 
