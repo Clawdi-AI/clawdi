@@ -130,6 +130,7 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 
 	return {
 		deployment: match?.deployment ?? null,
+		inventoryDeployments: inventory.deployments,
 		matchedRuntime: match?.runtime ?? null,
 		ambiguousMatches: resolution.ambiguousMatches,
 		environmentId: resolvedEnvId,

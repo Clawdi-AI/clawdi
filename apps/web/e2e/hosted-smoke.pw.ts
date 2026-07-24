@@ -745,8 +745,10 @@ type HostedApiStubOptions = {
 	cloudAgentErrors?: Record<string, { detail: string; status: number }>;
 	cloudAgentNotFoundIds?: readonly string[];
 	cloudAgentResponses?: Record<string, StubResponse[]>;
+	createDeploymentResponse?: StubResponse;
 	createDeploymentRequests?: Array<{ body: string; idempotencyKey: string | null }>;
 	deleteRequests?: string[];
+	completedDeleteIds?: Set<string>;
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
@@ -789,6 +791,8 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 
 async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const deployments = options.deployments ?? [];
+	const acceptedDeleteIds = new Set<string>();
+	const completedDeleteIds = options.completedDeleteIds ?? new Set<string>();
 	const plans = options.plans ?? [];
 	let currentWallet = options.walletState ?? walletState;
 	const deploymentRequests = new Map<string, DeploymentMutationFixture>();
@@ -846,13 +850,27 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				}
 				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
 			}
-			return fulfillJson(r, deployments.map(readDeploymentFixture));
+			return fulfillJson(
+				r,
+				deployments
+					.filter(
+						(deployment) =>
+							!isDeploymentMutationFixture(deployment) || !completedDeleteIds.has(deployment.id),
+					)
+					.map((deployment) =>
+						isDeploymentMutationFixture(deployment) && acceptedDeleteIds.has(deployment.id)
+							? readDeploymentFixture({ ...deployment, status: "deleting" })
+							: readDeploymentFixture(deployment),
+					),
+			);
 		}
 		if (p === "/v2/deployments" && r.request().method() === "POST") {
 			options.createDeploymentRequests?.push({
 				body: r.request().postData() ?? "",
 				idempotencyKey: r.request().headers()["idempotency-key"] ?? null,
 			});
+			const response = options.createDeploymentResponse;
+			if (response) return fulfillJson(r, response.body, response.status);
 			return fulfillJson(
 				r,
 				completedDeploymentOperation(
@@ -1130,9 +1148,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				(candidate): candidate is DeploymentMutationFixture =>
 					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
 			);
-			return deployment
-				? fulfillJson(r, completedDeploymentOperation(deployment, "delete"), 202)
-				: fulfillJson(r, { detail: "Deployment not found" }, 404);
+			if (!deployment) return fulfillJson(r, { detail: "Deployment not found" }, 404);
+			acceptedDeleteIds.add(deployment.id);
+			return fulfillJson(r, completedDeploymentOperation(deployment, "delete"), 202);
 		}
 		return fulfillJson(r, {});
 	});
@@ -1287,15 +1305,37 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 
 test("free Basic Deploy submits the declarative create contract", async ({ page }) => {
 	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
+	const convergencePollRequests: string[] = [];
+	page.on("request", (request) => {
+		const path = new URL(request.url()).pathname;
+		if (path.startsWith("/v2/operations/") || path.startsWith("/v2/deployments/by-request/")) {
+			convergencePollRequests.push(path);
+		}
+	});
+	const acceptedCreate = completedDeploymentOperation(
+		{
+			...includedBasicDeployment,
+			id: "hdep_included_created",
+			name: "Created included Basic",
+			status: "running",
+		},
+		"create",
+	);
 	await stubHostedApi(page, {
 		plans: [basicPlan],
 		deployments: [],
+		createDeploymentResponse: {
+			status: 202,
+			body: { ...acceptedCreate, done: false, response: null },
+		},
 		createDeploymentRequests,
 	});
 	await page.goto("/deploy");
 
 	await page.getByRole("button", { name: "Deploy agent" }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
+	expect(convergencePollRequests).toEqual([]);
+	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 	expect(createDeploymentRequests).toHaveLength(1);
 	expect(createDeploymentRequests[0]?.idempotencyKey).toMatch(/^deployment-create-/);
 	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
@@ -1306,6 +1346,36 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 			model: "gpt-5.6-luna",
 		},
 	});
+});
+
+test("accepted detail delete navigates after deployment membership disappears", async ({
+	page,
+}) => {
+	const deleteRequests: string[] = [];
+	const completedDeleteIds = new Set<string>();
+	await stubHostedApi(page, {
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan, performancePlan],
+		completedDeleteIds,
+		deleteRequests,
+	});
+	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+
+	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Delete compute", exact: true })
+		.click();
+
+	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
+	await expect(page).toHaveURL(/\/agents\/hdep_included\/settings/);
+	await expect(
+		page.locator("main").getByRole("button", { name: "Delete", exact: true }),
+	).toBeDisabled();
+
+	completedDeleteIds.add("hdep_included");
+	await expect(page).toHaveURL(/\/agents\/?$/);
+	await expect(page.getByText("Agent deleted", { exact: true })).toBeVisible();
 });
 
 test("managed model picker lists the curated catalog without Custom or image models", async ({

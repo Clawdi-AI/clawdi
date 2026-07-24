@@ -330,8 +330,17 @@ function RestartComputeAction({
 	);
 }
 
-function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
-	const router = useRouter();
+function DeleteComputeAction({
+	deployment,
+	onDeleteAccepted,
+	variant = "destructive",
+	className,
+}: {
+	deployment: HostedDeployment;
+	onDeleteAccepted: (deploymentId: string) => void;
+	variant?: React.ComponentProps<typeof Button>["variant"];
+	className?: string;
+}) {
 	const deleteDeployment = useDeleteDeployment();
 	const runAction = useActionLock();
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
@@ -348,14 +357,15 @@ function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
 			onConfirm={() =>
 				runAction(async () => {
 					await deleteDeployment.mutateAsync(deployment.resource.id);
-					void router.navigate({ href: "/" });
+					onDeleteAccepted(deployment.resource.id);
 				})
 			}
 		>
 			<Button
 				type="button"
-				variant="destructive"
+				variant={variant}
 				size="sm"
+				className={className}
 				disabled={deleteDeployment.isPending || !canDelete}
 			>
 				{deleteDeployment.isPending ? <Spinner /> : <Trash2 />}
@@ -419,11 +429,13 @@ export function HostedAgentDetail({
 	deployment,
 	runtime,
 	section = "overview",
+	onDeleteAccepted,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	section?: AgentSectionId;
+	onDeleteAccepted: (deploymentId: string) => void;
 }) {
 	const api = useApi();
 	const router = useRouter();
@@ -556,6 +568,7 @@ export function HostedAgentDetail({
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							isPerformance={isPerformance}
 							showDeploymentActions={projection.status !== "resolved" || !deploymentRunning}
+							onDeleteAccepted={onDeleteAccepted}
 							projectionAvailable={projection.status === "resolved"}
 							sessions={sessions.data?.items ?? []}
 							sessionsLoading={sessions.isLoading}
@@ -609,6 +622,7 @@ export function HostedAgentDetail({
 							deployment={deployment}
 							runtime={runtime}
 							projectionAvailable={projection.status === "resolved"}
+							onDeleteAccepted={onDeleteAccepted}
 						/>
 					) : null}
 				</div>
@@ -894,6 +908,7 @@ function OverviewTab({
 	agent,
 	isPerformance,
 	showDeploymentActions,
+	onDeleteAccepted,
 	projectionAvailable,
 	sessions,
 	sessionsLoading,
@@ -905,6 +920,7 @@ function OverviewTab({
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	isPerformance: boolean;
 	showDeploymentActions: boolean;
+	onDeleteAccepted: (deploymentId: string) => void;
 	projectionAvailable: boolean;
 	sessions: SessionListItem[];
 	sessionsLoading: boolean;
@@ -970,12 +986,20 @@ function OverviewTab({
 					/>
 				)}
 			</div>
-			{showDeploymentActions ? <OverviewDeploymentActions deployment={deployment} /> : null}
+			{showDeploymentActions ? (
+				<OverviewDeploymentActions deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
+			) : null}
 		</div>
 	);
 }
 
-function OverviewDeploymentActions({ deployment }: { deployment: HostedDeployment }) {
+function OverviewDeploymentActions({
+	deployment,
+	onDeleteAccepted,
+}: {
+	deployment: HostedDeployment;
+	onDeleteAccepted: (deploymentId: string) => void;
+}) {
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const failed = status.kind === "failed";
 	return (
@@ -990,7 +1014,7 @@ function OverviewDeploymentActions({ deployment }: { deployment: HostedDeploymen
 				{canStartDeployment(status) && !failed && status.kind !== "stopped" ? (
 					<StartComputeAction deployment={deployment} />
 				) : null}
-				<DeleteComputeAction deployment={deployment} />
+				<DeleteComputeAction deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
 			</div>
 		</SettingsSection>
 	);
@@ -2237,11 +2261,13 @@ function HostedAgentSettingsTab({
 	deployment,
 	runtime,
 	projectionAvailable,
+	onDeleteAccepted,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	projectionAvailable: boolean;
+	onDeleteAccepted: (deploymentId: string) => void;
 }) {
 	const formatName = useCallback((name: string) => deploymentDisplayName(name, runtime), [runtime]);
 	return (
@@ -2252,7 +2278,7 @@ function HostedAgentSettingsTab({
 				<ProjectionDependentUnavailable label="Profile settings" />
 			)}
 			<LanguageTimezoneSettingsSection deployment={deployment} runtime={runtime} />
-			<ComputeSettingsSections deployment={deployment} />
+			<ComputeSettingsSections deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
 		</div>
 	);
 }
@@ -2346,12 +2372,17 @@ function LanguageTimezoneSettingsSection({
 	);
 }
 
-function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment }) {
+function ComputeSettingsSections({
+	deployment,
+	onDeleteAccepted,
+}: {
+	deployment: HostedDeployment;
+	onDeleteAccepted: (deploymentId: string) => void;
+}) {
 	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const hostedAccess = useHostedProductAccess();
 	const lifecycle = useDeploymentLifecycle();
-	const del = useDeleteDeployment();
 	const plans = usePlans();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const quotePlanChange = useQuotePlanChange();
@@ -2371,7 +2402,6 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const canStop = canStopDeployment(deploymentStatus);
 	const canStart = canStartDeployment(deploymentStatus);
 	const canRestart = canRestartDeployment(deploymentStatus);
-	const canDelete = canDeleteDeployment(deploymentStatus);
 	const primaryLifecycleAction: "stop" | "start" =
 		canStop ||
 		deploymentStatus.kind === "stopping" ||
@@ -2630,11 +2660,6 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 
 	async function runLifecycleAction(action: "restart" | "stop" | "start") {
 		await lifecycle.mutateAsync({ id: deployment.resource.id, action });
-	}
-
-	async function deleteCompute() {
-		await del.mutateAsync(deployment.resource.id);
-		void router.navigate({ href: "/" });
 	}
 
 	return (
@@ -2926,26 +2951,12 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 							Tears down this deployment and its agent runtime. This can’t be undone.
 						</p>
 					</div>
-					<ConfirmAction
-						title={`Delete ${deploymentDisplayName(
-							deployment.resource.spec.name,
-							deployment.resource.spec.runtime,
-						)}?`}
-						description={<p>The hosted agent is torn down. This can’t be undone.</p>}
-						confirmLabel="Delete compute"
-						destructive
-						onConfirm={() => runAction(deleteCompute)}
-					>
-						<Button
-							variant="outline"
-							size="sm"
-							className="text-destructive"
-							disabled={del.isPending || !canDelete}
-						>
-							<Trash2 className="size-3.5" />
-							Delete
-						</Button>
-					</ConfirmAction>
+					<DeleteComputeAction
+						deployment={deployment}
+						onDeleteAccepted={onDeleteAccepted}
+						variant="outline"
+						className="text-destructive"
+					/>
 				</div>
 			</SettingsSection>
 		</div>

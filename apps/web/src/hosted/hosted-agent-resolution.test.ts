@@ -8,6 +8,7 @@ import {
 	resolveAgentDeployment,
 	resolveHostedAgentProjection,
 	resolveHostedInventory,
+	userInitiatedDeploymentDeleteCompleted,
 } from "@/hosted/hosted-agent-resolution";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 import { ApiError } from "@/lib/api-errors";
@@ -103,6 +104,20 @@ describe("hosted inventory resolution matrix", () => {
 });
 
 describe("hosted detail projection resolution", () => {
+	test("redirects only when the user-deleted deployment leaves authoritative membership", () => {
+		const deleting = deployment("deleting", "hdep_user_deleted");
+		const failed = deployment("failed", "hdep_user_deleted");
+		const deleted = deployment("deleted", "hdep_user_deleted");
+		const unrelated = deployment("running", "hdep_unrelated");
+
+		expect(userInitiatedDeploymentDeleteCompleted([deleting], "hdep_user_deleted")).toBe(false);
+		expect(userInitiatedDeploymentDeleteCompleted([failed], "hdep_user_deleted")).toBe(false);
+		expect(userInitiatedDeploymentDeleteCompleted([deleted], "hdep_user_deleted")).toBe(true);
+		expect(userInitiatedDeploymentDeleteCompleted([unrelated], "hdep_user_deleted")).toBe(true);
+		expect(userInitiatedDeploymentDeleteCompleted([], null)).toBe(false);
+		expect(userInitiatedDeploymentDeleteCompleted(null, "hdep_user_deleted")).toBe(false);
+	});
+
 	test("keeps a selected stopped deployment addressable after its projection is removed", () => {
 		const stopped = hostedDeploymentFixture({
 			id: "hdep_stopped",

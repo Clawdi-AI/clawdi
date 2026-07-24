@@ -2,7 +2,8 @@
 
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import { ChevronRight, RefreshCw } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
@@ -23,6 +24,7 @@ import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/d
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { deploymentStatusLabel, parseDeploymentStatus } from "@/hosted/deployment-status";
+import { userInitiatedDeploymentDeleteCompleted } from "@/hosted/hosted-agent-resolution";
 import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
 import {
 	AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY,
@@ -36,6 +38,12 @@ import { cn } from "@/lib/utils";
 
 const UNRESOLVED_HOSTED_AGENT_REFETCH_INTERVAL_MS = 5_000;
 const UNRESOLVED_HOSTED_AGENT_MAX_REFETCH_ATTEMPTS = 24;
+
+type UserDeleteNavigationIntent = {
+	deploymentId: string;
+	environmentId: string;
+	deploymentSelector: string | null;
+};
 
 /**
  * Agent home for hosted builds. An agent backed by a hosted deployment renders
@@ -57,6 +65,7 @@ export function AgentHome({
 	const deploymentSelector = agentDeploymentSelector(searchParams);
 	const {
 		deployment,
+		inventoryDeployments,
 		environmentId: resolvedEnvId,
 		matchedRuntime,
 		ambiguousMatches,
@@ -75,6 +84,16 @@ export function AgentHome({
 	const shouldAutoRefetchUnresolvedHostedAgent =
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
 	const isFetchingRef = useRef(isFetching);
+	const [userDeleteIntent, setUserDeleteIntent] = useState<UserDeleteNavigationIntent | null>(null);
+	const deleteIntentStillOwnsRoute =
+		userDeleteIntent?.environmentId === environmentId &&
+		(userDeleteIntent.deploymentSelector === deploymentSelector ||
+			(userDeleteIntent.deploymentSelector === null &&
+				deploymentSelector?.toLowerCase() === userDeleteIntent.deploymentId.toLowerCase()));
+	const deletedDeploymentGone = userInitiatedDeploymentDeleteCompleted(
+		inventoryDeployments,
+		deleteIntentStillOwnsRoute ? userDeleteIntent.deploymentId : null,
+	);
 
 	// Canonicalize a resolved hosted route with its deployment selector before
 	// Stop removes the env mapping. The selector is then sufficient to retain
@@ -93,6 +112,13 @@ export function AgentHome({
 	useEffect(() => {
 		isFetchingRef.current = isFetching;
 	}, [isFetching]);
+
+	useEffect(() => {
+		if (!deletedDeploymentGone) return;
+		setUserDeleteIntent(null);
+		toast.success("Agent deleted");
+		void router.navigate({ href: "/agents", replace: true });
+	}, [deletedDeploymentGone, router]);
 
 	useEffect(() => {
 		if (!shouldAutoRefetchUnresolvedHostedAgent || typeof window === "undefined") return;
@@ -191,6 +217,9 @@ export function AgentHome({
 				deployment={deployment}
 				runtime={runtime}
 				section={section}
+				onDeleteAccepted={(deploymentId) =>
+					setUserDeleteIntent({ deploymentId, environmentId, deploymentSelector })
+				}
 			/>
 		);
 	}
