@@ -20,7 +20,7 @@ export type BasicDeploySelection =
 	  }
 	| {
 			mode: "unavailable";
-			reason: "plan_missing" | "offers_missing";
+			reason: "plan_missing" | "offers_missing" | "inventory_unavailable";
 	  };
 
 export function usesActiveIncludedBasicSlot(deployments: HostedDeployment[] | undefined): boolean {
@@ -40,13 +40,17 @@ export function usesActiveIncludedBasicSlot(deployments: HostedDeployment[] | un
 export function resolveBasicDeploySelection({
 	basicPlan,
 	billingTermMonths,
-	includedSlotAvailable = false,
+	includedSlotAvailable,
 }: {
 	basicPlan: Plan | undefined;
 	billingTermMonths: number;
-	includedSlotAvailable?: boolean;
+	/** `null` means the deployment inventory has not loaded successfully. */
+	includedSlotAvailable: boolean | null;
 }): BasicDeploySelection {
 	if (!basicPlan) return { mode: "unavailable", reason: "plan_missing" };
+	if (includedSlotAvailable === null) {
+		return { mode: "unavailable", reason: "inventory_unavailable" };
+	}
 	if (includedSlotAvailable) {
 		return {
 			mode: "included",

@@ -4,7 +4,6 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 export const MANAGED_AI_CHOICE = "__managed__";
 export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_V2_PROVIDER_ID;
-export const MANAGED_DEFAULT_MODEL_CHOICE = "__hosted_default__";
 
 export type PrimaryModelRef = {
 	provider_id: string;
@@ -35,7 +34,7 @@ export function primaryModelProviderId(value: PrimaryModelInput): string | null 
 export function primaryModelRef(providerId: string, model: string): PrimaryModelRef | null {
 	const provider_id = providerId.trim();
 	const value = model.trim();
-	if (!provider_id || !value || value === MANAGED_DEFAULT_MODEL_CHOICE) return null;
+	if (!provider_id || !value) return null;
 	return { provider_id, model: value };
 }
 
@@ -82,10 +81,8 @@ export function modelIdsForProvider(
 	managedModels: readonly ManagedModelCatalogItem[] = [],
 ): string[] {
 	if (choice === MANAGED_AI_CHOICE) {
-		return [
-			MANAGED_DEFAULT_MODEL_CHOICE,
-			...dedupeProviderIds(managedModels.map((model) => model.id)),
-		];
+		const defaultModel = managedModels.find((model) => model.is_default)?.id ?? "";
+		return dedupeProviderIds([defaultModel, ...managedModels.map((model) => model.id)]);
 	}
 	const provider = providers.find((item) => item.provider_id === choice);
 	return dedupeProviderIds((provider?.models ?? []).map((model) => model.id));
@@ -98,13 +95,22 @@ export function managedModelDisplayName(
 	return managedModels.find((model) => model.id === modelId)?.display_name ?? null;
 }
 
+export function managedModelPickerItems(
+	managedModels: readonly ManagedModelCatalogItem[],
+): Array<{ value: string; label: string }> {
+	return modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).map((modelId) => ({
+		value: modelId,
+		label: managedModelDisplayName(modelId, managedModels) ?? modelId,
+	}));
+}
+
 export function firstModelForProvider(
 	choice: string,
 	providers: readonly AiProvider[],
 	managedModels: readonly ManagedModelCatalogItem[] = [],
 ): string {
 	const [first] = modelIdsForProvider(choice, providers, managedModels);
-	return first ?? (choice === MANAGED_AI_CHOICE ? MANAGED_DEFAULT_MODEL_CHOICE : "");
+	return first ?? "";
 }
 
 export function normalizeSelectedProviderIds(

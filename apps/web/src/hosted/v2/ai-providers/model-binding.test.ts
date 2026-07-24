@@ -3,29 +3,41 @@ import {
 	firstModelForProvider,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
-	MANAGED_DEFAULT_MODEL_CHOICE,
 	managedModelDisplayName,
+	managedModelPickerItems,
 	modelIdsForProvider,
 	providerChoiceFromRef,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 describe("model binding", () => {
-	test("uses an explicit hosted-default choice without guessing a model id", () => {
-		expect(firstModelForProvider(MANAGED_AI_CHOICE, [])).toBe(MANAGED_DEFAULT_MODEL_CHOICE);
-		expect(modelIdsForProvider(MANAGED_AI_CHOICE, [])).toEqual([MANAGED_DEFAULT_MODEL_CHOICE]);
+	test("does not invent a managed model before the catalog loads", () => {
+		expect(firstModelForProvider(MANAGED_AI_CHOICE, [])).toBe("");
+		expect(modelIdsForProvider(MANAGED_AI_CHOICE, [])).toEqual([]);
 	});
 
-	test("puts the hosted default before the v2 managed catalog and uses friendly names", () => {
+	test("puts the catalog default first and exposes real managed model names", () => {
 		const managedModels = [
-			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
 			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false },
+			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
+			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false },
 		];
 
 		expect(modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual([
-			MANAGED_DEFAULT_MODEL_CHOICE,
 			"gpt-5.6-luna",
 			"gpt-5.6-sol",
+			"gpt-5.6-terra",
+		]);
+		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.6-luna");
+		expect(
+			modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).map((modelId) =>
+				managedModelDisplayName(modelId, managedModels),
+			),
+		).toEqual(["Luna", "Sol", "Terra"]);
+		expect(managedModelPickerItems(managedModels)).toEqual([
+			{ value: "gpt-5.6-luna", label: "Luna" },
+			{ value: "gpt-5.6-sol", label: "Sol" },
+			{ value: "gpt-5.6-terra", label: "Terra" },
 		]);
 		expect(managedModelDisplayName("gpt-5.6-sol", managedModels)).toBe("Sol");
 	});

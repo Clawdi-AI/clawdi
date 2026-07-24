@@ -146,9 +146,8 @@ import {
 	dedupeProviderIds,
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
-	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
-	managedModelDisplayName,
+	managedModelPickerItems,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelRef,
@@ -349,6 +348,7 @@ function computeStatusLine({
 }: ComputeStatusInput): { message: string; tone: "destructive" | "muted" } | null {
 	if (compute === "basic") {
 		if (basicSelection.mode === "unavailable") {
+			if (basicSelection.reason === "inventory_unavailable") return null;
 			return {
 				tone: "destructive",
 				message:
@@ -468,8 +468,9 @@ export function DeployWizard() {
 			resolveBasicDeploySelection({
 				basicPlan,
 				billingTermMonths: term,
-				includedSlotAvailable:
-					deployments.isSuccess && !usesActiveIncludedBasicSlot(deployments.data),
+				includedSlotAvailable: deployments.isSuccess
+					? !usesActiveIncludedBasicSlot(deployments.data)
+					: null,
 			}),
 		[basicPlan, deployments.data, deployments.isSuccess, term],
 	);
@@ -483,8 +484,9 @@ export function DeployWizard() {
 	const perfBillingTermMonths = perfOfferSelection?.billingTermMonths ?? term;
 	const basicOffers = basicPlan ? explicitPlanOffers(basicPlan) : [];
 	const perfOffers = perfPlan ? planOffers(perfPlan) : [];
-	const paidSelection: PaidDeploySelection | null =
-		compute === "performance" && perfPlan && perfOfferSelection
+	const paidSelection: PaidDeploySelection | null = !deployments.isSuccess
+		? null
+		: compute === "performance" && perfPlan && perfOfferSelection
 			? {
 					billingTermMonths: perfOfferSelection.billingTermMonths,
 					computePlanSlug: COMPUTE_PERFORMANCE_SLUG,
@@ -531,17 +533,27 @@ export function DeployWizard() {
 			),
 		[aiProviders.data?.providers],
 	);
+	const managedModels = managedModelCatalog.data?.models ?? [];
 	const channelList = channels.data ?? [];
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
-	const planReady = !plans.isLoading && computePlanReady;
+	const planReady = plans.isSuccess && computePlanReady;
+	const managedPrimaryModelReady =
+		aiAccessMode !== "configured" ||
+		primaryProviderChoice !== MANAGED_AI_CHOICE ||
+		(managedModelCatalog.isSuccess &&
+			modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).includes(primaryModel));
 	const canSubmit =
 		planReady &&
+		deployments.isSuccess &&
+		managedPrimaryModelReady &&
 		assistantName.trim().length > 0 &&
 		!submitting &&
 		(!paidSelection ||
 			paymentMethod === "card" ||
-			(!!walletDebit &&
+			(wallet.isSuccess &&
+				!!wallet.data &&
+				!!walletDebit &&
 				!subscriptionCreateQuote.isFetching &&
 				!subscriptionCreateQuote.error &&
 				!walletInsufficient));
@@ -681,6 +693,7 @@ export function DeployWizard() {
 		setAiProviderChoices((current) => normalizeSelectedProviderIds(current, choice));
 		setPrimaryModel((current) => {
 			const trimmed = current.trim();
+			if (choice === MANAGED_AI_CHOICE && !nextCatalog.includes(trimmed)) return fallback;
 			if (!trimmed) return fallback;
 			if (
 				previousCatalog.includes(trimmed) &&
@@ -726,10 +739,19 @@ export function DeployWizard() {
 
 		const primaryProviderRef =
 			providerRefFromChoice(primaryProviderChoice, providerList) ?? MANAGED_PROVIDER_ID;
-		const usesHostedManagedDefault =
-			primaryProviderChoice === MANAGED_AI_CHOICE && primaryModel === MANAGED_DEFAULT_MODEL_CHOICE;
+		if (
+			primaryProviderChoice === MANAGED_AI_CHOICE &&
+			!modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModelCatalog.data?.models ?? []).includes(
+				primaryModel,
+			)
+		) {
+			toast.error("Managed model unavailable", {
+				description: "Load the managed model catalog and choose a model before deploying.",
+			});
+			return null;
+		}
 		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
-		if (!modelRef && !usesHostedManagedDefault) {
+		if (!modelRef) {
 			toast.error("Primary model required", {
 				description: "Choose a catalog model or enter a model id.",
 			});
@@ -1124,14 +1146,21 @@ export function DeployWizard() {
 		.filter(Boolean)
 		.join(" · ");
 
-	if (plans.error) {
+	const plansLoadError =
+		plans.error ??
+		(plans.isSuccess && !basicPlan && !perfPlan
+			? new Error("The billing service returned no compute plans. Try loading plans again.")
+			: null);
+
+	if (plansLoadError) {
 		return (
 			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
 				<PageHeader title="Deploy an Agent" />
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
-					error={plans.error}
-					onRetry={() => plans.refetch()}
+					error={plansLoadError}
+					onRetry={() => void plans.refetch()}
+					title="Couldn't load compute plans"
 				/>
 			</div>
 		);
@@ -1269,7 +1298,10 @@ export function DeployWizard() {
 					) : (
 						<PrimaryModelPicker
 							providers={aiProviders.data?.providers ?? []}
-							managedModels={managedModelCatalog.data?.models ?? []}
+							managedModels={managedModels}
+							managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
+							managedModelsError={managedModelCatalog.error}
+							onManagedModelsRetry={() => void managedModelCatalog.refetch()}
 							customProviders={providerList}
 							selectedProviderChoices={normalizeSelectedProviderIds(
 								aiProviderChoices,
@@ -1322,10 +1354,28 @@ export function DeployWizard() {
 					description="Basic and Performance agents use per-deployment funding selected below."
 				>
 					<div className="flex flex-col gap-3">
+						{!deployments.isSuccess ? (
+							deployments.error ? (
+								<ApiErrorPanel
+									normalizer={billingErrorNormalizer}
+									error={deployments.error}
+									onRetry={() => void deployments.refetch()}
+									title="Couldn't check deployment inventory"
+								/>
+							) : (
+								<p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+									<Spinner className="size-3.5" /> Checking your free Basic slot…
+								</p>
+							)
+						) : null}
 						<div className="grid gap-2 sm:grid-cols-2">
 							<EntityChoiceCard
 								selected={compute === "basic"}
-								onClick={!basicUnavailable ? () => setComputeTier("basic") : undefined}
+								onClick={
+									deployments.isSuccess && !basicUnavailable
+										? () => setComputeTier("basic")
+										: undefined
+								}
 								icon={
 									<IconChip tint="bg-identity-3-bg text-identity-3-fg">
 										<Cpu />
@@ -1333,26 +1383,38 @@ export function DeployWizard() {
 								}
 								title="Basic"
 								description={
-									basicSelection.mode === "included"
-										? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · First Basic agent — Free`
-										: basicOffer
-											? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · ${recurringOfferLabel(basicOffer)}`
-											: "Basic funding unavailable"
+									!deployments.isSuccess
+										? deployments.error
+											? "Basic availability couldn't be checked"
+											: "Checking free Basic slot availability"
+										: basicSelection.mode === "included"
+											? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · First Basic agent — Free`
+											: basicOffer
+												? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · ${recurringOfferLabel(basicOffer)}`
+												: "Basic funding unavailable"
 								}
 								badge={
 									<Badge variant="secondary">
-										{basicSelection.mode === "included"
-											? "Free"
-											: basicOffer
-												? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo`
-												: "Unavailable"}
+										{!deployments.isSuccess
+											? deployments.error
+												? "Unavailable"
+												: "Checking…"
+											: basicSelection.mode === "included"
+												? "Free"
+												: basicOffer
+													? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo`
+													: "Unavailable"}
 									</Badge>
 								}
-								disabled={basicUnavailable}
+								disabled={!deployments.isSuccess || basicUnavailable}
 							/>
 							<EntityChoiceCard
 								selected={compute === "performance"}
-								onClick={perfPlan ? () => setComputeTier("performance") : undefined}
+								onClick={
+									deployments.isSuccess && perfPlan
+										? () => setComputeTier("performance")
+										: undefined
+								}
 								icon={
 									<IconChip tint="bg-identity-8-bg text-identity-8-fg">
 										<Zap />
@@ -1373,7 +1435,7 @@ export function DeployWizard() {
 												: "Unavailable"}
 									</Badge>
 								}
-								disabled={!perfPlan}
+								disabled={!deployments.isSuccess || !perfPlan}
 							/>
 						</div>
 						{paidSelection && (compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
@@ -1427,7 +1489,18 @@ export function DeployWizard() {
 
 								{paymentMethod === "wallet" ? (
 									<div className="flex flex-col gap-3">
-										{subscriptionCreateQuote.isFetching && !subscriptionCreateQuote.data ? (
+										{!wallet.data && wallet.isFetching ? (
+											<p className="text-sm text-muted-foreground" role="status">
+												Loading your AI Credits wallet…
+											</p>
+										) : !wallet.data && wallet.error ? (
+											<ApiErrorPanel
+												normalizer={billingErrorNormalizer}
+												error={wallet.error}
+												onRetry={() => void wallet.refetch()}
+												title="Couldn't load your AI Credits wallet"
+											/>
+										) : subscriptionCreateQuote.isFetching && !subscriptionCreateQuote.data ? (
 											<p className="text-sm text-muted-foreground" role="status">
 												Getting the exact wallet debit…
 											</p>
@@ -1633,6 +1706,9 @@ function providerCatalogDescription(provider: AiProvider): string {
 function PrimaryModelPicker({
 	providers,
 	managedModels,
+	managedModelsLoading,
+	managedModelsError,
+	onManagedModelsRetry,
 	customProviders,
 	selectedProviderChoices,
 	primaryProviderChoice,
@@ -1642,6 +1718,9 @@ function PrimaryModelPicker({
 }: {
 	providers: readonly AiProvider[];
 	managedModels: readonly ManagedModelCatalogItem[];
+	managedModelsLoading: boolean;
+	managedModelsError: unknown;
+	onManagedModelsRetry: () => void;
 	customProviders: readonly AiProvider[];
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
@@ -1652,6 +1731,10 @@ function PrimaryModelPicker({
 	const isManaged = primaryProviderChoice === MANAGED_AI_CHOICE;
 	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
+	const managedCatalogUnavailableError =
+		isManaged && managedModels.length === 0 && !managedModelsLoading
+			? (managedModelsError ?? new Error("The managed model catalog returned no models."))
+			: null;
 	const primaryProviderItems = [
 		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
 			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
@@ -1663,18 +1746,12 @@ function PrimaryModelPicker({
 				label: provider.label ?? provider.provider_id,
 			})),
 	];
-	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({
-			value: model,
-			label:
-				model === MANAGED_DEFAULT_MODEL_CHOICE
-					? "Hosted default (Luna)"
-					: isManaged
-						? (managedModelDisplayName(model, managedModels) ?? model)
-						: model,
-		})),
-		...(!isManaged ? [{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" }] : []),
-	];
+	const catalogModelItems = isManaged
+		? managedModelPickerItems(managedModels)
+		: [
+				...catalogModelIds.map((model) => ({ value: model, label: model })),
+				{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
+			];
 	return (
 		<div className="mt-4 flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
 			<div className="grid gap-3 sm:grid-cols-2">
@@ -1706,7 +1783,18 @@ function PrimaryModelPicker({
 						</SelectContent>
 					</Select>
 				</div>
-				{catalogModelIds.length > 0 ? (
+				{isManaged && managedModelsLoading ? (
+					<div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+						<Spinner className="size-3.5" /> Loading managed models…
+					</div>
+				) : managedCatalogUnavailableError ? (
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
+						error={managedCatalogUnavailableError}
+						onRetry={onManagedModelsRetry}
+						title="Couldn't load managed models"
+					/>
+				) : catalogModelIds.length > 0 ? (
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="deploy-catalog-model">Catalog model</Label>
 						<Select
@@ -1722,18 +1810,11 @@ function PrimaryModelPicker({
 							</SelectTrigger>
 							<SelectContent>
 								<SelectGroup>
-									{catalogModelIds.map((model) => (
-										<SelectItem key={model} value={model}>
-											{model === MANAGED_DEFAULT_MODEL_CHOICE
-												? "Hosted default (Luna)"
-												: isManaged
-													? (managedModelDisplayName(model, managedModels) ?? model)
-													: model}
+									{catalogModelItems.map((item) => (
+										<SelectItem key={item.value} value={item.value}>
+											{item.label}
 										</SelectItem>
 									))}
-									{!isManaged ? (
-										<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
-									) : null}
 								</SelectGroup>
 							</SelectContent>
 						</Select>

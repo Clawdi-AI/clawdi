@@ -1,42 +1,31 @@
 import { describe, expect, test } from "bun:test";
-import {
-	DEFAULT_DEPLOY_RUNTIME,
-	defaultManagedDeployAiFields,
-} from "@/hosted/billing/deploy/deploy-defaults";
 import { buildHostedDeployRequest } from "@/hosted/billing/deploy/deploy-request";
 
 describe("buildHostedDeployRequest", () => {
-	test("serializes managed defaults without overriding hosted Luna selection", () => {
+	test("serializes the real managed Luna catalog selection", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_basic",
-			runtime: DEFAULT_DEPLOY_RUNTIME,
+			runtime: "hermes",
 			persona: {
 				assistantName: "Hermes",
 				language: "",
 				timezone: "",
 			},
-			aiFields: defaultManagedDeployAiFields(),
-		});
-
-		expect(request).toEqual({
-			compute_plan_slug: "compute_basic",
-			runtime: "hermes",
-			assistant_name: "Hermes",
-			language: null,
-			timezone: null,
-			ai_provider_id: null,
-			ai_provider_auth_kind: "managed",
-			provider_ids: ["clawdi-v2"],
-			config: {
-				runtime: "hermes",
-				assistant_name: "Hermes",
-				language: null,
-				timezone: null,
+			aiFields: {
+				ai_provider_id: null,
+				ai_provider_auth_kind: "managed",
+				provider_ids: ["clawdi-v2"],
+				primary_model: {
+					provider_id: "clawdi-v2",
+					model: "gpt-5.6-luna",
+				},
 			},
 		});
-		expect(request).not.toHaveProperty("primary_model");
-		expect("personality" in request).toBe(false);
-		expect("personality" in (request.config ?? {})).toBe(false);
+
+		expect(request.primary_model).toEqual({
+			provider_id: "clawdi-v2",
+			model: "gpt-5.6-luna",
+		});
 	});
 
 	test("serializes v2 hosted deploys without legacy deploy profile", () => {

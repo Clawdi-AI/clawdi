@@ -123,6 +123,7 @@ describe("resolveBasicDeploySelection", () => {
 		const selection = resolveBasicDeploySelection({
 			basicPlan: basic,
 			billingTermMonths: 1,
+			includedSlotAvailable: false,
 		});
 
 		expect(selection).toMatchObject({
@@ -139,6 +140,7 @@ describe("resolveBasicDeploySelection", () => {
 			resolveBasicDeploySelection({
 				basicPlan: undefined,
 				billingTermMonths: 1,
+				includedSlotAvailable: false,
 			}),
 		).toEqual({ mode: "unavailable", reason: "plan_missing" });
 	});
@@ -150,7 +152,18 @@ describe("resolveBasicDeploySelection", () => {
 			resolveBasicDeploySelection({
 				basicPlan: basicWithoutOffers,
 				billingTermMonths: 1,
+				includedSlotAvailable: false,
 			}),
 		).toEqual({ mode: "unavailable", reason: "offers_missing" });
+	});
+
+	test("never exposes paid Basic checkout before deployment inventory succeeds", () => {
+		expect(
+			resolveBasicDeploySelection({
+				basicPlan: basic,
+				billingTermMonths: 1,
+				includedSlotAvailable: null,
+			}),
+		).toEqual({ mode: "unavailable", reason: "inventory_unavailable" });
 	});
 });
