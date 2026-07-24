@@ -12,6 +12,7 @@ import {
 	agentDisplayName,
 	agentTypeLabel,
 } from "@/components/dashboard/agent-label";
+import { syncAgentNameDraft } from "@/components/dashboard/agent-settings-panel.logic";
 import { SettingsSection } from "@/components/settings-section";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
@@ -56,6 +57,7 @@ export function AgentSettingsPanel({
 	const ownership = useAgentOwnership();
 	const uploadAvatar = useAgentAvatarUploader();
 	const fileInputRef = useRef<HTMLInputElement | null>(null);
+	const lastServerNameRef = useRef<{ environmentId: string; name: string } | null>(null);
 	const [draftName, setDraftName] = useState("");
 	const {
 		data: agent,
@@ -71,12 +73,22 @@ export function AgentSettingsPanel({
 			),
 	});
 
+	const serverDraftName = agent
+		? agent.display_name
+			? (formatName?.(agent.display_name) ?? agent.display_name)
+			: ""
+		: undefined;
+
 	useEffect(() => {
-		if (!agent) return;
-		setDraftName(
-			agent.display_name ? (formatName?.(agent.display_name) ?? agent.display_name) : "",
+		if (serverDraftName === undefined) return;
+		const previous = lastServerNameRef.current;
+		const previousServerName =
+			previous?.environmentId === environmentId ? previous.name : undefined;
+		lastServerNameRef.current = { environmentId, name: serverDraftName };
+		setDraftName((currentDraft) =>
+			syncAgentNameDraft(currentDraft, previousServerName, serverDraftName),
 		);
-	}, [agent, formatName]);
+	}, [environmentId, serverDraftName]);
 
 	const updateIdentity = useMutation({
 		mutationFn: async (body: EnvironmentUpdate) =>
