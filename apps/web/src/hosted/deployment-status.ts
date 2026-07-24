@@ -120,6 +120,31 @@ export function isRunningStatus(status: DeploymentStatus): boolean {
 	}
 }
 
+/**
+ * Stopping a deployment removes its cloud-agent projection while preserving
+ * the deployment row. Do not query that absent projection until Start moves
+ * the deployment back into a recoverable lifecycle state.
+ */
+export function canQueryDeploymentProjection(status: DeploymentStatus): boolean {
+	switch (status.kind) {
+		case "stopped":
+		case "deleted":
+			return false;
+		case "creating":
+		case "starting":
+		case "running":
+		case "stopping":
+		case "restarting":
+		case "updating":
+		case "failed":
+		case "deleting":
+		case "unknown":
+			return true;
+		default:
+			return exhaustive(status);
+	}
+}
+
 export function isTerminalStatus(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "running":

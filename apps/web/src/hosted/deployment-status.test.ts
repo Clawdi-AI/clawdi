@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	canDelete,
+	canQueryDeploymentProjection,
 	canRestart,
 	canStart,
 	canStop,
@@ -126,6 +127,14 @@ describe("DeploymentStatus", () => {
 			expect(canStop(status)).toBe(stop);
 			expect(canRestart(status)).toBe(restart);
 		}
+	});
+
+	test("does not query a projection after stopped compute has released it", () => {
+		expect(canQueryDeploymentProjection(parseDeploymentStatus("stopped"))).toBe(false);
+		expect(canQueryDeploymentProjection(parseDeploymentStatus("deleted"))).toBe(false);
+		expect(canQueryDeploymentProjection(parseDeploymentStatus("starting"))).toBe(true);
+		expect(canQueryDeploymentProjection(parseDeploymentStatus("running"))).toBe(true);
+		expect(canQueryDeploymentProjection(parseDeploymentStatus("failed"))).toBe(true);
 	});
 
 	test("disables delete once deletion is in progress or complete", () => {

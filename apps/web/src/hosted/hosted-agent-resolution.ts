@@ -82,6 +82,11 @@ export function resolveAgentDeployment(
 	if (direct) {
 		return { match: { deployment: direct, runtime: null }, ambiguousMatches: [] };
 	}
+	const selectedDeployment = deploymentSelector
+		? members.find(
+				(deployment) => deployment.resource.id.toLowerCase() === deploymentSelector.toLowerCase(),
+			)
+		: undefined;
 
 	const matches: AgentDeploymentMatch[] = [];
 	for (const deployment of members) {
@@ -98,6 +103,12 @@ export function resolveAgentDeployment(
 	}
 
 	if (matches.length === 1) return { match: matches[0], ambiguousMatches: [] };
+	// Stop removes the runtime projection (and therefore its environment-id
+	// mapping) but leaves the deployment itself. Tile/detail links carry this
+	// selector specifically so the retained deployment remains addressable.
+	if (matches.length === 0 && selectedDeployment) {
+		return { match: { deployment: selectedDeployment, runtime: null }, ambiguousMatches: [] };
+	}
 	return { match: null, ambiguousMatches: matches };
 }
 

@@ -18,8 +18,8 @@ import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CARD_BASE,
-	ENTITY_CARD_BUTTON_FOCUS_CLASS,
 	ENTITY_GRID_CLASS,
+	ENTITY_STRETCHED_LINK_CLASS,
 	EntityHeader,
 } from "@/components/entity-card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -292,9 +292,17 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		dotClass: statusVisual.dotClass,
 	};
 
-	const card = (
+	const linkStatus = [statusDot.label, tile.secondaryStatus?.label].filter(Boolean).join(", ");
+	const linkIdentity = tile.contextLabel ? `${tile.name} (${tile.contextLabel})` : tile.name;
+	const linkLabel = `Open ${linkIdentity}. Status: ${linkStatus}`;
+
+	return (
 		<div
-			className={cn(ENTITY_CARD_BASE, "relative h-full transition-colors group-hover:bg-muted/50")}
+			className={cn(
+				ENTITY_CARD_BASE,
+				"group relative z-0 h-full transition-colors hover:bg-muted/50",
+			)}
+			title={tile.href ? undefined : `Status: ${linkStatus}`}
 		>
 			<EntityHeader
 				align="start"
@@ -309,7 +317,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 				}
 				meta={meta.length > 0 ? meta : undefined}
 				titleAdornment={sourcePill}
-				className={cn("min-w-0 flex-1", tile.action && "pr-8")}
+				className={cn("min-w-0 flex-1", tile.action && "pr-28")}
 			/>
 			{onClawdi && tile.secondaryStatus ? (
 				<div
@@ -328,43 +336,25 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 					className="pointer-events-none absolute right-3 top-3.5 size-3.5 text-muted-foreground"
 				/>
 			) : null}
-			{tile.action ? <div className="absolute top-2 right-2">{tile.action}</div> : null}
+			{tile.action ? <div className="absolute top-2 right-2 z-10">{tile.action}</div> : null}
+			{tile.href ? (
+				tile.external ? (
+					<a
+						href={tile.href}
+						target="_blank"
+						rel="noopener noreferrer"
+						className={ENTITY_STRETCHED_LINK_CLASS}
+						aria-label={linkLabel}
+					>
+						<span className="sr-only">{linkLabel}</span>
+					</a>
+				) : (
+					<Link to={tile.href} className={ENTITY_STRETCHED_LINK_CLASS} aria-label={linkLabel}>
+						<span className="sr-only">{linkLabel}</span>
+					</Link>
+				)
+			) : null}
 		</div>
-	);
-	const linkClassName = cn(
-		"group block h-full rounded-lg text-inherit no-underline",
-		ENTITY_CARD_BUTTON_FOCUS_CLASS,
-	);
-	const linkStatus = [statusDot.label, tile.secondaryStatus?.label].filter(Boolean).join(", ");
-	const linkIdentity = tile.contextLabel ? `${tile.name} (${tile.contextLabel})` : tile.name;
-	const linkLabel = `Open ${linkIdentity}. Status: ${linkStatus}`;
-
-	if (!tile.href) {
-		return (
-			<div className="block h-full rounded-lg text-inherit" title={`Status: ${linkStatus}`}>
-				{card}
-			</div>
-		);
-	}
-
-	if (tile.external) {
-		return (
-			<a
-				href={tile.href}
-				target="_blank"
-				rel="noopener noreferrer"
-				className={linkClassName}
-				aria-label={linkLabel}
-			>
-				{card}
-			</a>
-		);
-	}
-
-	return (
-		<Link to={tile.href} className={linkClassName} aria-label={linkLabel}>
-			{card}
-		</Link>
 	);
 }
 

@@ -346,6 +346,40 @@ describe("declarative deployment mutations", () => {
 		).toHaveLength(0);
 	});
 
+	it("releases an accepted Start without polling its LRO", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			const path = new URL(request.url).pathname;
+			if (path === "/v2/deployments/hdep_stopped" && request.method === "GET") {
+				return jsonResponse(
+					hostedDeploymentFixture({
+						id: "hdep_stopped",
+						status: "stopped",
+						resourceVersion: "rv-stopped",
+					}),
+				);
+			}
+			if (path === "/v2/deployments/hdep_stopped/start" && request.method === "POST") {
+				return jsonResponse(operation({ done: false, id: "start-accepted", verb: "start" }), 202);
+			}
+			if (path.startsWith("/v2/operations/")) {
+				throw new Error("Accepted Start must not poll its operation");
+			}
+			throw new Error(`Unexpected request: ${request.method} ${path}`);
+		});
+
+		await expect(
+			client.setDeploymentDesiredState("hdep_stopped", "running", "intent-start-stopped"),
+		).resolves.toMatchObject({ done: false, name: "operations/start-accepted" });
+		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+			"/v2/deployments/hdep_stopped",
+			"/v2/deployments/hdep_stopped/start",
+		]);
+		expect(requests[1]?.headers.get("Idempotency-Key")).toBe("intent-start-stopped");
+		expect(requests[1]?.headers.get("If-Match")).toBe('"rv-stopped"');
+	});
+
 	it("keeps an accepted delete visible when reconciliation later fails", async () => {
 		const failure = {
 			type: "https://api.clawdi.ai/problems/deployment-delete-failed",

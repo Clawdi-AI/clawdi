@@ -239,6 +239,25 @@ describe("deploymentToTiles", () => {
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 
+	test("keeps Start and Delete actions on a stopped tile with a retained env identity", () => {
+		const environmentId = "env-stopped-openclaw";
+		const [tile] = hostedDeploymentToTiles(
+			deployment({
+				name: "deployment-create-generated-id",
+				status: "stopped",
+				environmentId,
+			}),
+		);
+
+		expect(tile).toMatchObject({
+			name: "OpenClaw",
+			contextLabel: null,
+			statusLabel: "Stopped",
+			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
+		});
+		expect(tile?.action).toBeDefined();
+	});
+
 	test("removes deleted deployments from tiles and detail membership", () => {
 		const environmentId = "env-deleted-openclaw";
 		const deleted = deployment({ status: "deleted", environmentId });
