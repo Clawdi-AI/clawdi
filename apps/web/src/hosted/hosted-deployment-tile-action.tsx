@@ -8,6 +8,7 @@ import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { useDeleteDeployment } from "@/hosted/agents/deployment-hooks";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
+import { canDelete, parseDeploymentStatus } from "@/hosted/deployment-status";
 
 export function HostedDeploymentTileDeleteAction({ deployment }: { deployment: HostedDeployment }) {
 	const deleteDeployment = useDeleteDeployment();
@@ -16,6 +17,7 @@ export function HostedDeploymentTileDeleteAction({ deployment }: { deployment: H
 		deployment.resource.spec.name,
 		deployment.resource.spec.runtime,
 	);
+	const deleteEnabled = canDelete(parseDeploymentStatus(deployment.resource.status.summary_state));
 
 	return (
 		<div data-hosted="true">
@@ -35,7 +37,7 @@ export function HostedDeploymentTileDeleteAction({ deployment }: { deployment: H
 					variant="ghost"
 					size="icon-sm"
 					className="text-muted-foreground"
-					disabled={deleteDeployment.isPending}
+					disabled={deleteDeployment.isPending || !deleteEnabled}
 					aria-label={`Delete ${name}`}
 					title={`Delete ${name}`}
 				>

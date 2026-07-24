@@ -4,7 +4,12 @@ import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-q
 import { useMemo } from "react";
 import { toast } from "sonner";
 import { useBillingClient } from "@/hosted/billing/billing-client";
-import type { DeploymentUpdateRequest } from "@/hosted/billing/contracts";
+import type {
+	DeploymentOperation,
+	DeploymentUpdateRequest,
+	HostedDeployment,
+	HostedDeploymentStatus,
+} from "@/hosted/billing/contracts";
 import {
 	DeploymentConflictError,
 	isNetworkError,
@@ -36,6 +41,28 @@ function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
 			void qc.invalidateQueries({ queryKey: ["agents"] });
 		}, delay);
 	}
+}
+
+export function projectAcceptedDeploymentTransition(
+	qc: QueryClient,
+	deploymentId: string,
+	status: HostedDeploymentStatus["summary_state"],
+	operation: DeploymentOperation,
+) {
+	qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
+		deployments?.map((deployment) =>
+			deployment.resource.id === deploymentId
+				? {
+						...deployment,
+						accepted_operation: operation,
+						resource: {
+							...deployment.resource,
+							status: { ...deployment.resource.status, summary_state: status },
+						},
+					}
+				: deployment,
+		),
+	);
 }
 
 async function runStableDeploymentIntent<T>(
@@ -131,15 +158,18 @@ export function useDeploymentLifecycle() {
 					idempotencyKey,
 				);
 			}),
-		onSuccess: (_d, vars) => {
+		onSuccess: (operation, vars) => {
+			const status =
+				vars.action === "restart" ? "restarting" : vars.action === "stop" ? "stopping" : "starting";
+			projectAcceptedDeploymentTransition(qc, vars.id, status, operation);
 			scheduleDeploymentSettlingRefresh(qc);
 			const msg =
 				vars.action === "restart"
-					? "Agent restarted"
+					? "Restarting…"
 					: vars.action === "stop"
-						? "Agent stopped"
-						: "Agent started";
-			toast.success(msg);
+						? "Stopping…"
+						: "Starting…";
+			toast.message(msg);
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
@@ -157,9 +187,10 @@ export function useDeleteDeployment() {
 			runStableDeploymentIntent("deployment-delete", { action: "delete", id }, (key) =>
 				client.deleteDeployment(id, key),
 			),
-		onSuccess: () => {
+		onSuccess: (operation, id) => {
+			projectAcceptedDeploymentTransition(qc, id, "deleting", operation);
 			scheduleDeploymentSettlingRefresh(qc);
-			toast.success("Agent deleted");
+			toast.message("Deleting…");
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
@@ -177,9 +208,10 @@ export function useUpdateDeployment() {
 			runStableDeploymentIntent("deployment-update", vars, (key) =>
 				client.updateDeployment(vars.id, vars.update, key),
 			),
-		onSuccess: () => {
+		onSuccess: (operation, vars) => {
+			projectAcceptedDeploymentTransition(qc, vars.id, "updating", operation);
 			scheduleDeploymentSettlingRefresh(qc);
-			toast.success("Agent settings updated");
+			toast.message("Applying agent settings…");
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;

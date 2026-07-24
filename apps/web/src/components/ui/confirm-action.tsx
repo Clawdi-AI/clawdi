@@ -33,7 +33,8 @@ export function ConfirmAction({
 	destructive?: boolean;
 	/**
 	 * May be sync or async (any return). When it returns a promise the dialog
-	 * stays open with a spinner until it settles, then closes.
+	 * stays open with a spinner until it settles, then closes. Long-running
+	 * background work should resolve this promise when the action is accepted.
 	 */
 	onConfirm: () => unknown;
 }) {
@@ -70,8 +71,8 @@ export function ConfirmAction({
 				<AlertDialogFooter>
 					<AlertDialogCancel disabled={pending}>{cancelLabel}</AlertDialogCancel>
 					<AlertDialogAction
-						// Keep the dialog open until the action settles; the success path closes
-						// explicitly after the mutation finishes.
+						// Keep the dialog open until the caller settles; accepted background work
+						// closes here while status polling reflects its eventual outcome.
 						onClick={(event) => {
 							event.preventDefault();
 							// runConfirm rejects when onConfirm does; the dialog already stays open

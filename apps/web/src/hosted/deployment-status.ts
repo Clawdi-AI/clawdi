@@ -184,12 +184,12 @@ export function canStop(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "running":
 		case "starting":
-		case "restarting":
-		case "updating":
 			return true;
 		case "creating":
 		case "stopping":
 		case "stopped":
+		case "restarting":
+		case "updating":
 		case "failed":
 		case "deleting":
 		case "deleted":
@@ -203,14 +203,14 @@ export function canStop(status: DeploymentStatus): boolean {
 export function canRestart(status: DeploymentStatus): boolean {
 	switch (status.kind) {
 		case "running":
-		case "starting":
 		case "failed":
-		case "restarting":
-		case "updating":
 			return true;
 		case "creating":
+		case "starting":
 		case "stopping":
 		case "stopped":
+		case "restarting":
+		case "updating":
 		case "deleting":
 		case "deleted":
 		case "unknown":
@@ -218,6 +218,10 @@ export function canRestart(status: DeploymentStatus): boolean {
 		default:
 			return exhaustive(status);
 	}
+}
+
+export function canDelete(status: DeploymentStatus): boolean {
+	return status.kind !== "deleting" && status.kind !== "deleted";
 }
 
 export function shouldPollDeployments(
