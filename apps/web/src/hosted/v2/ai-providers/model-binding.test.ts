@@ -3,17 +3,19 @@ import {
 	firstModelForProvider,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
-	managedModelDisplayName,
-	managedModelPickerItems,
-	modelIdsForProvider,
+	MANAGED_PROVIDER_LABEL,
+	modelBindingDisplayName,
+	modelDisplayName,
+	modelOptionsForProvider,
 	providerChoiceFromRef,
+	providerDisplayLabel,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 describe("model binding", () => {
 	test("does not invent a managed model before the catalog loads", () => {
 		expect(firstModelForProvider(MANAGED_AI_CHOICE, [])).toBe("");
-		expect(modelIdsForProvider(MANAGED_AI_CHOICE, [])).toEqual([]);
+		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [])).toEqual([]);
 	});
 
 	test("puts the catalog default first and exposes real managed model names", () => {
@@ -23,23 +25,28 @@ describe("model binding", () => {
 			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false },
 		];
 
-		expect(modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual([
-			"gpt-5.6-luna",
-			"gpt-5.6-sol",
-			"gpt-5.6-terra",
-		]);
-		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.6-luna");
 		expect(
-			modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).map((modelId) =>
-				managedModelDisplayName(modelId, managedModels),
-			),
-		).toEqual(["Luna", "Sol", "Terra"]);
-		expect(managedModelPickerItems(managedModels)).toEqual([
-			{ value: "gpt-5.6-luna", label: "Luna" },
-			{ value: "gpt-5.6-sol", label: "Sol" },
-			{ value: "gpt-5.6-terra", label: "Terra" },
+			modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels).map((model) => model.id),
+		).toEqual(["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"]);
+		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.6-luna");
+		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual([
+			managedModels[1],
+			managedModels[0],
+			managedModels[2],
 		]);
-		expect(managedModelDisplayName("gpt-5.6-sol", managedModels)).toBe("Sol");
+		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("Sol");
+	});
+
+	test("uses catalog metadata before the shared formatter and raw id fallback", () => {
+		expect(
+			modelDisplayName("model", [{ id: "model", display_name: "Display", is_default: false }]),
+		).toBe("Display");
+		expect(modelDisplayName("model", [{ id: "model", label: "Label", alias: "Alias" }])).toBe(
+			"Label",
+		);
+		expect(modelDisplayName("model", [{ id: "model", alias: "Alias" }])).toBe("Alias");
+		expect(modelDisplayName("gpt-5.4", [])).toBe("GPT 5.4");
+		expect(modelDisplayName("unknown/model", [])).toBe("unknown/model");
 	});
 
 	test("uses the first catalog model for a selected provider", () => {
@@ -50,7 +57,7 @@ describe("model binding", () => {
 				scope: "account_global",
 				type: "openai",
 				base_url: "https://api.openai.com/v1",
-				models: [{ id: "gpt-5.5" }, { id: "gpt-5.4" }],
+				models: [{ id: "gpt-5.5", label: "GPT Latest" }, { id: "gpt-5.4" }],
 				api_mode: "openai_responses",
 				auth: { type: "api_key", source: "managed" },
 				managed_by: "user",
@@ -63,11 +70,22 @@ describe("model binding", () => {
 		];
 
 		expect(firstModelForProvider("openai-main", providers)).toBe("gpt-5.5");
+		expect(modelOptionsForProvider("openai-main", providers)).toEqual(providers[0].models);
+		expect(modelDisplayName("gpt-5.5", providers[0].models ?? [])).toBe("GPT Latest");
+		expect(providerDisplayLabel(providers[0])).toBe("OpenAI");
+		expect(providerDisplayLabel("openai-main", providers)).toBe("OpenAI");
 	});
 
 	test("maps deployment-scoped managed provider ids to the friendly managed choice", () => {
 		const providerId = "clawdi-v2-deployment-10";
 		expect(isManagedProviderId(providerId)).toBe(true);
 		expect(providerChoiceFromRef(providerId, [])).toBe(MANAGED_AI_CHOICE);
+		expect(providerDisplayLabel(providerId)).toBe(MANAGED_PROVIDER_LABEL);
+	});
+
+	test("labels empty bindings from their actual auth mode", () => {
+		expect(modelBindingDisplayName(null, "managed", [])).toBe("Managed default");
+		expect(modelBindingDisplayName(null, "unmanaged", [])).toBe("Configured in agent");
+		expect(modelBindingDisplayName(null, "api_key", [])).toBe("Not set");
 	});
 });

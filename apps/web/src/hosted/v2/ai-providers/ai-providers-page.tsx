@@ -1,6 +1,5 @@
 "use client";
 
-import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import { ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -35,9 +34,9 @@ import { Spinner } from "@/components/ui/spinner";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
-	useAiProviders,
 	useCheckProviderFields,
 	useDeleteProvider,
+	useUserAiProviders,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import {
 	type ProviderUsage,
@@ -45,13 +44,13 @@ import {
 	providerUsage,
 } from "@/hosted/v2/ai-providers/ai-providers-page.logic";
 import { AuthBadge, ManagedProviderCard } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import { modelDisplayName, providerDisplayLabel } from "@/hosted/v2/ai-providers/model-binding";
 import {
 	API_MODE_LABEL,
 	type ApiMode,
 	providerTypeMeta,
 } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
-import { formatModelLabel } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Choose how your agents reach a model.";
@@ -59,14 +58,12 @@ const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 
 const PROVIDER_GRID_CLASS = ENTITY_GRID_CLASS;
 
 export function AiProvidersPage() {
-	const providers = useAiProviders();
+	const providers = useUserAiProviders();
 	const inventory = useHostedDeploymentInventory();
 	const [addOpen, setAddOpen] = useState(false);
 	const [editing, setEditing] = useState<AiProvider | null>(null);
 
-	const list = (providers.data?.providers ?? []).filter(
-		(provider) => !isFirstPartyManagedAiProvider(provider),
-	);
+	const list = providers.data ?? [];
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
@@ -145,7 +142,7 @@ function ProviderCard({
 }) {
 	const meta = providerTypeMeta(provider.type);
 	const checkFields = useCheckProviderFields();
-	const providerLabel = provider.label ?? provider.provider_id;
+	const providerLabel = providerDisplayLabel(provider);
 	const modelSummary = modelCatalogSummary(provider);
 
 	function runCheckFields() {
@@ -206,7 +203,7 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 	const del = useDeleteProvider();
 	const [open, setOpen] = useState(false);
 	const [acknowledged, setAcknowledged] = useState(false);
-	const providerLabel = provider.label ?? provider.provider_id;
+	const providerLabel = providerDisplayLabel(provider);
 	const impact = providerRemovalImpact(usage);
 	const acknowledgementId = `remove-provider-ack-${provider.provider_id}`;
 
@@ -279,8 +276,11 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 }
 
 function modelCatalogSummary(provider: AiProvider): string {
-	const modelIds = (provider.models ?? []).map((model) => model.id).filter(Boolean);
-	if (modelIds.length === 0) return "No catalog models";
-	const visible = modelIds.slice(0, 2).map(formatModelLabel).join(", ");
-	return modelIds.length > 2 ? `${visible} +${modelIds.length - 2} more` : visible;
+	const models = (provider.models ?? []).filter((model) => model.id);
+	if (models.length === 0) return "No catalog models";
+	const visible = models
+		.slice(0, 2)
+		.map((model) => modelDisplayName(model.id, [model]))
+		.join(", ");
+	return models.length > 2 ? `${visible} +${models.length - 2} more` : visible;
 }

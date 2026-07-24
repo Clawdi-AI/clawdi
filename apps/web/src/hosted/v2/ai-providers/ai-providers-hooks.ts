@@ -1,19 +1,36 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
+import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { AiProviderPatch, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
+import type {
+	AiProviderList,
+	AiProviderPatch,
+	AiProviderUpsert,
+} from "@/hosted/v2/ai-providers/types";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 
 /** Typed data hooks for the AI Providers surface (cloud-api `/v1/ai-providers`). */
 
 const KEY = ["ai-providers"] as const;
+const selectUserAiProviders = (data: AiProviderList) =>
+	data.providers.filter((provider) => !isFirstPartyManagedAiProvider(provider));
 
-export function useAiProviders() {
-	const api = useApi();
-	return useQuery({
+function aiProvidersQueryOptions(api: ReturnType<typeof useApi>) {
+	return queryOptions({
 		queryKey: KEY,
 		queryFn: async () => unwrap(await api.GET("/v1/ai-providers")),
+	});
+}
+
+export function useAiProviders() {
+	return useQuery(aiProvidersQueryOptions(useApi()));
+}
+
+export function useUserAiProviders() {
+	return useQuery({
+		...aiProvidersQueryOptions(useApi()),
+		select: selectUserAiProviders,
 	});
 }
 

@@ -13,6 +13,7 @@ import {
 	isComputeSubscriptionRenewing,
 	isComputeSubscriptionTermChangeable,
 	isIncludedBasicSubscription,
+	largestSignupGrantUsd,
 	pendingComputePlanSlug,
 	pendingPlanScheduleCopy,
 	resolveBasicPlan,
@@ -97,6 +98,30 @@ describe("compute plan resolvers", () => {
 
 		expect(resolveBasicPlan([otherPaid, basic])).toBe(basic);
 		expect(resolveBasicPlan([otherPaid])).toBeUndefined();
+	});
+});
+
+describe("largestSignupGrantUsd", () => {
+	test("returns the largest positive configured grant", () => {
+		expect(
+			largestSignupGrantUsd([
+				plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 0, signup_grant_usd: "5.00" }),
+				plan({
+					slug: COMPUTE_PERFORMANCE_SLUG,
+					price_cents: 1900,
+					signup_grant_usd: "12.50",
+				}),
+			]),
+		).toBe("12.50");
+	});
+
+	test("returns null when no positive grant is configured", () => {
+		expect(largestSignupGrantUsd(undefined)).toBeNull();
+		expect(
+			largestSignupGrantUsd([
+				plan({ slug: COMPUTE_BASIC_SLUG, price_cents: 0, signup_grant_usd: "0" }),
+			]),
+		).toBeNull();
 	});
 });
 

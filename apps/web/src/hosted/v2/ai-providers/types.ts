@@ -9,6 +9,7 @@ import type { components } from "@/lib/api-schemas";
 type Schemas = components["schemas"];
 
 export type AiProvider = Schemas["AiProviderResponse"];
+export type AiProviderList = Schemas["AiProviderListResponse"];
 export type AiProviderAuth = Schemas["AiProviderAuth"];
 export type AiProviderUpsertAuth = Schemas["AiProviderUpsertAuth"];
 export type AiProviderUpsert = Schemas["AiProviderUpsert"];

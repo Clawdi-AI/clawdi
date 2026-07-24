@@ -18,9 +18,7 @@ import {
 	CUSTOM_MODEL_CHOICE,
 	MANAGED_AI_CHOICE,
 	type ModelBindingPickerItem,
-	modelIdsForProvider,
 	modelPickerItems,
-	primaryModelPickerChoice,
 	primaryProviderPickerItems,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
@@ -40,7 +38,6 @@ export function ModelBindingPicker({
 	selectedProviderChoices,
 	primaryProviderChoice,
 	primaryModel,
-	formatModel,
 	onPrimaryProviderChange,
 	onPrimaryModelChange,
 }: {
@@ -57,7 +54,6 @@ export function ModelBindingPicker({
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
 	primaryModel: string;
-	formatModel?: (modelId: string) => string;
 	onPrimaryProviderChange: (choice: string) => void;
 	onPrimaryModelChange: (model: string) => void;
 }) {
@@ -65,8 +61,11 @@ export function ModelBindingPicker({
 	const catalogInputId = `${idPrefix}-catalog-model`;
 	const customInputId = `${idPrefix}-primary-model`;
 	const isManaged = primaryProviderChoice === MANAGED_AI_CHOICE;
-	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
-	const modelChoice = primaryModelPickerChoice(primaryModel, catalogModelIds);
+	const catalogModelItems = modelPickerItems(primaryProviderChoice, providers, managedModels);
+	const hasCatalogModels = catalogModelItems.some((item) => item.value !== CUSTOM_MODEL_CHOICE);
+	const modelChoice = catalogModelItems.some((item) => item.value === primaryModel)
+		? primaryModel
+		: CUSTOM_MODEL_CHOICE;
 	const managedCatalogUnavailableError =
 		isManaged && managedModels.length === 0 && !managedModelsLoading
 			? (managedModelsError ?? new Error("The managed model catalog returned no models."))
@@ -76,13 +75,6 @@ export function ModelBindingPicker({
 		customProviders,
 		additionalProviderItems,
 	);
-	const catalogModelItems = modelPickerItems(
-		primaryProviderChoice,
-		providers,
-		managedModels,
-		formatModel,
-	);
-
 	return (
 		<div
 			data-hosted="true"
@@ -124,7 +116,7 @@ export function ModelBindingPicker({
 						onRetry={onManagedModelsRetry}
 						title="Couldn't load managed models"
 					/>
-				) : catalogModelIds.length > 0 ? (
+				) : hasCatalogModels ? (
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor={catalogInputId}>Catalog model</Label>
 						<Select
@@ -154,7 +146,7 @@ export function ModelBindingPicker({
 			{!isManaged && modelChoice === CUSTOM_MODEL_CHOICE ? (
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor={customInputId}>
-						{catalogModelIds.length > 0 ? "Custom model" : "Primary model"}
+						{hasCatalogModels ? "Custom model" : "Primary model"}
 					</Label>
 					<Input
 						id={customInputId}

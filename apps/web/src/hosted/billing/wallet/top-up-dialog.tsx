@@ -29,6 +29,7 @@ import {
 	validTopUpAmountCents,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
+	TOPUP_AMOUNT_RANGE_LABEL,
 	TOPUP_DEFAULT_CENTS,
 	TOPUP_INCREMENT_CENTS,
 	TOPUP_MAX_CENTS,
@@ -155,7 +156,7 @@ export function TopUpDialog({
 					<DialogTitle>Top up Wallet</DialogTitle>
 					<DialogDescription>
 						{step === "amount"
-							? `Add between ${formatCents(TOPUP_MIN_CENTS)} and ${formatCents(TOPUP_MAX_CENTS)} to your Wallet.`
+							? `Add a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL} to your Wallet.`
 							: `Enter your card details to pay ${formatCents(amountCents)}.`}
 					</DialogDescription>
 				</DialogHeader>
@@ -206,11 +207,9 @@ export function TopUpDialog({
 								}
 								aria-live="polite"
 							>
-								{amountInvalid
-									? `Enter a whole-dollar amount from ${formatCents(TOPUP_MIN_CENTS)} to ${formatCents(TOPUP_MAX_CENTS)}.`
-									: valid
-										? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
-										: `Enter a whole-dollar amount from ${formatCents(TOPUP_MIN_CENTS)} to ${formatCents(TOPUP_MAX_CENTS)}.`}
+								{valid
+									? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
+									: `Enter a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL}.`}
 							</p>
 						</div>
 						<div className="flex justify-end">

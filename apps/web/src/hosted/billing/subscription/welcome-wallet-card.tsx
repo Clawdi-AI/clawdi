@@ -7,10 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
-import type { Plan } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatUsdExact } from "@/hosted/billing/format";
 import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
+import { largestSignupGrantUsd } from "@/hosted/billing/subscription/subscription-utils";
 
 /**
  * Pure-$0 welcome + signup-grant feedback.
@@ -20,14 +20,6 @@ import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/ho
  * and points them at the deploy wizard. Returns null once the user has an
  * agent. Read failures render a retry action instead of hiding onboarding.
  */
-function signupGrantUsd(plans: Plan[] | undefined): string {
-	return (plans ?? []).reduce(
-		(largest, plan) =>
-			Number(plan.signup_grant_usd) > Number(largest) ? plan.signup_grant_usd : largest,
-		"0",
-	);
-}
-
 export function WelcomeWalletCard() {
 	const wallet = useWallet();
 	const ledger = useWalletLedger(50);
@@ -73,10 +65,10 @@ export function WelcomeWalletCard() {
 	const grant = ledger.data?.items.find((e) => e.operation === "grant_signup");
 	const grantApplied = grant?.status === "applied";
 	const grantPending = grant?.status === "pending";
-	const configuredSignupGrantUsd = signupGrantUsd(plans.data);
+	const configuredSignupGrantUsd = largestSignupGrantUsd(plans.data);
 	const grantAmount = grant
 		? formatUsdExact(grant.amount_usd.trim().replace(/^[+-]/, ""))
-		: Number(configuredSignupGrantUsd) > 0
+		: configuredSignupGrantUsd
 			? formatUsdExact(configuredSignupGrantUsd)
 			: null;
 

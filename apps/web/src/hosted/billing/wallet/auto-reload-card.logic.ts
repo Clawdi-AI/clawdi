@@ -7,6 +7,7 @@ import {
 import {
 	AUTORELOAD_AMOUNT_MAX_CENTS,
 	AUTORELOAD_AMOUNT_MIN_CENTS,
+	AUTORELOAD_AMOUNT_RANGE_LABEL,
 	AUTORELOAD_THRESHOLD_MIN_USD,
 } from "@/hosted/billing/wallet/wallet-constants";
 
@@ -154,7 +155,7 @@ export function autoReloadSaveError(error: unknown): AutoReloadSaveError {
 	if (signal.includes("auto reload amount") || signal.includes("auto_reload_amount")) {
 		return {
 			title: "Check the reload amount",
-			description: "Enter an amount from $5 to $500, then save again.",
+			description: `Enter an amount from ${AUTORELOAD_AMOUNT_RANGE_LABEL}, then save again.`,
 			field: "amount",
 			requiresPaymentMethod: false,
 		};

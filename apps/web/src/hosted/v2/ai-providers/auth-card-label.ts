@@ -1,4 +1,5 @@
 import type { AiProviderAuthKind } from "@/hosted/billing/contracts";
+import { MANAGED_PROVIDER_LABEL } from "@/hosted/v2/ai-providers/model-binding";
 
 export function authCardLabel(authKind: AiProviderAuthKind): string {
 	switch (authKind) {
@@ -9,6 +10,6 @@ export function authCardLabel(authKind: AiProviderAuthKind): string {
 		case "codex_oauth":
 			return "Use your OpenAI account";
 		default:
-			return "Managed by Clawdi";
+			return MANAGED_PROVIDER_LABEL;
 	}
 }

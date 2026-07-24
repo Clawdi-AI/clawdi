@@ -1,6 +1,5 @@
 "use client";
 
-import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import { useLocation, useRouter } from "@tanstack/react-router";
 import {
 	CalendarClock,
@@ -137,7 +136,7 @@ import { topUpAmountCentsForUsdShortfall } from "@/hosted/billing/wallet/top-up-
 import { walletDebitShortfallUsd } from "@/hosted/billing/wallet/wallet-debit-summary";
 import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
-import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
@@ -145,9 +144,14 @@ import {
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_ID,
+	MANAGED_PROVIDER_LABEL,
+	modelDisplayName,
 	modelIdsForProvider,
+	modelOptionsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelRef,
+	providerCatalogDescription,
+	providerDisplayLabel,
 	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
@@ -388,7 +392,7 @@ export function DeployWizard() {
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
 	const managedModelCatalog = useManagedModelCatalog();
-	const aiProviders = useAiProviders();
+	const aiProviders = useUserAiProviders();
 	const channels = useChannels();
 	const createSubscription = useCreateSubscription();
 	const billingClient = useBillingClient();
@@ -508,13 +512,7 @@ export function DeployWizard() {
 	const walletInsufficient = walletShortfallUsd !== null;
 	const basicUnavailable = basicSelection.mode === "unavailable";
 
-	const providerList = useMemo(
-		() =>
-			(aiProviders.data?.providers ?? []).filter(
-				(provider) => !isFirstPartyManagedAiProvider(provider),
-			),
-		[aiProviders.data?.providers],
-	);
+	const providerList = aiProviders.data ?? [];
 	const managedModels = managedModelCatalog.data?.models ?? [];
 	const channelList = channels.data ?? [];
 	const computePlanReady =
@@ -642,28 +640,25 @@ export function DeployWizard() {
 		if (primaryModel.trim()) return;
 		const fallback = firstModelForProvider(
 			primaryProviderChoice,
-			aiProviders.data?.providers ?? [],
+			providerList,
 			managedModelCatalog.data?.models ?? [],
 		);
 		if (fallback) setPrimaryModel(fallback);
-	}, [
-		aiProviders.data?.providers,
-		managedModelCatalog.data?.models,
-		primaryModel,
-		primaryProviderChoice,
-	]);
+	}, [managedModelCatalog.data?.models, primaryModel, primaryProviderChoice, providerList]);
 
 	function setComputeTier(next: Compute) {
 		setCompute(next);
 	}
 
-	function providerUnavailable(description = "Refresh providers or choose Managed by Clawdi.") {
+	function providerUnavailable(
+		description = `Refresh providers or choose ${MANAGED_PROVIDER_LABEL}.`,
+	) {
 		toast.error("Provider unavailable", { description });
 	}
 
 	function setPrimaryProvider(choice: string) {
 		setAiAccessMode("configured");
-		const providers = aiProviders.data?.providers ?? [];
+		const providers = providerList;
 		const managedModels = managedModelCatalog.data?.models ?? [];
 		const previousCatalog = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
 		const nextCatalog = modelIdsForProvider(choice, providers, managedModels);
@@ -1074,12 +1069,28 @@ export function DeployWizard() {
 		aiAccessMode === "configured"
 			? normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice).length
 			: 0;
+	const primaryProvider = providerList.find(
+		(provider) => provider.provider_id === primaryProviderChoice,
+	);
 	const aiSummary =
 		aiAccessMode === "unmanaged"
 			? authCardLabel("unmanaged")
-			: `${providerChoiceLabel(primaryProviderChoice, providerList)}${
-					selectedProviderCount > 1 ? ` +${selectedProviderCount - 1}` : ""
-				}`;
+			: [
+					`${providerDisplayLabel(
+						primaryProvider ??
+							(primaryProviderChoice === MANAGED_AI_CHOICE
+								? MANAGED_PROVIDER_ID
+								: primaryProviderChoice),
+					)}${selectedProviderCount > 1 ? ` +${selectedProviderCount - 1}` : ""}`,
+					primaryModel
+						? modelDisplayName(
+								primaryModel,
+								modelOptionsForProvider(primaryProviderChoice, providerList, managedModels),
+							)
+						: null,
+				]
+					.filter(Boolean)
+					.join(" · ");
 	const runtimeSummary = runtimeDisplayName(runtime);
 	const summaryLine = [
 		`${compute === "performance" ? "Performance" : "Basic"} compute`,
@@ -1188,7 +1199,7 @@ export function DeployWizard() {
 									<Sparkles />
 								</IconChip>
 							}
-							title="Managed by Clawdi"
+							title={MANAGED_PROVIDER_LABEL}
 							description="Managed-AI usage paid directly from your Wallet."
 							badge={
 								<Badge variant="secondary">
@@ -1218,7 +1229,7 @@ export function DeployWizard() {
 								}
 								onClick={() => toggleAiProviderChoice(provider.provider_id)}
 								icon={<ProviderTypeChip type={provider.type} />}
-								title={provider.label ?? provider.provider_id}
+								title={providerDisplayLabel(provider)}
 								description={providerCatalogDescription(provider)}
 								badge={
 									primaryProviderChoice === provider.provider_id ? (
@@ -1244,7 +1255,7 @@ export function DeployWizard() {
 						<ModelBindingPicker
 							idPrefix="deploy"
 							className="mt-4"
-							providers={aiProviders.data?.providers ?? []}
+							providers={providerList}
 							managedModels={managedModels}
 							managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
 							managedModelsError={managedModelCatalog.error}
@@ -1628,21 +1639,4 @@ export function DeployWizard() {
 			/>
 		</div>
 	);
-}
-
-function providerChoiceLabel(choice: string, providers: readonly AiProvider[]): string {
-	if (choice === MANAGED_AI_CHOICE) return "Managed AI";
-	const provider = providers.find((item) => item.provider_id === choice);
-	return provider?.label ?? provider?.provider_id ?? "Your provider";
-}
-
-function providerCatalogDescription(provider: AiProvider): string {
-	const count = provider.models?.length ?? 0;
-	if (count === 0) return providerTypeLabelFallback(provider);
-	if (count === 1) return provider.models?.[0]?.id ?? providerTypeLabelFallback(provider);
-	return `${count} catalog models`;
-}
-
-function providerTypeLabelFallback(provider: AiProvider): string {
-	return provider.base_url.replace(/^https?:\/\//, "");
 }
