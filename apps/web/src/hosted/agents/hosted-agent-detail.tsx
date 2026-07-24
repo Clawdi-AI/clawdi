@@ -78,6 +78,7 @@ import type {
 	ComputePlanChangeQuoteResponse,
 	DeploymentUpdateRequest,
 	HostedDeployment,
+	ManagedModelCatalogItem,
 } from "@/hosted/billing/contracts";
 import {
 	LANGUAGE_OPTIONS,
@@ -99,6 +100,7 @@ import {
 	useCancelSubscription,
 	useChangePlan,
 	useCheckoutReturnRefresh,
+	useManagedModelCatalog,
 	usePlans,
 	useQuotePlanChange,
 	useResumeSubscription,
@@ -162,6 +164,7 @@ import {
 	MANAGED_AI_CHOICE,
 	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
+	managedModelDisplayName,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
@@ -1428,6 +1431,7 @@ function AiProviderTab({
 	runtime: Runtime;
 }) {
 	const providers = useAiProviders();
+	const managedModelCatalog = useManagedModelCatalog();
 	const updateDeployment = useUpdateDeployment();
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data?.providers ?? [];
@@ -1525,9 +1529,10 @@ function AiProviderTab({
 
 	function setPrimaryProvider(choice: string) {
 		setBindingMode("configured");
-		const previousCatalog = modelIdsForProvider(primaryProviderChoice, list);
-		const nextCatalog = modelIdsForProvider(choice, list);
-		const fallback = firstModelForProvider(choice, list);
+		const managedModels = managedModelCatalog.data?.models ?? [];
+		const previousCatalog = modelIdsForProvider(primaryProviderChoice, list, managedModels);
+		const nextCatalog = modelIdsForProvider(choice, list, managedModels);
+		const fallback = firstModelForProvider(choice, list, managedModels);
 		setPrimaryProviderChoice(choice);
 		setSelectedProviders((current) => normalizeSelectedProviderIds(current, choice));
 		setPrimaryModel((current) => {
@@ -1594,8 +1599,10 @@ function AiProviderTab({
 		}
 		const primaryProviderRef =
 			providerRefFromChoice(primaryProviderChoice, list) ?? MANAGED_PROVIDER_ID;
+		const usesHostedManagedDefault =
+			primaryProviderChoice === MANAGED_AI_CHOICE && primaryModel === MANAGED_DEFAULT_MODEL_CHOICE;
 		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
-		if (!modelRef) {
+		if (!modelRef && !usesHostedManagedDefault) {
 			toast.error("Primary model required");
 			return;
 		}
@@ -1623,16 +1630,14 @@ function AiProviderTab({
 			});
 			return;
 		}
-		updateDeployment.mutate({
-			id: deployment.resource.id,
-			update: {
-				ai_provider_auth_kind: authKind,
-				ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
-				provider_ids: providerRefs,
-				primary_model: modelRef,
-				ai_provider_bootstrap: bootstrap,
-			},
-		});
+		const update: DeploymentUpdateRequest = {
+			ai_provider_auth_kind: authKind,
+			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
+			provider_ids: providerRefs,
+			ai_provider_bootstrap: bootstrap,
+		};
+		if (modelRef) update.primary_model = modelRef;
+		updateDeployment.mutate({ id: deployment.resource.id, update });
 	}
 
 	return (
@@ -1746,6 +1751,7 @@ function AiProviderTab({
 			) : (
 				<AgentPrimaryModelPicker
 					providers={list}
+					managedModels={managedModelCatalog.data?.models ?? []}
 					customProviders={customProviders}
 					selectedProviderChoices={normalizeSelectedProviderIds(
 						selectedProviders,
@@ -1778,6 +1784,7 @@ function AiProviderTab({
 
 function AgentPrimaryModelPicker({
 	providers,
+	managedModels,
 	customProviders,
 	selectedProviderChoices,
 	primaryProviderChoice,
@@ -1786,6 +1793,7 @@ function AgentPrimaryModelPicker({
 	onPrimaryModelChange,
 }: {
 	providers: readonly AiProvider[];
+	managedModels: readonly ManagedModelCatalogItem[];
 	customProviders: readonly AiProvider[];
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
@@ -1793,7 +1801,8 @@ function AgentPrimaryModelPicker({
 	onPrimaryProviderChange: (choice: string) => void;
 	onPrimaryModelChange: (model: string) => void;
 }) {
-	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers);
+	const isManaged = primaryProviderChoice === MANAGED_AI_CHOICE;
+	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 	const primaryProviderItems = [
 		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
@@ -1814,9 +1823,13 @@ function AgentPrimaryModelPicker({
 		...catalogModelIds.map((model) => ({
 			value: model,
 			label:
-				model === MANAGED_DEFAULT_MODEL_CHOICE ? "Hosted default (Luna)" : formatModelLabel(model),
+				model === MANAGED_DEFAULT_MODEL_CHOICE
+					? "Hosted default (Luna)"
+					: isManaged
+						? (managedModelDisplayName(model, managedModels) ?? model)
+						: formatModelLabel(model),
 		})),
-		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
+		...(!isManaged ? [{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" }] : []),
 	];
 	return (
 		<div className="flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
@@ -1871,10 +1884,14 @@ function AgentPrimaryModelPicker({
 									<SelectItem key={model} value={model}>
 										{model === MANAGED_DEFAULT_MODEL_CHOICE
 											? "Hosted default (Luna)"
-											: formatModelLabel(model)}
+											: isManaged
+												? (managedModelDisplayName(model, managedModels) ?? model)
+												: formatModelLabel(model)}
 									</SelectItem>
 								))}
-								<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
+								{!isManaged ? (
+									<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
+								) : null}
 							</SelectContent>
 						</Select>
 					</div>
@@ -1883,7 +1900,7 @@ function AgentPrimaryModelPicker({
 			{/* Free-text model id only when the catalog dropdown is on "Custom
 			    model" (or the provider has no catalog); otherwise it just
 			    duplicates the dropdown selection, so hide it. */}
-			{modelChoice === CUSTOM_MODEL_CHOICE ? (
+			{!isManaged && modelChoice === CUSTOM_MODEL_CHOICE ? (
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="agent-primary-model">
 						{catalogModelIds.length > 0 ? "Custom model" : "Primary model"}

@@ -274,6 +274,8 @@ export function createBillingClient(
 	};
 
 	return {
+		getManagedModelCatalog: async () =>
+			unwrapDeploy(await api.GET("/v2/ai-providers/managed/models")),
 		getWallet: async () => unwrapDeploy(await api.GET("/v2/wallet")),
 		getLedger: async (limit = 50) =>
 			unwrapDeploy(

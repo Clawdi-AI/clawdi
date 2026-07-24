@@ -1,6 +1,7 @@
 const subscriptionCreateQuotes = ["billing", "subscription-create-quote"] as const;
 
 export const billingKeys = {
+	managedModelCatalog: ["billing", "managed-model-catalog"] as const,
 	wallet: ["billing", "wallet"] as const,
 	ledger: (limit: number) => ["billing", "ledger", limit] as const,
 	subscriptionCreateQuotes,

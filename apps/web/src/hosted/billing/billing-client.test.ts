@@ -91,6 +91,26 @@ describe("unwrapDeploy", () => {
 	});
 });
 
+describe("managed model catalog", () => {
+	it("fetches the authenticated v2 managed-model endpoint", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			return jsonResponse({
+				models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true }],
+			});
+		});
+
+		await expect(client.getManagedModelCatalog()).resolves.toEqual({
+			models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true }],
+		});
+		expect(new URL(requests[0]?.url ?? "https://invalid").pathname).toBe(
+			"/v2/ai-providers/managed/models",
+		);
+		expect(requests[0]?.headers.get("Authorization")).toBe("Bearer test-token");
+	});
+});
+
 describe("declarative deployment mutations", () => {
 	it("creates an included Basic deployment with an idempotency key and waits for its LRO", async () => {
 		const requests: Request[] = [];
