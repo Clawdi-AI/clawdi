@@ -294,4 +294,127 @@ describe("declarative deployment mutations", () => {
 			expect(request.headers.get("If-Match")).toMatch(/^"rv-hdep_[a-z]+"$/);
 		}
 	});
+
+	it("releases lifecycle and settings mutations as soon as their LROs are accepted", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			const path = new URL(request.url).pathname;
+			if (request.method === "GET" && path.startsWith("/v2/deployments/")) {
+				const id = path.slice("/v2/deployments/".length);
+				return jsonResponse(hostedDeploymentFixture({ id, resourceVersion: `rv-${id}` }));
+			}
+			if (path.startsWith("/v2/operations/")) {
+				throw new Error("Accepted declarative mutations must not poll their operations");
+			}
+			const verb = path.endsWith("/restart")
+				? "restart"
+				: path.endsWith("/start")
+					? "start"
+					: path.endsWith("/stop")
+						? "stop"
+						: request.method === "DELETE"
+							? "delete"
+							: "update";
+			return jsonResponse(operation({ done: false, id: `accepted-${verb}`, verb }), 202);
+		});
+
+		const accepted = await Promise.all([
+			client.setDeploymentDesiredState("hdep_start", "running", "intent-start"),
+			client.setDeploymentDesiredState("hdep_stop", "stopped", "intent-stop"),
+			client.restartDeployment("hdep_restart", "intent-restart"),
+			client.updateDeployment(
+				"hdep_provider",
+				{
+					ai_provider_auth_kind: "managed",
+					provider_ids: ["managed"],
+					primary_model: { provider_id: "managed", model: "gpt-5.6-luna" },
+				},
+				"intent-provider",
+			),
+			client.updateDeployment(
+				"hdep_locale",
+				{ language: "fr", timezone: "Europe/Paris" },
+				"intent-locale",
+			),
+			client.deleteDeployment("hdep_delete", "intent-delete"),
+		]);
+
+		expect(accepted.map((item) => item.done)).toEqual([false, false, false, false, false, false]);
+		expect(
+			requests.filter((request) => new URL(request.url).pathname.startsWith("/v2/operations/")),
+		).toHaveLength(0);
+	});
+
+	it("keeps an accepted delete visible when reconciliation later fails", async () => {
+		const failure = {
+			type: "https://api.clawdi.ai/problems/deployment-delete-failed",
+			title: "Deployment deletion failed",
+			status: 409,
+			detail: "The deployment could not be deleted.",
+			instance: "hdep_delete_failure",
+			code: "deployment_delete_failed",
+			conditionReason: "DeploymentDeleteFailed",
+			conditionMessage: "The deployment could not be deleted.",
+			observedGeneration: 2,
+		};
+		const failedDeployment = hostedDeploymentFixture({
+			id: "hdep_delete_failure",
+			status: "failed",
+			failure,
+		});
+		const client = testClient(async (request) => {
+			const path = new URL(request.url).pathname;
+			if (path === "/v2/deployments/hdep_delete_failure" && request.method === "GET") {
+				return jsonResponse(hostedDeploymentFixture({ id: "hdep_delete_failure" }));
+			}
+			if (path === "/v2/deployments/hdep_delete_failure" && request.method === "DELETE") {
+				return jsonResponse(operation({ done: false, id: "delete-failure", verb: "delete" }), 202);
+			}
+			if (path === "/v2/deployments" && request.method === "GET") {
+				return jsonResponse([failedDeployment]);
+			}
+			throw new Error(`Unexpected request: ${request.method} ${path}`);
+		});
+
+		await expect(
+			client.deleteDeployment("hdep_delete_failure", "intent-delete-failure"),
+		).resolves.toMatchObject({ done: false, name: "operations/delete-failure" });
+		await expect(client.listDeployments()).resolves.toMatchObject([
+			{
+				resource: {
+					id: "hdep_delete_failure",
+					status: { summary_state: "failed", failure },
+				},
+			},
+		]);
+	});
+});
+
+describe("compute plan changes", () => {
+	it("settles from its direct response without polling a deployment operation", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			return jsonResponse({
+				operation_id: "plan-change-1",
+				subscription_id: 42,
+				funding_source: "wallet",
+				current_plan_slug: "compute_basic",
+				target_plan_slug: "compute_performance",
+				target_billing_term_months: 1,
+				status: "awaiting_projection",
+				effective_at: NOW,
+			});
+		});
+
+		await expect(client.changePlan({ operation_id: "plan-change-1" })).resolves.toMatchObject({
+			operation_id: "plan-change-1",
+			status: "awaiting_projection",
+		});
+		expect(requests).toHaveLength(1);
+		expect(new URL(requests[0]?.url ?? "https://invalid").pathname).toBe(
+			"/v2/subscription/plan/change",
+		);
+	});
 });

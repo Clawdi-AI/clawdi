@@ -268,7 +268,7 @@ export function createBillingClient(
 				}
 				throw new DeploymentConflictError({ cause: error });
 			}
-			return waitForOperation(accepted);
+			return accepted;
 		}
 		throw new DeploymentConflictError();
 	};

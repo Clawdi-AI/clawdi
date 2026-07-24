@@ -134,6 +134,7 @@ import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
+	canDelete as canDeleteDeployment,
 	canRestart as canRestartDeployment,
 	canStart as canStartDeployment,
 	canStop as canStopDeployment,
@@ -333,6 +334,8 @@ function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
 	const router = useRouter();
 	const deleteDeployment = useDeleteDeployment();
 	const runAction = useActionLock();
+	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const canDelete = canDeleteDeployment(status);
 	return (
 		<ConfirmAction
 			title={`Delete ${deploymentDisplayName(
@@ -345,11 +348,16 @@ function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
 			onConfirm={() =>
 				runAction(async () => {
 					await deleteDeployment.mutateAsync(deployment.resource.id);
-					await router.navigate({ href: "/" });
+					void router.navigate({ href: "/" });
 				})
 			}
 		>
-			<Button type="button" variant="destructive" size="sm" disabled={deleteDeployment.isPending}>
+			<Button
+				type="button"
+				variant="destructive"
+				size="sm"
+				disabled={deleteDeployment.isPending || !canDelete}
+			>
 				{deleteDeployment.isPending ? <Spinner /> : <Trash2 />}
 				Delete
 			</Button>
@@ -1538,6 +1546,8 @@ function AiProviderTab({
 	const providers = useAiProviders();
 	const managedModelCatalog = useManagedModelCatalog();
 	const updateDeployment = useUpdateDeployment();
+	const updateInProgress =
+		parseDeploymentStatus(deployment.resource.status.summary_state).kind === "updating";
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data?.providers ?? [];
 	const customProviders = useMemo(
@@ -1870,7 +1880,10 @@ function AiProviderTab({
 			)}
 
 			<div className="flex items-center gap-2">
-				<Button disabled={!dirty || updateDeployment.isPending} onClick={applyProviderSettings}>
+				<Button
+					disabled={!dirty || updateDeployment.isPending || updateInProgress}
+					onClick={applyProviderSettings}
+				>
 					{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
 					{dirty ? "Apply provider settings" : "No changes"}
 				</Button>
@@ -2324,6 +2337,8 @@ function LanguageTimezoneSettingsSection({
 	const configTimezone = runtimeConfiguration.timezone ?? "";
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const updateDeployment = useUpdateDeployment();
+	const updateInProgress =
+		parseDeploymentStatus(deployment.resource.status.summary_state).kind === "updating";
 	const localeIdentity = `${configLanguage}\0${configTimezone}`;
 	const [syncedLocaleIdentity, setSyncedLocaleIdentity] = useState(localeIdentity);
 	const [language, setLanguage] = useState(configLanguage);
@@ -2379,7 +2394,7 @@ function LanguageTimezoneSettingsSection({
 				</div>
 				<div>
 					<Button
-						disabled={!dirty || updateDeployment.isPending}
+						disabled={!dirty || updateDeployment.isPending || updateInProgress}
 						onClick={() =>
 							updateDeployment.mutate({
 								id: deployment.resource.id,
@@ -2424,8 +2439,15 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 	const canStop = canStopDeployment(deploymentStatus);
 	const canStart = canStartDeployment(deploymentStatus);
 	const canRestart = canRestartDeployment(deploymentStatus);
-	const primaryLifecycleAction: "stop" | "start" = canStop ? "stop" : "start";
-	const canRunPrimaryLifecycleAction = canStop || canStart;
+	const canDelete = canDeleteDeployment(deploymentStatus);
+	const primaryLifecycleAction: "stop" | "start" =
+		canStop ||
+		deploymentStatus.kind === "stopping" ||
+		deploymentStatus.kind === "restarting" ||
+		deploymentStatus.kind === "updating"
+			? "stop"
+			: "start";
+	const canRunPrimaryLifecycleAction = primaryLifecycleAction === "stop" ? canStop : canStart;
 	const fundingFact = deployment.commercial_display?.latest_funding_fact;
 	const rawComputePlanSlug = deployment.current_plan_slug;
 	const computePlanSlug =
@@ -2680,7 +2702,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 
 	async function deleteCompute() {
 		await del.mutateAsync(deployment.resource.id);
-		await router.navigate({ href: "/" });
+		void router.navigate({ href: "/" });
 	}
 
 	return (
@@ -2917,7 +2939,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 							Restart
 						</Button>
 					</ConfirmAction>
-					{canStop ? (
+					{primaryLifecycleAction === "stop" ? (
 						<ConfirmAction
 							title="Stop compute?"
 							description={
@@ -2986,7 +3008,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 							variant="outline"
 							size="sm"
 							className="text-destructive"
-							disabled={del.isPending}
+							disabled={del.isPending || !canDelete}
 						>
 							<Trash2 className="size-3.5" />
 							Delete

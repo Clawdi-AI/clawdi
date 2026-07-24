@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+	canDelete,
 	canRestart,
 	canStart,
 	canStop,
@@ -100,12 +101,12 @@ describe("DeploymentStatus", () => {
 	test("drives lifecycle gates from hosted backend statuses", () => {
 		const expectations = [
 			["creating", false, false, false],
-			["starting", false, true, true],
+			["starting", false, true, false],
 			["running", false, true, true],
 			["stopping", false, false, false],
 			["stopped", true, false, false],
-			["restarting", false, true, true],
-			["updating", false, true, true],
+			["restarting", false, false, false],
+			["updating", false, false, false],
 			["failed", true, false, true],
 			["deleting", false, false, false],
 			["deleted", false, false, false],
@@ -125,6 +126,13 @@ describe("DeploymentStatus", () => {
 			expect(canStop(status)).toBe(stop);
 			expect(canRestart(status)).toBe(restart);
 		}
+	});
+
+	test("disables delete once deletion is in progress or complete", () => {
+		expect(canDelete(parseDeploymentStatus("running"))).toBe(true);
+		expect(canDelete(parseDeploymentStatus("failed"))).toBe(true);
+		expect(canDelete(parseDeploymentStatus("deleting"))).toBe(false);
+		expect(canDelete(parseDeploymentStatus("deleted"))).toBe(false);
 	});
 
 	test("polls while any deployment is non-terminal", () => {
