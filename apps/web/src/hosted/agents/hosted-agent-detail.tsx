@@ -31,6 +31,7 @@ import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel"
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
+import { EntityCardSkeleton } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SessionFeed } from "@/components/sessions/session-feed";
@@ -51,6 +52,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import {
 	useCreateTerminalSession,
@@ -77,7 +79,6 @@ import type {
 	ComputePlanChangeQuoteResponse,
 	DeploymentUpdateRequest,
 	HostedDeployment,
-	ManagedModelCatalogItem,
 } from "@/hosted/billing/contracts";
 import {
 	LANGUAGE_OPTIONS,
@@ -165,7 +166,6 @@ import {
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_ID,
-	managedModelPickerItems,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
@@ -174,6 +174,7 @@ import {
 	providerChoiceFromRef,
 	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
+import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import {
 	aiProviderRuntimeId,
 	buildAiProviderPoolBootstrap,
@@ -182,7 +183,7 @@ import {
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
+import { ChannelStatusBadge, ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
 import {
 	useAgentChannelLinks,
 	useBotPool,
@@ -229,7 +230,6 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"channels",
 	"settings",
 ]);
-const CUSTOM_MODEL_CHOICE = "__custom__";
 const UNRESOLVED_PROVIDER_PREFIX = "unresolved:";
 
 function providerAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
@@ -800,10 +800,7 @@ function RuntimeStatusValue({
 				className={cn("inline-flex min-w-0 items-center gap-1.5", status.primary.textClass)}
 				title={`Compute ${status.primary.label}`}
 			>
-				<span
-					aria-hidden
-					className={cn("inline-block size-1.5 shrink-0 rounded-full", status.primary.dotClass)}
-				/>
+				<StatusDot status={status.primary.tone} />
 				<span className="truncate">{status.primary.label}</span>
 			</span>
 			{status.secondary ? (
@@ -1343,19 +1340,16 @@ const TERMINAL_STATUS_LABELS: Record<HostedTerminalStatus, string> = {
 	disconnected: "Disconnected",
 };
 
+const TERMINAL_STATUS_TONES: Record<HostedTerminalStatus, StatusTone> = {
+	connecting: "warning",
+	connected: "success",
+	disconnected: "destructive",
+};
+
 function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 	return (
 		<div className="flex items-center gap-2 text-xs text-muted-foreground">
-			<span
-				className={cn(
-					"size-2 rounded-full",
-					status === "connected"
-						? "bg-success"
-						: status === "connecting"
-							? "bg-warning"
-							: "bg-destructive",
-				)}
-			/>
+			<StatusDot status={TERMINAL_STATUS_TONES[status]} className="size-2" />
 			<span>{TERMINAL_STATUS_LABELS[status]}</span>
 		</div>
 	);
@@ -1537,22 +1531,6 @@ function selectableCard(active: boolean): string {
 	}`;
 }
 
-function ProviderOptionSkeleton() {
-	return (
-		<div className="flex items-center gap-3 rounded-lg border p-4">
-			<Skeleton className="size-10 shrink-0 rounded-lg" />
-			<div className="min-w-0 flex-1 space-y-2">
-				<div className="flex items-center gap-2">
-					<Skeleton className="h-4 w-32" />
-					<Skeleton className="h-5 w-16 rounded-full" />
-				</div>
-				<Skeleton className="h-3 w-40" />
-			</div>
-			<Skeleton className="h-5 w-14 rounded-full" />
-		</div>
-	);
-}
-
 function unresolvedProviderChoice(providerRef: string): string {
 	return `${UNRESOLVED_PROVIDER_PREFIX}${providerRef}`;
 }
@@ -1699,9 +1677,11 @@ function AiProviderTab({
 		if (fallback) setPrimaryModel(fallback);
 	}, [bindingMode, managedModels, primaryModel, primaryProviderChoice]);
 
-	const selectedIdentity = JSON.stringify(
-		normalizeSelectedProviderIds(selectedProviders, primaryProviderChoice),
+	const selectedProviderChoices = normalizeSelectedProviderIds(
+		selectedProviders,
+		primaryProviderChoice,
 	);
+	const selectedIdentity = JSON.stringify(selectedProviderChoices);
 	const initialSelectedIdentity = JSON.stringify(initialProviderChoices);
 	const dirty =
 		bindingMode !== initialMode ||
@@ -1875,7 +1855,7 @@ function AiProviderTab({
 						Clawdi-managed models, billed from your wallet.
 					</p>
 				</button>
-				{providers.isLoading ? <ProviderOptionSkeleton /> : null}
+				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
 				{providers.error ? (
 					<ApiErrorPanel
 						normalizer={billingErrorNormalizer}
@@ -1944,19 +1924,22 @@ function AiProviderTab({
 					after it starts.
 				</p>
 			) : (
-				<AgentPrimaryModelPicker
+				<ModelBindingPicker
+					idPrefix="agent"
 					providers={list}
 					managedModels={managedModels}
 					managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
 					managedModelsError={managedModelCatalog.error}
+					managedModelsErrorNormalizer={billingErrorNormalizer}
 					onManagedModelsRetry={() => void managedModelCatalog.refetch()}
 					customProviders={customProviders}
-					selectedProviderChoices={normalizeSelectedProviderIds(
-						selectedProviders,
-						primaryProviderChoice,
-					)}
+					additionalProviderItems={selectedProviderChoices
+						.filter(isUnresolvedProviderChoice)
+						.map((choice) => ({ value: choice, label: unresolvedProviderRef(choice) }))}
+					selectedProviderChoices={selectedProviderChoices}
 					primaryProviderChoice={primaryProviderChoice}
 					primaryModel={primaryModel}
+					formatModel={formatModelLabel}
 					onPrimaryProviderChange={setPrimaryProvider}
 					onPrimaryModelChange={setPrimaryModel}
 				/>
@@ -1981,154 +1964,6 @@ function AiProviderTab({
 				</Link>
 				.
 			</p>
-		</div>
-	);
-}
-
-function AgentPrimaryModelPicker({
-	providers,
-	managedModels,
-	managedModelsLoading,
-	managedModelsError,
-	onManagedModelsRetry,
-	customProviders,
-	selectedProviderChoices,
-	primaryProviderChoice,
-	primaryModel,
-	onPrimaryProviderChange,
-	onPrimaryModelChange,
-}: {
-	providers: readonly AiProvider[];
-	managedModels: readonly ManagedModelCatalogItem[];
-	managedModelsLoading: boolean;
-	managedModelsError: unknown;
-	onManagedModelsRetry: () => void;
-	customProviders: readonly AiProvider[];
-	selectedProviderChoices: readonly string[];
-	primaryProviderChoice: string;
-	primaryModel: string;
-	onPrimaryProviderChange: (choice: string) => void;
-	onPrimaryModelChange: (model: string) => void;
-}) {
-	const isManaged = primaryProviderChoice === MANAGED_AI_CHOICE;
-	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
-	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
-	const managedCatalogUnavailableError =
-		isManaged && managedModels.length === 0 && !managedModelsLoading
-			? (managedModelsError ?? new Error("The managed model catalog returned no models."))
-			: null;
-	const primaryProviderItems = [
-		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
-			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
-			: []),
-		...selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => ({
-			value: choice,
-			label: unresolvedProviderRef(choice),
-		})),
-		...customProviders
-			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
-			.map((provider) => ({
-				value: provider.provider_id,
-				label: provider.label ?? provider.provider_id,
-			})),
-	];
-	const catalogModelItems = isManaged
-		? managedModelPickerItems(managedModels)
-		: [
-				...catalogModelIds.map((model) => ({
-					value: model,
-					label: formatModelLabel(model),
-				})),
-				{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
-			];
-	return (
-		<div className="flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
-			<div className="grid gap-3 sm:grid-cols-2">
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="agent-primary-provider">Primary provider</Label>
-					<Select
-						items={primaryProviderItems}
-						value={primaryProviderChoice}
-						onValueChange={(value) => {
-							if (value) onPrimaryProviderChange(value);
-						}}
-					>
-						<SelectTrigger id="agent-primary-provider" className="w-full">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
-								<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
-							) : null}
-							{selectedProviderChoices.filter(isUnresolvedProviderChoice).map((choice) => (
-								<SelectItem key={choice} value={choice}>
-									{unresolvedProviderRef(choice)}
-								</SelectItem>
-							))}
-							{customProviders
-								.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
-								.map((provider) => (
-									<SelectItem key={provider.provider_id} value={provider.provider_id}>
-										{provider.label ?? provider.provider_id}
-									</SelectItem>
-								))}
-						</SelectContent>
-					</Select>
-				</div>
-				{isManaged && managedModelsLoading ? (
-					<div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-						<Spinner className="size-3.5" /> Loading managed models…
-					</div>
-				) : managedCatalogUnavailableError ? (
-					<ApiErrorPanel
-						normalizer={billingErrorNormalizer}
-						error={managedCatalogUnavailableError}
-						onRetry={onManagedModelsRetry}
-						title="Couldn't load managed models"
-					/>
-				) : catalogModelIds.length > 0 ? (
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="agent-catalog-model">Catalog model</Label>
-						<Select
-							items={catalogModelItems}
-							value={modelChoice}
-							onValueChange={(value) => {
-								if (!value) return;
-								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value);
-							}}
-						>
-							<SelectTrigger id="agent-catalog-model" className="w-full">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								{catalogModelItems.map((item) => (
-									<SelectItem key={item.value} value={item.value}>
-										{item.label}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-					</div>
-				) : null}
-			</div>
-			{/* Free-text model id only when the catalog dropdown is on "Custom
-			    model" (or the provider has no catalog); otherwise it just
-			    duplicates the dropdown selection, so hide it. */}
-			{!isManaged && modelChoice === CUSTOM_MODEL_CHOICE ? (
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="agent-primary-model">
-						{catalogModelIds.length > 0 ? "Custom model" : "Primary model"}
-					</Label>
-					<Input
-						id="agent-primary-model"
-						value={primaryModel}
-						onChange={(event) => onPrimaryModelChange(event.target.value)}
-						placeholder="model id"
-						autoComplete="off"
-						spellCheck={false}
-					/>
-				</div>
-			) : null}
 		</div>
 	);
 }
@@ -2345,8 +2180,9 @@ function LinkedChannelRow({
 				<ProviderChip provider={provider} />
 				<div className="min-w-0 flex-1">
 					<div className="truncate text-sm font-medium">{name}</div>
-					<div className="text-xs capitalize text-muted-foreground">
-						{provider ? `${providerMeta(provider).label} · ${link.status}` : link.status}
+					<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+						{provider ? <span>{providerMeta(provider).label}</span> : null}
+						<ChannelStatusBadge status={link.status} />
 					</div>
 				</div>
 				<Button

@@ -25,7 +25,7 @@ import {
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
-import { unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -102,7 +102,7 @@ export function AgentSettingsPanel({
 			updateEnvironmentCaches(queryClient, data);
 			toast.success("Agent updated");
 		},
-		onError: (e) => toast.error("Couldn't update agent", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't update agent"),
 	});
 
 	const uploadMutation = useMutation({
@@ -111,7 +111,7 @@ export function AgentSettingsPanel({
 			updateEnvironmentCaches(queryClient, data);
 			toast.success("Avatar uploaded");
 		},
-		onError: (e) => toast.error("Couldn't upload avatar", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't upload avatar"),
 	});
 
 	const clearAvatar = useMutation({
@@ -125,7 +125,7 @@ export function AgentSettingsPanel({
 			updateEnvironmentCaches(queryClient, data);
 			toast.success("Avatar removed");
 		},
-		onError: (e) => toast.error("Couldn't remove avatar", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't remove avatar"),
 	});
 
 	const disconnect = useMutation({
@@ -147,7 +147,7 @@ export function AgentSettingsPanel({
 			});
 			void router.navigate({ href: "/" });
 		},
-		onError: (e) => toast.error("Couldn't disconnect agent", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't disconnect agent"),
 	});
 
 	const onUploadChange = (event: React.ChangeEvent<HTMLInputElement>) => {

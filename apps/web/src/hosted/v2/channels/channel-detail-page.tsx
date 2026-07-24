@@ -57,6 +57,7 @@ import type {
 	ChannelBinding,
 } from "@/hosted/v2/channels/channel-types";
 import {
+	ChannelStatusBadge,
 	CopyInline,
 	DeliveryBadge,
 	HealthBadge,
@@ -263,7 +264,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				icon={<EntityIcon kind="channel" id={ch.provider} label={meta.label} size="lg" />}
 				status={
 					<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-						<span className="capitalize">{ch.status}</span>
+						<ChannelStatusBadge status={ch.status} />
 						{healthItem ? <HealthBadge status={healthItem.health_status} /> : null}
 					</div>
 				}
@@ -454,9 +455,9 @@ function AgentsTab({
 								<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 									<div className="min-w-0">
 										<AgentName env={findEnv(envs.data, link.agent_id)} fallback={link.agent_id} />
-										<div className="text-xs text-muted-foreground">
-											<span className="capitalize">{link.status}</span> · linked{" "}
-											{relativeTime(link.created_at)}
+										<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+											<ChannelStatusBadge status={link.status} />
+											<span>Linked {relativeTime(link.created_at)}</span>
 										</div>
 									</div>
 									{readOnly ? null : (
@@ -950,7 +951,7 @@ function BindingsTab({ accountId }: { accountId: string }) {
 							<CopyInline key="chat-id" value={b.external_chat_id} label="chat ID" />,
 						]}
 					/>
-					<span className="text-xs capitalize text-muted-foreground">{b.status}</span>
+					<ChannelStatusBadge status={b.status} />
 				</div>
 			))}
 		</div>

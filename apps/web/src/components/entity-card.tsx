@@ -3,6 +3,7 @@
 import { Link, type LinkProps } from "@tanstack/react-router";
 import { Check, ChevronRight } from "lucide-react";
 import type { ReactNode } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 /**
@@ -44,6 +45,52 @@ export const HERO_STRETCHED_LINK_CLASS =
 /** Focus ring for whole-card buttons matching the stretched-link treatment. */
 export const ENTITY_CARD_BUTTON_FOCUS_CLASS =
 	"focus:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
+
+/** Shared loading shape for entity cards and selectable entity options. */
+export function EntityCardSkeleton({
+	iconSize = "md",
+	metaLines = 1,
+	statusDot = false,
+	titleBadge = false,
+	trailingBadge = false,
+	actions = false,
+	className,
+}: {
+	iconSize?: "sm" | "md";
+	metaLines?: 0 | 1 | 2;
+	statusDot?: boolean;
+	titleBadge?: boolean;
+	trailingBadge?: boolean;
+	actions?: boolean;
+	className?: string;
+}) {
+	return (
+		<div className={cn(ENTITY_CARD_BASE, className)}>
+			<div className="flex items-start gap-3">
+				<Skeleton
+					className={cn("shrink-0", iconSize === "sm" ? "size-8 rounded-md" : "size-10 rounded-lg")}
+				/>
+				<div className="min-w-0 flex-1">
+					<div className="flex min-w-0 items-center gap-1.5">
+						{statusDot ? <Skeleton className="size-1.5 shrink-0 rounded-full" /> : null}
+						<Skeleton className="h-4 min-w-16 flex-1 max-w-32" />
+						{titleBadge ? <Skeleton className="h-5 w-16 shrink-0 rounded-full" /> : null}
+					</div>
+					{metaLines > 0 ? <Skeleton className="mt-2 h-3 w-40 max-w-[80%]" /> : null}
+					{metaLines > 1 ? <Skeleton className="mt-1.5 h-3 w-full max-w-56" /> : null}
+				</div>
+				{trailingBadge ? <Skeleton className="h-5 w-16 shrink-0 rounded-full" /> : null}
+			</div>
+			{actions ? (
+				<div className="mt-3 flex items-center gap-2">
+					<Skeleton className="h-8 w-20 rounded-md" />
+					<Skeleton className="h-8 w-14 rounded-md" />
+					<Skeleton className="ml-auto size-8 rounded-md" />
+				</div>
+			) : null}
+		</div>
+	);
+}
 
 /** Meta line — array items render middot-separated on one truncating line. */
 export function EntityMeta({

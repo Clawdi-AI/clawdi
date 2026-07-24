@@ -48,10 +48,10 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
-import type {
-	SubscriptionBillingTermMonths,
-	SubscriptionCreateSelection,
-	SubscriptionFundingSource,
+import {
+	type SubscriptionCreateSelection,
+	type SubscriptionFundingSource,
+	supportedBillingTerm,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import {
 	computeTierLabel,
@@ -73,10 +73,6 @@ const PLAN_ITEMS = [
 
 function computePlanSlug(value: string | null): ComputePlanSlug | null {
 	return value === "compute_basic" || value === "compute_performance" ? value : null;
-}
-
-function supportedBillingTerm(value: number): SubscriptionBillingTermMonths | null {
-	return value === 1 || value === 12 ? value : null;
 }
 
 function decimalCredits(value: unknown): number | null {

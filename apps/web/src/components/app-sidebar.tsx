@@ -92,6 +92,7 @@ import {
 	useSidebar,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { StatusDot } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
 import {
@@ -1343,12 +1344,11 @@ function HostedFocusTileStatus({ tile }: { tile: AgentTile }) {
 			className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap text-muted-foreground"
 			title={tile.secondaryStatus?.title ?? tile.statusLabel}
 		>
-			<span
-				aria-hidden
-				className={cn(
-					"inline-block size-1.5 shrink-0 rounded-full",
-					tile.statusDot?.dotClass ?? "border border-muted-foreground/50 bg-transparent",
-				)}
+			<StatusDot
+				status={tile.statusDot?.tone ?? "neutral"}
+				className={
+					tile.statusDot?.tone ? undefined : "border border-muted-foreground/50 bg-transparent"
+				}
 			/>
 			<span>{tile.statusLabel}</span>
 			{tile.secondaryStatus ? (
@@ -1363,10 +1363,7 @@ function HostedFocusTileStatus({ tile }: { tile: AgentTile }) {
 function FocusStatusFallback() {
 	return (
 		<span className="inline-flex items-center gap-1.5 whitespace-nowrap text-muted-foreground">
-			<span
-				aria-hidden
-				className="inline-block size-1.5 rounded-full border border-muted-foreground/50 bg-transparent"
-			/>
+			<StatusDot className="border border-muted-foreground/50 bg-transparent" />
 			<span>Status</span>
 		</span>
 	);

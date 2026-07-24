@@ -20,9 +20,10 @@ import {
 	ENTITY_CARD_BASE,
 	ENTITY_GRID_CLASS,
 	ENTITY_STRETCHED_LINK_CLASS,
+	EntityCardSkeleton,
 	EntityHeader,
 } from "@/components/entity-card";
-import { Skeleton } from "@/components/ui/skeleton";
+import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { agentSectionHref, parseAgentPathname } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -59,7 +60,8 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 
 export interface AgentTileStatusDot {
 	label: string;
-	dotClass: string;
+	tone?: StatusTone;
+	dotClass?: string;
 }
 
 export interface AgentTileSecondaryStatus {
@@ -179,7 +181,7 @@ export function AgentsCard({
 				) : isLoading ? (
 					<div className={ENTITY_GRID_CLASS}>
 						{Array.from({ length: 4 }).map((_, i) => (
-							<TileSkeleton key={i} />
+							<EntityCardSkeleton key={i} iconSize="sm" statusDot titleBadge />
 						))}
 					</div>
 				) : agents.length || hostedStatus?.isLoading ? (
@@ -188,7 +190,9 @@ export function AgentsCard({
 							{visible.map((tile) => (
 								<AgentTileView key={`${tile.source}:${tile.id}`} tile={tile} />
 							))}
-							{hostedStatus?.isLoading ? <TileSkeleton /> : null}
+							{hostedStatus?.isLoading ? (
+								<EntityCardSkeleton iconSize="sm" statusDot titleBadge />
+							) : null}
 						</div>
 						{hiddenCount > 0 || showAll ? (
 							<button
@@ -361,7 +365,11 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 function AgentStatusDot({ visual }: { visual: AgentTileStatusDot }) {
 	return (
 		<span title={visual.label} className="inline-flex shrink-0 items-center">
-			<span aria-hidden className={cn("size-1.5 rounded-full", visual.dotClass)} />
+			{visual.tone ? (
+				<StatusDot status={visual.tone} />
+			) : (
+				<span aria-hidden className={cn("size-1.5 rounded-full", visual.dotClass)} />
+			)}
 			<span className="sr-only">{visual.label}</span>
 		</span>
 	);
@@ -380,20 +388,4 @@ export function compareAgentTiles(a: AgentTile, b: AgentTile): number {
 	const name = a.name.localeCompare(b.name);
 	if (name !== 0) return name;
 	return a.id.localeCompare(b.id);
-}
-
-function TileSkeleton() {
-	return (
-		<div className={cn(ENTITY_CARD_BASE, "flex h-full items-start gap-3")}>
-			<Skeleton className="size-8 shrink-0 rounded-md" />
-			<div className="min-w-0 flex-1">
-				<div className="flex min-w-0 items-center gap-1.5">
-					<Skeleton className="size-1.5 shrink-0 rounded-full" />
-					<Skeleton className="h-4 min-w-16 flex-1 max-w-28" />
-					<Skeleton className="ml-0.5 size-4 shrink-0 rounded-full" />
-				</div>
-				<Skeleton className="mt-1 h-3 w-28 max-w-[80%]" />
-			</div>
-		</div>
-	);
 }

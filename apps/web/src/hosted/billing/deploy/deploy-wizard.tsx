@@ -28,7 +28,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
@@ -57,7 +56,6 @@ import type {
 	BillingOffer,
 	ComputePlanSlug,
 	DeployRequest,
-	ManagedModelCatalogItem,
 	Plan,
 } from "@/hosted/billing/contracts";
 import {
@@ -118,10 +116,10 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
-import type {
-	SubscriptionBillingTermMonths,
-	SubscriptionCreateRequestView,
-	SubscriptionCreateSelection,
+import {
+	type SubscriptionCreateRequestView,
+	type SubscriptionCreateSelection,
+	supportedBillingTerm,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import {
 	COMPUTE_BASIC_SLUG,
@@ -147,12 +145,12 @@ import {
 	firstModelForProvider,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_ID,
-	managedModelPickerItems,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelRef,
 	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
+import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import {
 	aiProviderRuntimeId,
 	buildAiProviderPoolBootstrap,
@@ -161,6 +159,7 @@ import {
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
+import { ChannelStatusBadge } from "@/hosted/v2/channels/channel-ui";
 import { useChannels } from "@/hosted/v2/channels/channels-hooks";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
@@ -193,16 +192,11 @@ const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
-const CUSTOM_MODEL_CHOICE = "__custom__";
 const EMPTY_WALLET_TOP_UP_CONTEXT: WalletTopUpContext = {
 	initialAmountCents: null,
 	refundDebtCredits: null,
 	blockedChargeCredits: null,
 };
-
-function supportedBillingTerm(value: number): SubscriptionBillingTermMonths | null {
-	return value === 1 || value === 12 ? value : null;
-}
 
 function decimalCredits(value: unknown): number | null {
 	if (typeof value !== "string" && typeof value !== "number") return null;
@@ -288,11 +282,7 @@ function ChannelInfoTile({ channel }: { channel: ChannelAccount }) {
 			icon={<EntityIcon kind="channel" id={channel.provider} label={meta.label} />}
 			title={channel.name}
 			description={`${meta.label} is ready. Link it from the agent page after deploy.`}
-			badge={
-				<Badge variant="outline" className="capitalize">
-					{channel.status}
-				</Badge>
-			}
+			badge={<ChannelStatusBadge status={channel.status} />}
 			className="h-full bg-card"
 		/>
 	);
@@ -1296,11 +1286,14 @@ export function DeployWizard() {
 							provisioning.
 						</p>
 					) : (
-						<PrimaryModelPicker
+						<ModelBindingPicker
+							idPrefix="deploy"
+							className="mt-4"
 							providers={aiProviders.data?.providers ?? []}
 							managedModels={managedModels}
 							managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
 							managedModelsError={managedModelCatalog.error}
+							managedModelsErrorNormalizer={billingErrorNormalizer}
 							onManagedModelsRetry={() => void managedModelCatalog.refetch()}
 							customProviders={providerList}
 							selectedProviderChoices={normalizeSelectedProviderIds(
@@ -1701,146 +1694,6 @@ function providerCatalogDescription(provider: AiProvider): string {
 	if (count === 0) return providerTypeLabelFallback(provider);
 	if (count === 1) return provider.models?.[0]?.id ?? providerTypeLabelFallback(provider);
 	return `${count} catalog models`;
-}
-
-function PrimaryModelPicker({
-	providers,
-	managedModels,
-	managedModelsLoading,
-	managedModelsError,
-	onManagedModelsRetry,
-	customProviders,
-	selectedProviderChoices,
-	primaryProviderChoice,
-	primaryModel,
-	onPrimaryProviderChange,
-	onPrimaryModelChange,
-}: {
-	providers: readonly AiProvider[];
-	managedModels: readonly ManagedModelCatalogItem[];
-	managedModelsLoading: boolean;
-	managedModelsError: unknown;
-	onManagedModelsRetry: () => void;
-	customProviders: readonly AiProvider[];
-	selectedProviderChoices: readonly string[];
-	primaryProviderChoice: string;
-	primaryModel: string;
-	onPrimaryProviderChange: (choice: string) => void;
-	onPrimaryModelChange: (model: string) => void;
-}) {
-	const isManaged = primaryProviderChoice === MANAGED_AI_CHOICE;
-	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
-	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
-	const managedCatalogUnavailableError =
-		isManaged && managedModels.length === 0 && !managedModelsLoading
-			? (managedModelsError ?? new Error("The managed model catalog returned no models."))
-			: null;
-	const primaryProviderItems = [
-		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
-			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
-			: []),
-		...customProviders
-			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
-			.map((provider) => ({
-				value: provider.provider_id,
-				label: provider.label ?? provider.provider_id,
-			})),
-	];
-	const catalogModelItems = isManaged
-		? managedModelPickerItems(managedModels)
-		: [
-				...catalogModelIds.map((model) => ({ value: model, label: model })),
-				{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
-			];
-	return (
-		<div className="mt-4 flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
-			<div className="grid gap-3 sm:grid-cols-2">
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="deploy-primary-provider">Primary provider</Label>
-					<Select
-						items={primaryProviderItems}
-						value={primaryProviderChoice}
-						onValueChange={(value) => {
-							if (value) onPrimaryProviderChange(value);
-						}}
-					>
-						<SelectTrigger id="deploy-primary-provider" className="w-full">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectGroup>
-								{selectedProviderChoices.includes(MANAGED_AI_CHOICE) ? (
-									<SelectItem value={MANAGED_AI_CHOICE}>Managed by Clawdi</SelectItem>
-								) : null}
-								{customProviders
-									.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
-									.map((provider) => (
-										<SelectItem key={provider.provider_id} value={provider.provider_id}>
-											{provider.label ?? provider.provider_id}
-										</SelectItem>
-									))}
-							</SelectGroup>
-						</SelectContent>
-					</Select>
-				</div>
-				{isManaged && managedModelsLoading ? (
-					<div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-						<Spinner className="size-3.5" /> Loading managed models…
-					</div>
-				) : managedCatalogUnavailableError ? (
-					<ApiErrorPanel
-						normalizer={billingErrorNormalizer}
-						error={managedCatalogUnavailableError}
-						onRetry={onManagedModelsRetry}
-						title="Couldn't load managed models"
-					/>
-				) : catalogModelIds.length > 0 ? (
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor="deploy-catalog-model">Catalog model</Label>
-						<Select
-							items={catalogModelItems}
-							value={modelChoice}
-							onValueChange={(value) => {
-								if (!value) return;
-								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value);
-							}}
-						>
-							<SelectTrigger id="deploy-catalog-model" className="w-full">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectGroup>
-									{catalogModelItems.map((item) => (
-										<SelectItem key={item.value} value={item.value}>
-											{item.label}
-										</SelectItem>
-									))}
-								</SelectGroup>
-							</SelectContent>
-						</Select>
-					</div>
-				) : null}
-			</div>
-			{/* The free-text model id is only needed when the catalog dropdown is
-			    on "Custom model" (or the provider has no catalog). When a catalog
-			    model is selected it just duplicates the dropdown, so hide it. */}
-			{!isManaged && modelChoice === CUSTOM_MODEL_CHOICE ? (
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="deploy-primary-model">
-						{catalogModelIds.length > 0 ? "Custom model" : "Primary model"}
-					</Label>
-					<Input
-						id="deploy-primary-model"
-						value={primaryModel}
-						onChange={(event) => onPrimaryModelChange(event.target.value)}
-						placeholder="model id"
-						autoComplete="off"
-						spellCheck={false}
-					/>
-				</div>
-			) : null}
-		</div>
-	);
 }
 
 function providerTypeLabelFallback(provider: AiProvider): string {

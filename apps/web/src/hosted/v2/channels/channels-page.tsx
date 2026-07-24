@@ -10,6 +10,7 @@ import {
 	ENTITY_CARD_BASE,
 	ENTITY_GRID_CLASS,
 	ENTITY_STRETCHED_LINK_CLASS,
+	EntityCardSkeleton,
 	EntityHeader,
 } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
@@ -19,7 +20,6 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
 	CHANNEL_PROVIDERS,
 	type ChannelProviderId,
@@ -27,7 +27,7 @@ import {
 	providerMeta,
 } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
-import { AccessBadge, HealthBadge } from "@/hosted/v2/channels/channel-ui";
+import { AccessBadge, ChannelStatusBadge, HealthBadge } from "@/hosted/v2/channels/channel-ui";
 import { useBotPool, useChannelHealth, useChannels } from "@/hosted/v2/channels/channels-hooks";
 import { dedupeBotPoolProviders, providerCounts } from "@/hosted/v2/channels/channels-page.logic";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
@@ -161,7 +161,7 @@ function YourChannelsSection({
 		content = (
 			<div className={CHANNEL_GRID_CLASS}>
 				{[0, 1, 2].map((i) => (
-					<ChannelCardSkeleton key={i} />
+					<EntityCardSkeleton key={i} trailingBadge />
 				))}
 			</div>
 		);
@@ -268,32 +268,12 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: st
 					icon={<EntityIcon kind="channel" id={channel.provider} label={meta.label} />}
 					title={channel.name}
 					titleAdornment={health ? <HealthBadge status={health} /> : undefined}
-					meta={[
-						meta.label,
-						<span key="status" className="capitalize">
-							{channel.status}
-						</span>,
-					]}
+					meta={[meta.label, <ChannelStatusBadge key="status" status={channel.status} />]}
 				/>
 			</div>
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
 				<span className="sr-only">Open {channel.name}</span>
 			</Link>
-		</div>
-	);
-}
-
-function ChannelCardSkeleton() {
-	return (
-		<div className={ENTITY_CARD_BASE}>
-			<div className="flex items-start gap-3">
-				<Skeleton className="size-10 shrink-0 rounded-lg" />
-				<div className="min-w-0 flex-1">
-					<Skeleton className="h-4 w-28" />
-					<Skeleton className="mt-2 h-3 w-32" />
-				</div>
-				<Skeleton className="h-6 w-20 rounded-full" />
-			</div>
 		</div>
 	);
 }
@@ -324,7 +304,7 @@ function SharedBotsSection({
 		content = (
 			<div className={CHANNEL_GRID_CLASS}>
 				{[0, 1, 2].map((i) => (
-					<Skeleton key={i} className="h-20 w-full rounded-lg" />
+					<EntityCardSkeleton key={i} />
 				))}
 			</div>
 		);

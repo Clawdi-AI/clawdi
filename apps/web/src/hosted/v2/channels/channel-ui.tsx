@@ -3,12 +3,10 @@
 import { Check, CircleAlert, CircleCheck, Copy, TriangleAlert } from "lucide-react";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
-import { StatusBadge } from "@/components/ui/status-badge";
+import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import { cn } from "@/lib/utils";
-
-type StatusTone = "success" | "warning" | "destructive" | "info" | "neutral";
 
 /** Real app-icon for a channel provider (delegates to the unified EntityIcon). */
 export function ProviderChip({
@@ -49,6 +47,29 @@ export function AccessBadge({ access }: { access: string }) {
 	const owner = access === "owner";
 	return (
 		<StatusBadge status={owner ? "info" : "neutral"}>{owner ? "Your bot" : "Shared"}</StatusBadge>
+	);
+}
+
+const CHANNEL_STATUS_TONE: Record<string, StatusTone> = {
+	active: "success",
+	connected: "success",
+	paired: "success",
+	pending: "warning",
+	pairing: "warning",
+	error: "destructive",
+	failed: "destructive",
+	revoked: "destructive",
+};
+
+/** Account, agent-link, and chat-binding lifecycle status. */
+export function ChannelStatusBadge({ status, className }: { status: string; className?: string }) {
+	return (
+		<StatusBadge
+			status={CHANNEL_STATUS_TONE[status.toLowerCase()] ?? "neutral"}
+			className={className}
+		>
+			<span className="capitalize">{status}</span>
+		</StatusBadge>
 	);
 }
 

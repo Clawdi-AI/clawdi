@@ -11,6 +11,10 @@ const agentDetailSource = readFileSync(
 	new URL("../../agents/hosted-agent-detail.tsx", import.meta.url),
 	"utf8",
 );
+const modelBindingPickerSource = readFileSync(
+	new URL("../../v2/ai-providers/model-binding-picker.tsx", import.meta.url),
+	"utf8",
+);
 
 describe("deploy wizard personalization", () => {
 	test("renders the required bounded agent name input", () => {
@@ -39,12 +43,13 @@ describe("first Basic agent copy", () => {
 describe("managed model picker", () => {
 	test("uses real catalog items and exposes loading and retry states", () => {
 		for (const source of [wizardSource, agentDetailSource]) {
-			expect(source).toContain("managedModelPickerItems(managedModels)");
-			expect(source).toContain("Loading managed models…");
-			expect(source).toContain('title="Couldn\'t load managed models"');
+			expect(source).toContain("<ModelBindingPicker");
 			expect(source).not.toContain("__hosted_default__");
 			expect(source).not.toContain("Hosted default (Luna)");
 		}
+		expect(modelBindingPickerSource).toContain("modelPickerItems(");
+		expect(modelBindingPickerSource).toContain("Loading managed models…");
+		expect(modelBindingPickerSource).toContain('title="Couldn\'t load managed models"');
 	});
 });
 

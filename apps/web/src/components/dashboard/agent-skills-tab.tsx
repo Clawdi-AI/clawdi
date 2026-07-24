@@ -5,10 +5,9 @@ import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { isProjectOwner } from "@/components/projects/project-metadata";
 import { SkillCardGrid } from "@/components/skills/skill-card";
-import { unwrap, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
-import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 type ProjectRow = components["schemas"]["ProjectResponse"];
@@ -127,6 +126,6 @@ function useUninstallAgentSkill() {
 			});
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
 		},
-		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't uninstall skill"),
 	});
 }

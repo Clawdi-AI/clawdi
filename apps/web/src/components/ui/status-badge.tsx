@@ -40,6 +40,23 @@ const dotVariants = cva("size-1.5 shrink-0 rounded-full", {
 	},
 });
 
+const statusTextVariants = cva("", {
+	variants: {
+		status: {
+			success: "text-muted-foreground",
+			warning: "text-warning-muted-foreground font-medium",
+			destructive: "text-destructive-muted-foreground font-medium",
+			info: "text-info-muted-foreground",
+			neutral: "text-muted-foreground",
+		},
+	},
+	defaultVariants: {
+		status: "neutral",
+	},
+});
+
+type StatusTone = NonNullable<VariantProps<typeof statusBadgeVariants>["status"]>;
+
 function StatusBadge({
 	className,
 	status = "neutral",
@@ -78,4 +95,5 @@ function StatusDot({
 	);
 }
 
-export { StatusBadge, StatusDot, statusBadgeVariants };
+export type { StatusTone };
+export { StatusBadge, StatusDot, statusBadgeVariants, statusTextVariants };
