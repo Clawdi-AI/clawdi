@@ -46,6 +46,10 @@ import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { isHostedRuntime } from "@/hosted/runtimes";
+import {
+	nativeTransportSummary,
+	pairCodeRequiresExplicitAgent,
+} from "@/hosted/v2/channels/channel-detail-page.logic";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type {
 	ChannelActivityItem,
@@ -291,6 +295,13 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				<InfoCard icon={TriangleAlert} title="Provider unavailable">
 					This provider is no longer available for new native channels. Existing channel data
 					remains visible, and you can remove the channel.
+				</InfoCard>
+			) : null}
+			{ch.provider === "discord" && !providerUnavailable ? (
+				<InfoCard icon={TriangleAlert} title="Verify Discord credentials">
+					Clawdi stores Discord credentials during setup but does not verify them with Discord. Send
+					a test message and confirm activity and health before relying on this channel. To replace
+					credentials, remove the channel and reconnect it.
 				</InfoCard>
 			) : null}
 
@@ -695,6 +706,7 @@ function isExpired(expiresAt: string, nowMs: number): boolean {
 
 function PairCodeTab({ accountId, provider }: { accountId: string; provider: string }) {
 	const envs = useEnvironments();
+	const links = useChannelAgentLinks(accountId);
 	const create = useCreatePairCode(accountId);
 	const ownership = useAgentOwnership();
 	// "" = no agent chosen (use the channel's linked agent). Sentinel keeps the
@@ -711,6 +723,21 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	const generateLocked = useRef(false);
 	const meta = providerMeta(provider);
 	const isGenerating = create.isPending || generateLocked.current;
+	const linkedAgentCount = links.data?.length ?? 0;
+	const requiresExplicitAgent = pairCodeRequiresExplicitAgent(linkedAgentCount);
+	const selectionMessage =
+		requiresExplicitAgent && !agentId && !links.isLoading && !links.error
+			? linkedAgentCount === 0
+				? agentItems.length === 0
+					? "No linked agent is available. Link an agent in the Agents tab first."
+					: "No agent is linked. Choose an agent for this pairing code."
+				: "This channel has multiple linked agents. Choose the agent for this pairing code."
+			: null;
+	const canGenerate =
+		!isGenerating &&
+		!links.isLoading &&
+		!links.error &&
+		(!requiresExplicitAgent || (!envs.isLoading && !envs.error && Boolean(agentId)));
 	const visibleAgentToken =
 		result && revealedAgentToken?.agentLinkId === result.agent_link_id
 			? revealedAgentToken.value
@@ -725,7 +752,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	}, [result]);
 
 	function generate() {
-		if (generateLocked.current) return;
+		if (!canGenerate || generateLocked.current) return;
 		generateLocked.current = true;
 		setResult(null);
 		create.mutate(
@@ -769,7 +796,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 			<div className="grid gap-3 sm:grid-cols-2">
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="pair-agent">Agent</Label>
-					{envs.isLoading ? (
+					{envs.isLoading || links.isLoading ? (
 						<Skeleton className="h-10 w-full rounded-md" />
 					) : (
 						<Select
@@ -778,10 +805,15 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 							onValueChange={(value) => {
 								if (value !== null) setAgentId(value);
 							}}
-							disabled={!!envs.error || isGenerating}
+							disabled={Boolean(envs.error || links.error) || isGenerating}
 						>
-							<SelectTrigger id="pair-agent">
-								<SelectValue placeholder="Use linked agent" />
+							<SelectTrigger
+								id="pair-agent"
+								aria-describedby={selectionMessage ? "pair-agent-requirement" : undefined}
+							>
+								<SelectValue
+									placeholder={requiresExplicitAgent ? "Choose an agent" : "Use linked agent"}
+								/>
 							</SelectTrigger>
 							<SelectContent>
 								{(envs.data ?? []).map((env) => (
@@ -796,6 +828,11 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 							</SelectContent>
 						</Select>
 					)}
+					{selectionMessage ? (
+						<p id="pair-agent-requirement" className="text-xs text-warning-muted-foreground">
+							{selectionMessage}
+						</p>
+					) : null}
 				</div>
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="pair-ttl">Expires in</Label>
@@ -828,8 +865,15 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 					title="Couldn't load agents"
 				/>
 			) : null}
+			{links.error ? (
+				<ApiErrorPanel
+					error={links.error}
+					onRetry={() => links.refetch()}
+					title="Couldn't load linked agents"
+				/>
+			) : null}
 
-			<Button onClick={generate} disabled={isGenerating}>
+			<Button onClick={generate} disabled={!canGenerate}>
 				<QrCode className="size-4" />
 				{isGenerating ? "Generating…" : "Generate pairing code"}
 			</Button>
@@ -1009,6 +1053,7 @@ function HealthTab({ accountId }: { accountId: string }) {
 		{ label: "In progress", value: h.in_progress_deliveries },
 		{ label: "Failed deliveries", value: h.failed_deliveries },
 	];
+	const transport = h.native_transport ? nativeTransportSummary(h.native_transport) : null;
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -1051,12 +1096,23 @@ function HealthTab({ accountId }: { accountId: string }) {
 				</div>
 			) : null}
 
-			{h.native_transport ? (
+			{transport ? (
 				<div className={ENTITY_CARD_BASE}>
-					<SectionLabel className="mb-2 px-0">Native transport</SectionLabel>
-					<pre className="overflow-x-auto text-xs text-muted-foreground">
-						{JSON.stringify(h.native_transport, null, 2)}
-					</pre>
+					<SectionLabel className="mb-3 px-0">Message transport</SectionLabel>
+					<dl className="grid gap-3 text-sm sm:grid-cols-3">
+						<div>
+							<dt className="text-xs text-muted-foreground">Status</dt>
+							<dd className="mt-0.5 font-medium">{transport.status}</dd>
+						</div>
+						<div>
+							<dt className="text-xs text-muted-foreground">Connection</dt>
+							<dd className="mt-0.5 font-medium">{transport.connection}</dd>
+						</div>
+						<div>
+							<dt className="text-xs text-muted-foreground">Message delivery</dt>
+							<dd className="mt-0.5 font-medium">{transport.delivery}</dd>
+						</div>
+					</dl>
 				</div>
 			) : null}
 		</div>

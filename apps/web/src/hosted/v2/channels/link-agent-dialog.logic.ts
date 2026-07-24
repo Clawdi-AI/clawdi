@@ -19,6 +19,10 @@ export function channelProviderLinkingReady(provider: string): boolean {
 	return provider !== "whatsapp" || WHATSAPP_LINKING_READY;
 }
 
+export function channelDialogOpenChangeAllowed(nextOpen: boolean, isSubmitting: boolean): boolean {
+	return nextOpen || !isSubmitting;
+}
+
 export function pairingCommand(code: string): string {
 	return `/bot_pair ${code}`;
 }

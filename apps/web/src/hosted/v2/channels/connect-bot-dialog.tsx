@@ -23,8 +23,16 @@ import {
 import type { ChannelCreate, ChannelCreated } from "@/hosted/v2/channels/channel-types";
 import { ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
 import { useCreateChannel } from "@/hosted/v2/channels/channels-hooks";
-import { discordPublicKeyError } from "@/hosted/v2/channels/connect-bot-dialog.logic";
-import { WHATSAPP_COMING_SOON_MESSAGE } from "@/hosted/v2/channels/link-agent-dialog.logic";
+import {
+	discordApplicationIdError,
+	discordBotTokenError,
+	discordGuildIdError,
+	discordPublicKeyError,
+} from "@/hosted/v2/channels/connect-bot-dialog.logic";
+import {
+	channelDialogOpenChangeAllowed,
+	WHATSAPP_LINKING_READY,
+} from "@/hosted/v2/channels/link-agent-dialog.logic";
 
 /**
  * Connect a channel. Each provider takes its OWN real inputs (grounded in
@@ -63,9 +71,15 @@ export function ConnectBotDialog({
 	}, [open]);
 
 	const meta = PROVIDER_META[provider];
-	const publicKeyError = meta.connect === "discord" ? discordPublicKeyError(publicKey) : null;
+	const discordSelected = meta.connect === "discord";
+	const tokenError = discordSelected ? discordBotTokenError(token) : null;
+	const applicationIdError = discordSelected ? discordApplicationIdError(applicationId) : null;
+	const publicKeyError = discordSelected ? discordPublicKeyError(publicKey) : null;
+	const guildIdError = discordSelected ? discordGuildIdError(guildId) : null;
+	const isSubmitting = create.isPending || submitLocked.current;
 
 	function changeProvider(next: ChannelProviderId) {
+		if (next === "whatsapp" && !WHATSAPP_LINKING_READY) return;
 		setProvider(next);
 		setToken("");
 		setApplicationId("");
@@ -76,14 +90,19 @@ export function ConnectBotDialog({
 	const canSubmit =
 		name.trim().length > 0 &&
 		(meta.connect === "whatsapp"
-			? true
+			? WHATSAPP_LINKING_READY
 			: meta.connect === "token"
 				? token.trim().length > 0
 				: meta.connect === "discord"
-					? token.trim().length > 0 && applicationId.trim().length > 0 && !publicKeyError
+					? token.trim().length > 0 &&
+						applicationId.trim().length > 0 &&
+						!tokenError &&
+						!applicationIdError &&
+						!publicKeyError &&
+						!guildIdError
 					: false);
 
-	function buildBody(): ChannelCreate {
+	function buildBody(): ChannelCreate | null {
 		const trimmedName = name.trim();
 		if (meta.connect === "discord") {
 			const config: Record<string, unknown> = { application_id: applicationId.trim() };
@@ -94,14 +113,16 @@ export function ConnectBotDialog({
 		if (meta.connect === "token") {
 			return { provider, name: trimmedName, provider_token: token.trim() };
 		}
-		// whatsapp — no token; device linking is gated during the beta
+		if (!WHATSAPP_LINKING_READY) return null;
 		return { provider, name: trimmedName };
 	}
 
 	function submit() {
 		if (!canSubmit || submitLocked.current) return;
+		const body = buildBody();
+		if (!body) return;
 		submitLocked.current = true;
-		create.mutate(buildBody(), {
+		create.mutate(body, {
 			onSuccess: (data) => setCreated(data),
 			onSettled: () => {
 				submitLocked.current = false;
@@ -109,18 +130,50 @@ export function ConnectBotDialog({
 		});
 	}
 
+	function handleOpenChange(nextOpen: boolean) {
+		if (!channelDialogOpenChangeAllowed(nextOpen, create.isPending || submitLocked.current)) return;
+		onOpenChange(nextOpen);
+	}
+
+	const discordVerificationPending = created?.provider === "discord";
+
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog open={open} onOpenChange={handleOpenChange}>
 			<DialogContent data-hosted="true" data-v2="true" className="sm:max-w-md">
 				{created ? (
 					<>
 						<DialogHeader>
-							<DialogTitle>Channel connected</DialogTitle>
+							<DialogTitle>
+								{discordVerificationPending
+									? "Discord setup saved — verification pending"
+									: "Channel connected"}
+							</DialogTitle>
 							<DialogDescription>
-								<span className="font-medium">{created.name}</span> is connected. Clawdi handles
-								message delivery automatically. There is nothing else to configure.
+								{discordVerificationPending ? (
+									<>
+										Credentials for <span className="font-medium">{created.name}</span> were saved,
+										but Clawdi does not verify them with Discord during setup.
+									</>
+								) : (
+									<>
+										<span className="font-medium">{created.name}</span> is connected. Clawdi handles
+										message delivery automatically.
+									</>
+								)}
 							</DialogDescription>
 						</DialogHeader>
+						{discordVerificationPending ? (
+							<div
+								role="status"
+								className="rounded-lg border border-warning/30 bg-warning-muted p-3 text-sm text-warning-muted-foreground"
+							>
+								<p className="font-medium">Verification pending</p>
+								<p className="mt-1 text-xs">
+									Send a test message to the bot, then review channel activity and health before
+									relying on it.
+								</p>
+							</div>
+						) : null}
 						{created.agent_token ? (
 							<TokenReveal
 								label="Agent token"
@@ -128,18 +181,19 @@ export function ConnectBotDialog({
 								note="An agent was auto-linked. This token lets it send and receive on the channel."
 							/>
 						) : null}
-						{provider === "whatsapp" ? (
-							<p className="text-sm text-muted-foreground">{WHATSAPP_COMING_SOON_MESSAGE}</p>
-						) : null}
 						<DialogFooter>
-							<Button variant="outline" onClick={() => onOpenChange(false)}>
+							<Button
+								variant="outline"
+								onClick={() => handleOpenChange(false)}
+								disabled={isSubmitting}
+							>
 								Close
 							</Button>
 							<Button
 								render={<Link to="/channels/$id" params={{ id: created.id }} />}
 								nativeButton={false}
 							>
-								Open channel
+								{discordVerificationPending ? "Open channel to verify" : "Open channel"}
 							</Button>
 						</DialogFooter>
 					</>
@@ -156,22 +210,34 @@ export function ConnectBotDialog({
 							<div className="flex flex-col gap-1.5">
 								<Label>Provider</Label>
 								<div className="grid grid-cols-2 gap-2">
-									{CHANNEL_PROVIDERS.map((p) => (
-										<EntityChoiceCard
-											key={p}
-											selected={provider === p}
-											onClick={() => changeProvider(p)}
-											icon={
-												<EntityIcon
-													kind="channel"
-													id={p}
-													label={PROVIDER_META[p].label}
-													size="sm"
-												/>
-											}
-											title={PROVIDER_META[p].label}
-										/>
-									))}
+									{CHANNEL_PROVIDERS.map((p) => {
+										const comingSoon = p === "whatsapp" && !WHATSAPP_LINKING_READY;
+										return (
+											<EntityChoiceCard
+												key={p}
+												selected={provider === p}
+												onClick={() => changeProvider(p)}
+												disabled={comingSoon}
+												badge={
+													comingSoon ? (
+														<span className="text-xs text-muted-foreground">Coming soon</span>
+													) : undefined
+												}
+												icon={
+													<EntityIcon
+														kind="channel"
+														id={p}
+														label={PROVIDER_META[p].label}
+														size="sm"
+													/>
+												}
+												title={PROVIDER_META[p].label}
+												description={
+													comingSoon ? "Hosted agent linking is not ready yet." : undefined
+												}
+											/>
+										);
+									})}
 								</div>
 							</div>
 
@@ -203,7 +269,15 @@ export function ConnectBotDialog({
 										placeholder={meta.tokenPlaceholder}
 										autoComplete="off"
 										spellCheck={false}
+										required
+										aria-invalid={Boolean(tokenError)}
+										aria-describedby={tokenError ? "connect-token-err" : undefined}
 									/>
+									{tokenError ? (
+										<p id="connect-token-err" className="text-xs text-destructive">
+											{tokenError}
+										</p>
+									) : null}
 								</div>
 							) : null}
 
@@ -219,10 +293,21 @@ export function ConnectBotDialog({
 											placeholder="Application (client) ID"
 											autoComplete="off"
 											spellCheck={false}
+											required
+											aria-invalid={Boolean(applicationIdError)}
+											aria-describedby={
+												applicationIdError ? "connect-app-id-err" : "connect-app-id-help"
+											}
 										/>
-										<p className="text-xs text-muted-foreground">
-											Required to publish slash commands.
-										</p>
+										{applicationIdError ? (
+											<p id="connect-app-id-err" className="text-xs text-destructive">
+												{applicationIdError}
+											</p>
+										) : (
+											<p id="connect-app-id-help" className="text-xs text-muted-foreground">
+												Required to publish slash commands.
+											</p>
+										)}
 									</div>
 									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="connect-public-key">
@@ -261,20 +346,28 @@ export function ConnectBotDialog({
 											placeholder="Default command scope"
 											autoComplete="off"
 											spellCheck={false}
+											aria-invalid={Boolean(guildIdError)}
+											aria-describedby={guildIdError ? "connect-guild-id-err" : undefined}
 										/>
+										{guildIdError ? (
+											<p id="connect-guild-id-err" className="text-xs text-destructive">
+												{guildIdError}
+											</p>
+										) : null}
 									</div>
 								</>
 							) : null}
 						</div>
 
 						<DialogFooter>
-							<Button variant="outline" onClick={() => onOpenChange(false)}>
+							<Button
+								variant="outline"
+								onClick={() => handleOpenChange(false)}
+								disabled={isSubmitting}
+							>
 								Cancel
 							</Button>
-							<Button
-								onClick={submit}
-								disabled={!canSubmit || create.isPending || submitLocked.current}
-							>
+							<Button onClick={submit} disabled={!canSubmit || isSubmitting}>
 								{create.isPending ? "Connecting…" : "Connect"}
 							</Button>
 						</DialogFooter>
