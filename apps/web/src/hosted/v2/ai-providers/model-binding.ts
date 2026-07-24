@@ -1,4 +1,4 @@
-import { CLAWDI_MANAGED_PROVIDER_IDS, CLAWDI_MANAGED_V2_PROVIDER_ID } from "@clawdi/shared";
+import { CLAWDI_MANAGED_V2_PROVIDER_ID, isClawdiManagedProviderId } from "@clawdi/shared";
 import type { ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
@@ -52,7 +52,7 @@ export function dedupeProviderIds(providerIds: readonly string[]): string[] {
 }
 
 export function isManagedProviderId(providerId: string | null | undefined): boolean {
-	return typeof providerId === "string" && CLAWDI_MANAGED_PROVIDER_IDS.has(providerId);
+	return typeof providerId === "string" && isClawdiManagedProviderId(providerId);
 }
 
 export function providerChoiceFromRef(

@@ -29,6 +29,8 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { deploymentDisplayName } from "@/hosted/agent-identity";
+import { isHostedRuntime } from "@/hosted/runtimes";
 import { TokenReveal } from "@/hosted/v2/channels/channel-ui";
 import {
 	useAgentChannelLinks,
@@ -143,7 +145,7 @@ export function LinkAgentDialog({
 				const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
 				return {
 					value: env.id,
-					label: agentTextLabel(env, { ownershipKind }),
+					label: agentOptionLabel(env, ownershipKind),
 				};
 			}),
 		[agents, ownership],
@@ -268,7 +270,14 @@ function agentOptionLabel(
 	},
 	ownershipKind: AgentOwnershipKind,
 ): string {
-	return agentTextLabel(env, { ownershipKind });
+	return agentTextLabel(env, { ownershipKind, formatName: runtimeNameFormatter(env) });
+}
+
+function runtimeNameFormatter(env: { agent_type?: string | null }) {
+	const runtime = env.agent_type;
+	return runtime && isHostedRuntime(runtime)
+		? (name: string) => deploymentDisplayName(name, runtime)
+		: undefined;
 }
 
 function AgentOption({
@@ -286,6 +295,7 @@ function AgentOption({
 			type={env.agent_type}
 			avatarUrl={env.avatar_url}
 			size="sm"
+			formatName={runtimeNameFormatter(env)}
 			titleAdornment={
 				<AgentSourceBadgeForEnvironment env={env} ownershipKind={ownershipKind} compact />
 			}

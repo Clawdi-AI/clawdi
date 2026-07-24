@@ -1514,7 +1514,12 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi`);
 	const main = page.locator("main");
-	await main.getByRole("button", { name: "Show Hermes credentials", exact: true }).click();
+	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
+		"src",
+		"https://runtime.example/hermes",
+	);
+	await expect(main.getByRole("button", { name: "Open in new window", exact: true })).toBeVisible();
+	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
 	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Retry", exact: true }).click();
@@ -1543,6 +1548,12 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 
 	await page.goto("/agents/hdep_openclaw_included/console?source=on-clawdi");
 	const main = page.locator("main");
+	await expect(main.locator('iframe[title="OpenClaw Control UI"]')).toHaveAttribute(
+		"src",
+		"https://runtime.example/openclaw/#token=gateway-token",
+	);
+	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
+	await expect(main.locator('input[value="gateway-token"]')).toBeVisible();
 	const popupPromise = page.waitForEvent("popup");
 	await main.getByRole("button", { name: "Open OpenClaw Control UI" }).click();
 	const popup = await popupPromise;

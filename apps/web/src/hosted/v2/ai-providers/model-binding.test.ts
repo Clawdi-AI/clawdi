@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import {
 	firstModelForProvider,
+	isManagedProviderId,
 	MANAGED_AI_CHOICE,
 	MANAGED_DEFAULT_MODEL_CHOICE,
 	managedModelDisplayName,
 	modelIdsForProvider,
+	providerChoiceFromRef,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
@@ -49,5 +51,11 @@ describe("model binding", () => {
 		];
 
 		expect(firstModelForProvider("openai-main", providers)).toBe("gpt-5.5");
+	});
+
+	test("maps deployment-scoped managed provider ids to the friendly managed choice", () => {
+		const providerId = "clawdi-v2-deployment-10";
+		expect(isManagedProviderId(providerId)).toBe(true);
+		expect(providerChoiceFromRef(providerId, [])).toBe(MANAGED_AI_CHOICE);
 	});
 });

@@ -3,6 +3,7 @@ import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
 	hermesCredentialsForGeneration,
 	hermesUiCredentials,
+	openClawUiCredentials,
 	openClawUiUrl,
 	openSecureRuntimeWindow,
 } from "@/hosted/agents/runtime-ui-credentials";
@@ -73,5 +74,18 @@ describe("runtime UI credential targeting", () => {
 			url: "https://runtime.example/openclaw/#token=deployment-token",
 		};
 		expect(openClawUiUrl(credentials, "https://runtime.example/openclaw/")).toBe(credentials.url);
+		expect(openClawUiCredentials(credentials, "https://runtime.example/openclaw/")).toEqual({
+			url: credentials.url,
+			token: "deployment-token",
+		});
+	});
+
+	test("rejects an OpenClaw credential URL without a token", () => {
+		const credentials: RuntimeUiCredentials = {
+			runtime: "openclaw",
+			auth_mode: "openclaw_device",
+			url: "https://runtime.example/openclaw/",
+		};
+		expect(openClawUiCredentials(credentials, credentials.url)).toBeNull();
 	});
 });

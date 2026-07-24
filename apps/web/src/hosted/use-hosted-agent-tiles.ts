@@ -191,7 +191,7 @@ export function useHostedAgentTiles({
 export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
 	if (!isHostedDeploymentMember(d)) return [];
 	const runtime = deploymentRuntime(d);
-	const slug = deploymentDisplayName(d.resource.spec.name);
+	const slug = deploymentDisplayName(d.resource.spec.name, runtime);
 	// Hosted deployments don't use last_seen_at; status is the freshness signal
 	// The deploy API projects the stable agent identity. The cloud-api env
 	// join only decorates the tile and may legitimately lag or be missing.
@@ -203,7 +203,9 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 	};
 	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
 	const settingsHref = envId ? agentSectionHref(envId, "settings", routeQuery) : undefined;
-	const name = matchedEnv ? agentDisplayName(matchedEnv) : runtimeDisplayName(runtime);
+	const name = matchedEnv
+		? deploymentDisplayName(agentDisplayName(matchedEnv), runtime)
+		: runtimeDisplayName(runtime);
 	const contextLabel = slug !== name ? slug : null;
 	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv ?? null);
 	const dunningStatus = computeDunningTileStatus(d);

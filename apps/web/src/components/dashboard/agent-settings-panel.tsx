@@ -44,9 +44,11 @@ function updateEnvironmentCaches(queryClient: QueryClient, environment: Environm
 export function AgentSettingsPanel({
 	environmentId,
 	className,
+	formatName,
 }: {
 	environmentId: string;
 	className?: string;
+	formatName?: (name: string) => string;
 }) {
 	const api = useApi();
 	const router = useRouter();
@@ -71,8 +73,10 @@ export function AgentSettingsPanel({
 
 	useEffect(() => {
 		if (!agent) return;
-		setDraftName(agent.display_name ?? "");
-	}, [agent]);
+		setDraftName(
+			agent.display_name ? (formatName?.(agent.display_name) ?? agent.display_name) : "",
+		);
+	}, [agent, formatName]);
 
 	const updateIdentity = useMutation({
 		mutationFn: async (body: EnvironmentUpdate) =>
@@ -171,7 +175,9 @@ export function AgentSettingsPanel({
 	}
 
 	const normalizedDraftName = draftName.trim() || null;
-	const currentCustomName = agent.display_name ?? null;
+	const currentCustomName = agent.display_name
+		? (formatName?.(agent.display_name) ?? agent.display_name)
+		: null;
 	const nameChanged = normalizedDraftName !== currentCustomName;
 	const hasCustomAvatar = Boolean(agent.avatar_url);
 	const ownershipKind = agentOwnershipKindFromId(agent.id, ownership);
@@ -189,8 +195,10 @@ export function AgentSettingsPanel({
 		uploadMutation.isPending ||
 		clearAvatar.isPending ||
 		disconnect.isPending;
-	const displayName = agentDisplayName(agent);
-	const defaultDisplayName = agentDisplayName({ ...agent, display_name: null });
+	const rawDisplayName = agentDisplayName(agent);
+	const rawDefaultDisplayName = agentDisplayName({ ...agent, display_name: null });
+	const displayName = formatName?.(rawDisplayName) ?? rawDisplayName;
+	const defaultDisplayName = formatName?.(rawDefaultDisplayName) ?? rawDefaultDisplayName;
 	const runtimeLabel = agentTypeLabel(agent.agent_type);
 	const currentAvatarLabel = hasCustomAvatar ? "Custom upload" : `${runtimeLabel} default`;
 	const legacyDashboardUrl = ownershipKind === "legacy" ? legacyHostedDashboardUrl() : null;

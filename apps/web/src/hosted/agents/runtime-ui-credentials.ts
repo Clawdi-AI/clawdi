@@ -6,6 +6,11 @@ export interface HermesUiCredentials {
 	password: string;
 }
 
+export interface OpenClawUiCredentials {
+	url: string;
+	token: string;
+}
+
 type RuntimeWindow = {
 	close(): void;
 	location: { replace(url: string | URL): void };
@@ -64,10 +69,10 @@ export function hermesUiCredentials(
 	};
 }
 
-export function openClawUiUrl(
+export function openClawUiCredentials(
 	credentials: RuntimeUiCredentials,
 	endpointUrl: string,
-): string | null {
+): OpenClawUiCredentials | null {
 	if (
 		credentials.runtime !== "openclaw" ||
 		credentials.auth_mode !== "openclaw_device" ||
@@ -75,5 +80,26 @@ export function openClawUiUrl(
 	) {
 		return null;
 	}
-	return credentials.url;
+	try {
+		const url = new URL(credentials.url);
+		const fragment = new URLSearchParams(url.hash.slice(1));
+		const token = fragment.get("token")?.trim();
+		if (
+			!token ||
+			fragment.getAll("token").length !== 1 ||
+			![...fragment.keys()].every((key) => key === "token")
+		) {
+			return null;
+		}
+		return { url: credentials.url, token };
+	} catch {
+		return null;
+	}
+}
+
+export function openClawUiUrl(
+	credentials: RuntimeUiCredentials,
+	endpointUrl: string,
+): string | null {
+	return openClawUiCredentials(credentials, endpointUrl)?.url ?? null;
 }

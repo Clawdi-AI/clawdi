@@ -76,6 +76,15 @@ describe("agentDisplayName", () => {
 			),
 		).toBe("Cloud · Research Agent · Codex");
 	});
+
+	test("formats a projected name without duplicating the runtime label", () => {
+		expect(
+			agentTextLabel(
+				{ name: "deployment-create-id", agent_type: "hermes" },
+				{ ownershipKind: "cloud", formatName: () => "Hermes" },
+			),
+		).toBe("Cloud · Hermes");
+	});
 });
 
 describe("compareAgentEnvironments", () => {

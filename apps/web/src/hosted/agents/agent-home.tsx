@@ -225,7 +225,10 @@ function DeploymentChooser({
 			<div className="grid max-w-2xl gap-2">
 				{matches.map((match) => {
 					const { deployment } = match;
-					const name = deploymentDisplayName(deployment.resource.spec.name);
+					const name = deploymentDisplayName(
+						deployment.resource.spec.name,
+						deployment.resource.spec.runtime,
+					);
 					const query = {
 						...agentDeploymentRouteQuery(searchStr),
 						[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: deployment.resource.id,
