@@ -103,7 +103,7 @@ export function PlanComparison({
 			<div>
 				<h3 className="text-base font-semibold">Compare compute options</h3>
 				<p className="text-sm text-muted-foreground">
-					Basic includes the first active agent. Additional Basic and Performance agents are billed
+					The first active Basic agent is free. Additional Basic and Performance agents are billed
 					separately.
 				</p>
 			</div>
@@ -125,7 +125,7 @@ export function PlanComparison({
 							</span>
 						</div>
 						<CardDescription className="mt-2">
-							One active Basic agent is included. Each additional Basic agent uses its own
+							Your first active Basic agent is free. Each additional Basic agent uses its own
 							subscription.
 						</CardDescription>
 						{basicOffer && basicOffer.billing_term_months !== 1 ? (

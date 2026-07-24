@@ -7,9 +7,12 @@ import { normalizeHostedLanguage } from "@/hosted/billing/deploy/language-timezo
 import type { HostedRuntime } from "@/hosted/runtimes";
 
 type DeployPersona = {
+	assistantName: string;
 	language: string;
 	timezone: string;
 };
+
+export const DEPLOY_ASSISTANT_NAME_MAX_LENGTH = 255;
 
 export type DeployAiFields = Pick<DeployRequest, "ai_provider_auth_kind"> &
 	Partial<
@@ -30,10 +33,12 @@ export function buildHostedDeployRequest({
 	persona: DeployPersona;
 	aiFields: DeployAiFields;
 }): DeployRequest {
+	const assistantName = persona.assistantName.trim();
 	const language = normalizeHostedLanguage(persona.language);
 	const timezone = persona.timezone.trim() || null;
 	const { ai_provider_auth_kind, ...restAiFields } = aiFields;
 	const personaFields = {
+		assistant_name: assistantName,
 		language,
 		timezone,
 	};
