@@ -28,7 +28,6 @@ const managedModelCatalog = {
 		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
 		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false },
 		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false },
-		{ id: "gpt-5.5", display_name: "GPT-5.5", is_default: false },
 	],
 };
 
@@ -743,6 +742,7 @@ type HostedApiStubOptions = {
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
 	managedModels?: typeof managedModelCatalog;
+	planRequests?: string[];
 	plans?: readonly unknown[];
 	planChangeRequests?: string[];
 	planChangeResponses?: unknown[];
@@ -765,6 +765,8 @@ type HostedApiStubOptions = {
 		ifMatch: string | null;
 	}>;
 	walletState?: typeof walletState;
+	walletRequests?: string[];
+	walletResponses?: StubResponse[];
 	onTopUpSuccess?: () => void;
 	onWalletCheckoutSuccess?: () => void;
 };
@@ -785,11 +787,20 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
 			return fulfillJson(r, hostedUser(options.canCreateCloudAgents ?? true));
 		}
-		if (p === "/v2/subscription/plans") return fulfillJson(r, plans);
+		if (p === "/v2/subscription/plans") {
+			options.planRequests?.push(r.request().url());
+			return fulfillJson(r, plans);
+		}
 		if (p === "/v2/ai-providers/managed/models") {
 			return fulfillJson(r, options.managedModels ?? managedModelCatalog);
 		}
 		if (p === "/v2/wallet" && r.request().method() === "GET") {
+			options.walletRequests?.push(r.request().url());
+			const response = options.walletResponses?.shift();
+			if (response) {
+				if (response.status < 400) currentWallet = response.body as typeof walletState;
+				return fulfillJson(r, response.body, response.status);
+			}
 			return fulfillJson(r, currentWallet);
 		}
 		if (p === "/v2/wallet/auto-reload" && r.request().method() === "PUT") {
@@ -818,6 +829,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			if (options.deploymentsResponse) {
+				if (options.deploymentsResponse.delayMs) {
+					await new Promise((resolve) => setTimeout(resolve, options.deploymentsResponse?.delayMs));
+				}
 				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
 			}
 			return fulfillJson(r, deployments.map(readDeploymentFixture));
@@ -1275,8 +1289,11 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		compute_plan_slug: "compute_basic",
 		runtime: "hermes",
+		primary_model: {
+			provider_id: "clawdi-v2",
+			model: "gpt-5.6-luna",
+		},
 	});
-	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).not.toHaveProperty("primary_model");
 });
 
 test("managed model picker lists the curated catalog without Custom or image models", async ({
@@ -1290,12 +1307,12 @@ test("managed model picker lists the curated catalog without Custom or image mod
 	});
 	await page.goto("/deploy");
 
+	await expect(page.locator("#deploy-catalog-model")).toContainText("Luna");
 	await page.locator("#deploy-catalog-model").click();
-	await expect(page.getByRole("option", { name: "Hosted default (Luna)" })).toBeVisible();
 	await expect(page.getByRole("option", { name: "Luna", exact: true })).toBeVisible();
 	await expect(page.getByRole("option", { name: "Sol", exact: true })).toBeVisible();
 	await expect(page.getByRole("option", { name: "Terra", exact: true })).toBeVisible();
-	await expect(page.getByRole("option", { name: "GPT-5.5", exact: true })).toBeVisible();
+	await expect(page.getByRole("option", { name: "Hosted default (Luna)" })).toHaveCount(0);
 	await expect(page.getByRole("option", { name: "Custom model" })).toHaveCount(0);
 	await expect(page.getByRole("option", { name: /gpt-image/i })).toHaveCount(0);
 
@@ -1308,6 +1325,55 @@ test("managed model picker lists the curated catalog without Custom or image mod
 			model: "gpt-5.6-sol",
 		},
 	});
+});
+
+test("Basic paid checkout stays hidden until deployment inventory succeeds", async ({ page }) => {
+	await stubHostedApi(page, {
+		plans: [basicPlan],
+		deploymentsResponse: { status: 200, body: [], delayMs: 1_000 },
+	});
+	await page.goto("/deploy");
+
+	await expect(page.getByText("Checking your free Basic slot…", { exact: true })).toBeVisible();
+	await expect(page.getByText("$9/mo", { exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Continue to checkout" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Deploy agent" })).toBeDisabled();
+
+	await expect(page.getByText("First Basic agent — Free", { exact: false })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Deploy agent" })).toBeEnabled();
+});
+
+test("empty plans and wallet failures expose working retries", async ({ page }) => {
+	const planRequests: string[] = [];
+	await stubHostedApi(page, { plans: [], planRequests });
+	await page.goto("/deploy");
+
+	const plansError = page.getByRole("alert").filter({ hasText: "Couldn't load compute plans" });
+	await expect(plansError).toBeVisible();
+	await plansError.getByRole("button", { name: "Retry" }).click();
+	await expect.poll(() => planRequests.length).toBeGreaterThanOrEqual(2);
+
+	const walletRequests: string[] = [];
+	await page.unrouteAll({ behavior: "wait" });
+	await stubHostedApi(page, {
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan],
+		walletRequests,
+		walletResponses: [
+			{ status: 403, body: { detail: "wallet unavailable" } },
+			{ status: 200, body: walletState },
+		],
+	});
+	await page.goto("/deploy");
+	await page.getByRole("button", { name: /Wallet balance/ }).click();
+
+	const walletError = page
+		.getByRole("alert")
+		.filter({ hasText: "Couldn't load your AI Credits wallet" });
+	await expect(walletError).toBeVisible();
+	await walletError.getByRole("button", { name: "Retry" }).click();
+	await expect(page.getByTestId("wallet-debit-equation")).toBeVisible();
+	await expect.poll(() => walletRequests.length).toBe(2);
 });
 
 test("hosted locale settings submit canonical deployment PATCH", async ({ page }) => {
@@ -1355,6 +1421,40 @@ test("hosted AI provider Apply submits canonical deployment PATCH", async ({ pag
 		ai_provider_id: null,
 		provider_ids: [],
 		primary_model: null,
+	});
+});
+
+test("hosted AI provider Apply accepts the managed Luna default", async ({ page }) => {
+	const updateDeploymentRequests: Array<{
+		body: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}> = [];
+	const unmanagedDeployment: DeploymentMutationFixture = {
+		...includedBasicDeployment,
+		id: "hdep_unmanaged_model",
+		config_info: {
+			...includedBasicDeployment.config_info,
+			ai_provider_auth_kind: "unmanaged",
+		},
+	};
+	await stubHostedApi(page, {
+		deployments: [unmanagedDeployment],
+		updateDeploymentRequests,
+	});
+	await page.goto("/agents/hdep_unmanaged_model/model-provider?source=on-clawdi");
+
+	await page.getByRole("button", { name: /Managed by Clawdi/ }).click();
+	await expect(page.locator("#agent-catalog-model")).toContainText("Luna");
+	await page.getByRole("button", { name: "Apply provider settings" }).click();
+	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
+	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+		ai_provider_auth_kind: "managed",
+		provider_ids: ["clawdi-v2"],
+		primary_model: {
+			provider_id: "clawdi-v2",
+			model: "gpt-5.6-luna",
+		},
 	});
 });
 

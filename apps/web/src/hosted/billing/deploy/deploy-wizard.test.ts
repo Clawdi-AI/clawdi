@@ -7,6 +7,10 @@ const planComparisonSource = readFileSync(
 	new URL("../subscription/plan-comparison.tsx", import.meta.url),
 	"utf8",
 );
+const agentDetailSource = readFileSync(
+	new URL("../../agents/hosted-agent-detail.tsx", import.meta.url),
+	"utf8",
+);
 
 describe("deploy wizard personalization", () => {
 	test("renders the required bounded agent name input", () => {
@@ -29,5 +33,28 @@ describe("first Basic agent copy", () => {
 		expect(planComparisonSource).toContain("The first active Basic agent is free.");
 		expect(planComparisonSource).toContain("Your first active Basic agent is free.");
 		expect(planComparisonSource).not.toContain("agent is included");
+	});
+});
+
+describe("managed model picker", () => {
+	test("uses real catalog items and exposes loading and retry states", () => {
+		for (const source of [wizardSource, agentDetailSource]) {
+			expect(source).toContain("managedModelPickerItems(managedModels)");
+			expect(source).toContain("Loading managed models…");
+			expect(source).toContain('title="Couldn\'t load managed models"');
+			expect(source).not.toContain("__hosted_default__");
+			expect(source).not.toContain("Hosted default (Luna)");
+		}
+	});
+});
+
+describe("billing-read gates", () => {
+	test("keeps deploy disabled until inventory succeeds and offers retries", () => {
+		expect(wizardSource).toContain("deployments.isSuccess &&");
+		expect(wizardSource).toContain('title="Couldn\'t check deployment inventory"');
+		expect(wizardSource).toContain("onRetry={() => void deployments.refetch()}");
+		expect(wizardSource).toContain('title="Couldn\'t load compute plans"');
+		expect(wizardSource).toContain('title="Couldn\'t load your AI Credits wallet"');
+		expect(wizardSource).toContain("onRetry={() => void wallet.refetch()}");
 	});
 });

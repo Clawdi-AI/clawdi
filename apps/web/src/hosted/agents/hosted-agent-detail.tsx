@@ -163,9 +163,8 @@ import {
 	firstModelForProvider,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
-	MANAGED_DEFAULT_MODEL_CHOICE,
 	MANAGED_PROVIDER_ID,
-	managedModelDisplayName,
+	managedModelPickerItems,
 	modelIdsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
@@ -1550,6 +1549,7 @@ function AiProviderTab({
 		parseDeploymentStatus(deployment.resource.status.summary_state).kind === "updating";
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data?.providers ?? [];
+	const managedModels = managedModelCatalog.data?.models ?? [];
 	const customProviders = useMemo(
 		() => list.filter((provider) => !isFirstPartyManagedAiProvider(provider)),
 		[list],
@@ -1597,18 +1597,22 @@ function AiProviderTab({
 						.filter((choice): choice is string => Boolean(choice)),
 					initialPrimaryChoice,
 				);
-	const currentModel =
+	const bindingModelIdentity =
 		currentAuthKind === "unmanaged"
 			? ""
 			: primaryModelValue(configuredPrimaryModel) ||
-				firstModelForProvider(initialPrimaryChoice, list);
+				(initialPrimaryChoice === MANAGED_AI_CHOICE
+					? ""
+					: firstModelForProvider(initialPrimaryChoice, list));
+	const currentModel =
+		currentAuthKind === "unmanaged"
+			? ""
+			: bindingModelIdentity || firstModelForProvider(initialPrimaryChoice, list, managedModels);
 
 	const [selectedProviders, setSelectedProviders] = useState<string[]>(initialProviderChoices);
 	const [bindingMode, setBindingMode] = useState<AiBindingMode>(initialMode);
 	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(initialPrimaryChoice);
-	const [primaryModel, setPrimaryModel] = useState<string>(
-		currentModel || MANAGED_DEFAULT_MODEL_CHOICE,
-	);
+	const [primaryModel, setPrimaryModel] = useState<string>(currentModel);
 
 	// Re-seed the form only when the server-side binding genuinely changes (the
 	// user's own apply completing, or an out-of-band change) — never on a plain
@@ -1620,7 +1624,7 @@ function AiProviderTab({
 		initialMode,
 		initialProviderChoices,
 		initialPrimaryChoice,
-		currentModel,
+		bindingModelIdentity,
 	]);
 	const [syncedIdentity, setSyncedIdentity] = useState(bindingIdentity);
 	if (bindingIdentity !== syncedIdentity) {
@@ -1628,8 +1632,19 @@ function AiProviderTab({
 		setBindingMode(initialMode);
 		setSelectedProviders(initialProviderChoices);
 		setPrimaryProviderChoice(initialPrimaryChoice);
-		setPrimaryModel(currentModel || MANAGED_DEFAULT_MODEL_CHOICE);
+		setPrimaryModel(currentModel);
 	}
+	useEffect(() => {
+		if (
+			bindingMode !== "configured" ||
+			primaryProviderChoice !== MANAGED_AI_CHOICE ||
+			primaryModel.trim()
+		) {
+			return;
+		}
+		const fallback = firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels);
+		if (fallback) setPrimaryModel(fallback);
+	}, [bindingMode, managedModels, primaryModel, primaryProviderChoice]);
 
 	const selectedIdentity = JSON.stringify(
 		normalizeSelectedProviderIds(selectedProviders, primaryProviderChoice),
@@ -1640,11 +1655,15 @@ function AiProviderTab({
 		(bindingMode === "configured" &&
 			(selectedIdentity !== initialSelectedIdentity ||
 				primaryProviderChoice !== initialPrimaryChoice ||
-				primaryModel !== (currentModel || MANAGED_DEFAULT_MODEL_CHOICE)));
+				primaryModel !== currentModel));
+	const managedPrimaryModelReady =
+		bindingMode !== "configured" ||
+		primaryProviderChoice !== MANAGED_AI_CHOICE ||
+		(managedModelCatalog.isSuccess &&
+			modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).includes(primaryModel));
 
 	function setPrimaryProvider(choice: string) {
 		setBindingMode("configured");
-		const managedModels = managedModelCatalog.data?.models ?? [];
 		const previousCatalog = modelIdsForProvider(primaryProviderChoice, list, managedModels);
 		const nextCatalog = modelIdsForProvider(choice, list, managedModels);
 		const fallback = firstModelForProvider(choice, list, managedModels);
@@ -1652,6 +1671,7 @@ function AiProviderTab({
 		setSelectedProviders((current) => normalizeSelectedProviderIds(current, choice));
 		setPrimaryModel((current) => {
 			const trimmed = current.trim();
+			if (choice === MANAGED_AI_CHOICE && !nextCatalog.includes(trimmed)) return fallback;
 			if (!trimmed) return fallback || current;
 			if (
 				previousCatalog.includes(trimmed) &&
@@ -1714,10 +1734,17 @@ function AiProviderTab({
 		}
 		const primaryProviderRef =
 			providerRefFromChoice(primaryProviderChoice, list) ?? MANAGED_PROVIDER_ID;
-		const usesHostedManagedDefault =
-			primaryProviderChoice === MANAGED_AI_CHOICE && primaryModel === MANAGED_DEFAULT_MODEL_CHOICE;
+		if (
+			primaryProviderChoice === MANAGED_AI_CHOICE &&
+			!modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).includes(primaryModel)
+		) {
+			toast.error("Managed model unavailable", {
+				description: "Load the managed model catalog and choose a model before applying.",
+			});
+			return;
+		}
 		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
-		if (!modelRef && !usesHostedManagedDefault) {
+		if (!modelRef) {
 			toast.error("Primary model required");
 			return;
 		}
@@ -1866,7 +1893,10 @@ function AiProviderTab({
 			) : (
 				<AgentPrimaryModelPicker
 					providers={list}
-					managedModels={managedModelCatalog.data?.models ?? []}
+					managedModels={managedModels}
+					managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
+					managedModelsError={managedModelCatalog.error}
+					onManagedModelsRetry={() => void managedModelCatalog.refetch()}
 					customProviders={customProviders}
 					selectedProviderChoices={normalizeSelectedProviderIds(
 						selectedProviders,
@@ -1881,7 +1911,9 @@ function AiProviderTab({
 
 			<div className="flex items-center gap-2">
 				<Button
-					disabled={!dirty || updateDeployment.isPending || updateInProgress}
+					disabled={
+						!dirty || !managedPrimaryModelReady || updateDeployment.isPending || updateInProgress
+					}
 					onClick={applyProviderSettings}
 				>
 					{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
@@ -1903,6 +1935,9 @@ function AiProviderTab({
 function AgentPrimaryModelPicker({
 	providers,
 	managedModels,
+	managedModelsLoading,
+	managedModelsError,
+	onManagedModelsRetry,
 	customProviders,
 	selectedProviderChoices,
 	primaryProviderChoice,
@@ -1912,6 +1947,9 @@ function AgentPrimaryModelPicker({
 }: {
 	providers: readonly AiProvider[];
 	managedModels: readonly ManagedModelCatalogItem[];
+	managedModelsLoading: boolean;
+	managedModelsError: unknown;
+	onManagedModelsRetry: () => void;
 	customProviders: readonly AiProvider[];
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
@@ -1922,6 +1960,10 @@ function AgentPrimaryModelPicker({
 	const isManaged = primaryProviderChoice === MANAGED_AI_CHOICE;
 	const catalogModelIds = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
 	const modelChoice = catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
+	const managedCatalogUnavailableError =
+		isManaged && managedModels.length === 0 && !managedModelsLoading
+			? (managedModelsError ?? new Error("The managed model catalog returned no models."))
+			: null;
 	const primaryProviderItems = [
 		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
 			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
@@ -1937,18 +1979,15 @@ function AgentPrimaryModelPicker({
 				label: provider.label ?? provider.provider_id,
 			})),
 	];
-	const catalogModelItems = [
-		...catalogModelIds.map((model) => ({
-			value: model,
-			label:
-				model === MANAGED_DEFAULT_MODEL_CHOICE
-					? "Hosted default (Luna)"
-					: isManaged
-						? (managedModelDisplayName(model, managedModels) ?? model)
-						: formatModelLabel(model),
-		})),
-		...(!isManaged ? [{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" }] : []),
-	];
+	const catalogModelItems = isManaged
+		? managedModelPickerItems(managedModels)
+		: [
+				...catalogModelIds.map((model) => ({
+					value: model,
+					label: formatModelLabel(model),
+				})),
+				{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
+			];
 	return (
 		<div className="flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3">
 			<div className="grid gap-3 sm:grid-cols-2">
@@ -1983,7 +2022,18 @@ function AgentPrimaryModelPicker({
 						</SelectContent>
 					</Select>
 				</div>
-				{catalogModelIds.length > 0 ? (
+				{isManaged && managedModelsLoading ? (
+					<div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+						<Spinner className="size-3.5" /> Loading managed models…
+					</div>
+				) : managedCatalogUnavailableError ? (
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
+						error={managedCatalogUnavailableError}
+						onRetry={onManagedModelsRetry}
+						title="Couldn't load managed models"
+					/>
+				) : catalogModelIds.length > 0 ? (
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="agent-catalog-model">Catalog model</Label>
 						<Select
@@ -1998,18 +2048,11 @@ function AgentPrimaryModelPicker({
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								{catalogModelIds.map((model) => (
-									<SelectItem key={model} value={model}>
-										{model === MANAGED_DEFAULT_MODEL_CHOICE
-											? "Hosted default (Luna)"
-											: isManaged
-												? (managedModelDisplayName(model, managedModels) ?? model)
-												: formatModelLabel(model)}
+								{catalogModelItems.map((item) => (
+									<SelectItem key={item.value} value={item.value}>
+										{item.label}
 									</SelectItem>
 								))}
-								{!isManaged ? (
-									<SelectItem value={CUSTOM_MODEL_CHOICE}>Custom model</SelectItem>
-								) : null}
 							</SelectContent>
 						</Select>
 					</div>
