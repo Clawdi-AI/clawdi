@@ -64,7 +64,6 @@ import {
 	DEFAULT_DEPLOY_PRIMARY_MODEL,
 	DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 	DEFAULT_DEPLOY_RUNTIME,
-	type DeployWizardAiAccessMode,
 	deployAssistantNameAfterRuntimeChange,
 } from "@/hosted/billing/deploy/deploy-defaults";
 import {
@@ -136,31 +135,24 @@ import {
 } from "@/hosted/billing/wallet/wallet-funding";
 import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
+import {
+	aiBindingBuildErrorCopy,
+	buildAiBindingFields,
+} from "@/hosted/v2/ai-providers/ai-provider-binding";
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
-	dedupeProviderIds,
-	firstModelForProvider,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_ID,
 	MANAGED_PROVIDER_LABEL,
 	modelDisplayName,
-	modelIdsForProvider,
 	modelOptionsForProvider,
-	normalizeSelectedProviderIds,
-	primaryModelRef,
 	providerCatalogDescription,
 	providerDisplayLabel,
-	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
-import {
-	aiProviderRuntimeId,
-	buildAiProviderPoolBootstrap,
-	type RuntimeAiProviderAuthKind,
-} from "@/hosted/v2/ai-providers/runtime-bootstrap";
-import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
 import { ChannelStatusBadge } from "@/hosted/v2/channels/channel-ui";
@@ -171,7 +163,6 @@ import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { cn } from "@/lib/utils";
 
 type Compute = "basic" | "performance";
-type AiAccessMode = DeployWizardAiAccessMode;
 type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: string;
@@ -200,12 +191,6 @@ const aiProviderErrorNormalizer: ApiErrorNormalizer = {
 	isAuthError: isApiAuthError,
 	normalizeError: (error) => `${normalizeApiError(error)} Managed AI still works.`,
 };
-
-function aiAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
-	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
-		? "codex_oauth"
-		: "api_key";
-}
 
 function AddTile({
 	title,
@@ -406,22 +391,11 @@ export function DeployWizard() {
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const includedCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const assistantNameEditedRef = useRef(false);
-	const createdProviderGuardRef = useRef<{ providerId: string; dataUpdatedAt: number } | null>(
-		null,
-	);
 
 	const [runtime, setRuntime] = useState(DEFAULT_DEPLOY_RUNTIME);
 	const [assistantName, setAssistantName] = useState(() =>
 		runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME),
 	);
-	const [aiAccessMode, setAiAccessMode] = useState<AiAccessMode>(DEFAULT_DEPLOY_AI_ACCESS_MODE);
-	const [aiProviderChoices, setAiProviderChoices] = useState<string[]>([
-		...DEFAULT_DEPLOY_AI_PROVIDER_CHOICES,
-	]);
-	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(
-		DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
-	);
-	const [primaryModel, setPrimaryModel] = useState(DEFAULT_DEPLOY_PRIMARY_MODEL);
 	const [compute, setCompute] = useState<Compute>("basic");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
@@ -515,15 +489,42 @@ export function DeployWizard() {
 
 	const providerList = aiProviders.data ?? [];
 	const managedModels = managedModelCatalog.data?.models ?? [];
+	const {
+		draft: aiBindingDraft,
+		managedPrimaryModelReady,
+		selectedProviderChoices,
+		selectCreatedProvider: selectCreatedAiProvider,
+		setBindingMode: setAiAccessMode,
+		setPrimaryModel,
+		setPrimaryProvider,
+		toggleProvider: toggleAiProviderChoice,
+	} = useAiProviderBindingDraft({
+		initialDraft: {
+			bindingMode: DEFAULT_DEPLOY_AI_ACCESS_MODE,
+			providerChoices: [...DEFAULT_DEPLOY_AI_PROVIDER_CHOICES],
+			primaryProviderChoice: DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
+			primaryModel: DEFAULT_DEPLOY_PRIMARY_MODEL,
+		},
+		managedCatalogReady: managedModelCatalog.isSuccess,
+		managedModels,
+		operationMode: "create",
+		providerCatalog: {
+			dataUpdatedAt: aiProviders.dataUpdatedAt,
+			isFetching: aiProviders.isFetching,
+			isSuccess: aiProviders.isSuccess,
+		},
+		providers: providerList,
+	});
+	const {
+		bindingMode: aiAccessMode,
+		primaryModel,
+		primaryProviderChoice,
+		providerChoices: aiProviderChoices,
+	} = aiBindingDraft;
 	const channelList = channels.data ?? [];
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const planReady = plans.isSuccess && computePlanReady;
-	const managedPrimaryModelReady =
-		aiAccessMode !== "configured" ||
-		primaryProviderChoice !== MANAGED_AI_CHOICE ||
-		(managedModelCatalog.isSuccess &&
-			modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).includes(primaryModel));
 	const canSubmit =
 		planReady &&
 		deployments.isSuccess &&
@@ -540,13 +541,7 @@ export function DeployWizard() {
 				!walletInsufficient));
 
 	function selectCreatedProvider(providerId: string) {
-		createdProviderGuardRef.current = {
-			providerId,
-			dataUpdatedAt: aiProviders.dataUpdatedAt,
-		};
-		setAiAccessMode("configured");
-		setAiProviderChoices([providerId]);
-		setPrimaryProvider(providerId);
+		selectCreatedAiProvider(providerId, aiProviders.dataUpdatedAt);
 	}
 
 	function selectRuntime(nextRuntime: HostedRuntime) {
@@ -577,170 +572,22 @@ export function DeployWizard() {
 		if (paymentMethod === "wallet" && walletDisabledReason) setPaymentMethod("card");
 	}, [paymentMethod, walletDisabledReason]);
 
-	// Don't let the selection silently degrade to managed: if the chosen
-	// provider vanishes from a SUCCESSFULLY-loaded list (deleted elsewhere),
-	// reset to managed so the UI and the deploy request agree.
-	useEffect(() => {
-		const providerIds = new Set(providerList.map((provider) => provider.provider_id));
-		const createdGuard = createdProviderGuardRef.current;
-
-		let nextChoices = aiProviderChoices.filter(
-			(choice) => choice === MANAGED_AI_CHOICE || providerIds.has(choice),
-		);
-		if (nextChoices.some((choice) => choice === createdGuard?.providerId)) {
-			createdProviderGuardRef.current = null;
-		}
-
-		if (createdGuard && aiProviderChoices.includes(createdGuard.providerId)) {
-			if (aiProviders.dataUpdatedAt <= createdGuard.dataUpdatedAt) return;
-			createdProviderGuardRef.current = null;
-		}
-
-		if (aiProviders.isSuccess && !aiProviders.isFetching) {
-			if (nextChoices.length === 0) nextChoices = [MANAGED_AI_CHOICE];
-			const normalized = dedupeProviderIds(nextChoices);
-			if (normalized.join("\0") !== aiProviderChoices.join("\0")) {
-				setAiProviderChoices(normalized);
-			}
-			if (!normalized.includes(primaryProviderChoice)) {
-				setPrimaryProvider(normalized[0] ?? MANAGED_AI_CHOICE);
-			}
-		}
-	}, [
-		aiProviderChoices,
-		aiProviders.dataUpdatedAt,
-		aiProviders.isFetching,
-		aiProviders.isSuccess,
-		primaryProviderChoice,
-		providerList,
-	]);
-
-	useEffect(() => {
-		if (primaryModel.trim()) return;
-		const fallback = firstModelForProvider(
-			primaryProviderChoice,
-			providerList,
-			managedModelCatalog.data?.models ?? [],
-		);
-		if (fallback) setPrimaryModel(fallback);
-	}, [managedModelCatalog.data?.models, primaryModel, primaryProviderChoice, providerList]);
-
 	function setComputeTier(next: Compute) {
 		setCompute(next);
 	}
 
-	function providerUnavailable(
-		description = `Refresh providers or choose ${MANAGED_PROVIDER_LABEL}.`,
-	) {
-		toast.error("Provider unavailable", { description });
-	}
-
-	function setPrimaryProvider(choice: string) {
-		setAiAccessMode("configured");
-		const providers = providerList;
-		const managedModels = managedModelCatalog.data?.models ?? [];
-		const previousCatalog = modelIdsForProvider(primaryProviderChoice, providers, managedModels);
-		const nextCatalog = modelIdsForProvider(choice, providers, managedModels);
-		const fallback = firstModelForProvider(choice, providers, managedModels);
-		setPrimaryProviderChoice(choice);
-		setAiProviderChoices((current) => normalizeSelectedProviderIds(current, choice));
-		setPrimaryModel((current) => {
-			const trimmed = current.trim();
-			if (choice === MANAGED_AI_CHOICE && !nextCatalog.includes(trimmed)) return fallback;
-			if (!trimmed) return fallback;
-			if (
-				previousCatalog.includes(trimmed) &&
-				nextCatalog.length > 0 &&
-				!nextCatalog.includes(trimmed)
-			) {
-				return fallback;
-			}
-			return current;
-		});
-	}
-
-	function toggleAiProviderChoice(choice: string) {
-		setAiAccessMode("configured");
-		const selected = aiProviderChoices.includes(choice);
-		let next = selected
-			? aiProviderChoices.filter((item) => item !== choice)
-			: aiProviderChoices.length === 1 &&
-					aiProviderChoices[0] === MANAGED_AI_CHOICE &&
-					choice !== MANAGED_AI_CHOICE
-				? [choice]
-				: [...aiProviderChoices, choice];
-		if (next.length === 0) next = [choice];
-		next = dedupeProviderIds(next);
-		setAiProviderChoices(next);
-		if (!next.includes(primaryProviderChoice)) {
-			setPrimaryProvider(next[0] ?? MANAGED_AI_CHOICE);
-		}
-	}
-
 	function aiDeployFields(): DeployAiFields | null {
-		if (aiAccessMode === "unmanaged") {
-			return { ai_provider_auth_kind: "unmanaged" };
-		}
-		const selectedChoices = normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice);
-		const providerRefs = selectedChoices
-			.map((choice) => providerRefFromChoice(choice, providerList))
-			.filter((providerId): providerId is string => Boolean(providerId));
-		if (providerRefs.length !== selectedChoices.length) {
-			providerUnavailable();
-			return null;
-		}
-
-		const primaryProviderRef =
-			providerRefFromChoice(primaryProviderChoice, providerList) ?? MANAGED_PROVIDER_ID;
-		if (
-			primaryProviderChoice === MANAGED_AI_CHOICE &&
-			!modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModelCatalog.data?.models ?? []).includes(
-				primaryModel,
-			)
-		) {
-			toast.error("Managed model unavailable", {
-				description: "Load the managed model catalog and choose a model before deploying.",
+		try {
+			return buildAiBindingFields(aiBindingDraft, {
+				managedModels,
+				mode: "create",
+				providers: providerList,
 			});
+		} catch (error) {
+			const copy = aiBindingBuildErrorCopy(error, "create");
+			toast.error(copy.title, copy.description ? { description: copy.description } : undefined);
 			return null;
 		}
-		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
-		if (!modelRef) {
-			toast.error("Primary model required", {
-				description: "Choose a catalog model or enter a model id.",
-			});
-			return null;
-		}
-		const primaryProvider = providerList.find(
-			(provider) => provider.provider_id === primaryProviderChoice,
-		);
-		const primaryKind = primaryProvider ? aiAuthKind(primaryProvider) : "managed";
-		const customProviders = selectedChoices
-			.filter((choice) => choice !== MANAGED_AI_CHOICE)
-			.map((choice) => providerList.find((provider) => provider.provider_id === choice))
-			.filter((provider): provider is AiProvider => Boolean(provider));
-		const body: DeployAiFields = {
-			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
-			ai_provider_auth_kind: primaryKind,
-			provider_ids: providerRefs,
-		};
-		if (modelRef) body.primary_model = modelRef;
-		if (customProviders.length > 0) {
-			const bootstrapSelectedProvider = primaryProvider ?? customProviders[0];
-			const bootstrapKind = aiAuthKind(bootstrapSelectedProvider);
-			try {
-				body.ai_provider_bootstrap = buildAiProviderPoolBootstrap(
-					customProviders,
-					bootstrapSelectedProvider.provider_id,
-					bootstrapKind,
-				);
-			} catch (error) {
-				providerUnavailable(
-					error instanceof Error ? error.message : "Check provider configuration.",
-				);
-				return null;
-			}
-		}
-		return body;
 	}
 
 	function buildDeployRequest(
@@ -1020,10 +867,7 @@ export function DeployWizard() {
 						: "Review wallet quote"
 			: "Continue to checkout"
 		: "Deploy agent";
-	const selectedProviderCount =
-		aiAccessMode === "configured"
-			? normalizeSelectedProviderIds(aiProviderChoices, primaryProviderChoice).length
-			: 0;
+	const selectedProviderCount = aiAccessMode === "configured" ? selectedProviderChoices.length : 0;
 	const primaryProvider = providerList.find(
 		(provider) => provider.provider_id === primaryProviderChoice,
 	);
@@ -1217,10 +1061,7 @@ export function DeployWizard() {
 							managedModelsErrorNormalizer={billingErrorNormalizer}
 							onManagedModelsRetry={() => void managedModelCatalog.refetch()}
 							customProviders={providerList}
-							selectedProviderChoices={normalizeSelectedProviderIds(
-								aiProviderChoices,
-								primaryProviderChoice,
-							)}
+							selectedProviderChoices={selectedProviderChoices}
 							primaryProviderChoice={primaryProviderChoice}
 							primaryModel={primaryModel}
 							onPrimaryProviderChange={setPrimaryProvider}
