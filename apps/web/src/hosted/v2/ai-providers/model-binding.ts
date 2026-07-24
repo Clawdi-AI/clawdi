@@ -4,6 +4,12 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 export const MANAGED_AI_CHOICE = "__managed__";
 export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_V2_PROVIDER_ID;
+export const CUSTOM_MODEL_CHOICE = "__custom__";
+
+export type ModelBindingPickerItem = {
+	value: string;
+	label: string;
+};
 
 export type PrimaryModelRef = {
 	provider_id: string;
@@ -97,11 +103,53 @@ export function managedModelDisplayName(
 
 export function managedModelPickerItems(
 	managedModels: readonly ManagedModelCatalogItem[],
-): Array<{ value: string; label: string }> {
+): ModelBindingPickerItem[] {
 	return modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).map((modelId) => ({
 		value: modelId,
 		label: managedModelDisplayName(modelId, managedModels) ?? modelId,
 	}));
+}
+
+export function primaryProviderPickerItems(
+	selectedProviderChoices: readonly string[],
+	providers: readonly AiProvider[],
+	additionalItems: readonly ModelBindingPickerItem[] = [],
+): ModelBindingPickerItem[] {
+	return [
+		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
+			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
+			: []),
+		...additionalItems,
+		...providers
+			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
+			.map((provider) => ({
+				value: provider.provider_id,
+				label: provider.label ?? provider.provider_id,
+			})),
+	];
+}
+
+export function modelPickerItems(
+	choice: string,
+	providers: readonly AiProvider[],
+	managedModels: readonly ManagedModelCatalogItem[],
+	formatModel: (modelId: string) => string = (modelId) => modelId,
+): ModelBindingPickerItem[] {
+	if (choice === MANAGED_AI_CHOICE) return managedModelPickerItems(managedModels);
+	return [
+		...modelIdsForProvider(choice, providers).map((modelId) => ({
+			value: modelId,
+			label: formatModel(modelId),
+		})),
+		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
+	];
+}
+
+export function primaryModelPickerChoice(
+	primaryModel: string,
+	catalogModelIds: readonly string[],
+): string {
+	return catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 }
 
 export function firstModelForProvider(

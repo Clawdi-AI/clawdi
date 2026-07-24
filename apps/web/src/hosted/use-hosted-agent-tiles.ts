@@ -5,6 +5,7 @@ import { createElement, useMemo } from "react";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
+import { statusTextVariants } from "@/components/ui/status-badge";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { computeDunningTileStatus } from "@/hosted/billing/components/compute-dunning.logic";
 import type { HostedDeployment, HostedDeploymentStatus } from "@/hosted/billing/contracts";
@@ -38,28 +39,12 @@ type DeploymentStatusInput = {
 
 const EMPTY_DEPLOYMENTS: HostedDeployment[] = [];
 
-const COMPUTE_DOT_TONE: Record<DeploymentStatusTone, string> = {
-	success: "bg-success ring-2 ring-success/20",
-	warning: "bg-warning ring-2 ring-warning/20",
-	destructive: "bg-destructive ring-2 ring-destructive/20",
-	info: "bg-info ring-2 ring-info/20",
-	neutral: "border border-muted-foreground/50 bg-transparent",
-};
-
-const COMPUTE_TEXT_TONE: Record<DeploymentStatusTone, string> = {
-	success: "text-muted-foreground",
-	warning: "text-warning-muted-foreground font-medium",
-	destructive: "text-destructive-muted-foreground font-medium",
-	info: "text-info-muted-foreground",
-	neutral: "text-muted-foreground",
-};
-
 export interface HostedRuntimeStatusView {
 	compute: DeploymentStatus;
 	sync: DaemonStatusVisual | null;
 	primary: {
 		label: string;
-		dotClass: string;
+		tone: DeploymentStatusTone;
 		textClass: string;
 	};
 	secondary: {
@@ -87,7 +72,7 @@ export function hostedRuntimeStatusView(
 			kind: "failure_reason",
 			label: `Failure: ${compactDeploymentFailureReason(failureReason)}`,
 			tooltip: failureReason,
-			textClass: COMPUTE_TEXT_TONE.destructive,
+			textClass: statusTextVariants({ status: "destructive" }),
 		};
 	} else if (computeIsRunning && sync && sync.kind !== "live") {
 		secondary = {
@@ -103,8 +88,8 @@ export function hostedRuntimeStatusView(
 		sync,
 		primary: {
 			label: computeLabel,
-			dotClass: COMPUTE_DOT_TONE[computeTone],
-			textClass: COMPUTE_TEXT_TONE[computeTone],
+			tone: computeTone,
+			textClass: statusTextVariants({ status: computeTone }),
 		},
 		secondary,
 		active: computeIsRunning,
@@ -232,7 +217,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			active: runtimeStatus.active,
 			statusDot: {
 				label: runtimeStatus.primary.label,
-				dotClass: runtimeStatus.primary.dotClass,
+				tone: runtimeStatus.primary.tone,
 			},
 			secondaryStatus: failureReasonStatus
 				? {
@@ -252,12 +237,4 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			env: matchedEnv ?? null,
 		},
 	];
-}
-
-export function hostedAgentTileStatus(rawStatus: string): { label: string; active: boolean } {
-	const status = parseDeploymentStatus(rawStatus);
-	return {
-		label: deploymentStatusLabel(status),
-		active: isRunningStatus(status),
-	};
 }

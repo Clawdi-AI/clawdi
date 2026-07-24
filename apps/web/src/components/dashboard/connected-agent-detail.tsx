@@ -47,7 +47,7 @@ import {
 	agentSectionLabel,
 	CONNECTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
-import { unwrap, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { sessionListQueryOptions } from "@/lib/session-queries";
@@ -442,7 +442,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project added");
 		},
-		onError: (e) => toast.error("Couldn't add project", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't add project"),
 	});
 
 	const removeBinding = useMutation({
@@ -457,7 +457,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project removed");
 		},
-		onError: (e) => toast.error("Couldn't remove project", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't remove project"),
 	});
 
 	const reorder = useMutation({
@@ -473,7 +473,7 @@ function AgentProjectsPanel({
 			onChanged();
 			toast.success("Project order updated");
 		},
-		onError: (e) => toast.error("Couldn't reorder projects", { description: errorMessage(e) }),
+		onError: toastApiError("Couldn't reorder projects"),
 	});
 
 	const moveContext = (bindingId: string, direction: -1 | 1) => {

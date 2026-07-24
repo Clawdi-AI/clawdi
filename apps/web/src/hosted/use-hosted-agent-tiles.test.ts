@@ -7,7 +7,6 @@ import type {
 } from "@/hosted/billing/contracts";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
-type HostedAgentTileStatus = typeof import("@/hosted/use-hosted-agent-tiles").hostedAgentTileStatus;
 type DeploymentToTiles = typeof import("@/hosted/use-hosted-agent-tiles").deploymentToTiles;
 type HostedRuntimeStatusView =
 	typeof import("@/hosted/use-hosted-agent-tiles").hostedRuntimeStatusView;
@@ -15,7 +14,6 @@ type ResolveAgentDeployment =
 	typeof import("@/hosted/agents/deployment-hooks").resolveAgentDeployment;
 type Env = components["schemas"]["AgentResponse"];
 
-let getTileStatus: HostedAgentTileStatus | null = null;
 let getDeploymentToTiles: DeploymentToTiles | null = null;
 let getRuntimeStatusView: HostedRuntimeStatusView | null = null;
 let getAgentDeploymentResolution: ResolveAgentDeployment | null = null;
@@ -25,17 +23,11 @@ beforeAll(async () => {
 	process.env.VITE_CLAWDI_DEPLOY_API_URL = "http://localhost:50021";
 	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
 	const module = await import("@/hosted/use-hosted-agent-tiles");
-	getTileStatus = module.hostedAgentTileStatus;
 	getDeploymentToTiles = module.deploymentToTiles;
 	getRuntimeStatusView = module.hostedRuntimeStatusView;
 	const deploymentHooks = await import("@/hosted/agents/deployment-hooks");
 	getAgentDeploymentResolution = deploymentHooks.resolveAgentDeployment;
 });
-
-function hostedAgentTileStatus(rawStatus: string) {
-	if (!getTileStatus) throw new Error("hostedAgentTileStatus was not loaded");
-	return getTileStatus(rawStatus);
-}
 
 function hostedRuntimeStatusView(
 	rawStatus: string,
@@ -335,32 +327,6 @@ describe("resolveAgentDeployment", () => {
 		expect(resolution.match?.deployment.resource.id).toBe("dep_older");
 		expect(resolution.match?.runtime).toBeNull();
 		expect(resolution.ambiguousMatches).toEqual([]);
-	});
-});
-
-describe("hostedAgentTileStatus", () => {
-	test("marks running deployments active and normalizes the ready alias", () => {
-		expect(hostedAgentTileStatus("running")).toEqual({ label: "Running", active: true });
-		expect(hostedAgentTileStatus("ready")).toEqual({ label: "Running", active: true });
-	});
-
-	test("keeps transitional and failed deployments inactive with readable labels", () => {
-		expect(hostedAgentTileStatus("creating")).toEqual({
-			label: "Provisioning",
-			active: false,
-		});
-		expect(hostedAgentTileStatus("starting")).toEqual({
-			label: "Starting",
-			active: false,
-		});
-		expect(hostedAgentTileStatus("failed")).toEqual({ label: "Failed", active: false });
-	});
-
-	test("passes unknown deploy-api statuses through as readable labels", () => {
-		expect(hostedAgentTileStatus("queued_for_drain")).toEqual({
-			label: "Queued For Drain",
-			active: false,
-		});
 	});
 });
 

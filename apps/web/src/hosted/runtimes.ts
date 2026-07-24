@@ -4,10 +4,6 @@ export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
 export type HostedRuntime = (typeof HOSTED_RUNTIMES)[number];
 export const DEFAULT_HOSTED_RUNTIME: HostedRuntime = "openclaw";
 
-const RUNTIME_ORDER = new Map<HostedRuntime, number>(
-	HOSTED_RUNTIMES.map((runtime, index) => [runtime, index]),
-);
-
 const RUNTIME_META = {
 	openclaw: {
 		label: "OpenClaw",
@@ -29,16 +25,6 @@ export function runtimeDisplayName(runtime: HostedRuntime): string {
 
 export function runtimeBlurb(runtime: HostedRuntime): string {
 	return RUNTIME_META[runtime].blurb;
-}
-
-export function sortHostedRuntimes(values: Iterable<string>): HostedRuntime[] {
-	const runtimes = new Set<HostedRuntime>();
-	for (const value of values) {
-		if (isHostedRuntime(value)) runtimes.add(value);
-	}
-	return [...runtimes].sort(
-		(left, right) => (RUNTIME_ORDER.get(left) ?? 0) - (RUNTIME_ORDER.get(right) ?? 0),
-	);
 }
 
 export function deploymentRuntime(deployment: HostedDeployment): HostedRuntime {

@@ -13,6 +13,10 @@ export type SubscriptionBillingTermMonths = NonNullable<
 	ComputeSubscriptionQuoteRequest["billing_term_months"]
 >;
 
+export function supportedBillingTerm(value: number): SubscriptionBillingTermMonths | null {
+	return value === 1 || value === 12 ? value : null;
+}
+
 /** UI selection for the rail-neutral subscription creation flow. */
 export type SubscriptionCreateSelection = {
 	planSlug: ComputePlanSlug;

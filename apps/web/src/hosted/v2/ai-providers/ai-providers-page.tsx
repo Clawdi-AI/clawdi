@@ -6,7 +6,12 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
-import { ENTITY_CARD_BASE, ENTITY_GRID_CLASS, EntityHeader } from "@/components/entity-card";
+import {
+	ENTITY_CARD_BASE,
+	ENTITY_GRID_CLASS,
+	EntityCardSkeleton,
+	EntityHeader,
+} from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
@@ -26,7 +31,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
@@ -100,7 +104,7 @@ export function AiProvidersPage() {
 				) : providers.isLoading ? (
 					<div className={PROVIDER_GRID_CLASS}>
 						{[0, 1, 2].map((i) => (
-							<ProviderCardSkeleton key={i} />
+							<EntityCardSkeleton key={i} metaLines={2} actions />
 						))}
 					</div>
 				) : list.length === 0 ? (
@@ -279,24 +283,4 @@ function modelCatalogSummary(provider: AiProvider): string {
 	if (modelIds.length === 0) return "No catalog models";
 	const visible = modelIds.slice(0, 2).map(formatModelLabel).join(", ");
 	return modelIds.length > 2 ? `${visible} +${modelIds.length - 2} more` : visible;
-}
-
-function ProviderCardSkeleton() {
-	return (
-		<div className={ENTITY_CARD_BASE}>
-			<div className="flex items-start gap-3">
-				<Skeleton className="size-10 shrink-0 rounded-lg" />
-				<div className="min-w-0 flex-1">
-					<Skeleton className="h-4 w-28" />
-					<Skeleton className="mt-2 h-3 w-40" />
-					<Skeleton className="mt-1.5 h-3 w-full max-w-56" />
-				</div>
-			</div>
-			<div className="mt-3 flex items-center gap-2">
-				<Skeleton className="h-8 w-20 rounded-md" />
-				<Skeleton className="h-8 w-14 rounded-md" />
-				<Skeleton className="ml-auto size-8 rounded-md" />
-			</div>
-		</div>
-	);
 }

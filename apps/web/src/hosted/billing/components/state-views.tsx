@@ -3,17 +3,6 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 
-/** Generic card-height skeleton stack. Prefer the structural skeletons below. */
-export function BillingLoading({ rows = 3 }: { rows?: number }) {
-	return (
-		<div data-hosted="true" className="space-y-4">
-			{Array.from({ length: rows }, (_, i) => `row-${i}`).map((key) => (
-				<Skeleton key={key} className="h-28 w-full rounded-lg" />
-			))}
-		</div>
-	);
-}
-
 /** A single card skeleton (header + body lines) matching the Card primitive. */
 function CardSkeleton({ lines = 3, className }: { lines?: number; className?: string }) {
 	return (
@@ -28,17 +17,6 @@ function CardSkeleton({ lines = 3, className }: { lines?: number; className?: st
 				))}
 			</CardContent>
 		</Card>
-	);
-}
-
-/** Pricing: three plan cards in the same responsive grid as the real page. */
-export function PricingSkeleton() {
-	return (
-		<div data-hosted="true" className="grid gap-4 lg:grid-cols-3">
-			<CardSkeleton lines={5} />
-			<CardSkeleton lines={5} className="border-primary/40" />
-			<CardSkeleton lines={4} />
-		</div>
 	);
 }
 

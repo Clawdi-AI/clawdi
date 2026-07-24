@@ -109,62 +109,6 @@ export function useDeleteProviderQuiet() {
 	});
 }
 
-/** vault field name from a provider id (mirrors v1 safeVaultField). */
-function safeVaultField(providerId: string): string {
-	const n = providerId
-		.toLowerCase()
-		.replace(/[^a-z0-9_]+/g, "_")
-		.replace(/^_+|_+$/g, "");
-	return `${n || "provider"}_api_key`;
-}
-
-function exactVaultRef(projectId: string, slug: string, section: string, field: string): string {
-	const parts = ["project", projectId, "vault", slug, "section", section, "field", field];
-	return `clawdi://${parts.map((p) => encodeURIComponent(p)).join("/")}`;
-}
-
-/**
- * Store a BYOK key in the user's project vault and return the `clawdi://…`
- * secret_ref — the create path for `{type:"secret_ref"}` providers (v1
- * `saveApiKeyToVault`). The provider's auth is then set to that ref so the
- * runtime resolves the key from the vault, never the dashboard.
- */
-export function useSaveApiKeyToVault() {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: { providerId: string; apiKey: string }): Promise<string> => {
-			const proj = unwrap(await api.GET("/v1/projects/default"));
-			const projectId = proj.project_id;
-			const slug = "ai-providers";
-			const section = "onboarding";
-			const field = safeVaultField(vars.providerId);
-			// Create-or-attach the vault (no create_only → attaches if it exists).
-			const vault = unwrap(
-				await api.POST("/v1/vault", {
-					params: { query: { project_id: projectId } },
-					body: { slug, name: "AI Providers" },
-				}),
-			);
-			unwrap(
-				await api.PUT("/v1/vault/{slug}/items", {
-					params: {
-						path: { slug },
-						query: { project_id: projectId, vault_id: vault.id },
-					},
-					body: { section, fields: { [field]: vars.apiKey } },
-				}),
-			);
-			return exactVaultRef(projectId, slug, section, field);
-		},
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["vaults"] });
-			qc.invalidateQueries({ queryKey: ["vault-items"] });
-		},
-		onError: toastApiError("Couldn't save to vault"),
-	});
-}
-
 export function useSetApiKey() {
 	const api = useApi();
 	const qc = useQueryClient();
