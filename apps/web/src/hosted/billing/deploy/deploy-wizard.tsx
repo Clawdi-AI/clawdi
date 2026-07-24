@@ -198,6 +198,10 @@ const EMPTY_WALLET_TOP_UP_CONTEXT: WalletTopUpContext = {
 	blockedChargeCredits: null,
 };
 
+function acceptedDeploymentNavigation(deploymentId: string, replace = false) {
+	return { href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"), replace };
+}
+
 function decimalCredits(value: unknown): number | null {
 	if (typeof value !== "string" && typeof value !== "number") return null;
 	const parsed = Number(value);
@@ -582,10 +586,7 @@ export function DeployWizard() {
 			}
 			const deploymentId = checkoutReturnDeploymentId(searchStr);
 			if (deploymentId) {
-				void router.navigate({
-					href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
-					replace: true,
-				});
+				void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
 				return;
 			}
 			toast.message("Checkout status refreshed", {
@@ -910,10 +911,7 @@ export function DeployWizard() {
 				toast.success("Deployment ready", {
 					description: `Your ${tierLabel} agent finished provisioning.`,
 				});
-				void router.navigate({
-					href: agentSectionHref(resolved.deploymentId, "overview", "source=on-clawdi"),
-					replace: true,
-				});
+				void router.navigate(acceptedDeploymentNavigation(resolved.deploymentId, true));
 				return;
 			} catch {
 				// Stripe may complete before its deploy request is visible. Fall back
@@ -938,10 +936,7 @@ export function DeployWizard() {
 			toast.success("Checkout complete", {
 				description: `Your ${tierLabel} deployment is provisioning now.`,
 			});
-			void router.navigate({
-				href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
-				replace: true,
-			});
+			void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
 			return;
 		}
 		toast.success("Checkout complete", {
@@ -998,18 +993,12 @@ export function DeployWizard() {
 					if (outcome.flowType !== "subscription_activation") {
 						throw new Error("Wallet subscription returned a checkout flow.");
 					}
-					const deploymentId = outcome.deploymentId;
-					if (!deploymentId) {
-						throw new Error("Wallet activation did not accept a deployment target.");
-					}
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
 					walletCreateAttemptRef.current = null;
 					toast.success("Agent deployed", {
 						description: `${formatCents(walletDebit?.exactDebitCents ?? paidSelection.offer.price_cents)} was paid with AI Credits.`,
 					});
-					void router.navigate({
-						href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
-					});
+					void router.navigate(acceptedDeploymentNavigation(outcome.deploymentId));
 					return;
 				}
 				const checkoutFingerprint = idempotencyFingerprint({ selection, target });
@@ -1090,9 +1079,7 @@ export function DeployWizard() {
 			toast.success("Agent deployed", {
 				description: "Your first Basic agent is provisioning now for free.",
 			});
-			void router.navigate({
-				href: agentSectionHref(created.deploymentId, "overview", "source=on-clawdi"),
-			});
+			void router.navigate(acceptedDeploymentNavigation(created.deploymentId));
 		} catch (e) {
 			if (paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
