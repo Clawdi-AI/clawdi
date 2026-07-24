@@ -421,15 +421,6 @@ export function billingRecoveryRefetchIntervalFor(
 		: false;
 }
 
-export function shouldPollBillingRecoveryFor(
-	deployments: readonly HostedDeployment[] | undefined,
-	targetId: string | null | undefined,
-): boolean {
-	return (
-		billingRecoveryRefetchIntervalFor(deployments, targetId) === BILLING_RECOVERY_POLL_INTERVAL_MS
-	);
-}
-
 export function useHostedDeployments({
 	enabled = true,
 	pollBillingRecoveryFor = null,

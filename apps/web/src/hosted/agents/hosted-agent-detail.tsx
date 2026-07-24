@@ -1841,11 +1841,6 @@ function AiProviderTab({
 
 	return (
 		<div className="flex flex-col gap-4">
-			<LiveNote>
-				Existing provider bindings are shown here. Choose providers in the deploy wizard while the
-				declarative update contract is being expanded.
-			</LiveNote>
-
 			<div className="flex flex-col gap-2">
 				<button
 					type="button"

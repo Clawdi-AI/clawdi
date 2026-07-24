@@ -345,10 +345,7 @@ export function createBillingClient(
 				),
 			),
 		getDeployment,
-		getDeploymentByRequest,
-		getOperation,
 		waitForDeploymentRequest,
-		waitForOperation,
 		createDeployment: async (
 			body: DeploymentCreateRequest,
 			idempotencyKey: string,
@@ -413,5 +410,3 @@ export function useBillingClient() {
 	const { getToken } = useAuthToken();
 	return useMemo(() => createBillingClient(getToken), [getToken]);
 }
-
-export type BillingClient = ReturnType<typeof useBillingClient>;

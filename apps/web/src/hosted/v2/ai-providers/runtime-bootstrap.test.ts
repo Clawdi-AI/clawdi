@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import {
 	aiProviderRuntimeId,
-	buildAiProviderBootstrap,
 	buildAiProviderPoolBootstrap,
 	toRuntimeAiProvider,
 } from "@/hosted/v2/ai-providers/runtime-bootstrap";
@@ -27,7 +26,7 @@ const provider: AiProvider = {
 
 describe("AI provider runtime bootstrap", () => {
 	test("uses stable provider_id instead of the response row id", () => {
-		const bootstrap = buildAiProviderBootstrap(provider, "codex_oauth");
+		const bootstrap = buildAiProviderPoolBootstrap([provider], provider.provider_id, "codex_oauth");
 
 		expect(aiProviderRuntimeId(provider)).toBe("openai-codex");
 		expect(bootstrap.selected_provider_id).toBe("openai-codex");
@@ -109,9 +108,9 @@ describe("AI provider runtime bootstrap", () => {
 			}),
 		);
 
-		expect(() => buildAiProviderBootstrap(malformedProvider, "api_key")).toThrow(
-			"Invalid AI provider auth source.",
-		);
+		expect(() =>
+			buildAiProviderPoolBootstrap([malformedProvider], malformedProvider.provider_id, "api_key"),
+		).toThrow("Invalid AI provider auth source.");
 	});
 
 	test("preserves api key profiles in the runtime catalog", () => {
@@ -129,30 +128,35 @@ describe("AI provider runtime bootstrap", () => {
 
 	test("rejects public no-auth provider endpoints", () => {
 		expect(() =>
-			buildAiProviderBootstrap(
-				{
-					...provider,
-					provider_id: "public-no-auth",
-					type: "custom_openai_compatible",
-					base_url: "https://example.com/v1",
-					api_mode: "openai_chat",
-					auth: { type: "none" },
-				},
+			buildAiProviderPoolBootstrap(
+				[
+					{
+						...provider,
+						provider_id: "public-no-auth",
+						type: "custom_openai_compatible",
+						base_url: "https://example.com/v1",
+						api_mode: "openai_chat",
+						auth: { type: "none" },
+					},
+				],
+				"public-no-auth",
 				"api_key",
 			),
 		).toThrow("uses no auth on a public URL");
 	});
 
 	test("allows local no-auth provider endpoints", () => {
-		const bootstrap = buildAiProviderBootstrap(
-			{
-				...provider,
-				provider_id: "local-no-auth",
-				type: "custom_openai_compatible",
-				base_url: "http://127.0.0.1:11434/v1",
-				api_mode: "openai_chat",
-				auth: { type: "none" },
-			},
+		const localProvider: AiProvider = {
+			...provider,
+			provider_id: "local-no-auth",
+			type: "custom_openai_compatible",
+			base_url: "http://127.0.0.1:11434/v1",
+			api_mode: "openai_chat",
+			auth: { type: "none" },
+		};
+		const bootstrap = buildAiProviderPoolBootstrap(
+			[localProvider],
+			localProvider.provider_id,
 			"api_key",
 		);
 
@@ -161,15 +165,17 @@ describe("AI provider runtime bootstrap", () => {
 
 	test("passes through the derived catalog and runtime env for known providers", () => {
 		const defaults = providerTypeMeta("openai");
-		const bootstrap = buildAiProviderBootstrap(
-			{
-				...provider,
-				provider_id: "openai-main",
-				label: "OpenAI",
-				auth: { type: "api_key", source: "managed" },
-				models: defaults.defaultModels.map((model) => ({ ...model })),
-				runtime_env_name: defaults.defaultRuntimeEnv,
-			},
+		const openAiProvider: AiProvider = {
+			...provider,
+			provider_id: "openai-main",
+			label: "OpenAI",
+			auth: { type: "api_key", source: "managed" },
+			models: defaults.defaultModels.map((model) => ({ ...model })),
+			runtime_env_name: defaults.defaultRuntimeEnv,
+		};
+		const bootstrap = buildAiProviderPoolBootstrap(
+			[openAiProvider],
+			openAiProvider.provider_id,
 			"api_key",
 		);
 

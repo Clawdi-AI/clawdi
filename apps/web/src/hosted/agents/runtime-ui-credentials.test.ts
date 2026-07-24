@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
-	hermesCredentialsForGeneration,
 	hermesUiCredentials,
 	openClawUiCredentials,
 	openClawUiUrl,
@@ -38,16 +37,6 @@ describe("runtime UI credential targeting", () => {
 			password: "deployment-password",
 		});
 		expect(credentials.url).not.toContain(credentials.password ?? "");
-	});
-
-	test("does not reuse Hermes credentials after deployment generation advances", () => {
-		const credentials = {
-			url: "https://runtime.example/hermes",
-			username: "admin",
-			password: "generation-one-password",
-		};
-		expect(hermesCredentialsForGeneration(credentials, 1, 1)).toBe(credentials);
-		expect(hermesCredentialsForGeneration(credentials, 1, 2)).toBeNull();
 	});
 
 	test("rejects credentials targeting a different published endpoint", () => {

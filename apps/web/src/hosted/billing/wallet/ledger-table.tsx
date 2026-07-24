@@ -56,9 +56,6 @@ function statusVariant(
 	return "neutral";
 }
 
-function opLabel(op: string): string {
-	return ledgerOperationLabel(op);
-}
 function statusLabel(status: WalletLedgerStatus): string {
 	return STATUS_LABELS[status] ?? "Unknown";
 }
@@ -175,7 +172,7 @@ export function LedgerTable({
 							return (
 								<li key={entry.id} className="flex items-start justify-between gap-3 p-3">
 									<div className="min-w-0 space-y-1">
-										<div className="font-medium">{opLabel(entry.operation)}</div>
+										<div className="font-medium">{ledgerOperationLabel(entry.operation)}</div>
 										{entry.notes ? (
 											<div className="truncate text-xs text-muted-foreground">{entry.notes}</div>
 										) : null}
@@ -217,7 +214,7 @@ export function LedgerTable({
 									return (
 										<TableRow key={entry.id}>
 											<TableCell>
-												<div className="font-medium">{opLabel(entry.operation)}</div>
+												<div className="font-medium">{ledgerOperationLabel(entry.operation)}</div>
 												{entry.notes ? (
 													<div className="max-w-[18rem] truncate text-xs text-muted-foreground">
 														{entry.notes}

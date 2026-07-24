@@ -13,6 +13,3 @@ export type AiProviderAuth = Schemas["AiProviderAuth"];
 export type AiProviderUpsertAuth = Schemas["AiProviderUpsertAuth"];
 export type AiProviderUpsert = Schemas["AiProviderUpsert"];
 export type AiProviderPatch = Schemas["AiProviderPatch"];
-export type AiProviderValidation = Schemas["AiProviderValidationResponse"];
-export type AiProviderOAuthStart = Schemas["AiProviderOAuthStartResponse"];
-export type AiProviderDeleted = Schemas["AiProviderDeleteResponse"];

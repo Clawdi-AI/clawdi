@@ -24,7 +24,6 @@ import {
 } from "@/hosted/billing/wallet/top-up-return.logic";
 import { LEDGER_MAX_ROWS, LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/wallet-constants";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
-import { shouldShowX402Card } from "@/hosted/billing/wallet/x402-card.logic";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
@@ -163,7 +162,7 @@ export function WalletPage() {
 
 			<div id="auto-reload" className="grid gap-4 lg:grid-cols-2">
 				<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
-				{shouldShowX402Card(w) ? <X402Card /> : null}
+				{w.x402_enabled === true ? <X402Card /> : null}
 			</div>
 
 			{ledger.error && !ledgerData ? (
