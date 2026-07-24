@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ColumnDef } from "@tanstack/react-table";
-import { Copy, Plus, Trash2 } from "lucide-react";
+import { Check, Copy, Plus, Trash2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -14,7 +14,7 @@ import { DataTable } from "@/components/ui/data-table";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { type ApiError, unwrap, useApi } from "@/lib/api";
+import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
 
 /** API Keys settings — CLI-facing bearer tokens. */
@@ -23,6 +23,7 @@ export function ApiKeysPanel() {
 	const queryClient = useQueryClient();
 	const [newLabel, setNewLabel] = useState("");
 	const [createdKey, setCreatedKey] = useState<string | null>(null);
+	const normalizedNewLabel = newLabel.trim();
 
 	const {
 		data: keys,
@@ -42,7 +43,7 @@ export function ApiKeysPanel() {
 			setNewLabel("");
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
 		},
-		onError: (e: ApiError) => toast.error("Couldn't create key", { description: e.detail }),
+		onError: toastApiError("Couldn't create key"),
 	});
 
 	const revokeKey = useMutation({
@@ -56,7 +57,7 @@ export function ApiKeysPanel() {
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
 			toast.success("Key turned off");
 		},
-		onError: (e: ApiError) => toast.error("Couldn't turn off key", { description: e.detail }),
+		onError: toastApiError("Couldn't turn off key"),
 	});
 
 	const columns = useMemo<ColumnDef<ApiKey>[]>(
@@ -164,7 +165,9 @@ export function ApiKeysPanel() {
 				className="flex flex-col gap-2 sm:flex-row"
 				onSubmit={(e) => {
 					e.preventDefault();
-					if (newLabel) createKey.mutate(newLabel);
+					if (normalizedNewLabel && createdKey === null) {
+						createKey.mutate(normalizedNewLabel);
+					}
 				}}
 			>
 				<Label htmlFor="new-key-label" className="sr-only">
@@ -178,10 +181,11 @@ export function ApiKeysPanel() {
 					className="min-w-0 flex-1"
 					name="new-key-label"
 					autoComplete="off"
+					disabled={createdKey !== null}
 				/>
 				<Button
 					type="submit"
-					disabled={!newLabel || createKey.isPending}
+					disabled={!normalizedNewLabel || createKey.isPending || createdKey !== null}
 					className="w-full sm:w-auto"
 				>
 					<Plus />
@@ -212,6 +216,10 @@ export function ApiKeysPanel() {
 							aria-label="Copy key"
 						>
 							<Copy />
+						</Button>
+						<Button type="button" variant="outline" size="sm" onClick={() => setCreatedKey(null)}>
+							<Check />
+							I&apos;ve saved it
 						</Button>
 					</div>
 				</div>
