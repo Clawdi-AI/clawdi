@@ -39,6 +39,7 @@ import {
 	useLinkAgent,
 } from "@/hosted/v2/channels/channels-hooks";
 import {
+	channelDialogOpenChangeAllowed,
 	linkAgentBlockReason,
 	shouldMintWhatsappTenantCredential,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
@@ -139,6 +140,17 @@ export function LinkAgentDialog({
 		});
 	}
 
+	function handleOpenChange(nextOpen: boolean) {
+		if (
+			!channelDialogOpenChangeAllowed(
+				nextOpen,
+				link.isPending || createWhatsappCredential.isPending || submitLocked.current,
+			)
+		)
+			return;
+		onOpenChange(nextOpen);
+	}
+
 	const agentItems = useMemo(
 		() =>
 			agents.map((env) => {
@@ -152,7 +164,7 @@ export function LinkAgentDialog({
 	);
 
 	return (
-		<Dialog open={open} onOpenChange={onOpenChange}>
+		<Dialog open={open} onOpenChange={handleOpenChange}>
 			<DialogContent data-hosted="true" data-v2="true" className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>Link an agent</DialogTitle>
@@ -237,10 +249,16 @@ export function LinkAgentDialog({
 
 				<DialogFooter>
 					{token || linkedNoToken || whatsappCredentialMinted ? (
-						<Button onClick={() => onOpenChange(false)}>Done</Button>
+						<Button onClick={() => handleOpenChange(false)} disabled={isSubmitting}>
+							Done
+						</Button>
 					) : (
 						<>
-							<Button variant="outline" onClick={() => onOpenChange(false)}>
+							<Button
+								variant="outline"
+								onClick={() => handleOpenChange(false)}
+								disabled={isSubmitting}
+							>
 								Cancel
 							</Button>
 							<Button

@@ -29,6 +29,7 @@ import {
 import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
 import { AccessBadge, HealthBadge } from "@/hosted/v2/channels/channel-ui";
 import { useBotPool, useChannelHealth, useChannels } from "@/hosted/v2/channels/channels-hooks";
+import { dedupeBotPoolProviders, providerCounts } from "@/hosted/v2/channels/channels-page.logic";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/link-agent-dialog.logic";
@@ -47,7 +48,7 @@ export function ChannelsPage() {
 	const health = useChannelHealth();
 
 	const channelItems = channels.data ?? [];
-	const poolProviders = botPool.data?.providers ?? {};
+	const poolProviders = dedupeBotPoolProviders(channelItems, botPool.data?.providers ?? {});
 	const counts = providerCounts(channelItems, poolProviders);
 	const totalCount = CHANNEL_PROVIDERS.reduce((sum, provider) => sum + counts[provider], 0);
 
@@ -106,27 +107,6 @@ export function ChannelsPage() {
 			<ConnectBotDialog open={connectOpen} onOpenChange={setConnectOpen} />
 		</div>
 	);
-}
-
-function providerCounts(
-	channels: ChannelAccount[],
-	poolProviders: Record<string, ChannelBotPoolItem[]>,
-): Record<ChannelProviderId, number> {
-	const counts = Object.fromEntries(CHANNEL_PROVIDERS.map((p) => [p, 0])) as Record<
-		ChannelProviderId,
-		number
-	>;
-	for (const channel of channels) {
-		if (isKnownProvider(channel.provider)) counts[channel.provider] += 1;
-	}
-	for (const provider of CHANNEL_PROVIDERS) {
-		counts[provider] += poolProviders[provider]?.length ?? 0;
-	}
-	return counts;
-}
-
-function isKnownProvider(provider: string): provider is ChannelProviderId {
-	return (CHANNEL_PROVIDERS as readonly string[]).includes(provider);
 }
 
 function providerLabel(filter: ProviderFilter): string {
