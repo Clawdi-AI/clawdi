@@ -2382,7 +2382,6 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 	const mode = detectRuntimeMode();
 	const intervalMs = parsePositiveMs(opts.intervalMs, 15_000, "--interval-ms");
 	const selfHealMs = parsePositiveMs(opts.selfHealMs, 300_000, "--self-heal-ms");
-	let lastFullFetchAt = Date.now();
 	let cliInstallRetryPending = false;
 	let cliInstallBackoffMs = 0;
 	let nextCliInstallRetryAt = 0;
@@ -2427,6 +2426,10 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			wakeSignal,
 			opts,
 		);
+		// Startup work must not consume the self-heal interval. The first watch
+		// tick should remain conditional, with full refresh timing measured from
+		// the point at which the polling loop is ready.
+		let lastFullFetchAt = Date.now();
 		for (;;) {
 			if (opts.abort?.aborted) return;
 			const now = Date.now();
