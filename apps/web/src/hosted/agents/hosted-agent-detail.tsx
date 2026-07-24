@@ -635,7 +635,7 @@ function HostedProjectionNotice({
 			<ApiErrorPanel
 				error={projection.error}
 				onRetry={onRetry}
-				title="Agent sync service unavailable"
+				title="Couldn’t sync agent details"
 			/>
 		);
 	}
@@ -643,12 +643,11 @@ function HostedProjectionNotice({
 		return (
 			<Alert data-hosted="true">
 				<AlertCircle />
-				<AlertTitle>Agent sync record unavailable</AlertTitle>
+				<AlertTitle>Some details are still syncing</AlertTitle>
 				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						Deployment controls remain available; Runtime UI and Terminal continue to follow
-						deployment status. Sessions, skills, profile, and channels will recover when the cloud
-						projection catches up.
+						You can manage compute and open available tools now. Sessions, skills, profile, and
+						channels will appear when syncing finishes.
 					</span>
 					<Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
 						{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
@@ -662,9 +661,9 @@ function HostedProjectionNotice({
 		return (
 			<Alert data-hosted="true">
 				<Spinner className="size-4" />
-				<AlertTitle>Loading synced agent data</AlertTitle>
+				<AlertTitle>Some details are still syncing</AlertTitle>
 				<AlertDescription>
-					Deployment-owned controls are ready while the cloud projection resolves.
+					You can manage compute while the rest of this agent finishes syncing.
 				</AlertDescription>
 			</Alert>
 		);
@@ -672,10 +671,9 @@ function HostedProjectionNotice({
 	return (
 		<Alert data-hosted="true">
 			<AlertCircle />
-			<AlertTitle>Agent sync identity pending</AlertTitle>
+			<AlertTitle>Finishing agent setup</AlertTitle>
 			<AlertDescription>
-				This deployment has not published an agent identity yet. Deployment controls remain
-				available while provisioning continues.
+				You can manage compute now. The rest of this agent will appear when setup finishes.
 			</AlertDescription>
 		</Alert>
 	);
@@ -685,7 +683,7 @@ function ProjectionDependentUnavailable({ label }: { label: string }) {
 	return (
 		<EmptyState
 			title={`${label} unavailable`}
-			description="This section depends on the synced agent record. Deployment-owned controls remain available."
+			description="This section will be available when the agent finishes syncing. You can manage compute in the meantime."
 		/>
 	);
 }
@@ -1270,23 +1268,11 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 									value={credentials.value.username}
 								/>
 							</div>
-							<div className="space-y-1.5">
-								<Label htmlFor={`hermes-password-${deployment.resource.id}`}>Password</Label>
-								<Input
-									id={`hermes-password-${deployment.resource.id}`}
-									readOnly
-									value={credentials.value.password}
-								/>
-							</div>
+							<TokenReveal label="Password" value={credentials.value.password} />
 						</>
 					) : credentials?.runtime === "openclaw" ? (
-						<div className="space-y-1.5 sm:col-span-2">
-							<Label htmlFor={`openclaw-token-${deployment.resource.id}`}>Token</Label>
-							<Input
-								id={`openclaw-token-${deployment.resource.id}`}
-								readOnly
-								value={credentials.value.token}
-							/>
+						<div className="sm:col-span-2">
+							<TokenReveal label="Token" value={credentials.value.token} />
 						</div>
 					) : null}
 				</div>
@@ -1740,12 +1726,14 @@ function AiProviderTab({
 					? selectedProviders.filter(isUnresolvedProviderChoice).map((choice) => (
 							<button key={choice} type="button" disabled className={selectableCard(true)}>
 								<div className="flex items-center justify-between gap-2">
-									<span className="text-sm font-medium">Provider unavailable</span>
+									<span className="text-sm font-medium">
+										Using {providerDisplayLabel(unresolvedProviderRef(choice), list)}
+									</span>
 									<Badge variant="secondary">In use</Badge>
 								</div>
 								<p className="mt-0.5 text-sm text-muted-foreground">
-									This runtime is bound to {unresolvedProviderRef(choice)}, but that provider could
-									not be loaded. Choose {MANAGED_PROVIDER_LABEL} to replace it.
+									Its saved connection details couldn’t be loaded. Choose {MANAGED_PROVIDER_LABEL}{" "}
+									to replace it.
 								</p>
 							</button>
 						))
@@ -1807,7 +1795,10 @@ function AiProviderTab({
 					customProviders={list}
 					additionalProviderItems={selectedProviderChoices
 						.filter(isUnresolvedProviderChoice)
-						.map((choice) => ({ value: choice, label: unresolvedProviderRef(choice) }))}
+						.map((choice) => ({
+							value: choice,
+							label: providerDisplayLabel(unresolvedProviderRef(choice), list),
+						}))}
 					selectedProviderChoices={selectedProviderChoices}
 					primaryProviderChoice={primaryProviderChoice}
 					primaryModel={primaryModel}
@@ -1824,7 +1815,7 @@ function AiProviderTab({
 					onClick={applyProviderSettings}
 				>
 					{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
-					{dirty ? "Apply provider settings" : "No changes"}
+					Save changes
 				</Button>
 			</div>
 
@@ -2044,7 +2035,7 @@ function LinkedChannelRow({
 	// account NEVER white-screens (apps/web/src has no ErrorBoundary).
 	const account = link.account ?? fallbackAccount ?? null;
 	const provider = account?.provider ?? "";
-	const name = account?.name ?? `Channel ${link.account_id.slice(0, 8)}`;
+	const name = account?.name ?? "Unnamed channel";
 	return (
 		<div className="rounded-lg border p-3">
 			<div className="flex items-center gap-3">
@@ -2211,7 +2202,7 @@ function LanguageTimezoneSettingsSection({
 						}
 					>
 						{updateDeployment.isPending ? <Spinner className="size-3.5" /> : null}
-						{dirty ? "Apply locale settings" : "No changes"}
+						Save changes
 					</Button>
 				</div>
 			</div>

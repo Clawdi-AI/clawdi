@@ -17,10 +17,10 @@ import { largestSignupGrantUsd } from "@/hosted/billing/subscription/subscriptio
  *
  * Renders for a new wallet user who hasn't deployed yet: it
  * confirms the welcome grant landed (reading the `grant_signup` ledger row)
- * and points them at the deploy wizard. Returns null once the user has an
+ * and can point them at the deploy wizard. Returns null once the user has an
  * agent. Read failures render a retry action instead of hiding onboarding.
  */
-export function WelcomeWalletCard() {
+export function WelcomeWalletCard({ showDeployAction = true }: { showDeployAction?: boolean }) {
 	const wallet = useWallet();
 	const ledger = useWalletLedger(50);
 	const deployments = useHostedDeployments();
@@ -36,7 +36,7 @@ export function WelcomeWalletCard() {
 						<Skeleton className="h-5 w-56 max-w-full" />
 						<Skeleton className="h-4 w-96 max-w-full" />
 					</div>
-					<Skeleton className="h-9 w-32" />
+					{showDeployAction ? <Skeleton className="h-9 w-32" /> : null}
 				</CardContent>
 			</Card>
 		);
@@ -98,12 +98,16 @@ export function WelcomeWalletCard() {
 						</p>
 					</div>
 				</div>
-				<div className="flex items-center gap-2">
-					{grantPending ? <Spinner className="size-4 text-muted-foreground" /> : null}
-					<Button render={<Link to="/deploy" />} nativeButton={false}>
-						<Rocket /> Deploy an agent
-					</Button>
-				</div>
+				{grantPending || showDeployAction ? (
+					<div className="flex items-center gap-2">
+						{grantPending ? <Spinner className="size-4 text-muted-foreground" /> : null}
+						{showDeployAction ? (
+							<Button render={<Link to="/deploy" />} nativeButton={false}>
+								<Rocket /> Deploy an agent
+							</Button>
+						) : null}
+					</div>
+				) : null}
 			</CardContent>
 		</Card>
 	);

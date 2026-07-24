@@ -2,11 +2,9 @@
 
 import { useRouter } from "@tanstack/react-router";
 import {
-	CalendarClock,
 	Cpu,
 	CreditCard,
 	Plus,
-	RefreshCw,
 	Rocket,
 	Settings2,
 	Sparkles,
@@ -27,6 +25,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
@@ -153,10 +152,6 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
-import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
-import { ChannelStatusBadge } from "@/hosted/v2/channels/channel-ui";
-import { useChannels } from "@/hosted/v2/channels/channels-hooks";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
@@ -249,20 +244,6 @@ function recurringOfferLabel(offer: BillingOffer): string {
 		: `${monthly}, billed ${formatCents(offer.price_cents)}${billingTermSuffix(
 				offer.billing_term_months,
 			)}`;
-}
-
-function ChannelInfoTile({ channel }: { channel: ChannelAccount }) {
-	const meta = providerMeta(channel.provider);
-	return (
-		<EntityChoiceCard
-			selected={false}
-			icon={<EntityIcon kind="channel" id={channel.provider} label={meta.label} />}
-			title={channel.name}
-			description={`${meta.label} is ready. Link it from the agent page after deploy.`}
-			badge={<ChannelStatusBadge status={channel.status} />}
-			className="h-full bg-card"
-		/>
-	);
 }
 
 interface ComputeStatusInput {
@@ -381,7 +362,6 @@ export function DeployWizard() {
 	const deployments = useHostedDeployments();
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
-	const channels = useChannels();
 	const createSubscription = useCreateSubscription();
 	const billingClient = useBillingClient();
 	const resolveDeploymentRequest = useResolveDeploymentRequest();
@@ -521,24 +501,34 @@ export function DeployWizard() {
 		primaryProviderChoice,
 		providerChoices: aiProviderChoices,
 	} = aiBindingDraft;
-	const channelList = channels.data ?? [];
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
-	const planReady = plans.isSuccess && computePlanReady;
-	const canSubmit =
-		planReady &&
-		deployments.isSuccess &&
-		managedPrimaryModelReady &&
-		assistantName.trim().length > 0 &&
-		!submitting &&
-		(!paidSelection ||
-			paymentMethod === "card" ||
-			(wallet.isSuccess &&
-				!!wallet.data &&
-				!!walletDebit &&
-				!subscriptionCreateQuote.isFetching &&
-				!subscriptionCreateQuote.error &&
-				!walletInsufficient));
+	const nameError = assistantName.trim().length === 0 ? "Enter a name for your agent." : null;
+	const submitBlockingReason = (() => {
+		if (submitting) return null;
+		if (nameError) return nameError;
+		if (!plans.isSuccess) return "Waiting for compute plans.";
+		if (!deployments.isSuccess) {
+			return deployments.error
+				? "Retry the agent availability check above."
+				: "Checking your free Basic agent availability.";
+		}
+		if (!computePlanReady) return "Choose an available compute plan.";
+		if (!managedPrimaryModelReady) return "Choose an available primary model.";
+		if (paidSelection && paymentMethod === "wallet") {
+			if (!wallet.isSuccess || !wallet.data) {
+				return wallet.error
+					? "Retry loading your Wallet balance above."
+					: "Loading your Wallet balance.";
+			}
+			if (subscriptionCreateQuote.error) return "Retry the Wallet quote above.";
+			if (subscriptionCreateQuote.isFetching) return "Refreshing your Wallet quote.";
+			if (!walletDebit) return "Waiting for your Wallet quote.";
+			if (walletInsufficient) return "Top up your Wallet to continue.";
+		}
+		return null;
+	})();
+	const canSubmit = !submitting && submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
 		selectCreatedAiProvider(providerId, aiProviders.dataUpdatedAt);
@@ -706,6 +696,10 @@ export function DeployWizard() {
 		}
 		toast.success("Checkout complete", {
 			description: `Your ${tierLabel} deployment is provisioning. Check your agents list in a moment.`,
+			action: {
+				label: "View agents",
+				onClick: () => void router.navigate({ href: "/agents" }),
+			},
 		});
 	}
 
@@ -929,21 +923,20 @@ export function DeployWizard() {
 				<DeploySectionSkeleton />
 				<DeploySectionSkeleton />
 				<DeploySectionSkeleton />
-				<DeploySectionSkeleton />
 			</div>
 		);
 	}
 
 	return (
 		<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
-			<div className="flex flex-col gap-6 sm:pb-24">
+			<div className="flex flex-col gap-6">
 				<PageHeader
 					title="Deploy an Agent"
-					description="Choose the execution engine and AI provider for this hosted deployment."
+					description="Choose how your agent runs and which AI model it will use."
 				/>
 				<SettingsSection
-					title="Runtimes"
-					description="Choose one execution engine for this hosted compute."
+					title="Agent software"
+					description="Choose the software that will power your agent."
 				>
 					<div className={RUNTIME_TILE_GRID_CLASS}>
 						<EntityChoiceCard
@@ -969,7 +962,7 @@ export function DeployWizard() {
 
 				<SettingsSection
 					title="AI providers"
-					description="Bind the provider pool and choose the primary model for the deployment."
+					description="Choose how your agent accesses AI models and select its primary model."
 				>
 					<div className={TWO_TILE_GRID_CLASS}>
 						<EntityChoiceCard
@@ -981,7 +974,7 @@ export function DeployWizard() {
 								</IconChip>
 							}
 							title={authCardLabel("unmanaged")}
-							description="Deploy first, then configure model access inside the runtime."
+							description="Deploy first, then configure model access inside the agent."
 							badge={
 								<Badge variant={aiAccessMode === "unmanaged" ? "secondary" : "outline"}>
 									{aiAccessMode === "unmanaged" ? "Selected" : "Optional"}
@@ -1047,8 +1040,7 @@ export function DeployWizard() {
 					</div>
 					{aiAccessMode === "unmanaged" ? (
 						<p className="mt-4 text-sm text-muted-foreground">
-							This deploy sends no hosted provider binding. Configure models inside the agent after
-							provisioning.
+							No AI provider will be selected for you. Add one inside the agent after it is ready.
 						</p>
 					) : (
 						<ModelBindingPicker
@@ -1068,40 +1060,6 @@ export function DeployWizard() {
 							onPrimaryModelChange={setPrimaryModel}
 						/>
 					)}
-				</SettingsSection>
-
-				<SettingsSection
-					title={
-						<>
-							Channels <span className="font-normal text-muted-foreground">· optional</span>
-						</>
-					}
-					description="Deploy first, then link a native channel from the agent page once provisioning creates the agent identity."
-				>
-					<div className={TWO_TILE_GRID_CLASS}>
-						<EntityChoiceCard
-							selected
-							icon={
-								<IconChip tint="bg-muted text-muted-foreground">
-									<CalendarClock />
-								</IconChip>
-							}
-							title="Link after deploy"
-							description="Channel links need the agent identity created during provisioning."
-							badge={<Badge variant="secondary">Default</Badge>}
-						/>
-						{channels.isLoading ? <Skeleton className="h-[74px] w-full rounded-lg" /> : null}
-						{channels.error ? (
-							<div className="flex min-h-[74px] flex-col items-start justify-center gap-2 rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground sm:col-span-2">
-								<p>Couldn’t load your channels. You can still deploy and link later.</p>
-								<Button size="sm" variant="outline" onClick={() => channels.refetch()}>
-									<RefreshCw /> Retry
-								</Button>
-							</div>
-						) : (
-							channelList.map((channel) => <ChannelInfoTile key={channel.id} channel={channel} />)
-						)}
-					</div>
 				</SettingsSection>
 
 				<SettingsSection
@@ -1304,94 +1262,127 @@ export function DeployWizard() {
 							perfOffer={perfOffer}
 							paymentMethod={paymentMethod}
 						/>
-					</div>
-				</SettingsSection>
-
-				<SettingsSection
-					title="Personalize"
-					description="Name your agent and optionally choose its language and timezone."
-				>
-					<div className="grid max-w-2xl gap-4 sm:grid-cols-2">
-						<div className="flex flex-col gap-1.5 sm:col-span-2">
-							<label htmlFor="agent-name" className="text-sm text-muted-foreground">
-								Name
-							</label>
-							<Input
-								id="agent-name"
-								value={assistantName}
-								maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}
-								required
-								onChange={(event) => {
-									assistantNameEditedRef.current = true;
-									setAssistantName(event.target.value);
-								}}
-								onBlur={() => setAssistantName((name) => name.trim())}
-							/>
-						</div>
-						<div className="flex flex-col gap-1.5">
-							<label htmlFor="agent-language" className="text-sm text-muted-foreground">
-								Language
-							</label>
-							<Select
-								items={LANGUAGE_SELECT_ITEMS}
-								value={language || "default"}
-								onValueChange={(v) => {
-									setLanguage(v === null || v === "default" ? "" : v);
-								}}
-							>
-								<SelectTrigger id="agent-language">
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									<SelectGroup>
-										<SelectItem value="default">Default</SelectItem>
-										{LANGUAGE_OPTIONS.map((l) => (
-											<SelectItem key={l.code} value={l.code}>
-												{l.label}
-											</SelectItem>
-										))}
-									</SelectGroup>
-								</SelectContent>
-							</Select>
-						</div>
-						{tzOptions.length > 0 ? (
-							<div className="flex flex-col gap-1.5">
-								<label htmlFor="agent-timezone" className="text-sm text-muted-foreground">
-									Timezone
-								</label>
-								<TimezoneCombobox
-									id="agent-timezone"
-									value={timezone}
-									onValueChange={setTimezone}
-									options={tzOptions}
-								/>
-							</div>
-						) : null}
+						<p className="text-xs text-muted-foreground">
+							After your agent is ready, connect channels from its page.
+						</p>
 					</div>
 				</SettingsSection>
 			</div>
 
-			{/* Sticky action bar */}
-			<div className="-mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur sm:sticky sm:bottom-0 lg:-mx-6 lg:px-6">
-				<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-					<p className="min-w-0 max-w-full truncate text-xs text-muted-foreground sm:text-sm">
-						{summaryLine}
-					</p>
-					<Button
-						size="lg"
-						onClick={() => runAction(onDeploy)}
-						disabled={!canSubmit}
-						className="w-full sm:w-auto"
+			<form
+				className="flex flex-col gap-6"
+				onSubmit={(event) => {
+					event.preventDefault();
+					if (canSubmit) void runAction(onDeploy);
+				}}
+			>
+				<div className="sm:pb-24">
+					<SettingsSection
+						title="Personalize"
+						description="Name your agent and optionally choose its language and timezone."
 					>
-						{submitting ? (
-							<Spinner data-icon="inline-start" />
-						) : (
-							<Rocket data-icon="inline-start" />
-						)}
-						{submitting ? "Working…" : deployLabel}
-					</Button>
+						<div className="grid max-w-2xl gap-4 sm:grid-cols-2">
+							<div className="flex flex-col gap-1.5 sm:col-span-2">
+								<Label htmlFor="agent-name">Name</Label>
+								<Input
+									id="agent-name"
+									value={assistantName}
+									maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}
+									required
+									aria-invalid={nameError ? true : undefined}
+									aria-describedby={nameError ? "agent-name-error" : undefined}
+									onChange={(event) => {
+										assistantNameEditedRef.current = true;
+										setAssistantName(event.target.value);
+									}}
+									onBlur={() => setAssistantName((name) => name.trim())}
+								/>
+								{nameError ? (
+									<p id="agent-name-error" className="text-xs text-destructive" role="alert">
+										{nameError}
+									</p>
+								) : null}
+							</div>
+							<div className="flex flex-col gap-1.5">
+								<label htmlFor="agent-language" className="text-sm text-muted-foreground">
+									Language
+								</label>
+								<Select
+									items={LANGUAGE_SELECT_ITEMS}
+									value={language || "default"}
+									onValueChange={(v) => {
+										setLanguage(v === null || v === "default" ? "" : v);
+									}}
+								>
+									<SelectTrigger id="agent-language" type="button">
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectGroup>
+											<SelectItem value="default">Default</SelectItem>
+											{LANGUAGE_OPTIONS.map((l) => (
+												<SelectItem key={l.code} value={l.code}>
+													{l.label}
+												</SelectItem>
+											))}
+										</SelectGroup>
+									</SelectContent>
+								</Select>
+							</div>
+							{tzOptions.length > 0 ? (
+								<div className="flex flex-col gap-1.5">
+									<label htmlFor="agent-timezone" className="text-sm text-muted-foreground">
+										Timezone
+									</label>
+									<TimezoneCombobox
+										id="agent-timezone"
+										value={timezone}
+										onValueChange={setTimezone}
+										options={tzOptions}
+									/>
+								</div>
+							) : null}
+						</div>
+					</SettingsSection>
 				</div>
-			</div>
+
+				{/* Sticky action bar */}
+				<div className="-mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur sm:sticky sm:bottom-0 lg:-mx-6 lg:px-6">
+					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+						<p className="min-w-0 max-w-full truncate text-xs text-muted-foreground sm:text-sm">
+							{summaryLine}
+						</p>
+						<div className="flex flex-col gap-1 sm:items-end">
+							<Button
+								type="submit"
+								size="lg"
+								disabled={!canSubmit}
+								aria-describedby={submitBlockingReason ? "deploy-blocking-reason" : undefined}
+								className="w-full sm:w-auto"
+							>
+								{submitting ? (
+									<Spinner data-icon="inline-start" />
+								) : (
+									<Rocket data-icon="inline-start" />
+								)}
+								{submitting ? "Working…" : deployLabel}
+							</Button>
+							{submitBlockingReason ? (
+								<p
+									id="deploy-blocking-reason"
+									className={cn(
+										"max-w-sm text-xs sm:text-right",
+										nameError ? "text-destructive" : "text-muted-foreground",
+									)}
+									role="status"
+								>
+									{submitBlockingReason}
+								</p>
+							) : null}
+						</div>
+					</div>
+				</div>
+			</form>
 
 			{/* Create a provider without leaving the wizard. */}
 			<AddProviderDialog

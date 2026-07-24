@@ -11,9 +11,19 @@ import {
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { SectionLabel } from "@/components/section-label";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
+import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
 import { useUnifiedAgentList } from "@/hosted/use-unified-agent-list";
 
 type Env = components["schemas"]["AgentResponse"];
+
+function HostedEmptyAccountHero() {
+	return (
+		<div className="space-y-4">
+			<OnboardingCard variant="first-agent" hosted />
+			<WelcomeWalletCard showDeployAction={false} />
+		</div>
+	);
+}
 
 /**
  * Hosted-only branch of the dashboard's agent panel.
@@ -85,7 +95,7 @@ export function HostedAgentsSection({
 	return (
 		<div data-hosted="true">
 			{isEmptyState ? (
-				<OnboardingCard variant="first-agent" />
+				<HostedEmptyAccountHero />
 			) : (
 				<AgentsCard
 					agents={agentTiles}
@@ -182,7 +192,7 @@ export function HostedAgentsByCompute({
 	if (isEmptyState) {
 		return (
 			<div data-hosted="true">
-				<OnboardingCard variant="first-agent" />
+				<HostedEmptyAccountHero />
 			</div>
 		);
 	}

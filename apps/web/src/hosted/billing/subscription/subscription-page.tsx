@@ -41,7 +41,7 @@ export function SubscriptionPage() {
 				window.location.href = res.url || res.portal_url;
 				return;
 			}
-			toast.message("Billing portal unavailable", {
+			toast.error("Billing portal unavailable", {
 				description: "Refresh this page and try again in a moment.",
 			});
 		} catch (e) {

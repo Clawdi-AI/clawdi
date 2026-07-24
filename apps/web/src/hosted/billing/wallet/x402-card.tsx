@@ -1,10 +1,11 @@
 "use client";
 
-import { Link2 } from "lucide-react";
+import { LifeBuoy, Link2, TriangleAlert } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CopyButton } from "@/hosted/billing/components/copy-button";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { useHostedUser } from "@/hosted/billing/hooks";
 
@@ -39,17 +40,25 @@ export function X402Card() {
 						title="Couldn’t load deposit address"
 					/>
 				) : address ? (
-					<div className="space-y-1.5">
-						<span className="text-xs text-muted-foreground">Deposit address</span>
-						<div className="flex items-center gap-2 rounded-md border bg-muted/30 p-2">
-							<code className="min-w-0 flex-1 truncate font-mono text-xs">{address}</code>
-							<CopyButton
-								value={address}
-								label="Copy deposit address"
-								toastMessage="Address copied"
-							/>
-						</div>
-					</div>
+					<Alert variant="destructive">
+						<TriangleAlert aria-hidden />
+						<AlertTitle>Contact support for deposit details</AlertTitle>
+						<AlertDescription className="flex flex-col items-start gap-3">
+							<span>
+								Your account data does not identify the required network or accepted token, so the
+								deposit address is hidden for your safety. Funds sent on the wrong network or as the
+								wrong token are unrecoverable.
+							</span>
+							<Button
+								render={<a href="mailto:support@clawdi.ai" />}
+								nativeButton={false}
+								size="sm"
+								variant="outline"
+							>
+								<LifeBuoy data-icon="inline-start" /> Contact support
+							</Button>
+						</AlertDescription>
+					</Alert>
 				) : (
 					<p className="text-sm text-muted-foreground">
 						An on-chain deposit address is provisioned with your first managed-AI agent.

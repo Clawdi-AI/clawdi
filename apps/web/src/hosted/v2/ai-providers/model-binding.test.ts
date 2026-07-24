@@ -74,6 +74,7 @@ describe("model binding", () => {
 		expect(modelDisplayName("gpt-5.5", providers[0].models ?? [])).toBe("GPT Latest");
 		expect(providerDisplayLabel(providers[0])).toBe("OpenAI");
 		expect(providerDisplayLabel("openai-main", providers)).toBe("OpenAI");
+		expect(providerDisplayLabel({ ...providers[0], label: null })).toBe("OpenAI");
 	});
 
 	test("maps deployment-scoped managed provider ids to the friendly managed choice", () => {

@@ -4,6 +4,7 @@ import {
 	isFirstPartyManagedAiProvider,
 } from "@clawdi/shared";
 import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
+import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatModelLabel } from "@/lib/format";
 
@@ -80,7 +81,7 @@ export function providerDisplayLabel(
 	}
 	return isFirstPartyManagedAiProvider(provider)
 		? MANAGED_PROVIDER_LABEL
-		: (provider.label ?? provider.provider_id);
+		: provider.label?.trim() || providerTypeMeta(provider.type).label;
 }
 
 export function providerChoiceFromRef(

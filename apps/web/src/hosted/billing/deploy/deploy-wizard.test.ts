@@ -19,10 +19,49 @@ const modelBindingPickerSource = readFileSync(
 describe("deploy wizard personalization", () => {
 	test("renders the required bounded agent name input", () => {
 		expect(wizardSource).toContain('htmlFor="agent-name"');
+		expect(wizardSource).toContain('<Label htmlFor="agent-name">');
 		expect(wizardSource).toContain('id="agent-name"');
 		expect(wizardSource).toContain("maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}");
 		expect(DEPLOY_ASSISTANT_NAME_MAX_LENGTH).toBe(255);
 		expect(wizardSource).toContain("required");
+		expect(wizardSource).toContain("aria-invalid={nameError ? true : undefined}");
+		expect(wizardSource).toContain('type="submit"');
+		expect(wizardSource).toContain("submitBlockingReason");
+	});
+});
+
+describe("deploy wizard product copy and flow", () => {
+	test("uses customer language and keeps channels out of the decision flow", () => {
+		expect(wizardSource).toContain('title="Agent software"');
+		expect(wizardSource).toContain("After your agent is ready, connect channels from its page.");
+		expect(wizardSource).not.toContain('title="Runtimes"');
+		expect(wizardSource).not.toContain("execution engine");
+		expect(wizardSource).not.toContain('title="Link after deploy"');
+	});
+
+	test("links checkout fallback recovery to the agents list", () => {
+		expect(wizardSource).toContain('label: "View agents"');
+		expect(wizardSource).toContain('router.navigate({ href: "/agents" })');
+	});
+});
+
+describe("hosted agent security and copy", () => {
+	test("renders runtime secrets through the shared masked token control", () => {
+		expect(agentDetailSource).toContain(
+			'<TokenReveal label="Password" value={credentials.value.password} />',
+		);
+		expect(agentDetailSource).toContain(
+			'<TokenReveal label="Token" value={credentials.value.token} />',
+		);
+		expect(agentDetailSource).not.toContain("hermes-password-");
+		expect(agentDetailSource).not.toContain("openclaw-token-");
+	});
+
+	test("keeps save actions stable and hides internal fallback ids", () => {
+		expect(agentDetailSource).toContain("Save changes");
+		expect(agentDetailSource).toContain('account?.name ?? "Unnamed channel"');
+		expect(agentDetailSource).not.toContain('"No changes"');
+		expect(agentDetailSource).not.toContain("This runtime is bound to");
 	});
 });
 

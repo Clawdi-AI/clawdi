@@ -178,6 +178,10 @@ describe("unified list consumers", () => {
 		const srcDir = resolve(import.meta.dir, "..");
 		const sidebar = readFileSync(resolve(srcDir, "components/app-sidebar.tsx"), "utf8");
 		const homepage = readFileSync(resolve(srcDir, "hosted/hosted-agents-section.tsx"), "utf8");
+		const onboarding = readFileSync(
+			resolve(srcDir, "components/dashboard/onboarding-card.tsx"),
+			"utf8",
+		);
 
 		expect(sidebar).toContain('import("@/hosted/use-unified-agent-list")');
 		expect(sidebar).toContain("hostedMembershipResolved");
@@ -185,5 +189,9 @@ describe("unified list consumers", () => {
 		expect(homepage).toContain("useUnifiedAgentList({");
 		expect(homepage).not.toContain("connectedAgentTilesForHostedView");
 		expect(homepage).not.toContain("useHostedAgentTiles({");
+		expect(homepage).toContain("<HostedEmptyAccountHero />");
+		expect(homepage).toContain("<WelcomeWalletCard showDeployAction={false} />");
+		expect(onboarding).toContain("Deploy a hosted agent");
+		expect(onboarding).toContain("Connect via CLI");
 	});
 });
