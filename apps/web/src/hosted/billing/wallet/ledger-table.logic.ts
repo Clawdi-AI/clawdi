@@ -58,15 +58,9 @@ export function filteredLedgerEntries(
 	entries: WalletLedgerEntry[],
 	filter: LedgerFilter,
 ): WalletLedgerEntry[] {
-	return (
-		filter === "all"
-			? entries
-			: entries.filter((entry) => ledgerOperationGroup(entry.operation) === filter)
-	).filter(
-		// Defensive: skip malformed rows (missing id) rather than emit a
-		// React key warning or render an "undefined" row.
-		(entry): entry is WalletLedgerEntry => entry != null && typeof entry.id === "string",
-	);
+	return filter === "all"
+		? entries
+		: entries.filter((entry) => ledgerOperationGroup(entry.operation) === filter);
 }
 
 export function ledgerEmptyStateCopy({

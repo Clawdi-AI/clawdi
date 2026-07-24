@@ -1,9 +1,19 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useSettingsEditState } from "@/components/settings-edit-state";
 import { Button } from "@/components/ui/button";
+import {
+	Card,
+	CardAction,
+	CardContent,
+	CardDescription,
+	CardHeader,
+	CardTitle,
+} from "@/components/ui/card";
 import {
 	Dialog,
 	DialogContent,
@@ -38,17 +48,20 @@ import {
 } from "@/hosted/billing/wallet/wallet-constants";
 
 type Step = "amount" | "pay";
+type TopUpPresentation = "dialog" | "inline";
 
 export function TopUpDialog({
 	open,
 	onOpenChange,
 	onComplete,
 	initialAmountCents,
+	presentation = "dialog",
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	onComplete?: (status: "succeeded" | "processing") => void;
 	initialAmountCents?: number | null;
+	presentation?: TopUpPresentation;
 }) {
 	const topUp = useTopUp();
 	const qc = useQueryClient();
@@ -58,9 +71,10 @@ export function TopUpDialog({
 	const [clientSecret, setClientSecret] = useState<string | null>(null);
 	const [amountTouched, setAmountTouched] = useState(false);
 	const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+	useSettingsEditState({ dirty: false, busy: open && (topUp.isPending || paymentSubmitting) });
 	// One idempotency key per top-up ATTEMPT, reused across a retry of the same
 	// amount so a timeout-resubmit / double-tab can't create two PaymentIntents.
-	// Reset whenever the amount changes (a genuinely new attempt) or the dialog
+	// Reset whenever the amount changes (a genuinely new attempt) or the flow
 	// closes.
 	const topupKeyRef = useRef<string | null>(null);
 
@@ -111,7 +125,7 @@ export function TopUpDialog({
 					topupKeyRef.current = null;
 				},
 				// Successful completion is not a dismiss attempt. Close directly so the
-				// in-flight guard cannot leave a completed payment dialog stranded open.
+				// in-flight guard cannot leave a completed payment flow stranded open.
 				closeDialog: () => onOpenChange(false),
 				toastSuccess: toast.success,
 				toastError: toast.error,
@@ -131,7 +145,7 @@ export function TopUpDialog({
 	}
 
 	// Only terminal outcomes reach here — `requires_action` (3DS) is completed
-	// inline by StripePaymentForm, which keeps the dialog open until it settles
+	// inline by StripePaymentForm, which keeps the payment flow open until it settles
 	// rather than closing on an unconfirmed payment.
 	function onPaid(status: PaymentOutcome) {
 		completeTopup(status === "succeeded" ? "succeeded" : "processing", {
@@ -145,6 +159,108 @@ export function TopUpDialog({
 		});
 	}
 
+	const description =
+		step === "amount"
+			? `Add a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL} to your Wallet.`
+			: `Enter your card details to pay ${formatCents(amountCents)}.`;
+	const content =
+		step === "amount" ? (
+			<div className="space-y-4">
+				<div className="flex flex-wrap gap-2">
+					{TOPUP_PRESETS_CENTS.map((preset) => (
+						<Button
+							key={preset}
+							type="button"
+							size="sm"
+							variant={amountCents === preset ? "default" : "outline"}
+							aria-pressed={amountCents === preset}
+							onClick={() => setAmount(String(preset / 100))}
+						>
+							{formatCents(preset)}
+						</Button>
+					))}
+				</div>
+				<div className="space-y-1.5">
+					<Label htmlFor="topup-amount">Amount (USD)</Label>
+					<div className="relative">
+						<span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
+							$
+						</span>
+						<Input
+							id="topup-amount"
+							name="topup-amount"
+							type="number"
+							inputMode="decimal"
+							autoComplete="off"
+							min={TOPUP_MIN_CENTS / 100}
+							max={TOPUP_MAX_CENTS / 100}
+							step={TOPUP_INCREMENT_CENTS / 100}
+							className="pl-6"
+							value={dollars}
+							onChange={(e) => setAmount(e.target.value)}
+							onBlur={() => setAmountTouched(true)}
+							aria-invalid={amountInvalid}
+							aria-describedby="topup-amount-help"
+						/>
+					</div>
+					<p
+						id="topup-amount-help"
+						className={amountInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+						aria-live="polite"
+					>
+						{valid
+							? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
+							: `Enter a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL}.`}
+					</p>
+				</div>
+				<div className="flex justify-end">
+					<Button onClick={() => runAction(onContinue)} disabled={!valid || topUp.isPending}>
+						{topUp.isPending ? (
+							<>
+								<Spinner /> Starting…
+							</>
+						) : (
+							`Continue with ${formatCents(amountCents)}`
+						)}
+					</Button>
+				</div>
+			</div>
+		) : clientSecret ? (
+			<StripePaymentForm
+				clientSecret={clientSecret}
+				onComplete={onPaid}
+				onCancel={() => setStep("amount")}
+				summary={`Top-up charge: ${formatCents(amountCents)}`}
+				submitLabel={`Pay ${formatCents(amountCents)}`}
+				onSubmittingChange={setPaymentSubmitting}
+			/>
+		) : null;
+
+	if (presentation === "inline") {
+		if (!open) return null;
+		return (
+			<Card data-hosted="true" role="region" aria-labelledby="wallet-top-up-title">
+				<CardHeader>
+					<CardTitle id="wallet-top-up-title">Top up Wallet</CardTitle>
+					<CardDescription>{description}</CardDescription>
+					<CardAction>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon-sm"
+							onClick={() => close(false)}
+							disabled={topUp.isPending || paymentSubmitting}
+						>
+							<X />
+							<span className="sr-only">Close top-up</span>
+						</Button>
+					</CardAction>
+				</CardHeader>
+				<CardContent>{content}</CardContent>
+			</Card>
+		);
+	}
+
 	return (
 		<Dialog open={open} onOpenChange={close}>
 			<DialogContent
@@ -154,86 +270,9 @@ export function TopUpDialog({
 			>
 				<DialogHeader>
 					<DialogTitle>Top up Wallet</DialogTitle>
-					<DialogDescription>
-						{step === "amount"
-							? `Add a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL} to your Wallet.`
-							: `Enter your card details to pay ${formatCents(amountCents)}.`}
-					</DialogDescription>
+					<DialogDescription>{description}</DialogDescription>
 				</DialogHeader>
-
-				{step === "amount" ? (
-					<div className="space-y-4">
-						<div className="flex flex-wrap gap-2">
-							{TOPUP_PRESETS_CENTS.map((preset) => (
-								<Button
-									key={preset}
-									type="button"
-									size="sm"
-									variant={amountCents === preset ? "default" : "outline"}
-									aria-pressed={amountCents === preset}
-									onClick={() => setAmount(String(preset / 100))}
-								>
-									{formatCents(preset)}
-								</Button>
-							))}
-						</div>
-						<div className="space-y-1.5">
-							<Label htmlFor="topup-amount">Amount (USD)</Label>
-							<div className="relative">
-								<span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-									$
-								</span>
-								<Input
-									id="topup-amount"
-									name="topup-amount"
-									type="number"
-									inputMode="decimal"
-									autoComplete="off"
-									min={TOPUP_MIN_CENTS / 100}
-									max={TOPUP_MAX_CENTS / 100}
-									step={TOPUP_INCREMENT_CENTS / 100}
-									className="pl-6"
-									value={dollars}
-									onChange={(e) => setAmount(e.target.value)}
-									onBlur={() => setAmountTouched(true)}
-									aria-invalid={amountInvalid}
-									aria-describedby="topup-amount-help"
-								/>
-							</div>
-							<p
-								id="topup-amount-help"
-								className={
-									amountInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"
-								}
-								aria-live="polite"
-							>
-								{valid
-									? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
-									: `Enter a whole-dollar amount from ${TOPUP_AMOUNT_RANGE_LABEL}.`}
-							</p>
-						</div>
-						<div className="flex justify-end">
-							<Button onClick={() => runAction(onContinue)} disabled={!valid || topUp.isPending}>
-								{topUp.isPending ? (
-									<>
-										<Spinner /> Starting…
-									</>
-								) : (
-									`Continue with ${formatCents(amountCents)}`
-								)}
-							</Button>
-						</div>
-					</div>
-				) : clientSecret ? (
-					<StripePaymentForm
-						clientSecret={clientSecret}
-						onComplete={onPaid}
-						onCancel={() => setStep("amount")}
-						summary={`Top-up charge: ${formatCents(amountCents)}`}
-						submitLabel={`Pay ${formatCents(amountCents)}`}
-						onSubmittingChange={setPaymentSubmitting}
-					/>
-				) : null}
+				{content}
 			</DialogContent>
 		</Dialog>
 	);

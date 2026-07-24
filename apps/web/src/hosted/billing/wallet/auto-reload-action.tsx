@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CreditCard, RefreshCw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useSettingsEditState } from "@/components/settings-edit-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import type { WalletState } from "@/hosted/billing/contracts";
@@ -34,6 +35,8 @@ export function AutoReloadActionConfirm({
 }) {
 	const qc = useQueryClient();
 	const [confirming, setConfirming] = useState(false);
+	const [paymentSubmitting, setPaymentSubmitting] = useState(false);
+	useSettingsEditState({ dirty: false, busy: confirming && paymentSubmitting });
 
 	const action = wallet.auto_reload_action;
 	if (!action) return null;
@@ -49,6 +52,7 @@ export function AutoReloadActionConfirm({
 		// settles; refetch balance + activity so this control clears itself.
 		qc.invalidateQueries({ queryKey: billingKeys.wallet });
 		qc.invalidateQueries({ queryKey: billingKeys.ledgerRoot });
+		setPaymentSubmitting(false);
 		setConfirming(false);
 		toast.success(status === "succeeded" ? "Payment confirmed" : "Payment processing", {
 			description:
@@ -98,6 +102,7 @@ export function AutoReloadActionConfirm({
 							onCancel={() => setConfirming(false)}
 							summary={`Auto-reload charge: ${charge}`}
 							submitLabel={`${declined ? "Retry" : "Confirm"} ${charge} payment`}
+							onSubmittingChange={setPaymentSubmitting}
 						/>
 					</div>
 				) : (

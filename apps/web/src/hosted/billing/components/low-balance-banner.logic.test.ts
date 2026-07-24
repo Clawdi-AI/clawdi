@@ -5,7 +5,6 @@ import { lowBalanceBannerState } from "./low-balance-banner.logic";
 function wallet(over: Partial<WalletState> = {}): WalletState {
 	return {
 		balance_usd: "50",
-		payment_mode: "card",
 		x402_enabled: true,
 		auto_reload_enabled: false,
 		auto_reload_threshold_usd: "1",
