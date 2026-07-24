@@ -79,7 +79,7 @@ from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.schemas.runtime import HostedRuntimeTools, validate_hosted_runtime_desired_state
 from app.services.managed_ai_provider import (
-    V2_MANAGED_AI_PROVIDER_ID,
+    CLAWDI_MANAGED_PROVIDER_ID,
     is_v2_deployment_managed_provider_id,
     runtime_managed_provider_id,
     v2_deployment_managed_provider_id,
@@ -355,8 +355,8 @@ def _runtime_state_may_use_provider(state: HostedRuntimeState, provider_id: str)
         return False
     runtime_provider_ids = {runtime_managed_provider_id(value) for value in runtime.provider_ids}
     return (
-        V2_MANAGED_AI_PROVIDER_ID in runtime_provider_ids
-        or runtime_managed_provider_id(tools.codex.provider_id) == V2_MANAGED_AI_PROVIDER_ID
+        CLAWDI_MANAGED_PROVIDER_ID in runtime_provider_ids
+        or runtime_managed_provider_id(tools.codex.provider_id) == CLAWDI_MANAGED_PROVIDER_ID
     )
 
 

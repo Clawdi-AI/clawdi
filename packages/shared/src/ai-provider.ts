@@ -165,6 +165,8 @@ export const CODEX_OAUTH_MODEL_CATALOG: readonly AiProviderModel[] = [
 	{ id: "gpt-5.4-mini" },
 ];
 
+// Agent-facing alias only. Credential and catalog source rows keep their v2 ids below.
+export const CLAWDI_MANAGED_PROVIDER_ID = "clawdi";
 export const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
 const CLAWDI_MANAGED_V1_API_MODE = "openai_responses";
 export const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-v2";
@@ -177,6 +179,7 @@ const CLAWDI_MANAGED_V2_API_MODE = "openai_chat";
 // TODO(#425): Remove the legacy member after hosted#892 is deployed everywhere and no
 // dev/self-hosted binding still uses clawdi-managed-v2.
 export const CLAWDI_MANAGED_PROVIDER_IDS: ReadonlySet<string> = new Set([
+	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
@@ -196,6 +199,7 @@ export interface AiProviderManagedIdentity {
 
 export function isClawdiManagedV2ProviderId(providerId: string): boolean {
 	if (
+		providerId === CLAWDI_MANAGED_PROVIDER_ID ||
 		providerId === CLAWDI_MANAGED_V2_PROVIDER_ID ||
 		providerId === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
 	) {

@@ -189,7 +189,7 @@ describe("runtime egress profile schema", () => {
 		});
 
 		expect(providerProfiles(bundle.profiles).map((profile) => profile.id)).toEqual([
-			"managed-provider-clawdi-v2",
+			"managed-provider-clawdi",
 		]);
 		expect(JSON.stringify(bundle.profiles)).not.toContain(
 			"managed-provider-clawdi-v2-deployment-42",

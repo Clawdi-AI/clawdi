@@ -1,8 +1,4 @@
-import {
-	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
-	CLAWDI_MANAGED_V2_PROVIDER_ID,
-	isClawdiManagedV2ProviderId,
-} from "@clawdi/shared";
+import { CLAWDI_MANAGED_PROVIDER_ID, isClawdiManagedV2ProviderId } from "@clawdi/shared";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { type EgressProfileInputBundle, egressProfileInputBundleSchema } from "./egress-profiles";
 
@@ -174,10 +170,9 @@ function managedProviderEgressProfileForProvider(
 	}
 	if (cleanString(provider.status) && cleanString(provider.status) !== "ok") return null;
 	const parsed = new URL(providerBaseUrl);
-	const profileProviderId =
-		isClawdiManagedV2ProviderId(providerId) && providerId !== CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
-			? CLAWDI_MANAGED_V2_PROVIDER_ID
-			: providerId;
+	const profileProviderId = isClawdiManagedV2ProviderId(providerId)
+		? CLAWDI_MANAGED_PROVIDER_ID
+		: providerId;
 	return {
 		id:
 			profileProviderId === "default"

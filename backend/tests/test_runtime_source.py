@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -12,7 +12,11 @@ from app.models.channel import ChannelAccount, ChannelBotAgentLink
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.runtime import HostedCodexProviderProjection
-from app.services.managed_ai_provider import V2_MANAGED_AI_PROVIDER_ID
+from app.services.managed_ai_provider import (
+    CLAWDI_MANAGED_PROVIDER_ID,
+    V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_MANAGED_AI_PROVIDER_ID,
+)
 from app.services.runtime_source import (
     RuntimeSourceBatch,
     RuntimeSourceError,
@@ -207,12 +211,12 @@ def _add_prefix_colliding_channel(batch: RuntimeSourceBatch) -> None:
     batch.channels[ENV_ID] = (*batch.channels[ENV_ID], (account, link))
 
 
-def _use_deployment_scoped_managed_provider(
+def _use_managed_provider(
     batch: RuntimeSourceBatch,
     *,
     bound_provider_id: str,
+    source_provider_id: str,
 ) -> str:
-    deployment_provider_id = "clawdi-v2-deployment-42"
     state = batch.rows[ENV_ID].state
     assert state is not None
     state.deployment_id = "42"
@@ -235,12 +239,12 @@ def _use_deployment_scoped_managed_provider(
     }
 
     provider = batch.providers.pop((USER_ID, "managed"))
-    provider.provider_id = deployment_provider_id
-    batch.providers[(USER_ID, deployment_provider_id)] = provider
+    provider.provider_id = source_provider_id
+    batch.providers[(USER_ID, source_provider_id)] = provider
     auth = batch.auth_payloads.pop((USER_ID, "managed", "default"))
-    auth.provider_id = deployment_provider_id
-    batch.auth_payloads[(USER_ID, deployment_provider_id, "default")] = auth
-    return deployment_provider_id
+    auth.provider_id = source_provider_id
+    batch.auth_payloads[(USER_ID, source_provider_id, "default")] = auth
+    return source_provider_id
 
 
 def _render(batch: RuntimeSourceBatch):
@@ -340,36 +344,106 @@ def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None
 
 
 @pytest.mark.parametrize(
-    "bound_provider_id",
-    [V2_MANAGED_AI_PROVIDER_ID, "clawdi-v2-deployment-42"],
-    ids=["stable-runtime-binding", "legacy-scoped-runtime-binding"],
+    ("bound_provider_id", "source_provider_id"),
+    [
+        (CLAWDI_MANAGED_PROVIDER_ID, "clawdi-v2-deployment-42"),
+        (CLAWDI_MANAGED_PROVIDER_ID, V2_MANAGED_AI_PROVIDER_ID),
+        (CLAWDI_MANAGED_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID),
+        (V2_MANAGED_AI_PROVIDER_ID, "clawdi-v2-deployment-42"),
+        ("clawdi-v2-deployment-42", "clawdi-v2-deployment-42"),
+        (V2_LEGACY_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID),
+    ],
+    ids=[
+        "agent-alias-scoped-source",
+        "agent-alias-base-source",
+        "agent-alias-legacy-source",
+        "stable-internal",
+        "deployment-scoped",
+        "legacy-internal",
+    ],
 )
-def test_deployment_managed_provider_projects_stable_agent_identity(
+def test_managed_v2_provider_projects_bare_agent_identity(
     bound_provider_id: str,
+    source_provider_id: str,
 ) -> None:
     batch = _batch()
-    deployment_provider_id = _use_deployment_scoped_managed_provider(
+    internal_provider_id = _use_managed_provider(
         batch,
         bound_provider_id=bound_provider_id,
+        source_provider_id=source_provider_id,
     )
 
     source = _render(batch)
     manifest = source.manifest
 
-    assert manifest["runtimes"]["openclaw"]["provider_ids"] == [V2_MANAGED_AI_PROVIDER_ID]
+    assert manifest["runtimes"]["openclaw"]["provider_ids"] == [CLAWDI_MANAGED_PROVIDER_ID]
     assert manifest["runtimes"]["openclaw"]["primary_model"] == {
+        "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
+        "model": "gpt-test",
+    }
+    assert set(manifest["providers"]) == {CLAWDI_MANAGED_PROVIDER_ID}
+    assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["apiKeySecretRef"] == (
+        "tool.codex.apiKey"
+    )
+    assert manifest["terminalTooling"]["codex"]["provider_id"] == CLAWDI_MANAGED_PROVIDER_ID
+    assert manifest["terminalTooling"]["codex"]["primary_model"]["provider_id"] == (
+        CLAWDI_MANAGED_PROVIDER_ID
+    )
+    assert internal_provider_id not in json.dumps(manifest)
+
+
+def test_bare_managed_alias_prefers_deployment_source_over_fallback_rows() -> None:
+    batch = _batch()
+    _use_managed_provider(
+        batch,
+        bound_provider_id=CLAWDI_MANAGED_PROVIDER_ID,
+        source_provider_id="clawdi-v2-deployment-42",
+    )
+    scoped_provider = batch.providers[(USER_ID, "clawdi-v2-deployment-42")]
+    scoped_provider.models = [{"id": "scoped-model"}]
+    for provider_id, model in [
+        (V2_MANAGED_AI_PROVIDER_ID, "base-model"),
+        (V2_LEGACY_MANAGED_AI_PROVIDER_ID, "legacy-model"),
+    ]:
+        batch.providers[(USER_ID, provider_id)] = AiProvider(
+            id=uuid4(),
+            owner_user_id=USER_ID,
+            provider_id=provider_id,
+            type=scoped_provider.type,
+            label=scoped_provider.label,
+            base_url=scoped_provider.base_url,
+            api_mode=scoped_provider.api_mode,
+            auth_type=scoped_provider.auth_type,
+            auth_metadata=scoped_provider.auth_metadata,
+            managed_by=scoped_provider.managed_by,
+            models=[{"id": model}],
+        )
+
+    manifest = _render(batch).manifest
+
+    assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == [{"id": "scoped-model"}]
+
+
+def test_multiple_managed_bindings_cannot_collapse_to_one_agent_provider() -> None:
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = [
+        V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    ]
+    runtime["primary_model"] = {
         "provider_id": V2_MANAGED_AI_PROVIDER_ID,
         "model": "gpt-test",
     }
-    assert set(manifest["providers"]) == {V2_MANAGED_AI_PROVIDER_ID}
-    assert manifest["providers"][V2_MANAGED_AI_PROVIDER_ID]["apiKeySecretRef"] == (
-        "tool.codex.apiKey"
-    )
-    assert manifest["terminalTooling"]["codex"]["provider_id"] == (V2_MANAGED_AI_PROVIDER_ID)
-    assert manifest["terminalTooling"]["codex"]["primary_model"]["provider_id"] == (
-        V2_MANAGED_AI_PROVIDER_ID
-    )
-    assert deployment_provider_id not in json.dumps(manifest)
+    state.runtimes = {"openclaw": runtime}
+
+    with pytest.raises(
+        RuntimeSourceError,
+        match="multiple provider bindings project to agent provider clawdi",
+    ):
+        _render(batch)
 
 
 @pytest.mark.parametrize(

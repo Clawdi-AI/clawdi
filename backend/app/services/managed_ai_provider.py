@@ -12,6 +12,8 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.user import User
 from app.services.vault_crypto import encrypt
 
+# Agent-facing alias only. Credential and catalog source rows keep their v2 ids below.
+CLAWDI_MANAGED_PROVIDER_ID = "clawdi"
 V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
 V1_MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
 V2_MANAGED_AI_PROVIDER_ID = "clawdi-v2"
@@ -74,9 +76,8 @@ def runtime_managed_provider_id(provider_id: str) -> str:
     """Return the stable agent-facing id for a managed provider binding."""
 
     return (
-        V2_MANAGED_AI_PROVIDER_ID
-        if provider_id == V2_MANAGED_AI_PROVIDER_ID
-        or is_v2_deployment_managed_provider_id(provider_id)
+        CLAWDI_MANAGED_PROVIDER_ID
+        if provider_id == CLAWDI_MANAGED_PROVIDER_ID or is_v2_managed_provider_id(provider_id)
         else provider_id
     )
 

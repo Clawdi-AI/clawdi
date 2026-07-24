@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	type AiProviderAuth,
+	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_PROVIDER_IDS,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX,
@@ -291,6 +292,7 @@ describe("validateAiProviderCatalog", () => {
 	});
 
 	test.each([
+		CLAWDI_MANAGED_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 		`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
@@ -375,6 +377,7 @@ describe("validateAiProviderCatalog", () => {
 
 describe("isFirstPartyManagedAiProvider", () => {
 	test("matches every first-party managed id even when old rows are missing managed_by", () => {
+		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_PROVIDER_ID })).toBe(true);
 		expect(isFirstPartyManagedAiProvider({ provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID })).toBe(
 			true,
 		);
@@ -391,6 +394,7 @@ describe("isFirstPartyManagedAiProvider", () => {
 				provider_id: `${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
 			}),
 		).toBe(true);
+		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_PROVIDER_ID)).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_PROVIDER_ID)).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID)).toBe(true);
 	});

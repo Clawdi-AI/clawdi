@@ -40,6 +40,8 @@ from app.schemas.runtime import (
 )
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
+    CLAWDI_MANAGED_PROVIDER_ID,
+    V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_ID,
     is_managed_provider_id,
     managed_provider_api_mode,
@@ -480,7 +482,14 @@ def _agent_runtime_binding(runtime: dict[str, Any]) -> dict[str, Any]:
         runtime_managed_provider_id(provider_id) for provider_id in runtime["provider_ids"]
     ]
     if len(provider_ids) != len(set(provider_ids)):
-        raise RuntimeSourceError("multiple provider bindings project to one agent provider")
+        duplicate = next(
+            provider_id
+            for index, provider_id in enumerate(provider_ids)
+            if provider_id in provider_ids[:index]
+        )
+        raise RuntimeSourceError(
+            f"multiple provider bindings project to agent provider {duplicate}"
+        )
     projected = {**runtime, "provider_ids": provider_ids}
     primary_model = runtime.get("primary_model")
     if isinstance(primary_model, dict):
@@ -510,12 +519,21 @@ def _provider_source_id(
     deployment_id: str,
     bound_provider_id: str,
 ) -> str:
-    if bound_provider_id != V2_MANAGED_AI_PROVIDER_ID:
+    """Resolve an agent alias to the deployment-scoped credential/catalog row."""
+
+    if bound_provider_id not in {
+        CLAWDI_MANAGED_PROVIDER_ID,
+        V2_MANAGED_AI_PROVIDER_ID,
+    }:
         return bound_provider_id
     deployment_provider_id = v2_deployment_managed_provider_id(deployment_id)
     if deployment_provider_id is not None and (user_id, deployment_provider_id) in batch.providers:
         return deployment_provider_id
-    return bound_provider_id
+    if (user_id, V2_MANAGED_AI_PROVIDER_ID) in batch.providers:
+        return V2_MANAGED_AI_PROVIDER_ID
+    if (user_id, V2_LEGACY_MANAGED_AI_PROVIDER_ID) in batch.providers:
+        return V2_LEGACY_MANAGED_AI_PROVIDER_ID
+    return V2_MANAGED_AI_PROVIDER_ID
 
 
 def _selected_auth_payload(
