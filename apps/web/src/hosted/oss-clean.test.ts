@@ -22,6 +22,7 @@ const HOSTED_DIR = join(import.meta.dir);
 const SRC_DIR = join(import.meta.dir, "..");
 const HOSTED_V2_DIR = join(HOSTED_DIR, "v2");
 const PAGES_DIR = join(SRC_DIR, "pages");
+const CAPABILITY_INDEPENDENT_HOSTED_ROUTES = new Set(["oauth/codex/callback/page.tsx"]);
 const GATED_ROUTE_DYNAMIC_IMPORT =
 	/\bimport\s*\(\s*["'](@\/hosted\/(?:v2\/|billing\/)[^"']+)["']\s*\)/g;
 
@@ -100,6 +101,9 @@ function discoverHostedProductOnlyRouteFiles(): string[] {
 		if (!/(?:^|\/)(?:page|layout)\.tsx$/.test(file)) continue;
 		const src = readFileSync(file, "utf8");
 		if (!routeUsesHostedProductOnlyModule(src)) continue;
+		// OAuth protocol callbacks must hand the authorization response back to
+		// their opener even while the per-user capability check is unavailable.
+		if (CAPABILITY_INDEPENDENT_HOSTED_ROUTES.has(relative(PAGES_DIR, file))) continue;
 
 		const gateFile = nearestHostedProductGateFile(file);
 		if (gateFile) {
@@ -334,6 +338,18 @@ describe("hosted product route exposure", () => {
 		expect(src).toContain('router.navigate({ href: "/deploy" })');
 		expect(src).not.toContain('from "@/hosted/');
 		expect(src).not.toMatch(/href=["']https:\/\/[^"']+\/dashboard["']/);
+	});
+
+	test("the Codex OAuth callback relays independently of the capability gate", () => {
+		const route = readFileSync(join(PAGES_DIR, "oauth/codex/callback/page.tsx"), "utf8");
+		const callback = readFileSync(
+			join(HOSTED_V2_DIR, "ai-providers/codex-oauth-callback.tsx"),
+			"utf8",
+		);
+		expect(route).not.toContain("HostedProductGate");
+		expect(callback).toContain("ch.postMessage(result)");
+		expect(callback).toContain("window.opener?.postMessage(");
+		expect(callback).toContain("localStorage.setItem(CODEX_OAUTH_STORAGE_KEY");
 	});
 
 	test("Cloud-agents-off agent index copy stays neutral", () => {

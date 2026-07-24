@@ -3,6 +3,7 @@
 import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
 import { useEffect, useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
@@ -40,10 +41,11 @@ export function NewAgentButton({
 	}, []);
 	const canDeployManagedAgent = mounted && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const checkingDeployAccess = mounted && IS_HOSTED && hostedAccess.isLoading;
+	const deployAccessError = mounted && IS_HOSTED && hostedAccess.isError;
 
 	function handleClick() {
 		if (checkingDeployAccess) return;
-		if (canDeployManagedAgent) {
+		if (canDeployManagedAgent || deployAccessError) {
 			setChooserOpen(true);
 			return;
 		}
@@ -100,6 +102,15 @@ export function NewAgentButton({
 							Deploy a managed agent on Clawdi, or connect an agent you already run.
 						</DialogDescription>
 					</DialogHeader>
+					{deployAccessError ? (
+						<ApiErrorPanel
+							error={hostedAccess.error}
+							onRetry={() => {
+								void hostedAccess.refetch();
+							}}
+							title="Couldn't verify deploy access"
+						/>
+					) : null}
 					<div className="grid gap-3 sm:grid-cols-2">
 						<ChoiceCard
 							icon={checkingDeployAccess ? <Loader2 className="animate-spin" /> : <Rocket />}
