@@ -1,3 +1,4 @@
+import { acceptDeclarativeOperation } from "@/hosted/billing/billing-client";
 import type {
 	CheckoutRequest,
 	CheckoutResult,
@@ -54,7 +55,7 @@ export type SubscriptionCreateOutcomeView =
 	  }
 	| {
 			flowType: "subscription_activation";
-			deploymentId: string | null;
+			deploymentId: string;
 			deployRequestId: string | null;
 	  };
 
@@ -144,7 +145,10 @@ export function subscriptionCreateOutcome(result: CheckoutResult): SubscriptionC
 	}
 	return {
 		flowType: "subscription_activation",
-		deploymentId: result.deployment_id ?? null,
+		deploymentId: acceptDeclarativeOperation(
+			{ deploymentId: result.deployment_id, operation: null },
+			"Wallet activation did not accept a deployment target.",
+		).deploymentId,
 		deployRequestId: result.deploy_request_id ?? null,
 	};
 }

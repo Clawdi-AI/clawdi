@@ -3,9 +3,8 @@
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
-import { useBillingClient } from "@/hosted/billing/billing-client";
+import { type AcceptedOperation, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
-	DeploymentOperation,
 	DeploymentUpdateRequest,
 	HostedDeployment,
 	HostedDeploymentStatus,
@@ -28,6 +27,19 @@ import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 
 const SETTLING_REFRESH_DELAYS_MS = [2_000, 10_000, 20_000, 30_000] as const;
+const ACCEPTED_OPERATION_TRANSITIONS = {
+	create: "creating",
+	start: "starting",
+	stop: "stopping",
+	restart: "restarting",
+	update: "updating",
+	runtime_switch: "updating",
+	rename: "updating",
+	delete: "deleting",
+} satisfies Record<
+	AcceptedOperation["operation"]["metadata"]["verb"],
+	HostedDeploymentStatus["summary_state"]
+>;
 
 export function invalidateDeploymentSnapshots(qc: QueryClient) {
 	void qc.invalidateQueries({ queryKey: billingKeys.deployments });
@@ -45,16 +57,16 @@ function scheduleDeploymentSettlingRefresh(qc: QueryClient) {
 
 export function projectAcceptedDeploymentTransition(
 	qc: QueryClient,
-	deploymentId: string,
-	status: HostedDeploymentStatus["summary_state"],
-	operation: DeploymentOperation,
+	accepted: AcceptedOperation,
+	scheduleRefresh = scheduleDeploymentSettlingRefresh,
 ) {
+	const status = ACCEPTED_OPERATION_TRANSITIONS[accepted.operation.metadata.verb];
 	qc.setQueryData<HostedDeployment[]>(billingKeys.deployments, (deployments) =>
 		deployments?.map((deployment) =>
-			deployment.resource.id === deploymentId
+			deployment.resource.id === accepted.deploymentId
 				? {
 						...deployment,
-						accepted_operation: operation,
+						accepted_operation: accepted.operation,
 						resource: {
 							...deployment.resource,
 							status: { ...deployment.resource.status, summary_state: status },
@@ -63,6 +75,7 @@ export function projectAcceptedDeploymentTransition(
 				: deployment,
 		),
 	);
+	scheduleRefresh(qc);
 }
 
 async function runStableDeploymentIntent<T>(
@@ -158,11 +171,8 @@ export function useDeploymentLifecycle() {
 					idempotencyKey,
 				);
 			}),
-		onSuccess: (operation, vars) => {
-			const status =
-				vars.action === "restart" ? "restarting" : vars.action === "stop" ? "stopping" : "starting";
-			projectAcceptedDeploymentTransition(qc, vars.id, status, operation);
-			scheduleDeploymentSettlingRefresh(qc);
+		onSuccess: (accepted, vars) => {
+			projectAcceptedDeploymentTransition(qc, accepted);
 			const msg =
 				vars.action === "restart"
 					? "Restarting…"
@@ -187,9 +197,8 @@ export function useDeleteDeployment() {
 			runStableDeploymentIntent("deployment-delete", { action: "delete", id }, (key) =>
 				client.deleteDeployment(id, key),
 			),
-		onSuccess: (operation, id) => {
-			projectAcceptedDeploymentTransition(qc, id, "deleting", operation);
-			scheduleDeploymentSettlingRefresh(qc);
+		onSuccess: (accepted) => {
+			projectAcceptedDeploymentTransition(qc, accepted);
 			toast.message("Deleting…");
 		},
 		onError: (error) => {
@@ -208,9 +217,8 @@ export function useUpdateDeployment() {
 			runStableDeploymentIntent("deployment-update", vars, (key) =>
 				client.updateDeployment(vars.id, vars.update, key),
 			),
-		onSuccess: (operation, vars) => {
-			projectAcceptedDeploymentTransition(qc, vars.id, "updating", operation);
-			scheduleDeploymentSettlingRefresh(qc);
+		onSuccess: (accepted) => {
+			projectAcceptedDeploymentTransition(qc, accepted);
 			toast.message("Applying agent settings…");
 		},
 		onError: (error) => {

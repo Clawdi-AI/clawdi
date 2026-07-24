@@ -48,10 +48,7 @@ type DeployResult<T> = { data?: T; error?: unknown; response: Response };
 type BillingFetch = (request: Request) => Promise<Response>;
 type BillingAuthTokenGetter = () => Promise<string | null | undefined>;
 
-export type DeploymentIntentResult = {
-	deploymentId: string;
-	operation: DeploymentOperation | null;
-};
+export type AcceptedOperation = { deploymentId: string; operation: DeploymentOperation };
 
 export type BillingClientOptions = {
 	fetch?: BillingFetch;
@@ -110,10 +107,30 @@ function operationIdFromName(name: string): string {
 }
 
 function deploymentIdFromOperation(operation: DeploymentOperation): string | null {
+	const metadataId = operation.metadata?.deploymentId?.trim();
+	if (metadataId) return metadataId;
 	return operation.response?.["@type"] ===
 		"type.googleapis.com/clawdi.v2.DeploymentOperationResponse"
-		? operation.response.deployment.id
+		? operation.response.deployment.id.trim() || null
 		: null;
+}
+
+export function acceptDeclarativeOperation<T extends DeploymentOperation | null>(
+	acceptance: {
+		operation: T;
+		deploymentId?: string | null;
+	},
+	missingDeploymentMessage = "The deployment service completed creation without a deployment.",
+): {
+	deploymentId: string;
+	operation: T;
+} {
+	const deploymentId =
+		(acceptance.operation ? deploymentIdFromOperation(acceptance.operation) : null) ||
+		acceptance.deploymentId?.trim() ||
+		null;
+	if (!deploymentId) throw new BillingApiError(502, missingDeploymentMessage);
+	return { deploymentId, operation: acceptance.operation };
 }
 
 function strongResourceEtag(deployment: HostedDeployment): string {
@@ -190,18 +207,13 @@ export function createBillingClient(
 		initialOperation: DeploymentOperation,
 	): Promise<DeploymentOperation> => {
 		let operation = initialOperation;
-		for (let poll = 0; poll <= pollLimit; poll += 1) {
-			if (operation.done) {
-				if (operation.error) {
-					throw new BillingApiError(409, operation.error.message, operation.error);
-				}
-				return operation;
-			}
-			if (poll === pollLimit) break;
+		for (let poll = 0; !operation.done && poll < pollLimit; poll += 1) {
 			await sleep(pollIntervalMs);
 			operation = await getOperation(operationIdFromName(operation.name));
 		}
-		throw new BillingNetworkError("timeout");
+		if (!operation.done) throw new BillingNetworkError("timeout");
+		if (operation.error) throw new BillingApiError(409, operation.error.message, operation.error);
+		return operation;
 	};
 
 	const getDeploymentByRequest = async (
@@ -213,9 +225,7 @@ export function createBillingClient(
 			}),
 		);
 
-	const waitForDeploymentRequest = async (
-		deployRequestId: string,
-	): Promise<DeploymentIntentResult> => {
+	const waitForDeploymentRequest = async (deployRequestId: string) => {
 		for (let poll = 0; poll <= pollLimit; poll += 1) {
 			const status = await getDeploymentByRequest(deployRequestId);
 			if (
@@ -231,14 +241,14 @@ export function createBillingClient(
 			if (projectedOperation || operationName) {
 				const initialOperation =
 					projectedOperation ?? (await getOperation(operationIdFromName(operationName ?? "")));
-				const operation = await waitForOperation(initialOperation);
-				const deploymentId =
-					deploymentIdFromOperation(operation) ?? status.lineage_tail?.deployment_id ?? null;
-				if (deploymentId) return { deploymentId, operation };
+				return acceptDeclarativeOperation({
+					operation: await waitForOperation(initialOperation),
+					deploymentId: status.lineage_tail?.deployment_id,
+				});
 			}
 			const deploymentId = status.lineage_tail?.deployment_id ?? null;
 			if (status.request_status === "succeeded" && deploymentId) {
-				return { deploymentId, operation: null };
+				return acceptDeclarativeOperation({ deploymentId, operation: null });
 			}
 			if (poll === pollLimit) break;
 			await sleep(pollIntervalMs);
@@ -250,16 +260,15 @@ export function createBillingClient(
 		id: string,
 		idempotencyKey: string,
 		send: (headers: MutationHeaders) => Promise<DeployResult<DeploymentOperation>>,
-	): Promise<DeploymentOperation> => {
+	): Promise<AcceptedOperation> => {
 		let deployment = await getDeployment(id);
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			const headers: MutationHeaders = {
 				"Idempotency-Key": idempotencyKey,
 				"If-Match": strongResourceEtag(deployment),
 			};
-			let accepted: DeploymentOperation;
 			try {
-				accepted = unwrapDeploy(await send(headers));
+				return acceptDeclarativeOperation({ operation: unwrapDeploy(await send(headers)) });
 			} catch (error) {
 				if (!isPreconditionConflict(error)) throw error;
 				if (attempt === 0) {
@@ -268,7 +277,6 @@ export function createBillingClient(
 				}
 				throw new DeploymentConflictError({ cause: error });
 			}
-			return accepted;
 		}
 		throw new DeploymentConflictError();
 	};
@@ -344,24 +352,15 @@ export function createBillingClient(
 		createDeployment: async (
 			body: DeploymentCreateRequest,
 			idempotencyKey: string,
-		): Promise<DeploymentIntentResult> => {
-			const operation = await waitForOperation(
-				unwrapDeploy(
+		): Promise<AcceptedOperation> =>
+			acceptDeclarativeOperation({
+				operation: unwrapDeploy(
 					await api.POST("/v2/deployments", {
 						params: { header: { "Idempotency-Key": idempotencyKey } },
 						body,
 					}),
 				),
-			);
-			const deploymentId = deploymentIdFromOperation(operation);
-			if (!deploymentId) {
-				throw new BillingApiError(
-					502,
-					"The deployment service completed creation without a deployment.",
-				);
-			}
-			return { deploymentId, operation };
-		},
+			}),
 		createTerminalSession: async (id: string) =>
 			unwrapDeploy(
 				await api.POST("/v2/deployments/{deployment_id}/terminal", {

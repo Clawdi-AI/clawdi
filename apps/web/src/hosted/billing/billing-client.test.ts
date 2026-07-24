@@ -1,5 +1,9 @@
 import { describe, expect, it } from "bun:test";
-import { createBillingClient, unwrapDeploy } from "@/hosted/billing/billing-client";
+import {
+	acceptDeclarativeOperation,
+	createBillingClient,
+	unwrapDeploy,
+} from "@/hosted/billing/billing-client";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
 import type { DeploymentOperation } from "@/hosted/billing/contracts";
 import {
@@ -20,10 +24,12 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 function operation({
 	done = true,
+	deploymentId = "hdep_test",
 	id = "op-test",
 	verb = "update",
 }: {
 	done?: boolean;
+	deploymentId?: string;
 	id?: string;
 	verb?: DeploymentOperation["metadata"]["verb"];
 } = {}): DeploymentOperation {
@@ -32,7 +38,7 @@ function operation({
 		name: `operations/${id}`,
 		metadata: {
 			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
-			deploymentId: deployment.id,
+			deploymentId,
 			verb,
 			targetGeneration: 2,
 			manifestETag: "manifest-test",
@@ -112,13 +118,13 @@ describe("managed model catalog", () => {
 });
 
 describe("declarative deployment mutations", () => {
-	it("creates an included Basic deployment with an idempotency key and waits for its LRO", async () => {
+	it("releases an included Basic deployment as soon as its LRO is accepted", async () => {
 		const requests: Request[] = [];
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
 			const path = new URL(request.url).pathname;
 			if (path === "/v2/deployments" && request.method === "POST") {
-				return jsonResponse(operation({ id: "included-create", verb: "create" }), 202);
+				return jsonResponse(operation({ done: false, id: "included-create", verb: "create" }), 202);
 			}
 			throw new Error(`Unexpected request: ${request.method} ${path}`);
 		});
@@ -133,25 +139,29 @@ describe("declarative deployment mutations", () => {
 		);
 
 		expect(result.deploymentId).toBe("hdep_test");
+		expect(result.operation.done).toBe(false);
 		expect(requests).toHaveLength(1);
 		expect(requests[0]?.headers.get("Idempotency-Key")).toBe("intent-included-create");
 		expect(await requests[0]?.json()).toMatchObject({
 			compute_plan_slug: "compute_basic",
 			runtime: "openclaw",
 		});
+		expect(() =>
+			acceptDeclarativeOperation({ operation: operation({ done: false, deploymentId: "" }) }),
+		).toThrow("The deployment service completed creation without a deployment.");
 	});
 
-	it("creates a wallet-funded deployment and waits for its LRO", async () => {
+	it("waits for a checkout deployment request that genuinely needs LRO completion", async () => {
 		const requests: Request[] = [];
-		const intentKey = "subscription-wallet-deploy-create-happy";
+		const intentKey = "subscription-checkout-deploy-create-happy";
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
 			const path = new URL(request.url).pathname;
 			if (path === "/v2/subscription/checkout") {
 				return jsonResponse({
-					flow_type: "subscription_activation",
-					funding_source: "wallet",
-					checkout_url: "",
+					flow_type: "checkout_session",
+					funding_source: "stripe",
+					checkout_url: "https://checkout.example.com/session",
 					deploy_request_id: intentKey,
 				});
 			}
@@ -177,7 +187,7 @@ describe("declarative deployment mutations", () => {
 			{
 				plan_slug: "compute_basic",
 				billing_term_months: 1,
-				funding_source: "wallet",
+				funding_source: "stripe",
 				ui_mode: "custom",
 				deploy_config: {
 					compute_plan_slug: "compute_basic",
@@ -340,44 +350,12 @@ describe("declarative deployment mutations", () => {
 			client.deleteDeployment("hdep_delete", "intent-delete"),
 		]);
 
-		expect(accepted.map((item) => item.done)).toEqual([false, false, false, false, false, false]);
+		expect(
+			accepted.every((item) => !item.operation.done && item.deploymentId === "hdep_test"),
+		).toBe(true);
 		expect(
 			requests.filter((request) => new URL(request.url).pathname.startsWith("/v2/operations/")),
 		).toHaveLength(0);
-	});
-
-	it("releases an accepted Start without polling its LRO", async () => {
-		const requests: Request[] = [];
-		const client = testClient(async (request) => {
-			requests.push(request.clone());
-			const path = new URL(request.url).pathname;
-			if (path === "/v2/deployments/hdep_stopped" && request.method === "GET") {
-				return jsonResponse(
-					hostedDeploymentFixture({
-						id: "hdep_stopped",
-						status: "stopped",
-						resourceVersion: "rv-stopped",
-					}),
-				);
-			}
-			if (path === "/v2/deployments/hdep_stopped/start" && request.method === "POST") {
-				return jsonResponse(operation({ done: false, id: "start-accepted", verb: "start" }), 202);
-			}
-			if (path.startsWith("/v2/operations/")) {
-				throw new Error("Accepted Start must not poll its operation");
-			}
-			throw new Error(`Unexpected request: ${request.method} ${path}`);
-		});
-
-		await expect(
-			client.setDeploymentDesiredState("hdep_stopped", "running", "intent-start-stopped"),
-		).resolves.toMatchObject({ done: false, name: "operations/start-accepted" });
-		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-			"/v2/deployments/hdep_stopped",
-			"/v2/deployments/hdep_stopped/start",
-		]);
-		expect(requests[1]?.headers.get("Idempotency-Key")).toBe("intent-start-stopped");
-		expect(requests[1]?.headers.get("If-Match")).toBe('"rv-stopped"');
 	});
 
 	it("keeps an accepted delete visible when reconciliation later fails", async () => {
@@ -413,7 +391,10 @@ describe("declarative deployment mutations", () => {
 
 		await expect(
 			client.deleteDeployment("hdep_delete_failure", "intent-delete-failure"),
-		).resolves.toMatchObject({ done: false, name: "operations/delete-failure" });
+		).resolves.toMatchObject({
+			deploymentId: "hdep_test",
+			operation: { done: false, name: "operations/delete-failure" },
+		});
 		await expect(client.listDeployments()).resolves.toMatchObject([
 			{
 				resource: {

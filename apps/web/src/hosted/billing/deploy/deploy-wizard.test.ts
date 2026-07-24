@@ -37,6 +37,9 @@ describe("first Basic agent copy", () => {
 		expect(planComparisonSource).toContain("The first active Basic agent is free.");
 		expect(planComparisonSource).toContain("Your first active Basic agent is free.");
 		expect(planComparisonSource).not.toContain("agent is included");
+		expect(wizardSource).toContain("acceptedDeploymentNavigation(created.deploymentId)");
+		expect(wizardSource).toContain("acceptedDeploymentNavigation(outcome.deploymentId)");
+		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
 	});
 });
 

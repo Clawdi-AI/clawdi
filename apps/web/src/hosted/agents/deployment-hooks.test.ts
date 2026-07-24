@@ -68,9 +68,14 @@ describe("deployment mutation settlement", () => {
 		expect(settlementInvalidations).toHaveLength(3);
 	});
 
-	test("projects accepted operations into promptly-polled transition states", () => {
+	test("projects every accepted operation through the shared transition model", () => {
 		if (!projectAcceptedTransition) throw new Error("deployment hooks were not loaded");
+		const queryClient = new QueryClient();
+		queryClient.setQueryData<HostedDeployment[]>(billingKeys.deployments, [
+			hostedDeploymentFixture({ id: "hdep_test" }),
+		]);
 		const expectations = [
+			["create", "creating"],
 			["start", "starting"],
 			["stop", "stopping"],
 			["restart", "restarting"],
@@ -79,12 +84,9 @@ describe("deployment mutation settlement", () => {
 		] as const;
 
 		for (const [verb, status] of expectations) {
-			const queryClient = new QueryClient();
-			queryClient.setQueryData<HostedDeployment[]>(billingKeys.deployments, [
-				hostedDeploymentFixture({ id: "hdep_test" }),
-			]);
 			const operation = acceptedOperation(verb);
-			projectAcceptedTransition(queryClient, "hdep_test", status, operation);
+			const accepted = { deploymentId: "hdep_test", operation };
+			projectAcceptedTransition(queryClient, accepted, () => undefined);
 			const deployments = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 
 			expect(deployments?.[0]?.resource.status.summary_state).toBe(status);
@@ -105,7 +107,11 @@ describe("deployment mutation settlement", () => {
 		queryClient.setQueryData<HostedDeployment[]>(billingKeys.deployments, [
 			hostedDeploymentFixture({ id: "hdep_delete" }),
 		]);
-		projectAcceptedTransition(queryClient, "hdep_delete", "deleting", acceptedOperation("delete"));
+		projectAcceptedTransition(
+			queryClient,
+			{ deploymentId: "hdep_delete", operation: acceptedOperation("delete") },
+			() => undefined,
+		);
 
 		const deleting = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 		expect(deleting).toHaveLength(1);

@@ -128,5 +128,8 @@ describe("subscription creation adapter", () => {
 			deploymentId: "hdep_created",
 			deployRequestId: "subscription-create-test",
 		});
+		expect(() => subscriptionCreateOutcome({ ...activation, deployment_id: null })).toThrow(
+			"Wallet activation did not accept a deployment target.",
+		);
 	});
 });
