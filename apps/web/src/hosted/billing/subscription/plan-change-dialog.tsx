@@ -31,7 +31,7 @@ import type {
 	ComputePlanSlug,
 	Plan,
 } from "@/hosted/billing/contracts";
-import { billingTermLabel, formatCents } from "@/hosted/billing/format";
+import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
 import {
 	computeTierLabel,
 	explicitPlanOffers,
@@ -65,7 +65,7 @@ export function PlanChangeDialog({
 	defaultFundingSource,
 	fundingSourceSelectable,
 	quote,
-	walletBalanceCredits,
+	walletBalanceUsd,
 	isQuoting,
 	isConfirming,
 	onQuote,
@@ -80,7 +80,7 @@ export function PlanChangeDialog({
 	defaultFundingSource: PlanChangeSelection["funding_source"];
 	fundingSourceSelectable: boolean;
 	quote: ComputePlanChangeQuoteResponse | null;
-	walletBalanceCredits: number | null;
+	walletBalanceUsd: string | null;
 	isQuoting: boolean;
 	isConfirming: boolean;
 	onQuote: (selection: PlanChangeSelection) => void;
@@ -106,14 +106,17 @@ export function PlanChangeDialog({
 		(offer) => offer.billing_term_months === selection.target_billing_term_months,
 	);
 	const noChange = isSamePlanChangeSelection(selection, currentPlanSlug, currentBillingTermMonths);
-	const walletBalanceBefore = walletBalanceCredits === null ? null : String(walletBalanceCredits);
 	const quoteFundingSource = quote?.funding_source ?? selection.funding_source;
 	const walletBalanceAfter =
-		quoteFundingSource === "wallet" && quote?.amount_credits && walletBalanceBefore
-			? walletBalanceAfterDebit(walletBalanceBefore, quote.amount_credits)
+		quoteFundingSource === "wallet" && quote?.amount_usd && walletBalanceUsd
+			? walletBalanceAfterDebit(walletBalanceUsd, quote.amount_usd)
 			: null;
 	const walletInsufficient = walletBalanceAfter?.startsWith("-") ?? false;
-	const walletReady = selection.funding_source !== "wallet" || walletBalanceCredits !== null;
+	const walletQuoteMissingAmount =
+		quoteFundingSource === "wallet" &&
+		quote?.change_kind === "immediate_upgrade" &&
+		!quote.amount_usd;
+	const walletReady = selection.funding_source !== "wallet" || walletBalanceUsd !== null;
 
 	useEffect(() => {
 		if (open) setSelection(initialSelection);
@@ -185,21 +188,24 @@ export function PlanChangeDialog({
 								</dt>
 								<dd className="font-medium tabular-nums">
 									{quote.change_kind === "immediate_upgrade"
-										? formatCents(quote.amount_cents)
+										? quoteFundingSource === "wallet"
+											? quote.amount_usd
+												? formatUsdExact(quote.amount_usd)
+												: "—"
+											: formatCents(quote.amount_cents)
 										: formatShortDate(quote.effective_at)}
 								</dd>
 							</dl>
 						</div>
 						{quoteFundingSource === "wallet" &&
 						quote.change_kind === "immediate_upgrade" &&
-						quote.amount_credits &&
-						walletBalanceBefore &&
+						quote.amount_usd &&
+						walletBalanceUsd &&
 						walletBalanceAfter ? (
 							<WalletDebitEquation
-								balanceBeforeCredits={walletBalanceBefore}
-								exactDebitCredits={quote.amount_credits}
-								exactDebitCents={quote.amount_cents}
-								balanceAfterCredits={walletBalanceAfter}
+								balanceBeforeUsd={walletBalanceUsd}
+								debitAmountUsd={quote.amount_usd}
+								balanceAfterUsd={walletBalanceAfter}
 							/>
 						) : null}
 						{quote.change_kind === "scheduled_downgrade" ? (
@@ -215,14 +221,23 @@ export function PlanChangeDialog({
 						{walletInsufficient ? (
 							<Alert variant="destructive">
 								<TriangleAlert aria-hidden />
-								<AlertTitle>Not enough AI Credits</AlertTitle>
+								<AlertTitle>Not enough Wallet balance</AlertTitle>
 								<AlertDescription className="flex flex-col items-start gap-3">
 									<span>Top up the shortfall, then request a fresh server quote.</span>
 									{onTopUp ? (
 										<Button type="button" size="sm" variant="outline" onClick={onTopUp}>
-											<WalletCards data-icon="inline-start" /> Top up AI Credits
+											<WalletCards data-icon="inline-start" /> Top up Wallet
 										</Button>
 									) : null}
+								</AlertDescription>
+							</Alert>
+						) : null}
+						{walletQuoteMissingAmount ? (
+							<Alert variant="destructive">
+								<TriangleAlert aria-hidden />
+								<AlertTitle>Wallet quote is incomplete</AlertTitle>
+								<AlertDescription>
+									Request a fresh quote before confirming this plan change.
 								</AlertDescription>
 							</Alert>
 						) : null}
@@ -232,7 +247,7 @@ export function PlanChangeDialog({
 							</Button>
 							<Button
 								onClick={() => onConfirm(quote.operation_id)}
-								disabled={isConfirming || walletInsufficient}
+								disabled={isConfirming || walletInsufficient || walletQuoteMissingAmount}
 							>
 								{isConfirming ? (
 									<Spinner data-icon="inline-start" />

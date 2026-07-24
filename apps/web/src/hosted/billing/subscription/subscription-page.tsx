@@ -15,7 +15,7 @@ import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/
 import { usePlans, usePortal } from "@/hosted/billing/hooks";
 import { BillingHistorySection } from "@/hosted/billing/subscription/billing-history-section";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
-import { WelcomeCreditsCard } from "@/hosted/billing/subscription/welcome-credits-card";
+import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { cn } from "@/lib/utils";
@@ -76,7 +76,7 @@ export function SubscriptionPage() {
 		<div data-hosted="true" className={SUBSCRIPTION_PAGE_CLASS}>
 			<PageHeader title="Compute" description={DESCRIPTION} />
 
-			<WelcomeCreditsCard />
+			<WelcomeWalletCard />
 
 			<Card data-hosted="true">
 				<CardHeader>

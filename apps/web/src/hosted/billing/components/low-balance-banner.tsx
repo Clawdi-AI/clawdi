@@ -5,7 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { lowBalanceBannerState } from "@/hosted/billing/components/low-balance-banner.logic";
 import type { WalletState } from "@/hosted/billing/contracts";
-import { creditsToUsd } from "@/hosted/billing/format";
+import { formatUsdExact } from "@/hosted/billing/format";
 
 /**
  * Low-balance / payment-attention banner.
@@ -35,7 +35,7 @@ export function LowBalanceBanner({
 		? "Auto-reload was declined"
 		: needsAction
 			? "Your bank needs to confirm a top-up"
-			: "Your AI Credits are running low";
+			: "Your Wallet balance is running low";
 
 	const consequence = hasWalletCompute
 		? "Managed AI and wallet-funded compute can be interrupted if the balance stays low."
@@ -44,7 +44,7 @@ export function LowBalanceBanner({
 		? `We couldn’t charge your saved card. Top up manually or update your payment method. ${consequence}`
 		: needsAction
 			? `A top-up is waiting on confirmation from your bank. ${consequence}`
-			: `You have about ${creditsToUsd(wallet.balance_credits, wallet.points_per_usd)} left. Top up or turn on auto-reload. ${consequence}`;
+			: `You have about ${formatUsdExact(wallet.balance_usd)} left. Top up or turn on auto-reload. ${consequence}`;
 
 	return (
 		<Alert data-hosted="true" variant={declined ? "destructive" : "default"}>

@@ -39,7 +39,7 @@ export function lowBalanceBannerState(wallet: WalletState | undefined): LowBalan
 	const hasAction = action != null;
 	const declined = action?.error_code != null;
 	const needsAction = hasAction && !declined;
-	const low = isLowBalance(wallet.balance_credits, wallet.points_per_usd);
+	const low = isLowBalance(wallet.balance_usd);
 	const show = low || hasAction;
 	const primaryCta: LowBalanceCta = hasAction
 		? declined

@@ -31,11 +31,11 @@ import {
 	autoReloadFormState,
 	autoReloadRequest,
 	autoReloadSaveError,
-	autoReloadThresholdMinimumCents,
 } from "@/hosted/billing/wallet/auto-reload-card.logic";
 import {
 	AUTORELOAD_AMOUNT_MAX_CENTS,
 	AUTORELOAD_AMOUNT_MIN_CENTS,
+	AUTORELOAD_THRESHOLD_MIN_USD,
 } from "@/hosted/billing/wallet/wallet-constants";
 
 type AutoReloadField = "threshold" | "amount" | "cap";
@@ -47,8 +47,6 @@ const ALL_FIELDS_BLURRED: BlurredFields = { threshold: true, amount: true, cap: 
 export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTopUp?: () => void }) {
 	const save = useSetAutoReload();
 	const runAction = useActionLock();
-	const pointsPerUsd = wallet.points_per_usd || 1000;
-	const thresholdMinimumCents = autoReloadThresholdMinimumCents(pointsPerUsd);
 	const initialDraft = autoReloadDraftFromWallet(wallet);
 	const [baseline, setBaseline] = useState<AutoReloadDraft>(initialDraft);
 	const [draft, setDraft] = useState<AutoReloadDraft>(initialDraft);
@@ -65,18 +63,13 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 		amount: draft.amount,
 		threshold: draft.threshold,
 		cap: draft.cap,
-		pointsPerUsd,
 	});
-	const dirty = autoReloadDraftIsDirty(draft, baseline, pointsPerUsd);
+	const dirty = autoReloadDraftIsDirty(draft, baseline);
 	useSettingsEditState({ dirty, busy: save.isPending });
 
 	useEffect(() => {
 		const next = autoReloadDraftFromWallet(wallet);
-		const wasDirty = autoReloadDraftIsDirty(
-			draftRef.current,
-			baselineRef.current,
-			wallet.points_per_usd || 1000,
-		);
+		const wasDirty = autoReloadDraftIsDirty(draftRef.current, baselineRef.current);
 		setBaseline(next);
 		if (!wasDirty && !pendingRef.current) {
 			setDraft(next);
@@ -85,10 +78,9 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 		}
 	}, [
 		wallet.auto_reload_enabled,
-		wallet.auto_reload_threshold_credits,
+		wallet.auto_reload_threshold_usd,
 		wallet.auto_reload_amount_cents,
 		wallet.auto_reload_monthly_cap_cents,
-		wallet.points_per_usd,
 	]);
 
 	function updateDraft<K extends keyof AutoReloadDraft>(key: K, value: AutoReloadDraft[K]) {
@@ -108,7 +100,7 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 	}
 
 	async function saveChanges() {
-		const request = autoReloadRequest(draft, pointsPerUsd);
+		const request = autoReloadRequest(draft);
 		if (!dirty || !request || save.isPending) return;
 		setRequestError(null);
 		try {
@@ -203,7 +195,7 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 								type="number"
 								inputMode="decimal"
 								autoComplete="off"
-								min={thresholdMinimumCents / 100}
+								min={AUTORELOAD_THRESHOLD_MIN_USD}
 								step="0.01"
 								className="tabular-nums"
 								value={draft.threshold}
@@ -224,7 +216,7 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 								}
 								aria-live="polite"
 							>
-								Minimum {formatCents(thresholdMinimumCents)}; up to 2 decimal places.
+								Minimum {formatCents(AUTORELOAD_THRESHOLD_MIN_USD * 100)}; up to 2 decimal places.
 							</p>
 						</div>
 

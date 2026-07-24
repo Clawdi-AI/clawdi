@@ -11,10 +11,10 @@ export const TOPUP_DEFAULT_CENTS = 2500;
 export const TOPUP_INCREMENT_CENTS = 100;
 export const TOPUP_PRESETS_CENTS = [1000, 2500, 5000, 10_000, 25_000];
 
-// Auto-reload: amount $5–$500, threshold ≥ $1 (1000 credits), cap ≥ 0 (0 = off).
+// Auto-reload: amount $5–$500, threshold ≥ $1, cap ≥ 0 (0 = off).
 export const AUTORELOAD_AMOUNT_MIN_CENTS = 500;
 export const AUTORELOAD_AMOUNT_MAX_CENTS = 50_000;
-export const AUTORELOAD_THRESHOLD_MIN_CREDITS = 1000;
+export const AUTORELOAD_THRESHOLD_MIN_USD = 1;
 
 // Low-balance warning trips below $2.
 export const LOW_BALANCE_USD = 2;
@@ -25,7 +25,7 @@ export const LOW_BALANCE_USD = 2;
 export const LEDGER_PAGE_SIZE = 50;
 export const LEDGER_MAX_ROWS = 100;
 
-export function isLowBalance(balanceCredits: number, pointsPerUsd: number): boolean {
-	if (!pointsPerUsd) return false;
-	return balanceCredits / pointsPerUsd < LOW_BALANCE_USD;
+export function isLowBalance(balanceUsd: string): boolean {
+	const balance = Number(balanceUsd);
+	return Number.isFinite(balance) && balance < LOW_BALANCE_USD;
 }

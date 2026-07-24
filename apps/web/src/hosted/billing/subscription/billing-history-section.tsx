@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/table";
 import type { ComputeBillingHistoryItem } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { formatCents } from "@/hosted/billing/format";
+import { formatCents, formatUsdExact } from "@/hosted/billing/format";
 import { useComputeBillingHistory } from "@/hosted/billing/hooks";
 import { billingHistoryFundingLabel } from "@/hosted/billing/subscription/billing-history.logic";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
@@ -61,6 +61,13 @@ function planLabel(planSlug: string): string {
 	return "Compute";
 }
 
+function amountLabel(row: ComputeBillingHistoryItem): string {
+	if (row.funding_source === "wallet") {
+		return row.amount_usd ? formatUsdExact(row.amount_usd) : "—";
+	}
+	return formatCents(row.amount_cents);
+}
+
 function InvoiceLink({ row }: { row: ComputeBillingHistoryItem }) {
 	if (!row.hosted_invoice_url) return null;
 	return (
@@ -90,7 +97,7 @@ export function BillingHistorySection() {
 					Billing history
 				</h2>
 				<p className="text-sm text-muted-foreground">
-					Stripe invoices for card and AI Credits compute subscriptions.
+					Invoices for card and Wallet-funded compute subscriptions.
 				</p>
 			</div>
 
@@ -135,9 +142,7 @@ export function BillingHistorySection() {
 										<InvoiceLink row={row} />
 									</div>
 								</div>
-								<span className="shrink-0 font-medium tabular-nums">
-									{formatCents(row.amount_cents)}
-								</span>
+								<span className="shrink-0 font-medium tabular-nums">{amountLabel(row)}</span>
 							</li>
 						))}
 					</ul>
@@ -170,7 +175,7 @@ export function BillingHistorySection() {
 											<StatusBadge status={statusTone(row)}>{statusLabel(row.status)}</StatusBadge>
 										</TableCell>
 										<TableCell className="text-right font-medium tabular-nums">
-											{formatCents(row.amount_cents)}
+											{amountLabel(row)}
 										</TableCell>
 										<TableCell className="text-right">
 											<InvoiceLink row={row} />

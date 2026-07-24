@@ -77,13 +77,6 @@ function decimalString(value: string | null | undefined, field: string): string 
 	return value;
 }
 
-function requiredQuoteNumber(value: number | null | undefined, field: string): number {
-	if (value === null || value === undefined) {
-		throw new Error(`Subscription quote is missing ${field}.`);
-	}
-	return value;
-}
-
 export function subscriptionCreateQuoteView(
 	selection: SubscriptionCreateSelection,
 	quote: ComputeSubscriptionQuoteResponse,
@@ -91,14 +84,9 @@ export function subscriptionCreateQuoteView(
 	const walletDebit =
 		quote.funding_source === "wallet"
 			? {
-					balanceBeforeCredits: decimalString(quote.balance_before_credits, "the wallet balance"),
-					exactDebitCredits: decimalString(quote.debit_credits, "the exact wallet debit"),
-					exactDebitCents: quote.term_price_cents,
-					balanceAfterCredits: decimalString(
-						quote.balance_after_credits,
-						"the post-debit wallet balance",
-					),
-					pointsPerUsd: requiredQuoteNumber(quote.points_per_usd, "the wallet conversion rate"),
+					balanceBeforeUsd: decimalString(quote.balance_before_usd, "the wallet balance"),
+					debitAmountUsd: decimalString(quote.debit_amount_usd, "the exact wallet debit"),
+					balanceAfterUsd: decimalString(quote.balance_after_usd, "the post-debit wallet balance"),
 				}
 			: null;
 	return {

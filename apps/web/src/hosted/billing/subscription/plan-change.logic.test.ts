@@ -9,9 +9,9 @@ import {
 
 describe("walletBalanceAfterDebit", () => {
 	test("preserves the exact quoted decimal debit", () => {
-		expect(walletBalanceAfterDebit("25000", "19000.125")).toBe("5999.875");
-		expect(walletBalanceAfterDebit("25000.5000", "0.5")).toBe("25000");
-		expect(walletBalanceAfterDebit("500", "501.25")).toBe("-1.25");
+		expect(walletBalanceAfterDebit("25", "19.000125")).toBe("5.999875");
+		expect(walletBalanceAfterDebit("25.5000", "0.5")).toBe("25");
+		expect(walletBalanceAfterDebit("0.5", "0.50125")).toBe("-0.00125");
 	});
 
 	test("rejects malformed or signed contract values", () => {

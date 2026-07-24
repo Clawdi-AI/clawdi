@@ -1,10 +1,8 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Info } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
 	Dialog,
@@ -16,9 +14,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
-import type { WalletState } from "@/hosted/billing/contracts";
 import { isIdempotencyKeyReusedError, normalizeBillingError } from "@/hosted/billing/errors";
-import { formatCents, formatCredits } from "@/hosted/billing/format";
+import { formatCents } from "@/hosted/billing/format";
 import { useTopUp } from "@/hosted/billing/hooks";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
@@ -44,19 +41,13 @@ type Step = "amount" | "pay";
 export function TopUpDialog({
 	open,
 	onOpenChange,
-	wallet,
 	onComplete,
 	initialAmountCents,
-	refundDebtCredits,
-	blockedChargeCredits,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	wallet: WalletState;
 	onComplete?: (status: "succeeded" | "processing") => void;
 	initialAmountCents?: number | null;
-	refundDebtCredits?: number | null;
-	blockedChargeCredits?: number | null;
 }) {
 	const topUp = useTopUp();
 	const qc = useQueryClient();
@@ -75,7 +66,6 @@ export function TopUpDialog({
 	const amountCents = Number(dollars) * 100;
 	const valid = validTopUpAmountCents(amountCents);
 	const amountInvalid = amountTouched && !valid;
-	const credits = valid ? formatCredits((amountCents / 100) * wallet.points_per_usd) : "";
 
 	function setAmount(next: string) {
 		setDollars(next);
@@ -162,28 +152,16 @@ export function TopUpDialog({
 				showCloseButton={!topUp.isPending && !paymentSubmitting}
 			>
 				<DialogHeader>
-					<DialogTitle>Top up AI Credits</DialogTitle>
+					<DialogTitle>Top up Wallet</DialogTitle>
 					<DialogDescription>
 						{step === "amount"
-							? `Add between ${formatCents(TOPUP_MIN_CENTS)} and ${formatCents(TOPUP_MAX_CENTS)}. $1 = ${wallet.points_per_usd.toLocaleString()} credits.`
+							? `Add between ${formatCents(TOPUP_MIN_CENTS)} and ${formatCents(TOPUP_MAX_CENTS)} to your Wallet.`
 							: `Enter your card details to pay ${formatCents(amountCents)}.`}
 					</DialogDescription>
 				</DialogHeader>
 
 				{step === "amount" ? (
 					<div className="space-y-4">
-						{refundDebtCredits && refundDebtCredits > 0 ? (
-							<Alert>
-								<Info />
-								<AlertTitle>Refund debt is repaid first</AlertTitle>
-								<AlertDescription>
-									This top-up first repays {formatCredits(refundDebtCredits)} of refund debt.
-									{blockedChargeCredits && blockedChargeCredits > 0
-										? ` The remaining funds cover the ${formatCredits(blockedChargeCredits)} blocked compute charge.`
-										: " Remaining funds become available in your Wallet."}
-								</AlertDescription>
-							</Alert>
-						) : null}
 						<div className="flex flex-wrap gap-2">
 							{TOPUP_PRESETS_CENTS.map((preset) => (
 								<Button
@@ -230,8 +208,8 @@ export function TopUpDialog({
 							>
 								{amountInvalid
 									? `Enter a whole-dollar amount from ${formatCents(TOPUP_MIN_CENTS)} to ${formatCents(TOPUP_MAX_CENTS)}.`
-									: credits
-										? `You’ll get ${credits}. Whole-dollar amounts only.`
+									: valid
+										? `You’ll add ${formatCents(amountCents)} to your Wallet. Whole-dollar amounts only.`
 										: `Enter a whole-dollar amount from ${formatCents(TOPUP_MIN_CENTS)} to ${formatCents(TOPUP_MAX_CENTS)}.`}
 							</p>
 						</div>

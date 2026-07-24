@@ -33,21 +33,12 @@ export function validTopUpAmountCents(amountCents: number): boolean {
 	);
 }
 
-/** Convert a credit shortfall into the smallest whole-dollar top-up that covers it. */
-export function topUpAmountCentsForCreditShortfall(
-	shortfallCredits: number | null,
-	pointsPerUsd: number,
-): number | null {
-	if (
-		shortfallCredits === null ||
-		!Number.isFinite(shortfallCredits) ||
-		shortfallCredits <= 0 ||
-		!Number.isFinite(pointsPerUsd) ||
-		pointsPerUsd <= 0
-	) {
+/** Convert a USD shortfall into the smallest whole-dollar top-up that covers it. */
+export function topUpAmountCentsForUsdShortfall(shortfallUsd: number | null): number | null {
+	if (shortfallUsd === null || !Number.isFinite(shortfallUsd) || shortfallUsd <= 0) {
 		return null;
 	}
-	const rawCents = (shortfallCredits / pointsPerUsd) * 100;
+	const rawCents = shortfallUsd * 100;
 	const roundedCents = Math.ceil(rawCents / TOPUP_INCREMENT_CENTS) * TOPUP_INCREMENT_CENTS;
 	return Math.min(TOPUP_MAX_CENTS, Math.max(TOPUP_MIN_CENTS, roundedCents));
 }
@@ -84,11 +75,8 @@ export function handleTopupStartResult(
 	result: WalletTopupResult,
 	controls: TopupStartResultControls,
 ): void {
-	// Only the PaymentIntent STATUS decides success. The backend includes
-	// `credits_added` (the credits this top-up WILL add) on every response —
-	// including `requires_payment_method` — so treating its presence as success
-	// closed the dialog before the card form ever showed and the top-up never
-	// charged.
+	// Only the PaymentIntent status decides success. A quoted amount can also
+	// appear on an incomplete response, so it must not close the payment step.
 	if (result.status === "succeeded") {
 		completeTopup("succeeded", controls);
 		return;

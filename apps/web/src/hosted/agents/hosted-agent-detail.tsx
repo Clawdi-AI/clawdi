@@ -92,7 +92,7 @@ import {
 	billingErrorNormalizer,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
-import { billingTermLabel, billingTermSuffix, formatCentsCompact } from "@/hosted/billing/format";
+import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
 	checkoutReturnDeploymentId,
 	checkoutReturnMarker,
@@ -132,7 +132,7 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
+import { topUpAmountCentsForUsdShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
 	canDelete as canDeleteDeployment,
@@ -403,7 +403,7 @@ function planChangeBillingTerm(
 	return value === 12 ? 12 : 1;
 }
 
-function decimalCredits(value: unknown): number | null {
+function decimalUsd(value: unknown): number | null {
 	if (typeof value !== "string" && typeof value !== "number") return null;
 	const parsed = Number(value);
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
@@ -2523,10 +2523,8 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 		if (!open) setPlanChangeQuote(null);
 	}
 
-	function openPlanChangeTopUp(shortfallCredits: number | null = null) {
-		setWalletTopUpAmountCents(
-			topUpAmountCentsForCreditShortfall(shortfallCredits, wallet.data?.points_per_usd ?? 0),
-		);
+	function openPlanChangeTopUp(shortfallUsd: number | null = null) {
+		setWalletTopUpAmountCents(topUpAmountCentsForUsdShortfall(shortfallUsd));
 		setWalletTopUpOpen(true);
 	}
 
@@ -2578,14 +2576,14 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 				detail?.code === "insufficient_wallet_balance" ||
 				detail?.code === "insufficient_balance"
 			) {
-				openPlanChangeTopUp(decimalCredits(detail.shortfall_credits));
-				toast.error("Not enough AI Credits", {
+				openPlanChangeTopUp(decimalUsd(detail.shortfall_usd));
+				toast.error("Not enough Wallet balance", {
 					description: "Top up the shortfall, then request a fresh plan-change quote.",
 				});
 				return;
 			}
 			if (detail?.code === "open_refund_debt") {
-				openPlanChangeTopUp(decimalCredits(detail.outstanding_debt_credits));
+				openPlanChangeTopUp();
 				toast.error("Refund debt must be repaid", {
 					description: "Top up before confirming this wallet-funded plan change.",
 				});
@@ -2646,7 +2644,6 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 						setWalletTopUpOpen(open);
 						if (!open) setWalletTopUpAmountCents(null);
 					}}
-					wallet={wallet.data}
 					initialAmountCents={walletTopUpAmountCents}
 					onComplete={() => setPlanChangeQuote(null)}
 				/>
@@ -2672,7 +2669,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 					defaultFundingSource={isWalletFunded ? "wallet" : "stripe"}
 					fundingSourceSelectable={isIncludedBasic}
 					quote={planChangeQuote}
-					walletBalanceCredits={wallet.data?.balance_credits ?? null}
+					walletBalanceUsd={wallet.data?.balance_usd ?? null}
 					isQuoting={quotePlanChange.isPending}
 					isConfirming={changePlan.isPending}
 					onQuote={requestPlanChangeQuote}
@@ -2717,7 +2714,7 @@ function ComputeSettingsSections({ deployment }: { deployment: HostedDeployment 
 									{currentPriceCents !== null ? (
 										<>
 											{" "}
-											· {formatCentsCompact(currentPriceCents)}
+											· {formatCents(currentPriceCents)}
 											{billingTermSuffix(currentBillingTerm)}
 										</>
 									) : null}

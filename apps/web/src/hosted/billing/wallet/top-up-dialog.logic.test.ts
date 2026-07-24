@@ -4,7 +4,7 @@ import type { WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	handleTopupStartResult,
-	topUpAmountCentsForCreditShortfall,
+	topUpAmountCentsForUsdShortfall,
 	validTopUpAmountCents,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
 
@@ -14,7 +14,7 @@ function result(overrides: Partial<WalletTopupResult>): WalletTopupResult {
 		flow_type: null,
 		payment_intent_id: null,
 		client_secret: null,
-		credits_added: null,
+		amount_usd: null,
 		...overrides,
 	};
 }
@@ -46,7 +46,7 @@ describe("handleTopupStartResult", () => {
 				status: "succeeded",
 				flow_type: "mock",
 				client_secret: null,
-				credits_added: 2500,
+				amount_usd: "2.50",
 			}),
 			{
 				queryClient: qc,
@@ -90,11 +90,8 @@ describe("handleTopupStartResult", () => {
 				flow_type: "payment_intent",
 				payment_intent_id: "pi_123",
 				client_secret: "pi_123_secret_456",
-				// The real backend response ALWAYS carries credits_added (the
-				// credits this top-up will add once paid). Regression guard: this
-				// used to be misread as "already succeeded", closing the dialog
-				// before the card form ever showed.
-				credits_added: 25_000,
+				// The quoted USD amount does not mean the PaymentIntent settled.
+				amount_usd: "25",
 			}),
 			{
 				queryClient: qc,
@@ -114,18 +111,17 @@ describe("handleTopupStartResult", () => {
 	});
 });
 
-describe("topUpAmountCentsForCreditShortfall", () => {
+describe("topUpAmountCentsForUsdShortfall", () => {
 	test("rounds up to whole dollars and clamps to the allowed top-up range", () => {
-		expect(topUpAmountCentsForCreditShortfall(4_000, 1_000)).toBe(1_000);
-		expect(topUpAmountCentsForCreditShortfall(14_000, 1_000)).toBe(1_400);
-		expect(topUpAmountCentsForCreditShortfall(25_001, 1_000)).toBe(2_600);
-		expect(topUpAmountCentsForCreditShortfall(2_500_000, 1_000)).toBe(200_000);
+		expect(topUpAmountCentsForUsdShortfall(4)).toBe(1_000);
+		expect(topUpAmountCentsForUsdShortfall(14)).toBe(1_400);
+		expect(topUpAmountCentsForUsdShortfall(25.001)).toBe(2_600);
+		expect(topUpAmountCentsForUsdShortfall(2_500)).toBe(200_000);
 	});
 
-	test("ignores missing or invalid conversion inputs", () => {
-		expect(topUpAmountCentsForCreditShortfall(null, 1_000)).toBeNull();
-		expect(topUpAmountCentsForCreditShortfall(14_000, 0)).toBeNull();
-		expect(topUpAmountCentsForCreditShortfall(Number.NaN, 1_000)).toBeNull();
+	test("ignores missing or invalid USD inputs", () => {
+		expect(topUpAmountCentsForUsdShortfall(null)).toBeNull();
+		expect(topUpAmountCentsForUsdShortfall(Number.NaN)).toBeNull();
 	});
 });
 

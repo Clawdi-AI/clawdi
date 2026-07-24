@@ -126,7 +126,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 	{
 		id: "billing-usage",
 		label: "Usage",
-		description: "AI Credits usage",
+		description: "Managed-AI spend in USD",
 		icon: BarChart3,
 		cloudOnly: true,
 	},

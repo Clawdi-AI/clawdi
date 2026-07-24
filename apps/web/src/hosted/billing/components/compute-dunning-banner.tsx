@@ -173,9 +173,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 					) : null}
 				</AlertDescription>
 			</Alert>
-			{wallet.data ? (
-				<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} wallet={wallet.data} />
-			) : null}
+			{wallet.data ? <TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} /> : null}
 		</>
 	);
 }
