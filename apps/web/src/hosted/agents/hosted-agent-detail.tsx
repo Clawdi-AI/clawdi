@@ -152,35 +152,33 @@ import {
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
 import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
+import {
+	aiBindingBuildErrorCopy,
+	buildAiBindingFields,
+	isUnresolvedProviderChoice,
+	unresolvedProviderChoice,
+	unresolvedProviderRef,
+	updateProviderChoiceFromRef,
+} from "@/hosted/v2/ai-providers/ai-provider-binding";
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
-	dedupeProviderIds,
 	firstModelForProvider,
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_ID,
 	MANAGED_PROVIDER_LABEL,
 	modelBindingDisplayName,
-	modelIdsForProvider,
 	modelOptionsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
-	primaryModelRef,
 	primaryModelValue,
 	providerCatalogDescription,
-	providerChoiceFromRef,
 	providerDisplayLabel,
-	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
-import {
-	aiProviderRuntimeId,
-	buildAiProviderPoolBootstrap,
-	type RuntimeAiProviderAuthKind,
-} from "@/hosted/v2/ai-providers/runtime-bootstrap";
-import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import { ChannelStatusBadge, ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
@@ -209,7 +207,6 @@ import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
 
 type Runtime = HostedRuntime;
-type AiBindingMode = "unmanaged" | "configured";
 type DeploymentStatus = ReturnType<typeof parseDeploymentStatus>;
 type HostedAgentTab =
 	| "overview"
@@ -230,13 +227,6 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"channels",
 	"settings",
 ]);
-const UNRESOLVED_PROVIDER_PREFIX = "unresolved:";
-
-function providerAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
-	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
-		? "codex_oauth"
-		: "api_key";
-}
 const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	overview: {
 		description: "Status, model, resources, and recent sessions.",
@@ -1569,34 +1559,6 @@ function selectableCard(active: boolean): string {
 	}`;
 }
 
-function unresolvedProviderChoice(providerRef: string): string {
-	return `${UNRESOLVED_PROVIDER_PREFIX}${providerRef}`;
-}
-
-function isUnresolvedProviderChoice(choice: string): boolean {
-	return choice.startsWith(UNRESOLVED_PROVIDER_PREFIX);
-}
-
-function unresolvedProviderRef(choice: string): string {
-	return choice.slice(UNRESOLVED_PROVIDER_PREFIX.length);
-}
-
-function agentChoiceFromProviderRef(
-	providerRef: string | null | undefined,
-	providers: readonly AiProvider[],
-): string | null {
-	if (!providerRef) return null;
-	const choice = providerChoiceFromRef(providerRef, providers);
-	if (!choice) return null;
-	if (
-		choice === MANAGED_AI_CHOICE ||
-		providers.some((provider) => provider.provider_id === choice)
-	) {
-		return choice;
-	}
-	return unresolvedProviderChoice(providerRef);
-}
-
 function AiProviderTab({
 	deployment,
 	runtime,
@@ -1621,7 +1583,7 @@ function AiProviderTab({
 			)
 		: undefined;
 	const currentAuthKind = runtimeAiProviderAuthKind(deployment, runtime);
-	const initialMode: AiBindingMode = currentAuthKind === "unmanaged" ? "unmanaged" : "configured";
+	const initialMode = currentAuthKind === "unmanaged" ? "unmanaged" : "configured";
 	const legacyProviderRef =
 		currentAuthKind === "unmanaged" ? null : (primaryConfiguredProvider?.provider_id ?? null);
 	const rawProviderRefs =
@@ -1642,7 +1604,7 @@ function AiProviderTab({
 	const initialPrimaryChoice =
 		currentAuthKind === "unmanaged"
 			? MANAGED_AI_CHOICE
-			: (agentChoiceFromProviderRef(primaryProviderRef, list) ??
+			: (updateProviderChoiceFromRef(primaryProviderRef, list) ??
 				(isManagedProviderId(primaryProviderRef)
 					? MANAGED_AI_CHOICE
 					: unresolvedProviderChoice(primaryProviderRef)));
@@ -1651,7 +1613,7 @@ function AiProviderTab({
 			? []
 			: normalizeSelectedProviderIds(
 					rawProviderRefs
-						.map((providerRef) => agentChoiceFromProviderRef(providerRef, list))
+						.map((providerRef) => updateProviderChoiceFromRef(providerRef, list))
 						.filter((choice): choice is string => Boolean(choice)),
 					initialPrimaryChoice,
 				);
@@ -1667,11 +1629,6 @@ function AiProviderTab({
 			? ""
 			: bindingModelIdentity || firstModelForProvider(initialPrimaryChoice, list, managedModels);
 
-	const [selectedProviders, setSelectedProviders] = useState<string[]>(initialProviderChoices);
-	const [bindingMode, setBindingMode] = useState<AiBindingMode>(initialMode);
-	const [primaryProviderChoice, setPrimaryProviderChoice] = useState(initialPrimaryChoice);
-	const [primaryModel, setPrimaryModel] = useState<string>(currentModel);
-
 	// Re-seed the form only when the server-side binding genuinely changes (the
 	// user's own apply completing, or an out-of-band change) — never on a plain
 	// background poll. Keyed on the binding identity: identical server truth →
@@ -1684,30 +1641,33 @@ function AiProviderTab({
 		initialPrimaryChoice,
 		bindingModelIdentity,
 	]);
-	const [syncedIdentity, setSyncedIdentity] = useState(bindingIdentity);
-	if (bindingIdentity !== syncedIdentity) {
-		setSyncedIdentity(bindingIdentity);
-		setBindingMode(initialMode);
-		setSelectedProviders(initialProviderChoices);
-		setPrimaryProviderChoice(initialPrimaryChoice);
-		setPrimaryModel(currentModel);
-	}
-	useEffect(() => {
-		if (
-			bindingMode !== "configured" ||
-			primaryProviderChoice !== MANAGED_AI_CHOICE ||
-			primaryModel.trim()
-		) {
-			return;
-		}
-		const fallback = firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels);
-		if (fallback) setPrimaryModel(fallback);
-	}, [bindingMode, managedModels, primaryModel, primaryProviderChoice]);
-
-	const selectedProviderChoices = normalizeSelectedProviderIds(
-		selectedProviders,
+	const {
+		draft: aiBindingDraft,
+		managedPrimaryModelReady,
+		selectedProviderChoices,
+		setBindingMode,
+		setPrimaryModel,
+		setPrimaryProvider,
+		toggleProvider,
+	} = useAiProviderBindingDraft({
+		initialDraft: {
+			bindingMode: initialMode,
+			providerChoices: initialProviderChoices,
+			primaryProviderChoice: initialPrimaryChoice,
+			primaryModel: currentModel,
+		},
+		managedCatalogReady: managedModelCatalog.isSuccess,
+		managedModels,
+		operationMode: "update",
+		providers: list,
+		syncIdentity: bindingIdentity,
+	});
+	const {
+		bindingMode,
+		primaryModel,
 		primaryProviderChoice,
-	);
+		providerChoices: selectedProviders,
+	} = aiBindingDraft;
 	const selectedIdentity = JSON.stringify(selectedProviderChoices);
 	const initialSelectedIdentity = JSON.stringify(initialProviderChoices);
 	const dirty =
@@ -1716,127 +1676,19 @@ function AiProviderTab({
 			(selectedIdentity !== initialSelectedIdentity ||
 				primaryProviderChoice !== initialPrimaryChoice ||
 				primaryModel !== currentModel));
-	const managedPrimaryModelReady =
-		bindingMode !== "configured" ||
-		primaryProviderChoice !== MANAGED_AI_CHOICE ||
-		(managedModelCatalog.isSuccess &&
-			modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).includes(primaryModel));
-
-	function setPrimaryProvider(choice: string) {
-		setBindingMode("configured");
-		const previousCatalog = modelIdsForProvider(primaryProviderChoice, list, managedModels);
-		const nextCatalog = modelIdsForProvider(choice, list, managedModels);
-		const fallback = firstModelForProvider(choice, list, managedModels);
-		setPrimaryProviderChoice(choice);
-		setSelectedProviders((current) => normalizeSelectedProviderIds(current, choice));
-		setPrimaryModel((current) => {
-			const trimmed = current.trim();
-			if (choice === MANAGED_AI_CHOICE && !nextCatalog.includes(trimmed)) return fallback;
-			if (!trimmed) return fallback || current;
-			if (
-				previousCatalog.includes(trimmed) &&
-				nextCatalog.length > 0 &&
-				!nextCatalog.includes(trimmed)
-			) {
-				return fallback;
-			}
-			return current;
-		});
-	}
-
-	function toggleProvider(choice: string) {
-		setBindingMode("configured");
-		const selected = selectedProviders.includes(choice);
-		let next =
-			choice === MANAGED_AI_CHOICE && selectedProviders.some(isUnresolvedProviderChoice)
-				? [MANAGED_AI_CHOICE]
-				: selected
-					? selectedProviders.filter((item) => item !== choice)
-					: selectedProviders.length === 1 &&
-							selectedProviders[0] === MANAGED_AI_CHOICE &&
-							choice !== MANAGED_AI_CHOICE
-						? [choice]
-						: [...selectedProviders, choice];
-		if (next.length === 0) next = [choice];
-		next = dedupeProviderIds(next);
-		setSelectedProviders(next);
-		if (!next.includes(primaryProviderChoice)) {
-			setPrimaryProvider(next[0] ?? MANAGED_AI_CHOICE);
-		}
-	}
-
 	function applyProviderSettings() {
-		if (bindingMode === "unmanaged") {
-			updateDeployment.mutate({
-				id: deployment.resource.id,
-				update: {
-					ai_provider_auth_kind: "unmanaged",
-					ai_provider_id: null,
-					provider_ids: [],
-					primary_model: null,
-					ai_provider_bootstrap: null,
-				},
-			});
-			return;
-		}
-		const normalizedChoices = normalizeSelectedProviderIds(
-			selectedProviders,
-			primaryProviderChoice,
-		);
-		const providerRefs = normalizedChoices
-			.map((choice) => providerRefFromChoice(choice, list))
-			.filter((providerId): providerId is string => Boolean(providerId));
-		if (providerRefs.length !== normalizedChoices.length) {
-			toast.error("Provider unavailable", {
-				description: "Refresh providers before applying these settings.",
-			});
-			return;
-		}
-		const primaryProviderRef =
-			providerRefFromChoice(primaryProviderChoice, list) ?? MANAGED_PROVIDER_ID;
-		if (
-			primaryProviderChoice === MANAGED_AI_CHOICE &&
-			!modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).includes(primaryModel)
-		) {
-			toast.error("Managed model unavailable", {
-				description: "Load the managed model catalog and choose a model before applying.",
-			});
-			return;
-		}
-		const modelRef = primaryModelRef(primaryProviderRef, primaryModel);
-		if (!modelRef) {
-			toast.error("Primary model required");
-			return;
-		}
-		const primaryProvider = list.find((provider) => provider.provider_id === primaryProviderChoice);
-		const selectedCustomProviders = list.filter((provider) =>
-			normalizedChoices.includes(provider.provider_id),
-		);
-		const authKind = primaryProvider ? providerAuthKind(primaryProvider) : "managed";
-		const bootstrapProvider = primaryProvider ?? selectedCustomProviders[0];
-		let bootstrap: DeploymentUpdateRequest["ai_provider_bootstrap"] = null;
+		let update: DeploymentUpdateRequest;
 		try {
-			bootstrap =
-				selectedCustomProviders.length > 0 && bootstrapProvider
-					? buildAiProviderPoolBootstrap(
-							selectedCustomProviders,
-							bootstrapProvider.provider_id,
-							providerAuthKind(bootstrapProvider),
-						)
-					: null;
-		} catch (error) {
-			toast.error("Provider configuration is invalid", {
-				description: error instanceof Error ? error.message : "Check provider configuration.",
+			update = buildAiBindingFields(aiBindingDraft, {
+				managedModels,
+				mode: "update",
+				providers: list,
 			});
+		} catch (error) {
+			const copy = aiBindingBuildErrorCopy(error, "update");
+			toast.error(copy.title, copy.description ? { description: copy.description } : undefined);
 			return;
 		}
-		const update: DeploymentUpdateRequest = {
-			ai_provider_auth_kind: authKind,
-			ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
-			provider_ids: providerRefs,
-			ai_provider_bootstrap: bootstrap,
-		};
-		if (modelRef) update.primary_model = modelRef;
 		updateDeployment.mutate({ id: deployment.resource.id, update });
 	}
 
