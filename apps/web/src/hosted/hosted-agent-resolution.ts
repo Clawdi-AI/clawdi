@@ -47,6 +47,23 @@ export function hostedDeploymentMembers(
 	return deployments.filter(isHostedDeploymentMember);
 }
 
+/**
+ * A detail-page delete is complete only after the accepted deployment leaves
+ * authoritative inventory membership. Cloud-agent projection misses are not
+ * part of this decision and therefore cannot redirect an unrelated detail.
+ */
+export function userInitiatedDeploymentDeleteCompleted(
+	deployments: readonly HostedDeployment[] | null,
+	deploymentId: string | null,
+): boolean {
+	if (!deploymentId || deployments === null) return false;
+	const target = deploymentId.toLowerCase();
+	return !deployments.some(
+		(deployment) =>
+			isHostedDeploymentMember(deployment) && deployment.resource.id.toLowerCase() === target,
+	);
+}
+
 /** One claimed-id set shared by list deduplication and ownership chrome. */
 export function claimedEnvIdsFromDeployments(
 	deployments: readonly HostedDeployment[],
