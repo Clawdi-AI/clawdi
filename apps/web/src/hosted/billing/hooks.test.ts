@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
+import { checkoutReturnMarker, checkoutReturnWasCanceled } from "@/hosted/billing/checkout-return";
 import type {
 	ComputeSubscriptionActionResult,
 	HostedComputeSubscription,
@@ -9,8 +10,6 @@ import {
 	applyDeploymentSubscriptionResult,
 	billingKeys,
 	billingRecoveryRefetchIntervalFor,
-	checkoutReturnMarker,
-	checkoutReturnWasCanceled,
 	refreshCheckoutReturnQueries,
 } from "@/hosted/billing/hooks";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
@@ -141,6 +140,29 @@ describe("refreshCheckoutReturnQueries", () => {
 		);
 		expect(qc.getQueryState(billingKeys.plans)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
+	});
+
+	test("rejects instead of claiming success when the required wallet refresh fails", async () => {
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false } },
+		});
+		let walletRefreshShouldFail = false;
+		await qc.prefetchQuery({
+			queryKey: billingKeys.deployments,
+			queryFn: async () => [],
+		});
+		await qc.prefetchQuery({
+			queryKey: billingKeys.wallet,
+			queryFn: async () => {
+				if (walletRefreshShouldFail) throw new Error("wallet refresh failed");
+				return { balance_cents: 1_000 };
+			},
+		});
+		walletRefreshShouldFail = true;
+
+		await expect(refreshCheckoutReturnQueries(qc)).rejects.toThrow(
+			"Couldn’t refresh required checkout return data.",
+		);
 	});
 });
 

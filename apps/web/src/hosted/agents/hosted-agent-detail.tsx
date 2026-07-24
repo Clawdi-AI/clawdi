@@ -72,6 +72,7 @@ import {
 	openSecureRuntimeWindow,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { useBillingClient } from "@/hosted/billing/billing-client";
+import { useCheckoutReturnHandler } from "@/hosted/billing/checkout-return";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
 import type {
 	ComputePlanChangeQuoteRequest,
@@ -86,19 +87,11 @@ import {
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
-import {
-	billingErrorDetail,
-	billingErrorNormalizer,
-	normalizeBillingError,
-} from "@/hosted/billing/errors";
+import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
-	checkoutReturnDeploymentId,
-	checkoutReturnMarker,
-	checkoutReturnWasCanceled,
 	useCancelSubscription,
 	useChangePlan,
-	useCheckoutReturnRefresh,
 	useManagedModelCatalog,
 	usePlans,
 	useQuotePlanChange,
@@ -131,7 +124,10 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import { topUpAmountCentsForUsdShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
+import {
+	useWalletTopUpDialog,
+	type WalletFundingErrorCopy,
+} from "@/hosted/billing/wallet/wallet-funding";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
 	canDelete as canDeleteDeployment,
@@ -417,11 +413,10 @@ function planChangeBillingTerm(
 	return value === 12 ? 12 : 1;
 }
 
-function decimalUsd(value: unknown): number | null {
-	if (typeof value !== "string" && typeof value !== "number") return null;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
-}
+const PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY = {
+	insufficientBalance: "Top up the shortfall, then request a fresh plan-change quote.",
+	refundDebt: "Top up before confirming this wallet-funded plan change.",
+} satisfies WalletFundingErrorCopy;
 
 /**
  * Hosted agent detail. A compute (deployment) hosts one selected execution
@@ -2380,11 +2375,23 @@ function ComputeSettingsSections({
 	onDeleteAccepted: (deploymentId: string) => void;
 }) {
 	const router = useRouter();
-	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const navigateCheckoutReturn = useCallback(
+		(checkoutDeploymentId: string): false | undefined => {
+			if (checkoutDeploymentId === deployment.resource.id) return false;
+			void router.navigate({
+				href: agentSectionHref(checkoutDeploymentId, "overview", "source=on-clawdi"),
+				replace: true,
+			});
+		},
+		[deployment.resource.id, router],
+	);
+	useCheckoutReturnHandler({
+		onCancelCopy: "You were not charged. Your compute plan is unchanged.",
+		onNavigate: navigateCheckoutReturn,
+	});
 	const hostedAccess = useHostedProductAccess();
 	const lifecycle = useDeploymentLifecycle();
 	const plans = usePlans();
-	const refreshCheckoutReturn = useCheckoutReturnRefresh();
 	const quotePlanChange = useQuotePlanChange();
 	const changePlan = useChangePlan();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
@@ -2397,7 +2404,6 @@ function ComputeSettingsSections({
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
-	const checkoutReturnRef = useRef<string | null>(null);
 	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const canStop = canStopDeployment(deploymentStatus);
 	const canStart = canStartDeployment(deploymentStatus);
@@ -2433,8 +2439,7 @@ function ComputeSettingsSections({
 	const [planChangeQuote, setPlanChangeQuote] = useState<ComputePlanChangeQuoteResponse | null>(
 		null,
 	);
-	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
-	const [walletTopUpAmountCents, setWalletTopUpAmountCents] = useState<number | null>(null);
+	const walletTopUp = useWalletTopUpDialog(PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
 	const currentPaidPlan =
@@ -2517,45 +2522,16 @@ function ComputeSettingsSections({
 					? planChangeUnavailable
 					: upgradeUnavailableMessage;
 	useEffect(() => {
-		const marker = checkoutReturnMarker(searchStr);
-		if (!marker || checkoutReturnRef.current === marker) return;
-		checkoutReturnRef.current = marker;
-		void refreshCheckoutReturn().then(() => {
-			if (checkoutReturnWasCanceled(searchStr)) {
-				toast.message("Checkout canceled", {
-					description: "You were not charged. Your compute plan is unchanged.",
-				});
-				return;
-			}
-			const deploymentId = checkoutReturnDeploymentId(searchStr);
-			if (deploymentId && deploymentId !== deployment.resource.id) {
-				void router.navigate({
-					href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
-					replace: true,
-				});
-				return;
-			}
-			toast.message("Checkout status refreshed", {
-				description: "We checked your deployments, subscription, and wallet.",
-			});
-		});
-	}, [deployment.resource.id, refreshCheckoutReturn, router, searchStr]);
-	useEffect(() => {
 		if (hostedAccess.isLoading || hostedAccess.canCreateCloudAgents) return;
 		setSubscriptionCreateOpen(false);
 		setPlanChangeOpen(false);
 		setPlanChangeQuote(null);
-		setWalletTopUpOpen(false);
-	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading]);
+		walletTopUp.reset();
+	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, walletTopUp.reset]);
 
 	function setPlanChangeDialogOpen(open: boolean) {
 		setPlanChangeOpen(open);
 		if (!open) setPlanChangeQuote(null);
-	}
-
-	function openPlanChangeTopUp(shortfallUsd: number | null = null) {
-		setWalletTopUpAmountCents(topUpAmountCentsForUsdShortfall(shortfallUsd));
-		setWalletTopUpOpen(true);
 	}
 
 	async function requestPlanChangeQuote(selection: PlanChangeSelection) {
@@ -2601,24 +2577,7 @@ function ComputeSettingsSections({
 			}
 			setPlanChangeDialogOpen(false);
 		} catch (error) {
-			const detail = billingErrorDetail(error);
-			if (
-				detail?.code === "insufficient_wallet_balance" ||
-				detail?.code === "insufficient_balance"
-			) {
-				openPlanChangeTopUp(decimalUsd(detail.shortfall_usd));
-				toast.error("Not enough Wallet balance", {
-					description: "Top up the shortfall, then request a fresh plan-change quote.",
-				});
-				return;
-			}
-			if (detail?.code === "open_refund_debt") {
-				openPlanChangeTopUp();
-				toast.error("Refund debt must be repaid", {
-					description: "Top up before confirming this wallet-funded plan change.",
-				});
-				return;
-			}
+			if (walletTopUp.handleFundingError(error)) return;
 			toast.error("Couldn’t change plan", {
 				description: normalizeBillingError(error),
 			});
@@ -2663,15 +2622,7 @@ function ComputeSettingsSections({
 	return (
 		<div className="flex flex-col gap-9">
 			{wallet.data ? (
-				<TopUpDialog
-					open={walletTopUpOpen}
-					onOpenChange={(open) => {
-						setWalletTopUpOpen(open);
-						if (!open) setWalletTopUpAmountCents(null);
-					}}
-					initialAmountCents={walletTopUpAmountCents}
-					onComplete={() => setPlanChangeQuote(null)}
-				/>
+				<TopUpDialog {...walletTopUp.dialogProps} onComplete={() => setPlanChangeQuote(null)} />
 			) : null}
 			{hasTerminalFallback && (basicPlan || perfPlan) ? (
 				<SubscriptionCreateDialog
@@ -2699,7 +2650,7 @@ function ComputeSettingsSections({
 					isConfirming={changePlan.isPending}
 					onQuote={requestPlanChangeQuote}
 					onConfirm={confirmPlanChange}
-					onTopUp={() => openPlanChangeTopUp()}
+					onTopUp={() => walletTopUp.show()}
 				/>
 			) : null}
 

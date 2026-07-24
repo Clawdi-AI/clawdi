@@ -30,7 +30,6 @@ import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
 import type { ComputePlanSlug, Plan } from "@/hosted/billing/contracts";
 import {
-	billingErrorDetail,
 	billingErrorNormalizer,
 	isIdempotencyKeyReusedError,
 	normalizeBillingError,
@@ -62,8 +61,11 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import { topUpAmountCentsForUsdShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { walletDebitShortfallUsd } from "@/hosted/billing/wallet/wallet-debit-summary";
+import {
+	SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY,
+	useWalletTopUpDialog,
+} from "@/hosted/billing/wallet/wallet-funding";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
 const PLAN_ITEMS = [
@@ -73,12 +75,6 @@ const PLAN_ITEMS = [
 
 function computePlanSlug(value: string | null): ComputePlanSlug | null {
 	return value === "compute_basic" || value === "compute_performance" ? value : null;
-}
-
-function decimalUsd(value: unknown): number | null {
-	if (typeof value !== "string" && typeof value !== "number") return null;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 function planForSlug(plans: Plan[], planSlug: ComputePlanSlug): Plan | undefined {
@@ -114,8 +110,7 @@ export function SubscriptionCreateDialog({
 	const [planSlug, setPlanSlug] = useState(initialPlanSlug);
 	const [billingTermMonths, setBillingTermMonths] = useState(initialBillingTermMonths);
 	const [fundingSource, setFundingSource] = useState<SubscriptionFundingSource>("stripe");
-	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
-	const [walletTopUpAmountCents, setWalletTopUpAmountCents] = useState<number | null>(null);
+	const walletTopUp = useWalletTopUpDialog(SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY);
 	const selectedPlan = useMemo(() => planForSlug(plans, planSlug), [planSlug, plans]);
 	const offers = useMemo(() => offersForPlan(selectedPlan, planSlug), [planSlug, selectedPlan]);
 	const selectedOffer =
@@ -159,9 +154,8 @@ export function SubscriptionCreateDialog({
 		setPlanSlug(initialPlanSlug);
 		setBillingTermMonths(nextTerm);
 		setFundingSource("stripe");
-		setWalletTopUpOpen(false);
-		setWalletTopUpAmountCents(null);
-	}, [initialBillingTermMonths, initialPlanSlug, open, plans]);
+		walletTopUp.reset();
+	}, [initialBillingTermMonths, initialPlanSlug, open, plans, walletTopUp.reset]);
 
 	useEffect(() => {
 		if (open && !hostedAccess.isLoading && !hostedAccess.canCreateCloudAgents) {
@@ -180,30 +174,6 @@ export function SubscriptionCreateDialog({
 			billingTermMonths;
 		setPlanSlug(nextPlanSlug);
 		setBillingTermMonths(nextTerm);
-	}
-
-	function openWalletTopUp(shortfallUsd: number | null) {
-		setWalletTopUpAmountCents(topUpAmountCentsForUsdShortfall(shortfallUsd));
-		setWalletTopUpOpen(true);
-	}
-
-	function handleWalletCreateError(error: unknown): boolean {
-		const detail = billingErrorDetail(error);
-		if (detail?.code === "insufficient_wallet_balance" || detail?.code === "insufficient_balance") {
-			openWalletTopUp(decimalUsd(detail.shortfall_usd));
-			toast.error("Not enough Wallet balance", {
-				description: "Top up the shortfall, then review a fresh wallet quote.",
-			});
-			return true;
-		}
-		if (detail?.code === "open_refund_debt") {
-			openWalletTopUp(null);
-			toast.error("Refund debt must be repaid", {
-				description: "Top up before starting this wallet subscription.",
-			});
-			return true;
-		}
-		return false;
 	}
 
 	async function create() {
@@ -257,7 +227,7 @@ export function SubscriptionCreateDialog({
 		} catch (error) {
 			if (fundingSource === "wallet") {
 				void createQuote.refetch();
-				if (handleWalletCreateError(error)) return;
+				if (walletTopUp.handleFundingError(error)) return;
 			}
 			if (isIdempotencyKeyReusedError(error) && createAttemptRef.current) {
 				forgetIdempotencyAttempt(
@@ -285,7 +255,7 @@ export function SubscriptionCreateDialog({
 			<Dialog
 				open={open}
 				onOpenChange={(nextOpen) => {
-					if (!isPending && !walletTopUpOpen) onOpenChange(nextOpen);
+					if (!isPending && !walletTopUp.dialogProps.open) onOpenChange(nextOpen);
 				}}
 			>
 				<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!isPending}>
@@ -398,7 +368,7 @@ export function SubscriptionCreateDialog({
 													size="sm"
 													variant="outline"
 													disabled={!wallet.data}
-													onClick={() => openWalletTopUp(walletShortfallUsd)}
+													onClick={() => walletTopUp.show(walletShortfallUsd)}
 												>
 													<WalletCards data-icon="inline-start" /> Top up Wallet
 												</Button>
@@ -438,12 +408,7 @@ export function SubscriptionCreateDialog({
 			</Dialog>
 
 			{wallet.data ? (
-				<TopUpDialog
-					open={walletTopUpOpen}
-					onOpenChange={setWalletTopUpOpen}
-					initialAmountCents={walletTopUpAmountCents}
-					onComplete={() => void createQuote.refetch()}
-				/>
+				<TopUpDialog {...walletTopUp.dialogProps} onComplete={() => void createQuote.refetch()} />
 			) : null}
 		</>
 	);

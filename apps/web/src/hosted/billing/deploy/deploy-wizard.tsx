@@ -1,6 +1,6 @@
 "use client";
 
-import { useLocation, useRouter } from "@tanstack/react-router";
+import { useRouter } from "@tanstack/react-router";
 import {
 	CalendarClock,
 	Cpu,
@@ -14,7 +14,7 @@ import {
 	WalletCards,
 	Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { EntityChoiceCard } from "@/components/entity-card";
@@ -39,6 +39,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { useBillingClient } from "@/hosted/billing/billing-client";
+import { useCheckoutReturnHandler } from "@/hosted/billing/checkout-return";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
@@ -84,7 +85,6 @@ import {
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
-	billingErrorDetail,
 	billingErrorNormalizer,
 	isIdempotencyKeyReusedError,
 	normalizeBillingError,
@@ -96,9 +96,6 @@ import {
 	formatUsdExact,
 } from "@/hosted/billing/format";
 import {
-	checkoutReturnDeploymentId,
-	checkoutReturnMarker,
-	checkoutReturnWasCanceled,
 	useCheckoutReturnRefresh,
 	useCreateSubscription,
 	useHostedDeployments,
@@ -132,8 +129,11 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import { topUpAmountCentsForUsdShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { walletDebitShortfallUsd } from "@/hosted/billing/wallet/wallet-debit-summary";
+import {
+	SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY,
+	useWalletTopUpDialog,
+} from "@/hosted/billing/wallet/wallet-funding";
 import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
@@ -194,12 +194,6 @@ const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 
 function acceptedDeploymentNavigation(deploymentId: string, replace = false) {
 	return { href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"), replace };
-}
-
-function decimalUsd(value: unknown): number | null {
-	if (typeof value !== "string" && typeof value !== "number") return null;
-	const parsed = Number(value);
-	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
 const aiProviderErrorNormalizer: ApiErrorNormalizer = {
@@ -387,7 +381,16 @@ function computeStatusLine({
 
 export function DeployWizard() {
 	const router = useRouter();
-	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const navigateCheckoutReturn = useCallback(
+		(deploymentId: string): undefined => {
+			void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
+		},
+		[router],
+	);
+	useCheckoutReturnHandler({
+		onCancelCopy: "You were not charged. Your agent was not deployed.",
+		onNavigate: navigateCheckoutReturn,
+	});
 	const hostedAccess = useHostedProductAccess();
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
@@ -403,7 +406,6 @@ export function DeployWizard() {
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const includedCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const assistantNameEditedRef = useRef(false);
-	const checkoutReturnRef = useRef<string | null>(null);
 	const createdProviderGuardRef = useRef<{ providerId: string; dataUpdatedAt: number } | null>(
 		null,
 	);
@@ -428,8 +430,7 @@ export function DeployWizard() {
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
-	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
-	const [walletTopUpAmountCents, setWalletTopUpAmountCents] = useState<number | null>(null);
+	const walletTopUp = useWalletTopUpDialog(SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY);
 
 	// Default language + timezone to the browser's after mount (avoids an SSR
 	// mismatch). Both stay explicitly unsettable back to the runtime default.
@@ -558,28 +559,6 @@ export function DeployWizard() {
 			}),
 		);
 	}
-
-	useEffect(() => {
-		const marker = checkoutReturnMarker(searchStr);
-		if (!marker || checkoutReturnRef.current === marker) return;
-		checkoutReturnRef.current = marker;
-		void refreshCheckoutReturn().then(() => {
-			if (checkoutReturnWasCanceled(searchStr)) {
-				toast.message("Checkout canceled", {
-					description: "You were not charged. Your agent was not deployed.",
-				});
-				return;
-			}
-			const deploymentId = checkoutReturnDeploymentId(searchStr);
-			if (deploymentId) {
-				void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
-				return;
-			}
-			toast.message("Checkout status refreshed", {
-				description: "We checked your deployments, subscription, and wallet.",
-			});
-		});
-	}, [refreshCheckoutReturn, router, searchStr]);
 
 	useEffect(() => {
 		if (compute !== "performance" || !plans.isSuccess || perfPlan) return;
@@ -792,33 +771,9 @@ export function DeployWizard() {
 		const available = await hostedAccess.recheckCanCreateCloudAgents();
 		if (!available) {
 			setCheckoutSession(null);
-			setWalletTopUpOpen(false);
+			walletTopUp.reset();
 		}
 		return available;
-	}
-
-	function openWalletTopUp(shortfallUsd: number | null) {
-		setWalletTopUpAmountCents(topUpAmountCentsForUsdShortfall(shortfallUsd));
-		setWalletTopUpOpen(true);
-	}
-
-	function handleWalletCreateError(error: unknown): boolean {
-		const detail = billingErrorDetail(error);
-		if (detail?.code === "insufficient_wallet_balance" || detail?.code === "insufficient_balance") {
-			openWalletTopUp(decimalUsd(detail.shortfall_usd));
-			toast.error("Not enough Wallet balance", {
-				description: "Top up the shortfall, then review a fresh wallet quote.",
-			});
-			return true;
-		}
-		if (detail?.code === "open_refund_debt") {
-			openWalletTopUp(null);
-			toast.error("Refund debt must be repaid", {
-				description: "Top up before starting this wallet subscription.",
-			});
-			return true;
-		}
-		return false;
 	}
 
 	async function fallbackToHostedCheckout(request: SubscriptionCreateRequestView) {
@@ -1046,7 +1001,7 @@ export function DeployWizard() {
 		} catch (e) {
 			if (paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
-				if (handleWalletCreateError(e)) return;
+				if (walletTopUp.handleFundingError(e)) return;
 			}
 			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });
 		} finally {
@@ -1488,7 +1443,7 @@ export function DeployWizard() {
 																size="sm"
 																variant="outline"
 																disabled={!wallet.data}
-																onClick={() => openWalletTopUp(walletShortfallUsd)}
+																onClick={() => walletTopUp.show(walletShortfallUsd)}
 															>
 																<WalletCards data-icon="inline-start" /> Top up Wallet
 															</Button>
@@ -1605,12 +1560,7 @@ export function DeployWizard() {
 			/>
 			{wallet.data ? (
 				<TopUpDialog
-					open={walletTopUpOpen}
-					onOpenChange={(open) => {
-						setWalletTopUpOpen(open);
-						if (!open) setWalletTopUpAmountCents(null);
-					}}
-					initialAmountCents={walletTopUpAmountCents}
+					{...walletTopUp.dialogProps}
 					onComplete={() => void subscriptionCreateQuote.refetch()}
 				/>
 			) : null}

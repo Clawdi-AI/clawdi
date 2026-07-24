@@ -42,37 +42,6 @@ import { runtimeEnvironmentId } from "@/hosted/runtimes";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
 
-const CHECKOUT_RETURN_DEPLOYMENT_PARAMS = ["deployment_id", "upgrade_deployment_id"] as const;
-const CHECKOUT_RETURN_MARKER_PARAMS = [
-	"session_id",
-	"checkout_session_id",
-	...CHECKOUT_RETURN_DEPLOYMENT_PARAMS,
-	"mockCheckout",
-] as const;
-
-export function checkoutReturnMarker(searchStr: string): string | null {
-	const params = new URLSearchParams(searchStr);
-	const values = CHECKOUT_RETURN_MARKER_PARAMS.flatMap((key) => {
-		const value = params.get(key);
-		return value ? [`${key}=${value}`] : [];
-	});
-	if (checkoutReturnWasCanceled(searchStr)) values.push("checkout=cancel");
-	return values.length > 0 ? values.join("&") : null;
-}
-
-export function checkoutReturnWasCanceled(searchStr: string): boolean {
-	return new URLSearchParams(searchStr).get("checkout") === "cancel";
-}
-
-export function checkoutReturnDeploymentId(searchStr: string): string | null {
-	const params = new URLSearchParams(searchStr);
-	for (const key of CHECKOUT_RETURN_DEPLOYMENT_PARAMS) {
-		const value = params.get(key);
-		if (value) return value;
-	}
-	return null;
-}
-
 function subscriptionFromAction(
 	previous: HostedComputeSubscription | null | undefined,
 	next: ComputeSubscriptionActionResult,
@@ -198,16 +167,9 @@ export function useWalletLedger(limit = 50) {
 
 export function useTopUp() {
 	const client = useBillingClient();
-	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: ({ body, idempotencyKey }: { body: WalletTopupRequest; idempotencyKey: string }) =>
 			client.topUp(body, idempotencyKey),
-		onSuccess: () => {
-			// Refetch both balance and activity so a fresh top-up never shows a
-			// stale balance or an empty ledger.
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: ["billing", "ledger"] });
-		},
 	});
 }
 
@@ -247,7 +209,7 @@ export function useCreateSubscription() {
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: ["billing", "history"] });
+			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
 			qc.invalidateQueries({ queryKey: ["agents"] });
 		},
 	});
@@ -293,7 +255,7 @@ export function useChangePlan() {
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: ["billing", "history"] });
+			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
 		},
 	});
 }
@@ -349,14 +311,14 @@ export function useResumeSubscription() {
 }
 
 export function useCheckoutReturnRefresh() {
-	const qc = useQueryClient();
-	return useCallback(() => refreshCheckoutReturnQueries(qc), [qc]);
+	const queryClient = useQueryClient();
+	return useCallback(() => refreshCheckoutReturnQueries(queryClient), [queryClient]);
 }
 
 export async function refreshCheckoutReturnQueries(
 	qc: QueryClient,
 ): Promise<HostedDeployment[] | undefined> {
-	const [deploymentsResult] = await Promise.allSettled([
+	const [deploymentsResult, walletResult] = await Promise.allSettled([
 		(async () => {
 			await qc.invalidateQueries({
 				queryKey: billingKeys.deployments,
@@ -382,9 +344,16 @@ export async function refreshCheckoutReturnQueries(
 		qc.invalidateQueries({ queryKey: billingKeys.plans }),
 		qc.invalidateQueries({ queryKey: ["agents"] }),
 	]);
-	return deploymentsResult.status === "fulfilled"
-		? qc.getQueryData<HostedDeployment[]>(billingKeys.deployments)
-		: undefined;
+	const requiredRefreshFailures = [deploymentsResult, walletResult].flatMap((result) =>
+		result.status === "rejected" ? [result.reason] : [],
+	);
+	if (requiredRefreshFailures.length > 0) {
+		throw new AggregateError(
+			requiredRefreshFailures,
+			"Couldn’t refresh required checkout return data.",
+		);
+	}
+	return qc.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 }
 
 // ── Usage ────────────────────────────────────────────────────────────────────

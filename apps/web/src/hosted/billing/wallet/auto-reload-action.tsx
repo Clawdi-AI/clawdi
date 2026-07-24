@@ -48,7 +48,7 @@ export function AutoReloadActionConfirm({
 		// The wallet snapshot resolves `auto_reload_action` once the PaymentIntent
 		// settles; refetch balance + activity so this control clears itself.
 		qc.invalidateQueries({ queryKey: billingKeys.wallet });
-		qc.invalidateQueries({ queryKey: ["billing", "ledger"] });
+		qc.invalidateQueries({ queryKey: billingKeys.ledgerRoot });
 		setConfirming(false);
 		toast.success(status === "succeeded" ? "Payment confirmed" : "Payment processing", {
 			description:
