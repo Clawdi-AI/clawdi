@@ -34,7 +34,7 @@ function statusLabel(status: string): string {
 		draft: "Draft",
 		uncollectible: "Uncollectible",
 	};
-	return known[status] ?? "Unknown";
+	return known[status] ?? "Processing";
 }
 
 function statusTone(

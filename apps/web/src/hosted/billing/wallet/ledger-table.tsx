@@ -34,7 +34,7 @@ import {
 import { cn, relativeTime } from "@/lib/utils";
 
 const STATUS_LABELS: Record<WalletLedgerStatus, string> = {
-	applied: "Applied",
+	applied: "Completed",
 	pending: "Pending",
 	failed: "Failed",
 };

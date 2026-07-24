@@ -1,6 +1,7 @@
 "use client";
 
-import { Check, CircleAlert, CircleCheck, Copy, TriangleAlert } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Copy, Eye, EyeOff, TriangleAlert } from "lucide-react";
+import { useState } from "react";
 import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import { StatusBadge, type StatusTone } from "@/components/ui/status-badge";
@@ -94,7 +95,7 @@ function useCopy() {
 	return useCopyToClipboard({ error: "Copy failed" });
 }
 
-/** Copyable token box for values revealed once. */
+/** Copyable secret box, masked until the user explicitly reveals it. */
 export function TokenReveal({
 	label,
 	value,
@@ -105,6 +106,7 @@ export function TokenReveal({
 	note?: string;
 }) {
 	const { copied, copy } = useCopy();
+	const [revealed, setRevealed] = useState(false);
 	return (
 		<div
 			data-hosted="true"
@@ -114,8 +116,18 @@ export function TokenReveal({
 			<div className="text-xs font-medium text-primary">{label}</div>
 			<div className="flex items-center gap-2">
 				<code className="flex-1 break-all rounded bg-muted px-3 py-2 font-mono text-xs">
-					{value}
+					{revealed ? value : "••••••••••••"}
 				</code>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					onClick={() => setRevealed((visible) => !visible)}
+					aria-label={`${revealed ? "Hide" : "Show"} ${label}`}
+					aria-pressed={revealed}
+				>
+					{revealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+				</Button>
 				<Button
 					type="button"
 					variant="ghost"

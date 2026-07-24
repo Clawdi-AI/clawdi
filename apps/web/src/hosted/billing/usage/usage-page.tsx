@@ -199,7 +199,8 @@ export function UsagePage() {
 										/>
 									</div>
 									<div className="text-xs text-muted-foreground">
-										{providerName} · {m.requests.toLocaleString()} requests
+										{providerName} · {m.requests.toLocaleString()} request
+										{m.requests === 1 ? "" : "s"}
 									</div>
 								</div>
 							);
