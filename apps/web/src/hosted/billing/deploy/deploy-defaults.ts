@@ -1,5 +1,5 @@
 import type { DeployAiFields } from "@/hosted/billing/deploy/deploy-request";
-import type { HostedRuntime } from "@/hosted/runtimes";
+import { type HostedRuntime, runtimeDisplayName } from "@/hosted/runtimes";
 import {
 	MANAGED_AI_CHOICE,
 	MANAGED_DEFAULT_MODEL_CHOICE,
@@ -15,6 +15,18 @@ export const DEFAULT_DEPLOY_AI_ACCESS_MODE: DeployWizardAiAccessMode = "configur
 export const DEFAULT_DEPLOY_AI_PROVIDER_CHOICES = [MANAGED_AI_CHOICE] as const;
 export const DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE = MANAGED_AI_CHOICE;
 export const DEFAULT_DEPLOY_PRIMARY_MODEL = MANAGED_DEFAULT_MODEL_CHOICE;
+
+export function deployAssistantNameAfterRuntimeChange({
+	currentName,
+	hasBeenEdited,
+	runtime,
+}: {
+	currentName: string;
+	hasBeenEdited: boolean;
+	runtime: HostedRuntime;
+}): string {
+	return hasBeenEdited ? currentName : runtimeDisplayName(runtime);
+}
 
 export function defaultManagedDeployAiFields(): DeployAiFields {
 	return {

@@ -6,6 +6,7 @@ import {
 	DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 	DEFAULT_DEPLOY_RUNTIME,
 	defaultManagedDeployAiFields,
+	deployAssistantNameAfterRuntimeChange,
 } from "@/hosted/billing/deploy/deploy-defaults";
 import {
 	MANAGED_AI_CHOICE,
@@ -30,5 +31,22 @@ describe("deploy wizard defaults", () => {
 		});
 		expect(defaultManagedDeployAiFields()).not.toHaveProperty("primary_model");
 		expect(JSON.stringify(defaultManagedDeployAiFields())).not.toContain("gpt-5.5");
+	});
+
+	test("follows runtime display names until the agent name is edited", () => {
+		expect(
+			deployAssistantNameAfterRuntimeChange({
+				currentName: "Hermes",
+				hasBeenEdited: false,
+				runtime: "openclaw",
+			}),
+		).toBe("OpenClaw");
+		expect(
+			deployAssistantNameAfterRuntimeChange({
+				currentName: "Research Assistant",
+				hasBeenEdited: true,
+				runtime: "hermes",
+			}),
+		).toBe("Research Assistant");
 	});
 });

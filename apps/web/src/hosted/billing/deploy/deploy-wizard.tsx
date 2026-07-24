@@ -67,6 +67,7 @@ import {
 	DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 	DEFAULT_DEPLOY_RUNTIME,
 	type DeployWizardAiAccessMode,
+	deployAssistantNameAfterRuntimeChange,
 } from "@/hosted/billing/deploy/deploy-defaults";
 import {
 	resolveBasicDeploySelection,
@@ -74,6 +75,7 @@ import {
 } from "@/hosted/billing/deploy/deploy-model";
 import {
 	buildHostedDeployRequest,
+	DEPLOY_ASSISTANT_NAME_MAX_LENGTH,
 	type DeployAiFields,
 } from "@/hosted/billing/deploy/deploy-request";
 import {
@@ -135,7 +137,7 @@ import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import { walletDebitShortfallCredits } from "@/hosted/billing/wallet/wallet-debit-summary";
-import { runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
+import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
@@ -358,7 +360,7 @@ function computeStatusLine({
 		if (basicSelection.mode === "included") {
 			return {
 				tone: "muted",
-				message: "Your included Basic slot is available. No compute subscription is required.",
+				message: "Your first Basic agent is free. No compute subscription is required.",
 			};
 		}
 		if (basicOffer) {
@@ -412,12 +414,16 @@ export function DeployWizard() {
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const includedCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
+	const assistantNameEditedRef = useRef(false);
 	const checkoutReturnRef = useRef<string | null>(null);
 	const createdProviderGuardRef = useRef<{ providerId: string; dataUpdatedAt: number } | null>(
 		null,
 	);
 
 	const [runtime, setRuntime] = useState(DEFAULT_DEPLOY_RUNTIME);
+	const [assistantName, setAssistantName] = useState(() =>
+		runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME),
+	);
 	const [aiAccessMode, setAiAccessMode] = useState<AiAccessMode>(DEFAULT_DEPLOY_AI_ACCESS_MODE);
 	const [aiProviderChoices, setAiProviderChoices] = useState<string[]>([
 		...DEFAULT_DEPLOY_AI_PROVIDER_CHOICES,
@@ -531,6 +537,7 @@ export function DeployWizard() {
 	const planReady = !plans.isLoading && computePlanReady;
 	const canSubmit =
 		planReady &&
+		assistantName.trim().length > 0 &&
 		!submitting &&
 		(!paidSelection ||
 			paymentMethod === "card" ||
@@ -547,6 +554,17 @@ export function DeployWizard() {
 		setAiAccessMode("configured");
 		setAiProviderChoices([providerId]);
 		setPrimaryProvider(providerId);
+	}
+
+	function selectRuntime(nextRuntime: HostedRuntime) {
+		setRuntime(nextRuntime);
+		setAssistantName((currentName) =>
+			deployAssistantNameAfterRuntimeChange({
+				currentName,
+				hasBeenEdited: assistantNameEditedRef.current,
+				runtime: nextRuntime,
+			}),
+		);
 	}
 
 	useEffect(() => {
@@ -758,6 +776,7 @@ export function DeployWizard() {
 			computePlanSlug,
 			runtime,
 			persona: {
+				assistantName,
 				language,
 				timezone,
 			},
@@ -1057,7 +1076,7 @@ export function DeployWizard() {
 			forgetIdempotencyAttempt("deployment-create", fingerprint);
 			includedCreateAttemptRef.current = null;
 			toast.success("Agent deployed", {
-				description: "Your included Basic deployment is provisioning now.",
+				description: "Your first Basic agent is provisioning now for free.",
 			});
 			void router.navigate({
 				href: agentSectionHref(created.deploymentId, "overview", "source=on-clawdi"),
@@ -1145,7 +1164,7 @@ export function DeployWizard() {
 					<div className={RUNTIME_TILE_GRID_CLASS}>
 						<EntityChoiceCard
 							selected={runtime === "hermes"}
-							onClick={() => setRuntime("hermes")}
+							onClick={() => selectRuntime("hermes")}
 							icon={
 								<EntityIcon kind="framework" id="hermes" label={runtimeDisplayName("hermes")} />
 							}
@@ -1154,7 +1173,7 @@ export function DeployWizard() {
 						/>
 						<EntityChoiceCard
 							selected={runtime === "openclaw"}
-							onClick={() => setRuntime("openclaw")}
+							onClick={() => selectRuntime("openclaw")}
 							icon={
 								<EntityIcon kind="framework" id="openclaw" label={runtimeDisplayName("openclaw")} />
 							}
@@ -1315,7 +1334,7 @@ export function DeployWizard() {
 								title="Basic"
 								description={
 									basicSelection.mode === "included"
-										? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · included slot`
+										? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · First Basic agent — Free`
 										: basicOffer
 											? `${basicPlan?.vcpu ?? 2} vCPU / ${basicPlan?.ram_gb ?? 4} GB · ${recurringOfferLabel(basicOffer)}`
 											: "Basic funding unavailable"
@@ -1323,7 +1342,7 @@ export function DeployWizard() {
 								badge={
 									<Badge variant="secondary">
 										{basicSelection.mode === "included"
-											? "Included"
+											? "Free"
 											: basicOffer
 												? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo`
 												: "Unavailable"}
@@ -1466,14 +1485,26 @@ export function DeployWizard() {
 				</SettingsSection>
 
 				<SettingsSection
-					title={
-						<>
-							Personalize <span className="font-normal text-muted-foreground">· optional</span>
-						</>
-					}
-					description="Choose the agent's language and timezone."
+					title="Personalize"
+					description="Name your agent and optionally choose its language and timezone."
 				>
 					<div className="grid max-w-2xl gap-4 sm:grid-cols-2">
+						<div className="flex flex-col gap-1.5 sm:col-span-2">
+							<label htmlFor="agent-name" className="text-sm text-muted-foreground">
+								Name
+							</label>
+							<Input
+								id="agent-name"
+								value={assistantName}
+								maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}
+								required
+								onChange={(event) => {
+									assistantNameEditedRef.current = true;
+									setAssistantName(event.target.value);
+								}}
+								onBlur={() => setAssistantName((name) => name.trim())}
+							/>
+						</div>
 						<div className="flex flex-col gap-1.5">
 							<label htmlFor="agent-language" className="text-sm text-muted-foreground">
 								Language

@@ -11,6 +11,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_basic",
 			runtime: DEFAULT_DEPLOY_RUNTIME,
 			persona: {
+				assistantName: "Hermes",
 				language: "",
 				timezone: "",
 			},
@@ -20,6 +21,7 @@ describe("buildHostedDeployRequest", () => {
 		expect(request).toEqual({
 			compute_plan_slug: "compute_basic",
 			runtime: "hermes",
+			assistant_name: "Hermes",
 			language: null,
 			timezone: null,
 			ai_provider_id: null,
@@ -27,13 +29,12 @@ describe("buildHostedDeployRequest", () => {
 			provider_ids: ["clawdi-v2"],
 			config: {
 				runtime: "hermes",
+				assistant_name: "Hermes",
 				language: null,
 				timezone: null,
 			},
 		});
 		expect(request).not.toHaveProperty("primary_model");
-		expect("assistant_name" in request).toBe(false);
-		expect("assistant_name" in (request.config ?? {})).toBe(false);
 		expect("personality" in request).toBe(false);
 		expect("personality" in (request.config ?? {})).toBe(false);
 	});
@@ -43,6 +44,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_performance",
 			runtime: "openclaw",
 			persona: {
+				assistantName: "  OpenClaw Studio  ",
 				language: "en",
 				timezone: "America/Los_Angeles",
 			},
@@ -50,21 +52,21 @@ describe("buildHostedDeployRequest", () => {
 		});
 
 		expect("profile" in request).toBe(false);
-		expect("assistant_name" in request).toBe(false);
 		expect("personality" in request).toBe(false);
 		expect(request).toMatchObject({
 			compute_plan_slug: "compute_performance",
 			runtime: "openclaw",
+			assistant_name: "OpenClaw Studio",
 			language: "en",
 			timezone: "America/Los_Angeles",
 			ai_provider_auth_kind: "managed",
 			config: {
 				runtime: "openclaw",
+				assistant_name: "OpenClaw Studio",
 				language: "en",
 				timezone: "America/Los_Angeles",
 			},
 		});
-		expect("assistant_name" in (request.config ?? {})).toBe(false);
 		expect("personality" in (request.config ?? {})).toBe(false);
 		expect("telegram_bot_token" in request).toBe(false);
 		expect("telegram_bot_token" in (request.config ?? {})).toBe(false);
@@ -79,6 +81,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_basic",
 			runtime: "hermes",
 			persona: {
+				assistantName: "Hermes",
 				language: "en",
 				timezone: "Etc/UTC",
 			},
@@ -88,10 +91,12 @@ describe("buildHostedDeployRequest", () => {
 		expect(request).toMatchObject({
 			compute_plan_slug: "compute_basic",
 			runtime: "hermes",
+			assistant_name: "Hermes",
 			language: "en",
 			timezone: "Etc/UTC",
 			config: {
 				runtime: "hermes",
+				assistant_name: "Hermes",
 				language: "en",
 				timezone: "Etc/UTC",
 			},
@@ -103,6 +108,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_performance",
 			runtime: "hermes",
 			persona: {
+				assistantName: "Hermes",
 				language: "",
 				timezone: "",
 			},
@@ -136,6 +142,7 @@ describe("buildHostedDeployRequest", () => {
 			computePlanSlug: "compute_basic",
 			runtime: "hermes",
 			persona: {
+				assistantName: "Hermes",
 				language: "",
 				timezone: "",
 			},
@@ -145,11 +152,13 @@ describe("buildHostedDeployRequest", () => {
 		expect(request).toEqual({
 			compute_plan_slug: "compute_basic",
 			runtime: "hermes",
+			assistant_name: "Hermes",
 			language: null,
 			timezone: null,
 			ai_provider_auth_kind: "unmanaged",
 			config: {
 				runtime: "hermes",
+				assistant_name: "Hermes",
 				language: null,
 				timezone: null,
 			},
