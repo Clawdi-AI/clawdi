@@ -209,6 +209,18 @@ const stoppedIncludedBasicDeployment = {
 	status: "stopped",
 };
 
+const stoppedProjectionEnvironmentId = "44444444-4444-4444-8444-444444444444";
+const stoppedProjectionGoneDeployment: DeploymentMutationFixture = {
+	...includedBasicDeployment,
+	id: "hdep_stopped_projection_gone",
+	name: "deployment-create-browser-generated",
+	status: "stopped",
+	config_info: {
+		...includedBasicDeployment.config_info,
+		clawdi_cloud_environments: {},
+	},
+};
+
 const missingProjectionEnvironmentId = "55555555-5555-4555-8555-555555555555";
 const missingProjectionFailureReason =
 	"startup_probe_failing; restart_count=2; container failed readiness probe after the runtime bridge exhausted every startup attempt";
@@ -1473,6 +1485,7 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
+	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe("hdep_failed_projection");
 	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toBeVisible();
 	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
@@ -1499,6 +1512,74 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 		.getByRole("button", { name: "Delete compute", exact: true })
 		.click();
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_failed_projection"]);
+});
+
+test("stopped deployment tiles expose Start and friendly Delete actions", async ({ page }) => {
+	const startRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [stoppedProjectionGoneDeployment],
+		startRequests,
+	});
+
+	for (const path of ["/", "/agents"]) {
+		await page.goto(path);
+		const main = page.locator("main");
+		await expect(main.getByRole("button", { name: "Start Hermes", exact: true })).toBeVisible();
+		await expect(main.getByRole("button", { name: "Delete Hermes", exact: true })).toBeVisible();
+		await expect(
+			main.getByText("deployment-create-browser-generated", { exact: true }),
+		).toHaveCount(0);
+	}
+
+	await page.locator("main").getByRole("button", { name: "Start Hermes", exact: true }).click();
+	await expect.poll(() => startRequests.length).toBe(1);
+});
+
+test("stopped detail stays recoverable without querying its removed projection", async ({
+	page,
+}) => {
+	const cloudRequests: string[] = [];
+	const deployRequests: string[] = [];
+	const startRequests: string[] = [];
+	page.on("request", (request) => {
+		const url = new URL(request.url());
+		const path = `${url.pathname}${url.search}`;
+		if (url.origin === CLOUD_API) cloudRequests.push(path);
+		if (url.origin === DEPLOY_API) deployRequests.push(path);
+	});
+	await stubHostedApi(page, {
+		deployments: [stoppedProjectionGoneDeployment],
+		cloudAgentNotFoundIds: [stoppedProjectionEnvironmentId],
+		startRequests,
+	});
+
+	const detailPath = `/agents/${stoppedProjectionEnvironmentId}`;
+	const detailQuery = `?source=on-clawdi&d=${stoppedProjectionGoneDeployment.id}`;
+	for (const section of ["", "/sessions", "/channel-links", "/console"]) {
+		await page.goto(`${detailPath}${section}${detailQuery}`);
+		const main = page.locator("main");
+		await expect(
+			main.locator('[data-slot="empty-title"]').getByText("Stopped", { exact: true }),
+		).toBeVisible();
+		await expect(main.getByRole("button", { name: "Start", exact: true })).toBeVisible();
+		await expect(main.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
+		await expect(main.getByText("Agent sync record unavailable", { exact: true })).toHaveCount(0);
+	}
+
+	const removedProjectionRequests = cloudRequests.filter((path) => {
+		if (path === `/v1/agents/${stoppedProjectionEnvironmentId}`) return true;
+		if (path.startsWith("/v1/sessions")) return true;
+		return (
+			path.startsWith("/v1/channels/agent-links") &&
+			path.includes(encodeURIComponent(stoppedProjectionEnvironmentId))
+		);
+	});
+	expect(removedProjectionRequests).toEqual([]);
+	expect(deployRequests.filter((path) => path.endsWith("/runtime-ui/credentials"))).toEqual([]);
+
+	await page.goto(`${detailPath}${detailQuery}`);
+	await page.locator("main").getByRole("button", { name: "Start", exact: true }).click();
+	await expect.poll(() => startRequests.length).toBe(1);
 });
 
 test("failed deployment with a retained projection keeps status-authoritative navigation", async ({

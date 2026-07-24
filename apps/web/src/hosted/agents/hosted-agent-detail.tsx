@@ -135,6 +135,7 @@ import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
 	canDelete as canDeleteDeployment,
+	canQueryDeploymentProjection,
 	canRestart as canRestartDeployment,
 	canStart as canStartDeployment,
 	canStop as canStopDeployment,
@@ -364,7 +365,13 @@ function DeleteComputeAction({ deployment }: { deployment: HostedDeployment }) {
 	);
 }
 
-function StartComputeAction({ deployment }: { deployment: HostedDeployment }) {
+function StartComputeAction({
+	deployment,
+	label = "Start compute",
+}: {
+	deployment: HostedDeployment;
+	label?: string;
+}) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
@@ -385,7 +392,7 @@ function StartComputeAction({ deployment }: { deployment: HostedDeployment }) {
 			) : (
 				<RefreshCw className="size-3.5" />
 			)}
-			Start compute
+			{label}
 		</Button>
 	);
 }
@@ -422,6 +429,7 @@ export function HostedAgentDetail({
 	const router = useRouter();
 	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
+	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
 	const cloudEnvironmentId = isCloudEnvId(environmentId);
 	const agentQuery = useQuery({
 		queryKey: ["agents", environmentId],
@@ -431,7 +439,7 @@ export function HostedAgentDetail({
 					params: { path: { agent_id: environmentId } },
 				}),
 			),
-		enabled: cloudEnvironmentId,
+		enabled: cloudEnvironmentId && deploymentProjectionQueryable,
 		refetchInterval: (query) =>
 			missingProjectionRefetchInterval(
 				query.state.error,
@@ -441,7 +449,7 @@ export function HostedAgentDetail({
 		refetchIntervalInBackground: false,
 	});
 	const projection = resolveHostedAgentProjection({
-		enabled: cloudEnvironmentId,
+		enabled: cloudEnvironmentId && deploymentProjectionQueryable,
 		data: agentQuery.data,
 		error: agentQuery.error,
 		isPending: agentQuery.isPending,
@@ -532,13 +540,15 @@ export function HostedAgentDetail({
 					/>
 				)}
 				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
-				<HostedProjectionNotice
-					projection={projection}
-					isFetching={agentQuery.isFetching}
-					onRetry={() => {
-						void agentQuery.refetch();
-					}}
-				/>
+				{deploymentProjectionQueryable ? (
+					<HostedProjectionNotice
+						projection={projection}
+						isFetching={agentQuery.isFetching}
+						onRetry={() => {
+							void agentQuery.refetch();
+						}}
+					/>
+				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{activeTab === "overview" ? (
 						<OverviewTab
@@ -559,14 +569,21 @@ export function HostedAgentDetail({
 					) : null}
 					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
 					{activeTab === "sessions" ? (
-						projection.status === "resolved" ? (
-							<HostedAgentSessionsTab environmentId={environmentId} />
+						!deploymentProjectionQueryable ? (
+							<StoppedAgentState deployment={deployment} />
+						) : projection.status === "resolved" ? (
+							<HostedAgentSessionsTab
+								environmentId={environmentId}
+								enabled={deploymentProjectionQueryable}
+							/>
 						) : (
 							<ProjectionDependentUnavailable label="Sessions" />
 						)
 					) : null}
 					{activeTab === "skills" ? (
-						projection.status === "resolved" ? (
+						!deploymentProjectionQueryable ? (
+							<StoppedAgentState deployment={deployment} />
+						) : projection.status === "resolved" ? (
 							<AgentSkillsTab
 								agentId={environmentId}
 								agentProjectId={agent?.default_project_id}
@@ -578,8 +595,10 @@ export function HostedAgentDetail({
 					) : null}
 					{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
 					{activeTab === "channels" ? (
-						projection.status === "resolved" ? (
-							<ChannelsTab environmentId={environmentId} />
+						!deploymentProjectionQueryable ? (
+							<StoppedAgentState deployment={deployment} />
+						) : projection.status === "resolved" ? (
+							<ChannelsTab environmentId={environmentId} enabled={deploymentProjectionQueryable} />
 						) : (
 							<ProjectionDependentUnavailable label="Channels" />
 						)
@@ -668,7 +687,30 @@ function ProjectionDependentUnavailable({ label }: { label: string }) {
 	);
 }
 
-function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
+function StoppedAgentState({
+	deployment,
+	variant = "page",
+}: {
+	deployment: HostedDeployment;
+	variant?: React.ComponentProps<typeof EmptyState>["variant"];
+}) {
+	return (
+		<EmptyState
+			variant={variant}
+			title="Stopped"
+			description="Hosted compute has been released. Start this agent to provision compute again."
+			action={<StartComputeAction deployment={deployment} label="Start" />}
+		/>
+	);
+}
+
+function HostedAgentSessionsTab({
+	environmentId,
+	enabled,
+}: {
+	environmentId: string;
+	enabled: boolean;
+}) {
 	const api = useApi();
 	const [page, setPage] = useState(1);
 	const [pageSize, setPageSize] = useState(20);
@@ -679,7 +721,7 @@ function HostedAgentSessionsTab({ environmentId }: { environmentId: string }) {
 
 	const sessions = useQuery({
 		...sessionListQueryOptions(api, { environment_id: environmentId, page, page_size: pageSize }),
-		enabled: isCloudEnvId(environmentId),
+		enabled: enabled && isCloudEnvId(environmentId),
 		placeholderData: keepPreviousData,
 	});
 	const total = sessions.data?.total ?? 0;
@@ -891,6 +933,9 @@ function OverviewTab({
 			{deploymentStatus.kind === "failed" ? (
 				<OverviewFailedPanel deployment={deployment} restartLabel="Retry startup" />
 			) : null}
+			{deploymentStatus.kind === "stopped" ? (
+				<StoppedAgentState deployment={deployment} variant="inset" />
+			) : null}
 			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
 				<StatCard
 					label="Status"
@@ -945,7 +990,7 @@ function OverviewDeploymentActions({ deployment }: { deployment: HostedDeploymen
 				{canRestartDeployment(status) && !failed ? (
 					<RestartComputeAction deployment={deployment} />
 				) : null}
-				{canStartDeployment(status) && !failed ? (
+				{canStartDeployment(status) && !failed && status.kind !== "stopped" ? (
 					<StartComputeAction deployment={deployment} />
 				) : null}
 				<DeleteComputeAction deployment={deployment} />
@@ -1113,6 +1158,10 @@ function ConsoleTab({ deployment, runtime }: { deployment: HostedDeployment; run
 		if (credentials?.runtime === runtime) setShowCredentials(true);
 		else void loadCredentials(true);
 	};
+
+	if (status.kind === "stopped") {
+		return <StoppedAgentState deployment={deployment} />;
+	}
 
 	if (!isRunning) {
 		return (
@@ -1388,6 +1437,10 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	const handleTerminalStatusChange = useCallback((status: HostedTerminalStatus) => {
 		setTerminalStatus(status);
 	}, []);
+
+	if (status.kind === "stopped") {
+		return <StoppedAgentState deployment={deployment} />;
+	}
 
 	if (!isRunning) {
 		return (
@@ -2082,12 +2135,12 @@ function AgentPrimaryModelPicker({
 
 // ── Channels ─────────────────────────────────────────────────────────────────
 
-function ChannelsTab({ environmentId }: { environmentId: string }) {
+function ChannelsTab({ environmentId, enabled }: { environmentId: string; enabled: boolean }) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const hasEnvironmentId = isCloudEnvId(environmentId);
+	const hasEnvironmentId = enabled && isCloudEnvId(environmentId);
 	const linked = useAgentChannelLinks(environmentId, hasEnvironmentId);
 	const unlink = useUnlinkAgentChannel(environmentId);
 	// "" = no channel selected. Sentinel keeps the Select controlled (no

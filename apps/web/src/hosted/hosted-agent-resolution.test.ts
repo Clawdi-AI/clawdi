@@ -5,6 +5,7 @@ import {
 	canOpenHostedRuntimeUi,
 	hostedDeploymentMembers,
 	missingProjectionRefetchInterval,
+	resolveAgentDeployment,
 	resolveHostedAgentProjection,
 	resolveHostedInventory,
 } from "@/hosted/hosted-agent-resolution";
@@ -102,6 +103,35 @@ describe("hosted inventory resolution matrix", () => {
 });
 
 describe("hosted detail projection resolution", () => {
+	test("keeps a selected stopped deployment addressable after its projection is removed", () => {
+		const stopped = hostedDeploymentFixture({
+			id: "hdep_stopped",
+			status: "stopped",
+			cloudEnvironments: {},
+		});
+		const resolution = resolveAgentDeployment(
+			[stopped],
+			"55555555-5555-4555-8555-555555555555",
+			"hdep_stopped",
+		);
+
+		expect(resolution.match?.deployment.resource.id).toBe("hdep_stopped");
+		expect(resolution.match?.runtime).toBeNull();
+		expect(resolution.ambiguousMatches).toEqual([]);
+	});
+
+	test("does not let a mismatched selector override an environment match", () => {
+		const environmentId = "55555555-5555-4555-8555-555555555555";
+		const matched = hostedDeploymentFixture({
+			id: "hdep_matched",
+			cloudEnvironments: { openclaw: environmentId },
+		});
+		const selected = hostedDeploymentFixture({ id: "hdep_selected", cloudEnvironments: {} });
+		const resolution = resolveAgentDeployment([matched, selected], environmentId, "hdep_selected");
+
+		expect(resolution.match?.deployment.resource.id).toBe("hdep_matched");
+	});
+
 	test("keeps missing, service-error, loading, unavailable, and resolved states distinct", () => {
 		const notFound = new ApiError(404, "Agent not found");
 		const serviceError = new ApiError(500, "gateway failure");

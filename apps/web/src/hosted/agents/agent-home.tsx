@@ -1,6 +1,6 @@
 "use client";
 
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import { ChevronRight, RefreshCw } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -51,6 +51,7 @@ export function AgentHome({
 	environmentId: string;
 	section: AgentSectionId;
 }) {
+	const router = useRouter();
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = new URLSearchParams(searchStr);
 	const deploymentSelector = agentDeploymentSelector(searchParams);
@@ -74,6 +75,20 @@ export function AgentHome({
 	const shouldAutoRefetchUnresolvedHostedAgent =
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
 	const isFetchingRef = useRef(isFetching);
+
+	// Canonicalize a resolved hosted route with its deployment selector before
+	// Stop removes the env mapping. The selector is then sufficient to retain
+	// detail ownership while the cloud-agent projection is absent.
+	useEffect(() => {
+		if (!deployment || deploymentSelector) return;
+		const query = new URLSearchParams(searchStr);
+		query.set("source", "on-clawdi");
+		query.set(AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, deployment.resource.id);
+		void router.navigate({
+			href: agentSectionHref(environmentId, section, query),
+			replace: true,
+		});
+	}, [deployment, deploymentSelector, environmentId, router, searchStr, section]);
 
 	useEffect(() => {
 		isFetchingRef.current = isFetching;

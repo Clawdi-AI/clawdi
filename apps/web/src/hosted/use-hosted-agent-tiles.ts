@@ -25,7 +25,7 @@ import {
 	claimedEnvIdsFromDeployments,
 	isHostedDeploymentMember,
 } from "@/hosted/hosted-agent-resolution";
-import { HostedDeploymentTileDeleteAction } from "@/hosted/hosted-deployment-tile-action";
+import { HostedDeploymentTileAction } from "@/hosted/hosted-deployment-tile-action";
 import { deploymentRuntime, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
@@ -208,6 +208,7 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 		: runtimeDisplayName(runtime);
 	const contextLabel = slug !== name ? slug : null;
 	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv ?? null);
+	const showTileActions = runtimeStatus.compute.kind === "stopped" || !envId;
 	const dunningStatus = computeDunningTileStatus(d);
 	const failureReasonStatus =
 		runtimeStatus.secondary?.kind === "failure_reason" ? runtimeStatus.secondary : null;
@@ -224,9 +225,9 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			href: detailHref,
 			external: false,
-			action: envId
-				? undefined
-				: createElement(HostedDeploymentTileDeleteAction, { deployment: d }),
+			action: showTileActions
+				? createElement(HostedDeploymentTileAction, { deployment: d })
+				: undefined,
 			manageHref: settingsHref,
 			active: runtimeStatus.active,
 			statusDot: {
