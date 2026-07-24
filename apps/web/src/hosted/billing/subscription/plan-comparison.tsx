@@ -20,12 +20,14 @@ import { billingTermSuffix, formatCents, formatUsdExact } from "@/hosted/billing
 import { usePlans } from "@/hosted/billing/hooks";
 import {
 	explicitPlanOffers,
+	largestSignupGrantUsd,
 	planOffers,
 	resolveBasicPlan,
 	resolvePerformancePlan,
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
+import { TOPUP_AMOUNT_RANGE_LABEL } from "@/hosted/billing/wallet/wallet-constants";
 import { settingsQueryHref } from "@/lib/settings-routes";
 
 function partitionPlans(plans: Plan[]): { basic?: Plan; performance?: Plan } {
@@ -87,13 +89,7 @@ export function PlanComparison({
 
 	if (!plansQuery.data) return null;
 
-	const signupGrantUsd =
-		[basic?.signup_grant_usd, performance?.signup_grant_usd]
-			.filter((value): value is string => value !== undefined)
-			.reduce<string | null>(
-				(largest, value) => (largest === null || Number(value) > Number(largest) ? value : largest),
-				null,
-			) ?? "0";
+	const signupGrantUsd = largestSignupGrantUsd(plansQuery.data);
 	const basicOffers = basic ? explicitPlanOffers(basic) : [];
 	const basicResources = basic;
 	const performanceOffers = performance ? planOffers(performance) : [];
@@ -158,7 +154,7 @@ export function PlanComparison({
 							<FeatureRow>Paid additional Basic agents</FeatureRow>
 							<FeatureRow>Single agent engine (OpenClaw or Hermes)</FeatureRow>
 							<FeatureRow>BYOK avoids managed-AI usage charges</FeatureRow>
-							{Number(signupGrantUsd) > 0 ? (
+							{signupGrantUsd ? (
 								<FeatureRow>{formatUsdExact(signupGrantUsd)} welcome balance on signup</FeatureRow>
 							) : null}
 						</ul>
@@ -270,7 +266,7 @@ export function PlanComparison({
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
 							<FeatureRow>Usage billed directly in USD</FeatureRow>
-							<FeatureRow>Top up any amount, $10–$2,000</FeatureRow>
+							<FeatureRow>Whole-dollar top-ups from {TOPUP_AMOUNT_RANGE_LABEL}</FeatureRow>
 							<FeatureRow>Optional auto-reload so agents never stall</FeatureRow>
 							<FeatureRow>
 								<span className="font-medium">No managed-AI charge with BYOK</span> — your own key

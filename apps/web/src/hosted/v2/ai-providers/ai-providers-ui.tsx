@@ -6,6 +6,7 @@ import { EntityIcon, type EntityIconSize } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
 import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "@/components/ui/status-badge";
+import { MANAGED_PROVIDER_LABEL } from "@/hosted/v2/ai-providers/model-binding";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProviderAuth } from "@/hosted/v2/ai-providers/types";
 
@@ -60,7 +61,7 @@ export function ManagedProviderCard() {
 						<Sparkles className="size-5" />
 					</IconChip>
 				}
-				title="Managed by Clawdi"
+				title={MANAGED_PROVIDER_LABEL}
 				titleAdornment={
 					<StatusBadge status="success">
 						<ShieldCheck className="size-3" />

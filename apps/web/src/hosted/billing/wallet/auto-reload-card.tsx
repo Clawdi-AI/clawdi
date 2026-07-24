@@ -35,6 +35,7 @@ import {
 import {
 	AUTORELOAD_AMOUNT_MAX_CENTS,
 	AUTORELOAD_AMOUNT_MIN_CENTS,
+	AUTORELOAD_AMOUNT_RANGE_LABEL,
 	AUTORELOAD_THRESHOLD_MIN_USD,
 } from "@/hosted/billing/wallet/wallet-constants";
 
@@ -248,7 +249,7 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 								}
 								aria-live="polite"
 							>
-								$5–$500; up to 2 decimal places.
+								{AUTORELOAD_AMOUNT_RANGE_LABEL}; up to 2 decimal places.
 							</p>
 						</div>
 

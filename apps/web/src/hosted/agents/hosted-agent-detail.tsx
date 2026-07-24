@@ -1,6 +1,5 @@
 "use client";
 
-import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
 import type { components } from "@clawdi/shared/api";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
@@ -157,7 +156,7 @@ import {
 	runtimeDisplayName,
 } from "@/hosted/runtimes";
 import { hostedRuntimeStatusView } from "@/hosted/use-hosted-agent-tiles";
-import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
@@ -166,12 +165,17 @@ import {
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_ID,
+	MANAGED_PROVIDER_LABEL,
+	modelBindingDisplayName,
 	modelIdsForProvider,
+	modelOptionsForProvider,
 	normalizeSelectedProviderIds,
 	primaryModelProviderId,
 	primaryModelRef,
 	primaryModelValue,
+	providerCatalogDescription,
 	providerChoiceFromRef,
+	providerDisplayLabel,
 	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
@@ -203,7 +207,7 @@ import {
 } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { SessionListItem } from "@/lib/api-schemas";
-import { formatMemoryMib, formatModelLabel, formatShortDate } from "@/lib/format";
+import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
 import { cn } from "@/lib/utils";
@@ -932,7 +936,22 @@ function OverviewTab({
 	};
 }) {
 	const spec = deployment.resource.spec;
-	const model = spec.runtime_configuration.primary_model?.model || "Managed default";
+	const providers = useUserAiProviders();
+	const managedModelCatalog = useManagedModelCatalog();
+	const primaryModel = spec.runtime_configuration.primary_model;
+	const bindingProvider =
+		spec.runtime_configuration.providers.find(
+			(provider) => provider.provider_id === primaryModelProviderId(primaryModel),
+		) ?? spec.runtime_configuration.providers[0];
+	const model = modelBindingDisplayName(
+		primaryModel,
+		runtimeAiProviderAuthKind(deployment) ?? bindingProvider?.auth_kind,
+		modelOptionsForProvider(
+			primaryModelProviderId(primaryModel) ?? MANAGED_PROVIDER_ID,
+			providers.data ?? [],
+			managedModelCatalog.data?.models ?? [],
+		),
+	);
 	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const sessionsEmptyMessage = deploymentRunning
@@ -1583,13 +1602,6 @@ function agentChoiceFromProviderRef(
 	return unresolvedProviderChoice(providerRef);
 }
 
-function providerCatalogDescription(provider: AiProvider): string {
-	const count = provider.models?.length ?? 0;
-	if (count === 0) return provider.base_url.replace(/^https?:\/\//, "");
-	if (count === 1) return provider.models?.[0]?.id ?? provider.base_url;
-	return `${count} catalog models`;
-}
-
 function AiProviderTab({
 	deployment,
 	runtime,
@@ -1597,18 +1609,14 @@ function AiProviderTab({
 	deployment: HostedDeployment;
 	runtime: Runtime;
 }) {
-	const providers = useAiProviders();
+	const providers = useUserAiProviders();
 	const managedModelCatalog = useManagedModelCatalog();
 	const updateDeployment = useUpdateDeployment();
 	const updateInProgress =
 		parseDeploymentStatus(deployment.resource.status.summary_state).kind === "updating";
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
-	const list = providers.data?.providers ?? [];
+	const list = providers.data ?? [];
 	const managedModels = managedModelCatalog.data?.models ?? [];
-	const customProviders = useMemo(
-		() => list.filter((provider) => !isFirstPartyManagedAiProvider(provider)),
-		[list],
-	);
 	// Selected-runtime binding: the deployment owns one runtime in the v2 model.
 	const configuredProviders = runtimeConfiguration.providers;
 	const configuredPrimaryModel = runtimeConfiguration.primary_model;
@@ -1805,10 +1813,8 @@ function AiProviderTab({
 			toast.error("Primary model required");
 			return;
 		}
-		const primaryProvider = customProviders.find(
-			(provider) => provider.provider_id === primaryProviderChoice,
-		);
-		const selectedCustomProviders = customProviders.filter((provider) =>
+		const primaryProvider = list.find((provider) => provider.provider_id === primaryProviderChoice);
+		const selectedCustomProviders = list.filter((provider) =>
 			normalizedChoices.includes(provider.provider_id),
 		);
 		const authKind = primaryProvider ? providerAuthKind(primaryProvider) : "managed";
@@ -1863,7 +1869,7 @@ function AiProviderTab({
 					)}
 				>
 					<div className="flex items-center justify-between gap-2">
-						<span className="text-sm font-medium">Managed by Clawdi</span>
+						<span className="text-sm font-medium">{MANAGED_PROVIDER_LABEL}</span>
 						{bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE ? (
 							<Badge variant="secondary">Primary</Badge>
 						) : bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE) ? (
@@ -1892,12 +1898,12 @@ function AiProviderTab({
 								</div>
 								<p className="mt-0.5 text-sm text-muted-foreground">
 									This runtime is bound to {unresolvedProviderRef(choice)}, but that provider could
-									not be loaded. Choose Managed by Clawdi to replace it.
+									not be loaded. Choose {MANAGED_PROVIDER_LABEL} to replace it.
 								</p>
 							</button>
 						))
 					: null}
-				{customProviders.map((p) => {
+				{list.map((p) => {
 					const selected =
 						bindingMode === "configured" && selectedProviders.includes(p.provider_id);
 					return (
@@ -1910,7 +1916,7 @@ function AiProviderTab({
 							<ProviderTypeChip type={p.type} />
 							<span className="min-w-0 flex-1">
 								<span className="flex items-center gap-2">
-									<span className="truncate text-sm font-medium">{p.label ?? p.provider_id}</span>
+									<span className="truncate text-sm font-medium">{providerDisplayLabel(p)}</span>
 									<AuthBadge auth={p.auth} />
 								</span>
 								<span className="block text-xs text-muted-foreground">
@@ -1951,14 +1957,13 @@ function AiProviderTab({
 					managedModelsError={managedModelCatalog.error}
 					managedModelsErrorNormalizer={billingErrorNormalizer}
 					onManagedModelsRetry={() => void managedModelCatalog.refetch()}
-					customProviders={customProviders}
+					customProviders={list}
 					additionalProviderItems={selectedProviderChoices
 						.filter(isUnresolvedProviderChoice)
 						.map((choice) => ({ value: choice, label: unresolvedProviderRef(choice) }))}
 					selectedProviderChoices={selectedProviderChoices}
 					primaryProviderChoice={primaryProviderChoice}
 					primaryModel={primaryModel}
-					formatModel={formatModelLabel}
 					onPrimaryProviderChange={setPrimaryProvider}
 					onPrimaryModelChange={setPrimaryModel}
 				/>

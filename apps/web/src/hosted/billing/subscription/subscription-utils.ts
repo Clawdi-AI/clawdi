@@ -43,6 +43,14 @@ export function resolvePerformancePlan(plans: Plan[] | undefined): Plan | undefi
 	return plans?.find((plan) => plan.slug === COMPUTE_PERFORMANCE_SLUG);
 }
 
+export function largestSignupGrantUsd(plans: readonly Plan[] | undefined): string | null {
+	return (plans ?? []).reduce<string | null>((largest, plan) => {
+		const grant = Number(plan.signup_grant_usd);
+		if (!Number.isFinite(grant) || grant <= 0) return largest;
+		return largest === null || grant > Number(largest) ? plan.signup_grant_usd : largest;
+	}, null);
+}
+
 export function isBasicCompute(planSlug: string | null | undefined): boolean {
 	return planSlug === COMPUTE_BASIC_SLUG;
 }

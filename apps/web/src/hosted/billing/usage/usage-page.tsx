@@ -9,7 +9,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatUsdExact } from "@/hosted/billing/format";
-import { useUsage } from "@/hosted/billing/hooks";
+import { useManagedModelCatalog, useUsage } from "@/hosted/billing/hooks";
+import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import {
+	MANAGED_PROVIDER_ID,
+	modelDisplayName,
+	modelOptionsForProvider,
+	providerDisplayLabel,
+} from "@/hosted/v2/ai-providers/model-binding";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -23,6 +30,8 @@ function decimalUsdNumber(value: string): number {
 
 export function UsagePage() {
 	const usage = useUsage();
+	const providers = useUserAiProviders();
+	const managedModelCatalog = useManagedModelCatalog();
 
 	if (usage.isLoading) {
 		return (
@@ -164,26 +173,37 @@ export function UsagePage() {
 							className="py-4 md:p-4"
 						/>
 					) : (
-						u.by_model.map((m) => (
-							<div key={`${m.provider ?? "managed"}:${m.model}`} className="space-y-1">
-								<div className="flex items-baseline justify-between gap-2 text-sm">
-									<span className="truncate font-medium">{m.model}</span>
-									<span className="shrink-0 tabular-nums">{formatUsdExact(m.amount_usd)}</span>
+						u.by_model.map((m) => {
+							const providerId = m.provider ?? MANAGED_PROVIDER_ID;
+							const modelName = modelDisplayName(
+								m.model,
+								modelOptionsForProvider(
+									providerId,
+									providers.data ?? [],
+									managedModelCatalog.data?.models ?? [],
+								),
+							);
+							const providerName = providerDisplayLabel(providerId, providers.data);
+							return (
+								<div key={`${m.provider ?? "managed"}:${m.model}`} className="space-y-1">
+									<div className="flex items-baseline justify-between gap-2 text-sm">
+										<span className="truncate font-medium">{modelName}</span>
+										<span className="shrink-0 tabular-nums">{formatUsdExact(m.amount_usd)}</span>
+									</div>
+									<div className="h-2 overflow-hidden rounded-full bg-muted">
+										<div
+											className="h-2 rounded-full bg-primary"
+											style={{
+												width: `${maxModel > 0 ? (decimalUsdNumber(m.amount_usd) / maxModel) * 100 : 0}%`,
+											}}
+										/>
+									</div>
+									<div className="text-xs text-muted-foreground">
+										{providerName} · {m.requests.toLocaleString()} requests
+									</div>
 								</div>
-								<div className="h-2 overflow-hidden rounded-full bg-muted">
-									<div
-										className="h-2 rounded-full bg-primary"
-										style={{
-											width: `${maxModel > 0 ? (decimalUsdNumber(m.amount_usd) / maxModel) * 100 : 0}%`,
-										}}
-									/>
-								</div>
-								<div className="text-xs text-muted-foreground">
-									{m.provider ? `${m.provider} · ` : ""}
-									{m.requests.toLocaleString()} requests
-								</div>
-							</div>
-						))
+							);
+						})
 					)}
 				</CardContent>
 			</Card>

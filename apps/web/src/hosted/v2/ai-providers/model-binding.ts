@@ -1,10 +1,19 @@
-import { CLAWDI_MANAGED_V2_PROVIDER_ID, isClawdiManagedProviderId } from "@clawdi/shared";
-import type { ManagedModelCatalogItem } from "@/hosted/billing/contracts";
+import {
+	CLAWDI_MANAGED_V2_PROVIDER_ID,
+	isClawdiManagedProviderId,
+	isFirstPartyManagedAiProvider,
+} from "@clawdi/shared";
+import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import { formatModelLabel } from "@/lib/format";
 
 export const MANAGED_AI_CHOICE = "__managed__";
 export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_V2_PROVIDER_ID;
+export const MANAGED_PROVIDER_LABEL = "Managed by Clawdi";
 export const CUSTOM_MODEL_CHOICE = "__custom__";
+
+type AiProviderModel = NonNullable<AiProvider["models"]>[number];
+export type ModelCatalogItem = ManagedModelCatalogItem | AiProviderModel;
 
 export type ModelBindingPickerItem = {
 	value: string;
@@ -60,6 +69,20 @@ export function isManagedProviderId(providerId: string | null | undefined): bool
 	return typeof providerId === "string" && isClawdiManagedProviderId(providerId);
 }
 
+export function providerDisplayLabel(
+	provider: AiProvider | string,
+	providers: readonly AiProvider[] = [],
+): string {
+	if (typeof provider === "string") {
+		if (isManagedProviderId(provider)) return MANAGED_PROVIDER_LABEL;
+		const match = providers.find((item) => item.id === provider || item.provider_id === provider);
+		return match ? providerDisplayLabel(match) : "Custom provider";
+	}
+	return isFirstPartyManagedAiProvider(provider)
+		? MANAGED_PROVIDER_LABEL
+		: (provider.label ?? provider.provider_id);
+}
+
 export function providerChoiceFromRef(
 	providerRef: string | null | undefined,
 	providers: readonly AiProvider[],
@@ -81,33 +104,64 @@ export function providerRefFromChoice(
 	return match?.provider_id ?? null;
 }
 
+export function modelOptionsForProvider(
+	choice: string,
+	providers: readonly AiProvider[],
+	managedModels: readonly ManagedModelCatalogItem[] = [],
+): ModelCatalogItem[] {
+	let models: readonly ModelCatalogItem[];
+	if (choice === MANAGED_AI_CHOICE || isManagedProviderId(choice)) {
+		const defaultModel = managedModels.find((model) => model.is_default);
+		models = defaultModel
+			? [defaultModel, ...managedModels.filter((model) => model !== defaultModel)]
+			: managedModels;
+	} else {
+		models =
+			providers.find((item) => item.id === choice || item.provider_id === choice)?.models ?? [];
+	}
+
+	const seen = new Set<string>();
+	return models.filter((model) => {
+		const id = model.id.trim();
+		if (!id || seen.has(id)) return false;
+		seen.add(id);
+		return true;
+	});
+}
+
 export function modelIdsForProvider(
 	choice: string,
 	providers: readonly AiProvider[],
 	managedModels: readonly ManagedModelCatalogItem[] = [],
 ): string[] {
-	if (choice === MANAGED_AI_CHOICE) {
-		const defaultModel = managedModels.find((model) => model.is_default)?.id ?? "";
-		return dedupeProviderIds([defaultModel, ...managedModels.map((model) => model.id)]);
-	}
-	const provider = providers.find((item) => item.provider_id === choice);
-	return dedupeProviderIds((provider?.models ?? []).map((model) => model.id));
+	return modelOptionsForProvider(choice, providers, managedModels).map((model) => model.id);
 }
 
-export function managedModelDisplayName(
-	modelId: string,
-	managedModels: readonly ManagedModelCatalogItem[],
-): string | null {
-	return managedModels.find((model) => model.id === modelId)?.display_name ?? null;
+export function modelDisplayName(modelId: string, catalog: readonly ModelCatalogItem[]): string {
+	const model = catalog.find((item) => item.id === modelId);
+	const displayName = model && "display_name" in model ? model.display_name : undefined;
+	const label = model && "label" in model ? model.label : undefined;
+	const alias = model && "alias" in model ? model.alias : undefined;
+	return displayName || label || alias || formatModelLabel(modelId) || modelId;
 }
 
-export function managedModelPickerItems(
-	managedModels: readonly ManagedModelCatalogItem[],
-): ModelBindingPickerItem[] {
-	return modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).map((modelId) => ({
-		value: modelId,
-		label: managedModelDisplayName(modelId, managedModels) ?? modelId,
-	}));
+export function providerCatalogDescription(provider: AiProvider): string {
+	const models = provider.models ?? [];
+	if (models.length === 0) return provider.base_url.replace(/^https?:\/\//, "");
+	if (models.length === 1 && models[0]) return modelDisplayName(models[0].id, models);
+	return `${models.length} catalog models`;
+}
+
+export function modelBindingDisplayName(
+	primaryModel: PrimaryModelInput,
+	authKind: AiProviderAuthKind | "secret_reference" | undefined,
+	catalog: readonly ModelCatalogItem[],
+): string {
+	const modelId = primaryModelValue(primaryModel);
+	if (modelId) return modelDisplayName(modelId, catalog);
+	if (authKind === "managed") return "Managed default";
+	if (authKind === "unmanaged") return "Configured in agent";
+	return "Not set";
 }
 
 export function primaryProviderPickerItems(
@@ -117,14 +171,14 @@ export function primaryProviderPickerItems(
 ): ModelBindingPickerItem[] {
 	return [
 		...(selectedProviderChoices.includes(MANAGED_AI_CHOICE)
-			? [{ value: MANAGED_AI_CHOICE, label: "Managed by Clawdi" }]
+			? [{ value: MANAGED_AI_CHOICE, label: MANAGED_PROVIDER_LABEL }]
 			: []),
 		...additionalItems,
 		...providers
 			.filter((provider) => selectedProviderChoices.includes(provider.provider_id))
 			.map((provider) => ({
 				value: provider.provider_id,
-				label: provider.label ?? provider.provider_id,
+				label: providerDisplayLabel(provider),
 			})),
 	];
 }
@@ -133,23 +187,17 @@ export function modelPickerItems(
 	choice: string,
 	providers: readonly AiProvider[],
 	managedModels: readonly ManagedModelCatalogItem[],
-	formatModel: (modelId: string) => string = (modelId) => modelId,
 ): ModelBindingPickerItem[] {
-	if (choice === MANAGED_AI_CHOICE) return managedModelPickerItems(managedModels);
+	const models = modelOptionsForProvider(choice, providers, managedModels);
 	return [
-		...modelIdsForProvider(choice, providers).map((modelId) => ({
-			value: modelId,
-			label: formatModel(modelId),
+		...models.map((model) => ({
+			value: model.id,
+			label: modelDisplayName(model.id, [model]),
 		})),
-		{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" },
+		...(choice === MANAGED_AI_CHOICE
+			? []
+			: [{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" }]),
 	];
-}
-
-export function primaryModelPickerChoice(
-	primaryModel: string,
-	catalogModelIds: readonly string[],
-): string {
-	return catalogModelIds.includes(primaryModel) ? primaryModel : CUSTOM_MODEL_CHOICE;
 }
 
 export function firstModelForProvider(
@@ -157,8 +205,7 @@ export function firstModelForProvider(
 	providers: readonly AiProvider[],
 	managedModels: readonly ManagedModelCatalogItem[] = [],
 ): string {
-	const [first] = modelIdsForProvider(choice, providers, managedModels);
-	return first ?? "";
+	return modelOptionsForProvider(choice, providers, managedModels)[0]?.id ?? "";
 }
 
 export function normalizeSelectedProviderIds(
