@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryObserver } from "@tanstack/react-query";
 import type { WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
@@ -32,14 +32,26 @@ function queryClientWithWalletActivity(): QueryClient {
 	return qc;
 }
 
+function setupControls(queryClient: QueryClient) {
+	const resetAttempt = mock(() => {});
+	const closeDialog = mock(() => {});
+	const startPayment = mock((_clientSecret: string) => {});
+	const toastSuccess = mock((_message: string, _options: { description: string }) => {});
+	const toastError = mock((_message: string, _options: { description: string }) => {});
+	return {
+		queryClient,
+		resetAttempt,
+		closeDialog,
+		startPayment,
+		toastSuccess,
+		toastError,
+	};
+}
+
 describe("handleTopupStartResult", () => {
 	test("treats synchronous success as terminal success and refreshes wallet activity", () => {
 		const qc = queryClientWithWalletActivity();
-		const resetAttempt = mock(() => {});
-		const closeDialog = mock(() => {});
-		const startPayment = mock((_clientSecret: string) => {});
-		const toastSuccess = mock((_message: string, _options: { description: string }) => {});
-		const toastError = mock((_message: string, _options: { description: string }) => {});
+		const setup = setupControls(qc);
 
 		handleTopupStartResult(
 			result({
@@ -48,14 +60,7 @@ describe("handleTopupStartResult", () => {
 				client_secret: null,
 				amount_usd: "2.50",
 			}),
-			{
-				queryClient: qc,
-				resetAttempt,
-				closeDialog,
-				startPayment,
-				toastSuccess,
-				toastError,
-			},
+			setup,
 		);
 
 		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(true);
@@ -67,22 +72,28 @@ describe("handleTopupStartResult", () => {
 		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(billingKeys.billingHistory(20))?.isInvalidated).toBe(true);
 		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
-		expect(resetAttempt).toHaveBeenCalledTimes(1);
-		expect(closeDialog).toHaveBeenCalledTimes(1);
-		expect(toastSuccess).toHaveBeenCalledWith("Top-up complete", {
+		expect(setup.resetAttempt).toHaveBeenCalledTimes(1);
+		expect(setup.closeDialog).toHaveBeenCalledTimes(1);
+		expect(setup.toastSuccess).toHaveBeenCalledWith("Top-up complete", {
 			description: "Your balance and any open wallet invoice will update automatically.",
 		});
-		expect(toastError).not.toHaveBeenCalled();
-		expect(startPayment).not.toHaveBeenCalled();
+		expect(setup.toastError).not.toHaveBeenCalled();
+		expect(setup.startPayment).not.toHaveBeenCalled();
 	});
 
-	test("keeps payment intent responses on the card payment step", () => {
+	test("keeps payment intents on the card step and refreshes only a visible ledger", async () => {
 		const qc = queryClientWithWalletActivity();
-		const resetAttempt = mock(() => {});
-		const closeDialog = mock(() => {});
-		const startPayment = mock((_clientSecret: string) => {});
-		const toastSuccess = mock((_message: string, _options: { description: string }) => {});
-		const toastError = mock((_message: string, _options: { description: string }) => {});
+		const setup = setupControls(qc);
+		let ledgerCalls = 0;
+		const ledgerObserver = new QueryObserver(qc, {
+			queryKey: billingKeys.ledger(50),
+			queryFn: async () => {
+				ledgerCalls += 1;
+				return { items: [{ id: "pending_topup" }] };
+			},
+			staleTime: Number.POSITIVE_INFINITY,
+		});
+		const unsubscribe = ledgerObserver.subscribe(() => {});
 
 		handleTopupStartResult(
 			result({
@@ -93,21 +104,25 @@ describe("handleTopupStartResult", () => {
 				// The quoted USD amount does not mean the PaymentIntent settled.
 				amount_usd: "25",
 			}),
-			{
-				queryClient: qc,
-				resetAttempt,
-				closeDialog,
-				startPayment,
-				toastSuccess,
-				toastError,
-			},
+			setup,
 		);
+		await Promise.resolve();
 
-		expect(startPayment).toHaveBeenCalledWith("pi_123_secret_456");
-		expect(closeDialog).not.toHaveBeenCalled();
-		expect(resetAttempt).not.toHaveBeenCalled();
-		expect(toastSuccess).not.toHaveBeenCalled();
-		expect(toastError).not.toHaveBeenCalled();
+		expect(setup.startPayment).toHaveBeenCalledWith("pi_123_secret_456");
+		expect(ledgerCalls).toBe(1);
+		expect(qc.getQueryState(billingKeys.wallet)?.isInvalidated).toBe(false);
+		expect(qc.getQueryState(billingKeys.ledger(50))?.isInvalidated).toBe(false);
+		expect(
+			qc.getQueryState(billingKeys.subscriptionCreateQuote("compute_basic", 1, "wallet"))
+				?.isInvalidated,
+		).toBe(false);
+		expect(qc.getQueryState(billingKeys.deployments)?.isInvalidated).toBe(false);
+		expect(qc.getQueryState(billingKeys.billingHistory(20))?.isInvalidated).toBe(false);
+		expect(setup.closeDialog).not.toHaveBeenCalled();
+		expect(setup.resetAttempt).not.toHaveBeenCalled();
+		expect(setup.toastSuccess).not.toHaveBeenCalled();
+		expect(setup.toastError).not.toHaveBeenCalled();
+		unsubscribe();
 	});
 });
 

@@ -45,10 +45,10 @@ export function topUpAmountCentsForUsdShortfall(shortfallUsd: number | null): nu
 
 export function invalidateWalletActivity(queryClient: QueryClient): void {
 	queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
-	queryClient.invalidateQueries({ queryKey: ["billing", "ledger"] });
+	queryClient.invalidateQueries({ queryKey: billingKeys.ledgerRoot });
 	queryClient.invalidateQueries({ queryKey: billingKeys.subscriptionCreateQuotes });
 	queryClient.invalidateQueries({ queryKey: billingKeys.deployments });
-	queryClient.invalidateQueries({ queryKey: ["billing", "history"] });
+	queryClient.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
 	queryClient.invalidateQueries({ queryKey: ["agents"] });
 }
 
@@ -82,6 +82,12 @@ export function handleTopupStartResult(
 		return;
 	}
 	if (result.flow_type === "payment_intent" && result.client_secret) {
+		// A pending ledger row matters only on a mounted activity surface. Keep
+		// balance and the rest of wallet activity untouched until payment settles.
+		void controls.queryClient.refetchQueries({
+			queryKey: billingKeys.ledgerRoot,
+			type: "active",
+		});
 		controls.startPayment(result.client_secret);
 		return;
 	}
