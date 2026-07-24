@@ -1039,10 +1039,10 @@ export interface components {
             metadata_generation?: number | null;
             /** Deploy Request Id */
             deploy_request_id?: string | null;
-            /** Debited Credits */
-            debited_credits?: string | null;
-            /** Balance After Credits */
-            balance_after_credits?: string | null;
+            /** Debited Usd */
+            debited_usd?: string | null;
+            /** Balance After Usd */
+            balance_after_usd?: string | null;
             /** Current Period Start */
             current_period_start?: string | null;
             /** Current Period End */
@@ -1072,10 +1072,8 @@ export interface components {
              * @default usd
              */
             currency: string;
-            /** Credits */
-            credits?: string | null;
-            /** Points Per Usd */
-            points_per_usd?: number | null;
+            /** Amount Usd */
+            amount_usd?: string | null;
             /** Period Start */
             period_start?: string | null;
             /** Period End */
@@ -1208,10 +1206,8 @@ export interface components {
             expires_at: string;
             /** Amount Cents */
             amount_cents: number;
-            /** Amount Credits */
-            amount_credits?: string | null;
-            /** Points Per Usd */
-            points_per_usd?: number | null;
+            /** Amount Usd */
+            amount_usd?: string | null;
             /**
              * Currency
              * @default usd
@@ -1340,14 +1336,12 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
-            /** Debit Credits */
-            debit_credits?: number | string | null;
-            /** Points Per Usd */
-            points_per_usd?: number | null;
-            /** Balance Before Credits */
-            balance_before_credits?: number | string | null;
-            /** Balance After Credits */
-            balance_after_credits?: number | string | null;
+            /** Debit Amount Usd */
+            debit_amount_usd?: number | string | null;
+            /** Balance Before Usd */
+            balance_before_usd?: number | string | null;
+            /** Balance After Usd */
+            balance_after_usd?: number | string | null;
         };
         /** V2ComputeSubscriptionQuoteResponse */
         "V2ComputeSubscriptionQuoteResponse-Output": {
@@ -1380,14 +1374,12 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
-            /** Debit Credits */
-            debit_credits?: string | null;
-            /** Points Per Usd */
-            points_per_usd?: number | null;
-            /** Balance Before Credits */
-            balance_before_credits?: string | null;
-            /** Balance After Credits */
-            balance_after_credits?: string | null;
+            /** Debit Amount Usd */
+            debit_amount_usd?: string | null;
+            /** Balance Before Usd */
+            balance_before_usd?: string | null;
+            /** Balance After Usd */
+            balance_after_usd?: string | null;
         };
         /** V2ComputeSubscriptionResumeRequest */
         V2ComputeSubscriptionResumeRequest: {
@@ -1709,8 +1701,8 @@ export interface components {
         V2HostedUsageDay: {
             /** Date */
             date: string;
-            /** Credits */
-            credits: number;
+            /** Amount Usd */
+            amount_usd: string;
         };
         /** V2HostedUsageModelBreakdown */
         V2HostedUsageModelBreakdown: {
@@ -1718,8 +1710,8 @@ export interface components {
             model: string;
             /** Provider */
             provider?: string | null;
-            /** Credits */
-            credits: number;
+            /** Amount Usd */
+            amount_usd: string;
             /** Requests */
             requests: number;
         };
@@ -1729,8 +1721,8 @@ export interface components {
             period_start: string;
             /** Period End */
             period_end: string;
-            /** Total Credits */
-            total_credits: number;
+            /** Total Usd */
+            total_usd: string;
             /** Total Requests */
             total_requests: number;
             /** By Model */
@@ -1760,13 +1752,11 @@ export interface components {
             name: string;
             /** Price Cents */
             price_cents: number;
-            /** Points Per Usd */
-            points_per_usd: number;
             /**
-             * Signup Grant Credits
+             * Signup Grant Usd
              * @default 0
              */
-            signup_grant_credits: number;
+            signup_grant_usd: string;
             /** Vcpu */
             vcpu: number;
             /** Ram Gb */
@@ -1838,8 +1828,8 @@ export interface components {
             payment_mode?: "card" | null;
             /** Auto Reload Enabled */
             auto_reload_enabled?: boolean | null;
-            /** Auto Reload Threshold Credits */
-            auto_reload_threshold_credits?: number | string | null;
+            /** Auto Reload Threshold Usd */
+            auto_reload_threshold_usd?: number | string | null;
             /** Auto Reload Amount Cents */
             auto_reload_amount_cents?: number | null;
             /** Auto Reload Monthly Cap Cents */
@@ -1853,8 +1843,8 @@ export interface components {
             operation: string;
             /** Request Id */
             request_id: string;
-            /** Credits Amount */
-            credits_amount: number;
+            /** Amount Usd */
+            amount_usd: string;
             /** Status */
             status: string;
             /** Notes */
@@ -1873,12 +1863,8 @@ export interface components {
         };
         /** V2WalletResponse */
         V2WalletResponse: {
-            /** Balance Credits */
-            balance_credits: number;
-            /** Overdraft Credits */
-            overdraft_credits: number;
-            /** Balance Snapshot At */
-            balance_snapshot_at?: string | null;
+            /** Balance Usd */
+            balance_usd: string;
             /**
              * Payment Mode
              * @constant
@@ -1888,15 +1874,13 @@ export interface components {
             x402_enabled: boolean;
             /** Auto Reload Enabled */
             auto_reload_enabled: boolean;
-            /** Auto Reload Threshold Credits */
-            auto_reload_threshold_credits: number;
+            /** Auto Reload Threshold Usd */
+            auto_reload_threshold_usd: string;
             /** Auto Reload Amount Cents */
             auto_reload_amount_cents: number;
             /** Auto Reload Monthly Cap Cents */
             auto_reload_monthly_cap_cents: number;
             auto_reload_action?: components["schemas"]["V2WalletAutoReloadActionResponse"] | null;
-            /** Points Per Usd */
-            points_per_usd: number;
         };
         /** V2WalletTopupRequest */
         V2WalletTopupRequest: {
@@ -1915,8 +1899,8 @@ export interface components {
             payment_intent_id?: string | null;
             /** Client Secret */
             client_secret?: string | null;
-            /** Credits Added */
-            credits_added?: number | null;
+            /** Amount Usd */
+            amount_usd?: string | null;
         };
         /** ValidationError */
         ValidationError: {

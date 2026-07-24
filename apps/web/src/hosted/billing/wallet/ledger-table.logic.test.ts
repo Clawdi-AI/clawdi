@@ -12,7 +12,7 @@ function entry(overrides: Partial<WalletLedgerEntry> = {}): WalletLedgerEntry {
 		id: "entry_1",
 		operation: "topup",
 		request_id: "request_1",
-		credits_amount: 1000,
+		amount_usd: "1",
 		status: "applied",
 		notes: null,
 		created_at: "2026-07-01T00:00:00Z",

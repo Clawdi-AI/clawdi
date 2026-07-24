@@ -24,8 +24,8 @@ export function X402Card() {
 					<Link2 className="size-4" aria-hidden /> On-chain top-up (x402)
 				</CardTitle>
 				<CardDescription>
-					Your agent can fund its own AI Credits on-chain via the x402 protocol — no card needed.
-					Deposits land in the same wallet balance.
+					Your agent can add USD value on-chain via the x402 protocol — no card needed. Deposits
+					land in the same wallet balance.
 				</CardDescription>
 			</CardHeader>
 			<CardContent>

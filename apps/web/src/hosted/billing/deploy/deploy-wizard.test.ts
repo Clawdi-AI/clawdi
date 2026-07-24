@@ -62,7 +62,7 @@ describe("billing-read gates", () => {
 		expect(wizardSource).toContain('title="Couldn\'t check deployment inventory"');
 		expect(wizardSource).toContain("onRetry={() => void deployments.refetch()}");
 		expect(wizardSource).toContain('title="Couldn\'t load compute plans"');
-		expect(wizardSource).toContain('title="Couldn\'t load your AI Credits wallet"');
+		expect(wizardSource).toContain('title="Couldn\'t load your Wallet balance"');
 		expect(wizardSource).toContain("onRetry={() => void wallet.refetch()}");
 	});
 });

@@ -1,10 +1,4 @@
-/**
- * Money + credits formatters for the billing surfaces.
- *
- * Convention: `1 USD = points_per_usd credits` (default 1000). The hosted API
- * tracks the wallet in credits and subscriptions in cents. Display shows both
- * where it helps.
- */
+/** USD formatters for the hosted billing surfaces. */
 
 const USD = new Intl.NumberFormat("en-US", {
 	style: "currency",
@@ -13,64 +7,42 @@ const USD = new Intl.NumberFormat("en-US", {
 	maximumFractionDigits: 2,
 });
 
-const USD_COMPACT = new Intl.NumberFormat("en-US", {
-	style: "currency",
-	currency: "USD",
-	minimumFractionDigits: 0,
-	maximumFractionDigits: 2,
-});
-
-const CREDITS = new Intl.NumberFormat("en-US", {
-	maximumFractionDigits: 0,
-});
-
-const DECIMAL_CREDITS = /^([+-]?)(\d+)(?:\.(\d+))?$/;
+const DECIMAL_USD = /^([+-]?)(\d+)(?:\.(\d+))?$/;
 
 /** Cents → "$19.00". */
 export function formatCents(cents: number): string {
-	return USD.format(cents / 100);
-}
-
-/** Cents → "$19" when whole, else "$19.50". For prices/headlines. */
-export function formatCentsCompact(cents: number): string {
-	return USD_COMPACT.format(cents / 100);
+	return formatUsd(cents / 100);
 }
 
 /** Dollars → "$10.00". */
 export function formatUsd(dollars: number): string {
+	if (!Number.isFinite(dollars)) return "—";
+	if (dollars !== 0 && Math.abs(dollars) < 0.01) {
+		return `${dollars < 0 ? "-" : ""}<$0.01`;
+	}
 	return USD.format(dollars);
 }
 
-/** Credits → "1,000 credits" (no decimals — credits are integers). */
-export function formatCredits(credits: number): string {
-	return `${CREDITS.format(Math.round(credits))} credits`;
-}
-
 /**
- * Decimal-string credits → a grouped display without rounding through a
- * JavaScript number. Stripe wallet quotes use decimal strings so the debit
- * shown before confirmation stays exact.
+ * Decimal-string USD → an exact grouped display without rounding through a
+ * JavaScript number. Non-zero sub-cent values use a visible floor so usage
+ * never appears as "$0.00".
  */
-export function formatExactCredits(credits: string): string {
-	const match = DECIMAL_CREDITS.exec(credits.trim());
-	if (!match) return "— credits";
+export function formatUsdExact(dollars: string): string {
+	const match = DECIMAL_USD.exec(dollars.trim());
+	if (!match) return "—";
 	const [, sign, rawWhole, rawFraction] = match;
 	const whole = rawWhole.replace(/^0+(?=\d)/, "");
 	const fraction = rawFraction?.replace(/0+$/, "") ?? "";
-	const normalizedSign = whole === "0" && !fraction ? "" : sign;
+	const isZero = whole === "0" && !fraction;
+	const normalizedSign = isZero || sign === "+" ? "" : sign;
+	const firstTwoFractionDigits = fraction.slice(0, 2).padEnd(2, "0");
+	if (!isZero && whole === "0" && firstTwoFractionDigits === "00") {
+		return `${normalizedSign}<$0.01`;
+	}
 	const groupedWhole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
-	return `${normalizedSign}${groupedWhole}${fraction ? `.${fraction}` : ""} credits`;
-}
-
-/** Credits → USD string using the wallet's conversion rate. */
-export function creditsToUsd(credits: number, pointsPerUsd: number): string {
-	if (!pointsPerUsd) return USD.format(0);
-	return USD.format(credits / pointsPerUsd);
-}
-
-/** USD dollars → credits (integer), using the wallet's conversion rate. */
-export function usdToCredits(dollars: number, pointsPerUsd: number): number {
-	return Math.round(dollars * pointsPerUsd);
+	const displayFraction = fraction.padEnd(2, "0");
+	return `${normalizedSign}$${groupedWhole}.${displayFraction}`;
 }
 
 /** "$57 / 3 mo" style term label. */

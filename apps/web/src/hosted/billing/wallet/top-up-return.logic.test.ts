@@ -39,7 +39,7 @@ describe("walletTopupReturnToast", () => {
 		expect(walletTopupReturnToast("succeeded")).toEqual({
 			kind: "success",
 			title: "Top-up complete",
-			description: "Your AI Credits will appear in a moment.",
+			description: "Your Wallet balance will update in a moment.",
 		});
 	});
 

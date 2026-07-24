@@ -1,7 +1,7 @@
 "use client";
 
 import { Link, useLocation } from "@tanstack/react-router";
-import { Check, Coins, Cpu, Rocket, Sparkles, Zap } from "lucide-react";
+import { Check, Cpu, Rocket, Sparkles, WalletCards, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { Plan } from "@/hosted/billing/contracts";
-import { billingTermSuffix, creditsToUsd, formatCentsCompact } from "@/hosted/billing/format";
+import { billingTermSuffix, formatCents, formatUsdExact } from "@/hosted/billing/format";
 import { usePlans } from "@/hosted/billing/hooks";
 import {
 	explicitPlanOffers,
@@ -45,7 +45,7 @@ function FeatureRow({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * The Basic / Performance / AI Credits comparison, folded into the Plan tab's
+ * The Basic / Performance / managed-AI comparison, folded into the Plan tab's
  * deploy flow (its own Pricing tab was redundant in Settings — Linear/Vercel
  * keep Plan + Usage). Self-contained; safe to drop below the current-plan card.
  */
@@ -87,12 +87,13 @@ export function PlanComparison({
 
 	if (!plansQuery.data) return null;
 
-	const pointsPerUsd = performance?.points_per_usd ?? basic?.points_per_usd ?? 1000;
-	const creditsPerDollar = pointsPerUsd.toLocaleString();
-	const signupGrantCredits = Math.max(
-		0,
-		basic?.signup_grant_credits ?? performance?.signup_grant_credits ?? 0,
-	);
+	const signupGrantUsd =
+		[basic?.signup_grant_usd, performance?.signup_grant_usd]
+			.filter((value): value is string => value !== undefined)
+			.reduce<string | null>(
+				(largest, value) => (largest === null || Number(value) > Number(largest) ? value : largest),
+				null,
+			) ?? "0";
 	const basicOffers = basic ? explicitPlanOffers(basic) : [];
 	const basicResources = basic;
 	const performanceOffers = performance ? planOffers(performance) : [];
@@ -120,7 +121,7 @@ export function PlanComparison({
 							<span className="text-2xl font-semibold tracking-tight">First agent free</span>
 							<span className="text-sm text-muted-foreground">
 								{basicOffer
-									? `then ${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo`
+									? `then ${formatCents(basicOffer.effective_monthly_price_cents)}/mo`
 									: "additional pricing unavailable"}
 							</span>
 						</div>
@@ -130,7 +131,7 @@ export function PlanComparison({
 						</CardDescription>
 						{basicOffer && basicOffer.billing_term_months !== 1 ? (
 							<p className="text-xs text-muted-foreground">
-								Additional agents billed {formatCentsCompact(basicOffer.price_cents)}
+								Additional agents billed {formatCents(basicOffer.price_cents)}
 								{billingTermSuffix(basicOffer.billing_term_months)}
 							</p>
 						) : null}
@@ -157,10 +158,8 @@ export function PlanComparison({
 							<FeatureRow>Paid additional Basic agents</FeatureRow>
 							<FeatureRow>Single agent engine (OpenClaw or Hermes)</FeatureRow>
 							<FeatureRow>BYOK avoids managed-AI usage charges</FeatureRow>
-							{signupGrantCredits > 0 ? (
-								<FeatureRow>
-									{creditsToUsd(signupGrantCredits, pointsPerUsd)} in AI Credits on signup
-								</FeatureRow>
+							{Number(signupGrantUsd) > 0 ? (
+								<FeatureRow>{formatUsdExact(signupGrantUsd)} welcome balance on signup</FeatureRow>
 							) : null}
 						</ul>
 					</CardContent>
@@ -194,15 +193,15 @@ export function PlanComparison({
 						<div className="mt-2 flex items-baseline gap-1">
 							<span className="text-3xl font-semibold tracking-tight tabular-nums">
 								{performanceOffer
-									? formatCentsCompact(performanceOffer.effective_monthly_price_cents)
+									? formatCents(performanceOffer.effective_monthly_price_cents)
 									: performance
-										? formatCentsCompact(performance.price_cents)
+										? formatCents(performance.price_cents)
 										: "—"}
 							</span>
 							<span className="text-sm text-muted-foreground">/mo</span>
 							{performanceOffer && performanceOffer.billing_term_months !== 1 ? (
 								<span className="ml-1 text-xs text-muted-foreground">
-									billed {formatCentsCompact(performanceOffer.price_cents)}
+									billed {formatCents(performanceOffer.price_cents)}
 									{billingTermSuffix(performanceOffer.billing_term_months)}
 								</span>
 							) : null}
@@ -255,11 +254,11 @@ export function PlanComparison({
 					</CardFooter>
 				</Card>
 
-				{/* AI Credits */}
+				{/* Managed AI */}
 				<Card className="flex flex-col bg-muted/30">
 					<CardHeader>
 						<CardTitle className="flex items-center gap-2">
-							<Coins className="size-5 text-muted-foreground" aria-hidden /> AI Credits
+							<WalletCards className="size-5 text-muted-foreground" aria-hidden /> Managed AI
 						</CardTitle>
 						<div className="mt-2 flex items-baseline gap-1">
 							<span className="text-3xl font-semibold tracking-tight">Pay as you go</span>
@@ -270,9 +269,7 @@ export function PlanComparison({
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>
-								<span className="font-medium">$1 = {creditsPerDollar} credits</span>, billed per use
-							</FeatureRow>
+							<FeatureRow>Usage billed directly in USD</FeatureRow>
 							<FeatureRow>Top up any amount, $10–$2,000</FeatureRow>
 							<FeatureRow>Optional auto-reload so agents never stall</FeatureRow>
 							<FeatureRow>

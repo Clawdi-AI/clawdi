@@ -177,7 +177,6 @@ export function WalletPage() {
 				<>
 					<LedgerTable
 						entries={ledgerData?.items ?? []}
-						pointsPerUsd={w.points_per_usd}
 						isLoading={ledger.isLoading}
 						hasMore={ledgerData?.has_more ?? false}
 						atCap={ledgerLimit >= LEDGER_MAX_ROWS && (ledgerData?.has_more ?? false)}
@@ -199,7 +198,7 @@ export function WalletPage() {
 				</>
 			)}
 
-			<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} wallet={w} />
+			<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} />
 		</div>
 	);
 }

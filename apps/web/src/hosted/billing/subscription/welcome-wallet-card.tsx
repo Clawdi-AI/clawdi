@@ -9,22 +9,26 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import type { Plan } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { creditsToUsd } from "@/hosted/billing/format";
+import { formatUsdExact } from "@/hosted/billing/format";
 import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
 
 /**
  * Pure-$0 welcome + signup-grant feedback.
  *
  * Renders for a new wallet user who hasn't deployed yet: it
- * confirms the AI Credits grant landed (reading the `grant_signup` ledger row)
+ * confirms the welcome grant landed (reading the `grant_signup` ledger row)
  * and points them at the deploy wizard. Returns null once the user has an
  * agent. Read failures render a retry action instead of hiding onboarding.
  */
-function signupGrantCredits(plans: Plan[] | undefined): number {
-	return Math.max(0, ...(plans ?? []).map((plan) => plan.signup_grant_credits ?? 0));
+function signupGrantUsd(plans: Plan[] | undefined): string {
+	return (plans ?? []).reduce(
+		(largest, plan) =>
+			Number(plan.signup_grant_usd) > Number(largest) ? plan.signup_grant_usd : largest,
+		"0",
+	);
 }
 
-export function WelcomeCreditsCard() {
+export function WelcomeWalletCard() {
 	const wallet = useWallet();
 	const ledger = useWalletLedger(50);
 	const deployments = useHostedDeployments();
@@ -34,7 +38,7 @@ export function WelcomeCreditsCard() {
 	if ((deployments.data?.length ?? 0) > 0) return null;
 	if (ledger.isLoading || wallet.isLoading || deployments.isLoading) {
 		return (
-			<Card data-hosted="true" aria-label="Loading welcome credits">
+			<Card data-hosted="true" aria-label="Loading welcome balance">
 				<CardContent className="flex items-center justify-between gap-4">
 					<div className="flex flex-1 flex-col gap-2">
 						<Skeleton className="h-5 w-56 max-w-full" />
@@ -58,7 +62,7 @@ export function WelcomeCreditsCard() {
 							if (ledger.error) void ledger.refetch();
 							if (deployments.error) void deployments.refetch();
 						}}
-						title="Couldn't load welcome credits"
+						title="Couldn't load welcome balance"
 					/>
 				</CardContent>
 			</Card>
@@ -69,11 +73,11 @@ export function WelcomeCreditsCard() {
 	const grant = ledger.data?.items.find((e) => e.operation === "grant_signup");
 	const grantApplied = grant?.status === "applied";
 	const grantPending = grant?.status === "pending";
-	const configuredSignupGrantCredits = signupGrantCredits(plans.data);
-	const grantCredits = grant
-		? creditsToUsd(Math.abs(grant.credits_amount), wallet.data.points_per_usd)
-		: configuredSignupGrantCredits > 0
-			? creditsToUsd(configuredSignupGrantCredits, wallet.data.points_per_usd)
+	const configuredSignupGrantUsd = signupGrantUsd(plans.data);
+	const grantAmount = grant
+		? formatUsdExact(grant.amount_usd.trim().replace(/^[+-]/, ""))
+		: Number(configuredSignupGrantUsd) > 0
+			? formatUsdExact(configuredSignupGrantUsd)
 			: null;
 
 	return (
@@ -86,18 +90,18 @@ export function WelcomeCreditsCard() {
 					<div className="space-y-1">
 						<p className="font-medium">
 							{grantApplied
-								? `You’re all set — ${grantCredits} in AI Credits added to your wallet`
+								? `You’re all set — ${grantAmount} added to your Wallet`
 								: grantPending
-									? "Adding your welcome credits…"
+									? "Adding your welcome balance…"
 									: "Welcome to Clawdi"}
 						</p>
 						<p className="text-sm text-muted-foreground">
 							{grantApplied
 								? "Your free Basic compute slot is ready. Deploy your first agent — managed AI is on us to start."
 								: grantPending
-									? grantCredits
-										? `Your ${grantCredits} in AI Credits is on the way. You can deploy now; it’ll be ready in a moment.`
-										: "Your welcome credits are on the way. You can deploy now; they’ll be ready in a moment."
+									? grantAmount
+										? `Your ${grantAmount} welcome balance is on the way. You can deploy now; it’ll be ready in a moment.`
+										: "Your welcome balance is on the way. You can deploy now; it’ll be ready in a moment."
 									: "Your free Basic compute slot is ready. Deploy your first agent to get going."}
 						</p>
 					</div>

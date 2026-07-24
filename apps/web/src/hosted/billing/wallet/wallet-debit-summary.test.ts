@@ -1,20 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { type WalletDebitSummary, walletDebitShortfallCredits } from "./wallet-debit-summary";
+import { type WalletDebitSummary, walletDebitShortfallUsd } from "./wallet-debit-summary";
 
 function summary(overrides: Partial<WalletDebitSummary> = {}): WalletDebitSummary {
 	return {
-		balanceBeforeCredits: "200000.25",
-		exactDebitCredits: "180000",
-		exactDebitCents: 18_000,
-		balanceAfterCredits: "20000.25",
-		pointsPerUsd: 1_000,
+		balanceBeforeUsd: "200.00025",
+		debitAmountUsd: "180",
+		balanceAfterUsd: "20.00025",
 		...overrides,
 	};
 }
 
-describe("walletDebitShortfallCredits", () => {
+describe("walletDebitShortfallUsd", () => {
 	test("derives an exact decimal shortfall from the presentation model", () => {
-		expect(walletDebitShortfallCredits(summary({ balanceAfterCredits: "-1250.5" }))).toBe(1250.5);
-		expect(walletDebitShortfallCredits(summary())).toBeNull();
+		expect(walletDebitShortfallUsd(summary({ balanceAfterUsd: "-1.2505" }))).toBe(1.2505);
+		expect(walletDebitShortfallUsd(summary())).toBeNull();
 	});
 });

@@ -94,7 +94,7 @@ import {
 	billingTermLabel,
 	billingTermSuffix,
 	formatCents,
-	formatCentsCompact,
+	formatUsdExact,
 } from "@/hosted/billing/format";
 import {
 	checkoutReturnDeploymentId,
@@ -133,8 +133,8 @@ import {
 } from "@/hosted/billing/subscription/subscription-utils";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
-import { topUpAmountCentsForCreditShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
-import { walletDebitShortfallCredits } from "@/hosted/billing/wallet/wallet-debit-summary";
+import { topUpAmountCentsForUsdShortfall } from "@/hosted/billing/wallet/top-up-dialog.logic";
+import { walletDebitShortfallUsd } from "@/hosted/billing/wallet/wallet-debit-summary";
 import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import { useAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
@@ -183,26 +183,16 @@ type PaidDeploySelection = {
 	plan: Plan;
 	tierLabel: "Basic" | "Performance";
 };
-type WalletTopUpContext = {
-	initialAmountCents: number | null;
-	refundDebtCredits: number | null;
-	blockedChargeCredits: number | null;
-};
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
-const EMPTY_WALLET_TOP_UP_CONTEXT: WalletTopUpContext = {
-	initialAmountCents: null,
-	refundDebtCredits: null,
-	blockedChargeCredits: null,
-};
 
 function acceptedDeploymentNavigation(deploymentId: string, replace = false) {
 	return { href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"), replace };
 }
 
-function decimalCredits(value: unknown): number | null {
+function decimalUsd(value: unknown): number | null {
 	if (typeof value !== "string" && typeof value !== "number") return null;
 	const parsed = Number(value);
 	return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
@@ -255,7 +245,7 @@ function computeCheckoutSummary({
 	termMonths: number;
 	tierLabel: "Basic" | "Performance";
 }): StripeCheckoutSummary {
-	const effectiveMonthly = formatCentsCompact(offer.effective_monthly_price_cents);
+	const effectiveMonthly = formatCents(offer.effective_monthly_price_cents);
 	const agentLabel =
 		tierLabel === "Basic" ? "additional hosted Basic agent" : "hosted Performance agent";
 	return {
@@ -264,16 +254,16 @@ function computeCheckoutSummary({
 				? `Per ${agentLabel}, billed monthly.`
 				: `${effectiveMonthly}/mo effective per ${agentLabel}.`,
 		planName: plan.name,
-		priceLabel: formatCentsCompact(offer.price_cents),
+		priceLabel: formatCents(offer.price_cents),
 		termLabel: billingTermLabel(termMonths),
 	};
 }
 
 function recurringOfferLabel(offer: BillingOffer): string {
-	const monthly = `${formatCentsCompact(offer.effective_monthly_price_cents)}/mo`;
+	const monthly = `${formatCents(offer.effective_monthly_price_cents)}/mo`;
 	return offer.billing_term_months === 1
 		? monthly
-		: `${monthly}, billed ${formatCentsCompact(offer.price_cents)}${billingTermSuffix(
+		: `${monthly}, billed ${formatCents(offer.price_cents)}${billingTermSuffix(
 				offer.billing_term_months,
 			)}`;
 }
@@ -378,7 +368,7 @@ function computeStatusLine({
 	if (perfOffer && perfOffer.billing_term_months !== 1) {
 		return {
 			tone: "muted",
-			message: `Checkout opens here. Billed ${formatCentsCompact(
+			message: `Checkout opens here. Billed ${formatCents(
 				perfOffer.price_cents,
 			)}${billingTermSuffix(
 				perfOffer.billing_term_months,
@@ -435,9 +425,7 @@ export function DeployWizard() {
 	const [submitting, setSubmitting] = useState(false);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
 	const [walletTopUpOpen, setWalletTopUpOpen] = useState(false);
-	const [walletTopUpContext, setWalletTopUpContext] = useState<WalletTopUpContext>(
-		EMPTY_WALLET_TOP_UP_CONTEXT,
-	);
+	const [walletTopUpAmountCents, setWalletTopUpAmountCents] = useState<number | null>(null);
 
 	// Default language + timezone to the browser's after mount (avoids an SSR
 	// mismatch). Both stay explicitly unsettable back to the runtime default.
@@ -516,8 +504,8 @@ export function DeployWizard() {
 		enabled: paymentMethod === "wallet",
 	});
 	const walletDebit = subscriptionCreateQuote.data?.walletDebit ?? null;
-	const walletShortfallCredits = walletDebitShortfallCredits(walletDebit);
-	const walletInsufficient = walletShortfallCredits !== null;
+	const walletShortfallUsd = walletDebitShortfallUsd(walletDebit);
+	const walletInsufficient = walletShortfallUsd !== null;
 	const basicUnavailable = basicSelection.mode === "unavailable";
 
 	const providerList = useMemo(
@@ -814,42 +802,22 @@ export function DeployWizard() {
 		return available;
 	}
 
-	function openWalletTopUp({
-		shortfallCredits,
-		refundDebtCredits = null,
-		blockedChargeCredits = null,
-	}: {
-		shortfallCredits: number | null;
-		refundDebtCredits?: number | null;
-		blockedChargeCredits?: number | null;
-	}) {
-		const pointsPerUsd = walletDebit?.pointsPerUsd ?? wallet.data?.points_per_usd ?? 0;
-		setWalletTopUpContext({
-			initialAmountCents: topUpAmountCentsForCreditShortfall(shortfallCredits, pointsPerUsd),
-			refundDebtCredits,
-			blockedChargeCredits,
-		});
+	function openWalletTopUp(shortfallUsd: number | null) {
+		setWalletTopUpAmountCents(topUpAmountCentsForUsdShortfall(shortfallUsd));
 		setWalletTopUpOpen(true);
 	}
 
 	function handleWalletCreateError(error: unknown): boolean {
 		const detail = billingErrorDetail(error);
 		if (detail?.code === "insufficient_wallet_balance" || detail?.code === "insufficient_balance") {
-			openWalletTopUp({ shortfallCredits: decimalCredits(detail.shortfall_credits) });
-			toast.error("Not enough AI Credits", {
+			openWalletTopUp(decimalUsd(detail.shortfall_usd));
+			toast.error("Not enough Wallet balance", {
 				description: "Top up the shortfall, then review a fresh wallet quote.",
 			});
 			return true;
 		}
 		if (detail?.code === "open_refund_debt") {
-			const refundDebtCredits = decimalCredits(detail.outstanding_debt_credits);
-			const blockedChargeCredits = decimalCredits(walletDebit?.exactDebitCredits);
-			openWalletTopUp({
-				shortfallCredits:
-					refundDebtCredits === null ? null : refundDebtCredits + (blockedChargeCredits ?? 0),
-				refundDebtCredits,
-				blockedChargeCredits,
-			});
+			openWalletTopUp(null);
 			toast.error("Refund debt must be repaid", {
 				description: "Top up before starting this wallet subscription.",
 			});
@@ -996,7 +964,7 @@ export function DeployWizard() {
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
 					walletCreateAttemptRef.current = null;
 					toast.success("Agent deployed", {
-						description: `${formatCents(walletDebit?.exactDebitCents ?? paidSelection.offer.price_cents)} was paid with AI Credits.`,
+						description: `${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(paidSelection.offer.price_cents)} was paid from Wallet.`,
 					});
 					void router.navigate(acceptedDeploymentNavigation(outcome.deploymentId));
 					return;
@@ -1098,7 +1066,7 @@ export function DeployWizard() {
 				: walletInsufficient
 					? "Top up to deploy"
 					: walletDebit
-						? `Pay ${formatCents(walletDebit.exactDebitCents)} from Wallet & deploy`
+						? `Pay ${formatUsdExact(walletDebit.debitAmountUsd)} from Wallet & deploy`
 						: "Review wallet quote"
 			: "Continue to checkout"
 		: "Deploy agent";
@@ -1221,7 +1189,7 @@ export function DeployWizard() {
 								</IconChip>
 							}
 							title="Managed by Clawdi"
-							description="AI Credits from your wallet."
+							description="Managed-AI usage paid directly from your Wallet."
 							badge={
 								<Badge variant="secondary">
 									{aiAccessMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE
@@ -1382,7 +1350,7 @@ export function DeployWizard() {
 											: basicSelection.mode === "included"
 												? "Free"
 												: basicOffer
-													? `${formatCentsCompact(basicOffer.effective_monthly_price_cents)}/mo`
+													? `${formatCents(basicOffer.effective_monthly_price_cents)}/mo`
 													: "Unavailable"}
 									</Badge>
 								}
@@ -1409,9 +1377,9 @@ export function DeployWizard() {
 								badge={
 									<Badge>
 										{perfOffer
-											? `${formatCentsCompact(perfOffer.effective_monthly_price_cents)}/mo`
+											? `${formatCents(perfOffer.effective_monthly_price_cents)}/mo`
 											: perfPlan
-												? `${formatCentsCompact(perfPlan.price_cents)}/mo`
+												? `${formatCents(perfPlan.price_cents)}/mo`
 												: "Unavailable"}
 									</Badge>
 								}
@@ -1460,7 +1428,7 @@ export function DeployWizard() {
 										title="Wallet balance"
 										description={
 											walletDisabledReason ??
-											"Debit the exact quoted amount from AI Credits, then renew on the selected term."
+											"Debit the exact quoted USD amount from Wallet, then renew on the selected term."
 										}
 										badge={<Badge variant="outline">Monthly or Annual</Badge>}
 										disabled={walletDisabledReason !== null}
@@ -1471,14 +1439,14 @@ export function DeployWizard() {
 									<div className="flex flex-col gap-3">
 										{!wallet.data && wallet.isFetching ? (
 											<p className="text-sm text-muted-foreground" role="status">
-												Loading your AI Credits wallet…
+												Loading your Wallet balance…
 											</p>
 										) : !wallet.data && wallet.error ? (
 											<ApiErrorPanel
 												normalizer={billingErrorNormalizer}
 												error={wallet.error}
 												onRetry={() => void wallet.refetch()}
-												title="Couldn't load your AI Credits wallet"
+												title="Couldn't load your Wallet balance"
 											/>
 										) : subscriptionCreateQuote.isFetching && !subscriptionCreateQuote.data ? (
 											<p className="text-sm text-muted-foreground" role="status">
@@ -1494,15 +1462,14 @@ export function DeployWizard() {
 										) : walletDebit ? (
 											<>
 												<WalletDebitEquation
-													balanceBeforeCredits={walletDebit.balanceBeforeCredits}
-													exactDebitCredits={walletDebit.exactDebitCredits}
-													exactDebitCents={walletDebit.exactDebitCents}
-													balanceAfterCredits={walletDebit.balanceAfterCredits}
+													balanceBeforeUsd={walletDebit.balanceBeforeUsd}
+													debitAmountUsd={walletDebit.debitAmountUsd}
+													balanceAfterUsd={walletDebit.balanceAfterUsd}
 												/>
 												{walletInsufficient ? (
 													<Alert variant="destructive">
 														<TriangleAlert aria-hidden />
-														<AlertTitle>Not enough AI Credits</AlertTitle>
+														<AlertTitle>Not enough Wallet balance</AlertTitle>
 														<AlertDescription className="flex flex-col items-start gap-3">
 															<span>Top up the shortfall, then review a fresh wallet quote.</span>
 															<Button
@@ -1510,13 +1477,9 @@ export function DeployWizard() {
 																size="sm"
 																variant="outline"
 																disabled={!wallet.data}
-																onClick={() =>
-																	openWalletTopUp({
-																		shortfallCredits: walletShortfallCredits,
-																	})
-																}
+																onClick={() => openWalletTopUp(walletShortfallUsd)}
 															>
-																<WalletCards data-icon="inline-start" /> Top up AI Credits
+																<WalletCards data-icon="inline-start" /> Top up Wallet
 															</Button>
 														</AlertDescription>
 													</Alert>
@@ -1634,12 +1597,9 @@ export function DeployWizard() {
 					open={walletTopUpOpen}
 					onOpenChange={(open) => {
 						setWalletTopUpOpen(open);
-						if (!open) setWalletTopUpContext(EMPTY_WALLET_TOP_UP_CONTEXT);
+						if (!open) setWalletTopUpAmountCents(null);
 					}}
-					wallet={wallet.data}
-					initialAmountCents={walletTopUpContext.initialAmountCents}
-					refundDebtCredits={walletTopUpContext.refundDebtCredits}
-					blockedChargeCredits={walletTopUpContext.blockedChargeCredits}
+					initialAmountCents={walletTopUpAmountCents}
 					onComplete={() => void subscriptionCreateQuote.refetch()}
 				/>
 			) : null}

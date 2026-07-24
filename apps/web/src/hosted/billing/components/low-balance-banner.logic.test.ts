@@ -4,17 +4,14 @@ import { lowBalanceBannerState } from "./low-balance-banner.logic";
 
 function wallet(over: Partial<WalletState> = {}): WalletState {
 	return {
-		balance_credits: 50_000,
-		overdraft_credits: 0,
-		balance_snapshot_at: null,
+		balance_usd: "50",
 		payment_mode: "card",
 		x402_enabled: true,
 		auto_reload_enabled: false,
-		auto_reload_threshold_credits: 1000,
+		auto_reload_threshold_usd: "1",
 		auto_reload_amount_cents: 2500,
 		auto_reload_monthly_cap_cents: 0,
 		auto_reload_action: null,
-		points_per_usd: 1000,
 		...over,
 	};
 }
@@ -41,8 +38,7 @@ describe("lowBalanceBannerState", () => {
 	});
 
 	test("low balance, no action → top-up CTA", () => {
-		// < $2 worth of credits trips the warning.
-		const s = lowBalanceBannerState(wallet({ balance_credits: 1000 }));
+		const s = lowBalanceBannerState(wallet({ balance_usd: "1" }));
 		expect(s).toMatchObject({ show: true, low: true, hasAction: false, primaryCta: "top-up" });
 	});
 

@@ -32,11 +32,11 @@ function decimalString(units: bigint, scale: number): string {
 
 /** Subtract a decimal-string debit without rounding through a JavaScript number. */
 export function walletBalanceAfterDebit(
-	balanceBeforeCredits: string,
-	exactDebitCredits: string,
+	balanceBeforeUsd: string,
+	debitAmountUsd: string,
 ): string | null {
-	const balance = decimalParts(balanceBeforeCredits);
-	const debit = decimalParts(exactDebitCredits);
+	const balance = decimalParts(balanceBeforeUsd);
+	const debit = decimalParts(debitAmountUsd);
 	if (!balance || !debit) return null;
 	const scale = Math.max(balance.scale, debit.scale);
 	return decimalString(scaledUnits(balance, scale) - scaledUnits(debit, scale), scale);

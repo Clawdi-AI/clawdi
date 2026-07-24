@@ -26,10 +26,9 @@ const walletQuote: ComputeSubscriptionQuoteResponse = {
 	term_price_cents: 18_000,
 	preview_invoice_id: "upcoming_in_annual",
 	expires_at: "2026-07-16T00:05:00Z",
-	debit_credits: "180000",
-	points_per_usd: 1_000,
-	balance_before_credits: "200000.25",
-	balance_after_credits: "20000.25",
+	debit_amount_usd: "180",
+	balance_before_usd: "200.00025",
+	balance_after_usd: "20.00025",
 };
 
 function createRequest(
@@ -66,11 +65,9 @@ describe("subscription creation adapter", () => {
 			expiresAt: "2026-07-16T00:05:00Z",
 			serverQuote: walletQuote,
 			walletDebit: {
-				balanceBeforeCredits: "200000.25",
-				exactDebitCredits: "180000",
-				exactDebitCents: 18_000,
-				balanceAfterCredits: "20000.25",
-				pointsPerUsd: 1_000,
+				balanceBeforeUsd: "200.00025",
+				debitAmountUsd: "180",
+				balanceAfterUsd: "20.00025",
 			},
 		});
 	});

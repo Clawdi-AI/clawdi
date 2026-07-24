@@ -23,7 +23,7 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import type { WalletLedgerEntry, WalletLedgerStatus } from "@/hosted/billing/contracts";
-import { creditsToUsd, formatCredits } from "@/hosted/billing/format";
+import { formatUsdExact } from "@/hosted/billing/format";
 import {
 	filteredLedgerEntries,
 	isLedgerFilter,
@@ -62,22 +62,18 @@ function opLabel(op: string): string {
 function statusLabel(status: WalletLedgerStatus): string {
 	return STATUS_LABELS[status] ?? "Unknown";
 }
-function signedAmount(entry: WalletLedgerEntry, pointsPerUsd: number): string {
-	const positive = entry.credits_amount >= 0;
-	const sign = positive ? "+" : "−";
-	const absCredits = Math.abs(entry.credits_amount);
-	// Sub-cent rows (e.g. a few credits of usage at 1000 credits/USD) round to
-	// "$0.00" and read as misleading zero rows. Show the raw credit amount
-	// instead so real, tiny entries stay legible.
-	if (absCredits > 0 && pointsPerUsd > 0 && absCredits / pointsPerUsd < 0.005) {
-		return `${sign}${formatCredits(absCredits)}`;
-	}
-	return `${sign}${creditsToUsd(absCredits, pointsPerUsd)}`;
+function amountIsPositive(entry: WalletLedgerEntry): boolean {
+	return !entry.amount_usd.trim().startsWith("-");
+}
+
+function signedAmount(entry: WalletLedgerEntry): string {
+	const positive = amountIsPositive(entry);
+	const unsignedAmount = entry.amount_usd.trim().replace(/^[+-]/, "");
+	return `${positive ? "+" : "−"}${formatUsdExact(unsignedAmount)}`;
 }
 
 export function LedgerTable({
 	entries,
-	pointsPerUsd,
 	isLoading = false,
 	hasMore = false,
 	atCap = false,
@@ -85,7 +81,6 @@ export function LedgerTable({
 	onShowMore,
 }: {
 	entries: WalletLedgerEntry[];
-	pointsPerUsd: number;
 	isLoading?: boolean;
 	/** More entries likely exist beyond the current window. */
 	hasMore?: boolean;
@@ -176,7 +171,7 @@ export function LedgerTable({
 					    viewports. sm+ gets the full table. */}
 					<ul className="divide-y overflow-hidden rounded-lg border sm:hidden">
 						{filtered.map((entry) => {
-							const positive = entry.credits_amount >= 0;
+							const positive = amountIsPositive(entry);
 							return (
 								<li key={entry.id} className="flex items-start justify-between gap-3 p-3">
 									<div className="min-w-0 space-y-1">
@@ -199,7 +194,7 @@ export function LedgerTable({
 											positive ? "text-success-muted-foreground" : "text-foreground",
 										)}
 									>
-										{signedAmount(entry, pointsPerUsd)}
+										{signedAmount(entry)}
 									</span>
 								</li>
 							);
@@ -218,7 +213,7 @@ export function LedgerTable({
 							</TableHeader>
 							<TableBody>
 								{filtered.map((entry) => {
-									const positive = entry.credits_amount >= 0;
+									const positive = amountIsPositive(entry);
 									return (
 										<TableRow key={entry.id}>
 											<TableCell>
@@ -240,7 +235,7 @@ export function LedgerTable({
 													positive ? "text-success-muted-foreground" : "text-foreground",
 												)}
 											>
-												{signedAmount(entry, pointsPerUsd)}
+												{signedAmount(entry)}
 											</TableCell>
 											<TableCell className="whitespace-nowrap text-right text-sm text-muted-foreground">
 												{relativeTime(entry.created_at)}

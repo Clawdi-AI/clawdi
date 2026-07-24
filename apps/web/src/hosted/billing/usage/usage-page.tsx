@@ -8,13 +8,18 @@ import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { formatCredits } from "@/hosted/billing/format";
+import { formatUsdExact } from "@/hosted/billing/format";
 import { useUsage } from "@/hosted/billing/hooks";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "AI Credits usage for the current reporting window across your agents.";
+const DESCRIPTION = "Managed-AI usage in USD for the current reporting window across your agents.";
 const USAGE_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
+
+function decimalUsdNumber(value: string): number {
+	const parsed = Number(value);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+}
 
 export function UsagePage() {
 	const usage = useUsage();
@@ -48,19 +53,19 @@ export function UsagePage() {
 	const windowLabel = `${formatShortDate(u.period_start)} – ${formatShortDate(u.period_end)}`;
 	const dailyChartLabel =
 		hasDailyBreakdown && firstDailyPoint && lastDailyPoint
-			? `Daily AI Credits usage returned for ${formatShortDate(firstDailyPoint.date)} to ${formatShortDate(lastDailyPoint.date)} within the ${windowLabel} reporting window.`
+			? `Daily USD usage returned for ${formatShortDate(firstDailyPoint.date)} to ${formatShortDate(lastDailyPoint.date)} within the ${windowLabel} reporting window.`
 			: undefined;
-	const maxDay = Math.max(1, ...u.by_day.map((d) => d.credits));
-	const maxModel = Math.max(1, ...u.by_model.map((m) => m.credits));
+	const maxDay = Math.max(0, ...u.by_day.map((day) => decimalUsdNumber(day.amount_usd)));
+	const maxModel = Math.max(0, ...u.by_model.map((model) => decimalUsdNumber(model.amount_usd)));
 
-	if (u.total_credits === 0 && u.by_model.length === 0) {
+	if (decimalUsdNumber(u.total_usd) === 0 && u.by_model.length === 0) {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<PageHeader title="Usage" description={DESCRIPTION} />
 				<EmptyState
 					icon={Activity}
 					title="No usage yet"
-					description="Once your agents start running, credit consumption shows up here."
+					description="Once your agents start running, managed-AI spend shows up here."
 				/>
 			</div>
 		);
@@ -77,10 +82,8 @@ export function UsagePage() {
 			<div className="grid gap-3 sm:grid-cols-2">
 				<Card data-hosted="true">
 					<CardContent>
-						<div className="text-3xl font-semibold tabular-nums">
-							{formatCredits(u.total_credits)}
-						</div>
-						<div className="text-sm text-muted-foreground">AI Credits used in window</div>
+						<div className="text-3xl font-semibold tabular-nums">{formatUsdExact(u.total_usd)}</div>
+						<div className="text-sm text-muted-foreground">Managed-AI spend in window</div>
 					</CardContent>
 				</Card>
 				<Card data-hosted="true">
@@ -105,9 +108,14 @@ export function UsagePage() {
 								{u.by_day.map((d) => (
 									<div
 										key={d.date}
-										title={`${formatShortDate(d.date)}: ${formatCredits(d.credits)}`}
+										title={`${formatShortDate(d.date)}: ${formatUsdExact(d.amount_usd)}`}
 										className="flex-1 rounded-t bg-primary/70 transition-colors hover:bg-primary"
-										style={{ height: `${Math.max(2, (d.credits / maxDay) * 100)}%` }}
+										style={{
+											height: `${Math.max(
+												2,
+												maxDay > 0 ? (decimalUsdNumber(d.amount_usd) / maxDay) * 100 : 0,
+											)}%`,
+										}}
 									/>
 								))}
 							</div>
@@ -120,14 +128,14 @@ export function UsagePage() {
 								<thead>
 									<tr>
 										<th scope="col">Day</th>
-										<th scope="col">AI Credits used</th>
+										<th scope="col">USD used</th>
 									</tr>
 								</thead>
 								<tbody>
 									{u.by_day.map((d) => (
 										<tr key={d.date}>
 											<td>{d.date}</td>
-											<td>{formatCredits(d.credits)}</td>
+											<td>{formatUsdExact(d.amount_usd)}</td>
 										</tr>
 									))}
 								</tbody>
@@ -160,12 +168,14 @@ export function UsagePage() {
 							<div key={`${m.provider ?? "managed"}:${m.model}`} className="space-y-1">
 								<div className="flex items-baseline justify-between gap-2 text-sm">
 									<span className="truncate font-medium">{m.model}</span>
-									<span className="shrink-0 tabular-nums">{formatCredits(m.credits)}</span>
+									<span className="shrink-0 tabular-nums">{formatUsdExact(m.amount_usd)}</span>
 								</div>
 								<div className="h-2 overflow-hidden rounded-full bg-muted">
 									<div
 										className="h-2 rounded-full bg-primary"
-										style={{ width: `${(m.credits / maxModel) * 100}%` }}
+										style={{
+											width: `${maxModel > 0 ? (decimalUsdNumber(m.amount_usd) / maxModel) * 100 : 0}%`,
+										}}
 									/>
 								</div>
 								<div className="text-xs text-muted-foreground">

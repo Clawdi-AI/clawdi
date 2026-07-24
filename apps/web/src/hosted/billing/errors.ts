@@ -167,7 +167,7 @@ export function isInsufficientBalanceError(error: unknown): boolean {
 export function normalizeBillingError(error: unknown): string {
 	if (error instanceof DeploymentConflictError) return DEPLOYMENT_CONFLICT_MESSAGE;
 	if (isInsufficientBalanceError(error)) {
-		return "Your AI Credits balance is too low. Top up or enable auto-reload before managed AI or wallet-funded compute is interrupted.";
+		return "Your Wallet balance is too low. Top up or enable auto-reload before managed AI or wallet-funded compute is interrupted.";
 	}
 	if (error instanceof BillingNetworkError) {
 		return error.kind === "timeout"

@@ -209,10 +209,10 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			tone: "warning",
 			title: "Wallet payment past due",
 			description:
-				"Top up AI Credits. Stripe will keep the invoice open while funds are short, and billing will update automatically after payment completes.",
+				"Top up your Wallet. Stripe will keep the invoice open while funds are short, and billing will update automatically after payment completes.",
 			ctaTarget: "top_up",
 			tileLabel: "Wallet payment past due",
-			tileTitle: "Top up AI Credits to pay the open invoice.",
+			tileTitle: "Top up your Wallet to pay the open invoice.",
 			tileTextClass: "text-warning-muted-foreground",
 		};
 	}
