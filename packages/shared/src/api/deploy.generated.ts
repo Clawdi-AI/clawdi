@@ -1824,8 +1824,6 @@ export interface components {
         };
         /** V2WalletAutoReloadRequest */
         V2WalletAutoReloadRequest: {
-            /** Payment Mode */
-            payment_mode?: "card" | null;
             /** Auto Reload Enabled */
             auto_reload_enabled?: boolean | null;
             /** Auto Reload Threshold Usd */
@@ -1837,18 +1835,16 @@ export interface components {
         };
         /** V2WalletLedgerItemResponse */
         V2WalletLedgerItemResponse: {
-            /** Id */
-            id: string;
             /** Operation */
             operation: string;
-            /** Request Id */
-            request_id: string;
+            /** Description */
+            description: string;
             /** Amount Usd */
             amount_usd: string;
             /** Status */
             status: string;
-            /** Notes */
-            notes?: string | null;
+            /** Receipt Url */
+            receipt_url?: string | null;
             /** Created At */
             created_at: string;
             /** Applied At */
@@ -1865,11 +1861,6 @@ export interface components {
         V2WalletResponse: {
             /** Balance Usd */
             balance_usd: string;
-            /**
-             * Payment Mode
-             * @constant
-             */
-            payment_mode: "card";
             /** X402 Enabled */
             x402_enabled: boolean;
             /** Auto Reload Enabled */

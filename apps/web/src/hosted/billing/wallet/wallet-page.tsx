@@ -1,16 +1,25 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { CreditCard } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
-import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { useHostedDeployments, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
+import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
+import {
+	useHostedDeployments,
+	usePortal,
+	useWallet,
+	useWalletLedger,
+} from "@/hosted/billing/hooks";
 import { getStripe } from "@/hosted/billing/stripe";
+import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { LedgerTable } from "@/hosted/billing/wallet/ledger-table";
@@ -53,6 +62,8 @@ function showWalletTopupReturnToast(result: WalletTopupReturnToast) {
 export function WalletPage() {
 	const wallet = useWallet();
 	const deployments = useHostedDeployments();
+	const portal = usePortal();
+	const runAction = useActionLock();
 	const queryClient = useQueryClient();
 	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
 	const ledger = useWalletLedger(ledgerLimit);
@@ -60,6 +71,31 @@ export function WalletPage() {
 	if (ledger.data) lastLedgerDataRef.current = ledger.data;
 	const ledgerData = ledger.data ?? lastLedgerDataRef.current;
 	const [topUpOpen, setTopUpOpen] = useState(false);
+
+	async function openBillingPortal() {
+		try {
+			const res = await portal.mutateAsync({});
+			if (res.url || res.portal_url) {
+				window.location.href = res.url || res.portal_url;
+				return;
+			}
+			toast.error("Billing portal unavailable", {
+				description: "Refresh this page and try again in a moment.",
+			});
+		} catch (error) {
+			toast.error("Couldn’t open billing", { description: normalizeBillingError(error) });
+		}
+	}
+
+	const portalAction = (
+		<Button
+			variant="outline"
+			onClick={() => runAction(openBillingPortal)}
+			disabled={portal.isPending}
+		>
+			{portal.isPending ? <Spinner /> : <CreditCard />} Manage payment methods
+		</Button>
+	);
 
 	useEffect(() => {
 		const topupReturn = readWalletTopupReturn(window.location.search);
@@ -115,7 +151,7 @@ export function WalletPage() {
 	if (wallet.isLoading) {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-				<PageHeader title="Wallet" description={DESCRIPTION} />
+				<PageHeader title="Wallet" description={DESCRIPTION} actions={portalAction} />
 				<WalletSkeleton />
 			</div>
 		);
@@ -124,7 +160,7 @@ export function WalletPage() {
 	if (wallet.error || !wallet.data) {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-				<PageHeader title="Wallet" description={DESCRIPTION} />
+				<PageHeader title="Wallet" description={DESCRIPTION} actions={portalAction} />
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={wallet.error}
@@ -143,61 +179,65 @@ export function WalletPage() {
 
 	return (
 		<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-			{/* The balance card below carries the primary Top up CTA; a second
-			    header button duplicated it in the same viewport. */}
-			<PageHeader title="Wallet" description={DESCRIPTION} />
-
-			<LowBalanceBanner
-				wallet={w}
-				hasWalletCompute={walletComputeCount > 0}
-				onTopUp={() => setTopUpOpen(true)}
-				onAutoReload={scrollToAutoReload}
+			<PageHeader
+				title="Wallet"
+				description={DESCRIPTION}
+				actions={topUpOpen ? undefined : portalAction}
 			/>
 
-			<BalanceCard
-				wallet={w}
-				hasWalletCompute={walletComputeCount > 0}
-				onTopUp={() => setTopUpOpen(true)}
-			/>
+			<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} presentation="inline" />
 
-			<div id="auto-reload" className="grid gap-4 lg:grid-cols-2">
-				<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
-				{w.x402_enabled === true ? <X402Card /> : null}
-			</div>
-
-			{ledger.error && !ledgerData ? (
-				<ApiErrorPanel
-					normalizer={billingErrorNormalizer}
-					error={ledger.error}
-					title="Couldn’t load activity"
-					onRetry={() => ledger.refetch()}
+			<div className={cn("space-y-6", topUpOpen && "hidden")}>
+				<LowBalanceBanner
+					wallet={w}
+					hasWalletCompute={walletComputeCount > 0}
+					onTopUp={() => setTopUpOpen(true)}
+					onAutoReload={scrollToAutoReload}
 				/>
-			) : (
-				<>
-					<LedgerTable
-						entries={ledgerData?.items ?? []}
-						isLoading={ledger.isLoading}
-						hasMore={ledgerData?.has_more ?? false}
-						atCap={ledgerLimit >= LEDGER_MAX_ROWS && (ledgerData?.has_more ?? false)}
-						isFetchingMore={ledger.isFetching}
-						onShowMore={
-							ledger.error
-								? undefined
-								: () => setLedgerLimit((n) => Math.min(n + LEDGER_PAGE_SIZE, LEDGER_MAX_ROWS))
-						}
-					/>
-					{ledger.error ? (
-						<ApiErrorPanel
-							normalizer={billingErrorNormalizer}
-							error={ledger.error}
-							title="Couldn’t load more activity"
-							onRetry={() => void ledger.refetch()}
-						/>
-					) : null}
-				</>
-			)}
 
-			<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} />
+				<BalanceCard
+					wallet={w}
+					hasWalletCompute={walletComputeCount > 0}
+					onTopUp={() => setTopUpOpen(true)}
+				/>
+
+				<div id="auto-reload" className="grid gap-4 lg:grid-cols-2">
+					<AutoReloadCard wallet={w} onTopUp={() => setTopUpOpen(true)} />
+					{w.x402_enabled === true ? <X402Card /> : null}
+				</div>
+
+				{ledger.error && !ledgerData ? (
+					<ApiErrorPanel
+						normalizer={billingErrorNormalizer}
+						error={ledger.error}
+						title="Couldn’t load activity"
+						onRetry={() => ledger.refetch()}
+					/>
+				) : (
+					<>
+						<LedgerTable
+							entries={ledgerData?.items ?? []}
+							isLoading={ledger.isLoading}
+							hasMore={ledgerData?.has_more ?? false}
+							atCap={ledgerLimit >= LEDGER_MAX_ROWS && (ledgerData?.has_more ?? false)}
+							isFetchingMore={ledger.isFetching}
+							onShowMore={
+								ledger.error
+									? undefined
+									: () => setLedgerLimit((n) => Math.min(n + LEDGER_PAGE_SIZE, LEDGER_MAX_ROWS))
+							}
+						/>
+						{ledger.error ? (
+							<ApiErrorPanel
+								normalizer={billingErrorNormalizer}
+								error={ledger.error}
+								title="Couldn’t load more activity"
+								onRetry={() => void ledger.refetch()}
+							/>
+						) : null}
+					</>
+				)}
+			</div>
 		</div>
 	);
 }

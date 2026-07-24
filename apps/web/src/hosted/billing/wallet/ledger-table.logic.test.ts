@@ -9,12 +9,11 @@ import {
 
 function entry(overrides: Partial<WalletLedgerEntry> = {}): WalletLedgerEntry {
 	return {
-		id: "entry_1",
 		operation: "topup",
-		request_id: "request_1",
+		description: "Wallet top-up",
 		amount_usd: "1",
 		status: "applied",
-		notes: null,
+		receipt_url: null,
 		created_at: "2026-07-01T00:00:00Z",
 		applied_at: "2026-07-01T00:00:00Z",
 		...overrides,
@@ -33,7 +32,7 @@ describe("filteredLedgerEntries", () => {
 		expect(ledgerOperationGroup("compute_credit")).toBe("compute");
 		expect(
 			filteredLedgerEntries(
-				[entry({ operation: "compute_charge" }), entry({ id: "entry_2", operation: "topup" })],
+				[entry({ operation: "compute_charge" }), entry({ operation: "topup" })],
 				"compute",
 			).map((item) => item.operation),
 		).toEqual(["compute_charge"]);

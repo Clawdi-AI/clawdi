@@ -1,6 +1,6 @@
 "use client";
 
-import { Receipt } from "lucide-react";
+import { ExternalLink, Receipt } from "lucide-react";
 import { useId, useMemo, useState } from "react";
 import { EmptyState } from "@/components/empty-state";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,25 @@ function signedAmount(entry: WalletLedgerEntry): string {
 	const positive = amountIsPositive(entry);
 	const unsignedAmount = entry.amount_usd.trim().replace(/^[+-]/, "");
 	return `${positive ? "+" : "−"}${formatUsdExact(unsignedAmount)}`;
+}
+
+function ledgerEntryKey(entry: WalletLedgerEntry): string {
+	return `${entry.created_at}:${entry.operation}:${entry.amount_usd}`;
+}
+
+function ReceiptLink({ entry }: { entry: WalletLedgerEntry }) {
+	if (!entry.receipt_url) return null;
+	return (
+		<Button
+			render={<a href={entry.receipt_url} target="_blank" rel="noopener noreferrer" />}
+			nativeButton={false}
+			variant="link"
+			size="xs"
+			className="h-auto px-0"
+		>
+			Receipt <ExternalLink data-icon="inline-end" />
+		</Button>
+	);
 }
 
 export function LedgerTable({
@@ -170,12 +189,15 @@ export function LedgerTable({
 						{filtered.map((entry) => {
 							const positive = amountIsPositive(entry);
 							return (
-								<li key={entry.id} className="flex items-start justify-between gap-3 p-3">
+								<li
+									key={ledgerEntryKey(entry)}
+									className="flex items-start justify-between gap-3 p-3"
+								>
 									<div className="min-w-0 space-y-1">
 										<div className="font-medium">{ledgerOperationLabel(entry.operation)}</div>
-										{entry.notes ? (
-											<div className="truncate text-xs text-muted-foreground">{entry.notes}</div>
-										) : null}
+										<div className="truncate text-xs text-muted-foreground">
+											{entry.description}
+										</div>
 										<div className="flex items-center gap-2">
 											<StatusBadge status={statusVariant(entry.status)}>
 												{statusLabel(entry.status)}
@@ -184,6 +206,7 @@ export function LedgerTable({
 												{relativeTime(entry.created_at)}
 											</span>
 										</div>
+										<ReceiptLink entry={entry} />
 									</div>
 									<span
 										className={cn(
@@ -206,20 +229,19 @@ export function LedgerTable({
 									<TableHead>Status</TableHead>
 									<TableHead className="text-right">Amount</TableHead>
 									<TableHead className="text-right">When</TableHead>
+									<TableHead className="text-right">Receipt</TableHead>
 								</TableRow>
 							</TableHeader>
 							<TableBody>
 								{filtered.map((entry) => {
 									const positive = amountIsPositive(entry);
 									return (
-										<TableRow key={entry.id}>
+										<TableRow key={ledgerEntryKey(entry)}>
 											<TableCell>
 												<div className="font-medium">{ledgerOperationLabel(entry.operation)}</div>
-												{entry.notes ? (
-													<div className="max-w-[18rem] truncate text-xs text-muted-foreground">
-														{entry.notes}
-													</div>
-												) : null}
+												<div className="max-w-[18rem] truncate text-xs text-muted-foreground">
+													{entry.description}
+												</div>
 											</TableCell>
 											<TableCell>
 												<StatusBadge status={statusVariant(entry.status)}>
@@ -236,6 +258,9 @@ export function LedgerTable({
 											</TableCell>
 											<TableCell className="whitespace-nowrap text-right text-sm text-muted-foreground">
 												{relativeTime(entry.created_at)}
+											</TableCell>
+											<TableCell className="text-right">
+												<ReceiptLink entry={entry} />
 											</TableCell>
 										</TableRow>
 									);

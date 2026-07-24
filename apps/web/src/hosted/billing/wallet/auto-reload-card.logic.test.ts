@@ -46,7 +46,6 @@ describe("autoReloadFormState", () => {
 
 const wallet: WalletState = {
 	balance_usd: "25",
-	payment_mode: "card",
 	x402_enabled: false,
 	auto_reload_enabled: false,
 	auto_reload_threshold_usd: "5",

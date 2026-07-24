@@ -311,17 +311,13 @@ const interruptedIdentitylessDeployment = {
 };
 
 const walletState = {
-	balance_credits: 25_000,
-	overdraft_credits: 0,
-	balance_snapshot_at: "2026-07-15T00:00:00Z",
-	payment_mode: "card",
+	balance_usd: "25.00",
 	x402_enabled: false,
 	auto_reload_enabled: false,
-	auto_reload_threshold_credits: 5_000,
+	auto_reload_threshold_usd: "5.00",
 	auto_reload_amount_cents: 2_500,
 	auto_reload_monthly_cap_cents: 10_000,
 	auto_reload_action: null,
-	points_per_usd: 1_000,
 };
 
 const walletActiveDeployment = {
@@ -758,6 +754,7 @@ type HostedApiStubOptions = {
 	managedModels?: typeof managedModelCatalog;
 	planRequests?: string[];
 	plans?: readonly unknown[];
+	portalRequests?: string[];
 	planChangeRequests?: string[];
 	planChangeResponses?: unknown[];
 	planQuoteRequests?: string[];
@@ -1029,7 +1026,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					flow_type: "mock",
 					payment_intent_id: null,
 					client_secret: null,
-					credits_added: 25_000,
+					amount_usd: "25.00",
 				},
 			};
 			if (response.delayMs) {
@@ -1052,6 +1049,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
 				: fulfillJson(r, response);
+		}
+		if (p === "/v2/subscription/portal" && r.request().method() === "POST") {
+			options.portalRequests?.push(r.request().postData() ?? "");
+			return fulfillJson(r, { portal_url: "/channels?portal=opened" });
 		}
 		if (p === "/v2/subscription/cancel" && r.request().method() === "POST") {
 			options.cancelRequests?.push(r.request().postData() ?? "");
@@ -1991,7 +1992,7 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 				balanceAfterCredits: "13600",
 			}),
 		],
-		walletState: { ...walletState, balance_credits: 100_000 },
+		walletState: { ...walletState, balance_usd: "100.00" },
 		onWalletCheckoutSuccess: () => deployments.push(walletAnnualDeployment),
 	});
 	await page.goto("/deploy");
@@ -2699,17 +2700,27 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	const ledgerRequests: string[] = [];
 	let expandedAttempts = 0;
 	const computeCharge = {
-		id: "ledger-compute-charge",
 		operation: "compute_charge",
-		request_id: "compute-renewal-42",
-		credits_amount: -9_000,
+		description: "Compute Basic renewal",
+		amount_usd: "-9.00",
 		status: "applied",
+		receipt_url: null,
 		created_at: "2026-07-15T00:00:00Z",
+		applied_at: "2026-07-15T00:00:00Z",
+	};
+	const topUp = {
+		operation: "topup",
+		description: "Card top-up",
+		amount_usd: "25.00",
+		status: "applied",
+		receipt_url: "https://billing.stripe.test/receipt/topup",
+		created_at: "2026-07-15T00:00:02Z",
+		applied_at: "2026-07-15T00:00:02Z",
 	};
 	await stubHostedApi(page, {
 		ledgerRequests,
 		ledgerResponseForRequest: (limit) => {
-			if (limit === 50) return { items: [computeCharge], has_more: true };
+			if (limit === 50) return { items: [topUp, computeCharge], has_more: true };
 			expandedAttempts += 1;
 			return expandedAttempts === 1
 				? { status: 400, body: { detail: "ledger_backend_unavailable" } }
@@ -2718,10 +2729,11 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 							computeCharge,
 							{
 								...computeCharge,
-								id: "ledger-compute-credit",
 								operation: "compute_credit",
-								request_id: "compute-reversal-42",
-								credits_amount: 9_000,
+								description: "Compute Basic reversal",
+								amount_usd: "9.00",
+								created_at: "2026-07-15T00:00:01Z",
+								applied_at: "2026-07-15T00:00:01Z",
 							},
 						],
 						has_more: true,
@@ -2734,6 +2746,10 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	const ledgerTable = settingsDialog.getByRole("table");
 
 	await expect(ledgerTable.getByText("Compute charge", { exact: true })).toBeVisible();
+	await expect(ledgerTable.getByText("Card top-up", { exact: true })).toBeVisible();
+	await expect(
+		ledgerTable.locator('a[href="https://billing.stripe.test/receipt/topup"]'),
+	).toHaveText("Receipt");
 	await settingsDialog.getByRole("button", { name: "Show more" }).click();
 	await expect.poll(() => ledgerRequests.length).toBe(2);
 	await expect(
@@ -2757,13 +2773,25 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	).toEqual([]);
 });
 
+test("Wallet opens the shared billing portal action", async ({ page }) => {
+	const portalRequests: string[] = [];
+	await stubHostedApi(page, { portalRequests });
+	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
+
+	await settingsDialog.getByRole("button", { name: "Manage payment methods" }).click();
+
+	await expect.poll(() => portalRequests.length).toBe(1);
+	await expect(page).toHaveURL(/\?portal=opened$/);
+	expect(JSON.parse(portalRequests[0] ?? "null")).toEqual({});
+});
+
 test("auto-reload batches toggle and fields into one explicit save", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	const autoReloadRequests: string[] = [];
 	const savedWallet = {
 		...walletState,
 		auto_reload_enabled: true,
-		auto_reload_threshold_credits: 7_500,
+		auto_reload_threshold_usd: "7.50",
 		auto_reload_amount_cents: 3_000,
 		auto_reload_monthly_cap_cents: 12_500,
 	};
@@ -2841,7 +2869,7 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 	for (const raw of autoReloadRequests) {
 		expect(JSON.parse(raw)).toEqual({
 			auto_reload_enabled: true,
-			auto_reload_threshold_credits: 7_500,
+			auto_reload_threshold_usd: 7.5,
 			auto_reload_amount_cents: 3_000,
 			auto_reload_monthly_cap_cents: 12_500,
 		});
@@ -2868,7 +2896,7 @@ test("top-up validates the amount and blocks duplicate submission or close in fl
 					flow_type: "mock",
 					payment_intent_id: null,
 					client_secret: null,
-					credits_added: 40_000,
+					amount_usd: "40.00",
 				},
 			},
 		],
@@ -2876,27 +2904,28 @@ test("top-up validates the amount and blocks duplicate submission or close in fl
 	});
 	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
 	await settingsDialog.getByRole("button", { name: "Top up" }).click();
-	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up AI Credits" });
-	const amount = topUpDialog.getByLabel("Amount (USD)");
+	const topUpPanel = settingsDialog.getByRole("region", { name: "Top up Wallet" });
+	await expect(page.getByRole("dialog")).toHaveCount(1);
+	const amount = topUpPanel.getByLabel("Amount (USD)");
 
 	await amount.fill("25.50");
 	await amount.blur();
 	await expect(
-		topUpDialog.getByText("Enter a whole-dollar amount from $10.00 to $2,000.00.", {
+		topUpPanel.getByText("Enter a whole-dollar amount from $10.00–$2,000.00.", {
 			exact: true,
 		}),
 	).toBeVisible();
 	await amount.fill("40");
-	const submit = topUpDialog.getByRole("button", { name: "Continue with $40.00" });
+	const submit = topUpPanel.getByRole("button", { name: "Continue with $40.00" });
 	await submit.evaluate((button: HTMLButtonElement) => {
 		button.click();
 		button.click();
 	});
-	await expect(topUpDialog.getByRole("button", { name: "Starting…" })).toBeDisabled();
+	await expect(topUpPanel.getByRole("button", { name: "Starting…" })).toBeDisabled();
 	await page.keyboard.press("Escape");
-	await expect(topUpDialog).toBeVisible();
+	await expect(topUpPanel).toBeVisible();
 	await expect.poll(() => topUpRequests.length).toBe(1);
-	await expect(topUpDialog).toHaveCount(0);
+	await expect(topUpPanel).toHaveCount(0);
 	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 4_000 });
 	expect(errors, `top-up interaction: ${errors.join(" | ")}`).toEqual([]);
 });
@@ -2922,20 +2951,20 @@ test("top-up rotates its idempotency key after an explicit reuse conflict", asyn
 	await page.goto("/channels?settings=billing-wallet");
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await settingsDialog.getByRole("button", { name: "Top up" }).click();
-	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up AI Credits" });
-	const submit = topUpDialog.getByRole("button", { name: "Continue" });
+	const topUpPanel = settingsDialog.getByRole("region", { name: "Top up Wallet" });
+	const submit = topUpPanel.getByRole("button", { name: "Continue" });
 
 	await submit.click();
 	await expect.poll(() => topUpIdempotencyKeys.length).toBe(1);
 	await expect(page.getByText("Start a fresh top-up", { exact: true })).toBeVisible();
-	await expect(topUpDialog).toBeVisible();
+	await expect(topUpPanel).toBeVisible();
 	await submit.click();
 	await expect.poll(() => topUpIdempotencyKeys.length).toBe(2);
 
 	expect(topUpIdempotencyKeys[0]).toMatch(/^topup-/);
 	expect(topUpIdempotencyKeys[1]).toMatch(/^topup-/);
 	expect(topUpIdempotencyKeys[1]).not.toBe(topUpIdempotencyKeys[0]);
-	await expect(topUpDialog).toHaveCount(0);
+	await expect(topUpPanel).toHaveCount(0);
 	expect(
 		errors.filter((error) => !error.includes("status of 409")),
 		`top-up key rotation: ${errors.join(" | ")}`,
@@ -2964,7 +2993,7 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 	await expect(page.getByRole("button", { name: /Retry payment/ })).toHaveCount(0);
 
 	await pastDueAlert.getByRole("button", { name: "Top up" }).click();
-	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up AI Credits" });
+	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up Wallet" });
 	await expect(topUpDialog).toBeVisible();
 	await topUpDialog.getByRole("button", { name: "Continue with $25.00" }).click();
 
