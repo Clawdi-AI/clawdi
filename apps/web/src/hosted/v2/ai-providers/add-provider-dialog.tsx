@@ -35,17 +35,21 @@ import {
 	parseModelIds,
 	providerAuthForSubmit,
 	providerFormIdentity,
+	providerListAllowsSubmit,
+	providerPatchForSubmit,
+	providerRollbackPatch,
 	shouldUseCatalogModels,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import {
 	useAiProviders,
+	useCreateProvider,
+	useCreateProviderQuiet,
 	useDeleteProviderQuiet,
 	useOAuthComplete,
 	useOAuthStart,
+	usePatchProvider,
+	usePatchProviderQuiet,
 	useSetApiKey,
-	useUpsertProvider,
-	useUpsertProviderQuiet,
-	useValidateProvider,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import { ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
@@ -73,7 +77,8 @@ import {
 	type ProviderTypeId,
 	providerTypeMeta,
 } from "@/hosted/v2/ai-providers/provider-types";
-import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import type { AiProvider, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
+import { normalizeApiError } from "@/lib/api-errors";
 
 function isApiMode(value: string | null): value is ApiMode {
 	return (
@@ -122,11 +127,12 @@ export function AddProviderDialog({
 	onCreated?: (providerId: string) => void;
 }) {
 	const providers = useAiProviders();
-	const upsert = useUpsertProvider();
-	const upsertQuiet = useUpsertProviderQuiet();
+	const createProvider = useCreateProvider();
+	const createProviderQuiet = useCreateProviderQuiet();
+	const patchProvider = usePatchProvider();
+	const patchProviderQuiet = usePatchProviderQuiet();
 	const deleteProviderQuiet = useDeleteProviderQuiet();
 	const setKey = useSetApiKey();
-	const validate = useValidateProvider();
 	const oauthStart = useOAuthStart();
 	const oauthComplete = useOAuthComplete();
 
@@ -298,13 +304,23 @@ export function AddProviderDialog({
 		? apiKeyEditState(authMethod, editing?.auth)
 		: apiKeyEditState(authMethod, null);
 	const { keyRequired, labelSuffix: apiKeyLabelSuffix, helpText: apiKeyHelpText } = apiKeyState;
+	const providerListReady = providerListAllowsSubmit(isEdit, providers.isSuccess);
 	const canSubmit =
+		providerListReady &&
 		Boolean(providerId) &&
 		Boolean(baseUrl.trim()) &&
 		noneAuthOk &&
 		(!keyRequired || apiKey.trim().length > 0);
 
 	async function submit() {
+		if (!providerListReady) {
+			toast.error("Provider list not ready", {
+				description: providers.isLoading
+					? "Wait for providers to finish loading, then try again."
+					: "Refresh providers, then try again.",
+			});
+			return;
+		}
 		if (!canSubmit) return;
 
 		// Codex "Sign in with ChatGPT": create the canonical openai-codex provider
@@ -313,25 +329,19 @@ export function AddProviderDialog({
 		// the sub-screen). redirect_uri stays identical across start/complete.
 		if (authMethod === "oauth") {
 			const redirectUri = codexRedirectUri();
-			if (!providers.isSuccess) {
-				toast.error("Provider list not ready", {
-					description: providers.isLoading
-						? "Wait for providers to finish loading, then try again."
-						: "Refresh providers, then try again.",
-				});
-				return;
-			}
 			// The canonical openai-codex provider must exist before `start`, but it
 			// isn't connected until `complete`. Only create it (quietly, without
 			// invalidating the list) if it doesn't already exist — so we never
 			// clobber a previously-connected provider, and an abandon cleans up
 			// only the record we ourselves created.
-			const existingCodex = providers.data.providers.some(
-				(p) => p.provider_id === CLAWDI_CODEX_OAUTH_PROVIDER_ID,
-			);
+			const existingCodex =
+				providers.data?.providers.some((p) => p.provider_id === CLAWDI_CODEX_OAUTH_PROVIDER_ID) ??
+				false;
 			if (!existingCodex) {
-				const codexCreated = await upsertQuiet.mutateAsync(codexProviderBody()).catch(() => null);
-				if (!codexCreated) return; // upsertQuiet.onError already toasts
+				const codexCreated = await createProviderQuiet
+					.mutateAsync(codexProviderBody())
+					.catch(() => null);
+				if (!codexCreated) return; // createProviderQuiet.onError already toasts
 				createdFreshRef.current = true;
 			} else {
 				createdFreshRef.current = false;
@@ -387,14 +397,12 @@ export function AddProviderDialog({
 			auth,
 			managed_by: "user" as const,
 			runtime_env_name: keyBacked ? runtimeEnvForSubmit : null,
-		};
-		const created = await upsert.mutateAsync(body).catch(() => null);
-		if (!created) return;
-
-		if (hasNewManagedKey) {
-			// Don't claim success on a key that didn't store — `/validate` only
-			// re-checks config shape, not that the key landed. setKey's onError
-			// already toasts; keep the dialog open so the user can retry.
+		} satisfies AiProviderUpsert;
+		let saved: AiProvider | null;
+		if (editing && hasNewManagedKey) {
+			// Store the payload and switch auth in the backend's single transaction
+			// before changing provider fields. A key-storage failure therefore
+			// leaves the entire existing provider untouched.
 			const keyStored = await setKey
 				.mutateAsync({
 					providerId,
@@ -402,26 +410,59 @@ export function AddProviderDialog({
 					runtime_env_name: runtimeEnvForSubmit,
 				})
 				.catch(() => null);
-			if (!keyStored) {
-				if (!isEdit) await deleteProviderQuiet.mutateAsync(providerId).catch(() => null);
+			if (!keyStored) return; // setKey.onError already toasts
+
+			saved = await patchProvider
+				.mutateAsync({
+					providerId,
+					body: providerPatchForSubmit(body, { preserveExistingAuth: true }),
+				})
+				.catch(() => null);
+			if (!saved) {
+				await restoreEditedProvider(providerId, editing);
 				return;
+			}
+		} else {
+			saved = editing
+				? await patchProvider
+						.mutateAsync({
+							providerId,
+							body: providerPatchForSubmit(body, { preserveExistingAuth: false }),
+						})
+						.catch(() => null)
+				: await createProvider.mutateAsync(body).catch(() => null);
+			if (!saved) return;
+
+			if (hasNewManagedKey) {
+				// Create has no prior auth to preserve. Remove the new provider if
+				// key storage fails so no unusable record remains.
+				const keyStored = await setKey
+					.mutateAsync({
+						providerId,
+						value: apiKey.trim(),
+						runtime_env_name: runtimeEnvForSubmit,
+					})
+					.catch(() => null);
+				if (!keyStored) {
+					await deleteProviderQuiet.mutateAsync(providerId).catch(() => null);
+					return;
+				}
 			}
 		}
 
-		// The provider IS saved at this point. `validate` is a post-save config
-		// check — distinguish its three outcomes honestly: invalid config,
-		// couldn't-run (network/throw → null), or clean.
-		const saved = isEdit ? "Provider updated" : "Provider added";
-		const result = await validate.mutateAsync(providerId).catch(() => null);
-		if (result && !result.valid) {
-			toast.warning("Provider saved with issues", { description: result.errors.join(" · ") });
-		} else if (!result) {
-			toast.success(saved, { description: "Couldn't run validation — check it from the list." });
-		} else {
-			toast.success(saved);
-		}
-		if (!isEdit) onCreated?.(created.provider_id);
+		toast.success(isEdit ? "Provider updated" : "Provider added");
+		if (!isEdit) onCreated?.(saved.provider_id);
 		onOpenChange(false);
+	}
+
+	async function restoreEditedProvider(providerId: string, previous: AiProvider) {
+		await patchProviderQuiet
+			.mutateAsync({ providerId, body: providerRollbackPatch(previous) })
+			.catch((error: unknown) => {
+				toast.error("Couldn't restore previous provider settings", {
+					description: normalizeApiError(error),
+				});
+			});
 	}
 
 	function openSignIn(url: string) {
@@ -612,11 +653,12 @@ export function AddProviderDialog({
 	}, [oauth]);
 
 	const busy =
-		upsert.isPending ||
-		upsertQuiet.isPending ||
+		createProvider.isPending ||
+		createProviderQuiet.isPending ||
+		patchProvider.isPending ||
+		patchProviderQuiet.isPending ||
 		deleteProviderQuiet.isPending ||
 		setKey.isPending ||
-		validate.isPending ||
 		oauthStart.isPending;
 
 	return (
@@ -729,6 +771,16 @@ export function AddProviderDialog({
 
 						<div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
 							<div className="flex flex-col gap-4">
+								{!providerListReady ? (
+									<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+										<CircleAlert className="mt-0.5 size-3.5 shrink-0" />
+										<p>
+											{providers.isLoading
+												? "Providers are still loading. Adding is disabled until the list is ready."
+												: "Providers couldn't be loaded. Retry the list before adding one."}
+										</p>
+									</div>
+								) : null}
 								{!isEdit ? (
 									<div className="flex flex-col gap-2">
 										<Label>Provider preset</Label>

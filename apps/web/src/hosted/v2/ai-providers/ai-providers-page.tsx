@@ -1,7 +1,7 @@
 "use client";
 
 import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
-import { BadgeCheck, Pencil, Plus, Trash2 } from "lucide-react";
+import { ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -12,15 +12,34 @@ import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+	AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
+import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
 	useAiProviders,
+	useCheckProviderFields,
 	useDeleteProvider,
-	useValidateProvider,
 } from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import {
+	type ProviderUsage,
+	providerRemovalImpact,
+	providerUsage,
+} from "@/hosted/v2/ai-providers/ai-providers-page.logic";
 import { AuthBadge, ManagedProviderCard } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
 	API_MODE_LABEL,
@@ -37,6 +56,7 @@ const PROVIDER_GRID_CLASS = ENTITY_GRID_CLASS;
 
 export function AiProvidersPage() {
 	const providers = useAiProviders();
+	const inventory = useHostedDeploymentInventory();
 	const [addOpen, setAddOpen] = useState(false);
 	const [editing, setEditing] = useState<AiProvider | null>(null);
 
@@ -52,6 +72,7 @@ export function AiProvidersPage() {
 				actions={
 					<Button
 						size="sm"
+						disabled={!providers.isSuccess}
 						onClick={() => {
 							setEditing(null);
 							setAddOpen(true);
@@ -93,6 +114,7 @@ export function AiProvidersPage() {
 							<ProviderCard
 								key={provider.provider_id}
 								provider={provider}
+								usage={providerUsage(provider.provider_id, inventory.deployments)}
 								onEdit={() => {
 									setEditing(provider);
 									setAddOpen(true);
@@ -108,18 +130,30 @@ export function AiProvidersPage() {
 	);
 }
 
-function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () => void }) {
+function ProviderCard({
+	provider,
+	usage,
+	onEdit,
+}: {
+	provider: AiProvider;
+	usage: ProviderUsage;
+	onEdit: () => void;
+}) {
 	const meta = providerTypeMeta(provider.type);
-	const del = useDeleteProvider();
-	const validate = useValidateProvider();
+	const checkFields = useCheckProviderFields();
 	const providerLabel = provider.label ?? provider.provider_id;
 	const modelSummary = modelCatalogSummary(provider);
 
-	function runValidate() {
-		validate.mutate(provider.provider_id, {
+	function runCheckFields() {
+		checkFields.mutate(provider.provider_id, {
 			onSuccess: (result) => {
-				if (result.valid) toast.success("Configuration looks good");
-				else toast.warning("Validation issues", { description: result.errors.join(" · ") });
+				if (result.valid) {
+					toast.success("Saved fields are valid", {
+						description: "This does not test endpoint connectivity or credentials.",
+					});
+				} else {
+					toast.warning("Field check found issues", { description: result.errors.join(" · ") });
+				}
 			},
 		});
 	}
@@ -147,40 +181,96 @@ function ProviderCard({ provider, onEdit }: { provider: AiProvider; onEdit: () =
 				<Button
 					variant="ghost"
 					size="sm"
-					onClick={runValidate}
-					disabled={validate.isPending}
-					aria-label={`Validate ${providerLabel}`}
+					onClick={runCheckFields}
+					disabled={checkFields.isPending}
+					aria-label={`Check saved fields for ${providerLabel}`}
 				>
-					<BadgeCheck />
-					Validate
+					<ListChecks />
+					Check fields
 				</Button>
 				<Button variant="outline" size="sm" onClick={onEdit} aria-label={`Edit ${providerLabel}`}>
 					<Pencil />
 					Edit
 				</Button>
-				<ConfirmAction
-					title={`Remove ${providerLabel}?`}
-					description={
-						<p>
-							Agents using this provider fall back to the managed default. This can't be undone.
-						</p>
-					}
-					confirmLabel="Remove provider"
-					destructive
-					onConfirm={() => del.mutate(provider.provider_id)}
-				>
+				<RemoveProviderAction provider={provider} usage={usage} />
+			</div>
+		</div>
+	);
+}
+
+function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage: ProviderUsage }) {
+	const del = useDeleteProvider();
+	const [open, setOpen] = useState(false);
+	const [acknowledged, setAcknowledged] = useState(false);
+	const providerLabel = provider.label ?? provider.provider_id;
+	const impact = providerRemovalImpact(usage);
+	const acknowledgementId = `remove-provider-ack-${provider.provider_id}`;
+
+	function changeOpen(next: boolean) {
+		if (del.isPending) return;
+		setOpen(next);
+		if (!next) setAcknowledged(false);
+	}
+
+	function removeProvider() {
+		del.mutate(provider.provider_id, {
+			onSuccess: () => {
+				setOpen(false);
+				setAcknowledged(false);
+			},
+		});
+	}
+
+	return (
+		<AlertDialog open={open} onOpenChange={changeOpen}>
+			<AlertDialogTrigger
+				render={
 					<Button
 						variant="ghost"
 						size="icon-sm"
 						className="ml-auto text-muted-foreground hover:text-destructive"
 						disabled={del.isPending}
 						aria-label={`Remove ${providerLabel}`}
+					/>
+				}
+			>
+				<Trash2 />
+			</AlertDialogTrigger>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>Remove {providerLabel}?</AlertDialogTitle>
+					<AlertDialogDescription render={<div className="space-y-3" />}>
+						<p>{impact.warning}</p>
+						{impact.acknowledgementRequired ? (
+							<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">
+								<Checkbox
+									id={acknowledgementId}
+									checked={acknowledged}
+									onCheckedChange={(checked) => setAcknowledged(checked === true)}
+								/>
+								<Label htmlFor={acknowledgementId} className="text-sm font-normal leading-snug">
+									I understand that affected agents will lose model access until reconfigured.
+								</Label>
+							</div>
+						) : null}
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel disabled={del.isPending}>Cancel</AlertDialogCancel>
+					<AlertDialogAction
+						onClick={(event) => {
+							event.preventDefault();
+							removeProvider();
+						}}
+						disabled={del.isPending || (impact.acknowledgementRequired && !acknowledged)}
+						variant="destructive"
 					>
-						<Trash2 />
-					</Button>
-				</ConfirmAction>
-			</div>
-		</div>
+						{del.isPending ? <Spinner /> : null}
+						Remove provider
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
 	);
 }
 
