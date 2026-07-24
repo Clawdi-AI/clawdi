@@ -5,13 +5,16 @@ import {
 	modelsFromText,
 	providerAuthForSubmit,
 	providerFormIdentity,
+	providerListAllowsSubmit,
+	providerPatchForSubmit,
+	providerRollbackPatch,
 	shouldUseCatalogModels,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import {
 	presetCatalogToProviderModels,
 	providerPresetById,
 } from "@/hosted/v2/ai-providers/provider-presets";
-import type { AiProviderAuth } from "@/hosted/v2/ai-providers/types";
+import type { AiProvider, AiProviderAuth, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 function testPreset(id: string) {
 	const preset = providerPresetById(id);
@@ -78,6 +81,67 @@ describe("providerAuthForSubmit", () => {
 				hasNewManagedKey: true,
 			}),
 		).toEqual({ type: "api_key", source: "managed" });
+	});
+});
+
+describe("provider edit integrity", () => {
+	const body = {
+		provider_id: "openai",
+		type: "openai",
+		label: "Updated OpenAI",
+		base_url: "https://api.openai.com/v1",
+		api_mode: "openai_responses",
+		auth: { type: "api_key", source: "managed" },
+		managed_by: "user",
+		runtime_env_name: "OPENAI_API_KEY",
+		models: [{ id: "gpt-5.5" }],
+	} satisfies AiProviderUpsert;
+
+	test("omits auth from the metadata patch after a managed key is stored", () => {
+		const patch = providerPatchForSubmit(body, { preserveExistingAuth: true });
+
+		expect("auth" in patch).toBe(false);
+		expect(patch.label).toBe("Updated OpenAI");
+	});
+
+	test("includes auth for a single-request edit that does not store a new key", () => {
+		expect(providerPatchForSubmit(body, { preserveExistingAuth: false }).auth).toEqual(body.auth);
+	});
+
+	test("builds a rollback patch with the prior auth source and fields", () => {
+		const provider = {
+			id: "provider-row-id",
+			provider_id: "openai",
+			type: "openai",
+			label: "Original OpenAI",
+			base_url: "https://old.example/v1",
+			api_mode: "openai_chat",
+			auth: { type: "api_key", source: "env", ref: "env:OPENAI_API_KEY" },
+			managed_by: "user",
+			runtime_env_name: "OPENAI_API_KEY",
+			models: [{ id: "gpt-old" }],
+			scope: "user",
+			created_at: "2026-01-01T00:00:00Z",
+			updated_at: "2026-01-01T00:00:00Z",
+		} satisfies AiProvider;
+
+		expect(providerRollbackPatch(provider)).toMatchObject({
+			label: "Original OpenAI",
+			base_url: "https://old.example/v1",
+			auth: { type: "api_key", source: "env", ref: "env:OPENAI_API_KEY" },
+			models: [{ id: "gpt-old" }],
+		});
+	});
+});
+
+describe("provider list submit gate", () => {
+	test("blocks create until the provider list succeeds", () => {
+		expect(providerListAllowsSubmit(false, false)).toBe(false);
+		expect(providerListAllowsSubmit(false, true)).toBe(true);
+	});
+
+	test("does not block editing an already-loaded provider snapshot", () => {
+		expect(providerListAllowsSubmit(true, false)).toBe(true);
 	});
 });
 

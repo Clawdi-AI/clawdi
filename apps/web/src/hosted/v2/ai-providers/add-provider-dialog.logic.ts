@@ -14,6 +14,7 @@ import {
 import type {
 	AiProvider,
 	AiProviderAuth,
+	AiProviderPatch,
 	AiProviderUpsert,
 	AiProviderUpsertAuth,
 } from "@/hosted/v2/ai-providers/types";
@@ -88,6 +89,46 @@ export function providerAuthForSubmit({
 		if (keepable) return keepable.auth;
 	}
 	return authFor("api_key");
+}
+
+export function providerPatchForSubmit(
+	body: AiProviderUpsert,
+	options: { preserveExistingAuth: boolean },
+): AiProviderPatch {
+	const patch: AiProviderPatch = {
+		type: body.type,
+		label: body.label,
+		base_url: body.base_url,
+		api_mode: body.api_mode,
+		managed_by: body.managed_by,
+		runtime_env_name: body.runtime_env_name,
+		capabilities: body.capabilities,
+		models: body.models,
+	};
+	if (!options.preserveExistingAuth) patch.auth = body.auth;
+	return patch;
+}
+
+/** Restore every editable field exposed by the provider response. */
+export function providerRollbackPatch(provider: AiProvider): AiProviderPatch {
+	const patch: AiProviderPatch = {
+		type: provider.type,
+		label: provider.label,
+		base_url: provider.base_url,
+		api_mode: provider.api_mode,
+		managed_by: provider.managed_by,
+		runtime_env_name: provider.runtime_env_name,
+		capabilities: provider.capabilities,
+		models: provider.models,
+	};
+	// oauth_profile is a response-only legacy auth shape. For every editable
+	// auth shape, restore the prior source as well as the provider fields.
+	if (provider.auth.type !== "oauth_profile") patch.auth = provider.auth;
+	return patch;
+}
+
+export function providerListAllowsSubmit(isEdit: boolean, listLoaded: boolean): boolean {
+	return isEdit || listLoaded;
 }
 
 export function modelsToText(models: ReadonlyArray<{ id: string }> | null | undefined): string {

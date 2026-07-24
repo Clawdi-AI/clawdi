@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import type { AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
+import type { AiProviderPatch, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 
 /** Typed data hooks for the AI Providers surface (cloud-api `/v1/ai-providers`). */
@@ -17,14 +17,46 @@ export function useAiProviders() {
 	});
 }
 
-export function useUpsertProvider() {
+export function useCreateProvider() {
 	const api = useApi();
 	const qc = useQueryClient();
 	return useMutation({
 		mutationFn: async (body: AiProviderUpsert) =>
-			unwrap(await api.POST("/v1/ai-providers", { body, params: { query: { replace: true } } })),
+			unwrap(await api.POST("/v1/ai-providers", { body, params: { query: { replace: false } } })),
 		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
-		onError: toastApiError("Couldn't save provider"),
+		onError: toastApiError("Couldn't add provider"),
+	});
+}
+
+export function usePatchProvider() {
+	const api = useApi();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (vars: { providerId: string; body: AiProviderPatch }) =>
+			unwrap(
+				await api.PATCH("/v1/ai-providers/{provider_id}", {
+					params: { path: { provider_id: vars.providerId } },
+					body: vars.body,
+				}),
+			),
+		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+		onError: toastApiError("Couldn't update provider"),
+	});
+}
+
+/** Silent patch used only to restore a snapshot after a multi-step edit fails. */
+export function usePatchProviderQuiet() {
+	const api = useApi();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: async (vars: { providerId: string; body: AiProviderPatch }) =>
+			unwrap(
+				await api.PATCH("/v1/ai-providers/{provider_id}", {
+					params: { path: { provider_id: vars.providerId } },
+					body: vars.body,
+				}),
+			),
+		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
 	});
 }
 
@@ -53,11 +85,11 @@ export function useDeleteProvider() {
  * a provider that looks connected even if the user abandons sign-in. The list
  * refreshes on a successful `complete` (`useOAuthComplete`) instead.
  */
-export function useUpsertProviderQuiet() {
+export function useCreateProviderQuiet() {
 	const api = useApi();
 	return useMutation({
 		mutationFn: async (body: AiProviderUpsert) =>
-			unwrap(await api.POST("/v1/ai-providers", { body, params: { query: { replace: true } } })),
+			unwrap(await api.POST("/v1/ai-providers", { body, params: { query: { replace: false } } })),
 		onError: toastApiError("Couldn't start sign-in"),
 	});
 }
@@ -149,7 +181,8 @@ export function useSetApiKey() {
 	});
 }
 
-export function useValidateProvider() {
+/** Static saved-field check; this endpoint does not probe credentials or connectivity. */
+export function useCheckProviderFields() {
 	const api = useApi();
 	return useMutation({
 		mutationFn: async (providerId: string) =>
@@ -158,7 +191,7 @@ export function useValidateProvider() {
 					params: { path: { provider_id: providerId } },
 				}),
 			),
-		onError: toastApiError("Couldn't validate"),
+		onError: toastApiError("Couldn't check fields"),
 	});
 }
 
