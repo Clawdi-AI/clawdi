@@ -11,11 +11,14 @@ export default defineConfig({
 	expect: {
 		timeout: 5_000,
 	},
+	retries: process.env.CI ? 1 : 0,
+	failOnFlakyTests: Boolean(process.env.CI),
 	fullyParallel: false,
 	reporter: process.env.CI ? "github" : "list",
 	use: {
 		baseURL,
 		trace: "on-first-retry",
+		screenshot: "only-on-failure",
 	},
 	webServer: {
 		command: `bun run dev -- --host 127.0.0.1 --port ${serverPort} --strictPort`,

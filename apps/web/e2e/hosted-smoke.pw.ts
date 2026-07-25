@@ -75,9 +75,7 @@ const basicPlan = {
 	slug: "compute_basic",
 	name: "Compute Basic",
 	price_cents: 900,
-	points_per_usd: 100,
-	signup_grant_credits: 500,
-	subscription_grant_credits: 0,
+	signup_grant_usd: "5.00",
 	vcpu: 2,
 	ram_gb: 4,
 	disk_size: 20,
@@ -102,9 +100,7 @@ const performancePlan = {
 	slug: "compute_performance",
 	name: "Compute Performance",
 	price_cents: 1_900,
-	points_per_usd: 100,
-	signup_grant_credits: 500,
-	subscription_grant_credits: 500,
+	signup_grant_usd: "5.00",
 	vcpu: 4,
 	ram_gb: 8,
 	disk_size: 40,
@@ -405,16 +401,16 @@ function walletSubscriptionQuote({
 	planSlug,
 	billingTermMonths,
 	termPriceCents,
-	exactDebitCredits,
-	balanceBeforeCredits,
-	balanceAfterCredits,
+	debitAmountUsd,
+	balanceBeforeUsd,
+	balanceAfterUsd,
 }: {
 	planSlug: "compute_basic" | "compute_performance";
 	billingTermMonths: 1 | 12;
 	termPriceCents: number;
-	exactDebitCredits: string;
-	balanceBeforeCredits: string;
-	balanceAfterCredits: string;
+	debitAmountUsd: string;
+	balanceBeforeUsd: string;
+	balanceAfterUsd: string;
 }) {
 	return {
 		plan_slug: planSlug,
@@ -424,10 +420,9 @@ function walletSubscriptionQuote({
 		term_price_cents: termPriceCents,
 		preview_invoice_id: `upcoming_${planSlug}_${billingTermMonths}`,
 		expires_at: "2026-07-16T00:15:00Z",
-		debit_credits: exactDebitCredits,
-		points_per_usd: 1_000,
-		balance_before_credits: balanceBeforeCredits,
-		balance_after_credits: balanceAfterCredits,
+		debit_amount_usd: debitAmountUsd,
+		balance_before_usd: balanceBeforeUsd,
+		balance_after_usd: balanceAfterUsd,
 	};
 }
 
@@ -442,7 +437,7 @@ function planChangeQuoteResponse({
 	changeKind,
 	effectiveAt,
 	amountCents,
-	amountCredits,
+	amountUsd,
 }: {
 	operationId: string;
 	subscriptionId: number;
@@ -454,7 +449,7 @@ function planChangeQuoteResponse({
 	changeKind: "immediate_upgrade" | "scheduled_downgrade";
 	effectiveAt: string;
 	amountCents: number;
-	amountCredits: string | null;
+	amountUsd: string | null;
 }) {
 	return {
 		operation_id: operationId,
@@ -470,8 +465,7 @@ function planChangeQuoteResponse({
 		proration_date: "2026-07-16T00:00:00Z",
 		expires_at: "2026-07-16T00:15:00Z",
 		amount_cents: amountCents,
-		amount_credits: amountCredits,
-		points_per_usd: fundingSource === "wallet" ? 1_000 : null,
+		amount_usd: amountUsd,
 		currency: "usd",
 		stripe_invoice_preview_id: "in_preview_browser",
 	};
@@ -797,8 +791,26 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 	const plans = options.plans ?? [];
 	let currentWallet = options.walletState ?? walletState;
 	const deploymentRequests = new Map<string, DeploymentMutationFixture>();
+	// Browser route mocks cannot satisfy the Vite SSR process. If they resolve
+	// during React's first hydration pass, client-only query data races the
+	// server markup and produces a real hydration mismatch. Hold the first API
+	// responses until the SSR markup has hydrated, then let React Query update
+	// the page normally. This keeps hydration checks enabled and deterministic.
+	const initialNavigationReady = new Promise<void>((resolve, reject) => {
+		page.once("domcontentloaded", () => {
+			page
+				.evaluate(
+					() =>
+						new Promise<void>((resolveFrame) => {
+							requestAnimationFrame(() => requestAnimationFrame(() => resolveFrame()));
+						}),
+				)
+				.then(() => resolve(), reject);
+		});
+	});
 	// Deploy API (/me, /v2/*).
 	await page.route(`${DEPLOY_API}/**`, async (r) => {
+		await initialNavigationReady;
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/me" || p === "/v1/me") {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
@@ -941,8 +953,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 								invoice_id: "in_wallet_browser",
 								deploy_request_id: deployRequestId,
 								deployment_id: "hdep_wallet_created",
-								debited_credits: "86400",
-								balance_after_credits: "13600",
+								debited_usd: "86.40",
+								balance_after_usd: "13.60",
 								current_period_start: "2026-07-15T00:00:00Z",
 								current_period_end: "2027-07-15T00:00:00Z",
 								entitled_until: "2027-07-15T00:00:00Z",
@@ -971,9 +983,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					planSlug: "compute_basic",
 					billingTermMonths: 1,
 					termPriceCents: 900,
-					exactDebitCredits: "9000",
-					balanceBeforeCredits: "25000",
-					balanceAfterCredits: "16000",
+					debitAmountUsd: "9.00",
+					balanceBeforeUsd: "25.00",
+					balanceAfterUsd: "16.00",
 				});
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
@@ -995,8 +1007,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				proration_date: "2026-07-16T00:00:00Z",
 				expires_at: "2026-07-16T00:15:00Z",
 				amount_cents: 1_000,
-				amount_credits: null,
-				points_per_usd: null,
+				amount_usd: null,
 				currency: "usd",
 				stripe_invoice_preview_id: "in_preview_browser",
 			};
@@ -1167,7 +1178,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		return fulfillJson(r, {});
 	});
 	// Cloud API (/v1/*).
-	await page.route(`${CLOUD_API}/**`, (r) => {
+	await page.route(`${CLOUD_API}/**`, async (r) => {
+		await initialNavigationReady;
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/v1/me") {
 			options.productAccessRequests?.push(`CLOUD ${p}`);
@@ -1267,8 +1279,11 @@ async function gotoHostedAgentSettings(
 	tier: "Basic" | "Performance",
 	search = "",
 ) {
+	const searchParams = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+	searchParams.set("source", "on-clawdi");
+	searchParams.set("d", deploymentId);
 	for (let attempt = 0; attempt < 2; attempt += 1) {
-		await page.goto(`/agents/${deploymentId}/settings${search}`);
+		await page.goto(`/agents/${deploymentId}/settings?${searchParams.toString()}`);
 		try {
 			await expect(page.getByText(`${tier} compute`, { exact: true })).toBeVisible();
 			// Do not open a modal while React is still hydrating the sidebar; Base UI's
@@ -1298,11 +1313,11 @@ async function gotoHostedSettingsDialog(page: Page, section: string) {
 
 test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
-	await stubHostedApi(page);
+	await stubHostedApi(page, { plans: [basicPlan] });
 	await page.goto("/deploy");
 
 	// The Personalize section's language select is always present.
-	const languageSelect = page.locator("#agent-language");
+	const languageSelect = page.getByRole("combobox", { name: "Language" });
 	await expect(languageSelect).toBeVisible();
 	await page.waitForTimeout(150);
 	expect(errors, `deploy render: ${errors.join(" | ")}`).toEqual([]);
@@ -1376,7 +1391,7 @@ test("accepted detail delete navigates after deployment membership disappears", 
 	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
 	await page
 		.getByRole("alertdialog")
-		.getByRole("button", { name: "Delete compute", exact: true })
+		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
@@ -1429,7 +1444,7 @@ test("Basic paid checkout stays hidden until deployment inventory succeeds", asy
 	await page.goto("/deploy");
 
 	await expect(page.getByText("Checking your free Basic slot…", { exact: true })).toBeVisible();
-	await expect(page.getByText("$9/mo", { exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: /^Basic \$9\.00\/mo/ })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Continue to checkout" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Deploy agent" })).toBeDisabled();
 
@@ -1463,7 +1478,7 @@ test("empty plans and wallet failures expose working retries", async ({ page }) 
 
 	const walletError = page
 		.getByRole("alert")
-		.filter({ hasText: "Couldn't load your AI Credits wallet" });
+		.filter({ hasText: "Couldn't load your Wallet balance" });
 	await expect(walletError).toBeVisible();
 	await walletError.getByRole("button", { name: "Retry" }).click();
 	await expect(page.getByTestId("wallet-debit-equation")).toBeVisible();
@@ -1485,7 +1500,7 @@ test("hosted locale settings submit canonical deployment PATCH", async ({ page }
 
 	await page.locator("#hosted-agent-language").click();
 	await page.getByRole("option", { name: "Español" }).click();
-	await page.getByRole("button", { name: "Apply locale settings" }).click();
+	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 
 	expect(updateDeploymentRequests[0]?.idempotencyKey).toMatch(/^deployment-update-/);
@@ -1508,7 +1523,7 @@ test("hosted AI provider Apply submits canonical deployment PATCH", async ({ pag
 	await page.goto("/agents/hdep_included/model-provider?source=on-clawdi");
 
 	await page.getByRole("button", { name: /Configure inside agent/ }).click();
-	await page.getByRole("button", { name: "Apply provider settings" }).click();
+	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		ai_provider_auth_kind: "unmanaged",
@@ -1540,7 +1555,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 
 	await page.getByRole("button", { name: /Managed by Clawdi/ }).click();
 	await expect(page.locator("#agent-catalog-model")).toContainText("Luna");
-	await page.getByRole("button", { name: "Apply provider settings" }).click();
+	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		ai_provider_auth_kind: "managed",
@@ -1568,7 +1583,7 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe("hdep_failed_projection");
-	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toBeVisible();
+	await expect(main.getByText("Some details are still syncing", { exact: true })).toBeVisible();
 	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
 	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
@@ -1645,7 +1660,7 @@ test("stopped detail stays recoverable without querying its removed projection",
 		).toBeVisible();
 		await expect(main.getByRole("button", { name: "Start", exact: true })).toBeVisible();
 		await expect(main.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
-		await expect(main.getByText("Agent sync record unavailable", { exact: true })).toHaveCount(0);
+		await expect(main.getByText("Some details are still syncing", { exact: true })).toHaveCount(0);
 	}
 
 	const removedProjectionRequests = cloudRequests.filter((path) => {
@@ -1722,11 +1737,11 @@ test("missing live projection recovers on Check again without losing deployment 
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toBeVisible();
+	await expect(main.getByText("Some details are still syncing", { exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Check again", exact: true }).click();
-	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Some details are still syncing", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Overview" })).toBeVisible();
 });
 
@@ -1744,7 +1759,7 @@ test("projection service errors stay visible while deployment tools remain avail
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText("Agent sync service unavailable", { exact: true })).toBeVisible();
+	await expect(main.getByText("Couldn’t sync agent details", { exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	const renderErrors = errors.filter(
@@ -1835,7 +1850,8 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Retry", exact: true }).click();
 	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toHaveCount(0);
-	await expect(main.locator('input[value="recovered-password"]')).toBeVisible();
+	await main.getByRole("button", { name: "Show Password", exact: true }).click();
+	await expect(main.getByText("recovered-password", { exact: true })).toBeVisible();
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
 });
 
@@ -1864,7 +1880,8 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 		"https://runtime.example/openclaw/#token=gateway-token",
 	);
 	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
-	await expect(main.locator('input[value="gateway-token"]')).toBeVisible();
+	await main.getByRole("button", { name: "Show Token", exact: true }).click();
+	await expect(main.getByText("gateway-token", { exact: true })).toBeVisible();
 	const popupPromise = page.waitForEvent("popup");
 	await main.getByRole("button", { name: "Open OpenClaw Control UI" }).click();
 	const popup = await popupPromise;
@@ -1970,14 +1987,16 @@ test("Basic create always follows the wizard-selected funding path", async ({ pa
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await stubHostedApi(page, {
 		checkoutRequests,
-		deployments: [paidBasicDeployment],
+		// Occupy the one included Basic slot so this scenario actually exercises
+		// the wizard-selected paid funding path.
+		deployments: [includedBasicDeployment],
 		plans: [basicPlan, performancePlan],
 	});
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("$9/mo", { exact: true })).toBeVisible();
-	await expect(page.getByText(/2 vCPU \/ 4 GB · \$9\/mo/)).toBeVisible();
+	await expect(page.getByRole("button", { name: /^Basic \$9\.00\/mo/ })).toBeVisible();
+	await expect(page.getByText("2 vCPU / 4 GB · $9.00/mo", { exact: true })).toBeVisible();
 	await expectNoQuarterlyCopy(page);
 	await capturePricingScreenshot(page, "/tmp/basic-paid-funded-slot-available-final.png");
 
@@ -2006,6 +2025,7 @@ test("entitled card subscription activation shows reuse banner without checkout"
 					funding_source: "stripe",
 					checkout_url: "",
 					deploy_request_id: "reuse-active-subscription",
+					deployment_id: "hdep_reused_subscription",
 					current_period_end: "2027-07-15T00:00:00Z",
 					entitled_until: "2027-07-15T00:00:00Z",
 				},
@@ -2051,7 +2071,7 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("$9/mo", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: /^Basic \$9\.00\/mo/ })).toBeVisible();
 	await expect(page.getByText("Monthly", { exact: true })).toBeVisible();
 	const annualTerm = page.getByRole("button", { name: /Annual.*%/ });
 	await expect(annualTerm).toBeVisible();
@@ -2059,8 +2079,12 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await annualTerm.click();
 	await expect(page.getByText("Wallet balance", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Wallet balance/ })).toBeVisible();
-	await expect(page.getByText(/2 vCPU \/ 4 GB · \$7.2\/mo, billed \$86.4\/yr/)).toBeVisible();
-	await expect(page.getByText(/this Basic agent at \$7.2\/mo, billed \$86.4\/yr/)).toBeVisible();
+	await expect(
+		page.getByText("2 vCPU / 4 GB · $7.20/mo, billed $86.40/yr", { exact: true }),
+	).toBeVisible();
+	await expect(
+		page.getByText(/this Basic agent at \$7\.20\/mo, billed \$86\.40\/yr/),
+	).toBeVisible();
 	await capturePricingScreenshot(page, "/tmp/basic-free-funded-slot-occupied-final.png");
 
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
@@ -2091,9 +2115,9 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 				planSlug: "compute_basic",
 				billingTermMonths: 12,
 				termPriceCents: 8_640,
-				exactDebitCredits: "86400",
-				balanceBeforeCredits: "100000",
-				balanceAfterCredits: "13600",
+				debitAmountUsd: "86.40",
+				balanceBeforeUsd: "100.00",
+				balanceAfterUsd: "13.60",
 			}),
 		],
 		walletState: { ...walletState, balance_usd: "100.00" },
@@ -2107,12 +2131,11 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 	await expect.poll(() => subscriptionQuoteRequests.length).toBe(1);
 	const equation = page.getByTestId("wallet-debit-equation");
 	await expect(equation).toContainText("Balance before");
-	await expect(equation).toContainText("100,000 credits");
+	await expect(equation).toContainText("$100.00");
 	await expect(equation).toContainText("Exact debit");
-	await expect(equation).toContainText("86,400 credits");
 	await expect(equation).toContainText("$86.40");
 	await expect(equation).toContainText("Balance after");
-	await expect(equation).toContainText("13,600 credits");
+	await expect(equation).toContainText("$13.60");
 
 	await page.getByRole("button", { name: "Pay $86.40 from Wallet & deploy" }).click();
 	await expect.poll(() => checkoutRequests.length).toBe(1);
@@ -2131,8 +2154,8 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 		quote: {
 			funding_source: "wallet",
 			term_price_cents: 8_640,
-			debit_credits: "86400",
-			balance_after_credits: "13600",
+			debit_amount_usd: "86.40",
+			balance_after_usd: "13.60",
 		},
 	});
 	await expect(page).toHaveURL(/\/agents\/hdep_wallet_created(?:\?|\/)/);
@@ -2176,7 +2199,7 @@ test("included Basic uses unified card quote and change without creating a secon
 				changeKind: "immediate_upgrade",
 				effectiveAt: "2026-07-16T00:00:00Z",
 				amountCents: 18_000,
-				amountCredits: null,
+				amountUsd: null,
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2254,7 +2277,7 @@ test("included Basic uses unified wallet quote and change with exact debit", asy
 				changeKind: "immediate_upgrade",
 				effectiveAt: "2026-07-16T00:00:00Z",
 				amountCents: 1_900,
-				amountCredits: "19000",
+				amountUsd: "19.00",
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2277,9 +2300,9 @@ test("included Basic uses unified wallet quote and change with exact debit", asy
 		funding_source: "wallet",
 	});
 	const equation = changeDialog.getByTestId("wallet-debit-equation");
-	await expect(equation).toContainText("25,000 credits");
-	await expect(equation).toContainText("19,000 credits");
-	await expect(equation).toContainText("6,000 credits");
+	await expect(equation).toContainText("$25.00");
+	await expect(equation).toContainText("$19.00");
+	await expect(equation).toContainText("$6.00");
 	await changeDialog.getByRole("button", { name: "Confirm upgrade" }).click();
 
 	await expect.poll(() => planChangeRequests.length).toBe(1);
@@ -2324,7 +2347,7 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 				changeKind: "immediate_upgrade",
 				effectiveAt: "2026-07-16T00:00:00Z",
 				amountCents: 9_360,
-				amountCredits: null,
+				amountUsd: null,
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2385,7 +2408,7 @@ test("paid wallet subscription confirms an immediate quoted upgrade", async ({ p
 				changeKind: "immediate_upgrade",
 				effectiveAt: "2026-07-16T00:00:00Z",
 				amountCents: 1_000,
-				amountCredits: "10000",
+				amountUsd: "10.00",
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2401,9 +2424,9 @@ test("paid wallet subscription confirms an immediate quoted upgrade", async ({ p
 	await review.click();
 	await expect.poll(() => planQuoteRequests.length).toBe(1);
 	const equation = changeDialog.getByTestId("wallet-debit-equation");
-	await expect(equation).toContainText("25,000 credits");
-	await expect(equation).toContainText("10,000 credits");
-	await expect(equation).toContainText("15,000 credits");
+	await expect(equation).toContainText("$25.00");
+	await expect(equation).toContainText("$10.00");
+	await expect(equation).toContainText("$15.00");
 	await changeDialog.getByRole("button", { name: "Confirm upgrade" }).click();
 
 	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
@@ -2452,7 +2475,7 @@ test("paid Performance schedules its quoted downgrade for the effective date", a
 				changeKind: "scheduled_downgrade",
 				effectiveAt: "2027-07-15T00:00:00Z",
 				amountCents: 0,
-				amountCredits: null,
+				amountUsd: null,
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2805,7 +2828,7 @@ test("paid Basic checkout abandonment preserves the checkout-ready wizard", asyn
 
 	await expect(page.getByText("Checkout canceled", { exact: true })).toBeVisible();
 	await expect(page.getByText("You were not charged. Your agent was not deployed.")).toBeVisible();
-	await expect(page.getByText("$9/mo", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: /^Basic \$9\.00\/mo/ })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Continue to checkout" })).toBeVisible();
 	await expect(page.getByText("First slot free", { exact: true })).toHaveCount(0);
 	expect(checkoutRequests).toEqual([]);
@@ -2897,7 +2920,7 @@ test("Stripe invoice history shows both rails and a server-visible zero proratio
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog.getByText("Billing history", { exact: true })).toBeVisible();
 	const billingTable = settingsDialog.getByRole("table");
-	await expect(billingTable.getByText("Paid with AI Credits", { exact: true })).toBeVisible();
+	await expect(billingTable.getByText("Paid from Wallet", { exact: true })).toBeVisible();
 	await expect(billingTable.getByText("Paid by card", { exact: true })).toHaveCount(2);
 	await expect(
 		billingTable.locator('a[href="https://invoice.stripe.test/in_wallet"]'),
@@ -2912,7 +2935,7 @@ test("Stripe invoice history shows both rails and a server-visible zero proratio
 	await expect(
 		settingsDialog.getByText("Couldn’t load more billing history", { exact: true }),
 	).toBeVisible();
-	await expect(billingTable.getByText("Paid with AI Credits", { exact: true })).toBeVisible();
+	await expect(billingTable.getByText("Paid from Wallet", { exact: true })).toBeVisible();
 	await settingsDialog.getByRole("button", { name: "Retry" }).click();
 	await expect.poll(() => billingHistoryRequests.length).toBe(3);
 	expect(new URL(billingHistoryRequests[1] ?? "http://invalid").searchParams.get("cursor")).toBe(
@@ -3259,15 +3282,15 @@ test("card past due uses Fix payment instead of wallet recovery", async ({ page 
 	expect(errors, `card payment recovery: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("compute plans keep signup credits without advertising subscription credit grants", async ({
+test("compute plans keep the welcome balance without advertising recurring grants", async ({
 	page,
 }) => {
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page, {
 		deployments: [paidBasicDeployment],
 		plans: [
-			{ ...basicPlan, subscription_grant_credits: 500 },
-			{ ...performancePlan, subscription_grant_credits: 1_000 },
+			{ ...basicPlan, signup_grant_usd: "5.00" },
+			{ ...performancePlan, signup_grant_usd: "5.00" },
 		],
 	});
 	await page.goto("/channels?settings=billing-plan");
@@ -3275,7 +3298,7 @@ test("compute plans keep signup credits without advertising subscription credit 
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog).toBeVisible();
 	await expect(
-		settingsDialog.getByText("$5.00 in AI Credits on signup", { exact: true }),
+		settingsDialog.getByText("$5.00 welcome balance on signup", { exact: true }),
 	).toBeVisible();
 	await expect(settingsDialog).not.toContainText("AI Credits per subscription");
 	await expect(settingsDialog).not.toContainText("AI Credits added to Wallet");

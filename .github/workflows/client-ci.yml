@@ -222,6 +222,43 @@ jobs:
           CLERK_SECRET_KEY: sk_test_dummy
         run: bunx turbo build --filter=web
 
+  web-e2e:
+    needs: changes
+    if: >-
+      github.event_name != 'schedule' && (
+        needs.changes.outputs.web == 'true' ||
+        needs.changes.outputs.shared == 'true' ||
+        needs.changes.outputs.infra == 'true'
+      )
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup-bun-ci
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-${{ runner.arch }}-
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+      - name: Run OSS web end-to-end tests
+        run: bun run --cwd apps/web e2e
+      - name: Run hosted web end-to-end tests
+        run: bun run --cwd apps/web e2e:hosted
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-failures-${{ github.run_id }}-${{ github.run_attempt }}
+          path: apps/web/test-results
+          if-no-files-found: ignore
+          retention-days: 7
+
   deploy-contract-drift:
     needs: changes
     if: >-
