@@ -63,8 +63,8 @@ export type RuntimeUiSettlingPollState = {
 /**
  * A4 may report compute as running just before its runtime UI endpoint is
  * published. Keep that short-lived gap on the fast deployment-query cadence,
- * but stop rapid polling after the boot window. Returning false leaves the
- * inventory event-driven unless another scoped interval applies.
+ * but stop rapid polling after the boot window. Returning false lets the
+ * shared query fall back to its modest foreground reconciliation interval.
  */
 export function runtimeUiSettlingPollState(
 	deployment: HostedDeployment | null | undefined,

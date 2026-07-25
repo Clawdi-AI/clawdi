@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
+import {
+	environmentManager,
+	focusManager,
+	QueryClient,
+	QueryObserver,
+} from "@tanstack/react-query";
 import { checkoutReturnMarker, checkoutReturnWasCanceled } from "@/hosted/billing/checkout-return";
 import type {
 	ComputeSubscriptionActionResult,
@@ -11,10 +16,12 @@ import {
 	applyDeploymentSubscriptionResult,
 	billingKeys,
 	billingRecoveryRefetchIntervalFor,
+	HOSTED_DEPLOYMENTS_REFRESH_POLICY,
 	reconcileDeploymentSnapshots,
 	refreshCheckoutReturnQueries,
 } from "@/hosted/billing/hooks";
 import { deploymentFailureProjection } from "@/hosted/deployment-failure";
+import { DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 function deployment(
@@ -238,6 +245,47 @@ describe("billingRecoveryRefetchIntervalFor", () => {
 			"hdep_unpaid",
 		);
 		expect(billingRecoveryRefetchIntervalFor([unpaid], unpaid.resource.id)).toBe(false);
+	});
+});
+
+describe("hosted deployment refresh policy", () => {
+	test("uses TanStack focus state to pause steady refreshes in a background tab", async () => {
+		expect(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS).toBe(60_000);
+		expect(HOSTED_DEPLOYMENTS_REFRESH_POLICY).toEqual({
+			refetchIntervalInBackground: false,
+			refetchOnWindowFocus: true,
+		});
+
+		environmentManager.setIsServer(() => false);
+		focusManager.setFocused(false);
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		let calls = 0;
+		const observer = new QueryObserver(queryClient, {
+			queryKey: ["test", "hosted-deployment-foreground-refresh"],
+			queryFn: async () => {
+				calls += 1;
+				return [];
+			},
+			refetchInterval: 5,
+			...HOSTED_DEPLOYMENTS_REFRESH_POLICY,
+		});
+		const unsubscribe = observer.subscribe(() => undefined);
+
+		try {
+			await Bun.sleep(20);
+			expect(calls).toBe(1);
+
+			focusManager.setFocused(true);
+			for (let attempt = 0; attempt < 20 && calls === 1; attempt += 1) {
+				await Bun.sleep(5);
+			}
+			expect(calls).toBeGreaterThan(1);
+		} finally {
+			unsubscribe();
+			queryClient.clear();
+			focusManager.setFocused(undefined);
+			environmentManager.setIsServer(() => typeof window === "undefined");
+		}
 	});
 });
 

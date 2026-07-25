@@ -376,6 +376,12 @@ export function useUsage() {
 
 const BILLING_RECOVERY_POLL_INTERVAL_MS = 30_000;
 
+/** Foreground polling is a bridge until deployment SSE is wired into this client. */
+export const HOSTED_DEPLOYMENTS_REFRESH_POLICY = {
+	refetchIntervalInBackground: false,
+	refetchOnWindowFocus: true,
+} as const;
+
 export function reconcileDeploymentSnapshots(
 	previous: readonly HostedDeployment[] | undefined,
 	incoming: HostedDeployment[],
@@ -461,7 +467,7 @@ export function useHostedDeployments({
 			const detailInterval = additionalRefetchInterval?.(q.state.data) ?? false;
 			return shortestRefetchInterval(inventoryInterval, billingInterval, detailInterval);
 		},
-		refetchIntervalInBackground: false,
+		...HOSTED_DEPLOYMENTS_REFRESH_POLICY,
 	});
 	const deploymentPolling = deriveDeploymentPollingState(query.data, Date.now());
 

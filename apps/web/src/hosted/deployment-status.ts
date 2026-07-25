@@ -32,6 +32,7 @@ export type DeploymentStatus = KnownDeploymentStatusModel | UnknownDeploymentSta
 
 export const DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS = 10_000;
 export const DEPLOYMENT_TRANSITION_TIMEOUT_MS = 5 * 60_000;
+export const DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS = 60_000;
 
 export type SettlingTracker = {
 	key: string;
@@ -311,8 +312,8 @@ export function shouldPollDeployments(
 
 /**
  * Poll each accepted lifecycle operation only during its bounded convergence
- * window. Stable snapshots are event-driven (query invalidation, focus, or a
- * manual refetch) and do not schedule a perpetual inventory timer.
+ * window. Until the existing deployment SSE stream is wired into the client,
+ * stable snapshots use a modest foreground-only reconciliation interval.
  */
 export function deploymentPollingState(
 	deployments: readonly HostedDeployment[] | null | undefined,
@@ -350,6 +351,9 @@ export function deploymentPollingState(
 					? Math.min(refetchInterval, pollState.refetchInterval)
 					: pollState.refetchInterval;
 		}
+	}
+	if (deployments !== null && deployments !== undefined && transitions.size === 0) {
+		refetchInterval = DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS;
 	}
 
 	return { refetchInterval, trackers: nextTrackers, transitions };

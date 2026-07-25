@@ -6,6 +6,7 @@ import {
 	canRestart,
 	canStart,
 	canStop,
+	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
 	DEPLOYMENT_TRANSITION_TIMEOUT_MS,
 	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
 	deploymentPollingState,
@@ -201,7 +202,7 @@ describe("DeploymentStatus", () => {
 		});
 	});
 
-	test("stops immediately when a lifecycle operation reaches a terminal state", () => {
+	test("drops fast polling immediately when a lifecycle operation reaches a terminal state", () => {
 		const nowMs = Date.parse("2026-07-25T00:00:00Z");
 		const operation = acceptedOperation("stop");
 		const pending = deploymentPollingState(
@@ -227,7 +228,8 @@ describe("DeploymentStatus", () => {
 			nowMs + DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
 		);
 
-		expect(terminal.refetchInterval).toBe(false);
+		expect(terminal.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(terminal.refetchInterval).not.toBe(DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS);
 		expect(terminal.transitions.size).toBe(0);
 		expect(terminal.trackers.size).toBe(0);
 	});
@@ -255,12 +257,13 @@ describe("DeploymentStatus", () => {
 		});
 	});
 
-	test("does not schedule perpetual refetches for steady inventory", () => {
+	test("schedules a modest reconciliation interval for steady inventory", () => {
 		const deployments = [
 			hostedDeploymentFixture({ status: "running" }),
 			hostedDeploymentFixture({ id: "hdep_stopped", status: "stopped" }),
 			hostedDeploymentFixture({ id: "hdep_failed", status: "failed" }),
 		];
-		expect(deploymentRefetchInterval(deployments)).toBe(false);
+		expect(deploymentRefetchInterval(deployments)).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS).toBe(60_000);
 	});
 });
