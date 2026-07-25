@@ -43,7 +43,11 @@ from app.schemas.ai_provider import (
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_IDS,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    V2_MANAGED_AI_PROVIDER_ID,
+    V2_MANAGED_AI_PROVIDER_IDS,
+    is_v2_deployment_managed_provider_id,
     managed_provider_api_mode,
+    runtime_managed_provider_id,
 )
 from app.services.sync_events import queue_provider_runtime_manifest_changed
 from app.services.vault_crypto import decrypt, encrypt
@@ -107,7 +111,13 @@ async def list_ai_providers(
         .scalars()
         .all()
     )
-    return AiProviderListResponse(providers=[_to_response(row) for row in rows])
+    providers_by_public_id: dict[str, AiProviderResponse] = {}
+    for row in rows:
+        if is_v2_deployment_managed_provider_id(row.provider_id):
+            continue
+        response = _to_response(row)
+        providers_by_public_id.setdefault(response.provider_id, response)
+    return AiProviderListResponse(providers=list(providers_by_public_id.values()))
 
 
 @router.post("", response_model=AiProviderResponse, response_model_exclude_none=True)
@@ -117,6 +127,8 @@ async def upsert_ai_provider(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
+    if body.provider_id in V2_MANAGED_AI_PROVIDER_IDS:
+        body = body.model_copy(update={"provider_id": V2_MANAGED_AI_PROVIDER_ID})
     errors = _validate_provider(body)
     if errors:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, {"errors": errors})
@@ -186,7 +198,7 @@ async def delete_ai_provider(
             await db.execute(
                 select(AiProviderAuthPayload).where(
                     AiProviderAuthPayload.owner_user_id == auth.user_id,
-                    AiProviderAuthPayload.provider_id == provider_id,
+                    AiProviderAuthPayload.provider_id == provider.provider_id,
                     AiProviderAuthPayload.archived_at.is_(None),
                 )
             )
@@ -198,7 +210,10 @@ async def delete_ai_provider(
         payload.archived_at = archived_at
     await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
-    return AiProviderDeleteResponse(status="deleted", provider_id=provider_id)
+    return AiProviderDeleteResponse(
+        status="deleted",
+        provider_id=runtime_managed_provider_id(provider.provider_id),
+    )
 
 
 @router.post("/{provider_id}/validate", response_model=AiProviderValidationResponse)
@@ -232,7 +247,7 @@ async def set_ai_provider_api_key(
     await _store_auth_payload(
         db,
         auth,
-        provider_id,
+        provider.provider_id,
         profile,
         "api_key",
         body.value.get_secret_value(),
@@ -283,7 +298,7 @@ async def import_ai_provider_auth(
     await _store_auth_payload(
         db,
         auth,
-        provider_id,
+        provider.provider_id,
         profile,
         auth_import.type,
         auth_import.payload.get_secret_value(),
@@ -306,7 +321,7 @@ async def start_ai_provider_oauth(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderOAuthStartResponse:
-    await _get_provider_or_404(db, auth, provider_id)
+    provider = await _get_provider_or_404(db, auth, provider_id)
     oauth_provider = _normalize_profile(body.provider)
     _validate_supported_oauth_provider(oauth_provider)
     profile = "default"
@@ -326,7 +341,7 @@ async def start_ai_provider_oauth(
     expires_at = datetime.now(UTC) + timedelta(seconds=OAUTH_STATE_TTL_SECONDS)
     state = _encode_oauth_state(
         {
-            "provider_id": provider_id,
+            "provider_id": provider.provider_id,
             "owner_user_id": str(auth.user_id),
             "oauth_provider": oauth_provider,
             "profile": profile,
@@ -363,7 +378,7 @@ async def start_ai_provider_oauth(
     separator = "&" if "?" in authorization_url else "?"
     auth_url = f"{authorization_url}{separator}{urlencode(params)}"
     return AiProviderOAuthStartResponse(
-        provider_id=provider_id,
+        provider_id=runtime_managed_provider_id(provider.provider_id),
         oauth_provider=oauth_provider,
         profile=profile,
         auth_url=auth_url,
@@ -387,7 +402,9 @@ async def complete_ai_provider_oauth(
     provider = await _get_provider_or_404(db, auth, provider_id)
     previous_signature = _runtime_manifest_provider_signature(provider)
     state = _decode_oauth_state(body.state)
-    if state.get("provider_id") != provider_id or state.get("owner_user_id") != str(auth.user_id):
+    if state.get("provider_id") != provider.provider_id or state.get("owner_user_id") != str(
+        auth.user_id
+    ):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state does not match this user")
     expires_at = _parse_state_datetime(str(state.get("expires_at") or ""))
     if expires_at < datetime.now(UTC):
@@ -429,7 +446,7 @@ async def complete_ai_provider_oauth(
     await _store_auth_payload(
         db,
         auth,
-        provider_id,
+        provider.provider_id,
         profile,
         provider_auth_type,
         payload_text,
@@ -603,20 +620,20 @@ async def resolve_ai_provider_auth(
     active_profile = _active_auth_profile(provider)
     if active_profile is not None and profile != active_profile:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider auth payload not found")
-    payload = await _find_auth_payload(db, auth, provider_id, profile)
+    payload = await _find_auth_payload(db, auth, provider.provider_id, profile)
     if payload is None or payload.archived_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider auth payload not found")
     plaintext = decrypt(payload.encrypted_payload, payload.nonce)
     if provider.auth_type == "api_key":
         return AiProviderAuthResolveResponse(
-            provider_id=provider_id,
+            provider_id=runtime_managed_provider_id(provider.provider_id),
             auth_type="api_key",
             value=plaintext,
             profile=profile,
         )
     if provider.auth_type in {"agent_profile", "oauth_profile"}:
         return AiProviderAuthResolveResponse(
-            provider_id=provider_id,
+            provider_id=runtime_managed_provider_id(provider.provider_id),
             auth_type=provider.auth_type,
             payload=plaintext,
             tool=metadata.get("tool"),
@@ -777,13 +794,25 @@ async def _find_provider(
     *,
     include_archived: bool = False,
 ) -> AiProvider | None:
+    provider_ids = (
+        V2_MANAGED_AI_PROVIDER_IDS
+        if provider_id in V2_MANAGED_AI_PROVIDER_IDS
+        else frozenset({provider_id})
+    )
     stmt = select(AiProvider).where(
         AiProvider.owner_user_id == auth.user_id,
-        AiProvider.provider_id == provider_id,
+        AiProvider.provider_id.in_(provider_ids),
     )
     if not include_archived:
         stmt = stmt.where(AiProvider.archived_at.is_(None))
-    return (await db.execute(stmt)).scalar_one_or_none()
+    providers = (await db.execute(stmt)).scalars().all()
+    if not providers:
+        return None
+    priority = {
+        V2_MANAGED_AI_PROVIDER_ID: 0,
+        provider_id: 1,
+    }
+    return min(providers, key=lambda provider: priority.get(provider.provider_id, 2))
 
 
 async def _get_provider_or_404(db: AsyncSession, auth: AuthContext, provider_id: str) -> AiProvider:
@@ -835,7 +864,7 @@ def _to_auth(provider: AiProvider) -> AiProviderAuth:
 def _to_response(provider: AiProvider) -> AiProviderResponse:
     return AiProviderResponse(
         id=str(provider.id),
-        provider_id=provider.provider_id,
+        provider_id=runtime_managed_provider_id(provider.provider_id),
         scope=AI_PROVIDER_SCOPE,
         type=provider.type,
         label=provider.label,
@@ -914,8 +943,7 @@ def _validate_managed_provider_contract(body: AiProviderUpsert | AiProviderRespo
     errors: list[str] = []
     expected_api_mode = managed_provider_api_mode(body.provider_id)
     if expected_api_mode is None:
-        allowed_ids = ", ".join(sorted(MANAGED_AI_PROVIDER_IDS))
-        errors.append(f"managed Clawdi provider must use provider_id one of: {allowed_ids}")
+        errors.append(f"managed Clawdi provider must use provider_id {V2_MANAGED_AI_PROVIDER_ID}")
     if body.managed_by != "clawdi":
         errors.append("managed Clawdi provider must be managed_by clawdi")
     if body.type != "custom_openai_compatible":

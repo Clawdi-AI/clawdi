@@ -1354,7 +1354,7 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 		compute_plan_slug: "compute_basic",
 		runtime: "hermes",
 		primary_model: {
-			provider_id: "clawdi-v2",
+			provider_id: "clawdi",
 			model: "gpt-5.6-luna",
 		},
 	});
@@ -1544,9 +1544,9 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		ai_provider_auth_kind: "managed",
-		provider_ids: ["clawdi-v2"],
+		provider_ids: ["clawdi"],
 		primary_model: {
-			provider_id: "clawdi-v2",
+			provider_id: "clawdi",
 			model: "gpt-5.6-luna",
 		},
 	});

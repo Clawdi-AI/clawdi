@@ -6,6 +6,7 @@ import {
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX,
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
 	CODEX_OAUTH_MODEL_CATALOG,
 	defaultAiProviderModels,
@@ -294,6 +295,7 @@ describe("validateAiProviderCatalog", () => {
 	test.each([
 		CLAWDI_MANAGED_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_PROVIDER_ID,
+		CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 		CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 		`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
 	])("accepts v2 Clawdi-managed provider %s in OpenAI chat mode", (providerId) => {
@@ -316,6 +318,11 @@ describe("validateAiProviderCatalog", () => {
 
 		expect(result.valid).toBe(true);
 		expect(result.errors).toEqual([]);
+	});
+
+	test("uses clawdi as the exact public id while accepting the legacy public id", () => {
+		expect(CLAWDI_MANAGED_V2_PROVIDER_ID).toBe("clawdi");
+		expect(isClawdiManagedV2ProviderId("clawdi-v2")).toBe(true);
 	});
 
 	test.each([
@@ -370,7 +377,7 @@ describe("validateAiProviderCatalog", () => {
 
 		expect(result.valid).toBe(false);
 		expect(result.errors).toContain(
-			"Provider clawdi-managed-v2 managed_by clawdi must use api_mode openai_chat.",
+			"Provider clawdi managed_by clawdi must use api_mode openai_chat.",
 		);
 	});
 });
@@ -386,6 +393,11 @@ describe("isFirstPartyManagedAiProvider", () => {
 		);
 		expect(
 			isFirstPartyManagedAiProvider({
+				provider_id: CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
+			}),
+		).toBe(true);
+		expect(
+			isFirstPartyManagedAiProvider({
 				provider_id: CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 			}),
 		).toBe(true);
@@ -396,6 +408,7 @@ describe("isFirstPartyManagedAiProvider", () => {
 		).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_PROVIDER_ID)).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_PROVIDER_ID)).toBe(true);
+		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID)).toBe(true);
 		expect(CLAWDI_MANAGED_PROVIDER_IDS.has(CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID)).toBe(true);
 	});
 

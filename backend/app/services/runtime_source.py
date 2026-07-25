@@ -40,9 +40,10 @@ from app.schemas.runtime import (
 )
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
-    CLAWDI_MANAGED_PROVIDER_ID,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_ID,
+    V2_MANAGED_AI_PROVIDER_IDS,
     is_managed_provider_id,
     managed_provider_api_mode,
     runtime_managed_provider_id,
@@ -521,16 +522,15 @@ def _provider_source_id(
 ) -> str:
     """Resolve an agent alias to the deployment-scoped credential/catalog row."""
 
-    if bound_provider_id not in {
-        CLAWDI_MANAGED_PROVIDER_ID,
-        V2_MANAGED_AI_PROVIDER_ID,
-    }:
+    if bound_provider_id not in V2_MANAGED_AI_PROVIDER_IDS:
         return bound_provider_id
     deployment_provider_id = v2_deployment_managed_provider_id(deployment_id)
     if deployment_provider_id is not None and (user_id, deployment_provider_id) in batch.providers:
         return deployment_provider_id
     if (user_id, V2_MANAGED_AI_PROVIDER_ID) in batch.providers:
         return V2_MANAGED_AI_PROVIDER_ID
+    if (user_id, V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID) in batch.providers:
+        return V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID
     if (user_id, V2_LEGACY_MANAGED_AI_PROVIDER_ID) in batch.providers:
         return V2_LEGACY_MANAGED_AI_PROVIDER_ID
     return V2_MANAGED_AI_PROVIDER_ID

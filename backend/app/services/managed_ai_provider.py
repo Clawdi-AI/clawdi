@@ -12,18 +12,22 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.user import User
 from app.services.vault_crypto import encrypt
 
-# Agent-facing alias only. Credential and catalog source rows keep their v2 ids below.
 CLAWDI_MANAGED_PROVIDER_ID = "clawdi"
 V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
 V1_MANAGED_AI_PROVIDER_API_MODE = "openai_responses"
-V2_MANAGED_AI_PROVIDER_ID = "clawdi-v2"
+V2_MANAGED_AI_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID
 V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX = "clawdi-v2-deployment-"
 V2_MANAGED_AI_PROVIDER_MAX_ID_LENGTH = 63
-# TODO(#425): Remove this legacy alias and transition accept-set after hosted#892
-# is deployed everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
+V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID = "clawdi-v2"
+# TODO(#425): Remove legacy aliases only after the cross-repo rollout is complete
+# and persisted clients no longer send either legacy id.
 V2_LEGACY_MANAGED_AI_PROVIDER_ID = "clawdi-managed-v2"
 V2_MANAGED_AI_PROVIDER_IDS = frozenset(
-    {V2_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID}
+    {
+        V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    }
 )
 V2_MANAGED_AI_PROVIDER_API_MODE = "openai_chat"
 
@@ -31,8 +35,7 @@ V2_MANAGED_AI_PROVIDER_API_MODE = "openai_chat"
 # through the user AI Provider endpoint with the v1-specific id/mode above.
 MANAGED_AI_PROVIDER_ID = V2_MANAGED_AI_PROVIDER_ID
 MANAGED_AI_PROVIDER_API_MODE = V2_MANAGED_AI_PROVIDER_API_MODE
-# TODO(#425): Remove the legacy v2 member from this aggregate after hosted#892
-# is deployed everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
+# TODO(#425): Remove legacy v2 members after the compatibility window closes.
 MANAGED_AI_PROVIDER_IDS = frozenset({V1_MANAGED_AI_PROVIDER_ID, *V2_MANAGED_AI_PROVIDER_IDS})
 MANAGED_AI_PROVIDER_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY"
 MANAGED_AI_PROVIDER_TYPE = "custom_openai_compatible"
@@ -85,8 +88,7 @@ def runtime_managed_provider_id(provider_id: str) -> str:
 def managed_provider_api_mode(provider_id: str) -> str | None:
     if provider_id == V1_MANAGED_AI_PROVIDER_ID:
         return V1_MANAGED_AI_PROVIDER_API_MODE
-    # TODO(#425): Remove legacy v2 mode resolution after hosted#892 is deployed
-    # everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
+    # TODO(#425): Remove legacy v2 mode resolution after the compatibility window closes.
     if provider_id in V2_MANAGED_AI_PROVIDER_IDS:
         return V2_MANAGED_AI_PROVIDER_API_MODE
     return None
@@ -129,8 +131,7 @@ async def upsert_clawdi_managed_provider(
     capabilities: dict | None = None,
 ) -> AiProvider:
     """Upsert a first-party v2 managed AI provider contract for a user."""
-    # TODO(#425): Remove legacy v2 upsert acceptance after hosted#892 is deployed
-    # everywhere and no dev/self-hosted binding still uses clawdi-managed-v2.
+    # TODO(#425): Remove legacy v2 upsert acceptance after the compatibility window closes.
     if not is_v2_managed_provider_id(provider_id):
         raise ValueError("unsupported managed provider id")
     validate_managed_provider_base_url(base_url)

@@ -15,6 +15,7 @@ from app.schemas.runtime import HostedCodexProviderProjection
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_ID,
 )
 from app.services.runtime_source import (
@@ -348,17 +349,24 @@ def test_shared_managed_provider_material_has_distinct_codex_wire_mode() -> None
     [
         (CLAWDI_MANAGED_PROVIDER_ID, "clawdi-v2-deployment-42"),
         (CLAWDI_MANAGED_PROVIDER_ID, V2_MANAGED_AI_PROVIDER_ID),
+        (CLAWDI_MANAGED_PROVIDER_ID, V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID),
         (CLAWDI_MANAGED_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID),
         (V2_MANAGED_AI_PROVIDER_ID, "clawdi-v2-deployment-42"),
         ("clawdi-v2-deployment-42", "clawdi-v2-deployment-42"),
+        (
+            V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+            V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+        ),
         (V2_LEGACY_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID),
     ],
     ids=[
         "agent-alias-scoped-source",
         "agent-alias-base-source",
+        "agent-alias-legacy-public-source",
         "agent-alias-legacy-source",
         "stable-internal",
         "deployment-scoped",
+        "legacy-public",
         "legacy-internal",
     ],
 )
@@ -367,7 +375,7 @@ def test_managed_v2_provider_projects_bare_agent_identity(
     source_provider_id: str,
 ) -> None:
     batch = _batch()
-    internal_provider_id = _use_managed_provider(
+    persisted_provider_id = _use_managed_provider(
         batch,
         bound_provider_id=bound_provider_id,
         source_provider_id=source_provider_id,
@@ -389,7 +397,8 @@ def test_managed_v2_provider_projects_bare_agent_identity(
     assert manifest["terminalTooling"]["codex"]["primary_model"]["provider_id"] == (
         CLAWDI_MANAGED_PROVIDER_ID
     )
-    assert internal_provider_id not in json.dumps(manifest)
+    if persisted_provider_id != CLAWDI_MANAGED_PROVIDER_ID:
+        assert persisted_provider_id not in json.dumps(manifest)
 
 
 def test_bare_managed_alias_prefers_deployment_source_over_fallback_rows() -> None:

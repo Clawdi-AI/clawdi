@@ -165,23 +165,23 @@ export const CODEX_OAUTH_MODEL_CATALOG: readonly AiProviderModel[] = [
 	{ id: "gpt-5.4-mini" },
 ];
 
-// Agent-facing alias only. Credential and catalog source rows keep their v2 ids below.
 export const CLAWDI_MANAGED_PROVIDER_ID = "clawdi";
 export const CLAWDI_MANAGED_V1_PROVIDER_ID = "clawdi-managed";
 const CLAWDI_MANAGED_V1_API_MODE = "openai_responses";
-export const CLAWDI_MANAGED_V2_PROVIDER_ID = "clawdi-v2";
+export const CLAWDI_MANAGED_V2_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID;
 export const CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX = "clawdi-v2-deployment-";
 const CLAWDI_MANAGED_PROVIDER_MAX_ID_LENGTH = 63;
-// TODO(#425): Remove this legacy alias after hosted#892 is deployed everywhere and no
-// dev/self-hosted binding still uses clawdi-managed-v2.
+export const CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID = "clawdi-v2";
+// TODO(#425): Remove legacy aliases only after the cross-repo rollout is complete and
+// persisted clients no longer send either legacy id.
 export const CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID = "clawdi-managed-v2";
 const CLAWDI_MANAGED_V2_API_MODE = "openai_chat";
-// TODO(#425): Remove the legacy member after hosted#892 is deployed everywhere and no
-// dev/self-hosted binding still uses clawdi-managed-v2.
+// TODO(#425): Remove legacy members after the compatibility window closes.
 export const CLAWDI_MANAGED_PROVIDER_IDS: ReadonlySet<string> = new Set([
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
 	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
 ]);
 const CLAWDI_MANAGED_RUNTIME_ENV = "CLAWDI_MANAGED_OPENAI_API_KEY";
@@ -201,6 +201,7 @@ export function isClawdiManagedV2ProviderId(providerId: string): boolean {
 	if (
 		providerId === CLAWDI_MANAGED_PROVIDER_ID ||
 		providerId === CLAWDI_MANAGED_V2_PROVIDER_ID ||
+		providerId === CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID ||
 		providerId === CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID
 	) {
 		return true;
@@ -369,41 +370,41 @@ function validateManagedProviderContract(
 	const isManagedContract =
 		isClawdiManagedProviderId(provider.id) || provider.managed_by === "clawdi";
 	if (!isManagedContract) return;
+	const publicPrefix = isClawdiManagedV2ProviderId(provider.id)
+		? CLAWDI_MANAGED_PROVIDER_ID
+		: prefix;
 
 	const expectedApiMode = clawdiManagedApiMode(provider.id);
 	if (!expectedApiMode) {
 		errors.push(
-			`Provider ${prefix} managed_by clawdi must use id ${Array.from(CLAWDI_MANAGED_PROVIDER_IDS)
-				.sort()
-				.join(" or ")}, or ${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}<deployment_id>.`,
+			`Provider ${publicPrefix} managed_by clawdi must use id ${CLAWDI_MANAGED_PROVIDER_ID} or an internal deployment-scoped managed provider id.`,
 		);
 	}
 	if (provider.managed_by !== "clawdi") {
-		errors.push(`Provider ${prefix} with Clawdi-managed id must be managed_by clawdi.`);
+		errors.push(`Provider ${publicPrefix} with Clawdi-managed id must be managed_by clawdi.`);
 	}
 	if (provider.type !== "custom_openai_compatible") {
-		errors.push(`Provider ${prefix} managed_by clawdi must use custom_openai_compatible.`);
+		errors.push(`Provider ${publicPrefix} managed_by clawdi must use custom_openai_compatible.`);
 	}
 	if (expectedApiMode && provider.api_mode !== expectedApiMode) {
-		errors.push(`Provider ${prefix} managed_by clawdi must use api_mode ${expectedApiMode}.`);
+		errors.push(`Provider ${publicPrefix} managed_by clawdi must use api_mode ${expectedApiMode}.`);
 	}
 	if (!provider.runtime_env_name || !CLAWDI_MANAGED_RUNTIME_ENVS.has(provider.runtime_env_name)) {
 		errors.push(
-			`Provider ${prefix} managed_by clawdi must use runtime_env_name ${Array.from(
+			`Provider ${publicPrefix} managed_by clawdi must use runtime_env_name ${Array.from(
 				CLAWDI_MANAGED_RUNTIME_ENVS,
 			).join(" or ")}.`,
 		);
 	}
 	const auth = (provider as { auth?: unknown }).auth;
 	if (!isRecord(auth) || auth.type !== "api_key" || auth.source !== "managed") {
-		errors.push(`Provider ${prefix} managed_by clawdi must use managed api_key auth.`);
+		errors.push(`Provider ${publicPrefix} managed_by clawdi must use managed api_key auth.`);
 	}
 }
 
 function clawdiManagedApiMode(providerId: string): AiProviderApiMode | null {
 	if (providerId === CLAWDI_MANAGED_V1_PROVIDER_ID) return CLAWDI_MANAGED_V1_API_MODE;
-	// TODO(#425): Remove legacy mode resolution after hosted#892 is deployed everywhere
-	// and no dev/self-hosted binding still uses clawdi-managed-v2.
+	// TODO(#425): Remove legacy mode resolution after the compatibility window closes.
 	if (isClawdiManagedV2ProviderId(providerId)) {
 		return CLAWDI_MANAGED_V2_API_MODE;
 	}

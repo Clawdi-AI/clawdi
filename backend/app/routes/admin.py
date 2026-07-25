@@ -99,6 +99,7 @@ from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
     MANAGED_AI_PROVIDER_SCOPE,
     MANAGED_AI_PROVIDER_TYPE,
+    V2_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_IDS,
     archive_clawdi_managed_provider,
     find_clawdi_managed_provider,
@@ -641,14 +642,14 @@ async def admin_upsert_clawdi_managed_ai_provider(
                 status.HTTP_422_UNPROCESSABLE_CONTENT,
                 "target_clerk_id is required for fixed managed AI providers",
             )
-        # Keep this branch byte-for-byte compatible with the original fixed
-        # clawdi-v2 / clawdi-managed-v2 admin contract.
+        # Legacy route ids remain accepted during the cross-service rollout,
+        # but fixed managed-provider writes and responses are canonical.
         target = await _resolve_or_create_user(db, body.target_clerk_id)
         try:
             provider = await upsert_clawdi_managed_provider(
                 db,
                 user=target,
-                provider_id=provider_id,
+                provider_id=V2_MANAGED_AI_PROVIDER_ID,
                 base_url=body.base_url,
                 api_key=body.api_key.get_secret_value(),
                 default_model=body.default_model,

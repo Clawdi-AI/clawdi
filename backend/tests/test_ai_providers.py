@@ -18,6 +18,7 @@ from app.services.managed_ai_provider import (
     V1_MANAGED_AI_PROVIDER_ID,
     V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_API_MODE,
     V2_MANAGED_AI_PROVIDER_ID,
     is_v2_managed_provider_id,
@@ -34,6 +35,7 @@ _TEST_SYSTEM = {}
     "provider_id",
     [
         V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
         V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     ],
 )
@@ -53,6 +55,7 @@ def test_v1_provider_mode_resolution_does_not_accept_deployment_scoped_ids():
     "provider_id",
     [
         V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
         V2_LEGACY_MANAGED_AI_PROVIDER_ID,
         f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42",
         CLAWDI_MANAGED_PROVIDER_ID,
@@ -62,11 +65,12 @@ def test_managed_v2_bindings_use_bare_agent_facing_id(provider_id: str):
     assert runtime_managed_provider_id(provider_id) == CLAWDI_MANAGED_PROVIDER_ID
 
 
-def test_agent_facing_managed_id_is_not_a_credential_identity():
+def test_public_managed_id_is_canonical_and_scoped_ids_remain_internal():
     provider_id = v2_deployment_managed_provider_id("42")
 
+    assert V2_MANAGED_AI_PROVIDER_ID == "clawdi"
     assert provider_id == f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42"
-    assert not is_v2_managed_provider_id(CLAWDI_MANAGED_PROVIDER_ID)
+    assert is_v2_managed_provider_id(CLAWDI_MANAGED_PROVIDER_ID)
     assert runtime_managed_provider_id(V1_MANAGED_AI_PROVIDER_ID) == V1_MANAGED_AI_PROVIDER_ID
 
 
@@ -260,6 +264,45 @@ async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncCl
     empty = await client.get("/v1/ai-providers")
     assert empty.status_code == 200, empty.text
     assert empty.json()["providers"] == []
+
+
+@pytest.mark.asyncio
+async def test_legacy_managed_rows_emit_only_the_public_clawdi_id(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    for provider_id in (
+        "clawdi-v2",
+        f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42",
+    ):
+        db_session.add(
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id=provider_id,
+                type="custom_openai_compatible",
+                base_url="https://managed.example/v1",
+                api_mode="openai_chat",
+                auth_type="api_key",
+                auth_metadata={"source": "managed", "profile": "default"},
+                managed_by="clawdi",
+                runtime_env_name="CLAWDI_MANAGED_OPENAI_API_KEY",
+                models=[{"id": "gpt-5.5"}],
+            )
+        )
+    await db_session.commit()
+
+    listing = await client.get("/v1/ai-providers")
+    canonical = await client.get("/v1/ai-providers/clawdi")
+    legacy = await client.get("/v1/ai-providers/clawdi-v2")
+
+    assert listing.status_code == 200, listing.text
+    assert [row["provider_id"] for row in listing.json()["providers"]] == ["clawdi"]
+    assert "clawdi-v2" not in listing.text
+    assert canonical.status_code == 200, canonical.text
+    assert canonical.json()["provider_id"] == "clawdi"
+    assert legacy.status_code == 200, legacy.text
+    assert legacy.json()["provider_id"] == "clawdi"
 
 
 @pytest.mark.asyncio
@@ -701,10 +744,11 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
 
     for managed_provider_id in (
         V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
         V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     ):
         managed = await client.post(
-            "/v1/ai-providers",
+            "/v1/ai-providers?replace=true",
             json={
                 "provider_id": managed_provider_id,
                 "type": "custom_openai_compatible",
@@ -717,7 +761,7 @@ async def test_ai_provider_rejects_invalid_auth_and_api_mode(client: httpx.Async
             },
         )
         assert managed.status_code == 200, managed.text
-        assert managed.json()["provider_id"] == managed_provider_id
+        assert managed.json()["provider_id"] == CLAWDI_MANAGED_PROVIDER_ID
         assert managed.json()["api_mode"] == "openai_chat"
         assert managed.json()["models"] == [{"id": "gpt-5.5"}]
 

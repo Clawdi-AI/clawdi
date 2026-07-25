@@ -26,6 +26,7 @@ from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_PROVENANCE_CAPABILITY,
     V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_ID,
 )
 
@@ -785,7 +786,11 @@ async def test_admin_revoke_unknown_key(admin_client):
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "route_provider_id",
-    [V2_MANAGED_AI_PROVIDER_ID, V2_LEGACY_MANAGED_AI_PROVIDER_ID],
+    [
+        V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    ],
 )
 async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     admin_client, db_session, seed_user, route_provider_id: str
@@ -838,7 +843,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     expected_response = {
         "owner_user_id": str(seed_user.id),
         "owner_clerk_id": seed_user.clerk_id,
-        "provider_id": route_provider_id,
+        "provider_id": V2_MANAGED_AI_PROVIDER_ID,
         "api_mode": MANAGED_AI_PROVIDER_API_MODE,
         "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
         "base_url": "https://ai-gateway.clawdi.ai/v1",
@@ -852,7 +857,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
         await db_session.execute(
             select(AiProvider).where(
                 AiProvider.owner_user_id == seed_user.id,
-                AiProvider.provider_id == route_provider_id,
+                AiProvider.provider_id == V2_MANAGED_AI_PROVIDER_ID,
             )
         )
     ).scalar_one()
@@ -870,7 +875,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
         await db_session.execute(
             select(AiProviderAuthPayload).where(
                 AiProviderAuthPayload.owner_user_id == seed_user.id,
-                AiProviderAuthPayload.provider_id == route_provider_id,
+                AiProviderAuthPayload.provider_id == V2_MANAGED_AI_PROVIDER_ID,
                 AiProviderAuthPayload.auth_profile == "default",
             )
         )
@@ -895,7 +900,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
         await db_session.execute(
             select(ControlPlaneAuditEvent).where(
                 ControlPlaneAuditEvent.action == "ai_provider.managed.upsert",
-                ControlPlaneAuditEvent.resource_id == route_provider_id,
+                ControlPlaneAuditEvent.resource_id == V2_MANAGED_AI_PROVIDER_ID,
             )
         )
     ).scalar_one()
@@ -904,7 +909,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     assert event.source == "api.admin"
     audit_models = [{**managed_models[0], "max_tokens": "[REDACTED]"}]
     assert event.details == {
-        "provider_id": route_provider_id,
+        "provider_id": V2_MANAGED_AI_PROVIDER_ID,
         "api_mode": MANAGED_AI_PROVIDER_API_MODE,
         "runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV,
         "models": audit_models,

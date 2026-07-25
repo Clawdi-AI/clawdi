@@ -98,6 +98,35 @@ describe("AI provider projection", () => {
 		expect(hermes.files[0]?.content).not.toContain("clawdi-v2");
 	});
 
+	test("accepts the legacy public managed id but only emits clawdi", () => {
+		const legacyProviderId = "clawdi-v2";
+		const catalog: AiProviderCatalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: legacyProviderId,
+					type: "custom_openai_compatible",
+					base_url: "https://managed.example.test/v1",
+					api_mode: "openai_chat",
+					auth: { type: "api_key", source: "managed" },
+					managed_by: "clawdi",
+					runtime_env_name: "OPENAI_API_KEY",
+					models: [{ id: "managed-model" }],
+				},
+			],
+			defaults: { chat_provider_id: legacyProviderId },
+		};
+		const primaryModel = { provider_id: legacyProviderId, model: "managed-model" };
+
+		for (const target of ["openclaw", "hermes"] as const) {
+			const projection = buildAgentTargetProjection(target, catalog, primaryModel);
+			expect(projection.provider_ids).toEqual([CLAWDI_MANAGED_PROVIDER_ID]);
+			expect(projection.default_provider_id).toBe(CLAWDI_MANAGED_PROVIDER_ID);
+			expect(projection.primary_model.provider_id).toBe(CLAWDI_MANAGED_PROVIDER_ID);
+			expect(projection.files[0]?.content).not.toContain(legacyProviderId);
+		}
+	});
+
 	test("maps known BYOK OpenAI providers to all runtime targets without extra user fields", () => {
 		const openclaw = buildAgentTargetProjection("openclaw", byokOpenAiCatalog);
 		expect(openclaw.provider_ids).toEqual(["openai-main"]);
@@ -177,7 +206,7 @@ describe("AI provider projection", () => {
 			schema_version: 1,
 			providers: [
 				{
-					id: "clawdi-v2",
+					id: CLAWDI_MANAGED_PROVIDER_ID,
 					type: "custom_openai_compatible",
 					base_url: "https://api.example.test/v1",
 					api_mode: "openai_chat",
@@ -205,17 +234,18 @@ describe("AI provider projection", () => {
 					}),
 				},
 			],
-			defaults: { chat_provider_id: "clawdi-v2" },
+			defaults: { chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID },
 		};
 
 		const openclaw = buildAgentTargetProjection("openclaw", catalog, {
-			provider_id: "clawdi-v2",
+			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
 			model: "k3",
 		});
 		const openclawPatch = JSON.parse(openclaw.files[0]?.content ?? "{}") as {
 			models?: { providers?: Record<string, { models?: Array<Record<string, unknown>> }> };
 		};
-		const openclawModels = openclawPatch.models?.providers?.["clawdi-v2"]?.models ?? [];
+		const openclawModels =
+			openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]?.models ?? [];
 		expect(openclawModels[0]).toMatchObject({
 			id: "k3",
 			contextWindow: 1_048_576,
@@ -233,7 +263,7 @@ describe("AI provider projection", () => {
 		expect(openclawModels[2]?.maxTokens).toBeUndefined();
 
 		const hermes = buildAgentTargetProjection("hermes", catalog, {
-			provider_id: "clawdi-v2",
+			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
 			model: "k3",
 		});
 		const k3Block = hermes.files[0]?.content.split('"k3":')[1]?.split('"kimi-for-coding":')[0];
@@ -254,7 +284,7 @@ describe("AI provider projection", () => {
 			schema_version: 1,
 			providers: [
 				{
-					id: "clawdi-v2",
+					id: CLAWDI_MANAGED_PROVIDER_ID,
 					type: "custom_openai_compatible",
 					base_url: "https://api.example.test/v1",
 					api_mode: "openai_chat",
@@ -273,15 +303,20 @@ describe("AI provider projection", () => {
 					}),
 				},
 			],
-			defaults: { chat_provider_id: "clawdi-v2" },
+			defaults: { chat_provider_id: CLAWDI_MANAGED_PROVIDER_ID },
 		};
 
-		const primaryModel = { provider_id: "clawdi-v2", model: "generic-output-alias" };
+		const primaryModel = {
+			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+			model: "generic-output-alias",
+		};
 		const openclaw = buildAgentTargetProjection("openclaw", catalog, primaryModel);
 		const openclawPatch = JSON.parse(openclaw.files[0]?.content ?? "{}") as {
 			models?: { providers?: Record<string, { models?: Array<Record<string, unknown>> }> };
 		};
-		expect(openclawPatch.models?.providers?.["clawdi-v2"]?.models?.[0]).toMatchObject({
+		expect(
+			openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]?.models?.[0],
+		).toMatchObject({
 			id: "generic-output-alias",
 			contextWindow: 400_000,
 			maxTokens: 16_384,

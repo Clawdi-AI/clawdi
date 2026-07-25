@@ -1,5 +1,5 @@
 import {
-	CLAWDI_MANAGED_V2_PROVIDER_ID,
+	CLAWDI_MANAGED_PROVIDER_ID,
 	isClawdiManagedProviderId,
 	isFirstPartyManagedAiProvider,
 } from "@clawdi/shared";
@@ -9,7 +9,7 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatModelLabel } from "@/lib/format";
 
 export const MANAGED_AI_CHOICE = "__managed__";
-export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_V2_PROVIDER_ID;
+export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID;
 export const MANAGED_PROVIDER_LABEL = "Managed by Clawdi";
 export const CUSTOM_MODEL_CHOICE = "__custom__";
 
