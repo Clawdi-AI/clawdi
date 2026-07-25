@@ -32,6 +32,8 @@ const wallet: DeploySchemas["V2WalletResponse"] = {
 const usage: DeploySchemas["V2HostedUsageSummaryResponse"] = {
 	period_start: "2026-07-01",
 	period_end: "2026-07-31",
+	availability: "complete",
+	unavailable_sections: [],
 	total_usd: "0.000001",
 	total_requests: 1,
 	by_model: [
@@ -42,6 +44,17 @@ const usage: DeploySchemas["V2HostedUsageSummaryResponse"] = {
 			requests: 1,
 		},
 	],
+	by_day: [{ date: "2026-07-24", amount_usd: "0.000001" }],
+};
+
+const partialUsage: DeploySchemas["V2HostedUsageSummaryResponse"] = {
+	period_start: "2026-07-01",
+	period_end: "2026-07-31",
+	availability: "partial",
+	unavailable_sections: ["totals", "by_model"],
+	total_usd: null,
+	total_requests: null,
+	by_model: [],
 	by_day: [{ date: "2026-07-24", amount_usd: "0.000001" }],
 };
 
@@ -77,5 +90,11 @@ describe("USD-native v2 billing contract", () => {
 		});
 		expect(usage.total_usd).toBe("0.000001");
 		expect(usage.by_model[0]?.amount_usd).toBe("0.000001");
+		expect(partialUsage).toMatchObject({
+			availability: "partial",
+			unavailable_sections: ["totals", "by_model"],
+			total_usd: null,
+			total_requests: null,
+		});
 	});
 });

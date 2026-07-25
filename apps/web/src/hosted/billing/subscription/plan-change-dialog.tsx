@@ -2,6 +2,7 @@
 
 import { CalendarClock, CreditCard, TriangleAlert, WalletCards } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,13 +25,17 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
-import { WalletDebitEquation } from "@/hosted/billing/components/wallet-debit-equation";
+import {
+	trustworthyWalletBalanceUsd,
+	WalletDebitEquation,
+} from "@/hosted/billing/components/wallet-debit-equation";
 import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
 	ComputePlanSlug,
 	Plan,
 } from "@/hosted/billing/contracts";
+import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
 import {
 	computeTierLabel,
@@ -56,6 +61,40 @@ function planSlug(value: string | null): ComputePlanSlug | null {
 	return value === "compute_basic" || value === "compute_performance" ? value : null;
 }
 
+export function walletPlanChangeDecision({
+	fundingSource,
+	changeKind,
+	amountUsd,
+	balanceUsd,
+	balanceError,
+	isBalanceFetching,
+}: {
+	fundingSource: "stripe" | "wallet";
+	changeKind: ComputePlanChangeQuoteResponse["change_kind"] | null;
+	amountUsd: string | null;
+	balanceUsd: string | null;
+	balanceError: unknown;
+	isBalanceFetching: boolean;
+}) {
+	const trustedBalanceUsd = trustworthyWalletBalanceUsd({
+		balanceUsd,
+		error: balanceError,
+		isFetching: isBalanceFetching,
+	});
+	const balanceRequired =
+		fundingSource === "wallet" && changeKind === "immediate_upgrade" && amountUsd !== null;
+	const balanceAfterUsd =
+		balanceRequired && trustedBalanceUsd
+			? walletBalanceAfterDebit(trustedBalanceUsd, amountUsd)
+			: null;
+	return {
+		trustedBalanceUsd,
+		balanceAfterUsd,
+		walletInsufficient: balanceAfterUsd?.startsWith("-") ?? false,
+		balanceReadUnavailable: balanceRequired && trustedBalanceUsd === null,
+	};
+}
+
 export function PlanChangeDialog({
 	open,
 	onOpenChange,
@@ -66,11 +105,14 @@ export function PlanChangeDialog({
 	fundingSourceSelectable,
 	quote,
 	walletBalanceUsd,
+	walletBalanceError,
+	isWalletBalanceFetching,
 	isQuoting,
 	isConfirming,
 	onQuote,
 	onConfirm,
 	onTopUp,
+	onRetryWalletBalance,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -81,11 +123,14 @@ export function PlanChangeDialog({
 	fundingSourceSelectable: boolean;
 	quote: ComputePlanChangeQuoteResponse | null;
 	walletBalanceUsd: string | null;
+	walletBalanceError: unknown;
+	isWalletBalanceFetching: boolean;
 	isQuoting: boolean;
 	isConfirming: boolean;
 	onQuote: (selection: PlanChangeSelection) => void;
 	onConfirm: (operationId: string) => void;
 	onTopUp?: () => void;
+	onRetryWalletBalance: () => void;
 }) {
 	const initialSelection = useMemo(
 		() =>
@@ -107,16 +152,22 @@ export function PlanChangeDialog({
 	);
 	const noChange = isSamePlanChangeSelection(selection, currentPlanSlug, currentBillingTermMonths);
 	const quoteFundingSource = quote?.funding_source ?? selection.funding_source;
-	const walletBalanceAfter =
-		quoteFundingSource === "wallet" && quote?.amount_usd && walletBalanceUsd
-			? walletBalanceAfterDebit(walletBalanceUsd, quote.amount_usd)
-			: null;
-	const walletInsufficient = walletBalanceAfter?.startsWith("-") ?? false;
+	const walletDecision = walletPlanChangeDecision({
+		fundingSource: quoteFundingSource,
+		changeKind: quote?.change_kind ?? null,
+		amountUsd: quote?.amount_usd ?? null,
+		balanceUsd: walletBalanceUsd,
+		balanceError: walletBalanceError,
+		isBalanceFetching: isWalletBalanceFetching,
+	});
+	const walletBalanceAfter = walletDecision.balanceAfterUsd;
+	const walletInsufficient = walletDecision.walletInsufficient;
 	const walletQuoteMissingAmount =
 		quoteFundingSource === "wallet" &&
 		quote?.change_kind === "immediate_upgrade" &&
 		!quote.amount_usd;
-	const walletReady = selection.funding_source !== "wallet" || walletBalanceUsd !== null;
+	const walletReady =
+		selection.funding_source !== "wallet" || walletDecision.trustedBalanceUsd !== null;
 
 	useEffect(() => {
 		if (open) setSelection(initialSelection);
@@ -199,13 +250,14 @@ export function PlanChangeDialog({
 						</div>
 						{quoteFundingSource === "wallet" &&
 						quote.change_kind === "immediate_upgrade" &&
-						quote.amount_usd &&
-						walletBalanceUsd &&
-						walletBalanceAfter ? (
+						quote.amount_usd ? (
 							<WalletDebitEquation
-								balanceBeforeUsd={walletBalanceUsd}
+								balanceBeforeUsd={walletDecision.trustedBalanceUsd}
 								debitAmountUsd={quote.amount_usd}
 								balanceAfterUsd={walletBalanceAfter}
+								balanceError={walletBalanceError}
+								isBalanceFetching={isWalletBalanceFetching}
+								onRetryBalance={onRetryWalletBalance}
 							/>
 						) : null}
 						{quote.change_kind === "scheduled_downgrade" ? (
@@ -247,7 +299,12 @@ export function PlanChangeDialog({
 							</Button>
 							<Button
 								onClick={() => onConfirm(quote.operation_id)}
-								disabled={isConfirming || walletInsufficient || walletQuoteMissingAmount}
+								disabled={
+									isConfirming ||
+									walletInsufficient ||
+									walletQuoteMissingAmount ||
+									walletDecision.balanceReadUnavailable
+								}
 							>
 								{isConfirming ? (
 									<Spinner data-icon="inline-start" />
@@ -329,9 +386,16 @@ export function PlanChangeDialog({
 								Funding source: {selection.funding_source === "wallet" ? "Wallet" : "Card"}
 							</p>
 						)}
-						{selection.funding_source === "wallet" && !walletReady ? (
+						{selection.funding_source === "wallet" && walletBalanceError ? (
+							<ApiErrorPanel
+								normalizer={billingErrorNormalizer}
+								error={walletBalanceError}
+								title="Couldn't load your Wallet balance"
+								onRetry={onRetryWalletBalance}
+							/>
+						) : selection.funding_source === "wallet" && !walletReady ? (
 							<p className="text-sm text-muted-foreground" role="status">
-								Loading Wallet balance…
+								Refreshing Wallet balance…
 							</p>
 						) : null}
 						{selectedOffer ? (
