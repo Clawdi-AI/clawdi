@@ -71,11 +71,13 @@ type DeploymentMutationFixture = {
 	} | null;
 };
 
+// Mirrors the user-facing GET /v2/subscription/plans response. clawdi-hosted resolves
+// the owner-approved Stripe prices from scripts/stripe/create-compute-{basic,performance}.py.
 const basicPlan = {
 	slug: "compute_basic",
 	name: "Compute Basic",
-	price_cents: 900,
-	signup_grant_usd: "5.00",
+	price_cents: 1_000,
+	signup_grant_usd: "5",
 	vcpu: 2,
 	ram_gb: 4,
 	disk_size: 20,
@@ -83,15 +85,15 @@ const basicPlan = {
 	offers: [
 		{
 			billing_term_months: 1,
-			price_cents: 900,
-			effective_monthly_price_cents: 900,
+			price_cents: 1_000,
+			effective_monthly_price_cents: 1_000,
 			discount_percent: 0,
 		},
 		{
 			billing_term_months: 12,
-			price_cents: 8_640,
-			effective_monthly_price_cents: 720,
-			discount_percent: 20,
+			price_cents: 10_000,
+			effective_monthly_price_cents: 833,
+			discount_percent: 17,
 		},
 	],
 };
@@ -99,8 +101,8 @@ const basicPlan = {
 const performancePlan = {
 	slug: "compute_performance",
 	name: "Compute Performance",
-	price_cents: 1_900,
-	signup_grant_usd: "5.00",
+	price_cents: 2_000,
+	signup_grant_usd: "5",
 	vcpu: 4,
 	ram_gb: 8,
 	disk_size: 40,
@@ -108,15 +110,15 @@ const performancePlan = {
 	offers: [
 		{
 			billing_term_months: 1,
-			price_cents: 1_900,
-			effective_monthly_price_cents: 1_900,
+			price_cents: 2_000,
+			effective_monthly_price_cents: 2_000,
 			discount_percent: 0,
 		},
 		{
 			billing_term_months: 12,
-			price_cents: 18_000,
-			effective_monthly_price_cents: 1_500,
-			discount_percent: 21,
+			price_cents: 20_000,
+			effective_monthly_price_cents: 1_666,
+			discount_percent: 17,
 		},
 	],
 };
@@ -166,7 +168,7 @@ const paidBasicDeployment: DeploymentMutationFixture = {
 		funding_source: "stripe",
 		payment_state: "ok",
 		billing_term_months: 12,
-		price_cents: 8_640,
+		price_cents: 10_000,
 		currency: "usd",
 		cancel_at_period_end: false,
 		current_period_end: "2027-07-15T00:00:00Z",
@@ -190,7 +192,7 @@ const performanceDeployment = {
 	name: "Performance agent",
 	compute_subscription: {
 		...paidBasicDeployment.compute_subscription,
-		price_cents: 18_000,
+		price_cents: 20_000,
 	},
 	config_info: {
 		...paidBasicDeployment.config_info,
@@ -326,7 +328,7 @@ const walletActiveDeployment = {
 		funding_source: "wallet",
 		payment_state: "ok",
 		billing_term_months: 1,
-		price_cents: 900,
+		price_cents: 1_000,
 		currency: "usd",
 		cancel_at_period_end: false,
 		current_period_end: "2026-08-15T00:00:00Z",
@@ -393,7 +395,7 @@ const walletAnnualDeployment = {
 	compute_subscription: {
 		...walletActiveDeployment.compute_subscription,
 		billing_term_months: 12,
-		price_cents: 8_640,
+		price_cents: 10_000,
 		current_period_end: "2027-07-15T00:00:00Z",
 	},
 };
@@ -968,6 +970,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			const request = JSON.parse(requestBody) as {
 				funding_source?: string;
 				deploy_config?: { deploy_request_id?: string };
+				quote?: {
+					debit_amount_usd?: string | null;
+					balance_after_usd?: string | null;
+				};
 			};
 			const deployRequestId = request.deploy_config?.deploy_request_id;
 			const createdDeployment: DeploymentMutationFixture = {
@@ -990,8 +996,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 								invoice_id: "in_wallet_browser",
 								deploy_request_id: deployRequestId,
 								deployment_id: "hdep_wallet_created",
-								debited_usd: "86.40",
-								balance_after_usd: "13.60",
+								debited_usd: request.quote?.debit_amount_usd ?? null,
+								balance_after_usd: request.quote?.balance_after_usd ?? null,
 								current_period_start: "2026-07-15T00:00:00Z",
 								current_period_end: "2027-07-15T00:00:00Z",
 								entitled_until: "2027-07-15T00:00:00Z",
@@ -1013,16 +1019,32 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/subscription/quote" && r.request().method() === "POST") {
-			options.subscriptionQuoteRequests?.push(r.request().postData() ?? "");
+			const requestBody = r.request().postData() ?? "";
+			options.subscriptionQuoteRequests?.push(requestBody);
+			const request = JSON.parse(requestBody) as {
+				plan_slug?: "compute_basic" | "compute_performance";
+				billing_term_months?: 1 | 12;
+			};
+			const planSlug =
+				request.plan_slug === "compute_performance" ? "compute_performance" : "compute_basic";
+			const billingTermMonths = request.billing_term_months === 12 ? 12 : 1;
+			const plan = planSlug === "compute_performance" ? performancePlan : basicPlan;
+			const offer = plan.offers.find(
+				(candidate) => candidate.billing_term_months === billingTermMonths,
+			);
+			if (!offer) throw new Error("Missing hosted smoke billing offer fixture");
+			const balanceBeforeUsd = currentWallet.balance_usd;
+			const debitAmountUsd = (offer.price_cents / 100).toFixed(2);
+			const balanceAfterUsd = (Number(balanceBeforeUsd) - offer.price_cents / 100).toFixed(2);
 			const response =
 				options.subscriptionQuoteResponses?.shift() ??
 				walletSubscriptionQuote({
-					planSlug: "compute_basic",
-					billingTermMonths: 1,
-					termPriceCents: 900,
-					debitAmountUsd: "9.00",
-					balanceBeforeUsd: "25.00",
-					balanceAfterUsd: "16.00",
+					planSlug,
+					billingTermMonths,
+					termPriceCents: offer.price_cents,
+					debitAmountUsd,
+					balanceBeforeUsd,
+					balanceAfterUsd,
 				});
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
@@ -2203,10 +2225,10 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 			walletSubscriptionQuote({
 				planSlug: "compute_basic",
 				billingTermMonths: 12,
-				termPriceCents: 8_640,
-				debitAmountUsd: "86.40",
+				termPriceCents: 10_000,
+				debitAmountUsd: "100.00",
 				balanceBeforeUsd: "100.00",
-				balanceAfterUsd: "13.60",
+				balanceAfterUsd: "0.00",
 			}),
 		],
 		walletState: { ...walletState, balance_usd: "100.00" },
@@ -2215,19 +2237,20 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("$9.00/mo", { exact: true })).toBeVisible();
+	await expect(page.getByText("$10.00/mo", { exact: true })).toBeVisible();
 	await page.getByRole("button", { name: /Annual.*%/ }).click();
+	await expect(page.getByText(/2 vCPU \/ 4 GB · \$8\.33\/mo, billed \$100\.00\/yr/)).toBeVisible();
 	await page.getByRole("button", { name: /Wallet balance/ }).click();
 	await expect.poll(() => subscriptionQuoteRequests.length).toBe(1);
 	const equation = page.getByTestId("wallet-debit-equation");
 	await expect(equation).toContainText("Balance before");
 	await expect(equation).toContainText("$100.00");
 	await expect(equation).toContainText("Exact debit");
-	await expect(equation).toContainText("$86.40");
+	await expect(equation).toContainText("$100.00");
 	await expect(equation).toContainText("Balance after");
-	await expect(equation).toContainText("$13.60");
+	await expect(equation).toContainText("$0.00");
 
-	await page.getByRole("button", { name: "Pay $86.40 from Wallet & deploy" }).click();
+	await page.getByRole("button", { name: "Pay $100.00 from Wallet & deploy" }).click();
 	await expect.poll(() => checkoutRequests.length).toBe(1);
 	const quote = JSON.parse(subscriptionQuoteRequests[0] ?? "{}");
 	const activation = JSON.parse(checkoutRequests[0] ?? "{}");
@@ -2243,16 +2266,16 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 		deploy_config: { compute_plan_slug: "compute_basic" },
 		quote: {
 			funding_source: "wallet",
-			term_price_cents: 8_640,
-			debit_amount_usd: "86.40",
+			term_price_cents: 10_000,
+			debit_amount_usd: "100.00",
 			balance_before_usd: "100.00",
-			balance_after_usd: "13.60",
+			balance_after_usd: "0.00",
 		},
 	});
 	await expect(page).toHaveURL(/\/agents\/hdep_wallet_created(?:\?|\/)/);
 	await expect(page.getByText("Agent deployment started", { exact: true })).toBeVisible();
 	await expect(
-		page.getByText("Your Basic agent is provisioning now. $86.40 was paid from Wallet.", {
+		page.getByText("Your Basic agent is provisioning now. $100.00 was paid from Wallet.", {
 			exact: true,
 		}),
 	).toBeVisible();
