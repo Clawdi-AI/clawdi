@@ -199,6 +199,8 @@ describe("deployment mutation settlement", () => {
 			["stop", "stopping"],
 			["restart", "restarting"],
 			["update", "updating"],
+			["runtime_switch", "updating"],
+			["rename", "updating"],
 			["delete", "deleting"],
 		] as const;
 
@@ -209,13 +211,10 @@ describe("deployment mutation settlement", () => {
 			const deployments = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 
 			expect(deployments?.[0]?.resource.status.summary_state).toBe(status);
+			expect(deployments?.[0]?.resource.status.failure).toBeNull();
 			expect(deployments?.[0]?.accepted_operation).toEqual(operation);
 			expect(
-				deploymentRefetchInterval(
-					deployments?.map((deployment) => ({
-						status: deployment.resource.status.summary_state,
-					})),
-				),
+				deploymentRefetchInterval(deployments, new Map(), Date.parse("2026-07-24T00:00:00Z")),
 			).toBe(DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS);
 		}
 	});

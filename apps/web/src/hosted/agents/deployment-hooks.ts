@@ -22,6 +22,7 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
+import { boundedSettlingPollState, type SettlingTracker } from "@/hosted/deployment-status";
 import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 import {
 	defaultDeploymentRuntime,
@@ -51,10 +52,7 @@ const ACCEPTED_OPERATION_TRANSITIONS = {
 export const RUNTIME_UI_SETTLING_POLL_INTERVAL_MS = 3_000;
 export const RUNTIME_UI_SETTLING_TIMEOUT_MS = 5 * 60_000;
 
-export type RuntimeUiSettlingTracker = {
-	key: string;
-	startedAtMs: number;
-};
+export type RuntimeUiSettlingTracker = SettlingTracker;
 
 export type RuntimeUiSettlingPollState = {
 	refetchInterval: number | false;
@@ -84,19 +82,14 @@ export function runtimeUiSettlingPollState(
 	}
 
 	const key = `${deployment.resource.id}:${deployment.resource.metadata.generation}:${runtime}`;
-	const nextTracker =
-		tracker?.key === key
-			? tracker
-			: {
-					key,
-					startedAtMs: runtimeUiSettlingStartedAtMs(deployment, nowMs),
-				};
-	const timedOut = nowMs - nextTracker.startedAtMs >= RUNTIME_UI_SETTLING_TIMEOUT_MS;
-	return {
-		refetchInterval: timedOut ? false : RUNTIME_UI_SETTLING_POLL_INTERVAL_MS,
-		timedOut,
-		tracker: nextTracker,
-	};
+	return boundedSettlingPollState({
+		key,
+		startedAtMs: runtimeUiSettlingStartedAtMs(deployment, nowMs),
+		tracker,
+		nowMs,
+		pollIntervalMs: RUNTIME_UI_SETTLING_POLL_INTERVAL_MS,
+		timeoutMs: RUNTIME_UI_SETTLING_TIMEOUT_MS,
+	});
 }
 
 function runtimeUiSettlingStartedAtMs(deployment: HostedDeployment, nowMs: number): number {
@@ -138,7 +131,11 @@ export function projectAcceptedDeploymentTransition(
 						accepted_operation: accepted.operation,
 						resource: {
 							...deployment.resource,
-							status: { ...deployment.resource.status, summary_state: status },
+							status: {
+								...deployment.resource.status,
+								summary_state: status,
+								failure: null,
+							},
 						},
 					}
 				: deployment,
@@ -217,6 +214,13 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 	);
 	const match = resolution.match;
 	const runtimeUiSettling = deriveRuntimeUiSettlingState(inventory.deployments, Date.now());
+	const deploymentId = match?.deployment.resource.id;
+	const deploymentTransition = deploymentId
+		? (inventory.deploymentTransitions.get(deploymentId) ?? null)
+		: null;
+	const deploymentFailure = deploymentId
+		? (inventory.deploymentFailures.get(deploymentId) ?? null)
+		: null;
 
 	useEffect(() => {
 		runtimeUiSettlingTrackerRef.current = runtimeUiSettling.tracker;
@@ -243,8 +247,12 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
 		isFetching: inventory.isFetching,
 		runtimeUiSettlingTimedOut: runtimeUiSettling.timedOut,
+		deploymentTransition,
+		deploymentTransitionTimedOut: deploymentTransition?.kind === "timed_out",
+		deploymentFailure,
 		error: inventory.error,
 		refetch: inventory.refetch,
+		retryDeploymentTransition: inventory.refetch,
 	};
 }
 

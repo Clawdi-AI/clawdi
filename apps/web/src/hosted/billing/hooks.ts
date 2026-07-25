@@ -3,13 +3,14 @@
 import {
 	keepPreviousData,
 	type QueryClient,
+	replaceEqualDeep,
 	type UseQueryOptions,
 	useInfiniteQuery,
 	useMutation,
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
 	ComputeFixPaymentRequest,
@@ -37,7 +38,12 @@ import {
 	subscriptionCreateQuoteView,
 	subscriptionCreateRequest,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
-import { deploymentRefetchInterval } from "@/hosted/deployment-status";
+import {
+	deploymentPollingState,
+	isTransitionalStatus,
+	parseDeploymentStatus,
+	type SettlingTracker,
+} from "@/hosted/deployment-status";
 import { runtimeEnvironmentId } from "@/hosted/runtimes";
 
 export { billingKeys } from "@/hosted/billing/query-keys";
@@ -370,6 +376,36 @@ export function useUsage() {
 
 const BILLING_RECOVERY_POLL_INTERVAL_MS = 30_000;
 
+export function reconcileDeploymentSnapshots(
+	previous: readonly HostedDeployment[] | undefined,
+	incoming: HostedDeployment[],
+): HostedDeployment[] {
+	const previousById = new Map(
+		(previous ?? []).map((deployment) => [deployment.resource.id, deployment]),
+	);
+	const reconciled = incoming.map((deployment) => {
+		if (deployment.accepted_operation) return deployment;
+		const acceptedOperation = previousById.get(deployment.resource.id)?.accepted_operation;
+		if (!acceptedOperation) return deployment;
+
+		const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+		const failure = deployment.resource.status.failure;
+		const operationApplies = isTransitionalStatus(status)
+			? true
+			: status.kind === "failed" &&
+				failure !== null &&
+				failure !== undefined &&
+				failure.observedGeneration >= acceptedOperation.metadata.targetGeneration;
+		return operationApplies ? { ...deployment, accepted_operation: acceptedOperation } : deployment;
+	});
+	return replaceEqualDeep(previous, reconciled) as HostedDeployment[];
+}
+
+function reconcileDeploymentQueryData(previous: unknown, incoming: unknown): unknown {
+	if (!Array.isArray(incoming)) return incoming;
+	return reconcileDeploymentSnapshots(Array.isArray(previous) ? previous : undefined, incoming);
+}
+
 export function billingRecoveryRefetchIntervalFor(
 	deployments: readonly HostedDeployment[] | undefined,
 	targetId: string | null | undefined,
@@ -402,29 +438,47 @@ export function useHostedDeployments({
 	) => number | false;
 } = {}) {
 	const client = useBillingClient();
-	return useBillingQuery({
+	const transitionTrackersRef = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
+	const deriveDeploymentPollingState = useCallback(
+		(deployments: readonly HostedDeployment[] | undefined, nowMs: number) =>
+			deploymentPollingState(deployments, transitionTrackersRef.current, nowMs),
+		[],
+	);
+	const query = useBillingQuery({
 		queryKey: billingKeys.deployments,
 		enabled: isDeployApiConfigured() && enabled,
 		queryFn: () => client.listDeployments(),
+		structuralSharing: reconcileDeploymentQueryData,
 		refetchInterval: (q) => {
-			const inventoryInterval = deploymentRefetchInterval(
-				q.state.data?.map((deployment) => ({
-					status: deployment.resource.status.summary_state,
-				})),
-			);
+			const inventoryInterval = deriveDeploymentPollingState(
+				q.state.data,
+				Date.now(),
+			).refetchInterval;
 			const billingInterval = billingRecoveryRefetchIntervalFor(
 				q.state.data,
 				pollBillingRecoveryFor,
 			);
 			const detailInterval = additionalRefetchInterval?.(q.state.data) ?? false;
-			return [inventoryInterval, billingInterval, detailInterval].reduce<number>(
-				(shortest, interval) =>
-					typeof interval === "number" ? Math.min(shortest, interval) : shortest,
-				inventoryInterval,
-			);
+			return shortestRefetchInterval(inventoryInterval, billingInterval, detailInterval);
 		},
 		refetchIntervalInBackground: false,
 	});
+	const deploymentPolling = deriveDeploymentPollingState(query.data, Date.now());
+
+	useEffect(() => {
+		transitionTrackersRef.current = deploymentPolling.trackers;
+	}, [deploymentPolling.trackers]);
+
+	return { ...query, deploymentTransitions: deploymentPolling.transitions };
+}
+
+function shortestRefetchInterval(...intervals: readonly (number | false)[]): number | false {
+	let shortest: number | false = false;
+	for (const interval of intervals) {
+		if (typeof interval !== "number") continue;
+		shortest = typeof shortest === "number" ? Math.min(shortest, interval) : interval;
+	}
+	return shortest;
 }
 
 export function useResolveDeploymentRequest() {

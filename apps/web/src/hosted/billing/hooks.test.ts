@@ -3,6 +3,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { checkoutReturnMarker, checkoutReturnWasCanceled } from "@/hosted/billing/checkout-return";
 import type {
 	ComputeSubscriptionActionResult,
+	DeploymentOperation,
 	HostedComputeSubscription,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
@@ -10,8 +11,10 @@ import {
 	applyDeploymentSubscriptionResult,
 	billingKeys,
 	billingRecoveryRefetchIntervalFor,
+	reconcileDeploymentSnapshots,
 	refreshCheckoutReturnQueries,
 } from "@/hosted/billing/hooks";
+import { deploymentFailureProjection } from "@/hosted/deployment-failure";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 function deployment(
@@ -34,6 +37,23 @@ function subscriptionAction(cancelAtPeriodEnd: boolean): ComputeSubscriptionActi
 		cancel_at_period_end: cancelAtPeriodEnd,
 		current_period_end: "2026-08-01T00:00:00Z",
 		cancel_at: cancelAtPeriodEnd ? "2026-08-01T00:00:00Z" : null,
+	};
+}
+
+function acceptedOperation(verb: DeploymentOperation["metadata"]["verb"]): DeploymentOperation {
+	return {
+		name: `operations/${verb}-failure`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "hdep_failure",
+			verb,
+			targetGeneration: 2,
+			manifestETag: "manifest-failure",
+			createTime: "2026-07-25T00:00:00Z",
+			updateTime: "2026-07-25T00:01:00Z",
+		},
+		done: false,
+		response: null,
 	};
 }
 
@@ -218,6 +238,44 @@ describe("billingRecoveryRefetchIntervalFor", () => {
 			"hdep_unpaid",
 		);
 		expect(billingRecoveryRefetchIntervalFor([unpaid], unpaid.resource.id)).toBe(false);
+	});
+});
+
+describe("reconcileDeploymentSnapshots", () => {
+	test("lets a failed server snapshot override optimistic pending state and retain its verb", () => {
+		const optimistic = hostedDeploymentFixture({
+			id: "hdep_failure",
+			status: "updating",
+			acceptedOperation: acceptedOperation("update"),
+		});
+		const failure = {
+			type: "https://api.clawdi.ai/problems/deployment-update-failed",
+			title: "Agent settings could not be applied",
+			status: 409,
+			detail: "The requested settings were rejected by the runtime.",
+			instance: "hdep_failure",
+			code: "deployment_update_failed",
+			conditionReason: "DeploymentUpdateFailed",
+			conditionMessage: "The requested settings were rejected by the runtime.",
+			observedGeneration: 2,
+		};
+		const serverSnapshot = hostedDeploymentFixture({
+			id: "hdep_failure",
+			status: "failed",
+			failure,
+			acceptedOperation: null,
+		});
+
+		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [serverSnapshot]);
+
+		expect(reconciled?.resource.status.summary_state).toBe("failed");
+		expect(reconciled?.resource.status.failure).toEqual(failure);
+		expect(deploymentFailureProjection(reconciled)).toEqual({
+			reason: "Agent settings could not be applied",
+			failedVerb: "update",
+			retryable: null,
+			code: "deployment_update_failed",
+		});
 	});
 });
 
