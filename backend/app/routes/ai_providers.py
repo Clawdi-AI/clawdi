@@ -127,6 +127,7 @@ async def upsert_ai_provider(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
+    _raise_if_deployment_managed_provider_id(body.provider_id)
     if body.provider_id in V2_MANAGED_AI_PROVIDER_IDS:
         body = body.model_copy(update={"provider_id": V2_MANAGED_AI_PROVIDER_ID})
     errors = _validate_provider(body)
@@ -817,9 +818,14 @@ async def _find_provider(
 
 async def _get_provider_or_404(db: AsyncSession, auth: AuthContext, provider_id: str) -> AiProvider:
     provider = await _find_provider(db, auth, provider_id)
-    if provider is None:
+    if provider is None or is_v2_deployment_managed_provider_id(provider.provider_id):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider not found")
     return provider
+
+
+def _raise_if_deployment_managed_provider_id(provider_id: str) -> None:
+    if is_v2_deployment_managed_provider_id(provider_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider not found")
 
 
 def _apply_provider_body(
