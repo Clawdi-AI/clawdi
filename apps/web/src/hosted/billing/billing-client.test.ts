@@ -10,6 +10,7 @@ import {
 	BillingApiError,
 	DEPLOYMENT_CONFLICT_MESSAGE,
 	DeploymentConflictError,
+	DeploymentRequestTerminalError,
 } from "@/hosted/billing/errors";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
@@ -151,9 +152,10 @@ describe("declarative deployment mutations", () => {
 		).toThrow("The deployment service completed creation without a deployment.");
 	});
 
-	it("waits for a checkout deployment request that genuinely needs LRO completion", async () => {
+	it("releases a checkout deployment request as soon as its LRO is accepted", async () => {
 		const requests: Request[] = [];
 		const intentKey = "subscription-checkout-deploy-create-happy";
+		let requestStatusReads = 0;
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
 			const path = new URL(request.url).pathname;
@@ -166,6 +168,19 @@ describe("declarative deployment mutations", () => {
 				});
 			}
 			if (path === `/v2/deployments/by-request/${intentKey}`) {
+				requestStatusReads += 1;
+				if (requestStatusReads === 1) {
+					return jsonResponse({
+						deploy_request_id: intentKey,
+						request_status: "ready",
+						lineage_tail: {
+							deployment_id: "hdep_test",
+							lineage_version: 1,
+							lineage_state: "unaccepted",
+							operation: null,
+						},
+					});
+				}
 				return jsonResponse({
 					deploy_request_id: intentKey,
 					request_status: "processing",
@@ -177,8 +192,8 @@ describe("declarative deployment mutations", () => {
 					},
 				});
 			}
-			if (path === "/v2/operations/create-happy") {
-				return jsonResponse(operation({ id: "create-happy", verb: "create" }));
+			if (path.startsWith("/v2/operations/")) {
+				throw new Error("Accepted checkout deploys must not poll their operation");
 			}
 			throw new Error(`Unexpected request: ${request.method} ${path}`);
 		});
@@ -201,7 +216,7 @@ describe("declarative deployment mutations", () => {
 		expect(checkout.deploy_request_id).toBe(intentKey);
 		expect(await client.waitForDeploymentRequest(intentKey)).toMatchObject({
 			deploymentId: "hdep_test",
-			operation: { done: true, name: "operations/create-happy" },
+			operation: { done: false, name: "operations/create-happy" },
 		});
 
 		const checkoutRequest = requests[0];
@@ -212,7 +227,36 @@ describe("declarative deployment mutations", () => {
 		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
 			"/v2/subscription/checkout",
 			`/v2/deployments/by-request/${intentKey}`,
-			"/v2/operations/create-happy",
+			`/v2/deployments/by-request/${intentKey}`,
+		]);
+	});
+
+	it("surfaces a checkout deployment request that fails before acceptance", async () => {
+		const intentKey = "subscription-checkout-deploy-create-failed";
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			const path = new URL(request.url).pathname;
+			if (path === `/v2/deployments/by-request/${intentKey}`) {
+				return jsonResponse({
+					deploy_request_id: intentKey,
+					request_status: "failed",
+					lineage_tail: {
+						deployment_id: null,
+						lineage_version: 1,
+						lineage_state: "failed",
+						operation: null,
+					},
+				});
+			}
+			throw new Error(`Unexpected request: ${request.method} ${path}`);
+		});
+
+		await expect(client.waitForDeploymentRequest(intentKey)).rejects.toBeInstanceOf(
+			DeploymentRequestTerminalError,
+		);
+		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+			`/v2/deployments/by-request/${intentKey}`,
 		]);
 	});
 

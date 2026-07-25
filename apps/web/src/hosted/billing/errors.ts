@@ -53,6 +53,11 @@ export class DeploymentConflictError extends Error {
 	}
 }
 
+/** A checkout-funded deploy request reached a terminal state before acceptance. */
+export class DeploymentRequestTerminalError extends BillingApiError {
+	override name = "DeploymentRequestTerminalError";
+}
+
 function hasDetail(value: unknown): value is { detail: unknown } {
 	return typeof value === "object" && value !== null && "detail" in value;
 }

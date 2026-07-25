@@ -84,6 +84,7 @@ import {
 } from "@/hosted/billing/deploy/language-timezone-controls";
 import {
 	billingErrorNormalizer,
+	DeploymentRequestTerminalError,
 	isIdempotencyKeyReusedError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
@@ -688,12 +689,18 @@ export function DeployWizard() {
 				const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
 				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 				checkoutAttemptRef.current = null;
-				toast.success("Deployment ready", {
-					description: `Your ${tierLabel} agent finished provisioning.`,
+				toast.success("Agent deployed", {
+					description: `Your ${tierLabel} agent is provisioning now.`,
 				});
 				void router.navigate(acceptedDeploymentNavigation(resolved.deploymentId, true));
 				return;
-			} catch {
+			} catch (error) {
+				if (error instanceof DeploymentRequestTerminalError) {
+					forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
+					checkoutAttemptRef.current = null;
+					toast.error("Couldn’t deploy", { description: normalizeBillingError(error) });
+					return;
+				}
 				// Stripe may complete before its deploy request is visible. Fall back
 				// to the inventory refresh path and let normal polling pick it up.
 			}
