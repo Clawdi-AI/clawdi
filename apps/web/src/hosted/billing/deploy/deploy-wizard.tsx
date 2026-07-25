@@ -535,9 +535,7 @@ export function DeployWizard() {
 		return null;
 	})();
 	const canSubmit =
-		!submitting &&
-		subscriptionReuseNotice === null &&
-		submitBlockingReason === null;
+		!submitting && subscriptionReuseNotice === null && submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
 		selectCreatedAiProvider(providerId, aiProviders.dataUpdatedAt);

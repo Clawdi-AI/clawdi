@@ -338,13 +338,7 @@ function DeleteComputeAction({
 			deployment={deployment}
 			onDeleted={() => onDeleteAccepted(deployment.resource.id)}
 		>
-			<Button
-				type="button"
-				variant={variant}
-				size="sm"
-				className={className}
-				disabled={!canDelete}
-			>
+			<Button type="button" variant={variant} size="sm" className={className} disabled={!canDelete}>
 				<Trash2 />
 				Delete
 			</Button>
