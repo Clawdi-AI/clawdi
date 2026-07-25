@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { isDeployApiConfigured } from "@/hosted/billing/billing-client";
+import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { useHostedDeployments } from "@/hosted/billing/hooks";
 import { resolveHostedInventory } from "@/hosted/hosted-agent-resolution";
 
@@ -9,12 +10,20 @@ import { resolveHostedInventory } from "@/hosted/hosted-agent-resolution";
 export function useHostedDeploymentInventory({
 	enabled = true,
 	pollBillingRecoveryFor = null,
+	additionalRefetchInterval,
 }: {
 	enabled?: boolean;
 	pollBillingRecoveryFor?: string | null;
+	additionalRefetchInterval?: (
+		deployments: readonly HostedDeployment[] | undefined,
+	) => number | false;
 } = {}) {
 	const configured = isDeployApiConfigured();
-	const query = useHostedDeployments({ enabled, pollBillingRecoveryFor });
+	const query = useHostedDeployments({
+		enabled,
+		pollBillingRecoveryFor,
+		additionalRefetchInterval,
+	});
 	const resolution = useMemo(
 		() =>
 			resolveHostedInventory({

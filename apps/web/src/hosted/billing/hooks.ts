@@ -393,9 +393,13 @@ export function billingRecoveryRefetchIntervalFor(
 export function useHostedDeployments({
 	enabled = true,
 	pollBillingRecoveryFor = null,
+	additionalRefetchInterval,
 }: {
 	enabled?: boolean;
 	pollBillingRecoveryFor?: string | null;
+	additionalRefetchInterval?: (
+		deployments: readonly HostedDeployment[] | undefined,
+	) => number | false;
 } = {}) {
 	const client = useBillingClient();
 	return useBillingQuery({
@@ -412,9 +416,12 @@ export function useHostedDeployments({
 				q.state.data,
 				pollBillingRecoveryFor,
 			);
-			return typeof billingInterval === "number"
-				? Math.min(inventoryInterval, billingInterval)
-				: inventoryInterval;
+			const detailInterval = additionalRefetchInterval?.(q.state.data) ?? false;
+			return [inventoryInterval, billingInterval, detailInterval].reduce<number>(
+				(shortest, interval) =>
+					typeof interval === "number" ? Math.min(shortest, interval) : shortest,
+				inventoryInterval,
+			);
 		},
 		refetchIntervalInBackground: false,
 	});

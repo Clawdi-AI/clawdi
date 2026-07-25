@@ -14,9 +14,14 @@ type InvalidateDeploymentSnapshots =
 	typeof import("@/hosted/agents/deployment-hooks").invalidateDeploymentSnapshots;
 type ProjectAcceptedDeploymentTransition =
 	typeof import("@/hosted/agents/deployment-hooks").projectAcceptedDeploymentTransition;
+type RuntimeUiSettlingPollState =
+	typeof import("@/hosted/agents/deployment-hooks").runtimeUiSettlingPollState;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
+let settlingPollState: RuntimeUiSettlingPollState | null = null;
+let settlingPollIntervalMs: number | null = null;
+let settlingTimeoutMs: number | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -25,6 +30,120 @@ beforeAll(async () => {
 	const module = await import("@/hosted/agents/deployment-hooks");
 	invalidateSnapshots = module.invalidateDeploymentSnapshots;
 	projectAcceptedTransition = module.projectAcceptedDeploymentTransition;
+	settlingPollState = module.runtimeUiSettlingPollState;
+	settlingPollIntervalMs = module.RUNTIME_UI_SETTLING_POLL_INTERVAL_MS;
+	settlingTimeoutMs = module.RUNTIME_UI_SETTLING_TIMEOUT_MS;
+});
+
+describe("runtime UI settling polling", () => {
+	test("derives the same pending tracker across repeated render-phase calculations", () => {
+		if (!settlingPollState) throw new Error("deployment hooks were not loaded");
+		const nowMs = Date.parse("2026-07-23T12:00:00Z");
+		const deployment = hostedDeploymentFixture({ status: "running", runtime: "hermes" });
+		const committedTracker = null;
+
+		const firstRender = settlingPollState(deployment, "hermes", committedTracker, nowMs);
+		const repeatedRender = settlingPollState(deployment, "hermes", committedTracker, nowMs);
+
+		expect(repeatedRender).toEqual(firstRender);
+		expect(committedTracker).toBeNull();
+	});
+
+	test("commits the derived tracker only from an effect", () => {
+		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
+		const hookStart = source.indexOf("export function useAgentDeployment");
+		const hookEnd = source.indexOf("export type {", hookStart);
+		const hookSource = source.slice(hookStart, hookEnd);
+		const assignments = hookSource.match(/runtimeUiSettlingTrackerRef\.current\s*=/g) ?? [];
+
+		expect(assignments).toHaveLength(1);
+		expect(hookSource).toContain(
+			"useEffect(() => {\n\t\truntimeUiSettlingTrackerRef.current = runtimeUiSettling.tracker;",
+		);
+	});
+
+	test("rapidly polls a running deployment until its selected runtime UI appears", () => {
+		if (!settlingPollState || !settlingPollIntervalMs) {
+			throw new Error("deployment hooks were not loaded");
+		}
+		const nowMs = Date.parse("2026-07-23T12:00:00Z");
+		const deployment = hostedDeploymentFixture({ status: "running", runtime: "hermes" });
+		const pending = settlingPollState(deployment, "hermes", null, nowMs);
+
+		expect(pending.refetchInterval).toBe(settlingPollIntervalMs);
+		expect(pending.timedOut).toBe(false);
+		expect(pending.tracker?.startedAtMs).toBe(nowMs);
+
+		const ready = settlingPollState(
+			hostedDeploymentFixture({
+				status: "running",
+				runtime: "hermes",
+				runtimeUiEndpoint: {
+					runtime: "hermes",
+					role: "control_ui",
+					url: "https://runtime.example/hermes",
+					auth_mode: "password",
+					browser_mode: "top_level",
+				},
+			}),
+			"hermes",
+			pending.tracker,
+			nowMs + settlingPollIntervalMs,
+		);
+		expect(ready).toEqual({ refetchInterval: false, timedOut: false, tracker: null });
+	});
+
+	test("bounds rapid polling to the runtime UI boot window", () => {
+		if (!settlingPollState || !settlingTimeoutMs) {
+			throw new Error("deployment hooks were not loaded");
+		}
+		const nowMs = Date.parse("2026-07-23T12:00:00Z");
+		const deployment = hostedDeploymentFixture({ status: "running" });
+		const pending = settlingPollState(deployment, "openclaw", null, nowMs);
+		const timedOut = settlingPollState(
+			deployment,
+			"openclaw",
+			pending.tracker,
+			nowMs + settlingTimeoutMs,
+		);
+
+		expect(timedOut.refetchInterval).toBe(false);
+		expect(timedOut.timedOut).toBe(true);
+		expect(timedOut.tracker).toEqual(pending.tracker);
+	});
+
+	test("uses an A4 Ready transition to recognize an already-stuck boot", () => {
+		if (!settlingPollState || !settlingTimeoutMs) {
+			throw new Error("deployment hooks were not loaded");
+		}
+		const nowMs = Date.parse("2026-07-23T12:00:00Z");
+		const deployment = hostedDeploymentFixture({ status: "running" });
+		deployment.resource.status.conditions = [
+			{
+				type: "Ready",
+				status: "True",
+				observedGeneration: 1,
+				lastTransitionTime: new Date(nowMs - settlingTimeoutMs).toISOString(),
+				reason: "RuntimeReady",
+				message: "Runtime reported ready",
+			},
+		];
+
+		const state = settlingPollState(deployment, "openclaw", null, nowMs);
+		expect(state.refetchInterval).toBe(false);
+		expect(state.timedOut).toBe(true);
+	});
+
+	test("does not override polling for non-running lifecycle states", () => {
+		if (!settlingPollState) throw new Error("deployment hooks were not loaded");
+		const state = settlingPollState(
+			hostedDeploymentFixture({ status: "starting" }),
+			"openclaw",
+			null,
+			Date.now(),
+		);
+		expect(state).toEqual({ refetchInterval: false, timedOut: false, tracker: null });
+	});
 });
 
 function acceptedOperation(verb: DeploymentOperation["metadata"]["verb"]): DeploymentOperation {
