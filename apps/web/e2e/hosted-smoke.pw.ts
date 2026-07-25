@@ -160,7 +160,7 @@ const includedBasicDeployment: DeploymentMutationFixture = {
 	},
 };
 
-const paidBasicDeployment = {
+const paidBasicDeployment: DeploymentMutationFixture = {
 	...includedBasicDeployment,
 	id: "hdep_paid",
 	name: "Paid Basic",
@@ -748,6 +748,7 @@ type HostedApiStubOptions = {
 	completedDeleteIds?: Set<string>;
 	deleteResponses?: StubResponse[];
 	deploymentListRequests?: string[];
+	deploymentRequestReads?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
 	fixPaymentRequests?: string[];
@@ -774,6 +775,7 @@ type HostedApiStubOptions = {
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
+	unfinishedDeploymentRequests?: boolean;
 	updateDeploymentRequests?: Array<{
 		body: string;
 		idempotencyKey: string | null;
@@ -788,6 +790,47 @@ type HostedApiStubOptions = {
 
 async function fulfillJson(route: Route, body: unknown, status = 200) {
 	await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
+}
+
+async function stubCompletedStripeCheckout(page: Page) {
+	await page.addInitScript(() => {
+		const mockStripe = Object.assign(
+			() => {
+				const session = { canConfirm: true, status: { type: "open" } };
+				const actions = {
+					getSession: () => session,
+					confirm: async () => ({
+						type: "success",
+						session: { status: { type: "complete" } },
+					}),
+				};
+				return {
+					elements: () => ({}),
+					createToken: async () => ({}),
+					createPaymentMethod: async () => ({}),
+					confirmCardPayment: async () => ({}),
+					_registerWrapper: () => undefined,
+					initCheckoutElementsSdk: () => ({
+						loadActions: async () => ({ type: "success", actions }),
+						on: () => undefined,
+						changeAppearance: () => undefined,
+						loadFonts: () => undefined,
+						createPaymentElement: () => ({
+							mount: (node: HTMLElement) => {
+								node.textContent = "Mock secure payment form";
+							},
+							on: () => undefined,
+							off: () => undefined,
+							update: () => undefined,
+							destroy: () => undefined,
+						}),
+					}),
+				};
+			},
+			{ version: "dahlia" },
+		);
+		Object.defineProperty(window, "Stripe", { configurable: true, value: mockStripe });
+	});
 }
 
 async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
@@ -889,19 +932,25 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.startsWith("/v2/deployments/by-request/") && r.request().method() === "GET") {
 			const deployRequestId = decodeURIComponent(p.slice("/v2/deployments/by-request/".length));
+			options.deploymentRequestReads?.push(deployRequestId);
 			const deployment = deploymentRequests.get(deployRequestId);
-			return deployment
-				? fulfillJson(r, {
-						deploy_request_id: deployRequestId,
-						request_status: "succeeded",
-						lineage_tail: {
-							deployment_id: deployment.id,
-							lineage_version: 1,
-							lineage_state: "succeeded",
-							operation: completedDeploymentOperation(deployment, "create"),
-						},
-					})
-				: fulfillJson(r, { detail: "Deployment request not found" }, 404);
+			if (!deployment) {
+				return fulfillJson(r, { detail: "Deployment request not found" }, 404);
+			}
+			const acceptedOperation = completedDeploymentOperation(deployment, "create");
+			const unfinished = options.unfinishedDeploymentRequests ?? false;
+			return fulfillJson(r, {
+				deploy_request_id: deployRequestId,
+				request_status: unfinished ? "processing" : "succeeded",
+				lineage_tail: {
+					deployment_id: deployment.id,
+					lineage_version: 1,
+					lineage_state: unfinished ? "processing" : "succeeded",
+					operation: unfinished
+						? { ...acceptedOperation, done: false, response: null }
+						: acceptedOperation,
+				},
+			});
 		}
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "GET") {
 			const deploymentId = decodeURIComponent(p.slice("/v2/deployments/".length));
@@ -1358,6 +1407,54 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 			model: "gpt-5.6-luna",
 		},
 	});
+});
+
+test("paid checkout navigates on deployment acceptance without LRO convergence", async ({
+	page,
+}) => {
+	const deploymentRequestReads: string[] = [];
+	const operationPollRequests: string[] = [];
+	page.on("request", (request) => {
+		const path = new URL(request.url()).pathname;
+		if (path.startsWith("/v2/operations/")) operationPollRequests.push(path);
+	});
+	await stubCompletedStripeCheckout(page);
+	const provisioningDeployment: DeploymentMutationFixture = {
+		...paidBasicDeployment,
+		id: "hdep_created",
+		name: "Created Basic",
+		status: "creating",
+	};
+	await stubHostedApi(page, {
+		checkoutResponses: [
+			{
+				status: 200,
+				body: {
+					flow_type: "checkout_session",
+					funding_source: "stripe",
+					action_url: null,
+					checkout_url: "https://checkout.stripe.test/session",
+					client_secret: "cs_test_paid_checkout",
+				},
+			},
+		],
+		deploymentRequestReads,
+		deployments: [includedBasicDeployment, provisioningDeployment],
+		plans: [basicPlan],
+		unfinishedDeploymentRequests: true,
+	});
+	await page.goto("/deploy");
+
+	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	const checkoutDialog = page.getByRole("dialog", { name: /Complete .* checkout/ });
+	await expect(checkoutDialog.getByText("Mock secure payment form", { exact: true })).toBeVisible();
+	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
+
+	await expect(page).toHaveURL(/\/agents\/hdep_created/);
+	await expect(page.getByText("Provisioning your agent…", { exact: true })).toBeVisible();
+	expect(deploymentRequestReads).toHaveLength(1);
+	expect(operationPollRequests).toEqual([]);
+	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 });
 
 test("accepted detail delete navigates after deployment membership disappears", async ({

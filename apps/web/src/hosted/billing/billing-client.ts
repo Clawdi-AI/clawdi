@@ -32,6 +32,7 @@ import {
 	BillingApiError,
 	BillingNetworkError,
 	DeploymentConflictError,
+	DeploymentRequestTerminalError,
 } from "@/hosted/billing/errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
@@ -153,7 +154,7 @@ function isPreconditionConflict(error: unknown): error is BillingApiError {
 }
 
 function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingApiError {
-	return new BillingApiError(
+	return new DeploymentRequestTerminalError(
 		409,
 		status.request_status === "superseded"
 			? "This deployment request was superseded by a newer attempt."
@@ -203,19 +204,6 @@ export function createBillingClient(
 			}),
 		);
 
-	const waitForOperation = async (
-		initialOperation: DeploymentOperation,
-	): Promise<DeploymentOperation> => {
-		let operation = initialOperation;
-		for (let poll = 0; !operation.done && poll < pollLimit; poll += 1) {
-			await sleep(pollIntervalMs);
-			operation = await getOperation(operationIdFromName(operation.name));
-		}
-		if (!operation.done) throw new BillingNetworkError("timeout");
-		if (operation.error) throw new BillingApiError(409, operation.error.message, operation.error);
-		return operation;
-	};
-
 	const getDeploymentByRequest = async (
 		deployRequestId: string,
 	): Promise<HostedDeployRequestStatus> =>
@@ -236,18 +224,24 @@ export function createBillingClient(
 				throw terminalDeployRequestError(status);
 			}
 
+			const deploymentId = status.lineage_tail?.deployment_id ?? null;
 			const projectedOperation = status.lineage_tail?.operation ?? null;
+			if (projectedOperation) {
+				return acceptDeclarativeOperation({ operation: projectedOperation, deploymentId });
+			}
+			if (
+				(status.request_status === "processing" || status.request_status === "succeeded") &&
+				deploymentId
+			) {
+				return acceptDeclarativeOperation({ deploymentId, operation: null });
+			}
 			const operationName = status.lineage_tail?.operation_name ?? null;
-			if (projectedOperation || operationName) {
-				const initialOperation =
-					projectedOperation ?? (await getOperation(operationIdFromName(operationName ?? "")));
+			if (operationName) {
 				return acceptDeclarativeOperation({
-					operation: await waitForOperation(initialOperation),
-					deploymentId: status.lineage_tail?.deployment_id,
+					operation: await getOperation(operationIdFromName(operationName)),
 				});
 			}
-			const deploymentId = status.lineage_tail?.deployment_id ?? null;
-			if (status.request_status === "succeeded" && deploymentId) {
+			if (status.request_status === "succeeded") {
 				return acceptDeclarativeOperation({ deploymentId, operation: null });
 			}
 			if (poll === pollLimit) break;
