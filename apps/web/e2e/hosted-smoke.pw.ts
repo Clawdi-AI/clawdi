@@ -1789,12 +1789,15 @@ test("running deployment without a UI endpoint auto-opens the live UI when polli
 		.poll(() => deploymentListRequests.length, { timeout: 10_000 })
 		.toBeGreaterThanOrEqual(2);
 	await expect(page).toHaveURL(
-		new RegExp(`/agents/${missingProjectionEnvironmentId}/console\\?source=on-clawdi$`),
+		(url) =>
+			url.pathname === `/agents/${missingProjectionEnvironmentId}/console` &&
+			url.searchParams.get("source") === "on-clawdi" &&
+			url.searchParams.get("d") === pendingRuntimeUiDeployment.id,
 	);
-	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
+	expect(runtimeUiRedemptionRequests).toEqual([]);
 	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
 		"src",
-		"https://runtime.example/ui?clawdi_code=browser",
+		"https://runtime.example/hermes",
 	);
 });
 

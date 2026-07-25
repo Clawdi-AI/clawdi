@@ -1,7 +1,7 @@
 "use client";
 
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { toast } from "sonner";
 import { type AcceptedOperation, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
@@ -179,7 +179,7 @@ function toastDeploymentConflict(error: unknown): boolean {
  */
 export function useAgentDeployment(environmentId: string, deploymentSelector?: string | null) {
 	const runtimeUiSettlingTrackerRef = useRef<RuntimeUiSettlingTracker | null>(null);
-	const updateRuntimeUiSettlingState = useCallback(
+	const deriveRuntimeUiSettlingState = useCallback(
 		(deployments: readonly HostedDeployment[] | null | undefined, nowMs: number) => {
 			const resolution = resolveAgentDeployment(
 				deployments ?? [],
@@ -193,21 +193,19 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 					: match
 						? defaultDeploymentRuntime(match.deployment)
 						: null;
-			const state = runtimeUiSettlingPollState(
+			return runtimeUiSettlingPollState(
 				match?.deployment,
 				runtime,
 				runtimeUiSettlingTrackerRef.current,
 				nowMs,
 			);
-			runtimeUiSettlingTrackerRef.current = state.tracker;
-			return state;
 		},
 		[deploymentSelector, environmentId],
 	);
 	const additionalRefetchInterval = useCallback(
 		(deployments: readonly HostedDeployment[] | undefined) =>
-			updateRuntimeUiSettlingState(deployments, Date.now()).refetchInterval,
-		[updateRuntimeUiSettlingState],
+			deriveRuntimeUiSettlingState(deployments, Date.now()).refetchInterval,
+		[deriveRuntimeUiSettlingState],
 	);
 	const inventory = useHostedDeploymentInventory({
 		pollBillingRecoveryFor: deploymentSelector ?? environmentId,
@@ -218,7 +216,11 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 		[inventory.deployments, environmentId, deploymentSelector],
 	);
 	const match = resolution.match;
-	const runtimeUiSettling = updateRuntimeUiSettlingState(inventory.deployments, Date.now());
+	const runtimeUiSettling = deriveRuntimeUiSettlingState(inventory.deployments, Date.now());
+
+	useEffect(() => {
+		runtimeUiSettlingTrackerRef.current = runtimeUiSettling.tracker;
+	}, [runtimeUiSettling.tracker]);
 
 	// The env id to drive per-env queries (sessions, channel links). For an
 	// env-id route it's the route param itself; for a deployment-id route

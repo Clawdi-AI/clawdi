@@ -36,6 +36,32 @@ beforeAll(async () => {
 });
 
 describe("runtime UI settling polling", () => {
+	test("derives the same pending tracker across repeated render-phase calculations", () => {
+		if (!settlingPollState) throw new Error("deployment hooks were not loaded");
+		const nowMs = Date.parse("2026-07-23T12:00:00Z");
+		const deployment = hostedDeploymentFixture({ status: "running", runtime: "hermes" });
+		const committedTracker = null;
+
+		const firstRender = settlingPollState(deployment, "hermes", committedTracker, nowMs);
+		const repeatedRender = settlingPollState(deployment, "hermes", committedTracker, nowMs);
+
+		expect(repeatedRender).toEqual(firstRender);
+		expect(committedTracker).toBeNull();
+	});
+
+	test("commits the derived tracker only from an effect", () => {
+		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
+		const hookStart = source.indexOf("export function useAgentDeployment");
+		const hookEnd = source.indexOf("export type {", hookStart);
+		const hookSource = source.slice(hookStart, hookEnd);
+		const assignments = hookSource.match(/runtimeUiSettlingTrackerRef\.current\s*=/g) ?? [];
+
+		expect(assignments).toHaveLength(1);
+		expect(hookSource).toContain(
+			"useEffect(() => {\n\t\truntimeUiSettlingTrackerRef.current = runtimeUiSettling.tracker;",
+		);
+	});
+
 	test("rapidly polls a running deployment until its selected runtime UI appears", () => {
 		if (!settlingPollState || !settlingPollIntervalMs) {
 			throw new Error("deployment hooks were not loaded");
