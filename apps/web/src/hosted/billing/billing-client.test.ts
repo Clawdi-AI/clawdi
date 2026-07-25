@@ -451,25 +451,32 @@ describe("declarative deployment mutations", () => {
 });
 
 describe("compute plan changes", () => {
-	it("settles from its direct response without polling a deployment operation", async () => {
+	it("returns the accepted LRO without polling the deployment operation", async () => {
 		const requests: Request[] = [];
+		const accepted = operation({ done: false, id: "plan-change-1", verb: "plan_change" });
+		accepted.metadata.planChange = {
+			"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
+			operationId: "plan-change-1",
+			subscriptionId: 42,
+			fundingSource: "wallet",
+			sourcePlanSlug: "compute_basic",
+			targetPlanSlug: "compute_performance",
+			targetBillingTermMonths: 1,
+			state: "awaiting_projection",
+			effectiveAt: NOW,
+		};
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
-			return jsonResponse({
-				operation_id: "plan-change-1",
-				subscription_id: 42,
-				funding_source: "wallet",
-				current_plan_slug: "compute_basic",
-				target_plan_slug: "compute_performance",
-				target_billing_term_months: 1,
-				status: "awaiting_projection",
-				effective_at: NOW,
-			});
+			return jsonResponse(accepted, 202);
 		});
 
 		await expect(client.changePlan({ operation_id: "plan-change-1" })).resolves.toMatchObject({
-			operation_id: "plan-change-1",
-			status: "awaiting_projection",
+			name: "operations/plan-change-1",
+			metadata: {
+				verb: "plan_change",
+				planChange: { operationId: "plan-change-1", state: "awaiting_projection" },
+			},
+			done: false,
 		});
 		expect(requests).toHaveLength(1);
 		expect(new URL(requests[0]?.url ?? "https://invalid").pathname).toBe(

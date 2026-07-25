@@ -495,15 +495,34 @@ function planChangeResponse({
 	effectiveAt: string;
 }) {
 	return {
-		operation_id: operationId,
-		subscription_id: subscriptionId,
-		funding_source: fundingSource,
-		current_plan_slug: currentPlanSlug,
-		target_plan_slug: targetPlanSlug,
-		target_billing_term_months: targetBillingTermMonths,
-		status,
-		effective_at: effectiveAt,
-		funding_invoice_id: status === "scheduled" ? null : "in_plan_browser",
+		status: 202,
+		body: {
+			name: `operations/${operationId}`,
+			metadata: {
+				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+				deploymentId: `hdep_plan_${subscriptionId}`,
+				verb: "plan_change",
+				targetGeneration: 1,
+				manifestETag: `plan-change-${operationId}`,
+				createTime: effectiveAt,
+				updateTime: effectiveAt,
+				planChange: {
+					"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
+					operationId,
+					subscriptionId,
+					fundingSource,
+					sourcePlanSlug: currentPlanSlug,
+					targetPlanSlug,
+					targetBillingTermMonths,
+					state: status,
+					effectiveAt,
+					fundingInvoiceId: status === "scheduled" ? null : "in_plan_browser",
+				},
+			},
+			done: status === "complete",
+			error: null,
+			response: null,
+		},
 	};
 }
 
@@ -1082,17 +1101,18 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/subscription/plan/change" && r.request().method() === "POST") {
 			options.planChangeRequests?.push(r.request().postData() ?? "");
-			const response = options.planChangeResponses?.shift() ?? {
-				operation_id: "op_plan_browser",
-				subscription_id: 42,
-				funding_source: "stripe",
-				current_plan_slug: "compute_basic",
-				target_plan_slug: "compute_performance",
-				target_billing_term_months: 1,
-				status: "complete",
-				effective_at: "2026-07-16T00:00:00Z",
-				funding_invoice_id: "in_plan_browser",
-			};
+			const response =
+				options.planChangeResponses?.shift() ??
+				planChangeResponse({
+					operationId: "op_plan_browser",
+					subscriptionId: 42,
+					fundingSource: "stripe",
+					currentPlanSlug: "compute_basic",
+					targetPlanSlug: "compute_performance",
+					targetBillingTermMonths: 1,
+					status: "complete",
+					effectiveAt: "2026-07-16T00:00:00Z",
+				});
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
 				: fulfillJson(r, response);

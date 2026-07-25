@@ -3049,14 +3049,18 @@ function ComputeSettingsSections({
 				return;
 			}
 			const result = await changePlan.mutateAsync({ operation_id: operationId });
-			if (result.status === "scheduled") {
+			const progress = result.metadata.planChange;
+			if (!progress) {
+				throw new Error("The deployment service returned plan-change operation without progress.");
+			}
+			if (progress.state === "scheduled") {
 				toast.success("Downgrade scheduled", {
-					description: `Your current compute remains active until ${formatShortDate(result.effective_at)}.`,
+					description: `Your current compute remains active until ${formatShortDate(progress.effectiveAt)}.`,
 				});
 			} else {
 				toast.success("Plan change started", {
 					description:
-						result.status === "complete"
+						progress.state === "complete"
 							? "Your compute subscription has been updated."
 							: "Compute updates after Stripe confirms the invoice payment.",
 				});
