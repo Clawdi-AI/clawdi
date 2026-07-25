@@ -53,9 +53,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
+import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
 	useCreateTerminalSession,
-	useDeleteDeployment,
 	useDeploymentLifecycle,
 	useUpdateDeployment,
 } from "@/hosted/agents/deployment-hooks";
@@ -331,37 +331,18 @@ function DeleteComputeAction({
 	variant?: React.ComponentProps<typeof Button>["variant"];
 	className?: string;
 }) {
-	const deleteDeployment = useDeleteDeployment();
-	const runAction = useActionLock();
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const canDelete = canDeleteDeployment(status);
 	return (
-		<ConfirmAction
-			title={`Delete ${deploymentDisplayName(
-				deployment.resource.spec.name,
-				deployment.resource.spec.runtime,
-			)}?`}
-			description={<p>The hosted agent is torn down. This can’t be undone.</p>}
-			confirmLabel="Delete compute"
-			destructive
-			onConfirm={() =>
-				runAction(async () => {
-					await deleteDeployment.mutateAsync(deployment.resource.id);
-					onDeleteAccepted(deployment.resource.id);
-				})
-			}
+		<HostedDeploymentDeleteAction
+			deployment={deployment}
+			onDeleted={() => onDeleteAccepted(deployment.resource.id)}
 		>
-			<Button
-				type="button"
-				variant={variant}
-				size="sm"
-				className={className}
-				disabled={deleteDeployment.isPending || !canDelete}
-			>
-				{deleteDeployment.isPending ? <Spinner /> : <Trash2 />}
+			<Button type="button" variant={variant} size="sm" className={className} disabled={!canDelete}>
+				<Trash2 />
 				Delete
 			</Button>
-		</ConfirmAction>
+		</HostedDeploymentDeleteAction>
 	);
 }
 

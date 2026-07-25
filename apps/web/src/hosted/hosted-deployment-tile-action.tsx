@@ -2,16 +2,15 @@
 
 import { Play, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
-import { useDeleteDeployment, useDeploymentLifecycle } from "@/hosted/agents/deployment-hooks";
+import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
+import { useDeploymentLifecycle } from "@/hosted/agents/deployment-hooks";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { canDelete, canStart, parseDeploymentStatus } from "@/hosted/deployment-status";
 
 export function HostedDeploymentTileAction({ deployment }: { deployment: HostedDeployment }) {
-	const deleteDeployment = useDeleteDeployment();
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
 	const name = deploymentDisplayName(
@@ -41,29 +40,19 @@ export function HostedDeploymentTileAction({ deployment }: { deployment: HostedD
 					Start
 				</Button>
 			) : null}
-			<ConfirmAction
-				title={`Delete ${name}?`}
-				description={<p>The hosted deployment is torn down. This can’t be undone.</p>}
-				confirmLabel="Delete deployment"
-				destructive
-				onConfirm={() =>
-					runAction(async () => {
-						await deleteDeployment.mutateAsync(deployment.resource.id);
-					})
-				}
-			>
+			<HostedDeploymentDeleteAction deployment={deployment}>
 				<Button
 					type="button"
 					variant="ghost"
 					size="icon-xs"
 					className="text-muted-foreground hover:text-destructive"
-					disabled={deleteDeployment.isPending || !deleteEnabled}
+					disabled={!deleteEnabled}
 					aria-label={`Delete ${name}`}
 					title={`Delete ${name}`}
 				>
-					{deleteDeployment.isPending ? <Spinner /> : <Trash2 />}
+					<Trash2 />
 				</Button>
-			</ConfirmAction>
+			</HostedDeploymentDeleteAction>
 		</div>
 	);
 }
