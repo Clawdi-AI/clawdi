@@ -2563,7 +2563,9 @@ test("paid Basic cancellation stays conditional with the included slot vacant or
 	expect(errors, `paid Basic cancellation: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("paid agent deletion keeps the reusable subscription by default", async ({ page }) => {
+test("paid agent deletion cancels the subscription before teardown by default", async ({
+	page,
+}) => {
 	const cancelRequests: string[] = [];
 	const deleteRequests: string[] = [];
 	const mutationOrder: string[] = [];
@@ -2582,17 +2584,17 @@ test("paid agent deletion keeps the reusable subscription by default", async ({ 
 	await expect(dialog).toContainText("Delete agent and cancel subscription");
 	const choices = dialog.getByRole("radio");
 	await expect(choices).toHaveCount(2);
-	await expect(choices.first()).toBeChecked();
+	await expect(choices.nth(1)).toBeChecked();
 	await dialog
-		.getByRole("button", { name: "Delete agent (keep subscription)", exact: true })
+		.getByRole("button", { name: "Delete agent and cancel subscription", exact: true })
 		.click();
 
-	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
-	expect(cancelRequests).toEqual([]);
-	expect(mutationOrder).toEqual(["delete"]);
+	await expect.poll(() => mutationOrder).toEqual(["cancel", "delete"]);
+	expect(JSON.parse(cancelRequests[0] ?? "{}")).toEqual({ deployment_id: "hdep_paid" });
+	expect(deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
 });
 
-test("paid agent deletion records cancellation before deployment teardown", async ({ page }) => {
+test("paid agent deletion explicitly keeps the reusable subscription", async ({ page }) => {
 	const cancelRequests: string[] = [];
 	const deleteRequests: string[] = [];
 	const mutationOrder: string[] = [];
@@ -2607,14 +2609,14 @@ test("paid agent deletion records cancellation before deployment teardown", asyn
 
 	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
 	const dialog = page.getByRole("alertdialog");
-	await dialog.getByRole("radio").nth(1).check();
+	await dialog.getByRole("radio").first().check();
 	await dialog
-		.getByRole("button", { name: "Delete agent and cancel subscription", exact: true })
+		.getByRole("button", { name: "Delete agent (keep subscription)", exact: true })
 		.click();
 
-	await expect.poll(() => mutationOrder).toEqual(["cancel", "delete"]);
-	expect(JSON.parse(cancelRequests[0] ?? "{}")).toEqual({ deployment_id: "hdep_paid" });
-	expect(deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
+	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
+	expect(cancelRequests).toEqual([]);
+	expect(mutationOrder).toEqual(["delete"]);
 });
 
 test("paid agent deletion does not teardown when cancellation fails", async ({ page }) => {

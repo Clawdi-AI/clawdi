@@ -40,7 +40,7 @@ export function HostedDeploymentDeleteAction({
 	const deleteDeployment = useDeleteDeployment();
 	const cancelSubscription = useCancelSubscription();
 	const [open, setOpen] = useState(false);
-	const [choice, setChoice] = useState<DeploymentDeleteChoice>("keep_subscription");
+	const [choice, setChoice] = useState<DeploymentDeleteChoice>("cancel_subscription");
 	const [pending, setPending] = useState(false);
 	const locked = useRef(false);
 	const subscription = deployment.commercial_display?.compute_subscription;
@@ -115,7 +115,7 @@ export function HostedDeploymentDeleteAction({
 			open={open}
 			onOpenChange={(nextOpen) => {
 				if (pending) return;
-				if (nextOpen) setChoice("keep_subscription");
+				if (nextOpen) setChoice("cancel_subscription");
 				setOpen(nextOpen);
 			}}
 		>

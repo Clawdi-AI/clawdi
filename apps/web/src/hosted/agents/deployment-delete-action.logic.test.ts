@@ -45,7 +45,7 @@ describe("hosted deployment deletion", () => {
 		).toBe(false);
 	});
 
-	test("keeps the subscription by default and only deletes the deployment", async () => {
+	test("only deletes when keeping the subscription", async () => {
 		const calls: string[] = [];
 		await deleteDeploymentWithSubscriptionChoice({
 			choice: "keep_subscription",
