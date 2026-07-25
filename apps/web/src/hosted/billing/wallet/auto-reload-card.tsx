@@ -1,5 +1,6 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CreditCard, Repeat } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -20,7 +21,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
 import type { WalletState } from "@/hosted/billing/contracts";
 import { formatCents } from "@/hosted/billing/format";
-import { useSetAutoReload } from "@/hosted/billing/hooks";
+import { billingKeys } from "@/hosted/billing/query-keys";
+import { useSensitiveSetAutoReload } from "@/hosted/billing/sensitive-actions";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { AutoReloadActionConfirm } from "@/hosted/billing/wallet/auto-reload-action";
 import {
@@ -46,13 +48,15 @@ const PRISTINE_FIELDS: BlurredFields = { threshold: false, amount: false, cap: f
 const ALL_FIELDS_BLURRED: BlurredFields = { threshold: true, amount: true, cap: true };
 
 export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTopUp?: () => void }) {
-	const save = useSetAutoReload();
+	const save = useSensitiveSetAutoReload();
+	const queryClient = useQueryClient();
 	const runAction = useActionLock();
 	const initialDraft = autoReloadDraftFromWallet(wallet);
 	const [baseline, setBaseline] = useState<AutoReloadDraft>(initialDraft);
 	const [draft, setDraft] = useState<AutoReloadDraft>(initialDraft);
 	const [blurred, setBlurred] = useState<BlurredFields>(PRISTINE_FIELDS);
 	const [requestError, setRequestError] = useState<AutoReloadSaveError | null>(null);
+	const [actionClientSecret, setActionClientSecret] = useState<string | null>(null);
 	const draftRef = useRef(draft);
 	const baselineRef = useRef(baseline);
 	const pendingRef = useRef(save.isPending);
@@ -84,6 +88,10 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 		wallet.auto_reload_monthly_cap_cents,
 	]);
 
+	useEffect(() => {
+		if (!wallet.auto_reload_action) setActionClientSecret(null);
+	}, [wallet.auto_reload_action?.attempt_id, wallet.auto_reload_action]);
+
 	function updateDraft<K extends keyof AutoReloadDraft>(key: K, value: AutoReloadDraft[K]) {
 		setDraft((current) => ({ ...current, [key]: value }));
 		setRequestError(null);
@@ -105,7 +113,9 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 		if (!dirty || !request || save.isPending) return;
 		setRequestError(null);
 		try {
-			const nextWallet = await save.mutateAsync(request);
+			const nextWallet = await save.execute(request);
+			setActionClientSecret(nextWallet.auto_reload_action?.client_secret ?? null);
+			queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
 			const next = autoReloadDraftFromWallet(nextWallet);
 			setBaseline(next);
 			setDraft(next);
@@ -162,7 +172,12 @@ export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTop
 			</CardHeader>
 
 			<CardContent className="flex flex-col gap-4">
-				<AutoReloadActionConfirm wallet={wallet} onTopUp={onTopUp} />
+				<AutoReloadActionConfirm
+					wallet={wallet}
+					onTopUp={onTopUp}
+					initialClientSecret={actionClientSecret}
+					onDiscardClientSecret={() => setActionClientSecret(null)}
+				/>
 
 				{requestError ? (
 					<Alert variant="destructive">

@@ -96,7 +96,6 @@ import {
 } from "@/hosted/billing/format";
 import {
 	useCheckoutReturnRefresh,
-	useCreateSubscription,
 	useHostedDeployments,
 	useManagedModelCatalog,
 	usePlans,
@@ -111,6 +110,7 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
+import { useSensitiveCreateSubscription } from "@/hosted/billing/sensitive-actions";
 import {
 	type SubscriptionCreateRequestView,
 	type SubscriptionCreateSelection,
@@ -367,7 +367,7 @@ export function DeployWizard() {
 	const deployments = useHostedDeployments();
 	const managedModelCatalog = useManagedModelCatalog();
 	const aiProviders = useUserAiProviders();
-	const createSubscription = useCreateSubscription();
+	const createSubscription = useSensitiveCreateSubscription();
 	const billingClient = useBillingClient();
 	const resolveDeploymentRequest = useResolveDeploymentRequest();
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
@@ -651,7 +651,7 @@ export function DeployWizard() {
 			newIdempotencyKey,
 		);
 		const outcome = await createSubscription
-			.mutateAsync({
+			.execute({
 				...request,
 				uiMode: "hosted",
 				idempotencyKey: checkoutAttemptRef.current.key,
@@ -768,7 +768,7 @@ export function DeployWizard() {
 					);
 					walletCreateAttemptRef.current = attempt;
 					const outcome = await createSubscription
-						.mutateAsync({
+						.execute({
 							selection,
 							target,
 							uiMode: CHECKOUT_ELEMENTS_UI_MODE,
@@ -801,7 +801,7 @@ export function DeployWizard() {
 					newIdempotencyKey,
 				);
 				const outcome = await createSubscription
-					.mutateAsync({
+					.execute({
 						selection,
 						target,
 						uiMode: CHECKOUT_ELEMENTS_UI_MODE,

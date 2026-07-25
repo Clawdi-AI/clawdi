@@ -4,16 +4,15 @@ import { CircleAlert, CircleCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
 	CODEX_OAUTH_CHANNEL,
-	CODEX_OAUTH_STORAGE_KEY,
 	type CodexOAuthResult,
 	parseCodexCallback,
 } from "@/hosted/v2/ai-providers/codex-oauth";
 
 /**
  * The Codex OAuth landing page. ChatGPT redirects here with `?code&state`;
- * this hands them back to the add-provider dialog (the opener) over three
- * channels for resilience — postMessage to the opener, a BroadcastChannel,
- * and localStorage — then closes itself when it was opened as a popup.
+ * this hands them back to the add-provider dialog (the opener) over two
+ * in-memory channels — postMessage to the opener and a BroadcastChannel —
+ * then closes itself when it was opened as a popup.
  */
 export function CodexOAuthCallback() {
 	const [state, setState] = useState<"ok" | "error">("ok");
@@ -25,6 +24,10 @@ export function CodexOAuthCallback() {
 			state: "",
 			error: "missing_code",
 		};
+		// The callback query is browser-history data. Strip code/state before
+		// handing them to the opener so refresh, screenshots, and diagnostics no
+		// longer expose the authorization material.
+		window.history.replaceState(window.history.state, "", window.location.pathname);
 		setState(result.error || !result.code ? "error" : "ok");
 
 		try {
@@ -40,14 +43,8 @@ export function CodexOAuthCallback() {
 				window.location.origin,
 			);
 		} catch {
-			// Cross-origin opener — ignore; storage/broadcast still deliver.
+			// Cross-origin opener — ignore; BroadcastChannel or manual paste still delivers.
 		}
-		try {
-			localStorage.setItem(CODEX_OAUTH_STORAGE_KEY, JSON.stringify(result));
-		} catch {
-			// Storage blocked — best-effort only.
-		}
-
 		// Opened as a popup with a usable result → auto-close shortly.
 		if (window.opener && !result.error && result.code) {
 			const t = setTimeout(() => window.close(), 1000);

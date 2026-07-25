@@ -55,8 +55,8 @@ import { ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import {
 	CLAWDI_CODEX_OAUTH_PROVIDER_ID,
 	CODEX_OAUTH_CHANNEL,
-	CODEX_OAUTH_STORAGE_KEY,
 	type CodexOAuthResult,
+	codexOAuthStateMatches,
 	codexProviderBody,
 	codexRedirectUri,
 	parseCodexCallback,
@@ -347,7 +347,7 @@ export function AddProviderDialog({
 				createdFreshRef.current = false;
 			}
 			const started = await oauthStart
-				.mutateAsync({
+				.execute({
 					providerId: CLAWDI_CODEX_OAUTH_PROVIDER_ID,
 					provider: "codex",
 					redirect_uri: redirectUri,
@@ -364,9 +364,6 @@ export function AddProviderDialog({
 			completedRef.current = false;
 			abandonedRef.current = false;
 			setOauthIssue(null);
-			try {
-				localStorage.removeItem(CODEX_OAUTH_STORAGE_KEY);
-			} catch {}
 			setOauth({
 				providerId: CLAWDI_CODEX_OAUTH_PROVIDER_ID,
 				state: started.state,
@@ -404,7 +401,7 @@ export function AddProviderDialog({
 			// before changing provider fields. A key-storage failure therefore
 			// leaves the entire existing provider untouched.
 			const keyStored = await setKey
-				.mutateAsync({
+				.execute({
 					providerId,
 					value: apiKey.trim(),
 					runtime_env_name: runtimeEnvForSubmit,
@@ -437,7 +434,7 @@ export function AddProviderDialog({
 				// Create has no prior auth to preserve. Remove the new provider if
 				// key storage fails so no unusable record remains.
 				const keyStored = await setKey
-					.mutateAsync({
+					.execute({
 						providerId,
 						value: apiKey.trim(),
 						runtime_env_name: runtimeEnvForSubmit,
@@ -451,6 +448,7 @@ export function AddProviderDialog({
 		}
 
 		toast.success(isEdit ? "Provider updated" : "Provider added");
+		setApiKey("");
 		if (!isEdit) onCreated?.(saved.provider_id);
 		onOpenChange(false);
 	}
@@ -489,7 +487,7 @@ export function AddProviderDialog({
 	async function restartSignIn() {
 		if (!oauth || oauthStart.isPending) return;
 		const started = await oauthStart
-			.mutateAsync({
+			.execute({
 				providerId: oauth.providerId,
 				provider: "codex",
 				redirect_uri: oauth.redirectUri,
@@ -498,9 +496,6 @@ export function AddProviderDialog({
 		if (!started) return; // oauthStart.onError already toasts
 		completedRef.current = false;
 		abandonedRef.current = false;
-		try {
-			localStorage.removeItem(CODEX_OAUTH_STORAGE_KEY);
-		} catch {}
 		// Fresh session resets the expiry/poll effect (keyed on `oauth`).
 		setOauth({
 			providerId: oauth.providerId,
@@ -544,13 +539,14 @@ export function AddProviderDialog({
 		setOauth(null);
 		setOauthCode("");
 		setOauthIssue(null);
-		try {
-			localStorage.removeItem(CODEX_OAUTH_STORAGE_KEY);
-		} catch {}
 	}
 
 	function requestClose(next: boolean) {
-		if (!next) abandonCodexIfIncomplete();
+		if (!next) {
+			abandonCodexIfIncomplete();
+			setApiKey("");
+			setOauthCode("");
+		}
 		onOpenChange(next);
 	}
 
@@ -573,11 +569,17 @@ export function AddProviderDialog({
 			if (result.error) toast.error("ChatGPT sign-in failed", { description: result.error });
 			return;
 		}
+		if (!codexOAuthStateMatches(oauth.state, result)) {
+			toast.error("ChatGPT sign-in could not be verified", {
+				description: "The OAuth state did not match. Restart sign-in and try again.",
+			});
+			return;
+		}
 		completedRef.current = true;
 		const done = await oauthComplete
-			.mutateAsync({
+			.execute({
 				providerId: oauth.providerId,
-				state: result.state || oauth.state,
+				state: result.state,
 				code: result.code,
 				redirect_uri: oauth.redirectUri,
 			})
@@ -588,6 +590,7 @@ export function AddProviderDialog({
 			createdFreshRef.current = false;
 			closeOAuthPopup();
 			setOauth(null);
+			setOauthCode("");
 			if (!isEdit) onCreated?.(oauth.providerId);
 			onOpenChange(false);
 		} else {
@@ -596,8 +599,8 @@ export function AddProviderDialog({
 	};
 
 	// While a Codex sign-in is in flight, listen for the callback route handing
-	// back code+state over any of three channels (postMessage, BroadcastChannel,
-	// localStorage) and complete automatically.
+	// back code+state over the two in-memory cross-window channels and complete
+	// automatically. The manual paste field remains the no-channel fallback.
 	useEffect(() => {
 		if (!oauth) return;
 		const handle = (r: CodexOAuthResult | null) => {
@@ -613,19 +616,10 @@ export function AddProviderDialog({
 				handle(e.data as CodexOAuthResult);
 			}
 		};
-		const onStorage = (e: StorageEvent) => {
-			if (e.key === CODEX_OAUTH_STORAGE_KEY && e.newValue) {
-				try {
-					handle(JSON.parse(e.newValue) as CodexOAuthResult);
-				} catch {}
-			}
-		};
 		window.addEventListener("message", onMessage);
-		window.addEventListener("storage", onStorage);
 		return () => {
 			ch?.close();
 			window.removeEventListener("message", onMessage);
-			window.removeEventListener("storage", onStorage);
 		};
 	}, [oauth]);
 

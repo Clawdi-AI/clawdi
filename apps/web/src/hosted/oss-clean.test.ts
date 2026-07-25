@@ -349,7 +349,9 @@ describe("hosted product route exposure", () => {
 		expect(route).not.toContain("HostedProductGate");
 		expect(callback).toContain("ch.postMessage(result)");
 		expect(callback).toContain("window.opener?.postMessage(");
-		expect(callback).toContain("localStorage.setItem(CODEX_OAUTH_STORAGE_KEY");
+		expect(callback).toContain("window.history.replaceState(");
+		expect(callback).not.toContain("localStorage");
+		expect(callback).not.toContain("sessionStorage");
 	});
 
 	test("Cloud-agents-off agent index copy stays neutral", () => {

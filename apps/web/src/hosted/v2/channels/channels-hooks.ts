@@ -10,6 +10,7 @@ import {
 } from "@/hosted/v2/channels/channel-query-cache";
 import type { ChannelCreate } from "@/hosted/v2/channels/channel-types";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /**
  * Typed data hooks for the native channels surface. All reads/writes go
@@ -109,14 +110,17 @@ export function useEnvironments() {
 export function useCreateChannel() {
 	const api = useApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (body: ChannelCreate) => unwrap(await api.POST("/v1/channels", { body })),
-		onSuccess: () => {
+	return useSensitiveAction(async (body: ChannelCreate) => {
+		try {
+			const result = unwrap(await api.POST("/v1/channels", { body }));
 			qc.invalidateQueries({ queryKey: keys.list });
 			qc.invalidateQueries({ queryKey: keys.pool });
 			qc.invalidateQueries({ queryKey: keys.health });
-		},
-		onError: toastApiError("Couldn't connect channel"),
+			return result;
+		} catch (error) {
+			toastApiError("Couldn't connect channel")(error);
+			throw error;
+		}
 	});
 }
 
@@ -141,34 +145,35 @@ export function useDeleteChannel() {
 export function useLinkAgent(accountId: string) {
 	const api = useApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (agentId: string) =>
-			unwrap(
+	return useSensitiveAction(async (agentId: string) => {
+		try {
+			const result = unwrap(
 				await api.POST("/v1/channels/{account_id}/agent-links", {
 					params: { path: { account_id: accountId } },
 					body: { agent_id: agentId },
 				}),
-			),
-		onSuccess: () => {
+			);
 			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
 			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
 			qc.invalidateQueries({ queryKey: keys.pool });
-		},
-		onError: toastApiError("Couldn't link agent"),
+			return result;
+		} catch (error) {
+			toastApiError("Couldn't link agent")(error);
+			throw error;
+		}
 	});
 }
 
 export function useRotateAgentToken(accountId: string) {
 	const api = useApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (linkId: string) =>
-			unwrap(
+	return useSensitiveAction(async (linkId: string) => {
+		try {
+			const data = unwrap(
 				await api.POST("/v1/channels/{account_id}/agent-links/{link_id}/token", {
 					params: { path: { account_id: accountId, link_id: linkId } },
 				}),
-			),
-		onSuccess: (data) => {
+			);
 			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
 			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
 			// Always confirm — the new token is also revealed inline when present,
@@ -178,29 +183,36 @@ export function useRotateAgentToken(accountId: string) {
 					? "Copy the new token below — the previous one is now invalid."
 					: "The previous token is now invalid.",
 			});
-		},
-		onError: toastApiError("Couldn't rotate token"),
+			return data;
+		} catch (error) {
+			toastApiError("Couldn't rotate token")(error);
+			throw error;
+		}
 	});
 }
 
 export function useCreatePairCode(accountId: string) {
 	const api = useApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: { agent_id?: string; agent_link_id?: string; ttl_seconds?: number }) =>
-			unwrap(
-				await api.POST("/v1/channels/{account_id}/pair-codes", {
-					params: { path: { account_id: accountId } },
-					body: { ttl_seconds: vars.ttl_seconds ?? 900, ...vars },
-				}),
-			),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
-			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
-			qc.invalidateQueries({ queryKey: keys.bindings(accountId) });
+	return useSensitiveAction(
+		async (vars: { agent_id?: string; agent_link_id?: string; ttl_seconds?: number }) => {
+			try {
+				const result = unwrap(
+					await api.POST("/v1/channels/{account_id}/pair-codes", {
+						params: { path: { account_id: accountId } },
+						body: { ttl_seconds: vars.ttl_seconds ?? 900, ...vars },
+					}),
+				);
+				qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
+				qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
+				qc.invalidateQueries({ queryKey: keys.bindings(accountId) });
+				return result;
+			} catch (error) {
+				toastApiError("Couldn't create pairing code")(error);
+				throw error;
+			}
 		},
-		onError: toastApiError("Couldn't create pairing code"),
-	});
+	);
 }
 
 /** An agent's linked channels (+account summary) — fixes the per-channel N+1. */
@@ -283,8 +295,8 @@ export function useWhatsappTenantCreds(accountId: string, enabled = true) {
 export function useCreateWhatsappTenantCred(accountId: string) {
 	const api = useApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: { agent_id?: string; agent_link_id?: string }) =>
+	return useSensitiveAction(async (vars: { agent_id?: string; agent_link_id?: string }) => {
+		try {
 			unwrap(
 				await api.POST("/v1/channels/whatsapp/{account_id}/tenant-creds", {
 					params: { path: { account_id: accountId } },
@@ -292,14 +304,15 @@ export function useCreateWhatsappTenantCred(accountId: string) {
 					// it required — send the primary device.
 					body: { device: 1, ...vars },
 				}),
-			),
-		onSuccess: () => {
+			);
 			qc.invalidateQueries({ queryKey: keys.whatsappCreds(accountId) });
 			toast.success("Device credential minted", {
 				description: "Finish pairing from the agent runtime to link the number.",
 			});
-		},
-		onError: toastApiError("Couldn't link WhatsApp device"),
+		} catch (error) {
+			toastApiError("Couldn't link WhatsApp device")(error);
+			throw error;
+		}
 	});
 }
 

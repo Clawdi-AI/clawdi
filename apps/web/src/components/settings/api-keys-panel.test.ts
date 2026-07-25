@@ -16,7 +16,8 @@ describe("API keys query states", () => {
 describe("API key creation safeguards", () => {
 	test("trims labels and rejects whitespace-only input", () => {
 		expect(source).toContain("const normalizedNewLabel = newLabel.trim()");
-		expect(source).toContain("createKey.mutate(normalizedNewLabel)");
+		expect(source).toContain("createKey.execute(normalizedNewLabel)");
+		expect(source).toContain("const createKey = useSensitiveAction(");
 		expect(source).toContain("disabled={!normalizedNewLabel || createKey.isPending");
 	});
 
@@ -27,8 +28,8 @@ describe("API key creation safeguards", () => {
 		expect(source).toContain("I&apos;ve saved it");
 	});
 
-	test("normalizes create and revoke mutation errors", () => {
-		expect(source).toContain('onError: toastApiError("Couldn\'t create key")');
+	test("normalizes create-action and revoke-mutation errors", () => {
+		expect(source).toContain('toastApiError("Couldn\'t create key")(error)');
 		expect(source).toContain('onError: toastApiError("Couldn\'t turn off key")');
 		expect(source).not.toMatch(/onError:.*\.detail/);
 	});

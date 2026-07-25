@@ -35,11 +35,7 @@ import {
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
-import {
-	useCreateSubscription,
-	useSubscriptionCreateQuote,
-	useWallet,
-} from "@/hosted/billing/hooks";
+import { useSubscriptionCreateQuote, useWallet } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
 	type IdempotencyAttempt,
@@ -47,6 +43,7 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
+import { useSensitiveCreateSubscription } from "@/hosted/billing/sensitive-actions";
 import {
 	type SubscriptionCreateSelection,
 	type SubscriptionFundingSource,
@@ -104,7 +101,7 @@ export function SubscriptionCreateDialog({
 	initialBillingTermMonths: number;
 }) {
 	const hostedAccess = useHostedProductAccess();
-	const createSubscription = useCreateSubscription();
+	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
 	const createAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const [planSlug, setPlanSlug] = useState(initialPlanSlug);
@@ -199,7 +196,7 @@ export function SubscriptionCreateDialog({
 				fingerprint,
 				newIdempotencyKey,
 			);
-			const outcome = await createSubscription.mutateAsync({
+			const outcome = await createSubscription.execute({
 				selection: createSelection,
 				target,
 				uiMode: "hosted",

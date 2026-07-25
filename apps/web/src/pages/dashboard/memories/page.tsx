@@ -46,6 +46,7 @@ import type { Memory } from "@/lib/api-schemas";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 const CATEGORIES = [
@@ -75,22 +76,49 @@ export default function MemoriesPage() {
 
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
-		queryFn: async () => unwrap(await api.GET("/v1/settings")),
+		queryFn: async (): Promise<{
+			memory_provider: string;
+			mem0_api_key_configured: boolean;
+		}> => {
+			const value = unwrap(await api.GET("/v1/settings"));
+			const mem0ApiKey = value.mem0_api_key;
+			return {
+				memory_provider:
+					typeof value.memory_provider === "string" ? value.memory_provider : "builtin",
+				mem0_api_key_configured: typeof mem0ApiKey === "string" && mem0ApiKey.length > 0,
+			};
+		},
 	});
 
 	const provider =
 		typeof settings?.memory_provider === "string" ? settings.memory_provider : "builtin";
-	const mem0Key = typeof settings?.mem0_api_key === "string" ? settings.mem0_api_key : "";
-	const hasMem0Key = mem0Key !== "";
+	const hasMem0Key = settings?.mem0_api_key_configured === true;
 
 	const updateSettings = useMutation({
-		mutationFn: async (patch: Record<string, string>) =>
-			unwrap(await api.PATCH("/v1/settings", { body: { settings: patch } })),
+		mutationFn: async (memoryProvider: "builtin" | "mem0") =>
+			unwrap(
+				await api.PATCH("/v1/settings", {
+					body: { settings: { memory_provider: memoryProvider } },
+				}),
+			),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ["settings"] });
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
 		},
 		onError: (e) => toast.error("Couldn't update settings", { description: errorMessage(e) }),
+	});
+	const saveMem0Key = useSensitiveAction(async (key: string) => {
+		try {
+			const result = unwrap(
+				await api.PATCH("/v1/settings", { body: { settings: { mem0_api_key: key } } }),
+			);
+			queryClient.invalidateQueries({ queryKey: ["settings"] });
+			queryClient.invalidateQueries({ queryKey: ["memories"] });
+			return result;
+		} catch (error) {
+			toast.error("Couldn't update settings", { description: errorMessage(error) });
+			throw error;
+		}
 	});
 
 	const { data, isLoading, isFetching, error, refetch } = useQuery({
@@ -145,10 +173,7 @@ export default function MemoriesPage() {
 			<PageHeader title="Memories" description={MEMORIES_RESOURCE.managementDescription} />
 
 			{provider === "mem0" && !hasMem0Key ? (
-				<Mem0KeyForm
-					onSave={(key) => updateSettings.mutate({ mem0_api_key: key })}
-					isPending={updateSettings.isPending}
-				/>
+				<Mem0KeyForm onSave={saveMem0Key.execute} isPending={saveMem0Key.isPending} />
 			) : null}
 
 			<ListToolbar
@@ -190,7 +215,7 @@ export default function MemoriesPage() {
 							onValueChange={(v) => {
 								const selected = v[0];
 								if (selected === "builtin" || selected === "mem0") {
-									updateSettings.mutate({ memory_provider: selected });
+									updateSettings.mutate(selected);
 								}
 							}}
 							disabled={updateSettings.isPending}
@@ -349,8 +374,23 @@ function MemoryNotesGrid({
 	);
 }
 
-function Mem0KeyForm({ onSave, isPending }: { onSave: (key: string) => void; isPending: boolean }) {
+function Mem0KeyForm({
+	onSave,
+	isPending,
+}: {
+	onSave: (key: string) => Promise<unknown>;
+	isPending: boolean;
+}) {
 	const [apiKey, setApiKey] = useState("");
+	async function submit() {
+		if (!apiKey || isPending) return;
+		try {
+			await onSave(apiKey);
+			setApiKey("");
+		} catch {
+			// The parent action surfaces the error; retain the value for an explicit retry.
+		}
+	}
 	return (
 		<Card>
 			<CardHeader>
@@ -378,10 +418,10 @@ function Mem0KeyForm({ onSave, isPending }: { onSave: (key: string) => void; isP
 						autoComplete="off"
 						spellCheck={false}
 						onKeyDown={(e) => {
-							if (e.key === "Enter" && apiKey) onSave(apiKey);
+							if (e.key === "Enter" && apiKey) void submit();
 						}}
 					/>
-					<Button onClick={() => apiKey && onSave(apiKey)} disabled={!apiKey || isPending}>
+					<Button onClick={() => void submit()} disabled={!apiKey || isPending}>
 						{isPending ? <Spinner /> : <Key />}
 						Save API Key
 					</Button>

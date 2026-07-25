@@ -14,7 +14,7 @@ import {
 	UserMinus,
 	Users,
 } from "lucide-react";
-import { type ReactElement, useState } from "react";
+import { type ReactElement, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { isCustomProject } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -45,6 +45,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { formatApiError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { errorMessage } from "@/lib/utils";
 
 /**
@@ -131,7 +132,7 @@ export function ShareProjectDialog({
 								<Link2 className="size-3.5 text-muted-foreground" />
 								Share link
 							</h3>
-							<ShareLinksPanel projectId={projectId} />
+							<ShareLinksPanel projectId={projectId} open={open} />
 						</section>
 						<p className="border-t pt-3 text-xs text-muted-foreground">
 							Everyone joins as a viewer: they read skills and key names here, and their agents can
@@ -153,13 +154,16 @@ export function ShareProjectDialog({
 	);
 }
 
-function ShareLinksPanel({ projectId }: { projectId: string }) {
+function ShareLinksPanel({ projectId, open }: { projectId: string; open: boolean }) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const [label, setLabel] = useState("");
 	// The just-created link's full URL is shown once because the server
 	// stores only the prefix going forward.
 	const [freshLink, setFreshLink] = useState<ShareLinkCreated | null>(null);
+	useEffect(() => {
+		if (!open) setFreshLink(null);
+	}, [open]);
 
 	const links = useQuery({
 		queryKey: ["share-links", projectId],
@@ -171,17 +175,15 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			),
 	});
 
-	const create = useMutation({
-		mutationFn: async (nextLabel: string): Promise<ShareLinkCreated> => {
+	const create = useSensitiveAction(async (nextLabel: string): Promise<ShareLinkCreated> => {
+		try {
 			const trimmedLabel = nextLabel.trim();
-			return unwrap(
+			const body = unwrap(
 				await api.POST("/v1/projects/{project_id}/share-links", {
 					params: { path: { project_id: projectId } },
 					body: { label: trimmedLabel.length > 0 ? trimmedLabel : null },
 				}),
 			);
-		},
-		onSuccess: (body) => {
 			setLabel("");
 			setFreshLink(body);
 			qc.invalidateQueries({ queryKey: ["share-links", projectId] });
@@ -194,8 +196,8 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 			toast.success("Share link created", {
 				description: "Copy it before closing this dialog. You can turn it off later.",
 			});
-		},
-		onError: (e) => {
+			return body;
+		} catch (e) {
 			toast.error(
 				e instanceof ApiError && e.status === 409
 					? "Set a display name on your profile before sharing."
@@ -203,7 +205,8 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 						? e.message
 						: "Couldn't create link",
 			);
-		},
+			throw e;
+		}
 	});
 
 	const revoke = useMutation({
@@ -239,7 +242,7 @@ function ShareLinksPanel({ projectId }: { projectId: string }) {
 				className="space-y-2 rounded-lg border p-3"
 				onSubmit={(e) => {
 					e.preventDefault();
-					create.mutate(label);
+					void create.execute(label).catch(() => undefined);
 				}}
 			>
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-center">
