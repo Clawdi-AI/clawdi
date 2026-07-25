@@ -15,6 +15,7 @@ from app.models.hosted_runtime import HostedRuntimeState
 from app.services import sync_events
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
+    MANAGED_AI_PROVIDER_RUNTIME_ENV,
     V1_MANAGED_AI_PROVIDER_ID,
     V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
@@ -267,14 +268,15 @@ async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_legacy_managed_rows_emit_only_the_public_clawdi_id(
+async def test_canonical_and_legacy_managed_ids_resolve_while_deployment_id_is_hidden(
     client: httpx.AsyncClient,
     db_session,
     seed_user,
 ):
+    internal_provider_id = f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42"
     for provider_id in (
         "clawdi-v2",
-        f"{V2_DEPLOYMENT_MANAGED_AI_PROVIDER_PREFIX}42",
+        internal_provider_id,
     ):
         db_session.add(
             AiProvider(
@@ -295,6 +297,8 @@ async def test_legacy_managed_rows_emit_only_the_public_clawdi_id(
     listing = await client.get("/v1/ai-providers")
     canonical = await client.get("/v1/ai-providers/clawdi")
     legacy = await client.get("/v1/ai-providers/clawdi-v2")
+    internal = await client.get(f"/v1/ai-providers/{internal_provider_id}")
+    missing = await client.get("/v1/ai-providers/missing-provider")
 
     assert listing.status_code == 200, listing.text
     assert [row["provider_id"] for row in listing.json()["providers"]] == ["clawdi"]
@@ -303,6 +307,255 @@ async def test_legacy_managed_rows_emit_only_the_public_clawdi_id(
     assert canonical.json()["provider_id"] == "clawdi"
     assert legacy.status_code == 200, legacy.text
     assert legacy.json()["provider_id"] == "clawdi"
+    assert internal.status_code == missing.status_code == 404
+    assert internal.json() == missing.json() == {"detail": "AI Provider not found"}
+
+
+@pytest.mark.asyncio
+async def test_user_ai_provider_list_excludes_deployment_managed_row_and_keeps_byo(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-byo",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    internal_provider_id = v2_deployment_managed_provider_id("42")
+    assert internal_provider_id is not None
+    internal_provider = AiProvider(
+        owner_user_id=seed_user.id,
+        provider_id=internal_provider_id,
+        type="custom_openai_compatible",
+        label="Clawdi managed",
+        base_url="https://managed.example/v1",
+        api_mode="openai_chat",
+        auth_type="api_key",
+        auth_metadata={"source": "managed", "profile": "default"},
+        managed_by="clawdi",
+        runtime_env_name=MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    )
+    db_session.add(internal_provider)
+    await db_session.commit()
+    await db_session.refresh(internal_provider)
+
+    listing = await client.get("/v1/ai-providers")
+
+    assert listing.status_code == 200, listing.text
+    assert [provider["provider_id"] for provider in listing.json()["providers"]] == ["openai-byo"]
+    assert internal_provider_id not in listing.text
+    assert str(internal_provider.id) not in listing.text
+
+    fetched = await client.get("/v1/ai-providers/openai-byo")
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["id"] == created.json()["id"]
+
+    patched = await client.patch(
+        "/v1/ai-providers/openai-byo",
+        json={"label": "User-owned BYO"},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["label"] == "User-owned BYO"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "body"),
+    [
+        pytest.param("GET", None, id="get"),
+        pytest.param("PATCH", {"label": "mutated"}, id="patch"),
+        pytest.param("DELETE", None, id="delete"),
+    ],
+)
+async def test_user_ai_provider_item_routes_hide_deployment_managed_row(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    method: str,
+    body: dict | None,
+):
+    internal_provider_id = v2_deployment_managed_provider_id("43")
+    assert internal_provider_id is not None
+    internal_provider = AiProvider(
+        owner_user_id=seed_user.id,
+        provider_id=internal_provider_id,
+        type="custom_openai_compatible",
+        label="Clawdi managed",
+        base_url="https://managed.example/v1",
+        api_mode="openai_chat",
+        auth_type="api_key",
+        auth_metadata={"source": "managed", "profile": "default"},
+        managed_by="clawdi",
+        runtime_env_name=MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    )
+    db_session.add(internal_provider)
+    await db_session.commit()
+
+    response = await client.request(
+        method,
+        f"/v1/ai-providers/{internal_provider_id}",
+        json=body,
+    )
+    missing = await client.request(
+        method,
+        "/v1/ai-providers/missing-provider",
+        json=body,
+    )
+
+    assert response.status_code == missing.status_code == 404
+    assert response.json() == missing.json() == {"detail": "AI Provider not found"}
+    await db_session.refresh(internal_provider)
+    assert internal_provider.label == "Clawdi managed"
+    assert internal_provider.archived_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        pytest.param("/{provider_id}/validate", None, id="validate"),
+        pytest.param(
+            "/{provider_id}/auth/api-key",
+            {"value": "sk-must-not-be-written"},
+            id="api-key",
+        ),
+        pytest.param(
+            "/{provider_id}/auth/import",
+            {
+                "type": "agent_profile",
+                "tool": "codex",
+                "profile": "default",
+                "payload": '{"token":"must-not-be-written"}',
+            },
+            id="import",
+        ),
+        pytest.param(
+            "/{provider_id}/auth/oauth/start",
+            {
+                "provider": "codex",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+            id="oauth-start",
+        ),
+        pytest.param(
+            "/{provider_id}/auth/oauth/complete",
+            {
+                "state": "must-not-be-read",
+                "code": "must-not-be-exchanged",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+            id="oauth-complete",
+        ),
+        pytest.param(
+            "/{provider_id}/auth/resolve",
+            {"profile": "default"},
+            id="resolve",
+        ),
+    ],
+)
+async def test_user_ai_provider_subroutes_hide_deployment_managed_row(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    path: str,
+    body: dict | None,
+):
+    internal_provider_id = v2_deployment_managed_provider_id("45")
+    assert internal_provider_id is not None
+    db_session.add(
+        AiProvider(
+            owner_user_id=seed_user.id,
+            provider_id=internal_provider_id,
+            type="custom_openai_compatible",
+            label="Clawdi managed",
+            base_url="https://managed.example/v1",
+            api_mode="openai_chat",
+            auth_type="api_key",
+            auth_metadata={"source": "managed", "profile": "default"},
+            managed_by="clawdi",
+            runtime_env_name=MANAGED_AI_PROVIDER_RUNTIME_ENV,
+        )
+    )
+    await db_session.commit()
+
+    api_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="unused",
+        key_prefix="clawdi_test",
+        label="test-cli",
+        scopes=None,
+    )
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=api_key)
+
+    request_kwargs = {} if body is None else {"json": body}
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        internal = await client.post(
+            f"/v1/ai-providers{path.format(provider_id=internal_provider_id)}",
+            **request_kwargs,
+        )
+        missing = await client.post(
+            f"/v1/ai-providers{path.format(provider_id='missing-provider')}",
+            **request_kwargs,
+        )
+    finally:
+        app.dependency_overrides.pop(get_auth, None)
+
+    assert internal.status_code == missing.status_code == 404
+    assert internal.json() == missing.json() == {"detail": "AI Provider not found"}
+
+
+@pytest.mark.asyncio
+async def test_user_ai_provider_upsert_cannot_replace_deployment_managed_row(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    internal_provider_id = v2_deployment_managed_provider_id("44")
+    assert internal_provider_id is not None
+    internal_provider = AiProvider(
+        owner_user_id=seed_user.id,
+        provider_id=internal_provider_id,
+        type="custom_openai_compatible",
+        label="Clawdi managed",
+        base_url="https://managed.example/v1",
+        api_mode="openai_chat",
+        auth_type="api_key",
+        auth_metadata={"source": "managed", "profile": "default"},
+        managed_by="clawdi",
+        runtime_env_name=MANAGED_AI_PROVIDER_RUNTIME_ENV,
+    )
+    db_session.add(internal_provider)
+    await db_session.commit()
+
+    response = await client.post(
+        "/v1/ai-providers",
+        params={"replace": "true"},
+        json={
+            "provider_id": internal_provider_id,
+            "type": "openai",
+            "label": "mutated",
+            "base_url": "https://api.openai.com/v1",
+            "api_mode": "openai_responses",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json() == {"detail": "AI Provider not found"}
+    await db_session.refresh(internal_provider)
+    assert internal_provider.label == "Clawdi managed"
+    assert internal_provider.base_url == "https://managed.example/v1"
 
 
 @pytest.mark.asyncio
