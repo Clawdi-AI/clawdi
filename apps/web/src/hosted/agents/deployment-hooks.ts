@@ -22,7 +22,11 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
-import { boundedSettlingPollState, type SettlingTracker } from "@/hosted/deployment-status";
+import {
+	boundedSettlingPollState,
+	type DeploymentOperationVerb,
+	type SettlingTracker,
+} from "@/hosted/deployment-status";
 import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 import {
 	defaultDeploymentRuntime,
@@ -41,13 +45,11 @@ const ACCEPTED_OPERATION_TRANSITIONS = {
 	stop: "stopping",
 	restart: "restarting",
 	update: "updating",
+	plan_change: "updating",
 	runtime_switch: "updating",
 	rename: "updating",
 	delete: "deleting",
-} satisfies Record<
-	AcceptedOperation["operation"]["metadata"]["verb"],
-	HostedDeploymentStatus["summary_state"]
->;
+} satisfies Record<DeploymentOperationVerb, HostedDeploymentStatus["summary_state"]>;
 
 export const RUNTIME_UI_SETTLING_POLL_INTERVAL_MS = 3_000;
 export const RUNTIME_UI_SETTLING_TIMEOUT_MS = 5 * 60_000;

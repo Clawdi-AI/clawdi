@@ -1,19 +1,30 @@
-import type { DeploymentOperation, HostedDeployment } from "@/hosted/billing/contracts";
+import type { HostedDeployment } from "@/hosted/billing/contracts";
+import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 
 const DEFAULT_FAILURE_REASON_MAX_LENGTH = 96;
 
 export type DeploymentFailureProjection = {
 	reason: string;
-	failedVerb: DeploymentOperation["metadata"]["verb"] | null;
+	failedVerb: DeploymentOperationVerb | null;
 	retryable: boolean | null;
 	code: string;
 };
 
 export function deploymentFailureReason(input: {
-	failure?: { title: string; conditionMessage: string } | null;
+	failure?: {
+		title: string;
+		conditionMessage: string;
+		detail?: string;
+		phase?: string | null;
+	} | null;
 }): string | null {
-	for (const candidate of [input.failure?.title, input.failure?.conditionMessage]) {
-		const reason = (candidate ?? "").replace(/\s+/g, " ").trim();
+	const failure = input.failure;
+	const candidates =
+		failure?.phase === "plan_change"
+			? [failure.detail, failure.title, failure.conditionMessage]
+			: [failure?.title, failure?.conditionMessage];
+	for (const candidate of candidates) {
+		const reason = (candidate ?? "").trim();
 		if (reason) return reason;
 	}
 	return null;

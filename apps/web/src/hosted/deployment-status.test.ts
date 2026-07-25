@@ -9,6 +9,7 @@ import {
 	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
 	DEPLOYMENT_TRANSITION_TIMEOUT_MS,
 	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+	type DeploymentOperationVerb,
 	deploymentPollingState,
 	deploymentRefetchInterval,
 	deploymentStatusLabel,
@@ -22,13 +23,13 @@ import {
 } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
-function acceptedOperation(verb: DeploymentOperation["metadata"]["verb"]): DeploymentOperation {
+function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
 	return {
 		name: `operations/${verb}-polling`,
 		metadata: {
 			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
 			deploymentId: "hdep_polling",
-			verb,
+			verb: verb as DeploymentOperation["metadata"]["verb"],
 			targetGeneration: 2,
 			manifestETag: "manifest-polling",
 			createTime: "2026-07-25T00:00:00Z",
@@ -202,14 +203,14 @@ describe("DeploymentStatus", () => {
 		});
 	});
 
-	test("drops fast polling immediately when a lifecycle operation reaches a terminal state", () => {
+	test("drops fast plan-change polling immediately when it reaches a terminal state", () => {
 		const nowMs = Date.parse("2026-07-25T00:00:00Z");
-		const operation = acceptedOperation("stop");
+		const operation = acceptedOperation("plan_change");
 		const pending = deploymentPollingState(
 			[
 				hostedDeploymentFixture({
 					id: "hdep_polling",
-					status: "stopping",
+					status: "updating",
 					acceptedOperation: operation,
 				}),
 			],
@@ -220,7 +221,7 @@ describe("DeploymentStatus", () => {
 			[
 				hostedDeploymentFixture({
 					id: "hdep_polling",
-					status: "stopped",
+					status: "running",
 					acceptedOperation: operation,
 				}),
 			],
@@ -238,8 +239,8 @@ describe("DeploymentStatus", () => {
 		const nowMs = Date.parse("2026-07-25T00:00:00Z");
 		const deployment = hostedDeploymentFixture({
 			id: "hdep_polling",
-			status: "restarting",
-			acceptedOperation: acceptedOperation("restart"),
+			status: "updating",
+			acceptedOperation: acceptedOperation("plan_change"),
 		});
 		const pending = deploymentPollingState([deployment], new Map(), nowMs);
 		const timedOut = deploymentPollingState(
@@ -252,7 +253,7 @@ describe("DeploymentStatus", () => {
 		expect(timedOut.refetchInterval).toBe(false);
 		expect(timedOut.transitions.get("hdep_polling")).toEqual({
 			kind: "timed_out",
-			verb: "restart",
+			verb: "plan_change",
 			startedAtMs: nowMs,
 		});
 	});

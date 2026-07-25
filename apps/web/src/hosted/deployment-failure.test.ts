@@ -24,12 +24,14 @@ describe("deploymentFailureReason", () => {
 	});
 
 	test("projects the authoritative reason and failed verb for every tab", () => {
+		const actionableReason =
+			"Top up your wallet and retry the plan change. Operation ID: operations/plan-change-failed.";
 		const operation: DeploymentOperation = {
-			name: "operations/restart-failed",
+			name: "operations/plan-change-failed",
 			metadata: {
 				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
 				deploymentId: "hdep_failed",
-				verb: "restart",
+				verb: "plan_change" as DeploymentOperation["metadata"]["verb"],
 				targetGeneration: 2,
 				manifestETag: "manifest-failed",
 				createTime: "2026-07-25T00:00:00Z",
@@ -43,25 +45,25 @@ describe("deploymentFailureReason", () => {
 			status: "failed",
 			acceptedOperation: operation,
 			failure: {
-				type: "https://api.clawdi.ai/problems/runtime-readiness-timeout",
-				title: "Runtime restart failed",
-				status: 504,
-				detail: "The runtime did not become ready before the deadline.",
+				type: "https://api.clawdi.ai/problems/operation_aborted",
+				title: "Deployment operation was aborted",
+				status: 409,
+				detail: actionableReason,
 				instance: "hdep_failed",
-				code: "runtime_readiness_timeout",
-				phase: "readiness",
-				retryable: true,
-				conditionReason: "RuntimeReadinessTimeout",
-				conditionMessage: "The runtime did not become ready.",
+				code: "operation_aborted",
+				phase: "plan_change",
+				retryable: false,
+				conditionReason: "OperationAborted",
+				conditionMessage: "Deployment operation was aborted",
 				observedGeneration: 2,
 			},
 		});
 
 		expect(deploymentFailureProjection(deployment)).toEqual({
-			reason: "Runtime restart failed",
-			failedVerb: "restart",
-			retryable: true,
-			code: "runtime_readiness_timeout",
+			reason: actionableReason,
+			failedVerb: "plan_change",
+			retryable: false,
+			code: "operation_aborted",
 		});
 	});
 

@@ -21,7 +21,10 @@ import {
 	refreshCheckoutReturnQueries,
 } from "@/hosted/billing/hooks";
 import { deploymentFailureProjection } from "@/hosted/deployment-failure";
-import { DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS } from "@/hosted/deployment-status";
+import {
+	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
+	type DeploymentOperationVerb,
+} from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 function deployment(
@@ -47,13 +50,13 @@ function subscriptionAction(cancelAtPeriodEnd: boolean): ComputeSubscriptionActi
 	};
 }
 
-function acceptedOperation(verb: DeploymentOperation["metadata"]["verb"]): DeploymentOperation {
+function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
 	return {
 		name: `operations/${verb}-failure`,
 		metadata: {
 			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
 			deploymentId: "hdep_failure",
-			verb,
+			verb: verb as DeploymentOperation["metadata"]["verb"],
 			targetGeneration: 2,
 			manifestETag: "manifest-failure",
 			createTime: "2026-07-25T00:00:00Z",
@@ -294,17 +297,21 @@ describe("reconcileDeploymentSnapshots", () => {
 		const optimistic = hostedDeploymentFixture({
 			id: "hdep_failure",
 			status: "updating",
-			acceptedOperation: acceptedOperation("update"),
+			acceptedOperation: acceptedOperation("plan_change"),
 		});
+		const actionableReason =
+			"Re-quote the plan change and try again. Operation ID: operations/plan_change-failure.";
 		const failure = {
-			type: "https://api.clawdi.ai/problems/deployment-update-failed",
-			title: "Agent settings could not be applied",
+			type: "https://api.clawdi.ai/problems/operation_aborted",
+			title: "Deployment operation was aborted",
 			status: 409,
-			detail: "The requested settings were rejected by the runtime.",
+			detail: actionableReason,
 			instance: "hdep_failure",
-			code: "deployment_update_failed",
-			conditionReason: "DeploymentUpdateFailed",
-			conditionMessage: "The requested settings were rejected by the runtime.",
+			code: "operation_aborted",
+			phase: "plan_change",
+			retryable: false,
+			conditionReason: "OperationAborted",
+			conditionMessage: "Deployment operation was aborted",
 			observedGeneration: 2,
 		};
 		const serverSnapshot = hostedDeploymentFixture({
@@ -319,10 +326,10 @@ describe("reconcileDeploymentSnapshots", () => {
 		expect(reconciled?.resource.status.summary_state).toBe("failed");
 		expect(reconciled?.resource.status.failure).toEqual(failure);
 		expect(deploymentFailureProjection(reconciled)).toEqual({
-			reason: "Agent settings could not be applied",
-			failedVerb: "update",
-			retryable: null,
-			code: "deployment_update_failed",
+			reason: actionableReason,
+			failedVerb: "plan_change",
+			retryable: false,
+			code: "operation_aborted",
 		});
 	});
 });

@@ -29,6 +29,7 @@ export type UnknownDeploymentStatus = {
 };
 
 export type DeploymentStatus = KnownDeploymentStatusModel | UnknownDeploymentStatus;
+export type DeploymentOperationVerb = DeploymentOperation["metadata"]["verb"] | "plan_change";
 
 export const DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS = 10_000;
 export const DEPLOYMENT_TRANSITION_TIMEOUT_MS = 5 * 60_000;
@@ -47,7 +48,7 @@ export type SettlingPollState = {
 
 export type DeploymentTransitionState = {
 	kind: "converging" | "timed_out";
-	verb: DeploymentOperation["metadata"]["verb"] | null;
+	verb: DeploymentOperationVerb | null;
 	startedAtMs: number;
 };
 

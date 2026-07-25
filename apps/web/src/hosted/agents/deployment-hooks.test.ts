@@ -6,6 +6,7 @@ import { billingKeys } from "@/hosted/billing/query-keys";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
 	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+	type DeploymentOperationVerb,
 	deploymentRefetchInterval,
 } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
@@ -146,13 +147,13 @@ describe("runtime UI settling polling", () => {
 	});
 });
 
-function acceptedOperation(verb: DeploymentOperation["metadata"]["verb"]): DeploymentOperation {
+function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
 	return {
 		name: `operations/${verb}-accepted`,
 		metadata: {
 			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
 			deploymentId: "hdep_test",
-			verb,
+			verb: verb as DeploymentOperation["metadata"]["verb"],
 			targetGeneration: 2,
 			manifestETag: "manifest-accepted",
 			createTime: "2026-07-24T00:00:00Z",
@@ -199,6 +200,7 @@ describe("deployment mutation settlement", () => {
 			["stop", "stopping"],
 			["restart", "restarting"],
 			["update", "updating"],
+			["plan_change", "updating"],
 			["runtime_switch", "updating"],
 			["rename", "updating"],
 			["delete", "deleting"],
