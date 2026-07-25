@@ -1,7 +1,8 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import { Gift, PartyPopper, Rocket } from "lucide-react";
+import { Gift, PartyPopper, RefreshCw, Rocket } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,6 +12,9 @@ import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatUsdExact } from "@/hosted/billing/format";
 import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
 import { largestSignupGrantUsd } from "@/hosted/billing/subscription/subscription-utils";
+
+const WELCOME_GRANT_RECHECK_INTERVAL_MS = 5_000;
+const WELCOME_GRANT_TIMEOUT_MS = 60_000;
 
 /**
  * Pure-$0 welcome + signup-grant feedback.
@@ -25,9 +29,74 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 	const ledger = useWalletLedger(50);
 	const deployments = useHostedDeployments();
 	const plans = usePlans();
+	const grant = ledger.data?.items.find((entry) => entry.operation === "grant_signup");
+	const grantApplied = grant?.status === "applied";
+	const grantPending = grant?.status === "pending";
+	const hasDeployments = (deployments.data?.length ?? 0) > 0;
+	const ledgerHasError = Boolean(ledger.error);
+	const [grantCheckTimedOut, setGrantCheckTimedOut] = useState(false);
+	const [grantCheckGeneration, setGrantCheckGeneration] = useState(0);
+	const grantRefetchInFlight = useRef(false);
+	const refetchLedger = ledger.refetch;
+
+	useEffect(() => {
+		if (hasDeployments || ledgerHasError || !grantPending || grantCheckTimedOut) return;
+		const deadline = Date.now() + WELCOME_GRANT_TIMEOUT_MS;
+		let disposed = false;
+
+		function recheckVisibleLedger() {
+			if (disposed || document.visibilityState !== "visible" || grantRefetchInFlight.current) {
+				return;
+			}
+			grantRefetchInFlight.current = true;
+			void refetchLedger()
+				.catch(() => undefined)
+				.finally(() => {
+					grantRefetchInFlight.current = false;
+				});
+		}
+
+		const interval = window.setInterval(() => {
+			if (Date.now() >= deadline) {
+				setGrantCheckTimedOut(true);
+				return;
+			}
+			recheckVisibleLedger();
+		}, WELCOME_GRANT_RECHECK_INTERVAL_MS);
+		const timeout = window.setTimeout(() => setGrantCheckTimedOut(true), WELCOME_GRANT_TIMEOUT_MS);
+		const handleVisibilityChange = () => {
+			if (document.visibilityState !== "visible") return;
+			if (Date.now() >= deadline) {
+				setGrantCheckTimedOut(true);
+				return;
+			}
+			recheckVisibleLedger();
+		};
+		document.addEventListener("visibilitychange", handleVisibilityChange);
+
+		return () => {
+			disposed = true;
+			window.clearInterval(interval);
+			window.clearTimeout(timeout);
+			document.removeEventListener("visibilitychange", handleVisibilityChange);
+		};
+	}, [
+		grantCheckGeneration,
+		grantCheckTimedOut,
+		grantPending,
+		hasDeployments,
+		ledgerHasError,
+		refetchLedger,
+	]);
+
+	function retryGrantCheck() {
+		setGrantCheckTimedOut(false);
+		setGrantCheckGeneration((generation) => generation + 1);
+		void refetchLedger().catch(() => undefined);
+	}
 
 	// Past onboarding — they already have at least one agent.
-	if ((deployments.data?.length ?? 0) > 0) return null;
+	if (hasDeployments) return null;
 	if (ledger.isLoading || wallet.isLoading || deployments.isLoading) {
 		return (
 			<Card data-hosted="true" aria-label="Loading welcome balance">
@@ -62,9 +131,6 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 	}
 	if (!wallet.data) return null;
 
-	const grant = ledger.data?.items.find((e) => e.operation === "grant_signup");
-	const grantApplied = grant?.status === "applied";
-	const grantPending = grant?.status === "pending";
 	const configuredSignupGrantUsd = largestSignupGrantUsd(plans.data);
 	const grantAmount = grant
 		? formatUsdExact(grant.amount_usd.trim().replace(/^[+-]/, ""))
@@ -84,23 +150,40 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 							{grantApplied
 								? `You’re all set — ${grantAmount} added to your Wallet`
 								: grantPending
-									? "Adding your welcome balance…"
+									? grantCheckTimedOut
+										? "Your welcome balance is taking longer than expected"
+										: "Adding your welcome balance…"
 									: "Welcome to Clawdi"}
 						</p>
 						<p className="text-sm text-muted-foreground">
 							{grantApplied
 								? "Your free Basic compute slot is ready. Deploy your first agent — managed AI is on us to start."
 								: grantPending
-									? grantAmount
-										? `Your ${grantAmount} welcome balance is on the way. You can deploy now; it’ll be ready in a moment.`
-										: "Your welcome balance is on the way. You can deploy now; it’ll be ready in a moment."
+									? grantCheckTimedOut
+										? "It hasn’t appeared yet. Refresh to check again."
+										: grantAmount
+											? `Your ${grantAmount} welcome balance is on the way. You can deploy now; it’ll be ready in a moment.`
+											: "Your welcome balance is on the way. You can deploy now; it’ll be ready in a moment."
 									: "Your free Basic compute slot is ready. Deploy your first agent to get going."}
 						</p>
 					</div>
 				</div>
 				{grantPending || showDeployAction ? (
-					<div className="flex items-center gap-2">
-						{grantPending ? <Spinner className="size-4 text-muted-foreground" /> : null}
+					<div className="flex flex-wrap items-center gap-2">
+						{grantPending && !grantCheckTimedOut ? (
+							<Spinner className="size-4 text-muted-foreground" />
+						) : null}
+						{grantPending && grantCheckTimedOut ? (
+							<Button
+								type="button"
+								variant="outline"
+								onClick={retryGrantCheck}
+								disabled={ledger.isFetching}
+							>
+								{ledger.isFetching ? <Spinner /> : <RefreshCw />}
+								Refresh balance
+							</Button>
+						) : null}
 						{showDeployAction ? (
 							<Button render={<Link to="/deploy" />} nativeButton={false}>
 								<Rocket /> Deploy an agent
