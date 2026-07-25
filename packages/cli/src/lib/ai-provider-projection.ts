@@ -6,8 +6,10 @@ import type {
 	AiProviderModel,
 } from "@clawdi/shared";
 import {
+	CLAWDI_MANAGED_PROVIDER_ID,
 	defaultAiProviderApiMode,
 	defaultAiProviderBaseUrl,
+	isClawdiManagedV2ProviderId,
 	validateAiProviderCatalog,
 } from "@clawdi/shared";
 
@@ -150,12 +152,16 @@ function selectProjectionProviders(
 			`No AI Providers can be applied to ${target}:\n${warnings.map((warning) => `- ${warning}`).join("\n")}`,
 		);
 	}
-	const selectedPrimaryModel = primaryModel ?? legacyCatalogPrimaryModel(catalog, providers);
-	if (!selectedPrimaryModel) {
+	const selectedPrimaryModelInput = primaryModel ?? legacyCatalogPrimaryModel(catalog, providers);
+	if (!selectedPrimaryModelInput) {
 		throw new Error(
 			`No primary model is configured for ${target}; pass agent primary_model {provider_id, model} before agent config apply.`,
 		);
 	}
+	const selectedPrimaryModel = {
+		...selectedPrimaryModelInput,
+		provider_id: agentFacingProviderId(selectedPrimaryModelInput.provider_id),
+	};
 	if (hasLegacyOpenAiCodexModelPrefix(selectedPrimaryModel.model)) {
 		throw new Error(
 			`Primary model for ${selectedPrimaryModel.provider_id} must use the OpenAI model id without the legacy openai-codex prefix.`,
@@ -176,30 +182,31 @@ function normalizeProjectionProvider(
 	target: AgentTarget,
 	provider: AiProvider,
 ): ProjectionProvider | string {
+	const providerId = agentFacingProviderId(provider.id);
 	const legacyDefaultModel = legacyProviderDefaultModel(provider);
 	if (legacyDefaultModel && hasLegacyOpenAiCodexModelPrefix(legacyDefaultModel)) {
-		return `Provider ${provider.id} skipped for ${target}: legacy default_model must use the OpenAI model id without the legacy openai-codex prefix.`;
+		return `Provider ${providerId} skipped for ${target}: legacy default_model must use the OpenAI model id without the legacy openai-codex prefix.`;
 	}
 	const legacyModel = provider.models?.find((model) => hasLegacyOpenAiCodexModelPrefix(model.id));
 	if (legacyModel) {
-		return `Provider ${provider.id} skipped for ${target}: model ${legacyModel.id} must use the OpenAI model id without the legacy openai-codex prefix.`;
+		return `Provider ${providerId} skipped for ${target}: model ${legacyModel.id} must use the OpenAI model id without the legacy openai-codex prefix.`;
 	}
 	if (provider.auth.type === "oauth_profile") {
-		return `Provider ${provider.id} skipped for ${target}: uses oauth_profile auth, which does not have a verified agent config apply path yet.`;
+		return `Provider ${providerId} skipped for ${target}: uses oauth_profile auth, which does not have a verified agent config apply path yet.`;
 	}
 	if (provider.auth.type === "agent_profile" && !usesCodexNativeAuth(provider)) {
-		return `Provider ${provider.id} skipped for ${target}: uses agent_profile auth for ${provider.auth.tool}; AI Provider apply only supports agent:codex/<profile> profiles.`;
+		return `Provider ${providerId} skipped for ${target}: uses agent_profile auth for ${provider.auth.tool}; AI Provider apply only supports agent:codex/<profile> profiles.`;
 	}
 	const envName = authEnvName(provider);
 	if (provider.auth.type !== "none" && !envName && !usesCodexNativeAuth(provider)) {
-		return `Provider ${provider.id} skipped for ${target}: auth requires an agent env name (catalog runtime_env_name) or an env:<NAME> ref before agent config apply.`;
+		return `Provider ${providerId} skipped for ${target}: auth requires an agent env name (catalog runtime_env_name) or an env:<NAME> ref before agent config apply.`;
 	}
 	const apiMode = provider.api_mode ?? defaultAiProviderApiMode(provider.type);
 	if (!apiMode) {
-		return `Provider ${provider.id} skipped for ${target}: requires api_mode before agent config apply.`;
+		return `Provider ${providerId} skipped for ${target}: requires api_mode before agent config apply.`;
 	}
 	const projectionProvider = {
-		id: provider.id,
+		id: providerId,
 		type: provider.type,
 		label: provider.label,
 		base_url: provider.base_url,
@@ -228,14 +235,22 @@ function legacyCatalogPrimaryModel(
 	catalog: AiProviderCatalog,
 	providers: ProjectionProvider[],
 ): AgentPrimaryModel | undefined {
-	const preferredProviderId = catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id;
+	const preferredProviderId = agentFacingProviderId(
+		catalog.defaults?.chat_provider_id ?? catalog.providers[0]?.id ?? "",
+	);
 	const preferredProvider =
 		providers.find((provider) => provider.id === preferredProviderId) ?? providers[0];
 	if (!preferredProvider) return undefined;
-	const source = catalog.providers.find((provider) => provider.id === preferredProvider.id);
+	const source = catalog.providers.find(
+		(provider) => agentFacingProviderId(provider.id) === preferredProvider.id,
+	);
 	const model = source ? (legacyProviderDefaultModel(source) ?? source.models?.[0]?.id) : undefined;
 	if (!model) return undefined;
 	return { provider_id: preferredProvider.id, model };
+}
+
+function agentFacingProviderId(providerId: string): string {
+	return isClawdiManagedV2ProviderId(providerId) ? CLAWDI_MANAGED_PROVIDER_ID : providerId;
 }
 
 function legacyProviderDefaultModel(provider: AiProvider): string | undefined {

@@ -1782,22 +1782,21 @@ describe("ai-provider commands", () => {
 		const projection = buildAgentTargetProjection("openclaw", catalog);
 		const patch = JSON.parse(projection.files[0]!.content);
 
-		expect(patch.agents.defaults.model.primary).toBe("clawdi-managed-v2/gpt-5.5");
-		expect(patch.models.providers["clawdi-managed-v2"].baseUrl).toBe(
-			"https://sub2api.example.test/v1",
-		);
-		expect(patch.models.providers["clawdi-managed-v2"].api).toBeUndefined();
-		expect(patch.models.providers["clawdi-managed-v2"].agentRuntime).toBeUndefined();
-		expect(patch.models.providers["clawdi-managed-v2"].models[0]).toMatchObject({
+		expect(patch.agents.defaults.model.primary).toBe("clawdi/gpt-5.5");
+		expect(patch.models.providers.clawdi.baseUrl).toBe("https://sub2api.example.test/v1");
+		expect(patch.models.providers.clawdi.api).toBeUndefined();
+		expect(patch.models.providers.clawdi.agentRuntime).toBeUndefined();
+		expect(patch.models.providers.clawdi.models[0]).toMatchObject({
 			id: "gpt-5.5",
 			name: "gpt-5.5",
 		});
-		expect(patch.models.providers["clawdi-managed-v2"].models[0].api).toBeUndefined();
-		expect(patch.models.providers["clawdi-managed-v2"].apiKey).toEqual({
+		expect(patch.models.providers.clawdi.models[0].api).toBeUndefined();
+		expect(patch.models.providers.clawdi.apiKey).toEqual({
 			source: "env",
 			provider: "default",
 			id: "CLAWDI_MANAGED_OPENAI_API_KEY",
 		});
+		expect(JSON.stringify(patch)).not.toContain("clawdi-managed-v2");
 	});
 
 	it("projects Clawdi-managed OpenAI chat providers directly to Hermes", () => {
@@ -1820,12 +1819,13 @@ describe("ai-provider commands", () => {
 		});
 
 		const patch = projection.files[0]?.content ?? "";
-		expect(patch).toContain('provider: "custom:clawdi-managed-v2"');
+		expect(patch).toContain('provider: "custom:clawdi"');
 		expect(patch).toContain('api: "https://sub2api.example.test/v1"');
 		expect(patch).toContain('transport: "chat_completions"');
 		expect(patch).toContain('key_env: "CLAWDI_MANAGED_OPENAI_API_KEY"');
 		expect(patch).not.toContain("chatgpt.com");
 		expect(patch).not.toContain("CLAWDI_PROVIDER_PLACEHOLDER_TOKEN");
+		expect(patch).not.toContain("clawdi-managed-v2");
 	});
 
 	it("uses agent primary_model with provider catalogs that have no default_model", () => {

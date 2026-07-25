@@ -20,10 +20,12 @@ from urllib.parse import urlencode
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.services.managed_ai_provider import CLAWDI_MANAGED_PROVIDER_ID
+
 DEV_V2_DEPLOYMENT_ID = "hdep_dev_sidebar"
 DEV_V2_APP_ID = "app_dev_sidebar"
 DEV_V2_PROVIDER_ID = "openrouter-dev"
-DEV_V2_MANAGED_PROVIDER_ID = "clawdi-v2"
+DEV_V2_MANAGED_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID
 STABLE_UUID_NAMESPACE = uuid.UUID("6a9575fd-7eb5-464a-89e7-e13f090f8de6")
 OPERATIONS: dict[str, dict[str, Any]] = {}
 DEPLOY_REQUESTS: dict[str, dict[str, Any]] = {}

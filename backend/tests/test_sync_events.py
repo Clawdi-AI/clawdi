@@ -32,6 +32,7 @@ from app.services import sync_events
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
+    V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_ID,
 )
 
@@ -291,6 +292,7 @@ def test_runtime_provider_usage_includes_independent_codex_tool_ref() -> None:
     [
         CLAWDI_MANAGED_PROVIDER_ID,
         V2_MANAGED_AI_PROVIDER_ID,
+        V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
         V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     ],
 )

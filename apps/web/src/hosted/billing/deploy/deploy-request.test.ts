@@ -14,16 +14,16 @@ describe("buildHostedDeployRequest", () => {
 			aiFields: {
 				ai_provider_id: null,
 				ai_provider_auth_kind: "managed",
-				provider_ids: ["clawdi-v2"],
+				provider_ids: ["clawdi"],
 				primary_model: {
-					provider_id: "clawdi-v2",
+					provider_id: "clawdi",
 					model: "gpt-5.6-luna",
 				},
 			},
 		});
 
 		expect(request.primary_model).toEqual({
-			provider_id: "clawdi-v2",
+			provider_id: "clawdi",
 			model: "gpt-5.6-luna",
 		});
 	});
