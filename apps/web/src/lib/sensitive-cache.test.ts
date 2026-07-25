@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import type { QueryClient } from "@tanstack/react-query";
 import { createAppQueryClient } from "@/lib/query-client";
-import { cacheValueContains } from "@/lib/sensitive-cache";
+import { cacheValueContains, sanitizeQueryCacheValue } from "@/lib/sensitive-cache";
 import { executeSensitiveAction } from "@/lib/use-sensitive-action";
 
-function cachedState(queryClient: ReturnType<typeof createAppQueryClient>) {
+function cachedState(queryClient: QueryClient) {
 	return {
 		queries: queryClient
 			.getQueryCache()
@@ -61,5 +62,29 @@ describe("sensitive cache boundaries", () => {
 		expect(queryClient.getMutationCache().getAll()).toHaveLength(0);
 		expect(cacheValueContains(cachedState(queryClient), apiKey)).toBe(false);
 		expect(cacheValueContains(cachedState(queryClient), oneTimeToken)).toBe(false);
+	});
+
+	test("matches mixed-case fields through arrays and deeply nested JSON payloads", () => {
+		const secrets = {
+			client: "mixed-case-client-secret",
+			credential: "array-object-credential",
+			deep: "deeply-nested-token",
+		};
+		let deeplyNested: unknown = { ToKeN: secrets.deep, safe: "deep value" };
+		for (let depth = 0; depth < 128; depth += 1) {
+			deeplyNested = depth % 2 === 0 ? [{ child: deeplyNested }] : { child: deeplyNested };
+		}
+		const payload = {
+			CLIENT_SECRET: secrets.client,
+			items: [{ CrEdEnTiAlS: secrets.credential, safe: "array value" }],
+			deeplyNested,
+		};
+
+		const sanitized = sanitizeQueryCacheValue(payload);
+		for (const secret of Object.values(secrets)) {
+			expect(cacheValueContains(sanitized, secret)).toBe(false);
+		}
+		expect(cacheValueContains(sanitized, "array value")).toBe(true);
+		expect(cacheValueContains(sanitized, "deep value")).toBe(true);
 	});
 });

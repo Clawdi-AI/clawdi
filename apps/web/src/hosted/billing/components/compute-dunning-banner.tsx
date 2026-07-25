@@ -17,10 +17,10 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { normalizeBillingError } from "@/hosted/billing/errors";
-import { useWallet } from "@/hosted/billing/hooks";
 import { useSensitiveFixPayment } from "@/hosted/billing/sensitive-actions";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { settingsQueryHref } from "@/lib/settings-routes";
@@ -31,7 +31,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	const hostedAccess = useHostedProductAccess();
 	const fixPayment = useSensitiveFixPayment();
 	const runAction = useActionLock();
-	const wallet = useWallet({
+	const wallet = useWalletSnapshot({
 		enabled: state?.ctaTarget === "top_up",
 	});
 	const [topUpOpen, setTopUpOpen] = useState(false);

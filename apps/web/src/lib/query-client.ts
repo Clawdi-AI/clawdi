@@ -7,9 +7,8 @@ export function createAppQueryClient(): QueryClient {
 		defaultOptions: {
 			queries: {
 				staleTime: 30_000,
-				// API payloads are sanitized before QueryCache owns them. This is
-				// structural prevention: a client secret is never briefly cached and
-				// then cleaned up after observers/devtools have seen it.
+				// Last-resort defense in depth for an accidentally unsafe query. Active
+				// secret-bearing flows project secrets out before returning query data.
 				structuralSharing: (oldData, newData) =>
 					replaceEqualDeep(oldData, sanitizeQueryCacheValue(newData)),
 				retry: (failureCount, error) => {

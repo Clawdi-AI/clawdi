@@ -19,7 +19,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
-import type { WalletState } from "@/hosted/billing/contracts";
 import { formatCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { useSensitiveSetAutoReload } from "@/hosted/billing/sensitive-actions";
@@ -34,6 +33,7 @@ import {
 	autoReloadRequest,
 	autoReloadSaveError,
 } from "@/hosted/billing/wallet/auto-reload-card.logic";
+import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 import {
 	AUTORELOAD_AMOUNT_MAX_CENTS,
 	AUTORELOAD_AMOUNT_MIN_CENTS,
@@ -47,7 +47,13 @@ type BlurredFields = Record<AutoReloadField, boolean>;
 const PRISTINE_FIELDS: BlurredFields = { threshold: false, amount: false, cap: false };
 const ALL_FIELDS_BLURRED: BlurredFields = { threshold: true, amount: true, cap: true };
 
-export function AutoReloadCard({ wallet, onTopUp }: { wallet: WalletState; onTopUp?: () => void }) {
+export function AutoReloadCard({
+	wallet,
+	onTopUp,
+}: {
+	wallet: WalletCacheSnapshot;
+	onTopUp?: () => void;
+}) {
 	const save = useSensitiveSetAutoReload();
 	const queryClient = useQueryClient();
 	const runAction = useActionLock();

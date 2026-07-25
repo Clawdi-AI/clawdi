@@ -9,6 +9,7 @@ import {
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
 import type { ChannelCreate } from "@/hosted/v2/channels/channel-types";
+import { whatsappCredentialMetadataForCache } from "@/hosted/v2/channels/whatsapp-credential-cache";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
@@ -283,10 +284,12 @@ export function useWhatsappTenantCreds(accountId: string, enabled = true) {
 	return useQuery({
 		queryKey: keys.whatsappCreds(accountId),
 		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/channels/whatsapp/{account_id}/tenant-creds", {
-					params: { path: { account_id: accountId } },
-				}),
+			whatsappCredentialMetadataForCache(
+				unwrap(
+					await api.GET("/v1/channels/whatsapp/{account_id}/tenant-creds", {
+						params: { path: { account_id: accountId } },
+					}),
+				),
 			),
 		enabled,
 	});

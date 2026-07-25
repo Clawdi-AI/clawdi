@@ -92,7 +92,6 @@ import {
 	usePlans,
 	useQuotePlanChange,
 	useResumeSubscription,
-	useWallet,
 } from "@/hosted/billing/hooks";
 import {
 	type PlanChangeSelection,
@@ -124,6 +123,7 @@ import {
 	useWalletTopUpDialog,
 	type WalletFundingErrorCopy,
 } from "@/hosted/billing/wallet/wallet-funding";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
 	canDelete as canDeleteDeployment,
@@ -2422,7 +2422,7 @@ function ComputeSettingsSections({
 	const changePlan = useChangePlan();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
-	const wallet = useWallet({
+	const wallet = useWalletSnapshot({
 		enabled:
 			deployment.commercial_display?.compute_subscription?.funding_source === "wallet" ||
 			(hostedAccess.canCreateCloudAgents && planChangeOpen),

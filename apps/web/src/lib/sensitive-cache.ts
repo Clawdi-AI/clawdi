@@ -1,3 +1,6 @@
+// Defense in depth only. Secret-bearing queries and actions must avoid or
+// remove secrets structurally before TanStack owns the value. Adding a field
+// name here is not the fix for a new secret-bearing flow.
 const SENSITIVE_CACHE_FIELDS = new Set([
 	"access_token",
 	"agent_token",

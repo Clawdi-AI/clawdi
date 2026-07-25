@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { useSettingsEditState } from "@/components/settings-edit-state";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import type { WalletState } from "@/hosted/billing/contracts";
 import { formatCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { useSensitiveWalletSnapshot } from "@/hosted/billing/sensitive-actions";
@@ -15,13 +14,14 @@ import {
 	type PaymentOutcome,
 	StripePaymentForm,
 } from "@/hosted/billing/wallet/stripe-payment-form";
+import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 
 /**
  * SCA / decline-recovery control for a pending auto-reload. When the wallet
- * carries a `auto_reload_action` with a `client_secret`, the user can complete
- * the bank confirmation (SCA) or retry a declined charge right here: mounting
- * Stripe Elements against that PaymentIntent secret so the top-up actually
- * finishes from the dashboard.
+ * carries pending `auto_reload_action` metadata, the user can complete the bank
+ * confirmation (SCA) or retry a declined charge right here. The PaymentIntent
+ * secret is fetched outside QueryCache and kept only in this component while
+ * Stripe Elements is mounted.
  *
  * On success the wallet refetch clears `auto_reload_action`, so this control
  * unmounts itself. Without a `client_secret` (backend couldn't attach one) it
@@ -33,7 +33,7 @@ export function AutoReloadActionConfirm({
 	initialClientSecret,
 	onDiscardClientSecret,
 }: {
-	wallet: WalletState;
+	wallet: WalletCacheSnapshot;
 	onTopUp?: () => void;
 	initialClientSecret?: string | null;
 	onDiscardClientSecret?: () => void;

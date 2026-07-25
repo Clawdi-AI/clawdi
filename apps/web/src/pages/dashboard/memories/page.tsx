@@ -48,6 +48,7 @@ import { getProjectResourceDefinition } from "@/lib/project-resource-model";
 import { useDebouncedValue } from "@/lib/use-debounced";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
+import { memorySettingsForCache } from "@/pages/dashboard/memories/memory-settings-cache";
 
 const CATEGORIES = [
 	{ value: "all", label: "All" },
@@ -76,18 +77,7 @@ export default function MemoriesPage() {
 
 	const { data: settings } = useQuery({
 		queryKey: ["settings"],
-		queryFn: async (): Promise<{
-			memory_provider: string;
-			mem0_api_key_configured: boolean;
-		}> => {
-			const value = unwrap(await api.GET("/v1/settings"));
-			const mem0ApiKey = value.mem0_api_key;
-			return {
-				memory_provider:
-					typeof value.memory_provider === "string" ? value.memory_provider : "builtin",
-				mem0_api_key_configured: typeof mem0ApiKey === "string" && mem0ApiKey.length > 0,
-			};
-		},
+		queryFn: async () => memorySettingsForCache(unwrap(await api.GET("/v1/settings"))),
 	});
 
 	const provider =

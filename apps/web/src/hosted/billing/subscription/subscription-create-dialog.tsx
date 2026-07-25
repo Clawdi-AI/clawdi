@@ -35,7 +35,7 @@ import {
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
-import { useSubscriptionCreateQuote, useWallet } from "@/hosted/billing/hooks";
+import { useSubscriptionCreateQuote } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
 	type IdempotencyAttempt,
@@ -63,6 +63,7 @@ import {
 	SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY,
 	useWalletTopUpDialog,
 } from "@/hosted/billing/wallet/wallet-funding";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
 const PLAN_ITEMS = [
@@ -121,7 +122,7 @@ export function SubscriptionCreateDialog({
 					fundingSource,
 				}
 			: null;
-	const wallet = useWallet({
+	const wallet = useWalletSnapshot({
 		enabled: open && hostedAccess.canCreateCloudAgents && fundingSource === "wallet",
 	});
 	const createQuote = useSubscriptionCreateQuote(createSelection, {

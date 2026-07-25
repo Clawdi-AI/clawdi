@@ -101,7 +101,6 @@ import {
 	usePlans,
 	useResolveDeploymentRequest,
 	useSubscriptionCreateQuote,
-	useWallet,
 } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
@@ -133,6 +132,7 @@ import {
 	SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY,
 	useWalletTopUpDialog,
 } from "@/hosted/billing/wallet/wallet-funding";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { type HostedRuntime, runtimeBlurb, runtimeDisplayName } from "@/hosted/runtimes";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
 import {
@@ -463,7 +463,7 @@ export function DeployWizard() {
 					fundingSource: paymentMethod === "wallet" ? "wallet" : "stripe",
 				}
 			: null;
-	const wallet = useWallet({
+	const wallet = useWalletSnapshot({
 		enabled: paymentMethod === "wallet",
 	});
 	const subscriptionCreateQuote = useSubscriptionCreateQuote(subscriptionCreateSelection, {
