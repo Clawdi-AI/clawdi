@@ -19,6 +19,7 @@ import {
 	Sparkles,
 	TerminalSquare,
 	Trash2,
+	WalletCards,
 	Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -124,7 +125,10 @@ import {
 	type WalletFundingErrorCopy,
 } from "@/hosted/billing/wallet/wallet-funding";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
-import { deploymentFailureReason } from "@/hosted/deployment-failure";
+import {
+	type DeploymentFailurePresentation,
+	deploymentFailurePresentation,
+} from "@/hosted/deployment-failure";
 import {
 	canDelete as canDeleteDeployment,
 	canQueryDeploymentProjection,
@@ -200,6 +204,7 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
+import { settingsQueryHref } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
 
@@ -322,11 +327,13 @@ function DeleteComputeAction({
 	onDeleteAccepted,
 	variant = "destructive",
 	className,
+	label = "Delete",
 }: {
 	deployment: HostedDeployment;
 	onDeleteAccepted: (deploymentId: string) => void;
 	variant?: React.ComponentProps<typeof Button>["variant"];
 	className?: string;
+	label?: string;
 }) {
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const canDelete = canDeleteDeployment(status);
@@ -337,7 +344,7 @@ function DeleteComputeAction({
 		>
 			<Button type="button" variant={variant} size="sm" className={className} disabled={!canDelete}>
 				<Trash2 />
-				Delete
+				{label}
 			</Button>
 		</HostedDeploymentDeleteAction>
 	);
@@ -460,6 +467,7 @@ export function HostedAgentDetail({
 	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const terminalHref = agentSectionHref(environmentId, "terminal", searchStr);
+	const planChangeHref = `${agentSectionHref(environmentId, "settings", searchStr)}#compute-plan-controls`;
 
 	useEffect(() => {
 		if (
@@ -577,6 +585,7 @@ export function HostedAgentDetail({
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
 							terminalHref={terminalHref}
+							planChangeHref={planChangeHref}
 							runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							isCheckingDeployment={isCheckingDeployment}
@@ -819,7 +828,12 @@ function RuntimeStatusValue({
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 }) {
-	const status = hostedRuntimeStatusView(deployment.resource.status, agent);
+	const failure = deploymentFailurePresentation(deployment);
+	const status = hostedRuntimeStatusView(
+		deployment.resource.status,
+		agent,
+		failure?.failedVerb ? failure : null,
+	);
 	return (
 		<div className="flex min-w-0 flex-col gap-1">
 			<span
@@ -997,50 +1011,100 @@ function DeploymentFailureReasonText({ reason }: { reason: string }) {
 	return <p className="mt-2 whitespace-pre-wrap break-words text-sm">{reason}</p>;
 }
 
-function OverviewFailedPanel({
+function OverviewFailureAction({
 	deployment,
-	restartLabel = "Restart compute",
+	failure,
+	planChangeHref,
+	onDeleteAccepted,
 }: {
 	deployment: HostedDeployment;
-	restartLabel?: string;
+	failure: DeploymentFailurePresentation;
+	planChangeHref: string;
+	onDeleteAccepted: (deploymentId: string) => void;
+}) {
+	const remediation = failure.remediation;
+	return (
+		<div className="flex shrink-0 flex-wrap gap-2">
+			{remediation.requiresWalletTopUp && remediation.kind === "restart" ? (
+				<Button
+					render={<a href={settingsQueryHref("billing-wallet")} />}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+				>
+					<WalletCards className="size-3.5" />
+					Open Wallet
+				</Button>
+			) : null}
+			{remediation.kind === "restart" ? (
+				<RestartComputeAction deployment={deployment} label={remediation.label} />
+			) : remediation.kind === "review_plan_change" ? (
+				<Button
+					render={<a href={planChangeHref} />}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+				>
+					{remediation.label}
+				</Button>
+			) : remediation.kind === "retry_delete" ? (
+				<DeleteComputeAction
+					deployment={deployment}
+					onDeleteAccepted={onDeleteAccepted}
+					label={remediation.label}
+				/>
+			) : null}
+		</div>
+	);
+}
+
+export function OverviewFailedPanel({
+	deployment,
+	planChangeHref,
+	onDeleteAccepted,
+}: {
+	deployment: HostedDeployment;
+	planChangeHref: string;
+	onDeleteAccepted: (deploymentId: string) => void;
 }) {
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
-	const failureReason = deploymentFailureReason(deployment.resource.status);
-	if (failureReason) {
+	const failure = deploymentFailurePresentation(deployment);
+	if (failure) {
 		return (
 			<Alert data-hosted="true" variant="destructive">
 				<AlertCircle className="size-4" />
-				<AlertTitle>Agent setup failed</AlertTitle>
+				<AlertTitle>{failure.title}</AlertTitle>
 				<AlertDescription className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
 					<div className="min-w-0">
 						<p>
-							Restart the compute to retry startup. Current status: {deploymentStatusLabel(status)}.
+							{failure.description} Current status: {deploymentStatusLabel(status)}.
 						</p>
-						<DeploymentFailureReasonText reason={failureReason} />
+						<DeploymentFailureReasonText reason={failure.reason} />
 					</div>
-					<div className="shrink-0">
-						<RestartComputeAction deployment={deployment} label={restartLabel} />
-					</div>
+					<OverviewFailureAction
+						deployment={deployment}
+						failure={failure}
+						planChangeHref={planChangeHref}
+						onDeleteAccepted={onDeleteAccepted}
+					/>
 				</AlertDescription>
 			</Alert>
 		);
 	}
 	return (
 		<div className="rounded-xl border border-destructive-muted bg-destructive-muted p-5 text-destructive-muted-foreground">
-			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+			<div className="flex flex-col gap-4 sm:flex-row sm:items-start">
 				<div className="flex min-w-0 gap-3">
 					<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-destructive-muted bg-background">
-						<RefreshCw className="size-5" />
+						<AlertCircle className="size-5" />
 					</div>
 					<div className="min-w-0">
-						<h2 className="text-sm font-semibold text-foreground">Agent setup failed</h2>
+						<h2 className="text-sm font-semibold text-foreground">Deployment operation failed</h2>
 						<p className="mt-1 text-sm">
-							Restart the compute to retry startup. Current status: {deploymentStatusLabel(status)}.
+							The failure reason and operation are unavailable, so there is no safe automatic retry.
+							Current status: {deploymentStatusLabel(status)}.
 						</p>
 					</div>
-				</div>
-				<div className="shrink-0">
-					<RestartComputeAction deployment={deployment} label={restartLabel} />
 				</div>
 			</div>
 		</div>
@@ -1061,6 +1125,7 @@ function OverviewTab({
 	onRetrySessions,
 	sessionLink,
 	terminalHref,
+	planChangeHref,
 	runtimeUiSettlingTimedOut,
 	deploymentTransitionTimedOut,
 	isCheckingDeployment,
@@ -1082,6 +1147,7 @@ function OverviewTab({
 		params: { id: string; sessionId: string };
 	};
 	terminalHref: string;
+	planChangeHref: string;
 	runtimeUiSettlingTimedOut: boolean;
 	deploymentTransitionTimedOut: boolean;
 	isCheckingDeployment: boolean;
@@ -1127,7 +1193,11 @@ function OverviewTab({
 				/>
 			) : null}
 			{deploymentStatus.kind === "failed" ? (
-				<OverviewFailedPanel deployment={deployment} restartLabel="Retry startup" />
+				<OverviewFailedPanel
+					deployment={deployment}
+					planChangeHref={planChangeHref}
+					onDeleteAccepted={onDeleteAccepted}
+				/>
 			) : null}
 			{deploymentStatus.kind === "stopped" ? (
 				<StoppedAgentState deployment={deployment} variant="inset" />

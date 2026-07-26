@@ -1,10 +1,13 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
+import { isValidElement } from "react";
 import type {
+	DeploymentOperation,
 	HostedComputeSubscription,
 	HostedDeployment,
 	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
+import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 type DeploymentToTiles = typeof import("@/hosted/use-hosted-agent-tiles").deploymentToTiles;
@@ -98,6 +101,23 @@ function deploymentFailure(reason: string): NonNullable<HostedDeploymentStatus["
 	};
 }
 
+function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
+	return {
+		name: `operations/${verb}-failed`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "dep_123",
+			verb: verb as DeploymentOperation["metadata"]["verb"],
+			targetGeneration: 2,
+			manifestETag: "manifest-failed",
+			createTime: "2026-07-25T00:00:00Z",
+			updateTime: "2026-07-25T00:01:00Z",
+		},
+		done: false,
+		response: null,
+	};
+}
+
 function deployment(
 	overrides: {
 		id?: string;
@@ -108,6 +128,7 @@ function deployment(
 		computeSubscription?: HostedComputeSubscription;
 		computePlanSlug?: "compute_basic" | "compute_performance";
 		failureReason?: string;
+		failedVerb?: DeploymentOperationVerb;
 		environmentId?: string | null;
 	} = {},
 ): HostedDeployment {
@@ -124,6 +145,7 @@ function deployment(
 		computeSubscription: overrides.computeSubscription,
 		currentPlanSlug: overrides.computePlanSlug,
 		failure: overrides.failureReason ? deploymentFailure(overrides.failureReason) : undefined,
+		acceptedOperation: overrides.failedVerb ? acceptedOperation(overrides.failedVerb) : undefined,
 	});
 }
 
@@ -227,8 +249,34 @@ describe("deploymentToTiles", () => {
 			},
 		});
 		expect(tile?.manageHref).toBe(`/agents/${environmentId}/settings?source=on-clawdi&d=dep_123`);
-		expect(tile?.action).toBeUndefined();
+		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
+	});
+
+	test("gives a failed plan change its own status and confirmed-flow remediation", () => {
+		const environmentId = "env-failed-plan-change";
+		const reason = "Top up your Wallet and retry the plan change.";
+		const [tile] = hostedDeploymentToTiles(
+			deployment({
+				status: "failed",
+				failureReason: reason,
+				failedVerb: "plan_change",
+				environmentId,
+			}),
+		);
+
+		expect(tile?.secondaryStatus).toEqual({
+			label: `Plan change failed: ${reason}`,
+			title:
+				"Plan change failed. Open Compute settings to top up your Wallet, request a fresh quote, and confirm the price before retrying. Reason: Top up your Wallet and retry the plan change.",
+			textClass: "text-destructive-muted-foreground font-medium",
+		});
+		expect(
+			isValidElement<{ remediationHref?: string }>(tile?.action) &&
+				tile.action.props.remediationHref,
+		).toBe(`/agents/${environmentId}/settings?source=on-clawdi&d=dep_123#compute-plan-controls`);
+		expect(tile?.secondaryStatus?.label).not.toContain("startup");
+		expect(tile?.secondaryStatus?.label).not.toContain("restart");
 	});
 
 	test("keeps Start and Delete actions on a stopped tile with a retained env identity", () => {

@@ -12,6 +12,8 @@ import type { HostedDeployment, HostedDeploymentStatus } from "@/hosted/billing/
 import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-management";
 import {
 	compactDeploymentFailureReason,
+	type DeploymentFailurePresentation,
+	deploymentFailurePresentation,
 	deploymentFailureReason,
 } from "@/hosted/deployment-failure";
 import {
@@ -59,6 +61,7 @@ export interface HostedRuntimeStatusView {
 export function hostedRuntimeStatusView(
 	deployment: DeploymentStatusInput,
 	env: Env | null | undefined,
+	failurePresentation?: DeploymentFailurePresentation | null,
 ): HostedRuntimeStatusView {
 	const compute = parseDeploymentStatus(deployment.summary_state);
 	const computeLabel = deploymentStatusLabel(compute);
@@ -70,8 +73,14 @@ export function hostedRuntimeStatusView(
 	if (failureReason) {
 		secondary = {
 			kind: "failure_reason",
-			label: `Failure: ${compactDeploymentFailureReason(failureReason)}`,
-			tooltip: failureReason,
+			label: failurePresentation
+				? compactDeploymentFailureReason(
+						`${failurePresentation.title}: ${failurePresentation.reason}`,
+					)
+				: `Failure: ${compactDeploymentFailureReason(failureReason)}`,
+			tooltip: failurePresentation
+				? `${failurePresentation.title}. ${failurePresentation.description} Reason: ${failurePresentation.reason}`
+				: failureReason,
 			textClass: statusTextVariants({ status: "destructive" }),
 		};
 	} else if (computeIsRunning && sync && sync.kind !== "live") {
@@ -192,8 +201,14 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 		? deploymentDisplayName(agentDisplayName(matchedEnv), runtime)
 		: runtimeDisplayName(runtime);
 	const contextLabel = slug !== name ? slug : null;
-	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv ?? null);
-	const showTileActions = runtimeStatus.compute.kind === "stopped" || !envId;
+	const failurePresentation = deploymentFailurePresentation(d);
+	const runtimeStatus = hostedRuntimeStatusView(
+		d.resource.status,
+		matchedEnv ?? null,
+		failurePresentation?.failedVerb ? failurePresentation : null,
+	);
+	const showTileActions =
+		runtimeStatus.compute.kind === "stopped" || runtimeStatus.compute.kind === "failed" || !envId;
 	const dunningStatus = computeDunningTileStatus(d);
 	const failureReasonStatus =
 		runtimeStatus.secondary?.kind === "failure_reason" ? runtimeStatus.secondary : null;
@@ -211,7 +226,10 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 			href: detailHref,
 			external: false,
 			action: showTileActions
-				? createElement(HostedDeploymentTileAction, { deployment: d })
+				? createElement(HostedDeploymentTileAction, {
+						deployment: d,
+						remediationHref: settingsHref ? `${settingsHref}#compute-plan-controls` : undefined,
+					})
 				: undefined,
 			manageHref: settingsHref,
 			active: runtimeStatus.active,

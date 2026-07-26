@@ -21,6 +21,7 @@ type RuntimeUiSettlingPollState =
 	typeof import("@/hosted/agents/deployment-hooks").runtimeUiSettlingPollState;
 type OverviewProvisioningPanel =
 	typeof import("@/hosted/agents/hosted-agent-detail").OverviewProvisioningPanel;
+type OverviewFailedPanel = typeof import("@/hosted/agents/hosted-agent-detail").OverviewFailedPanel;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
@@ -28,6 +29,7 @@ let settlingPollState: RuntimeUiSettlingPollState | null = null;
 let settlingPollIntervalMs: number | null = null;
 let settlingTimeoutMs: number | null = null;
 let overviewProvisioningPanel: OverviewProvisioningPanel | null = null;
+let overviewFailedPanel: OverviewFailedPanel | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -39,8 +41,62 @@ beforeAll(async () => {
 	settlingPollState = module.runtimeUiSettlingPollState;
 	settlingPollIntervalMs = module.RUNTIME_UI_SETTLING_POLL_INTERVAL_MS;
 	settlingTimeoutMs = module.RUNTIME_UI_SETTLING_TIMEOUT_MS;
-	overviewProvisioningPanel = (await import("@/hosted/agents/hosted-agent-detail"))
-		.OverviewProvisioningPanel;
+	const detailModule = await import("@/hosted/agents/hosted-agent-detail");
+	overviewProvisioningPanel = detailModule.OverviewProvisioningPanel;
+	overviewFailedPanel = detailModule.OverviewFailedPanel;
+});
+
+describe("deployment failure remediation rendering", () => {
+	test("routes a failed plan change through review without startup or bare restart copy", () => {
+		if (!overviewFailedPanel) throw new Error("agent detail was not loaded");
+		const operation: DeploymentOperation = {
+			name: "operations/plan-change-failed",
+			metadata: {
+				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+				deploymentId: "hdep_failed",
+				verb: "plan_change" as DeploymentOperation["metadata"]["verb"],
+				targetGeneration: 2,
+				manifestETag: "manifest-failed",
+				createTime: "2026-07-25T00:00:00Z",
+				updateTime: "2026-07-25T00:01:00Z",
+			},
+			done: false,
+			response: null,
+		};
+		const deployment = hostedDeploymentFixture({
+			id: "hdep_failed",
+			status: "failed",
+			acceptedOperation: operation,
+			failure: {
+				type: "https://api.clawdi.ai/problems/operation_aborted",
+				title: "Deployment operation was aborted",
+				status: 409,
+				detail: "Top up your wallet and retry the plan change.",
+				instance: "hdep_failed",
+				code: "operation_aborted",
+				phase: "plan_change",
+				retryable: false,
+				conditionReason: "OperationAborted",
+				conditionMessage: "Deployment operation was aborted",
+				observedGeneration: 2,
+			},
+		});
+
+		const markup = renderToStaticMarkup(
+			createElement(overviewFailedPanel, {
+				deployment,
+				planChangeHref: "/agents/env_test/settings?source=on-clawdi",
+				onDeleteAccepted: () => undefined,
+			}),
+		);
+
+		expect(markup).toContain("Plan change failed");
+		expect(markup).toContain("Top up your wallet and retry the plan change.");
+		expect(markup).toContain("Review plan");
+		expect(markup).not.toContain("Agent setup failed");
+		expect(markup).not.toContain("retry startup");
+		expect(markup).not.toContain("Restart compute");
+	});
 });
 
 describe("deployment transition timeout rendering", () => {
