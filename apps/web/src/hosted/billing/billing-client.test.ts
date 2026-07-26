@@ -5,7 +5,7 @@ import {
 	unwrapDeploy,
 } from "@/hosted/billing/billing-client";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
-import type { ComputePlanChangeProgress, DeploymentOperation } from "@/hosted/billing/contracts";
+import type { DeploymentOperation } from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
 	DEPLOYMENT_CONFLICT_MESSAGE,
@@ -59,22 +59,35 @@ function operation({
 }
 
 function planChangeOperation(
-	state: ComputePlanChangeProgress["state"],
-	{ done = false }: { done?: boolean } = {},
-): DeploymentOperation {
-	const result = operation({ done, id: "plan-change-1", verb: "plan_change" });
-	result.metadata.planChange = {
-		"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
-		operationId: "plan-change-1",
-		subscriptionId: 42,
-		fundingSource: "wallet",
-		sourcePlanSlug: "compute_basic",
-		targetPlanSlug: "compute_performance",
-		targetBillingTermMonths: 1,
-		state,
-		effectiveAt: NOW,
+	state: string,
+	{ done = false, error = null }: { done?: boolean; error?: unknown } = {},
+) {
+	return {
+		name: "operations/plan-change-1",
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "hdep_test",
+			verb: "plan_change",
+			targetGeneration: 2,
+			manifestETag: "manifest-test",
+			createTime: NOW,
+			updateTime: NOW,
+			planChange: {
+				"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
+				operationId: "plan-change-1",
+				subscriptionId: 42,
+				fundingSource: "wallet",
+				sourcePlanSlug: "compute_basic",
+				targetPlanSlug: "compute_performance",
+				targetBillingTermMonths: 1,
+				state,
+				effectiveAt: NOW,
+			},
+		},
+		done,
+		error,
+		response: null,
 	};
-	return result;
 }
 
 function testClient(fetch: (request: Request) => Promise<Response>) {
@@ -486,13 +499,9 @@ describe("compute plan changes", () => {
 			return jsonResponse(response, request.method === "POST" ? 202 : 200);
 		});
 
-		await expect(client.changePlan({ operation_id: "plan-change-1" })).resolves.toMatchObject({
-			name: "operations/plan-change-1",
-			metadata: {
-				verb: "plan_change",
-				planChange: { operationId: "plan-change-1", state: "complete" },
-			},
-			done: true,
+		await expect(client.changePlan({ operation_id: "plan-change-1" })).resolves.toEqual({
+			kind: "complete",
+			effectiveAt: NOW,
 		});
 		expect(requests.map((request) => request.method)).toEqual(["POST", "GET", "GET"]);
 		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
@@ -534,37 +543,38 @@ describe("compute plan changes", () => {
 
 		requests.length = 0;
 		complete = true;
-		await expect(client.checkPlanChange(pending.operationName)).resolves.toMatchObject({
-			done: true,
-			metadata: { planChange: { state: "complete" } },
+		await expect(client.checkPlanChange(pending.operationName)).resolves.toEqual({
+			kind: "complete",
+			effectiveAt: NOW,
 		});
 		expect(requests.map((request) => request.method)).toEqual(["GET"]);
 	});
 
 	it("surfaces a terminal operation failure instead of reporting success", async () => {
 		const accepted = planChangeOperation("awaiting_payment");
-		const failed = planChangeOperation("failed", { done: true });
-		failed.response = null;
-		failed.error = {
-			code: 9,
-			message: "Plan change failed",
-			details: [
-				{
-					"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
-					type: "https://api.clawdi.ai/problems/operation_aborted",
-					title: "Plan change failed",
-					status: 409,
-					detail: "The payment method was rejected. Update it and request a new price.",
-					instance: "operations/plan-change-1",
-					code: "operation_aborted",
-					phase: "plan_change",
-					retryable: false,
-					conditionReason: "OperationAborted",
-					conditionMessage: "Plan change failed",
-					observedGeneration: 2,
-				},
-			],
-		};
+		const failed = planChangeOperation("failed", {
+			done: true,
+			error: {
+				code: 9,
+				message: "Plan change failed",
+				details: [
+					{
+						"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+						type: "https://api.clawdi.ai/problems/operation_aborted",
+						title: "Plan change failed",
+						status: 409,
+						detail: "The payment method was rejected. Update it and request a new price.",
+						instance: "operations/plan-change-1",
+						code: "operation_aborted",
+						phase: "plan_change",
+						retryable: false,
+						conditionReason: "OperationAborted",
+						conditionMessage: "Plan change failed",
+						observedGeneration: 2,
+					},
+				],
+			},
+		});
 		const responses = [accepted, failed];
 		const client = testClient(async (request) => {
 			const response = responses.shift();
@@ -575,5 +585,28 @@ describe("compute plan changes", () => {
 		const result = client.changePlan({ operation_id: "plan-change-1" });
 		await expect(result).rejects.toBeInstanceOf(PlanChangeTerminalError);
 		await expect(result).rejects.toThrow("The payment method was rejected");
+	});
+
+	it("keeps the deployed synchronous response compatible without a competing read", async () => {
+		const requests: Request[] = [];
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			return jsonResponse({
+				operation_id: "plan-change-1",
+				subscription_id: 42,
+				funding_source: "stripe",
+				current_plan_slug: "compute_basic",
+				target_plan_slug: "compute_performance",
+				target_billing_term_months: 1,
+				status: "awaiting_payment",
+				effective_at: NOW,
+			});
+		});
+
+		await expect(client.changePlan({ operation_id: "plan-change-1" })).resolves.toEqual({
+			kind: "pending",
+			waitingFor: "payment",
+		});
+		expect(requests.map((request) => request.method)).toEqual(["POST"]);
 	});
 });

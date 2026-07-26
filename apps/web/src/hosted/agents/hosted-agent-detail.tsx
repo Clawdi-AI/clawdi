@@ -3026,9 +3026,8 @@ function ComputeSettingsSections({
 
 	function setPlanChangeDialogOpen(open: boolean) {
 		setPlanChangeOpen(open);
-		if (!open) {
+		if (!open && pendingPlanChangeName === null) {
 			setPlanChangeQuote(null);
-			setPendingPlanChangeName(null);
 		}
 	}
 
@@ -3064,20 +3063,24 @@ function ComputeSettingsSections({
 			const result = pendingPlanChangeName
 				? await checkPlanChange.mutateAsync(pendingPlanChangeName)
 				: await changePlan.mutateAsync({ operation_id: operationId });
-			const progress = result.metadata.planChange;
-			if (!progress) {
-				throw new Error("The deployment service returned plan-change operation without progress.");
-			}
-			if (progress.state === "scheduled") {
+			if (result.kind === "scheduled") {
 				toast.success("Downgrade scheduled", {
-					description: `Your current compute remains active until ${formatShortDate(progress.effectiveAt)}.`,
+					description: `Your current compute remains active until ${formatShortDate(result.effectiveAt)}.`,
 				});
-			} else {
+			} else if (result.kind === "complete") {
 				toast.success("Plan changed", {
 					description: "Your compute subscription has been updated.",
 				});
+			} else {
+				toast.info("Plan change in progress", {
+					description:
+						result.waitingFor === "payment"
+							? "We’re still waiting for payment confirmation. Your compute plan has not changed yet."
+							: "Your request was received, but the compute plan has not updated yet. You can watch its status here.",
+				});
 			}
 			setPendingPlanChangeName(null);
+			setPlanChangeQuote(null);
 			setPlanChangeDialogOpen(false);
 		} catch (error) {
 			if (error instanceof PlanChangePendingError) {
@@ -3239,8 +3242,9 @@ function ComputeSettingsSections({
 								<Button
 									size="sm"
 									disabled={
-										plans.isLoading ||
-										(hasTerminalFallback ? !canStartNewSubscription : !canUpgrade || !perfPlan)
+										pendingPlanChangeName === null &&
+										(plans.isLoading ||
+											(hasTerminalFallback ? !canStartNewSubscription : !canUpgrade || !perfPlan))
 									}
 									onClick={() =>
 										hasTerminalFallback
@@ -3253,7 +3257,11 @@ function ComputeSettingsSections({
 									) : (
 										<Zap data-icon="inline-start" />
 									)}
-									{hasTerminalFallback ? "Start a new subscription" : "Upgrade to Performance"}
+									{pendingPlanChangeName
+										? "Check plan change status"
+										: hasTerminalFallback
+											? "Start a new subscription"
+											: "Upgrade to Performance"}
 								</Button>
 								{hasTerminalFallback ? (
 									canStartNewSubscription ? null : (
@@ -3291,10 +3299,15 @@ function ComputeSettingsSections({
 											type="button"
 											variant="outline"
 											size="sm"
-											disabled={planChangeUnavailable !== null || !!pendingPlanSlug}
+											disabled={
+												pendingPlanChangeName === null &&
+												(planChangeUnavailable !== null || !!pendingPlanSlug)
+											}
 											onClick={() => setPlanChangeDialogOpen(true)}
 										>
-											Change plan or billing term
+											{pendingPlanChangeName
+												? "Check plan change status"
+												: "Change plan or billing term"}
 										</Button>
 										<ConfirmAction
 											title={`Cancel ${tierLabel} subscription?`}

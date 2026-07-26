@@ -16,7 +16,7 @@ import type {
 	ComputeFixPaymentRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
-	ComputePlanChangeResponse,
+	ComputePlanChangeResult,
 	ComputeSubscriptionActionResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
@@ -256,7 +256,7 @@ export function useQuotePlanChange() {
 export function useChangePlan() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
-	return useMutation<ComputePlanChangeResponse, Error, ComputePlanChangeRequest>({
+	return useMutation<ComputePlanChangeResult, Error, ComputePlanChangeRequest>({
 		mutationFn: (body) => client.changePlan(body),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
@@ -269,7 +269,7 @@ export function useChangePlan() {
 export function useCheckPlanChange() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
-	return useMutation<ComputePlanChangeResponse, Error, string>({
+	return useMutation<ComputePlanChangeResult, Error, string>({
 		mutationFn: (operationName) => client.checkPlanChange(operationName),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });

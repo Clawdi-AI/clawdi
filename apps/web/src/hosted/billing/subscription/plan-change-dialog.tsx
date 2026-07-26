@@ -155,20 +155,18 @@ export function PlanChangeDialog({
 	const confirmLabel =
 		quote?.change_kind === "immediate_upgrade" ? "Confirm upgrade" : "Schedule downgrade";
 	const busyLabel =
-		quote?.change_kind === "immediate_upgrade" ? "Waiting for payment…" : "Scheduling downgrade…";
+		quote?.change_kind === "immediate_upgrade"
+			? "Confirming plan change…"
+			: "Scheduling downgrade…";
 
 	return (
 		<Dialog
 			open={open}
 			onOpenChange={(nextOpen) => {
-				if (!isQuoting && !isConfirming && !hasAcceptedChange) onOpenChange(nextOpen);
+				if (!isQuoting && !isConfirming) onOpenChange(nextOpen);
 			}}
 		>
-			<DialogContent
-				data-hosted="true"
-				className="sm:max-w-lg"
-				showCloseButton={!isConfirming && !hasAcceptedChange}
-			>
+			<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!isConfirming}>
 				<DialogHeader>
 					<DialogTitle>{quote ? quoteTitle : "Change compute subscription"}</DialogTitle>
 					<DialogDescription>
@@ -260,11 +258,7 @@ export function PlanChangeDialog({
 							</Alert>
 						) : null}
 						<DialogFooter>
-							<Button
-								variant="ghost"
-								onClick={() => onOpenChange(false)}
-								disabled={isConfirming || hasAcceptedChange}
-							>
+							<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isConfirming}>
 								Back
 							</Button>
 							<Button
@@ -278,7 +272,13 @@ export function PlanChangeDialog({
 								) : (
 									<CreditCard data-icon="inline-start" />
 								)}
-								{isConfirming ? busyLabel : hasAcceptedChange ? "Check status" : confirmLabel}
+								{isConfirming
+									? hasAcceptedChange
+										? "Checking status…"
+										: busyLabel
+									: hasAcceptedChange
+										? "Check status"
+										: confirmLabel}
 							</Button>
 						</DialogFooter>
 					</div>

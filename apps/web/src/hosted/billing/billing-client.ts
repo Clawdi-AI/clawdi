@@ -14,7 +14,7 @@ import type {
 	ComputeFixPaymentRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
-	ComputePlanChangeResponse,
+	ComputePlanChangeResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionResumeRequest,
@@ -166,10 +166,64 @@ function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingA
 	);
 }
 
-function planChangeTerminalError(operation: ComputePlanChangeResponse): BillingApiError {
-	const detail = operation.error?.details[0];
-	if (detail) {
-		return new PlanChangeTerminalError(detail.status, detail.detail, { detail });
+type ParsedPlanChangeOperation = {
+	name: string;
+	done: boolean;
+	state: string;
+	effectiveAt: string;
+	error: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function invalidPlanChangeResponse(): BillingApiError {
+	return new BillingApiError(
+		502,
+		"We couldn't verify the plan change status. Check again in a moment.",
+	);
+}
+
+function parsePlanChangeOperation(value: unknown): ParsedPlanChangeOperation {
+	if (!isRecord(value) || typeof value.name !== "string" || typeof value.done !== "boolean") {
+		throw invalidPlanChangeResponse();
+	}
+	const metadata = value.metadata;
+	if (!isRecord(metadata) || metadata.verb !== "plan_change") {
+		throw invalidPlanChangeResponse();
+	}
+	const progress = metadata.planChange;
+	if (
+		!isRecord(progress) ||
+		typeof progress.state !== "string" ||
+		typeof progress.effectiveAt !== "string"
+	) {
+		throw invalidPlanChangeResponse();
+	}
+	operationIdFromName(value.name);
+	return {
+		name: value.name,
+		done: value.done,
+		state: progress.state,
+		effectiveAt: progress.effectiveAt,
+		error: value.error,
+	};
+}
+
+function planChangeTerminalError(error: unknown): BillingApiError {
+	if (isRecord(error) && Array.isArray(error.details)) {
+		const detail = error.details.find(
+			(item) =>
+				isRecord(item) && typeof item.status === "number" && typeof item.detail === "string",
+		);
+		if (
+			isRecord(detail) &&
+			typeof detail.status === "number" &&
+			typeof detail.detail === "string"
+		) {
+			return new PlanChangeTerminalError(detail.status, detail.detail, { detail });
+		}
 	}
 	return new PlanChangeTerminalError(
 		409,
@@ -177,25 +231,37 @@ function planChangeTerminalError(operation: ComputePlanChangeResponse): BillingA
 	);
 }
 
-function completedPlanChange(
-	operation: ComputePlanChangeResponse,
-): ComputePlanChangeResponse | null {
-	const progress = operation.metadata.planChange;
-	if (operation.metadata.verb !== "plan_change" || !progress) {
-		throw new BillingApiError(
-			502,
-			"We couldn't verify the plan change status. Check again in a moment.",
-		);
+function completedPlanChange(operation: ParsedPlanChangeOperation): ComputePlanChangeResult | null {
+	if (!operation.done) {
+		if (operation.error !== undefined && operation.error !== null) {
+			throw invalidPlanChangeResponse();
+		}
+		return null;
 	}
-	if (!operation.done) return null;
-	if (operation.error) throw planChangeTerminalError(operation);
-	if (progress.state !== "complete" && progress.state !== "scheduled") {
-		throw new BillingApiError(
-			502,
-			"We couldn't verify whether the plan change finished. Check again in a moment.",
-		);
+	if (operation.error !== undefined && operation.error !== null) {
+		throw planChangeTerminalError(operation.error);
 	}
-	return operation;
+	if (operation.state === "complete" || operation.state === "scheduled") {
+		return { kind: operation.state, effectiveAt: operation.effectiveAt };
+	}
+	throw invalidPlanChangeResponse();
+}
+
+function legacyPlanChangeResult(value: unknown): ComputePlanChangeResult | null {
+	if (!isRecord(value) || !("operation_id" in value)) return null;
+	if (typeof value.status !== "string" || typeof value.effective_at !== "string") {
+		throw invalidPlanChangeResponse();
+	}
+	if (value.status === "complete" || value.status === "scheduled") {
+		return { kind: value.status, effectiveAt: value.effective_at };
+	}
+	if (value.status === "awaiting_payment") {
+		return { kind: "pending", waitingFor: "payment" };
+	}
+	if (value.status === "awaiting_projection") {
+		return { kind: "pending", waitingFor: "update" };
+	}
+	throw invalidPlanChangeResponse();
 }
 
 /**
@@ -232,7 +298,7 @@ export function createBillingClient(
 			}),
 		);
 
-	const getOperation = async (operationId: string): Promise<ComputePlanChangeResponse> =>
+	const getOperation = async (operationId: string): Promise<DeploymentOperation> =>
 		unwrapDeploy(
 			await api.GET("/v2/operations/{operation_id}", {
 				params: { path: { operation_id: operationId } },
@@ -240,15 +306,19 @@ export function createBillingClient(
 		);
 
 	const waitForPlanChange = async (
-		initial: ComputePlanChangeResponse,
-	): Promise<ComputePlanChangeResponse> => {
-		let operation = initial;
+		initial: unknown,
+		expectedOperationId: string,
+	): Promise<ComputePlanChangeResult> => {
+		let operation = parsePlanChangeOperation(initial);
+		if (operationIdFromName(operation.name) !== expectedOperationId) {
+			throw invalidPlanChangeResponse();
+		}
 		for (let poll = 0; poll <= pollLimit; poll += 1) {
 			const completed = completedPlanChange(operation);
 			if (completed) return completed;
 			if (poll === pollLimit) throw new PlanChangePendingError(operation.name);
 			await sleep(pollIntervalMs);
-			operation = await getOperation(operationIdFromName(operation.name));
+			operation = parsePlanChangeOperation(await getOperation(operationIdFromName(operation.name)));
 		}
 		throw new PlanChangePendingError(operation.name);
 	};
@@ -362,17 +432,20 @@ export function createBillingClient(
 			unwrapDeploy(await api.POST("/v2/subscription/quote", { body })),
 		quotePlanChange: async (body: ComputePlanChangeQuoteRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/plan/quote", { body })),
-		changePlan: async (body: ComputePlanChangeRequest) =>
-			waitForPlanChange(
-				unwrapDeploy(
-					await api.POST("/v2/subscription/plan/change", {
-						params: { header: { "Idempotency-Key": body.operation_id } },
-						body,
-					}),
-				),
-			),
+		changePlan: async (body: ComputePlanChangeRequest): Promise<ComputePlanChangeResult> => {
+			const response: unknown = unwrapDeploy(
+				await api.POST("/v2/subscription/plan/change", {
+					headers: { "Idempotency-Key": body.operation_id },
+					body,
+				}),
+			);
+			const legacy = legacyPlanChangeResult(response);
+			return legacy ?? waitForPlanChange(response, body.operation_id);
+		},
 		checkPlanChange: async (operationName: string) =>
-			getOperation(operationIdFromName(operationName)).then((operation) => {
+			getOperation(operationIdFromName(operationName)).then((value) => {
+				const operation = parsePlanChangeOperation(value);
+				if (operation.name !== operationName) throw invalidPlanChangeResponse();
 				const completed = completedPlanChange(operation);
 				if (completed) return completed;
 				throw new PlanChangePendingError(operation.name);

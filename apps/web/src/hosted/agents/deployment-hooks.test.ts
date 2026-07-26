@@ -354,6 +354,7 @@ describe("deployment mutation settlement", () => {
 			["restart", "restarting"],
 			["update", "updating"],
 			["plan_change", "updating"],
+			["runtime_switch", "updating"],
 			["rename", "updating"],
 			["delete", "deleting"],
 		] as const;
