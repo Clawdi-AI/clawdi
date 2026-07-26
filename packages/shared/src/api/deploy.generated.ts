@@ -1721,10 +1721,17 @@ export interface components {
             period_start: string;
             /** Period End */
             period_end: string;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "complete" | "partial" | "unavailable";
+            /** Unavailable Sections */
+            unavailable_sections: ("totals" | "by_model" | "by_day")[];
             /** Total Usd */
-            total_usd: string;
+            total_usd: string | null;
             /** Total Requests */
-            total_requests: number;
+            total_requests: number | null;
             /** By Model */
             by_model: components["schemas"]["V2HostedUsageModelBreakdown"][];
             /** By Day */
