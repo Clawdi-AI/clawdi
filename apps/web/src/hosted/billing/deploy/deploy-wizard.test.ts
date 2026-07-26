@@ -27,6 +27,7 @@ const welcomeWalletSource = readFileSync(
 	new URL("../subscription/welcome-wallet-card.tsx", import.meta.url),
 	"utf8",
 );
+const runtimesSource = readFileSync(new URL("../../runtimes.ts", import.meta.url), "utf8");
 
 describe("deploy wizard personalization", () => {
 	test("uses a stable dashboard name within the strictest backend limit", () => {
@@ -63,6 +64,19 @@ describe("deploy wizard product copy and flow", () => {
 		expect(wizardSource).not.toContain("per-deployment funding");
 		expect(wizardSource).not.toContain("server quote");
 		expect(wizardSource).not.toContain('title="Link after deploy"');
+	});
+
+	test("makes the recommended permanent agent software choice answerable", () => {
+		expect(wizardSource).toContain('<Badge variant="secondary">Recommended</Badge>');
+		expect(wizardSource).toContain("Agent software can’t be changed later");
+		expect(wizardSource).toContain(
+			"To switch after deployment, you must delete this agent and deploy a new one.",
+		);
+		expect(runtimesSource).toContain("Chat with and manage your agent in the Hermes Dashboard.");
+		expect(runtimesSource).toContain("already use OpenClaw and want its Control UI and workflows.");
+		expect(runtimesSource).not.toContain("Your own personal AI assistant.");
+		expect(runtimesSource).not.toContain("The agent that grows with you.");
+		expect(runtimesSource).not.toContain("DEFAULT_HOSTED_RUNTIME");
 	});
 
 	test("links unresolved post-payment recovery to the agents list", () => {

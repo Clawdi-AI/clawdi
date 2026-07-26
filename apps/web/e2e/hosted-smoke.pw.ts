@@ -1446,6 +1446,10 @@ test("deploy keeps Managed AI compact and provider selection exclusive", async (
 	await stubHostedApi(page, { plans: [basicPlan], deployments: [] });
 	await page.goto("/deploy");
 
+	await expect(page.getByRole("button", { name: /^Hermes/ })).toContainText("Recommended");
+	await expect(
+		page.getByText("Agent software can’t be changed later", { exact: true }),
+	).toBeVisible();
 	await expect(page.getByText("Using Managed AI", { exact: true })).toBeVisible();
 	const addProvider = page.getByRole("button", { name: /^Add a provider/ });
 	await expect(addProvider).toHaveCount(0);

@@ -1005,6 +1005,7 @@ export function DeployWizard() {
 							}
 							title={runtimeDisplayName("hermes")}
 							description={runtimeBlurb("hermes")}
+							badge={<Badge variant="secondary">Recommended</Badge>}
 						/>
 						<EntityChoiceCard
 							selected={runtime === "openclaw"}
@@ -1016,6 +1017,13 @@ export function DeployWizard() {
 							description={runtimeBlurb("openclaw")}
 						/>
 					</div>
+					<Alert className="mt-4 max-w-2xl">
+						<TriangleAlert />
+						<AlertTitle>Agent software can’t be changed later</AlertTitle>
+						<AlertDescription>
+							To switch after deployment, you must delete this agent and deploy a new one.
+						</AlertDescription>
+					</Alert>
 				</SettingsSection>
 
 				<SettingsSection

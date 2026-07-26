@@ -3,8 +3,7 @@ import { MANAGED_AI_CHOICE } from "@/hosted/v2/ai-providers/model-binding";
 
 export type DeployWizardAiAccessMode = "unmanaged" | "configured";
 
-// Deploy-form pre-selection. Independent from the config-interpretation
-// fallback in runtimes.ts (which stays openclaw for existing deployment records).
+// Product pre-selection for new deployments.
 export const DEFAULT_DEPLOY_RUNTIME: HostedRuntime = "hermes";
 export const DEFAULT_DEPLOY_AI_ACCESS_MODE: DeployWizardAiAccessMode = "configured";
 export const DEFAULT_DEPLOY_AI_PROVIDER_CHOICES = [MANAGED_AI_CHOICE] as const;
