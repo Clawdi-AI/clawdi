@@ -5,6 +5,8 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
+	Bot,
+	CircleCheck,
 	Cpu,
 	ExternalLink,
 	Info,
@@ -177,15 +179,23 @@ import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picke
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import { ChannelStatusBadge, ProviderChip, TokenReveal } from "@/hosted/v2/channels/channel-ui";
+import {
+	ChannelStatusBadge,
+	HealthBadge,
+	ProviderChip,
+	TokenReveal,
+} from "@/hosted/v2/channels/channel-ui";
 import {
 	useAgentChannelLinks,
 	useBotPool,
+	useChannelHealth,
 	useChannels,
 	useCreatePairCode,
 	useUnlinkAgentChannel,
 } from "@/hosted/v2/channels/channels-hooks";
+import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import {
+	channelActivityAfterLink,
 	channelProviderLinkingReady,
 	pairingCommand,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
@@ -552,7 +562,7 @@ export function HostedAgentDetail({
 					/>
 				)}
 				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
-				{deploymentProjectionQueryable ? (
+				{deploymentProjectionQueryable && activeTab !== "channels" ? (
 					<HostedProjectionNotice
 						projection={projection}
 						isFetching={agentQuery.isFetching}
@@ -625,9 +635,15 @@ export function HostedAgentDetail({
 						!deploymentProjectionQueryable ? (
 							<StoppedAgentState deployment={deployment} />
 						) : projection.status === "resolved" ? (
-							<ChannelsTab environmentId={environmentId} enabled={deploymentProjectionQueryable} />
+							<ChannelsTab environmentId={environmentId} />
 						) : (
-							<ProjectionDependentUnavailable label="Channels" />
+							<ChannelsSyncState
+								isChecking={isCheckingDeployment || agentQuery.isFetching}
+								onCheckAgain={() => {
+									onCheckDeploymentAgain();
+									if (cloudEnvironmentId) void agentQuery.refetch();
+								}}
+							/>
 						)
 					) : null}
 					{activeTab === "settings" ? (
@@ -2088,45 +2104,115 @@ function AiProviderTab({
 
 // ── Channels ─────────────────────────────────────────────────────────────────
 
-function ChannelsTab({ environmentId, enabled }: { environmentId: string; enabled: boolean }) {
+function ChannelsSyncState({
+	isChecking,
+	onCheckAgain,
+}: {
+	isChecking: boolean;
+	onCheckAgain: () => void;
+}) {
+	return (
+		<EmptyState
+			icon={isChecking ? <Spinner className="size-5" /> : Link2}
+			title="Getting channels ready"
+			description="Your agent is finishing setup. This usually takes a few minutes, and this page checks automatically."
+			action={
+				<div className="flex flex-wrap justify-center gap-2">
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						disabled={isChecking}
+						onClick={onCheckAgain}
+					>
+						{isChecking ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
+						{isChecking ? "Checking…" : "Check now"}
+					</Button>
+					<Button render={<Link to="/channels" />} nativeButton={false} size="sm" variant="outline">
+						Choose a channel while you wait
+					</Button>
+				</div>
+			}
+		/>
+	);
+}
+
+type LinkableChannel = { id: string; provider: string; name: string };
+
+function channelSelectItems(channels: LinkableChannel[]) {
+	return channels.map((channel) => ({
+		value: channel.id,
+		label: `${providerMeta(channel.provider).label} · ${channel.name}`,
+	}));
+}
+
+function ChannelsTab({ environmentId }: { environmentId: string }) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const channels = useChannels();
 	const botPool = useBotPool();
-	const hasEnvironmentId = enabled && isCloudEnvId(environmentId);
-	const linked = useAgentChannelLinks(environmentId, hasEnvironmentId);
+	const health = useChannelHealth();
+	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId));
 	const unlink = useUnlinkAgentChannel(environmentId);
-	// "" = no channel selected. Sentinel keeps the Select controlled (no
-	// undefined↔string flip) while staying falsy for the gated Link button.
-	const [accountId, setAccountId] = useState("");
-	const [token, setToken] = useState<string | null>(null);
+	const [readyBotId, setReadyBotId] = useState("");
+	const [ownedChannelId, setOwnedChannelId] = useState("");
+	const [recentLink, setRecentLink] = useState<AgentChannelLink | null>(null);
+	const [recentToken, setRecentToken] = useState<{ linkId: string; value: string } | null>(null);
+	const [connectOpen, setConnectOpen] = useState(false);
+	const [advancedOpen, setAdvancedOpen] = useState(false);
 	const [linkingAccountId, setLinkingAccountId] = useState<string | null>(null);
 	const linkInFlightRef = useRef(false);
 	const unlinkingLinkIdsRef = useRef<Set<string>>(new Set());
 	const [unlinkingLinkIds, setUnlinkingLinkIds] = useState<ReadonlySet<string>>(() => new Set());
 
 	const linkedIds = useMemo(
-		() => new Set((linked.data ?? []).map((l) => l.account_id)),
-		[linked.data],
+		() =>
+			new Set([
+				...(linked.data ?? []).map((link) => link.account_id),
+				...(recentLink ? [recentLink.account_id] : []),
+			]),
+		[linked.data, recentLink],
 	);
-	const linkable = useMemo(() => {
-		const mine = (channels.data ?? []).map((c) => ({
-			id: c.id,
-			provider: c.provider,
-			name: c.name,
-		}));
-		const shared = Object.values(botPool.data?.providers ?? {})
-			.flat()
-			.filter((b) => b.access === "public" && b.available)
-			.map((b) => ({ id: b.id, provider: b.provider, name: b.name }));
-		return [...mine, ...shared].filter(
-			(c) => channelProviderLinkingReady(c.provider) && !linkedIds.has(c.id),
-		);
-	}, [channels.data, botPool.data, linkedIds]);
-	const linkableItems = linkable.map((channel) => ({
-		value: channel.id,
-		label: `${providerMeta(channel.provider).label} · ${channel.name}`,
-	}));
+	const visibleLinks = useMemo(() => {
+		const items = linked.data ?? [];
+		return recentLink && !items.some((link) => link.id === recentLink.id)
+			? [recentLink, ...items]
+			: items;
+	}, [linked.data, recentLink]);
+	const ownedChannels = useMemo(
+		() =>
+			(channels.data ?? [])
+				.map((channel) => ({
+					id: channel.id,
+					provider: channel.provider,
+					name: channel.name,
+				}))
+				.filter(
+					(channel) => channelProviderLinkingReady(channel.provider) && !linkedIds.has(channel.id),
+				),
+		[channels.data, linkedIds],
+	);
+	const readyBots = useMemo(
+		() =>
+			Object.values(botPool.data?.providers ?? {})
+				.flat()
+				.filter(
+					(bot) =>
+						bot.access === "public" &&
+						bot.available &&
+						channelProviderLinkingReady(bot.provider) &&
+						!linkedIds.has(bot.id),
+				)
+				.map((bot) => ({ id: bot.id, provider: bot.provider, name: bot.name })),
+		[botPool.data, linkedIds],
+	);
+	const selectedReadyBotId = readyBotId || (readyBots.length === 1 ? readyBots[0]?.id : "");
+	const selectedOwnedChannelId =
+		ownedChannelId || (ownedChannels.length === 1 ? ownedChannels[0]?.id : "");
+
+	useEffect(() => {
+		if (!botPool.isLoading && !botPool.error && readyBots.length === 0) setAdvancedOpen(true);
+	}, [botPool.error, botPool.isLoading, readyBots.length]);
 
 	// Provider/name labels for linked rows whose API payload omits the nested
 	// `account` (the list-by-agent endpoint isn't guaranteed to embed it).
@@ -2138,6 +2224,10 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 			for (const b of list) map.set(b.id, { provider: b.provider, name: b.name });
 		return map;
 	}, [channels.data, botPool.data]);
+	const healthByAccount = useMemo(
+		() => new Map((health.data?.items ?? []).map((item) => [item.account_id, item])),
+		[health.data],
+	);
 
 	const link = useSensitiveAction(async (channelId: string) => {
 		try {
@@ -2147,13 +2237,21 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 					body: { agent_id: environmentId },
 				}),
 			);
-			if (data.agent_token != null) setToken(data.agent_token);
-			setAccountId("");
+			setRecentToken(data.agent_token ? { linkId: data.id, value: data.agent_token } : null);
+			setRecentLink({
+				id: data.id,
+				account_id: data.account_id,
+				agent_id: data.agent_id,
+				status: data.status,
+				created_at: data.created_at,
+			});
 			qc.invalidateQueries({ queryKey: ["agent-channel-links", environmentId] });
 			qc.invalidateQueries({ queryKey: ["channel-agent-links", data.account_id] });
 			qc.invalidateQueries({ queryKey: ["channel-bot-pool"] });
 			qc.invalidateQueries({ queryKey: ["channels"] });
-			toast.success("Channel linked");
+			toast.success("Channel linked", {
+				description: "Create a pairing code in the linked channel card to connect a conversation.",
+			});
 			return data;
 		} catch (error) {
 			toastApiError("Couldn't link channel")(error);
@@ -2161,12 +2259,14 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 		}
 	});
 
-	async function submitLink() {
-		if (!accountId || linkInFlightRef.current) return;
+	async function submitLink(channelId: string) {
+		if (!channelId || linkInFlightRef.current) return;
 		linkInFlightRef.current = true;
-		setLinkingAccountId(accountId);
+		setLinkingAccountId(channelId);
 		try {
-			await link.execute(accountId);
+			await link.execute(channelId);
+			setReadyBotId("");
+			setOwnedChannelId("");
 		} catch {
 			// The action already surfaces the API error.
 		} finally {
@@ -2182,6 +2282,8 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 		void (async () => {
 			try {
 				await unlink.mutateAsync({ accountId: accountIdToUnlink, linkId });
+				setRecentToken((current) => (current?.linkId === linkId ? null : current));
+				setRecentLink((current) => (current?.id === linkId ? null : current));
 			} catch {
 				// useUnlinkAgentChannel already surfaces the API error.
 			} finally {
@@ -2195,111 +2297,197 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 		})();
 	}
 
-	if (!hasEnvironmentId) {
-		return (
-			<EmptyState
-				icon={Link2}
-				title="Channels available once provisioning finishes"
-				description="The deployment is still minting its cloud agent id. When the agent is ready, link channels here."
-			/>
-		);
-	}
-
 	return (
 		<div className="space-y-4">
-			<LiveNote>Linking a channel applies its token live — no restart.</LiveNote>
+			<LiveNote>
+				Hosted agents apply channel credentials automatically — no restart or token copy.
+			</LiveNote>
 
 			{/* Linked channels */}
 			<div className="space-y-2">
 				<div className="text-sm font-medium">Linked channels</div>
-				{linked.isLoading ? (
+				{linked.isLoading && visibleLinks.length === 0 ? (
 					<Skeleton className="h-16 w-full rounded-lg" />
-				) : linked.error ? (
+				) : linked.error && visibleLinks.length === 0 ? (
 					<ApiErrorPanel
 						error={linked.error}
 						onRetry={() => linked.refetch()}
 						title="Couldn't load linked channels"
 					/>
-				) : (linked.data ?? []).length === 0 ? (
+				) : visibleLinks.length === 0 ? (
 					<EmptyState
 						variant="inset"
 						title="No channels linked"
 						description="Link a channel below so this agent can send and receive messages."
 					/>
 				) : (
-					(linked.data ?? []).map((l) => (
+					visibleLinks.map((l) => (
 						<LinkedChannelRow
 							key={l.id}
 							link={l}
 							fallbackAccount={accountSummaries.get(l.account_id)}
+							health={healthByAccount.get(l.account_id)}
+							healthLoading={health.isLoading}
+							healthError={Boolean(health.error)}
+							token={recentToken?.linkId === l.id ? recentToken.value : undefined}
 							unlinking={unlinkingLinkIds.has(l.id)}
 							onUnlink={() => startUnlink(l.account_id, l.id)}
 						/>
 					))
 				)}
-			</div>
-
-			{/* Link a channel */}
-			<div className="space-y-2 rounded-lg border p-4">
-				<div className="text-sm font-medium">Link a channel</div>
-				<p className="text-xs text-muted-foreground">
-					Connect this agent to one of your channels or a shared-pool bot.
-				</p>
-				<div className="flex flex-col gap-2 sm:flex-row">
-					<Select
-						items={linkableItems}
-						value={accountId}
-						onValueChange={(value) => {
-							if (value !== null) setAccountId(value);
-						}}
-					>
-						<SelectTrigger aria-label="Link a channel" className="flex-1">
-							<SelectValue placeholder="Choose a channel…" />
-						</SelectTrigger>
-						<SelectContent>
-							{linkable.map((c) => (
-								<SelectItem key={c.id} value={c.id}>
-									{providerMeta(c.provider).label} · {c.name}
-								</SelectItem>
-							))}
-						</SelectContent>
-					</Select>
-					<Button
-						onClick={() => void submitLink()}
-						disabled={
-							!accountId || linkingAccountId !== null || channels.isLoading || botPool.isLoading
-						}
-					>
-						{linkingAccountId ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
-						{linkingAccountId ? "Linking…" : "Link"}
-					</Button>
-				</div>
-				{channels.error || botPool.error ? (
+				{linked.error && visibleLinks.length > 0 ? (
 					<ApiErrorPanel
-						error={channels.error ?? botPool.error}
-						onRetry={() => {
-							channels.refetch();
-							botPool.refetch();
-						}}
-						title="Couldn't load available channels"
-					/>
-				) : null}
-				{token ? (
-					<TokenReveal
-						label="Agent token"
-						value={token}
-						note="Copy it now — used by the runtime to send and receive on this channel."
+						error={linked.error}
+						onRetry={() => linked.refetch()}
+						title="Couldn't refresh every linked channel"
 					/>
 				) : null}
 			</div>
 
-			<p className="text-xs text-muted-foreground">
-				Health, activity, and command sync for each channel live on{" "}
-				<Link to="/channels" className="underline">
-					Channels
-				</Link>
-				.
-			</p>
+			<div className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
+				<div className="flex items-start gap-3">
+					<div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background text-primary ring-1 ring-primary/20">
+						<Bot className="size-4" />
+					</div>
+					<div>
+						<div className="text-sm font-medium">Fastest: use a ready-to-go bot</div>
+						<p className="mt-1 text-xs text-muted-foreground">
+							No bot account, credentials, or developer setup. Choose one and link it now.
+						</p>
+					</div>
+				</div>
+				{botPool.isLoading ? (
+					<Skeleton className="h-9 w-full rounded-md" />
+				) : botPool.error ? (
+					<ApiErrorPanel
+						error={botPool.error}
+						onRetry={() => botPool.refetch()}
+						title="Couldn't load ready-to-go bots"
+					/>
+				) : readyBots.length > 0 ? (
+					<div className="flex flex-col gap-2 sm:flex-row">
+						<Select
+							items={channelSelectItems(readyBots)}
+							value={selectedReadyBotId}
+							onValueChange={(value) => {
+								if (value !== null) setReadyBotId(value);
+							}}
+						>
+							<SelectTrigger aria-label="Choose a ready-to-go bot" className="flex-1 bg-background">
+								<SelectValue placeholder="Choose a ready-to-go bot…" />
+							</SelectTrigger>
+							<SelectContent>
+								{readyBots.map((bot) => (
+									<SelectItem key={bot.id} value={bot.id}>
+										{providerMeta(bot.provider).label} · {bot.name}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+						<Button
+							disabled={!selectedReadyBotId || linkingAccountId !== null}
+							onClick={() => void submitLink(selectedReadyBotId)}
+						>
+							{linkingAccountId === selectedReadyBotId ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<Link2 className="size-3.5" />
+							)}
+							{linkingAccountId === selectedReadyBotId ? "Linking…" : "Link bot"}
+						</Button>
+					</div>
+				) : (
+					<p className="text-sm text-muted-foreground">
+						No ready-to-go bots are available right now. You can use your own bot below.
+					</p>
+				)}
+			</div>
+
+			<details
+				open={advancedOpen}
+				onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+				className="group rounded-lg border p-4"
+			>
+				<summary className="cursor-pointer text-sm font-medium">
+					Use your own bot (advanced)
+				</summary>
+				<div className="mt-3 space-y-3">
+					<p className="text-xs text-muted-foreground">
+						Choose a Telegram or Discord bot you already connected, or connect a new one.
+					</p>
+					{channels.isLoading ? (
+						<Skeleton className="h-9 w-full rounded-md" />
+					) : channels.error ? (
+						<ApiErrorPanel
+							error={channels.error}
+							onRetry={() => channels.refetch()}
+							title="Couldn't load your bots"
+						/>
+					) : ownedChannels.length > 0 ? (
+						<div className="flex flex-col gap-2 sm:flex-row">
+							<Select
+								items={channelSelectItems(ownedChannels)}
+								value={selectedOwnedChannelId}
+								onValueChange={(value) => {
+									if (value !== null) setOwnedChannelId(value);
+								}}
+							>
+								<SelectTrigger aria-label="Choose your bot" className="flex-1">
+									<SelectValue placeholder="Choose your bot…" />
+								</SelectTrigger>
+								<SelectContent>
+									{ownedChannels.map((channel) => (
+										<SelectItem key={channel.id} value={channel.id}>
+											{providerMeta(channel.provider).label} · {channel.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							<Button
+								disabled={!selectedOwnedChannelId || linkingAccountId !== null}
+								onClick={() => void submitLink(selectedOwnedChannelId)}
+							>
+								{linkingAccountId === selectedOwnedChannelId ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<Link2 className="size-3.5" />
+								)}
+								{linkingAccountId === selectedOwnedChannelId ? "Linking…" : "Link my bot"}
+							</Button>
+						</div>
+					) : (
+						<EmptyState
+							variant="inset"
+							title="No bot connected yet"
+							description="Connect a Telegram or Discord bot, then it will appear here automatically."
+							action={
+								<Button onClick={() => setConnectOpen(true)}>
+									<Plus className="size-3.5" />
+									Connect my bot
+								</Button>
+							}
+						/>
+					)}
+					<div className="flex flex-wrap gap-2">
+						{ownedChannels.length > 0 ? (
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={() => setConnectOpen(true)}
+							>
+								<Plus className="size-3.5" />
+								Connect another bot
+							</Button>
+						) : null}
+						<Button render={<Link to="/channels" />} nativeButton={false} variant="ghost" size="sm">
+							View all channel options
+						</Button>
+					</div>
+				</div>
+			</details>
+
+			<ConnectBotDialog open={connectOpen} onOpenChange={setConnectOpen} />
 		</div>
 	);
 }
@@ -2309,11 +2497,19 @@ function LinkedChannelRow({
 	onUnlink,
 	unlinking,
 	fallbackAccount,
+	health,
+	healthLoading,
+	healthError,
+	token,
 }: {
 	link: AgentChannelLink;
 	onUnlink: () => void;
 	unlinking: boolean;
 	fallbackAccount?: { provider: string; name: string };
+	health?: components["schemas"]["ChannelHealthItemResponse"];
+	healthLoading: boolean;
+	healthError: boolean;
+	token?: string;
 }) {
 	const pair = useCreatePairCode(link.account_id);
 	const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
@@ -2325,6 +2521,14 @@ function LinkedChannelRow({
 	const account = link.account ?? fallbackAccount ?? null;
 	const provider = account?.provider ?? "";
 	const name = account?.name ?? "Unnamed channel";
+	const providerLabel = provider ? providerMeta(provider).label : "your chat app";
+	const hasActivity = channelActivityAfterLink(health?.last_message_at, link.created_at);
+	const chatInstruction =
+		provider === "telegram"
+			? `Open Telegram and start a conversation with the bot you connected as “${name}”.`
+			: provider === "discord"
+				? `Open Discord and choose the server channel or direct message where “${name}” should answer.`
+				: `Open the conversation where you want “${name}” to answer.`;
 	async function createPairCode() {
 		if (pairInFlightRef.current) return;
 		pairInFlightRef.current = true;
@@ -2340,25 +2544,17 @@ function LinkedChannelRow({
 		}
 	}
 	return (
-		<div className="rounded-lg border p-3">
+		<div className="rounded-lg border p-4">
 			<div className="flex items-center gap-3">
 				<ProviderChip provider={provider} />
 				<div className="min-w-0 flex-1">
 					<div className="truncate text-sm font-medium">{name}</div>
-					<div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+					<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
 						{provider ? <span>{providerMeta(provider).label}</span> : null}
 						<ChannelStatusBadge status={link.status} />
+						{health ? <HealthBadge status={health.health_status} /> : null}
 					</div>
 				</div>
-				<Button
-					variant="outline"
-					size="sm"
-					disabled={creatingPairCode}
-					onClick={() => void createPairCode()}
-				>
-					{creatingPairCode ? <Spinner className="size-3.5" /> : <QrCode className="size-3.5" />}
-					{creatingPairCode ? "Creating code…" : "Pair code"}
-				</Button>
 				<ConfirmAction
 					title="Unlink this channel?"
 					description={<p>The agent stops sending and receiving on this channel.</p>}
@@ -2377,14 +2573,104 @@ function LinkedChannelRow({
 					</Button>
 				</ConfirmAction>
 			</div>
-			{code ? (
-				<div className="mt-2 rounded-md border border-primary/30 bg-primary/5 p-2 text-sm">
-					Send{" "}
-					<span className="font-mono font-semibold tracking-wider">
-						{pairingCommand(code.code)}
-					</span>{" "}
-					from the chat to pair it.
+
+			<div
+				role="status"
+				aria-live="polite"
+				className={cn(
+					"mt-3 rounded-lg border p-3",
+					hasActivity ? "border-success/30 bg-success-muted" : "bg-muted/30",
+				)}
+			>
+				<div className="flex items-center gap-2 text-sm font-medium">
+					{healthLoading ? (
+						<Spinner className="size-4" />
+					) : healthError ? (
+						<AlertCircle className="size-4 text-warning-muted-foreground" />
+					) : hasActivity ? (
+						<CircleCheck className="size-4 text-success-muted-foreground" />
+					) : (
+						<span className="size-2 animate-pulse rounded-full bg-info" aria-hidden />
+					)}
+					{healthLoading
+						? "Checking channel activity…"
+						: healthError
+							? "Channel activity is temporarily unavailable"
+							: hasActivity
+								? "Channel activity detected"
+								: "Waiting for channel activity"}
 				</div>
+				<p className="mt-1 text-xs text-muted-foreground">
+					{healthError
+						? "Automatic checks will continue. You can finish the steps below while Clawdi reconnects."
+						: hasActivity
+							? "Clawdi can see activity on this channel. This signal does not yet confirm that the agent received a normal message."
+							: "This page checks automatically every 20 seconds. No refresh needed."}
+				</p>
+			</div>
+
+			{hasActivity ? (
+				<div className="mt-3 text-sm">
+					<p className="font-medium">Send a normal message to start chatting</p>
+					<p className="mt-1 text-xs text-muted-foreground">
+						Open {providerLabel} and message the conversation you paired. Channel-level activity is
+						live; agent delivery confirmation is not available yet.
+					</p>
+				</div>
+			) : (
+				<div className="mt-3 space-y-3">
+					<div>
+						<p className="text-sm font-medium">Finish connecting your conversation</p>
+						<p className="mt-1 text-xs text-muted-foreground">
+							Linking gives this agent access to the bot. Pairing chooses the exact conversation
+							where it should answer.
+						</p>
+					</div>
+					<ol className="list-decimal space-y-2 pl-4 text-sm text-muted-foreground">
+						<li>
+							<Button
+								variant="outline"
+								size="sm"
+								className="ml-1"
+								disabled={creatingPairCode}
+								onClick={() => void createPairCode()}
+							>
+								{creatingPairCode ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<QrCode className="size-3.5" />
+								)}
+								{creatingPairCode ? "Creating code…" : "Create pairing code"}
+							</Button>
+						</li>
+						<li>{chatInstruction}</li>
+						<li>Send the command below in that conversation, then send a normal message.</li>
+					</ol>
+					{code ? (
+						<div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
+							<p className="text-xs font-medium text-primary">Send this exact command</p>
+							<code className="mt-1 block break-all font-mono font-semibold tracking-wide">
+								{pairingCommand(code.code)}
+							</code>
+							<p className="mt-1 text-xs text-muted-foreground">
+								The code is one-time and expires automatically.
+							</p>
+						</div>
+					) : null}
+				</div>
+			)}
+
+			{token ? (
+				<details className="mt-3 rounded-md border p-3">
+					<summary className="cursor-pointer text-xs font-medium">Agent token (advanced)</summary>
+					<div className="mt-2">
+						<TokenReveal
+							label="Agent token"
+							value={token}
+							note="Hosted agents configure this automatically. You do not need to copy it unless support asks you to."
+						/>
+					</div>
+				</details>
 			) : null}
 		</div>
 	);

@@ -23,6 +23,17 @@ export function pairingCommand(code: string): string {
 	return `/bot_pair ${code}`;
 }
 
+/** Account-level activity is useful, but it is not proof of agent-runtime delivery. */
+export function channelActivityAfterLink(
+	lastMessageAt: string | null | undefined,
+	linkCreatedAt: string,
+): boolean {
+	if (!lastMessageAt) return false;
+	const messageTime = Date.parse(lastMessageAt);
+	const linkTime = Date.parse(linkCreatedAt);
+	return Number.isFinite(messageTime) && Number.isFinite(linkTime) && messageTime >= linkTime;
+}
+
 export function shouldMintWhatsappTenantCredential(provider: string, agent: Agent): boolean {
 	return WHATSAPP_LINKING_READY && provider === "whatsapp" && agent !== null && agent !== undefined;
 }

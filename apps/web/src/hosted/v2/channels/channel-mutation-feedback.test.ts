@@ -30,8 +30,8 @@ describe("channel mutation feedback", () => {
 
 		expectFeedbackBeforeRequest(
 			detail,
-			"setLinkingAccountId(accountId)",
-			"await link.execute(accountId)",
+			"setLinkingAccountId(channelId)",
+			"await link.execute(channelId)",
 		);
 		expectFeedbackBeforeRequest(
 			detail,
@@ -40,8 +40,8 @@ describe("channel mutation feedback", () => {
 		);
 		expectFeedbackBeforeRequest(detail, "setCreatingPairCode(true)", "await pair.execute");
 		expect(detail).toContain("unlinking={unlinkingLinkIds.has(l.id)}");
-		expect(detail).toContain('{linkingAccountId ? "Linking…" : "Link"}');
-		expect(detail).toContain('{creatingPairCode ? "Creating code…" : "Pair code"}');
+		expect(detail).toContain('linkingAccountId === selectedReadyBotId ? "Linking…" : "Link bot"');
+		expect(detail).toContain('{creatingPairCode ? "Creating code…" : "Create pairing code"}');
 	});
 
 	test("uses per-action feedback for detail-page mutations", () => {
