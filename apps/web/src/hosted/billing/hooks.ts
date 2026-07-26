@@ -40,8 +40,8 @@ import {
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import {
 	deploymentPollingState,
+	deploymentStatusFromResource,
 	isTransitionalStatus,
-	parseDeploymentStatus,
 	type SettlingTracker,
 } from "@/hosted/deployment-status";
 import { runtimeEnvironmentId } from "@/hosted/runtimes";
@@ -394,8 +394,9 @@ export function reconcileDeploymentSnapshots(
 		const acceptedOperation = previousById.get(deployment.resource.id)?.accepted_operation;
 		if (!acceptedOperation) return deployment;
 
-		const status = parseDeploymentStatus(deployment.resource.status.summary_state);
-		const failure = deployment.resource.status.failure;
+		const resourceStatus = deployment.resource.status;
+		const status = deploymentStatusFromResource(resourceStatus);
+		const failure = resourceStatus === null ? null : resourceStatus.failure;
 		const operationApplies = isTransitionalStatus(status)
 			? true
 			: status.kind === "failed" &&

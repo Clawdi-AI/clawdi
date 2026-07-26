@@ -46,7 +46,6 @@ const ACCEPTED_OPERATION_TRANSITIONS = {
 	restart: "restarting",
 	update: "updating",
 	plan_change: "updating",
-	runtime_switch: "updating",
 	rename: "updating",
 	delete: "deleting",
 } satisfies Record<DeploymentOperationVerb, HostedDeploymentStatus["summary_state"]>;
@@ -74,19 +73,18 @@ export function runtimeUiSettlingPollState(
 	tracker: RuntimeUiSettlingTracker | null,
 	nowMs: number,
 ): RuntimeUiSettlingPollState {
-	if (
-		!deployment ||
-		!runtime ||
-		deployment.resource.status.summary_state !== "running" ||
-		runtimeConsoleUrl(deployment, runtime)
-	) {
+	if (!deployment || !runtime || runtimeConsoleUrl(deployment, runtime)) {
+		return { refetchInterval: false, timedOut: false, tracker: null };
+	}
+	const status = deployment.resource.status;
+	if (status === null || status.summary_state !== "running") {
 		return { refetchInterval: false, timedOut: false, tracker: null };
 	}
 
 	const key = `${deployment.resource.id}:${deployment.resource.metadata.generation}:${runtime}`;
 	return boundedSettlingPollState({
 		key,
-		startedAtMs: runtimeUiSettlingStartedAtMs(deployment, nowMs),
+		startedAtMs: runtimeUiSettlingStartedAtMs(status, nowMs),
 		tracker,
 		nowMs,
 		pollIntervalMs: RUNTIME_UI_SETTLING_POLL_INTERVAL_MS,
@@ -94,8 +92,8 @@ export function runtimeUiSettlingPollState(
 	});
 }
 
-function runtimeUiSettlingStartedAtMs(deployment: HostedDeployment, nowMs: number): number {
-	const transitionTimes = deployment.resource.status.conditions.flatMap((condition) => {
+function runtimeUiSettlingStartedAtMs(status: HostedDeploymentStatus, nowMs: number): number {
+	const transitionTimes = status.conditions.flatMap((condition) => {
 		if (condition.type !== "Ready" || condition.status !== "True") {
 			return [];
 		}
@@ -133,11 +131,14 @@ export function projectAcceptedDeploymentTransition(
 						accepted_operation: accepted.operation,
 						resource: {
 							...deployment.resource,
-							status: {
-								...deployment.resource.status,
-								summary_state: status,
-								failure: null,
-							},
+							status:
+								deployment.resource.status === null
+									? null
+									: {
+											...deployment.resource.status,
+											summary_state: status,
+											failure: null,
+										},
 						},
 					}
 				: deployment,
