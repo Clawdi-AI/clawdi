@@ -5,6 +5,7 @@ import {
 	deploymentFailureProjection,
 	deploymentFailureReason,
 } from "@/hosted/deployment-failure";
+import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 describe("deploymentFailureReason", () => {
@@ -79,7 +80,7 @@ describe("deploymentFailureReason", () => {
 				"Open Compute settings to top up your Wallet, request a fresh quote, and confirm the price before retrying.",
 			remediation: {
 				kind: "review_plan_change",
-				label: "Review plan change",
+				label: "Review plan",
 				requiresWalletTopUp: true,
 			},
 		});
@@ -97,6 +98,56 @@ describe("deploymentFailureReason", () => {
 				},
 			}),
 		).toBe("Try again.");
+	});
+
+	test("maps every failed operation to a truthful safe remediation", () => {
+		const cases = [
+			["create", "Agent setup failed", "restart"],
+			["start", "Agent startup failed", "restart"],
+			["stop", "Compute stop failed", "none"],
+			["restart", "Compute restart failed", "restart"],
+			["update", "Agent update failed", "none"],
+			["runtime_switch", "Runtime switch failed", "none"],
+			["rename", "Agent rename failed", "none"],
+			["delete", "Agent deletion failed", "retry_delete"],
+			["plan_change", "Plan change failed", "review_plan_change"],
+		] as const satisfies readonly [DeploymentOperationVerb, string, string][];
+
+		for (const [verb, title, remediationKind] of cases) {
+			const deployment = hostedDeploymentFixture({
+				status: "failed",
+				acceptedOperation: {
+					name: `operations/${verb}-failed`,
+					metadata: {
+						"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+						deploymentId: "hdep_failed",
+						verb: verb as DeploymentOperation["metadata"]["verb"],
+						targetGeneration: 2,
+						manifestETag: "manifest-failed",
+						createTime: "2026-07-25T00:00:00Z",
+						updateTime: "2026-07-25T00:01:00Z",
+					},
+					done: false,
+					response: null,
+				},
+				failure: {
+					type: "https://api.clawdi.ai/problems/operation_failed",
+					title: "The requested operation did not complete.",
+					status: 409,
+					detail: "The requested operation did not complete.",
+					instance: "hdep_failed",
+					code: "operation_failed",
+					retryable: true,
+					conditionReason: "OperationFailed",
+					conditionMessage: "The requested operation did not complete.",
+					observedGeneration: 2,
+				},
+			});
+			const presentation = deploymentFailurePresentation(deployment);
+
+			expect(presentation?.title).toBe(title);
+			expect(presentation?.remediation.kind).toBe(remediationKind);
+		}
 	});
 
 	test("does not expose a stale failure outside the authoritative failed state", () => {

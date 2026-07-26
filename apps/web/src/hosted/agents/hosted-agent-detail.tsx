@@ -467,7 +467,7 @@ export function HostedAgentDetail({
 	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const terminalHref = agentSectionHref(environmentId, "terminal", searchStr);
-	const planChangeHref = agentSectionHref(environmentId, "settings", searchStr);
+	const planChangeHref = `${agentSectionHref(environmentId, "settings", searchStr)}#compute-plan-controls`;
 
 	useEffect(() => {
 		if (
@@ -828,7 +828,12 @@ function RuntimeStatusValue({
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 }) {
-	const status = hostedRuntimeStatusView(deployment.resource.status, agent);
+	const failure = deploymentFailurePresentation(deployment);
+	const status = hostedRuntimeStatusView(
+		deployment.resource.status,
+		agent,
+		failure?.failedVerb ? failure : null,
+	);
 	return (
 		<div className="flex min-w-0 flex-col gap-1">
 			<span

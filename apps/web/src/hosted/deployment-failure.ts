@@ -123,7 +123,7 @@ export function deploymentFailurePresentation(
 					: "Open Compute settings to request a fresh quote and confirm the price before retrying.",
 				remediation: {
 					kind: "review_plan_change",
-					label: "Review plan change",
+					label: "Review plan",
 					requiresWalletTopUp,
 				},
 			};

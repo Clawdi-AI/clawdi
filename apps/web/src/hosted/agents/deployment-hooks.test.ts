@@ -92,7 +92,7 @@ describe("deployment failure remediation rendering", () => {
 
 		expect(markup).toContain("Plan change failed");
 		expect(markup).toContain("Top up your wallet and retry the plan change.");
-		expect(markup).toContain("Review plan change");
+		expect(markup).toContain("Review plan");
 		expect(markup).not.toContain("Agent setup failed");
 		expect(markup).not.toContain("retry startup");
 		expect(markup).not.toContain("Restart compute");
