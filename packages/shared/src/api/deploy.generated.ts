@@ -553,7 +553,7 @@ export interface components {
              * Verb
              * @enum {string}
              */
-            verb: "create" | "start" | "stop" | "restart" | "update" | "runtime_switch" | "rename" | "delete";
+            verb: "create" | "start" | "stop" | "restart" | "update" | "rename" | "delete";
             /** Targetgeneration */
             targetGeneration: number;
             /** Manifestetag */
@@ -666,7 +666,7 @@ export interface components {
             deployment_target: string;
             metadata: components["schemas"]["DeploymentMetadata"];
             spec: components["schemas"]["HostedDeploymentSpec"];
-            status: components["schemas"]["HostedDeploymentStatus"];
+            status: components["schemas"]["HostedDeploymentStatus"] | null;
         };
         /** HostedDeploymentSpec */
         HostedDeploymentSpec: {
@@ -1649,7 +1649,7 @@ export interface components {
              * @default false
              */
             upgrade_available: boolean;
-            compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"];
+            compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"] | null;
         };
         /** V2HostedRuntimeUiCredentials */
         V2HostedRuntimeUiCredentials: {
