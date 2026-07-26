@@ -78,6 +78,7 @@ import type {
 	ComputePlanChangeQuoteResponse,
 	DeploymentUpdateRequest,
 	HostedDeployment,
+	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
 import {
 	LANGUAGE_OPTIONS,
@@ -137,10 +138,12 @@ import {
 	canRestart as canRestartDeployment,
 	canStart as canStartDeployment,
 	canStop as canStopDeployment,
+	type DeploymentStatus,
+	deploymentStatusFromResource,
 	deploymentStatusLabel,
 	isRunningStatus,
-	parseDeploymentStatus,
 } from "@/hosted/deployment-status";
+import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
 import {
 	canOpenHostedRuntimeUi,
 	type HostedProjectionResolution,
@@ -219,7 +222,6 @@ import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
 
 type Runtime = HostedRuntime;
-type DeploymentStatus = ReturnType<typeof parseDeploymentStatus>;
 type HostedAgentTab =
 	| "overview"
 	| "console"
@@ -307,7 +309,7 @@ function RestartComputeAction({
 }) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const canRestart = canRestartDeployment(status);
 	return (
 		<ConfirmAction
@@ -345,7 +347,7 @@ function DeleteComputeAction({
 	className?: string;
 	label?: string;
 }) {
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const canDelete = canDeleteDeployment(status);
 	return (
 		<HostedDeploymentDeleteAction
@@ -369,7 +371,7 @@ function StartComputeAction({
 }) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const canStart = canStartDeployment(status);
 	return (
 		<Button
@@ -433,7 +435,7 @@ export function HostedAgentDetail({
 }) {
 	const api = useApi();
 	const router = useRouter();
-	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
 	const cloudEnvironmentId = isCloudEnvId(environmentId);
@@ -449,7 +451,7 @@ export function HostedAgentDetail({
 		refetchInterval: (query) =>
 			missingProjectionRefetchInterval(
 				query.state.error,
-				deployment.resource.status.summary_state,
+				deploymentStatus,
 				query.state.fetchFailureCount,
 			),
 		refetchIntervalInBackground: false,
@@ -483,7 +485,7 @@ export function HostedAgentDetail({
 		if (
 			!autoOpenRuntimeUi ||
 			activeTab !== "overview" ||
-			!canOpenHostedRuntimeUi(deployment.resource.status.summary_state, consoleUrl)
+			!canOpenHostedRuntimeUi(deploymentStatus, consoleUrl)
 		) {
 			return;
 		}
@@ -495,7 +497,7 @@ export function HostedAgentDetail({
 		activeTab,
 		autoOpenRuntimeUi,
 		consoleUrl,
-		deployment.resource.status.summary_state,
+		deploymentStatus.kind,
 		environmentId,
 		router,
 		searchStr,
@@ -535,7 +537,7 @@ export function HostedAgentDetail({
 			</Button>
 		) : runtime === "openclaw" &&
 			consoleUrl &&
-			canOpenHostedRuntimeUi(deployment.resource.status.summary_state, consoleUrl) ? (
+			canOpenHostedRuntimeUi(deploymentStatus, consoleUrl) ? (
 			<RuntimeUiOpenButton
 				deployment={deployment}
 				endpointUrl={consoleUrl}
@@ -570,7 +572,14 @@ export function HostedAgentDetail({
 					/>
 				)}
 				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
-				{deploymentProjectionQueryable && activeTab !== "channels" ? (
+				{!deploymentStatus.known ? (
+					<DeploymentStatusUnavailableState
+						deployment={deployment}
+						isRetrying={isCheckingDeployment}
+						onRetry={onCheckDeploymentAgain}
+					/>
+				) : null}
+				{deploymentStatus.known && deploymentProjectionQueryable && activeTab !== "channels" ? (
 					<HostedProjectionNotice
 						projection={projection}
 						isFetching={agentQuery.isFetching}
@@ -580,7 +589,7 @@ export function HostedAgentDetail({
 					/>
 				) : null}
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
-					{activeTab === "overview" ? (
+					{deploymentStatus.known && activeTab === "overview" ? (
 						<OverviewTab
 							deployment={deployment}
 							runtime={runtime}
@@ -602,7 +611,7 @@ export function HostedAgentDetail({
 							onCheckDeploymentAgain={onCheckDeploymentAgain}
 						/>
 					) : null}
-					{activeTab === "console" ? (
+					{deploymentStatus.known && activeTab === "console" ? (
 						<ConsoleTab
 							deployment={deployment}
 							runtime={runtime}
@@ -613,8 +622,10 @@ export function HostedAgentDetail({
 							onCheckDeploymentAgain={onCheckDeploymentAgain}
 						/>
 					) : null}
-					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
-					{activeTab === "sessions" ? (
+					{deploymentStatus.known && activeTab === "terminal" ? (
+						<TerminalTab deployment={deployment} />
+					) : null}
+					{deploymentStatus.known && activeTab === "sessions" ? (
 						!deploymentProjectionQueryable ? (
 							<StoppedAgentState deployment={deployment} />
 						) : projection.status === "resolved" ? (
@@ -626,7 +637,7 @@ export function HostedAgentDetail({
 							<ProjectionDependentUnavailable label="Sessions" />
 						)
 					) : null}
-					{activeTab === "skills" ? (
+					{deploymentStatus.known && activeTab === "skills" ? (
 						!deploymentProjectionQueryable ? (
 							<StoppedAgentState deployment={deployment} />
 						) : projection.status === "resolved" ? (
@@ -639,8 +650,10 @@ export function HostedAgentDetail({
 							<ProjectionDependentUnavailable label="Skills" />
 						)
 					) : null}
-					{activeTab === "ai" ? <AiProviderTab deployment={deployment} runtime={runtime} /> : null}
-					{activeTab === "channels" ? (
+					{deploymentStatus.known && activeTab === "ai" ? (
+						<AiProviderTab deployment={deployment} runtime={runtime} />
+					) : null}
+					{deploymentStatus.known && activeTab === "channels" ? (
 						!deploymentProjectionQueryable ? (
 							<StoppedAgentState deployment={deployment} />
 						) : projection.status === "resolved" ? (
@@ -655,7 +668,7 @@ export function HostedAgentDetail({
 							/>
 						)
 					) : null}
-					{activeTab === "settings" ? (
+					{deploymentStatus.known && activeTab === "settings" ? (
 						<HostedAgentSettingsTab
 							environmentId={environmentId}
 							deployment={deployment}
@@ -874,7 +887,7 @@ function RuntimeStatusValue({
 type DeploymentReadinessStage = "provisioning" | "booting" | "ready";
 
 function deploymentReadinessStage(
-	status: HostedDeployment["resource"]["status"],
+	status: HostedDeploymentStatus,
 	runtimeUiAvailable: boolean,
 ): DeploymentReadinessStage {
 	if (runtimeUiAvailable) return "ready";
@@ -907,6 +920,15 @@ export function OverviewProvisioningPanel({
 	terminalHref: string;
 }) {
 	const status = deployment.resource.status;
+	if (status === null) {
+		return (
+			<DeploymentStatusUnavailableState
+				deployment={deployment}
+				isRetrying={isCheckingDeployment}
+				onRetry={onCheckDeploymentAgain}
+			/>
+		);
+	}
 	const stage = deploymentReadinessStage(status, runtimeUiAvailable);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const settlingTimedOut = deploymentTransitionTimedOut || runtimeUiSettlingTimedOut;
@@ -1041,7 +1063,7 @@ export function OverviewFailedPanel({
 	planChangeHref: string;
 	onDeleteAccepted: (deploymentId: string) => void;
 }) {
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const failure = deploymentFailurePresentation(deployment);
 	if (failure) {
 		return (
@@ -1144,7 +1166,7 @@ function OverviewTab({
 			managedModelCatalog.data?.models ?? [],
 		),
 	);
-	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const runtimeUiAvailable = Boolean(runtimeConsoleUrl(deployment, runtime));
 	const agentGettingReady =
@@ -1236,7 +1258,7 @@ function OverviewDeploymentActions({
 	deployment: HostedDeployment;
 	onDeleteAccepted: (deploymentId: string) => void;
 }) {
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const failed = status.kind === "failed";
 	return (
 		<SettingsSection
@@ -1350,7 +1372,7 @@ function ConsoleTab({
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
 }) {
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
 	const isProvisioning = isProvisioningStatus(status);
 	const label = runtimeDisplayName(runtime);
@@ -1673,7 +1695,7 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 }
 
 function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
 	const isProvisioning = isProvisioningStatus(status);
 	const label = deploymentDisplayName(
@@ -1865,7 +1887,7 @@ function AiProviderTab({
 	const managedModelCatalog = useManagedModelCatalog();
 	const updateDeployment = useUpdateDeployment();
 	const updateInProgress =
-		parseDeploymentStatus(deployment.resource.status.summary_state).kind === "updating";
+		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const list = providers.data ?? [];
 	const managedModels = managedModelCatalog.data?.models ?? [];
@@ -2755,7 +2777,7 @@ function LanguageTimezoneSettingsSection({
 	const runtimeLabel = runtimeDisplayName(runtime);
 	const updateDeployment = useUpdateDeployment();
 	const updateInProgress =
-		parseDeploymentStatus(deployment.resource.status.summary_state).kind === "updating";
+		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
 	const localeIdentity = `${configLanguage}\0${configTimezone}`;
 	const [syncedLocaleIdentity, setSyncedLocaleIdentity] = useState(localeIdentity);
 	const [language, setLanguage] = useState(configLanguage);
@@ -2868,7 +2890,7 @@ function ComputeSettingsSections({
 	const cancelSubscription = useCancelSubscription();
 	const resumeSubscription = useResumeSubscription();
 	const runAction = useActionLock();
-	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const canStop = canStopDeployment(deploymentStatus);
 	const canStart = canStartDeployment(deploymentStatus);
 	const canRestart = canRestartDeployment(deploymentStatus);

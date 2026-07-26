@@ -1,7 +1,7 @@
 "use client";
 
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
-import { ChevronRight, RefreshCw } from "lucide-react";
+import { AlertCircle, ChevronRight, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -18,12 +18,14 @@ import {
 } from "@/components/entity-card";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
-import { deploymentStatusLabel, parseDeploymentStatus } from "@/hosted/deployment-status";
+import { deploymentStatusFromResource, deploymentStatusLabel } from "@/hosted/deployment-status";
 import { userInitiatedDeploymentDeleteCompleted } from "@/hosted/hosted-agent-resolution";
 import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
 import {
@@ -202,6 +204,8 @@ export function AgentHome({
 				section={section}
 				searchStr={searchStr}
 				matches={ambiguousMatches}
+				isFetching={isFetching}
+				onRetry={handleCheckAgain}
 			/>
 		);
 	}
@@ -258,12 +262,19 @@ function DeploymentChooser({
 	section,
 	searchStr,
 	matches,
+	isFetching,
+	onRetry,
 }: {
 	environmentId: string;
 	section: AgentSectionId;
 	searchStr: string;
 	matches: readonly AgentDeploymentMatch[];
+	isFetching: boolean;
+	onRetry: () => void;
 }) {
+	const hasUnknownStatus = matches.some(
+		(match) => deploymentStatusFromResource(match.deployment.resource.status).kind === "unknown",
+	);
 	return (
 		<div
 			data-hosted="true"
@@ -273,6 +284,25 @@ function DeploymentChooser({
 				title="Choose a deployment"
 				description="Multiple legacy deployments share this agent identity. Choose the deployment you want to manage."
 			/>
+			{hasUnknownStatus ? (
+				<Alert data-hosted="true">
+					<AlertCircle />
+					<AlertTitle>Some deployment statuses are unavailable</AlertTitle>
+					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+						<span>We can’t determine every deployment state right now.</span>
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={isFetching}
+							onClick={onRetry}
+						>
+							{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw />}
+							Check again
+						</Button>
+					</AlertDescription>
+				</Alert>
+			) : null}
 			<div className="grid max-w-2xl gap-2">
 				{matches.map((match) => {
 					const { deployment } = match;
@@ -299,9 +329,7 @@ function DeploymentChooser({
 								icon={<AgentIcon agent={match.runtime} size="lg" />}
 								title={name}
 								meta={[
-									deploymentStatusLabel(
-										parseDeploymentStatus(deployment.resource.status.summary_state),
-									),
+									deploymentStatusLabel(deploymentStatusFromResource(deployment.resource.status)),
 									`Created ${formatShortDate(deployment.resource.metadata.createdAt)}`,
 								]}
 								titleAdornment={

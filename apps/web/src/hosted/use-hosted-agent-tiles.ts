@@ -19,10 +19,10 @@ import {
 import {
 	type DeploymentStatus,
 	type DeploymentStatusTone,
+	deploymentStatusFromResource,
 	deploymentStatusLabel,
 	deploymentStatusTone,
 	isRunningStatus,
-	parseDeploymentStatus,
 } from "@/hosted/deployment-status";
 import {
 	claimedEnvIdsFromDeployments,
@@ -34,10 +34,7 @@ import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inv
 import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
 
 type Env = components["schemas"]["AgentResponse"];
-type DeploymentStatusInput = {
-	failure?: HostedDeploymentStatus["failure"];
-	summary_state: string;
-};
+type DeploymentStatusInput = HostedDeploymentStatus | null;
 
 const EMPTY_DEPLOYMENTS: HostedDeployment[] = [];
 
@@ -63,7 +60,7 @@ export function hostedRuntimeStatusView(
 	env: Env | null | undefined,
 	failurePresentation?: DeploymentFailurePresentation | null,
 ): HostedRuntimeStatusView {
-	const compute = parseDeploymentStatus(deployment.summary_state);
+	const compute = deploymentStatusFromResource(deployment);
 	const computeLabel = deploymentStatusLabel(compute);
 	const computeTone = deploymentStatusTone(compute);
 	const sync = env === undefined ? null : daemonStatusVisual(env, "on-clawdi");
@@ -151,8 +148,17 @@ export function useHostedAgentTiles({
 	// TanStack Query gives the same `data` reference back on no-op
 	// refetches, so the memo deps stay stable.
 	const tiles = useMemo<AgentTile[]>(() => {
-		return includeDeployments ? deployments.flatMap((d) => deploymentToTiles(d, envById)) : [];
-	}, [deployments, includeDeployments, envById]);
+		return includeDeployments
+			? deployments.flatMap((d) =>
+					deploymentToTiles(d, envById, {
+						isRetrying: inventory.isFetching,
+						onRetry: () => {
+							void inventory.refetch();
+						},
+					}),
+				)
+			: [];
+	}, [deployments, includeDeployments, envById, inventory.isFetching, inventory.refetch]);
 
 	// Env ids that are owned by a hosted deployment. The dashboard
 	// excludes these from its self-managed grid so a hosted deployment's env
@@ -182,7 +188,11 @@ export function useHostedAgentTiles({
  * environment id owns the detail route. A matching projection decorates the tile
  * with daemon sync state and presentation metadata.
  */
-export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>): AgentTile[] {
+export function deploymentToTiles(
+	d: HostedDeployment,
+	envById: Map<string, Env>,
+	statusRetry?: { isRetrying: boolean; onRetry: () => void },
+): AgentTile[] {
 	if (!isHostedDeploymentMember(d)) return [];
 	const runtime = deploymentRuntime(d);
 	const slug = deploymentDisplayName(d.resource.spec.name, runtime);
@@ -208,7 +218,10 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 		failurePresentation?.failedVerb ? failurePresentation : null,
 	);
 	const showTileActions =
-		runtimeStatus.compute.kind === "stopped" || runtimeStatus.compute.kind === "failed" || !envId;
+		runtimeStatus.compute.kind === "stopped" ||
+		runtimeStatus.compute.kind === "failed" ||
+		runtimeStatus.compute.kind === "unknown" ||
+		!envId;
 	const dunningStatus = computeDunningTileStatus(d);
 	const failureReasonStatus =
 		runtimeStatus.secondary?.kind === "failure_reason" ? runtimeStatus.secondary : null;
@@ -229,6 +242,8 @@ export function deploymentToTiles(d: HostedDeployment, envById: Map<string, Env>
 				? createElement(HostedDeploymentTileAction, {
 						deployment: d,
 						remediationHref: settingsHref ? `${settingsHref}#compute-plan-controls` : undefined,
+						isRetrying: statusRetry?.isRetrying,
+						onRetry: statusRetry?.onRetry,
 					})
 				: undefined,
 			manageHref: settingsHref,
