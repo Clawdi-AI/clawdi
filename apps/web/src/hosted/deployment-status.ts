@@ -41,7 +41,12 @@ export type UnknownDeploymentStatus =
 	  };
 
 export type DeploymentStatus = KnownDeploymentStatusModel | UnknownDeploymentStatus;
-export type DeploymentOperationVerb = DeploymentOperation["metadata"]["verb"] | "plan_change";
+// `plan_change` is a projected failure phase; `runtime_switch` remains a live
+// legacy wire value while the hosted main rollout converges.
+export type DeploymentOperationVerb =
+	| DeploymentOperation["metadata"]["verb"]
+	| "plan_change"
+	| "runtime_switch";
 
 export const DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS = 10_000;
 export const DEPLOYMENT_TRANSITION_TIMEOUT_MS = 5 * 60_000;
