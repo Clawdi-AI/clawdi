@@ -27,7 +27,7 @@ function deployment({
 	fundingSource?: NonNullable<HostedFundingFact["funding_source"]>;
 	reason?: NonNullable<HostedFundingFact["reason"]>;
 	priorPlanSlug?: ComputePlanSlug;
-	status?: HostedDeploymentStatus["summary_state"];
+	status?: HostedDeploymentStatus["summary_state"] | null;
 } = {}) {
 	return hostedDeploymentFixture({
 		status,
@@ -208,6 +208,21 @@ describe("computeDunningState", () => {
 			}),
 		);
 		expect(stopped?.description).toContain("No included Basic slot was available");
+
+		const unavailable = computeDunningState(
+			deployment({
+				computeSubscription: includedSubscription(),
+				factKind: "funding_revoked",
+				status: null,
+			}),
+		);
+		expect(unavailable?.description).toContain(
+			"can’t determine whether this deployment stopped or is using included Basic",
+		);
+		expect(unavailable?.description).not.toContain("is now using included Basic");
+		expect(unavailable?.tileTitle).toBe(
+			"Performance compute ended. Current deployment status is unavailable.",
+		);
 	});
 
 	test("does not recover a detached or already recovered subscription", () => {

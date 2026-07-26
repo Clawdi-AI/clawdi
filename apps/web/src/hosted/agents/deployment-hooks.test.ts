@@ -3,7 +3,11 @@ import { readFileSync } from "node:fs";
 import { QueryClient } from "@tanstack/react-query";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { DeploymentOperation, HostedDeployment } from "@/hosted/billing/contracts";
+import type {
+	DeploymentOperation,
+	HostedDeployment,
+	HostedDeploymentStatus,
+} from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
@@ -30,6 +34,15 @@ let settlingPollIntervalMs: number | null = null;
 let settlingTimeoutMs: number | null = null;
 let overviewProvisioningPanel: OverviewProvisioningPanel | null = null;
 let overviewFailedPanel: OverviewFailedPanel | null = null;
+
+function requiredDeploymentStatus(
+	deployment: HostedDeployment | undefined,
+): HostedDeploymentStatus {
+	if (!deployment) throw new Error("Expected deployment fixture");
+	const status = deployment.resource.status;
+	if (status === null) throw new Error("Expected deployment status fixture");
+	return status;
+}
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -248,7 +261,7 @@ describe("runtime UI settling polling", () => {
 		}
 		const nowMs = Date.parse("2026-07-23T12:00:00Z");
 		const deployment = hostedDeploymentFixture({ status: "running" });
-		deployment.resource.status.conditions = [
+		requiredDeploymentStatus(deployment).conditions = [
 			{
 				type: "Ready",
 				status: "True",
@@ -268,6 +281,17 @@ describe("runtime UI settling polling", () => {
 		if (!settlingPollState) throw new Error("deployment hooks were not loaded");
 		const state = settlingPollState(
 			hostedDeploymentFixture({ status: "starting" }),
+			"openclaw",
+			null,
+			Date.now(),
+		);
+		expect(state).toEqual({ refetchInterval: false, timedOut: false, tracker: null });
+	});
+
+	test("does not treat unavailable deployment status as a running runtime", () => {
+		if (!settlingPollState) throw new Error("deployment hooks were not loaded");
+		const state = settlingPollState(
+			hostedDeploymentFixture({ status: null }),
 			"openclaw",
 			null,
 			Date.now(),
@@ -330,7 +354,6 @@ describe("deployment mutation settlement", () => {
 			["restart", "restarting"],
 			["update", "updating"],
 			["plan_change", "updating"],
-			["runtime_switch", "updating"],
 			["rename", "updating"],
 			["delete", "deleting"],
 		] as const;
@@ -340,9 +363,10 @@ describe("deployment mutation settlement", () => {
 			const accepted = { deploymentId: "hdep_test", operation };
 			projectAcceptedTransition(queryClient, accepted, () => undefined);
 			const deployments = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
+			const resourceStatus = requiredDeploymentStatus(deployments?.[0]);
 
-			expect(deployments?.[0]?.resource.status.summary_state).toBe(status);
-			expect(deployments?.[0]?.resource.status.failure).toBeNull();
+			expect(resourceStatus.summary_state).toBe(status);
+			expect(resourceStatus.failure).toBeNull();
 			expect(deployments?.[0]?.accepted_operation).toEqual(operation);
 			expect(
 				deploymentRefetchInterval(deployments, new Map(), Date.parse("2026-07-24T00:00:00Z")),
@@ -364,7 +388,7 @@ describe("deployment mutation settlement", () => {
 
 		const deleting = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 		expect(deleting).toHaveLength(1);
-		expect(deleting?.[0]?.resource.status.summary_state).toBe("deleting");
+		expect(requiredDeploymentStatus(deleting?.[0]).summary_state).toBe("deleting");
 
 		const failure = {
 			type: "https://api.clawdi.ai/problems/deployment-delete-failed",
@@ -383,9 +407,27 @@ describe("deployment mutation settlement", () => {
 
 		const failed = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments);
 		expect(failed).toHaveLength(1);
-		expect(failed?.[0]?.resource.status.summary_state).toBe("failed");
-		expect(deploymentFailureReason(failed?.[0]?.resource.status ?? {})).toBe(
-			"Deployment deletion failed",
+		const failedStatus = requiredDeploymentStatus(failed?.[0]);
+		expect(failedStatus.summary_state).toBe("failed");
+		expect(deploymentFailureReason(failedStatus)).toBe("Deployment deletion failed");
+	});
+
+	test("does not fabricate a status while projecting an accepted operation", () => {
+		if (!projectAcceptedTransition) throw new Error("deployment hooks were not loaded");
+		const queryClient = new QueryClient();
+		queryClient.setQueryData<HostedDeployment[]>(billingKeys.deployments, [
+			hostedDeploymentFixture({ id: "hdep_unknown", status: null }),
+		]);
+		const operation = acceptedOperation("start");
+
+		projectAcceptedTransition(
+			queryClient,
+			{ deploymentId: "hdep_unknown", operation },
+			() => undefined,
 		);
+
+		const [projected] = queryClient.getQueryData<HostedDeployment[]>(billingKeys.deployments) ?? [];
+		expect(projected?.resource.status).toBeNull();
+		expect(projected?.accepted_operation).toEqual(operation);
 	});
 });

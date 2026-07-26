@@ -154,4 +154,10 @@ describe("deploymentFailureReason", () => {
 		const deployment = hostedDeploymentFixture({ status: "starting" });
 		expect(deploymentFailureProjection(deployment)).toBeNull();
 	});
+
+	test("does not classify unavailable status as a failure", () => {
+		const deployment = hostedDeploymentFixture({ status: null });
+		expect(deploymentFailureReason(deployment.resource.status)).toBeNull();
+		expect(deploymentFailureProjection(deployment)).toBeNull();
+	});
 });

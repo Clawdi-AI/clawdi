@@ -526,7 +526,9 @@ function isDeploymentMutationFixture(value: unknown): value is DeploymentMutatio
 	);
 }
 
-function readSummaryState(status: string): DeploymentRead["resource"]["status"]["summary_state"] {
+function readSummaryState(
+	status: string,
+): NonNullable<DeploymentRead["resource"]["status"]>["summary_state"] {
 	switch (status) {
 		case "creating":
 		case "starting":
