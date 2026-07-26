@@ -17,10 +17,10 @@ only the surface we actually consume so:
 
 Usage:
 
-Local development (the default behind `bun --cwd apps/web run generate-deploy-api`):
+Local development (the default behind `bun run --cwd apps/web generate-deploy-api`):
 
     DEPLOY_OPENAPI_SOURCE=http://localhost:50021/openapi.json \
-      bun --cwd apps/web run generate-deploy-api
+      bun run --cwd apps/web generate-deploy-api
 
 Regenerating against a reviewed checked-in hosted contract before coordinated
 deployment:
@@ -28,7 +28,7 @@ deployment:
     cd /path/to/clawdi-hosted/backend
     python3 -m http.server 50021
     DEPLOY_OPENAPI_SOURCE=http://localhost:50021/openapi.json \
-      bun --cwd apps/web run generate-deploy-api
+      bun run --cwd apps/web generate-deploy-api
 
 To consume a new endpoint, add its path + HTTP method to
 `KEEP_OPERATIONS_BY_PATH` and rerun the generate command. Schema closure is
