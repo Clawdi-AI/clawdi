@@ -398,6 +398,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/usage/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** V2 Usage Summary */
+        get: operations["v2_usage_summary_v2_usage_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/usage/services": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** V2 Usage Services */
+        get: operations["v2_usage_services_v2_usage_services_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v2/usage/services/daily": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** V2 Usage Services Daily */
+        get: operations["v2_usage_services_daily_v2_usage_services_daily_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/wallet": {
         parameters: {
             query?: never;
@@ -553,7 +604,7 @@ export interface components {
              * Verb
              * @enum {string}
              */
-            verb: "create" | "start" | "stop" | "restart" | "update" | "runtime_switch" | "rename" | "delete";
+            verb: "create" | "start" | "stop" | "restart" | "update" | "rename" | "delete";
             /** Targetgeneration */
             targetGeneration: number;
             /** Manifestetag */
@@ -666,7 +717,7 @@ export interface components {
             deployment_target: string;
             metadata: components["schemas"]["DeploymentMetadata"];
             spec: components["schemas"]["HostedDeploymentSpec"];
-            status: components["schemas"]["HostedDeploymentStatus"];
+            status: components["schemas"]["HostedDeploymentStatus"] | null;
         };
         /** HostedDeploymentSpec */
         HostedDeploymentSpec: {
@@ -1649,7 +1700,7 @@ export interface components {
              * @default false
              */
             upgrade_available: boolean;
-            compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"];
+            compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"] | null;
         };
         /** V2HostedRuntimeUiCredentials */
         V2HostedRuntimeUiCredentials: {
@@ -1794,6 +1845,58 @@ export interface components {
             /** Amount Due Usd */
             amount_due_usd?: number | null;
         };
+        /** V2ServiceUsageBreakdownItem */
+        V2ServiceUsageBreakdownItem: {
+            /** Service */
+            service: string;
+            /** Operation */
+            operation: string;
+            /** Callscount */
+            callsCount: number;
+            /** Amountusd */
+            amountUsd: string;
+        };
+        /** V2ServiceUsageBreakdownResponse */
+        V2ServiceUsageBreakdownResponse: {
+            /** Days */
+            days: number;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "complete" | "partial" | "unavailable";
+            /** Unavailable Sections */
+            unavailable_sections: "items"[];
+            /** Items */
+            items: components["schemas"]["V2ServiceUsageBreakdownItem"][];
+        };
+        /** V2ServiceUsageDailyBreakdownItem */
+        V2ServiceUsageDailyBreakdownItem: {
+            /** Date */
+            date: string;
+            /** Service */
+            service: string;
+            /** Operation */
+            operation: string;
+            /** Callscount */
+            callsCount: number;
+            /** Amountusd */
+            amountUsd: string;
+        };
+        /** V2ServiceUsageDailyBreakdownResponse */
+        V2ServiceUsageDailyBreakdownResponse: {
+            /** Days */
+            days: number;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "complete" | "partial" | "unavailable";
+            /** Unavailable Sections */
+            unavailable_sections: "items"[];
+            /** Items */
+            items: components["schemas"]["V2ServiceUsageDailyBreakdownItem"][];
+        };
         /** V2UpdateDeploymentRequest */
         V2UpdateDeploymentRequest: {
             /** Assistant Name */
@@ -1817,6 +1920,34 @@ export interface components {
             ai_provider_bootstrap?: {
                 [key: string]: unknown;
             } | null;
+        };
+        /** V2UsageReportWindow */
+        V2UsageReportWindow: {
+            /** Start */
+            start: string;
+            /** End */
+            end: string;
+        };
+        /** V2UsageSummaryResponse */
+        V2UsageSummaryResponse: {
+            reportWindow: components["schemas"]["V2UsageReportWindow"];
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "complete" | "partial" | "unavailable";
+            /** Unavailable Sections */
+            unavailable_sections: ("tokens_used" | "wallet_balance_usd" | "messages_count")[];
+            /** Tokensused */
+            tokensUsed: number | null;
+            /** Walletbalanceusd */
+            walletBalanceUsd: string | null;
+            /** Messagescount */
+            messagesCount: number | null;
+            /** Deploymentsactive */
+            deploymentsActive: number;
+            /** Deploymentstotal */
+            deploymentsTotal: number;
         };
         /** V2WalletAutoReloadActionResponse */
         V2WalletAutoReloadActionResponse: {
@@ -2944,6 +3075,88 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["V2HostedUsageSummaryResponse"];
+                };
+            };
+        };
+    };
+    v2_usage_summary_v2_usage_summary_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2UsageSummaryResponse"];
+                };
+            };
+        };
+    };
+    v2_usage_services_v2_usage_services_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ServiceUsageBreakdownResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    v2_usage_services_daily_v2_usage_services_daily_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["V2ServiceUsageDailyBreakdownResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
