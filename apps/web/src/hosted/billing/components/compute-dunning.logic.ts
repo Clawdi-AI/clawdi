@@ -9,6 +9,7 @@ import {
 	isIncludedBasicSubscription,
 	pendingComputePlanSlug,
 } from "@/hosted/billing/subscription/subscription-utils";
+import { deploymentStatusFromResource } from "@/hosted/deployment-status";
 
 type DunningDeployment = Pick<
 	HostedDeployment,
@@ -80,7 +81,9 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 	if (!recoveryPlanSlug) return null;
 
 	const fallbackPlanLabel = `${computeTierLabel(recoveryPlanSlug)} compute`;
-	const stopped = deployment.resource.status.summary_state === "stopped";
+	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
+	const stopped = deploymentStatus.kind === "stopped";
+	const statusUnavailable = !deploymentStatus.known;
 	const presentation = (() => {
 		switch (fallback.reason) {
 			case "payment_failure":
@@ -131,18 +134,22 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		paymentState: "unpaid",
 		fundingSource: fallback.funding_source,
 		recoveryAction: "start_new",
-		description: stopped
-			? "No included Basic slot was available, so this deployment stopped. Start a new subscription to restore paid compute."
-			: "This deployment is now using included Basic. Start a new subscription to restore paid compute.",
+		description: statusUnavailable
+			? "We can’t determine whether this deployment stopped or is using included Basic because its current status is unavailable. Start a new subscription to restore paid compute."
+			: stopped
+				? "No included Basic slot was available, so this deployment stopped. Start a new subscription to restore paid compute."
+				: "This deployment is now using included Basic. Start a new subscription to restore paid compute.",
 		invoiceUrl: null,
 		fallbackOccurredAt: fallback.occurred_at,
 		fallbackPlanLabel,
 		fallbackReason: fallback.reason,
 		recoveryPlanSlug,
 		ctaTarget: "start_new",
-		tileTitle: stopped
-			? `${fallbackPlanLabel} ended and the deployment stopped.`
-			: `${fallbackPlanLabel} ended and fell back to included Basic.`,
+		tileTitle: statusUnavailable
+			? `${fallbackPlanLabel} ended. Current deployment status is unavailable.`
+			: stopped
+				? `${fallbackPlanLabel} ended and the deployment stopped.`
+				: `${fallbackPlanLabel} ended and fell back to included Basic.`,
 	};
 }
 

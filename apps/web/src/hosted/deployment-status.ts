@@ -1,4 +1,8 @@
-import type { DeploymentOperation, HostedDeployment } from "@/hosted/billing/contracts";
+import type {
+	DeploymentOperation,
+	HostedDeployment,
+	HostedDeploymentStatus,
+} from "@/hosted/billing/contracts";
 
 export const KNOWN_DEPLOYMENT_STATUSES = [
 	"creating",
@@ -22,11 +26,19 @@ type KnownDeploymentStatusModel = {
 	known: true;
 };
 
-export type UnknownDeploymentStatus = {
-	kind: "unknown";
-	raw: string;
-	known: false;
-};
+export type UnknownDeploymentStatus =
+	| {
+			kind: "unknown";
+			raw: string;
+			known: false;
+			reason: "unrecognized";
+	  }
+	| {
+			kind: "unknown";
+			raw: null;
+			known: false;
+			reason: "status_unavailable";
+	  };
 
 export type DeploymentStatus = KnownDeploymentStatusModel | UnknownDeploymentStatus;
 export type DeploymentOperationVerb = DeploymentOperation["metadata"]["verb"] | "plan_change";
@@ -61,8 +73,8 @@ export type DeploymentPollingState = {
 const KNOWN_STATUS_SET = new Set<string>(KNOWN_DEPLOYMENT_STATUSES);
 const LEGACY_STATUS_ALIASES = new Map<string, KnownDeploymentStatus>([["ready", "running"]]);
 
-export function parseDeploymentStatus(raw: string | null | undefined): DeploymentStatus {
-	const value = raw?.trim() ?? "";
+export function parseDeploymentStatus(raw: string): DeploymentStatus {
+	const value = raw.trim();
 	const normalized = value.toLowerCase();
 	const alias = LEGACY_STATUS_ALIASES.get(normalized);
 	if (alias) {
@@ -72,7 +84,21 @@ export function parseDeploymentStatus(raw: string | null | undefined): Deploymen
 		const kind = normalized as KnownDeploymentStatus;
 		return { kind, raw: kind, known: true };
 	}
-	return { kind: "unknown", raw: value || "unknown", known: false };
+	return { kind: "unknown", raw: value, known: false, reason: "unrecognized" };
+}
+
+/**
+ * A missing declarative projection is different from an unrecognized future
+ * status value. Keep that distinction explicit instead of feeding null through
+ * the string parser or fabricating a lifecycle state.
+ */
+export function deploymentStatusFromResource(
+	status: HostedDeploymentStatus | null,
+): DeploymentStatus {
+	if (status === null) {
+		return { kind: "unknown", raw: null, known: false, reason: "status_unavailable" };
+	}
+	return parseDeploymentStatus(status.summary_state);
 }
 
 export function deploymentStatusLabel(status: DeploymentStatus): string {
@@ -98,7 +124,9 @@ export function deploymentStatusLabel(status: DeploymentStatus): string {
 		case "deleted":
 			return "Deleted";
 		case "unknown":
-			return titleCaseStatus(status.raw);
+			return status.reason === "status_unavailable"
+				? "Status unavailable"
+				: titleCaseStatus(status.raw);
 		default:
 			return exhaustive(status);
 	}
@@ -165,8 +193,9 @@ export function canQueryDeploymentProjection(status: DeploymentStatus): boolean 
 		case "updating":
 		case "failed":
 		case "deleting":
-		case "unknown":
 			return true;
+		case "unknown":
+			return false;
 		default:
 			return exhaustive(status);
 	}
@@ -273,7 +302,23 @@ export function canRestart(status: DeploymentStatus): boolean {
 }
 
 export function canDelete(status: DeploymentStatus): boolean {
-	return status.kind !== "deleting" && status.kind !== "deleted";
+	switch (status.kind) {
+		case "creating":
+		case "starting":
+		case "running":
+		case "stopping":
+		case "stopped":
+		case "restarting":
+		case "updating":
+		case "failed":
+			return true;
+		case "deleting":
+		case "deleted":
+		case "unknown":
+			return false;
+		default:
+			return exhaustive(status);
+	}
 }
 
 /** Shared started-at/timeout primitive for lifecycle and runtime-UI convergence. */
@@ -306,9 +351,18 @@ export function boundedSettlingPollState({
 export function shouldPollDeployments(
 	items: readonly { status: string | null | undefined }[] | null | undefined,
 ): boolean {
-	return (items ?? []).some((deployment) =>
-		isTransitionalStatus(parseDeploymentStatus(deployment.status)),
-	);
+	return (items ?? []).some((deployment) => {
+		const status: DeploymentStatus =
+			deployment.status === null || deployment.status === undefined
+				? {
+						kind: "unknown",
+						raw: null,
+						known: false,
+						reason: "status_unavailable",
+					}
+				: parseDeploymentStatus(deployment.status);
+		return isTransitionalStatus(status);
+	});
 }
 
 /**
@@ -326,7 +380,7 @@ export function deploymentPollingState(
 	let refetchInterval: number | false = false;
 
 	for (const deployment of deployments ?? []) {
-		const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+		const status = deploymentStatusFromResource(deployment.resource.status);
 		if (!isTransitionalStatus(status)) continue;
 
 		const deploymentId = deployment.resource.id;

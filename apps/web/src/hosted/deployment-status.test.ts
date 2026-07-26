@@ -12,6 +12,7 @@ import {
 	type DeploymentOperationVerb,
 	deploymentPollingState,
 	deploymentRefetchInterval,
+	deploymentStatusFromResource,
 	deploymentStatusLabel,
 	deploymentStatusTone,
 	isRunningStatus,
@@ -73,9 +74,34 @@ describe("DeploymentStatus", () => {
 
 	test("preserves and labels unknown statuses", () => {
 		const status = parseDeploymentStatus("queued_for_drain");
-		expect(status).toEqual({ kind: "unknown", raw: "queued_for_drain", known: false });
+		expect(status).toEqual({
+			kind: "unknown",
+			raw: "queued_for_drain",
+			known: false,
+			reason: "unrecognized",
+		});
 		expect(deploymentStatusLabel(status)).toBe("Queued For Drain");
 		expect(deploymentStatusTone(status)).toBe("warning");
+	});
+
+	test("models a missing authoritative status as its own unknown state", () => {
+		const deployment = hostedDeploymentFixture({ status: null });
+		const status = deploymentStatusFromResource(deployment.resource.status);
+
+		expect(status).toEqual({
+			kind: "unknown",
+			raw: null,
+			known: false,
+			reason: "status_unavailable",
+		});
+		expect(deploymentStatusLabel(status)).toBe("Status unavailable");
+		expect(deploymentStatusTone(status)).toBe("warning");
+		expect(isRunningStatus(status)).toBe(false);
+		expect(canStart(status)).toBe(false);
+		expect(canStop(status)).toBe(false);
+		expect(canRestart(status)).toBe(false);
+		expect(canDelete(status)).toBe(false);
+		expect(canQueryDeploymentProjection(status)).toBe(false);
 	});
 
 	test("labels and tones the hosted backend statuses", () => {
@@ -164,6 +190,7 @@ describe("DeploymentStatus", () => {
 		expect(canDelete(parseDeploymentStatus("failed"))).toBe(true);
 		expect(canDelete(parseDeploymentStatus("deleting"))).toBe(false);
 		expect(canDelete(parseDeploymentStatus("deleted"))).toBe(false);
+		expect(canDelete(parseDeploymentStatus("future_status"))).toBe(false);
 	});
 
 	test("classifies whether any deployment is non-terminal", () => {
@@ -182,8 +209,25 @@ describe("DeploymentStatus", () => {
 		expect(shouldPollDeployments([{ status: "running" }, { status: "updating" }])).toBe(true);
 		expect(shouldPollDeployments([{ status: "running" }, { status: "deleting" }])).toBe(true);
 		expect(shouldPollDeployments([{ status: "new_backend_status" }])).toBe(true);
+		expect(shouldPollDeployments([{ status: null }])).toBe(true);
 		expect(shouldPollDeployments([])).toBe(false);
 		expect(shouldPollDeployments(undefined)).toBe(false);
+	});
+
+	test("polls a missing authoritative status on the bounded convergence cadence", () => {
+		const nowMs = Date.parse("2026-07-25T00:00:00Z");
+		const pending = deploymentPollingState(
+			[hostedDeploymentFixture({ id: "hdep_unknown", status: null })],
+			new Map(),
+			nowMs,
+		);
+
+		expect(pending.refetchInterval).toBe(DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS);
+		expect(pending.transitions.get("hdep_unknown")).toEqual({
+			kind: "converging",
+			verb: null,
+			startedAtMs: nowMs,
+		});
 	});
 
 	test("polls a lifecycle operation only while it is plausibly converging", () => {

@@ -11,6 +11,7 @@ import type {
 	DeploymentOperation,
 	HostedComputeSubscription,
 	HostedDeployment,
+	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
 import {
 	applyDeploymentSubscriptionResult,
@@ -26,6 +27,15 @@ import {
 	type DeploymentOperationVerb,
 } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
+
+function requiredDeploymentStatus(
+	deployment: HostedDeployment | undefined,
+): HostedDeploymentStatus {
+	if (!deployment) throw new Error("Expected deployment fixture");
+	const status = deployment.resource.status;
+	if (status === null) throw new Error("Expected deployment status fixture");
+	return status;
+}
 
 function deployment(
 	computeSubscription: HostedComputeSubscription,
@@ -322,15 +332,35 @@ describe("reconcileDeploymentSnapshots", () => {
 		});
 
 		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [serverSnapshot]);
+		const reconciledStatus = requiredDeploymentStatus(reconciled);
 
-		expect(reconciled?.resource.status.summary_state).toBe("failed");
-		expect(reconciled?.resource.status.failure).toEqual(failure);
+		expect(reconciledStatus.summary_state).toBe("failed");
+		expect(reconciledStatus.failure).toEqual(failure);
 		expect(deploymentFailureProjection(reconciled)).toEqual({
 			reason: "Re-quote the plan change and try again.",
 			failedVerb: "plan_change",
 			retryable: false,
 			code: "operation_aborted",
 		});
+	});
+
+	test("retains accepted operation context without fabricating unavailable status", () => {
+		const accepted = acceptedOperation("update");
+		const optimistic = hostedDeploymentFixture({
+			id: "hdep_unknown",
+			status: "updating",
+			acceptedOperation: accepted,
+		});
+		const serverSnapshot = hostedDeploymentFixture({
+			id: "hdep_unknown",
+			status: null,
+			acceptedOperation: null,
+		});
+
+		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [serverSnapshot]);
+
+		expect(reconciled?.resource.status).toBeNull();
+		expect(reconciled?.accepted_operation).toEqual(accepted);
 	});
 });
 

@@ -33,18 +33,16 @@ beforeAll(async () => {
 });
 
 function hostedRuntimeStatusView(
-	rawStatus: string,
+	rawStatus: HostedDeploymentStatus["summary_state"],
 	environment: Env | null | undefined,
 	failureReason?: string | null,
 ) {
 	if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
-	return getRuntimeStatusView(
-		{
-			summary_state: rawStatus,
-			failure: failureReason ? deploymentFailure(failureReason) : null,
-		},
-		environment,
-	);
+	const deployment = hostedDeploymentFixture({
+		status: rawStatus,
+		failure: failureReason ? deploymentFailure(failureReason) : null,
+	});
+	return getRuntimeStatusView(deployment.resource.status, environment);
 }
 
 function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = []) {
@@ -122,7 +120,7 @@ function deployment(
 	overrides: {
 		id?: string;
 		name?: string;
-		status?: HostedDeploymentStatus["summary_state"];
+		status?: HostedDeploymentStatus["summary_state"] | null;
 		createdAt?: string;
 		runtime?: "openclaw" | "hermes";
 		computeSubscription?: HostedComputeSubscription;
@@ -379,6 +377,16 @@ describe("resolveAgentDeployment", () => {
 });
 
 describe("hostedRuntimeStatusView", () => {
+	test("renders unavailable status without treating fresh sync as healthy", () => {
+		if (!getRuntimeStatusView) throw new Error("hostedRuntimeStatusView was not loaded");
+		const view = getRuntimeStatusView(null, env({ last_seen_at: new Date().toISOString() }));
+
+		expect(view.primary).toMatchObject({ label: "Status unavailable", tone: "warning" });
+		expect(view.active).toBe(false);
+		expect(view.sync?.kind).toBe("live");
+		expect(view.secondary).toBeNull();
+	});
+
 	test("keeps compute primary and sync paused secondary while running", () => {
 		const view = hostedRuntimeStatusView(
 			"running",

@@ -9,15 +9,19 @@ import { useDeploymentLifecycle } from "@/hosted/agents/deployment-hooks";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { deploymentFailurePresentation } from "@/hosted/deployment-failure";
-import { canDelete, canStart, parseDeploymentStatus } from "@/hosted/deployment-status";
+import { canDelete, canStart, deploymentStatusFromResource } from "@/hosted/deployment-status";
 import { settingsQueryHref } from "@/lib/settings-routes";
 
 export function HostedDeploymentTileAction({
 	deployment,
 	remediationHref,
+	isRetrying = false,
+	onRetry,
 }: {
 	deployment: HostedDeployment;
 	remediationHref?: string;
+	isRetrying?: boolean;
+	onRetry?: () => void;
 }) {
 	const lifecycle = useDeploymentLifecycle();
 	const runAction = useActionLock();
@@ -25,9 +29,20 @@ export function HostedDeploymentTileAction({
 		deployment.resource.spec.name,
 		deployment.resource.spec.runtime,
 	);
-	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+	const status = deploymentStatusFromResource(deployment.resource.status);
 	const startEnabled = status.kind === "stopped" && canStart(status);
 	const deleteEnabled = canDelete(status);
+	if (status.kind === "unknown") {
+		return onRetry ? (
+			<div data-hosted="true">
+				<Button type="button" variant="outline" size="xs" disabled={isRetrying} onClick={onRetry}>
+					{isRetrying ? <Spinner /> : <RefreshCw />}
+					Check status
+				</Button>
+			</div>
+		) : null;
+	}
+
 	const failure = deploymentFailurePresentation(deployment);
 	const remediation = failure?.remediation;
 	const retryDelete = remediation?.kind === "retry_delete";

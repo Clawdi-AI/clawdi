@@ -23,14 +23,42 @@ export type ComputePlanChangeQuoteResponse = Schemas["V2ComputePlanChangeQuoteRe
 export type ComputeSubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];
 export type ComputeSubscriptionQuoteResponse = Schemas["V2ComputeSubscriptionQuoteResponse-Output"];
 export type ComputeSubscriptionResumeRequest = Schemas["V2ComputeSubscriptionResumeRequest"];
-export type DeploymentOperation = Schemas["LongRunningOperation"];
 export type DeploymentCreateRequest = Schemas["V2HostedDeployRequest"];
 export type DeploymentUpdateRequest = Schemas["V2UpdateDeploymentRequest"];
 export type DeploymentDesiredLifecycle = "running" | "stopped";
 export type DeployRequest = Schemas["V2HostedDeployRequest"];
-export type HostedDeployment = Schemas["V2HostedDeploymentReadResponse"];
 export type HostedDeploymentSpec = Schemas["HostedDeploymentSpec"];
 export type HostedDeploymentStatus = Schemas["HostedDeploymentStatus"];
+type GeneratedHostedDeployment = Schemas["V2HostedDeploymentReadResponse"];
+type GeneratedHostedDeploymentResource = GeneratedHostedDeployment["resource"];
+type GeneratedDeploymentOperation = Schemas["LongRunningOperation"];
+type GeneratedDeploymentOperationResponse = Schemas["DeploymentOperationResponse"];
+type CompatibleHostedDeploymentResource = Omit<GeneratedHostedDeploymentResource, "status"> & {
+	status: HostedDeploymentStatus | null;
+};
+
+export type DeploymentOperation = Omit<GeneratedDeploymentOperation, "response"> & {
+	response?:
+		| (Omit<GeneratedDeploymentOperationResponse, "deployment"> & {
+				deployment: CompatibleHostedDeploymentResource;
+		  })
+		| Schemas["EmptyResponse"]
+		| null;
+};
+
+/**
+ * Web-first compatibility overlay for deployment reads that may be unable to
+ * provide status or compute-slot occupancy. Keep the generated client synced
+ * to the deployed contract; model the temporarily wider read boundary here.
+ */
+export type HostedDeployment = Omit<
+	GeneratedHostedDeployment,
+	"accepted_operation" | "compute_slot_occupancy" | "resource"
+> & {
+	accepted_operation?: DeploymentOperation | null;
+	compute_slot_occupancy: GeneratedHostedDeployment["compute_slot_occupancy"] | null;
+	resource: CompatibleHostedDeploymentResource;
+};
 export type HostedComputeSubscription = NonNullable<
 	NonNullable<HostedDeployment["commercial_display"]>["compute_subscription"]
 >;

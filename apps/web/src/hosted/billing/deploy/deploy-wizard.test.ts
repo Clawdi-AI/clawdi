@@ -215,6 +215,9 @@ describe("AI provider usability gate", () => {
 describe("billing-read gates", () => {
 	test("keeps deploy disabled until inventory succeeds and offers retries", () => {
 		expect(wizardSource).toContain("deployments.isSuccess &&");
+		expect(wizardSource).toContain("activeIncludedBasicSlot === null");
+		expect(wizardSource).toContain("Free Basic agent availability is unknown");
+		expect(wizardSource).toContain("No free agent is assumed.");
 		expect(wizardSource).toContain('title="Couldn\'t check deployment inventory"');
 		expect(wizardSource).toContain("onRetry={() => void deployments.refetch()}");
 		expect(wizardSource).toContain('title="Couldn\'t load compute plans"');

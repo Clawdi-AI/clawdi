@@ -1,9 +1,10 @@
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { isNetworkError } from "@/hosted/billing/errors";
 import {
+	type DeploymentStatus,
+	deploymentStatusFromResource,
 	isRunningStatus,
 	isTransitionalStatus,
-	parseDeploymentStatus,
 } from "@/hosted/deployment-status";
 import { runtimeEnvironmentId } from "@/hosted/runtimes";
 import { isApiNotFoundError } from "@/lib/api-errors";
@@ -38,7 +39,7 @@ export class HostedInventoryUnavailableError extends Error {
 
 /** Deleted deployments stop owning an agent as soon as the deploy API says so. */
 export function isHostedDeploymentMember(deployment: HostedDeployment): boolean {
-	return parseDeploymentStatus(deployment.resource.status.summary_state).kind !== "deleted";
+	return deploymentStatusFromResource(deployment.resource.status).kind !== "deleted";
 }
 
 export function hostedDeploymentMembers(
@@ -210,20 +211,20 @@ const PROJECTION_MISSING_BACKOFF_MS = [5_000, 10_000, 20_000, 30_000, 60_000] as
 /** Bounded, foreground-only reconciliation cadence for a lagging projection. */
 export function missingProjectionRefetchInterval(
 	error: Error | null,
-	deploymentStatus: string | null | undefined,
+	deploymentStatus: DeploymentStatus,
 	failureCount: number,
 ): number | false {
 	if (!error || !isApiNotFoundError(error)) return false;
-	const status = parseDeploymentStatus(deploymentStatus);
-	if (!isRunningStatus(status) && !isTransitionalStatus(status)) return false;
+	if (!deploymentStatus.known) return false;
+	if (!isRunningStatus(deploymentStatus) && !isTransitionalStatus(deploymentStatus)) return false;
 	const index = Math.min(Math.max(failureCount - 1, 0), PROJECTION_MISSING_BACKOFF_MS.length - 1);
 	return PROJECTION_MISSING_BACKOFF_MS[index] ?? false;
 }
 
 /** The same authoritative gate is shared by header and inline Runtime UI actions. */
 export function canOpenHostedRuntimeUi(
-	deploymentStatus: string | null | undefined,
+	deploymentStatus: DeploymentStatus,
 	consoleUrl: string | null | undefined,
 ): boolean {
-	return Boolean(consoleUrl) && isRunningStatus(parseDeploymentStatus(deploymentStatus));
+	return Boolean(consoleUrl) && isRunningStatus(deploymentStatus);
 }

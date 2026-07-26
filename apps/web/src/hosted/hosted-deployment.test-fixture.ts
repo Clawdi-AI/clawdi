@@ -10,7 +10,7 @@ import type {
 type HostedDeploymentFixtureOptions = {
 	id?: string;
 	name?: string;
-	status?: HostedDeploymentStatus["summary_state"];
+	status?: HostedDeploymentStatus["summary_state"] | null;
 	createdAt?: string;
 	runtime?: HostedDeploymentSpec["runtime"];
 	runtimeVersion?: string;
@@ -24,6 +24,7 @@ type HostedDeploymentFixtureOptions = {
 	computeSubscription?: HostedComputeSubscription | null;
 	fundingFact?: HostedFundingFact | null;
 	occupiesSlot?: boolean;
+	computeSlotOccupancy?: HostedDeployment["compute_slot_occupancy"];
 	upgradeAvailable?: boolean;
 	acceptedOperation?: HostedDeployment["accepted_operation"];
 	cloudEnvironments?: HostedDeployment["clawdi_cloud_environments"];
@@ -72,17 +73,20 @@ export function hostedDeploymentFixture(
 				rollout_nonce: 0,
 				secret_references: [],
 			},
-			status: {
-				summary_state: options.status ?? "running",
-				observedGeneration: 1,
-				conditions: [],
-				failure: options.failure,
-				backing_infrastructure: backingInfrastructure,
-				driver_acknowledged_generation: 1,
-				driver_applied_generation: 1,
-				driver_observation_sequence: 1,
-				endpoints: options.endpoints ?? [],
-			},
+			status:
+				options.status === null
+					? null
+					: {
+							summary_state: options.status ?? "running",
+							observedGeneration: 1,
+							conditions: [],
+							failure: options.failure,
+							backing_infrastructure: backingInfrastructure,
+							driver_acknowledged_generation: 1,
+							driver_applied_generation: 1,
+							driver_observation_sequence: 1,
+							endpoints: options.endpoints ?? [],
+						},
 		},
 		clawdi_cloud_environments: options.cloudEnvironments,
 		ai_provider_auth_kinds: options.aiProviderAuthKinds ?? { [runtime]: "managed" },
@@ -94,10 +98,13 @@ export function hostedDeploymentFixture(
 		},
 		current_plan_slug: options.currentPlanSlug ?? "compute_basic",
 		upgrade_available: options.upgradeAvailable ?? false,
-		compute_slot_occupancy: {
-			occupies_slot: occupiesSlot,
-			backing_infra: backingInfrastructure,
-			reason: occupiesSlot ? "backing_infra_present" : "authoritative_absence",
-		},
+		compute_slot_occupancy:
+			options.computeSlotOccupancy === undefined
+				? {
+						occupies_slot: occupiesSlot,
+						backing_infra: backingInfrastructure,
+						reason: occupiesSlot ? "backing_infra_present" : "authoritative_absence",
+					}
+				: options.computeSlotOccupancy,
 	};
 }

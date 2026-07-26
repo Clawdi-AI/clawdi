@@ -152,15 +152,17 @@ export function deploymentFailurePresentation(
 	}
 }
 
-export function deploymentFailureReason(input: {
-	failure?: {
-		title: string;
-		conditionMessage: string;
-		detail?: string;
-		phase?: string | null;
-	} | null;
-}): string | null {
-	const failure = input.failure;
+export function deploymentFailureReason(
+	input: {
+		failure?: {
+			title: string;
+			conditionMessage: string;
+			detail?: string;
+			phase?: string | null;
+		} | null;
+	} | null,
+): string | null {
+	const failure = input?.failure;
 	const candidates =
 		failure?.phase === "plan_change"
 			? [failure.detail, failure.title, failure.conditionMessage]
@@ -179,9 +181,11 @@ export function deploymentFailureReason(input: {
 export function deploymentFailureProjection(
 	deployment: HostedDeployment | null | undefined,
 ): DeploymentFailureProjection | null {
-	if (deployment?.resource.status.summary_state !== "failed") return null;
-	const failure = deployment.resource.status.failure;
-	const reason = deploymentFailureReason(deployment.resource.status);
+	if (!deployment) return null;
+	const status = deployment.resource.status;
+	if (status === null || status.summary_state !== "failed") return null;
+	const failure = status.failure;
+	const reason = deploymentFailureReason(status);
 	if (!failure || !reason) return null;
 	return {
 		reason,

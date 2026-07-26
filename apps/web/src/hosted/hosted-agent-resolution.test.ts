@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { HostedDeploymentStatus } from "@/hosted/billing/contracts";
 import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
+import { deploymentStatusFromResource, parseDeploymentStatus } from "@/hosted/deployment-status";
 import {
 	canOpenHostedRuntimeUi,
 	hostedDeploymentMembers,
@@ -191,20 +192,46 @@ describe("hosted detail projection resolution", () => {
 
 	test("uses capped backoff only while a missing projection can still recover", () => {
 		const notFound = new ApiError(404, "Agent not found");
-		expect(missingProjectionRefetchInterval(notFound, "running", 1)).toBe(5_000);
-		expect(missingProjectionRefetchInterval(notFound, "starting", 3)).toBe(20_000);
-		expect(missingProjectionRefetchInterval(notFound, "running", 99)).toBe(60_000);
-		expect(missingProjectionRefetchInterval(notFound, "stopped", 1)).toBe(false);
-		expect(missingProjectionRefetchInterval(new ApiError(500, "failure"), "running", 1)).toBe(
+		expect(missingProjectionRefetchInterval(notFound, parseDeploymentStatus("running"), 1)).toBe(
+			5_000,
+		);
+		expect(missingProjectionRefetchInterval(notFound, parseDeploymentStatus("starting"), 3)).toBe(
+			20_000,
+		);
+		expect(missingProjectionRefetchInterval(notFound, parseDeploymentStatus("running"), 99)).toBe(
+			60_000,
+		);
+		expect(missingProjectionRefetchInterval(notFound, parseDeploymentStatus("stopped"), 1)).toBe(
+			false,
+		);
+		expect(
+			missingProjectionRefetchInterval(
+				new ApiError(500, "failure"),
+				parseDeploymentStatus("running"),
+				1,
+			),
+		).toBe(false);
+		expect(missingProjectionRefetchInterval(notFound, deploymentStatusFromResource(null), 1)).toBe(
 			false,
 		);
 	});
 
 	test("gates every Runtime UI entry point on deployment running status", () => {
-		expect(canOpenHostedRuntimeUi("running", "https://runtime.example/ui")).toBe(true);
-		expect(canOpenHostedRuntimeUi("ready", "https://runtime.example/ui")).toBe(true);
-		expect(canOpenHostedRuntimeUi("stopped", "https://runtime.example/ui")).toBe(false);
-		expect(canOpenHostedRuntimeUi("failed", "https://runtime.example/ui")).toBe(false);
-		expect(canOpenHostedRuntimeUi("running", null)).toBe(false);
+		expect(
+			canOpenHostedRuntimeUi(parseDeploymentStatus("running"), "https://runtime.example/ui"),
+		).toBe(true);
+		expect(
+			canOpenHostedRuntimeUi(parseDeploymentStatus("ready"), "https://runtime.example/ui"),
+		).toBe(true);
+		expect(
+			canOpenHostedRuntimeUi(parseDeploymentStatus("stopped"), "https://runtime.example/ui"),
+		).toBe(false);
+		expect(
+			canOpenHostedRuntimeUi(parseDeploymentStatus("failed"), "https://runtime.example/ui"),
+		).toBe(false);
+		expect(canOpenHostedRuntimeUi(parseDeploymentStatus("running"), null)).toBe(false);
+		expect(
+			canOpenHostedRuntimeUi(deploymentStatusFromResource(null), "https://runtime.example/ui"),
+		).toBe(false);
 	});
 });

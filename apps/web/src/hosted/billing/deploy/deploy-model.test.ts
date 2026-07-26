@@ -99,6 +99,18 @@ describe("usesActiveIncludedBasicSlot", () => {
 			]),
 		).toBe(false);
 	});
+
+	test("does not assume a free Basic slot when occupancy is unavailable", () => {
+		expect(
+			usesActiveIncludedBasicSlot([
+				hostedDeploymentFixture({
+					status: "running",
+					computeSubscription: includedSubscription(),
+					computeSlotOccupancy: null,
+				}),
+			]),
+		).toBeNull();
+	});
 });
 
 describe("resolveBasicDeploySelection", () => {
