@@ -1,6 +1,7 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
+import { ExternalLink } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EntityChoiceCard } from "@/components/entity-card";
@@ -257,7 +258,27 @@ export function ConnectBotDialog({
 
 							<div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-3">
 								<ProviderChip provider={provider} />
-								<p className="text-xs text-muted-foreground">{meta.hint}</p>
+								<div className="space-y-2 text-xs text-muted-foreground">
+									<p>{meta.hint}</p>
+									{meta.setupSteps ? (
+										<ol className="list-decimal space-y-1 pl-4">
+											{meta.setupSteps.map((step) => (
+												<li key={step}>{step}</li>
+											))}
+										</ol>
+									) : null}
+									{meta.setupUrl && meta.setupLinkLabel ? (
+										<a
+											href={meta.setupUrl}
+											target="_blank"
+											rel="noreferrer"
+											className="inline-flex items-center gap-1 font-medium text-foreground underline underline-offset-4"
+										>
+											{meta.setupLinkLabel}
+											<ExternalLink className="size-3" />
+										</a>
+									) : null}
+								</div>
 							</div>
 
 							<div className="flex flex-col gap-1.5">
@@ -269,6 +290,9 @@ export function ConnectBotDialog({
 									placeholder="Support Bot"
 									autoComplete="off"
 								/>
+								<p className="text-xs text-muted-foreground">
+									This is the name shown in Clawdi; it does not rename the bot.
+								</p>
 							</div>
 
 							{/* Telegram / Discord bot token. */}
@@ -319,7 +343,7 @@ export function ConnectBotDialog({
 											</p>
 										) : (
 											<p id="connect-app-id-help" className="text-xs text-muted-foreground">
-												Required to publish slash commands.
+												Find this on General Information in the Discord Developer Portal.
 											</p>
 										)}
 									</div>
@@ -345,29 +369,36 @@ export function ConnectBotDialog({
 											</p>
 										) : (
 											<p id="connect-public-key-help" className="text-xs text-muted-foreground">
-												Stored with the Discord application metadata.
+												Find this on General Information. Leave it blank if you do not use Discord
+												interactions.
 											</p>
 										)}
 									</div>
 									<div className="flex flex-col gap-1.5">
 										<Label htmlFor="connect-guild-id">
-											Guild ID <span className="text-muted-foreground">· optional</span>
+											Server ID <span className="text-muted-foreground">· optional</span>
 										</Label>
 										<Input
 											id="connect-guild-id"
 											value={guildId}
 											onChange={(e) => setGuildId(e.target.value)}
-											placeholder="Default command scope"
+											placeholder="Discord server ID"
 											autoComplete="off"
 											spellCheck={false}
 											aria-invalid={Boolean(guildIdError)}
-											aria-describedby={guildIdError ? "connect-guild-id-err" : undefined}
+											aria-describedby={
+												guildIdError ? "connect-guild-id-err" : "connect-server-id-help"
+											}
 										/>
 										{guildIdError ? (
 											<p id="connect-guild-id-err" className="text-xs text-destructive">
 												{guildIdError}
 											</p>
-										) : null}
+										) : (
+											<p id="connect-server-id-help" className="text-xs text-muted-foreground">
+												Leave blank unless commands should be limited to one Discord server.
+											</p>
+										)}
 									</div>
 								</>
 							) : null}

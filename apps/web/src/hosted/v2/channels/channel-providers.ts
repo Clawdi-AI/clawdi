@@ -22,6 +22,9 @@ export interface ChannelProviderMeta {
 	tokenLabel?: string;
 	tokenPlaceholder?: string;
 	hint: string;
+	setupUrl?: string;
+	setupLinkLabel?: string;
+	setupSteps?: readonly string[];
 	unavailable?: boolean;
 }
 
@@ -39,7 +42,14 @@ export const PROVIDER_META: Record<ChannelProviderId, SupportedChannelProviderMe
 		connect: "token",
 		tokenLabel: "Bot token",
 		tokenPlaceholder: "123456:ABC-DEF…",
-		hint: "Create a bot with @BotFather and paste its token.",
+		hint: "Telegram's official @BotFather creates the bot and gives you its token.",
+		setupUrl: "https://t.me/BotFather",
+		setupLinkLabel: "Open @BotFather in Telegram",
+		setupSteps: [
+			"Send /newbot to @BotFather and follow the prompts to choose a name and username.",
+			"Copy the HTTP API token from @BotFather.",
+			"Give the connection a friendly name below, then paste the token.",
+		],
 	},
 	discord: {
 		id: "discord",
@@ -48,7 +58,14 @@ export const PROVIDER_META: Record<ChannelProviderId, SupportedChannelProviderMe
 		connect: "discord",
 		tokenLabel: "Bot token",
 		tokenPlaceholder: "Bot token",
-		hint: "Paste the bot token and application ID from your Discord application. Include the public key when available.",
+		hint: "Create a Discord application, add its bot to your server, then copy the credentials below.",
+		setupUrl: "https://discord.com/developers/applications",
+		setupLinkLabel: "Open the Discord Developer Portal",
+		setupSteps: [
+			"Create an application, open its Bot page, and copy or reset the bot token.",
+			"On General Information, copy the application ID and, if you use interactions, the public key.",
+			"Use the Installation page to add the bot to the Discord server where it should answer.",
+		],
 	},
 	whatsapp: {
 		id: "whatsapp",

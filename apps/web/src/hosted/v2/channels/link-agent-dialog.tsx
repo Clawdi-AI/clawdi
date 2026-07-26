@@ -1,6 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { Link } from "@tanstack/react-router";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -165,32 +166,58 @@ export function LinkAgentDialog({
 			}),
 		[agents, ownership],
 	);
+	const linkComplete = Boolean(token || linkedNoToken || whatsappCredentialMinted);
 
 	return (
 		<Dialog open={open} onOpenChange={handleOpenChange}>
 			<DialogContent data-hosted="true" data-v2="true" className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>Link an agent</DialogTitle>
+					<DialogTitle>{linkComplete ? "Agent linked" : "Link an agent"}</DialogTitle>
 					<DialogDescription>
-						Connect one of your agents to <span className="font-medium">{accountName}</span>.
+						{linkComplete ? (
+							<>
+								<span className="font-medium">{accountName}</span> is linked. Finish setup from the
+								agent's Channels page.
+							</>
+						) : (
+							<>
+								Connect one of your agents to <span className="font-medium">{accountName}</span>.
+							</>
+						)}
 					</DialogDescription>
 				</DialogHeader>
 
-				{token ? (
-					<TokenReveal
-						label="Agent token"
-						value={token}
-						note="Copy it now — it won't be shown again. The agent runtime uses this to send and receive on this channel."
-					/>
+				{token || linkedNoToken ? (
+					<div className="space-y-3 rounded-lg border border-success/30 bg-success-muted p-3 text-sm">
+						<div className="flex items-start gap-2 text-success-muted-foreground">
+							<CircleCheck className="mt-0.5 size-4 shrink-0" />
+							<div>
+								<p className="font-medium">The bot is linked to this agent</p>
+								<p className="mt-1 text-xs">
+									Next, create a pairing code and send it in the exact chat where the agent should
+									answer.
+								</p>
+							</div>
+						</div>
+						{token ? (
+							<details className="rounded-md border bg-background p-3">
+								<summary className="cursor-pointer text-xs font-medium">
+									Agent token (advanced)
+								</summary>
+								<div className="mt-2">
+									<TokenReveal
+										label="Agent token"
+										value={token}
+										note="Hosted agents configure this automatically. Only copy it for a self-managed runtime that asks for it."
+									/>
+								</div>
+							</details>
+						) : null}
+					</div>
 				) : whatsappCredentialMinted ? (
 					<div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success-muted p-3 text-sm text-success-muted-foreground">
 						<CircleCheck className="size-4 shrink-0" />
-						Device credential minted. Finish pairing from the agent runtime to link the number.
-					</div>
-				) : linkedNoToken ? (
-					<div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success-muted p-3 text-sm text-success-muted-foreground">
-						<CircleCheck className="size-4 shrink-0" />
-						This agent is already linked to the channel.
+						WhatsApp access is ready. Finish linking the number from the agent runtime.
 					</div>
 				) : envs.isLoading ? (
 					<Skeleton className="h-10 w-full rounded-md" />
@@ -251,8 +278,20 @@ export function LinkAgentDialog({
 				)}
 
 				<DialogFooter>
-					{token || linkedNoToken || whatsappCredentialMinted ? (
-						<Button onClick={() => handleOpenChange(false)}>Done</Button>
+					{linkComplete ? (
+						<>
+							<Button variant="outline" onClick={() => handleOpenChange(false)}>
+								Close
+							</Button>
+							<Button
+								render={
+									<Link to="/agents/$id/$section" params={{ id: agentId, section: "channels" }} />
+								}
+								nativeButton={false}
+							>
+								Finish channel setup
+							</Button>
+						</>
 					) : (
 						<>
 							<Button variant="outline" onClick={() => handleOpenChange(false)}>

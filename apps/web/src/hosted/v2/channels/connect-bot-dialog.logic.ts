@@ -30,7 +30,7 @@ export function discordApplicationIdError(value: string): string | null {
 export function discordGuildIdError(value: string): string | null {
 	const trimmed = value.trim();
 	if (!trimmed) return null;
-	return isDiscordSnowflake(trimmed) ? null : "Enter a valid numeric guild ID.";
+	return isDiscordSnowflake(trimmed) ? null : "Enter a valid numeric server ID.";
 }
 
 export function discordPublicKeyError(value: string): string | null {

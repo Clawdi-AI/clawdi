@@ -298,7 +298,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 			<PageHeader
 				title={ch.name}
-				description={`${meta.label} · ${ch.visibility === "public" ? "Shared bot" : "Private bot"}`}
+				description={`${meta.label} · ${ch.visibility === "public" ? "Ready-to-go bot" : "Your bot"}`}
 				icon={<EntityIcon kind="channel" id={ch.provider} label={meta.label} size="lg" />}
 				status={
 					<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -852,7 +852,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 				<EmptyState
 					variant="inset"
 					title="Link an agent first"
-					description="A WhatsApp device is minted per agent. Link an agent on the Agents tab, then come back."
+					description="Each agent needs its own WhatsApp connection. Link an agent on the Agents tab, then come back."
 				/>
 			) : (
 				<div className="flex flex-col gap-2">

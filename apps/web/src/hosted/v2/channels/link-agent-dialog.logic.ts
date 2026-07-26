@@ -60,5 +60,9 @@ export function linkAgentBlockReason({
 			link.account.provider === provider,
 	);
 	if (!hasExistingProviderLink) return null;
-	return `one-${provider}-link-per-Hermes-agent: Hermes agents support one active ${provider} link. Unlink the existing ${provider} channel before linking another.`;
+	return `Hermes agents can use one active ${providerMetaLabel(provider)} bot at a time. Unlink the current ${providerMetaLabel(provider)} bot before linking another.`;
+}
+
+function providerMetaLabel(provider: string): string {
+	return provider === "telegram" ? "Telegram" : provider === "discord" ? "Discord" : "channel";
 }

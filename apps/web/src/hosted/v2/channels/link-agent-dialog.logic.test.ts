@@ -61,7 +61,9 @@ describe("linkAgentBlockReason", () => {
 				],
 				accountId: "tg-current",
 			}),
-		).toContain("one-telegram-link-per-Hermes-agent");
+		).toBe(
+			"Hermes agents can use one active Telegram bot at a time. Unlink the current Telegram bot before linking another.",
+		);
 	});
 
 	test("allows the current existing link and non-Hermes multi-link behavior", () => {
