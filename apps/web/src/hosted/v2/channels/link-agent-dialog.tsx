@@ -107,37 +107,24 @@ export function LinkAgentDialog({
 		setWhatsappCredentialMinted(false);
 	}, [open]);
 
-	function submit() {
+	async function submit() {
 		if (!agentId || blockReason || guardLoading || submitLocked.current) return;
 		const agent = selectedAgent;
 		submitLocked.current = true;
-		let credentialMutationStarted = false;
-		link.mutate(agentId, {
-			onSuccess: (data) => {
-				if (shouldMintWhatsappTenantCredential(provider, agent)) {
-					credentialMutationStarted = true;
-					createWhatsappCredential.mutate(
-						{ agent_link_id: data.id },
-						{
-							onSuccess: () => {
-								setWhatsappCredentialMinted(true);
-							},
-							onSettled: () => {
-								submitLocked.current = false;
-							},
-						},
-					);
-					return;
-				}
-				if (data.agent_token) setToken(data.agent_token);
-				else setLinkedNoToken(true);
-			},
-			onSettled: () => {
-				if (!credentialMutationStarted) {
-					submitLocked.current = false;
-				}
-			},
-		});
+		try {
+			const data = await link.execute(agentId);
+			if (shouldMintWhatsappTenantCredential(provider, agent)) {
+				await createWhatsappCredential.execute({ agent_link_id: data.id });
+				setWhatsappCredentialMinted(true);
+				return;
+			}
+			if (data.agent_token) setToken(data.agent_token);
+			else setLinkedNoToken(true);
+		} catch {
+			// The sensitive action hooks already surface API failures.
+		} finally {
+			submitLocked.current = false;
+		}
 	}
 
 	function handleOpenChange(nextOpen: boolean) {
@@ -148,6 +135,7 @@ export function LinkAgentDialog({
 			)
 		)
 			return;
+		if (!nextOpen) setToken(null);
 		onOpenChange(nextOpen);
 	}
 
@@ -262,7 +250,7 @@ export function LinkAgentDialog({
 								Cancel
 							</Button>
 							<Button
-								onClick={submit}
+								onClick={() => void submit()}
 								disabled={!agentId || Boolean(blockReason) || guardLoading || isSubmitting}
 							>
 								{createWhatsappCredential.isPending

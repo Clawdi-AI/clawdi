@@ -23,14 +23,17 @@ import type { AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 export const CLAWDI_CODEX_OAUTH_PROVIDER_ID = "openai-codex";
 
-/** Cross-window channel + storage key the callback uses to hand back code+state. */
+/** In-memory cross-window channel used to hand code+state back to the opener. */
 export const CODEX_OAUTH_CHANNEL = "clawdi-codex-oauth";
-export const CODEX_OAUTH_STORAGE_KEY = "clawdi:codex-oauth-result";
 
 export interface CodexOAuthResult {
 	code: string;
 	state: string;
 	error?: string;
+}
+
+export function codexOAuthStateMatches(expectedState: string, result: CodexOAuthResult): boolean {
+	return result.state.length > 0 && result.state === expectedState;
 }
 
 /** The v2 app's own OAuth callback route — the redirect_uri the flow uses. */

@@ -20,16 +20,17 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { SearchInput } from "@/components/ui/search-input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { ConnectorTool } from "@/lib/api-schemas";
 import {
 	isActiveConnection,
 	useAvailableApp,
-	useConnect,
 	useConnections,
 	useConnectorTools,
 	useDisconnect,
 } from "@/lib/connectors-data";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage } from "@/lib/utils";
 
 /** Strip leading underscores/dashes and title-case for fallback display. */
@@ -102,7 +103,15 @@ function ConnectorDetail({ name }: { name: string }) {
 	// Query's per-connection window-focus refetch always checks for the
 	// new ACTIVE connection when the user returns to this tab. No polling
 	// loop needed.
-	const connectMutation = useConnect();
+	const api = useApi();
+	const connectAction = useSensitiveAction(async (redirectUrl: string) =>
+		unwrap(
+			await api.POST("/v1/connectors/{app_name}/connect", {
+				params: { path: { app_name: name } },
+				body: { redirect_url: redirectUrl },
+			}),
+		),
+	);
 
 	// Per-row disconnect single-flight guard.
 	//
@@ -219,23 +228,20 @@ function ConnectorDetail({ name }: { name: string }) {
 		// back to our origin and the connections query force-refetches on
 		// window focus to reflect the new ACTIVE connection.
 		const redirectUrl = window.location.href;
-		connectMutation.mutate(
-			{ appName: name, redirectUrl },
-			{
-				onSuccess: (result) => {
-					if (!popup.closed) popup.location.href = result.connect_url;
-				},
-				onError: (e) => {
-					popup.close();
-					toast.error("Couldn't start connection", { description: errorMessage(e) });
-				},
-				onSettled: () => {
-					inflightConnectRef.current = false;
-				},
-			},
-		);
+		void connectAction
+			.execute(redirectUrl)
+			.then((result) => {
+				if (!popup.closed) popup.location.href = result.connect_url;
+			})
+			.catch((error) => {
+				popup.close();
+				toast.error("Couldn't start connection", { description: errorMessage(error) });
+			})
+			.finally(() => {
+				inflightConnectRef.current = false;
+			});
 	};
-	const isStarting = connectMutation.isPending;
+	const isStarting = connectAction.isPending;
 	const isConnectDisabled = isStarting || hasUnsupportedAuthType || isSetupBlocked;
 	const isReady = isConnected || usesNoAuth;
 	useSetBreadcrumbTitle(displayName);

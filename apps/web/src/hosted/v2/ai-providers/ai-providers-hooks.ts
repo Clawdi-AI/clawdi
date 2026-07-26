@@ -9,6 +9,7 @@ import type {
 	AiProviderUpsert,
 } from "@/hosted/v2/ai-providers/types";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /** Typed data hooks for the AI Providers surface (cloud-api `/v1/ai-providers`). */
 
@@ -129,17 +130,23 @@ export function useDeleteProviderQuiet() {
 export function useSetApiKey() {
 	const api = useApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: { providerId: string; value: string; runtime_env_name?: string }) =>
-			unwrap(
-				await api.POST("/v1/ai-providers/{provider_id}/auth/api-key", {
-					params: { path: { provider_id: vars.providerId } },
-					body: { value: vars.value, runtime_env_name: vars.runtime_env_name },
-				}),
-			),
-		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
-		onError: toastApiError("Couldn't save API key"),
-	});
+	return useSensitiveAction(
+		async (vars: { providerId: string; value: string; runtime_env_name?: string }) => {
+			try {
+				const result = unwrap(
+					await api.POST("/v1/ai-providers/{provider_id}/auth/api-key", {
+						params: { path: { provider_id: vars.providerId } },
+						body: { value: vars.value, runtime_env_name: vars.runtime_env_name },
+					}),
+				);
+				qc.invalidateQueries({ queryKey: KEY });
+				return result;
+			} catch (error) {
+				toastApiError("Couldn't save API key")(error);
+				throw error;
+			}
+		},
+	);
 }
 
 /** Static saved-field check; this endpoint does not probe credentials or connectivity. */
@@ -158,35 +165,41 @@ export function useCheckProviderFields() {
 
 export function useOAuthStart() {
 	const api = useApi();
-	return useMutation({
-		mutationFn: async (vars: { providerId: string; provider: string; redirect_uri?: string }) =>
-			unwrap(
-				await api.POST("/v1/ai-providers/{provider_id}/auth/oauth/start", {
-					params: { path: { provider_id: vars.providerId } },
-					body: { provider: vars.provider, redirect_uri: vars.redirect_uri },
-				}),
-			),
-		onError: toastApiError("Couldn't start sign-in"),
-	});
+	return useSensitiveAction(
+		async (vars: { providerId: string; provider: string; redirect_uri?: string }) => {
+			try {
+				return unwrap(
+					await api.POST("/v1/ai-providers/{provider_id}/auth/oauth/start", {
+						params: { path: { provider_id: vars.providerId } },
+						body: { provider: vars.provider, redirect_uri: vars.redirect_uri },
+					}),
+				);
+			} catch (error) {
+				toastApiError("Couldn't start sign-in")(error);
+				throw error;
+			}
+		},
+	);
 }
 
 export function useOAuthComplete() {
 	const api = useApi();
 	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async (vars: {
-			providerId: string;
-			state: string;
-			code: string;
-			redirect_uri?: string;
-		}) =>
-			unwrap(
-				await api.POST("/v1/ai-providers/{provider_id}/auth/oauth/complete", {
-					params: { path: { provider_id: vars.providerId } },
-					body: { state: vars.state, code: vars.code, redirect_uri: vars.redirect_uri },
-				}),
-			),
-		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
-		onError: toastApiError("Couldn't finish sign-in"),
-	});
+	return useSensitiveAction(
+		async (vars: { providerId: string; state: string; code: string; redirect_uri?: string }) => {
+			try {
+				const result = unwrap(
+					await api.POST("/v1/ai-providers/{provider_id}/auth/oauth/complete", {
+						params: { path: { provider_id: vars.providerId } },
+						body: { state: vars.state, code: vars.code, redirect_uri: vars.redirect_uri },
+					}),
+				);
+				qc.invalidateQueries({ queryKey: KEY });
+				return result;
+			} catch (error) {
+				toastApiError("Couldn't finish sign-in")(error);
+				throw error;
+			}
+		},
+	);
 }

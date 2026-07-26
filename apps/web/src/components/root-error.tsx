@@ -23,7 +23,9 @@ export default function RootError({
 	reset: () => void;
 }) {
 	useEffect(() => {
-		console.error("Unhandled app error:", error);
+		// Error objects can carry request details. Keep the production signal
+		// without serializing a possibly secret-bearing payload into browser logs.
+		console.error("Unhandled app error");
 	}, [error]);
 
 	return (

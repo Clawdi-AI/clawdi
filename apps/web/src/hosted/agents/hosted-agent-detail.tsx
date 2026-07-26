@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
@@ -54,11 +54,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
-import {
-	useCreateTerminalSession,
-	useDeploymentLifecycle,
-	useUpdateDeployment,
-} from "@/hosted/agents/deployment-hooks";
+import { useDeploymentLifecycle, useUpdateDeployment } from "@/hosted/agents/deployment-hooks";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
@@ -96,7 +92,6 @@ import {
 	usePlans,
 	useQuotePlanChange,
 	useResumeSubscription,
-	useWallet,
 } from "@/hosted/billing/hooks";
 import {
 	type PlanChangeSelection,
@@ -128,6 +123,7 @@ import {
 	useWalletTopUpDialog,
 	type WalletFundingErrorCopy,
 } from "@/hosted/billing/wallet/wallet-funding";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
 import {
 	canDelete as canDeleteDeployment,
@@ -204,6 +200,7 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
 
 type Runtime = HostedRuntime;
@@ -1328,6 +1325,7 @@ function ConsoleTab({
 	const toggleCredentials = () => {
 		if (showCredentials) {
 			setShowCredentials(false);
+			if (runtime === "hermes") setCredentials(null);
 			return;
 		}
 		if (credentials?.runtime === runtime) setShowCredentials(true);
@@ -1548,8 +1546,9 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 		deployment.resource.spec.name,
 		deployment.resource.spec.runtime,
 	);
-	const terminal = useCreateTerminalSession();
-	const { isPending: isOpeningTerminal, mutateAsync: createTerminalSession } = terminal;
+	const client = useBillingClient();
+	const terminal = useSensitiveAction(({ id }: { id: string }) => client.createTerminalSession(id));
+	const { isPending: isOpeningTerminal, execute: createTerminalSession } = terminal;
 	const [websocketUrl, setWebsocketUrl] = useState<string | null>(null);
 	const [terminalStatus, setTerminalStatus] = useState<HostedTerminalStatus>("disconnected");
 	const [terminalFailure, setTerminalFailure] = useState<string | null>(null);
@@ -1561,6 +1560,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 		if (!isRunning || isOpeningTerminal) return;
 		const requestId = terminalRequestRef.current + 1;
 		terminalRequestRef.current = requestId;
+		setWebsocketUrl(null);
 		setTerminalFailure(null);
 		setTerminalStatus("connecting");
 		try {
@@ -1575,10 +1575,11 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 				return;
 			}
 			setWebsocketUrl(session.websocket_url);
-		} catch {
+		} catch (error) {
 			if (terminalRequestRef.current !== requestId) return;
 			setTerminalStatus("disconnected");
 			setTerminalFailure("Couldn't open terminal. Try again.");
+			toast.error("Couldn't open terminal", { description: normalizeBillingError(error) });
 		}
 	}, [createTerminalSession, deployment.resource.id, isOpeningTerminal, isRunning]);
 
@@ -1615,6 +1616,10 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 
 	const handleTerminalStatusChange = useCallback((status: HostedTerminalStatus) => {
 		setTerminalStatus(status);
+		if (status === "disconnected") {
+			setWebsocketUrl(null);
+			setTerminalFailure("Terminal connection closed. Reconnect to start a new session.");
+		}
 	}, []);
 
 	if (status.kind === "stopped") {
@@ -2051,15 +2056,14 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 		return map;
 	}, [channels.data, botPool.data]);
 
-	const link = useMutation({
-		mutationFn: async (channelId: string) =>
-			unwrap(
+	const link = useSensitiveAction(async (channelId: string) => {
+		try {
+			const data = unwrap(
 				await api.POST("/v1/channels/{account_id}/agent-links", {
 					params: { path: { account_id: channelId } },
 					body: { agent_id: environmentId },
 				}),
-			),
-		onSuccess: (data) => {
+			);
 			if (data.agent_token != null) setToken(data.agent_token);
 			setAccountId("");
 			qc.invalidateQueries({ queryKey: ["agent-channel-links", environmentId] });
@@ -2067,18 +2071,23 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 			qc.invalidateQueries({ queryKey: ["channel-bot-pool"] });
 			qc.invalidateQueries({ queryKey: ["channels"] });
 			toast.success("Channel linked");
-		},
-		onError: toastApiError("Couldn't link channel"),
+			return data;
+		} catch (error) {
+			toastApiError("Couldn't link channel")(error);
+			throw error;
+		}
 	});
 
-	function submitLink() {
+	async function submitLink() {
 		if (!accountId || linkInFlightRef.current) return;
 		linkInFlightRef.current = true;
-		link.mutate(accountId, {
-			onSettled: () => {
-				linkInFlightRef.current = false;
-			},
-		});
+		try {
+			await link.execute(accountId);
+		} catch {
+			// The action already surfaces the API error.
+		} finally {
+			linkInFlightRef.current = false;
+		}
 	}
 
 	if (!hasEnvironmentId) {
@@ -2151,7 +2160,7 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 						</SelectContent>
 					</Select>
 					<Button
-						onClick={submitLink}
+						onClick={() => void submitLink()}
 						disabled={!accountId || link.isPending || channels.isLoading || botPool.isLoading}
 					>
 						{link.isPending ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
@@ -2207,6 +2216,14 @@ function LinkedChannelRow({
 	const account = link.account ?? fallbackAccount ?? null;
 	const provider = account?.provider ?? "";
 	const name = account?.name ?? "Unnamed channel";
+	async function createPairCode() {
+		try {
+			const data = await pair.execute({ agent_link_id: link.id });
+			setCode({ code: data.code, expires_at: data.expires_at });
+		} catch {
+			// useCreatePairCode already surfaces the API error.
+		}
+	}
 	return (
 		<div className="rounded-lg border p-3">
 			<div className="flex items-center gap-3">
@@ -2222,12 +2239,7 @@ function LinkedChannelRow({
 					variant="outline"
 					size="sm"
 					disabled={pair.isPending}
-					onClick={() =>
-						pair.mutate(
-							{ agent_link_id: link.id },
-							{ onSuccess: (d) => setCode({ code: d.code, expires_at: d.expires_at }) },
-						)
-					}
+					onClick={() => void createPairCode()}
 				>
 					<QrCode className="size-3.5" />
 					Pair code
@@ -2410,7 +2422,7 @@ function ComputeSettingsSections({
 	const changePlan = useChangePlan();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
-	const wallet = useWallet({
+	const wallet = useWalletSnapshot({
 		enabled:
 			deployment.commercial_display?.compute_subscription?.funding_source === "wallet" ||
 			(hostedAccess.canCreateCloudAgents && planChangeOpen),

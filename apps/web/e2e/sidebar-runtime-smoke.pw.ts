@@ -24,6 +24,27 @@ const agents = [
 		explicit_identity: true,
 		default_project_id: "project-smoke",
 	},
+	{
+		id: "agent-smoke-2",
+		name: "smoke-hermes",
+		default_name: "Smoke Hermes",
+		machine_name: "smoke-hermes.local",
+		display_name: "Smoke Hermes",
+		avatar_url: null,
+		sort_order: 1,
+		agent_type: "hermes",
+		agent_version: "1.0.0",
+		os: "linux",
+		last_seen_at: now.toISOString(),
+		last_sync_at: now.toISOString(),
+		last_sync_error: null,
+		last_revision_seen: 8,
+		queue_depth_high_water: 0,
+		dropped_count: 0,
+		sync_enabled: true,
+		explicit_identity: true,
+		default_project_id: "project-smoke",
+	},
 ];
 
 const projects = [
@@ -100,9 +121,22 @@ async function fulfillJson(route: Route, body: unknown) {
 	});
 }
 
-async function stubDashboardApi(page: Page) {
+async function stubDashboardApi(page: Page, agentOrderRequests: string[] = []) {
 	await page.route("**/v1/**", async (route) => {
 		const url = new URL(route.request().url());
+		if (url.pathname === "/v1/agents/order" && route.request().method() === "PATCH") {
+			agentOrderRequests.push(route.request().postData() ?? "");
+			const requested = JSON.parse(route.request().postData() ?? "{}") as {
+				agent_ids?: string[];
+			};
+			const byId = new Map(agents.map((agent) => [agent.id, agent]));
+			const ordered = (requested.agent_ids ?? [])
+				.map((id) => byId.get(id))
+				.filter((agent) => agent !== undefined)
+				.map((agent, index) => ({ ...agent, sort_order: index }));
+			await fulfillJson(route, ordered);
+			return;
+		}
 		if (url.pathname === "/v1/agents") {
 			await fulfillJson(route, agents);
 			return;
@@ -183,4 +217,32 @@ test("dashboard sidebar primitives run without browser errors", async ({ page })
 	await page.getByTestId("settings-theme-select").click();
 	await expect(page.getByRole("option", { name: "Dark" })).toBeVisible();
 	await expectNoBrowserErrors(page, browserErrors, "settings select");
+});
+
+test("agent rail exposes current order and supports keyboard sorting", async ({ page }) => {
+	const agentOrderRequests: string[] = [];
+	await stubDashboardApi(page, agentOrderRequests);
+	await page.goto("/");
+
+	const firstHandle = page.getByRole("button", {
+		name: "Reorder Smoke Codex · Codex, position 1 of 2",
+		exact: true,
+	});
+	await expect(firstHandle).toBeVisible();
+	await firstHandle.focus();
+	await expect(firstHandle).toBeFocused();
+	await page.keyboard.press("Space");
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("Space");
+
+	await expect.poll(() => agentOrderRequests.length).toBe(1);
+	expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
+		agent_ids: ["agent-smoke-2", "agent-smoke-1"],
+	});
+	await expect(
+		page.getByRole("button", {
+			name: "Reorder Smoke Codex · Codex, position 2 of 2",
+			exact: true,
+		}),
+	).toBeVisible();
 });

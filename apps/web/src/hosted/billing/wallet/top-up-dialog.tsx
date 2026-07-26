@@ -26,8 +26,8 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { isIdempotencyKeyReusedError, normalizeBillingError } from "@/hosted/billing/errors";
 import { formatCents } from "@/hosted/billing/format";
-import { useTopUp } from "@/hosted/billing/hooks";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
+import { useSensitiveTopUp } from "@/hosted/billing/sensitive-actions";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type PaymentOutcome,
@@ -63,7 +63,7 @@ export function TopUpDialog({
 	initialAmountCents?: number | null;
 	presentation?: TopUpPresentation;
 }) {
-	const topUp = useTopUp();
+	const topUp = useSensitiveTopUp();
 	const qc = useQueryClient();
 	const runAction = useActionLock();
 	const [step, setStep] = useState<Step>("amount");
@@ -99,6 +99,7 @@ export function TopUpDialog({
 
 	function close(next: boolean) {
 		if (!next && (topUp.isPending || paymentSubmitting)) return;
+		if (!next) reset();
 		onOpenChange(next);
 	}
 
@@ -115,7 +116,7 @@ export function TopUpDialog({
 		setAmountTouched(true);
 		topupKeyRef.current ??= newIdempotencyKey("topup");
 		try {
-			const result = await topUp.mutateAsync({
+			const result = await topUp.execute({
 				body: { amount_cents: amountCents },
 				idempotencyKey: topupKeyRef.current,
 			});
@@ -126,7 +127,10 @@ export function TopUpDialog({
 				},
 				// Successful completion is not a dismiss attempt. Close directly so the
 				// in-flight guard cannot leave a completed payment flow stranded open.
-				closeDialog: () => onOpenChange(false),
+				closeDialog: () => {
+					reset();
+					onOpenChange(false);
+				},
 				toastSuccess: toast.success,
 				toastError: toast.error,
 				onComplete,
@@ -148,6 +152,9 @@ export function TopUpDialog({
 	// inline by StripePaymentForm, which keeps the payment flow open until it settles
 	// rather than closing on an unconfirmed payment.
 	function onPaid(status: PaymentOutcome) {
+		setClientSecret(null);
+		setStep("amount");
+		setPaymentSubmitting(false);
 		completeTopup(status === "succeeded" ? "succeeded" : "processing", {
 			queryClient: qc,
 			resetAttempt: () => {
@@ -229,7 +236,10 @@ export function TopUpDialog({
 			<StripePaymentForm
 				clientSecret={clientSecret}
 				onComplete={onPaid}
-				onCancel={() => setStep("amount")}
+				onCancel={() => {
+					setClientSecret(null);
+					setStep("amount");
+				}}
 				summary={`Top-up charge: ${formatCents(amountCents)}`}
 				submitLabel={`Pay ${formatCents(amountCents)}`}
 				onSubmittingChange={setPaymentSubmitting}

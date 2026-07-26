@@ -10,8 +10,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatUsdExact } from "@/hosted/billing/format";
-import { useHostedDeployments, usePlans, useWallet, useWalletLedger } from "@/hosted/billing/hooks";
+import { useHostedDeployments, usePlans, useWalletLedger } from "@/hosted/billing/hooks";
 import { largestSignupGrantUsd } from "@/hosted/billing/subscription/subscription-utils";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 
 const WELCOME_GRANT_RECHECK_INTERVAL_MS = 5_000;
 const WELCOME_GRANT_TIMEOUT_MS = 60_000;
@@ -25,7 +26,7 @@ const WELCOME_GRANT_TIMEOUT_MS = 60_000;
  * agent. Read failures render a retry action instead of hiding onboarding.
  */
 export function WelcomeWalletCard({ showDeployAction = true }: { showDeployAction?: boolean }) {
-	const wallet = useWallet();
+	const wallet = useWalletSnapshot();
 	const ledger = useWalletLedger(50);
 	const deployments = useHostedDeployments();
 	const plans = usePlans();

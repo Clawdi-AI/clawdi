@@ -12,12 +12,8 @@ import { Spinner } from "@/components/ui/spinner";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import {
-	useHostedDeployments,
-	usePortal,
-	useWallet,
-	useWalletLedger,
-} from "@/hosted/billing/hooks";
+import { useHostedDeployments, useWalletLedger } from "@/hosted/billing/hooks";
+import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
 import { getStripe } from "@/hosted/billing/stripe";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
@@ -32,6 +28,7 @@ import {
 	walletTopupReturnToast,
 } from "@/hosted/billing/wallet/top-up-return.logic";
 import { LEDGER_MAX_ROWS, LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/wallet-constants";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
@@ -60,9 +57,9 @@ function showWalletTopupReturnToast(result: WalletTopupReturnToast) {
 }
 
 export function WalletPage() {
-	const wallet = useWallet();
+	const wallet = useWalletSnapshot();
 	const deployments = useHostedDeployments();
-	const portal = usePortal();
+	const portal = useSensitiveBillingPortal();
 	const runAction = useActionLock();
 	const queryClient = useQueryClient();
 	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
@@ -74,7 +71,7 @@ export function WalletPage() {
 
 	async function openBillingPortal() {
 		try {
-			const res = await portal.mutateAsync({});
+			const res = await portal.execute({});
 			if (res.url || res.portal_url) {
 				window.location.href = res.url || res.portal_url;
 				return;

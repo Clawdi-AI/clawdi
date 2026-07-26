@@ -117,21 +117,28 @@ export function ConnectBotDialog({
 		return { provider, name: trimmedName };
 	}
 
-	function submit() {
+	async function submit() {
 		if (!canSubmit || submitLocked.current) return;
 		const body = buildBody();
 		if (!body) return;
 		submitLocked.current = true;
-		create.mutate(body, {
-			onSuccess: (data) => setCreated(data),
-			onSettled: () => {
-				submitLocked.current = false;
-			},
-		});
+		try {
+			const data = await create.execute(body);
+			setToken("");
+			setCreated(data);
+		} catch {
+			// useCreateChannel already surfaces the API error; retain the token for retry.
+		} finally {
+			submitLocked.current = false;
+		}
 	}
 
 	function handleOpenChange(nextOpen: boolean) {
 		if (!channelDialogOpenChangeAllowed(nextOpen, create.isPending || submitLocked.current)) return;
+		if (!nextOpen) {
+			setToken("");
+			setCreated(null);
+		}
 		onOpenChange(nextOpen);
 	}
 
@@ -367,7 +374,7 @@ export function ConnectBotDialog({
 							>
 								Cancel
 							</Button>
-							<Button onClick={submit} disabled={!canSubmit || isSubmitting}>
+							<Button onClick={() => void submit()} disabled={!canSubmit || isSubmitting}>
 								{create.isPending ? "Connecting…" : "Connect"}
 							</Button>
 						</DialogFooter>

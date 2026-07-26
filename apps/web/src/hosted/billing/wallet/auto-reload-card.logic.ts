@@ -1,9 +1,10 @@
-import type { WalletAutoReloadRequest, WalletState } from "@/hosted/billing/contracts";
+import type { WalletAutoReloadRequest } from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
 	billingErrorDetail,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
+import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 import {
 	AUTORELOAD_AMOUNT_MAX_CENTS,
 	AUTORELOAD_AMOUNT_MIN_CENTS,
@@ -85,7 +86,7 @@ export function autoReloadFormState({
 	};
 }
 
-export function autoReloadDraftFromWallet(wallet: WalletState): AutoReloadDraft {
+export function autoReloadDraftFromWallet(wallet: WalletCacheSnapshot): AutoReloadDraft {
 	return {
 		enabled: wallet.auto_reload_enabled,
 		threshold: dollars(Number(wallet.auto_reload_threshold_usd)),

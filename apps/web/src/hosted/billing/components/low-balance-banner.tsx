@@ -4,8 +4,8 @@ import { AlertTriangle, CreditCard, Repeat } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { lowBalanceBannerState } from "@/hosted/billing/components/low-balance-banner.logic";
-import type { WalletState } from "@/hosted/billing/contracts";
 import { formatUsdExact } from "@/hosted/billing/format";
+import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 
 /**
  * Low-balance / payment-attention banner.
@@ -23,7 +23,7 @@ export function LowBalanceBanner({
 	onTopUp,
 	onAutoReload,
 }: {
-	wallet: WalletState | undefined;
+	wallet: WalletCacheSnapshot | undefined;
 	hasWalletCompute?: boolean;
 	onTopUp?: () => void;
 	onAutoReload?: () => void;

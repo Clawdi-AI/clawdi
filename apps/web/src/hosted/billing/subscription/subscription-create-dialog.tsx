@@ -35,11 +35,7 @@ import {
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 import { billingTermLabel, formatCents, formatUsdExact } from "@/hosted/billing/format";
-import {
-	useCreateSubscription,
-	useSubscriptionCreateQuote,
-	useWallet,
-} from "@/hosted/billing/hooks";
+import { useSubscriptionCreateQuote } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
 	type IdempotencyAttempt,
@@ -47,6 +43,7 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
+import { useSensitiveCreateSubscription } from "@/hosted/billing/sensitive-actions";
 import {
 	type SubscriptionCreateSelection,
 	type SubscriptionFundingSource,
@@ -66,6 +63,7 @@ import {
 	SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY,
 	useWalletTopUpDialog,
 } from "@/hosted/billing/wallet/wallet-funding";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 
 const PLAN_ITEMS = [
@@ -104,7 +102,7 @@ export function SubscriptionCreateDialog({
 	initialBillingTermMonths: number;
 }) {
 	const hostedAccess = useHostedProductAccess();
-	const createSubscription = useCreateSubscription();
+	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
 	const createAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const [planSlug, setPlanSlug] = useState(initialPlanSlug);
@@ -124,7 +122,7 @@ export function SubscriptionCreateDialog({
 					fundingSource,
 				}
 			: null;
-	const wallet = useWallet({
+	const wallet = useWalletSnapshot({
 		enabled: open && hostedAccess.canCreateCloudAgents && fundingSource === "wallet",
 	});
 	const createQuote = useSubscriptionCreateQuote(createSelection, {
@@ -199,7 +197,7 @@ export function SubscriptionCreateDialog({
 				fingerprint,
 				newIdempotencyKey,
 			);
-			const outcome = await createSubscription.mutateAsync({
+			const outcome = await createSubscription.execute({
 				selection: createSelection,
 				target,
 				uiMode: "hosted",

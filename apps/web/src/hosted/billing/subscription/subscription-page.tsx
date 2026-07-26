@@ -12,7 +12,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Spinner } from "@/components/ui/spinner";
 import { SubscriptionSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
-import { usePlans, usePortal } from "@/hosted/billing/hooks";
+import { usePlans } from "@/hosted/billing/hooks";
+import { useSensitiveBillingPortal } from "@/hosted/billing/sensitive-actions";
 import { BillingHistorySection } from "@/hosted/billing/subscription/billing-history-section";
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
@@ -29,14 +30,14 @@ const SUBSCRIPTION_PAGE_CLASS = cn(
 
 export function SubscriptionPage() {
 	const plans = usePlans();
-	const portal = usePortal();
+	const portal = useSensitiveBillingPortal();
 	const hostedAccess = useHostedProductAccess();
 	const runAction = useActionLock();
 	const [term, setTerm] = useState(1);
 
 	async function openBillingPortal() {
 		try {
-			const res = await portal.mutateAsync({});
+			const res = await portal.execute({});
 			if (res.url || res.portal_url) {
 				window.location.href = res.url || res.portal_url;
 				return;

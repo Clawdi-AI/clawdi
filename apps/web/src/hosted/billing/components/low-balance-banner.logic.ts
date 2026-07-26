@@ -1,4 +1,4 @@
-import type { WalletState } from "@/hosted/billing/contracts";
+import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 import { isLowBalance } from "@/hosted/billing/wallet/wallet-constants";
 
 /** Which primary CTA the banner should lead with. */
@@ -24,7 +24,9 @@ export interface LowBalanceBannerState {
  * confirm control on the auto-reload card; otherwise a low balance shows a
  * top-up CTA. Returns `show: false` when there's nothing to surface.
  */
-export function lowBalanceBannerState(wallet: WalletState | undefined): LowBalanceBannerState {
+export function lowBalanceBannerState(
+	wallet: WalletCacheSnapshot | undefined,
+): LowBalanceBannerState {
 	if (!wallet) {
 		return {
 			show: false,

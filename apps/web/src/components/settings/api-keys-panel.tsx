@@ -16,6 +16,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import type { ApiKey } from "@/lib/api-schemas";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /** API Keys settings — CLI-facing bearer tokens. */
 export function ApiKeysPanel() {
@@ -35,15 +36,17 @@ export function ApiKeysPanel() {
 		queryFn: async () => unwrap(await api.GET("/v1/auth/keys")),
 	});
 
-	const createKey = useMutation({
-		mutationFn: async (label: string) =>
-			unwrap(await api.POST("/v1/auth/keys", { body: { label } })),
-		onSuccess: (data) => {
+	const createKey = useSensitiveAction(async (label: string) => {
+		try {
+			const data = unwrap(await api.POST("/v1/auth/keys", { body: { label } }));
 			setCreatedKey(data.raw_key);
 			setNewLabel("");
 			queryClient.invalidateQueries({ queryKey: ["api-keys"] });
-		},
-		onError: toastApiError("Couldn't create key"),
+			return data;
+		} catch (error) {
+			toastApiError("Couldn't create key")(error);
+			throw error;
+		}
 	});
 
 	const revokeKey = useMutation({
@@ -166,7 +169,7 @@ export function ApiKeysPanel() {
 				onSubmit={(e) => {
 					e.preventDefault();
 					if (normalizedNewLabel && createdKey === null) {
-						createKey.mutate(normalizedNewLabel);
+						void createKey.execute(normalizedNewLabel).catch(() => undefined);
 					}
 				}}
 			>

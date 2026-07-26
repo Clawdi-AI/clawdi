@@ -17,9 +17,10 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { normalizeBillingError } from "@/hosted/billing/errors";
-import { useFixPayment, useWallet } from "@/hosted/billing/hooks";
+import { useSensitiveFixPayment } from "@/hosted/billing/sensitive-actions";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { settingsQueryHref } from "@/lib/settings-routes";
@@ -28,9 +29,9 @@ import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.l
 export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
 	const state = computeDunningState(deployment);
 	const hostedAccess = useHostedProductAccess();
-	const fixPayment = useFixPayment();
+	const fixPayment = useSensitiveFixPayment();
 	const runAction = useActionLock();
-	const wallet = useWallet({
+	const wallet = useWalletSnapshot({
 		enabled: state?.ctaTarget === "top_up",
 	});
 	const [topUpOpen, setTopUpOpen] = useState(false);
@@ -58,7 +59,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 			return;
 		}
 		try {
-			const result = await fixPayment.mutateAsync({ deployment_id: deployment.resource.id });
+			const result = await fixPayment.execute({ deployment_id: deployment.resource.id });
 			const url = result.url || result.portal_url;
 			if (url) {
 				window.location.href = url;

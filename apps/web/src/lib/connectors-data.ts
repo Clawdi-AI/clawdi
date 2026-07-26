@@ -154,40 +154,6 @@ export function useAuthFields(appName: string, { enabled }: { enabled: boolean }
 // ─────────────────────────────────────────────────────────────────────
 // Mutations
 
-export function useConnect() {
-	const api = useApi();
-	return useMutation({
-		mutationFn: async ({ appName, redirectUrl }: { appName: string; redirectUrl?: string }) =>
-			unwrap(
-				await api.POST("/v1/connectors/{app_name}/connect", {
-					params: { path: { app_name: appName } },
-					body: redirectUrl ? { redirect_url: redirectUrl } : {},
-				}),
-			),
-	});
-}
-
-export function useConnectCredentials() {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: async ({
-			appName,
-			credentials,
-		}: {
-			appName: string;
-			credentials: Record<string, string>;
-		}) =>
-			unwrap(
-				await api.POST("/v1/connectors/{app_name}/connect-credentials", {
-					params: { path: { app_name: appName } },
-					body: { credentials },
-				}),
-			),
-		onSuccess: () => qc.invalidateQueries({ queryKey: ["connections"] }),
-	});
-}
-
 export function useDisconnect() {
 	const api = useApi();
 	const qc = useQueryClient();

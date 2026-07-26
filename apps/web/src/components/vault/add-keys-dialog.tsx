@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, Check, Plus } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -32,6 +32,7 @@ import { buildKeyImportPreview } from "@/components/vault/key-import-logic";
 import { slugFromVaultName } from "@/components/vault/vault-slug";
 import { unwrap, useApi } from "@/lib/api";
 import { identityFor } from "@/lib/identity";
+import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { errorMessage } from "@/lib/utils";
 
 /* The #2 job of this dashboard: get keys in, fast. Paste-first composer —
@@ -152,8 +153,8 @@ export function AddKeysDialog({
 		!destinationLoadError &&
 		!existingItems.error;
 
-	const save = useMutation({
-		mutationFn: async () => {
+	const save = useSensitiveAction(async () => {
+		try {
 			let slug = effectiveSlug;
 			let targetVaultId = selectedVaultId;
 			let projectId: string | undefined;
@@ -191,9 +192,7 @@ export function AddKeysDialog({
 					}),
 				);
 			}
-			return { slug, vaultId: targetVaultId, summary: importPlan.summary };
-		},
-		onSuccess: ({ slug, vaultId: targetVaultId, summary }) => {
+			const summary = importPlan.summary;
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			qc.invalidateQueries({
 				queryKey: targetVaultId ? ["vault-items", targetVaultId] : ["vault-items"],
@@ -205,13 +204,15 @@ export function AddKeysDialog({
 						? `${summary.created} new, ${summary.updated} updated, ${summary.skipped} skipped in vault://${slug}.`
 						: `In vault://${slug}. Agents read them through the CLI at runtime.`,
 			});
+			setText("");
 			setOpen(false);
-		},
-		onError: (e) => toast.error("Couldn't save keys", { description: errorMessage(e) }),
+		} catch (error) {
+			toast.error("Couldn't save keys", { description: errorMessage(error) });
+			throw error;
+		}
 	});
 
 	useEffect(() => {
-		if (!open) return;
 		setText("");
 		setNewVaultName("");
 		setVaultChoice(vaultId ?? "");
@@ -393,7 +394,10 @@ export function AddKeysDialog({
 							{count} {count === 1 ? "key" : "keys"} detected
 							{importPlan.summary.skipped > 0 ? ` · ${importPlan.summary.skipped} skipped` : ""}
 						</span>
-						<Button onClick={() => save.mutate()} disabled={!canSave || save.isPending}>
+						<Button
+							onClick={() => void save.execute().catch(() => undefined)}
+							disabled={!canSave || save.isPending}
+						>
 							{save.isPending ? <Spinner /> : <Check className="size-3.5" />}
 							Save {importableCount > 0 ? importableCount : ""}
 						</Button>

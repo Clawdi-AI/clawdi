@@ -4,8 +4,8 @@ import { Coins, CreditCard, Info, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import type { WalletState } from "@/hosted/billing/contracts";
 import { formatUsdExact } from "@/hosted/billing/format";
+import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
 import { isLowBalance } from "@/hosted/billing/wallet/wallet-constants";
 
 /**
@@ -18,7 +18,7 @@ export function BalanceCard({
 	hasWalletCompute = false,
 	onTopUp,
 }: {
-	wallet: WalletState;
+	wallet: WalletCacheSnapshot;
 	hasWalletCompute?: boolean;
 	onTopUp: () => void;
 }) {
