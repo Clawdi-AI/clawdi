@@ -6,8 +6,10 @@ describe("deploymentDisplayName", () => {
 		expect(deploymentDisplayName(" Research Agent ")).toBe("Research Agent");
 	});
 
-	test("keeps backend-provided deployment names as the display source of truth", () => {
-		expect(deploymentDisplayName("v2-hosted-a1b2c3d4")).toBe("v2-hosted-a1b2c3d4");
+	test("hides generated backend deployment names", () => {
+		expect(deploymentDisplayName("v2-hosted-a1b2c3d4")).toBe("Clawdi Cloud agent");
+		expect(deploymentDisplayName("clawdi-v2-deployment-10", "hermes")).toBe("Hermes");
+		expect(deploymentDisplayName("clawdi-v3-deployment-build-27", "openclaw")).toBe("OpenClaw");
 	});
 
 	test("keeps the existing runtime-prefix cleanup", () => {

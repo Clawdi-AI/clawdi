@@ -7,8 +7,16 @@ const planComparisonSource = readFileSync(
 	new URL("../subscription/plan-comparison.tsx", import.meta.url),
 	"utf8",
 );
+const planChangeDialogSource = readFileSync(
+	new URL("../subscription/plan-change-dialog.tsx", import.meta.url),
+	"utf8",
+);
 const agentDetailSource = readFileSync(
 	new URL("../../agents/hosted-agent-detail.tsx", import.meta.url),
+	"utf8",
+);
+const terminalPanelSource = readFileSync(
+	new URL("../../agents/hosted-terminal-panel.tsx", import.meta.url),
 	"utf8",
 );
 const modelBindingPickerSource = readFileSync(
@@ -33,9 +41,13 @@ describe("deploy wizard personalization", () => {
 describe("deploy wizard product copy and flow", () => {
 	test("uses customer language and keeps channels out of the decision flow", () => {
 		expect(wizardSource).toContain('title="Agent software"');
+		expect(wizardSource).toContain("<DeploySectionSkeleton columns={2} />");
+		expect(wizardSource).toContain('description="Choose a compute plan and how paid plans renew."');
 		expect(wizardSource).toContain("After your agent is ready, connect channels from its page.");
 		expect(wizardSource).not.toContain('title="Runtimes"');
 		expect(wizardSource).not.toContain("execution engine");
+		expect(wizardSource).not.toContain("per-deployment funding");
+		expect(wizardSource).not.toContain("server quote");
 		expect(wizardSource).not.toContain('title="Link after deploy"');
 	});
 
@@ -62,6 +74,23 @@ describe("hosted agent security and copy", () => {
 		expect(agentDetailSource).toContain('account?.name ?? "Unnamed channel"');
 		expect(agentDetailSource).not.toContain('"No changes"');
 		expect(agentDetailSource).not.toContain("This runtime is bound to");
+	});
+
+	test("uses product language for terminal startup and failures", () => {
+		expect(agentDetailSource).toContain("Opening secure terminal");
+		expect(agentDetailSource).toContain("Starting a secure shell for your agent.");
+		expect(agentDetailSource).not.toContain("terminal websocket URL");
+		expect(agentDetailSource).not.toContain("Opening deployment terminal");
+		expect(terminalPanelSource).toContain("secure terminal could not be opened");
+		expect(terminalPanelSource).not.toContain("terminal websocket could not be opened");
+	});
+});
+
+describe("plan-change copy", () => {
+	test("reviews price and timing without exposing server terminology", () => {
+		expect(planChangeDialogSource).toContain("review the exact price and timing");
+		expect(planChangeDialogSource).toContain("Listed recurring price {formatCents");
+		expect(planChangeDialogSource).not.toContain("server quote");
 	});
 });
 

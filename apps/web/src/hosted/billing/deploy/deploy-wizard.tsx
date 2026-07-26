@@ -330,7 +330,7 @@ function computeStatusLine({
 	if (paymentMethod === "wallet") {
 		return {
 			tone: "muted",
-			message: "Wallet debits the exact server quote now and renews on the selected billing term.",
+			message: "Wallet charges the exact amount shown now and renews on the selected billing term.",
 		};
 	}
 
@@ -957,7 +957,7 @@ export function DeployWizard() {
 		return (
 			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
 				<PageHeader title="Deploy an Agent" description="Preparing your compute options…" />
-				<DeploySectionSkeleton columns={3} />
+				<DeploySectionSkeleton columns={2} />
 				<DeploySectionSkeleton />
 				<DeploySectionSkeleton />
 				<DeploySectionSkeleton />
@@ -1119,7 +1119,7 @@ export function DeployWizard() {
 
 				<SettingsSection
 					title="Compute"
-					description="Basic and Performance agents use per-deployment funding selected below."
+					description="Choose a compute plan and how paid plans renew."
 				>
 					<div className="flex flex-col gap-3">
 						{!deployments.isSuccess ? (

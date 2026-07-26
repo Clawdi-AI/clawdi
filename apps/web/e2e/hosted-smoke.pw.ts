@@ -1383,6 +1383,43 @@ async function gotoHostedSettingsDialog(page: Page, section: string) {
 	throw new Error("Settings dialog did not open.");
 }
 
+test("empty account offers two working first-agent paths", async ({ page }) => {
+	await stubHostedApi(page, { deployments: [], cloudAgents: [] });
+	await page.goto("/");
+
+	const firstAgent = page.locator("main").getByText("Get your first agent running", {
+		exact: true,
+	});
+	await expect(firstAgent).toBeVisible();
+	await expect(
+		page.getByRole("button", { name: "Deploy a hosted agent", exact: true }),
+	).toHaveAttribute("href", "/deploy");
+
+	await page.getByRole("button", { name: "Connect via CLI", exact: true }).click();
+	await expect(page.getByText("Connect an agent you already run", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("Run the setup command on the machine where your agent lives."),
+	).toBeVisible();
+});
+
+test("existing Cloud customers keep billing settings when new deploys are disabled", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		canCreateCloudAgents: false,
+		deployments: [includedBasicDeployment],
+	});
+	await page.goto("/channels");
+	await page.waitForLoadState("networkidle");
+
+	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	const dialog = page.getByTestId("settings-dialog");
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByRole("button", { name: /^Wallet/ })).toBeVisible();
+	await expect(dialog.getByRole("button", { name: /^Compute/ })).toBeVisible();
+	await expect(dialog.getByRole("button", { name: /^Usage/ })).toBeVisible();
+});
+
 test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page);

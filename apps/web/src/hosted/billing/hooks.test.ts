@@ -326,7 +326,7 @@ describe("reconcileDeploymentSnapshots", () => {
 		expect(reconciled?.resource.status.summary_state).toBe("failed");
 		expect(reconciled?.resource.status.failure).toEqual(failure);
 		expect(deploymentFailureProjection(reconciled)).toEqual({
-			reason: actionableReason,
+			reason: "Re-quote the plan change and try again.",
 			failedVerb: "plan_change",
 			retryable: false,
 			code: "operation_aborted",

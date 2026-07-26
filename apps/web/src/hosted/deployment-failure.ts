@@ -2,6 +2,22 @@ import type { HostedDeployment } from "@/hosted/billing/contracts";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 
 const DEFAULT_FAILURE_REASON_MAX_LENGTH = 96;
+const INTERNAL_OPERATION_REFERENCE_RE =
+	/\s*(?:operation\s+id\s*:\s*)?operations\/[A-Za-z0-9._~-]+[.!]?/gi;
+const INTERNAL_DEPLOYMENT_REFERENCE_RE =
+	/\s*(?:deployment\s+id\s*:\s*)?hdep_[A-Za-z0-9._~-]+[.!]?/gi;
+const INTERNAL_UUID_REFERENCE_RE =
+	/\s*(?:(?:agent|environment|deployment)\s+id\s*:\s*)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.!]?/gi;
+
+function userFacingFailureReason(value: string): string {
+	return value
+		.replace(/\s+/g, " ")
+		.replace(INTERNAL_OPERATION_REFERENCE_RE, "")
+		.replace(INTERNAL_DEPLOYMENT_REFERENCE_RE, "")
+		.replace(INTERNAL_UUID_REFERENCE_RE, "")
+		.replace(/\s+([,.!?])/g, "$1")
+		.trim();
+}
 
 export type DeploymentFailureProjection = {
 	reason: string;
@@ -27,7 +43,7 @@ export function deploymentFailureReason(input: {
 		// Backend reasons are concatenated from conditions, so they arrive with
 		// ragged padding. Collapse it once here — every label and tooltip is
 		// derived from this value.
-		const reason = (candidate ?? "").replace(/\s+/g, " ").trim();
+		const reason = userFacingFailureReason(candidate ?? "");
 		if (reason) return reason;
 	}
 	return null;

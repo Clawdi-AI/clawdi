@@ -1856,6 +1856,9 @@ export function AppSidebar({
 			<SettingsDialog
 				open={settingsOpen}
 				section={activeSettingsSection}
+				hasExistingCloudAgents={
+					hostedAgentTiles?.some((tile) => tile.source === "on-clawdi") ?? false
+				}
 				onSectionChange={changeSettingsSection}
 				onOpenChange={setSettingsOpen}
 			/>

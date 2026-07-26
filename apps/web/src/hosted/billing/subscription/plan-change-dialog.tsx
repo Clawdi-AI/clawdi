@@ -168,7 +168,7 @@ export function PlanChangeDialog({
 							? quote.change_kind === "immediate_upgrade"
 								? "The quoted proration is charged now. Compute changes after payment is confirmed."
 								: `The current plan remains active until ${formatShortDate(quote.effective_at)}.`
-							: "Choose a compute plan and monthly or annual billing, then review the server quote."}
+							: "Choose a compute plan and monthly or annual billing, then review the exact price and timing."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -223,7 +223,7 @@ export function PlanChangeDialog({
 								<TriangleAlert aria-hidden />
 								<AlertTitle>Not enough Wallet balance</AlertTitle>
 								<AlertDescription className="flex flex-col items-start gap-3">
-									<span>Top up the shortfall, then request a fresh server quote.</span>
+									<span>Top up the shortfall, then request a fresh price.</span>
 									{onTopUp ? (
 										<Button type="button" size="sm" variant="outline" onClick={onTopUp}>
 											<WalletCards data-icon="inline-start" /> Top up Wallet
@@ -336,8 +336,7 @@ export function PlanChangeDialog({
 						) : null}
 						{selectedOffer ? (
 							<p className="text-sm text-muted-foreground">
-								Server quote required · listed recurring price{" "}
-								{formatCents(selectedOffer.price_cents)}
+								Listed recurring price {formatCents(selectedOffer.price_cents)}
 								{selectedOffer.billing_term_months === 1 ? "/month" : "/year"}
 							</p>
 						) : null}

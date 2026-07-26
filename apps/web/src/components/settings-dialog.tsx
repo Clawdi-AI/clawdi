@@ -135,11 +135,13 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 export function SettingsDialog({
 	open,
 	section,
+	hasExistingCloudAgents = false,
 	onSectionChange,
 	onOpenChange,
 }: {
 	open: boolean;
 	section: SettingsSectionId;
+	hasExistingCloudAgents?: boolean;
 	onSectionChange: (section: SettingsSectionId) => void;
 	onOpenChange: (open: boolean) => void;
 }) {
@@ -166,6 +168,7 @@ export function SettingsDialog({
 	const showBilling =
 		IS_HOSTED_BUILD &&
 		(hostedAccess.canCreateCloudAgents ||
+			hasExistingCloudAgents ||
 			(requestedBillingSection &&
 				(!mounted || hostedAccess.isLoading || Boolean(hostedAccess.error))));
 	const items = SETTINGS_NAV.filter((item) => !item.cloudOnly || showBilling);
@@ -179,7 +182,8 @@ export function SettingsDialog({
 		IS_HOSTED_BUILD &&
 		mounted &&
 		Boolean(hostedAccess.error) &&
-		!hostedAccess.canCreateCloudAgents;
+		!hostedAccess.canCreateCloudAgents &&
+		!hasExistingCloudAgents;
 
 	useEffect(() => {
 		if (!open) return;
