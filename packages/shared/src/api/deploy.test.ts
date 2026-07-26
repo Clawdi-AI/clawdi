@@ -32,6 +32,8 @@ const wallet: DeploySchemas["V2WalletResponse"] = {
 const usage: DeploySchemas["V2HostedUsageSummaryResponse"] = {
 	period_start: "2026-07-01",
 	period_end: "2026-07-31",
+	availability: "complete",
+	unavailable_sections: [],
 	total_usd: "0.000001",
 	total_requests: 1,
 	by_model: [
@@ -76,6 +78,7 @@ describe("USD-native v2 billing contract", () => {
 			auto_reload_amount_cents: 2500,
 		});
 		expect(usage.total_usd).toBe("0.000001");
+		expect(usage.availability).toBe("complete");
 		expect(usage.by_model[0]?.amount_usd).toBe("0.000001");
 	});
 });

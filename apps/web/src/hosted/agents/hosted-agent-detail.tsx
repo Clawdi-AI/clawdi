@@ -399,6 +399,9 @@ export function HostedAgentDetail({
 	onDeleteAccepted,
 	autoOpenRuntimeUi = false,
 	runtimeUiSettlingTimedOut = false,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
 }: {
 	environmentId: string;
 	deployment: HostedDeployment;
@@ -407,6 +410,9 @@ export function HostedAgentDetail({
 	onDeleteAccepted: (deploymentId: string) => void;
 	autoOpenRuntimeUi?: boolean;
 	runtimeUiSettlingTimedOut?: boolean;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
 }) {
 	const api = useApi();
 	const router = useRouter();
@@ -572,6 +578,9 @@ export function HostedAgentDetail({
 							sessionLink={(session) => scopedSessionLink(session.id)}
 							terminalHref={terminalHref}
 							runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
+							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							isCheckingDeployment={isCheckingDeployment}
+							onCheckDeploymentAgain={onCheckDeploymentAgain}
 						/>
 					) : null}
 					{activeTab === "console" ? (
@@ -580,6 +589,9 @@ export function HostedAgentDetail({
 							runtime={runtime}
 							terminalHref={terminalHref}
 							runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
+							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+							isCheckingDeployment={isCheckingDeployment}
+							onCheckDeploymentAgain={onCheckDeploymentAgain}
 						/>
 					) : null}
 					{activeTab === "terminal" ? <TerminalTab deployment={deployment} /> : null}
@@ -882,72 +894,98 @@ function DeploymentReadinessProgress({ stage }: { stage: DeploymentReadinessStag
 	);
 }
 
-function OverviewProvisioningPanel({
+export function OverviewProvisioningPanel({
 	deployment,
 	runtime,
 	runtimeUiAvailable,
 	runtimeUiSettlingTimedOut,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
 	terminalHref,
 }: {
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	runtimeUiAvailable: boolean;
 	runtimeUiSettlingTimedOut: boolean;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
 	terminalHref: string;
 }) {
 	const status = deployment.resource.status;
 	const stage = deploymentReadinessStage(status, runtimeUiAvailable);
 	const parsedStatus = parseDeploymentStatus(status.summary_state);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
-	const title = runtimeUiSettlingTimedOut
-		? "Live UI is taking longer than expected"
-		: stage === "provisioning"
-			? "Provisioning your agent…"
-			: stage === "booting"
-				? status.summary_state === "running"
-					? "Starting the live UI…"
-					: "Booting your agent…"
-				: "Your agent is ready";
-	const description = runtimeUiSettlingTimedOut
-		? `${browserUiLabel} did not publish within the startup window. Automatic periodic checks will continue, and Terminal is available now.`
-		: stage === "provisioning"
-			? "Hosted compute is being prepared. This page updates automatically."
-			: stage === "booting"
-				? "Opening the live UI automatically… Terminal is available while the runtime finishes booting."
-				: "The live UI is ready to use.";
+	const settlingTimedOut = deploymentTransitionTimedOut || runtimeUiSettlingTimedOut;
+	const title = deploymentTransitionTimedOut
+		? "Deployment is taking longer than expected"
+		: runtimeUiSettlingTimedOut
+			? "Live UI is taking longer than expected"
+			: stage === "provisioning"
+				? "Provisioning your agent…"
+				: stage === "booting"
+					? status.summary_state === "running"
+						? "Starting the live UI…"
+						: "Booting your agent…"
+					: "Your agent is ready";
+	const description = deploymentTransitionTimedOut
+		? "The latest deployment change did not finish within five minutes. Automatic checks have stopped. Check again to load the latest status."
+		: runtimeUiSettlingTimedOut
+			? `${browserUiLabel} did not publish within the startup window. Automatic periodic checks will continue, and Terminal is available now.`
+			: stage === "provisioning"
+				? "Hosted compute is being prepared. This page updates automatically."
+				: stage === "booting"
+					? "Opening the live UI automatically… Terminal is available while the runtime finishes booting."
+					: "The live UI is ready to use.";
 	return (
 		<div
 			className={cn(
 				"rounded-xl border p-5",
-				runtimeUiSettlingTimedOut
+				settlingTimedOut
 					? "border-warning/30 bg-warning-muted text-warning-muted-foreground"
 					: "border-info-muted bg-info-muted text-info-muted-foreground",
 			)}
 		>
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-start">
 				<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-info-muted bg-background">
-					{runtimeUiSettlingTimedOut ? (
-						<AlertCircle className="size-5" />
-					) : (
-						<Spinner className="size-5" />
-					)}
+					{settlingTimedOut ? <AlertCircle className="size-5" /> : <Spinner className="size-5" />}
 				</div>
 				<div className="min-w-0 flex-1">
 					<h2 className="text-sm font-semibold text-foreground">{title}</h2>
 					<p className="mt-1 text-sm">{description}</p>
-					<DeploymentReadinessProgress stage={stage} />
+					{deploymentTransitionTimedOut ? null : <DeploymentReadinessProgress stage={stage} />}
 					<p className="mt-2 text-xs">Current status: {deploymentStatusLabel(parsedStatus)}.</p>
-					{stage === "booting" ? (
-						<Button
-							render={<Link to={terminalHref} />}
-							nativeButton={false}
-							variant="outline"
-							size="sm"
-							className="mt-3"
-						>
-							<TerminalSquare className="size-3.5" />
-							Use Terminal now
-						</Button>
+					{deploymentTransitionTimedOut || stage === "booting" ? (
+						<div className="mt-3 flex flex-wrap gap-2">
+							{deploymentTransitionTimedOut ? (
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									disabled={isCheckingDeployment}
+									onClick={onCheckDeploymentAgain}
+								>
+									{isCheckingDeployment ? (
+										<Spinner className="size-3.5" />
+									) : (
+										<RefreshCw className="size-3.5" />
+									)}
+									Check again
+								</Button>
+							) : null}
+							{stage === "booting" ? (
+								<Button
+									render={<Link to={terminalHref} />}
+									nativeButton={false}
+									variant="outline"
+									size="sm"
+								>
+									<TerminalSquare className="size-3.5" />
+									Use Terminal now
+								</Button>
+							) : null}
+						</div>
 					) : null}
 				</div>
 			</div>
@@ -1024,6 +1062,9 @@ function OverviewTab({
 	sessionLink,
 	terminalHref,
 	runtimeUiSettlingTimedOut,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
 }: {
 	deployment: HostedDeployment;
 	runtime: Runtime;
@@ -1042,6 +1083,9 @@ function OverviewTab({
 	};
 	terminalHref: string;
 	runtimeUiSettlingTimedOut: boolean;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
 }) {
 	const spec = deployment.resource.spec;
 	const providers = useUserAiProviders();
@@ -1068,13 +1112,17 @@ function OverviewTab({
 		: "Sessions appear once your agent is running.";
 	return (
 		<div className="flex flex-col gap-5">
-			{isProvisioningStatus(deploymentStatus) ||
+			{deploymentTransitionTimedOut ||
+			isProvisioningStatus(deploymentStatus) ||
 			(deploymentStatus.kind === "running" && !runtimeUiAvailable) ? (
 				<OverviewProvisioningPanel
 					deployment={deployment}
 					runtime={runtime}
 					runtimeUiAvailable={runtimeUiAvailable}
 					runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
+					deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+					isCheckingDeployment={isCheckingDeployment}
+					onCheckDeploymentAgain={onCheckDeploymentAgain}
 					terminalHref={terminalHref}
 				/>
 			) : null}
@@ -1237,11 +1285,17 @@ function ConsoleTab({
 	runtime,
 	terminalHref,
 	runtimeUiSettlingTimedOut,
+	deploymentTransitionTimedOut,
+	isCheckingDeployment,
+	onCheckDeploymentAgain,
 }: {
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	terminalHref: string;
 	runtimeUiSettlingTimedOut: boolean;
+	deploymentTransitionTimedOut: boolean;
+	isCheckingDeployment: boolean;
+	onCheckDeploymentAgain: () => void;
 }) {
 	const status = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const isRunning = isRunningStatus(status);
@@ -1339,14 +1393,41 @@ function ConsoleTab({
 	if (!isRunning) {
 		return (
 			<EmptyState
-				icon={MonitorPlay}
-				title={isProvisioning ? provisioningTitle(status) : "Compute is not running"}
-				description={
-					isProvisioning
-						? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
-						: `Start the compute to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				icon={deploymentTransitionTimedOut ? AlertCircle : MonitorPlay}
+				title={
+					deploymentTransitionTimedOut
+						? "Deployment is taking longer than expected"
+						: isProvisioning
+							? provisioningTitle(status)
+							: "Compute is not running"
 				}
-				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
+				description={
+					deploymentTransitionTimedOut
+						? "The latest deployment change did not finish within five minutes. Automatic checks have stopped. Check again to load the latest status."
+						: isProvisioning
+							? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
+							: `Start the compute to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+				}
+				action={
+					deploymentTransitionTimedOut ? (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={isCheckingDeployment}
+							onClick={onCheckDeploymentAgain}
+						>
+							{isCheckingDeployment ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<RefreshCw className="size-3.5" />
+							)}
+							Check again
+						</Button>
+					) : canStartDeployment(status) ? (
+						<StartComputeAction deployment={deployment} />
+					) : null
+				}
 			/>
 		);
 	}

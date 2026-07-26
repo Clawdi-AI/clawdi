@@ -1,6 +1,8 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { QueryClient } from "@tanstack/react-query";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import type { DeploymentOperation, HostedDeployment } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { deploymentFailureReason } from "@/hosted/deployment-failure";
@@ -17,12 +19,15 @@ type ProjectAcceptedDeploymentTransition =
 	typeof import("@/hosted/agents/deployment-hooks").projectAcceptedDeploymentTransition;
 type RuntimeUiSettlingPollState =
 	typeof import("@/hosted/agents/deployment-hooks").runtimeUiSettlingPollState;
+type OverviewProvisioningPanel =
+	typeof import("@/hosted/agents/hosted-agent-detail").OverviewProvisioningPanel;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
 let settlingPollState: RuntimeUiSettlingPollState | null = null;
 let settlingPollIntervalMs: number | null = null;
 let settlingTimeoutMs: number | null = null;
+let overviewProvisioningPanel: OverviewProvisioningPanel | null = null;
 
 beforeAll(async () => {
 	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
@@ -34,6 +39,53 @@ beforeAll(async () => {
 	settlingPollState = module.runtimeUiSettlingPollState;
 	settlingPollIntervalMs = module.RUNTIME_UI_SETTLING_POLL_INTERVAL_MS;
 	settlingTimeoutMs = module.RUNTIME_UI_SETTLING_TIMEOUT_MS;
+	overviewProvisioningPanel = (await import("@/hosted/agents/hosted-agent-detail"))
+		.OverviewProvisioningPanel;
+});
+
+describe("deployment transition timeout rendering", () => {
+	test("replaces the automatic-update promise with an honest timeout and check action", () => {
+		if (!overviewProvisioningPanel) throw new Error("agent detail was not loaded");
+		const deployment = hostedDeploymentFixture({ status: "creating" });
+		const commonProps = {
+			deployment,
+			runtime: "openclaw" as const,
+			runtimeUiAvailable: false,
+			runtimeUiSettlingTimedOut: false,
+			isCheckingDeployment: false,
+			onCheckDeploymentAgain: () => undefined,
+			terminalHref: "/agents/env_test/terminal",
+		};
+
+		const converging = renderToStaticMarkup(
+			createElement(overviewProvisioningPanel, {
+				...commonProps,
+				deploymentTransitionTimedOut: false,
+			}),
+		);
+		const timedOut = renderToStaticMarkup(
+			createElement(overviewProvisioningPanel, {
+				...commonProps,
+				deploymentTransitionTimedOut: true,
+			}),
+		);
+
+		expect(converging).toContain("Provisioning your agent…");
+		expect(converging).toContain("This page updates automatically.");
+		expect(timedOut).toContain("Deployment is taking longer than expected");
+		expect(timedOut).toContain("Automatic checks have stopped.");
+		expect(timedOut).toContain("Check again");
+		expect(timedOut).not.toContain("This page updates automatically.");
+	});
+
+	test("wires the timed-out inventory state and real refetch action into the detail", () => {
+		const source = readFileSync(new URL("./agent-home.tsx", import.meta.url), "utf8");
+
+		expect(source).toContain("deploymentTransitionTimedOut,");
+		expect(source).toContain("deploymentTransitionTimedOut={deploymentTransitionTimedOut}");
+		expect(source).toContain("onCheckDeploymentAgain={handleCheckAgain}");
+		expect(source).toContain("void refetch();");
+	});
 });
 
 describe("runtime UI settling polling", () => {

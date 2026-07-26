@@ -73,6 +73,7 @@ export function AgentHome({
 		isLoading,
 		isFetching,
 		runtimeUiSettlingTimedOut,
+		deploymentTransitionTimedOut,
 		error,
 		refetch,
 	} = useAgentDeployment(environmentId, deploymentSelector);
@@ -223,6 +224,9 @@ export function AgentHome({
 				}
 				autoOpenRuntimeUi={requestedFromCloudRedirect && environmentId === deployment.resource.id}
 				runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
+				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
+				isCheckingDeployment={isFetching}
+				onCheckDeploymentAgain={handleCheckAgain}
 			/>
 		);
 	}
