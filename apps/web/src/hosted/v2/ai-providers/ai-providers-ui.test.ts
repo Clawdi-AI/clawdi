@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProviderUsabilityBadge } from "@/hosted/v2/ai-providers/ai-providers-ui";
 
@@ -10,7 +11,7 @@ const providerPageSource = readFileSync(
 
 describe("ProviderUsabilityBadge", () => {
 	test("badges an unfinished provider as needing setup, never connected", () => {
-		const markup = renderToStaticMarkup(<ProviderUsabilityBadge usable={false} />);
+		const markup = renderToStaticMarkup(createElement(ProviderUsabilityBadge, { usable: false }));
 
 		expect(markup).toContain("Needs setup");
 		expect(markup).not.toContain("Connected");
@@ -24,7 +25,7 @@ describe("ProviderUsabilityBadge", () => {
 	});
 
 	test("badges a credential-backed provider as connected", () => {
-		const markup = renderToStaticMarkup(<ProviderUsabilityBadge usable />);
+		const markup = renderToStaticMarkup(createElement(ProviderUsabilityBadge, { usable: true }));
 
 		expect(markup).toContain("Connected");
 		expect(markup).toContain('data-status="success"');
