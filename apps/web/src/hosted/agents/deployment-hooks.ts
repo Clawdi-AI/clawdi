@@ -22,6 +22,11 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
+import {
+	boundedSettlingPollState,
+	type DeploymentOperationVerb,
+	type SettlingTracker,
+} from "@/hosted/deployment-status";
 import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 import {
 	defaultDeploymentRuntime,
@@ -40,21 +45,16 @@ const ACCEPTED_OPERATION_TRANSITIONS = {
 	stop: "stopping",
 	restart: "restarting",
 	update: "updating",
+	plan_change: "updating",
 	runtime_switch: "updating",
 	rename: "updating",
 	delete: "deleting",
-} satisfies Record<
-	AcceptedOperation["operation"]["metadata"]["verb"],
-	HostedDeploymentStatus["summary_state"]
->;
+} satisfies Record<DeploymentOperationVerb, HostedDeploymentStatus["summary_state"]>;
 
 export const RUNTIME_UI_SETTLING_POLL_INTERVAL_MS = 3_000;
 export const RUNTIME_UI_SETTLING_TIMEOUT_MS = 5 * 60_000;
 
-export type RuntimeUiSettlingTracker = {
-	key: string;
-	startedAtMs: number;
-};
+export type RuntimeUiSettlingTracker = SettlingTracker;
 
 export type RuntimeUiSettlingPollState = {
 	refetchInterval: number | false;
@@ -65,8 +65,8 @@ export type RuntimeUiSettlingPollState = {
 /**
  * A4 may report compute as running just before its runtime UI endpoint is
  * published. Keep that short-lived gap on the fast deployment-query cadence,
- * but stop rapid polling after the boot window. The normal inventory
- * reconciliation cadence remains active after this override returns false.
+ * but stop rapid polling after the boot window. Returning false lets the
+ * shared query fall back to its modest foreground reconciliation interval.
  */
 export function runtimeUiSettlingPollState(
 	deployment: HostedDeployment | null | undefined,
@@ -84,19 +84,14 @@ export function runtimeUiSettlingPollState(
 	}
 
 	const key = `${deployment.resource.id}:${deployment.resource.metadata.generation}:${runtime}`;
-	const nextTracker =
-		tracker?.key === key
-			? tracker
-			: {
-					key,
-					startedAtMs: runtimeUiSettlingStartedAtMs(deployment, nowMs),
-				};
-	const timedOut = nowMs - nextTracker.startedAtMs >= RUNTIME_UI_SETTLING_TIMEOUT_MS;
-	return {
-		refetchInterval: timedOut ? false : RUNTIME_UI_SETTLING_POLL_INTERVAL_MS,
-		timedOut,
-		tracker: nextTracker,
-	};
+	return boundedSettlingPollState({
+		key,
+		startedAtMs: runtimeUiSettlingStartedAtMs(deployment, nowMs),
+		tracker,
+		nowMs,
+		pollIntervalMs: RUNTIME_UI_SETTLING_POLL_INTERVAL_MS,
+		timeoutMs: RUNTIME_UI_SETTLING_TIMEOUT_MS,
+	});
 }
 
 function runtimeUiSettlingStartedAtMs(deployment: HostedDeployment, nowMs: number): number {
@@ -138,7 +133,11 @@ export function projectAcceptedDeploymentTransition(
 						accepted_operation: accepted.operation,
 						resource: {
 							...deployment.resource,
-							status: { ...deployment.resource.status, summary_state: status },
+							status: {
+								...deployment.resource.status,
+								summary_state: status,
+								failure: null,
+							},
 						},
 					}
 				: deployment,
@@ -217,6 +216,13 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 	);
 	const match = resolution.match;
 	const runtimeUiSettling = deriveRuntimeUiSettlingState(inventory.deployments, Date.now());
+	const deploymentId = match?.deployment.resource.id;
+	const deploymentTransition = deploymentId
+		? (inventory.deploymentTransitions.get(deploymentId) ?? null)
+		: null;
+	const deploymentFailure = deploymentId
+		? (inventory.deploymentFailures.get(deploymentId) ?? null)
+		: null;
 
 	useEffect(() => {
 		runtimeUiSettlingTrackerRef.current = runtimeUiSettling.tracker;
@@ -243,8 +249,12 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
 		isFetching: inventory.isFetching,
 		runtimeUiSettlingTimedOut: runtimeUiSettling.timedOut,
+		deploymentTransition,
+		deploymentTransitionTimedOut: deploymentTransition?.kind === "timed_out",
+		deploymentFailure,
 		error: inventory.error,
 		refetch: inventory.refetch,
+		retryDeploymentTransition: inventory.refetch,
 	};
 }
 

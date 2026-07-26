@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import type { DeploymentOperation } from "@/hosted/billing/contracts";
 import {
 	canDelete,
 	canQueryDeploymentProjection,
@@ -6,7 +7,10 @@ import {
 	canStart,
 	canStop,
 	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
+	DEPLOYMENT_TRANSITION_TIMEOUT_MS,
 	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+	type DeploymentOperationVerb,
+	deploymentPollingState,
 	deploymentRefetchInterval,
 	deploymentStatusLabel,
 	deploymentStatusTone,
@@ -17,6 +21,24 @@ import {
 	parseDeploymentStatus,
 	shouldPollDeployments,
 } from "@/hosted/deployment-status";
+import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
+
+function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
+	return {
+		name: `operations/${verb}-polling`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "hdep_polling",
+			verb: verb as DeploymentOperation["metadata"]["verb"],
+			targetGeneration: 2,
+			manifestETag: "manifest-polling",
+			createTime: "2026-07-25T00:00:00Z",
+			updateTime: "2026-07-25T00:00:00Z",
+		},
+		done: false,
+		response: null,
+	};
+}
 
 describe("DeploymentStatus", () => {
 	test("matches the hosted backend deployment status enum", () => {
@@ -144,7 +166,7 @@ describe("DeploymentStatus", () => {
 		expect(canDelete(parseDeploymentStatus("deleted"))).toBe(false);
 	});
 
-	test("polls while any deployment is non-terminal", () => {
+	test("classifies whether any deployment is non-terminal", () => {
 		expect(
 			shouldPollDeployments([
 				{ status: "running" },
@@ -162,11 +184,87 @@ describe("DeploymentStatus", () => {
 		expect(shouldPollDeployments([{ status: "new_backend_status" }])).toBe(true);
 		expect(shouldPollDeployments([])).toBe(false);
 		expect(shouldPollDeployments(undefined)).toBe(false);
-		expect(deploymentRefetchInterval([{ status: "running" }])).toBe(
-			DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
+	});
+
+	test("polls a lifecycle operation only while it is plausibly converging", () => {
+		const nowMs = Date.parse("2026-07-25T00:00:00Z");
+		const deployment = hostedDeploymentFixture({
+			id: "hdep_polling",
+			status: "starting",
+			acceptedOperation: acceptedOperation("start"),
+		});
+		const pending = deploymentPollingState([deployment], new Map(), nowMs);
+
+		expect(pending.refetchInterval).toBe(DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS);
+		expect(pending.transitions.get("hdep_polling")).toEqual({
+			kind: "converging",
+			verb: "start",
+			startedAtMs: nowMs,
+		});
+	});
+
+	test("drops fast plan-change polling immediately when it reaches a terminal state", () => {
+		const nowMs = Date.parse("2026-07-25T00:00:00Z");
+		const operation = acceptedOperation("plan_change");
+		const pending = deploymentPollingState(
+			[
+				hostedDeploymentFixture({
+					id: "hdep_polling",
+					status: "updating",
+					acceptedOperation: operation,
+				}),
+			],
+			new Map(),
+			nowMs,
 		);
-		expect(deploymentRefetchInterval([{ status: "starting" }])).toBe(
-			DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+		const terminal = deploymentPollingState(
+			[
+				hostedDeploymentFixture({
+					id: "hdep_polling",
+					status: "running",
+					acceptedOperation: operation,
+				}),
+			],
+			pending.trackers,
+			nowMs + DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
 		);
+
+		expect(terminal.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(terminal.refetchInterval).not.toBe(DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS);
+		expect(terminal.transitions.size).toBe(0);
+		expect(terminal.trackers.size).toBe(0);
+	});
+
+	test("stops at five minutes and distinguishes timeout from convergence", () => {
+		const nowMs = Date.parse("2026-07-25T00:00:00Z");
+		const deployment = hostedDeploymentFixture({
+			id: "hdep_polling",
+			status: "updating",
+			acceptedOperation: acceptedOperation("plan_change"),
+		});
+		const pending = deploymentPollingState([deployment], new Map(), nowMs);
+		const timedOut = deploymentPollingState(
+			[deployment],
+			pending.trackers,
+			nowMs + DEPLOYMENT_TRANSITION_TIMEOUT_MS,
+		);
+
+		expect(pending.transitions.get("hdep_polling")?.kind).toBe("converging");
+		expect(timedOut.refetchInterval).toBe(false);
+		expect(timedOut.transitions.get("hdep_polling")).toEqual({
+			kind: "timed_out",
+			verb: "plan_change",
+			startedAtMs: nowMs,
+		});
+	});
+
+	test("schedules a modest reconciliation interval for steady inventory", () => {
+		const deployments = [
+			hostedDeploymentFixture({ status: "running" }),
+			hostedDeploymentFixture({ id: "hdep_stopped", status: "stopped" }),
+			hostedDeploymentFixture({ id: "hdep_failed", status: "failed" }),
+		];
+		expect(deploymentRefetchInterval(deployments)).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS).toBe(60_000);
 	});
 });

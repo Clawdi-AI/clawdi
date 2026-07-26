@@ -1,3 +1,5 @@
+import type { DeploymentOperation, HostedDeployment } from "@/hosted/billing/contracts";
+
 export const KNOWN_DEPLOYMENT_STATUSES = [
 	"creating",
 	"starting",
@@ -27,9 +29,34 @@ export type UnknownDeploymentStatus = {
 };
 
 export type DeploymentStatus = KnownDeploymentStatusModel | UnknownDeploymentStatus;
+export type DeploymentOperationVerb = DeploymentOperation["metadata"]["verb"] | "plan_change";
 
 export const DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS = 10_000;
-export const DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS = 75_000;
+export const DEPLOYMENT_TRANSITION_TIMEOUT_MS = 5 * 60_000;
+export const DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS = 60_000;
+
+export type SettlingTracker = {
+	key: string;
+	startedAtMs: number;
+};
+
+export type SettlingPollState = {
+	refetchInterval: number | false;
+	timedOut: boolean;
+	tracker: SettlingTracker;
+};
+
+export type DeploymentTransitionState = {
+	kind: "converging" | "timed_out";
+	verb: DeploymentOperationVerb | null;
+	startedAtMs: number;
+};
+
+export type DeploymentPollingState = {
+	refetchInterval: number | false;
+	trackers: ReadonlyMap<string, SettlingTracker>;
+	transitions: ReadonlyMap<string, DeploymentTransitionState>;
+};
 
 const KNOWN_STATUS_SET = new Set<string>(KNOWN_DEPLOYMENT_STATUSES);
 const LEGACY_STATUS_ALIASES = new Map<string, KnownDeploymentStatus>([["ready", "running"]]);
@@ -249,6 +276,33 @@ export function canDelete(status: DeploymentStatus): boolean {
 	return status.kind !== "deleting" && status.kind !== "deleted";
 }
 
+/** Shared started-at/timeout primitive for lifecycle and runtime-UI convergence. */
+export function boundedSettlingPollState({
+	key,
+	startedAtMs,
+	tracker,
+	nowMs,
+	pollIntervalMs,
+	timeoutMs,
+}: {
+	key: string;
+	startedAtMs: number;
+	tracker: SettlingTracker | null;
+	nowMs: number;
+	pollIntervalMs: number;
+	timeoutMs: number;
+}): SettlingPollState {
+	const safeStartedAtMs =
+		Number.isFinite(startedAtMs) && startedAtMs <= nowMs ? startedAtMs : nowMs;
+	const nextTracker = tracker?.key === key ? tracker : { key, startedAtMs: safeStartedAtMs };
+	const timedOut = nowMs - nextTracker.startedAtMs >= timeoutMs;
+	return {
+		refetchInterval: timedOut ? false : pollIntervalMs,
+		timedOut,
+		tracker: nextTracker,
+	};
+}
+
 export function shouldPollDeployments(
 	items: readonly { status: string | null | undefined }[] | null | undefined,
 ): boolean {
@@ -258,15 +312,68 @@ export function shouldPollDeployments(
 }
 
 /**
- * Transitional deployments converge quickly; stable snapshots still reconcile
- * periodically so changes made in another tab or control plane become visible.
+ * Poll each accepted lifecycle operation only during its bounded convergence
+ * window. Until the existing deployment SSE stream is wired into the client,
+ * stable snapshots use a modest foreground-only reconciliation interval.
  */
+export function deploymentPollingState(
+	deployments: readonly HostedDeployment[] | null | undefined,
+	trackers: ReadonlyMap<string, SettlingTracker>,
+	nowMs: number,
+): DeploymentPollingState {
+	const nextTrackers = new Map<string, SettlingTracker>();
+	const transitions = new Map<string, DeploymentTransitionState>();
+	let refetchInterval: number | false = false;
+
+	for (const deployment of deployments ?? []) {
+		const status = parseDeploymentStatus(deployment.resource.status.summary_state);
+		if (!isTransitionalStatus(status)) continue;
+
+		const deploymentId = deployment.resource.id;
+		const operation = deployment.accepted_operation;
+		const operationStartedAtMs = Date.parse(operation?.metadata.createTime ?? "");
+		const pollState = boundedSettlingPollState({
+			key: operation?.name ?? deploymentTransitionFallbackKey(deployment),
+			startedAtMs: Number.isFinite(operationStartedAtMs) ? operationStartedAtMs : nowMs,
+			tracker: trackers.get(deploymentId) ?? null,
+			nowMs,
+			pollIntervalMs: DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+			timeoutMs: DEPLOYMENT_TRANSITION_TIMEOUT_MS,
+		});
+		nextTrackers.set(deploymentId, pollState.tracker);
+		transitions.set(deploymentId, {
+			kind: pollState.timedOut ? "timed_out" : "converging",
+			verb: operation?.metadata.verb ?? null,
+			startedAtMs: pollState.tracker.startedAtMs,
+		});
+		if (typeof pollState.refetchInterval === "number") {
+			refetchInterval =
+				typeof refetchInterval === "number"
+					? Math.min(refetchInterval, pollState.refetchInterval)
+					: pollState.refetchInterval;
+		}
+	}
+	if (deployments !== null && deployments !== undefined && transitions.size === 0) {
+		refetchInterval = DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS;
+	}
+
+	return { refetchInterval, trackers: nextTrackers, transitions };
+}
+
 export function deploymentRefetchInterval(
-	items: readonly { status: string | null | undefined }[] | null | undefined,
-): number {
-	return shouldPollDeployments(items)
-		? DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS
-		: DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS;
+	deployments: readonly HostedDeployment[] | null | undefined,
+	trackers: ReadonlyMap<string, SettlingTracker> = new Map(),
+	nowMs = Date.now(),
+): number | false {
+	return deploymentPollingState(deployments, trackers, nowMs).refetchInterval;
+}
+
+function deploymentTransitionFallbackKey(deployment: HostedDeployment): string {
+	return [
+		deployment.resource.id,
+		deployment.resource.metadata.generation,
+		deployment.resource.spec.desired_lifecycle,
+	].join(":");
 }
 
 function titleCaseStatus(raw: string): string {

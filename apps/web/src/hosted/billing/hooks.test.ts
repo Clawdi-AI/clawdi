@@ -1,8 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { QueryClient } from "@tanstack/react-query";
+import {
+	environmentManager,
+	focusManager,
+	QueryClient,
+	QueryObserver,
+} from "@tanstack/react-query";
 import { checkoutReturnMarker, checkoutReturnWasCanceled } from "@/hosted/billing/checkout-return";
 import type {
 	ComputeSubscriptionActionResult,
+	DeploymentOperation,
 	HostedComputeSubscription,
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
@@ -10,8 +16,15 @@ import {
 	applyDeploymentSubscriptionResult,
 	billingKeys,
 	billingRecoveryRefetchIntervalFor,
+	HOSTED_DEPLOYMENTS_REFRESH_POLICY,
+	reconcileDeploymentSnapshots,
 	refreshCheckoutReturnQueries,
 } from "@/hosted/billing/hooks";
+import { deploymentFailureProjection } from "@/hosted/deployment-failure";
+import {
+	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
+	type DeploymentOperationVerb,
+} from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 function deployment(
@@ -34,6 +47,23 @@ function subscriptionAction(cancelAtPeriodEnd: boolean): ComputeSubscriptionActi
 		cancel_at_period_end: cancelAtPeriodEnd,
 		current_period_end: "2026-08-01T00:00:00Z",
 		cancel_at: cancelAtPeriodEnd ? "2026-08-01T00:00:00Z" : null,
+	};
+}
+
+function acceptedOperation(verb: DeploymentOperationVerb): DeploymentOperation {
+	return {
+		name: `operations/${verb}-failure`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "hdep_failure",
+			verb: verb as DeploymentOperation["metadata"]["verb"],
+			targetGeneration: 2,
+			manifestETag: "manifest-failure",
+			createTime: "2026-07-25T00:00:00Z",
+			updateTime: "2026-07-25T00:01:00Z",
+		},
+		done: false,
+		response: null,
 	};
 }
 
@@ -218,6 +248,89 @@ describe("billingRecoveryRefetchIntervalFor", () => {
 			"hdep_unpaid",
 		);
 		expect(billingRecoveryRefetchIntervalFor([unpaid], unpaid.resource.id)).toBe(false);
+	});
+});
+
+describe("hosted deployment refresh policy", () => {
+	test("uses TanStack focus state to pause steady refreshes in a background tab", async () => {
+		expect(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS).toBe(60_000);
+		expect(HOSTED_DEPLOYMENTS_REFRESH_POLICY).toEqual({
+			refetchIntervalInBackground: false,
+			refetchOnWindowFocus: true,
+		});
+
+		environmentManager.setIsServer(() => false);
+		focusManager.setFocused(false);
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		let calls = 0;
+		const observer = new QueryObserver(queryClient, {
+			queryKey: ["test", "hosted-deployment-foreground-refresh"],
+			queryFn: async () => {
+				calls += 1;
+				return [];
+			},
+			refetchInterval: 5,
+			...HOSTED_DEPLOYMENTS_REFRESH_POLICY,
+		});
+		const unsubscribe = observer.subscribe(() => undefined);
+
+		try {
+			await Bun.sleep(20);
+			expect(calls).toBe(1);
+
+			focusManager.setFocused(true);
+			for (let attempt = 0; attempt < 20 && calls === 1; attempt += 1) {
+				await Bun.sleep(5);
+			}
+			expect(calls).toBeGreaterThan(1);
+		} finally {
+			unsubscribe();
+			queryClient.clear();
+			focusManager.setFocused(undefined);
+			environmentManager.setIsServer(() => typeof window === "undefined");
+		}
+	});
+});
+
+describe("reconcileDeploymentSnapshots", () => {
+	test("lets a failed server snapshot override optimistic pending state and retain its verb", () => {
+		const optimistic = hostedDeploymentFixture({
+			id: "hdep_failure",
+			status: "updating",
+			acceptedOperation: acceptedOperation("plan_change"),
+		});
+		const actionableReason =
+			"Re-quote the plan change and try again. Operation ID: operations/plan_change-failure.";
+		const failure = {
+			type: "https://api.clawdi.ai/problems/operation_aborted",
+			title: "Deployment operation was aborted",
+			status: 409,
+			detail: actionableReason,
+			instance: "hdep_failure",
+			code: "operation_aborted",
+			phase: "plan_change",
+			retryable: false,
+			conditionReason: "OperationAborted",
+			conditionMessage: "Deployment operation was aborted",
+			observedGeneration: 2,
+		};
+		const serverSnapshot = hostedDeploymentFixture({
+			id: "hdep_failure",
+			status: "failed",
+			failure,
+			acceptedOperation: null,
+		});
+
+		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [serverSnapshot]);
+
+		expect(reconciled?.resource.status.summary_state).toBe("failed");
+		expect(reconciled?.resource.status.failure).toEqual(failure);
+		expect(deploymentFailureProjection(reconciled)).toEqual({
+			reason: actionableReason,
+			failedVerb: "plan_change",
+			retryable: false,
+			code: "operation_aborted",
+		});
 	});
 });
 
