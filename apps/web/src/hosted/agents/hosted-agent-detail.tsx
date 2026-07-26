@@ -2659,12 +2659,17 @@ function ComputeSettingsSections({
 					defaultFundingSource={isWalletFunded ? "wallet" : "stripe"}
 					fundingSourceSelectable={isIncludedBasic}
 					quote={planChangeQuote}
-					walletBalanceUsd={wallet.data?.balance_usd ?? null}
+					walletBalanceUsd={
+						wallet.error || wallet.isFetching ? null : (wallet.data?.balance_usd ?? null)
+					}
+					walletBalanceError={wallet.error}
+					isWalletBalanceFetching={wallet.isFetching}
 					isQuoting={quotePlanChange.isPending}
 					isConfirming={changePlan.isPending}
 					onQuote={requestPlanChangeQuote}
 					onConfirm={confirmPlanChange}
 					onTopUp={() => walletTopUp.show()}
+					onRetryWalletBalance={() => void wallet.refetch()}
 				/>
 			) : null}
 

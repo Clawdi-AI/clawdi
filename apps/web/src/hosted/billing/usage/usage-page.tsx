@@ -1,10 +1,13 @@
 "use client";
 
-import { Activity } from "lucide-react";
+import type { DeployComponents } from "@clawdi/shared/api";
+import { Activity, RefreshCw, TriangleAlert } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
@@ -22,6 +25,48 @@ import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "Managed-AI usage in USD for the current reporting window across your agents.";
 const USAGE_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
+const USAGE_UNAVAILABLE_ERROR = new Error(
+	"Usage data is temporarily unavailable. No usage totals were shown.",
+);
+
+type HostedUsage = DeployComponents["schemas"]["V2HostedUsageSummaryResponse"];
+type UsageUnavailableSection = HostedUsage["unavailable_sections"][number];
+
+export type UsagePageState =
+	| { kind: "unavailable" }
+	| { kind: "empty" }
+	| { kind: "partial"; description: string }
+	| { kind: "complete" };
+
+export function partialUsageDescription(sections: readonly UsageUnavailableSection[]): string {
+	const totalsUnavailable = sections.includes("totals");
+	const modelsUnavailable = sections.includes("by_model");
+	const dailyUnavailable = sections.includes("by_day");
+	if (totalsUnavailable && modelsUnavailable && !dailyUnavailable) {
+		return "Usage totals and the model breakdown are temporarily unavailable. Only the daily breakdown could be loaded.";
+	}
+	if (dailyUnavailable && !totalsUnavailable && !modelsUnavailable) {
+		return "The daily breakdown is temporarily unavailable. The totals and model breakdown below are complete.";
+	}
+	return "Some usage data is temporarily unavailable. Missing sections are labelled below.";
+}
+
+export function usagePageState(usage: HostedUsage): UsagePageState {
+	if (usage.availability === "unavailable") return { kind: "unavailable" };
+	if (usage.availability === "partial") {
+		return {
+			kind: "partial",
+			description: partialUsageDescription(usage.unavailable_sections),
+		};
+	}
+	if (usage.total_usd === null || usage.total_requests === null) {
+		return { kind: "unavailable" };
+	}
+	if (decimalUsdNumber(usage.total_usd) === 0 && usage.by_model.length === 0) {
+		return { kind: "empty" };
+	}
+	return { kind: "complete" };
+}
 
 function decimalUsdNumber(value: string): number {
 	const parsed = Number(value);
@@ -56,7 +101,25 @@ export function UsagePage() {
 	}
 
 	const u = usage.data;
+	const pageState = usagePageState(u);
+	if (pageState.kind === "unavailable") {
+		return (
+			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
+				<PageHeader title="Usage" description={DESCRIPTION} />
+				<ApiErrorPanel
+					normalizer={billingErrorNormalizer}
+					error={USAGE_UNAVAILABLE_ERROR}
+					title="Couldn't load usage"
+					onRetry={() => usage.refetch()}
+				/>
+			</div>
+		);
+	}
+
 	const hasDailyBreakdown = u.by_day.length > 0;
+	const totalsUnavailable = u.total_usd === null || u.total_requests === null;
+	const dailyUnavailable = u.unavailable_sections.includes("by_day");
+	const modelsUnavailable = u.unavailable_sections.includes("by_model");
 	const firstDailyPoint = u.by_day[0];
 	const lastDailyPoint = u.by_day[u.by_day.length - 1];
 	const windowLabel = `${formatShortDate(u.period_start)} – ${formatShortDate(u.period_end)}`;
@@ -67,7 +130,7 @@ export function UsagePage() {
 	const maxDay = Math.max(0, ...u.by_day.map((day) => decimalUsdNumber(day.amount_usd)));
 	const maxModel = Math.max(0, ...u.by_model.map((model) => decimalUsdNumber(model.amount_usd)));
 
-	if (decimalUsdNumber(u.total_usd) === 0 && u.by_model.length === 0) {
+	if (pageState.kind === "empty") {
 		return (
 			<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 				<PageHeader title="Usage" description={DESCRIPTION} />
@@ -84,21 +147,40 @@ export function UsagePage() {
 		<div data-hosted="true" className={USAGE_PAGE_CLASS}>
 			<PageHeader
 				title="Usage"
-				description={`${windowLabel} reporting window. Totals below are for this window; wallet balance carries over.`}
+				description={
+					pageState.kind === "partial"
+						? `${windowLabel} reporting window. Available data is shown below; missing sections are labelled.`
+						: `${windowLabel} reporting window. Totals below are for this window; wallet balance carries over.`
+				}
 			/>
+
+			{pageState.kind === "partial" ? (
+				<Alert>
+					<TriangleAlert aria-hidden />
+					<AlertTitle>Some usage data couldn't be loaded</AlertTitle>
+					<AlertDescription className="flex flex-col items-start gap-3">
+						<span>{pageState.description}</span>
+						<Button type="button" size="sm" variant="outline" onClick={() => usage.refetch()}>
+							<RefreshCw /> Retry
+						</Button>
+					</AlertDescription>
+				</Alert>
+			) : null}
 
 			{/* Totals */}
 			<div className="grid gap-3 sm:grid-cols-2">
 				<Card data-hosted="true">
 					<CardContent>
-						<div className="text-3xl font-semibold tabular-nums">{formatUsdExact(u.total_usd)}</div>
+						<div className="text-3xl font-semibold tabular-nums">
+							{u.total_usd === null ? "Unavailable" : formatUsdExact(u.total_usd)}
+						</div>
 						<div className="text-sm text-muted-foreground">Managed-AI spend in window</div>
 					</CardContent>
 				</Card>
 				<Card data-hosted="true">
 					<CardContent>
 						<div className="text-3xl font-semibold tabular-nums">
-							{u.total_requests.toLocaleString()}
+							{u.total_requests === null ? "Unavailable" : u.total_requests.toLocaleString()}
 						</div>
 						<div className="text-sm text-muted-foreground">Requests in window</div>
 					</CardContent>
@@ -111,7 +193,13 @@ export function UsagePage() {
 					<CardTitle className="text-base">Daily consumption</CardTitle>
 				</CardHeader>
 				<CardContent>
-					{hasDailyBreakdown ? (
+					{dailyUnavailable ? (
+						<EmptyState
+							variant="inset"
+							description="Daily breakdown temporarily unavailable"
+							className="py-4 md:p-4"
+						/>
+					) : hasDailyBreakdown ? (
 						<>
 							<div className="flex h-28 items-end gap-1" role="img" aria-label={dailyChartLabel}>
 								{u.by_day.map((d) => (
@@ -166,7 +254,13 @@ export function UsagePage() {
 					<CardTitle className="text-base">By model</CardTitle>
 				</CardHeader>
 				<CardContent className="flex flex-col gap-4">
-					{u.by_model.length === 0 ? (
+					{modelsUnavailable || totalsUnavailable ? (
+						<EmptyState
+							variant="inset"
+							description="Model breakdown temporarily unavailable"
+							className="py-4 md:p-4"
+						/>
+					) : u.by_model.length === 0 ? (
 						<EmptyState
 							variant="inset"
 							description="No model breakdown available"
