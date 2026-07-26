@@ -12,6 +12,7 @@ import {
 	DeploymentConflictError,
 	DeploymentRequestTerminalError,
 	PlanChangePendingError,
+	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
@@ -571,8 +572,8 @@ describe("compute plan changes", () => {
 			return jsonResponse(response, request.method === "POST" ? 202 : 200);
 		});
 
-		await expect(client.changePlan({ operation_id: "plan-change-1" })).rejects.toThrow(
-			"The payment method was rejected",
-		);
+		const result = client.changePlan({ operation_id: "plan-change-1" });
+		await expect(result).rejects.toBeInstanceOf(PlanChangeTerminalError);
+		await expect(result).rejects.toThrow("The payment method was rejected");
 	});
 });

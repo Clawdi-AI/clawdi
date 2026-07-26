@@ -161,10 +161,14 @@ export function PlanChangeDialog({
 		<Dialog
 			open={open}
 			onOpenChange={(nextOpen) => {
-				if (!isQuoting && !isConfirming) onOpenChange(nextOpen);
+				if (!isQuoting && !isConfirming && !hasAcceptedChange) onOpenChange(nextOpen);
 			}}
 		>
-			<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!isConfirming}>
+			<DialogContent
+				data-hosted="true"
+				className="sm:max-w-lg"
+				showCloseButton={!isConfirming && !hasAcceptedChange}
+			>
 				<DialogHeader>
 					<DialogTitle>{quote ? quoteTitle : "Change compute subscription"}</DialogTitle>
 					<DialogDescription>
@@ -256,7 +260,11 @@ export function PlanChangeDialog({
 							</Alert>
 						) : null}
 						<DialogFooter>
-							<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isConfirming}>
+							<Button
+								variant="ghost"
+								onClick={() => onOpenChange(false)}
+								disabled={isConfirming || hasAcceptedChange}
+							>
 								Back
 							</Button>
 							<Button

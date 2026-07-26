@@ -66,6 +66,11 @@ export class PlanChangePendingError extends Error {
 	}
 }
 
+/** The accepted plan change reached an explicit failed terminal state. */
+export class PlanChangeTerminalError extends BillingApiError {
+	override name = "PlanChangeTerminalError";
+}
+
 function hasDetail(value: unknown): value is { detail: unknown } {
 	return typeof value === "object" && value !== null && "detail" in value;
 }

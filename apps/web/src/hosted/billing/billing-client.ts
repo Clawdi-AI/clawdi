@@ -35,6 +35,7 @@ import {
 	DeploymentConflictError,
 	DeploymentRequestTerminalError,
 	PlanChangePendingError,
+	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
@@ -168,9 +169,9 @@ function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingA
 function planChangeTerminalError(operation: ComputePlanChangeResponse): BillingApiError {
 	const detail = operation.error?.details[0];
 	if (detail) {
-		return new BillingApiError(detail.status, detail.detail, { detail });
+		return new PlanChangeTerminalError(detail.status, detail.detail, { detail });
 	}
-	return new BillingApiError(
+	return new PlanChangeTerminalError(
 		409,
 		"The plan change could not be completed. Review the price and try again.",
 	);

@@ -91,6 +91,7 @@ import {
 	billingErrorNormalizer,
 	normalizeBillingError,
 	PlanChangePendingError,
+	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
@@ -3036,7 +3037,7 @@ function ComputeSettingsSections({
 			return;
 		}
 		try {
-			if (!(await hostedAccess.recheckCanCreateCloudAgents())) {
+			if (pendingPlanChangeName === null && !(await hostedAccess.recheckCanCreateCloudAgents())) {
 				setPlanChangeDialogOpen(false);
 				return;
 			}
@@ -3085,6 +3086,9 @@ function ComputeSettingsSections({
 					description: "No result is available yet. Check the status again in a moment.",
 				});
 				return;
+			}
+			if (error instanceof PlanChangeTerminalError) {
+				setPendingPlanChangeName(null);
 			}
 			if (walletTopUp.handleFundingError(error)) return;
 			toast.error("Couldn’t change plan", {
