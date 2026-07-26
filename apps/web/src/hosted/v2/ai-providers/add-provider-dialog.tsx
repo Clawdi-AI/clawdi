@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
+import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type AuthMethod,
 	apiKeyEditState,
@@ -135,6 +136,7 @@ export function AddProviderDialog({
 	const setKey = useSetApiKey();
 	const oauthStart = useOAuthStart();
 	const oauthComplete = useOAuthComplete();
+	const runAction = useActionLock();
 
 	const isEdit = Boolean(editing);
 	const [type, setType] = useState<ProviderTypeId>("openai");
@@ -735,10 +737,16 @@ export function AddProviderDialog({
 										/>
 										<Button
 											size="sm"
-											onClick={submitPastedCallback}
+											onClick={() => void runAction(submitPastedCallback)}
 											disabled={!oauthCode.trim() || oauthComplete.isPending}
 										>
-											{oauthComplete.isPending ? "Finishing…" : "Finish sign-in"}
+											{oauthComplete.isPending ? (
+												<>
+													<Spinner data-icon="inline-start" /> Finishing sign-in…
+												</>
+											) : (
+												"Finish sign-in"
+											)}
 										</Button>
 										<p>
 											If it never returns, an admin may need to register this app’s callback URL in
@@ -1034,14 +1042,23 @@ export function AddProviderDialog({
 							<Button variant="outline" onClick={() => requestClose(false)}>
 								Cancel
 							</Button>
-							<Button onClick={submit} disabled={!canSubmit || busy}>
-								{busy
-									? "Saving…"
-									: authMethod === "oauth"
-										? "Continue to sign-in"
-										: isEdit
-											? "Save changes"
-											: "Add provider"}
+							<Button onClick={() => void runAction(submit)} disabled={!canSubmit || busy}>
+								{busy ? (
+									<>
+										<Spinner data-icon="inline-start" />
+										{authMethod === "oauth"
+											? "Opening sign-in…"
+											: isEdit
+												? "Saving provider…"
+												: "Adding provider…"}
+									</>
+								) : authMethod === "oauth" ? (
+									"Continue to sign-in"
+								) : isEdit ? (
+									"Save changes"
+								) : (
+									"Add provider"
+								)}
 							</Button>
 						</DialogFooter>
 					</>

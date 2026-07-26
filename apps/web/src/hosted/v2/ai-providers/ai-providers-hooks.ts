@@ -41,7 +41,9 @@ export function useCreateProvider() {
 	return useMutation({
 		mutationFn: async (body: AiProviderUpsert) =>
 			unwrap(await api.POST("/v1/ai-providers", { body, params: { query: { replace: false } } })),
-		onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+		onSuccess: () => {
+			void qc.invalidateQueries({ queryKey: KEY });
+		},
 		onError: toastApiError("Couldn't add provider"),
 	});
 }

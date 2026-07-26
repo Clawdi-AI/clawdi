@@ -28,6 +28,14 @@ const welcomeWalletSource = readFileSync(
 	"utf8",
 );
 const runtimesSource = readFileSync(new URL("../../runtimes.ts", import.meta.url), "utf8");
+const addProviderDialogSource = readFileSync(
+	new URL("../../v2/ai-providers/add-provider-dialog.tsx", import.meta.url),
+	"utf8",
+);
+const aiProviderHooksSource = readFileSync(
+	new URL("../../v2/ai-providers/ai-providers-hooks.ts", import.meta.url),
+	"utf8",
+);
 
 describe("deploy wizard personalization", () => {
 	test("uses a stable dashboard name within the strictest backend limit", () => {
@@ -242,5 +250,15 @@ describe("deploy acceptance", () => {
 		expect(wizardSource).toContain('role="alert"');
 		expect(wizardSource).toContain("Your choices are unchanged; review them and try again.");
 		expect(wizardSource).not.toContain('submitting ? "Working…"');
+	});
+
+	test("keeps the reachable provider mutation busy state scoped and does not await refetch", () => {
+		expect(addProviderDialogSource).toContain("const runAction = useActionLock()");
+		expect(addProviderDialogSource).toContain("void runAction(submit)");
+		expect(addProviderDialogSource).toContain('<Spinner data-icon="inline-start" />');
+		expect(addProviderDialogSource).toContain('"Opening sign-in…"');
+		expect(addProviderDialogSource).toContain('"Adding provider…"');
+		expect(addProviderDialogSource).toContain('"Saving provider…"');
+		expect(aiProviderHooksSource).toContain("void qc.invalidateQueries({ queryKey: KEY })");
 	});
 });
