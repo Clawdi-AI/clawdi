@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import {
-	channelDialogOpenChangeAllowed,
 	channelProviderLinkingReady,
 	linkAgentBlockReason,
 	pairingCommand,
@@ -17,12 +16,6 @@ describe("hosted channel instructions and gates", () => {
 		expect(channelProviderLinkingReady("telegram")).toBe(true);
 		expect(channelProviderLinkingReady("discord")).toBe(true);
 		expect(channelProviderLinkingReady("whatsapp")).toBe(false);
-	});
-
-	test("keeps one-time results in view while a connect or link request is pending", () => {
-		expect(channelDialogOpenChangeAllowed(false, true)).toBe(false);
-		expect(channelDialogOpenChangeAllowed(false, false)).toBe(true);
-		expect(channelDialogOpenChangeAllowed(true, true)).toBe(true);
 	});
 });
 

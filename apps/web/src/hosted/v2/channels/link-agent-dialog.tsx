@@ -3,6 +3,7 @@
 import type { components } from "@clawdi/shared/api";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
 	AgentLabel,
@@ -39,7 +40,6 @@ import {
 	useLinkAgent,
 } from "@/hosted/v2/channels/channels-hooks";
 import {
-	channelDialogOpenChangeAllowed,
 	linkAgentBlockReason,
 	shouldMintWhatsappTenantCredential,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
@@ -80,7 +80,11 @@ export function LinkAgentDialog({
 	const [token, setToken] = useState<string | null>(null);
 	const [linkedNoToken, setLinkedNoToken] = useState(false);
 	const [whatsappCredentialMinted, setWhatsappCredentialMinted] = useState(false);
+	const [submitting, setSubmitting] = useState(false);
 	const submitLocked = useRef(false);
+	const openRef = useRef(open);
+	const dialogSessionRef = useRef(0);
+	openRef.current = open;
 
 	const agents = useMemo(() => [...(envs.data ?? [])].sort(compareAgentEnvironments), [envs.data]);
 	const selectedAgent = agents.find((env) => env.id === agentId);
@@ -97,7 +101,7 @@ export function LinkAgentDialog({
 		accountId,
 	});
 	const guardLoading = shouldCheckHermesSingleLink && selectedAgentLinks.isLoading;
-	const isSubmitting = link.isPending || createWhatsappCredential.isPending || submitLocked.current;
+	const isSubmitting = submitting || link.isPending || createWhatsappCredential.isPending;
 
 	useEffect(() => {
 		if (!open) return;
@@ -111,31 +115,42 @@ export function LinkAgentDialog({
 		if (!agentId || blockReason || guardLoading || submitLocked.current) return;
 		const agent = selectedAgent;
 		submitLocked.current = true;
+		setSubmitting(true);
+		const dialogSession = dialogSessionRef.current;
 		try {
 			const data = await link.execute(agentId);
 			if (shouldMintWhatsappTenantCredential(provider, agent)) {
 				await createWhatsappCredential.execute({ agent_link_id: data.id });
-				setWhatsappCredentialMinted(true);
+				if (openRef.current && dialogSessionRef.current === dialogSession) {
+					setWhatsappCredentialMinted(true);
+				} else {
+					toast.success("Agent linked", {
+						description: `${accountName} is linked. Finish device pairing from the agent runtime.`,
+					});
+				}
 				return;
 			}
-			if (data.agent_token) setToken(data.agent_token);
-			else setLinkedNoToken(true);
+			if (openRef.current && dialogSessionRef.current === dialogSession) {
+				if (data.agent_token) setToken(data.agent_token);
+				else setLinkedNoToken(true);
+			} else {
+				toast.success("Agent linked", {
+					description: `${accountName} is linked. Open the agent's Channels tab to pair a chat.`,
+				});
+			}
 		} catch {
 			// The sensitive action hooks already surface API failures.
 		} finally {
 			submitLocked.current = false;
+			setSubmitting(false);
 		}
 	}
 
 	function handleOpenChange(nextOpen: boolean) {
-		if (
-			!channelDialogOpenChangeAllowed(
-				nextOpen,
-				link.isPending || createWhatsappCredential.isPending || submitLocked.current,
-			)
-		)
-			return;
-		if (!nextOpen) setToken(null);
+		if (!nextOpen) {
+			dialogSessionRef.current += 1;
+			setToken(null);
+		}
 		onOpenChange(nextOpen);
 	}
 
@@ -237,27 +252,17 @@ export function LinkAgentDialog({
 
 				<DialogFooter>
 					{token || linkedNoToken || whatsappCredentialMinted ? (
-						<Button onClick={() => handleOpenChange(false)} disabled={isSubmitting}>
-							Done
-						</Button>
+						<Button onClick={() => handleOpenChange(false)}>Done</Button>
 					) : (
 						<>
-							<Button
-								variant="outline"
-								onClick={() => handleOpenChange(false)}
-								disabled={isSubmitting}
-							>
-								Cancel
+							<Button variant="outline" onClick={() => handleOpenChange(false)}>
+								{isSubmitting ? "Close" : "Cancel"}
 							</Button>
 							<Button
 								onClick={() => void submit()}
 								disabled={!agentId || Boolean(blockReason) || guardLoading || isSubmitting}
 							>
-								{createWhatsappCredential.isPending
-									? "Minting device…"
-									: link.isPending
-										? "Linking…"
-										: "Link agent"}
+								{isSubmitting ? "Linking…" : "Link agent"}
 							</Button>
 						</>
 					)}

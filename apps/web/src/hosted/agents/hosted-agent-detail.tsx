@@ -2100,7 +2100,10 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 	// undefined↔string flip) while staying falsy for the gated Link button.
 	const [accountId, setAccountId] = useState("");
 	const [token, setToken] = useState<string | null>(null);
+	const [linkingAccountId, setLinkingAccountId] = useState<string | null>(null);
 	const linkInFlightRef = useRef(false);
+	const unlinkingLinkIdsRef = useRef<Set<string>>(new Set());
+	const [unlinkingLinkIds, setUnlinkingLinkIds] = useState<ReadonlySet<string>>(() => new Set());
 
 	const linkedIds = useMemo(
 		() => new Set((linked.data ?? []).map((l) => l.account_id)),
@@ -2161,13 +2164,35 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 	async function submitLink() {
 		if (!accountId || linkInFlightRef.current) return;
 		linkInFlightRef.current = true;
+		setLinkingAccountId(accountId);
 		try {
 			await link.execute(accountId);
 		} catch {
 			// The action already surfaces the API error.
 		} finally {
 			linkInFlightRef.current = false;
+			setLinkingAccountId(null);
 		}
+	}
+
+	function startUnlink(accountIdToUnlink: string, linkId: string) {
+		if (unlinkingLinkIdsRef.current.has(linkId)) return;
+		unlinkingLinkIdsRef.current.add(linkId);
+		setUnlinkingLinkIds((prev) => new Set(prev).add(linkId));
+		void (async () => {
+			try {
+				await unlink.mutateAsync({ accountId: accountIdToUnlink, linkId });
+			} catch {
+				// useUnlinkAgentChannel already surfaces the API error.
+			} finally {
+				unlinkingLinkIdsRef.current.delete(linkId);
+				setUnlinkingLinkIds((prev) => {
+					const next = new Set(prev);
+					next.delete(linkId);
+					return next;
+				});
+			}
+		})();
 	}
 
 	if (!hasEnvironmentId) {
@@ -2207,8 +2232,8 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 							key={l.id}
 							link={l}
 							fallbackAccount={accountSummaries.get(l.account_id)}
-							unlinking={unlink.isPending}
-							onUnlink={() => unlink.mutate({ accountId: l.account_id, linkId: l.id })}
+							unlinking={unlinkingLinkIds.has(l.id)}
+							onUnlink={() => startUnlink(l.account_id, l.id)}
 						/>
 					))
 				)}
@@ -2241,10 +2266,12 @@ function ChannelsTab({ environmentId, enabled }: { environmentId: string; enable
 					</Select>
 					<Button
 						onClick={() => void submitLink()}
-						disabled={!accountId || link.isPending || channels.isLoading || botPool.isLoading}
+						disabled={
+							!accountId || linkingAccountId !== null || channels.isLoading || botPool.isLoading
+						}
 					>
-						{link.isPending ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
-						Link
+						{linkingAccountId ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
+						{linkingAccountId ? "Linking…" : "Link"}
 					</Button>
 				</div>
 				{channels.error || botPool.error ? (
@@ -2290,6 +2317,8 @@ function LinkedChannelRow({
 }) {
 	const pair = useCreatePairCode(link.account_id);
 	const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
+	const [creatingPairCode, setCreatingPairCode] = useState(false);
+	const pairInFlightRef = useRef(false);
 	// The list-by-agent payload may omit the nested `account`. Fall back to the
 	// loaded channels/bot-pool summary, then to the raw account id, so a missing
 	// account NEVER white-screens (apps/web/src has no ErrorBoundary).
@@ -2297,11 +2326,17 @@ function LinkedChannelRow({
 	const provider = account?.provider ?? "";
 	const name = account?.name ?? "Unnamed channel";
 	async function createPairCode() {
+		if (pairInFlightRef.current) return;
+		pairInFlightRef.current = true;
+		setCreatingPairCode(true);
 		try {
 			const data = await pair.execute({ agent_link_id: link.id });
 			setCode({ code: data.code, expires_at: data.expires_at });
 		} catch {
 			// useCreatePairCode already surfaces the API error.
+		} finally {
+			pairInFlightRef.current = false;
+			setCreatingPairCode(false);
 		}
 	}
 	return (
@@ -2318,11 +2353,11 @@ function LinkedChannelRow({
 				<Button
 					variant="outline"
 					size="sm"
-					disabled={pair.isPending}
+					disabled={creatingPairCode}
 					onClick={() => void createPairCode()}
 				>
-					<QrCode className="size-3.5" />
-					Pair code
+					{creatingPairCode ? <Spinner className="size-3.5" /> : <QrCode className="size-3.5" />}
+					{creatingPairCode ? "Creating code…" : "Pair code"}
 				</Button>
 				<ConfirmAction
 					title="Unlink this channel?"
@@ -2338,7 +2373,7 @@ function LinkedChannelRow({
 						disabled={unlinking}
 						aria-label="Unlink channel"
 					>
-						<Link2Off className="size-4" />
+						{unlinking ? <Spinner className="size-4" /> : <Link2Off className="size-4" />}
 					</Button>
 				</ConfirmAction>
 			</div>

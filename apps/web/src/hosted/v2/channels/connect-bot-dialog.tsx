@@ -2,6 +2,7 @@
 
 import { Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
@@ -29,10 +30,7 @@ import {
 	discordGuildIdError,
 	discordPublicKeyError,
 } from "@/hosted/v2/channels/connect-bot-dialog.logic";
-import {
-	channelDialogOpenChangeAllowed,
-	WHATSAPP_LINKING_READY,
-} from "@/hosted/v2/channels/link-agent-dialog.logic";
+import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/link-agent-dialog.logic";
 
 /**
  * Connect a channel. Each provider takes its OWN real inputs (grounded in
@@ -57,7 +55,11 @@ export function ConnectBotDialog({
 	const [publicKey, setPublicKey] = useState("");
 	const [guildId, setGuildId] = useState("");
 	const [created, setCreated] = useState<ChannelCreated | null>(null);
+	const [submitting, setSubmitting] = useState(false);
 	const submitLocked = useRef(false);
+	const openRef = useRef(open);
+	const dialogSessionRef = useRef(0);
+	openRef.current = open;
 
 	useEffect(() => {
 		if (!open) return;
@@ -76,7 +78,7 @@ export function ConnectBotDialog({
 	const applicationIdError = discordSelected ? discordApplicationIdError(applicationId) : null;
 	const publicKeyError = discordSelected ? discordPublicKeyError(publicKey) : null;
 	const guildIdError = discordSelected ? discordGuildIdError(guildId) : null;
-	const isSubmitting = create.isPending || submitLocked.current;
+	const isSubmitting = submitting || create.isPending;
 
 	function changeProvider(next: ChannelProviderId) {
 		if (next === "whatsapp" && !WHATSAPP_LINKING_READY) return;
@@ -122,20 +124,29 @@ export function ConnectBotDialog({
 		const body = buildBody();
 		if (!body) return;
 		submitLocked.current = true;
+		setSubmitting(true);
+		const dialogSession = dialogSessionRef.current;
 		try {
 			const data = await create.execute(body);
 			setToken("");
-			setCreated(data);
+			if (openRef.current && dialogSessionRef.current === dialogSession) {
+				setCreated(data);
+			} else {
+				toast.success("Channel connected", {
+					description: `${data.name} is ready on the Channels page.`,
+				});
+			}
 		} catch {
 			// useCreateChannel already surfaces the API error; retain the token for retry.
 		} finally {
 			submitLocked.current = false;
+			setSubmitting(false);
 		}
 	}
 
 	function handleOpenChange(nextOpen: boolean) {
-		if (!channelDialogOpenChangeAllowed(nextOpen, create.isPending || submitLocked.current)) return;
 		if (!nextOpen) {
+			dialogSessionRef.current += 1;
 			setToken("");
 			setCreated(null);
 		}
@@ -189,11 +200,7 @@ export function ConnectBotDialog({
 							/>
 						) : null}
 						<DialogFooter>
-							<Button
-								variant="outline"
-								onClick={() => handleOpenChange(false)}
-								disabled={isSubmitting}
-							>
+							<Button variant="outline" onClick={() => handleOpenChange(false)}>
 								Close
 							</Button>
 							<Button
@@ -367,15 +374,11 @@ export function ConnectBotDialog({
 						</div>
 
 						<DialogFooter>
-							<Button
-								variant="outline"
-								onClick={() => handleOpenChange(false)}
-								disabled={isSubmitting}
-							>
-								Cancel
+							<Button variant="outline" onClick={() => handleOpenChange(false)}>
+								{isSubmitting ? "Close" : "Cancel"}
 							</Button>
 							<Button onClick={() => void submit()} disabled={!canSubmit || isSubmitting}>
-								{create.isPending ? "Connecting…" : "Connect"}
+								{isSubmitting ? "Connecting…" : "Connect"}
 							</Button>
 						</DialogFooter>
 					</>

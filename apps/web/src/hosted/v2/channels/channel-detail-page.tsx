@@ -215,6 +215,25 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	const health = useChannelHealth();
 	const router = useRouter();
 	const del = useDeleteChannel();
+	const [removing, setRemoving] = useState(false);
+	const removeLockedRef = useRef(false);
+
+	function removeChannel() {
+		if (removeLockedRef.current) return;
+		removeLockedRef.current = true;
+		setRemoving(true);
+		void (async () => {
+			try {
+				await del.mutateAsync(id);
+				await router.navigate({ href: "/channels" });
+			} catch {
+				// useDeleteChannel already surfaces the API error.
+			} finally {
+				removeLockedRef.current = false;
+				setRemoving(false);
+			}
+		})();
+	}
 
 	useSetBreadcrumbTitle(channel.data?.name);
 
@@ -297,15 +316,15 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 						}
 						confirmLabel="Remove channel"
 						destructive
-						onConfirm={() =>
-							del.mutateAsync(id, {
-								onSuccess: () => void router.navigate({ href: "/channels" }),
-							})
-						}
+						onConfirm={removeChannel}
 					>
-						<Button variant="outline" className="text-muted-foreground hover:text-destructive">
-							<Trash2 className="size-4" />
-							Remove
+						<Button
+							variant="outline"
+							className="text-muted-foreground hover:text-destructive"
+							disabled={removing}
+						>
+							{removing ? <Spinner className="size-4" /> : <Trash2 className="size-4" />}
+							{removing ? "Removing…" : "Remove"}
 						</Button>
 					</ConfirmAction>
 				}
@@ -490,6 +509,8 @@ function AgentsTab({
 	const rotationControllersRef = useRef<Map<string, AbortController>>(new Map());
 	const rotatingLinksRef = useRef<Set<string>>(new Set());
 	const [rotatingLinks, setRotatingLinks] = useState<ReadonlySet<string>>(() => new Set());
+	const unlinkingLinksRef = useRef<Set<string>>(new Set());
+	const [unlinkingLinks, setUnlinkingLinks] = useState<ReadonlySet<string>>(() => new Set());
 	const hasTokenAtRisk = hasAtRiskRotatedToken(rotated, rotatingLinks.size > 0);
 	const tokenAtRiskRef = useRef(hasTokenAtRisk);
 	tokenAtRiskRef.current = hasTokenAtRisk;
@@ -557,6 +578,26 @@ function AgentsTab({
 		});
 	}
 
+	function unlinkAgent(linkId: string) {
+		if (unlinkingLinksRef.current.has(linkId)) return;
+		unlinkingLinksRef.current.add(linkId);
+		setUnlinkingLinks((prev) => new Set(prev).add(linkId));
+		void (async () => {
+			try {
+				await unlink.mutateAsync(linkId);
+			} catch {
+				// useUnlinkChannelAgent already surfaces the API error.
+			} finally {
+				unlinkingLinksRef.current.delete(linkId);
+				setUnlinkingLinks((prev) => {
+					const next = new Set(prev);
+					next.delete(linkId);
+					return next;
+				});
+			}
+		})();
+	}
+
 	function leaveWithoutToken() {
 		tokenAtRiskRef.current = false;
 		for (const controller of rotationControllersRef.current.values()) controller.abort();
@@ -615,6 +656,7 @@ function AgentsTab({
 				<div className="flex flex-col gap-2">
 					{items.map((link: ChannelAgentLink) => {
 						const isRotating = rotatingLinks.has(link.id);
+						const isUnlinking = unlinkingLinks.has(link.id);
 						return (
 							<div key={link.id} className={ENTITY_CARD_BASE}>
 								<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -646,16 +688,20 @@ function AgentsTab({
 												description={<p>It stops sending and receiving on {accountName}.</p>}
 												confirmLabel="Unlink"
 												destructive
-												onConfirm={() => unlink.mutateAsync(link.id)}
+												onConfirm={() => unlinkAgent(link.id)}
 											>
 												<Button
 													variant="ghost"
 													size="icon-sm"
 													className="text-muted-foreground hover:text-destructive"
-													disabled={unlink.isPending && unlink.variables === link.id}
+													disabled={isUnlinking}
 													aria-label="Unlink agent"
 												>
-													<Link2Off className="size-4" />
+													{isUnlinking ? (
+														<Spinner className="size-4" />
+													) : (
+														<Link2Off className="size-4" />
+													)}
 												</Button>
 											</ConfirmAction>
 										</div>
@@ -726,6 +772,12 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 	const revoke = useRevokeWhatsappTenantCred(accountId);
 	const ownership = useAgentOwnership();
 	const [linkId, setLinkId] = useState("");
+	const [creatingCredential, setCreatingCredential] = useState(false);
+	const createCredentialLockedRef = useRef(false);
+	const revokingCredentialsRef = useRef<Set<string>>(new Set());
+	const [revokingCredentials, setRevokingCredentials] = useState<ReadonlySet<string>>(
+		() => new Set(),
+	);
 
 	const linkItems = links.data ?? [];
 	const devices = creds.data ?? [];
@@ -735,6 +787,42 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 		value: link.id,
 		label: envName(envs.data, link.agent_id, ownership),
 	}));
+
+	function linkDevice() {
+		if (!effectiveLink || createCredentialLockedRef.current) return;
+		createCredentialLockedRef.current = true;
+		setCreatingCredential(true);
+		void (async () => {
+			try {
+				await create.execute({ agent_link_id: effectiveLink });
+			} catch {
+				// useCreateWhatsappTenantCred already surfaces the API error.
+			} finally {
+				createCredentialLockedRef.current = false;
+				setCreatingCredential(false);
+			}
+		})();
+	}
+
+	function revokeDevice(credentialId: string) {
+		if (revokingCredentialsRef.current.has(credentialId)) return;
+		revokingCredentialsRef.current.add(credentialId);
+		setRevokingCredentials((prev) => new Set(prev).add(credentialId));
+		void (async () => {
+			try {
+				await revoke.mutateAsync(credentialId);
+			} catch {
+				// useRevokeWhatsappTenantCred already surfaces the API error.
+			} finally {
+				revokingCredentialsRef.current.delete(credentialId);
+				setRevokingCredentials((prev) => {
+					const next = new Set(prev);
+					next.delete(credentialId);
+					return next;
+				});
+			}
+		})();
+	}
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -805,14 +893,13 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 							</Select>
 						</div>
 					) : null}
-					<Button
-						onClick={() => {
-							if (effectiveLink) void create.execute({ agent_link_id: effectiveLink });
-						}}
-						disabled={!effectiveLink || create.isPending}
-					>
-						<Smartphone className="size-4" />
-						{create.isPending ? "Minting…" : "Link a device"}
+					<Button onClick={linkDevice} disabled={!effectiveLink || creatingCredential}>
+						{creatingCredential ? (
+							<Spinner className="size-4" />
+						) : (
+							<Smartphone className="size-4" />
+						)}
+						{creatingCredential ? "Linking device…" : "Link a device"}
 					</Button>
 				</div>
 			)}
@@ -855,16 +942,20 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 								description={<p>The WhatsApp credential is revoked. This can't be undone.</p>}
 								confirmLabel="Unlink"
 								destructive
-								onConfirm={() => revoke.mutateAsync(d.credential_id)}
+								onConfirm={() => revokeDevice(d.credential_id)}
 							>
 								<Button
 									variant="ghost"
 									size="icon-sm"
 									className="text-muted-foreground hover:text-destructive"
-									disabled={revoke.isPending}
+									disabled={revokingCredentials.has(d.credential_id)}
 									aria-label="Unlink device"
 								>
-									<Trash2 className="size-4" />
+									{revokingCredentials.has(d.credential_id) ? (
+										<Spinner className="size-4" />
+									) : (
+										<Trash2 className="size-4" />
+									)}
 								</Button>
 							</ConfirmAction>
 						</div>
@@ -911,13 +1002,14 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	const [result, setResult] = useState<PairCodeResult | null>(null);
 	const [revealedAgentToken, setRevealedAgentToken] = useState<RevealedAgentToken | null>(null);
 	const [nowMs, setNowMs] = useState(() => Date.now());
+	const [generating, setGenerating] = useState(false);
 	const agentItems = (envs.data ?? []).map((env) => ({
 		value: env.id,
 		label: envName(envs.data, env.id, ownership),
 	}));
 	const generateLocked = useRef(false);
 	const meta = providerMeta(provider);
-	const isGenerating = create.isPending || generateLocked.current;
+	const isGenerating = generating || create.isPending;
 	const linkedAgentCount = links.data?.length ?? 0;
 	const requiresExplicitAgent = pairCodeRequiresExplicitAgent(linkedAgentCount);
 	const selectionMessage =
@@ -949,6 +1041,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 	function generate() {
 		if (!canGenerate || generateLocked.current) return;
 		generateLocked.current = true;
+		setGenerating(true);
 		setResult(null);
 		void (async () => {
 			try {
@@ -971,6 +1064,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 				// useSensitiveAction already surfaces the API error.
 			} finally {
 				generateLocked.current = false;
+				setGenerating(false);
 			}
 		})();
 	}
@@ -1323,6 +1417,24 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 	const meta = providerMeta(provider);
 	const supportsCommands = provider === "telegram" || provider === "discord";
 	const commands = sync.data?.commands ?? [];
+	const [syncing, setSyncing] = useState(false);
+	const syncLockedRef = useRef(false);
+
+	function syncCommands() {
+		if (syncLockedRef.current) return;
+		syncLockedRef.current = true;
+		setSyncing(true);
+		void (async () => {
+			try {
+				await sync.mutateAsync();
+			} catch {
+				// useSyncCommands already surfaces the API error.
+			} finally {
+				syncLockedRef.current = false;
+				setSyncing(false);
+			}
+		})();
+	}
 
 	return (
 		<div className="flex flex-col gap-4">
@@ -1334,9 +1446,9 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 
 			{supportsCommands ? (
 				<>
-					<Button onClick={() => sync.mutate()} disabled={sync.isPending}>
-						<RefreshCw className="size-4" />
-						{sync.isPending ? "Syncing…" : "Sync commands"}
+					<Button onClick={syncCommands} disabled={syncing}>
+						{syncing ? <Spinner className="size-4" /> : <RefreshCw className="size-4" />}
+						{syncing ? "Syncing…" : "Sync commands"}
 					</Button>
 					{commands.length > 0 ? (
 						<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-2")}>
