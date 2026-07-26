@@ -60,11 +60,25 @@ describe("deploymentFailureReason", () => {
 		});
 
 		expect(deploymentFailureProjection(deployment)).toEqual({
-			reason: actionableReason,
+			reason: "Top up your wallet and retry the plan change.",
 			failedVerb: "plan_change",
 			retryable: false,
 			code: "operation_aborted",
 		});
+	});
+
+	test("removes internal operation and deployment references from visible failures", () => {
+		expect(
+			deploymentFailureReason({
+				failure: {
+					title: " ",
+					phase: "plan_change",
+					detail:
+						"Try again. Operation ID: operations/op-secret. Deployment ID: hdep_internal. Agent ID: 123e4567-e89b-42d3-a456-426614174000.",
+					conditionMessage: "Plan change failed.",
+				},
+			}),
+		).toBe("Try again.");
 	});
 
 	test("does not expose a stale failure outside the authoritative failed state", () => {

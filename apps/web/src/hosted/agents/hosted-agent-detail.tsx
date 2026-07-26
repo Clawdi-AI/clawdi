@@ -956,7 +956,7 @@ function OverviewProvisioningPanel({
 }
 
 function DeploymentFailureReasonText({ reason }: { reason: string }) {
-	return <p className="mt-2 whitespace-pre-wrap break-words font-mono text-xs">{reason}</p>;
+	return <p className="mt-2 whitespace-pre-wrap break-words text-sm">{reason}</p>;
 }
 
 function OverviewFailedPanel({
@@ -1568,9 +1568,9 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 			if (terminalRequestRef.current !== requestId) return;
 			if (!session.websocket_url) {
 				setTerminalStatus("disconnected");
-				setTerminalFailure("The deployment did not return a terminal websocket URL.");
+				setTerminalFailure("The secure terminal could not be opened. Try again.");
 				toast.error("Terminal unavailable", {
-					description: "The deployment did not return a terminal websocket URL.",
+					description: "The secure terminal could not be opened. Try again.",
 				});
 				return;
 			}
@@ -1677,11 +1677,10 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 						</div>
 						<div>
 							<h2 className="text-base font-semibold">
-								{terminalFailure ? "Terminal unavailable" : "Opening deployment terminal"}
+								{terminalFailure ? "Terminal unavailable" : "Opening secure terminal"}
 							</h2>
 							<p className="mt-1 text-sm text-muted-foreground">
-								{terminalFailure ??
-									"Starting a real shell in the hosted deployment as the default runtime user."}
+								{terminalFailure ?? "Starting a secure shell for your agent."}
 							</p>
 						</div>
 						{terminalFailure ? (

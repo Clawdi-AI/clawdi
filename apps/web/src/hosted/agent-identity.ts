@@ -14,7 +14,8 @@ import { runtimeDisplayName } from "@/hosted/runtimes";
  * a 422 against `/v1/sessions`.
  */
 const CLOUD_ENV_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const GENERATED_DEPLOYMENT_NAME_RE = /^deployment-create-/i;
+const GENERATED_DEPLOYMENT_NAME_RE =
+	/^(?:deployment-create-|clawdi-v\d+-deployment(?:-|$)|v\d+-hosted(?:-|$))/i;
 
 /** Whether `value` looks like a real cloud-api env id (UUID), not a deployment id. */
 export function isCloudEnvId(value: string): boolean {

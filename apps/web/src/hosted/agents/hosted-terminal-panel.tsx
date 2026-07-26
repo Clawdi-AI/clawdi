@@ -210,7 +210,7 @@ export function HostedTerminalPanel({ websocketUrl, onStatusChange }: HostedTerm
 					return;
 				}
 				setStatus("disconnected");
-				writeTerminalNotice(term, "terminal websocket could not be opened");
+				writeTerminalNotice(term, "secure terminal could not be opened");
 				return;
 			}
 			ws.binaryType = "arraybuffer";
