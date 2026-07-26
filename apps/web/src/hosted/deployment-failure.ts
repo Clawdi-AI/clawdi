@@ -24,7 +24,10 @@ export function deploymentFailureReason(input: {
 			? [failure.detail, failure.title, failure.conditionMessage]
 			: [failure?.title, failure?.conditionMessage];
 	for (const candidate of candidates) {
-		const reason = (candidate ?? "").trim();
+		// Backend reasons are concatenated from conditions, so they arrive with
+		// ragged padding. Collapse it once here — every label and tooltip is
+		// derived from this value.
+		const reason = (candidate ?? "").replace(/\s+/g, " ").trim();
 		if (reason) return reason;
 	}
 	return null;
