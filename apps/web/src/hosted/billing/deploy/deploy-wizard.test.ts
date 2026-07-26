@@ -51,8 +51,9 @@ describe("deploy wizard product copy and flow", () => {
 		expect(wizardSource).not.toContain('title="Link after deploy"');
 	});
 
-	test("links checkout fallback recovery to the agents list", () => {
-		expect(wizardSource).toContain('label: "View agents"');
+	test("links unresolved post-payment recovery to the agents list", () => {
+		expect(wizardSource).toContain("submitError.blocksRetry");
+		expect(wizardSource).toContain("View agents");
 		expect(wizardSource).toContain('router.navigate({ href: "/agents" })');
 	});
 });
@@ -132,5 +133,43 @@ describe("billing-read gates", () => {
 		expect(wizardSource).toContain('title="Couldn\'t load compute plans"');
 		expect(wizardSource).toContain('title="Couldn\'t load your Wallet balance"');
 		expect(wizardSource).toContain("onRetry={() => void wallet.refetch()}");
+	});
+});
+
+describe("deploy acceptance", () => {
+	test("pauses quote reads, submits the last successful quote, and navigates on acceptance", () => {
+		expect(wizardSource).toContain('enabled: paymentMethod === "wallet" && !submitting');
+		expect(wizardSource).toContain(
+			"const lastSuccessfulSubscriptionQuote = subscriptionCreateQuote.data ?? null;",
+		);
+		expect(wizardSource.match(/quote: lastSuccessfulSubscriptionQuote/g)).toHaveLength(3);
+		expect(wizardSource).toContain(
+			"submitting || lastSuccessfulSubscriptionQuote ? null : subscriptionCreateQuote.error;",
+		);
+		expect(wizardSource).not.toContain("await subscriptionCreateQuote.refetch()");
+		expect(wizardSource).not.toContain("subscription-checkout-hosted-fallback");
+		expect(wizardSource).toContain("fallbackUrl: checkoutRedirectUrl(result)");
+		const onDeployStart = wizardSource.indexOf("async function onDeploy()");
+		const walletBranch = wizardSource.slice(
+			wizardSource.indexOf('if (paymentMethod === "wallet")', onDeployStart),
+			wizardSource.indexOf("const checkoutFingerprint"),
+		);
+		expect(walletBranch).not.toContain("refreshCheckoutReturn");
+		expect(walletBranch).not.toContain("recheckCanCreateCloudAgents");
+		expect(wizardSource).toContain(
+			"router.navigate(acceptedDeploymentNavigation(outcome.deploymentId))",
+		);
+	});
+
+	test("shows a scoped honest busy state and keeps a persistent actionable failure", () => {
+		expect(wizardSource).toContain("setSubmitBusyLabel(");
+		expect(wizardSource).toContain('"Confirming payment & creating agent…"');
+		expect(wizardSource).toContain('"Opening secure checkout…"');
+		expect(wizardSource).toContain('"Creating agent…"');
+		expect(wizardSource).toContain('<Spinner data-icon="inline-start" />');
+		expect(wizardSource).toContain("{submitting ? submitBusyLabel : deployLabel}");
+		expect(wizardSource).toContain('role="alert"');
+		expect(wizardSource).toContain("Your choices are unchanged; review them and try again.");
+		expect(wizardSource).not.toContain('submitting ? "Working…"');
 	});
 });

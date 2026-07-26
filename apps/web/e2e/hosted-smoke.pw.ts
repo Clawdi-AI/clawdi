@@ -1013,6 +1013,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 								client_secret: null,
 							},
 						});
+			if (response.delayMs) {
+				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			}
 			if (response.status < 400 && request.funding_source === "wallet") {
 				options.onWalletCheckoutSuccess?.();
 			}
@@ -2163,7 +2166,7 @@ test("Basic create always follows the wizard-selected funding path", async ({ pa
 	expect(errors, `funded Basic deploy: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("entitled card subscription activation shows reuse banner without checkout", async ({
+test("entitled card subscription activation opens the accepted deployment without checkout", async ({
 	page,
 }) => {
 	const errors = collectBrowserErrors(page);
@@ -2178,6 +2181,7 @@ test("entitled card subscription activation shows reuse banner without checkout"
 					funding_source: "stripe",
 					checkout_url: "",
 					deploy_request_id: "reuse-active-subscription",
+					deployment_id: "hdep_included",
 					current_period_end: "2027-07-15T00:00:00Z",
 					entitled_until: "2027-07-15T00:00:00Z",
 				},
@@ -2191,16 +2195,10 @@ test("entitled card subscription activation shows reuse banner without checkout"
 
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
 	await expect.poll(() => checkoutRequests.length).toBe(1);
-	const banner = page.getByTestId("subscription-reuse-banner");
-	await expect(banner).toBeVisible();
-	await expect(banner).toContainText(
-		"Reusing your active subscription — valid until Jul 15, 2027, no additional charge.",
-	);
+	await expect(page).toHaveURL(/\/agents\/hdep_included(?:\?|\/)/);
+	await expect(page.getByText("Agent deployment started", { exact: true })).toBeVisible();
 	await expect(page.getByRole("dialog", { name: /Complete .* checkout/ })).toHaveCount(0);
 	await expect(page.getByText("Mock secure payment form", { exact: true })).toHaveCount(0);
-	await expect(
-		page.getByRole("button", { name: "Deployment started", exact: true }),
-	).toBeDisabled();
 	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({
 		funding_source: "stripe",
 		deploy_config: { compute_plan_slug: "compute_basic" },
@@ -2255,6 +2253,21 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 	const subscriptionQuoteRequests: string[] = [];
 	await stubHostedApi(page, {
 		checkoutRequests,
+		checkoutResponses: [
+			{
+				status: 202,
+				delayMs: 500,
+				body: {
+					flow_type: "subscription_activation",
+					funding_source: "wallet",
+					checkout_url: "",
+					deployment_id: "hdep_wallet_created",
+					deploy_request_id: "wallet-annual-delayed",
+					debited_usd: "100.00",
+					balance_after_usd: "0.00",
+				},
+			},
+		],
 		deployments,
 		plans: [basicPlan, performancePlan],
 		subscriptionQuoteRequests,
@@ -2288,6 +2301,11 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 	await expect(equation).toContainText("$0.00");
 
 	await page.getByRole("button", { name: "Pay $100.00 from Wallet & deploy" }).click();
+	const accepting = page.getByRole("button", { name: "Confirming payment & creating agent…" });
+	await expect(accepting).toBeDisabled();
+	await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+	await page.waitForTimeout(100);
+	expect(subscriptionQuoteRequests).toHaveLength(1);
 	await expect.poll(() => checkoutRequests.length).toBe(1);
 	const quote = JSON.parse(subscriptionQuoteRequests[0] ?? "{}");
 	const activation = JSON.parse(checkoutRequests[0] ?? "{}");
@@ -2312,7 +2330,7 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 	await expect(page).toHaveURL(/\/agents\/hdep_wallet_created(?:\?|\/)/);
 	await expect(page.getByText("Agent deployment started", { exact: true })).toBeVisible();
 	await expect(
-		page.getByText("Your Basic agent is provisioning now. $100.00 was paid from Wallet.", {
+		page.getByText("Your Basic agent is getting ready now. $100.00 was paid from Wallet.", {
 			exact: true,
 		}),
 	).toBeVisible();

@@ -86,6 +86,7 @@ import {
 	billingErrorNormalizer,
 	DeploymentRequestTerminalError,
 	isIdempotencyKeyReusedError,
+	isNetworkError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 import {
@@ -155,14 +156,13 @@ import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picke
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
-import { formatShortDate } from "@/lib/format";
-import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { cn } from "@/lib/utils";
 
 type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
 	clientSecret: string;
+	fallbackUrl: string | null;
 	previousDeploymentIds: string[];
 	request: SubscriptionCreateRequestView;
 	summary: StripeCheckoutSummary;
@@ -174,9 +174,6 @@ type PaidDeploySelection = {
 	offer: BillingOffer;
 	plan: Plan;
 	tierLabel: "Basic" | "Performance";
-};
-type SubscriptionReuseNotice = {
-	validUntil: string | null;
 };
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
@@ -362,7 +359,6 @@ export function DeployWizard() {
 		onCancelCopy: "You were not charged. Your agent was not deployed.",
 		onNavigate: navigateCheckoutReturn,
 	});
-	const hostedAccess = useHostedProductAccess();
 	const plans = usePlans();
 	const deployments = useHostedDeployments();
 	const managedModelCatalog = useManagedModelCatalog();
@@ -386,10 +382,18 @@ export function DeployWizard() {
 	const [timezone, setTimezone] = useState("");
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
-	const [subscriptionReuseNotice, setSubscriptionReuseNotice] =
-		useState<SubscriptionReuseNotice | null>(null);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
+	const [submitTakingLong, setSubmitTakingLong] = useState(false);
+	const [submitError, setSubmitError] = useState<{
+		blocksRetry?: boolean;
+		description: string;
+		title: string;
+	} | null>(null);
+	const [submitBusyLabel, setSubmitBusyLabel] = useState("Creating agent…");
+	const [submitTakingLongCopy, setSubmitTakingLongCopy] = useState(
+		"Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+	);
 	const [paymentMethod, setPaymentMethod] = useState<DeployPaymentMethod>("card");
 	const walletTopUp = useWalletTopUpDialog(SUBSCRIPTION_WALLET_FUNDING_ERROR_COPY);
 
@@ -399,6 +403,11 @@ export function DeployWizard() {
 		setTimezone((tz) => tz || browserTimezone());
 		setLanguage((lang) => lang || browserLanguage());
 	}, []);
+	useEffect(() => {
+		if (!submitting) return;
+		const timeout = window.setTimeout(() => setSubmitTakingLong(true), 5_000);
+		return () => window.clearTimeout(timeout);
+	}, [submitting]);
 	const tzOptions = useMemo(() => {
 		const all = supportedTimezones();
 		if (timezone && !all.includes(timezone)) return [timezone, ...all];
@@ -467,9 +476,13 @@ export function DeployWizard() {
 		enabled: paymentMethod === "wallet",
 	});
 	const subscriptionCreateQuote = useSubscriptionCreateQuote(subscriptionCreateSelection, {
-		enabled: paymentMethod === "wallet",
+		enabled: paymentMethod === "wallet" && !submitting,
 	});
-	const walletDebit = subscriptionCreateQuote.data?.walletDebit ?? null;
+	const lastSuccessfulSubscriptionQuote = subscriptionCreateQuote.data ?? null;
+	const visibleSubscriptionQuoteError =
+		submitting || lastSuccessfulSubscriptionQuote ? null : subscriptionCreateQuote.error;
+	const visibleSubscriptionQuoteFetching = !submitting && subscriptionCreateQuote.isFetching;
+	const walletDebit = lastSuccessfulSubscriptionQuote?.walletDebit ?? null;
 	const walletShortfallUsd = walletDebitShortfallUsd(walletDebit);
 	const walletInsufficient = walletShortfallUsd !== null;
 	const basicUnavailable = basicSelection.mode === "unavailable";
@@ -528,15 +541,14 @@ export function DeployWizard() {
 					? "Retry loading your Wallet balance above."
 					: "Loading your Wallet balance.";
 			}
-			if (subscriptionCreateQuote.error) return "Retry the Wallet quote above.";
-			if (subscriptionCreateQuote.isFetching) return "Refreshing your Wallet quote.";
+			if (visibleSubscriptionQuoteError) return "Retry the Wallet quote above.";
+			if (visibleSubscriptionQuoteFetching) return "Refreshing your Wallet quote.";
 			if (!walletDebit) return "Waiting for your Wallet quote.";
 			if (walletInsufficient) return "Top up your Wallet to continue.";
 		}
 		return null;
 	})();
-	const canSubmit =
-		!submitting && subscriptionReuseNotice === null && submitBlockingReason === null;
+	const canSubmit = !submitting && !submitError?.blocksRetry && submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
 		selectCreatedAiProvider(providerId, aiProviders.dataUpdatedAt);
@@ -612,135 +624,116 @@ export function DeployWizard() {
 		return false;
 	}
 
-	async function recheckCanCreateCloudAgents(): Promise<boolean> {
-		const available = await hostedAccess.recheckCanCreateCloudAgents();
-		if (!available) {
-			setCheckoutSession(null);
-			walletTopUp.reset();
-		}
-		return available;
-	}
-
-	function showSubscriptionReuseNotice({
-		currentPeriodEnd,
-		entitledUntil,
-	}: {
-		currentPeriodEnd: string | null;
-		entitledUntil: string | null;
-	}) {
+	function navigateToReusedSubscription({ deploymentId }: { deploymentId: string }) {
 		setCheckoutSession(null);
-		setSubscriptionReuseNotice({
-			validUntil: currentPeriodEnd ?? entitledUntil,
-		});
 		toast.success("Agent deployment started", {
-			description: "Your active subscription was reused without another charge.",
+			description:
+				"Your active subscription was reused without another charge. Your agent is getting ready now.",
 		});
+		void router.navigate(acceptedDeploymentNavigation(deploymentId));
 	}
-	async function fallbackToHostedCheckout(request: SubscriptionCreateRequestView) {
-		if (!(await recheckCanCreateCloudAgents())) return;
-		const fingerprint = idempotencyFingerprint({
-			selection: request.selection,
-			target: request.target,
-			uiMode: "hosted",
-			quote: request.quote,
-		});
-		checkoutAttemptRef.current = idempotencyAttemptFor(
-			checkoutAttemptRef.current,
-			"subscription-checkout-hosted-fallback",
-			fingerprint,
-			newIdempotencyKey,
-		);
-		const outcome = await createSubscription
-			.execute({
-				...request,
-				uiMode: "hosted",
-				idempotencyKey: checkoutAttemptRef.current.key,
-			})
-			.catch((error: unknown) => {
-				if (isIdempotencyKeyReusedError(error)) {
-					forgetIdempotencyAttempt("subscription-checkout-hosted-fallback", fingerprint);
-					checkoutAttemptRef.current = null;
-				}
-				throw error;
-			});
-		if (outcome.flowType === "subscription_activation") {
-			forgetIdempotencyAttempt("subscription-checkout-hosted-fallback", fingerprint);
-			checkoutAttemptRef.current = null;
-			showSubscriptionReuseNotice(outcome);
-			return;
-		}
-		if (redirectTo(checkoutRedirectUrl(outcome.checkout))) return;
-		throw new Error("No checkout URL was returned.");
-	}
-
 	async function handleCheckoutComplete(
 		previousDeploymentIds: readonly string[],
 		tierLabel: "Basic" | "Performance",
 		request: SubscriptionCreateRequestView | null,
 	) {
 		setCheckoutSession(null);
+		setSubmitError(null);
+		setSubmitTakingLong(false);
+		setSubmitBusyLabel("Creating agent…");
+		setSubmitTakingLongCopy(
+			"Payment was confirmed and agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+		);
+		setSubmitting(true);
 		let requestFingerprint: string | null = null;
-		if (request) {
-			requestFingerprint = idempotencyFingerprint({
-				selection: request.selection,
-				target: request.target,
-			});
-			try {
-				const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
-				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
-				checkoutAttemptRef.current = null;
-				toast.success("Agent deployment started", {
-					description: `Your ${tierLabel} agent is provisioning now.`,
+		try {
+			if (request) {
+				requestFingerprint = idempotencyFingerprint({
+					selection: request.selection,
+					target: request.target,
 				});
-				void router.navigate(acceptedDeploymentNavigation(resolved.deploymentId, true));
-				return;
-			} catch (error) {
-				if (error instanceof DeploymentRequestTerminalError) {
+				try {
+					const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
 					forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 					checkoutAttemptRef.current = null;
-					toast.error("Couldn’t deploy", { description: normalizeBillingError(error) });
+					toast.success("Agent deployment started", {
+						description: `Your ${tierLabel} agent is getting ready now.`,
+					});
+					void router.navigate(acceptedDeploymentNavigation(resolved.deploymentId, true));
 					return;
+				} catch (error) {
+					if (error instanceof DeploymentRequestTerminalError) {
+						forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
+						checkoutAttemptRef.current = null;
+						const normalized = normalizeBillingError(error);
+						setSubmitError({
+							blocksRetry: true,
+							title: "Payment succeeded, but the agent could not be started",
+							description: `${normalized} Don’t submit another payment; check Agents for the latest state.`,
+						});
+						toast.error("Couldn’t create agent", { description: normalized });
+						return;
+					}
+					// Stripe may complete before its deployment request is visible. Fall back
+					// to one inventory refresh after the bounded request-status watch ends.
 				}
-				// Stripe may complete before its deploy request is visible. Fall back
-				// to the inventory refresh path and let normal polling pick it up.
 			}
-		}
-		let refreshedDeployments: Awaited<ReturnType<typeof refreshCheckoutReturn>>;
-		try {
-			refreshedDeployments = await refreshCheckoutReturn();
-		} catch {
-			toast.success("Checkout complete", {
-				description: `Your ${tierLabel} deployment is provisioning. We’ll refresh it on the next load.`,
-			});
-			return;
-		}
-		const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
-		if (deploymentId) {
+			let refreshedDeployments: Awaited<ReturnType<typeof refreshCheckoutReturn>>;
+			try {
+				refreshedDeployments = await refreshCheckoutReturn();
+			} catch {
+				setSubmitError({
+					blocksRetry: true,
+					title: "Payment succeeded; agent status is unavailable",
+					description:
+						"We couldn’t refresh your agent list. Don’t submit another payment; open Agents and check again in a moment.",
+				});
+				return;
+			}
+			const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
+			if (!deploymentId) {
+				setSubmitError({
+					blocksRetry: true,
+					title: "Payment succeeded; your agent is not visible yet",
+					description:
+						"Don’t submit another payment. Open Agents and check again in a moment while the accepted request appears.",
+				});
+				return;
+			}
 			if (requestFingerprint) {
 				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 				checkoutAttemptRef.current = null;
 			}
-			toast.success("Checkout complete", {
-				description: `Your ${tierLabel} deployment is provisioning now.`,
+			toast.success("Agent deployment started", {
+				description: `Your ${tierLabel} agent is getting ready now.`,
 			});
 			void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
-			return;
+		} finally {
+			setSubmitting(false);
+			setSubmitTakingLong(false);
 		}
-		toast.success("Checkout complete", {
-			description: `Your ${tierLabel} deployment is provisioning. Check your agents list in a moment.`,
-			action: {
-				label: "View agents",
-				onClick: () => void router.navigate({ href: "/agents" }),
-			},
-		});
 	}
 
 	async function onDeploy() {
 		if (!canSubmit) return;
-		setSubscriptionReuseNotice(null);
+		setSubmitError(null);
+		setSubmitTakingLong(false);
+		setSubmitBusyLabel(
+			paidSelection
+				? paymentMethod === "wallet"
+					? "Confirming payment & creating agent…"
+					: "Opening secure checkout…"
+				: "Creating agent…",
+		);
+		setSubmitTakingLongCopy(
+			paidSelection
+				? paymentMethod === "wallet"
+					? "Payment and agent creation are still being confirmed. Keep this page open; we’ll take you to your agent as soon as both are confirmed."
+					: "Secure checkout is still opening. No payment has been submitted yet; keep this page open to continue."
+				: "Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
+		);
 		setSubmitting(true);
 		try {
-			if (!(await recheckCanCreateCloudAgents())) return;
 			const aiFields = aiDeployFields();
 			if (!aiFields) return;
 			if (paidSelection) {
@@ -773,7 +766,7 @@ export function DeployWizard() {
 							target,
 							uiMode: CHECKOUT_ELEMENTS_UI_MODE,
 							idempotencyKey: attempt.key,
-							quote: subscriptionCreateQuote.data ?? null,
+							quote: lastSuccessfulSubscriptionQuote,
 						})
 						.catch((error: unknown) => {
 							if (isIdempotencyKeyReusedError(error)) {
@@ -783,12 +776,14 @@ export function DeployWizard() {
 							throw error;
 						});
 					if (outcome.flowType !== "subscription_activation") {
-						throw new Error("Wallet subscription returned a checkout flow.");
+						throw new Error(
+							"Wallet payment could not be confirmed. Review the payment method and try again.",
+						);
 					}
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
 					walletCreateAttemptRef.current = null;
 					toast.success("Agent deployment started", {
-						description: `Your ${paidSelection.tierLabel} agent is provisioning now. ${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(paidSelection.offer.price_cents)} was paid from Wallet.`,
+						description: `Your ${paidSelection.tierLabel} agent is getting ready now. ${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(paidSelection.offer.price_cents)} was paid from Wallet.`,
 					});
 					void router.navigate(acceptedDeploymentNavigation(outcome.deploymentId));
 					return;
@@ -806,7 +801,7 @@ export function DeployWizard() {
 						target,
 						uiMode: CHECKOUT_ELEMENTS_UI_MODE,
 						idempotencyKey: checkoutAttemptRef.current.key,
-						quote: subscriptionCreateQuote.data ?? null,
+						quote: lastSuccessfulSubscriptionQuote,
 					})
 					.catch((error: unknown) => {
 						if (isIdempotencyKeyReusedError(error)) {
@@ -818,13 +813,14 @@ export function DeployWizard() {
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
-					showSubscriptionReuseNotice(outcome);
+					navigateToReusedSubscription(outcome);
 					return;
 				}
 				const result = outcome.checkout;
 				if (hasCheckoutClientSecret(result)) {
 					setCheckoutSession({
 						clientSecret: result.client_secret,
+						fallbackUrl: checkoutRedirectUrl(result),
 						previousDeploymentIds: (deployments.data ?? []).map(
 							(deployment) => deployment.resource.id,
 						),
@@ -833,7 +829,7 @@ export function DeployWizard() {
 							target,
 							uiMode: CHECKOUT_ELEMENTS_UI_MODE,
 							idempotencyKey: checkoutAttemptRef.current.key,
-							quote: subscriptionCreateQuote.data ?? null,
+							quote: lastSuccessfulSubscriptionQuote,
 						},
 						summary: computeCheckoutSummary({
 							offer: paidSelection.offer,
@@ -846,10 +842,9 @@ export function DeployWizard() {
 					return;
 				}
 				if (redirectTo(checkoutRedirectUrl(result))) return;
-				toast.error("Couldn't start checkout", {
-					description: "No checkout URL was returned. Please try again.",
-				});
-				return;
+				throw new Error(
+					"Secure checkout could not be opened. Review the payment method and try again.",
+				);
 			}
 			const deployConfig = buildDeployRequest(aiFields, COMPUTE_BASIC_SLUG);
 			const fingerprint = idempotencyFingerprint(deployConfig);
@@ -872,33 +867,44 @@ export function DeployWizard() {
 			forgetIdempotencyAttempt("deployment-create", fingerprint);
 			includedCreateAttemptRef.current = null;
 			toast.success("Agent deployment started", {
-				description: "Your first Basic agent is provisioning now for free.",
+				description: "Your first Basic agent is getting ready now for free.",
 			});
 			void router.navigate(acceptedDeploymentNavigation(created.deploymentId));
 		} catch (e) {
+			const normalized = normalizeBillingError(e);
+			setSubmitError(
+				isNetworkError(e)
+					? {
+							title: "We couldn’t confirm this attempt",
+							description: `${normalized} Your choices are unchanged; retry to safely check the same payment attempt.`,
+						}
+					: {
+							title: "Your agent wasn’t created",
+							description: `${normalized} Your choices are unchanged; review them and try again.`,
+						},
+			);
 			if (paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
 				if (walletTopUp.handleFundingError(e)) return;
 			}
-			toast.error("Couldn’t deploy", { description: normalizeBillingError(e) });
+			toast.error("Couldn’t deploy", { description: normalized });
 		} finally {
 			setSubmitting(false);
+			setSubmitTakingLong(false);
 		}
 	}
 
-	const deployLabel = subscriptionReuseNotice
-		? "Deployment started"
-		: paidSelection
-			? paymentMethod === "wallet"
-				? subscriptionCreateQuote.isFetching
-					? "Getting wallet quote…"
-					: walletInsufficient
-						? "Top up to deploy"
-						: walletDebit
-							? `Pay ${formatUsdExact(walletDebit.debitAmountUsd)} from Wallet & deploy`
-							: "Review wallet quote"
-				: "Continue to checkout"
-			: "Deploy agent";
+	const deployLabel = paidSelection
+		? paymentMethod === "wallet"
+			? visibleSubscriptionQuoteFetching
+				? "Getting wallet quote…"
+				: walletInsufficient
+					? "Top up to deploy"
+					: walletDebit
+						? `Pay ${formatUsdExact(walletDebit.debitAmountUsd)} from Wallet & deploy`
+						: "Review wallet quote"
+			: "Continue to checkout"
+		: "Deploy agent";
 	const selectedProviderCount = aiAccessMode === "configured" ? selectedProviderChoices.length : 0;
 	const primaryProvider = providerList.find(
 		(provider) => provider.provider_id === primaryProviderChoice,
@@ -972,23 +978,6 @@ export function DeployWizard() {
 					title="Deploy an Agent"
 					description="Choose how your agent runs and which AI model it will use."
 				/>
-				{subscriptionReuseNotice ? (
-					<Alert
-						data-testid="subscription-reuse-banner"
-						aria-live="polite"
-						className="border-emerald-500/35 bg-emerald-500/5"
-					>
-						<Sparkles />
-						<AlertTitle>Active subscription reused</AlertTitle>
-						<AlertDescription>
-							{subscriptionReuseNotice.validUntil
-								? `Reusing your active subscription — valid until ${formatShortDate(
-										subscriptionReuseNotice.validUntil,
-									)}, no additional charge.`
-								: "Reusing your active subscription — no additional charge."}
-						</AlertDescription>
-					</Alert>
-				) : null}
 				<SettingsSection
 					title="Agent software"
 					description="Choose the software that will power your agent."
@@ -1268,14 +1257,14 @@ export function DeployWizard() {
 												onRetry={() => void wallet.refetch()}
 												title="Couldn't load your Wallet balance"
 											/>
-										) : subscriptionCreateQuote.isFetching && !subscriptionCreateQuote.data ? (
+										) : visibleSubscriptionQuoteFetching && !lastSuccessfulSubscriptionQuote ? (
 											<p className="text-sm text-muted-foreground" role="status">
 												Getting the exact wallet debit…
 											</p>
-										) : subscriptionCreateQuote.error ? (
+										) : visibleSubscriptionQuoteError ? (
 											<ApiErrorPanel
 												normalizer={billingErrorNormalizer}
-												error={subscriptionCreateQuote.error}
+												error={visibleSubscriptionQuoteError}
 												onRetry={() => void subscriptionCreateQuote.refetch()}
 												title="Couldn’t get subscription quote"
 											/>
@@ -1420,9 +1409,28 @@ export function DeployWizard() {
 								) : (
 									<Rocket data-icon="inline-start" />
 								)}
-								{submitting ? "Working…" : deployLabel}
+								{submitting ? submitBusyLabel : deployLabel}
 							</Button>
-							{submitBlockingReason ? (
+							{submitError ? (
+								<div className="max-w-sm text-xs text-destructive sm:text-right" role="alert">
+									<p className="font-medium">{submitError.title}</p>
+									<p>{submitError.description}</p>
+									{submitError.blocksRetry ? (
+										<Button
+											type="button"
+											variant="link"
+											className="h-auto px-0 text-destructive"
+											onClick={() => void router.navigate({ href: "/agents" })}
+										>
+											View agents
+										</Button>
+									) : null}
+								</div>
+							) : submitTakingLong ? (
+								<p className="max-w-sm text-xs text-muted-foreground sm:text-right" role="status">
+									{submitTakingLongCopy}
+								</p>
+							) : submitBlockingReason ? (
 								<p
 									id="deploy-blocking-reason"
 									className={cn(
@@ -1448,7 +1456,9 @@ export function DeployWizard() {
 			{wallet.data ? (
 				<TopUpDialog
 					{...walletTopUp.dialogProps}
-					onComplete={() => void subscriptionCreateQuote.refetch()}
+					onComplete={() => {
+						if (!submitting) void subscriptionCreateQuote.refetch();
+					}}
 				/>
 			) : null}
 			<StripeCheckoutDialog
@@ -1460,7 +1470,6 @@ export function DeployWizard() {
 				title={`Complete ${checkoutSession?.tierLabel ?? "compute"} checkout`}
 				description="Enter payment details without leaving this page. Redirect-based payment methods return here after confirmation."
 				summary={checkoutSession?.summary ?? null}
-				onBeforeConfirm={recheckCanCreateCloudAgents}
 				onComplete={() =>
 					void handleCheckoutComplete(
 						checkoutSession?.previousDeploymentIds ?? [],
@@ -1469,9 +1478,9 @@ export function DeployWizard() {
 					)
 				}
 				onFallback={() =>
-					checkoutSession
-						? fallbackToHostedCheckout(checkoutSession.request)
-						: Promise.reject(new Error("Missing checkout request."))
+					redirectTo(checkoutSession?.fallbackUrl)
+						? Promise.resolve()
+						: Promise.reject(new Error("Secure checkout fallback is unavailable."))
 				}
 			/>
 		</div>

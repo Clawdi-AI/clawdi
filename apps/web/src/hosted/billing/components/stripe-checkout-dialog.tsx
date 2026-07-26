@@ -32,7 +32,6 @@ export type StripeCheckoutSummary = {
 type StripeCheckoutDialogProps = {
 	clientSecret: string | null;
 	description: string;
-	onBeforeConfirm: () => Promise<boolean>;
 	onComplete: () => void;
 	onFallback: () => Promise<void>;
 	onOpenChange: (open: boolean) => void;
@@ -156,18 +155,17 @@ function CheckoutSummaryPanel({ summary }: { summary: StripeCheckoutSummary | nu
 }
 
 function CheckoutElementForm({
-	onBeforeConfirm,
 	onComplete,
 	onLoadError,
 	onSubmittingChange,
 }: {
-	onBeforeConfirm: () => Promise<boolean>;
 	onComplete: () => void;
 	onLoadError: (message: string) => void;
 	onSubmittingChange: (submitting: boolean) => void;
 }) {
 	const checkoutState = useCheckoutElements();
 	const [submitting, setSubmitting] = useState(false);
+	const [takingLong, setTakingLong] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const submittingRef = useRef(false);
 	const loadErrorMessage = checkoutState.type === "error" ? checkoutState.error.message : null;
@@ -175,8 +173,15 @@ function CheckoutElementForm({
 	function finishSubmitting() {
 		submittingRef.current = false;
 		setSubmitting(false);
+		setTakingLong(false);
 		onSubmittingChange(false);
 	}
+
+	useEffect(() => {
+		if (!submitting) return;
+		const timeout = window.setTimeout(() => setTakingLong(true), 5_000);
+		return () => window.clearTimeout(timeout);
+	}, [submitting]);
 
 	useEffect(() => {
 		if (loadErrorMessage) onLoadError(loadErrorMessage);
@@ -214,17 +219,6 @@ function CheckoutElementForm({
 		onSubmittingChange(true);
 		setError(null);
 		try {
-			if (!(await onBeforeConfirm())) {
-				setError("Checkout is temporarily unavailable. No payment was submitted.");
-				finishSubmitting();
-				return;
-			}
-		} catch {
-			setError("We couldn’t verify checkout availability. Please try again.");
-			finishSubmitting();
-			return;
-		}
-		try {
 			const result = await checkout.confirm({ redirect: "if_required" });
 			if (result.type === "error") {
 				setError(result.error.message || "We could not confirm this payment. Please try again.");
@@ -257,6 +251,12 @@ function CheckoutElementForm({
 					<AlertDescription>{error}</AlertDescription>
 				</Alert>
 			) : null}
+			{takingLong ? (
+				<p className="text-sm text-muted-foreground" role="status">
+					Your payment is still being confirmed. Keep this checkout open; we’ll continue as soon as
+					Stripe responds.
+				</p>
+			) : null}
 			<div className="flex justify-end">
 				<Button
 					type="button"
@@ -265,7 +265,7 @@ function CheckoutElementForm({
 				>
 					{submitting ? (
 						<>
-							<Spinner data-icon="inline-start" /> Processing…
+							<Spinner data-icon="inline-start" /> Confirming payment…
 						</>
 					) : (
 						"Subscribe"
@@ -279,7 +279,6 @@ function CheckoutElementForm({
 export function StripeCheckoutDialog({
 	clientSecret,
 	description,
-	onBeforeConfirm,
 	onComplete,
 	onFallback,
 	onOpenChange,
@@ -408,7 +407,6 @@ export function StripeCheckoutDialog({
 						options={providerOptions}
 					>
 						<CheckoutElementForm
-							onBeforeConfirm={onBeforeConfirm}
 							onComplete={completeCheckout}
 							onLoadError={handleProviderLoadError}
 							onSubmittingChange={setCheckoutSubmitting}
