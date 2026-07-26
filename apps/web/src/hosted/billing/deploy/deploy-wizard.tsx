@@ -5,6 +5,7 @@ import {
 	Cpu,
 	CreditCard,
 	Plus,
+	RefreshCw,
 	Rocket,
 	Settings2,
 	Sparkles,
@@ -417,16 +418,18 @@ export function DeployWizard() {
 		() => (basicPlan ? selectExplicitOfferForTerm(basicPlan, term) : null),
 		[basicPlan, term],
 	);
+	const activeIncludedBasicSlot = useMemo(
+		() => (deployments.isSuccess ? usesActiveIncludedBasicSlot(deployments.data) : null),
+		[deployments.data, deployments.isSuccess],
+	);
 	const basicSelection = useMemo(
 		() =>
 			resolveBasicDeploySelection({
 				basicPlan,
 				billingTermMonths: term,
-				includedSlotAvailable: deployments.isSuccess
-					? !usesActiveIncludedBasicSlot(deployments.data)
-					: null,
+				includedSlotAvailable: activeIncludedBasicSlot === null ? null : !activeIncludedBasicSlot,
 			}),
-		[basicPlan, deployments.data, deployments.isSuccess, term],
+		[activeIncludedBasicSlot, basicPlan, term],
 	);
 	const perfOfferSelection = useMemo(
 		() => (perfPlan ? selectOfferForTerm(perfPlan, term) : null),
@@ -1189,6 +1192,32 @@ export function DeployWizard() {
 									<Spinner className="size-3.5" /> Checking your free Basic slot…
 								</p>
 							)
+						) : null}
+						{deployments.isSuccess && activeIncludedBasicSlot === null ? (
+							<Alert data-hosted="true">
+								<TriangleAlert />
+								<AlertTitle>Free Basic slot availability is unknown</AlertTitle>
+								<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+									<span>
+										We can’t determine whether an existing agent occupies your included Basic slot.
+										No free slot is assumed.
+									</span>
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										disabled={deployments.isFetching}
+										onClick={() => void deployments.refetch()}
+									>
+										{deployments.isFetching ? (
+											<Spinner className="size-3.5" />
+										) : (
+											<RefreshCw className="size-3.5" />
+										)}
+										Check again
+									</Button>
+								</AlertDescription>
+							</Alert>
 						) : null}
 						<div className="grid gap-2 sm:grid-cols-2">
 							<EntityChoiceCard
