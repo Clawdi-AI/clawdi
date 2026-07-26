@@ -215,6 +215,7 @@ export function missingProjectionRefetchInterval(
 	failureCount: number,
 ): number | false {
 	if (!error || !isApiNotFoundError(error)) return false;
+	if (!deploymentStatus.known) return false;
 	if (!isRunningStatus(deploymentStatus) && !isTransitionalStatus(deploymentStatus)) return false;
 	const index = Math.min(Math.max(failureCount - 1, 0), PROJECTION_MISSING_BACKOFF_MS.length - 1);
 	return PROJECTION_MISSING_BACKOFF_MS[index] ?? false;
