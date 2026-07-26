@@ -1020,7 +1020,7 @@ export function DeployWizard() {
 
 				<SettingsSection
 					title="AI providers"
-					description="Managed AI is selected by default. Change it only if you want to use your own provider."
+					description="Managed AI is selected by default. Your welcome balance covers it first; after that, usage draws from your Wallet."
 				>
 					<EntityRow
 						icon={
@@ -1092,7 +1092,7 @@ export function DeployWizard() {
 										</IconChip>
 									}
 									title={DEPLOY_MANAGED_AI_LABEL}
-									description="Managed-AI usage paid directly from your Wallet."
+									description="Your welcome balance covers usage first; after that, it draws from your Wallet."
 									badge={<Badge variant="secondary">Default</Badge>}
 								/>
 								{aiProviders.isLoading ? (

@@ -23,6 +23,10 @@ const modelBindingPickerSource = readFileSync(
 	new URL("../../v2/ai-providers/model-binding-picker.tsx", import.meta.url),
 	"utf8",
 );
+const welcomeWalletSource = readFileSync(
+	new URL("../subscription/welcome-wallet-card.tsx", import.meta.url),
+	"utf8",
+);
 
 describe("deploy wizard personalization", () => {
 	test("uses a stable dashboard name within the strictest backend limit", () => {
@@ -154,6 +158,17 @@ describe("deploy provider choice", () => {
 		expect(wizardSource).toContain("{aiProviderEditorOpen ? (");
 		expect(wizardSource).toContain('title="Add a provider"');
 		expect(wizardSource).toContain('title={authCardLabel("unmanaged")}');
+	});
+
+	test("explains that the welcome balance is used before added Wallet funds", () => {
+		expect(welcomeWalletSource).toContain(
+			"welcome balance covers Managed AI first; after that, usage draws from your Wallet.",
+		);
+		expect(wizardSource).toContain(
+			"Your welcome balance covers it first; after that, usage draws from your Wallet.",
+		);
+		expect(welcomeWalletSource).not.toContain("managed AI is on us to start");
+		expect(wizardSource).not.toContain("Managed-AI usage paid directly from your Wallet");
 	});
 
 	test("uses an exclusive provider selection and hides the redundant provider picker", () => {
