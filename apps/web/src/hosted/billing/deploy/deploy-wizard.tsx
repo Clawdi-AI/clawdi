@@ -1196,11 +1196,11 @@ export function DeployWizard() {
 						{deployments.isSuccess && activeIncludedBasicSlot === null ? (
 							<Alert data-hosted="true">
 								<TriangleAlert />
-								<AlertTitle>Free Basic slot availability is unknown</AlertTitle>
+								<AlertTitle>Free Basic agent availability is unknown</AlertTitle>
 								<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 									<span>
-										We can’t determine whether an existing agent occupies your included Basic slot.
-										No free slot is assumed.
+										We can’t determine whether an existing agent is already using your free Basic
+										allowance. No free agent is assumed.
 									</span>
 									<Button
 										type="button"
