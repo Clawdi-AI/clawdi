@@ -806,7 +806,9 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 						</div>
 					) : null}
 					<Button
-						onClick={() => effectiveLink && create.mutate({ agent_link_id: effectiveLink })}
+						onClick={() => {
+							if (effectiveLink) void create.execute({ agent_link_id: effectiveLink });
+						}}
 						disabled={!effectiveLink || create.isPending}
 					>
 						<Smartphone className="size-4" />
@@ -948,27 +950,29 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 		if (!canGenerate || generateLocked.current) return;
 		generateLocked.current = true;
 		setResult(null);
-		create.mutate(
-			{ agent_id: agentId || undefined, ttl_seconds: Number(ttl) },
-			{
-				onSuccess: (data) => {
-					if (data.agent_token) {
-						setRevealedAgentToken({
-							agentLinkId: data.agent_link_id,
-							value: data.agent_token,
-						});
-					}
-					setResult({
-						code: data.code,
-						expires_at: data.expires_at,
-						agent_link_id: data.agent_link_id,
+		void (async () => {
+			try {
+				const data = await create.execute({
+					agent_id: agentId || undefined,
+					ttl_seconds: Number(ttl),
+				});
+				if (data.agent_token) {
+					setRevealedAgentToken({
+						agentLinkId: data.agent_link_id,
+						value: data.agent_token,
 					});
-				},
-				onSettled: () => {
-					generateLocked.current = false;
-				},
-			},
-		);
+				}
+				setResult({
+					code: data.code,
+					expires_at: data.expires_at,
+					agent_link_id: data.agent_link_id,
+				});
+			} catch {
+				// useSensitiveAction already surfaces the API error.
+			} finally {
+				generateLocked.current = false;
+			}
+		})();
 	}
 
 	if (provider === "whatsapp" && !WHATSAPP_LINKING_READY) {
