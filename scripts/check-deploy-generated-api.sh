@@ -92,6 +92,6 @@ fi
 
 diff -u "$committed_path" "$expected_path" || true
 echo \
-	"packages/shared/src/api/deploy.generated.ts is stale. Regenerate with \`DEPLOY_OPENAPI_SOURCE=$spec_source bun --cwd apps/web run generate-deploy-api\` and commit the result." \
+	"packages/shared/src/api/deploy.generated.ts is stale. Regenerate with \`DEPLOY_OPENAPI_SOURCE=$spec_source bun run --cwd apps/web generate-deploy-api\` and commit the result." \
 	>&2
 exit 1
