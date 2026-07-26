@@ -35,7 +35,8 @@ import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/link-agent-dialog.logic";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Connect Telegram and Discord to your agents. WhatsApp is coming soon.";
+const DESCRIPTION =
+	"Start instantly with a ready-to-go bot, or connect your own Telegram or Discord bot for full control.";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const CHANNEL_GRID_CLASS = ENTITY_GRID_CLASS;
 type ProviderFilter = "all" | ChannelProviderId;
@@ -76,14 +77,21 @@ export function ChannelsPage() {
 					</>
 				}
 				actions={
-					<Button size="sm" onClick={() => setConnectOpen(true)}>
+					<Button size="sm" variant="outline" onClick={() => setConnectOpen(true)}>
 						<Plus />
-						Connect a bot
+						Connect your own bot
 					</Button>
 				}
 			/>
 
 			<div className="flex flex-col gap-7">
+				<ReadyBotsSection
+					providers={poolProviders}
+					isLoading={botPool.isLoading}
+					error={botPool.error}
+					onRetry={() => botPool.refetch()}
+					filter={filter}
+				/>
 				<YourChannelsSection
 					channels={channelItems}
 					isLoading={channels.isLoading}
@@ -94,13 +102,6 @@ export function ChannelsPage() {
 					onRetryHealth={() => health.refetch()}
 					filter={filter}
 					onConnect={() => setConnectOpen(true)}
-				/>
-				<SharedBotsSection
-					providers={poolProviders}
-					isLoading={botPool.isLoading}
-					error={botPool.error}
-					onRetry={() => botPool.refetch()}
-					filter={filter}
 				/>
 			</div>
 
@@ -171,12 +172,12 @@ function YourChannelsSection({
 		content = (
 			<EmptyState
 				icon={MessagesSquare}
-				title="No channels yet"
-				description="Connect a bot, or link a shared bot to an agent from the Shared bots section."
+				title="No personal bots yet"
+				description="Personal bots are optional. Use a ready-to-go bot above, or connect one here when you need full control."
 				action={
-					<Button onClick={onConnect}>
+					<Button variant="outline" onClick={onConnect}>
 						<Plus />
-						Connect a bot
+						Connect your own bot
 					</Button>
 				}
 			/>
@@ -186,11 +187,11 @@ function YourChannelsSection({
 			<EmptyState
 				icon={MessagesSquare}
 				title={`No ${providerLabel(filter)} channels`}
-				description="Try another provider filter, or connect a new bot."
+				description="Try another provider filter, or connect your own bot."
 				action={
-					<Button onClick={onConnect}>
+					<Button variant="outline" onClick={onConnect}>
 						<Plus />
-						Connect a bot
+						Connect your own bot
 					</Button>
 				}
 			/>
@@ -213,7 +214,7 @@ function YourChannelsSection({
 
 	return (
 		<section className="flex flex-col gap-3">
-			<SectionLabel count={!isLoading ? visibleCount : undefined}>Your channels</SectionLabel>
+			<SectionLabel count={!isLoading ? visibleCount : undefined}>Your bots</SectionLabel>
 			{healthError ? (
 				<ApiErrorPanel
 					error={healthError}
@@ -278,7 +279,7 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: st
 	);
 }
 
-function SharedBotsSection({
+function ReadyBotsSection({
 	providers,
 	isLoading,
 	error,
@@ -309,18 +310,22 @@ function SharedBotsSection({
 			</div>
 		);
 	} else if (error) {
-		content = <ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load shared bots" />;
+		content = (
+			<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load ready-to-go bots" />
+		);
 	} else if (groups.length === 0) {
 		content = (
 			<EmptyState
 				icon={Users}
 				title={
-					filter === "all" ? "No shared bots available" : `No ${providerLabel(filter)} shared bots`
+					filter === "all"
+						? "No ready-to-go bots available"
+						: `No ${providerLabel(filter)} ready-to-go bots`
 				}
 				description={
 					filter === "all"
-						? "Shared bots you can link to instantly will appear here."
-						: "Try another provider filter to see linkable shared bots."
+						? "Bots you can link without credentials will appear here."
+						: "Try another provider filter to see bots you can link instantly."
 				}
 			/>
 		);
@@ -356,7 +361,7 @@ function SharedBotsSection({
 
 	return (
 		<section className="flex flex-col gap-3">
-			<SectionLabel count={!isLoading ? visibleCount : undefined}>Shared bots</SectionLabel>
+			<SectionLabel count={!isLoading ? visibleCount : undefined}>Ready-to-go bots</SectionLabel>
 			{content}
 			{linkTarget ? (
 				<LinkAgentDialog

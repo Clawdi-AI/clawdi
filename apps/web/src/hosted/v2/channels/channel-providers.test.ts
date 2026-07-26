@@ -20,6 +20,19 @@ describe("channel provider registry", () => {
 		});
 	});
 
+	test("provides official setup links and complete bring-your-own steps", () => {
+		expect(providerMeta("telegram")).toMatchObject({
+			setupUrl: "https://t.me/BotFather",
+			setupLinkLabel: "Open @BotFather in Telegram",
+		});
+		expect(providerMeta("telegram").setupSteps).toHaveLength(3);
+		expect(providerMeta("discord")).toMatchObject({
+			setupUrl: "https://discord.com/developers/applications",
+			setupLinkLabel: "Open the Discord Developer Portal",
+		});
+		expect(providerMeta("discord").setupSteps).toHaveLength(3);
+	});
+
 	test("orders supported providers first and appends legacy providers from data", () => {
 		expect(orderedProviderIds(["imessage", "discord", "telegram", "custom", "telegram"])).toEqual([
 			"telegram",

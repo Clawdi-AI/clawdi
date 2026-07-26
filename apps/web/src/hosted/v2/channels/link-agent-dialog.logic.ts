@@ -19,12 +19,19 @@ export function channelProviderLinkingReady(provider: string): boolean {
 	return provider !== "whatsapp" || WHATSAPP_LINKING_READY;
 }
 
-export function channelDialogOpenChangeAllowed(nextOpen: boolean, isSubmitting: boolean): boolean {
-	return nextOpen || !isSubmitting;
-}
-
 export function pairingCommand(code: string): string {
 	return `/bot_pair ${code}`;
+}
+
+/** Account-level activity is useful, but it is not proof of agent-runtime delivery. */
+export function channelActivityAfterLink(
+	lastMessageAt: string | null | undefined,
+	linkCreatedAt: string,
+): boolean {
+	if (!lastMessageAt) return false;
+	const messageTime = Date.parse(lastMessageAt);
+	const linkTime = Date.parse(linkCreatedAt);
+	return Number.isFinite(messageTime) && Number.isFinite(linkTime) && messageTime >= linkTime;
 }
 
 export function shouldMintWhatsappTenantCredential(provider: string, agent: Agent): boolean {
@@ -53,5 +60,9 @@ export function linkAgentBlockReason({
 			link.account.provider === provider,
 	);
 	if (!hasExistingProviderLink) return null;
-	return `one-${provider}-link-per-Hermes-agent: Hermes agents support one active ${provider} link. Unlink the existing ${provider} channel before linking another.`;
+	return `Hermes agents can use one active ${providerMetaLabel(provider)} bot at a time. Unlink the current ${providerMetaLabel(provider)} bot before linking another.`;
+}
+
+function providerMetaLabel(provider: string): string {
+	return provider === "telegram" ? "Telegram" : provider === "discord" ? "Discord" : "channel";
 }

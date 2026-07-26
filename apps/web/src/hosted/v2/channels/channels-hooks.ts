@@ -309,7 +309,7 @@ export function useCreateWhatsappTenantCred(accountId: string) {
 				}),
 			);
 			qc.invalidateQueries({ queryKey: keys.whatsappCreds(accountId) });
-			toast.success("Device credential minted", {
+			toast.success("WhatsApp access is ready", {
 				description: "Finish pairing from the agent runtime to link the number.",
 			});
 		} catch (error) {

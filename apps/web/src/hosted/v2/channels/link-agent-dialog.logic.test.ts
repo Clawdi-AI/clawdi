@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
-	channelDialogOpenChangeAllowed,
+	channelActivityAfterLink,
 	channelProviderLinkingReady,
 	linkAgentBlockReason,
 	pairingCommand,
@@ -19,10 +19,11 @@ describe("hosted channel instructions and gates", () => {
 		expect(channelProviderLinkingReady("whatsapp")).toBe(false);
 	});
 
-	test("keeps one-time results in view while a connect or link request is pending", () => {
-		expect(channelDialogOpenChangeAllowed(false, true)).toBe(false);
-		expect(channelDialogOpenChangeAllowed(false, false)).toBe(true);
-		expect(channelDialogOpenChangeAllowed(true, true)).toBe(true);
+	test("only treats real account activity after linking as new channel activity", () => {
+		expect(channelActivityAfterLink(null, "2026-07-26T09:00:00Z")).toBe(false);
+		expect(channelActivityAfterLink("2026-07-26T08:59:59Z", "2026-07-26T09:00:00Z")).toBe(false);
+		expect(channelActivityAfterLink("2026-07-26T09:00:01Z", "2026-07-26T09:00:00Z")).toBe(true);
+		expect(channelActivityAfterLink("not-a-date", "2026-07-26T09:00:00Z")).toBe(false);
 	});
 });
 
@@ -60,7 +61,9 @@ describe("linkAgentBlockReason", () => {
 				],
 				accountId: "tg-current",
 			}),
-		).toContain("one-telegram-link-per-Hermes-agent");
+		).toBe(
+			"Hermes agents can use one active Telegram bot at a time. Unlink the current Telegram bot before linking another.",
+		);
 	});
 
 	test("allows the current existing link and non-Hermes multi-link behavior", () => {

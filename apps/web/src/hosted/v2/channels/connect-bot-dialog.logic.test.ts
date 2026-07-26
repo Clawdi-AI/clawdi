@@ -37,10 +37,10 @@ describe("Discord snowflake fields", () => {
 		);
 	});
 
-	test("allows an empty optional guild ID but validates supplied values", () => {
+	test("allows an empty optional server ID but validates supplied values", () => {
 		expect(discordGuildIdError("   ")).toBeNull();
 		expect(discordGuildIdError("1234567890123456789")).toBeNull();
-		expect(discordGuildIdError("1234567890123456")).toBe("Enter a valid numeric guild ID.");
+		expect(discordGuildIdError("1234567890123456")).toBe("Enter a valid numeric server ID.");
 	});
 });
 

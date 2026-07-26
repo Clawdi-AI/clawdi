@@ -47,7 +47,9 @@ export function HealthBadge({ status, className }: { status: string; className?:
 export function AccessBadge({ access }: { access: string }) {
 	const owner = access === "owner";
 	return (
-		<StatusBadge status={owner ? "info" : "neutral"}>{owner ? "Your bot" : "Shared"}</StatusBadge>
+		<StatusBadge status={owner ? "info" : "neutral"}>
+			{owner ? "Your bot" : "Ready to use"}
+		</StatusBadge>
 	);
 }
 

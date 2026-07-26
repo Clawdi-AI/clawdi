@@ -1,8 +1,10 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { Link } from "@tanstack/react-router";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import {
 	AgentLabel,
@@ -39,7 +41,6 @@ import {
 	useLinkAgent,
 } from "@/hosted/v2/channels/channels-hooks";
 import {
-	channelDialogOpenChangeAllowed,
 	linkAgentBlockReason,
 	shouldMintWhatsappTenantCredential,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
@@ -80,7 +81,11 @@ export function LinkAgentDialog({
 	const [token, setToken] = useState<string | null>(null);
 	const [linkedNoToken, setLinkedNoToken] = useState(false);
 	const [whatsappCredentialMinted, setWhatsappCredentialMinted] = useState(false);
+	const [submitting, setSubmitting] = useState(false);
 	const submitLocked = useRef(false);
+	const openRef = useRef(open);
+	const dialogSessionRef = useRef(0);
+	openRef.current = open;
 
 	const agents = useMemo(() => [...(envs.data ?? [])].sort(compareAgentEnvironments), [envs.data]);
 	const selectedAgent = agents.find((env) => env.id === agentId);
@@ -97,7 +102,7 @@ export function LinkAgentDialog({
 		accountId,
 	});
 	const guardLoading = shouldCheckHermesSingleLink && selectedAgentLinks.isLoading;
-	const isSubmitting = link.isPending || createWhatsappCredential.isPending || submitLocked.current;
+	const isSubmitting = submitting || link.isPending || createWhatsappCredential.isPending;
 
 	useEffect(() => {
 		if (!open) return;
@@ -111,31 +116,42 @@ export function LinkAgentDialog({
 		if (!agentId || blockReason || guardLoading || submitLocked.current) return;
 		const agent = selectedAgent;
 		submitLocked.current = true;
+		setSubmitting(true);
+		const dialogSession = dialogSessionRef.current;
 		try {
 			const data = await link.execute(agentId);
 			if (shouldMintWhatsappTenantCredential(provider, agent)) {
 				await createWhatsappCredential.execute({ agent_link_id: data.id });
-				setWhatsappCredentialMinted(true);
+				if (openRef.current && dialogSessionRef.current === dialogSession) {
+					setWhatsappCredentialMinted(true);
+				} else {
+					toast.success("Agent linked", {
+						description: `${accountName} is linked. Finish device pairing from the agent runtime.`,
+					});
+				}
 				return;
 			}
-			if (data.agent_token) setToken(data.agent_token);
-			else setLinkedNoToken(true);
+			if (openRef.current && dialogSessionRef.current === dialogSession) {
+				if (data.agent_token) setToken(data.agent_token);
+				else setLinkedNoToken(true);
+			} else {
+				toast.success("Agent linked", {
+					description: `${accountName} is linked. Open the agent's Channels tab to pair a chat.`,
+				});
+			}
 		} catch {
 			// The sensitive action hooks already surface API failures.
 		} finally {
 			submitLocked.current = false;
+			setSubmitting(false);
 		}
 	}
 
 	function handleOpenChange(nextOpen: boolean) {
-		if (
-			!channelDialogOpenChangeAllowed(
-				nextOpen,
-				link.isPending || createWhatsappCredential.isPending || submitLocked.current,
-			)
-		)
-			return;
-		if (!nextOpen) setToken(null);
+		if (!nextOpen) {
+			dialogSessionRef.current += 1;
+			setToken(null);
+		}
 		onOpenChange(nextOpen);
 	}
 
@@ -150,32 +166,58 @@ export function LinkAgentDialog({
 			}),
 		[agents, ownership],
 	);
+	const linkComplete = Boolean(token || linkedNoToken || whatsappCredentialMinted);
 
 	return (
 		<Dialog open={open} onOpenChange={handleOpenChange}>
 			<DialogContent data-hosted="true" data-v2="true" className="sm:max-w-md">
 				<DialogHeader>
-					<DialogTitle>Link an agent</DialogTitle>
+					<DialogTitle>{linkComplete ? "Agent linked" : "Link an agent"}</DialogTitle>
 					<DialogDescription>
-						Connect one of your agents to <span className="font-medium">{accountName}</span>.
+						{linkComplete ? (
+							<>
+								<span className="font-medium">{accountName}</span> is linked. Finish setup from the
+								agent's Channels page.
+							</>
+						) : (
+							<>
+								Connect one of your agents to <span className="font-medium">{accountName}</span>.
+							</>
+						)}
 					</DialogDescription>
 				</DialogHeader>
 
-				{token ? (
-					<TokenReveal
-						label="Agent token"
-						value={token}
-						note="Copy it now — it won't be shown again. The agent runtime uses this to send and receive on this channel."
-					/>
+				{token || linkedNoToken ? (
+					<div className="space-y-3 rounded-lg border border-success/30 bg-success-muted p-3 text-sm">
+						<div className="flex items-start gap-2 text-success-muted-foreground">
+							<CircleCheck className="mt-0.5 size-4 shrink-0" />
+							<div>
+								<p className="font-medium">The bot is linked to this agent</p>
+								<p className="mt-1 text-xs">
+									Next, create a pairing code and send it in the exact chat where the agent should
+									answer.
+								</p>
+							</div>
+						</div>
+						{token ? (
+							<details className="rounded-md border bg-background p-3">
+								<summary className="cursor-pointer text-xs font-medium">
+									Agent token (advanced)
+								</summary>
+								<div className="mt-2">
+									<TokenReveal
+										label="Agent token"
+										value={token}
+										note="Hosted agents configure this automatically. Only copy it for a self-managed runtime that asks for it."
+									/>
+								</div>
+							</details>
+						) : null}
+					</div>
 				) : whatsappCredentialMinted ? (
 					<div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success-muted p-3 text-sm text-success-muted-foreground">
 						<CircleCheck className="size-4 shrink-0" />
-						Device credential minted. Finish pairing from the agent runtime to link the number.
-					</div>
-				) : linkedNoToken ? (
-					<div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success-muted p-3 text-sm text-success-muted-foreground">
-						<CircleCheck className="size-4 shrink-0" />
-						This agent is already linked to the channel.
+						WhatsApp access is ready. Finish linking the number from the agent runtime.
 					</div>
 				) : envs.isLoading ? (
 					<Skeleton className="h-10 w-full rounded-md" />
@@ -236,28 +278,30 @@ export function LinkAgentDialog({
 				)}
 
 				<DialogFooter>
-					{token || linkedNoToken || whatsappCredentialMinted ? (
-						<Button onClick={() => handleOpenChange(false)} disabled={isSubmitting}>
-							Done
-						</Button>
+					{linkComplete ? (
+						<>
+							<Button variant="outline" onClick={() => handleOpenChange(false)}>
+								Close
+							</Button>
+							<Button
+								render={
+									<Link to="/agents/$id/$section" params={{ id: agentId, section: "channels" }} />
+								}
+								nativeButton={false}
+							>
+								Finish channel setup
+							</Button>
+						</>
 					) : (
 						<>
-							<Button
-								variant="outline"
-								onClick={() => handleOpenChange(false)}
-								disabled={isSubmitting}
-							>
-								Cancel
+							<Button variant="outline" onClick={() => handleOpenChange(false)}>
+								{isSubmitting ? "Close" : "Cancel"}
 							</Button>
 							<Button
 								onClick={() => void submit()}
 								disabled={!agentId || Boolean(blockReason) || guardLoading || isSubmitting}
 							>
-								{createWhatsappCredential.isPending
-									? "Minting device…"
-									: link.isPending
-										? "Linking…"
-										: "Link agent"}
+								{isSubmitting ? "Linking…" : "Link agent"}
 							</Button>
 						</>
 					)}
