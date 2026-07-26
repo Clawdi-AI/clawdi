@@ -268,6 +268,68 @@ async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncCl
 
 
 @pytest.mark.asyncio
+async def test_ai_provider_usability_requires_the_active_stored_credential(
+    client: httpx.AsyncClient,
+):
+    codex_placeholder = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-codex",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "agent_profile", "tool": "codex", "profile": "default"},
+        },
+    )
+    api_key_placeholder = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-main",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "api_key", "source": "managed", "profile": "default"},
+        },
+    )
+
+    assert codex_placeholder.status_code == 200, codex_placeholder.text
+    assert api_key_placeholder.status_code == 200, api_key_placeholder.text
+    assert codex_placeholder.json()["usable"] is False
+    assert api_key_placeholder.json()["usable"] is False
+
+    initial_listing = await client.get("/v1/ai-providers")
+    assert initial_listing.status_code == 200, initial_listing.text
+    assert {
+        provider["provider_id"]: provider["usable"]
+        for provider in initial_listing.json()["providers"]
+    } == {"openai-codex": False, "openai-main": False}
+
+    imported = await client.post(
+        "/v1/ai-providers/openai-codex/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": '{"tokens":{"access_token":"oauth-access-token"}}',
+        },
+    )
+    key_stored = await client.post(
+        "/v1/ai-providers/openai-main/auth/api-key",
+        json={"value": "sk-managed-secret"},
+    )
+
+    assert imported.status_code == 200, imported.text
+    assert key_stored.status_code == 200, key_stored.text
+    assert imported.json()["usable"] is True
+    assert key_stored.json()["usable"] is True
+
+    completed_listing = await client.get("/v1/ai-providers")
+    assert completed_listing.status_code == 200, completed_listing.text
+    assert {
+        provider["provider_id"]: provider["usable"]
+        for provider in completed_listing.json()["providers"]
+    } == {"openai-codex": True, "openai-main": True}
+
+
+@pytest.mark.asyncio
 async def test_canonical_and_legacy_managed_ids_resolve_while_deployment_id_is_hidden(
     client: httpx.AsyncClient,
     db_session,

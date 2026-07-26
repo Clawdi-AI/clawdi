@@ -26,6 +26,7 @@ const apiKeyProvider: AiProvider = {
 	models: [{ id: "gpt-custom" }],
 	api_mode: "openai_responses",
 	auth: { type: "api_key", source: "managed" },
+	usable: true,
 	managed_by: "user",
 	runtime_env_name: "OPENAI_API_KEY",
 	capabilities: null,
@@ -130,6 +131,24 @@ describe("AI provider binding fields", () => {
 				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
 			).toEqual([oauthProvider.provider_id, apiKeyProvider.provider_id]);
 		}
+	});
+
+	test("rejects an unusable provider even if stale UI state selects it", () => {
+		const unfinishedProvider = { ...oauthProvider, usable: false };
+		const draft = {
+			bindingMode: "configured" as const,
+			providerChoices: [unfinishedProvider.provider_id],
+			primaryProviderChoice: unfinishedProvider.provider_id,
+			primaryModel: "gpt-custom",
+		};
+
+		expect(() =>
+			buildAiBindingFields(draft, {
+				managedModels,
+				mode: "create",
+				providers: [unfinishedProvider],
+			}),
+		).toThrow("has no usable credential");
 	});
 });
 

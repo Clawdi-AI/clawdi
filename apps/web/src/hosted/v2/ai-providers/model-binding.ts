@@ -70,6 +70,10 @@ export function isManagedProviderId(providerId: string | null | undefined): bool
 	return typeof providerId === "string" && isClawdiManagedProviderId(providerId);
 }
 
+export function usableProviders(providers: readonly AiProvider[]): AiProvider[] {
+	return providers.filter((provider) => provider.usable);
+}
+
 export function providerDisplayLabel(
 	provider: AiProvider | string,
 	providers: readonly AiProvider[] = [],

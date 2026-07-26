@@ -1,6 +1,6 @@
 "use client";
 
-import { ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
+import { CircleAlert, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -43,7 +43,11 @@ import {
 	providerRemovalImpact,
 	providerUsage,
 } from "@/hosted/v2/ai-providers/ai-providers-page.logic";
-import { AuthBadge, ManagedProviderCard } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import {
+	AuthBadge,
+	ManagedProviderCard,
+	ProviderUsabilityBadge,
+} from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { modelDisplayName, providerDisplayLabel } from "@/hosted/v2/ai-providers/model-binding";
 import {
 	API_MODE_LABEL,
@@ -165,7 +169,12 @@ function ProviderCard({
 				align="start"
 				icon={<EntityIcon kind="provider" id={provider.type} label={providerLabel} />}
 				title={providerLabel}
-				titleAdornment={<AuthBadge auth={provider.auth} />}
+				titleAdornment={
+					<span className="inline-flex items-center gap-1.5">
+						<AuthBadge auth={provider.auth} />
+						<ProviderUsabilityBadge usable={provider.usable} />
+					</span>
+				}
 				meta={[
 					`${meta.label} · ${modelSummary}${
 						provider.api_mode
@@ -176,6 +185,9 @@ function ProviderCard({
 						{provider.base_url}
 						{provider.runtime_env_name ? ` · ${provider.runtime_env_name}` : ""}
 					</span>,
+					provider.usable
+						? null
+						: "Credential setup is incomplete. Finish setup before using this provider.",
 				]}
 			/>
 			<div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
@@ -189,9 +201,14 @@ function ProviderCard({
 					<ListChecks />
 					Check fields
 				</Button>
-				<Button variant="outline" size="sm" onClick={onEdit} aria-label={`Edit ${providerLabel}`}>
-					<Pencil />
-					Edit
+				<Button
+					variant="outline"
+					size="sm"
+					onClick={onEdit}
+					aria-label={`${provider.usable ? "Edit" : "Finish setup for"} ${providerLabel}`}
+				>
+					{provider.usable ? <Pencil /> : <CircleAlert />}
+					{provider.usable ? "Edit" : "Finish setup"}
 				</Button>
 				<RemoveProviderAction provider={provider} usage={usage} />
 			</div>

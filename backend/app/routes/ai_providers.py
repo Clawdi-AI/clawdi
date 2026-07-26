@@ -111,11 +111,12 @@ async def list_ai_providers(
         .scalars()
         .all()
     )
+    visible_rows = [
+        row for row in rows if not is_v2_deployment_managed_provider_id(row.provider_id)
+    ]
+    responses = await _to_responses(db, auth, visible_rows)
     providers_by_public_id: dict[str, AiProviderResponse] = {}
-    for row in rows:
-        if is_v2_deployment_managed_provider_id(row.provider_id):
-            continue
-        response = _to_response(row)
+    for response in responses:
         providers_by_public_id.setdefault(response.provider_id, response)
     return AiProviderListResponse(providers=list(providers_by_public_id.values()))
 
@@ -145,7 +146,7 @@ async def upsert_ai_provider(
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
-    return _to_response(provider)
+    return await _to_response(db, auth, provider)
 
 
 @router.get("/{provider_id}", response_model=AiProviderResponse, response_model_exclude_none=True)
@@ -155,7 +156,7 @@ async def get_ai_provider(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
-    return _to_response(provider)
+    return await _to_response(db, auth, provider)
 
 
 @router.patch("/{provider_id}", response_model=AiProviderResponse, response_model_exclude_none=True)
@@ -167,7 +168,7 @@ async def patch_ai_provider(
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
     previous_signature = _runtime_manifest_provider_signature(provider)
-    merged = _to_response(provider)
+    merged = await _to_response(db, auth, provider)
     update = {field: getattr(body, field) for field in body.model_fields_set}
     null_errors = _validate_patch_nulls(update)
     if null_errors:
@@ -182,7 +183,7 @@ async def patch_ai_provider(
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
-    return _to_response(provider)
+    return await _to_response(db, auth, provider)
 
 
 @router.delete("/{provider_id}", response_model=AiProviderDeleteResponse)
@@ -224,7 +225,7 @@ async def validate_ai_provider(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderValidationResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
-    body = _to_response(provider)
+    body = await _to_response(db, auth, provider)
     errors = _validate_provider(body)
     return AiProviderValidationResponse(valid=not errors, errors=errors, warnings=[])
 
@@ -263,7 +264,7 @@ async def set_ai_provider_api_key(
     await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
-    return _to_response(provider)
+    return await _to_response(db, auth, provider)
 
 
 @router.post(
@@ -309,7 +310,7 @@ async def import_ai_provider_auth(
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
-    return _to_response(provider)
+    return await _to_response(db, auth, provider)
 
 
 @router.post(
@@ -460,7 +461,7 @@ async def complete_ai_provider_oauth(
         await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     await db.refresh(provider)
-    return _to_response(provider)
+    return await _to_response(db, auth, provider)
 
 
 async def _oauth_payload_from_token_response(
@@ -867,7 +868,62 @@ def _to_auth(provider: AiProvider) -> AiProviderAuth:
         ) from exc
 
 
-def _to_response(provider: AiProvider) -> AiProviderResponse:
+async def _to_response(
+    db: AsyncSession,
+    auth: AuthContext,
+    provider: AiProvider,
+) -> AiProviderResponse:
+    return (await _to_responses(db, auth, [provider]))[0]
+
+
+async def _to_responses(
+    db: AsyncSession,
+    auth: AuthContext,
+    providers: list[AiProvider],
+) -> list[AiProviderResponse]:
+    payload_provider_ids = {
+        provider.provider_id for provider in providers if _active_auth_profile(provider) is not None
+    }
+    payload_keys: set[tuple[str, str, str]] = set()
+    if payload_provider_ids:
+        rows = (
+            await db.execute(
+                select(
+                    AiProviderAuthPayload.provider_id,
+                    AiProviderAuthPayload.auth_profile,
+                    AiProviderAuthPayload.kind,
+                ).where(
+                    AiProviderAuthPayload.owner_user_id == auth.user_id,
+                    AiProviderAuthPayload.provider_id.in_(payload_provider_ids),
+                    AiProviderAuthPayload.archived_at.is_(None),
+                )
+            )
+        ).all()
+        payload_keys = {(row.provider_id, row.auth_profile, row.kind) for row in rows}
+    return [
+        _build_response(provider, usable=_provider_is_usable(provider, payload_keys))
+        for provider in providers
+    ]
+
+
+def _provider_is_usable(
+    provider: AiProvider,
+    payload_keys: set[tuple[str, str, str]],
+) -> bool:
+    active_profile = _active_auth_profile(provider)
+    if active_profile is not None:
+        return (provider.provider_id, active_profile, provider.auth_type) in payload_keys
+    if provider.auth_type == "none":
+        return True
+    if provider.auth_type == "secret_ref":
+        return bool(provider.auth_ref)
+    if provider.auth_type == "api_key":
+        source = (provider.auth_metadata or {}).get("source")
+        return source in {"env", "vault"} and bool(provider.auth_ref)
+    return False
+
+
+def _build_response(provider: AiProvider, *, usable: bool) -> AiProviderResponse:
     return AiProviderResponse(
         id=str(provider.id),
         provider_id=runtime_managed_provider_id(provider.provider_id),
@@ -877,6 +933,7 @@ def _to_response(provider: AiProvider) -> AiProviderResponse:
         base_url=provider.base_url,
         api_mode=provider.api_mode,
         auth=_to_auth(provider),
+        usable=usable,
         managed_by=provider.managed_by,
         runtime_env_name=provider.runtime_env_name,
         capabilities=provider.capabilities,

@@ -7,8 +7,10 @@ import {
 	modelBindingDisplayName,
 	modelDisplayName,
 	modelOptionsForProvider,
+	primaryProviderPickerItems,
 	providerChoiceFromRef,
 	providerDisplayLabel,
+	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
@@ -60,6 +62,7 @@ describe("model binding", () => {
 				models: [{ id: "gpt-5.5", label: "GPT Latest" }, { id: "gpt-5.4" }],
 				api_mode: "openai_responses",
 				auth: { type: "api_key", source: "managed" },
+				usable: true,
 				managed_by: "user",
 				runtime_env_name: "OPENAI_API_KEY",
 				capabilities: null,
@@ -75,6 +78,28 @@ describe("model binding", () => {
 		expect(providerDisplayLabel(providers[0])).toBe("OpenAI");
 		expect(providerDisplayLabel("openai-main", providers)).toBe("OpenAI");
 		expect(providerDisplayLabel({ ...providers[0], label: null })).toBe("OpenAI");
+	});
+
+	test("does not offer an unfinished provider as a deploy selection", () => {
+		const unfinishedProvider = {
+			id: "row-codex",
+			provider_id: "openai-codex",
+			scope: "account_global",
+			type: "openai",
+			base_url: "https://api.openai.com/v1",
+			models: [{ id: "gpt-5.5" }],
+			api_mode: "openai_responses",
+			auth: { type: "agent_profile", tool: "codex", profile: "default" },
+			usable: false,
+			managed_by: "user",
+			created_at: "2026-01-01T00:00:00Z",
+			updated_at: "2026-01-01T00:00:00Z",
+			label: "Codex",
+		} satisfies AiProvider;
+		const selectable = usableProviders([unfinishedProvider]);
+
+		expect(selectable).toEqual([]);
+		expect(primaryProviderPickerItems([unfinishedProvider.provider_id], selectable)).toEqual([]);
 	});
 
 	test("maps deployment-scoped managed provider ids to the friendly managed choice", () => {

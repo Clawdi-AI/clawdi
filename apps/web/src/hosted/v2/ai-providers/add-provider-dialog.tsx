@@ -303,7 +303,7 @@ export function AddProviderDialog({
 	// `none` auth only works with a loopback/private base_url (backend rule).
 	const noneAuthOk = authMethod !== "none" || isLoopbackOrPrivateUrl(baseUrl.trim());
 	const apiKeyState = isEdit
-		? apiKeyEditState(authMethod, editing?.auth)
+		? apiKeyEditState(authMethod, editing?.auth, editing?.usable)
 		: apiKeyEditState(authMethod, null);
 	const { keyRequired, labelSuffix: apiKeyLabelSuffix, helpText: apiKeyHelpText } = apiKeyState;
 	const providerListReady = providerListAllowsSubmit(isEdit, providers.isSuccess);
@@ -517,18 +517,7 @@ export function AddProviderDialog({
 		popupRef.current = null;
 	}
 
-	/**
-	 * Remove the placeholder provider we created if sign-in is left unfinished.
-	 *
-	 * This covers closing the DIALOG only. If the user closes the browser tab
-	 * mid-OAuth this never runs, and we deliberately don't reconcile the orphan on
-	 * next mount: AiProviderResponse exposes no verified/status field, and a
-	 * never-completed placeholder is byte-for-byte identical to a connected Codex
-	 * provider (both `auth: {agent_profile, codex, default}`). Any client-side
-	 * "looks incomplete" heuristic would risk deleting a legitimately connected
-	 * provider, so honest reconciliation needs backend completion state the
-	 * dashboard doesn't have.
-	 */
+	/** Remove the placeholder created by this dialog when its sign-in is abandoned. */
 	function abandonCodexIfIncomplete() {
 		if (!oauth) return;
 		if (!completedRef.current && createdFreshRef.current) {
@@ -765,9 +754,17 @@ export function AddProviderDialog({
 				) : (
 					<>
 						<DialogHeader className="shrink-0 px-6 pt-6">
-							<DialogTitle>{isEdit ? "Edit provider" : "Add a provider"}</DialogTitle>
+							<DialogTitle>
+								{editing?.usable === false
+									? "Finish provider setup"
+									: isEdit
+										? "Edit provider"
+										: "Add a provider"}
+							</DialogTitle>
 							<DialogDescription>
-								Route inference through your own account by API key, sign-in, or a custom endpoint.
+								{editing?.usable === false
+									? "Add the missing credential so agents can use this provider."
+									: "Route inference through your own account by API key, sign-in, or a custom endpoint."}
 							</DialogDescription>
 						</DialogHeader>
 
@@ -948,7 +945,9 @@ export function AddProviderDialog({
 										) : null}
 										{keyRequired && isEdit && !apiKey.trim() ? (
 											<p className="text-xs text-destructive">
-												Enter a key to switch this provider to managed API-key auth.
+												{editing?.usable === false
+													? "Enter a key to finish provider setup."
+													: "Enter a key to switch this provider to managed API-key auth."}
 											</p>
 										) : null}
 									</div>

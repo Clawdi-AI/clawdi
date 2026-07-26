@@ -3106,6 +3106,11 @@ export interface components {
             scope: string;
             auth: components["schemas"]["AiProviderAuth"];
             /**
+             * Usable
+             * @description Whether the provider has the credential material required for runtime use. This does not validate the credential or test endpoint connectivity.
+             */
+            usable: boolean;
+            /**
              * Created At
              * Format: date-time
              */
