@@ -14,6 +14,7 @@ import type {
 	ComputeFixPaymentRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
+	ComputePlanChangeResponse,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionResumeRequest,
@@ -33,6 +34,7 @@ import {
 	BillingNetworkError,
 	DeploymentConflictError,
 	DeploymentRequestTerminalError,
+	PlanChangePendingError,
 } from "@/hosted/billing/errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
@@ -163,6 +165,38 @@ function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingA
 	);
 }
 
+function planChangeTerminalError(operation: ComputePlanChangeResponse): BillingApiError {
+	const detail = operation.error?.details[0];
+	if (detail) {
+		return new BillingApiError(detail.status, detail.detail, { detail });
+	}
+	return new BillingApiError(
+		409,
+		"The plan change could not be completed. Review the price and try again.",
+	);
+}
+
+function completedPlanChange(
+	operation: ComputePlanChangeResponse,
+): ComputePlanChangeResponse | null {
+	const progress = operation.metadata.planChange;
+	if (operation.metadata.verb !== "plan_change" || !progress) {
+		throw new BillingApiError(
+			502,
+			"We couldn't verify the plan change status. Check again in a moment.",
+		);
+	}
+	if (!operation.done) return null;
+	if (operation.error) throw planChangeTerminalError(operation);
+	if (progress.state !== "complete" && progress.state !== "scheduled") {
+		throw new BillingApiError(
+			502,
+			"We couldn't verify whether the plan change finished. Check again in a moment.",
+		);
+	}
+	return operation;
+}
+
 /**
  * Generated deploy-api client facade. Request/response bodies come from
  * `packages/shared/src/api/deploy.generated.ts`; this hook only centralizes
@@ -197,12 +231,26 @@ export function createBillingClient(
 			}),
 		);
 
-	const getOperation = async (operationId: string): Promise<DeploymentOperation> =>
+	const getOperation = async (operationId: string): Promise<ComputePlanChangeResponse> =>
 		unwrapDeploy(
 			await api.GET("/v2/operations/{operation_id}", {
 				params: { path: { operation_id: operationId } },
 			}),
 		);
+
+	const waitForPlanChange = async (
+		initial: ComputePlanChangeResponse,
+	): Promise<ComputePlanChangeResponse> => {
+		let operation = initial;
+		for (let poll = 0; poll <= pollLimit; poll += 1) {
+			const completed = completedPlanChange(operation);
+			if (completed) return completed;
+			if (poll === pollLimit) throw new PlanChangePendingError(operation.name);
+			await sleep(pollIntervalMs);
+			operation = await getOperation(operationIdFromName(operation.name));
+		}
+		throw new PlanChangePendingError(operation.name);
+	};
 
 	const getDeploymentByRequest = async (
 		deployRequestId: string,
@@ -314,7 +362,16 @@ export function createBillingClient(
 		quotePlanChange: async (body: ComputePlanChangeQuoteRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/plan/quote", { body })),
 		changePlan: async (body: ComputePlanChangeRequest) =>
-			unwrapDeploy(await api.POST("/v2/subscription/plan/change", { body })),
+			waitForPlanChange(
+				unwrapDeploy(
+					await api.POST("/v2/subscription/plan/change", {
+						params: { header: { "Idempotency-Key": body.operation_id } },
+						body,
+					}),
+				),
+			),
+		checkPlanChange: async (operationName: string) =>
+			waitForPlanChange(await getOperation(operationIdFromName(operationName))),
 		cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
 		fixPayment: async (body: ComputeFixPaymentRequest) =>

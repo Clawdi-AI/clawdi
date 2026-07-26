@@ -87,11 +87,16 @@ import {
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
-import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
+import {
+	billingErrorNormalizer,
+	normalizeBillingError,
+	PlanChangePendingError,
+} from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
 	useCancelSubscription,
 	useChangePlan,
+	useCheckPlanChange,
 	useManagedModelCatalog,
 	usePlans,
 	useQuotePlanChange,
@@ -2880,6 +2885,7 @@ function ComputeSettingsSections({
 	const plans = usePlans();
 	const quotePlanChange = useQuotePlanChange();
 	const changePlan = useChangePlan();
+	const checkPlanChange = useCheckPlanChange();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
 	const wallet = useWalletSnapshot({
@@ -2925,6 +2931,7 @@ function ComputeSettingsSections({
 	const [planChangeQuote, setPlanChangeQuote] = useState<ComputePlanChangeQuoteResponse | null>(
 		null,
 	);
+	const [pendingPlanChangeName, setPendingPlanChangeName] = useState<string | null>(null);
 	const walletTopUp = useWalletTopUpDialog(PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
@@ -3012,12 +3019,16 @@ function ComputeSettingsSections({
 		setSubscriptionCreateOpen(false);
 		setPlanChangeOpen(false);
 		setPlanChangeQuote(null);
+		setPendingPlanChangeName(null);
 		walletTopUp.reset();
 	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, walletTopUp.reset]);
 
 	function setPlanChangeDialogOpen(open: boolean) {
 		setPlanChangeOpen(open);
-		if (!open) setPlanChangeQuote(null);
+		if (!open) {
+			setPlanChangeQuote(null);
+			setPendingPlanChangeName(null);
+		}
 	}
 
 	async function requestPlanChangeQuote(selection: PlanChangeSelection) {
@@ -3033,6 +3044,7 @@ function ComputeSettingsSections({
 				subscription_id: subscriptionId,
 				...selection,
 			});
+			setPendingPlanChangeName(null);
 			setPlanChangeQuote(quote);
 		} catch (error) {
 			toast.error("Couldn’t quote plan change", {
@@ -3048,7 +3060,9 @@ function ComputeSettingsSections({
 				setPlanChangeDialogOpen(false);
 				return;
 			}
-			const result = await changePlan.mutateAsync({ operation_id: operationId });
+			const result = pendingPlanChangeName
+				? await checkPlanChange.mutateAsync(pendingPlanChangeName)
+				: await changePlan.mutateAsync({ operation_id: operationId });
 			const progress = result.metadata.planChange;
 			if (!progress) {
 				throw new Error("The deployment service returned plan-change operation without progress.");
@@ -3058,15 +3072,20 @@ function ComputeSettingsSections({
 					description: `Your current compute remains active until ${formatShortDate(progress.effectiveAt)}.`,
 				});
 			} else {
-				toast.success("Plan change started", {
-					description:
-						progress.state === "complete"
-							? "Your compute subscription has been updated."
-							: "Compute updates after Stripe confirms the invoice payment.",
+				toast.success("Plan changed", {
+					description: "Your compute subscription has been updated.",
 				});
 			}
+			setPendingPlanChangeName(null);
 			setPlanChangeDialogOpen(false);
 		} catch (error) {
+			if (error instanceof PlanChangePendingError) {
+				setPendingPlanChangeName(error.operationName);
+				toast.info("Still waiting for confirmation", {
+					description: "No result is available yet. Check the status again in a moment.",
+				});
+				return;
+			}
 			if (walletTopUp.handleFundingError(error)) return;
 			toast.error("Couldn’t change plan", {
 				description: normalizeBillingError(error),
@@ -3137,7 +3156,8 @@ function ComputeSettingsSections({
 					quote={planChangeQuote}
 					walletBalanceUsd={wallet.data?.balance_usd ?? null}
 					isQuoting={quotePlanChange.isPending}
-					isConfirming={changePlan.isPending}
+					isConfirming={changePlan.isPending || checkPlanChange.isPending}
+					hasAcceptedChange={pendingPlanChangeName !== null}
 					onQuote={requestPlanChangeQuote}
 					onConfirm={confirmPlanChange}
 					onTopUp={() => walletTopUp.show()}

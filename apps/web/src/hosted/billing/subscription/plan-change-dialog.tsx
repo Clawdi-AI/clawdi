@@ -68,6 +68,7 @@ export function PlanChangeDialog({
 	walletBalanceUsd,
 	isQuoting,
 	isConfirming,
+	hasAcceptedChange,
 	onQuote,
 	onConfirm,
 	onTopUp,
@@ -83,6 +84,7 @@ export function PlanChangeDialog({
 	walletBalanceUsd: string | null;
 	isQuoting: boolean;
 	isConfirming: boolean;
+	hasAcceptedChange: boolean;
 	onQuote: (selection: PlanChangeSelection) => void;
 	onConfirm: (operationId: string) => void;
 	onTopUp?: () => void;
@@ -152,6 +154,8 @@ export function PlanChangeDialog({
 		quote?.change_kind === "immediate_upgrade" ? "Confirm immediate upgrade" : "Schedule downgrade";
 	const confirmLabel =
 		quote?.change_kind === "immediate_upgrade" ? "Confirm upgrade" : "Schedule downgrade";
+	const busyLabel =
+		quote?.change_kind === "immediate_upgrade" ? "Waiting for payment…" : "Scheduling downgrade…";
 
 	return (
 		<Dialog
@@ -241,6 +245,16 @@ export function PlanChangeDialog({
 								</AlertDescription>
 							</Alert>
 						) : null}
+						{hasAcceptedChange ? (
+							<Alert>
+								<CalendarClock aria-hidden />
+								<AlertTitle>Still waiting for confirmation</AlertTitle>
+								<AlertDescription>
+									The request was received, but no final result is available yet. Checking again
+									only reads its status and does not submit another charge.
+								</AlertDescription>
+							</Alert>
+						) : null}
 						<DialogFooter>
 							<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isConfirming}>
 								Back
@@ -256,7 +270,7 @@ export function PlanChangeDialog({
 								) : (
 									<CreditCard data-icon="inline-start" />
 								)}
-								{confirmLabel}
+								{isConfirming ? busyLabel : hasAcceptedChange ? "Check status" : confirmLabel}
 							</Button>
 						</DialogFooter>
 					</div>

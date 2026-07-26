@@ -59,8 +59,6 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 			return "Compute restart";
 		case "update":
 			return "Agent update";
-		case "runtime_switch":
-			return "Runtime switch";
 		case "rename":
 			return "Agent rename";
 		case "delete":
@@ -140,7 +138,6 @@ export function deploymentFailurePresentation(
 			};
 		case "stop":
 		case "update":
-		case "runtime_switch":
 		case "rename":
 		case null:
 			return {

@@ -5,12 +5,13 @@ import {
 	unwrapDeploy,
 } from "@/hosted/billing/billing-client";
 import { hostedApiBaseUrl } from "@/hosted/billing/billing-url";
-import type { DeploymentOperation } from "@/hosted/billing/contracts";
+import type { ComputePlanChangeProgress, DeploymentOperation } from "@/hosted/billing/contracts";
 import {
 	BillingApiError,
 	DEPLOYMENT_CONFLICT_MESSAGE,
 	DeploymentConflictError,
 	DeploymentRequestTerminalError,
+	PlanChangePendingError,
 } from "@/hosted/billing/errors";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
@@ -54,6 +55,25 @@ function operation({
 				}
 			: null,
 	};
+}
+
+function planChangeOperation(
+	state: ComputePlanChangeProgress["state"],
+	{ done = false }: { done?: boolean } = {},
+): DeploymentOperation {
+	const result = operation({ done, id: "plan-change-1", verb: "plan_change" });
+	result.metadata.planChange = {
+		"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
+		operationId: "plan-change-1",
+		subscriptionId: 42,
+		fundingSource: "wallet",
+		sourcePlanSlug: "compute_basic",
+		targetPlanSlug: "compute_performance",
+		targetBillingTermMonths: 1,
+		state,
+		effectiveAt: NOW,
+	};
+	return result;
 }
 
 function testClient(fetch: (request: Request) => Promise<Response>) {
@@ -451,36 +471,102 @@ describe("declarative deployment mutations", () => {
 });
 
 describe("compute plan changes", () => {
-	it("returns the accepted LRO without polling the deployment operation", async () => {
+	it("accepts once and waits through awaiting_payment for terminal success", async () => {
 		const requests: Request[] = [];
-		const accepted = operation({ done: false, id: "plan-change-1", verb: "plan_change" });
-		accepted.metadata.planChange = {
-			"@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress",
-			operationId: "plan-change-1",
-			subscriptionId: 42,
-			fundingSource: "wallet",
-			sourcePlanSlug: "compute_basic",
-			targetPlanSlug: "compute_performance",
-			targetBillingTermMonths: 1,
-			state: "awaiting_projection",
-			effectiveAt: NOW,
-		};
+		const responses = [
+			planChangeOperation("quoted"),
+			planChangeOperation("awaiting_payment"),
+			planChangeOperation("complete", { done: true }),
+		];
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
-			return jsonResponse(accepted, 202);
+			const response = responses.shift();
+			if (!response) throw new Error("Unexpected plan-change request");
+			return jsonResponse(response, request.method === "POST" ? 202 : 200);
 		});
 
 		await expect(client.changePlan({ operation_id: "plan-change-1" })).resolves.toMatchObject({
 			name: "operations/plan-change-1",
 			metadata: {
 				verb: "plan_change",
-				planChange: { operationId: "plan-change-1", state: "awaiting_projection" },
+				planChange: { operationId: "plan-change-1", state: "complete" },
 			},
-			done: false,
+			done: true,
 		});
-		expect(requests).toHaveLength(1);
-		expect(new URL(requests[0]?.url ?? "https://invalid").pathname).toBe(
+		expect(requests.map((request) => request.method)).toEqual(["POST", "GET", "GET"]);
+		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
 			"/v2/subscription/plan/change",
+			"/v2/operations/plan-change-1",
+			"/v2/operations/plan-change-1",
+		]);
+		expect(requests[0]?.headers.get("Idempotency-Key")).toBe("plan-change-1");
+	});
+
+	it("offers a GET-only status check after bounded polling", async () => {
+		const requests: Request[] = [];
+		let complete = false;
+		const client = testClient(async (request) => {
+			requests.push(request.clone());
+			if (request.method === "POST") return jsonResponse(planChangeOperation("quoted"), 202);
+			return jsonResponse(
+				complete
+					? planChangeOperation("complete", { done: true })
+					: planChangeOperation("awaiting_projection"),
+			);
+		});
+
+		let pending: unknown;
+		try {
+			await client.changePlan({ operation_id: "plan-change-1" });
+		} catch (error) {
+			pending = error;
+		}
+		expect(pending).toBeInstanceOf(PlanChangePendingError);
+		if (!(pending instanceof PlanChangePendingError)) throw pending;
+		expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
+
+		requests.length = 0;
+		complete = true;
+		await expect(client.checkPlanChange(pending.operationName)).resolves.toMatchObject({
+			done: true,
+			metadata: { planChange: { state: "complete" } },
+		});
+		expect(requests.map((request) => request.method)).toEqual(["GET"]);
+	});
+
+	it("surfaces a terminal operation failure instead of reporting success", async () => {
+		const accepted = planChangeOperation("awaiting_payment");
+		const failed = planChangeOperation("failed", { done: true });
+		failed.response = null;
+		failed.error = {
+			code: 9,
+			message: "Plan change failed",
+			details: [
+				{
+					"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+					type: "https://api.clawdi.ai/problems/operation_aborted",
+					title: "Plan change failed",
+					status: 409,
+					detail: "The payment method was rejected. Update it and request a new price.",
+					instance: "operations/plan-change-1",
+					code: "operation_aborted",
+					phase: "plan_change",
+					retryable: false,
+					conditionReason: "OperationAborted",
+					conditionMessage: "Plan change failed",
+					observedGeneration: 2,
+				},
+			],
+		};
+		const responses = [accepted, failed];
+		const client = testClient(async (request) => {
+			const response = responses.shift();
+			if (!response) throw new Error(`Unexpected request: ${request.method}`);
+			return jsonResponse(response, request.method === "POST" ? 202 : 200);
+		});
+
+		await expect(client.changePlan({ operation_id: "plan-change-1" })).rejects.toThrow(
+			"The payment method was rejected",
 		);
 	});
 });

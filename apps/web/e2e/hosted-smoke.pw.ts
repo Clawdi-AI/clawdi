@@ -519,7 +519,7 @@ function planChangeResponse({
 					fundingInvoiceId: status === "scheduled" ? null : "in_plan_browser",
 				},
 			},
-			done: status === "complete",
+			done: status === "complete" || status === "scheduled",
 			error: null,
 			response: null,
 		},
@@ -781,6 +781,7 @@ type HostedApiStubOptions = {
 	mutationOrder?: string[];
 	plans?: readonly unknown[];
 	portalRequests?: string[];
+	planChangeOperationResponses?: StubResponse[];
 	planChangeRequests?: string[];
 	planChangeResponses?: unknown[];
 	planQuoteRequests?: string[];
@@ -1116,6 +1117,12 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
 				: fulfillJson(r, response);
+		}
+		if (p.startsWith("/v2/operations/") && r.request().method() === "GET") {
+			const response = options.planChangeOperationResponses?.shift();
+			return response
+				? fulfillJson(r, response.body, response.status)
+				: fulfillJson(r, { detail: "Operation not found" }, 404);
 		}
 		if (p === "/v2/wallet/topup" && r.request().method() === "POST") {
 			options.topUpRequests?.push(r.request().postData() ?? "");
@@ -2414,9 +2421,24 @@ test("included Basic uses unified card quote and change without creating a secon
 				currentPlanSlug: "compute_basic",
 				targetPlanSlug: "compute_performance",
 				targetBillingTermMonths: 12,
-				status: "complete",
+				status: "awaiting_projection",
 				effectiveAt: "2026-07-16T00:00:00Z",
 			}),
+		],
+		planChangeOperationResponses: [
+			{
+				...planChangeResponse({
+					operationId: "op_free_wallet",
+					subscriptionId: 7,
+					fundingSource: "wallet",
+					currentPlanSlug: "compute_basic",
+					targetPlanSlug: "compute_performance",
+					targetBillingTermMonths: 1,
+					status: "complete",
+					effectiveAt: "2026-07-16T00:00:00Z",
+				}),
+				status: 200,
+			},
 		],
 		planQuoteRequests,
 		planQuoteResponses: [
@@ -2470,7 +2492,7 @@ test("included Basic uses unified card quote and change without creating a secon
 	});
 	expect(checkoutRequests).toEqual([]);
 	expect(subscriptionQuoteRequests).toEqual([]);
-	await expect(page.getByText("Plan change started", { exact: true })).toBeVisible();
+	await expect(page.getByText("Plan changed", { exact: true })).toBeVisible();
 	expect(errors, `included Basic card upgrade: ${errors.join(" | ")}`).toEqual([]);
 });
 
@@ -2495,6 +2517,21 @@ test("included Basic uses unified wallet quote and change with exact debit", asy
 				status: "awaiting_projection",
 				effectiveAt: "2026-07-16T00:00:00Z",
 			}),
+		],
+		planChangeOperationResponses: [
+			{
+				...planChangeResponse({
+					operationId: "op_paid_wallet",
+					subscriptionId: 42,
+					fundingSource: "wallet",
+					currentPlanSlug: "compute_basic",
+					targetPlanSlug: "compute_performance",
+					targetBillingTermMonths: 1,
+					status: "complete",
+					effectiveAt: "2026-07-16T00:00:00Z",
+				}),
+				status: 200,
+			},
 		],
 		planQuoteRequests,
 		planQuoteResponses: [
@@ -2543,7 +2580,7 @@ test("included Basic uses unified wallet quote and change with exact debit", asy
 	});
 	expect(checkoutRequests).toEqual([]);
 	expect(subscriptionQuoteRequests).toEqual([]);
-	await expect(page.getByText("Plan change started", { exact: true })).toBeVisible();
+	await expect(page.getByText("Plan changed", { exact: true })).toBeVisible();
 	expect(errors, `included Basic wallet upgrade: ${errors.join(" | ")}`).toEqual([]);
 });
 
@@ -2623,7 +2660,7 @@ test("paid wallet subscription confirms an immediate quoted upgrade", async ({ p
 				currentPlanSlug: "compute_basic",
 				targetPlanSlug: "compute_performance",
 				targetBillingTermMonths: 1,
-				status: "awaiting_projection",
+				status: "complete",
 				effectiveAt: "2026-07-16T00:00:00Z",
 			}),
 		],

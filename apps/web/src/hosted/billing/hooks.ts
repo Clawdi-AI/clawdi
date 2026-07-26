@@ -266,6 +266,19 @@ export function useChangePlan() {
 	});
 }
 
+export function useCheckPlanChange() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation<ComputePlanChangeResponse, Error, string>({
+		mutationFn: (operationName) => client.checkPlanChange(operationName),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: billingKeys.wallet });
+			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
+		},
+	});
+}
+
 export function useCancelSubscription() {
 	const client = useBillingClient();
 	const qc = useQueryClient();

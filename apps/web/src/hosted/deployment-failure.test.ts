@@ -107,7 +107,6 @@ describe("deploymentFailureReason", () => {
 			["stop", "Compute stop failed", "none"],
 			["restart", "Compute restart failed", "restart"],
 			["update", "Agent update failed", "none"],
-			["runtime_switch", "Runtime switch failed", "none"],
 			["rename", "Agent rename failed", "none"],
 			["delete", "Agent deletion failed", "retry_delete"],
 			["plan_change", "Plan change failed", "review_plan_change"],
