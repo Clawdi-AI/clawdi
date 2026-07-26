@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { DeploymentOperation } from "@/hosted/billing/contracts";
-import { deploymentFailureProjection, deploymentFailureReason } from "@/hosted/deployment-failure";
+import {
+	deploymentFailurePresentation,
+	deploymentFailureProjection,
+	deploymentFailureReason,
+} from "@/hosted/deployment-failure";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 describe("deploymentFailureReason", () => {
@@ -64,6 +68,20 @@ describe("deploymentFailureReason", () => {
 			failedVerb: "plan_change",
 			retryable: false,
 			code: "operation_aborted",
+		});
+		expect(deploymentFailurePresentation(deployment)).toEqual({
+			reason: "Top up your wallet and retry the plan change.",
+			failedVerb: "plan_change",
+			retryable: false,
+			code: "operation_aborted",
+			title: "Plan change failed",
+			description:
+				"Open Compute settings to top up your Wallet, request a fresh quote, and confirm the price before retrying.",
+			remediation: {
+				kind: "review_plan_change",
+				label: "Review plan change",
+				requiresWalletTopUp: true,
+			},
 		});
 	});
 
