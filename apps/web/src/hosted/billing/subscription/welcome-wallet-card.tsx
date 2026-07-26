@@ -158,7 +158,7 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 						</p>
 						<p className="text-sm text-muted-foreground">
 							{grantApplied
-								? "Your free Basic compute slot is ready. Deploy your first agent — managed AI is on us to start."
+								? `Your free Basic compute is ready. Your ${grantAmount} welcome balance covers Managed AI first; after that, usage draws from your Wallet.`
 								: grantPending
 									? grantCheckTimedOut
 										? "It hasn’t appeared yet. Refresh to check again."

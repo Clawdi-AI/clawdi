@@ -92,7 +92,7 @@ describe("buildHostedDeployRequest", () => {
 		});
 	});
 
-	test("serializes backend provider pool contract at the deploy body boundary", () => {
+	test("serializes one selected provider at the deploy body boundary", () => {
 		const request = buildHostedDeployRequest({
 			computePlanSlug: "compute_performance",
 			runtime: "hermes",
@@ -104,7 +104,7 @@ describe("buildHostedDeployRequest", () => {
 			aiFields: {
 				ai_provider_id: "anthropic-prod",
 				ai_provider_auth_kind: "api_key",
-				provider_ids: ["openai-prod", "anthropic-prod"],
+				provider_ids: ["anthropic-prod"],
 				primary_model: {
 					provider_id: "anthropic-prod",
 					model: "claude-sonnet-5",
@@ -116,7 +116,7 @@ describe("buildHostedDeployRequest", () => {
 			runtime: "hermes",
 			ai_provider_id: "anthropic-prod",
 			ai_provider_auth_kind: "api_key",
-			provider_ids: ["openai-prod", "anthropic-prod"],
+			provider_ids: ["anthropic-prod"],
 			primary_model: {
 				provider_id: "anthropic-prod",
 				model: "claude-sonnet-5",

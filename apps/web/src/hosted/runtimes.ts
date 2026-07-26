@@ -2,16 +2,15 @@ import type { AiProviderAuthKind, HostedDeployment } from "@/hosted/billing/cont
 
 export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
 export type HostedRuntime = (typeof HOSTED_RUNTIMES)[number];
-export const DEFAULT_HOSTED_RUNTIME: HostedRuntime = "openclaw";
 
 const RUNTIME_META = {
 	openclaw: {
 		label: "OpenClaw",
-		blurb: "Your own personal AI assistant.",
+		blurb: "Choose this if you already use OpenClaw and want its Control UI and workflows.",
 	},
 	hermes: {
 		label: "Hermes",
-		blurb: "The agent that grows with you.",
+		blurb: "Recommended for most people. Chat with and manage your agent in the Hermes Dashboard.",
 	},
 } as const satisfies Record<HostedRuntime, { label: string; blurb: string }>;
 

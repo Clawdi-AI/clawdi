@@ -871,43 +871,6 @@ function deploymentReadinessStage(
 	return "provisioning";
 }
 
-function DeploymentReadinessProgress({ stage }: { stage: DeploymentReadinessStage }) {
-	const steps = ["Provisioning", "Booting", "Ready"] as const;
-	const stageIndex = { provisioning: 0, booting: 1, ready: 2 }[stage];
-	return (
-		<ol aria-label="Deployment progress" className="mt-3 flex items-center gap-2 text-xs">
-			{steps.map((step, index) => {
-				const complete = index < stageIndex || stage === "ready";
-				const current = index === stageIndex && stage !== "ready";
-				return (
-					<li
-						key={step}
-						className={cn(
-							"flex items-center gap-1.5",
-							complete || current ? "font-medium text-foreground" : "text-muted-foreground",
-						)}
-						aria-current={current ? "step" : undefined}
-					>
-						<span
-							aria-hidden
-							className={cn(
-								"size-1.5 rounded-full",
-								complete ? "bg-success" : current ? "bg-info" : "bg-border",
-							)}
-						/>
-						{step}
-						{index < steps.length - 1 ? (
-							<span aria-hidden className="ml-0.5 text-border">
-								→
-							</span>
-						) : null}
-					</li>
-				);
-			})}
-		</ol>
-	);
-}
-
 export function OverviewProvisioningPanel({
 	deployment,
 	runtime,
@@ -929,29 +892,26 @@ export function OverviewProvisioningPanel({
 }) {
 	const status = deployment.resource.status;
 	const stage = deploymentReadinessStage(status, runtimeUiAvailable);
-	const parsedStatus = parseDeploymentStatus(status.summary_state);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const settlingTimedOut = deploymentTransitionTimedOut || runtimeUiSettlingTimedOut;
 	const title = deploymentTransitionTimedOut
-		? "Deployment is taking longer than expected"
+		? "Your agent is taking longer than expected"
 		: runtimeUiSettlingTimedOut
-			? "Live UI is taking longer than expected"
+			? `${browserUiLabel} is taking longer than expected`
 			: stage === "provisioning"
-				? "Provisioning your agent…"
+				? "Getting your agent ready…"
 				: stage === "booting"
-					? status.summary_state === "running"
-						? "Starting the live UI…"
-						: "Booting your agent…"
+					? `Opening ${browserUiLabel}…`
 					: "Your agent is ready";
 	const description = deploymentTransitionTimedOut
-		? "The latest deployment change did not finish within five minutes. Automatic checks have stopped. Check again to load the latest status."
+		? "Your agent did not finish getting ready within five minutes. Automatic checks have stopped. Check again to load the latest update."
 		: runtimeUiSettlingTimedOut
-			? `${browserUiLabel} did not publish within the startup window. Automatic periodic checks will continue, and Terminal is available now.`
+			? `${browserUiLabel} did not open within five minutes. We’ll keep checking automatically, and Terminal is available now.`
 			: stage === "provisioning"
-				? "Hosted compute is being prepared. This page updates automatically."
+				? "This step should finish within five minutes. Your agent will keep getting ready if you leave this page."
 				: stage === "booting"
-					? "Opening the live UI automatically… Terminal is available while the runtime finishes booting."
-					: "The live UI is ready to use.";
+					? `This step should finish within five minutes. We’ll open ${browserUiLabel} automatically; Terminal is available now.`
+					: `${browserUiLabel} is ready to use.`;
 	return (
 		<div
 			className={cn(
@@ -968,8 +928,6 @@ export function OverviewProvisioningPanel({
 				<div className="min-w-0 flex-1">
 					<h2 className="text-sm font-semibold text-foreground">{title}</h2>
 					<p className="mt-1 text-sm">{description}</p>
-					{deploymentTransitionTimedOut ? null : <DeploymentReadinessProgress stage={stage} />}
-					<p className="mt-2 text-xs">Current status: {deploymentStatusLabel(parsedStatus)}.</p>
 					{deploymentTransitionTimedOut || stage === "booting" ? (
 						<div className="mt-3 flex flex-wrap gap-2">
 							{deploymentTransitionTimedOut ? (
@@ -1173,14 +1131,16 @@ function OverviewTab({
 	const deploymentStatus = parseDeploymentStatus(deployment.resource.status.summary_state);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const runtimeUiAvailable = Boolean(runtimeConsoleUrl(deployment, runtime));
+	const agentGettingReady =
+		deploymentTransitionTimedOut ||
+		isProvisioningStatus(deploymentStatus) ||
+		(deploymentStatus.kind === "running" && !runtimeUiAvailable);
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
 	return (
 		<div className="flex flex-col gap-5">
-			{deploymentTransitionTimedOut ||
-			isProvisioningStatus(deploymentStatus) ||
-			(deploymentStatus.kind === "running" && !runtimeUiAvailable) ? (
+			{agentGettingReady ? (
 				<OverviewProvisioningPanel
 					deployment={deployment}
 					runtime={runtime}
@@ -1202,11 +1162,18 @@ function OverviewTab({
 			{deploymentStatus.kind === "stopped" ? (
 				<StoppedAgentState deployment={deployment} variant="inset" />
 			) : null}
-			<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-				<StatCard
-					label="Status"
-					value={<RuntimeStatusValue deployment={deployment} agent={agent} />}
-				/>
+			<div
+				className={cn(
+					"grid gap-2 sm:grid-cols-2",
+					agentGettingReady ? "lg:grid-cols-3" : "lg:grid-cols-4",
+				)}
+			>
+				{agentGettingReady ? null : (
+					<StatCard
+						label="Status"
+						value={<RuntimeStatusValue deployment={deployment} agent={agent} />}
+					/>
+				)}
 				<StatCard label="Compute" value={isPerformance ? "Performance" : "Basic"} />
 				<StatCard label="Model" value={model} />
 				<StatCard

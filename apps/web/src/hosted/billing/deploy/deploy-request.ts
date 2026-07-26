@@ -12,7 +12,7 @@ type DeployPersona = {
 	timezone: string;
 };
 
-export const DEPLOY_ASSISTANT_NAME_MAX_LENGTH = 255;
+export const DEPLOY_ASSISTANT_NAME_MAX_LENGTH = 64;
 
 export type DeployAiFields = Pick<DeployRequest, "ai_provider_auth_kind"> &
 	Partial<

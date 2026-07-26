@@ -35,6 +35,7 @@ export function ModelBindingPicker({
 	onManagedModelsRetry,
 	customProviders,
 	additionalProviderItems = [],
+	showProviderSelect = true,
 	selectedProviderChoices,
 	primaryProviderChoice,
 	primaryModel,
@@ -51,6 +52,7 @@ export function ModelBindingPicker({
 	onManagedModelsRetry: () => void;
 	customProviders: readonly AiProvider[];
 	additionalProviderItems?: readonly ModelBindingPickerItem[];
+	showProviderSelect?: boolean;
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
 	primaryModel: string;
@@ -81,30 +83,32 @@ export function ModelBindingPicker({
 			data-v2="true"
 			className={cn("flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3", className)}
 		>
-			<div className="grid gap-3 sm:grid-cols-2">
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor={providerInputId}>Primary provider</Label>
-					<Select
-						items={primaryProviderItems}
-						value={primaryProviderChoice}
-						onValueChange={(value) => {
-							if (value) onPrimaryProviderChange(value);
-						}}
-					>
-						<SelectTrigger id={providerInputId} className="w-full">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectGroup>
-								{primaryProviderItems.map((item) => (
-									<SelectItem key={item.value} value={item.value}>
-										{item.label}
-									</SelectItem>
-								))}
-							</SelectGroup>
-						</SelectContent>
-					</Select>
-				</div>
+			<div className={cn("grid gap-3", showProviderSelect && "sm:grid-cols-2")}>
+				{showProviderSelect ? (
+					<div className="flex flex-col gap-1.5">
+						<Label htmlFor={providerInputId}>Primary provider</Label>
+						<Select
+							items={primaryProviderItems}
+							value={primaryProviderChoice}
+							onValueChange={(value) => {
+								if (value) onPrimaryProviderChange(value);
+							}}
+						>
+							<SelectTrigger id={providerInputId} className="w-full">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectGroup>
+									{primaryProviderItems.map((item) => (
+										<SelectItem key={item.value} value={item.value}>
+											{item.label}
+										</SelectItem>
+									))}
+								</SelectGroup>
+							</SelectContent>
+						</Select>
+					</div>
+				) : null}
 				{isManaged && managedModelsLoading ? (
 					<div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
 						<Spinner className="size-3.5" /> Loading managed models…

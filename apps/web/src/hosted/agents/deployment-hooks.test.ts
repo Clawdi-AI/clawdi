@@ -126,12 +126,33 @@ describe("deployment transition timeout rendering", () => {
 			}),
 		);
 
-		expect(converging).toContain("Provisioning your agent…");
-		expect(converging).toContain("This page updates automatically.");
-		expect(timedOut).toContain("Deployment is taking longer than expected");
+		expect(converging).toContain("Getting your agent ready…");
+		expect(converging).toContain("This step should finish within five minutes.");
+		expect(converging).toContain("will keep getting ready if you leave this page");
+		expect(converging).not.toContain("Provisioning");
+		expect(converging).not.toContain("Booting");
+		expect(converging).not.toContain("Current status");
+		expect(converging).not.toContain("Deployment progress");
+		expect(timedOut).toContain("Your agent is taking longer than expected");
+		expect(timedOut).toContain("did not finish getting ready within five minutes");
 		expect(timedOut).toContain("Automatic checks have stopped.");
 		expect(timedOut).toContain("Check again");
-		expect(timedOut).not.toContain("This page updates automatically.");
+		expect(timedOut).not.toContain("will keep getting ready if you leave this page");
+	});
+
+	test("sets an honest five-minute expectation while the product UI opens", () => {
+		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
+		const panelStart = source.indexOf("export function OverviewProvisioningPanel");
+		const panelEnd = source.indexOf("function OverviewFailedPanel", panelStart);
+		const panelSource = source.slice(panelStart, panelEnd);
+
+		expect(panelSource).toContain("`Opening ");
+		expect(panelSource).toContain("browserUiLabel}…`");
+		expect(panelSource).toContain("This step should finish within five minutes.");
+		expect(panelSource).toContain("We’ll open ");
+		expect(panelSource).toContain("browserUiLabel} automatically");
+		expect(panelSource).not.toContain('"Booting"');
+		expect(panelSource).not.toContain("Current status");
 	});
 
 	test("wires the timed-out inventory state and real refetch action into the detail", () => {

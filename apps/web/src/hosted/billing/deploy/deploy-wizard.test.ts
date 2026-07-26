@@ -23,16 +23,39 @@ const modelBindingPickerSource = readFileSync(
 	new URL("../../v2/ai-providers/model-binding-picker.tsx", import.meta.url),
 	"utf8",
 );
+const welcomeWalletSource = readFileSync(
+	new URL("../subscription/welcome-wallet-card.tsx", import.meta.url),
+	"utf8",
+);
+const runtimesSource = readFileSync(new URL("../../runtimes.ts", import.meta.url), "utf8");
+const addProviderDialogSource = readFileSync(
+	new URL("../../v2/ai-providers/add-provider-dialog.tsx", import.meta.url),
+	"utf8",
+);
+const aiProviderHooksSource = readFileSync(
+	new URL("../../v2/ai-providers/ai-providers-hooks.ts", import.meta.url),
+	"utf8",
+);
 
 describe("deploy wizard personalization", () => {
-	test("renders the required bounded agent name input", () => {
+	test("uses a stable dashboard name within the strictest backend limit", () => {
 		expect(wizardSource).toContain('htmlFor="agent-name"');
-		expect(wizardSource).toContain('<Label htmlFor="agent-name">');
+		expect(wizardSource).toContain('<Label htmlFor="agent-name">Name in Clawdi</Label>');
 		expect(wizardSource).toContain('id="agent-name"');
 		expect(wizardSource).toContain("maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}");
-		expect(DEPLOY_ASSISTANT_NAME_MAX_LENGTH).toBe(255);
+		expect(DEPLOY_ASSISTANT_NAME_MAX_LENGTH).toBe(64);
+		expect(wizardSource).toContain(
+			"trimmedAssistantName.length > DEPLOY_ASSISTANT_NAME_MAX_LENGTH",
+		);
+		expect(wizardSource).toContain("Used to identify this agent in Clawdi.");
+		expect(wizardSource).toContain("useState(DEFAULT_DEPLOY_ASSISTANT_NAME)");
+		expect(wizardSource).not.toContain("assistantNameEditedRef");
+		expect(wizardSource).not.toContain("deployAssistantNameAfterRuntimeChange");
 		expect(wizardSource).toContain("required");
 		expect(wizardSource).toContain("aria-invalid={nameError ? true : undefined}");
+		expect(wizardSource).toContain(
+			'aria-describedby={nameError ? "agent-name-error" : "agent-name-help"}',
+		);
 		expect(wizardSource).toContain('type="submit"');
 		expect(wizardSource).toContain("submitBlockingReason");
 	});
@@ -51,8 +74,22 @@ describe("deploy wizard product copy and flow", () => {
 		expect(wizardSource).not.toContain('title="Link after deploy"');
 	});
 
-	test("links checkout fallback recovery to the agents list", () => {
-		expect(wizardSource).toContain('label: "View agents"');
+	test("makes the recommended permanent agent software choice answerable", () => {
+		expect(wizardSource).toContain('<Badge variant="secondary">Recommended</Badge>');
+		expect(wizardSource).toContain("Agent software can’t be changed later");
+		expect(wizardSource).toContain(
+			"To switch after deployment, you must delete this agent and deploy a new one.",
+		);
+		expect(runtimesSource).toContain("Chat with and manage your agent in the Hermes Dashboard.");
+		expect(runtimesSource).toContain("already use OpenClaw and want its Control UI and workflows.");
+		expect(runtimesSource).not.toContain("Your own personal AI assistant.");
+		expect(runtimesSource).not.toContain("The agent that grows with you.");
+		expect(runtimesSource).not.toContain("DEFAULT_HOSTED_RUNTIME");
+	});
+
+	test("links unresolved post-payment recovery to the agents list", () => {
+		expect(wizardSource).toContain("submitError.blocksRetry");
+		expect(wizardSource).toContain("View agents");
 		expect(wizardSource).toContain('router.navigate({ href: "/agents" })');
 	});
 });
@@ -122,6 +159,49 @@ describe("managed model picker", () => {
 		expect(modelBindingPickerSource).toContain("Loading managed models…");
 		expect(modelBindingPickerSource).toContain('title="Couldn\'t load managed models"');
 	});
+
+	test("does not blame the user while the Managed AI catalog is loading or unavailable", () => {
+		expect(wizardSource).toContain('return "Loading Managed AI models."');
+		expect(wizardSource).toContain('return "Retry loading Managed AI models above."');
+		expect(wizardSource).toContain('return "Choose an available primary model."');
+		expect(wizardSource.indexOf('return "Loading Managed AI models."')).toBeLessThan(
+			wizardSource.indexOf('return "Choose an available primary model."'),
+		);
+	});
+});
+
+describe("deploy provider choice", () => {
+	test("keeps Managed AI compact by default and expands every alternative on demand", () => {
+		expect(wizardSource).toContain("useState(false)");
+		expect(wizardSource).toContain("title={aiProviderSummaryTitle}");
+		expect(wizardSource).toContain("primaryProviderLabel");
+		expect(wizardSource).toContain("Using ");
+		expect(wizardSource).toContain('{aiProviderEditorOpen ? "Done" : "Change"}');
+		expect(wizardSource).toContain("{aiProviderEditorOpen ? (");
+		expect(wizardSource).toContain('title="Add a provider"');
+		expect(wizardSource).toContain('title={authCardLabel("unmanaged")}');
+	});
+
+	test("explains that the welcome balance is used before added Wallet funds", () => {
+		expect(welcomeWalletSource).toContain(
+			"welcome balance covers Managed AI first; after that, usage draws from your Wallet.",
+		);
+		expect(wizardSource).toContain(
+			"Your welcome balance covers it first; after that, usage draws from your Wallet.",
+		);
+		expect(welcomeWalletSource).not.toContain("managed AI is on us to start");
+		expect(wizardSource).not.toContain("Managed-AI usage paid directly from your Wallet");
+	});
+
+	test("uses an exclusive provider selection and hides the redundant provider picker", () => {
+		expect(wizardSource).toContain("selectProvider: selectAiProviderChoice");
+		expect(wizardSource).toContain("selectAiProviderChoice(MANAGED_AI_CHOICE)");
+		expect(wizardSource).toContain("selectAiProviderChoice(provider.provider_id)");
+		expect(wizardSource).toContain("showProviderSelect={false}");
+		expect(wizardSource).not.toContain("toggleAiProviderChoice");
+		expect(wizardSource).not.toContain("selectedProviderCount");
+		expect(wizardSource).not.toContain("aiProviderChoices.includes");
+	});
 });
 
 describe("billing-read gates", () => {
@@ -132,5 +212,53 @@ describe("billing-read gates", () => {
 		expect(wizardSource).toContain('title="Couldn\'t load compute plans"');
 		expect(wizardSource).toContain('title="Couldn\'t load your Wallet balance"');
 		expect(wizardSource).toContain("onRetry={() => void wallet.refetch()}");
+	});
+});
+
+describe("deploy acceptance", () => {
+	test("pauses quote reads, submits the last successful quote, and navigates on acceptance", () => {
+		expect(wizardSource).toContain('enabled: paymentMethod === "wallet" && !submitting');
+		expect(wizardSource).toContain(
+			"const lastSuccessfulSubscriptionQuote = subscriptionCreateQuote.data ?? null;",
+		);
+		expect(wizardSource.match(/quote: lastSuccessfulSubscriptionQuote/g)).toHaveLength(3);
+		expect(wizardSource).toContain(
+			"submitting || lastSuccessfulSubscriptionQuote ? null : subscriptionCreateQuote.error;",
+		);
+		expect(wizardSource).not.toContain("await subscriptionCreateQuote.refetch()");
+		expect(wizardSource).not.toContain("subscription-checkout-hosted-fallback");
+		expect(wizardSource).toContain("fallbackUrl: checkoutRedirectUrl(result)");
+		const onDeployStart = wizardSource.indexOf("async function onDeploy()");
+		const walletBranch = wizardSource.slice(
+			wizardSource.indexOf('if (paymentMethod === "wallet")', onDeployStart),
+			wizardSource.indexOf("const checkoutFingerprint"),
+		);
+		expect(walletBranch).not.toContain("refreshCheckoutReturn");
+		expect(walletBranch).not.toContain("recheckCanCreateCloudAgents");
+		expect(wizardSource).toContain(
+			"router.navigate(acceptedDeploymentNavigation(outcome.deploymentId))",
+		);
+	});
+
+	test("shows a scoped honest busy state and keeps a persistent actionable failure", () => {
+		expect(wizardSource).toContain("setSubmitBusyLabel(");
+		expect(wizardSource).toContain('"Confirming payment & creating agent…"');
+		expect(wizardSource).toContain('"Opening secure checkout…"');
+		expect(wizardSource).toContain('"Creating agent…"');
+		expect(wizardSource).toContain('<Spinner data-icon="inline-start" />');
+		expect(wizardSource).toContain("{submitting ? submitBusyLabel : deployLabel}");
+		expect(wizardSource).toContain('role="alert"');
+		expect(wizardSource).toContain("Your choices are unchanged; review them and try again.");
+		expect(wizardSource).not.toContain('submitting ? "Working…"');
+	});
+
+	test("keeps the reachable provider mutation busy state scoped and does not await refetch", () => {
+		expect(addProviderDialogSource).toContain("const runAction = useActionLock()");
+		expect(addProviderDialogSource).toContain("void runAction(submit)");
+		expect(addProviderDialogSource).toContain('<Spinner data-icon="inline-start" />');
+		expect(addProviderDialogSource).toContain('"Opening sign-in…"');
+		expect(addProviderDialogSource).toContain('"Adding provider…"');
+		expect(addProviderDialogSource).toContain('"Saving provider…"');
+		expect(aiProviderHooksSource).toContain("void qc.invalidateQueries({ queryKey: KEY })");
 	});
 });
