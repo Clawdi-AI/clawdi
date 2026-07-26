@@ -10,6 +10,7 @@ import { MANAGED_AI_CHOICE, MANAGED_PROVIDER_ID } from "@/hosted/v2/ai-providers
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import {
 	changeAiBindingPrimaryProvider,
+	selectAiBindingProvider,
 	toggleAiBindingProvider,
 } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 
@@ -133,6 +134,34 @@ describe("AI provider binding fields", () => {
 });
 
 describe("AI provider binding draft transitions", () => {
+	test("selects exactly one provider for the deploy flow", () => {
+		const selected = selectAiBindingProvider(
+			{
+				bindingMode: "configured",
+				providerChoices: [MANAGED_AI_CHOICE, oauthProvider.provider_id],
+				primaryProviderChoice: MANAGED_AI_CHOICE,
+				primaryModel: "gpt-managed",
+			},
+			apiKeyProvider.provider_id,
+			{
+				managedModels,
+				operationMode: "create",
+				providers: [apiKeyProvider, oauthProvider],
+			},
+		);
+
+		expect(selected.providerChoices).toEqual([apiKeyProvider.provider_id]);
+		expect(selected.primaryProviderChoice).toBe(apiKeyProvider.provider_id);
+		expect(selected.primaryModel).toBe("gpt-custom");
+		expect(
+			buildAiBindingFields(selected, {
+				managedModels,
+				mode: "create",
+				providers: [apiKeyProvider, oauthProvider],
+			}).provider_ids,
+		).toEqual([apiKeyProvider.provider_id]);
+	});
+
 	test("preserves the create and update model-fallback difference", () => {
 		const draft = {
 			bindingMode: "configured" as const,

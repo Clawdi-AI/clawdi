@@ -15,7 +15,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
-import { EntityChoiceCard } from "@/components/entity-card";
+import { EntityChoiceCard, EntityRow } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
@@ -145,8 +145,6 @@ import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-provide
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
 	MANAGED_AI_CHOICE,
-	MANAGED_PROVIDER_ID,
-	MANAGED_PROVIDER_LABEL,
 	modelDisplayName,
 	modelOptionsForProvider,
 	providerCatalogDescription,
@@ -179,6 +177,7 @@ const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-
 const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
+const DEPLOY_MANAGED_AI_LABEL = "Managed AI";
 
 function acceptedDeploymentNavigation(deploymentId: string, replace = false) {
 	return { href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"), replace };
@@ -376,6 +375,7 @@ export function DeployWizard() {
 	const [compute, setCompute] = useState<Compute>("basic");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
+	const [aiProviderEditorOpen, setAiProviderEditorOpen] = useState(false);
 	const [addProviderOpen, setAddProviderOpen] = useState(false);
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
 	const [term, setTerm] = useState(1);
@@ -490,10 +490,9 @@ export function DeployWizard() {
 		managedPrimaryModelReady,
 		selectedProviderChoices,
 		selectCreatedProvider: selectCreatedAiProvider,
+		selectProvider: selectAiProviderChoice,
 		setBindingMode: setAiAccessMode,
 		setPrimaryModel,
-		setPrimaryProvider,
-		toggleProvider: toggleAiProviderChoice,
 	} = useAiProviderBindingDraft({
 		initialDraft: {
 			bindingMode: DEFAULT_DEPLOY_AI_ACCESS_MODE,
@@ -511,12 +510,15 @@ export function DeployWizard() {
 		},
 		providers: providerList,
 	});
-	const {
-		bindingMode: aiAccessMode,
-		primaryModel,
-		primaryProviderChoice,
-		providerChoices: aiProviderChoices,
-	} = aiBindingDraft;
+	const { bindingMode: aiAccessMode, primaryModel, primaryProviderChoice } = aiBindingDraft;
+	const managedProviderSelected =
+		aiAccessMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE;
+	const managedModelsNeedRetry =
+		managedProviderSelected &&
+		managedModels.length === 0 &&
+		(Boolean(managedModelCatalog.error) || managedModelCatalog.isSuccess);
+	const managedModelsLoading =
+		managedProviderSelected && managedModels.length === 0 && !managedModelsNeedRetry;
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const trimmedAssistantName = assistantName.trim();
@@ -536,7 +538,11 @@ export function DeployWizard() {
 				: "Checking your free Basic agent availability.";
 		}
 		if (!computePlanReady) return "Choose an available compute plan.";
-		if (!managedPrimaryModelReady) return "Choose an available primary model.";
+		if (!managedPrimaryModelReady) {
+			if (managedModelsNeedRetry) return "Retry loading Managed AI models above.";
+			if (managedModelsLoading) return "Loading Managed AI models.";
+			return "Choose an available primary model.";
+		}
 		if (paidSelection && paymentMethod === "wallet") {
 			if (!wallet.isSuccess || !wallet.data) {
 				return wallet.error
@@ -900,20 +906,18 @@ export function DeployWizard() {
 						: "Review wallet quote"
 			: "Continue to checkout"
 		: "Deploy agent";
-	const selectedProviderCount = aiAccessMode === "configured" ? selectedProviderChoices.length : 0;
 	const primaryProvider = providerList.find(
 		(provider) => provider.provider_id === primaryProviderChoice,
 	);
+	const primaryProviderLabel =
+		primaryProviderChoice === MANAGED_AI_CHOICE
+			? DEPLOY_MANAGED_AI_LABEL
+			: providerDisplayLabel(primaryProvider ?? primaryProviderChoice);
 	const aiSummary =
 		aiAccessMode === "unmanaged"
 			? authCardLabel("unmanaged")
 			: [
-					`${providerDisplayLabel(
-						primaryProvider ??
-							(primaryProviderChoice === MANAGED_AI_CHOICE
-								? MANAGED_PROVIDER_ID
-								: primaryProviderChoice),
-					)}${selectedProviderCount > 1 ? ` +${selectedProviderCount - 1}` : ""}`,
+					primaryProviderLabel,
 					primaryModel
 						? modelDisplayName(
 								primaryModel,
@@ -923,6 +927,21 @@ export function DeployWizard() {
 				]
 					.filter(Boolean)
 					.join(" · ");
+	const aiProviderSummaryTitle =
+		aiAccessMode === "unmanaged" ? authCardLabel("unmanaged") : `Using ${primaryProviderLabel}`;
+	const aiProviderSummaryMeta =
+		aiAccessMode === "unmanaged"
+			? "Add model access inside the agent after it is ready."
+			: managedModelsLoading
+				? "Loading available models…"
+				: managedModelsNeedRetry
+					? "Models couldn’t be loaded."
+					: primaryModel
+						? modelDisplayName(
+								primaryModel,
+								modelOptionsForProvider(primaryProviderChoice, providerList, managedModels),
+							)
+						: "Choose a model.";
 	const runtimeSummary = runtimeDisplayName(runtime);
 	const summaryLine = [
 		`${compute === "performance" ? "Performance" : "Basic"} compute`,
@@ -1001,104 +1020,146 @@ export function DeployWizard() {
 
 				<SettingsSection
 					title="AI providers"
-					description="Choose how your agent accesses AI models and select its primary model."
+					description="Managed AI is selected by default. Change it only if you want to use your own provider."
 				>
-					<div className={TWO_TILE_GRID_CLASS}>
-						<EntityChoiceCard
-							selected={aiAccessMode === "unmanaged"}
-							onClick={() => setAiAccessMode("unmanaged")}
-							icon={
-								<IconChip tint="bg-muted text-muted-foreground">
-									<Settings2 />
-								</IconChip>
-							}
-							title={authCardLabel("unmanaged")}
-							description="Deploy first, then configure model access inside the agent."
-							badge={
-								<Badge variant={aiAccessMode === "unmanaged" ? "secondary" : "outline"}>
-									{aiAccessMode === "unmanaged" ? "Selected" : "Optional"}
-								</Badge>
-							}
-						/>
-						<EntityChoiceCard
-							selected={
-								aiAccessMode === "configured" && aiProviderChoices.includes(MANAGED_AI_CHOICE)
-							}
-							onClick={() => toggleAiProviderChoice(MANAGED_AI_CHOICE)}
-							icon={
+					<EntityRow
+						icon={
+							managedProviderSelected ? (
 								<IconChip tint="bg-primary/10 text-primary">
 									<Sparkles />
 								</IconChip>
-							}
-							title={MANAGED_PROVIDER_LABEL}
-							description="Managed-AI usage paid directly from your Wallet."
-							badge={
-								<Badge variant="secondary">
-									{aiAccessMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE
-										? "Default"
-										: "Managed"}
-								</Badge>
-							}
-						/>
-						{aiProviders.isLoading ? (
-							<Skeleton className="h-[74px] w-full rounded-lg" />
-						) : aiProviders.error ? (
-							<div className="sm:col-span-2">
-								<ApiErrorPanel
-									title="Couldn't load providers"
-									error={aiProviders.error}
-									onRetry={() => aiProviders.refetch()}
-									normalizer={aiProviderErrorNormalizer}
+							) : primaryProvider ? (
+								<ProviderTypeChip type={primaryProvider.type} />
+							) : (
+								<IconChip tint="bg-muted text-muted-foreground">
+									<Settings2 />
+								</IconChip>
+							)
+						}
+						title={aiProviderSummaryTitle}
+						meta={aiProviderSummaryMeta}
+						actions={
+							<>
+								{managedModelsNeedRetry ? (
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										disabled={managedModelCatalog.isFetching}
+										onClick={() => void managedModelCatalog.refetch()}
+									>
+										{managedModelCatalog.isFetching ? <Spinner data-icon="inline-start" /> : null}
+										{managedModelCatalog.isFetching ? "Retrying…" : "Retry"}
+									</Button>
+								) : null}
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									aria-expanded={aiProviderEditorOpen}
+									onClick={() => setAiProviderEditorOpen((open) => !open)}
+								>
+									{aiProviderEditorOpen ? "Done" : "Change"}
+								</Button>
+							</>
+						}
+					/>
+					{aiProviderEditorOpen ? (
+						<div className="mt-4 flex flex-col gap-4">
+							<div className={TWO_TILE_GRID_CLASS}>
+								<EntityChoiceCard
+									selected={aiAccessMode === "unmanaged"}
+									onClick={() => setAiAccessMode("unmanaged")}
+									icon={
+										<IconChip tint="bg-muted text-muted-foreground">
+											<Settings2 />
+										</IconChip>
+									}
+									title={authCardLabel("unmanaged")}
+									description="Deploy first, then configure model access inside the agent."
+									badge={
+										aiAccessMode === "unmanaged" ? (
+											<Badge variant="secondary">Selected</Badge>
+										) : null
+									}
+								/>
+								<EntityChoiceCard
+									selected={managedProviderSelected}
+									onClick={() => selectAiProviderChoice(MANAGED_AI_CHOICE)}
+									icon={
+										<IconChip tint="bg-primary/10 text-primary">
+											<Sparkles />
+										</IconChip>
+									}
+									title={DEPLOY_MANAGED_AI_LABEL}
+									description="Managed-AI usage paid directly from your Wallet."
+									badge={<Badge variant="secondary">Default</Badge>}
+								/>
+								{aiProviders.isLoading ? (
+									<Skeleton className="h-[74px] w-full rounded-lg" />
+								) : aiProviders.error ? (
+									<div className="sm:col-span-2">
+										<ApiErrorPanel
+											title="Couldn't load providers"
+											error={aiProviders.error}
+											onRetry={() => aiProviders.refetch()}
+											normalizer={aiProviderErrorNormalizer}
+										/>
+									</div>
+								) : null}
+								{providerList.map((provider) => (
+									<EntityChoiceCard
+										key={provider.provider_id}
+										selected={
+											aiAccessMode === "configured" &&
+											primaryProviderChoice === provider.provider_id
+										}
+										onClick={() => selectAiProviderChoice(provider.provider_id)}
+										icon={<ProviderTypeChip type={provider.type} />}
+										title={providerDisplayLabel(provider)}
+										description={providerCatalogDescription(provider)}
+										badge={
+											primaryProviderChoice === provider.provider_id ? (
+												<Badge variant="secondary">Selected</Badge>
+											) : (
+												<AuthBadge auth={provider.auth} />
+											)
+										}
+									/>
+								))}
+								<AddTile
+									title="Add a provider"
+									description="Connect OpenAI, Anthropic, or another endpoint."
+									onClick={() => setAddProviderOpen(true)}
 								/>
 							</div>
-						) : null}
-						{providerList.map((provider) => (
-							<EntityChoiceCard
-								key={provider.provider_id}
-								selected={
-									aiAccessMode === "configured" && aiProviderChoices.includes(provider.provider_id)
-								}
-								onClick={() => toggleAiProviderChoice(provider.provider_id)}
-								icon={<ProviderTypeChip type={provider.type} />}
-								title={providerDisplayLabel(provider)}
-								description={providerCatalogDescription(provider)}
-								badge={
-									primaryProviderChoice === provider.provider_id ? (
-										<Badge variant="secondary">Primary</Badge>
-									) : (
-										<AuthBadge auth={provider.auth} />
-									)
-								}
-							/>
-						))}
-						<AddTile
-							title="Add a provider"
-							description="Connect OpenAI, Anthropic, or another endpoint."
-							onClick={() => setAddProviderOpen(true)}
-						/>
-					</div>
-					{aiAccessMode === "unmanaged" ? (
-						<p className="mt-4 text-sm text-muted-foreground">
-							No AI provider will be selected for you. Add one inside the agent after it is ready.
-						</p>
-					) : (
-						<ModelBindingPicker
-							idPrefix="deploy"
-							className="mt-4"
-							providers={providerList}
-							managedModels={managedModels}
-							managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
-							managedModelsError={managedModelCatalog.error}
-							managedModelsErrorNormalizer={billingErrorNormalizer}
-							onManagedModelsRetry={() => void managedModelCatalog.refetch()}
-							customProviders={providerList}
-							selectedProviderChoices={selectedProviderChoices}
-							primaryProviderChoice={primaryProviderChoice}
-							primaryModel={primaryModel}
-							onPrimaryProviderChange={setPrimaryProvider}
-							onPrimaryModelChange={setPrimaryModel}
-						/>
-					)}
+							{aiAccessMode === "unmanaged" ? (
+								<p className="text-sm text-muted-foreground">
+									No AI provider will be selected for you. Add one inside the agent after it is
+									ready.
+								</p>
+							) : (
+								<ModelBindingPicker
+									idPrefix="deploy"
+									providers={providerList}
+									managedModels={managedModels}
+									managedModelsLoading={
+										managedModels.length === 0 && managedModelCatalog.isFetching
+									}
+									managedModelsError={managedModelCatalog.error}
+									managedModelsErrorNormalizer={billingErrorNormalizer}
+									onManagedModelsRetry={() => void managedModelCatalog.refetch()}
+									customProviders={providerList}
+									showProviderSelect={false}
+									selectedProviderChoices={selectedProviderChoices}
+									primaryProviderChoice={primaryProviderChoice}
+									primaryModel={primaryModel}
+									onPrimaryProviderChange={selectAiProviderChoice}
+									onPrimaryModelChange={setPrimaryModel}
+								/>
+							)}
+						</div>
+					) : null}
 				</SettingsSection>
 
 				<SettingsSection
@@ -1339,8 +1400,7 @@ export function DeployWizard() {
 									</p>
 								) : (
 									<p id="agent-name-help" className="text-xs text-muted-foreground">
-										Used to identify this agent in Clawdi. {DEPLOY_ASSISTANT_NAME_MAX_LENGTH}
-										characters maximum.
+										{`Used to identify this agent in Clawdi. ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters maximum.`}
 									</p>
 								)}
 							</div>

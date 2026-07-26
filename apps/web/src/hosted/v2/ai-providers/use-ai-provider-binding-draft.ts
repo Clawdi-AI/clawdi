@@ -86,6 +86,14 @@ export function toggleAiBindingProvider(
 		: changeAiBindingPrimaryProvider(next, choices[0] ?? MANAGED_AI_CHOICE, context);
 }
 
+export function selectAiBindingProvider(
+	draft: AiProviderBindingDraft,
+	choice: string,
+	context: DraftContext,
+): AiProviderBindingDraft {
+	return changeAiBindingPrimaryProvider({ ...draft, providerChoices: [choice] }, choice, context);
+}
+
 export function useAiProviderBindingDraft({
 	initialDraft,
 	managedCatalogReady,
@@ -184,6 +192,8 @@ export function useAiProviderBindingDraft({
 			setDraft((current) => ({ ...current, primaryModel })),
 		setPrimaryProvider: (choice: string) =>
 			setDraft((current) => changeAiBindingPrimaryProvider(current, choice, context)),
+		selectProvider: (choice: string) =>
+			setDraft((current) => selectAiBindingProvider(current, choice, context)),
 		toggleProvider: (choice: string) =>
 			setDraft((current) => toggleAiBindingProvider(current, choice, context)),
 		selectCreatedProvider: (id: string, dataUpdatedAt: number) => {

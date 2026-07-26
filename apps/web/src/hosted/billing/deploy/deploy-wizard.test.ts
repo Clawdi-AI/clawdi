@@ -133,6 +133,38 @@ describe("managed model picker", () => {
 		expect(modelBindingPickerSource).toContain("Loading managed models…");
 		expect(modelBindingPickerSource).toContain('title="Couldn\'t load managed models"');
 	});
+
+	test("does not blame the user while the Managed AI catalog is loading or unavailable", () => {
+		expect(wizardSource).toContain('return "Loading Managed AI models."');
+		expect(wizardSource).toContain('return "Retry loading Managed AI models above."');
+		expect(wizardSource).toContain('return "Choose an available primary model."');
+		expect(wizardSource.indexOf('return "Loading Managed AI models."')).toBeLessThan(
+			wizardSource.indexOf('return "Choose an available primary model."'),
+		);
+	});
+});
+
+describe("deploy provider choice", () => {
+	test("keeps Managed AI compact by default and expands every alternative on demand", () => {
+		expect(wizardSource).toContain("useState(false)");
+		expect(wizardSource).toContain("title={aiProviderSummaryTitle}");
+		expect(wizardSource).toContain("primaryProviderLabel");
+		expect(wizardSource).toContain("Using ");
+		expect(wizardSource).toContain('{aiProviderEditorOpen ? "Done" : "Change"}');
+		expect(wizardSource).toContain("{aiProviderEditorOpen ? (");
+		expect(wizardSource).toContain('title="Add a provider"');
+		expect(wizardSource).toContain('title={authCardLabel("unmanaged")}');
+	});
+
+	test("uses an exclusive provider selection and hides the redundant provider picker", () => {
+		expect(wizardSource).toContain("selectProvider: selectAiProviderChoice");
+		expect(wizardSource).toContain("selectAiProviderChoice(MANAGED_AI_CHOICE)");
+		expect(wizardSource).toContain("selectAiProviderChoice(provider.provider_id)");
+		expect(wizardSource).toContain("showProviderSelect={false}");
+		expect(wizardSource).not.toContain("toggleAiProviderChoice");
+		expect(wizardSource).not.toContain("selectedProviderCount");
+		expect(wizardSource).not.toContain("aiProviderChoices.includes");
+	});
 });
 
 describe("billing-read gates", () => {

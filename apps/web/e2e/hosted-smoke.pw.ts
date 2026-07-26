@@ -1442,6 +1442,33 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("deploy keeps Managed AI compact and provider selection exclusive", async ({ page }) => {
+	await stubHostedApi(page, { plans: [basicPlan], deployments: [] });
+	await page.goto("/deploy");
+
+	await expect(page.getByText("Using Managed AI", { exact: true })).toBeVisible();
+	const addProvider = page.getByRole("button", { name: /^Add a provider/ });
+	await expect(addProvider).toHaveCount(0);
+	await page.getByRole("button", { name: "Change", exact: true }).click();
+
+	const managed = page.getByRole("button", { name: /^Managed AI/ });
+	const unmanaged = page.getByRole("button", { name: /^Configure inside agent/ });
+	await expect(addProvider).toBeVisible();
+	await expect(managed).toHaveAttribute("aria-pressed", "true");
+	await expect(unmanaged).toHaveAttribute("aria-pressed", "false");
+
+	await unmanaged.click();
+	await expect(unmanaged).toHaveAttribute("aria-pressed", "true");
+	await expect(managed).toHaveAttribute("aria-pressed", "false");
+	await managed.click();
+	await expect(managed).toHaveAttribute("aria-pressed", "true");
+	await expect(unmanaged).toHaveAttribute("aria-pressed", "false");
+
+	await page.getByRole("button", { name: "Done", exact: true }).click();
+	await expect(addProvider).toHaveCount(0);
+	await expect(page.getByText("Using Managed AI", { exact: true })).toBeVisible();
+});
+
 test("free Basic Deploy submits the declarative create contract", async ({ page }) => {
 	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
 	const convergencePollRequests: string[] = [];
