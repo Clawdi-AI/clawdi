@@ -82,6 +82,16 @@ describe("providerAuthForSubmit", () => {
 			}),
 		).toEqual({ type: "api_key", source: "managed" });
 	});
+
+	test("requires a key when a managed-key placeholder has no stored credential", () => {
+		expect(apiKeyEditState("api_key", { type: "api_key", source: "managed" }, false)).toMatchObject(
+			{
+				canKeepManagedApiKey: false,
+				canKeepExistingKey: false,
+				keyRequired: true,
+			},
+		);
+	});
 });
 
 describe("provider edit integrity", () => {
@@ -117,6 +127,7 @@ describe("provider edit integrity", () => {
 			base_url: "https://old.example/v1",
 			api_mode: "openai_chat",
 			auth: { type: "api_key", source: "env", ref: "env:OPENAI_API_KEY" },
+			usable: true,
 			managed_by: "user",
 			runtime_env_name: "OPENAI_API_KEY",
 			models: [{ id: "gpt-old" }],

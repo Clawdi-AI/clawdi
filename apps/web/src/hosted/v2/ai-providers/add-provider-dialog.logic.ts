@@ -59,8 +59,9 @@ export function authFor(method: AuthMethod): AiProviderUpsertAuth {
 export function apiKeyEditState(
 	authMethod: AuthMethod,
 	editingAuth: AiProviderAuth | null | undefined,
+	credentialUsable = true,
 ): ApiKeyEditState {
-	const keepable = keepableExistingApiKeyAuth(editingAuth);
+	const keepable = credentialUsable ? keepableExistingApiKeyAuth(editingAuth) : null;
 	const keepKind = authMethod === "api_key" ? keepable?.kind : undefined;
 	const canKeepExistingKey = keepKind !== undefined;
 	return {

@@ -17,6 +17,7 @@ const provider: AiProvider = {
 	models: [{ id: "gpt-5.1" }],
 	api_mode: "openai_responses",
 	auth: { type: "agent_profile", tool: "codex", profile: "default" },
+	usable: true,
 	managed_by: "user",
 	runtime_env_name: null,
 	capabilities: { chat: true, responses: true, ignored: "yes" },

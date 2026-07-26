@@ -124,6 +124,14 @@ describe("managed model picker", () => {
 	});
 });
 
+describe("AI provider usability gate", () => {
+	test("builds every deploy-provider choice from the usable subset", () => {
+		expect(wizardSource).toContain("usableProviders(aiProviders.data ?? [])");
+		expect(wizardSource).toContain("{providerList.map((provider) => (");
+		expect(wizardSource).not.toContain("{aiProviders.data?.map((provider) => (");
+	});
+});
+
 describe("billing-read gates", () => {
 	test("keeps deploy disabled until inventory succeeds and offers retries", () => {
 		expect(wizardSource).toContain("deployments.isSuccess &&");

@@ -101,6 +101,16 @@ export function buildAiBindingFields(
 				};
 	}
 
+	const unusableProvider = draft.providerChoices
+		.map((choice) => providers.find((provider) => provider.provider_id === choice))
+		.find((provider) => provider?.usable === false);
+	if (unusableProvider) {
+		throw new AiBindingBuildError(
+			"Provider needs setup",
+			`${unusableProvider.label?.trim() || unusableProvider.provider_id} has no usable credential. Finish its setup or choose another provider.`,
+		);
+	}
+
 	const selectedChoices = normalizeSelectedProviderIds(
 		draft.providerChoices,
 		draft.primaryProviderChoice,

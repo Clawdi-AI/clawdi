@@ -150,6 +150,7 @@ import {
 	modelOptionsForProvider,
 	providerCatalogDescription,
 	providerDisplayLabel,
+	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
@@ -474,7 +475,7 @@ export function DeployWizard() {
 	const walletInsufficient = walletShortfallUsd !== null;
 	const basicUnavailable = basicSelection.mode === "unavailable";
 
-	const providerList = aiProviders.data ?? [];
+	const providerList = usableProviders(aiProviders.data ?? []);
 	const managedModels = managedModelCatalog.data?.models ?? [];
 	const {
 		draft: aiBindingDraft,
