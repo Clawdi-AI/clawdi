@@ -1560,7 +1560,10 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
 
 	await expect(page).toHaveURL(/\/agents\/hdep_created/);
-	await expect(page.getByText("Provisioning your agent…", { exact: true })).toBeVisible();
+	await expect(page.getByText("Getting your agent ready…", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("This step should finish within five minutes.", { exact: false }),
+	).toBeVisible();
 	expect(deploymentRequestReads).toHaveLength(1);
 	expect(operationPollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
