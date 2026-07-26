@@ -1,11 +1,37 @@
 import { describe, expect, test } from "bun:test";
-import { nativeTransportSummary, pairCodeRequiresExplicitAgent } from "./channel-detail-page.logic";
+import {
+	acknowledgeRotatedToken,
+	hasAtRiskRotatedToken,
+	nativeTransportSummary,
+	pairCodeRequiresExplicitAgent,
+	rotatedTokenDisplayState,
+} from "./channel-detail-page.logic";
 
 describe("pairCodeRequiresExplicitAgent", () => {
 	test("only permits the implicit linked-agent default for exactly one link", () => {
 		expect(pairCodeRequiresExplicitAgent(0)).toBe(true);
 		expect(pairCodeRequiresExplicitAgent(1)).toBe(false);
 		expect(pairCodeRequiresExplicitAgent(2)).toBe(true);
+	});
+});
+
+describe("rotated token display state", () => {
+	test("keeps a returned token at risk until the user acknowledges it", () => {
+		const state = rotatedTokenDisplayState("one-time-secret");
+
+		expect(state).toEqual({
+			status: "available",
+			token: "one-time-secret",
+			acknowledged: false,
+		});
+		expect(hasAtRiskRotatedToken({ link: state }, false)).toBe(true);
+		expect(hasAtRiskRotatedToken({ link: acknowledgeRotatedToken(state) }, false)).toBe(false);
+	});
+
+	test("treats an absent response token as unrecoverable and guards pending rotations", () => {
+		expect(rotatedTokenDisplayState(null)).toEqual({ status: "unrecoverable" });
+		expect(rotatedTokenDisplayState("   ")).toEqual({ status: "unrecoverable" });
+		expect(hasAtRiskRotatedToken({}, true)).toBe(true);
 	});
 });
 

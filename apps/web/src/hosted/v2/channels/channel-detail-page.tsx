@@ -1,9 +1,13 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
+import { useBlocker, useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownLeft,
 	ArrowUpRight,
+	Check,
+	Copy,
+	Eye,
+	EyeOff,
 	KeyRound,
 	Link2,
 	Link2Off,
@@ -16,7 +20,8 @@ import {
 	Trash2,
 	TriangleAlert,
 } from "lucide-react";
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import {
@@ -31,6 +36,16 @@ import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Label } from "@/components/ui/label";
@@ -47,8 +62,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { isHostedRuntime } from "@/hosted/runtimes";
 import {
+	acknowledgeRotatedToken,
+	hasAtRiskRotatedToken,
 	nativeTransportSummary,
 	pairCodeRequiresExplicitAgent,
+	type RotatedTokenDisplayState,
+	rotatedTokenDisplayState,
 } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type {
@@ -74,7 +93,6 @@ import {
 	useDeleteChannel,
 	useEnvironments,
 	useRevokeWhatsappTenantCred,
-	useRotateAgentToken,
 	useSyncCommands,
 	useUnlinkChannelAgent,
 	useWhatsappTenantCreds,
@@ -90,6 +108,7 @@ import {
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
+import { toastApiError, unwrap, useApi } from "@/lib/api";
 import { cn, relativeTime } from "@/lib/utils";
 
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
@@ -358,6 +377,99 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 
 // ── Agents ───────────────────────────────────────────────────────────────────
 
+function RotatedTokenCard({
+	state,
+	onAcknowledge,
+}: {
+	state: RotatedTokenDisplayState;
+	onAcknowledge: () => void;
+}) {
+	const [revealed, setRevealed] = useState(false);
+	const [copied, setCopied] = useState(false);
+	const tokenIdentity = state.status === "available" ? state.token : null;
+
+	useEffect(() => {
+		setRevealed(false);
+		setCopied(false);
+	}, [tokenIdentity]);
+
+	if (state.status === "unrecoverable") {
+		return (
+			<div
+				role="alert"
+				className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3"
+			>
+				<TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+				<div className="space-y-1">
+					<p className="text-xs font-medium text-destructive">New token is not recoverable</p>
+					<p className="text-xs text-muted-foreground">
+						This token was shown once and is not recoverable — rotate again to get a new one.
+					</p>
+				</div>
+			</div>
+		);
+	}
+	const token = state.token;
+
+	async function copyToken() {
+		try {
+			await navigator.clipboard.writeText(token);
+			setCopied(true);
+			onAcknowledge();
+			toast.success("Token copied to clipboard");
+			window.setTimeout(() => setCopied(false), 1_500);
+		} catch {
+			toast.error("Couldn’t copy — select and copy manually.");
+		}
+	}
+
+	return (
+		<div className="flex flex-col gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3">
+			<div className="text-xs font-medium text-primary">New agent token</div>
+			<div className="flex items-center gap-2">
+				<code className="flex-1 break-all rounded bg-muted px-3 py-2 font-mono text-xs">
+					{revealed ? state.token : "••••••••••••"}
+				</code>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					onClick={() => setRevealed((visible) => !visible)}
+					aria-label={`${revealed ? "Hide" : "Show"} New agent token`}
+					aria-pressed={revealed}
+				>
+					{revealed ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+				</Button>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon"
+					onClick={() => void copyToken()}
+					aria-label="Copy New agent token"
+				>
+					{copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+				</Button>
+			</div>
+			<p className="text-xs text-muted-foreground">
+				{state.acknowledged
+					? "This token is shown only once and cannot be recovered later. If you lose it, rotate again to get a new one."
+					: "Shown only once. Copy it or confirm you saved it before leaving this page; it cannot be recovered later."}
+			</p>
+			{state.acknowledged ? null : (
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					className="self-start"
+					onClick={onAcknowledge}
+				>
+					I’ve saved this token
+				</Button>
+			)}
+		</div>
+	);
+}
+
 function AgentsTab({
 	accountId,
 	accountName,
@@ -369,37 +481,90 @@ function AgentsTab({
 	provider: string;
 	readOnly?: boolean;
 }) {
+	const api = useApi();
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
-	const rotate = useRotateAgentToken(accountId);
 	const unlink = useUnlinkChannelAgent(accountId);
 	const [linkOpen, setLinkOpen] = useState(false);
-	const [rotated, setRotated] = useState<Record<string, string>>({});
+	const [rotated, setRotated] = useState<Record<string, RotatedTokenDisplayState>>({});
+	const rotationControllersRef = useRef<Map<string, AbortController>>(new Map());
 	const rotatingLinksRef = useRef<Set<string>>(new Set());
 	const [rotatingLinks, setRotatingLinks] = useState<ReadonlySet<string>>(() => new Set());
+	const hasTokenAtRisk = hasAtRiskRotatedToken(rotated, rotatingLinks.size > 0);
+	const tokenAtRiskRef = useRef(hasTokenAtRisk);
+	tokenAtRiskRef.current = hasTokenAtRisk;
+	const shouldBlockNavigation = useCallback(() => tokenAtRiskRef.current, []);
+	const blocker = useBlocker({
+		shouldBlockFn: shouldBlockNavigation,
+		enableBeforeUnload: shouldBlockNavigation,
+		withResolver: true,
+	});
 
-	function rotateToken(linkId: string) {
+	useEffect(
+		() => () => {
+			for (const controller of rotationControllersRef.current.values()) controller.abort();
+			rotationControllersRef.current.clear();
+		},
+		[],
+	);
+
+	async function rotateToken(linkId: string) {
 		if (rotatingLinksRef.current.has(linkId)) return;
 		rotatingLinksRef.current.add(linkId);
+		tokenAtRiskRef.current = true;
 		setRotatingLinks((prev) => new Set(prev).add(linkId));
-		rotate.mutate(linkId, {
-			onSuccess: (data) => {
-				const token = data.agent_token;
-				if (!token) return;
-				setRotated((prev) => ({
-					...prev,
-					[linkId]: token,
-				}));
-			},
-			onSettled: () => {
-				rotatingLinksRef.current.delete(linkId);
-				setRotatingLinks((prev) => {
-					const next = new Set(prev);
-					next.delete(linkId);
-					return next;
-				});
-			},
+		setRotated((prev) => {
+			const next = { ...prev };
+			delete next[linkId];
+			return next;
 		});
+		const controller = new AbortController();
+		rotationControllersRef.current.set(linkId, controller);
+		try {
+			const data = unwrap(
+				await api.POST("/v1/channels/{account_id}/agent-links/{link_id}/token", {
+					params: { path: { account_id: accountId, link_id: linkId } },
+					signal: controller.signal,
+				}),
+			);
+			const state = rotatedTokenDisplayState(data.agent_token);
+			setRotated((prev) => ({ ...prev, [linkId]: state }));
+			toast.success("Token rotated", {
+				description:
+					state.status === "available"
+						? "Copy the new token below — the previous one is now invalid."
+						: "The previous token is now invalid. Rotate again to receive a new token.",
+			});
+		} catch (error) {
+			if (controller.signal.aborted) return;
+			setRotated((prev) => ({ ...prev, [linkId]: { status: "unrecoverable" } }));
+			toastApiError("Couldn’t rotate token")(error);
+		} finally {
+			rotationControllersRef.current.delete(linkId);
+			rotatingLinksRef.current.delete(linkId);
+			setRotatingLinks((prev) => {
+				const next = new Set(prev);
+				next.delete(linkId);
+				return next;
+			});
+		}
+	}
+
+	function acknowledgeToken(linkId: string) {
+		setRotated((prev) => {
+			const state = prev[linkId];
+			return state ? { ...prev, [linkId]: acknowledgeRotatedToken(state) } : prev;
+		});
+	}
+
+	function leaveWithoutToken() {
+		tokenAtRiskRef.current = false;
+		for (const controller of rotationControllersRef.current.values()) controller.abort();
+		rotationControllersRef.current.clear();
+		setRotated((prev) =>
+			Object.fromEntries(Object.keys(prev).map((linkId) => [linkId, { status: "unrecoverable" }])),
+		);
+		if (blocker.status === "blocked") blocker.proceed();
 	}
 
 	if (links.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
@@ -498,10 +663,9 @@ function AgentsTab({
 								</div>
 								{rotated[link.id] ? (
 									<div className="mt-3">
-										<TokenReveal
-											label="New agent token"
-											value={rotated[link.id]}
-											note="The previous token is now invalid. Update the agent with this value."
+										<RotatedTokenCard
+											state={rotated[link.id]}
+											onAcknowledge={() => acknowledgeToken(link.id)}
 										/>
 									</div>
 								) : null}
@@ -520,6 +684,34 @@ function AgentsTab({
 					provider={provider}
 				/>
 			)}
+
+			<AlertDialog
+				open={blocker.status === "blocked"}
+				onOpenChange={(open) => {
+					if (!open && blocker.status === "blocked") blocker.reset();
+				}}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							{rotatingLinks.size > 0
+								? "Leave while token rotation is in progress?"
+								: "Leave without saving the new token?"}
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							{rotatingLinks.size > 0
+								? "The one-time token may be returned after this page closes. If you leave, it could be lost and cannot be recovered — rotate again to get a new one."
+								: "This token is shown only once and has not been copied or acknowledged. If you leave, it will be lost. This token was shown once and is not recoverable — rotate again to get a new one."}
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Stay and copy token</AlertDialogCancel>
+						<AlertDialogAction variant="destructive" onClick={leaveWithoutToken}>
+							Leave and lose token
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
 		</div>
 	);
 }

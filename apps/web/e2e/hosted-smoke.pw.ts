@@ -71,13 +71,13 @@ type DeploymentMutationFixture = {
 	} | null;
 };
 
+// Mirrors the user-facing GET /v2/subscription/plans response. clawdi-hosted resolves
+// the owner-approved Stripe prices from scripts/stripe/create-compute-{basic,performance}.py.
 const basicPlan = {
 	slug: "compute_basic",
 	name: "Compute Basic",
-	price_cents: 900,
-	points_per_usd: 100,
-	signup_grant_credits: 500,
-	subscription_grant_credits: 0,
+	price_cents: 1_000,
+	signup_grant_usd: "5",
 	vcpu: 2,
 	ram_gb: 4,
 	disk_size: 20,
@@ -85,15 +85,15 @@ const basicPlan = {
 	offers: [
 		{
 			billing_term_months: 1,
-			price_cents: 900,
-			effective_monthly_price_cents: 900,
+			price_cents: 1_000,
+			effective_monthly_price_cents: 1_000,
 			discount_percent: 0,
 		},
 		{
 			billing_term_months: 12,
-			price_cents: 8_640,
-			effective_monthly_price_cents: 720,
-			discount_percent: 20,
+			price_cents: 10_000,
+			effective_monthly_price_cents: 833,
+			discount_percent: 17,
 		},
 	],
 };
@@ -101,10 +101,8 @@ const basicPlan = {
 const performancePlan = {
 	slug: "compute_performance",
 	name: "Compute Performance",
-	price_cents: 1_900,
-	points_per_usd: 100,
-	signup_grant_credits: 500,
-	subscription_grant_credits: 500,
+	price_cents: 2_000,
+	signup_grant_usd: "5",
 	vcpu: 4,
 	ram_gb: 8,
 	disk_size: 40,
@@ -112,15 +110,15 @@ const performancePlan = {
 	offers: [
 		{
 			billing_term_months: 1,
-			price_cents: 1_900,
-			effective_monthly_price_cents: 1_900,
+			price_cents: 2_000,
+			effective_monthly_price_cents: 2_000,
 			discount_percent: 0,
 		},
 		{
 			billing_term_months: 12,
-			price_cents: 18_000,
-			effective_monthly_price_cents: 1_500,
-			discount_percent: 21,
+			price_cents: 20_000,
+			effective_monthly_price_cents: 1_666,
+			discount_percent: 17,
 		},
 	],
 };
@@ -170,7 +168,7 @@ const paidBasicDeployment: DeploymentMutationFixture = {
 		funding_source: "stripe",
 		payment_state: "ok",
 		billing_term_months: 12,
-		price_cents: 8_640,
+		price_cents: 10_000,
 		currency: "usd",
 		cancel_at_period_end: false,
 		current_period_end: "2027-07-15T00:00:00Z",
@@ -194,7 +192,7 @@ const performanceDeployment = {
 	name: "Performance agent",
 	compute_subscription: {
 		...paidBasicDeployment.compute_subscription,
-		price_cents: 18_000,
+		price_cents: 20_000,
 	},
 	config_info: {
 		...paidBasicDeployment.config_info,
@@ -330,7 +328,7 @@ const walletActiveDeployment = {
 		funding_source: "wallet",
 		payment_state: "ok",
 		billing_term_months: 1,
-		price_cents: 900,
+		price_cents: 1_000,
 		currency: "usd",
 		cancel_at_period_end: false,
 		current_period_end: "2026-08-15T00:00:00Z",
@@ -393,10 +391,11 @@ const walletAnnualDeployment = {
 	...paidBasicDeployment,
 	id: "hdep_wallet_created",
 	name: "Annual Wallet Basic",
+	status: "creating",
 	compute_subscription: {
 		...walletActiveDeployment.compute_subscription,
 		billing_term_months: 12,
-		price_cents: 8_640,
+		price_cents: 10_000,
 		current_period_end: "2027-07-15T00:00:00Z",
 	},
 };
@@ -405,16 +404,16 @@ function walletSubscriptionQuote({
 	planSlug,
 	billingTermMonths,
 	termPriceCents,
-	exactDebitCredits,
-	balanceBeforeCredits,
-	balanceAfterCredits,
+	debitAmountUsd,
+	balanceBeforeUsd,
+	balanceAfterUsd,
 }: {
 	planSlug: "compute_basic" | "compute_performance";
 	billingTermMonths: 1 | 12;
 	termPriceCents: number;
-	exactDebitCredits: string;
-	balanceBeforeCredits: string;
-	balanceAfterCredits: string;
+	debitAmountUsd: string;
+	balanceBeforeUsd: string;
+	balanceAfterUsd: string;
 }) {
 	return {
 		plan_slug: planSlug,
@@ -424,10 +423,9 @@ function walletSubscriptionQuote({
 		term_price_cents: termPriceCents,
 		preview_invoice_id: `upcoming_${planSlug}_${billingTermMonths}`,
 		expires_at: "2026-07-16T00:15:00Z",
-		debit_credits: exactDebitCredits,
-		points_per_usd: 1_000,
-		balance_before_credits: balanceBeforeCredits,
-		balance_after_credits: balanceAfterCredits,
+		debit_amount_usd: debitAmountUsd,
+		balance_before_usd: balanceBeforeUsd,
+		balance_after_usd: balanceAfterUsd,
 	};
 }
 
@@ -736,6 +734,8 @@ type HostedApiStubOptions = {
 	cancelResponses?: StubResponse[];
 	checkoutRequests?: string[];
 	checkoutResponses?: StubResponse[];
+	channelAccount?: unknown;
+	channelAgentLinks?: readonly unknown[];
 	cloudAgentOverrides?: Record<string, unknown>;
 	cloudAgents?: readonly unknown[];
 	cloudAgentsResponse?: StubResponse;
@@ -765,6 +765,8 @@ type HostedApiStubOptions = {
 	planQuoteRequests?: string[];
 	planQuoteResponses?: unknown[];
 	restartRequests?: string[];
+	rotateAgentTokenRequests?: string[];
+	rotateAgentTokenResponses?: unknown[];
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
 	resumeRequests?: string[];
@@ -968,6 +970,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			const request = JSON.parse(requestBody) as {
 				funding_source?: string;
 				deploy_config?: { deploy_request_id?: string };
+				quote?: {
+					debit_amount_usd?: string | null;
+					balance_after_usd?: string | null;
+				};
 			};
 			const deployRequestId = request.deploy_config?.deploy_request_id;
 			const createdDeployment: DeploymentMutationFixture = {
@@ -990,8 +996,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 								invoice_id: "in_wallet_browser",
 								deploy_request_id: deployRequestId,
 								deployment_id: "hdep_wallet_created",
-								debited_credits: "86400",
-								balance_after_credits: "13600",
+								debited_usd: request.quote?.debit_amount_usd ?? null,
+								balance_after_usd: request.quote?.balance_after_usd ?? null,
 								current_period_start: "2026-07-15T00:00:00Z",
 								current_period_end: "2027-07-15T00:00:00Z",
 								entitled_until: "2027-07-15T00:00:00Z",
@@ -1013,16 +1019,32 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			return fulfillJson(r, response.body, response.status);
 		}
 		if (p === "/v2/subscription/quote" && r.request().method() === "POST") {
-			options.subscriptionQuoteRequests?.push(r.request().postData() ?? "");
+			const requestBody = r.request().postData() ?? "";
+			options.subscriptionQuoteRequests?.push(requestBody);
+			const request = JSON.parse(requestBody) as {
+				plan_slug?: "compute_basic" | "compute_performance";
+				billing_term_months?: 1 | 12;
+			};
+			const planSlug =
+				request.plan_slug === "compute_performance" ? "compute_performance" : "compute_basic";
+			const billingTermMonths = request.billing_term_months === 12 ? 12 : 1;
+			const plan = planSlug === "compute_performance" ? performancePlan : basicPlan;
+			const offer = plan.offers.find(
+				(candidate) => candidate.billing_term_months === billingTermMonths,
+			);
+			if (!offer) throw new Error("Missing hosted smoke billing offer fixture");
+			const balanceBeforeUsd = currentWallet.balance_usd;
+			const debitAmountUsd = (offer.price_cents / 100).toFixed(2);
+			const balanceAfterUsd = (Number(balanceBeforeUsd) - offer.price_cents / 100).toFixed(2);
 			const response =
 				options.subscriptionQuoteResponses?.shift() ??
 				walletSubscriptionQuote({
-					planSlug: "compute_basic",
-					billingTermMonths: 1,
-					termPriceCents: 900,
-					exactDebitCredits: "9000",
-					balanceBeforeCredits: "25000",
-					balanceAfterCredits: "16000",
+					planSlug,
+					billingTermMonths,
+					termPriceCents: offer.price_cents,
+					debitAmountUsd,
+					balanceBeforeUsd,
+					balanceAfterUsd,
 				});
 			return isStubResponse(response)
 				? fulfillJson(r, response.body, response.status)
@@ -1260,9 +1282,25 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			});
 		}
 		if (p === "/v1/ai-providers") return fulfillJson(r, { providers: [] });
-		if (p === "/v1/channels") return fulfillJson(r, []);
+		if (p === "/v1/channels") {
+			return fulfillJson(r, options.channelAccount ? [options.channelAccount] : []);
+		}
 		if (p === "/v1/channels/bot-pool") return fulfillJson(r, { providers: {} });
 		if (p === "/v1/channels/health") return fulfillJson(r, { items: [] });
+		if (p.match(/^\/v1\/channels\/[^/]+$/) && r.request().method() === "GET") {
+			return fulfillJson(r, options.channelAccount ?? { detail: "Channel not found" }, 200);
+		}
+		if (p.endsWith("/agent-links") && r.request().method() === "GET") {
+			return fulfillJson(r, options.channelAgentLinks ?? []);
+		}
+		if (p.endsWith("/token") && r.request().method() === "POST") {
+			options.rotateAgentTokenRequests?.push(p);
+			return fulfillJson(r, options.rotateAgentTokenResponses?.shift() ?? { agent_token: null });
+		}
+		if (p.endsWith("/bindings") && r.request().method() === "GET") return fulfillJson(r, []);
+		if (p.endsWith("/activity") && r.request().method() === "GET") {
+			return fulfillJson(r, { items: [] });
+		}
 		if (p === "/v1/projects") return fulfillJson(r, []);
 		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
 		if (p === "/v1/auth/keys") return fulfillJson(r, []);
@@ -2187,10 +2225,10 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 			walletSubscriptionQuote({
 				planSlug: "compute_basic",
 				billingTermMonths: 12,
-				termPriceCents: 8_640,
-				exactDebitCredits: "86400",
-				balanceBeforeCredits: "100000",
-				balanceAfterCredits: "13600",
+				termPriceCents: 10_000,
+				debitAmountUsd: "100.00",
+				balanceBeforeUsd: "100.00",
+				balanceAfterUsd: "0.00",
 			}),
 		],
 		walletState: { ...walletState, balance_usd: "100.00" },
@@ -2199,19 +2237,20 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
+	await expect(page.getByText("$10.00/mo", { exact: true })).toBeVisible();
 	await page.getByRole("button", { name: /Annual.*%/ }).click();
+	await expect(page.getByText(/2 vCPU \/ 4 GB · \$8\.33\/mo, billed \$100\.00\/yr/)).toBeVisible();
 	await page.getByRole("button", { name: /Wallet balance/ }).click();
 	await expect.poll(() => subscriptionQuoteRequests.length).toBe(1);
 	const equation = page.getByTestId("wallet-debit-equation");
 	await expect(equation).toContainText("Balance before");
-	await expect(equation).toContainText("100,000 credits");
+	await expect(equation).toContainText("$100.00");
 	await expect(equation).toContainText("Exact debit");
-	await expect(equation).toContainText("86,400 credits");
-	await expect(equation).toContainText("$86.40");
+	await expect(equation).toContainText("$100.00");
 	await expect(equation).toContainText("Balance after");
-	await expect(equation).toContainText("13,600 credits");
+	await expect(equation).toContainText("$0.00");
 
-	await page.getByRole("button", { name: "Pay $86.40 from Wallet & deploy" }).click();
+	await page.getByRole("button", { name: "Pay $100.00 from Wallet & deploy" }).click();
 	await expect.poll(() => checkoutRequests.length).toBe(1);
 	const quote = JSON.parse(subscriptionQuoteRequests[0] ?? "{}");
 	const activation = JSON.parse(checkoutRequests[0] ?? "{}");
@@ -2227,12 +2266,20 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 		deploy_config: { compute_plan_slug: "compute_basic" },
 		quote: {
 			funding_source: "wallet",
-			term_price_cents: 8_640,
-			debit_credits: "86400",
-			balance_after_credits: "13600",
+			term_price_cents: 10_000,
+			debit_amount_usd: "100.00",
+			balance_before_usd: "100.00",
+			balance_after_usd: "0.00",
 		},
 	});
 	await expect(page).toHaveURL(/\/agents\/hdep_wallet_created(?:\?|\/)/);
+	await expect(page.getByText("Agent deployment started", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("Your Basic agent is provisioning now. $100.00 was paid from Wallet.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(page.getByText("Agent deployed", { exact: true })).toHaveCount(0);
 	expect(errors, `wallet annual deploy: ${errors.join(" | ")}`).toEqual([]);
 });
 
@@ -3100,6 +3147,42 @@ test("Wallet activity caps show-more requests at the ledger API limit", async ({
 	).toEqual([]);
 });
 
+test("pending welcome balance stops polling and offers a bounded refresh", async ({ page }) => {
+	await page.clock.install({ time: new Date("2026-07-25T12:00:00Z") });
+	const ledgerRequests: string[] = [];
+	const pendingGrant = {
+		operation: "grant_signup",
+		description: "Welcome balance",
+		amount_usd: "5.00",
+		status: "pending",
+		receipt_url: null,
+		created_at: "2026-07-25T12:00:00Z",
+		applied_at: null,
+	};
+	await stubHostedApi(page, {
+		deployments: [],
+		ledgerRequests,
+		ledgerResponseForRequest: () => ({ items: [pendingGrant], has_more: false }),
+		plans: [basicPlan],
+	});
+
+	await page.goto("/agents");
+	await expect(page.getByText("Adding your welcome balance…", { exact: true })).toBeVisible();
+	await page.clock.fastForward(60_001);
+	await expect(
+		page.getByText("Your welcome balance is taking longer than expected", { exact: true }),
+	).toBeVisible();
+	await expect(page.getByRole("button", { name: "Refresh balance", exact: true })).toBeVisible();
+
+	const requestsAtTimeout = ledgerRequests.length;
+	await page.clock.fastForward(120_000);
+	expect(ledgerRequests).toHaveLength(requestsAtTimeout);
+
+	await page.getByRole("button", { name: "Refresh balance", exact: true }).click();
+	await expect.poll(() => ledgerRequests.length).toBeGreaterThan(requestsAtTimeout);
+	await expect(page.getByText("Adding your welcome balance…", { exact: true })).toBeVisible();
+});
+
 test("Wallet opens the shared billing portal action", async ({ page }) => {
 	const portalRequests: string[] = [];
 	await stubHostedApi(page, { portalRequests });
@@ -3413,4 +3496,82 @@ test("channels connect dialog opens without browser errors", async ({ page }) =>
 	await expect(page.locator('[data-slot="dialog-content"]').first()).toBeVisible();
 	await page.waitForTimeout(150);
 	expect(errors, `connect dialog: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("rotated channel token blocks silent loss and explains recovery", async ({
+	page,
+	context,
+}) => {
+	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+	const channelId = "11111111-1111-4111-8111-111111111111";
+	const linkId = "22222222-2222-4222-8222-222222222222";
+	const token = "one-time-browser-token";
+	const channelAccount = {
+		id: channelId,
+		provider: "telegram",
+		name: "Browser Telegram",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/browser",
+		created_at: "2026-07-25T12:00:00Z",
+	};
+	const channelLink = {
+		id: linkId,
+		account_id: channelId,
+		agent_id: "33333333-3333-4333-8333-333333333333",
+		status: "active",
+		created_at: "2026-07-25T12:00:00Z",
+	};
+	const rotateAgentTokenRequests: string[] = [];
+	await stubHostedApi(page, {
+		channelAccount,
+		channelAgentLinks: [channelLink],
+		rotateAgentTokenRequests,
+		rotateAgentTokenResponses: [
+			{ ...channelLink, agent_token: token },
+			{ ...channelLink, agent_token: null },
+		],
+	});
+
+	await page.goto(`/channels/${channelId}`);
+	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
+	await expect.poll(() => rotateAgentTokenRequests.length).toBe(1);
+	await expect(
+		page.getByText(
+			"Shown only once. Copy it or confirm you saved it before leaving this page; it cannot be recovered later.",
+			{ exact: true },
+		),
+	).toBeVisible();
+
+	const serializedBrowserStorage = await page.evaluate(() =>
+		JSON.stringify({ localStorage: { ...localStorage }, sessionStorage: { ...sessionStorage } }),
+	);
+	expect(serializedBrowserStorage).not.toContain(token);
+
+	const agentsLink = page.getByTestId("app-sidebar").locator('a[href="/agents"]').first();
+	await agentsLink.click();
+	const leaveDialog = page.getByRole("alertdialog");
+	await expect(leaveDialog).toContainText("Leave without saving the new token?");
+	await expect(leaveDialog).toContainText(
+		"This token was shown once and is not recoverable — rotate again to get a new one.",
+	);
+	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
+	await leaveDialog.getByRole("button", { name: "Stay and copy token", exact: true }).click();
+
+	await page.getByRole("button", { name: "Copy New agent token", exact: true }).click();
+	await expect(page.getByText("Token copied to clipboard", { exact: true })).toBeVisible();
+	await agentsLink.click();
+	await expect(page).toHaveURL(/\/agents\/?$/);
+
+	await page.goto(`/channels/${channelId}`);
+	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
+	await expect.poll(() => rotateAgentTokenRequests.length).toBe(2);
+	await expect(
+		page.getByText(
+			"This token was shown once and is not recoverable — rotate again to get a new one.",
+			{ exact: true },
+		),
+	).toBeVisible();
+	await expect(page.getByRole("button", { name: "Copy New agent token" })).toHaveCount(0);
 });

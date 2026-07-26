@@ -689,7 +689,7 @@ export function DeployWizard() {
 				const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
 				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 				checkoutAttemptRef.current = null;
-				toast.success("Agent deployed", {
+				toast.success("Agent deployment started", {
 					description: `Your ${tierLabel} agent is provisioning now.`,
 				});
 				void router.navigate(acceptedDeploymentNavigation(resolved.deploymentId, true));
@@ -787,8 +787,8 @@ export function DeployWizard() {
 					}
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
 					walletCreateAttemptRef.current = null;
-					toast.success("Agent deployed", {
-						description: `${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(paidSelection.offer.price_cents)} was paid from Wallet.`,
+					toast.success("Agent deployment started", {
+						description: `Your ${paidSelection.tierLabel} agent is provisioning now. ${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(paidSelection.offer.price_cents)} was paid from Wallet.`,
 					});
 					void router.navigate(acceptedDeploymentNavigation(outcome.deploymentId));
 					return;
@@ -871,7 +871,7 @@ export function DeployWizard() {
 				});
 			forgetIdempotencyAttempt("deployment-create", fingerprint);
 			includedCreateAttemptRef.current = null;
-			toast.success("Agent deployed", {
+			toast.success("Agent deployment started", {
 				description: "Your first Basic agent is provisioning now for free.",
 			});
 			void router.navigate(acceptedDeploymentNavigation(created.deploymentId));
