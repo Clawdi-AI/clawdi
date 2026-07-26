@@ -60,10 +60,10 @@ import type {
 import {
 	DEFAULT_DEPLOY_AI_ACCESS_MODE,
 	DEFAULT_DEPLOY_AI_PROVIDER_CHOICES,
+	DEFAULT_DEPLOY_ASSISTANT_NAME,
 	DEFAULT_DEPLOY_PRIMARY_MODEL,
 	DEFAULT_DEPLOY_PRIMARY_PROVIDER_CHOICE,
 	DEFAULT_DEPLOY_RUNTIME,
-	deployAssistantNameAfterRuntimeChange,
 } from "@/hosted/billing/deploy/deploy-defaults";
 import {
 	resolveBasicDeploySelection,
@@ -371,12 +371,8 @@ export function DeployWizard() {
 	const checkoutAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const walletCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const includedCreateAttemptRef = useRef<IdempotencyAttempt | null>(null);
-	const assistantNameEditedRef = useRef(false);
-
 	const [runtime, setRuntime] = useState(DEFAULT_DEPLOY_RUNTIME);
-	const [assistantName, setAssistantName] = useState(() =>
-		runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME),
-	);
+	const [assistantName, setAssistantName] = useState(DEFAULT_DEPLOY_ASSISTANT_NAME);
 	const [compute, setCompute] = useState<Compute>("basic");
 	const [language, setLanguage] = useState("");
 	const [timezone, setTimezone] = useState("");
@@ -523,7 +519,13 @@ export function DeployWizard() {
 	} = aiBindingDraft;
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
-	const nameError = assistantName.trim().length === 0 ? "Enter a name for your agent." : null;
+	const trimmedAssistantName = assistantName.trim();
+	const nameError =
+		trimmedAssistantName.length === 0
+			? "Enter a name for this agent."
+			: trimmedAssistantName.length > DEPLOY_ASSISTANT_NAME_MAX_LENGTH
+				? `Use ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters or fewer.`
+				: null;
 	const submitBlockingReason = (() => {
 		if (submitting) return null;
 		if (nameError) return nameError;
@@ -556,13 +558,6 @@ export function DeployWizard() {
 
 	function selectRuntime(nextRuntime: HostedRuntime) {
 		setRuntime(nextRuntime);
-		setAssistantName((currentName) =>
-			deployAssistantNameAfterRuntimeChange({
-				currentName,
-				hasBeenEdited: assistantNameEditedRef.current,
-				runtime: nextRuntime,
-			}),
-		);
 	}
 
 	useEffect(() => {
@@ -1323,29 +1318,31 @@ export function DeployWizard() {
 				<div className="sm:pb-24">
 					<SettingsSection
 						title="Personalize"
-						description="Name your agent and optionally choose its language and timezone."
+						description="Choose how this agent appears in Clawdi, plus its language and timezone."
 					>
 						<div className="grid max-w-2xl gap-4 sm:grid-cols-2">
 							<div className="flex flex-col gap-1.5 sm:col-span-2">
-								<Label htmlFor="agent-name">Name</Label>
+								<Label htmlFor="agent-name">Name in Clawdi</Label>
 								<Input
 									id="agent-name"
 									value={assistantName}
 									maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}
 									required
 									aria-invalid={nameError ? true : undefined}
-									aria-describedby={nameError ? "agent-name-error" : undefined}
-									onChange={(event) => {
-										assistantNameEditedRef.current = true;
-										setAssistantName(event.target.value);
-									}}
+									aria-describedby={nameError ? "agent-name-error" : "agent-name-help"}
+									onChange={(event) => setAssistantName(event.target.value)}
 									onBlur={() => setAssistantName((name) => name.trim())}
 								/>
 								{nameError ? (
 									<p id="agent-name-error" className="text-xs text-destructive" role="alert">
 										{nameError}
 									</p>
-								) : null}
+								) : (
+									<p id="agent-name-help" className="text-xs text-muted-foreground">
+										Used to identify this agent in Clawdi. {DEPLOY_ASSISTANT_NAME_MAX_LENGTH}
+										characters maximum.
+									</p>
+								)}
 							</div>
 							<div className="flex flex-col gap-1.5">
 								<label htmlFor="agent-language" className="text-sm text-muted-foreground">

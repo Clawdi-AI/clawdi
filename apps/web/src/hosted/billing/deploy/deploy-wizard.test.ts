@@ -25,14 +25,24 @@ const modelBindingPickerSource = readFileSync(
 );
 
 describe("deploy wizard personalization", () => {
-	test("renders the required bounded agent name input", () => {
+	test("uses a stable dashboard name within the strictest backend limit", () => {
 		expect(wizardSource).toContain('htmlFor="agent-name"');
-		expect(wizardSource).toContain('<Label htmlFor="agent-name">');
+		expect(wizardSource).toContain('<Label htmlFor="agent-name">Name in Clawdi</Label>');
 		expect(wizardSource).toContain('id="agent-name"');
 		expect(wizardSource).toContain("maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}");
-		expect(DEPLOY_ASSISTANT_NAME_MAX_LENGTH).toBe(255);
+		expect(DEPLOY_ASSISTANT_NAME_MAX_LENGTH).toBe(64);
+		expect(wizardSource).toContain(
+			"trimmedAssistantName.length > DEPLOY_ASSISTANT_NAME_MAX_LENGTH",
+		);
+		expect(wizardSource).toContain("Used to identify this agent in Clawdi.");
+		expect(wizardSource).toContain("useState(DEFAULT_DEPLOY_ASSISTANT_NAME)");
+		expect(wizardSource).not.toContain("assistantNameEditedRef");
+		expect(wizardSource).not.toContain("deployAssistantNameAfterRuntimeChange");
 		expect(wizardSource).toContain("required");
 		expect(wizardSource).toContain("aria-invalid={nameError ? true : undefined}");
+		expect(wizardSource).toContain(
+			'aria-describedby={nameError ? "agent-name-error" : "agent-name-help"}',
+		);
 		expect(wizardSource).toContain('type="submit"');
 		expect(wizardSource).toContain("submitBlockingReason");
 	});
