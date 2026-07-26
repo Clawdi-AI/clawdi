@@ -2428,12 +2428,12 @@ test("included Basic uses unified card quote and change without creating a secon
 		planChangeOperationResponses: [
 			{
 				...planChangeResponse({
-					operationId: "op_free_wallet",
+					operationId: "op_free_card",
 					subscriptionId: 7,
-					fundingSource: "wallet",
+					fundingSource: "stripe",
 					currentPlanSlug: "compute_basic",
 					targetPlanSlug: "compute_performance",
-					targetBillingTermMonths: 1,
+					targetBillingTermMonths: 12,
 					status: "complete",
 					effectiveAt: "2026-07-16T00:00:00Z",
 				}),
@@ -2521,8 +2521,8 @@ test("included Basic uses unified wallet quote and change with exact debit", asy
 		planChangeOperationResponses: [
 			{
 				...planChangeResponse({
-					operationId: "op_paid_wallet",
-					subscriptionId: 42,
+					operationId: "op_free_wallet",
+					subscriptionId: 7,
 					fundingSource: "wallet",
 					currentPlanSlug: "compute_basic",
 					targetPlanSlug: "compute_performance",
@@ -2599,9 +2599,24 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 				currentPlanSlug: "compute_basic",
 				targetPlanSlug: "compute_performance",
 				targetBillingTermMonths: 12,
-				status: "complete",
+				status: "awaiting_projection",
 				effectiveAt: "2026-07-16T00:00:00Z",
 			}),
+		],
+		planChangeOperationResponses: [
+			{
+				...planChangeResponse({
+					operationId: "op_paid_card",
+					subscriptionId: 42,
+					fundingSource: "stripe",
+					currentPlanSlug: "compute_basic",
+					targetPlanSlug: "compute_performance",
+					targetBillingTermMonths: 12,
+					status: "complete",
+					effectiveAt: "2026-07-16T00:00:00Z",
+				}),
+				status: 200,
+			},
 		],
 		planQuoteRequests,
 		planQuoteResponses: [
@@ -2660,9 +2675,24 @@ test("paid wallet subscription confirms an immediate quoted upgrade", async ({ p
 				currentPlanSlug: "compute_basic",
 				targetPlanSlug: "compute_performance",
 				targetBillingTermMonths: 1,
-				status: "complete",
+				status: "awaiting_projection",
 				effectiveAt: "2026-07-16T00:00:00Z",
 			}),
+		],
+		planChangeOperationResponses: [
+			{
+				...planChangeResponse({
+					operationId: "op_paid_wallet",
+					subscriptionId: 42,
+					fundingSource: "wallet",
+					currentPlanSlug: "compute_basic",
+					targetPlanSlug: "compute_performance",
+					targetBillingTermMonths: 1,
+					status: "complete",
+					effectiveAt: "2026-07-16T00:00:00Z",
+				}),
+				status: 200,
+			},
 		],
 		planQuoteRequests,
 		planQuoteResponses: [

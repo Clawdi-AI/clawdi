@@ -371,7 +371,11 @@ export function createBillingClient(
 				),
 			),
 		checkPlanChange: async (operationName: string) =>
-			waitForPlanChange(await getOperation(operationIdFromName(operationName))),
+			getOperation(operationIdFromName(operationName)).then((operation) => {
+				const completed = completedPlanChange(operation);
+				if (completed) return completed;
+				throw new PlanChangePendingError(operation.name);
+			}),
 		cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
 		fixPayment: async (body: ComputeFixPaymentRequest) =>

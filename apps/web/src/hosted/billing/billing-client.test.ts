@@ -526,6 +526,12 @@ describe("compute plan changes", () => {
 		expect(requests.filter((request) => request.method === "POST")).toHaveLength(1);
 
 		requests.length = 0;
+		await expect(client.checkPlanChange(pending.operationName)).rejects.toBeInstanceOf(
+			PlanChangePendingError,
+		);
+		expect(requests.map((request) => request.method)).toEqual(["GET"]);
+
+		requests.length = 0;
 		complete = true;
 		await expect(client.checkPlanChange(pending.operationName)).resolves.toMatchObject({
 			done: true,
