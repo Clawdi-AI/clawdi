@@ -894,7 +894,7 @@ export function OverviewProvisioningPanel({
 		: runtimeUiSettlingTimedOut
 			? `${browserUiLabel} did not open within five minutes. We’ll keep checking automatically, and Terminal is available now.`
 			: stage === "provisioning"
-				? "This step should finish within five minutes. You can leave this page; we’ll keep checking automatically."
+				? "This step should finish within five minutes. Your agent will keep getting ready if you leave this page."
 				: stage === "booting"
 					? `This step should finish within five minutes. We’ll open ${browserUiLabel} automatically; Terminal is available now.`
 					: `${browserUiLabel} is ready to use.`;

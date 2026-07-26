@@ -72,7 +72,7 @@ describe("deployment transition timeout rendering", () => {
 
 		expect(converging).toContain("Getting your agent ready…");
 		expect(converging).toContain("This step should finish within five minutes.");
-		expect(converging).toContain("we’ll keep checking automatically");
+		expect(converging).toContain("will keep getting ready if you leave this page");
 		expect(converging).not.toContain("Provisioning");
 		expect(converging).not.toContain("Booting");
 		expect(converging).not.toContain("Current status");
@@ -81,7 +81,7 @@ describe("deployment transition timeout rendering", () => {
 		expect(timedOut).toContain("did not finish getting ready within five minutes");
 		expect(timedOut).toContain("Automatic checks have stopped.");
 		expect(timedOut).toContain("Check again");
-		expect(timedOut).not.toContain("we’ll keep checking automatically");
+		expect(timedOut).not.toContain("will keep getting ready if you leave this page");
 	});
 
 	test("sets an honest five-minute expectation while the product UI opens", () => {
