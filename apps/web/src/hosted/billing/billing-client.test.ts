@@ -374,13 +374,22 @@ describe("declarative deployment mutations", () => {
 		await client.setDeploymentDesiredState("hdep_stop", "stopped", "intent-stop");
 		await client.restartDeployment("hdep_restart", "intent-restart");
 		await client.updateDeployment("hdep_update", { name: "Renamed" }, "intent-update");
-		await client.deleteDeployment("hdep_delete", "intent-delete");
+		await client.deleteDeployment(
+			"hdep_delete",
+			{ subscription_choice: "keep_subscription" },
+			"intent-delete",
+		);
 
 		expect(mutations).toHaveLength(5);
 		for (const request of mutations) {
 			expect(request.headers.get("Idempotency-Key")).toMatch(/^intent-/);
 			expect(request.headers.get("If-Match")).toMatch(/^"rv-hdep_[a-z]+"$/);
 		}
+		const deleteRequests = mutations.filter((request) => request.method === "DELETE");
+		expect(deleteRequests).toHaveLength(1);
+		expect(await deleteRequests[0]?.json()).toEqual({
+			subscription_choice: "keep_subscription",
+		});
 	});
 
 	it("releases lifecycle and settings mutations as soon as their LROs are accepted", async () => {
@@ -425,7 +434,11 @@ describe("declarative deployment mutations", () => {
 				{ language: "fr", timezone: "Europe/Paris" },
 				"intent-locale",
 			),
-			client.deleteDeployment("hdep_delete", "intent-delete"),
+			client.deleteDeployment(
+				"hdep_delete",
+				{ subscription_choice: "cancel_subscription" },
+				"intent-delete",
+			),
 		]);
 
 		expect(
@@ -468,7 +481,11 @@ describe("declarative deployment mutations", () => {
 		});
 
 		await expect(
-			client.deleteDeployment("hdep_delete_failure", "intent-delete-failure"),
+			client.deleteDeployment(
+				"hdep_delete_failure",
+				{ subscription_choice: "cancel_subscription" },
+				"intent-delete-failure",
+			),
 		).resolves.toMatchObject({
 			deploymentId: "hdep_test",
 			operation: { done: false, name: "operations/delete-failure" },

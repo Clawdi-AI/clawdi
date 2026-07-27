@@ -1,6 +1,6 @@
 "use client";
 
-import { useQueryClient } from "@tanstack/react-query";
+import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -37,6 +37,7 @@ import {
 	completeTopup,
 	handleTopupStartResult,
 	validTopUpAmountCents,
+	waitForWalletTopupCredit,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
 	TOPUP_AMOUNT_RANGE_LABEL,
@@ -49,6 +50,33 @@ import {
 
 type Step = "amount" | "pay";
 type TopUpPresentation = "dialog" | "inline";
+
+export async function confirmWalletTopup(
+	queryClient: QueryClient,
+	paymentReference: string | null,
+) {
+	if (!paymentReference) {
+		toast.warning("Wallet credit can’t be confirmed automatically", {
+			description:
+				"The payment did not include a link to Wallet Activity. The balance and Activity may take a moment to update.",
+		});
+		return;
+	}
+	if (await waitForWalletTopupCredit(queryClient, paymentReference)) {
+		toast.success("Wallet credited", {
+			description: "Your balance and Activity now include the top-up.",
+		});
+		return;
+	}
+	toast.info("Wallet credit not confirmed yet", {
+		description:
+			"The Wallet has not linked this payment to the displayed balance and Activity yet.",
+		action: {
+			label: "Check again",
+			onClick: () => void confirmWalletTopup(queryClient, paymentReference),
+		},
+	});
+}
 
 export function TopUpDialog({
 	open,
@@ -77,16 +105,24 @@ export function TopUpDialog({
 	// Reset whenever the amount changes (a genuinely new attempt) or the flow
 	// closes.
 	const topupKeyRef = useRef<string | null>(null);
+	const paymentReferenceRef = useRef<string | null>(null);
 
 	const amountCents = Number(dollars) * 100;
 	const valid = validTopUpAmountCents(amountCents);
 	const amountInvalid = amountTouched && !valid;
+	function finishTopup(status: PaymentOutcome) {
+		onComplete?.(status);
+		if (presentation === "inline") {
+			void confirmWalletTopup(qc, paymentReferenceRef.current);
+		}
+	}
 
 	function setAmount(next: string) {
 		setDollars(next);
 		setAmountTouched(false);
 		// New amount = new attempt; mint a fresh key on the next Continue.
 		topupKeyRef.current = null;
+		paymentReferenceRef.current = null;
 	}
 
 	function reset() {
@@ -95,6 +131,7 @@ export function TopUpDialog({
 		setAmountTouched(false);
 		setPaymentSubmitting(false);
 		topupKeyRef.current = null;
+		paymentReferenceRef.current = null;
 	}
 
 	function close(next: boolean) {
@@ -120,6 +157,7 @@ export function TopUpDialog({
 				body: { amount_cents: amountCents },
 				idempotencyKey: topupKeyRef.current,
 			});
+			paymentReferenceRef.current = result.payment_intent_id ?? null;
 			handleTopupStartResult(result, {
 				queryClient: qc,
 				resetAttempt: () => {
@@ -133,7 +171,7 @@ export function TopUpDialog({
 				},
 				toastInfo: toast.info,
 				toastError: toast.error,
-				onComplete,
+				onComplete: finishTopup,
 				startPayment: (nextClientSecret) => {
 					setClientSecret(nextClientSecret);
 					setStep("pay");
@@ -162,7 +200,7 @@ export function TopUpDialog({
 			},
 			closeDialog: () => onOpenChange(false),
 			toastInfo: toast.info,
-			onComplete,
+			onComplete: finishTopup,
 		});
 	}
 

@@ -42,7 +42,6 @@ const LEDGER_FILTER_ITEMS = [
 	{ value: "all", label: "All activity" },
 	{ value: "topup", label: "Top-ups" },
 	{ value: "grant", label: "Grants" },
-	{ value: "usage", label: "Usage" },
 	{ value: "compute", label: "Compute" },
 	{ value: "refund", label: "Refunds" },
 ] as const;

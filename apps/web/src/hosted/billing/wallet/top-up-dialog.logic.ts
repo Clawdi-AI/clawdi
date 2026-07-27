@@ -1,5 +1,5 @@
 import type { QueryClient } from "@tanstack/react-query";
-import type { WalletTopupResult } from "@/hosted/billing/contracts";
+import type { WalletLedgerEntry, WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	TOPUP_INCREMENT_CENTS,
@@ -8,6 +8,8 @@ import {
 } from "@/hosted/billing/wallet/wallet-constants";
 
 type TopupToast = (message: string, options: { description: string }) => void;
+const TOP_UP_CREDIT_RECHECK_INTERVAL_MS = 3_000;
+const TOP_UP_CREDIT_RECHECK_LIMIT = 10;
 
 export type TopupCompletionStatus = "succeeded" | "processing";
 
@@ -69,6 +71,54 @@ export function completeTopup(
 		});
 	}
 	controls.closeDialog();
+}
+
+export function walletTopupCreditIsApplied(
+	paymentReference: string | null,
+	entries: readonly WalletLedgerEntry[],
+): boolean {
+	if (!paymentReference) return false;
+	return entries.some(
+		(entry) =>
+			entry.operation === "topup" &&
+			entry.status === "applied" &&
+			entry.payment_reference === paymentReference,
+	);
+}
+
+export async function waitForWalletTopupCredit(
+	queryClient: QueryClient,
+	paymentReference: string,
+): Promise<boolean> {
+	for (let attempt = 0; attempt < TOP_UP_CREDIT_RECHECK_LIMIT; attempt += 1) {
+		const refreshes = await Promise.allSettled([
+			queryClient.refetchQueries(
+				{ queryKey: billingKeys.wallet, type: "active" },
+				{ throwOnError: true },
+			),
+			queryClient.refetchQueries(
+				{ queryKey: billingKeys.ledgerRoot, type: "active" },
+				{ throwOnError: true },
+			),
+		]);
+		const ledgerPages = queryClient.getQueriesData<{ items: WalletLedgerEntry[] }>({
+			queryKey: billingKeys.ledgerRoot,
+		});
+		if (
+			refreshes.every((refresh) => refresh.status === "fulfilled") &&
+			ledgerPages.some(([, page]) =>
+				walletTopupCreditIsApplied(paymentReference, page?.items ?? []),
+			)
+		) {
+			return true;
+		}
+		if (attempt + 1 < TOP_UP_CREDIT_RECHECK_LIMIT) {
+			await new Promise<void>((resolve) =>
+				globalThis.setTimeout(resolve, TOP_UP_CREDIT_RECHECK_INTERVAL_MS),
+			);
+		}
+	}
+	return false;
 }
 
 export function handleTopupStartResult(

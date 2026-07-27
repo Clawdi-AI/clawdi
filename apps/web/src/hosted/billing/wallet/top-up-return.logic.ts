@@ -5,7 +5,7 @@ export const STRIPE_PAYMENT_INTENT_PARAM = "payment_intent";
 export const STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM = "payment_intent_client_secret";
 export const STRIPE_REDIRECT_STATUS_PARAM = "redirect_status";
 
-export type WalletTopupReturnToastKind = "success" | "info" | "error";
+export type WalletTopupReturnToastKind = "info" | "error";
 
 export interface WalletTopupReturnState {
 	clientSecret: string;

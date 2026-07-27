@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { retireRuntimeWindows } from "@/hosted/agents/runtime-window-lifecycle";
 import { type AcceptedOperation, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
+	DeploymentDeleteRequest,
 	DeploymentUpdateRequest,
 	HostedDeployment,
 	HostedDeploymentStatus,
@@ -214,9 +215,9 @@ export function useDeleteDeployment() {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation({
-		mutationFn: (id: string) =>
-			runStableDeploymentIntent("deployment-delete", { action: "delete", id }, (key) =>
-				client.deleteDeployment(id, key),
+		mutationFn: (vars: { id: string; request: DeploymentDeleteRequest }) =>
+			runStableDeploymentIntent("deployment-delete", { action: "delete", ...vars }, (key) =>
+				client.deleteDeployment(vars.id, vars.request, key),
 			),
 		onSuccess: (accepted) => {
 			projectAcceptedDeploymentTransition(qc, accepted);

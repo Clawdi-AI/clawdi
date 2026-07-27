@@ -19,6 +19,7 @@ import type {
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionResumeRequest,
 	DeploymentCreateRequest,
+	DeploymentDeleteRequest,
 	DeploymentDesiredLifecycle,
 	DeploymentOperation,
 	DeploymentUpdateRequest,
@@ -531,10 +532,11 @@ export function createBillingClient(
 					body,
 				}),
 			),
-		deleteDeployment: async (id: string, idempotencyKey: string) =>
+		deleteDeployment: async (id: string, body: DeploymentDeleteRequest, idempotencyKey: string) =>
 			acceptDeploymentMutation(id, idempotencyKey, (headers) =>
 				api.DELETE("/v2/deployments/{deployment_id}", {
 					params: { path: { deployment_id: id }, header: headers },
+					body,
 				}),
 			),
 	};

@@ -41,6 +41,8 @@ describe("filteredLedgerEntries", () => {
 
 	test("does not expose an unknown backend operation token", () => {
 		expect(ledgerOperationLabel("bridge_internal_credit_v3")).toBe("Other activity");
+		expect(ledgerOperationGroup("invoice")).toBe("all");
+		expect(ledgerOperationLabel("invoice")).toBe("Other activity");
 	});
 });
 
