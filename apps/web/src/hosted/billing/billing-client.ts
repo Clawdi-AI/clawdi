@@ -14,6 +14,7 @@ import type {
 	ComputeFixPaymentRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
+	ComputePlanChangeResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionResumeRequest,
@@ -33,6 +34,8 @@ import {
 	BillingNetworkError,
 	DeploymentConflictError,
 	DeploymentRequestTerminalError,
+	PlanChangePendingError,
+	PlanChangeTerminalError,
 } from "@/hosted/billing/errors";
 import { useAuthToken } from "@/lib/auth-client";
 import { env } from "@/lib/env";
@@ -163,6 +166,104 @@ function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingA
 	);
 }
 
+type ParsedPlanChangeOperation = {
+	name: string;
+	done: boolean;
+	state: string;
+	effectiveAt: string;
+	error: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function invalidPlanChangeResponse(): BillingApiError {
+	return new BillingApiError(
+		502,
+		"We couldn't verify the plan change status. Check again in a moment.",
+	);
+}
+
+function parsePlanChangeOperation(value: unknown): ParsedPlanChangeOperation {
+	if (!isRecord(value) || typeof value.name !== "string" || typeof value.done !== "boolean") {
+		throw invalidPlanChangeResponse();
+	}
+	const metadata = value.metadata;
+	if (!isRecord(metadata) || metadata.verb !== "plan_change") {
+		throw invalidPlanChangeResponse();
+	}
+	const progress = metadata.planChange;
+	if (
+		!isRecord(progress) ||
+		typeof progress.state !== "string" ||
+		typeof progress.effectiveAt !== "string"
+	) {
+		throw invalidPlanChangeResponse();
+	}
+	operationIdFromName(value.name);
+	return {
+		name: value.name,
+		done: value.done,
+		state: progress.state,
+		effectiveAt: progress.effectiveAt,
+		error: value.error,
+	};
+}
+
+function planChangeTerminalError(error: unknown): BillingApiError {
+	if (isRecord(error) && Array.isArray(error.details)) {
+		const detail = error.details.find(
+			(item) =>
+				isRecord(item) && typeof item.status === "number" && typeof item.detail === "string",
+		);
+		if (
+			isRecord(detail) &&
+			typeof detail.status === "number" &&
+			typeof detail.detail === "string"
+		) {
+			return new PlanChangeTerminalError(detail.status, detail.detail, { detail });
+		}
+	}
+	return new PlanChangeTerminalError(
+		409,
+		"The plan change could not be completed. Review the price and try again.",
+	);
+}
+
+function completedPlanChange(operation: ParsedPlanChangeOperation): ComputePlanChangeResult | null {
+	if (!operation.done) {
+		if (operation.error !== undefined && operation.error !== null) {
+			throw invalidPlanChangeResponse();
+		}
+		return null;
+	}
+	if (operation.error !== undefined && operation.error !== null) {
+		throw planChangeTerminalError(operation.error);
+	}
+	if (operation.state === "complete" || operation.state === "scheduled") {
+		return { kind: operation.state, effectiveAt: operation.effectiveAt };
+	}
+	throw invalidPlanChangeResponse();
+}
+
+function legacyPlanChangeResult(value: unknown): ComputePlanChangeResult | null {
+	if (!isRecord(value) || !("operation_id" in value)) return null;
+	if (typeof value.status !== "string" || typeof value.effective_at !== "string") {
+		throw invalidPlanChangeResponse();
+	}
+	if (value.status === "complete" || value.status === "scheduled") {
+		return { kind: value.status, effectiveAt: value.effective_at };
+	}
+	if (value.status === "awaiting_payment") {
+		return { kind: "pending", waitingFor: "payment" };
+	}
+	if (value.status === "awaiting_projection") {
+		return { kind: "pending", waitingFor: "update" };
+	}
+	throw invalidPlanChangeResponse();
+}
+
 /**
  * Generated deploy-api client facade. Request/response bodies come from
  * `packages/shared/src/api/deploy.generated.ts`; this hook only centralizes
@@ -203,6 +304,26 @@ export function createBillingClient(
 				params: { path: { operation_id: operationId } },
 			}),
 		);
+
+	const waitForPlanChange = async (
+		initial: unknown,
+		expectedOperationId: string,
+		onAccepted?: (operationName: string) => void,
+	): Promise<ComputePlanChangeResult> => {
+		let operation = parsePlanChangeOperation(initial);
+		if (operationIdFromName(operation.name) !== expectedOperationId) {
+			throw invalidPlanChangeResponse();
+		}
+		onAccepted?.(operation.name);
+		for (let poll = 0; poll <= pollLimit; poll += 1) {
+			const completed = completedPlanChange(operation);
+			if (completed) return completed;
+			if (poll === pollLimit) throw new PlanChangePendingError(operation.name);
+			await sleep(pollIntervalMs);
+			operation = parsePlanChangeOperation(await getOperation(operationIdFromName(operation.name)));
+		}
+		throw new PlanChangePendingError(operation.name);
+	};
 
 	const getDeploymentByRequest = async (
 		deployRequestId: string,
@@ -313,8 +434,27 @@ export function createBillingClient(
 			unwrapDeploy(await api.POST("/v2/subscription/quote", { body })),
 		quotePlanChange: async (body: ComputePlanChangeQuoteRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/plan/quote", { body })),
-		changePlan: async (body: ComputePlanChangeRequest) =>
-			unwrapDeploy(await api.POST("/v2/subscription/plan/change", { body })),
+		changePlan: async (
+			body: ComputePlanChangeRequest,
+			onAccepted?: (operationName: string) => void,
+		): Promise<ComputePlanChangeResult> => {
+			const response: unknown = unwrapDeploy(
+				await api.POST("/v2/subscription/plan/change", {
+					headers: { "Idempotency-Key": body.operation_id },
+					body,
+				}),
+			);
+			const legacy = legacyPlanChangeResult(response);
+			return legacy ?? waitForPlanChange(response, body.operation_id, onAccepted);
+		},
+		checkPlanChange: async (operationName: string) =>
+			getOperation(operationIdFromName(operationName)).then((value) => {
+				const operation = parsePlanChangeOperation(value);
+				if (operation.name !== operationName) throw invalidPlanChangeResponse();
+				const completed = completedPlanChange(operation);
+				if (completed) return completed;
+				throw new PlanChangePendingError(operation.name);
+			}),
 		cancelSubscription: async (body: ComputeSubscriptionCancelRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/cancel", { body })),
 		fixPayment: async (body: ComputeFixPaymentRequest) =>

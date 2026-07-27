@@ -87,11 +87,17 @@ import {
 	supportedTimezones,
 	TimezoneCombobox,
 } from "@/hosted/billing/deploy/language-timezone-controls";
-import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
+import {
+	billingErrorNormalizer,
+	normalizeBillingError,
+	PlanChangePendingError,
+	PlanChangeTerminalError,
+} from "@/hosted/billing/errors";
 import { billingTermLabel, billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import {
 	useCancelSubscription,
 	useChangePlan,
+	useCheckPlanChange,
 	useManagedModelCatalog,
 	usePlans,
 	useQuotePlanChange,
@@ -2879,7 +2885,9 @@ function ComputeSettingsSections({
 	const lifecycle = useDeploymentLifecycle();
 	const plans = usePlans();
 	const quotePlanChange = useQuotePlanChange();
-	const changePlan = useChangePlan();
+	const [pendingPlanChangeName, setPendingPlanChangeName] = useState<string | null>(null);
+	const changePlan = useChangePlan(setPendingPlanChangeName);
+	const checkPlanChange = useCheckPlanChange();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
 	const wallet = useWalletSnapshot({
@@ -3012,12 +3020,15 @@ function ComputeSettingsSections({
 		setSubscriptionCreateOpen(false);
 		setPlanChangeOpen(false);
 		setPlanChangeQuote(null);
+		setPendingPlanChangeName(null);
 		walletTopUp.reset();
 	}, [hostedAccess.canCreateCloudAgents, hostedAccess.isLoading, walletTopUp.reset]);
 
 	function setPlanChangeDialogOpen(open: boolean) {
 		setPlanChangeOpen(open);
-		if (!open) setPlanChangeQuote(null);
+		if (!open && pendingPlanChangeName === null) {
+			setPlanChangeQuote(null);
+		}
 	}
 
 	async function requestPlanChangeQuote(selection: PlanChangeSelection) {
@@ -3025,7 +3036,7 @@ function ComputeSettingsSections({
 			return;
 		}
 		try {
-			if (!(await hostedAccess.recheckCanCreateCloudAgents())) {
+			if (pendingPlanChangeName === null && !(await hostedAccess.recheckCanCreateCloudAgents())) {
 				setPlanChangeDialogOpen(false);
 				return;
 			}
@@ -3033,6 +3044,7 @@ function ComputeSettingsSections({
 				subscription_id: subscriptionId,
 				...selection,
 			});
+			setPendingPlanChangeName(null);
 			setPlanChangeQuote(quote);
 		} catch (error) {
 			toast.error("Couldn’t quote plan change", {
@@ -3048,21 +3060,40 @@ function ComputeSettingsSections({
 				setPlanChangeDialogOpen(false);
 				return;
 			}
-			const result = await changePlan.mutateAsync({ operation_id: operationId });
-			if (result.status === "scheduled") {
+			const result = pendingPlanChangeName
+				? await checkPlanChange.mutateAsync(pendingPlanChangeName)
+				: await changePlan.mutateAsync({ operation_id: operationId });
+			if (result.kind === "scheduled") {
 				toast.success("Downgrade scheduled", {
-					description: `Your current compute remains active until ${formatShortDate(result.effective_at)}.`,
+					description: `Your current compute remains active until ${formatShortDate(result.effectiveAt)}.`,
+				});
+			} else if (result.kind === "complete") {
+				toast.success("Plan changed", {
+					description: "Your compute subscription has been updated.",
 				});
 			} else {
-				toast.success("Plan change started", {
+				toast.info("Plan change in progress", {
 					description:
-						result.status === "complete"
-							? "Your compute subscription has been updated."
-							: "Compute updates after Stripe confirms the invoice payment.",
+						result.waitingFor === "payment"
+							? "We’re still waiting for payment confirmation. Your compute plan has not changed yet."
+							: "Your request was received, but the compute plan has not updated yet. You can watch its status here.",
 				});
 			}
+			setPendingPlanChangeName(null);
+			setPlanChangeQuote(null);
 			setPlanChangeDialogOpen(false);
 		} catch (error) {
+			if (error instanceof PlanChangePendingError) {
+				setPendingPlanChangeName(error.operationName);
+				toast.info("Still waiting for confirmation", {
+					description:
+						"We don’t have a final result yet. Don’t submit another plan change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another charge.",
+				});
+				return;
+			}
+			if (error instanceof PlanChangeTerminalError) {
+				setPendingPlanChangeName(null);
+			}
 			if (walletTopUp.handleFundingError(error)) return;
 			toast.error("Couldn’t change plan", {
 				description: normalizeBillingError(error),
@@ -3133,7 +3164,8 @@ function ComputeSettingsSections({
 					quote={planChangeQuote}
 					walletBalanceUsd={wallet.data?.balance_usd ?? null}
 					isQuoting={quotePlanChange.isPending}
-					isConfirming={changePlan.isPending}
+					isConfirming={changePlan.isPending || checkPlanChange.isPending}
+					hasAcceptedChange={pendingPlanChangeName !== null}
 					onQuote={requestPlanChangeQuote}
 					onConfirm={confirmPlanChange}
 					onTopUp={() => walletTopUp.show()}
@@ -3211,8 +3243,9 @@ function ComputeSettingsSections({
 								<Button
 									size="sm"
 									disabled={
-										plans.isLoading ||
-										(hasTerminalFallback ? !canStartNewSubscription : !canUpgrade || !perfPlan)
+										pendingPlanChangeName === null &&
+										(plans.isLoading ||
+											(hasTerminalFallback ? !canStartNewSubscription : !canUpgrade || !perfPlan))
 									}
 									onClick={() =>
 										hasTerminalFallback
@@ -3225,7 +3258,11 @@ function ComputeSettingsSections({
 									) : (
 										<Zap data-icon="inline-start" />
 									)}
-									{hasTerminalFallback ? "Start a new subscription" : "Upgrade to Performance"}
+									{pendingPlanChangeName
+										? "Check plan change status"
+										: hasTerminalFallback
+											? "Start a new subscription"
+											: "Upgrade to Performance"}
 								</Button>
 								{hasTerminalFallback ? (
 									canStartNewSubscription ? null : (
@@ -3263,10 +3300,15 @@ function ComputeSettingsSections({
 											type="button"
 											variant="outline"
 											size="sm"
-											disabled={planChangeUnavailable !== null || !!pendingPlanSlug}
+											disabled={
+												pendingPlanChangeName === null &&
+												(planChangeUnavailable !== null || !!pendingPlanSlug)
+											}
 											onClick={() => setPlanChangeDialogOpen(true)}
 										>
-											Change plan or billing term
+											{pendingPlanChangeName
+												? "Check plan change status"
+												: "Change plan or billing term"}
 										</Button>
 										<ConfirmAction
 											title={`Cancel ${tierLabel} subscription?`}

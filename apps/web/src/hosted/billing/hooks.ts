@@ -16,7 +16,7 @@ import type {
 	ComputeFixPaymentRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
-	ComputePlanChangeResponse,
+	ComputePlanChangeResult,
 	ComputeSubscriptionActionResult,
 	ComputeSubscriptionCancelRequest,
 	ComputeSubscriptionResumeRequest,
@@ -253,11 +253,24 @@ export function useQuotePlanChange() {
 	});
 }
 
-export function useChangePlan() {
+export function useChangePlan(onAccepted?: (operationName: string) => void) {
 	const client = useBillingClient();
 	const qc = useQueryClient();
-	return useMutation<ComputePlanChangeResponse, Error, ComputePlanChangeRequest>({
-		mutationFn: (body) => client.changePlan(body),
+	return useMutation<ComputePlanChangeResult, Error, ComputePlanChangeRequest>({
+		mutationFn: (body) => client.changePlan(body, onAccepted),
+		onSuccess: () => {
+			qc.invalidateQueries({ queryKey: billingKeys.deployments });
+			qc.invalidateQueries({ queryKey: billingKeys.wallet });
+			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
+		},
+	});
+}
+
+export function useCheckPlanChange() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation<ComputePlanChangeResult, Error, string>({
+		mutationFn: (operationName) => client.checkPlanChange(operationName),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });

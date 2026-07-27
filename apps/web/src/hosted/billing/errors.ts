@@ -58,6 +58,19 @@ export class DeploymentRequestTerminalError extends BillingApiError {
 	override name = "DeploymentRequestTerminalError";
 }
 
+/** A plan change remains nonterminal after the bounded foreground poll. */
+export class PlanChangePendingError extends Error {
+	constructor(public readonly operationName: string) {
+		super("We're still waiting for the plan change to finish. Check the status again in a moment.");
+		this.name = "PlanChangePendingError";
+	}
+}
+
+/** The accepted plan change reached an explicit failed terminal state. */
+export class PlanChangeTerminalError extends BillingApiError {
+	override name = "PlanChangeTerminalError";
+}
+
 function hasDetail(value: unknown): value is { detail: unknown } {
 	return typeof value === "object" && value !== null && "detail" in value;
 }
