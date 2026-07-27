@@ -440,7 +440,7 @@ function planChangeQuoteResponse({
 	changeKind,
 	effectiveAt,
 	amountCents,
-	amountCredits,
+	amountUsd,
 }: {
 	operationId: string;
 	subscriptionId: number;
@@ -452,7 +452,7 @@ function planChangeQuoteResponse({
 	changeKind: "immediate_upgrade" | "scheduled_downgrade";
 	effectiveAt: string;
 	amountCents: number;
-	amountCredits: string | null;
+	amountUsd: string | null;
 }) {
 	return {
 		operation_id: operationId,
@@ -468,8 +468,7 @@ function planChangeQuoteResponse({
 		proration_date: "2026-07-16T00:00:00Z",
 		expires_at: "2026-07-16T00:15:00Z",
 		amount_cents: amountCents,
-		amount_credits: amountCredits,
-		points_per_usd: fundingSource === "wallet" ? 1_000 : null,
+		amount_usd: amountUsd,
 		currency: "usd",
 		stripe_invoice_preview_id: "in_preview_browser",
 	};
@@ -1091,8 +1090,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				proration_date: "2026-07-16T00:00:00Z",
 				expires_at: "2026-07-16T00:15:00Z",
 				amount_cents: 1_000,
-				amount_credits: null,
-				points_per_usd: null,
+				amount_usd: null,
 				currency: "usd",
 				stripe_invoice_preview_id: "in_preview_browser",
 			};
@@ -1457,8 +1455,21 @@ test("existing Cloud customers keep billing settings when new deploys are disabl
 
 test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
-	await stubHostedApi(page);
+	await stubHostedApi(page, { plans: [basicPlan], deployments: [] });
 	await page.goto("/deploy");
+
+	const nameInput = page.getByRole("textbox", { name: "Name in Clawdi" });
+	const maxLengthName = "a".repeat(64);
+	await nameInput.fill(maxLengthName);
+	await expect(
+		page.getByText("64 / 64 characters — limit reached.", { exact: true }),
+	).toBeVisible();
+	await expect(page.locator('[role="status"][aria-live="polite"]')).toHaveText(
+		"Name limit reached. You can enter up to 64 characters.",
+	);
+	await nameInput.press("End");
+	await nameInput.type("b");
+	await expect(nameInput).toHaveValue(maxLengthName);
 
 	// The Personalize section's language select is always present.
 	const languageSelect = page.locator("#agent-language");
@@ -1617,7 +1628,7 @@ test("accepted detail delete navigates after deployment membership disappears", 
 	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
 	await page
 		.getByRole("alertdialog")
-		.getByRole("button", { name: "Delete compute", exact: true })
+		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
@@ -1642,6 +1653,7 @@ test("managed model picker lists the curated catalog without Custom or image mod
 	});
 	await page.goto("/deploy");
 
+	await page.getByRole("button", { name: "Change", exact: true }).click();
 	await expect(page.locator("#deploy-catalog-model")).toContainText("Luna");
 	await page.locator("#deploy-catalog-model").click();
 	await expect(page.getByRole("option", { name: "Luna", exact: true })).toBeVisible();
@@ -1670,7 +1682,7 @@ test("Basic paid checkout stays hidden until deployment inventory succeeds", asy
 	await page.goto("/deploy");
 
 	await expect(page.getByText("Checking your free Basic slot…", { exact: true })).toBeVisible();
-	await expect(page.getByText("$9/mo", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("$10.00/mo", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Continue to checkout" })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Deploy agent" })).toBeDisabled();
 
@@ -1704,7 +1716,7 @@ test("empty plans and wallet failures expose working retries", async ({ page }) 
 
 	const walletError = page
 		.getByRole("alert")
-		.filter({ hasText: "Couldn't load your AI Credits wallet" });
+		.filter({ hasText: "Couldn't load your Wallet balance" });
 	await expect(walletError).toBeVisible();
 	await walletError.getByRole("button", { name: "Retry" }).click();
 	await expect(page.getByTestId("wallet-debit-equation")).toBeVisible();
@@ -1726,7 +1738,7 @@ test("hosted locale settings submit canonical deployment PATCH", async ({ page }
 
 	await page.locator("#hosted-agent-language").click();
 	await page.getByRole("option", { name: "Español" }).click();
-	await page.getByRole("button", { name: "Apply locale settings" }).click();
+	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 
 	expect(updateDeploymentRequests[0]?.idempotencyKey).toMatch(/^deployment-update-/);
@@ -1749,7 +1761,7 @@ test("hosted AI provider Apply submits canonical deployment PATCH", async ({ pag
 	await page.goto("/agents/hdep_included/model-provider?source=on-clawdi");
 
 	await page.getByRole("button", { name: /Configure inside agent/ }).click();
-	await page.getByRole("button", { name: "Apply provider settings" }).click();
+	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		ai_provider_auth_kind: "unmanaged",
@@ -1781,7 +1793,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 
 	await page.getByRole("button", { name: /Managed by Clawdi/ }).click();
 	await expect(page.locator("#agent-catalog-model")).toContainText("Luna");
-	await page.getByRole("button", { name: "Apply provider settings" }).click();
+	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		ai_provider_auth_kind: "managed",
@@ -1809,25 +1821,21 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe("hdep_failed_projection");
-	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toBeVisible();
-	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toBeVisible();
+	await expect(main.getByText("Some agent details are not ready", { exact: true })).toBeVisible();
+	await expect(main.getByText(missingProjectionFailureReason, { exact: true })).toHaveCount(0);
+	await expect(
+		main.getByText("The Clawdi service could not complete this request.", { exact: true }),
+	).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
 	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
 
-	await main.getByRole("button", { name: "Retry startup", exact: true }).click();
-	await page
-		.getByRole("alertdialog")
-		.getByRole("button", { name: "Retry startup", exact: true })
-		.click();
-	await expect
-		.poll(() => restartRequests)
-		.toEqual(["/v2/deployments/hdep_failed_projection/restart"]);
+	expect(restartRequests).toEqual([]);
 
 	await main.getByRole("button", { name: "Delete", exact: true }).click();
 	await page
@@ -1886,7 +1894,9 @@ test("stopped detail stays recoverable without querying its removed projection",
 		).toBeVisible();
 		await expect(main.getByRole("button", { name: "Start", exact: true })).toBeVisible();
 		await expect(main.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
-		await expect(main.getByText("Agent sync record unavailable", { exact: true })).toHaveCount(0);
+		await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(
+			0,
+		);
 	}
 
 	const removedProjectionRequests = cloudRequests.filter((path) => {
@@ -1923,23 +1933,19 @@ test("failed deployment with a retained projection keeps status-authoritative na
 
 	await page.goto(`/agents/${retainedProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText(retainedProjectionFailureReason, { exact: true })).toBeVisible();
+	await expect(main.getByText(retainedProjectionFailureReason, { exact: true })).toHaveCount(0);
+	await expect(
+		main.getByText("The Clawdi service could not complete this request.", { exact: true }),
+	).toBeVisible();
 	await expect(main.getByText("Failed", { exact: true })).toBeVisible();
 	await expect(main.getByText("Basic", { exact: true })).toBeVisible();
-	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 
-	await main.getByRole("button", { name: "Retry startup", exact: true }).click();
-	await page
-		.getByRole("alertdialog")
-		.getByRole("button", { name: "Retry startup", exact: true })
-		.click();
-	await expect
-		.poll(() => restartRequests)
-		.toEqual(["/v2/deployments/hdep_failed_retained_projection/restart"]);
+	expect(restartRequests).toEqual([]);
 
 	await main.getByRole("button", { name: "Delete", exact: true }).click();
 	await page
@@ -1963,11 +1969,11 @@ test("missing live projection recovers on Check again without losing deployment 
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toBeVisible();
+	await expect(main.getByText("Some agent details are not ready", { exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Check again", exact: true }).click();
-	await expect(main.getByText("Agent sync record unavailable", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("heading", { name: "Overview" })).toBeVisible();
 });
 
@@ -1985,7 +1991,7 @@ test("projection service errors stay visible while deployment tools remain avail
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText("Agent sync service unavailable", { exact: true })).toBeVisible();
+	await expect(main.getByText("Couldn’t load all agent details", { exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	const renderErrors = errors.filter(
@@ -1994,17 +2000,19 @@ test("projection service errors stay visible while deployment tools remain avail
 	expect(renderErrors, `projection failure render: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("running deployment without a UI endpoint auto-opens the live UI when polling resolves", async ({
+test("deployment detail stays put, becomes ready, and keeps manual Runtime UI access", async ({
 	page,
 }) => {
 	const pendingRuntimeUiDeployment = {
 		...runningMissingProjectionDeployment,
 		id: "hdep_runtime_ui_settling",
 		name: "Runtime UI settling agent",
+		status: "creating",
 		hermes_control_ui_url: null,
 	};
 	const readyRuntimeUiDeployment = {
 		...pendingRuntimeUiDeployment,
+		status: "running",
 		hermes_control_ui_url: "https://runtime.example/hermes",
 	};
 	const deployments: unknown[] = [pendingRuntimeUiDeployment];
@@ -2018,24 +2026,30 @@ test("running deployment without a UI endpoint auto-opens the live UI when polli
 
 	await page.goto(`/agents/${pendingRuntimeUiDeployment.id}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText("Starting the live UI…", { exact: true })).toBeVisible();
-	await expect(
-		main.getByText("Opening the live UI automatically…", { exact: false }),
-	).toBeVisible();
-	await expect(main.getByRole("button", { name: "Use Terminal now", exact: true })).toBeVisible();
+	await expect(main.getByText("Getting your agent ready…", { exact: true })).toBeVisible();
+	await expect(page).toHaveURL(
+		(url) => url.pathname === `/agents/${pendingRuntimeUiDeployment.id}`,
+	);
 
 	deployments.splice(0, 1, readyRuntimeUiDeployment);
 
 	await expect
-		.poll(() => deploymentListRequests.length, { timeout: 10_000 })
+		.poll(() => deploymentListRequests.length, { timeout: 15_000 })
 		.toBeGreaterThanOrEqual(2);
+	await expect(main.getByText("Your agent is ready", { exact: true })).toBeVisible();
+	await expect(page).toHaveURL(
+		(url) => url.pathname === `/agents/${pendingRuntimeUiDeployment.id}`,
+	);
+	expect(runtimeUiRedemptionRequests).toEqual([]);
+	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveCount(0);
+
+	await page.getByRole("link", { name: "Runtime UI", exact: true }).click();
 	await expect(page).toHaveURL(
 		(url) =>
-			url.pathname === `/agents/${missingProjectionEnvironmentId}/console` &&
+			url.pathname === `/agents/${pendingRuntimeUiDeployment.id}/console` &&
 			url.searchParams.get("source") === "on-clawdi" &&
 			url.searchParams.get("d") === pendingRuntimeUiDeployment.id,
 	);
-	expect(runtimeUiRedemptionRequests).toEqual([]);
 	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
 		"src",
 		"https://runtime.example/hermes",
@@ -2076,7 +2090,11 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Retry", exact: true }).click();
 	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toHaveCount(0);
-	await expect(main.locator('input[value="recovered-password"]')).toBeVisible();
+	const passwordValue = main.locator("code");
+	await expect(passwordValue).toHaveText("••••••••••••");
+	await expect(passwordValue).not.toContainText("recovered-password");
+	await main.getByRole("button", { name: "Show Password", exact: true }).click();
+	await expect(passwordValue).toHaveText("recovered-password");
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
 });
 
@@ -2105,7 +2123,11 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 		"https://runtime.example/openclaw/#token=gateway-token",
 	);
 	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
-	await expect(main.locator('input[value="gateway-token"]')).toBeVisible();
+	const tokenValue = main.locator("code");
+	await expect(tokenValue).toHaveText("••••••••••••");
+	await expect(tokenValue).not.toContainText("gateway-token");
+	await main.getByRole("button", { name: "Show Token", exact: true }).click();
+	await expect(tokenValue).toHaveText("gateway-token");
 	const popupPromise = page.waitForEvent("popup");
 	await main.getByRole("button", { name: "Open OpenClaw Control UI" }).click();
 	const popup = await popupPromise;
@@ -2142,10 +2164,15 @@ test("shared legacy environment routes an older tile's actions to its deployment
 
 	await page.goto("/agents");
 	const agents = page.locator("main");
-	const newerTile = agents.getByRole("link").filter({ hasText: "Newer twin" });
-	const olderTile = agents.getByRole("link").filter({ hasText: "Older twin" });
+	const newerTile = agents.getByRole("link", { name: "Open Newer twin", exact: true });
+	const olderTile = agents.getByRole("link", { name: "Open Older twin", exact: true });
 	await expect(newerTile).toBeVisible();
 	await expect(olderTile).toBeVisible();
+	await expect(newerTile.locator("..").getByText("Running", { exact: true })).toHaveCount(0);
+	await expect(olderTile.locator("..").getByText("Stopped", { exact: true })).toHaveCount(0);
+	const rail = page.getByTestId("app-sidebar-agent-tiles");
+	await expect(rail.getByLabel("Newer twin", { exact: true })).toBeVisible();
+	await expect(rail.getByLabel("Older twin", { exact: true })).toBeVisible();
 	await olderTile.click();
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(page).toHaveURL(
@@ -2211,14 +2238,14 @@ test("Basic create always follows the wizard-selected funding path", async ({ pa
 	await page.emulateMedia({ reducedMotion: "reduce" });
 	await stubHostedApi(page, {
 		checkoutRequests,
-		deployments: [paidBasicDeployment],
+		deployments: [includedBasicDeployment],
 		plans: [basicPlan, performancePlan],
 	});
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("$9/mo", { exact: true })).toBeVisible();
-	await expect(page.getByText(/2 vCPU \/ 4 GB · \$9\/mo/)).toBeVisible();
+	await expect(page.getByText("$10.00/mo", { exact: true })).toBeVisible();
+	await expect(page.getByText(/2 vCPU \/ 4 GB · \$10\.00\/mo/)).toBeVisible();
 	await expectNoQuarterlyCopy(page);
 	await capturePricingScreenshot(page, "/tmp/basic-paid-funded-slot-available-final.png");
 
@@ -2287,7 +2314,7 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await page.goto("/deploy");
 	await page.waitForLoadState("networkidle");
 
-	await expect(page.getByText("$9/mo", { exact: true })).toBeVisible();
+	await expect(page.getByText("$10.00/mo", { exact: true })).toBeVisible();
 	await expect(page.getByText("Monthly", { exact: true })).toBeVisible();
 	const annualTerm = page.getByRole("button", { name: /Annual.*%/ });
 	await expect(annualTerm).toBeVisible();
@@ -2295,8 +2322,10 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await annualTerm.click();
 	await expect(page.getByText("Wallet balance", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Wallet balance/ })).toBeVisible();
-	await expect(page.getByText(/2 vCPU \/ 4 GB · \$7.2\/mo, billed \$86.4\/yr/)).toBeVisible();
-	await expect(page.getByText(/this Basic agent at \$7.2\/mo, billed \$86.4\/yr/)).toBeVisible();
+	await expect(page.getByText(/2 vCPU \/ 4 GB · \$8\.33\/mo, billed \$100\.00\/yr/)).toBeVisible();
+	await expect(
+		page.getByText(/this Basic agent at \$8\.33\/mo, billed \$100\.00\/yr/),
+	).toBeVisible();
 	await capturePricingScreenshot(page, "/tmp/basic-free-funded-slot-occupied-final.png");
 
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
@@ -2456,7 +2485,7 @@ test("included Basic uses unified card quote and change without creating a secon
 				changeKind: "immediate_upgrade",
 				effectiveAt: "2026-07-16T00:00:00Z",
 				amountCents: 18_000,
-				amountCredits: null,
+				amountUsd: null,
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2549,7 +2578,7 @@ test("included Basic uses unified wallet quote and change with exact debit", asy
 				changeKind: "immediate_upgrade",
 				effectiveAt: "2026-07-16T00:00:00Z",
 				amountCents: 1_900,
-				amountCredits: "19000",
+				amountUsd: "19.00",
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2572,9 +2601,9 @@ test("included Basic uses unified wallet quote and change with exact debit", asy
 		funding_source: "wallet",
 	});
 	const equation = changeDialog.getByTestId("wallet-debit-equation");
-	await expect(equation).toContainText("25,000 credits");
-	await expect(equation).toContainText("19,000 credits");
-	await expect(equation).toContainText("6,000 credits");
+	await expect(equation).toContainText("$25.00");
+	await expect(equation).toContainText("$19.00");
+	await expect(equation).toContainText("$6.00");
 	await changeDialog.getByRole("button", { name: "Confirm upgrade" }).click();
 
 	await expect.poll(() => planChangeRequests.length).toBe(1);
@@ -2635,7 +2664,7 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 				changeKind: "immediate_upgrade",
 				effectiveAt: "2026-07-16T00:00:00Z",
 				amountCents: 9_360,
-				amountCredits: null,
+				amountUsd: null,
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2718,7 +2747,7 @@ test("paid wallet subscription confirms an immediate quoted upgrade", async ({ p
 				changeKind: "immediate_upgrade",
 				effectiveAt: "2026-07-16T00:00:00Z",
 				amountCents: 1_000,
-				amountCredits: "10000",
+				amountUsd: "10.00",
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2734,9 +2763,9 @@ test("paid wallet subscription confirms an immediate quoted upgrade", async ({ p
 	await review.click();
 	await expect.poll(() => planQuoteRequests.length).toBe(1);
 	const equation = changeDialog.getByTestId("wallet-debit-equation");
-	await expect(equation).toContainText("25,000 credits");
-	await expect(equation).toContainText("10,000 credits");
-	await expect(equation).toContainText("15,000 credits");
+	await expect(equation).toContainText("$25.00");
+	await expect(equation).toContainText("$10.00");
+	await expect(equation).toContainText("$15.00");
 	await changeDialog.getByRole("button", { name: "Confirm upgrade" }).click();
 
 	expect(JSON.parse(planQuoteRequests[0] ?? "{}")).toEqual({
@@ -2785,7 +2814,7 @@ test("paid Performance schedules its quoted downgrade for the effective date", a
 				changeKind: "scheduled_downgrade",
 				effectiveAt: "2027-07-15T00:00:00Z",
 				amountCents: 0,
-				amountCredits: null,
+				amountUsd: null,
 			}),
 		],
 		plans: [basicPlan, performancePlan],
@@ -2857,7 +2886,9 @@ test("terminal fallback starts a new subscription against the fallback deploymen
 	});
 	await gotoHostedAgentSettings(page, "hdep_terminal_fallback", "Basic");
 
-	await expect(page.getByText("Compute subscription ended", { exact: true })).toBeVisible();
+	await expect(
+		page.locator("main").getByText("Compute subscription ended", { exact: true }),
+	).toBeVisible();
 	await expect(
 		page.getByRole("alert").getByRole("button", { name: "Start a new subscription" }),
 	).toBeVisible();
@@ -3138,7 +3169,7 @@ test("paid Basic checkout abandonment preserves the checkout-ready wizard", asyn
 
 	await expect(page.getByText("Checkout canceled", { exact: true })).toBeVisible();
 	await expect(page.getByText("You were not charged. Your agent was not deployed.")).toBeVisible();
-	await expect(page.getByText("$9/mo", { exact: true })).toBeVisible();
+	await expect(page.getByText("$10.00/mo", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Continue to checkout" })).toBeVisible();
 	await expect(page.getByText("First slot free", { exact: true })).toHaveCount(0);
 	expect(checkoutRequests).toEqual([]);
@@ -3230,7 +3261,7 @@ test("Stripe invoice history shows both rails and a server-visible zero proratio
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog.getByText("Billing history", { exact: true })).toBeVisible();
 	const billingTable = settingsDialog.getByRole("table");
-	await expect(billingTable.getByText("Paid with AI Credits", { exact: true })).toBeVisible();
+	await expect(billingTable.getByText("Paid from Wallet", { exact: true })).toBeVisible();
 	await expect(billingTable.getByText("Paid by card", { exact: true })).toHaveCount(2);
 	await expect(
 		billingTable.locator('a[href="https://invoice.stripe.test/in_wallet"]'),
@@ -3245,7 +3276,7 @@ test("Stripe invoice history shows both rails and a server-visible zero proratio
 	await expect(
 		settingsDialog.getByText("Couldn’t load more billing history", { exact: true }),
 	).toBeVisible();
-	await expect(billingTable.getByText("Paid with AI Credits", { exact: true })).toBeVisible();
+	await expect(billingTable.getByText("Paid from Wallet", { exact: true })).toBeVisible();
 	await settingsDialog.getByRole("button", { name: "Retry" }).click();
 	await expect.poll(() => billingHistoryRequests.length).toBe(3);
 	expect(new URL(billingHistoryRequests[1] ?? "http://invalid").searchParams.get("cursor")).toBe(
@@ -3644,7 +3675,7 @@ test("compute plans keep signup credits without advertising subscription credit 
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog).toBeVisible();
 	await expect(
-		settingsDialog.getByText("$5.00 in AI Credits on signup", { exact: true }),
+		settingsDialog.getByText("$5.00 welcome balance on signup", { exact: true }),
 	).toBeVisible();
 	await expect(settingsDialog).not.toContainText("AI Credits per subscription");
 	await expect(settingsDialog).not.toContainText("AI Credits added to Wallet");
@@ -3665,19 +3696,34 @@ test("command palette opens with Ctrl+K", async ({ page }) => {
 	expect(errors, `command palette: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("app 404 offers a working exit to the dashboard", async ({ page }) => {
+	await stubHostedApi(page);
+	const response = await page.goto("/this-clawdi-page-does-not-exist");
+	expect(response?.status()).toBe(404);
+
+	const dashboardExit = page.getByRole("link", { name: "Back to dashboard", exact: true });
+	await expect(dashboardExit).toHaveAttribute("href", "/");
+	const errors = collectBrowserErrors(page);
+	await dashboardExit.click();
+
+	await expect(page).toHaveURL(/\/$/);
+	await expect(page.getByTestId("app-sidebar")).toBeVisible();
+	expect(errors, `app 404: ${errors.join(" | ")}`).toEqual([]);
+});
+
 test("channels connect dialog opens without browser errors", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page);
 	await page.goto("/channels");
 
-	const connect = page.getByRole("button", { name: /connect a bot/i }).first();
+	const connect = page.getByRole("button", { name: "Connect your own bot", exact: true }).first();
 	await expect(connect).toBeVisible();
 	await page.waitForTimeout(150);
 	expect(errors, `channels render: ${errors.join(" | ")}`).toEqual([]);
 
 	await expect(page.locator('[data-slot="tabs-list"]')).toHaveCount(0);
-	await expect(page.getByText("Your channels").first()).toBeVisible();
-	await expect(page.getByText("Shared bots").first()).toBeVisible();
+	await expect(page.getByText("Ready-to-go bots", { exact: true })).toBeVisible();
+	await expect(page.getByText("Your bots", { exact: true })).toBeVisible();
 	await expectNonZeroBox(page.locator('[data-sidebar="separator"]').first(), "sidebar separator");
 
 	// Open the Base UI Dialog + interact with its provider picker.

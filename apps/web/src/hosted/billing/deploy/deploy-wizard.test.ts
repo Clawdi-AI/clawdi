@@ -53,9 +53,14 @@ describe("deploy wizard personalization", () => {
 		expect(wizardSource).not.toContain("deployAssistantNameAfterRuntimeChange");
 		expect(wizardSource).toContain("required");
 		expect(wizardSource).toContain("aria-invalid={nameError ? true : undefined}");
-		expect(wizardSource).toContain(
-			'aria-describedby={nameError ? "agent-name-error" : "agent-name-help"}',
-		);
+		expect(wizardSource).toContain('"agent-name-error agent-name-count"');
+		expect(wizardSource).toContain('"agent-name-help agent-name-count"');
+		expect(wizardSource).toContain('id="agent-name-count"');
+		expect(wizardSource).toContain("nameLimitReached");
+		expect(wizardSource).toContain('className="sr-only" role="status" aria-live="polite"');
+		expect(wizardSource).toContain('aria-live="polite"');
+		expect(wizardSource).toContain('" — limit reached."');
+		expect(wizardSource).toContain("Name limit reached. You can enter up to");
 		expect(wizardSource).toContain('type="submit"');
 		expect(wizardSource).toContain("submitBlockingReason");
 	});

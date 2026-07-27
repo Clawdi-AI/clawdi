@@ -21,18 +21,13 @@ type InvalidateDeploymentSnapshots =
 	typeof import("@/hosted/agents/deployment-hooks").invalidateDeploymentSnapshots;
 type ProjectAcceptedDeploymentTransition =
 	typeof import("@/hosted/agents/deployment-hooks").projectAcceptedDeploymentTransition;
-type RuntimeUiSettlingPollState =
-	typeof import("@/hosted/agents/deployment-hooks").runtimeUiSettlingPollState;
-type OverviewProvisioningPanel =
-	typeof import("@/hosted/agents/hosted-agent-detail").OverviewProvisioningPanel;
+type OverviewReadinessPanel =
+	typeof import("@/hosted/agents/hosted-agent-detail").OverviewReadinessPanel;
 type OverviewFailedPanel = typeof import("@/hosted/agents/hosted-agent-detail").OverviewFailedPanel;
 
 let invalidateSnapshots: InvalidateDeploymentSnapshots | null = null;
 let projectAcceptedTransition: ProjectAcceptedDeploymentTransition | null = null;
-let settlingPollState: RuntimeUiSettlingPollState | null = null;
-let settlingPollIntervalMs: number | null = null;
-let settlingTimeoutMs: number | null = null;
-let overviewProvisioningPanel: OverviewProvisioningPanel | null = null;
+let overviewReadinessPanel: OverviewReadinessPanel | null = null;
 let overviewFailedPanel: OverviewFailedPanel | null = null;
 
 function requiredDeploymentStatus(
@@ -51,11 +46,8 @@ beforeAll(async () => {
 	const module = await import("@/hosted/agents/deployment-hooks");
 	invalidateSnapshots = module.invalidateDeploymentSnapshots;
 	projectAcceptedTransition = module.projectAcceptedDeploymentTransition;
-	settlingPollState = module.runtimeUiSettlingPollState;
-	settlingPollIntervalMs = module.RUNTIME_UI_SETTLING_POLL_INTERVAL_MS;
-	settlingTimeoutMs = module.RUNTIME_UI_SETTLING_TIMEOUT_MS;
 	const detailModule = await import("@/hosted/agents/hosted-agent-detail");
-	overviewProvisioningPanel = detailModule.OverviewProvisioningPanel;
+	overviewReadinessPanel = detailModule.OverviewReadinessPanel;
 	overviewFailedPanel = detailModule.OverviewFailedPanel;
 });
 
@@ -84,7 +76,8 @@ describe("deployment failure remediation rendering", () => {
 				type: "https://api.clawdi.ai/problems/operation_aborted",
 				title: "Deployment operation was aborted",
 				status: 409,
-				detail: "Top up your wallet and retry the plan change.",
+				detail:
+					"MissingGreenlet prevented synchronous plan confirmation for operations/plan-change-failed.",
 				instance: "hdep_failed",
 				code: "operation_aborted",
 				phase: "plan_change",
@@ -104,36 +97,56 @@ describe("deployment failure remediation rendering", () => {
 		);
 
 		expect(markup).toContain("Plan change failed");
-		expect(markup).toContain("Top up your wallet and retry the plan change.");
-		expect(markup).toContain("Review plan");
+		expect(markup).toContain("The Clawdi service could not confirm the plan change.");
+		expect(markup).toContain("Your plan was not changed and you were not charged.");
+		expect(markup).toContain("Get a fresh quote and confirm the price before trying again.");
+		expect(markup).toContain("Get fresh quote");
+		expect(markup).not.toContain("MissingGreenlet");
+		expect(markup).not.toContain("operations/plan-change-failed");
+		expect(markup).not.toContain("provisioning");
+		expect(markup).not.toContain("synchronous plan confirmation");
 		expect(markup).not.toContain("Agent setup failed");
 		expect(markup).not.toContain("retry startup");
 		expect(markup).not.toContain("Restart compute");
+	});
+
+	test("gives an unexplained failure customer language and a working next step", () => {
+		if (!overviewFailedPanel) throw new Error("agent detail was not loaded");
+		const markup = renderToStaticMarkup(
+			createElement(overviewFailedPanel, {
+				deployment: hostedDeploymentFixture({ status: "failed" }),
+				planChangeHref: "/agents/env_test/settings?source=on-clawdi",
+				onDeleteAccepted: () => undefined,
+			}),
+		);
+
+		expect(markup).toContain("Agent change failed");
+		expect(markup).toContain("Clawdi couldn’t complete the last change to this agent");
+		expect(markup).toContain("It isn’t safe to try again automatically");
+		expect(markup).toContain('href="mailto:support@clawdi.ai"');
+		expect(markup).not.toContain("Deployment operation");
+		expect(markup).not.toContain("failure reason and operation");
 	});
 });
 
 describe("deployment transition timeout rendering", () => {
 	test("replaces the automatic-update promise with an honest timeout and check action", () => {
-		if (!overviewProvisioningPanel) throw new Error("agent detail was not loaded");
+		if (!overviewReadinessPanel) throw new Error("agent detail was not loaded");
 		const deployment = hostedDeploymentFixture({ status: "creating" });
 		const commonProps = {
 			deployment,
-			runtime: "openclaw" as const,
-			runtimeUiAvailable: false,
-			runtimeUiSettlingTimedOut: false,
 			isCheckingDeployment: false,
 			onCheckDeploymentAgain: () => undefined,
-			terminalHref: "/agents/env_test/terminal",
 		};
 
 		const converging = renderToStaticMarkup(
-			createElement(overviewProvisioningPanel, {
+			createElement(overviewReadinessPanel, {
 				...commonProps,
 				deploymentTransitionTimedOut: false,
 			}),
 		);
 		const timedOut = renderToStaticMarkup(
-			createElement(overviewProvisioningPanel, {
+			createElement(overviewReadinessPanel, {
 				...commonProps,
 				deploymentTransitionTimedOut: true,
 			}),
@@ -153,19 +166,22 @@ describe("deployment transition timeout rendering", () => {
 		expect(timedOut).not.toContain("will keep getting ready if you leave this page");
 	});
 
-	test("sets an honest five-minute expectation while the product UI opens", () => {
-		const source = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
-		const panelStart = source.indexOf("export function OverviewProvisioningPanel");
-		const panelEnd = source.indexOf("function OverviewFailedPanel", panelStart);
-		const panelSource = source.slice(panelStart, panelEnd);
+	test("makes the authoritative running state unambiguously ready", () => {
+		if (!overviewReadinessPanel) throw new Error("agent detail was not loaded");
+		const ready = renderToStaticMarkup(
+			createElement(overviewReadinessPanel, {
+				deployment: hostedDeploymentFixture({ status: "running" }),
+				deploymentTransitionTimedOut: false,
+				isCheckingDeployment: false,
+				onCheckDeploymentAgain: () => undefined,
+			}),
+		);
 
-		expect(panelSource).toContain("`Opening ");
-		expect(panelSource).toContain("browserUiLabel}…`");
-		expect(panelSource).toContain("This step should finish within five minutes.");
-		expect(panelSource).toContain("We’ll open ");
-		expect(panelSource).toContain("browserUiLabel} automatically");
-		expect(panelSource).not.toContain('"Booting"');
-		expect(panelSource).not.toContain("Current status");
+		expect(ready).toContain("Your agent is ready");
+		expect(ready).toContain("running and ready to use");
+		expect(ready).not.toContain("automatically");
+		expect(ready).not.toContain("Provisioning");
+		expect(ready).not.toContain("Booting");
 	});
 
 	test("wires the timed-out inventory state and real refetch action into the detail", () => {
@@ -178,125 +194,34 @@ describe("deployment transition timeout rendering", () => {
 	});
 });
 
-describe("runtime UI settling polling", () => {
-	test("derives the same pending tracker across repeated render-phase calculations", () => {
-		if (!settlingPollState) throw new Error("deployment hooks were not loaded");
-		const nowMs = Date.parse("2026-07-23T12:00:00Z");
-		const deployment = hostedDeploymentFixture({ status: "running", runtime: "hermes" });
-		const committedTracker = null;
-
-		const firstRender = settlingPollState(deployment, "hermes", committedTracker, nowMs);
-		const repeatedRender = settlingPollState(deployment, "hermes", committedTracker, nowMs);
-
-		expect(repeatedRender).toEqual(firstRender);
-		expect(committedTracker).toBeNull();
-	});
-
-	test("commits the derived tracker only from an effect", () => {
-		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
-		const hookStart = source.indexOf("export function useAgentDeployment");
-		const hookEnd = source.indexOf("export type {", hookStart);
-		const hookSource = source.slice(hookStart, hookEnd);
-		const assignments = hookSource.match(/runtimeUiSettlingTrackerRef\.current\s*=/g) ?? [];
-
-		expect(assignments).toHaveLength(1);
-		expect(hookSource).toContain(
-			"useEffect(() => {\n\t\truntimeUiSettlingTrackerRef.current = runtimeUiSettling.tracker;",
+describe("hosted agent customer language", () => {
+	test("keeps delayed and unavailable states honest without implementation vocabulary", () => {
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
 		);
-	});
+		const sidebarSource = readFileSync(
+			new URL("../../components/app-sidebar.tsx", import.meta.url),
+			"utf8",
+		);
+		const customerCopy = `${detailSource}\n${sidebarSource}`;
 
-	test("rapidly polls a running deployment until its selected runtime UI appears", () => {
-		if (!settlingPollState || !settlingPollIntervalMs) {
-			throw new Error("deployment hooks were not loaded");
+		for (const internalCopy of [
+			"Sync record unavailable",
+			"synced agent record",
+			"Deployment actions",
+			"Manage hosted compute independently of synced agent data.",
+			"Apply locale changes directly",
+			"finishes booting",
+			"Deployment operation failed",
+			"failure reason and operation",
+		]) {
+			expect(customerCopy).not.toContain(internalCopy);
 		}
-		const nowMs = Date.parse("2026-07-23T12:00:00Z");
-		const deployment = hostedDeploymentFixture({ status: "running", runtime: "hermes" });
-		const pending = settlingPollState(deployment, "hermes", null, nowMs);
-
-		expect(pending.refetchInterval).toBe(settlingPollIntervalMs);
-		expect(pending.timedOut).toBe(false);
-		expect(pending.tracker?.startedAtMs).toBe(nowMs);
-
-		const ready = settlingPollState(
-			hostedDeploymentFixture({
-				status: "running",
-				runtime: "hermes",
-				runtimeUiEndpoint: {
-					runtime: "hermes",
-					role: "control_ui",
-					url: "https://runtime.example/hermes",
-					auth_mode: "password",
-					browser_mode: "top_level",
-				},
-			}),
-			"hermes",
-			pending.tracker,
-			nowMs + settlingPollIntervalMs,
-		);
-		expect(ready).toEqual({ refetchInterval: false, timedOut: false, tracker: null });
-	});
-
-	test("bounds rapid polling to the runtime UI boot window", () => {
-		if (!settlingPollState || !settlingTimeoutMs) {
-			throw new Error("deployment hooks were not loaded");
-		}
-		const nowMs = Date.parse("2026-07-23T12:00:00Z");
-		const deployment = hostedDeploymentFixture({ status: "running" });
-		const pending = settlingPollState(deployment, "openclaw", null, nowMs);
-		const timedOut = settlingPollState(
-			deployment,
-			"openclaw",
-			pending.tracker,
-			nowMs + settlingTimeoutMs,
-		);
-
-		expect(timedOut.refetchInterval).toBe(false);
-		expect(timedOut.timedOut).toBe(true);
-		expect(timedOut.tracker).toEqual(pending.tracker);
-	});
-
-	test("uses an A4 Ready transition to recognize an already-stuck boot", () => {
-		if (!settlingPollState || !settlingTimeoutMs) {
-			throw new Error("deployment hooks were not loaded");
-		}
-		const nowMs = Date.parse("2026-07-23T12:00:00Z");
-		const deployment = hostedDeploymentFixture({ status: "running" });
-		requiredDeploymentStatus(deployment).conditions = [
-			{
-				type: "Ready",
-				status: "True",
-				observedGeneration: 1,
-				lastTransitionTime: new Date(nowMs - settlingTimeoutMs).toISOString(),
-				reason: "RuntimeReady",
-				message: "Runtime reported ready",
-			},
-		];
-
-		const state = settlingPollState(deployment, "openclaw", null, nowMs);
-		expect(state.refetchInterval).toBe(false);
-		expect(state.timedOut).toBe(true);
-	});
-
-	test("does not override polling for non-running lifecycle states", () => {
-		if (!settlingPollState) throw new Error("deployment hooks were not loaded");
-		const state = settlingPollState(
-			hostedDeploymentFixture({ status: "starting" }),
-			"openclaw",
-			null,
-			Date.now(),
-		);
-		expect(state).toEqual({ refetchInterval: false, timedOut: false, tracker: null });
-	});
-
-	test("does not treat unavailable deployment status as a running runtime", () => {
-		if (!settlingPollState) throw new Error("deployment hooks were not loaded");
-		const state = settlingPollState(
-			hostedDeploymentFixture({ status: null }),
-			"openclaw",
-			null,
-			Date.now(),
-		);
-		expect(state).toEqual({ refetchInterval: false, timedOut: false, tracker: null });
+		expect(detailSource).toContain("Some agent details are unavailable");
+		expect(detailSource).toContain("Clawdi can’t load every part of this agent right now.");
+		expect(detailSource).toContain("title={`Agent status: ");
+		expect(sidebarSource).toContain('"Agent details unavailable"');
 	});
 });
 
@@ -410,7 +335,9 @@ describe("deployment mutation settlement", () => {
 		expect(failed).toHaveLength(1);
 		const failedStatus = requiredDeploymentStatus(failed?.[0]);
 		expect(failedStatus.summary_state).toBe("failed");
-		expect(deploymentFailureReason(failedStatus)).toBe("Deployment deletion failed");
+		expect(deploymentFailureReason(failedStatus)).toBe(
+			"The Clawdi service could not complete this request.",
+		);
 	});
 
 	test("does not fabricate a status while projecting an accepted operation", () => {

@@ -39,9 +39,6 @@ export type ComputeDunningState = {
 	fallbackPlanLabel: string | null;
 	fallbackReason: FundingRevocationReason | null;
 	recoveryPlanSlug: ComputePlanSlug | null;
-	tileLabel: string;
-	tileTitle: string;
-	tileTextClass: string;
 };
 
 export function fallbackReasonSentence(
@@ -91,40 +88,30 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 					tone: "destructive" as const,
 					title: "Compute subscription ended",
 					secondaryTarget: null,
-					tileLabel: "Compute subscription ended",
-					tileTextClass: "text-destructive",
 				};
 			case "canceled":
 				return {
 					tone: "neutral" as const,
 					title: "Compute subscription ended",
 					secondaryTarget: null,
-					tileLabel: "Compute subscription ended",
-					tileTextClass: "text-muted-foreground",
 				};
 			case "refunded":
 				return {
 					tone: "neutral" as const,
 					title: "Compute payment refunded",
 					secondaryTarget: "billing_history" as const,
-					tileLabel: "Compute payment refunded",
-					tileTextClass: "text-muted-foreground",
 				};
 			case "disputed":
 				return {
 					tone: "warning" as const,
 					title: "Compute payment disputed",
 					secondaryTarget: "support" as const,
-					tileLabel: "Compute payment disputed",
-					tileTextClass: "text-warning-muted-foreground",
 				};
 			case "admin_forced":
 				return {
 					tone: "neutral" as const,
 					title: "Compute funding changed",
 					secondaryTarget: "support" as const,
-					tileLabel: "Compute funding changed",
-					tileTextClass: "text-muted-foreground",
 				};
 		}
 	})();
@@ -145,11 +132,6 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		fallbackReason: fallback.reason,
 		recoveryPlanSlug,
 		ctaTarget: "start_new",
-		tileTitle: statusUnavailable
-			? `${fallbackPlanLabel} ended. Current deployment status is unavailable.`
-			: stopped
-				? `${fallbackPlanLabel} ended and the deployment stopped.`
-				: `${fallbackPlanLabel} ended and fell back to included Basic.`,
 	};
 }
 
@@ -187,9 +169,6 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			description:
 				"This paid subscription is terminal. Start a new subscription for the fallback deployment to restore paid compute.",
 			ctaTarget: "start_new",
-			tileLabel: "Compute subscription ended",
-			tileTitle: `${computeName} ended. Start a new subscription to restore paid compute.`,
-			tileTextClass: "text-destructive",
 		};
 	}
 
@@ -202,9 +181,6 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			title: "Payment authentication required",
 			description: `Complete the payment authentication to keep ${computeName} active.`,
 			ctaTarget: common.invoiceUrl ? "invoice" : "fix_payment",
-			tileLabel: "Payment action required",
-			tileTitle: `Complete payment authentication to keep ${computeName} active.`,
-			tileTextClass: "text-warning-muted-foreground",
 		};
 	}
 
@@ -218,9 +194,6 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			description:
 				"Top up your Wallet. Stripe will keep the invoice open while funds are short, and billing will update automatically after payment completes.",
 			ctaTarget: "top_up",
-			tileLabel: "Wallet payment past due",
-			tileTitle: "Top up your Wallet to pay the open invoice.",
-			tileTextClass: "text-warning-muted-foreground",
 		};
 	}
 
@@ -232,20 +205,5 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 		title: "Payment past due",
 		description: "Update the card payment method for the open invoice.",
 		ctaTarget: "fix_payment",
-		tileLabel: "Payment past due",
-		tileTitle: "Fix the card payment method for the open invoice.",
-		tileTextClass: "text-warning-muted-foreground",
-	};
-}
-
-export function computeDunningTileStatus(
-	deployment: DunningDeployment,
-): { label: string; title: string; textClass: string } | null {
-	const state = computeDunningState(deployment);
-	if (!state) return null;
-	return {
-		label: state.tileLabel,
-		title: state.tileTitle,
-		textClass: state.tileTextClass,
 	};
 }

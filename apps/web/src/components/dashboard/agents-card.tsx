@@ -14,7 +14,7 @@ import {
 	displayMachineName,
 	LegacyAgentBadge,
 } from "@/components/dashboard/agent-label";
-import { daemonStatusVisual } from "@/components/dashboard/daemon-status";
+import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CARD_BASE,
@@ -23,7 +23,6 @@ import {
 	EntityCardSkeleton,
 	EntityHeader,
 } from "@/components/entity-card";
-import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { agentSectionHref, parseAgentPathname } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
 
@@ -50,24 +49,11 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 		avatarUrl: env.avatar_url,
 		sortOrder: env.sort_order,
 		agentType: env.agent_type,
-		statusLabel: env.last_seen_at ? `Active ${relativeTime(env.last_seen_at)}` : "Never seen",
 		lastSeenAt: env.last_seen_at,
 		href: agentSectionHref(env.id),
 		active: isAgentActive(env.last_seen_at),
 		env,
 	}));
-}
-
-export interface AgentTileStatusDot {
-	label: string;
-	tone?: StatusTone;
-	dotClass?: string;
-}
-
-export interface AgentTileSecondaryStatus {
-	label: string;
-	title?: string;
-	textClass?: string;
 }
 
 /**
@@ -83,10 +69,6 @@ export interface AgentTile {
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
-	/** Optional deployment/source context for callers that group or label hosted tiles. */
-	contextLabel?: string | null;
-	/** Humanized fallback when there is no last-seen timestamp ("Running", "Never seen"). */
-	statusLabel: string;
 	/** Used to compute the "N active now" count in the card description. */
 	lastSeenAt?: string | null;
 	/** Primary click target. Points at the in-app env detail page
@@ -97,17 +79,10 @@ export interface AgentTile {
 	external?: boolean;
 	/** Optional card-level action supplied by the owning integration. */
 	action?: ReactNode;
-	/** Optional hosted remediation target retained for surfaces that open
-	 * status dialogs. Tiles render daemon status as a non-interactive dot. */
+	/** Optional remediation target for legacy status dialogs. */
 	manageHref?: string;
-	/** Counted in the "N active now" header line; no per-tile indicator rendered. */
+	/** Counted in the "N active now" header line. */
 	active: boolean;
-	/** Primary status dot. Hosted tiles use compute status here; connected tiles
-	 * omit it and fall back to live-sync status. */
-	statusDot?: AgentTileStatusDot;
-	/** Secondary qualifier appended to the tile meta line. Hosted tiles use this
-	 * only for meaningful sync qualifiers such as "Sync paused". */
-	secondaryStatus?: AgentTileSecondaryStatus | null;
 	/** Self-managed envs carry the full EnvironmentResponse so the
 	 * tile can render a sync indicator. Hosted tiles join their
 	 * cloud-api env via `clawdi_cloud_environments` and end up with
@@ -281,24 +256,16 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		machine_name: tile.name,
 		agent_type: tile.agentType,
 	});
-	const meta: string[] = [];
-	if (tile.contextLabel) meta.push(tile.contextLabel);
-	if (identity.secondaryLabel) meta.push(identity.secondaryLabel);
-	if (onClawdi) meta.push(tile.statusLabel);
 	const activityLabel = agentTileActivityLabel(tile);
-	if (activityLabel && !onClawdi) meta.push(activityLabel);
-	const statusVisual = daemonStatusVisual(
-		tile.env,
-		onClawdi || legacyHosted ? "on-clawdi" : "self-managed",
-	);
-	const statusDot = tile.statusDot ?? {
-		label: statusVisual.label,
-		dotClass: statusVisual.dotClass,
-	};
-
-	const linkStatus = [statusDot.label, tile.secondaryStatus?.label].filter(Boolean).join(", ");
-	const linkIdentity = tile.contextLabel ? `${tile.name} (${tile.contextLabel})` : tile.name;
-	const linkLabel = `Open ${linkIdentity}. Status: ${linkStatus}`;
+	const meta = onClawdi
+		? []
+		: [identity.secondaryLabel, activityLabel].filter((value): value is string => Boolean(value));
+	const statusVisual = onClawdi
+		? null
+		: daemonStatusVisual(tile.env, legacyHosted ? "on-clawdi" : "self-managed");
+	const linkLabel = statusVisual
+		? `Open ${tile.name}. Status: ${statusVisual.label}`
+		: `Open ${tile.name}`;
 
 	return (
 		<div
@@ -306,14 +273,14 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 				ENTITY_CARD_BASE,
 				"group relative z-0 h-full transition-colors hover:bg-muted/50",
 			)}
-			title={tile.href ? undefined : `Status: ${linkStatus}`}
+			title={tile.href ? undefined : tile.name}
 		>
 			<EntityHeader
 				align="start"
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={
 					<span className="flex min-w-0 items-center gap-1.5">
-						<AgentStatusDot visual={statusDot} />
+						{statusVisual ? <AgentStatusDot visual={statusVisual} /> : null}
 						<span className="min-w-0 truncate" title={tile.name}>
 							{displayMachineName(tile.name)}
 						</span>
@@ -323,17 +290,6 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 				titleAdornment={sourcePill}
 				className={cn("min-w-0 flex-1", tile.action && "pr-28")}
 			/>
-			{onClawdi && tile.secondaryStatus ? (
-				<div
-					className={cn(
-						"mt-0.5 pl-11 text-xs leading-4",
-						tile.secondaryStatus.textClass ?? "text-muted-foreground",
-					)}
-					title={tile.secondaryStatus.title}
-				>
-					{tile.secondaryStatus.label}
-				</div>
-			) : null}
 			{tile.external ? (
 				<ArrowUpRight
 					aria-hidden
@@ -362,14 +318,10 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	);
 }
 
-function AgentStatusDot({ visual }: { visual: AgentTileStatusDot }) {
+function AgentStatusDot({ visual }: { visual: DaemonStatusVisual }) {
 	return (
 		<span title={visual.label} className="inline-flex shrink-0 items-center">
-			{visual.tone ? (
-				<StatusDot status={visual.tone} />
-			) : (
-				<span aria-hidden className={cn("size-1.5 rounded-full", visual.dotClass)} />
-			)}
+			<span aria-hidden className={cn("size-1.5 rounded-full", visual.dotClass)} />
 			<span className="sr-only">{visual.label}</span>
 		</span>
 	);

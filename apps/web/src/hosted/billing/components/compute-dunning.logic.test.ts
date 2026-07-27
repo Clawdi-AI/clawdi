@@ -6,11 +6,7 @@ import type {
 	HostedFundingFact,
 } from "@/hosted/billing/contracts";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
-import {
-	computeDunningState,
-	computeDunningTileStatus,
-	fallbackReasonSentence,
-} from "./compute-dunning.logic";
+import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
 
 function deployment({
 	computeSubscription = null,
@@ -115,11 +111,6 @@ describe("computeDunningState", () => {
 			recoveryAction: "fix_payment",
 			ctaTarget: "fix_payment",
 		});
-		expect(computeDunningTileStatus(deploymentWithPastDueCard)).toEqual({
-			label: "Payment past due",
-			title: "Fix the card payment method for the open invoice.",
-			textClass: "text-warning-muted-foreground",
-		});
 	});
 
 	test("routes action-required subscriptions to the hosted invoice when present", () => {
@@ -172,7 +163,7 @@ describe("computeDunningState", () => {
 				fundingSource,
 				recoveryAction: "start_new",
 				ctaTarget: "start_new",
-				tileTextClass: "text-destructive",
+				tone: "destructive",
 			});
 			expect(state?.description).toContain("Start a new subscription");
 		}
@@ -220,9 +211,6 @@ describe("computeDunningState", () => {
 			"can’t determine whether this deployment stopped or is using included Basic",
 		);
 		expect(unavailable?.description).not.toContain("is now using included Basic");
-		expect(unavailable?.tileTitle).toBe(
-			"Performance compute ended. Current deployment status is unavailable.",
-		);
 	});
 
 	test("does not recover a detached or already recovered subscription", () => {

@@ -19,8 +19,8 @@ test("renders an honest retryable state when deployment status is unavailable", 
 	}).not.toThrow();
 
 	expect(markup).toContain('data-testid="deployment-status-unavailable"');
-	expect(markup).toContain("Deployment status unavailable");
-	expect(markup).toContain("We can’t determine this agent’s deployment state right now.");
+	expect(markup).toContain("Agent status unavailable");
+	expect(markup).toContain("The Clawdi service can’t determine this agent’s status right now.");
 	expect(markup).toContain("Actions and live tools are paused");
 	expect(markup).toContain("Check again");
 	expect(markup).not.toContain(">Running<");

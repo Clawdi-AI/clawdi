@@ -23,8 +23,8 @@ export function DeploymentStatusUnavailableState({
 		<div data-hosted="true" data-testid="deployment-status-unavailable">
 			<EmptyState
 				icon={AlertCircle}
-				title="Deployment status unavailable"
-				description="We can’t determine this agent’s deployment state right now. Actions and live tools are paused until a status is available."
+				title="Agent status unavailable"
+				description="The Clawdi service can’t determine this agent’s status right now. Actions and live tools are paused until the status is available."
 				action={
 					<Button type="button" variant="outline" size="sm" disabled={isRetrying} onClick={onRetry}>
 						{isRetrying ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}

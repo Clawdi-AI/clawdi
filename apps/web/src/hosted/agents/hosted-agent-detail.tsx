@@ -10,6 +10,7 @@ import {
 	Cpu,
 	ExternalLink,
 	Info,
+	LifeBuoy,
 	Link2,
 	Link2Off,
 	type LucideIcon,
@@ -78,7 +79,6 @@ import type {
 	ComputePlanChangeQuoteResponse,
 	DeploymentUpdateRequest,
 	HostedDeployment,
-	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
 import {
 	LANGUAGE_OPTIONS,
@@ -253,15 +253,15 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Info,
 	},
 	console: {
-		description: "Open the runtime's live browser UI.",
+		description: "Open this agent's browser interface.",
 		icon: MonitorPlay,
 	},
 	terminal: {
-		description: "Start a browser terminal in this deployment.",
+		description: "Open a terminal for this agent.",
 		icon: TerminalSquare,
 	},
 	sessions: {
-		description: "History synced by this hosted runtime.",
+		description: "Conversation history from this agent.",
 		icon: RefreshCw,
 	},
 	skills: {
@@ -269,7 +269,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Sparkles,
 	},
 	ai: {
-		description: "Runtime-scoped provider and model binding.",
+		description: "AI provider and model used by this agent.",
 		icon: Zap,
 	},
 	channels: {
@@ -277,7 +277,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Link2,
 	},
 	settings: {
-		description: "Profile, compute, and lifecycle controls.",
+		description: "Name, preferences, plan, and lifecycle controls.",
 		icon: Settings,
 	},
 };
@@ -308,7 +308,7 @@ function provisioningTitle(status: DeploymentStatus): string {
 
 function RestartComputeAction({
 	deployment,
-	label = "Restart compute",
+	label = "Restart agent",
 }: {
 	deployment: HostedDeployment;
 	label?: string;
@@ -319,8 +319,8 @@ function RestartComputeAction({
 	const canRestart = canRestartDeployment(status);
 	return (
 		<ConfirmAction
-			title="Restart compute?"
-			description={<p>This restarts this hosted agent.</p>}
+			title="Restart agent?"
+			description={<p>This restarts the whole agent.</p>}
 			confirmLabel={label}
 			onConfirm={() =>
 				runAction(async () => {
@@ -370,7 +370,7 @@ function DeleteComputeAction({
 
 function StartComputeAction({
 	deployment,
-	label = "Start compute",
+	label = "Start agent",
 }: {
 	deployment: HostedDeployment;
 	label?: string;
@@ -422,8 +422,6 @@ export function HostedAgentDetail({
 	runtime,
 	section = "overview",
 	onDeleteAccepted,
-	autoOpenRuntimeUi = false,
-	runtimeUiSettlingTimedOut = false,
 	deploymentTransitionTimedOut,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
@@ -433,8 +431,6 @@ export function HostedAgentDetail({
 	runtime: Runtime;
 	section?: AgentSectionId;
 	onDeleteAccepted: (deploymentId: string) => void;
-	autoOpenRuntimeUi?: boolean;
-	runtimeUiSettlingTimedOut?: boolean;
 	deploymentTransitionTimedOut: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
@@ -487,27 +483,6 @@ export function HostedAgentDetail({
 	const terminalHref = agentSectionHref(environmentId, "terminal", searchStr);
 	const planChangeHref = `${agentSectionHref(environmentId, "settings", searchStr)}#compute-plan-controls`;
 
-	useEffect(() => {
-		if (
-			!autoOpenRuntimeUi ||
-			activeTab !== "overview" ||
-			!canOpenHostedRuntimeUi(deploymentStatus, consoleUrl)
-		) {
-			return;
-		}
-		void router.navigate({
-			href: agentSectionHref(environmentId, "console", searchStr),
-			replace: true,
-		});
-	}, [
-		activeTab,
-		autoOpenRuntimeUi,
-		consoleUrl,
-		deploymentStatus.kind,
-		environmentId,
-		router,
-		searchStr,
-	]);
 	const scopedSessionLink = (sessionId: string) => ({
 		to: "/agents/$id/sessions/$sessionId" as const,
 		params: { id: environmentId, sessionId },
@@ -598,7 +573,6 @@ export function HostedAgentDetail({
 					{deploymentStatus.known && activeTab === "overview" ? (
 						<OverviewTab
 							deployment={deployment}
-							runtime={runtime}
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							isPerformance={isPerformance}
 							showDeploymentActions={projection.status !== "resolved" || !deploymentRunning}
@@ -609,9 +583,7 @@ export function HostedAgentDetail({
 							sessionsError={sessions.error}
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
-							terminalHref={terminalHref}
 							planChangeHref={planChangeHref}
-							runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							isCheckingDeployment={isCheckingDeployment}
 							onCheckDeploymentAgain={onCheckDeploymentAgain}
@@ -622,7 +594,6 @@ export function HostedAgentDetail({
 							deployment={deployment}
 							runtime={runtime}
 							terminalHref={terminalHref}
-							runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							isCheckingDeployment={isCheckingDeployment}
 							onCheckDeploymentAgain={onCheckDeploymentAgain}
@@ -704,7 +675,7 @@ function HostedProjectionNotice({
 			<ApiErrorPanel
 				error={projection.error}
 				onRetry={onRetry}
-				title="Couldn’t sync agent details"
+				title="Couldn’t load all agent details"
 			/>
 		);
 	}
@@ -712,11 +683,11 @@ function HostedProjectionNotice({
 		return (
 			<Alert data-hosted="true">
 				<AlertCircle />
-				<AlertTitle>Some details are still syncing</AlertTitle>
+				<AlertTitle>Some agent details are not ready</AlertTitle>
 				<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 					<span>
-						You can manage compute and open available tools now. Sessions, skills, profile, and
-						channels will appear when syncing finishes.
+						Sessions, skills, profile, and channels will appear when they’re ready. Available
+						actions and tools still work.
 					</span>
 					<Button type="button" variant="outline" size="sm" disabled={isFetching} onClick={onRetry}>
 						{isFetching ? <Spinner className="size-3.5" /> : <RefreshCw className="size-3.5" />}
@@ -730,9 +701,9 @@ function HostedProjectionNotice({
 		return (
 			<Alert data-hosted="true">
 				<Spinner className="size-4" />
-				<AlertTitle>Some details are still syncing</AlertTitle>
+				<AlertTitle>Loading agent details</AlertTitle>
 				<AlertDescription>
-					You can manage compute while the rest of this agent finishes syncing.
+					Available actions still work while the rest of this agent loads.
 				</AlertDescription>
 			</Alert>
 		);
@@ -740,9 +711,9 @@ function HostedProjectionNotice({
 	return (
 		<Alert data-hosted="true">
 			<AlertCircle />
-			<AlertTitle>Finishing agent setup</AlertTitle>
+			<AlertTitle>Some agent details are unavailable</AlertTitle>
 			<AlertDescription>
-				You can manage compute now. The rest of this agent will appear when setup finishes.
+				Clawdi can’t load every part of this agent right now. Available actions still work.
 			</AlertDescription>
 		</Alert>
 	);
@@ -752,7 +723,7 @@ function ProjectionDependentUnavailable({ label }: { label: string }) {
 	return (
 		<EmptyState
 			title={`${label} unavailable`}
-			description="This section will be available when the agent finishes syncing. You can manage compute in the meantime."
+			description="Clawdi can’t load this part of the agent yet. Other available actions still work."
 		/>
 	);
 }
@@ -768,7 +739,7 @@ function StoppedAgentState({
 		<EmptyState
 			variant={variant}
 			title="Stopped"
-			description="Hosted compute has been released. Start this agent to provision compute again."
+			description="This agent is stopped. Start it to use its tools again."
 			action={<StartComputeAction deployment={deployment} label="Start" />}
 		/>
 	);
@@ -873,7 +844,7 @@ function RuntimeStatusValue({
 		<div className="flex min-w-0 flex-col gap-1">
 			<span
 				className={cn("inline-flex min-w-0 items-center gap-1.5", status.primary.textClass)}
-				title={`Compute ${status.primary.label}`}
+				title={`Agent status: ${status.primary.label}`}
 			>
 				<StatusDot status={status.primary.tone} />
 				<span className="truncate">{status.primary.label}</span>
@@ -890,40 +861,16 @@ function RuntimeStatusValue({
 	);
 }
 
-type DeploymentReadinessStage = "provisioning" | "booting" | "ready";
-
-function deploymentReadinessStage(
-	status: HostedDeploymentStatus,
-	runtimeUiAvailable: boolean,
-): DeploymentReadinessStage {
-	if (runtimeUiAvailable) return "ready";
-	const computeReady = status.conditions.some(
-		(condition) => condition.type === "Ready" && condition.status === "True",
-	);
-	if (status.summary_state === "starting" || status.summary_state === "running" || computeReady) {
-		return "booting";
-	}
-	return "provisioning";
-}
-
-export function OverviewProvisioningPanel({
+export function OverviewReadinessPanel({
 	deployment,
-	runtime,
-	runtimeUiAvailable,
-	runtimeUiSettlingTimedOut,
 	deploymentTransitionTimedOut,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
-	terminalHref,
 }: {
 	deployment: HostedDeployment;
-	runtime: Runtime;
-	runtimeUiAvailable: boolean;
-	runtimeUiSettlingTimedOut: boolean;
 	deploymentTransitionTimedOut: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
-	terminalHref: string;
 }) {
 	const status = deployment.resource.status;
 	if (status === null) {
@@ -935,72 +882,57 @@ export function OverviewProvisioningPanel({
 			/>
 		);
 	}
-	const stage = deploymentReadinessStage(status, runtimeUiAvailable);
-	const browserUiLabel = runtimeBrowserUiLabel(runtime);
-	const settlingTimedOut = deploymentTransitionTimedOut || runtimeUiSettlingTimedOut;
+	const ready = status.summary_state === "running";
 	const title = deploymentTransitionTimedOut
 		? "Your agent is taking longer than expected"
-		: runtimeUiSettlingTimedOut
-			? `${browserUiLabel} is taking longer than expected`
-			: stage === "provisioning"
-				? "Getting your agent ready…"
-				: stage === "booting"
-					? `Opening ${browserUiLabel}…`
-					: "Your agent is ready";
+		: ready
+			? "Your agent is ready"
+			: "Getting your agent ready…";
 	const description = deploymentTransitionTimedOut
 		? "Your agent did not finish getting ready within five minutes. Automatic checks have stopped. Check again to load the latest update."
-		: runtimeUiSettlingTimedOut
-			? `${browserUiLabel} did not open within five minutes. We’ll keep checking automatically, and Terminal is available now.`
-			: stage === "provisioning"
-				? "This step should finish within five minutes. Your agent will keep getting ready if you leave this page."
-				: stage === "booting"
-					? `This step should finish within five minutes. We’ll open ${browserUiLabel} automatically; Terminal is available now.`
-					: `${browserUiLabel} is ready to use.`;
+		: ready
+			? "Your agent is running and ready to use."
+			: "This step should finish within five minutes. Your agent will keep getting ready if you leave this page.";
 	return (
 		<div
 			className={cn(
 				"rounded-xl border p-5",
-				settlingTimedOut
+				deploymentTransitionTimedOut
 					? "border-warning/30 bg-warning-muted text-warning-muted-foreground"
-					: "border-info-muted bg-info-muted text-info-muted-foreground",
+					: ready
+						? "border-success/30 bg-success-muted text-success-muted-foreground"
+						: "border-info-muted bg-info-muted text-info-muted-foreground",
 			)}
 		>
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-start">
-				<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-info-muted bg-background">
-					{settlingTimedOut ? <AlertCircle className="size-5" /> : <Spinner className="size-5" />}
+				<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-background">
+					{deploymentTransitionTimedOut ? (
+						<AlertCircle className="size-5" />
+					) : ready ? (
+						<CircleCheck className="size-5" />
+					) : (
+						<Spinner className="size-5" />
+					)}
 				</div>
 				<div className="min-w-0 flex-1">
 					<h2 className="text-sm font-semibold text-foreground">{title}</h2>
 					<p className="mt-1 text-sm">{description}</p>
-					{deploymentTransitionTimedOut || stage === "booting" ? (
+					{deploymentTransitionTimedOut ? (
 						<div className="mt-3 flex flex-wrap gap-2">
-							{deploymentTransitionTimedOut ? (
-								<Button
-									type="button"
-									variant="outline"
-									size="sm"
-									disabled={isCheckingDeployment}
-									onClick={onCheckDeploymentAgain}
-								>
-									{isCheckingDeployment ? (
-										<Spinner className="size-3.5" />
-									) : (
-										<RefreshCw className="size-3.5" />
-									)}
-									Check again
-								</Button>
-							) : null}
-							{stage === "booting" ? (
-								<Button
-									render={<Link to={terminalHref} />}
-									nativeButton={false}
-									variant="outline"
-									size="sm"
-								>
-									<TerminalSquare className="size-3.5" />
-									Use Terminal now
-								</Button>
-							) : null}
+							<Button
+								type="button"
+								variant="outline"
+								size="sm"
+								disabled={isCheckingDeployment}
+								onClick={onCheckDeploymentAgain}
+							>
+								{isCheckingDeployment ? (
+									<Spinner className="size-3.5" />
+								) : (
+									<RefreshCw className="size-3.5" />
+								)}
+								Check again
+							</Button>
 						</div>
 					) : null}
 				</div>
@@ -1095,19 +1027,29 @@ export function OverviewFailedPanel({
 	}
 	return (
 		<div className="rounded-xl border border-destructive-muted bg-destructive-muted p-5 text-destructive-muted-foreground">
-			<div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 				<div className="flex min-w-0 gap-3">
 					<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-destructive-muted bg-background">
 						<AlertCircle className="size-5" />
 					</div>
 					<div className="min-w-0">
-						<h2 className="text-sm font-semibold text-foreground">Deployment operation failed</h2>
+						<h2 className="text-sm font-semibold text-foreground">Agent change failed</h2>
 						<p className="mt-1 text-sm">
-							The failure reason and operation are unavailable, so there is no safe automatic retry.
-							Current status: {deploymentStatusLabel(status)}.
+							Clawdi couldn’t complete the last change to this agent or determine why. It isn’t safe
+							to try again automatically. Contact support before trying again. Current status:{" "}
+							{deploymentStatusLabel(status)}.
 						</p>
 					</div>
 				</div>
+				<Button
+					render={<a href="mailto:support@clawdi.ai" />}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+					className="shrink-0"
+				>
+					<LifeBuoy data-icon="inline-start" /> Contact support
+				</Button>
 			</div>
 		</div>
 	);
@@ -1115,7 +1057,6 @@ export function OverviewFailedPanel({
 
 function OverviewTab({
 	deployment,
-	runtime,
 	agent,
 	isPerformance,
 	showDeploymentActions,
@@ -1126,15 +1067,12 @@ function OverviewTab({
 	sessionsError,
 	onRetrySessions,
 	sessionLink,
-	terminalHref,
 	planChangeHref,
-	runtimeUiSettlingTimedOut,
 	deploymentTransitionTimedOut,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
 }: {
 	deployment: HostedDeployment;
-	runtime: Runtime;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	isPerformance: boolean;
 	showDeploymentActions: boolean;
@@ -1148,9 +1086,7 @@ function OverviewTab({
 		to: "/agents/$id/sessions/$sessionId";
 		params: { id: string; sessionId: string };
 	};
-	terminalHref: string;
 	planChangeHref: string;
-	runtimeUiSettlingTimedOut: boolean;
 	deploymentTransitionTimedOut: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
@@ -1174,26 +1110,21 @@ function OverviewTab({
 	);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
-	const runtimeUiAvailable = Boolean(runtimeConsoleUrl(deployment, runtime));
-	const agentGettingReady =
+	const showReadinessPanel =
 		deploymentTransitionTimedOut ||
 		isProvisioningStatus(deploymentStatus) ||
-		(deploymentStatus.kind === "running" && !runtimeUiAvailable);
+		deploymentStatus.kind === "running";
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
 	return (
 		<div className="flex flex-col gap-5">
-			{agentGettingReady ? (
-				<OverviewProvisioningPanel
+			{showReadinessPanel ? (
+				<OverviewReadinessPanel
 					deployment={deployment}
-					runtime={runtime}
-					runtimeUiAvailable={runtimeUiAvailable}
-					runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
 					deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 					isCheckingDeployment={isCheckingDeployment}
 					onCheckDeploymentAgain={onCheckDeploymentAgain}
-					terminalHref={terminalHref}
 				/>
 			) : null}
 			{deploymentStatus.kind === "failed" ? (
@@ -1209,10 +1140,10 @@ function OverviewTab({
 			<div
 				className={cn(
 					"grid gap-2 sm:grid-cols-2",
-					agentGettingReady ? "lg:grid-cols-3" : "lg:grid-cols-4",
+					showReadinessPanel ? "lg:grid-cols-3" : "lg:grid-cols-4",
 				)}
 			>
-				{agentGettingReady ? null : (
+				{showReadinessPanel ? null : (
 					<StatCard
 						label="Status"
 						value={<RuntimeStatusValue deployment={deployment} agent={agent} />}
@@ -1231,7 +1162,7 @@ function OverviewTab({
 					<EmptyState
 						variant="inset"
 						title="Sessions unavailable"
-						description="Sessions depend on the synced agent record and will recover when it becomes available."
+						description="Sessions will appear when the rest of this agent is ready."
 					/>
 				) : sessionsError ? (
 					<ApiErrorPanel
@@ -1268,8 +1199,8 @@ function OverviewDeploymentActions({
 	const failed = status.kind === "failed";
 	return (
 		<SettingsSection
-			title="Deployment actions"
-			description="Manage hosted compute independently of synced agent data."
+			title="Agent actions"
+			description="These actions remain available while other agent details load."
 		>
 			<div className="flex flex-wrap gap-2.5">
 				{canRestartDeployment(status) && !failed ? (
@@ -1312,7 +1243,7 @@ function RuntimeUiOpenButton({
 	const openUi = useCallback(async () => {
 		const popup = openSecureRuntimeWindow(window.open.bind(window));
 		if (!popup) {
-			toast.error("Couldn't open runtime UI", {
+			toast.error("Couldn't open agent interface", {
 				description: "Your browser blocked the new window.",
 			});
 			return;
@@ -1329,7 +1260,7 @@ function RuntimeUiOpenButton({
 			popup.location.replace(url);
 		} catch {
 			popup.close();
-			toast.error("Couldn't open runtime UI", { description: "Please try again." });
+			toast.error("Couldn't open agent interface", { description: "Please try again." });
 		} finally {
 			setIsPending(false);
 		}
@@ -1365,7 +1296,6 @@ function ConsoleTab({
 	deployment,
 	runtime,
 	terminalHref,
-	runtimeUiSettlingTimedOut,
 	deploymentTransitionTimedOut,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
@@ -1373,7 +1303,6 @@ function ConsoleTab({
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	terminalHref: string;
-	runtimeUiSettlingTimedOut: boolean;
 	deploymentTransitionTimedOut: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
@@ -1477,17 +1406,17 @@ function ConsoleTab({
 				icon={deploymentTransitionTimedOut ? AlertCircle : MonitorPlay}
 				title={
 					deploymentTransitionTimedOut
-						? "Deployment is taking longer than expected"
+						? "Your agent is taking longer than expected"
 						: isProvisioning
 							? provisioningTitle(status)
-							: "Compute is not running"
+							: "Agent is not running"
 				}
 				description={
 					deploymentTransitionTimedOut
-						? "The latest deployment change did not finish within five minutes. Automatic checks have stopped. Check again to load the latest status."
+						? "The latest change to this agent did not finish within five minutes. Automatic checks have stopped. Check again to load the latest status."
 						: isProvisioning
 							? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
-							: `Start the compute to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+							: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
 				action={
 					deploymentTransitionTimedOut ? (
@@ -1517,27 +1446,35 @@ function ConsoleTab({
 	if (!url) {
 		return (
 			<EmptyState
-				icon={runtimeUiSettlingTimedOut ? AlertCircle : <Spinner className="size-5" />}
-				title={
-					runtimeUiSettlingTimedOut
-						? "Live UI is taking longer than expected"
-						: "Starting the live UI…"
-				}
-				description={
-					runtimeUiSettlingTimedOut
-						? `${label} did not publish its browser UI within the startup window. Automatic periodic checks will continue.`
-						: `Opening the live UI automatically… You can use Terminal right now while ${label} finishes booting.`
-				}
+				icon={MonitorPlay}
+				title={`${browserUiLabel} isn’t ready yet`}
+				description={`Your agent is ready. Check again in a moment, or use Terminal now while ${label} starts its browser interface.`}
 				action={
-					<Button
-						render={<Link to={terminalHref} />}
-						nativeButton={false}
-						variant="outline"
-						size="sm"
-					>
-						<TerminalSquare className="size-3.5" />
-						Use Terminal now
-					</Button>
+					<div className="flex flex-wrap justify-center gap-2">
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={isCheckingDeployment}
+							onClick={onCheckDeploymentAgain}
+						>
+							{isCheckingDeployment ? (
+								<Spinner className="size-3.5" />
+							) : (
+								<RefreshCw className="size-3.5" />
+							)}
+							Check again
+						</Button>
+						<Button
+							render={<Link to={terminalHref} />}
+							nativeButton={false}
+							variant="outline"
+							size="sm"
+						>
+							<TerminalSquare className="size-3.5" />
+							Use Terminal now
+						</Button>
+					</div>
 				}
 			/>
 		);
@@ -1792,11 +1729,11 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 		return (
 			<EmptyState
 				icon={TerminalSquare}
-				title={isProvisioning ? provisioningTitle(status) : "Compute is not running"}
+				title={isProvisioning ? provisioningTitle(status) : "Agent is not running"}
 				description={
 					isProvisioning
 						? "The browser terminal opens once your agent is running. This page updates automatically."
-						: `Start the compute to open a deployment shell. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
+						: `Start the agent to open a terminal. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
 				action={canStartDeployment(status) ? <StartComputeAction deployment={deployment} /> : null}
 			/>
@@ -2764,23 +2701,16 @@ function HostedAgentSettingsTab({
 			) : (
 				<ProjectionDependentUnavailable label="Profile settings" />
 			)}
-			<LanguageTimezoneSettingsSection deployment={deployment} runtime={runtime} />
+			<LanguageTimezoneSettingsSection deployment={deployment} />
 			<ComputeSettingsSections deployment={deployment} onDeleteAccepted={onDeleteAccepted} />
 		</div>
 	);
 }
 
-function LanguageTimezoneSettingsSection({
-	deployment,
-	runtime,
-}: {
-	deployment: HostedDeployment;
-	runtime: Runtime;
-}) {
+function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDeployment }) {
 	const runtimeConfiguration = deployment.resource.spec.runtime_configuration;
 	const configLanguage = runtimeConfiguration.language ?? "";
 	const configTimezone = runtimeConfiguration.timezone ?? "";
-	const runtimeLabel = runtimeDisplayName(runtime);
 	const updateDeployment = useUpdateDeployment();
 	const updateInProgress =
 		deploymentStatusFromResource(deployment.resource.status).kind === "updating";
@@ -2802,10 +2732,10 @@ function LanguageTimezoneSettingsSection({
 	return (
 		<SettingsSection
 			title="Language & timezone"
-			description="Locale context configured for this hosted agent."
+			description="Language and time zone used by this agent."
 		>
 			<div className="flex max-w-2xl flex-col gap-4">
-				<LiveNote>{`Apply locale changes directly to this ${runtimeLabel} deployment.`}</LiveNote>
+				<LiveNote>Changes apply to this agent.</LiveNote>
 				<div className="grid gap-4 sm:grid-cols-2">
 					<div className="flex flex-col gap-1.5">
 						<Label htmlFor="hosted-agent-language">Language</Label>
@@ -3352,15 +3282,12 @@ function ComputeSettingsSections({
 				</div>
 			</SettingsSection>
 
-			<SettingsSection
-				title="Lifecycle"
-				description="Restart, stop, or start the whole hosted compute."
-			>
+			<SettingsSection title="Lifecycle" description="Restart, stop, or start this agent.">
 				<div className="flex flex-wrap gap-2.5">
 					<ConfirmAction
-						title="Restart compute?"
-						description={<p>This restarts this hosted agent.</p>}
-						confirmLabel="Restart compute"
+						title="Restart agent?"
+						description={<p>This restarts the whole agent.</p>}
+						confirmLabel="Restart agent"
 						onConfirm={() => runAction(() => runLifecycleAction("restart"))}
 					>
 						<Button variant="outline" size="sm" disabled={lifecycle.isPending || !canRestart}>
@@ -3374,14 +3301,14 @@ function ComputeSettingsSections({
 					</ConfirmAction>
 					{primaryLifecycleAction === "stop" ? (
 						<ConfirmAction
-							title="Stop compute?"
+							title="Stop agent?"
 							description={
 								<p>
-									This stops the hosted agent. Runtime UI, terminal access, sessions, and channels
-									pause until you start it again.
+									This pauses its browser tools, terminal, sessions, and channels until you start it
+									again.
 								</p>
 							}
-							confirmLabel="Stop compute"
+							confirmLabel="Stop agent"
 							onConfirm={() => runAction(() => runLifecycleAction("stop"))}
 						>
 							<Button
@@ -3417,14 +3344,14 @@ function ComputeSettingsSections({
 
 			<SettingsSection
 				title="Danger zone"
-				description="Tear down this hosted compute and its agent runtime."
+				description="Permanently delete this agent."
 				variant="destructive"
 			>
 				<div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
 					<div>
-						<div className="text-sm font-medium">Delete this compute</div>
+						<div className="text-sm font-medium">Delete this agent</div>
 						<p className="text-xs text-muted-foreground">
-							Tears down this deployment and its agent runtime. This can’t be undone.
+							Deletes this agent and releases its resources. This can’t be undone.
 						</p>
 					</div>
 					<DeleteComputeAction

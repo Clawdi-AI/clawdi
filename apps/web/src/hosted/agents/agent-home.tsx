@@ -74,7 +74,6 @@ export function AgentHome({
 		membershipResolved,
 		isLoading,
 		isFetching,
-		runtimeUiSettlingTimedOut,
 		deploymentTransitionTimedOut,
 		error,
 		refetch,
@@ -226,8 +225,6 @@ export function AgentHome({
 				onDeleteAccepted={(deploymentId) =>
 					setUserDeleteIntent({ deploymentId, environmentId, deploymentSelector })
 				}
-				autoOpenRuntimeUi={requestedFromCloudRedirect && environmentId === deployment.resource.id}
-				runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 				isCheckingDeployment={isFetching}
 				onCheckDeploymentAgain={handleCheckAgain}
@@ -243,7 +240,7 @@ export function AgentHome({
 			>
 				<EmptyState
 					title="Clawdi Cloud agent not found"
-					description="This Clawdi Cloud agent may still be provisioning or may have been removed."
+					description="This Clawdi Cloud agent may still be getting ready or may have been removed."
 					action={
 						<Button type="button" variant="outline" size="sm" onClick={handleCheckAgain}>
 							<RefreshCw /> Check again

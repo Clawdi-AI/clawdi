@@ -2,18 +2,15 @@
 
 import type { components } from "@clawdi/shared/api";
 import { createElement, useMemo } from "react";
-import { agentDisplayName } from "@/components/dashboard/agent-label";
 import type { AgentTile } from "@/components/dashboard/agents-card";
 import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
 import { statusTextVariants } from "@/components/ui/status-badge";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
-import { computeDunningTileStatus } from "@/hosted/billing/components/compute-dunning.logic";
 import type { HostedDeployment, HostedDeploymentStatus } from "@/hosted/billing/contracts";
 import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-management";
 import {
 	compactDeploymentFailureReason,
 	type DeploymentFailurePresentation,
-	deploymentFailurePresentation,
 	deploymentFailureReason,
 } from "@/hosted/deployment-failure";
 import {
@@ -29,7 +26,7 @@ import {
 	isHostedDeploymentMember,
 } from "@/hosted/hosted-agent-resolution";
 import { HostedDeploymentTileAction } from "@/hosted/hosted-deployment-tile-action";
-import { deploymentRuntime, runtimeDisplayName, runtimeEnvironmentId } from "@/hosted/runtimes";
+import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, agentSectionHref } from "@/lib/agent-routes";
 
@@ -111,11 +108,8 @@ export function hostedRuntimeStatusView(
  * fetches for the self-managed grid; passing it through lets each
  * hosted tile attach its matching `EnvironmentResponse` (joined via the
  * stored environment id projected by the deploy API). With the join, the same
- * `DaemonStatusBadge` that powers
- * self-managed tiles' "Synced 2m ago" label fires on hosted tiles too
- * — hosted runtimes register cloud-api envs with their own daemon, so
- * the data is the same shape; only the "Clawdi" pill distinguishes
- * hosted in the UI.
+ * agent identity can carry its avatar and sort order without making the
+ * Cloud API projection authoritative for deployment state.
  */
 export function useHostedAgentTiles({
 	cloudEnvs,
@@ -185,8 +179,8 @@ export function useHostedAgentTiles({
 
 /**
  * One deployment renders as one hosted agent tile. The selected runtime's stored
- * environment id owns the detail route. A matching projection decorates the tile
- * with daemon sync state and presentation metadata.
+ * environment id owns the detail route. Deployment state stays on the detail page;
+ * the tile projects only the agent identity and available actions.
  */
 export function deploymentToTiles(
 	d: HostedDeployment,
@@ -195,10 +189,9 @@ export function deploymentToTiles(
 ): AgentTile[] {
 	if (!isHostedDeploymentMember(d)) return [];
 	const runtime = deploymentRuntime(d);
-	const slug = deploymentDisplayName(d.resource.spec.name, runtime);
-	// Hosted deployments don't use last_seen_at; status is the freshness signal
-	// The deploy API projects the stable agent identity. The cloud-api env
-	// join only decorates the tile and may legitimately lag or be missing.
+	const name = deploymentDisplayName(d.resource.spec.name, runtime);
+	// The deploy API projects the stable agent identity. The Cloud API env join
+	// only decorates the tile and may legitimately lag or be missing.
 	const envId = runtimeEnvironmentId(d, runtime);
 	const matchedEnv = envId ? envById.get(envId.toLowerCase()) : undefined;
 	const routeQuery = {
@@ -207,24 +200,12 @@ export function deploymentToTiles(
 	};
 	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
 	const settingsHref = envId ? agentSectionHref(envId, "settings", routeQuery) : undefined;
-	const name = matchedEnv
-		? deploymentDisplayName(agentDisplayName(matchedEnv), runtime)
-		: runtimeDisplayName(runtime);
-	const contextLabel = slug !== name ? slug : null;
-	const failurePresentation = deploymentFailurePresentation(d);
-	const runtimeStatus = hostedRuntimeStatusView(
-		d.resource.status,
-		matchedEnv ?? null,
-		failurePresentation?.failedVerb ? failurePresentation : null,
-	);
+	const deploymentStatus = deploymentStatusFromResource(d.resource.status);
 	const showTileActions =
-		runtimeStatus.compute.kind === "stopped" ||
-		runtimeStatus.compute.kind === "failed" ||
-		runtimeStatus.compute.kind === "unknown" ||
+		deploymentStatus.kind === "stopped" ||
+		deploymentStatus.kind === "failed" ||
+		deploymentStatus.kind === "unknown" ||
 		!envId;
-	const dunningStatus = computeDunningTileStatus(d);
-	const failureReasonStatus =
-		runtimeStatus.secondary?.kind === "failure_reason" ? runtimeStatus.secondary : null;
 	return [
 		{
 			id: d.resource.id,
@@ -233,8 +214,6 @@ export function deploymentToTiles(
 			avatarUrl: matchedEnv?.avatar_url ?? null,
 			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,
-			contextLabel,
-			statusLabel: runtimeStatus.primary.label,
 			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			href: detailHref,
 			external: false,
@@ -246,27 +225,7 @@ export function deploymentToTiles(
 						onRetry: statusRetry?.onRetry,
 					})
 				: undefined,
-			manageHref: settingsHref,
-			active: runtimeStatus.active,
-			statusDot: {
-				label: runtimeStatus.primary.label,
-				tone: runtimeStatus.primary.tone,
-			},
-			secondaryStatus: failureReasonStatus
-				? {
-						label: failureReasonStatus.label,
-						title: failureReasonStatus.tooltip,
-						textClass: failureReasonStatus.textClass,
-					}
-				: dunningStatus
-					? dunningStatus
-					: runtimeStatus.secondary
-						? {
-								label: runtimeStatus.secondary.label,
-								title: runtimeStatus.secondary.tooltip,
-								textClass: runtimeStatus.secondary.textClass,
-							}
-						: null,
+			active: isRunningStatus(deploymentStatus),
 			env: matchedEnv ?? null,
 		},
 	];
