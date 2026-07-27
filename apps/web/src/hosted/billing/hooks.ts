@@ -449,13 +449,9 @@ export function billingRecoveryRefetchIntervalFor(
 export function useHostedDeployments({
 	enabled = true,
 	pollBillingRecoveryFor = null,
-	additionalRefetchInterval,
 }: {
 	enabled?: boolean;
 	pollBillingRecoveryFor?: string | null;
-	additionalRefetchInterval?: (
-		deployments: readonly HostedDeployment[] | undefined,
-	) => number | false;
 } = {}) {
 	const client = useBillingClient();
 	const transitionTrackersRef = useRef<ReadonlyMap<string, SettlingTracker>>(new Map());
@@ -478,8 +474,7 @@ export function useHostedDeployments({
 				q.state.data,
 				pollBillingRecoveryFor,
 			);
-			const detailInterval = additionalRefetchInterval?.(q.state.data) ?? false;
-			return shortestRefetchInterval(inventoryInterval, billingInterval, detailInterval);
+			return shortestRefetchInterval(inventoryInterval, billingInterval);
 		},
 		...HOSTED_DEPLOYMENTS_REFRESH_POLICY,
 	});

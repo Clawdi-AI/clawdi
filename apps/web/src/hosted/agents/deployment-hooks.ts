@@ -1,7 +1,7 @@
 "use client";
 
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { toast } from "sonner";
 import { type AcceptedOperation, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
@@ -22,20 +22,9 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
-import {
-	boundedSettlingPollState,
-	type DeploymentOperationVerb,
-	type SettlingTracker,
-} from "@/hosted/deployment-status";
+import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
-import {
-	defaultDeploymentRuntime,
-	deploymentRuntime,
-	type HostedRuntime,
-	isHostedRuntime,
-	runtimeConsoleUrl,
-	runtimeEnvironmentId,
-} from "@/hosted/runtimes";
+import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 
 const SETTLING_REFRESH_DELAYS_MS = [2_000, 10_000, 20_000, 30_000] as const;
@@ -50,59 +39,6 @@ const ACCEPTED_OPERATION_TRANSITIONS = {
 	rename: "updating",
 	delete: "deleting",
 } satisfies Record<DeploymentOperationVerb, HostedDeploymentStatus["summary_state"]>;
-
-export const RUNTIME_UI_SETTLING_POLL_INTERVAL_MS = 3_000;
-export const RUNTIME_UI_SETTLING_TIMEOUT_MS = 5 * 60_000;
-
-export type RuntimeUiSettlingTracker = SettlingTracker;
-
-export type RuntimeUiSettlingPollState = {
-	refetchInterval: number | false;
-	timedOut: boolean;
-	tracker: RuntimeUiSettlingTracker | null;
-};
-
-/**
- * A4 may report compute as running just before its runtime UI endpoint is
- * published. Keep that short-lived gap on the fast deployment-query cadence,
- * but stop rapid polling after the boot window. Returning false lets the
- * shared query fall back to its modest foreground reconciliation interval.
- */
-export function runtimeUiSettlingPollState(
-	deployment: HostedDeployment | null | undefined,
-	runtime: HostedRuntime | null | undefined,
-	tracker: RuntimeUiSettlingTracker | null,
-	nowMs: number,
-): RuntimeUiSettlingPollState {
-	if (!deployment || !runtime || runtimeConsoleUrl(deployment, runtime)) {
-		return { refetchInterval: false, timedOut: false, tracker: null };
-	}
-	const status = deployment.resource.status;
-	if (status === null || status.summary_state !== "running") {
-		return { refetchInterval: false, timedOut: false, tracker: null };
-	}
-
-	const key = `${deployment.resource.id}:${deployment.resource.metadata.generation}:${runtime}`;
-	return boundedSettlingPollState({
-		key,
-		startedAtMs: runtimeUiSettlingStartedAtMs(status, nowMs),
-		tracker,
-		nowMs,
-		pollIntervalMs: RUNTIME_UI_SETTLING_POLL_INTERVAL_MS,
-		timeoutMs: RUNTIME_UI_SETTLING_TIMEOUT_MS,
-	});
-}
-
-function runtimeUiSettlingStartedAtMs(status: HostedDeploymentStatus, nowMs: number): number {
-	const transitionTimes = status.conditions.flatMap((condition) => {
-		if (condition.type !== "Ready" || condition.status !== "True") {
-			return [];
-		}
-		const parsed = Date.parse(condition.lastTransitionTime);
-		return Number.isFinite(parsed) && parsed <= nowMs ? [parsed] : [];
-	});
-	return transitionTimes.length > 0 ? Math.max(...transitionTimes) : nowMs;
-}
 
 export function invalidateDeploymentSnapshots(qc: QueryClient) {
 	void qc.invalidateQueries({ queryKey: billingKeys.deployments });
@@ -179,45 +115,14 @@ function toastDeploymentConflict(error: unknown): boolean {
  * selector disambiguates duplicate inventory rows.
  */
 export function useAgentDeployment(environmentId: string, deploymentSelector?: string | null) {
-	const runtimeUiSettlingTrackerRef = useRef<RuntimeUiSettlingTracker | null>(null);
-	const deriveRuntimeUiSettlingState = useCallback(
-		(deployments: readonly HostedDeployment[] | null | undefined, nowMs: number) => {
-			const resolution = resolveAgentDeployment(
-				deployments ?? [],
-				environmentId,
-				deploymentSelector,
-			);
-			const match = resolution.match;
-			const runtime =
-				match?.runtime && isHostedRuntime(match.runtime)
-					? match.runtime
-					: match
-						? defaultDeploymentRuntime(match.deployment)
-						: null;
-			return runtimeUiSettlingPollState(
-				match?.deployment,
-				runtime,
-				runtimeUiSettlingTrackerRef.current,
-				nowMs,
-			);
-		},
-		[deploymentSelector, environmentId],
-	);
-	const additionalRefetchInterval = useCallback(
-		(deployments: readonly HostedDeployment[] | undefined) =>
-			deriveRuntimeUiSettlingState(deployments, Date.now()).refetchInterval,
-		[deriveRuntimeUiSettlingState],
-	);
 	const inventory = useHostedDeploymentInventory({
 		pollBillingRecoveryFor: deploymentSelector ?? environmentId,
-		additionalRefetchInterval,
 	});
 	const resolution = useMemo(
 		() => resolveAgentDeployment(inventory.deployments ?? [], environmentId, deploymentSelector),
 		[inventory.deployments, environmentId, deploymentSelector],
 	);
 	const match = resolution.match;
-	const runtimeUiSettling = deriveRuntimeUiSettlingState(inventory.deployments, Date.now());
 	const deploymentId = match?.deployment.resource.id;
 	const deploymentTransition = deploymentId
 		? (inventory.deploymentTransitions.get(deploymentId) ?? null)
@@ -225,10 +130,6 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 	const deploymentFailure = deploymentId
 		? (inventory.deploymentFailures.get(deploymentId) ?? null)
 		: null;
-
-	useEffect(() => {
-		runtimeUiSettlingTrackerRef.current = runtimeUiSettling.tracker;
-	}, [runtimeUiSettling.tracker]);
 
 	// The env id to drive per-env queries (sessions, channel links). For an
 	// env-id route it's the route param itself; for a deployment-id route
@@ -250,7 +151,6 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 		membershipResolved: inventory.status === "resolved",
 		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
 		isFetching: inventory.isFetching,
-		runtimeUiSettlingTimedOut: runtimeUiSettling.timedOut,
 		deploymentTransition,
 		deploymentTransitionTimedOut: deploymentTransition?.kind === "timed_out",
 		deploymentFailure,

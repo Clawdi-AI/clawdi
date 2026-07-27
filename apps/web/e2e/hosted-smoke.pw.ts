@@ -2000,17 +2000,19 @@ test("projection service errors stay visible while deployment tools remain avail
 	expect(renderErrors, `projection failure render: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("running deployment without a UI endpoint auto-opens the live UI when polling resolves", async ({
+test("deployment detail stays put, becomes ready, and keeps manual Runtime UI access", async ({
 	page,
 }) => {
 	const pendingRuntimeUiDeployment = {
 		...runningMissingProjectionDeployment,
 		id: "hdep_runtime_ui_settling",
 		name: "Runtime UI settling agent",
+		status: "creating",
 		hermes_control_ui_url: null,
 	};
 	const readyRuntimeUiDeployment = {
 		...pendingRuntimeUiDeployment,
+		status: "running",
 		hermes_control_ui_url: "https://runtime.example/hermes",
 	};
 	const deployments: unknown[] = [pendingRuntimeUiDeployment];
@@ -2024,24 +2026,30 @@ test("running deployment without a UI endpoint auto-opens the live UI when polli
 
 	await page.goto(`/agents/${pendingRuntimeUiDeployment.id}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText("Opening Hermes Dashboard…", { exact: true })).toBeVisible();
-	await expect(
-		main.getByText("We’ll open Hermes Dashboard automatically", { exact: false }),
-	).toBeVisible();
-	await expect(main.getByRole("button", { name: "Use Terminal now", exact: true })).toBeVisible();
+	await expect(main.getByText("Getting your agent ready…", { exact: true })).toBeVisible();
+	await expect(page).toHaveURL(
+		(url) => url.pathname === `/agents/${pendingRuntimeUiDeployment.id}`,
+	);
 
 	deployments.splice(0, 1, readyRuntimeUiDeployment);
 
 	await expect
-		.poll(() => deploymentListRequests.length, { timeout: 10_000 })
+		.poll(() => deploymentListRequests.length, { timeout: 15_000 })
 		.toBeGreaterThanOrEqual(2);
+	await expect(main.getByText("Your agent is ready", { exact: true })).toBeVisible();
+	await expect(page).toHaveURL(
+		(url) => url.pathname === `/agents/${pendingRuntimeUiDeployment.id}`,
+	);
+	expect(runtimeUiRedemptionRequests).toEqual([]);
+	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveCount(0);
+
+	await page.getByRole("link", { name: "Runtime UI", exact: true }).click();
 	await expect(page).toHaveURL(
 		(url) =>
-			url.pathname === `/agents/${missingProjectionEnvironmentId}/console` &&
+			url.pathname === `/agents/${pendingRuntimeUiDeployment.id}/console` &&
 			url.searchParams.get("source") === "on-clawdi" &&
 			url.searchParams.get("d") === pendingRuntimeUiDeployment.id,
 	);
-	expect(runtimeUiRedemptionRequests).toEqual([]);
 	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
 		"src",
 		"https://runtime.example/hermes",

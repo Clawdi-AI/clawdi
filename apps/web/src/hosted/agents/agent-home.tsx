@@ -74,7 +74,6 @@ export function AgentHome({
 		membershipResolved,
 		isLoading,
 		isFetching,
-		runtimeUiSettlingTimedOut,
 		deploymentTransitionTimedOut,
 		error,
 		refetch,
@@ -226,8 +225,6 @@ export function AgentHome({
 				onDeleteAccepted={(deploymentId) =>
 					setUserDeleteIntent({ deploymentId, environmentId, deploymentSelector })
 				}
-				autoOpenRuntimeUi={requestedFromCloudRedirect && environmentId === deployment.resource.id}
-				runtimeUiSettlingTimedOut={runtimeUiSettlingTimedOut}
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 				isCheckingDeployment={isFetching}
 				onCheckDeploymentAgain={handleCheckAgain}
