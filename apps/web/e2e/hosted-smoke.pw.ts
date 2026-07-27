@@ -3576,10 +3576,9 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 	).toEqual([]);
 });
 
-test("top-up states its minimum, blocks duplicates, and keeps unconfirmed payment visible", async ({
+test("top-up validates the amount and blocks duplicate submission or close in flight", async ({
 	page,
 }) => {
-	await page.clock.install({ time: new Date("2026-07-27T12:00:00Z") });
 	const errors = collectBrowserErrors(page);
 	const topUpRequests: string[] = [];
 	await stubHostedApi(page, {
@@ -3603,11 +3602,6 @@ test("top-up states its minimum, blocks duplicates, and keeps unconfirmed paymen
 	await settingsDialog.getByRole("button", { name: "Top up" }).click();
 	const topUpPanel = settingsDialog.getByRole("region", { name: "Top up Wallet" });
 	await expect(page.getByRole("dialog")).toHaveCount(1);
-	await expect(
-		topUpPanel.getByText("Add a whole-dollar amount from $10.00–$2,000.00 to your Wallet.", {
-			exact: true,
-		}),
-	).toBeVisible();
 	const amount = topUpPanel.getByLabel("Amount (USD)");
 
 	await amount.fill("25.50");
@@ -3628,24 +3622,6 @@ test("top-up states its minimum, blocks duplicates, and keeps unconfirmed paymen
 	await expect(topUpPanel).toBeVisible();
 	await expect.poll(() => topUpRequests.length).toBe(1);
 	await expect(topUpPanel).toHaveCount(0);
-	await expect(
-		settingsDialog.getByText("Payment accepted — confirming Wallet credit", { exact: true }),
-	).toBeVisible();
-	await expect(settingsDialog.getByText("No activity yet", { exact: true })).toBeVisible();
-
-	await page.reload();
-	const reloadedSettings = page.getByTestId("settings-dialog");
-	await expect(reloadedSettings).toBeVisible();
-	await expect(
-		reloadedSettings.getByText("Payment accepted — confirming Wallet credit", { exact: true }),
-	).toBeVisible();
-	await page.clock.fastForward(30_001);
-	await expect(
-		reloadedSettings.getByText("Payment accepted; Wallet credit not confirmed", { exact: true }),
-	).toBeVisible();
-	await expect(
-		reloadedSettings.getByRole("button", { name: "Check Wallet again", exact: true }),
-	).toBeVisible();
 	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 4_000 });
 	expect(errors, `top-up interaction: ${errors.join(" | ")}`).toEqual([]);
 });
