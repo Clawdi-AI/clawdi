@@ -3665,6 +3665,21 @@ test("command palette opens with Ctrl+K", async ({ page }) => {
 	expect(errors, `command palette: ${errors.join(" | ")}`).toEqual([]);
 });
 
+test("app 404 offers a working exit to the dashboard", async ({ page }) => {
+	await stubHostedApi(page);
+	const response = await page.goto("/this-clawdi-page-does-not-exist");
+	expect(response?.status()).toBe(404);
+
+	const dashboardExit = page.getByRole("link", { name: "Back to dashboard", exact: true });
+	await expect(dashboardExit).toHaveAttribute("href", "/");
+	const errors = collectBrowserErrors(page);
+	await dashboardExit.click();
+
+	await expect(page).toHaveURL(/\/$/);
+	await expect(page.getByTestId("app-sidebar")).toBeVisible();
+	expect(errors, `app 404: ${errors.join(" | ")}`).toEqual([]);
+});
+
 test("channels connect dialog opens without browser errors", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
 	await stubHostedApi(page);

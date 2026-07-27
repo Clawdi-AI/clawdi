@@ -3,6 +3,7 @@
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import "../../instrumentation-client";
+import { AppNotFound } from "@/components/app-not-found";
 import { AuthProvider } from "@/components/auth-provider";
 import { Providers } from "@/components/providers";
 import RootError from "@/components/root-error";
@@ -41,14 +42,7 @@ export const Route = createRootRoute({
 			<RootError error={error} reset={reset} />
 		</RootDocument>
 	),
-	notFoundComponent: () => (
-		<div className="flex min-h-dvh items-center justify-center bg-background p-6">
-			<div className="space-y-2 text-center">
-				<h1 className="font-semibold text-lg">Page not found</h1>
-				<p className="text-muted-foreground text-sm">This Clawdi page does not exist.</p>
-			</div>
-		</div>
-	),
+	notFoundComponent: AppNotFound,
 	component: RootComponent,
 });
 
