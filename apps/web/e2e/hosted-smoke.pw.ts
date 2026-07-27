@@ -2055,10 +2055,9 @@ test("deployment detail stays put, becomes ready, and keeps manual Runtime UI ac
 			url.searchParams.get("source") === "on-clawdi" &&
 			url.searchParams.get("d") === pendingRuntimeUiDeployment.id,
 	);
-	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
-		"src",
-		"https://runtime.example/hermes",
-	);
+	await expect(main.locator("iframe")).toHaveCount(0);
+	await expect(main.getByText("Open in a new window", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Open Hermes Dashboard" })).toBeVisible();
 });
 
 test("Runtime UI credential failure renders a retryable error instead of a permanent spinner", async ({
@@ -2085,16 +2084,20 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
-		"src",
-		"https://runtime.example/hermes",
-	);
-	await expect(main.getByRole("button", { name: "Open in new window", exact: true })).toBeVisible();
-	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
+	await expect(main.locator("iframe")).toHaveCount(0);
+	const failedPopupPromise = page.waitForEvent("popup");
+	await main.getByRole("button", { name: "Open Hermes Dashboard" }).click();
+	await failedPopupPromise;
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
-	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toBeVisible();
-	await main.getByRole("button", { name: "Retry", exact: true }).click();
-	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Couldn't open Hermes Dashboard", { exact: true })).toBeVisible();
+	await expect(page.getByText("credentials temporarily unavailable", { exact: true })).toHaveCount(
+		0,
+	);
+	const recoveredPopupPromise = page.waitForEvent("popup");
+	await page.getByRole("button", { name: "Try again", exact: true }).click();
+	await recoveredPopupPromise;
+	await expect(page.getByText("Couldn't open Hermes Dashboard", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Hermes sign-in details", { exact: true })).toBeVisible();
 	const passwordValue = main.locator("code");
 	await expect(passwordValue).toHaveText("••••••••••••");
 	await expect(passwordValue).not.toContainText("recovered-password");
@@ -2123,20 +2126,13 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 
 	await page.goto("/agents/hdep_openclaw_included/console?source=on-clawdi");
 	const main = page.locator("main");
-	await expect(main.locator('iframe[title="OpenClaw Control UI"]')).toHaveAttribute(
-		"src",
-		"https://runtime.example/openclaw/#token=gateway-token",
-	);
-	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
-	const tokenValue = main.locator("code");
-	await expect(tokenValue).toHaveText("••••••••••••");
-	await expect(tokenValue).not.toContainText("gateway-token");
-	await main.getByRole("button", { name: "Show Token", exact: true }).click();
-	await expect(tokenValue).toHaveText("gateway-token");
+	await expect(main.locator("iframe")).toHaveCount(0);
+	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
 	const popupPromise = page.waitForEvent("popup");
 	await main.getByRole("button", { name: "Open OpenClaw Control UI" }).click();
 	const popup = await popupPromise;
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
+	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
 	expect(popup).toBeDefined();
 });
 

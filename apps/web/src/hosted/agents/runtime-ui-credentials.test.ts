@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
-	hermesUiCredentials,
-	openClawUiCredentials,
-	openClawUiUrl,
 	openSecureRuntimeWindow,
+	resolveRuntimeUiCredentials,
 } from "@/hosted/agents/runtime-ui-credentials";
 
 describe("runtime UI credential targeting", () => {
@@ -31,10 +29,13 @@ describe("runtime UI credential targeting", () => {
 			username: "admin",
 			password: "deployment-password",
 		};
-		expect(hermesUiCredentials(credentials, "https://runtime.example/hermes")).toEqual({
-			url: "https://runtime.example/hermes",
-			username: "admin",
-			password: "deployment-password",
+		expect(resolveRuntimeUiCredentials(credentials, "https://runtime.example/hermes")).toEqual({
+			runtime: "hermes",
+			value: {
+				url: "https://runtime.example/hermes",
+				username: "admin",
+				password: "deployment-password",
+			},
 		});
 		expect(credentials.url).not.toContain(credentials.password ?? "");
 	});
@@ -52,8 +53,8 @@ describe("runtime UI credential targeting", () => {
 			auth_mode: "openclaw_device",
 			url: "https://other.example/openclaw/#token=deployment-token",
 		};
-		expect(hermesUiCredentials(hermes, "https://runtime.example/hermes")).toBeNull();
-		expect(openClawUiUrl(openclaw, "https://runtime.example/openclaw/")).toBeNull();
+		expect(resolveRuntimeUiCredentials(hermes, "https://runtime.example/hermes")).toBeNull();
+		expect(resolveRuntimeUiCredentials(openclaw, "https://runtime.example/openclaw/")).toBeNull();
 	});
 
 	test("preserves the exact official OpenClaw token fragment URL", () => {
@@ -62,10 +63,12 @@ describe("runtime UI credential targeting", () => {
 			auth_mode: "openclaw_device",
 			url: "https://runtime.example/openclaw/#token=deployment-token",
 		};
-		expect(openClawUiUrl(credentials, "https://runtime.example/openclaw/")).toBe(credentials.url);
-		expect(openClawUiCredentials(credentials, "https://runtime.example/openclaw/")).toEqual({
-			url: credentials.url,
-			token: "deployment-token",
+		expect(resolveRuntimeUiCredentials(credentials, "https://runtime.example/openclaw/")).toEqual({
+			runtime: "openclaw",
+			value: {
+				url: credentials.url,
+				token: "deployment-token",
+			},
 		});
 	});
 
@@ -75,6 +78,6 @@ describe("runtime UI credential targeting", () => {
 			auth_mode: "openclaw_device",
 			url: "https://runtime.example/openclaw/",
 		};
-		expect(openClawUiCredentials(credentials, credentials.url)).toBeNull();
+		expect(resolveRuntimeUiCredentials(credentials, credentials.url)).toBeNull();
 	});
 });
