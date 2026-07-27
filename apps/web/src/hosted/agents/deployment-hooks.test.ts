@@ -84,7 +84,8 @@ describe("deployment failure remediation rendering", () => {
 				type: "https://api.clawdi.ai/problems/operation_aborted",
 				title: "Deployment operation was aborted",
 				status: 409,
-				detail: "Top up your wallet and retry the plan change.",
+				detail:
+					"MissingGreenlet prevented synchronous plan confirmation for operations/plan-change-failed.",
 				instance: "hdep_failed",
 				code: "operation_aborted",
 				phase: "plan_change",
@@ -104,8 +105,14 @@ describe("deployment failure remediation rendering", () => {
 		);
 
 		expect(markup).toContain("Plan change failed");
-		expect(markup).toContain("Top up your wallet and retry the plan change.");
-		expect(markup).toContain("Review plan");
+		expect(markup).toContain("The Clawdi service could not confirm the plan change.");
+		expect(markup).toContain("Your plan was not changed and you were not charged.");
+		expect(markup).toContain("Get a fresh quote and confirm the price before trying again.");
+		expect(markup).toContain("Get fresh quote");
+		expect(markup).not.toContain("MissingGreenlet");
+		expect(markup).not.toContain("operations/plan-change-failed");
+		expect(markup).not.toContain("provisioning");
+		expect(markup).not.toContain("synchronous plan confirmation");
 		expect(markup).not.toContain("Agent setup failed");
 		expect(markup).not.toContain("retry startup");
 		expect(markup).not.toContain("Restart compute");
@@ -410,7 +417,9 @@ describe("deployment mutation settlement", () => {
 		expect(failed).toHaveLength(1);
 		const failedStatus = requiredDeploymentStatus(failed?.[0]);
 		expect(failedStatus.summary_state).toBe("failed");
-		expect(deploymentFailureReason(failedStatus)).toBe("Deployment deletion failed");
+		expect(deploymentFailureReason(failedStatus)).toBe(
+			"The Clawdi service could not complete this request.",
+		);
 	});
 
 	test("does not fabricate a status while projecting an accepted operation", () => {

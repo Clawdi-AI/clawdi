@@ -1365,21 +1365,29 @@ function runtimeDisplayLabel(agentType: string | null | undefined): string {
 function HostedFocusTileStatus({ tile }: { tile: AgentTile }) {
 	return (
 		<span
-			className="inline-flex min-w-0 items-center gap-1.5 whitespace-nowrap text-muted-foreground"
+			className="flex w-full min-w-0 items-start gap-1.5 text-muted-foreground"
 			title={tile.secondaryStatus?.title ?? tile.statusLabel}
 		>
 			<StatusDot
 				status={tile.statusDot?.tone ?? "neutral"}
-				className={
-					tile.statusDot?.tone ? undefined : "border border-muted-foreground/50 bg-transparent"
-				}
+				className={cn(
+					"mt-1 shrink-0",
+					tile.statusDot?.tone ? undefined : "border border-muted-foreground/50 bg-transparent",
+				)}
 			/>
-			<span>{tile.statusLabel}</span>
-			{tile.secondaryStatus ? (
-				<span className={tile.secondaryStatus.textClass ?? "text-muted-foreground"}>
-					· {tile.secondaryStatus.label}
-				</span>
-			) : null}
+			<span className="min-w-0 flex-1">
+				<span>{tile.statusLabel}</span>
+				{tile.secondaryStatus ? (
+					<span
+						className={cn(
+							"block whitespace-normal break-words [overflow-wrap:anywhere]",
+							tile.secondaryStatus.textClass ?? "text-muted-foreground",
+						)}
+					>
+						{tile.secondaryStatus.label}
+					</span>
+				) : null}
+			</span>
 		</span>
 	);
 }

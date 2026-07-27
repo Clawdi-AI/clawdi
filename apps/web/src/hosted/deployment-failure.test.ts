@@ -9,7 +9,7 @@ import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 describe("deploymentFailureReason", () => {
-	test("uses the compatibility Problem title instead of internal detail", () => {
+	test("uses client-owned copy instead of a free-form Problem title or detail", () => {
 		expect(
 			deploymentFailureReason({
 				failure: {
@@ -17,15 +17,25 @@ describe("deploymentFailureReason", () => {
 					conditionMessage: "The runtime did not become ready.",
 				},
 			}),
-		).toBe("Runtime startup failed");
+		).toBe("The Clawdi service could not complete this request.");
 	});
 
-	test("falls back to the condition message when the title is empty", () => {
+	test("does not expose internal exceptions, identifiers, or implementation vocabulary", () => {
 		expect(
 			deploymentFailureReason({
-				failure: { title: "  ", conditionMessage: "The runtime did not become ready." },
+				failure: {
+					title: "MissingGreenlet during provisioning",
+					detail:
+						"SQLAlchemy failed for operations/op-secret and hdep_internal while reconciling the runtime.",
+					conditionMessage:
+						"Agent 123e4567-e89b-42d3-a456-426614174000 failed synchronous plan confirmation.",
+					phase: "plan_change",
+					code: "operation_aborted",
+				},
 			}),
-		).toBe("The runtime did not become ready.");
+		).toBe(
+			"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
+		);
 	});
 
 	test("projects the authoritative reason and failed verb for every tab", () => {
@@ -65,39 +75,26 @@ describe("deploymentFailureReason", () => {
 		});
 
 		expect(deploymentFailureProjection(deployment)).toEqual({
-			reason: "Top up your wallet and retry the plan change.",
+			reason:
+				"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
 			failedVerb: "plan_change",
 			retryable: false,
 			code: "operation_aborted",
 		});
 		expect(deploymentFailurePresentation(deployment)).toEqual({
-			reason: "Top up your wallet and retry the plan change.",
+			reason:
+				"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
 			failedVerb: "plan_change",
 			retryable: false,
 			code: "operation_aborted",
 			title: "Plan change failed",
-			description:
-				"Open Compute settings to top up your Wallet, request a fresh quote, and confirm the price before retrying.",
+			description: "Get a fresh quote and confirm the price before trying again.",
 			remediation: {
 				kind: "review_plan_change",
-				label: "Review plan",
-				requiresWalletTopUp: true,
+				label: "Get fresh quote",
+				requiresWalletTopUp: false,
 			},
 		});
-	});
-
-	test("removes internal operation and deployment references from visible failures", () => {
-		expect(
-			deploymentFailureReason({
-				failure: {
-					title: " ",
-					phase: "plan_change",
-					detail:
-						"Try again. Operation ID: operations/op-secret. Deployment ID: hdep_internal. Agent ID: 123e4567-e89b-42d3-a456-426614174000.",
-					conditionMessage: "Plan change failed.",
-				},
-			}),
-		).toBe("Try again.");
 	});
 
 	test("maps every failed operation to a truthful safe remediation", () => {

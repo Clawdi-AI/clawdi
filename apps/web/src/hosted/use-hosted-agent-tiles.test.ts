@@ -198,7 +198,7 @@ describe("deploymentToTiles", () => {
 		});
 	});
 
-	test("projects failed deployment reasons ahead of dunning state", () => {
+	test("projects client-owned failure copy ahead of dunning state", () => {
 		const [tile] = hostedDeploymentToTiles(
 			deployment({
 				status: "failed",
@@ -222,8 +222,8 @@ describe("deploymentToTiles", () => {
 		);
 
 		expect(tile?.secondaryStatus).toEqual({
-			label: "Failure: startup_probe_failing; restart_count=2; container failed readiness probe",
-			title: "startup_probe_failing; restart_count=2; container failed readiness probe",
+			label: "Failure: The Clawdi service could not complete this request.",
+			title: "The Clawdi service could not complete this request.",
 			textClass: "text-destructive-muted-foreground font-medium",
 		});
 	});
@@ -241,8 +241,8 @@ describe("deploymentToTiles", () => {
 			env: null,
 			contextLabel: "hosted-test",
 			secondaryStatus: {
-				label: "Failure: startup_probe_failing; restart_count=2",
-				title: failureReason,
+				label: "Failure: The Clawdi service could not complete this request.",
+				title: "The Clawdi service could not complete this request.",
 				textClass: "text-destructive-muted-foreground font-medium",
 			},
 		});
@@ -264,9 +264,10 @@ describe("deploymentToTiles", () => {
 		);
 
 		expect(tile?.secondaryStatus).toEqual({
-			label: `Plan change failed: ${reason}`,
+			label:
+				"Plan change failed: The Clawdi service could not confirm the plan change. Your plan was not c...",
 			title:
-				"Plan change failed. Open Compute settings to top up your Wallet, request a fresh quote, and confirm the price before retrying. Reason: Top up your Wallet and retry the plan change.",
+				"Plan change failed. Get a fresh quote and confirm the price before trying again. Reason: The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
 			textClass: "text-destructive-muted-foreground font-medium",
 		});
 		expect(
@@ -275,6 +276,7 @@ describe("deploymentToTiles", () => {
 		).toBe(`/agents/${environmentId}/settings?source=on-clawdi&d=dep_123#compute-plan-controls`);
 		expect(tile?.secondaryStatus?.label).not.toContain("startup");
 		expect(tile?.secondaryStatus?.label).not.toContain("restart");
+		expect(tile?.secondaryStatus?.title).not.toContain(reason);
 	});
 
 	test("keeps Start and Delete actions on a stopped tile with a retained env identity", () => {
@@ -317,8 +319,8 @@ describe("deploymentToTiles", () => {
 			href: null,
 			env: null,
 			secondaryStatus: {
-				label: "Failure: creation_interrupted",
-				title: "creation_interrupted",
+				label: "Failure: The Clawdi service could not complete this request.",
+				title: "The Clawdi service could not complete this request.",
 			},
 		});
 		expect(tile?.action).toBeDefined();
@@ -439,7 +441,7 @@ describe("hostedRuntimeStatusView", () => {
 		const creating = hostedRuntimeStatusView("creating", null);
 
 		expect(running.secondary?.label).toBe("Sync pending");
-		expect(creating.primary.label).toBe("Provisioning");
+		expect(creating.primary.label).toBe("Getting ready");
 		expect(creating.secondary).toBeNull();
 	});
 
@@ -453,8 +455,8 @@ describe("hostedRuntimeStatusView", () => {
 		expect(view.primary.label).toBe("Failed");
 		expect(view.secondary).toEqual({
 			kind: "failure_reason",
-			label: "Failure: startup_probe_failing; restart_count=2",
-			tooltip: "startup_probe_failing; restart_count=2",
+			label: "Failure: The Clawdi service could not complete this request.",
+			tooltip: "The Clawdi service could not complete this request.",
 			textClass: "text-destructive-muted-foreground font-medium",
 		});
 	});

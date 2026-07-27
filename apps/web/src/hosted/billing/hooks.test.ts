@@ -337,7 +337,8 @@ describe("reconcileDeploymentSnapshots", () => {
 		expect(reconciledStatus.summary_state).toBe("failed");
 		expect(reconciledStatus.failure).toEqual(failure);
 		expect(deploymentFailureProjection(reconciled)).toEqual({
-			reason: "Re-quote the plan change and try again.",
+			reason:
+				"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
 			failedVerb: "plan_change",
 			retryable: false,
 			code: "operation_aborted",

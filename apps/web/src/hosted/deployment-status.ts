@@ -109,7 +109,7 @@ export function deploymentStatusFromResource(
 export function deploymentStatusLabel(status: DeploymentStatus): string {
 	switch (status.kind) {
 		case "creating":
-			return "Provisioning";
+			return "Getting ready";
 		case "starting":
 			return "Starting";
 		case "running":

@@ -2,22 +2,24 @@ import type { HostedDeployment } from "@/hosted/billing/contracts";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 
 const DEFAULT_FAILURE_REASON_MAX_LENGTH = 96;
-const INTERNAL_OPERATION_REFERENCE_RE =
-	/\s*(?:operation\s+id\s*:\s*)?operations\/[A-Za-z0-9._~-]+[.!]?/gi;
-const INTERNAL_DEPLOYMENT_REFERENCE_RE =
-	/\s*(?:deployment\s+id\s*:\s*)?hdep_[A-Za-z0-9._~-]+[.!]?/gi;
-const INTERNAL_UUID_REFERENCE_RE =
-	/\s*(?:(?:agent|environment|deployment)\s+id\s*:\s*)?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}[.!]?/gi;
+const PLAN_CHANGE_FAILURE_REASON =
+	"The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.";
+const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service could not complete this request.";
 
-function userFacingFailureReason(value: string): string {
-	return value
-		.replace(/\s+/g, " ")
-		.replace(INTERNAL_OPERATION_REFERENCE_RE, "")
-		.replace(INTERNAL_DEPLOYMENT_REFERENCE_RE, "")
-		.replace(INTERNAL_UUID_REFERENCE_RE, "")
-		.replace(/\s+([,.!?])/g, "$1")
-		.trim();
-}
+const CUSTOMER_FAILURE_REASONS_BY_CODE = new Map<string, string>([
+	[
+		"insufficient_balance",
+		"Your Wallet balance was too low for the Clawdi service to complete this request.",
+	],
+	[
+		"insufficient_wallet_balance",
+		"Your Wallet balance was too low for the Clawdi service to complete this request.",
+	],
+	[
+		"open_refund_debt",
+		"Your Wallet has an unsettled refund balance, so the Clawdi service could not complete this request.",
+	],
+]);
 
 export type DeploymentFailureProjection = {
 	reason: string;
@@ -38,8 +40,6 @@ export type DeploymentFailurePresentation = DeploymentFailureProjection & {
 	remediation: DeploymentFailureRemediation;
 };
 
-const WALLET_FUNDING_REASON_RE =
-	/\b(?:top[ -]?up|insufficient(?: wallet)? (?:balance|funds?)|wallet (?:balance|funds?).*(?:low|short|empty|exhausted|depleted)|refund debt)\b/i;
 const WALLET_FUNDING_CODES = new Set([
 	"insufficient_balance",
 	"insufficient_wallet_balance",
@@ -73,7 +73,7 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 }
 
 function deploymentFailureNeedsWalletTopUp(failure: DeploymentFailureProjection): boolean {
-	return WALLET_FUNDING_CODES.has(failure.code) || WALLET_FUNDING_REASON_RE.test(failure.reason);
+	return WALLET_FUNDING_CODES.has(failure.code);
 }
 
 /** Shared honest copy/action decision for detail, status, and tile surfaces. */
@@ -119,11 +119,11 @@ export function deploymentFailurePresentation(
 				...failure,
 				title: `${operationLabel} failed`,
 				description: requiresWalletTopUp
-					? "Open Compute settings to top up your Wallet, request a fresh quote, and confirm the price before retrying."
-					: "Open Compute settings to request a fresh quote and confirm the price before retrying.",
+					? "Top up your Wallet, then get a fresh quote and confirm the price before trying again."
+					: "Get a fresh quote and confirm the price before trying again.",
 				remediation: {
 					kind: "review_plan_change",
-					label: "Review plan",
+					label: "Get fresh quote",
 					requiresWalletTopUp,
 				},
 			};
@@ -159,22 +159,22 @@ export function deploymentFailureReason(
 			conditionMessage: string;
 			detail?: string;
 			phase?: string | null;
+			code?: string;
 		} | null;
 	} | null,
+	failedVerb: DeploymentOperationVerb | null = null,
 ): string | null {
 	const failure = input?.failure;
-	const candidates =
-		failure?.phase === "plan_change"
-			? [failure.detail, failure.title, failure.conditionMessage]
-			: [failure?.title, failure?.conditionMessage];
-	for (const candidate of candidates) {
-		// Backend reasons are concatenated from conditions, so they arrive with
-		// ragged padding. Collapse it once here — every label and tooltip is
-		// derived from this value.
-		const reason = userFacingFailureReason(candidate ?? "");
-		if (reason) return reason;
+	if (!failure) return null;
+
+	// Failure title/detail/conditionMessage are free-form backend strings. Even
+	// after removing identifiers they can contain exception names or service
+	// vocabulary, so none of them are customer copy. Only structured classes
+	// that the client explicitly recognizes may select a specific message.
+	if (failedVerb === "plan_change" || failure.phase === "plan_change") {
+		return PLAN_CHANGE_FAILURE_REASON;
 	}
-	return null;
+	return CUSTOMER_FAILURE_REASONS_BY_CODE.get(failure.code ?? "") ?? DEFAULT_SERVICE_FAILURE_REASON;
 }
 
 /** One tab-agnostic failure view backed by the authoritative failed snapshot. */
@@ -185,11 +185,13 @@ export function deploymentFailureProjection(
 	const status = deployment.resource.status;
 	if (status === null || status.summary_state !== "failed") return null;
 	const failure = status.failure;
-	const reason = deploymentFailureReason(status);
-	if (!failure || !reason) return null;
+	if (!failure) return null;
+	const failedVerb = deployment.accepted_operation?.metadata.verb ?? null;
+	const reason = deploymentFailureReason(status, failedVerb);
+	if (!reason) return null;
 	return {
 		reason,
-		failedVerb: deployment.accepted_operation?.metadata.verb ?? null,
+		failedVerb,
 		retryable: failure.retryable ?? null,
 		code: failure.code,
 	};
