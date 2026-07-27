@@ -122,10 +122,10 @@ function detachedFallbackState(deployment: DunningDeployment): ComputeDunningSta
 		fundingSource: fallback.funding_source,
 		recoveryAction: "start_new",
 		description: statusUnavailable
-			? "We can’t determine whether this deployment stopped or is using included Basic because its current status is unavailable. Start a new subscription to restore paid compute."
+			? "We can’t determine whether this agent stopped or is using included Basic because its current status is unavailable. Start a new subscription to restore paid compute."
 			: stopped
-				? "No included Basic slot was available, so this deployment stopped. Start a new subscription to restore paid compute."
-				: "This deployment is now using included Basic. Start a new subscription to restore paid compute.",
+				? "No included Basic slot was available, so this agent stopped. Start a new subscription to restore paid compute."
+				: "This agent is now using included Basic. Start a new subscription to restore paid compute.",
 		invoiceUrl: null,
 		fallbackOccurredAt: fallback.occurred_at,
 		fallbackPlanLabel,
@@ -167,7 +167,7 @@ export function computeDunningState(deployment: DunningDeployment): ComputeDunni
 			tone: "destructive",
 			title: "Compute subscription ended",
 			description:
-				"This paid subscription is terminal. Start a new subscription for the fallback deployment to restore paid compute.",
+				"This paid subscription ended. Start a new subscription for this agent to restore paid compute.",
 			ctaTarget: "start_new",
 		};
 	}

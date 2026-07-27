@@ -183,7 +183,7 @@ describe("declarative deployment mutations", () => {
 		});
 		expect(() =>
 			acceptDeclarativeOperation({ operation: operation({ done: false, deploymentId: "" }) }),
-		).toThrow("The deployment service completed creation without a deployment.");
+		).toThrow("The agent service completed creation without returning the agent.");
 	});
 
 	it("releases a checkout deployment request as soon as its LRO is accepted", async () => {

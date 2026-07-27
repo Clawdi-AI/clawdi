@@ -1029,7 +1029,7 @@ export function DeployWizard() {
 						<TriangleAlert />
 						<AlertTitle>Agent software can’t be changed later</AlertTitle>
 						<AlertDescription>
-							To switch after deployment, you must delete this agent and deploy a new one.
+							To switch after creation, you must delete this agent and create a new one.
 						</AlertDescription>
 					</Alert>
 				</SettingsSection>
@@ -1189,7 +1189,7 @@ export function DeployWizard() {
 									normalizer={billingErrorNormalizer}
 									error={deployments.error}
 									onRetry={() => void deployments.refetch()}
-									title="Couldn't check deployment inventory"
+									title="Couldn't check existing agents"
 								/>
 							) : (
 								<p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
@@ -1308,7 +1308,7 @@ export function DeployWizard() {
 								<div>
 									<div className="text-sm font-medium">Payment method</div>
 									<p className="text-xs text-muted-foreground">
-										Choose how this deployment renews. You can review the charge before paying.
+										Choose how this agent’s compute renews. You can review the charge before paying.
 									</p>
 								</div>
 								<div className="grid gap-2 sm:grid-cols-2">

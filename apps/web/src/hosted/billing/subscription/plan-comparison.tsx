@@ -143,7 +143,7 @@ export function PlanComparison({
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>Always-on hosted runtime + TEE</FeatureRow>
+							<FeatureRow>Always-on agent with TEE protection</FeatureRow>
 							<FeatureRow>
 								Burstable compute
 								{basicResources
@@ -226,7 +226,7 @@ export function PlanComparison({
 								{performance ? ` (${performance.vcpu} vCPU / ${performance.ram_gb} GB)` : ""}
 							</FeatureRow>
 							<FeatureRow>One subscription per Performance agent</FeatureRow>
-							<FeatureRow>Public-port entitlement for runtime-owned services</FeatureRow>
+							<FeatureRow>Public ports for agent services</FeatureRow>
 							<FeatureRow>
 								Larger disk{performance ? ` (${performance.disk_size} GB)` : ""}
 							</FeatureRow>

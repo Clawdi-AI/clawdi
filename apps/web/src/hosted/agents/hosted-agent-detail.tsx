@@ -1872,7 +1872,7 @@ function AiProviderTab({
 						{bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
 					</div>
 					<p className="mt-0.5 text-sm text-muted-foreground">
-						Remove the hosted provider binding and configure model access inside the runtime.
+						Use provider settings inside the agent instead of connecting them through Clawdi.
 					</p>
 				</button>
 				<button
@@ -1961,8 +1961,8 @@ function AiProviderTab({
 
 			{bindingMode === "unmanaged" ? (
 				<p className="text-sm text-muted-foreground">
-					This runtime now carries no hosted provider binding. Configure models inside the agent
-					after it starts.
+					This agent has no Clawdi provider connection. Configure models inside the agent after it
+					starts.
 				</p>
 			) : (
 				<ModelBindingPicker
@@ -2655,7 +2655,7 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 								<SelectValue />
 							</SelectTrigger>
 							<SelectContent>
-								<SelectItem value="default">Runtime default</SelectItem>
+								<SelectItem value="default">Agent default</SelectItem>
 								{LANGUAGE_OPTIONS.map((option) => (
 									<SelectItem key={option.code} value={option.code}>
 										{option.label}
@@ -2819,7 +2819,7 @@ function ComputeSettingsSections({
 				status: currentSubscription.status,
 				subscriptionId,
 			})
-		: "Start a new subscription to change this deployment’s paid compute.";
+		: "Start a new subscription to change this agent’s paid compute.";
 	const upgradeUnavailableMessage = performanceUpgradeUnavailableReason({
 		plansLoading: plans.isLoading,
 		canCreateCloudAgents: hostedAccess.canCreateCloudAgents,
@@ -2948,8 +2948,8 @@ function ComputeSettingsSections({
 				description: res.current_period_end
 					? `Cancellation takes effect ${formatShortDate(
 							res.current_period_end,
-						)}. The deployment then falls back to included Basic funding if available; otherwise, it stops.`
-					: "The deployment falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
+						)}. The agent then falls back to included Basic funding if available; otherwise, it stops.`
+					: "The agent falls back to included Basic funding if available when cancellation takes effect; otherwise, it stops.",
 			});
 		} catch (error) {
 			toast.error("Couldn’t cancel subscription", { description: normalizeBillingError(error) });
@@ -3036,7 +3036,7 @@ function ComputeSettingsSections({
 						</div>
 						<p className="mt-1 text-xs text-muted-foreground">
 							Basic includes one free active slot per user. Paid Basic and Performance each use one
-							subscription per deployment.
+							subscription per agent.
 						</p>
 						{isPaidCompute && currentSubscription ? (
 							<div className="mt-2 flex flex-col gap-1 text-xs text-muted-foreground">
@@ -3151,8 +3151,8 @@ function ComputeSettingsSections({
 											title={`Cancel ${tierLabel} subscription?`}
 											description={
 												<p>
-													Cancellation takes effect {subscriptionPeriodLabel}. The deployment then
-													falls back to included Basic funding if available; otherwise, it stops.
+													Cancellation takes effect {subscriptionPeriodLabel}. The agent then falls
+													back to included Basic funding if available; otherwise, it stops.
 												</p>
 											}
 											confirmLabel="Cancel at period end"

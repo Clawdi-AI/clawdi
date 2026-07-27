@@ -97,8 +97,8 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 					{hostedAccess.isLoading ? null : !hostedAccess.canCreateCloudAgents &&
 						state.ctaTarget === "start_new" ? (
 						<span className="text-xs text-muted-foreground">
-							Starting a new subscription is temporarily unavailable. This deployment remains
-							visible and manageable.
+							Starting a new subscription is temporarily unavailable. This agent remains visible and
+							manageable.
 						</span>
 					) : state.ctaTarget === "top_up" ? (
 						<Button

@@ -105,7 +105,7 @@ function operationIdFromName(name: string): string {
 	const prefix = "operations/";
 	const operationId = name.startsWith(prefix) ? name.slice(prefix.length) : "";
 	if (!operationId) {
-		throw new BillingApiError(502, "The deployment service returned an invalid operation name.");
+		throw new BillingApiError(502, "The agent service returned an invalid operation name.");
 	}
 	return operationId;
 }
@@ -124,7 +124,7 @@ export function acceptDeclarativeOperation<T extends DeploymentOperation | null>
 		operation: T;
 		deploymentId?: string | null;
 	},
-	missingDeploymentMessage = "The deployment service completed creation without a deployment.",
+	missingDeploymentMessage = "The agent service completed creation without returning the agent.",
 ): {
 	deploymentId: string;
 	operation: T;
@@ -147,7 +147,7 @@ function strongResourceEtag(deployment: HostedDeployment): string {
 			return code >= 0x21 && code <= 0x7e && character !== '"' && character !== "\\";
 		});
 	if (!valid) {
-		throw new BillingApiError(502, "The deployment service returned an invalid resource ETag.");
+		throw new BillingApiError(502, "The agent service returned an invalid resource version.");
 	}
 	return `"${resourceVersion}"`;
 }
@@ -160,8 +160,8 @@ function terminalDeployRequestError(status: HostedDeployRequestStatus): BillingA
 	return new DeploymentRequestTerminalError(
 		409,
 		status.request_status === "superseded"
-			? "This deployment request was superseded by a newer attempt."
-			: "The deployment request could not be completed.",
+			? "This agent creation was superseded by a newer attempt."
+			: "The agent could not be created.",
 		status,
 	);
 }

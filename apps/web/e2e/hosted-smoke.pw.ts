@@ -1836,7 +1836,7 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
 
@@ -1947,7 +1947,7 @@ test("failed deployment with a retained projection keeps status-authoritative na
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 
 	expect(restartRequests).toEqual([]);
@@ -1975,7 +1975,7 @@ test("missing live projection recovers on Check again without losing deployment 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect(main.getByText("Some agent details are not ready", { exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Check again", exact: true }).click();
 	await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(0);
@@ -1997,7 +1997,7 @@ test("projection service errors stay visible while deployment tools remain avail
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect(main.getByText("Couldn’t load all agent details", { exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	const renderErrors = errors.filter(
 		(error) => error.includes("Maximum update depth") || error.includes("Too many re-renders"),
@@ -2048,7 +2048,7 @@ test("deployment detail stays put, becomes ready, and keeps manual Runtime UI ac
 	expect(runtimeUiRedemptionRequests).toEqual([]);
 	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveCount(0);
 
-	await page.getByRole("link", { name: "Runtime UI", exact: true }).click();
+	await page.getByRole("link", { name: "Agent Interface", exact: true }).click();
 	await expect(page).toHaveURL(
 		(url) =>
 			url.pathname === `/agents/${pendingRuntimeUiDeployment.id}/console` &&
@@ -2190,7 +2190,7 @@ test("shared legacy environment routes an older tile's actions to its deployment
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_shared_older"]);
 });
 
-test("shared legacy environment direct route asks the user to choose a deployment", async ({
+test("shared legacy environment direct route asks the user to choose an agent", async ({
 	page,
 }) => {
 	await stubHostedApi(page, {
@@ -2199,7 +2199,7 @@ test("shared legacy environment direct route asks the user to choose a deploymen
 
 	await page.goto(`/agents/${sharedLegacyEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByRole("heading", { name: "Choose a deployment" })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Choose an agent" })).toBeVisible();
 	const newerChoice = main.getByRole("link", { name: "Open Newer twin" });
 	const olderChoice = main.getByRole("link", { name: "Open Older twin" });
 	await expect(newerChoice).toContainText("Running");

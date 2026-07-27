@@ -344,15 +344,15 @@ function DeploymentChooser({
 			className={`${CENTERED_PAGE_WIDTH_CLASS.page} flex flex-col gap-4 px-4 py-2 lg:px-6`}
 		>
 			<PageHeader
-				title="Choose a deployment"
-				description="Multiple legacy deployments share this agent identity. Choose the deployment you want to manage."
+				title="Choose an agent"
+				description="More than one older agent shares this identity. Choose the one you want to manage."
 			/>
 			{hasUnknownStatus ? (
 				<Alert data-hosted="true">
 					<AlertCircle />
-					<AlertTitle>Some deployment statuses are unavailable</AlertTitle>
+					<AlertTitle>Some agent statuses are unavailable</AlertTitle>
 					<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-						<span>We can’t determine every deployment state right now.</span>
+						<span>We can’t determine every agent state right now.</span>
 						<Button
 							type="button"
 							variant="outline"
