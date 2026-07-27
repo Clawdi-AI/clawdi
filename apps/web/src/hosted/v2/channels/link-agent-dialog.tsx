@@ -126,7 +126,7 @@ export function LinkAgentDialog({
 					setWhatsappCredentialMinted(true);
 				} else {
 					toast.success("Agent linked", {
-						description: `${accountName} is linked. Finish device pairing from the agent runtime.`,
+						description: `${accountName} is linked. Open the agent’s Channels page to finish device pairing.`,
 					});
 				}
 				return;
@@ -208,7 +208,7 @@ export function LinkAgentDialog({
 									<TokenReveal
 										label="Agent token"
 										value={token}
-										note="Hosted agents configure this automatically. Only copy it for a self-managed runtime that asks for it."
+										note="Clawdi agents configure this automatically. Only copy it for a self-managed agent that asks for it."
 									/>
 								</div>
 							</details>
@@ -217,7 +217,7 @@ export function LinkAgentDialog({
 				) : whatsappCredentialMinted ? (
 					<div className="flex items-center gap-2 rounded-lg border border-success/30 bg-success-muted p-3 text-sm text-success-muted-foreground">
 						<CircleCheck className="size-4 shrink-0" />
-						WhatsApp access is ready. Finish linking the number from the agent runtime.
+						WhatsApp access is ready. Open the agent’s Channels page to finish linking the number.
 					</div>
 				) : envs.isLoading ? (
 					<Skeleton className="h-10 w-full rounded-md" />

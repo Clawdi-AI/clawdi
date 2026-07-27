@@ -864,7 +864,7 @@ export function AddProviderDialog({
 														? `Preset mapping · ${API_MODE_LABEL[apiMode]} · primary ${selectedPreset.suggested_primary_model}`
 														: authMethod === "oauth"
 															? `ChatGPT/Codex mapping · ${catalogSummary || "No catalog models"}`
-															: `Runtime mapping · ${API_MODE_LABEL[apiMode]} · ${catalogSummary || "No catalog models"}`}
+															: `Custom mapping · ${API_MODE_LABEL[apiMode]} · ${catalogSummary || "No catalog models"}`}
 												</p>
 												<p className="mt-1 break-all font-mono text-xs text-muted-foreground">
 													{baseUrl}
@@ -1001,7 +1001,7 @@ export function AddProviderDialog({
 
 												{showRuntimeEnvField ? (
 													<div className="flex flex-col gap-1.5">
-														<Label htmlFor="provider-env">Runtime env var</Label>
+														<Label htmlFor="provider-env">Agent environment variable</Label>
 														<Input
 															id="provider-env"
 															name="provider-env"

@@ -32,6 +32,10 @@ const addProviderDialogSource = readFileSync(
 	new URL("../../v2/ai-providers/add-provider-dialog.tsx", import.meta.url),
 	"utf8",
 );
+const addProviderDialogLogicSource = readFileSync(
+	new URL("../../v2/ai-providers/add-provider-dialog.logic.ts", import.meta.url),
+	"utf8",
+);
 const aiProviderHooksSource = readFileSync(
 	new URL("../../v2/ai-providers/ai-providers-hooks.ts", import.meta.url),
 	"utf8",
@@ -83,7 +87,7 @@ describe("deploy wizard product copy and flow", () => {
 		expect(wizardSource).toContain('<Badge variant="secondary">Recommended</Badge>');
 		expect(wizardSource).toContain("Agent software can’t be changed later");
 		expect(wizardSource).toContain(
-			"To switch after deployment, you must delete this agent and deploy a new one.",
+			"To switch after creation, you must delete this agent and create a new one.",
 		);
 		expect(runtimesSource).toContain("Chat with and manage your agent in the Hermes Dashboard.");
 		expect(runtimesSource).toContain("already use OpenClaw and want its Control UI and workflows.");
@@ -100,13 +104,11 @@ describe("deploy wizard product copy and flow", () => {
 });
 
 describe("hosted agent security and copy", () => {
-	test("renders runtime secrets through the shared masked token control", () => {
+	test("masks the required Hermes password and keeps the OpenClaw token out of the page", () => {
 		expect(agentDetailSource).toContain(
-			'<TokenReveal label="Password" value={credentials.value.password} />',
+			'<TokenReveal label="Password" value={hermesCredentials.password} />',
 		);
-		expect(agentDetailSource).toContain(
-			'<TokenReveal label="Token" value={credentials.value.token} />',
-		);
+		expect(agentDetailSource).not.toContain('<TokenReveal label="Token"');
 		expect(agentDetailSource).not.toContain("hermes-password-");
 		expect(agentDetailSource).not.toContain("openclaw-token-");
 	});
@@ -150,6 +152,25 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).toContain("acceptedDeploymentNavigation(created.deploymentId)");
 		expect(wizardSource).toContain("acceptedDeploymentNavigation(outcome.deploymentId)");
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
+	});
+
+	test("keeps setup progress on the destination and bounds the payment-only notice", () => {
+		expect(wizardSource).not.toContain("Agent deployment started");
+		expect(wizardSource).not.toContain("agent is getting ready now");
+		expect(wizardSource).toContain('toast.success("Wallet payment confirmed"');
+		expect(wizardSource).toContain("toast.dismiss(WALLET_PAYMENT_TOAST_ID)");
+	});
+
+	test("keeps infrastructure vocabulary out of customer copy", () => {
+		expect(planComparisonSource).toContain("Always-on agent with TEE protection");
+		expect(planComparisonSource).toContain("Public ports for agent services");
+		expect(planComparisonSource).not.toContain("hosted runtime");
+		expect(planComparisonSource).not.toContain("runtime-owned services");
+		expect(addProviderDialogSource).toContain("Agent environment variable");
+		expect(addProviderDialogSource).not.toContain("Runtime mapping");
+		expect(addProviderDialogSource).not.toContain("Runtime env var");
+		expect(addProviderDialogLogicSource).not.toContain("manifest secret");
+		expect(addProviderDialogLogicSource).not.toContain("hosted runtime");
 	});
 });
 
@@ -223,7 +244,7 @@ describe("billing-read gates", () => {
 		expect(wizardSource).toContain("activeIncludedBasicSlot === null");
 		expect(wizardSource).toContain("Free Basic agent availability is unknown");
 		expect(wizardSource).toContain("No free agent is assumed.");
-		expect(wizardSource).toContain('title="Couldn\'t check deployment inventory"');
+		expect(wizardSource).toContain('title="Couldn\'t check existing agents"');
 		expect(wizardSource).toContain("onRetry={() => void deployments.refetch()}");
 		expect(wizardSource).toContain('title="Couldn\'t load compute plans"');
 		expect(wizardSource).toContain('title="Couldn\'t load your Wallet balance"');

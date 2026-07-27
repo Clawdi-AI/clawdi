@@ -310,7 +310,7 @@ export function useCreateWhatsappTenantCred(accountId: string) {
 			);
 			qc.invalidateQueries({ queryKey: keys.whatsappCreds(accountId) });
 			toast.success("WhatsApp access is ready", {
-				description: "Finish pairing from the agent runtime to link the number.",
+				description: "Open the agent’s Channels page to finish pairing the number.",
 			});
 		} catch (error) {
 			toastApiError("Couldn't link WhatsApp device")(error);

@@ -5,6 +5,9 @@ const agentChannels = readFileSync(
 	new URL("../../agents/hosted-agent-detail.tsx", import.meta.url),
 	"utf8",
 );
+const channelDetail = readFileSync(new URL("./channel-detail-page.tsx", import.meta.url), "utf8");
+const channelHooks = readFileSync(new URL("./channels-hooks.ts", import.meta.url), "utf8");
+const linkAgentDialog = readFileSync(new URL("./link-agent-dialog.tsx", import.meta.url), "utf8");
 
 describe("hosted-agent channel finish line", () => {
 	test("assembles the existing live health query into an honest automatic activity state", () => {
@@ -44,5 +47,16 @@ describe("hosted-agent channel finish line", () => {
 		expect(agentChannels).toContain("Choose a channel while you wait");
 		expect(agentChannels).not.toContain("minting its cloud agent id");
 		expect(agentChannels).not.toContain("shared-pool");
+	});
+
+	test("describes channel setup without infrastructure vocabulary", () => {
+		const customerCopy = `${channelDetail}\n${channelHooks}\n${linkAgentDialog}`;
+		expect(customerCopy).toContain("Open the agent’s Channels page");
+		expect(channelDetail).not.toContain("Mint a device credential");
+		expect(channelDetail).not.toContain("The agent runtime uses");
+		expect(channelDetail).not.toContain("The runtime returned");
+		expect(channelHooks).not.toContain('description: "Finish pairing from the agent runtime');
+		expect(linkAgentDialog).not.toContain("Finish device pairing from the agent runtime");
+		expect(linkAgentDialog).not.toContain("self-managed runtime that asks for it");
 	});
 });

@@ -831,7 +831,7 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 				title={WHATSAPP_LINKING_READY ? "Link a WhatsApp number" : "WhatsApp is coming soon"}
 			>
 				{WHATSAPP_LINKING_READY
-					? "WhatsApp uses no bot token. Mint a device credential for an agent, then finish the link by scanning it in WhatsApp -> Linked devices. The credential is handed to the agent runtime to complete pairing."
+					? "WhatsApp uses no bot token. Create secure access for an agent, then finish the link by scanning it in WhatsApp → Linked devices. The agent uses that access to complete pairing."
 					: WHATSAPP_COMING_SOON_MESSAGE}
 			</InfoCard>
 
@@ -1187,7 +1187,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 						<TokenReveal
 							label="Agent token"
 							value={visibleAgentToken}
-							note="Copy it now. It won't be shown again. The agent runtime uses this to send and receive on this channel."
+							note="Copy it now. It won't be shown again. The agent uses it to send and receive on this channel."
 						/>
 					) : null}
 				</div>
@@ -1465,7 +1465,7 @@ function CommandsTab({ accountId, provider }: { accountId: string; provider: str
 					) : sync.data ? (
 						<EmptyState
 							variant="inset"
-							description="Command sync completed. The runtime returned no commands to publish."
+							description="Command sync completed. The agent returned no commands to publish."
 						/>
 					) : null}
 				</>

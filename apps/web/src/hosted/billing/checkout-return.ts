@@ -61,12 +61,12 @@ export function useCheckoutReturnHandler({
 				const deploymentId = checkoutReturnDeploymentId(searchStr);
 				if (deploymentId && onNavigate(deploymentId) !== false) return;
 				toast.message("Checkout status refreshed", {
-					description: "We checked your deployments, subscription, and wallet.",
+					description: "We checked your agents, subscription, and wallet.",
 				});
 			})
 			.catch(() => {
 				toast.error("Couldn’t refresh checkout status", {
-					description: "Refresh the page to check your deployments, subscription, and wallet.",
+					description: "Refresh the page to check your agents, subscription, and wallet.",
 				});
 			});
 	}, [onCancelCopy, onNavigate, refreshCheckoutReturn, searchStr]);

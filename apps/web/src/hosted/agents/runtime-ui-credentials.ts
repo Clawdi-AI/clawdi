@@ -11,6 +11,10 @@ export interface OpenClawUiCredentials {
 	token: string;
 }
 
+export type ResolvedRuntimeUiCredentials =
+	| { runtime: "hermes"; value: HermesUiCredentials }
+	| { runtime: "openclaw"; value: OpenClawUiCredentials };
+
 type RuntimeWindow = {
 	close(): void;
 	location: { replace(url: string | URL): void };
@@ -41,7 +45,7 @@ function targetsPublishedEndpoint(credentialUrl: string, endpointUrl: string): b
 	}
 }
 
-export function hermesUiCredentials(
+function hermesUiCredentials(
 	credentials: RuntimeUiCredentials,
 	endpointUrl: string,
 ): HermesUiCredentials | null {
@@ -61,7 +65,7 @@ export function hermesUiCredentials(
 	};
 }
 
-export function openClawUiCredentials(
+function openClawUiCredentials(
 	credentials: RuntimeUiCredentials,
 	endpointUrl: string,
 ): OpenClawUiCredentials | null {
@@ -89,9 +93,14 @@ export function openClawUiCredentials(
 	}
 }
 
-export function openClawUiUrl(
+export function resolveRuntimeUiCredentials(
 	credentials: RuntimeUiCredentials,
 	endpointUrl: string,
-): string | null {
-	return openClawUiCredentials(credentials, endpointUrl)?.url ?? null;
+): ResolvedRuntimeUiCredentials | null {
+	if (credentials.runtime === "hermes") {
+		const value = hermesUiCredentials(credentials, endpointUrl);
+		return value ? { runtime: "hermes", value } : null;
+	}
+	const value = openClawUiCredentials(credentials, endpointUrl);
+	return value ? { runtime: "openclaw", value } : null;
 }

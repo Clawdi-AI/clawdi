@@ -12,6 +12,7 @@ import {
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
 	hasAgentTabQuery,
+	isAcceptedHostedAgentRoute,
 	parseAgentPathname,
 	parseAgentSectionSegment,
 } from "./agent-routes";
@@ -59,6 +60,26 @@ describe("agent routes", () => {
 		);
 	});
 
+	it("distinguishes a freshly accepted hosted route from normal and unknown routes", () => {
+		expect(isAcceptedHostedAgentRoute("hdep_accepted", "source=on-clawdi&setup=accepted")).toBe(
+			true,
+		);
+		expect(isAcceptedHostedAgentRoute("hdep_unknown", "source=on-clawdi")).toBe(false);
+		expect(
+			isAcceptedHostedAgentRoute(
+				"9f6e5c8f-5af3-55fe-97ab-c9eb3cd7859d",
+				"source=on-clawdi&setup=accepted",
+			),
+		).toBe(false);
+		expect(
+			isAcceptedHostedAgentRoute(
+				"hdep_accepted",
+				"source=on-clawdi&setup=accepted&d=hdep_accepted",
+			),
+		).toBe(false);
+		expect(isAcceptedHostedAgentRoute("hdep_unknown", undefined)).toBe(false);
+	});
+
 	it("parses only canonical section segments", () => {
 		expect(agentSectionSegment("projects")).toBe("project-access");
 		expect(parseAgentSectionSegment("project-access")).toBe("projects");
@@ -74,7 +95,9 @@ describe("agent routes", () => {
 
 	it("keeps labels and URL segments in one route table", () => {
 		expect(agentSectionLabel("projects")).toBe("Project Access");
+		expect(agentSectionLabel("console")).toBe("Agent Interface");
 		expect(agentSectionLabelFromSegment("project-access")).toBe("Project Access");
+		expect(agentSectionLabelFromSegment("console")).toBe("Agent Interface");
 		expect(agentSectionLabelFromSegment("model-provider")).toBe("Model Provider");
 		expect(agentSectionLabelFromSegment("settings")).toBe("Settings");
 		expect(agentSectionLabelFromSegment("bad")).toBeNull();

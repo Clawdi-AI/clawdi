@@ -208,7 +208,7 @@ describe("computeDunningState", () => {
 			}),
 		);
 		expect(unavailable?.description).toContain(
-			"can’t determine whether this deployment stopped or is using included Basic",
+			"can’t determine whether this agent stopped or is using included Basic",
 		);
 		expect(unavailable?.description).not.toContain("is now using included Basic");
 	});

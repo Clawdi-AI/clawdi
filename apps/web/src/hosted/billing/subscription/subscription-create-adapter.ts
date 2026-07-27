@@ -137,7 +137,7 @@ export function subscriptionCreateOutcome(result: CheckoutResult): SubscriptionC
 		flowType: "subscription_activation",
 		deploymentId: acceptDeclarativeOperation(
 			{ deploymentId: result.deployment_id, operation: null },
-			"Wallet activation did not accept a deployment target.",
+			"Wallet activation did not return an agent.",
 		).deploymentId,
 		deployRequestId: result.deploy_request_id ?? null,
 		currentPeriodEnd: result.current_period_end ?? null,

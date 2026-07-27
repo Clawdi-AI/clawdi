@@ -13,6 +13,7 @@ export type RouteSearchParamsRecord = Record<string, string | string[] | undefin
 export type AgentRouteQuery = string | URLSearchParams | RouteSearchParamsRecord | null | undefined;
 
 export const AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY = "d";
+const AGENT_ACCEPTED_SETUP_QUERY_KEY = "setup";
 
 export const CONNECTED_AGENT_SECTION_IDS = [
 	"overview",
@@ -50,7 +51,7 @@ const AGENT_SECTION_LABELS = {
 	sessions: "Sessions",
 	skills: "Skills",
 	projects: "Project Access",
-	console: "Runtime UI",
+	console: "Agent Interface",
 	terminal: "Terminal",
 	ai: "Model Provider",
 	channels: "Channel Links",
@@ -130,6 +131,21 @@ export function hasAgentTabQuery(query?: AgentRouteQuery): boolean {
 export function agentDeploymentSelector(query?: AgentRouteQuery): string | null {
 	const selector = agentRouteSearchParams(query).get(AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY)?.trim();
 	return selector || null;
+}
+
+/**
+ * The create flow initially routes by the accepted deployment id because the
+ * stable agent id does not exist yet. Once inventory catches up, normal hosted
+ * links carry a separate deployment selector and use the stable agent id.
+ */
+export function isAcceptedHostedAgentRoute(agentId: string, query?: AgentRouteQuery): boolean {
+	const params = agentRouteSearchParams(query);
+	return (
+		agentId.toLowerCase().startsWith("hdep_") &&
+		params.get("source") === "on-clawdi" &&
+		params.get(AGENT_ACCEPTED_SETUP_QUERY_KEY) === "accepted" &&
+		agentDeploymentSelector(params) === null
+	);
 }
 
 export function agentDeploymentRouteQuery(

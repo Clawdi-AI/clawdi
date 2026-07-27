@@ -182,7 +182,25 @@ const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const DEPLOY_MANAGED_AI_LABEL = "Managed AI";
 
 function acceptedDeploymentNavigation(deploymentId: string, replace = false) {
-	return { href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"), replace };
+	return {
+		href: agentSectionHref(deploymentId, "overview", "source=on-clawdi&setup=accepted"),
+		replace,
+	};
+}
+
+const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";
+const WALLET_PAYMENT_TOAST_DURATION_MS = 8_000;
+
+function showWalletPaymentConfirmation(amount: string) {
+	toast.success("Wallet payment confirmed", {
+		id: WALLET_PAYMENT_TOAST_ID,
+		description: `${amount} was paid from Wallet.`,
+		duration: Number.POSITIVE_INFINITY,
+	});
+	globalThis.setTimeout(
+		() => toast.dismiss(WALLET_PAYMENT_TOAST_ID),
+		WALLET_PAYMENT_TOAST_DURATION_MS,
+	);
 }
 
 const aiProviderErrorNormalizer: ApiErrorNormalizer = {
@@ -632,15 +650,10 @@ export function DeployWizard() {
 
 	function navigateToReusedSubscription({ deploymentId }: { deploymentId: string }) {
 		setCheckoutSession(null);
-		toast.success("Agent deployment started", {
-			description:
-				"Your active subscription was reused without another charge. Your agent is getting ready now.",
-		});
 		void router.navigate(acceptedDeploymentNavigation(deploymentId));
 	}
 	async function handleCheckoutComplete(
 		previousDeploymentIds: readonly string[],
-		tierLabel: "Basic" | "Performance",
 		request: SubscriptionCreateRequestView | null,
 	) {
 		setCheckoutSession(null);
@@ -662,9 +675,6 @@ export function DeployWizard() {
 					const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
 					forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 					checkoutAttemptRef.current = null;
-					toast.success("Agent deployment started", {
-						description: `Your ${tierLabel} agent is getting ready now.`,
-					});
 					void router.navigate(acceptedDeploymentNavigation(resolved.deploymentId, true));
 					return;
 				} catch (error) {
@@ -710,9 +720,6 @@ export function DeployWizard() {
 				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 				checkoutAttemptRef.current = null;
 			}
-			toast.success("Agent deployment started", {
-				description: `Your ${tierLabel} agent is getting ready now.`,
-			});
 			void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
 		} finally {
 			setSubmitting(false);
@@ -788,9 +795,11 @@ export function DeployWizard() {
 					}
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
 					walletCreateAttemptRef.current = null;
-					toast.success("Agent deployment started", {
-						description: `Your ${paidSelection.tierLabel} agent is getting ready now. ${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(paidSelection.offer.price_cents)} was paid from Wallet.`,
-					});
+					showWalletPaymentConfirmation(
+						walletDebit
+							? formatUsdExact(walletDebit.debitAmountUsd)
+							: formatCents(paidSelection.offer.price_cents),
+					);
 					void router.navigate(acceptedDeploymentNavigation(outcome.deploymentId));
 					return;
 				}
@@ -872,9 +881,6 @@ export function DeployWizard() {
 				});
 			forgetIdempotencyAttempt("deployment-create", fingerprint);
 			includedCreateAttemptRef.current = null;
-			toast.success("Agent deployment started", {
-				description: "Your first Basic agent is getting ready now for free.",
-			});
 			void router.navigate(acceptedDeploymentNavigation(created.deploymentId));
 		} catch (e) {
 			const normalized = normalizeBillingError(e);
@@ -1026,7 +1032,7 @@ export function DeployWizard() {
 						<TriangleAlert />
 						<AlertTitle>Agent software can’t be changed later</AlertTitle>
 						<AlertDescription>
-							To switch after deployment, you must delete this agent and deploy a new one.
+							To switch after creation, you must delete this agent and create a new one.
 						</AlertDescription>
 					</Alert>
 				</SettingsSection>
@@ -1186,7 +1192,7 @@ export function DeployWizard() {
 									normalizer={billingErrorNormalizer}
 									error={deployments.error}
 									onRetry={() => void deployments.refetch()}
-									title="Couldn't check deployment inventory"
+									title="Couldn't check existing agents"
 								/>
 							) : (
 								<p className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
@@ -1305,7 +1311,7 @@ export function DeployWizard() {
 								<div>
 									<div className="text-sm font-medium">Payment method</div>
 									<p className="text-xs text-muted-foreground">
-										Choose how this deployment renews. You can review the charge before paying.
+										Choose how this agent’s compute renews. You can review the charge before paying.
 									</p>
 								</div>
 								<div className="grid gap-2 sm:grid-cols-2">
@@ -1591,7 +1597,6 @@ export function DeployWizard() {
 				onComplete={() =>
 					void handleCheckoutComplete(
 						checkoutSession?.previousDeploymentIds ?? [],
-						checkoutSession?.tierLabel ?? "Basic",
 						checkoutSession?.request ?? null,
 					)
 				}

@@ -130,7 +130,7 @@ describe("subscription creation adapter", () => {
 			entitledUntil: "2027-07-16T00:00:00Z",
 		});
 		expect(() => subscriptionCreateOutcome({ ...activation, deployment_id: null })).toThrow(
-			"Wallet activation did not accept a deployment target.",
+			"Wallet activation did not return an agent.",
 		);
 	});
 });

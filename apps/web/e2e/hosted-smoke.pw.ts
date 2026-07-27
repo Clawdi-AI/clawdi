@@ -1547,6 +1547,12 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 
 	await page.getByRole("button", { name: "Deploy agent" }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
+	await expect.poll(() => new URL(page.url()).searchParams.get("setup")).toBe("accepted");
+	await expect(page.getByTestId("accepted-agent-setup")).toBeVisible();
+	await expect(page.getByText("Setting up your agent", { exact: true }).first()).toBeVisible();
+	await expect(page.getByText("Agent unavailable", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
+	await expect(page.locator("body")).not.toContainText("hdep_included_created");
 	expect(convergencePollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 	expect(createDeploymentRequests).toHaveLength(1);
@@ -1831,7 +1837,7 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: "Check again", exact: true })).toBeVisible();
 
@@ -1942,7 +1948,7 @@ test("failed deployment with a retained projection keeps status-authoritative na
 	await expect(main.getByRole("button", { name: "Retry startup", exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: "Delete", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Sessions", exact: true })).toBeVisible();
 
 	expect(restartRequests).toEqual([]);
@@ -1970,7 +1976,7 @@ test("missing live projection recovers on Check again without losing deployment 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect(main.getByText("Some agent details are not ready", { exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Check again", exact: true }).click();
 	await expect(main.getByText("Some agent details are not ready", { exact: true })).toHaveCount(0);
@@ -1992,7 +1998,7 @@ test("projection service errors stay visible while deployment tools remain avail
 	await page.goto(`/agents/${missingProjectionEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
 	await expect(main.getByText("Couldn’t load all agent details", { exact: true })).toBeVisible();
-	await expect(page.getByRole("link", { name: "Runtime UI", exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Agent Interface", exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Terminal", exact: true })).toBeVisible();
 	const renderErrors = errors.filter(
 		(error) => error.includes("Maximum update depth") || error.includes("Too many re-renders"),
@@ -2043,17 +2049,16 @@ test("deployment detail stays put, becomes ready, and keeps manual Runtime UI ac
 	expect(runtimeUiRedemptionRequests).toEqual([]);
 	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveCount(0);
 
-	await page.getByRole("link", { name: "Runtime UI", exact: true }).click();
+	await page.getByRole("link", { name: "Agent Interface", exact: true }).click();
 	await expect(page).toHaveURL(
 		(url) =>
 			url.pathname === `/agents/${pendingRuntimeUiDeployment.id}/console` &&
 			url.searchParams.get("source") === "on-clawdi" &&
 			url.searchParams.get("d") === pendingRuntimeUiDeployment.id,
 	);
-	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
-		"src",
-		"https://runtime.example/hermes",
-	);
+	await expect(main.locator("iframe")).toHaveCount(0);
+	await expect(main.getByText("Open in a new window", { exact: true })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Open Hermes Dashboard" })).toBeVisible();
 });
 
 test("Runtime UI credential failure renders a retryable error instead of a permanent spinner", async ({
@@ -2080,16 +2085,20 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 
 	await page.goto(`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
-		"src",
-		"https://runtime.example/hermes",
-	);
-	await expect(main.getByRole("button", { name: "Open in new window", exact: true })).toBeVisible();
-	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
+	await expect(main.locator("iframe")).toHaveCount(0);
+	const failedPopupPromise = page.waitForEvent("popup");
+	await main.getByRole("button", { name: "Open Hermes Dashboard" }).click();
+	await failedPopupPromise;
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
-	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toBeVisible();
-	await main.getByRole("button", { name: "Retry", exact: true }).click();
-	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Couldn't open Hermes Dashboard", { exact: true })).toBeVisible();
+	await expect(page.getByText("credentials temporarily unavailable", { exact: true })).toHaveCount(
+		0,
+	);
+	const recoveredPopupPromise = page.waitForEvent("popup");
+	await page.getByRole("button", { name: "Try again", exact: true }).click();
+	await recoveredPopupPromise;
+	await expect(page.getByText("Couldn't open Hermes Dashboard", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Hermes sign-in details", { exact: true })).toBeVisible();
 	const passwordValue = main.locator("code");
 	await expect(passwordValue).toHaveText("••••••••••••");
 	await expect(passwordValue).not.toContainText("recovered-password");
@@ -2118,20 +2127,13 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 
 	await page.goto("/agents/hdep_openclaw_included/console?source=on-clawdi");
 	const main = page.locator("main");
-	await expect(main.locator('iframe[title="OpenClaw Control UI"]')).toHaveAttribute(
-		"src",
-		"https://runtime.example/openclaw/#token=gateway-token",
-	);
-	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
-	const tokenValue = main.locator("code");
-	await expect(tokenValue).toHaveText("••••••••••••");
-	await expect(tokenValue).not.toContainText("gateway-token");
-	await main.getByRole("button", { name: "Show Token", exact: true }).click();
-	await expect(tokenValue).toHaveText("gateway-token");
+	await expect(main.locator("iframe")).toHaveCount(0);
+	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
 	const popupPromise = page.waitForEvent("popup");
 	await main.getByRole("button", { name: "Open OpenClaw Control UI" }).click();
 	const popup = await popupPromise;
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
+	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
 	expect(popup).toBeDefined();
 });
 
@@ -2189,7 +2191,7 @@ test("shared legacy environment routes an older tile's actions to its deployment
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_shared_older"]);
 });
 
-test("shared legacy environment direct route asks the user to choose a deployment", async ({
+test("shared legacy environment direct route asks the user to choose an agent", async ({
 	page,
 }) => {
 	await stubHostedApi(page, {
@@ -2198,7 +2200,7 @@ test("shared legacy environment direct route asks the user to choose a deploymen
 
 	await page.goto(`/agents/${sharedLegacyEnvironmentId}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByRole("heading", { name: "Choose a deployment" })).toBeVisible();
+	await expect(main.getByRole("heading", { name: "Choose an agent" })).toBeVisible();
 	const newerChoice = main.getByRole("link", { name: "Open Newer twin" });
 	const olderChoice = main.getByRole("link", { name: "Open Older twin" });
 	await expect(newerChoice).toContainText("Running");
@@ -2289,7 +2291,7 @@ test("entitled card subscription activation opens the accepted deployment withou
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
 	await expect.poll(() => checkoutRequests.length).toBe(1);
 	await expect(page).toHaveURL(/\/agents\/hdep_included(?:\?|\/)/);
-	await expect(page.getByText("Agent deployment started", { exact: true })).toBeVisible();
+	await expect(page.getByText("Agent deployment started", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("dialog", { name: /Complete .* checkout/ })).toHaveCount(0);
 	await expect(page.getByText("Mock secure payment form", { exact: true })).toHaveCount(0);
 	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({
@@ -2423,12 +2425,10 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 		},
 	});
 	await expect(page).toHaveURL(/\/agents\/hdep_wallet_created(?:\?|\/)/);
-	await expect(page.getByText("Agent deployment started", { exact: true })).toBeVisible();
-	await expect(
-		page.getByText("Your Basic agent is getting ready now. $100.00 was paid from Wallet.", {
-			exact: true,
-		}),
-	).toBeVisible();
+	await expect(page.getByText("Wallet payment confirmed", { exact: true })).toBeVisible();
+	await expect(page.getByText("$100.00 was paid from Wallet.", { exact: true })).toBeVisible();
+	await page.waitForTimeout(8_500);
+	await expect(page.getByText("Wallet payment confirmed", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Agent deployed", { exact: true })).toHaveCount(0);
 	expect(errors, `wallet annual deploy: ${errors.join(" | ")}`).toEqual([]);
 });

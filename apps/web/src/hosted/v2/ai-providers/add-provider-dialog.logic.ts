@@ -282,7 +282,7 @@ function apiKeyHelpText(kind: ApiKeyKeepKind | undefined): string {
 	if (kind === "managed") {
 		return "Leave blank to keep the current managed key. Enter a key to replace it.";
 	}
-	return "Stored encrypted for the hosted runtime and delivered as a manifest secret. The dashboard will not show it again.";
+	return "Clawdi stores this key encrypted and securely gives it to your agent. The dashboard will not show it again.";
 }
 
 function normalizeLabel(value: string | null | undefined): string | null {
