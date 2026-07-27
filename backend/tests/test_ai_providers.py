@@ -7,6 +7,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
@@ -1919,7 +1920,6 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
 
 
 @pytest.mark.asyncio
-@pytest.mark.committed_db
 async def test_oauth_accept_persists_pending_then_completes_same_provider_idempotently(
     client: httpx.AsyncClient,
     db_session,
@@ -1927,6 +1927,16 @@ async def test_oauth_accept_persists_pending_then_completes_same_provider_idempo
     monkeypatch: pytest.MonkeyPatch,
 ):
     user_id = seed_user.id
+    connection = await db_session.connection()
+    completion_session_factory = async_sessionmaker(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    monkeypatch.setattr(
+        "app.routes.ai_providers.async_session_factory",
+        completion_session_factory,
+    )
     previous = settings.ai_provider_oauth_config_json
     settings.ai_provider_oauth_config_json = json.dumps(
         {
