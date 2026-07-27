@@ -219,30 +219,30 @@ test("dashboard sidebar primitives run without browser errors", async ({ page })
 	await expectNoBrowserErrors(page, browserErrors, "settings select");
 });
 
-test("agent rail exposes current order and supports keyboard sorting", async ({ page }) => {
+test("agent rail supports whole-tile sorting without drag handles", async ({ page }) => {
 	const agentOrderRequests: string[] = [];
 	await stubDashboardApi(page, agentOrderRequests);
 	await page.goto("/");
 
-	const firstHandle = page.getByRole("button", {
-		name: "Reorder Smoke Codex · Codex, position 1 of 2",
-		exact: true,
+	const tiles = page.getByTestId("app-sidebar-agent-tile");
+	await expect(tiles).toHaveCount(2, { timeout: 15_000 });
+	await expect(page.getByRole("button", { name: /^Reorder / })).toHaveCount(0);
+	const source = tiles.filter({ hasText: "Smoke Codex" }).locator("a");
+	const target = tiles.filter({ hasText: "Smoke Hermes" }).locator("a");
+	const sourceBox = await source.boundingBox();
+	const targetBox = await target.boundingBox();
+	if (!sourceBox || !targetBox) throw new Error("Agent rail tiles are not draggable.");
+
+	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+		steps: 10,
 	});
-	await expect(firstHandle).toBeVisible();
-	await firstHandle.focus();
-	await expect(firstHandle).toBeFocused();
-	await page.keyboard.press("Space");
-	await page.keyboard.press("ArrowDown");
-	await page.keyboard.press("Space");
+	await page.mouse.up();
 
 	await expect.poll(() => agentOrderRequests.length).toBe(1);
 	expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
 		agent_ids: ["agent-smoke-2", "agent-smoke-1"],
 	});
-	await expect(
-		page.getByRole("button", {
-			name: "Reorder Smoke Codex · Codex, position 2 of 2",
-			exact: true,
-		}),
-	).toBeVisible();
+	await expect(tiles.nth(0)).toContainText("Smoke Hermes");
 });
