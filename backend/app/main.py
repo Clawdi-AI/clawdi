@@ -193,6 +193,7 @@ app.add_middleware(
         "X-Correlation-ID",
         "X-Clawdi-Environment-Id",
         "X-Clawdi-Token",
+        "Idempotency-Key",
         # `If-None-Match` carries the daemon's last seen
         # `skills_revision` for the conditional GET /v1/skills.
         # The CLI daemon hits this without going through CORS, so

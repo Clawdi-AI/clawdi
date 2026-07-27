@@ -74,6 +74,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ai-providers/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept Ai Provider
+         * @description Atomically create a provider and its first usable auth state.
+         */
+        post: operations["accept_ai_provider_v1_ai_providers_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/ai-providers/{provider_id}": {
         parameters: {
             query?: never;
@@ -172,6 +192,26 @@ export interface paths {
         put?: never;
         /** Complete Ai Provider Oauth */
         post: operations["complete_ai_provider_oauth_v1_ai_providers__provider_id__auth_oauth_complete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai-providers/{provider_id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete Ai Provider Accept
+         * @description Complete an OAuth-pending provider without spanning remote I/O with a DB session.
+         */
+        post: operations["complete_ai_provider_accept_v1_ai_providers__provider_id__accept_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2796,6 +2836,13 @@ export interface components {
             /** Default Project Id */
             default_project_id: string;
         };
+        /** AiProviderAcceptRequest */
+        AiProviderAcceptRequest: {
+            provider: components["schemas"]["AiProviderUpsert"];
+            /** Credential */
+            credential: components["schemas"]["AiProviderApiKeyAcceptCredential"] | components["schemas"]["AiProviderOAuthAcceptCredential"];
+        };
+        AiProviderAcceptResponse: components["schemas"]["AiProviderReadyAcceptResponse"] | components["schemas"]["AiProviderOAuthPendingAcceptResponse"];
         /** AiProviderAgentProfileAuth */
         AiProviderAgentProfileAuth: {
             /**
@@ -2827,6 +2874,19 @@ export interface components {
             type: "agent_profile";
             /** Tool */
             tool: string;
+        };
+        /** AiProviderApiKeyAcceptCredential */
+        AiProviderApiKeyAcceptCredential: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "api_key";
+            /**
+             * Value
+             * Format: password
+             */
+            value: string;
         };
         AiProviderApiKeyAuth: components["schemas"]["AiProviderEnvApiKeyAuth"] | components["schemas"]["AiProviderVaultApiKeyAuth"] | components["schemas"]["AiProviderManagedApiKeyAuth"];
         AiProviderAuth: components["schemas"]["AiProviderSecretRefAuth"] | components["schemas"]["AiProviderApiKeyAuth"] | components["schemas"]["AiProviderOAuthProfileAuth"] | components["schemas"]["AiProviderAgentProfileAuth"] | components["schemas"]["AiProviderNoneAuth"];
@@ -2981,6 +3041,18 @@ export interface components {
              */
             type: "none";
         };
+        /** AiProviderOAuthAcceptCredential */
+        AiProviderOAuthAcceptCredential: {
+            /** Provider */
+            provider: string;
+            /** Redirect Uri */
+            redirect_uri?: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "oauth";
+        };
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {
             /** State */
@@ -2989,6 +3061,16 @@ export interface components {
             code: string;
             /** Redirect Uri */
             redirect_uri?: string | null;
+        };
+        /** AiProviderOAuthPendingAcceptResponse */
+        AiProviderOAuthPendingAcceptResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "pending";
+            provider: components["schemas"]["AiProviderResponse"];
+            authorization: components["schemas"]["AiProviderOAuthStartResponse"];
         };
         /** AiProviderOAuthProfileAuth */
         AiProviderOAuthProfileAuth: {
@@ -3070,6 +3152,15 @@ export interface components {
             } | null;
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
+        };
+        /** AiProviderReadyAcceptResponse */
+        AiProviderReadyAcceptResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "ready";
+            provider: components["schemas"]["AiProviderResponse"];
         };
         /** AiProviderResponse */
         AiProviderResponse: {
@@ -7053,6 +7144,41 @@ export interface operations {
             };
         };
     };
+    accept_ai_provider_v1_ai_providers_accept_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderAcceptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderAcceptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_ai_provider_v1_ai_providers__provider_id__get: {
         parameters: {
             query?: never;
@@ -7308,6 +7434,43 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    complete_ai_provider_accept_v1_ai_providers__provider_id__accept_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+            };
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderOAuthCompleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderReadyAcceptResponse"];
                 };
             };
             /** @description Validation Error */
