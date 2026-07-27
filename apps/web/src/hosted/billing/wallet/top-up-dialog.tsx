@@ -50,6 +50,11 @@ import {
 type Step = "amount" | "pay";
 type TopUpPresentation = "dialog" | "inline";
 
+export interface TopUpCompletionContext {
+	amountCents: number;
+	paymentStartedAtMs: number;
+}
+
 export function TopUpDialog({
 	open,
 	onOpenChange,
@@ -59,7 +64,7 @@ export function TopUpDialog({
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	onComplete?: (status: "succeeded" | "processing") => void;
+	onComplete?: (status: "succeeded" | "processing", context: TopUpCompletionContext) => void;
 	initialAmountCents?: number | null;
 	presentation?: TopUpPresentation;
 }) {
@@ -77,6 +82,7 @@ export function TopUpDialog({
 	// Reset whenever the amount changes (a genuinely new attempt) or the flow
 	// closes.
 	const topupKeyRef = useRef<string | null>(null);
+	const paymentStartedAtRef = useRef<number | null>(null);
 
 	const amountCents = Number(dollars) * 100;
 	const valid = validTopUpAmountCents(amountCents);
@@ -87,6 +93,7 @@ export function TopUpDialog({
 		setAmountTouched(false);
 		// New amount = new attempt; mint a fresh key on the next Continue.
 		topupKeyRef.current = null;
+		paymentStartedAtRef.current = null;
 	}
 
 	function reset() {
@@ -95,6 +102,7 @@ export function TopUpDialog({
 		setAmountTouched(false);
 		setPaymentSubmitting(false);
 		topupKeyRef.current = null;
+		paymentStartedAtRef.current = null;
 	}
 
 	function close(next: boolean) {
@@ -114,6 +122,7 @@ export function TopUpDialog({
 		// double-click could slip a second request through before it repaints.
 		if (!valid || topUp.isPending) return;
 		setAmountTouched(true);
+		paymentStartedAtRef.current ??= Date.now();
 		topupKeyRef.current ??= newIdempotencyKey("topup");
 		try {
 			const result = await topUp.execute({
@@ -131,9 +140,13 @@ export function TopUpDialog({
 					reset();
 					onOpenChange(false);
 				},
-				toastSuccess: toast.success,
+				toastInfo: toast.info,
 				toastError: toast.error,
-				onComplete,
+				onComplete: (status) =>
+					onComplete?.(status, {
+						amountCents,
+						paymentStartedAtMs: paymentStartedAtRef.current ?? Date.now(),
+					}),
 				startPayment: (nextClientSecret) => {
 					setClientSecret(nextClientSecret);
 					setStep("pay");
@@ -141,7 +154,10 @@ export function TopUpDialog({
 			});
 		} catch (e) {
 			const reused = isIdempotencyKeyReusedError(e);
-			if (reused) topupKeyRef.current = null;
+			if (reused) {
+				topupKeyRef.current = null;
+				paymentStartedAtRef.current = null;
+			}
 			toast.error(reused ? "Start a fresh top-up" : "Couldn’t start top-up", {
 				description: normalizeBillingError(e),
 			});
@@ -161,8 +177,12 @@ export function TopUpDialog({
 				topupKeyRef.current = null;
 			},
 			closeDialog: () => onOpenChange(false),
-			toastSuccess: toast.success,
-			onComplete,
+			toastInfo: toast.info,
+			onComplete: (nextStatus) =>
+				onComplete?.(nextStatus, {
+					amountCents,
+					paymentStartedAtMs: paymentStartedAtRef.current ?? Date.now(),
+				}),
 		});
 	}
 

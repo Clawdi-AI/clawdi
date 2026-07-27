@@ -44,9 +44,9 @@ export function cleanWalletTopupReturnUrl(currentHref: string): string {
 export function walletTopupReturnToast(status: string | null | undefined): WalletTopupReturnToast {
 	if (status === "succeeded") {
 		return {
-			kind: "success",
-			title: "Top-up complete",
-			description: "Your Wallet balance will update in a moment.",
+			kind: "info",
+			title: "Payment accepted",
+			description: "We're confirming your Wallet credit now.",
 		};
 	}
 	if (status === "processing") {
@@ -65,7 +65,8 @@ export function walletTopupReturnToast(status: string | null | undefined): Walle
 	}
 	return {
 		kind: "info",
-		title: "Top-up status refreshed",
-		description: "We'll update your wallet when Stripe reports the final status.",
+		title: "Top-up status unknown",
+		description:
+			"We couldn't confirm whether Stripe finished the payment. We won't charge it again.",
 	};
 }

@@ -15,7 +15,7 @@ export interface TopupCompletionControls {
 	queryClient: QueryClient;
 	resetAttempt: () => void;
 	closeDialog: () => void;
-	toastSuccess: TopupToast;
+	toastInfo: TopupToast;
 	onComplete?: (status: TopupCompletionStatus) => void;
 }
 
@@ -60,11 +60,11 @@ export function completeTopup(
 	controls.resetAttempt();
 	controls.onComplete?.(status);
 	if (status === "succeeded") {
-		controls.toastSuccess("Top-up complete", {
-			description: "Your balance and any open wallet invoice will update automatically.",
+		controls.toastInfo("Payment accepted", {
+			description: "We're confirming your Wallet credit now.",
 		});
 	} else {
-		controls.toastSuccess("Top-up processing", {
+		controls.toastInfo("Payment processing", {
 			description: "We'll credit your wallet once the payment settles.",
 		});
 	}

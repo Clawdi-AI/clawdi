@@ -35,11 +35,11 @@ describe("wallet top-up return URL helpers", () => {
 });
 
 describe("walletTopupReturnToast", () => {
-	test("maps succeeded to success copy", () => {
+	test("maps succeeded to accepted copy while Wallet credit is still unconfirmed", () => {
 		expect(walletTopupReturnToast("succeeded")).toEqual({
-			kind: "success",
-			title: "Top-up complete",
-			description: "Your Wallet balance will update in a moment.",
+			kind: "info",
+			title: "Payment accepted",
+			description: "We're confirming your Wallet credit now.",
 		});
 	});
 
