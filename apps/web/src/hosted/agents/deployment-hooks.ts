@@ -222,9 +222,7 @@ export function useDeleteDeployment() {
 		onSuccess: (accepted) => {
 			projectAcceptedDeploymentTransition(qc, accepted);
 			retireRuntimeWindows(accepted.deploymentId);
-			toast.message("Agent removal started", {
-				description: "Cleanup continues in the background.",
-			});
+			toast.message("Agent removed");
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;

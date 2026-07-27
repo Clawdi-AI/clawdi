@@ -1689,7 +1689,7 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
 	await expect(page).toHaveURL(/\/agents\/?$/);
-	await expect(page.getByText("Agent removal started", { exact: true })).toBeVisible();
+	await expect(page.getByText("Agent removed", { exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Open Basic", exact: true })).toHaveCount(0);
 	await expect(page.getByTestId("app-sidebar-agent-tiles").getByLabel("Basic")).toHaveCount(0);
 	// The deployment is still in the stubbed inventory as `deleting`; dismissal

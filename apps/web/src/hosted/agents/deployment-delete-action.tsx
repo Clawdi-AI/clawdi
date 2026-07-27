@@ -84,9 +84,8 @@ export function HostedDeploymentDeleteAction({
 			await onAccepted?.();
 		} catch (error) {
 			if (deletionAccepted) {
-				toast.error("Agent removal started, but the page did not move", {
-					description:
-						"Removal continues in the background. Use Agents in the sidebar to check its status.",
+				toast.error("Agent removed, but navigation failed", {
+					description: "Use Agents in the sidebar to check its status.",
 				});
 			} else if (offerChoice && choice === "cancel_subscription") {
 				if (cancellationState.recorded) {
