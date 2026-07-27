@@ -891,13 +891,8 @@ function SortableAgentRailItem({
 		kind === "legacy"
 			? `Legacy · ${agentTextLabel(identity, { includeSource: false, ownershipKind: kind })}`
 			: agentTextLabel(identity, { includeSource: kind === "cloud", ownershipKind: kind });
-	const identityLabel = [baseIdentityLabel, agent.contextLabel].filter(Boolean).join(" · ");
-	const statusLabel =
-		kind === "cloud"
-			? [agent.statusLabel, agent.secondaryStatus?.label].filter(Boolean).join(" · ")
-			: null;
-	const label = statusLabel ? `${identityLabel} · ${statusLabel}` : identityLabel;
-	const caption = displayMachineName(agent.contextLabel ?? agent.name);
+	const label = kind === "cloud" ? agent.name : baseIdentityLabel;
+	const caption = displayMachineName(agent.name);
 	const style: React.CSSProperties = {
 		transform: CSS.Transform.toString(transform),
 		transition: isDragging ? undefined : transition,
@@ -1247,8 +1242,6 @@ function FocusHeader({
 	activeAgentKind: AgentChromeKind;
 	activeAgentId: string | null;
 }) {
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const routeQuery = agentDeploymentRouteQuery(searchStr);
 	if (!activeAgent && !activeAgentId) {
 		return (
 			<div className="min-w-0">
@@ -1281,23 +1274,22 @@ function FocusHeader({
 		);
 	}
 
-	const name = activeAgent
-		? agentDisplayName(activeAgent)
-		: (activeAgentTile?.name ?? "Clawdi Cloud agent");
+	const name =
+		activeAgentTile?.name ?? (activeAgent ? agentDisplayName(activeAgent) : "Clawdi Cloud agent");
 	const displayName = displayMachineName(name);
-	const meta = activeAgent ? agentHeaderMeta(activeAgent, activeAgentKind) : null;
-	const contextLabel = activeAgentTile?.contextLabel ?? null;
+	const meta =
+		activeAgentKind !== "cloud" && activeAgent
+			? agentHeaderMeta(activeAgent, activeAgentKind)
+			: null;
 	const activityLabel = meta?.activityLabel ?? "Agent details unavailable";
-	const visibleLabel = meta?.visibleLabel ?? hostedAgentDisplayLabel(activeAgentTile?.agentType);
-	const detailLabel = [contextLabel, meta?.detailLabel ?? visibleLabel].filter(Boolean).join(" · ");
-	const title = [name, detailLabel, activityLabel].filter(Boolean).join(" · ");
-	const manageHref =
+	const visibleLabel = meta?.visibleLabel;
+	const detailLabel = meta?.detailLabel;
+	const title =
 		activeAgentKind === "cloud"
-			? (activeAgentTile?.manageHref ??
-				agentSectionHref(activeAgentId ?? activeAgent?.id ?? "", "settings", routeQuery))
-			: activeAgentKind === "legacy"
-				? (legacyHostedDashboardUrl() ?? undefined)
-				: undefined;
+			? name
+			: [name, detailLabel, activityLabel].filter(Boolean).join(" · ");
+	const manageHref =
+		activeAgentKind === "legacy" ? (legacyHostedDashboardUrl() ?? undefined) : undefined;
 	return (
 		<div className="min-w-0 text-left">
 			<div className="flex min-w-0 items-center gap-2" title={title}>
@@ -1318,78 +1310,30 @@ function FocusHeader({
 			</div>
 			{visibleLabel ? (
 				<div className="mt-1 truncate text-xs leading-4 text-muted-foreground" title={detailLabel}>
-					{[contextLabel, visibleLabel].filter(Boolean).join(" · ")}
+					{visibleLabel}
 				</div>
 			) : null}
-			<div
-				className={cn(
-					"mt-2 flex min-w-0 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4",
-					activeAgentKind === "cloud"
-						? "flex-col items-start gap-0.5"
-						: "items-center justify-between gap-2",
-				)}
-			>
-				{/* Legacy agents share the hosted copy variant (supervised
-				 * daemon, no CLI steps), while remediation stays in the legacy
-				 * v1 dashboard when that URL is configured. */}
-				{activeAgentKind === "cloud" && activeAgentTile ? (
-					<HostedFocusTileStatus tile={activeAgentTile} />
-				) : activeAgent ? (
-					<DaemonStatusBadge
-						env={activeAgent}
-						source={activeAgentKind === "legacy" ? "on-clawdi" : "self-managed"}
-						manageHref={manageHref}
-						compact
-						tooltipDetail={detailLabel}
-					/>
-				) : (
-					<FocusStatusFallback />
-				)}
-				<span
-					className={cn(
-						"min-w-0 truncate text-muted-foreground",
-						activeAgentKind === "cloud" && "w-full pl-3.5",
+			{activeAgentKind !== "cloud" ? (
+				<div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
+					{/* Legacy agents use hosted daemon copy and keep remediation in
+					 * the legacy v1 dashboard when that URL is configured. */}
+					{activeAgent ? (
+						<DaemonStatusBadge
+							env={activeAgent}
+							source={activeAgentKind === "legacy" ? "on-clawdi" : "self-managed"}
+							manageHref={manageHref}
+							compact
+							tooltipDetail={detailLabel}
+						/>
+					) : (
+						<FocusStatusFallback />
 					)}
-					title={activityLabel}
-				>
-					{activityLabel}
-				</span>
-			</div>
-		</div>
-	);
-}
-
-function hostedAgentDisplayLabel(agentType: string | null | undefined): string {
-	return agentType ? agentTypeLabel(agentType) : "Clawdi Cloud agent";
-}
-
-function HostedFocusTileStatus({ tile }: { tile: AgentTile }) {
-	return (
-		<span
-			className="flex w-full min-w-0 items-start gap-1.5 text-muted-foreground"
-			title={tile.secondaryStatus?.title ?? tile.statusLabel}
-		>
-			<StatusDot
-				status={tile.statusDot?.tone ?? "neutral"}
-				className={cn(
-					"mt-1 shrink-0",
-					tile.statusDot?.tone ? undefined : "border border-muted-foreground/50 bg-transparent",
-				)}
-			/>
-			<span className="min-w-0 flex-1">
-				<span>{tile.statusLabel}</span>
-				{tile.secondaryStatus ? (
-					<span
-						className={cn(
-							"block whitespace-normal break-words [overflow-wrap:anywhere]",
-							tile.secondaryStatus.textClass ?? "text-muted-foreground",
-						)}
-					>
-						{tile.secondaryStatus.label}
+					<span className="min-w-0 truncate text-muted-foreground" title={activityLabel}>
+						{activityLabel}
 					</span>
-				) : null}
-			</span>
-		</span>
+				</div>
+			) : null}
+		</div>
 	);
 }
 

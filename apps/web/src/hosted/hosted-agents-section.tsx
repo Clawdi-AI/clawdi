@@ -64,10 +64,9 @@ export function HostedAgentsSection({
 	/**
 	 * Cloud-api environments the parent already fetched for the
 	 * self-managed grid. Passed through so hosted tiles can join
-	 * to their daemon-sync row using the stored environment id projected
-	 * by the deploy API and render the same status badge
-	 * as self-managed tiles. Empty/missing envs is harmless — the
-	 * matched-env lookup falls back to null and the tile still renders.
+	 * avatar and sort metadata using the stored environment id projected
+	 * by the deploy API. Empty/missing envs is harmless — the tile still
+	 * renders from the deployment identity.
 	 */
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;

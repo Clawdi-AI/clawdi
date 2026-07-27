@@ -2164,10 +2164,15 @@ test("shared legacy environment routes an older tile's actions to its deployment
 
 	await page.goto("/agents");
 	const agents = page.locator("main");
-	const newerTile = agents.getByRole("link").filter({ hasText: "Newer twin" });
-	const olderTile = agents.getByRole("link").filter({ hasText: "Older twin" });
+	const newerTile = agents.getByRole("link", { name: "Open Newer twin", exact: true });
+	const olderTile = agents.getByRole("link", { name: "Open Older twin", exact: true });
 	await expect(newerTile).toBeVisible();
 	await expect(olderTile).toBeVisible();
+	await expect(newerTile.locator("..").getByText("Running", { exact: true })).toHaveCount(0);
+	await expect(olderTile.locator("..").getByText("Stopped", { exact: true })).toHaveCount(0);
+	const rail = page.getByTestId("app-sidebar-agent-tiles");
+	await expect(rail.getByLabel("Newer twin", { exact: true })).toBeVisible();
+	await expect(rail.getByLabel("Older twin", { exact: true })).toBeVisible();
 	await olderTile.click();
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(page).toHaveURL(

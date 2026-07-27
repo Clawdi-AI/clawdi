@@ -53,6 +53,13 @@ function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = [])
 	);
 }
 
+function expectHostedTileHasNoStatus(tile: ReturnType<DeploymentToTiles>[number] | undefined) {
+	expect(tile).toBeDefined();
+	for (const field of ["statusLabel", "statusDot", "secondaryStatus", "contextLabel"] as const) {
+		expect(field in (tile ?? {})).toBe(false);
+	}
+}
+
 function resolveAgentDeployment(
 	deployments: readonly HostedDeployment[],
 	environmentId: string,
@@ -163,13 +170,12 @@ describe("deploymentToTiles", () => {
 
 		expect(tiles.map((tile) => tile.agentType)).toEqual(["openclaw"]);
 		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
+		expect(tiles.map((tile) => tile.name)).toEqual(["hosted-test"]);
 		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi&d=dep_123`);
-		expect(tiles[0]?.manageHref).toBe(
-			`/agents/${openclawEnv.id}/settings?source=on-clawdi&d=dep_123`,
-		);
+		expectHostedTileHasNoStatus(tiles[0]);
 	});
 
-	test("projects dunning state as the hosted tile secondary status", () => {
+	test("keeps dunning state off the hosted tile", () => {
 		const [tile] = hostedDeploymentToTiles(
 			deployment({
 				computePlanSlug: "compute_basic",
@@ -191,14 +197,10 @@ describe("deploymentToTiles", () => {
 			}),
 		);
 
-		expect(tile?.secondaryStatus).toEqual({
-			label: "Payment action required",
-			title: "Complete payment authentication to keep Basic compute active.",
-			textClass: "text-warning-muted-foreground",
-		});
+		expectHostedTileHasNoStatus(tile);
 	});
 
-	test("projects client-owned failure copy ahead of dunning state", () => {
+	test("keeps backend failure detail off the hosted tile", () => {
 		const [tile] = hostedDeploymentToTiles(
 			deployment({
 				status: "failed",
@@ -221,11 +223,7 @@ describe("deploymentToTiles", () => {
 			}),
 		);
 
-		expect(tile?.secondaryStatus).toEqual({
-			label: "Failure: The Clawdi service could not complete this request.",
-			title: "The Clawdi service could not complete this request.",
-			textClass: "text-destructive-muted-foreground font-medium",
-		});
+		expectHostedTileHasNoStatus(tile);
 	});
 
 	test("links by deployment env identity when the cloud-api projection is missing", () => {
@@ -237,16 +235,11 @@ describe("deploymentToTiles", () => {
 		expect(tile).toMatchObject({
 			id: "dep_123",
 			source: "on-clawdi",
+			name: "hosted-test",
 			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
 			env: null,
-			contextLabel: "hosted-test",
-			secondaryStatus: {
-				label: "Failure: The Clawdi service could not complete this request.",
-				title: "The Clawdi service could not complete this request.",
-				textClass: "text-destructive-muted-foreground font-medium",
-			},
 		});
-		expect(tile?.manageHref).toBe(`/agents/${environmentId}/settings?source=on-clawdi&d=dep_123`);
+		expectHostedTileHasNoStatus(tile);
 		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
@@ -263,20 +256,11 @@ describe("deploymentToTiles", () => {
 			}),
 		);
 
-		expect(tile?.secondaryStatus).toEqual({
-			label:
-				"Plan change failed: The Clawdi service could not confirm the plan change. Your plan was not c...",
-			title:
-				"Plan change failed. Get a fresh quote and confirm the price before trying again. Reason: The Clawdi service could not confirm the plan change. Your plan was not changed and you were not charged.",
-			textClass: "text-destructive-muted-foreground font-medium",
-		});
+		expectHostedTileHasNoStatus(tile);
 		expect(
 			isValidElement<{ remediationHref?: string }>(tile?.action) &&
 				tile.action.props.remediationHref,
 		).toBe(`/agents/${environmentId}/settings?source=on-clawdi&d=dep_123#compute-plan-controls`);
-		expect(tile?.secondaryStatus?.label).not.toContain("startup");
-		expect(tile?.secondaryStatus?.label).not.toContain("restart");
-		expect(tile?.secondaryStatus?.title).not.toContain(reason);
 	});
 
 	test("keeps Start and Delete actions on a stopped tile with a retained env identity", () => {
@@ -291,10 +275,9 @@ describe("deploymentToTiles", () => {
 
 		expect(tile).toMatchObject({
 			name: "OpenClaw",
-			contextLabel: null,
-			statusLabel: "Stopped",
 			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
 		});
+		expectHostedTileHasNoStatus(tile);
 		expect(tile?.action).toBeDefined();
 	});
 
@@ -316,13 +299,11 @@ describe("deploymentToTiles", () => {
 
 		expect(tile).toMatchObject({
 			id: "dep_123",
+			name: "hosted-test",
 			href: null,
 			env: null,
-			secondaryStatus: {
-				label: "Failure: The Clawdi service could not complete this request.",
-				title: "The Clawdi service could not complete this request.",
-			},
 		});
+		expectHostedTileHasNoStatus(tile);
 		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});

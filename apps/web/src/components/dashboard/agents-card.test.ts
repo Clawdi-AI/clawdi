@@ -60,6 +60,7 @@ describe("selfManagedAgentTiles", () => {
 		expect(tile).toMatchObject({
 			name: "Launch runner",
 		});
+		expect("statusLabel" in tile).toBe(false);
 		expect("runtimeLabel" in tile).toBe(false);
 	});
 });
@@ -72,7 +73,6 @@ describe("agentTileMatchesRouteId", () => {
 			source: "on-clawdi",
 			name: "Hosted agent",
 			agentType: "openclaw",
-			statusLabel: "Running",
 			href: `/agents/${projected.id}?source=on-clawdi&d=hdep_paid`,
 			active: true,
 			env: projected,
@@ -98,7 +98,6 @@ describe("fleetSummaryFromTiles", () => {
 			source: "on-clawdi",
 			name: "Codex",
 			agentType: "codex",
-			statusLabel: "Running",
 			lastSeenAt: null,
 			href: "/agents/dep_123",
 			active: true,
@@ -109,7 +108,6 @@ describe("fleetSummaryFromTiles", () => {
 			source: "on-clawdi",
 			name: "Stopped Codex",
 			agentType: "codex",
-			statusLabel: "Stopped",
 			lastSeenAt: newestSeenAt,
 			href: "/agents/dep_456",
 			active: true,

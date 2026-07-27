@@ -55,7 +55,6 @@ describe("selectUnifiedAgentList", () => {
 			source: "on-clawdi",
 			name: "OpenClaw",
 			agentType: "openclaw",
-			statusLabel: "Failed",
 			href: null,
 			active: false,
 			env: null,
@@ -75,7 +74,6 @@ describe("selectUnifiedAgentList", () => {
 			[legacy.id, "legacy-hosted"],
 			[connected.id, "self-managed"],
 		]);
-		expect(selection.tiles[0]?.statusLabel).toBe("Failed");
 		expect(selection.tiles.some((tile) => tile.id === claimed.id)).toBe(false);
 	});
 
@@ -87,7 +85,6 @@ describe("selectUnifiedAgentList", () => {
 			source: "on-clawdi",
 			name: "OpenClaw",
 			agentType: "openclaw",
-			statusLabel: "Starting",
 			href: null,
 			active: false,
 			env: null,
@@ -134,7 +131,6 @@ describe("selectUnifiedAgentList", () => {
 			source: "on-clawdi",
 			name: "OpenClaw",
 			agentType: "openclaw",
-			statusLabel: "Running",
 			href: `/agents/${claimed.id}?source=on-clawdi&d=dep_running`,
 			active: true,
 			env: claimed,
