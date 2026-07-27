@@ -34,7 +34,8 @@ export const AGENT_TARGET_CONTRACTS: Record<
 	hermes: {
 		settingMethod:
 			"structured merge into $HERMES_HOME/config.yaml model/providers compatibility keys",
-		supportedVersionRange: "Hermes Agent 0.18.x config.yaml compatibility readers",
+		supportedVersionRange:
+			"Hermes Agent 0.13.0 through 0.18.2 providers-dict compatibility readers",
 		status: "enabled",
 	},
 	openclaw: {
@@ -474,7 +475,7 @@ function hermesModelLines(provider: ProjectionProvider): string[] {
 	if (models.length === 0) return [];
 	const lines = ["    models:"];
 	for (const model of models) {
-		lines.push(`      ${quoteYaml(model.id)}:`);
+		lines.push(`      ${quoteYaml(model.id)}:${Object.keys(model).length === 1 ? " {}" : ""}`);
 		if (model.context_length !== undefined) {
 			lines.push(`        context_length: ${model.context_length}`);
 		}
@@ -526,7 +527,7 @@ function hermesModels(provider: ProjectionProvider): HermesProjectedModel[] {
 		if (supportsVision !== undefined) entry.supports_vision = supportsVision;
 		const cost = hermesModelCost(model.cost);
 		if (cost) Object.assign(entry, cost);
-		if (Object.keys(entry).length > 1) entries.push(entry);
+		entries.push(entry);
 	}
 	return entries;
 }

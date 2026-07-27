@@ -38,18 +38,18 @@ dump_failure_logs() {
       /tmp/codex-exec.err \
       /tmp/hermes-apply.json \
       /tmp/hermes-smoke.json \
+      /tmp/kimi-add.json \
+      /tmp/kimi-hermes-apply.json \
+      /tmp/kimi-hermes-smoke.json \
       /tmp/openclaw-apply.json \
       /tmp/openclaw-provider.json \
       /tmp/openclaw-default.json \
       /tmp/oauth-add.json \
       /tmp/oauth-apply.json \
+      /tmp/oauth-hermes-smoke.json \
       /tmp/oauth-openclaw-default.json \
-      /tmp/oauth-openclaw-auth-profiles.json \
-      /tmp/oauth-codex-auth.json \
       /tmp/oauth-hermes-config.yaml \
-      /tmp/oauth-hermes-auth.json \
-      /tmp/ai-provider-smoke-summary.json \
-      /tmp/fake-provider-requests.jsonl; do
+      /tmp/ai-provider-smoke-summary.json; do
       if [ -f "$f" ]; then
         echo "--- ${f} ---" >&2
         tail -120 "$f" >&2 || true
@@ -73,7 +73,7 @@ npm install -g \
 step "installing pinned Hermes package"
 python3 -m venv /tmp/hermes-venv
 /tmp/hermes-venv/bin/python -m pip install --upgrade pip >/tmp/hermes-pip.log 2>&1
-/tmp/hermes-venv/bin/python -m pip install hermes-agent==0.15.2 >>/tmp/hermes-pip.log 2>&1
+/tmp/hermes-venv/bin/python -m pip install hermes-agent==0.18.2 >>/tmp/hermes-pip.log 2>&1
 
 step "copying repository and installing CLI workspace dependencies"
 mkdir -p /tmp/repo
@@ -250,6 +250,7 @@ test -f /tmp/fake-provider-ready
 step "creating provider and running Clawdi CLI checks"
 CLI=(bun run packages/cli/src/index.ts)
 SECRET="sk-smoke-secret-value"
+KIMI_SECRET="kimi-smoke-secret-value"
 PASSPHRASE="isolated-ai-provider-passphrase"
 SRC_HOME=/tmp/src-home
 DST_HOME=/tmp/dst-home
@@ -357,35 +358,99 @@ if grep -q "$SECRET" "$HERMES_HOME/config.yaml" /tmp/hermes-apply.json; then
   exit 1
 fi
 
-HERMES_HOME="$HERMES_HOME" OPENAI_API_KEY="$SECRET" /tmp/hermes-venv/bin/python - <<'PY' >/tmp/hermes-smoke.json
+HOME="$DST_HOME" HERMES_HOME="$HERMES_HOME" OPENAI_API_KEY="$SECRET" \
+  /tmp/hermes-venv/bin/python - <<'PY' >/tmp/hermes-smoke.json
 import json
-from hermes_cli.config import get_compatible_custom_providers, load_config
-from hermes_cli.runtime_provider import _get_model_config, _get_named_custom_provider
+from importlib.metadata import version
+from hermes_cli.config import load_config
+from hermes_cli.runtime_provider import _get_model_config, resolve_runtime_provider
 
 cfg = load_config()
 model = _get_model_config()
-custom = get_compatible_custom_providers(cfg)
-named = _get_named_custom_provider("custom:openai-main")
+runtime = resolve_runtime_provider(requested="custom:openai-main")
 
+assert version("hermes-agent") == "0.18.2"
 assert cfg["model"]["provider"] == "custom:openai-main"
 assert cfg["model"]["default"] == "gpt-5.2"
 assert cfg["providers"]["openai-main"]["api"] == "http://127.0.0.1:18080/v1"
 assert cfg["providers"]["openai-main"]["transport"] == "codex_responses"
 assert cfg["providers"]["openai-main"]["key_env"] == "OPENAI_API_KEY"
+assert cfg["providers"]["openai-main"]["models"]["gpt-5.2"] == {}
 assert model["provider"] == "custom:openai-main"
-assert named["base_url"] == "http://127.0.0.1:18080/v1"
-assert named["model"] == "gpt-5.2"
-assert named["api_mode"] == "codex_responses"
-assert named["api_key"] == "sk-smoke-secret-value"
-assert any(entry.get("provider_key") == "openai-main" for entry in custom)
+assert model["default"] == "gpt-5.2"
+assert runtime["provider"] == "custom"
+assert runtime["base_url"] == "http://127.0.0.1:18080/v1"
+assert runtime["api_mode"] == "codex_responses"
+assert runtime["api_key"] == "sk-smoke-secret-value"
 
 print(json.dumps({
     "ok": True,
+    "hermes_version": version("hermes-agent"),
     "model_provider": cfg["model"]["provider"],
+    "model": model["default"],
     "provider_api": cfg["providers"]["openai-main"]["api"],
-    "transport": named["api_mode"],
+    "runtime_provider": runtime["provider"],
+    "transport": runtime["api_mode"],
+    "key_matches_env": runtime["api_key"] == "sk-smoke-secret-value",
     "mcp_preserved": "clawdi" in cfg.get("mcp_servers", {}),
     "comment_preserved": "keep this comment" in open("/tmp/hermes-home/config.yaml").read(),
+}, indent=2))
+PY
+
+step "applying Kimi Coding and resolving it with Hermes"
+HOME="$DST_HOME" CLAWDI_HOME="$DST_CLAWDI" KIMI_CODING_API_KEY="$KIMI_SECRET" \
+  "${CLI[@]}" ai-provider add kimi-coding \
+  --type anthropic \
+  --base-url https://api.kimi.com/coding \
+  --default-model kimi-for-coding \
+  --api-mode anthropic_messages \
+  --auth env:KIMI_CODING_API_KEY \
+  --json >/tmp/kimi-add.json
+
+HOME="$DST_HOME" CLAWDI_HOME="$DST_CLAWDI" HERMES_HOME="$HERMES_HOME" \
+  "${CLI[@]}" ai-provider apply kimi-coding --target hermes --json >/tmp/kimi-hermes-apply.json
+
+if grep -q "$KIMI_SECRET" \
+  /tmp/kimi-add.json \
+  /tmp/kimi-hermes-apply.json \
+  "$HERMES_HOME/config.yaml"; then
+  echo "Kimi secret leaked into CLI output or Hermes config" >&2
+  exit 1
+fi
+
+HOME="$DST_HOME" HERMES_HOME="$HERMES_HOME" KIMI_CODING_API_KEY="$KIMI_SECRET" \
+  /tmp/hermes-venv/bin/python - <<'PY' >/tmp/kimi-hermes-smoke.json
+import json
+from importlib.metadata import version
+from hermes_cli.config import load_config
+from hermes_cli.runtime_provider import _get_model_config, resolve_runtime_provider
+
+cfg = load_config()
+model = _get_model_config()
+runtime = resolve_runtime_provider(requested="custom:kimi-coding")
+
+assert version("hermes-agent") == "0.18.2"
+assert cfg["model"]["provider"] == "custom:kimi-coding"
+assert cfg["model"]["default"] == "kimi-for-coding"
+assert cfg["providers"]["kimi-coding"]["api"] == "https://api.kimi.com/coding"
+assert cfg["providers"]["kimi-coding"]["transport"] == "anthropic_messages"
+assert cfg["providers"]["kimi-coding"]["key_env"] == "KIMI_CODING_API_KEY"
+assert cfg["providers"]["kimi-coding"]["models"]["kimi-for-coding"] == {}
+assert model["default"] == "kimi-for-coding"
+assert runtime["provider"] == "custom"
+assert runtime["base_url"] == "https://api.kimi.com/coding"
+assert runtime["api_mode"] == "anthropic_messages"
+assert runtime["api_key"] == "kimi-smoke-secret-value"
+
+print(json.dumps({
+    "ok": True,
+    "hermes_version": version("hermes-agent"),
+    "model_provider": model["provider"],
+    "model": model["default"],
+    "runtime_provider": runtime["provider"],
+    "provider_api": runtime["base_url"],
+    "transport": runtime["api_mode"],
+    "key_matches_env": runtime["api_key"] == "kimi-smoke-secret-value",
 }, indent=2))
 PY
 
@@ -448,10 +513,42 @@ if grep -q "codex-oauth-access-smoke" \
   exit 1
 fi
 
+HOME="$DST_HOME" HERMES_HOME="$OAUTH_HERMES_HOME" \
+  /tmp/hermes-venv/bin/python - <<'PY' >/tmp/oauth-hermes-smoke.json
+import json
+from importlib.metadata import version
+from hermes_cli.config import load_config
+from hermes_cli.runtime_provider import _get_model_config, resolve_runtime_provider
+
+cfg = load_config()
+model = _get_model_config()
+runtime = resolve_runtime_provider(requested="openai-codex")
+
+assert version("hermes-agent") == "0.18.2"
+assert cfg["model"]["provider"] == "openai-codex"
+assert model["default"] == "gpt-5.2"
+assert runtime["provider"] == "openai-codex"
+assert runtime["api_mode"] == "codex_responses"
+assert runtime["base_url"] == "https://chatgpt.com/backend-api/codex"
+assert runtime["api_key"] == "codex-oauth-access-smoke"
+
+print(json.dumps({
+    "ok": True,
+    "hermes_version": version("hermes-agent"),
+    "model_provider": model["provider"],
+    "model": model["default"],
+    "runtime_provider": runtime["provider"],
+    "provider_api": runtime["base_url"],
+    "transport": runtime["api_mode"],
+    "token_matches_auth_store": runtime["api_key"] == "codex-oauth-access-smoke",
+}, indent=2))
+PY
+
 step "validating smoke artifacts"
 node - <<'NODE' >/tmp/ai-provider-smoke-summary.json
 const fs = require("fs");
 const secret = "sk-smoke-secret-value";
+const kimiSecret = "kimi-smoke-secret-value";
 const oauthAccessToken = "codex-oauth-access-smoke";
 const oauthRefreshToken = "codex-oauth-refresh-smoke";
 const add = JSON.parse(fs.readFileSync("/tmp/add.json", "utf8"));
@@ -461,10 +558,14 @@ const imported = JSON.parse(fs.readFileSync("/tmp/import.json", "utf8"));
 const codexApply = JSON.parse(fs.readFileSync("/tmp/codex-apply.json", "utf8"));
 const hermesApply = JSON.parse(fs.readFileSync("/tmp/hermes-apply.json", "utf8"));
 const hermesSmoke = JSON.parse(fs.readFileSync("/tmp/hermes-smoke.json", "utf8"));
+const kimiAdd = JSON.parse(fs.readFileSync("/tmp/kimi-add.json", "utf8"));
+const kimiHermesApply = JSON.parse(fs.readFileSync("/tmp/kimi-hermes-apply.json", "utf8"));
+const kimiHermesSmoke = JSON.parse(fs.readFileSync("/tmp/kimi-hermes-smoke.json", "utf8"));
 const openclawApply = JSON.parse(fs.readFileSync("/tmp/openclaw-apply.json", "utf8"));
 const provider = JSON.parse(fs.readFileSync("/tmp/openclaw-provider.json", "utf8"));
 const def = JSON.parse(fs.readFileSync("/tmp/openclaw-default.json", "utf8"));
 const oauthApply = JSON.parse(fs.readFileSync("/tmp/oauth-apply.json", "utf8"));
+const oauthHermesSmoke = JSON.parse(fs.readFileSync("/tmp/oauth-hermes-smoke.json", "utf8"));
 const oauthDefault = JSON.parse(fs.readFileSync("/tmp/oauth-openclaw-default.json", "utf8"));
 const oauthCodexAuth = JSON.parse(fs.readFileSync("/tmp/oauth-codex-auth.json", "utf8"));
 const oauthHermesAuth = JSON.parse(fs.readFileSync("/tmp/oauth-hermes-auth.json", "utf8"));
@@ -487,10 +588,14 @@ const rawWithoutEnvFile = JSON.stringify({
   codexApply,
   hermesApply,
   hermesSmoke,
+  kimiAdd,
+  kimiHermesApply,
+  kimiHermesSmoke,
   openclawApply,
   provider,
   def,
   oauthApply,
+  oauthHermesSmoke,
   oauthDefault,
   codexProfile,
   oauthCodexProfile,
@@ -498,6 +603,7 @@ const rawWithoutEnvFile = JSON.stringify({
   codexStdout,
 });
 if (rawWithoutEnvFile.includes(secret)) throw new Error("secret leaked into CLI/runtime outputs");
+if (rawWithoutEnvFile.includes(kimiSecret)) throw new Error("Kimi secret leaked into CLI/runtime outputs");
 if (rawWithoutEnvFile.includes(oauthAccessToken) || rawWithoutEnvFile.includes(oauthRefreshToken)) {
   throw new Error("Codex OAuth token leaked into CLI/runtime outputs");
 }
@@ -529,7 +635,7 @@ if (responsesCall.body?.model !== "gpt-5.2") throw new Error("Codex request mode
 const oauthTargets = oauthApply.targets?.map((target) => target.target).sort() ?? [];
 if (oauthTargets.join(",") !== "codex,hermes,openclaw") throw new Error("Codex OAuth did not apply to all targets");
 if (!oauthCodexProfile.includes('model_provider = "openai"')) throw new Error("Codex OAuth profile should use built-in openai provider");
-if (oauthCodexProfile.includes('model = "')) throw new Error("Codex OAuth profile should omit fixed model");
+if (!oauthCodexProfile.includes('model = "gpt-5.2"')) throw new Error("Codex OAuth profile should preserve the selected model");
 if (oauthCodexAuth.tokens?.access_token !== oauthAccessToken) throw new Error("Codex auth.json token mismatch");
 if (oauthCodexAuth.tokens?.refresh_token !== oauthRefreshToken) throw new Error("Codex auth.json refresh mismatch");
 if (!/provider:\s*["']?openai-codex["']?/.test(oauthHermesConfig)) throw new Error("Hermes OAuth config missing native provider");
@@ -540,6 +646,12 @@ if (oauthHermesAuth.providers?.["openai-codex"]?.tokens?.access_token !== oauthA
 if (oauthHermesAuth.credential_pool?.["openai-codex"]?.[0]?.source !== "device_code") {
   throw new Error("Hermes credential pool missing device_code entry");
 }
+if (!hermesSmoke.key_matches_env) throw new Error("Hermes custom provider did not resolve the env key");
+if (hermesSmoke.model !== "gpt-5.2") throw new Error("Hermes custom provider model mismatch");
+if (!kimiHermesSmoke.key_matches_env) throw new Error("Hermes Kimi provider did not resolve the env key");
+if (kimiHermesSmoke.model !== "kimi-for-coding") throw new Error("Hermes Kimi model mismatch");
+if (kimiHermesSmoke.transport !== "anthropic_messages") throw new Error("Hermes Kimi transport mismatch");
+if (!oauthHermesSmoke.token_matches_auth_store) throw new Error("Hermes Codex OAuth token mismatch");
 const openClawProfile = oauthOpenClawAuth.profiles?.["openai:default"];
 if (openClawProfile?.type !== "oauth") throw new Error("OpenClaw OAuth profile missing");
 if (openClawProfile?.provider !== "openai") throw new Error("OpenClaw OAuth profile provider mismatch");
@@ -555,7 +667,7 @@ console.log(JSON.stringify({
   bun: "1.3.14",
   codex: "0.136.0",
   openclaw: "2026.6.1",
-  hermes: "0.15.2",
+  hermes: "0.18.2",
   addProvider: add.added,
   defaultProbe: authTest.provider_probe.status,
   liveProbe: liveTest.provider_probe.status,
@@ -566,12 +678,16 @@ console.log(JSON.stringify({
   hermesConfigLoadedByHermes: hermesSmoke.ok,
   hermesTransport: hermesSmoke.transport,
   hermesMcpPreserved: hermesSmoke.mcp_preserved,
+  hermesKimiResolvedByHermes: kimiHermesSmoke.ok,
+  hermesKimiModel: kimiHermesSmoke.model,
+  hermesKimiTransport: kimiHermesSmoke.transport,
   openclawDefaultModel: defaultValue,
   openclawProviderApi: value.api,
   openclawModels: modelIds,
   codexOauthTargets: oauthTargets,
   codexOauthProfileUsesBuiltInOpenAI: true,
   codexOauthAuthStoresWritten: ["codex", "hermes", "openclaw"],
+  hermesCodexOauthResolvedByHermes: oauthHermesSmoke.ok,
   openclawOauthProfile: "openai:default",
   openclawOauthDefaultModel: oauthDefaultValue,
   backendAuthResolveCalls: authResolveCalls.length,

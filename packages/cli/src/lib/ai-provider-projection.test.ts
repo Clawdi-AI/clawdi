@@ -8,6 +8,7 @@ import {
 	defaultAiProviderModels,
 	defaultAiProviderRuntimeEnvName,
 } from "@clawdi/shared";
+import { parse as parseYaml } from "yaml";
 import { extractManagedLiveModels } from "../runtime/managed-model-resolution";
 import { buildAgentTargetProjection } from "./ai-provider-projection";
 
@@ -47,6 +48,112 @@ const codexOAuthCatalog: AiProviderCatalog = {
 };
 
 describe("AI provider projection", () => {
+	test("projects complete keyed Hermes providers without embedding secrets", () => {
+		const catalog: AiProviderCatalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: CLAWDI_MANAGED_PROVIDER_ID,
+					type: "custom_openai_compatible",
+					base_url: "https://managed.example.test/v1",
+					api_mode: "openai_chat",
+					auth: { type: "api_key", source: "managed" },
+					managed_by: "clawdi",
+					runtime_env_name: "CLAWDI_MANAGED_OPENAI_API_KEY",
+					models: [{ id: "managed-model" }],
+				},
+				{
+					id: "kimi-coding",
+					type: "anthropic",
+					base_url: "https://api.kimi.com/coding",
+					api_mode: "anthropic_messages",
+					auth: { type: "api_key", source: "managed" },
+					runtime_env_name: "KIMI_CODING_API_KEY",
+					models: [{ id: "kimi-for-coding" }],
+				},
+				{
+					id: "openai-responses",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					api_mode: "openai_responses",
+					auth: { type: "api_key", source: "managed" },
+					runtime_env_name: "OPENAI_RESPONSES_API_KEY",
+					models: [{ id: "gpt-5.5" }],
+				},
+				{
+					id: "anthropic-proxy",
+					type: "anthropic",
+					base_url: "https://anthropic.example.test",
+					api_mode: "anthropic_messages",
+					auth: { type: "api_key", source: "managed" },
+					runtime_env_name: "ANTHROPIC_PROXY_API_KEY",
+					models: [{ id: "claude-test" }],
+				},
+			],
+		};
+		const cases = [
+			{
+				providerId: CLAWDI_MANAGED_PROVIDER_ID,
+				model: "managed-model",
+				envName: "CLAWDI_MANAGED_OPENAI_API_KEY",
+				baseUrl: "https://managed.example.test/v1",
+				apiMode: "chat_completions",
+			},
+			{
+				providerId: "kimi-coding",
+				model: "kimi-for-coding",
+				envName: "KIMI_CODING_API_KEY",
+				baseUrl: "https://api.kimi.com/coding",
+				apiMode: "anthropic_messages",
+			},
+			{
+				providerId: "openai-responses",
+				model: "gpt-5.5",
+				envName: "OPENAI_RESPONSES_API_KEY",
+				baseUrl: "https://api.openai.com/v1",
+				apiMode: "codex_responses",
+			},
+			{
+				providerId: "anthropic-proxy",
+				model: "claude-test",
+				envName: "ANTHROPIC_PROXY_API_KEY",
+				baseUrl: "https://anthropic.example.test",
+				apiMode: "anthropic_messages",
+			},
+		] as const;
+
+		for (const testCase of cases) {
+			const projection = buildAgentTargetProjection("hermes", catalog, {
+				provider_id: testCase.providerId,
+				model: testCase.model,
+			});
+			const content = projection.files[0]?.content ?? "";
+			const config = parseYaml(content) as {
+				model?: { default?: string; provider?: string };
+				providers?: Record<
+					string,
+					{
+						api?: string;
+						key_env?: string;
+						models?: Record<string, unknown>;
+						transport?: string;
+					}
+				>;
+			};
+			expect(config.model).toMatchObject({
+				default: testCase.model,
+				provider: `custom:${testCase.providerId}`,
+			});
+			expect(config.providers?.[testCase.providerId]).toMatchObject({
+				api: testCase.baseUrl,
+				key_env: testCase.envName,
+				models: { [testCase.model]: {} },
+				transport: testCase.apiMode,
+			});
+			expect(content).not.toContain("sentinel-secret-value");
+		}
+	});
+
 	test("projects the bare managed provider alias with the managed endpoint and key env", () => {
 		const catalog: AiProviderCatalog = {
 			schema_version: 1,
@@ -84,6 +191,12 @@ describe("AI provider projection", () => {
 			baseUrl: "https://managed.example.test/v1",
 			apiKey: { id: "CLAWDI_MANAGED_OPENAI_API_KEY" },
 		});
+		expect(Object.keys(openclawPatch.models?.providers ?? {})).toEqual([
+			CLAWDI_MANAGED_PROVIDER_ID,
+		]);
+		expect(openclawPatch).not.toHaveProperty("plugins");
+		expect(JSON.stringify(openclawPatch)).not.toContain("secret://");
+		expect(JSON.stringify(openclawPatch).toLowerCase()).not.toContain("vault");
 		// openai_chat is OpenClaw's default custom-provider mode and is intentionally omitted.
 		expect(openclawPatch.models?.providers?.[CLAWDI_MANAGED_PROVIDER_ID]?.api).toBeUndefined();
 		expect(JSON.stringify(openclawPatch)).not.toContain("clawdi-v2");
@@ -95,6 +208,7 @@ describe("AI provider projection", () => {
 		expect(hermes.files[0]?.content).toContain('api: "https://managed.example.test/v1"');
 		expect(hermes.files[0]?.content).toContain('transport: "chat_completions"');
 		expect(hermes.files[0]?.content).toContain('key_env: "CLAWDI_MANAGED_OPENAI_API_KEY"');
+		expect(hermes.files[0]?.content).toContain('"managed-model": {}');
 		expect(hermes.files[0]?.content).not.toContain("clawdi-v2");
 	});
 

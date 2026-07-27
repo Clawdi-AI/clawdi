@@ -38,11 +38,7 @@ import {
 } from "@clawdi/shared";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
-import {
-	type AgentPrimaryModel,
-	buildAgentTargetProjection,
-	type ProjectionFile,
-} from "../lib/ai-provider-projection";
+import { type AgentPrimaryModel, buildAgentTargetProjection } from "../lib/ai-provider-projection";
 import {
 	mergeHermesChannelConfig,
 	mergeHermesConfig,
@@ -2055,36 +2051,6 @@ type ManagedGatewayModelListFetcher = (
 	input: ManagedGatewayModelFetchInput,
 ) => ManagedGatewayModelFetchResult;
 
-interface HermesHostedProviderPluginProjection {
-	modelPatch: string;
-	pluginFiles: ProjectionFile[];
-	revision: string;
-}
-
-interface HermesHostedPluginProviderProfile {
-	description: string;
-	displayName: string;
-	envName: string;
-	fallbackModels: string[];
-	pluginProviderName: string;
-	primaryModelDetails: {
-		context_length?: number;
-		max_tokens?: number;
-		supports_vision?: boolean;
-	} | null;
-	provider: AiProviderCatalog["providers"][number];
-	providerApiMode: string;
-}
-
-const HERMES_MODEL_PROVIDER_PLUGIN_NAME = "clawdi";
-const HERMES_MODEL_PROVIDER_PLUGIN_VERSION = "1.0.0";
-const HERMES_MODEL_PROVIDER_PLUGIN_MIN_VERSION = [0, 18, 0] as const;
-const HERMES_PROVIDER_PROFILE_API_MODES: Partial<Record<AiProviderApiMode, string>> = {
-	openai_chat: "chat_completions",
-	openai_responses: "codex_responses",
-	anthropic_messages: "anthropic_messages",
-};
-
 function applyHostedAiProviderProjection(
 	name: string,
 	observation: RuntimeInstallObservation,
@@ -2116,7 +2082,6 @@ function applyHostedAiProviderProjection(
 			projectionInput,
 			previousProviderIds,
 			home,
-			workspaceRoot,
 		);
 	}
 	if (name === "openclaw") {
@@ -2153,7 +2118,6 @@ function previewHostedAiProviderProjectionRevision(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
-	workspaceRoot: string,
 	previousProviderIds: readonly string[],
 	managedModelOverrides: ManagedGatewayModelOverrides,
 ): string | null {
@@ -2180,7 +2144,6 @@ function previewHostedAiProviderProjectionRevision(
 		projectionInput,
 		previousProviderIds,
 		projectionSystemHome(manifest) ?? process.env.HOME ?? "",
-		workspaceRoot,
 		false,
 	).revision;
 }
@@ -2401,12 +2364,11 @@ function applyHostedHermesAiProviderProjection(
 	projectionInput: HostedAiProviderProjectionInput | null,
 	previousProviderIds: readonly string[],
 	home: string,
-	workspaceRoot: string,
 	apply = true,
 ): HostedAiProviderProjectionResult {
 	const configPath = join(home, ".hermes", "config.yaml");
+	if (apply) removeLegacyHermesModelProviderPlugin(home);
 	if (!projectionInput) {
-		if (apply && previousProviderIds.length > 0) removeHermesModelProviderPlugin(home);
 		const deletedProviderIds = existingHermesProviderIds(
 			configPath,
 			staleProviderIds(new Set(previousProviderIds), new Set()),
@@ -2427,420 +2389,43 @@ function applyHostedHermesAiProviderProjection(
 
 	const commandPath = observation.commandPath;
 	if (!commandPath) return { path: null, revision: null, providerIds: [] };
-	const version = detectHermesInstalledVersion(commandPath, home, workspaceRoot);
-	if (!supportsHermesModelProviderPlugins(version)) {
-		if (apply) removeHermesModelProviderPlugin(home);
-		const projection = buildAgentTargetProjection(
-			"hermes",
-			projectionInput.catalog,
-			projectionInput.primaryModel,
-		);
-		const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
-		if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
-		const activeProviderIds = [...hermesProjectedProviderIds(projectionInput, "yaml-merge")].sort();
-		const deletedProviderIds = existingHermesProviderIds(
-			configPath,
-			staleProviderIds(new Set(previousProviderIds), new Set(activeProviderIds)),
-		);
-		const patchContent = mergeHermesProviderDeletes(file.content, deletedProviderIds);
-		if (apply) {
-			mergeHermesConfig(configPath, patchContent);
-			makeRuntimeUserOwned(configPath);
-		}
-		return {
-			path: configPath,
-			providerIds: activeProviderIds,
-			revision: revisionHash({
-				hermesProviderProjection: "yaml-merge",
-				patch: patchContent,
-			}),
-		};
-	}
-
-	const pluginProjection = buildHermesHostedProviderPluginProjection(
+	const projection = buildAgentTargetProjection(
+		"hermes",
 		projectionInput.catalog,
 		projectionInput.primaryModel,
 	);
-	const activeProviderIds = [...hermesProjectedProviderIds(projectionInput, "plugin")].sort();
-	const deletedProviderIds = staleProviderIds(
-		new Set(previousProviderIds),
-		new Set(activeProviderIds),
+	const file = projection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
+	if (!file) throw new Error("Hermes projection did not include a config merge YAML file.");
+	const activeProviderIds = [...hermesProviderIdsFromPatch(file.content)].sort();
+	const deletedProviderIds = existingHermesProviderIds(
+		configPath,
+		staleProviderIds(new Set(previousProviderIds), new Set(activeProviderIds)),
 	);
-	const existingDeletedProviderIds = existingHermesProviderIds(configPath, deletedProviderIds);
-	const modelPatch = mergeHermesProviderDeletes(
-		pluginProjection.modelPatch,
-		existingDeletedProviderIds,
-	);
-	const pluginDir = apply
-		? syncHermesModelProviderPlugin(home, pluginProjection.pluginFiles)
-		: hermesModelProviderPluginDir(home);
+	const patchContent = mergeHermesProviderDeletes(file.content, deletedProviderIds);
 	if (apply) {
-		mergeHermesConfig(configPath, modelPatch);
+		mergeHermesConfig(configPath, patchContent);
 		makeRuntimeUserOwned(configPath);
 	}
 	return {
-		path: pluginDir,
+		path: configPath,
 		providerIds: activeProviderIds,
 		revision: revisionHash({
-			hermesProviderProjection: "plugin",
-			modelPatch,
-			pluginFiles: pluginProjection.pluginFiles,
+			hermesProviderProjection: "yaml-merge",
+			patch: patchContent,
 		}),
 	};
-}
-
-function detectHermesInstalledVersion(command: string, home: string, cwd: string): string | null {
-	const result = spawnRuntimeUserCommand(command, ["--version"], home, cwd);
-	if (result.status !== 0) return null;
-	const output = [result.stdout, result.stderr]
-		.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-		.join("\n");
-	const match = output.match(/v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)/);
-	return match?.[1] ?? null;
-}
-
-function supportsHermesModelProviderPlugins(version: string | null): boolean {
-	const parsed = parseSemverishVersion(version);
-	if (!parsed) return false;
-	return compareSemverParts(parsed, HERMES_MODEL_PROVIDER_PLUGIN_MIN_VERSION) >= 0;
-}
-
-function parseSemverishVersion(version: string | null): [number, number, number] | null {
-	if (!version) return null;
-	const match = version.match(/(\d+)\.(\d+)\.(\d+)/);
-	if (!match) return null;
-	const major = Number.parseInt(match[1] ?? "", 10);
-	const minor = Number.parseInt(match[2] ?? "", 10);
-	const patch = Number.parseInt(match[3] ?? "", 10);
-	if (![major, minor, patch].every((part) => Number.isInteger(part) && part >= 0)) {
-		return null;
-	}
-	return [major, minor, patch];
-}
-
-function compareSemverParts(
-	left: readonly [number, number, number],
-	right: readonly [number, number, number],
-): number {
-	const [leftMajor, leftMinor, leftPatch] = left;
-	const [rightMajor, rightMinor, rightPatch] = right;
-	return leftMajor - rightMajor || leftMinor - rightMinor || leftPatch - rightPatch;
-}
-
-function buildHermesHostedProviderPluginProjection(
-	catalog: AiProviderCatalog,
-	primaryModel: AgentPrimaryModel,
-): HermesHostedProviderPluginProjection {
-	const profiles = catalog.providers.map((provider) =>
-		buildHermesHostedPluginProviderProfile(
-			provider,
-			provider.id === primaryModel.provider_id ? primaryModel.model : null,
-		),
-	);
-	const primaryProvider = profiles.find((entry) => entry.provider.id === primaryModel.provider_id);
-	if (!primaryProvider?.primaryModelDetails) {
-		throw new Error(
-			`Hermes hosted provider projection cannot find primary provider ${primaryModel.provider_id}.`,
-		);
-	}
-	const pluginFiles: ProjectionFile[] = [
-		{
-			path: "__init__.py",
-			content: buildHermesHostedPluginInit(profiles),
-		},
-		{
-			path: "plugin.yaml",
-			content: [
-				`name: ${quoteYaml(HERMES_MODEL_PROVIDER_PLUGIN_NAME)}`,
-				"kind: model-provider",
-				`version: ${quoteYaml(HERMES_MODEL_PROVIDER_PLUGIN_VERSION)}`,
-				'description: "Clawdi hosted AI provider projection"',
-				'author: "Clawdi"',
-				"",
-			].join("\n"),
-		},
-	];
-	const compatibilityProviders = buildHermesHostedCompatibilityProviders(profiles);
-	const modelPatch = buildHermesHostedPluginModelPatch(
-		primaryModel,
-		primaryProvider.pluginProviderName,
-		primaryProvider.primaryModelDetails,
-		compatibilityProviders,
-	);
-	return {
-		modelPatch,
-		pluginFiles,
-		revision: revisionHash({
-			hermesProviderProjection: "plugin",
-			modelPatch,
-			pluginFiles,
-		}),
-	};
-}
-
-function buildHermesHostedPluginProviderProfile(
-	provider: AiProviderCatalog["providers"][number],
-	primaryModelId: string | null,
-): HermesHostedPluginProviderProfile {
-	const envName = provider.runtime_env_name?.trim();
-	if (!envName || !isEnvKey(envName)) {
-		throw new Error(
-			`Hermes model-provider plugin projection requires a valid runtime_env_name for ${provider.id}.`,
-		);
-	}
-	if (provider.auth.type !== "api_key") {
-		throw new Error(
-			`Hermes model-provider plugin projection requires api_key auth for ${provider.id}; got ${provider.auth.type}.`,
-		);
-	}
-	const providerApiMode = provider.api_mode;
-	if (!providerApiMode) {
-		throw new Error(
-			`Hermes model-provider plugin projection requires api_mode for ${provider.id}.`,
-		);
-	}
-	const apiMode = HERMES_PROVIDER_PROFILE_API_MODES[providerApiMode];
-	if (!apiMode) {
-		throw new Error(
-			`Hermes model-provider plugin projection does not support api_mode ${providerApiMode} for ${provider.id}.`,
-		);
-	}
-
-	const displayName = provider.label?.trim() || provider.id;
-	return {
-		description: `${displayName} projected by Clawdi runtime converge`,
-		displayName,
-		envName,
-		fallbackModels: hermesHostedFallbackModels(provider, primaryModelId),
-		pluginProviderName: hermesHostedPluginProviderName(provider.id),
-		primaryModelDetails:
-			primaryModelId === null ? null : hermesHostedPrimaryModelDetails(provider, primaryModelId),
-		provider,
-		providerApiMode: apiMode,
-	};
-}
-
-function buildHermesHostedPluginInit(
-	profiles: readonly HermesHostedPluginProviderProfile[],
-): string {
-	const lines = [
-		'"""Clawdi hosted AI provider projection."""',
-		"",
-		"from providers import register_provider",
-		"from providers.base import ProviderProfile",
-		"",
-	];
-	for (const profile of profiles) {
-		const profileArgs = [
-			`name=${pythonStringLiteral(profile.pluginProviderName)}`,
-			`display_name=${pythonStringLiteral(profile.displayName)}`,
-			`description=${pythonStringLiteral(profile.description)}`,
-			`env_vars=${pythonTupleLiteral([profile.envName])}`,
-			`base_url=${pythonStringLiteral(profile.provider.base_url)}`,
-			'auth_type="api_key"',
-			`api_mode=${pythonStringLiteral(profile.providerApiMode)}`,
-			...(profile.fallbackModels.length > 0
-				? [`fallback_models=${pythonTupleLiteral(profile.fallbackModels)}`]
-				: []),
-		];
-		lines.push(
-			"register_provider(",
-			"    ProviderProfile(",
-			...profileArgs.map((line) => `        ${line},`),
-			"    )",
-			")",
-			"",
-		);
-	}
-	return `${lines.join("\n")}\n`;
-}
-
-function buildHermesHostedCompatibilityProviders(
-	profiles: readonly HermesHostedPluginProviderProfile[],
-): Record<string, unknown> {
-	const providers: Record<string, unknown> = {};
-	for (const profile of profiles) {
-		const models = buildHermesHostedCompatibilityProviderModels(profile.provider);
-		providers[profile.pluginProviderName] =
-			Object.keys(models).length > 0
-				? {
-						api: profile.provider.base_url,
-						models,
-					}
-				: {
-						api: profile.provider.base_url,
-					};
-	}
-	return providers;
-}
-
-function buildHermesHostedCompatibilityProviderModels(
-	provider: AiProviderCatalog["providers"][number],
-): Record<string, unknown> {
-	const models: Record<string, unknown> = {};
-	for (const model of provider.models ?? []) {
-		const modelId = model.id.trim();
-		if (!modelId || Object.hasOwn(models, modelId)) continue;
-		const metadata: Record<string, unknown> = {};
-		const contextLength = positiveInteger(model.context_window);
-		if (contextLength !== undefined) metadata.context_length = contextLength;
-		const maxTokens = positiveInteger(model.max_tokens);
-		if (maxTokens !== undefined) metadata.max_tokens = maxTokens;
-		const supportsVision = hermesHostedSupportsVision(model);
-		if (supportsVision !== undefined) metadata.supports_vision = supportsVision;
-		const cost = hermesHostedModelCost(model.cost);
-		if (cost) Object.assign(metadata, cost);
-		if (Object.keys(metadata).length === 0) continue;
-		models[modelId] = metadata;
-	}
-	return models;
-}
-
-function hermesHostedModelCost(
-	cost: AiProviderModel["cost"] | undefined,
-): Record<string, number> | undefined {
-	if (!cost) return undefined;
-	const input = nonNegativeNumber(cost.input);
-	const output = nonNegativeNumber(cost.output);
-	if (input === undefined || output === undefined) return undefined;
-	return {
-		input_cost_per_million: input,
-		output_cost_per_million: output,
-		...(nonNegativeNumber(cost.cache_read) !== undefined
-			? { cache_read_cost_per_million: nonNegativeNumber(cost.cache_read) }
-			: {}),
-		...(nonNegativeNumber(cost.cache_write) !== undefined
-			? { cache_write_cost_per_million: nonNegativeNumber(cost.cache_write) }
-			: {}),
-	};
-}
-
-function buildHermesHostedPluginModelPatch(
-	primaryModel: AgentPrimaryModel,
-	primaryPluginProviderName: string,
-	primaryModelDetails: {
-		context_length?: number;
-		max_tokens?: number;
-		supports_vision?: boolean;
-	},
-	compatibilityProviders: Record<string, unknown>,
-): string {
-	const patch: Record<string, unknown> = {
-		model: {
-			provider: primaryPluginProviderName,
-			default: primaryModel.model,
-			context_length: primaryModelDetails.context_length ?? null,
-			max_tokens: primaryModelDetails.max_tokens ?? null,
-			supports_vision: primaryModelDetails.supports_vision ?? null,
-		},
-	};
-	if (Object.keys(compatibilityProviders).length > 0) {
-		patch.providers = compatibilityProviders;
-	}
-	return [
-		"# Generated by Clawdi. Merge this patch into Hermes config.yaml.",
-		"# Contract: Hermes Agent 0.18.x discovers model-provider plugins from",
-		`# $HERMES_HOME/plugins/model-providers/${HERMES_MODEL_PROVIDER_PLUGIN_NAME}/.`,
-		stringifyYaml(patch).trimEnd(),
-		"",
-	].join("\n");
-}
-
-function hermesHostedPrimaryModelDetails(
-	provider: AiProviderCatalog["providers"][number],
-	modelId: string,
-): { context_length?: number; max_tokens?: number; supports_vision?: boolean } {
-	const model = provider.models?.find((entry) => entry.id === modelId);
-	return {
-		context_length: positiveInteger(model?.context_window),
-		max_tokens: positiveInteger(model?.max_tokens),
-		supports_vision: hermesHostedSupportsVision(model),
-	};
-}
-
-function hermesHostedFallbackModels(
-	provider: AiProviderCatalog["providers"][number],
-	primaryModelId: string | null,
-): string[] {
-	const ordered = [
-		...(primaryModelId ? [primaryModelId] : []),
-		...(provider.models ?? []).map((entry) => entry.id).filter((value) => value.trim().length > 0),
-	];
-	return ordered.filter((value, index, entries) => entries.indexOf(value) === index);
-}
-
-function hermesHostedSupportsVision(
-	model: NonNullable<AiProviderCatalog["providers"][number]["models"]>[number] | undefined,
-): boolean | undefined {
-	if (!model) return undefined;
-	if (typeof model.supports_vision === "boolean") return model.supports_vision;
-	return model.input_modalities?.includes("image") ? true : undefined;
-}
-
-function positiveInteger(value: number | undefined): number | undefined {
-	return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
-}
-
-function nonNegativeNumber(value: number | undefined): number | undefined {
-	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
-}
-
-function pythonStringLiteral(value: string): string {
-	return JSON.stringify(value);
-}
-
-function pythonTupleLiteral(values: readonly string[]): string {
-	if (values.length === 0) return "()";
-	return `(${values.map((value) => pythonStringLiteral(value)).join(", ")}${
-		values.length === 1 ? "," : ""
-	})`;
-}
-
-function quoteYaml(value: string): string {
-	return JSON.stringify(value);
 }
 
 function quoteTomlString(value: string): string {
 	return JSON.stringify(value);
 }
 
-function hermesHostedPluginProviderName(providerId: string): string {
-	const normalized = providerId
-		.trim()
-		.toLowerCase()
-		.replace(/[^a-z0-9]+/g, "-")
-		.replace(/^-+|-+$/g, "");
-	if (
-		normalized === HERMES_MODEL_PROVIDER_PLUGIN_NAME ||
-		normalized.startsWith(`${HERMES_MODEL_PROVIDER_PLUGIN_NAME}-`)
-	) {
-		return normalized;
-	}
-	return `${HERMES_MODEL_PROVIDER_PLUGIN_NAME}-${normalized || "provider"}`;
+function legacyHermesModelProviderPluginDir(home: string): string {
+	return join(home, ".hermes", "plugins", "model-providers", "clawdi");
 }
 
-function hermesModelProviderPluginDir(home: string): string {
-	return join(home, ".hermes", "plugins", "model-providers", HERMES_MODEL_PROVIDER_PLUGIN_NAME);
-}
-
-function syncHermesModelProviderPlugin(home: string, files: ProjectionFile[]): string {
-	const pluginsDir = join(home, ".hermes", "plugins");
-	const providersDir = join(pluginsDir, "model-providers");
-	const pluginDir = hermesModelProviderPluginDir(home);
-	rmSync(pluginDir, { recursive: true, force: true });
-	makeRuntimeUserPrivateDir(pluginsDir);
-	makeRuntimeUserPrivateDir(providersDir);
-	makeRuntimeUserPrivateDir(pluginDir);
-	for (const file of files) {
-		const path = join(pluginDir, file.path);
-		writePrivateFileAtomic(path, file.content);
-		makeRuntimeUserOwned(path);
-	}
-	return pluginDir;
-}
-
-function removeHermesModelProviderPlugin(home: string): void {
-	rmSync(hermesModelProviderPluginDir(home), { recursive: true, force: true });
+function removeLegacyHermesModelProviderPlugin(home: string): void {
+	rmSync(legacyHermesModelProviderPluginDir(home), { recursive: true, force: true });
 }
 
 function applyOpenClawHostedProviderProjection(
@@ -2953,24 +2538,6 @@ function openClawProviderDeletePatch(
 			providers: Object.fromEntries(deletedProviderIds.map((providerId) => [providerId, null])),
 		},
 	};
-}
-
-function hermesProjectedProviderIds(
-	projectionInput: HostedAiProviderProjectionInput,
-	mode: "plugin" | "yaml-merge",
-): Set<string> {
-	const patchContent =
-		mode === "plugin"
-			? buildHermesHostedProviderPluginProjection(
-					projectionInput.catalog,
-					projectionInput.primaryModel,
-				).modelPatch
-			: (buildAgentTargetProjection(
-					"hermes",
-					projectionInput.catalog,
-					projectionInput.primaryModel,
-				).files.find((entry) => entry.path.endsWith(".hermes.yaml"))?.content ?? "");
-	return hermesProviderIdsFromPatch(patchContent);
 }
 
 function hermesProviderIdsFromPatch(content: string): Set<string> {
@@ -5330,7 +4897,7 @@ export function runtimeLiveSnapshotPaths(
 		join(home, ".openclaw", "openclaw.json"),
 		join(home, ".hermes", "config.yaml"),
 		join(home, ".hermes", "SOUL.md"),
-		hermesModelProviderPluginDir(home),
+		legacyHermesModelProviderPluginDir(home),
 		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
 	]);
 	for (const agent of MANAGED_LIVE_SYNC_AGENTS) {
@@ -5601,10 +5168,6 @@ function validateRuntimeProjectionPlan(input: {
 				const yamlFile = yamlProjection.files.find((entry) => entry.path.endsWith(".hermes.yaml"));
 				if (!yamlFile)
 					throw new Error("Hermes projection did not include a config merge YAML file.");
-				buildHermesHostedProviderPluginProjection(
-					projectionInput.catalog,
-					projectionInput.primaryModel,
-				);
 				hermesConfig = renderHermesConfig(hermesConfig, yamlFile.content);
 			} else if (
 				!configuredProjectionUnavailable &&
@@ -5967,7 +5530,6 @@ export function convergeRuntimeManifest(
 				name,
 				observation,
 				manifest,
-				workspaceRoot,
 				previousProjectedProviderIds[name] ?? [],
 				managedModelOverrides,
 			);

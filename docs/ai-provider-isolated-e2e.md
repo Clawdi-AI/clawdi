@@ -24,14 +24,14 @@ or Python packages on the host machine.
 
 - Date: 2026-06-03
 - Branch: `feat/ai-provider-abstraction`
-- Latest rerun: 2026-06-04 after source/target apply and Codex OAuth
-  target-native auth store changes
+- Latest rerun: 2026-07-27 after Hermes native provider projection and Kimi
+  Coding contract changes
 - Container image: `node:24-bookworm-slim`
 - Container-only installs:
   - `bun@1.3.14`
   - `@openai/codex@0.136.0`
   - `openclaw@2026.6.1`
-  - `hermes-agent==0.15.2`
+  - `hermes-agent==0.18.2`
   - Debian `git`, `python3`, and `python3-venv`
 - Repository mount: read-only at `/repo`
 - Runtime copy: `/tmp/repo` inside the container
@@ -55,24 +55,31 @@ or Python packages on the host machine.
    primary `$CODEX_HOME/config.toml`.
 7. Run real `codex exec --profile clawdi-ai-provider` against the fake provider;
    the fake provider receives `POST /v1/responses`.
-8. Apply Hermes config and load it through the real `hermes-agent` package;
-   existing `mcp_servers` config is preserved.
-9. Apply OpenClaw config through the real OpenClaw CLI and read it back with
+8. Apply Hermes config and call the real `hermes-agent==0.18.2`
+   `resolve_runtime_provider()`; assert its resolved env key, base URL,
+   Responses transport, and selected model. Existing `mcp_servers` config is
+   preserved.
+9. Add Kimi Coding as an Anthropic-type provider, apply it to Hermes, and use
+   the same real resolver to assert `api.kimi.com/coding`,
+   `anthropic_messages`, `kimi-for-coding`, and env-key resolution.
+10. Apply OpenClaw config through the real OpenClaw CLI and read it back with
    `openclaw config get`.
-10. Add a Codex OAuth source backed by a fake Clawdi auth-resolve endpoint, then
+11. Add a Codex OAuth source backed by a fake Clawdi auth-resolve endpoint, then
     run `clawdi ai-provider apply openai-codex` with the default target set.
-11. Verify target-native Codex OAuth auth stores are written for Codex, Hermes,
+12. Verify target-native Codex OAuth auth stores are written for Codex, Hermes,
     and OpenClaw. The OpenClaw auth profile is the canonical
     `openai:default` entry with `order.openai`.
-12. Assert fake env secrets and fake OAuth tokens are not present in Clawdi CLI
+13. Resolve Hermes' native `openai-codex` runtime with the real 0.18.2 resolver
+    and assert its auth-store token, backend URL, Responses transport, and model.
+14. Assert fake env secrets and fake OAuth tokens are not present in Clawdi CLI
     output or generated non-secret runtime config.
-13. Assert the fake secret is not present in Clawdi CLI output, generated
+15. Assert the fake secret is not present in Clawdi CLI output, generated
     runtime config, or the smoke summary.
 
 ## Automated But Not Smoke-Covered
 
-Codex OAuth is covered by CLI and backend tests, but it is not part of this
-Docker smoke run.
+The Docker smoke uses a local fake Codex auth-resolve endpoint. Interactive
+browser authorization and real token exchange remain outside the smoke.
 
 Covered by automated tests:
 
@@ -115,17 +122,18 @@ Recorded on 2026-06-03 with `@openai/codex@0.136.0`:
    `clawdi ai-provider apply openai-codex --target codex`.
 7. Verified the isolated Codex profile and `auth.json` were written with mode `0600`,
    `auth_mode: "chatgpt"`, and OAuth token fields.
-8. Verified the generated Codex profile uses `model_provider = "openai"` and
-   omits `model`, allowing Codex to choose its ChatGPT-account-compatible
-   default model.
+8. Verified the generated Codex profile used `model_provider = "openai"` and
+   omitted `model`, allowing Codex to choose its ChatGPT-account-compatible
+   default model in that historical run.
 9. Ran real `codex exec --profile clawdi-ai-provider` without
     `OPENAI_API_KEY`; Codex used `model: gpt-5.5` and returned the expected
     response.
 
-Important finding: writing `model = "gpt-5.2"` into a Codex OAuth profile
-caused Codex to fail with a real OpenAI error because that API model is not
-supported for the tested ChatGPT Codex account. AI Provider apply therefore
-omits `model` for the built-in OpenAI Codex OAuth provider.
+Historical finding: writing `model = "gpt-5.2"` into a Codex OAuth profile
+caused Codex to fail for the account tested in 2026-06. The current CLI
+projection, which is unchanged by this fix, writes the selected model for all
+Codex profiles. The current isolated smoke verifies that profile shape and the
+native auth store, but does not make a live account-entitlement claim.
 
 ## Version Compatibility Audit
 
@@ -145,14 +153,16 @@ package caches:
   through the real `openclaw config patch --stdin` path and used the canonical
   `openai:default` auth profile for Codex OAuth target-native apply.
 
-Latest source/package audit recorded on 2026-06-29:
+Latest source/package audit recorded on 2026-07-27:
 
 - Codex: `@openai/codex@0.142.4` still exposes profile-v2 config files,
   `model_providers`, `wire_api = "responses"`, `env_key`, and
   `requires_openai_auth`.
-- Hermes: `hermes-agent==0.17.0` still supports the v12 `providers` dict,
-  `custom:<provider-id>` resolution, the target-native Responses transport,
-  `openai-codex`, and `credential_pool.openai-codex`.
+- Hermes: the Docker smoke installed `hermes-agent==0.18.2` and called its real
+  `resolve_runtime_provider()` for keyed OpenAI Responses, Kimi Coding, and
+  native `openai-codex`. A read-only source cross-check used
+  `/home/kingsley/hermes-agent` at commit
+  `736fc4d86a1acd8c96473aeb55f9c783e2170dca`.
 - OpenClaw: `openclaw@2026.6.10` still supports
   `openclaw config patch --stdin`, `models.providers`, env SecretRefs, and
   canonical `openai/<model>` routes. Clawdi projects API-key Responses
@@ -183,7 +193,7 @@ The recorded isolated run exited with code `0` and printed:
   "bun": "1.3.14",
   "codex": "0.136.0",
   "openclaw": "2026.6.1",
-  "hermes": "0.15.2",
+  "hermes": "0.18.2",
   "addProvider": "openai-main",
   "defaultProbe": "skipped",
   "liveProbe": "ok",
@@ -194,21 +204,25 @@ The recorded isolated run exited with code `0` and printed:
   "hermesConfigLoadedByHermes": true,
   "hermesTransport": "codex_responses",
   "hermesMcpPreserved": true,
+  "hermesKimiResolvedByHermes": true,
+  "hermesKimiModel": "kimi-for-coding",
+  "hermesKimiTransport": "anthropic_messages",
   "openclawDefaultModel": "openai-main/gpt-5.2",
   "openclawProviderApi": "openai-responses",
   "openclawModels": ["gpt-5.2"],
   "codexOauthTargets": ["codex", "hermes", "openclaw"],
   "codexOauthProfileUsesBuiltInOpenAI": true,
   "codexOauthAuthStoresWritten": ["codex", "hermes", "openclaw"],
+  "hermesCodexOauthResolvedByHermes": true,
   "openclawOauthProfile": "openai:default",
   "openclawOauthDefaultModel": "openai/gpt-5.2",
   "backendAuthResolveCalls": 3,
   "fakeProviderRequests": [
     "GET /v1/models",
     "POST /v1/responses",
-    "POST /api/ai-providers/openai-codex/auth/resolve",
-    "POST /api/ai-providers/openai-codex/auth/resolve",
-    "POST /api/ai-providers/openai-codex/auth/resolve"
+    "POST /v1/ai-providers/openai-codex/auth/resolve",
+    "POST /v1/ai-providers/openai-codex/auth/resolve",
+    "POST /v1/ai-providers/openai-codex/auth/resolve"
   ],
   "secretLeakedInOutputs": false
 }

@@ -1,6 +1,6 @@
 # AI Provider Agent Contract Audit
 
-Date: 2026-06-29
+Date: 2026-07-27
 
 This audit pins the agent configuration contracts used by AI Provider apply and
 auth flows. AI Provider adapters must be updated only against verified agent
@@ -11,7 +11,7 @@ source or official docs.
 | Agent | Verified version/source | AI Provider status | Config method |
 | --- | --- | --- | --- |
 | Codex | `@openai/codex@0.134.0` through `0.142.4`; official Codex manual profile contract | Enabled | `$CODEX_HOME/clawdi-ai-provider.config.toml`, selected with `codex --profile clawdi-ai-provider` |
-| Hermes | `hermes-agent==0.13.0` through `0.17.0` package audit | Enabled | Structured merge into `$HERMES_HOME/config.yaml` |
+| Hermes | `hermes-agent==0.13.0` through `0.18.2` package audit | Enabled | Structured merge into `$HERMES_HOME/config.yaml` |
 | OpenClaw | `openclaw@2026.5.12` through `2026.6.10` package/source audit | Enabled | `openclaw config patch --stdin` |
 | Claude Code | Not pinned for AI Provider v1 | Not supported | None |
 
@@ -45,9 +45,9 @@ Clawdi behavior:
 - Codex native OAuth providers use Codex's built-in OpenAI provider when the
   base URL is the default OpenAI URL, or `requires_openai_auth = true` for a
   custom provider entry.
-- For the built-in OpenAI OAuth provider, Clawdi omits `model` from the
-  generated profile so Codex selects the default model supported by the
-  signed-in ChatGPT/Codex account.
+- For the built-in OpenAI OAuth provider, Clawdi keeps the selected `model` and
+  uses Codex's built-in `openai` model provider. This projection is independent
+  of the Hermes provider path.
 - Codex OAuth link generation is a backend responsibility. The CLI listens on
   `http://localhost:1455/auth/callback` and falls back to
   `http://localhost:1457/auth/callback`, or accepts a pasted redirect URL.
@@ -87,6 +87,14 @@ Verified sources:
   `providers` dict compatibility layer, the current Hermes Responses transport,
   `openai-codex` provider selector, `active_provider`, and
   `credential_pool.openai-codex` runtime credential paths.
+- The 2026-07-27 Docker smoke installed the PyPI
+  `hermes-agent==0.18.2` wheel and invoked its real
+  `resolve_runtime_provider()` for an env-backed Responses provider, Kimi
+  Coding, and native `openai-codex`. The read-only source cross-check at
+  `/home/kingsley/hermes-agent` commit
+  `736fc4d86a1acd8c96473aeb55f9c783e2170dca` confirms the same keyed-provider
+  resolution fields in `hermes_cli/config.py` and
+  `hermes_cli/runtime_provider.py`.
 - Docker package audits passed for `hermes-agent==0.13.0`, `0.14.0`,
   `0.15.0`, `0.15.1`, and `0.15.2`. Each package loaded a v12 `providers`
   dict from `config.yaml` and resolved `custom:openai-main` with Hermes'
@@ -98,6 +106,9 @@ Clawdi behavior:
   `$HERMES_HOME/config.yaml`.
 - The merge writes the verified v12 `providers` dict shape and sets
   `model.provider` to `custom:<provider-id>`.
+- The same native `model`/`providers` authority is used across the supported
+  range. Hosted converge removes the obsolete Clawdi model-provider plugin so
+  it cannot shadow a same-name keyed provider.
 - Codex OAuth providers are projected through Hermes' native
   `model.provider: openai-codex` selector and Responses runtime, not as
   custom providers with `key_env`.
@@ -110,6 +121,10 @@ Clawdi behavior:
   managed by Clawdi so inline `api_key` values do not shadow `key_env`.
 - Dry-run prints only the generated patch, not the existing `config.yaml`, to
   avoid leaking user inline secrets.
+- Hosted user BYOK keys are resolved by the encrypted bootstrap/external-secret
+  pipeline into runtime `secretEnv`; Clawdi-managed credentials use the
+  separate deployment-scoped egress injection path. Hermes projection consumes
+  only the resulting env names and does not read or require Vault.
 
 Clawdi provider modes are standard API modes. The Hermes adapter translates
 those modes into Hermes' target-native transport labels only at config output:
@@ -164,6 +179,10 @@ Clawdi behavior:
   `openclaw config patch --stdin`.
 - The patch uses `models.mode: "merge"`, `models.providers.<id>.apiKey` env
   SecretRefs, and `agents.defaults.model.primary`.
+- API-key projection has one model-provider authority under
+  `models.providers`; the `secrets` block only declares the env SecretRef
+  provider and cannot shadow a model provider. There is no Hermes-style
+  generated provider plugin.
 - OpenAI-compatible API-key providers project directly. `openai_chat` uses
   OpenClaw's default OpenAI-compatible chat surface; `openai_responses` writes
   `api: "openai-responses"` with the configured provider URL and env SecretRef.
@@ -177,3 +196,6 @@ Clawdi behavior:
   `order.openai` pointing at that profile.
 - Model metadata omits unknown or zero values; Clawdi does not invent model
   cost/context defaults.
+- Hosted OpenClaw receives resolved runtime env names. User BYOK bootstrap and
+  Clawdi-managed deployment injection stay outside OpenClaw config, and neither
+  projection path introduces a Vault dependency.
