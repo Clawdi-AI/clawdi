@@ -1547,6 +1547,11 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 
 	await page.getByRole("button", { name: "Deploy agent" }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
+	await expect(page.getByTestId("accepted-agent-setup")).toBeVisible();
+	await expect(page.getByText("Setting up your agent", { exact: true }).first()).toBeVisible();
+	await expect(page.getByText("Agent unavailable", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
+	await expect(page.locator("body")).not.toContainText("hdep_included_created");
 	expect(convergencePollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 	expect(createDeploymentRequests).toHaveLength(1);

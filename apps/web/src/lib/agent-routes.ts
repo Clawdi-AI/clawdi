@@ -132,6 +132,20 @@ export function agentDeploymentSelector(query?: AgentRouteQuery): string | null 
 	return selector || null;
 }
 
+/**
+ * The create flow initially routes by the accepted deployment id because the
+ * stable agent id does not exist yet. Once inventory catches up, normal hosted
+ * links carry a separate deployment selector and use the stable agent id.
+ */
+export function isAcceptedHostedAgentRoute(agentId: string, query?: AgentRouteQuery): boolean {
+	const params = agentRouteSearchParams(query);
+	return (
+		agentId.toLowerCase().startsWith("hdep_") &&
+		params.get("source") === "on-clawdi" &&
+		agentDeploymentSelector(params) === null
+	);
+}
+
 export function agentDeploymentRouteQuery(
 	query?: AgentRouteQuery,
 ): RouteSearchParamsRecord | undefined {

@@ -12,6 +12,7 @@ import {
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
 	hasAgentTabQuery,
+	isAcceptedHostedAgentRoute,
 	parseAgentPathname,
 	parseAgentSectionSegment,
 } from "./agent-routes";
@@ -57,6 +58,17 @@ describe("agent routes", () => {
 		expect(agentSectionHref("agent 1", "settings", agentDeploymentRouteQuery(query))).toBe(
 			"/agents/agent%201/settings?source=on-clawdi&d=dep_older",
 		);
+	});
+
+	it("distinguishes a freshly accepted hosted route from normal and unknown routes", () => {
+		expect(isAcceptedHostedAgentRoute("hdep_accepted", "source=on-clawdi")).toBe(true);
+		expect(
+			isAcceptedHostedAgentRoute(
+				"9f6e5c8f-5af3-55fe-97ab-c9eb3cd7859d",
+				"source=on-clawdi&d=hdep_accepted",
+			),
+		).toBe(false);
+		expect(isAcceptedHostedAgentRoute("hdep_unknown", undefined)).toBe(false);
 	});
 
 	it("parses only canonical section segments", () => {
