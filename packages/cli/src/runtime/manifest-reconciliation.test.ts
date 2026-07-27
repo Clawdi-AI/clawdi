@@ -12,6 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { writeRuntimeAppliedState } from "./applied-state";
 import {
 	convergeRuntimeManifest,
 	hostedAiProviderCatalog,
@@ -1771,6 +1773,194 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(envFile).not.toContain("sk-managed");
 	});
 
+	test("converges Hermes providers as one native authority with secret refs and stale cleanup", () => {
+		const paths = tempRuntimePaths();
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		const hermesConfig = join(paths.userHome, ".hermes", "config.yaml");
+		const legacyPlugin = join(
+			paths.userHome,
+			".hermes",
+			"plugins",
+			"model-providers",
+			"clawdi",
+			"__init__.py",
+		);
+		const responsesKey = "sentinel-responses-runtime";
+		const anthropicKey = "sentinel-anthropic-runtime";
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		mkdirSync(dirname(legacyPlugin), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n");
+		writeFileSync(legacyPlugin, 'raise RuntimeError("obsolete")\n');
+		writeFileSync(
+			hermesConfig,
+			[
+				"model:",
+				"  provider: responses",
+				"providers:",
+				"  responses:",
+				"    api: https://stale.example.test/v1",
+				"    api_key: stale-inline-secret",
+				"",
+			].join("\n"),
+		);
+		chmodSync(hermesCommand, 0o700);
+
+		const providerEntries = {
+			responses: {
+				type: "openai",
+				baseUrl: "https://responses.example.test/v1",
+				apiMode: "openai_responses",
+				models: [{ id: "gpt-test" }],
+				runtimeEnvName: "RESPONSES_API_KEY",
+				apiKeySecretRef: "secret://providers/responses/api-key",
+			},
+			anthropic: {
+				type: "anthropic",
+				baseUrl: "https://anthropic.example.test",
+				apiMode: "anthropic_messages",
+				models: [{ id: "claude-test" }],
+				runtimeEnvName: "ANTHROPIC_TEST_API_KEY",
+				apiKeySecretRef: "secret://providers/anthropic/api-key",
+			},
+		};
+		const manifestFor = (
+			providers: Record<string, unknown>,
+			primaryModel: { provider_id: string; model: string } | undefined,
+			generation: number,
+		): RuntimeManifest =>
+			baseManifest(
+				paths,
+				{
+					hermes: {
+						enabled: true,
+						run: runSettings(hermesCommand, ["gateway", "run"]),
+						provider_ids: Object.keys(providers),
+						primary_model: primaryModel,
+						services: {},
+					},
+				},
+				{
+					runtime: "hermes",
+					generation,
+					issuedAt: `2026-07-01T00:0${generation}:00.000Z`,
+					projection: { system: { home: paths.userHome }, providers },
+				},
+			);
+		const writeAppliedProviders = (generation: number, providerIds: string[]) => {
+			writeRuntimeAppliedState(
+				{
+					schemaVersion: "clawdi.runtimeAppliedState.v2",
+					appliedAt: `2026-07-01T00:1${generation}:00.000Z`,
+					instanceId: "hri_reconcile",
+					etag: `"generation-${generation}"`,
+					sourceRevision: String(generation).repeat(64),
+					generation,
+					contentIdentity: {
+						sourcePath: `inline-hermes-generation-${generation}`,
+						sha256: "a".repeat(64),
+					},
+					providerIds,
+					projectedProviderIds: { hermes: providerIds },
+				},
+				paths,
+			);
+		};
+
+		const initial = convergeRuntimeManifest(
+			manifestLoad(
+				manifestFor(providerEntries, { provider_id: "responses", model: "gpt-test" }, 1),
+				"inline-hermes-native-providers",
+				{
+					"secret://providers/responses/api-key": responsesKey,
+					"secret://providers/anthropic/api-key": anthropicKey,
+				},
+			),
+			paths,
+		);
+
+		expect(initial.installErrors).toEqual([]);
+		expect(initial.projectedProviderIds.hermes).toEqual(["anthropic", "responses"]);
+		expect(existsSync(dirname(legacyPlugin))).toBe(false);
+		const initialConfig = readFileSync(hermesConfig, "utf8");
+		const initialRunConfig = readFileSync(runtimeRunConfigPath("hermes", paths), "utf8");
+		const initialHermes = parseYaml(initialConfig) as {
+			model?: { default?: string; provider?: string };
+			providers?: Record<string, unknown>;
+		};
+		expect(initialHermes.model).toMatchObject({
+			default: "gpt-test",
+			provider: "custom:responses",
+		});
+		expect(initialHermes.providers?.responses).toMatchObject({
+			api: "https://responses.example.test/v1",
+			key_env: "RESPONSES_API_KEY",
+			models: { "gpt-test": {} },
+			transport: "codex_responses",
+		});
+		expect(initialHermes.providers?.anthropic).toMatchObject({
+			api: "https://anthropic.example.test",
+			key_env: "ANTHROPIC_TEST_API_KEY",
+			models: { "claude-test": {} },
+			transport: "anthropic_messages",
+		});
+		expect(JSON.parse(initialRunConfig)).toMatchObject({
+			secretEnv: {
+				RESPONSES_API_KEY: "secret://providers/responses/api-key",
+				ANTHROPIC_TEST_API_KEY: "secret://providers/anthropic/api-key",
+			},
+		});
+		for (const secret of [responsesKey, anthropicKey]) {
+			expect(initialConfig).not.toContain(secret);
+			expect(initialRunConfig).not.toContain(secret);
+		}
+		expect(initialConfig).not.toContain("stale-inline-secret");
+		expect(initialConfig).not.toContain("https://stale.example.test/v1");
+
+		writeAppliedProviders(1, initial.projectedProviderIds.hermes ?? []);
+		const switched = convergeRuntimeManifest(
+			manifestLoad(
+				manifestFor(
+					{ anthropic: providerEntries.anthropic },
+					{ provider_id: "anthropic", model: "claude-test" },
+					2,
+				),
+				"inline-hermes-provider-switch",
+				{ "secret://providers/anthropic/api-key": anthropicKey },
+			),
+			paths,
+		);
+		expect(switched.installErrors).toEqual([]);
+		expect(switched.projectedProviderIds.hermes).toEqual(["anthropic"]);
+		const switchedConfig = readFileSync(hermesConfig, "utf8");
+		const switchedProviders = (parseYaml(switchedConfig) as { providers?: Record<string, unknown> })
+			.providers;
+		expect(switchedProviders).not.toHaveProperty("responses");
+		expect(parseYaml(switchedConfig)).toMatchObject({
+			model: { default: "claude-test", provider: "custom:anthropic" },
+			providers: {
+				anthropic: {
+					api: "https://anthropic.example.test",
+					key_env: "ANTHROPIC_TEST_API_KEY",
+					models: { "claude-test": {} },
+					transport: "anthropic_messages",
+				},
+			},
+		});
+
+		writeAppliedProviders(2, switched.projectedProviderIds.hermes ?? []);
+		const deleted = convergeRuntimeManifest(
+			manifestLoad(manifestFor({}, undefined, 3), "inline-hermes-provider-delete"),
+			paths,
+		);
+		expect(deleted.installErrors).toEqual([]);
+		expect(deleted.projectedProviderIds.hermes).toEqual([]);
+		const deletedProviders = (
+			parseYaml(readFileSync(hermesConfig, "utf8")) as { providers?: Record<string, unknown> }
+		).providers;
+		expect(deletedProviders).not.toHaveProperty("anthropic");
+	});
+
 	test("preserves managed hosted provider model capabilities after primary resolution", () => {
 		const paths = tempRuntimePaths();
 		const manifest = baseManifest(
@@ -2369,6 +2559,9 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(snapshotPaths).toContain(paths.managedConfig);
 		expect(snapshotPaths).toContain(join(paths.userHome, ".openclaw", "openclaw.json"));
 		expect(snapshotPaths).toContain(join(paths.userHome, ".hermes", "config.yaml"));
+		expect(snapshotPaths).toContain(
+			join(paths.userHome, ".hermes", "plugins", "model-providers", "clawdi"),
+		);
 		for (const [index, path] of snapshotPaths.entries()) {
 			for (const other of snapshotPaths.slice(index + 1)) {
 				expect(other.startsWith(`${path}/`) || path.startsWith(`${other}/`)).toBe(false);

@@ -743,13 +743,6 @@ function hermesModelProviderPluginDir(home: string): string {
 	return join(home, ".hermes", "plugins", "model-providers", "clawdi");
 }
 
-function readHermesModelProviderPluginFile(
-	home: string,
-	name: "__init__.py" | "plugin.yaml",
-): string {
-	return readFileSync(join(hermesModelProviderPluginDir(home), name), "utf-8");
-}
-
 function readHermesConfigYaml(home: string): Record<string, unknown> {
 	const parsed = parseYaml(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8"));
 	if (!isRecord(parsed)) {
@@ -3215,7 +3208,7 @@ exit 0
 		expect(JSON.stringify(patch)).not.toContain("clawdi-v2");
 	});
 
-	it("uses the stable managed provider name without doubling the Hermes plugin prefix", () => {
+	it("uses the stable managed provider name in the native Hermes projection", () => {
 		const scopedProviderId = "clawdi-v2-deployment-42";
 		const agentProviderId = "clawdi";
 		const home = join(root, "home", "clawdi");
@@ -3253,13 +3246,11 @@ exit 0
 		expect(convergence.installErrors).toEqual([]);
 		const config = readHermesConfigYaml(home);
 		const model = expectRecord(config.model, "Hermes managed model config");
-		expect(model.provider).toBe(agentProviderId);
+		expect(model.provider).toBe(`custom:${agentProviderId}`);
 		const providers = expectRecord(config.providers, "Hermes managed providers config");
 		expect(providers[agentProviderId]).toBeDefined();
 		expect(providers[`clawdi-${agentProviderId}`]).toBeUndefined();
-		const plugin = readHermesModelProviderPluginFile(home, "__init__.py");
-		expect(plugin).toContain(`name="${agentProviderId}"`);
-		expect(plugin).not.toContain(`name="clawdi-${agentProviderId}"`);
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
 		expect(JSON.stringify(config)).not.toContain(scopedProviderId);
 	});
 
@@ -3275,14 +3266,6 @@ exit 0
 				providerCase.first === "clawdi-managed-v2" ? "clawdi" : providerCase.first;
 			const secondAgentProvider =
 				providerCase.second === "clawdi-managed-v2" ? "clawdi" : providerCase.second;
-			const firstHermesProvider =
-				firstAgentProvider === "clawdi" || firstAgentProvider.startsWith("clawdi-")
-					? firstAgentProvider
-					: `clawdi-${firstAgentProvider}`;
-			const secondHermesProvider =
-				secondAgentProvider === "clawdi" || secondAgentProvider.startsWith("clawdi-")
-					? secondAgentProvider
-					: `clawdi-${secondAgentProvider}`;
 			const caseRoot = join(root, providerCase.id);
 			const home = join(caseRoot, "home", "clawdi");
 			const state = join(caseRoot, "var", "lib", "clawdi");
@@ -3356,10 +3339,10 @@ exit 0
 			const hermesConfig = readHermesConfigYaml(home);
 			const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
 			expect(Object.keys(hermesProviders).sort()).toEqual(
-				["user-local", secondHermesProvider].sort(),
+				["user-local", secondAgentProvider].sort(),
 			);
-			expect(hermesProviders[firstHermesProvider]).toBeUndefined();
-			expect(hermesProviders[secondHermesProvider]).toMatchObject({
+			expect(hermesProviders[firstAgentProvider]).toBeUndefined();
+			expect(hermesProviders[secondAgentProvider]).toMatchObject({
 				api: `https://${providerCase.second}.provider.example.test/v1`,
 			});
 			expect(hermesProviders["user-local"]).toMatchObject({
@@ -3609,7 +3592,7 @@ exit 0
 		expect(hermesProviders["clawdi-orphaned"]).toMatchObject({
 			custom_field: "preserve-without-applied-state",
 		});
-		expect(hermesProviders["clawdi-byok-b"]).toBeDefined();
+		expect(hermesProviders["byok-b"]).toBeDefined();
 	});
 
 	it("applies OpenClaw hosted config after the official gateway installer", () => {
@@ -3870,17 +3853,16 @@ exit 0
 		expect(JSON.stringify(patch)).not.toContain("hermes-provider.example.test");
 		const hermesConfig = readHermesConfigYaml(home);
 		const hermesModel = expectRecord(hermesConfig.model, "Hermes model config");
-		expect(hermesModel.provider).toBe("clawdi-hermes");
+		expect(hermesModel.provider).toBe("custom:hermes");
 		expect(hermesModel.default).toBe("kimi/kimi-for-coding");
-		expect(hermesModel.context_length).toBe(262144);
-		expect(hermesModel.max_tokens).toBe(32768);
-		expect(hermesModel.supports_vision).toBe(true);
+		expect(hermesModel.context_length).toBeUndefined();
+		expect(hermesModel.max_tokens).toBeUndefined();
+		expect(hermesModel.supports_vision).toBeUndefined();
 		const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
-		expect(hermesProviders.hermes).toBeUndefined();
-		const hermesProvider = expectRecord(hermesProviders["clawdi-hermes"], "Hermes provider config");
+		const hermesProvider = expectRecord(hermesProviders.hermes, "Hermes provider config");
 		expect(hermesProvider.api).toBe("https://hermes-provider.example.test/v1");
-		expect(hermesProvider.transport).toBeUndefined();
-		expect(hermesProvider.key_env).toBeUndefined();
+		expect(hermesProvider.transport).toBe("chat_completions");
+		expect(hermesProvider.key_env).toBe("HERMES_PROVIDER_API_KEY");
 		const hermesProviderModels = expectRecord(
 			hermesProvider.models,
 			"Hermes provider model metadata",
@@ -3892,16 +3874,7 @@ exit 0
 		expect(kimiModel.context_length).toBe(262144);
 		expect(kimiModel.supports_vision).toBe(true);
 		expect(kimiModel.max_tokens).toBe(32768);
-		const hermesPlugin = readHermesModelProviderPluginFile(home, "__init__.py");
-		const hermesPluginYaml = readHermesModelProviderPluginFile(home, "plugin.yaml");
-		expect(hermesPlugin).toContain('name="clawdi-hermes"');
-		expect(hermesPlugin).toContain('base_url="https://hermes-provider.example.test/v1"');
-		expect(hermesPlugin).toContain('env_vars=("HERMES_PROVIDER_API_KEY",)');
-		expect(hermesPlugin).toContain('auth_type="api_key"');
-		expect(hermesPlugin).toContain('api_mode="chat_completions"');
-		expect(hermesPlugin).toContain('fallback_models=("kimi/kimi-for-coding",)');
-		expect(hermesPluginYaml).toContain("kind: model-provider");
-		expect(hermesPluginYaml).toContain('name: "clawdi"');
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
 		const openclawRunConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
 		);
@@ -3922,7 +3895,7 @@ exit 0
 		expect(JSON.stringify(hermesRunConfig)).not.toContain("provider.openclaw.apiKey");
 	});
 
-	it("reconverges the Hermes model-provider plugin idempotently", () => {
+	it("reconverges the native Hermes provider projection idempotently", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -3936,18 +3909,17 @@ exit 0
 		const paths = getRuntimePaths();
 
 		convergeRuntimeManifest(loaded, paths);
-		const firstPlugin = readHermesModelProviderPluginFile(home, "__init__.py");
-		const firstPluginYaml = readHermesModelProviderPluginFile(home, "plugin.yaml");
+		const firstConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
 
 		convergeRuntimeManifest(loaded, paths);
 
-		expect(readHermesModelProviderPluginFile(home, "__init__.py")).toBe(firstPlugin);
-		expect(readHermesModelProviderPluginFile(home, "plugin.yaml")).toBe(firstPluginYaml);
+		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).toBe(firstConfig);
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"))).toBe(firstRevision);
 	});
 
-	it("registers multiple Hermes hosted providers in a single plugin projection", () => {
+	it("registers multiple Hermes hosted providers in one native config authority", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -3996,25 +3968,14 @@ exit 0
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const hermesPlugin = readHermesModelProviderPluginFile(home, "__init__.py");
-		expect(hermesPlugin.match(/register_provider\(/g)?.length).toBe(2);
-		expect(hermesPlugin).toContain('name="clawdi-hermes"');
-		expect(hermesPlugin).toContain('name="clawdi-moonshot"');
-		expect(hermesPlugin).toContain('env_vars=("HERMES_PROVIDER_API_KEY",)');
-		expect(hermesPlugin).toContain('env_vars=("MOONSHOT_PROVIDER_API_KEY",)');
 		const hermesConfig = readHermesConfigYaml(home);
 		const hermesModel = expectRecord(hermesConfig.model, "Hermes model config");
-		expect(hermesModel.provider).toBe("clawdi-hermes");
+		expect(hermesModel.provider).toBe("custom:hermes");
 		const hermesProviders = expectRecord(hermesConfig.providers, "Hermes providers config");
-		expect(hermesProviders.hermes).toBeUndefined();
-		expect(hermesProviders.moonshot).toBeUndefined();
-		const primaryHermesProvider = expectRecord(
-			hermesProviders["clawdi-hermes"],
-			"primary Hermes provider",
-		);
+		const primaryHermesProvider = expectRecord(hermesProviders.hermes, "primary Hermes provider");
 		expect(primaryHermesProvider.api).toBe("https://hermes-provider.example.test/v1");
-		expect(primaryHermesProvider.transport).toBeUndefined();
-		expect(primaryHermesProvider.key_env).toBeUndefined();
+		expect(primaryHermesProvider.transport).toBe("chat_completions");
+		expect(primaryHermesProvider.key_env).toBe("HERMES_PROVIDER_API_KEY");
 		const primaryHermesModels = expectRecord(
 			primaryHermesProvider.models,
 			"primary Hermes provider models",
@@ -4023,13 +3984,10 @@ exit 0
 			expectRecord(primaryHermesModels["kimi/kimi-for-coding"], "primary Hermes model metadata")
 				.context_length,
 		).toBe(262144);
-		const moonshotProvider = expectRecord(
-			hermesProviders["clawdi-moonshot"],
-			"secondary Hermes provider",
-		);
+		const moonshotProvider = expectRecord(hermesProviders.moonshot, "secondary Hermes provider");
 		expect(moonshotProvider.api).toBe("https://moonshot-provider.example.test/v1");
-		expect(moonshotProvider.transport).toBeUndefined();
-		expect(moonshotProvider.key_env).toBeUndefined();
+		expect(moonshotProvider.transport).toBe("chat_completions");
+		expect(moonshotProvider.key_env).toBe("MOONSHOT_PROVIDER_API_KEY");
 		const moonshotModels = expectRecord(
 			moonshotProvider.models,
 			"secondary Hermes provider models",
@@ -4049,9 +4007,10 @@ exit 0
 		});
 		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-hermes-provider");
 		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-moonshot-provider");
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
 	});
 
-	it("removes the converge-owned Hermes model-provider plugin when the provider projection disappears", () => {
+	it("removes the stale Hermes plugin and native provider when projection disappears", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4061,6 +4020,8 @@ exit 0
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		writeHermesVersionBinary(home, "0.18.0");
+		mkdirSync(hermesModelProviderPluginDir(home), { recursive: true });
+		writeFileSync(join(hermesModelProviderPluginDir(home), "__init__.py"), "# stale\n");
 		const withProvider = hostedHermesProviderLoad(home);
 		const withoutProvider: RuntimeManifestLoad = {
 			...withProvider,
@@ -4085,11 +4046,17 @@ exit 0
 		const first = convergeRuntimeManifest(withProvider, paths);
 		writeTestRuntimeAppliedState(paths, withProvider, first);
 		const firstRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
-		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(true);
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
+		expect(
+			expectRecord(readHermesConfigYaml(home).providers, "Hermes providers").hermes,
+		).toBeDefined();
 
 		convergeRuntimeManifest(withoutProvider, paths);
 
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
+		expect(
+			expectRecord(readHermesConfigYaml(home).providers, "Hermes providers").hermes,
+		).toBeUndefined();
 		expect(systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"))).not.toBe(firstRevision);
 	});
 
@@ -4124,11 +4091,11 @@ exit 0
 		convergeRuntimeManifest(withCapabilities, getRuntimePaths());
 		const initialConfig = readHermesConfigYaml(home);
 		const initialModelConfig = expectRecord(initialConfig.model, "initial Hermes model config");
-		expect(initialModelConfig.context_length).toBe(262144);
-		expect(initialModelConfig.supports_vision).toBe(true);
+		expect(initialModelConfig.context_length).toBeUndefined();
+		expect(initialModelConfig.supports_vision).toBeUndefined();
 		const initialProviderModels = expectRecord(
 			expectRecord(
-				expectRecord(initialConfig.providers, "initial Hermes providers")["clawdi-hermes"],
+				expectRecord(initialConfig.providers, "initial Hermes providers").hermes,
 				"initial Hermes provider",
 			).models,
 			"initial Hermes provider models",
@@ -4149,14 +4116,14 @@ exit 0
 		expect(hermesModel.max_tokens).toBeUndefined();
 		expect(hermesModel.supports_vision).toBeUndefined();
 		const hermesProvider = expectRecord(
-			expectRecord(hermesConfig.providers, "Hermes providers config")["clawdi-hermes"],
+			expectRecord(hermesConfig.providers, "Hermes providers config").hermes,
 			"Hermes provider config",
 		);
 		expect(hermesProvider.api).toBe("https://hermes-provider.example.test/v1");
-		expect(hermesProvider.models).toBeUndefined();
+		expect(hermesProvider.models).toEqual({ "kimi/kimi-for-coding": {} });
 	});
 
-	it("falls back to Hermes config.yaml provider merges before 0.18.0 and changes revision when plugin support appears", () => {
+	it("uses the same native Hermes projection before and after 0.18.0", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4166,27 +4133,27 @@ exit 0
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		writeHermesVersionBinary(home, "0.17.0");
+		mkdirSync(hermesModelProviderPluginDir(home), { recursive: true });
+		writeFileSync(join(hermesModelProviderPluginDir(home), "__init__.py"), "# stale\n");
 		const loaded = hostedHermesProviderLoad(home);
 		const paths = getRuntimePaths();
 
 		convergeRuntimeManifest(loaded, paths);
 
 		const yamlRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
-		const fallbackConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
-		expect(fallbackConfig).toContain("provider: custom:hermes");
-		expect(fallbackConfig).toMatch(/api: "?https:\/\/hermes-provider\.example\.test\/v1"?/);
+		const initialConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
+		expect(initialConfig).toContain("provider: custom:hermes");
+		expect(initialConfig).toMatch(/api: "?https:\/\/hermes-provider\.example\.test\/v1"?/);
 		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
 
 		writeHermesVersionBinary(home, "0.18.0");
 		convergeRuntimeManifest(loaded, paths);
 
-		const pluginRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
-		const pluginConfig = readHermesConfigYaml(home);
-		expect(expectRecord(pluginConfig.model, "Hermes plugin model config").provider).toBe(
-			"clawdi-hermes",
-		);
-		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(true);
-		expect(pluginRevision).not.toBe(yamlRevision);
+		const currentRevision = systemdEnvRevision(readSystemdEnvFile(paths, "clawdi-hermes"));
+		const currentConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
+		expect(currentConfig).toBe(initialConfig);
+		expect(existsSync(hermesModelProviderPluginDir(home))).toBe(false);
+		expect(currentRevision).toBe(yamlRevision);
 	});
 
 	it("projects runtime-scoped Codex OAuth providers as native agent profiles", () => {

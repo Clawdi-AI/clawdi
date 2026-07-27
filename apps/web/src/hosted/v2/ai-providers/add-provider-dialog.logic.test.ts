@@ -13,6 +13,7 @@ import {
 import {
 	presetCatalogToProviderModels,
 	providerPresetById,
+	providerTypeForPreset,
 } from "@/hosted/v2/ai-providers/provider-presets";
 import type { AiProvider, AiProviderAuth, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
@@ -157,6 +158,25 @@ describe("provider list submit gate", () => {
 });
 
 describe("providerFormIdentity", () => {
+	test("keeps editing legacy mixed Kimi/Moonshot providers after retiring the preset", () => {
+		expect(providerPresetById("kimi-moonshot")).toBeNull();
+		expect(
+			providerFormIdentity({
+				type: "custom_openai_compatible",
+				authMethod: "api_key",
+				labelInput: "Kimi / Moonshot legacy",
+				existingProviderIds: ["kimi-moonshot"],
+				editing: {
+					provider_id: "kimi-moonshot",
+					label: "Kimi / Moonshot",
+				},
+			}),
+		).toEqual({
+			providerId: "kimi-moonshot",
+			label: "Kimi / Moonshot legacy",
+		});
+	});
+
 	test("derives a stable label and provider id for known providers", () => {
 		expect(
 			providerFormIdentity({
@@ -234,6 +254,43 @@ describe("providerFormIdentity", () => {
 });
 
 describe("derivedProviderFields", () => {
+	test("uses explicit protocol contracts for Kimi Coding and Moonshot products", () => {
+		const kimi = testPreset("kimi-coding");
+		expect(providerTypeForPreset(kimi)).toBe("anthropic");
+		expect(derivedProviderFields("anthropic", "api_key", kimi)).toEqual({
+			baseUrl: "https://api.kimi.com/coding",
+			apiMode: "anthropic_messages",
+			runtimeEnv: "KIMI_CODING_API_KEY",
+			modelsText: "kimi-for-coding",
+			suggestedPrimaryModel: "kimi-for-coding",
+		});
+
+		const moonshot = testPreset("moonshot");
+		expect(derivedProviderFields("custom_openai_compatible", "api_key", moonshot)).toMatchObject({
+			baseUrl: "https://api.moonshot.cn/v1",
+			apiMode: "openai_chat",
+			modelsText: "moonshot-v1-128k",
+		});
+		expect(moonshot.region_variants).toEqual([
+			{
+				id: "cn",
+				label: "China",
+				base_url: "https://api.moonshot.cn/v1",
+				api_key_url: "https://platform.moonshot.cn/console/api-keys",
+				website_url: "https://platform.moonshot.cn",
+			},
+			{
+				id: "global",
+				label: "Global",
+				base_url: "https://api.moonshot.ai/v1",
+				api_key_url: "https://platform.moonshot.ai/console/api-keys",
+				website_url: "https://platform.moonshot.ai",
+			},
+		]);
+		expect(providerPresetById("moonshot-cn")).toBeNull();
+		expect(providerPresetById("moonshot-global")).toBeNull();
+	});
+
 	test("uses shared defaults for known providers", () => {
 		expect(derivedProviderFields("openai", "api_key")).toEqual({
 			baseUrl: "https://api.openai.com/v1",

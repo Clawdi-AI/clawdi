@@ -182,9 +182,9 @@ OAuth tokens are stored as encrypted provider-auth payloads. They are not printe
 or stored inside the Provider Catalog.
 
 For Codex OAuth, `ai-provider apply openai-codex` uses Codex's built-in
-OpenAI provider and does not write a fixed `model` value into the generated
-profile. Codex then selects the default model supported by the signed-in
-ChatGPT/Codex account for the pinned CLI version.
+OpenAI provider and writes the selected primary model into the generated
+profile. This Hermes correctness fix does not change the terminal Codex
+projection.
 
 The same `agent:codex/<profile>` provider can be applied to Hermes and
 OpenClaw. Hermes uses its native `openai-codex` provider selector. OpenClaw uses
@@ -245,8 +245,16 @@ generated provider patch.
 Supported contract:
 
 ```text
-Hermes Agent 0.13.0 through 0.17.0 with providers dict compatibility
+Hermes Agent 0.13.0 through 0.18.2 with providers dict compatibility
 ```
+
+Hosted converge uses this same native `model`/`providers` authority for every
+supported Hermes version and removes the obsolete Clawdi model-provider plugin
+if an earlier converge left it behind. User BYOK keys arrive through the hosted
+encrypted bootstrap/external-secret pipeline and are materialized from resolved
+runtime `secretEnv` references. Clawdi-managed credentials use the separate
+deployment-scoped egress injection path. Neither path depends on Vault, and
+agent config files contain only environment variable names, never key values.
 
 Hermes custom-provider output mapping. Users configure standard Clawdi
 `api_mode` values; the Hermes adapter writes Hermes' target-native transport
