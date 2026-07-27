@@ -706,7 +706,7 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 function completedDeploymentOperation(
 	deployment: DeploymentMutationFixture,
 	verb: "create" | "start" | "stop" | "restart" | "delete" | "update",
-) {
+): NonNullable<DeploymentRead["accepted_operation"]> {
 	const resource = mutationDeploymentReadFixture(deployment).resource;
 	return {
 		name: `operations/e2e-${verb}-${resource.id}`,
@@ -723,6 +723,38 @@ function completedDeploymentOperation(
 		response: {
 			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationResponse",
 			deployment: resource,
+		},
+	};
+}
+
+function failedDeletionReadFixture(
+	deployment: DeploymentMutationFixture,
+	retryable: boolean,
+): DeploymentRead {
+	const read = mutationDeploymentReadFixture({ ...deployment, status: "failed" });
+	const status = read.resource.status;
+	if (status === null) throw new Error("Failed deletion fixture requires deployment status");
+	return {
+		...read,
+		accepted_operation: completedDeploymentOperation(deployment, "delete"),
+		resource: {
+			...read.resource,
+			status: {
+				...status,
+				failure: {
+					type: "https://api.clawdi.ai/problems/deployment-delete-failed",
+					title: "Deployment deletion failed",
+					status: 409,
+					detail: "The deployment could not be deleted.",
+					instance: deployment.id,
+					code: "deployment_delete_failed",
+					phase: "delete",
+					retryable,
+					conditionReason: "DeploymentDeleteFailed",
+					conditionMessage: "The deployment could not be deleted.",
+					observedGeneration: 2,
+				},
+			},
 		},
 	};
 }
@@ -766,6 +798,7 @@ type HostedApiStubOptions = {
 	createDeploymentRequests?: Array<{ body: string; idempotencyKey: string | null }>;
 	deleteRequests?: string[];
 	completedDeleteIds?: Set<string>;
+	failedDeleteRetryability?: Map<string, boolean>;
 	deleteResponses?: StubResponse[];
 	deploymentListRequests?: string[];
 	deploymentRequestReads?: string[];
@@ -927,7 +960,12 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					)
 					.map((deployment) =>
 						isDeploymentMutationFixture(deployment) && acceptedDeleteIds.has(deployment.id)
-							? readDeploymentFixture({ ...deployment, status: "deleting" })
+							? options.failedDeleteRetryability?.has(deployment.id)
+								? failedDeletionReadFixture(
+										deployment,
+										options.failedDeleteRetryability.get(deployment.id) ?? false,
+									)
+								: readDeploymentFixture({ ...deployment, status: "deleting" })
 							: readDeploymentFixture(deployment),
 					),
 			);
@@ -1612,16 +1650,18 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 });
 
-test("accepted detail delete navigates after deployment membership disappears", async ({
+test("accepted detail delete dismisses immediately while teardown finishes in the background", async ({
 	page,
 }) => {
 	const deleteRequests: string[] = [];
+	const deploymentListRequests: string[] = [];
 	const completedDeleteIds = new Set<string>();
 	await stubHostedApi(page, {
 		deployments: [includedBasicDeployment],
 		plans: [basicPlan, performancePlan],
 		completedDeleteIds,
 		deleteRequests,
+		deploymentListRequests,
 	});
 	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
 
@@ -1632,14 +1672,20 @@ test("accepted detail delete navigates after deployment membership disappears", 
 		.click();
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
-	await expect(page).toHaveURL(/\/agents\/hdep_included\/settings/);
-	await expect(
-		page.locator("main").getByRole("button", { name: "Delete", exact: true }),
-	).toBeDisabled();
-
-	completedDeleteIds.add("hdep_included");
 	await expect(page).toHaveURL(/\/agents\/?$/);
-	await expect(page.getByText("Agent deleted", { exact: true })).toBeVisible();
+	await expect(page.getByText("Agent removed", { exact: true })).toBeVisible();
+	await expect(page.getByRole("link", { name: "Open Basic", exact: true })).toHaveCount(0);
+	await expect(page.getByTestId("app-sidebar-agent-tiles").getByLabel("Basic")).toHaveCount(0);
+	// The deployment is still in the stubbed inventory as `deleting`; dismissal
+	// therefore precedes teardown rather than waiting for a completed list read.
+	expect(completedDeleteIds.has("hdep_included")).toBe(false);
+
+	const readsBeforeCompletion = deploymentListRequests.length;
+	completedDeleteIds.add("hdep_included");
+	await expect
+		.poll(() => deploymentListRequests.length, { timeout: 10_000 })
+		.toBeGreaterThan(readsBeforeCompletion);
+	await expect(page.getByRole("link", { name: "Open Basic", exact: true })).toHaveCount(0);
 });
 
 test("managed model picker lists the curated catalog without Custom or image models", async ({
@@ -2210,9 +2256,11 @@ test("shared legacy environment direct route asks the user to choose an agent", 
 
 test("identity-less interrupted deployment tile exposes delete", async ({ page }) => {
 	const deleteRequests: string[] = [];
+	const failedDeleteRetryability = new Map<string, boolean>();
 	await stubHostedApi(page, {
 		deployments: [interruptedIdentitylessDeployment],
 		deleteRequests,
+		failedDeleteRetryability,
 	});
 
 	await page.goto("/agents");
@@ -2224,6 +2272,15 @@ test("identity-less interrupted deployment tile exposes delete", async ({ page }
 		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_creation_interrupted"]);
+	await expect(deleteAction).toHaveCount(0);
+
+	failedDeleteRetryability.set("hdep_creation_interrupted", false);
+	await expect(
+		page.getByText("Cleanup for Interrupted deployment needs attention", { exact: true }),
+	).toBeVisible();
+	await expect(page.getByRole("button", { name: "Contact support", exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Retry cleanup", exact: true })).toHaveCount(0);
+	await expect(deleteAction).toHaveCount(0);
 });
 
 test("Basic create always follows the wizard-selected funding path", async ({ page }) => {

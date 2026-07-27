@@ -31,11 +31,11 @@ import { cn } from "@/lib/utils";
 export function HostedDeploymentDeleteAction({
 	children,
 	deployment,
-	onDeleted,
+	onAccepted,
 }: {
 	children: ReactElement;
 	deployment: HostedDeployment;
-	onDeleted?: () => Promise<void> | void;
+	onAccepted?: () => Promise<void> | void;
 }) {
 	const deleteDeployment = useDeleteDeployment();
 	const cancelSubscription = useCancelSubscription();
@@ -56,7 +56,7 @@ export function HostedDeploymentDeleteAction({
 			recorded: boolean;
 			result: ComputeSubscriptionActionResult | null;
 		} = { recorded: false, result: null };
-		let deletionCompleted = false;
+		let deletionAccepted = false;
 		try {
 			await deleteDeploymentWithSubscriptionChoice({
 				choice: offerChoice ? choice : "keep_subscription",
@@ -68,7 +68,7 @@ export function HostedDeploymentDeleteAction({
 				},
 				deleteDeployment: async () => {
 					await deleteDeployment.mutateAsync(deployment.resource.id);
-					deletionCompleted = true;
+					deletionAccepted = true;
 				},
 			});
 			if (cancellationState.recorded) {
@@ -81,10 +81,10 @@ export function HostedDeploymentDeleteAction({
 				});
 			}
 			setOpen(false);
-			await onDeleted?.();
+			await onAccepted?.();
 		} catch (error) {
-			if (deletionCompleted) {
-				toast.error("Agent deleted, but navigation failed", {
+			if (deletionAccepted) {
+				toast.error("Agent removed, but navigation failed", {
 					description: "Refresh the page to update the agent list.",
 				});
 			} else if (offerChoice && choice === "cancel_subscription") {

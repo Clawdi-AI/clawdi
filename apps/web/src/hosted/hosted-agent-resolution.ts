@@ -42,27 +42,20 @@ export function isHostedDeploymentMember(deployment: HostedDeployment): boolean 
 	return deploymentStatusFromResource(deployment.resource.status).kind !== "deleted";
 }
 
+/** Accepted deletion dismisses the agent while its deployment remains observable for cleanup. */
+export function isHostedDeploymentVisible(deployment: HostedDeployment): boolean {
+	const status = deploymentStatusFromResource(deployment.resource.status);
+	return (
+		status.kind !== "deleting" &&
+		status.kind !== "deleted" &&
+		deployment.accepted_operation?.metadata.verb !== "delete"
+	);
+}
+
 export function hostedDeploymentMembers(
 	deployments: readonly HostedDeployment[],
 ): HostedDeployment[] {
 	return deployments.filter(isHostedDeploymentMember);
-}
-
-/**
- * A detail-page delete is complete only after the accepted deployment leaves
- * authoritative inventory membership. Cloud-agent projection misses are not
- * part of this decision and therefore cannot redirect an unrelated detail.
- */
-export function userInitiatedDeploymentDeleteCompleted(
-	deployments: readonly HostedDeployment[] | null,
-	deploymentId: string | null,
-): boolean {
-	if (!deploymentId || deployments === null) return false;
-	const target = deploymentId.toLowerCase();
-	return !deployments.some(
-		(deployment) =>
-			isHostedDeploymentMember(deployment) && deployment.resource.id.toLowerCase() === target,
-	);
 }
 
 /** One claimed-id set shared by list deduplication and ownership chrome. */
@@ -94,7 +87,7 @@ export function resolveAgentDeployment(
 	environmentId: string,
 	deploymentSelector?: string | null,
 ): AgentDeploymentResolution {
-	const members = hostedDeploymentMembers(deployments);
+	const members = deployments.filter(isHostedDeploymentVisible);
 	const target = environmentId.toLowerCase();
 	const direct = members.find((deployment) => deployment.resource.id.toLowerCase() === target);
 	if (direct) {

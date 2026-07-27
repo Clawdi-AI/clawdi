@@ -1,6 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
+import { AlertCircle, LifeBuoy } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentSourceBadge } from "@/components/dashboard/agent-label";
 import {
@@ -10,8 +11,14 @@ import {
 } from "@/components/dashboard/agents-card";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { SectionLabel } from "@/components/section-label";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { deploymentDisplayName } from "@/hosted/agent-identity";
+import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
+import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
+import { deploymentFailurePresentation } from "@/hosted/deployment-failure";
 import { useUnifiedAgentList } from "@/hosted/use-unified-agent-list";
 
 type Env = components["schemas"]["AgentResponse"];
@@ -21,6 +28,49 @@ function HostedEmptyAccountHero() {
 		<div className="space-y-4">
 			<OnboardingCard variant="first-agent" hosted />
 			<WelcomeWalletCard showDeployAction={false} />
+		</div>
+	);
+}
+
+function HostedDeletionFailureNotices({ deployments }: { deployments: HostedDeployment[] }) {
+	if (deployments.length === 0) return null;
+	return (
+		<div className="space-y-3">
+			{deployments.map((deployment) => {
+				const failure = deploymentFailurePresentation(deployment);
+				if (failure?.failedVerb !== "delete") return null;
+				const name = deploymentDisplayName(deployment.resource.spec.name);
+				const retrySafe = failure.retryable !== false;
+				return (
+					<Alert key={deployment.resource.id} variant="destructive">
+						<AlertCircle />
+						<AlertTitle>{`Cleanup for ${name} needs attention`}</AlertTitle>
+						<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+							<span>
+								The agent stays out of your list, but the Clawdi service couldn’t finish releasing
+								its resources.{" "}
+								{retrySafe ? "Retry cleanup." : "Contact support before trying again."}
+							</span>
+							{retrySafe ? (
+								<HostedDeploymentDeleteAction deployment={deployment}>
+									<Button type="button" variant="outline" size="sm">
+										Retry cleanup
+									</Button>
+								</HostedDeploymentDeleteAction>
+							) : (
+								<Button
+									render={<a href="mailto:support@clawdi.ai" />}
+									nativeButton={false}
+									variant="outline"
+									size="sm"
+								>
+									<LifeBuoy data-icon="inline-start" /> Contact support
+								</Button>
+							)}
+						</AlertDescription>
+					</Alert>
+				);
+			})}
 		</div>
 	);
 }
@@ -92,7 +142,8 @@ export function HostedAgentsSection({
 		!unified.isLoading &&
 		!unified.error;
 	return (
-		<div data-hosted="true">
+		<div data-hosted="true" className="space-y-4">
+			<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
 			{isEmptyState ? (
 				<HostedEmptyAccountHero />
 			) : (
@@ -190,7 +241,8 @@ export function HostedAgentsByCompute({
 		!unified.error;
 	if (isEmptyState) {
 		return (
-			<div data-hosted="true">
+			<div data-hosted="true" className="space-y-6">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
 				<HostedEmptyAccountHero />
 			</div>
 		);
@@ -202,7 +254,8 @@ export function HostedAgentsByCompute({
 		connectedTiles.length === 0
 	) {
 		return (
-			<div data-hosted="true">
+			<div data-hosted="true" className="space-y-6">
+				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
 				<AgentsCard agents={[]} isLoading />
 			</div>
 		);
@@ -210,6 +263,7 @@ export function HostedAgentsByCompute({
 
 	return (
 		<div data-hosted="true" className="space-y-6">
+			<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
 			{hostedTiles.length > 0 ? (
 				<section className="space-y-2">
 					<SectionLabel

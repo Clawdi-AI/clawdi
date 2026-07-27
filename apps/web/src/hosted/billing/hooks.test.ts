@@ -303,6 +303,25 @@ describe("hosted deployment refresh policy", () => {
 });
 
 describe("reconcileDeploymentSnapshots", () => {
+	test("retains accepted delete intent across stale reads so a dismissed agent cannot reappear", () => {
+		const accepted = acceptedOperation("delete");
+		const optimistic = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "deleting",
+			acceptedOperation: accepted,
+		});
+		const staleServerSnapshot = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "running",
+			acceptedOperation: acceptedOperation("start"),
+		});
+
+		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [staleServerSnapshot]);
+
+		expect(reconciled?.resource.status?.summary_state).toBe("running");
+		expect(reconciled?.accepted_operation).toEqual(accepted);
+	});
+
 	test("lets a failed server snapshot override optimistic pending state and retain its verb", () => {
 		const optimistic = hostedDeploymentFixture({
 			id: "hdep_failure",

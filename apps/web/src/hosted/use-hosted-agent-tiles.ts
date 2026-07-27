@@ -11,6 +11,7 @@ import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-managemen
 import {
 	compactDeploymentFailureReason,
 	type DeploymentFailurePresentation,
+	deploymentFailureProjection,
 	deploymentFailureReason,
 } from "@/hosted/deployment-failure";
 import {
@@ -23,7 +24,7 @@ import {
 } from "@/hosted/deployment-status";
 import {
 	claimedEnvIdsFromDeployments,
-	isHostedDeploymentMember,
+	isHostedDeploymentVisible,
 } from "@/hosted/hosted-agent-resolution";
 import { HostedDeploymentTileAction } from "@/hosted/hosted-deployment-tile-action";
 import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
@@ -164,6 +165,15 @@ export function useHostedAgentTiles({
 		if (!includeDeployments) return new Set<string>();
 		return claimedEnvIdsFromDeployments(deployments);
 	}, [deployments, includeDeployments]);
+	const deletionFailures = useMemo(
+		() =>
+			includeDeployments
+				? deployments.filter(
+						(deployment) => deploymentFailureProjection(deployment)?.failedVerb === "delete",
+					)
+				: [],
+		[deployments, includeDeployments],
+	);
 
 	return {
 		inventoryStatus: inventory.status,
@@ -171,6 +181,7 @@ export function useHostedAgentTiles({
 			includeDeployments && hasExistingCloudDeployments(inventory.deployments),
 		tiles,
 		claimedEnvIds,
+		deletionFailures,
 		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
 		error: inventory.error,
 		refetch: inventory.refetch,
@@ -187,7 +198,7 @@ export function deploymentToTiles(
 	envById: Map<string, Env>,
 	statusRetry?: { isRetrying: boolean; onRetry: () => void },
 ): AgentTile[] {
-	if (!isHostedDeploymentMember(d)) return [];
+	if (!isHostedDeploymentVisible(d)) return [];
 	const runtime = deploymentRuntime(d);
 	const name = deploymentDisplayName(d.resource.spec.name, runtime);
 	// The deploy API projects the stable agent identity. The Cloud API env join

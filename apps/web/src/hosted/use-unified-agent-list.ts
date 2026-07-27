@@ -122,6 +122,7 @@ export function useUnifiedAgentList({
 	return {
 		...selection,
 		hasExistingDeployments: hosted.hasExistingDeployments,
+		deletionFailures: hosted.deletionFailures,
 		inventoryStatus: hosted.inventoryStatus,
 		isLoading:
 			(showCloudDeployments && hosted.isLoading) ||

@@ -403,8 +403,11 @@ export function reconcileDeploymentSnapshots(
 		(previous ?? []).map((deployment) => [deployment.resource.id, deployment]),
 	);
 	const reconciled = incoming.map((deployment) => {
-		if (deployment.accepted_operation) return deployment;
 		const acceptedOperation = previousById.get(deployment.resource.id)?.accepted_operation;
+		if (acceptedOperation?.metadata.verb === "delete") {
+			return { ...deployment, accepted_operation: acceptedOperation };
+		}
+		if (deployment.accepted_operation) return deployment;
 		if (!acceptedOperation) return deployment;
 
 		const resourceStatus = deployment.resource.status;
