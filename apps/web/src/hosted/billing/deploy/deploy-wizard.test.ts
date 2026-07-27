@@ -100,13 +100,11 @@ describe("deploy wizard product copy and flow", () => {
 });
 
 describe("hosted agent security and copy", () => {
-	test("renders runtime secrets through the shared masked token control", () => {
+	test("masks the required Hermes password and keeps the OpenClaw token out of the page", () => {
 		expect(agentDetailSource).toContain(
-			'<TokenReveal label="Password" value={credentials.value.password} />',
+			'<TokenReveal label="Password" value={hermesCredentials.password} />',
 		);
-		expect(agentDetailSource).toContain(
-			'<TokenReveal label="Token" value={credentials.value.token} />',
-		);
+		expect(agentDetailSource).not.toContain('<TokenReveal label="Token"');
 		expect(agentDetailSource).not.toContain("hermes-password-");
 		expect(agentDetailSource).not.toContain("openclaw-token-");
 	});
@@ -150,6 +148,13 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).toContain("acceptedDeploymentNavigation(created.deploymentId)");
 		expect(wizardSource).toContain("acceptedDeploymentNavigation(outcome.deploymentId)");
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
+	});
+
+	test("keeps setup progress on the destination and bounds the payment-only notice", () => {
+		expect(wizardSource).not.toContain("Agent deployment started");
+		expect(wizardSource).not.toContain("agent is getting ready now");
+		expect(wizardSource).toContain('toast.success("Wallet payment confirmed"');
+		expect(wizardSource).toContain("toast.dismiss(WALLET_PAYMENT_TOAST_ID)");
 	});
 });
 

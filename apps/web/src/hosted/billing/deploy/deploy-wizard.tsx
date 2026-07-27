@@ -185,6 +185,21 @@ function acceptedDeploymentNavigation(deploymentId: string, replace = false) {
 	return { href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"), replace };
 }
 
+const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";
+const WALLET_PAYMENT_TOAST_DURATION_MS = 8_000;
+
+function showWalletPaymentConfirmation(amount: string) {
+	toast.success("Wallet payment confirmed", {
+		id: WALLET_PAYMENT_TOAST_ID,
+		description: `${amount} was paid from Wallet.`,
+		duration: Number.POSITIVE_INFINITY,
+	});
+	globalThis.setTimeout(
+		() => toast.dismiss(WALLET_PAYMENT_TOAST_ID),
+		WALLET_PAYMENT_TOAST_DURATION_MS,
+	);
+}
+
 const aiProviderErrorNormalizer: ApiErrorNormalizer = {
 	isAuthError: isApiAuthError,
 	normalizeError: (error) => `${normalizeApiError(error)} Managed AI still works.`,
@@ -632,15 +647,10 @@ export function DeployWizard() {
 
 	function navigateToReusedSubscription({ deploymentId }: { deploymentId: string }) {
 		setCheckoutSession(null);
-		toast.success("Agent deployment started", {
-			description:
-				"Your active subscription was reused without another charge. Your agent is getting ready now.",
-		});
 		void router.navigate(acceptedDeploymentNavigation(deploymentId));
 	}
 	async function handleCheckoutComplete(
 		previousDeploymentIds: readonly string[],
-		tierLabel: "Basic" | "Performance",
 		request: SubscriptionCreateRequestView | null,
 	) {
 		setCheckoutSession(null);
@@ -662,9 +672,6 @@ export function DeployWizard() {
 					const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
 					forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 					checkoutAttemptRef.current = null;
-					toast.success("Agent deployment started", {
-						description: `Your ${tierLabel} agent is getting ready now.`,
-					});
 					void router.navigate(acceptedDeploymentNavigation(resolved.deploymentId, true));
 					return;
 				} catch (error) {
@@ -710,9 +717,6 @@ export function DeployWizard() {
 				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 				checkoutAttemptRef.current = null;
 			}
-			toast.success("Agent deployment started", {
-				description: `Your ${tierLabel} agent is getting ready now.`,
-			});
 			void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
 		} finally {
 			setSubmitting(false);
@@ -788,9 +792,11 @@ export function DeployWizard() {
 					}
 					forgetIdempotencyAttempt("subscription-wallet-deploy", fingerprint);
 					walletCreateAttemptRef.current = null;
-					toast.success("Agent deployment started", {
-						description: `Your ${paidSelection.tierLabel} agent is getting ready now. ${walletDebit ? formatUsdExact(walletDebit.debitAmountUsd) : formatCents(paidSelection.offer.price_cents)} was paid from Wallet.`,
-					});
+					showWalletPaymentConfirmation(
+						walletDebit
+							? formatUsdExact(walletDebit.debitAmountUsd)
+							: formatCents(paidSelection.offer.price_cents),
+					);
 					void router.navigate(acceptedDeploymentNavigation(outcome.deploymentId));
 					return;
 				}
@@ -872,9 +878,6 @@ export function DeployWizard() {
 				});
 			forgetIdempotencyAttempt("deployment-create", fingerprint);
 			includedCreateAttemptRef.current = null;
-			toast.success("Agent deployment started", {
-				description: "Your first Basic agent is getting ready now for free.",
-			});
 			void router.navigate(acceptedDeploymentNavigation(created.deploymentId));
 		} catch (e) {
 			const normalized = normalizeBillingError(e);
@@ -1591,7 +1594,6 @@ export function DeployWizard() {
 				onComplete={() =>
 					void handleCheckoutComplete(
 						checkoutSession?.previousDeploymentIds ?? [],
-						checkoutSession?.tierLabel ?? "Basic",
 						checkoutSession?.request ?? null,
 					)
 				}

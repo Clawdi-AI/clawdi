@@ -2290,7 +2290,7 @@ test("entitled card subscription activation opens the accepted deployment withou
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
 	await expect.poll(() => checkoutRequests.length).toBe(1);
 	await expect(page).toHaveURL(/\/agents\/hdep_included(?:\?|\/)/);
-	await expect(page.getByText("Agent deployment started", { exact: true })).toBeVisible();
+	await expect(page.getByText("Agent deployment started", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("dialog", { name: /Complete .* checkout/ })).toHaveCount(0);
 	await expect(page.getByText("Mock secure payment form", { exact: true })).toHaveCount(0);
 	expect(JSON.parse(checkoutRequests[0] ?? "{}")).toMatchObject({
@@ -2424,12 +2424,10 @@ test("wallet annual quotes the exact debit and activates the created deployment"
 		},
 	});
 	await expect(page).toHaveURL(/\/agents\/hdep_wallet_created(?:\?|\/)/);
-	await expect(page.getByText("Agent deployment started", { exact: true })).toBeVisible();
-	await expect(
-		page.getByText("Your Basic agent is getting ready now. $100.00 was paid from Wallet.", {
-			exact: true,
-		}),
-	).toBeVisible();
+	await expect(page.getByText("Wallet payment confirmed", { exact: true })).toBeVisible();
+	await expect(page.getByText("$100.00 was paid from Wallet.", { exact: true })).toBeVisible();
+	await page.waitForTimeout(8_500);
+	await expect(page.getByText("Wallet payment confirmed", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Agent deployed", { exact: true })).toHaveCount(0);
 	expect(errors, `wallet annual deploy: ${errors.join(" | ")}`).toEqual([]);
 });
