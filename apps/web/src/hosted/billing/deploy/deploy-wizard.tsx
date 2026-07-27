@@ -526,6 +526,7 @@ export function DeployWizard() {
 	const computePlanReady =
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const trimmedAssistantName = assistantName.trim();
+	const nameLimitReached = assistantName.length >= DEPLOY_ASSISTANT_NAME_MAX_LENGTH;
 	const nameError =
 		trimmedAssistantName.length === 0
 			? "Enter a name for this agent."
@@ -1428,7 +1429,11 @@ export function DeployWizard() {
 									maxLength={DEPLOY_ASSISTANT_NAME_MAX_LENGTH}
 									required
 									aria-invalid={nameError ? true : undefined}
-									aria-describedby={nameError ? "agent-name-error" : "agent-name-help"}
+									aria-describedby={
+										nameError
+											? "agent-name-error agent-name-count"
+											: "agent-name-help agent-name-count"
+									}
 									onChange={(event) => setAssistantName(event.target.value)}
 									onBlur={() => setAssistantName((name) => name.trim())}
 								/>
@@ -1438,9 +1443,27 @@ export function DeployWizard() {
 									</p>
 								) : (
 									<p id="agent-name-help" className="text-xs text-muted-foreground">
-										{`Used to identify this agent in Clawdi. ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters maximum.`}
+										Used to identify this agent in Clawdi.
 									</p>
 								)}
+								<p
+									id="agent-name-count"
+									className={cn(
+										"text-xs",
+										nameLimitReached
+											? "font-medium text-warning-muted-foreground"
+											: "text-muted-foreground",
+									)}
+								>
+									{`${assistantName.length} / ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters${
+										nameLimitReached ? " — limit reached." : ""
+									}`}
+								</p>
+								{nameLimitReached ? (
+									<span className="sr-only" role="status" aria-live="polite">
+										{`Name limit reached. You can enter up to ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters.`}
+									</span>
+								) : null}
 							</div>
 							<div className="flex flex-col gap-1.5">
 								<label htmlFor="agent-language" className="text-sm text-muted-foreground">
