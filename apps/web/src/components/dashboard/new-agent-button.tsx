@@ -2,7 +2,7 @@
 
 import { useRouter } from "@tanstack/react-router";
 import { CirclePlus, Loader2, Rocket, TerminalSquare } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AddAgentDialog } from "@/components/dashboard/add-agent-dialog";
 import { IconChip } from "@/components/icon-chip";
@@ -18,6 +18,7 @@ import { SidebarMenuButton, SidebarMenuItem } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useHydrated } from "@/lib/use-hydrated";
 import { cn } from "@/lib/utils";
 
 export function NewAgentButton({
@@ -33,15 +34,12 @@ export function NewAgentButton({
 } = {}) {
 	const router = useRouter();
 	const hostedAccess = useHostedProductAccess();
-	const [mounted, setMounted] = useState(false);
+	const hydrated = useHydrated();
 	const [chooserOpen, setChooserOpen] = useState(false);
 	const [connectOpen, setConnectOpen] = useState(false);
-	useEffect(() => {
-		setMounted(true);
-	}, []);
-	const canDeployManagedAgent = mounted && IS_HOSTED && hostedAccess.canCreateCloudAgents;
-	const checkingDeployAccess = mounted && IS_HOSTED && hostedAccess.isLoading;
-	const deployAccessError = mounted && IS_HOSTED && hostedAccess.isError;
+	const canDeployManagedAgent = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
+	const checkingDeployAccess = hydrated && IS_HOSTED && hostedAccess.isLoading;
+	const deployAccessError = hydrated && IS_HOSTED && hostedAccess.isError;
 
 	function handleClick() {
 		if (checkingDeployAccess) return;

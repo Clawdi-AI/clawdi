@@ -132,6 +132,7 @@ import {
 	SETTINGS_SECTION_IDS,
 	type SettingsSectionId,
 } from "@/lib/settings-routes";
+import { useHydrated } from "@/lib/use-hydrated";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 type AgentChromeKind = AgentOwnershipKind;
@@ -1695,7 +1696,7 @@ export function AppSidebar({
 	const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
 	const api = useApi();
 	const hostedAccess = useHostedProductAccess();
-	const [mounted, setMounted] = useState(false);
+	const hydrated = useHydrated();
 	const [hostedAgentTiles, setHostedAgentTiles] = useState<AgentTile[] | null>(null);
 	const [hostedMembershipResolved, setHostedMembershipResolved] = useState(false);
 	const updateHostedAgentList = useCallback(
@@ -1705,11 +1706,8 @@ export function AppSidebar({
 		},
 		[],
 	);
-	useEffect(() => {
-		setMounted(true);
-	}, []);
 	const showCloudFeatures =
-		mounted && IS_HOSTED && (hostedAccess.canCreateCloudAgents || hostedAccess.status === "error");
+		hydrated && IS_HOSTED && (hostedAccess.canCreateCloudAgents || hostedAccess.status === "error");
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
 	const { data: environments } = useQuery({
@@ -1717,12 +1715,12 @@ export function AppSidebar({
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
 		refetchInterval: activeAgentId ? 10_000 : false,
 	});
-	const hydratedEnvironments = mounted ? environments : undefined;
+	const hydratedEnvironments = hydrated ? environments : undefined;
 	const selfManagedTiles = useMemo(
 		() => selfManagedAgentTiles(hydratedEnvironments),
 		[hydratedEnvironments],
 	);
-	const unifiedAgentListEnabled = mounted && Boolean(HostedUnifiedAgentListSensor);
+	const unifiedAgentListEnabled = hydrated && Boolean(HostedUnifiedAgentListSensor);
 	const agentsLoaded = unifiedAgentListEnabled
 		? hostedAgentTiles !== null && hostedMembershipResolved
 		: hydratedEnvironments !== undefined;
