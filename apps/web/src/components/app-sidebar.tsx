@@ -6,7 +6,6 @@ import {
 	DndContext,
 	type DragEndEvent,
 	type DragOverEvent,
-	KeyboardSensor,
 	type Modifier,
 	PointerSensor,
 	TouchSensor,
@@ -16,7 +15,6 @@ import {
 import {
 	arrayMove,
 	SortableContext,
-	sortableKeyboardCoordinates,
 	useSortable,
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
@@ -28,7 +26,6 @@ import {
 	CircleHelp,
 	Cloud,
 	ExternalLink,
-	GripVertical,
 	History,
 	Layers,
 	LayoutDashboard,
@@ -853,8 +850,6 @@ function RailFocusButton({
 
 function SortableAgentRailItem({
 	agent,
-	position,
-	itemCount,
 	active,
 	onNavigate,
 	onClickCapture,
@@ -863,8 +858,6 @@ function SortableAgentRailItem({
 	showTooltip,
 }: {
 	agent: AgentTile;
-	position: number;
-	itemCount: number;
 	active: boolean;
 	onNavigate: React.MouseEventHandler<HTMLAnchorElement>;
 	onClickCapture: React.MouseEventHandler<HTMLAnchorElement>;
@@ -872,15 +865,10 @@ function SortableAgentRailItem({
 	onTouchStartCapture: React.TouchEventHandler<HTMLAnchorElement>;
 	showTooltip: boolean;
 }) {
-	const {
-		attributes,
-		listeners,
-		setActivatorNodeRef,
-		setNodeRef,
-		transform,
-		transition,
-		isDragging,
-	} = useSortable({ id: agent.id, disabled: !agent.env });
+	const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+		id: agent.id,
+		disabled: !agent.env,
+	});
 	const kind = agentTileChromeKind(agent);
 	const identity = agent.env ?? {
 		id: agent.id,
@@ -899,7 +887,10 @@ function SortableAgentRailItem({
 		transition: isDragging ? undefined : transition,
 		zIndex: isDragging ? 20 : undefined,
 	};
-	const reorderLabel = `Reorder ${baseIdentityLabel}, position ${position} of ${itemCount}`;
+	const dragPointerDown: React.PointerEventHandler<HTMLAnchorElement> | undefined =
+		listeners?.onPointerDown ? (event) => listeners.onPointerDown?.(event) : undefined;
+	const dragTouchStart: React.TouchEventHandler<HTMLAnchorElement> | undefined =
+		listeners?.onTouchStart ? (event) => listeners.onTouchStart?.(event) : undefined;
 
 	return (
 		<SidebarMenuItem
@@ -919,7 +910,9 @@ function SortableAgentRailItem({
 				onNavigate={onNavigate}
 				onClickCapture={onClickCapture}
 				onPointerDownCapture={onPointerDownCapture}
+				onPointerDown={dragPointerDown}
 				onTouchStartCapture={onTouchStartCapture}
+				onTouchStart={dragTouchStart}
 				showTooltip={showTooltip}
 			>
 				<span className="relative inline-flex rounded-md">
@@ -941,20 +934,6 @@ function SortableAgentRailItem({
 					) : null}
 				</span>
 			</RailFocusButton>
-			<Button
-				ref={setActivatorNodeRef}
-				type="button"
-				variant="ghost"
-				size="icon-sm"
-				className="absolute right-0 bottom-0 z-30 size-5 cursor-grab rounded-sm bg-sidebar/85 text-muted-foreground opacity-70 shadow-sm hover:opacity-100 focus-visible:opacity-100 active:cursor-grabbing"
-				disabled={!agent.env}
-				aria-label={reorderLabel}
-				title={reorderLabel}
-				{...attributes}
-				{...listeners}
-			>
-				<GripVertical aria-hidden="true" className="size-3" />
-			</Button>
 		</SidebarMenuItem>
 	);
 }
@@ -987,7 +966,6 @@ function FocusRailContent({
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: RAIL_DRAG_ACTIVATION_DISTANCE } }),
 		useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
-		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
 	);
 	useEffect(() => {
 		if (!draggingRailItem.current) {
@@ -1174,12 +1152,10 @@ function FocusRailContent({
 						onDragEnd={onDragEnd}
 					>
 						<SortableContext items={orderedAgentIds} strategy={verticalListSortingStrategy}>
-							{orderedAgents.map((agent, index) => (
+							{orderedAgents.map((agent) => (
 								<SortableAgentRailItem
 									key={agent.id}
 									agent={agent}
-									position={index + 1}
-									itemCount={orderedAgents.length}
 									active={Boolean(activeAgentId && agentTileMatchesRouteId(agent, activeAgentId))}
 									onNavigate={onRailAgentNavigate}
 									onClickCapture={onRailAgentClickCapture}

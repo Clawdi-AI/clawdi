@@ -52,9 +52,9 @@ describe("deploy wizard personalization", () => {
 			"trimmedAssistantName.length > DEPLOY_ASSISTANT_NAME_MAX_LENGTH",
 		);
 		expect(wizardSource).toContain("Used to identify this agent in Clawdi.");
-		expect(wizardSource).toContain("useState(DEFAULT_DEPLOY_ASSISTANT_NAME)");
-		expect(wizardSource).not.toContain("assistantNameEditedRef");
-		expect(wizardSource).not.toContain("deployAssistantNameAfterRuntimeChange");
+		expect(wizardSource).toContain("runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME)");
+		expect(wizardSource).toContain("assistantNameEditedRef");
+		expect(wizardSource).toContain("deployAssistantNameAfterRuntimeChange");
 		expect(wizardSource).toContain("required");
 		expect(wizardSource).toContain("aria-invalid={nameError ? true : undefined}");
 		expect(wizardSource).toContain('"agent-name-error agent-name-count"');
@@ -83,12 +83,10 @@ describe("deploy wizard product copy and flow", () => {
 		expect(wizardSource).not.toContain('title="Link after deploy"');
 	});
 
-	test("makes the recommended permanent agent software choice answerable", () => {
+	test("makes the recommended agent software choice answerable", () => {
 		expect(wizardSource).toContain('<Badge variant="secondary">Recommended</Badge>');
-		expect(wizardSource).toContain("Agent software can’t be changed later");
-		expect(wizardSource).toContain(
-			"To switch after creation, you must delete this agent and create a new one.",
-		);
+		expect(wizardSource).not.toContain("Agent software can’t be changed later");
+		expect(wizardSource).not.toContain("To switch after creation");
 		expect(runtimesSource).toContain("Chat with and manage your agent in the Hermes Dashboard.");
 		expect(runtimesSource).toContain("already use OpenClaw and want its Control UI and workflows.");
 		expect(runtimesSource).not.toContain("Your own personal AI assistant.");
@@ -197,15 +195,15 @@ describe("managed model picker", () => {
 });
 
 describe("deploy provider choice", () => {
-	test("keeps Managed AI compact by default and expands every alternative on demand", () => {
-		expect(wizardSource).toContain("useState(false)");
-		expect(wizardSource).toContain("title={aiProviderSummaryTitle}");
-		expect(wizardSource).toContain("primaryProviderLabel");
-		expect(wizardSource).toContain("Using ");
-		expect(wizardSource).toContain('{aiProviderEditorOpen ? "Done" : "Change"}');
-		expect(wizardSource).toContain("{aiProviderEditorOpen ? (");
+	test("shows every provider choice in the expanded form", () => {
+		expect(wizardSource).toContain(
+			'description="Choose how your agent accesses AI models and select its primary model."',
+		);
 		expect(wizardSource).toContain('title="Add a provider"');
 		expect(wizardSource).toContain('title={authCardLabel("unmanaged")}');
+		expect(wizardSource).not.toContain("aiProviderEditorOpen");
+		expect(wizardSource).not.toContain("aiProviderSummaryTitle");
+		expect(wizardSource).not.toContain("Using Managed AI");
 	});
 
 	test("explains that the welcome balance is used before added Wallet funds", () => {
@@ -213,7 +211,7 @@ describe("deploy provider choice", () => {
 			"welcome balance covers Managed AI first; after that, usage draws from your Wallet.",
 		);
 		expect(wizardSource).toContain(
-			"Your welcome balance covers it first; after that, usage draws from your Wallet.",
+			"Your welcome balance covers usage first; after that, it draws from your Wallet.",
 		);
 		expect(welcomeWalletSource).not.toContain("managed AI is on us to start");
 		expect(wizardSource).not.toContain("Managed-AI usage paid directly from your Wallet");
