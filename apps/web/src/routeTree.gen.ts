@@ -18,7 +18,6 @@ import { Route as ShareTokenRouteImport } from './routes/share/$token'
 import { Route as SChar123idChar125DotmdRouteImport } from './routes/s/{$id}[.]md'
 import { Route as SChar123idChar125DotjsonRouteImport } from './routes/s/{$id}[.]json'
 import { Route as SIdRouteImport } from './routes/s/$id'
-import { Route as ProtectedRuntimeWindowRouteImport } from './routes/_protected/runtime-window'
 import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
 import { Route as ProtectedDashboardIndexRouteImport } from './routes/_protected/_dashboard/index'
@@ -90,11 +89,6 @@ const SIdRoute = SIdRouteImport.update({
   id: '/s/$id',
   path: '/s/$id',
   getParentRoute: () => rootRouteImport,
-} as any)
-const ProtectedRuntimeWindowRoute = ProtectedRuntimeWindowRouteImport.update({
-  id: '/runtime-window',
-  path: '/runtime-window',
-  getParentRoute: () => ProtectedRoute,
 } as any)
 const ProtectedCliAuthorizeRoute = ProtectedCliAuthorizeRouteImport.update({
   id: '/cli-authorize',
@@ -254,7 +248,6 @@ export interface FileRoutesByFullPath {
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
-  '/runtime-window': typeof ProtectedRuntimeWindowRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -290,7 +283,6 @@ export interface FileRoutesByTo {
   '/sign-in': typeof SignInRouteWithChildren
   '/sign-up': typeof SignUpRouteWithChildren
   '/cli-authorize': typeof ProtectedCliAuthorizeRoute
-  '/runtime-window': typeof ProtectedRuntimeWindowRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -328,7 +320,6 @@ export interface FileRoutesById {
   '/sign-up': typeof SignUpRouteWithChildren
   '/_protected/_dashboard': typeof ProtectedDashboardRouteWithChildren
   '/_protected/cli-authorize': typeof ProtectedCliAuthorizeRoute
-  '/_protected/runtime-window': typeof ProtectedRuntimeWindowRoute
   '/s/$id': typeof SIdRoute
   '/s/{$id}.json': typeof SChar123idChar125DotjsonRoute
   '/s/{$id}.md': typeof SChar123idChar125DotmdRoute
@@ -367,7 +358,6 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/sign-up'
     | '/cli-authorize'
-    | '/runtime-window'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -403,7 +393,6 @@ export interface FileRouteTypes {
     | '/sign-in'
     | '/sign-up'
     | '/cli-authorize'
-    | '/runtime-window'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -440,7 +429,6 @@ export interface FileRouteTypes {
     | '/sign-up'
     | '/_protected/_dashboard'
     | '/_protected/cli-authorize'
-    | '/_protected/runtime-window'
     | '/s/$id'
     | '/s/{$id}.json'
     | '/s/{$id}.md'
@@ -547,13 +535,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/s/$id'
       preLoaderRoute: typeof SIdRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/_protected/runtime-window': {
-      id: '/_protected/runtime-window'
-      path: '/runtime-window'
-      fullPath: '/runtime-window'
-      preLoaderRoute: typeof ProtectedRuntimeWindowRouteImport
-      parentRoute: typeof ProtectedRoute
     }
     '/_protected/cli-authorize': {
       id: '/_protected/cli-authorize'
@@ -803,14 +784,12 @@ const ProtectedDashboardRouteWithChildren =
 interface ProtectedRouteChildren {
   ProtectedDashboardRoute: typeof ProtectedDashboardRouteWithChildren
   ProtectedCliAuthorizeRoute: typeof ProtectedCliAuthorizeRoute
-  ProtectedRuntimeWindowRoute: typeof ProtectedRuntimeWindowRoute
   ProtectedOauthCodexCallbackRoute: typeof ProtectedOauthCodexCallbackRoute
 }
 
 const ProtectedRouteChildren: ProtectedRouteChildren = {
   ProtectedDashboardRoute: ProtectedDashboardRouteWithChildren,
   ProtectedCliAuthorizeRoute: ProtectedCliAuthorizeRoute,
-  ProtectedRuntimeWindowRoute: ProtectedRuntimeWindowRoute,
   ProtectedOauthCodexCallbackRoute: ProtectedOauthCodexCallbackRoute,
 }
 

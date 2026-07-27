@@ -318,8 +318,7 @@ describe("deployment mutation settlement", () => {
 		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
 
 		expect(source).toContain('if (vars.action === "restart") {');
-		expect(source).toContain('retireRuntimeWindows(accepted.deploymentId, "restarted");');
-		expect(source).toContain('retireRuntimeWindows(accepted.deploymentId, "deleting");');
+		expect(source).toContain("retireRuntimeWindows(accepted.deploymentId);");
 		expect(source.match(/retireRuntimeWindows\(accepted\.deploymentId/g)).toHaveLength(2);
 	});
 

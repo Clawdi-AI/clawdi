@@ -2079,26 +2079,9 @@ test("deployment detail stays put, becomes running, and keeps manual Runtime UI 
 	const deployments: unknown[] = [pendingRuntimeUiDeployment];
 	const deploymentListRequests: string[] = [];
 	const runtimeUiRedemptionRequests: string[] = [];
-	const restartRequests: string[] = [];
-	await page.context().route(`${DEPLOY_API}/**`, async (route) => {
-		const path = new URL(route.request().url()).pathname;
-		if (path === "/v1/me") return fulfillJson(route, hostedUser());
-		if (path === "/v2/deployments") {
-			return fulfillJson(route, [mutationDeploymentReadFixture(readyRuntimeUiDeployment)]);
-		}
-		return fulfillJson(route, {});
-	});
-	await page.context().route(`${CLOUD_API}/**`, (route) => fulfillJson(route, {}));
-	await page.context().route("https://runtime.example/**", (route) =>
-		route.fulfill({
-			contentType: "text/html",
-			body: "<!doctype html><title>Hermes runtime</title><p>Gateway Status: Running</p>",
-		}),
-	);
 	await stubHostedApi(page, {
 		deployments,
 		deploymentListRequests,
-		restartRequests,
 		runtimeUiRedemptionRequests,
 	});
 
@@ -2133,32 +2116,6 @@ test("deployment detail stays put, becomes running, and keeps manual Runtime UI 
 		"https://runtime.example/hermes",
 	);
 	await expect(main.getByRole("button", { name: "Open Hermes Dashboard" })).toBeVisible();
-
-	const popupPromise = page.waitForEvent("popup");
-	await main.getByRole("button", { name: "Open Hermes Dashboard" }).click();
-	const popup = await popupPromise;
-	await expect(popup).toHaveURL(/\/runtime-window$/);
-	await expect(popup.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
-		"src",
-		"https://runtime.example/hermes",
-	);
-	await expect(popup).not.toHaveURL(/hdep_|runtime\.example/);
-
-	await page.getByRole("link", { name: "Settings", exact: true }).click();
-	await page.getByRole("button", { name: "Restart", exact: true }).click();
-	await page
-		.getByRole("alertdialog", { name: "Restart agent?" })
-		.getByRole("button", { name: "Restart agent", exact: true })
-		.click();
-
-	await expect.poll(() => restartRequests.length).toBe(1);
-	await expect(popup).toHaveURL(/\/runtime-window\?reason=restarted$/);
-	await expect(
-		popup.getByText("This runtime window is out of date", { exact: true }),
-	).toBeVisible();
-	await expect(popup.getByRole("button", { name: "Close this window" })).toBeVisible();
-	await popup.getByText("View Agents here", { exact: true }).click();
-	await expect(popup).toHaveURL(/\/agents$/);
 });
 
 test("Runtime UI credential failure renders a retryable error instead of a permanent spinner", async ({
@@ -3734,7 +3691,9 @@ test("top-up rotates its idempotency key after an explicit reuse conflict", asyn
 	).toEqual([]);
 });
 
-test("wallet top-up completion refreshes an automatically paid open invoice", async ({ page }) => {
+test("wallet top-up acceptance refreshes an automatically paid open invoice without claiming credit", async ({
+	page,
+}) => {
 	const errors = collectBrowserErrors(page);
 	const deployments: unknown[] = [walletPastDueDeployment];
 	const topUpRequests: string[] = [];
@@ -3761,7 +3720,11 @@ test("wallet top-up completion refreshes an automatically paid open invoice", as
 	await topUpDialog.getByRole("button", { name: "Continue with $25.00" }).click();
 
 	await expect.poll(() => topUpRequests.length).toBe(1);
-	await expect(page.getByText("Top-up complete", { exact: true })).toBeVisible();
+	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("We're confirming your Wallet credit now.", { exact: true }),
+	).toBeVisible();
+	await expect(page.getByText("Top-up complete", { exact: true })).toHaveCount(0);
 	await expect(pastDueAlert).toHaveCount(0);
 	await expect(page.getByText("Wallet", { exact: true })).toBeVisible();
 	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 2_500 });

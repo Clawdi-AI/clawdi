@@ -193,7 +193,7 @@ export function useDeploymentLifecycle() {
 		onSuccess: (accepted, vars) => {
 			projectAcceptedDeploymentTransition(qc, accepted);
 			if (vars.action === "restart") {
-				retireRuntimeWindows(accepted.deploymentId, "restarted");
+				retireRuntimeWindows(accepted.deploymentId);
 			}
 			const msg =
 				vars.action === "restart"
@@ -221,7 +221,7 @@ export function useDeleteDeployment() {
 			),
 		onSuccess: (accepted) => {
 			projectAcceptedDeploymentTransition(qc, accepted);
-			retireRuntimeWindows(accepted.deploymentId, "deleting");
+			retireRuntimeWindows(accepted.deploymentId);
 			toast.message("Agent removal started", {
 				description: "Cleanup continues in the background.",
 			});
