@@ -71,7 +71,8 @@ export function HostedDeploymentTileAction({
 					Open Wallet
 				</Button>
 			) : null}
-			{remediation?.kind === "review_plan_change" && remediationHref ? (
+			{(remediation?.kind === "review_plan_change" || remediation?.kind === "review_provider") &&
+			remediationHref ? (
 				<Button
 					render={<a href={remediationHref} />}
 					nativeButton={false}

@@ -11,6 +11,7 @@ import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-managemen
 import {
 	compactDeploymentFailureReason,
 	type DeploymentFailurePresentation,
+	deploymentFailurePresentation,
 	deploymentFailureProjection,
 	deploymentFailureReason,
 } from "@/hosted/deployment-failure";
@@ -211,8 +212,11 @@ export function deploymentToTiles(
 	};
 	const detailHref = envId ? agentSectionHref(envId, "overview", routeQuery) : null;
 	const settingsHref = envId ? agentSectionHref(envId, "settings", routeQuery) : undefined;
+	const providerSettingsHref = envId ? agentSectionHref(envId, "ai", routeQuery) : undefined;
 	const deploymentStatus = deploymentStatusFromResource(d.resource.status);
+	const failure = deploymentFailurePresentation(d);
 	const showTileActions =
+		Boolean(failure) ||
 		deploymentStatus.kind === "stopped" ||
 		deploymentStatus.kind === "failed" ||
 		deploymentStatus.kind === "unknown" ||
@@ -231,7 +235,12 @@ export function deploymentToTiles(
 			action: showTileActions
 				? createElement(HostedDeploymentTileAction, {
 						deployment: d,
-						remediationHref: settingsHref ? `${settingsHref}#compute-plan-controls` : undefined,
+						remediationHref:
+							failure?.remediation.kind === "review_provider"
+								? providerSettingsHref
+								: settingsHref
+									? `${settingsHref}#compute-plan-controls`
+									: undefined,
 						isRetrying: statusRetry?.isRetrying,
 						onRetry: statusRetry?.onRetry,
 					})

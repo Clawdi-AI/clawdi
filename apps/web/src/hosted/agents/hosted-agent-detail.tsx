@@ -481,6 +481,7 @@ export function HostedAgentDetail({
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const terminalHref = agentSectionHref(environmentId, "terminal", searchStr);
 	const planChangeHref = `${agentSectionHref(environmentId, "settings", searchStr)}#compute-plan-controls`;
+	const providerSettingsHref = agentSectionHref(environmentId, "ai", searchStr);
 
 	const scopedSessionLink = (sessionId: string) => ({
 		to: "/agents/$id/sessions/$sessionId" as const,
@@ -584,6 +585,7 @@ export function HostedAgentDetail({
 							onRetrySessions={() => sessions.refetch()}
 							sessionLink={(session) => scopedSessionLink(session.id)}
 							planChangeHref={planChangeHref}
+							providerSettingsHref={providerSettingsHref}
 							deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 							isCheckingDeployment={isCheckingDeployment}
 							onCheckDeploymentAgain={onCheckDeploymentAgain}
@@ -949,11 +951,13 @@ function OverviewFailureAction({
 	deployment,
 	failure,
 	planChangeHref,
+	providerSettingsHref,
 	onDeleteAccepted,
 }: {
 	deployment: HostedDeployment;
 	failure: DeploymentFailurePresentation;
 	planChangeHref: string;
+	providerSettingsHref: string;
 	onDeleteAccepted: (deploymentId: string) => void;
 }) {
 	const remediation = failure.remediation;
@@ -972,6 +976,15 @@ function OverviewFailureAction({
 			) : null}
 			{remediation.kind === "restart" ? (
 				<RestartComputeAction deployment={deployment} label={remediation.label} />
+			) : remediation.kind === "review_provider" ? (
+				<Button
+					render={<a href={providerSettingsHref} />}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+				>
+					{remediation.label}
+				</Button>
 			) : remediation.kind === "review_plan_change" ? (
 				<Button
 					render={<a href={planChangeHref} />}
@@ -995,10 +1008,12 @@ function OverviewFailureAction({
 export function OverviewFailedPanel({
 	deployment,
 	planChangeHref,
+	providerSettingsHref,
 	onDeleteAccepted,
 }: {
 	deployment: HostedDeployment;
 	planChangeHref: string;
+	providerSettingsHref: string;
 	onDeleteAccepted: (deploymentId: string) => void;
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
@@ -1019,6 +1034,7 @@ export function OverviewFailedPanel({
 						deployment={deployment}
 						failure={failure}
 						planChangeHref={planChangeHref}
+						providerSettingsHref={providerSettingsHref}
 						onDeleteAccepted={onDeleteAccepted}
 					/>
 				</AlertDescription>
@@ -1068,6 +1084,7 @@ function OverviewTab({
 	onRetrySessions,
 	sessionLink,
 	planChangeHref,
+	providerSettingsHref,
 	deploymentTransitionTimedOut,
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
@@ -1087,6 +1104,7 @@ function OverviewTab({
 		params: { id: string; sessionId: string };
 	};
 	planChangeHref: string;
+	providerSettingsHref: string;
 	deploymentTransitionTimedOut: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
@@ -1109,11 +1127,13 @@ function OverviewTab({
 		),
 	);
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
+	const deploymentFailure = deploymentFailurePresentation(deployment);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const showReadinessPanel =
-		deploymentTransitionTimedOut ||
-		isStartingStatus(deploymentStatus) ||
-		deploymentStatus.kind === "running";
+		!deploymentFailure &&
+		(deploymentTransitionTimedOut ||
+			isStartingStatus(deploymentStatus) ||
+			deploymentStatus.kind === "running");
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
@@ -1127,10 +1147,11 @@ function OverviewTab({
 					onCheckDeploymentAgain={onCheckDeploymentAgain}
 				/>
 			) : null}
-			{deploymentStatus.kind === "failed" ? (
+			{deploymentFailure || deploymentStatus.kind === "failed" ? (
 				<OverviewFailedPanel
 					deployment={deployment}
 					planChangeHref={planChangeHref}
+					providerSettingsHref={providerSettingsHref}
 					onDeleteAccepted={onDeleteAccepted}
 				/>
 			) : null}

@@ -247,6 +247,20 @@ describe("DeploymentStatus", () => {
 		});
 	});
 
+	test("stops convergence polling when the accepted operation has failed", () => {
+		const operation = acceptedOperation("create");
+		operation.done = true;
+		operation.error = { code: 5, message: "provider unavailable", details: [] };
+		const failed = deploymentPollingState(
+			[hostedDeploymentFixture({ status: "starting", acceptedOperation: operation })],
+			new Map(),
+			Date.parse("2026-07-27T00:00:00Z"),
+		);
+
+		expect(failed.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(failed.transitions.size).toBe(0);
+	});
+
 	test("drops fast plan-change polling immediately when it reaches a terminal state", () => {
 		const nowMs = Date.parse("2026-07-25T00:00:00Z");
 		const operation = acceptedOperation("plan_change");

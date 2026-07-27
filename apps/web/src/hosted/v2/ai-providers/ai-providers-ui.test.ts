@@ -24,10 +24,11 @@ describe("ProviderUsabilityBadge", () => {
 		expect(providerPageSource).toContain("<RemoveProviderAction provider={provider}");
 	});
 
-	test("badges a credential-backed provider as connected", () => {
+	test("badges a credential-backed provider as saved without claiming connectivity", () => {
 		const markup = renderToStaticMarkup(createElement(ProviderUsabilityBadge, { usable: true }));
 
-		expect(markup).toContain("Connected");
+		expect(markup).toContain("Saved");
+		expect(markup).not.toContain("Connected");
 		expect(markup).toContain('data-status="success"');
 	});
 });
