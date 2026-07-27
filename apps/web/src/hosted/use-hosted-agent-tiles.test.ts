@@ -289,6 +289,14 @@ describe("deploymentToTiles", () => {
 		expect(resolveAgentDeployment([deleted], environmentId).match).toBeNull();
 	});
 
+	test("removes an accepted delete from tiles before teardown completes", () => {
+		const environmentId = "env-deleting-openclaw";
+		const deleting = deployment({ status: "deleting", failedVerb: "delete", environmentId });
+
+		expect(hostedDeploymentToTiles(deleting)).toEqual([]);
+		expect(resolveAgentDeployment([deleting], environmentId).match).toBeNull();
+	});
+
 	test("keeps a deployment without an env identity non-navigable but exposes delete", () => {
 		const hostedDeployment = deployment({
 			status: "failed",

@@ -1,15 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import type { HostedDeploymentStatus } from "@/hosted/billing/contracts";
+import type { DeploymentOperation, HostedDeploymentStatus } from "@/hosted/billing/contracts";
 import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
 import { deploymentStatusFromResource, parseDeploymentStatus } from "@/hosted/deployment-status";
 import {
 	canOpenHostedRuntimeUi,
+	claimedEnvIdsFromDeployments,
 	hostedDeploymentMembers,
+	isHostedDeploymentVisible,
 	missingProjectionRefetchInterval,
 	resolveAgentDeployment,
 	resolveHostedAgentProjection,
 	resolveHostedInventory,
-	userInitiatedDeploymentDeleteCompleted,
 } from "@/hosted/hosted-agent-resolution";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 import { ApiError } from "@/lib/api-errors";
@@ -25,6 +26,23 @@ function deployment(
 		createdAt: "2026-07-16T00:00:00Z",
 		endpoints: [{ name: "openclaw", url: "https://runtime.example/ui" }],
 	});
+}
+
+function acceptedDelete(deploymentId: string): DeploymentOperation {
+	return {
+		name: `operations/delete-${deploymentId}`,
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId,
+			verb: "delete",
+			targetGeneration: 2,
+			manifestETag: "manifest-delete",
+			createTime: "2026-07-27T00:00:00Z",
+			updateTime: "2026-07-27T00:00:00Z",
+		},
+		done: false,
+		response: null,
+	};
 }
 
 describe("hosted inventory resolution matrix", () => {
@@ -105,18 +123,32 @@ describe("hosted inventory resolution matrix", () => {
 });
 
 describe("hosted detail projection resolution", () => {
-	test("redirects only when the user-deleted deployment leaves authoritative membership", () => {
-		const deleting = deployment("deleting", "hdep_user_deleted");
-		const failed = deployment("failed", "hdep_user_deleted");
-		const deleted = deployment("deleted", "hdep_user_deleted");
-		const unrelated = deployment("running", "hdep_unrelated");
+	test("dismisses an accepted delete without releasing its hosted ownership claim", () => {
+		const environmentId = "55555555-5555-4555-8555-555555555555";
+		const deploymentId = "hdep_user_deleted";
+		const deleting = hostedDeploymentFixture({
+			id: deploymentId,
+			status: "deleting",
+			cloudEnvironments: { openclaw: environmentId },
+			acceptedOperation: acceptedDelete(deploymentId),
+		});
 
-		expect(userInitiatedDeploymentDeleteCompleted([deleting], "hdep_user_deleted")).toBe(false);
-		expect(userInitiatedDeploymentDeleteCompleted([failed], "hdep_user_deleted")).toBe(false);
-		expect(userInitiatedDeploymentDeleteCompleted([deleted], "hdep_user_deleted")).toBe(true);
-		expect(userInitiatedDeploymentDeleteCompleted([unrelated], "hdep_user_deleted")).toBe(true);
-		expect(userInitiatedDeploymentDeleteCompleted([], null)).toBe(false);
-		expect(userInitiatedDeploymentDeleteCompleted(null, "hdep_user_deleted")).toBe(false);
+		expect(isHostedDeploymentVisible(deleting)).toBe(false);
+		expect(hostedDeploymentMembers([deleting])).toEqual([deleting]);
+		expect(claimedEnvIdsFromDeployments([deleting])).toEqual(new Set([environmentId]));
+		expect(resolveAgentDeployment([deleting], environmentId, deploymentId).match).toBeNull();
+	});
+
+	test("does not resurrect a dismissed agent when background deletion fails", () => {
+		const deploymentId = "hdep_delete_failed";
+		const failed = hostedDeploymentFixture({
+			id: deploymentId,
+			status: "failed",
+			acceptedOperation: acceptedDelete(deploymentId),
+		});
+
+		expect(isHostedDeploymentVisible(failed)).toBe(false);
+		expect(resolveAgentDeployment([failed], deploymentId).match).toBeNull();
 	});
 
 	test("keeps a selected stopped deployment addressable after its projection is removed", () => {

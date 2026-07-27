@@ -217,7 +217,9 @@ export function useDeleteDeployment() {
 			),
 		onSuccess: (accepted) => {
 			projectAcceptedDeploymentTransition(qc, accepted);
-			toast.message("Deleting…");
+			toast.message("Agent removed", {
+				description: "Cleanup continues in the background.",
+			});
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
