@@ -19,7 +19,7 @@ import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { AutoReloadCard } from "@/hosted/billing/wallet/auto-reload-card";
 import { BalanceCard } from "@/hosted/billing/wallet/balance-card";
 import { LedgerTable } from "@/hosted/billing/wallet/ledger-table";
-import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
+import { confirmWalletTopup, TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { invalidateWalletActivity } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
 	cleanWalletTopupReturnUrl,
@@ -45,10 +45,6 @@ function scrollToAutoReload() {
 }
 
 function showWalletTopupReturnToast(result: WalletTopupReturnToast) {
-	if (result.kind === "success") {
-		toast.success(result.title, { description: result.description });
-		return;
-	}
 	if (result.kind === "error") {
 		toast.error(result.title, { description: result.description });
 		return;
@@ -124,8 +120,15 @@ export function WalletPage() {
 					});
 					return;
 				}
-				showWalletTopupReturnToast(walletTopupReturnToast(result.paymentIntent?.status));
+				const paymentIntent = result.paymentIntent;
+				const status = paymentIntent?.status;
+				showWalletTopupReturnToast(walletTopupReturnToast(status));
 				invalidateWalletActivity(queryClient);
+				if (status === "succeeded") {
+					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null);
+				} else if (status === "processing" || status === "requires_capture") {
+					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null);
+				}
 			} catch {
 				if (!cancelled) {
 					toast.error("Couldn't refresh top-up", {

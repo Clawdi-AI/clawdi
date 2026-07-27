@@ -1,11 +1,12 @@
 import { describe, expect, mock, test } from "bun:test";
 import { QueryClient, QueryObserver } from "@tanstack/react-query";
-import type { WalletTopupResult } from "@/hosted/billing/contracts";
+import type { WalletLedgerEntry, WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
 	handleTopupStartResult,
 	topUpAmountCentsForUsdShortfall,
 	validTopUpAmountCents,
+	walletTopupCreditIsApplied,
 } from "@/hosted/billing/wallet/top-up-dialog.logic";
 
 function result(overrides: Partial<WalletTopupResult>): WalletTopupResult {
@@ -38,6 +39,7 @@ function setupControls(queryClient: QueryClient) {
 	const startPayment = mock((_clientSecret: string) => {});
 	const toastInfo = mock((_message: string, _options: { description: string }) => {});
 	const toastError = mock((_message: string, _options: { description: string }) => {});
+	const onComplete = mock((_status: "succeeded" | "processing") => {});
 	return {
 		queryClient,
 		resetAttempt,
@@ -45,6 +47,7 @@ function setupControls(queryClient: QueryClient) {
 		startPayment,
 		toastInfo,
 		toastError,
+		onComplete,
 	};
 }
 
@@ -57,6 +60,7 @@ describe("handleTopupStartResult", () => {
 			result({
 				status: "succeeded",
 				flow_type: "mock",
+				payment_intent_id: "pi_sync_success",
 				client_secret: null,
 				amount_usd: "2.50",
 			}),
@@ -79,6 +83,7 @@ describe("handleTopupStartResult", () => {
 		});
 		expect(setup.toastError).not.toHaveBeenCalled();
 		expect(setup.startPayment).not.toHaveBeenCalled();
+		expect(setup.onComplete).toHaveBeenCalledWith("succeeded");
 	});
 
 	test("keeps payment intents on the card step and refreshes only a visible ledger", async () => {
@@ -123,6 +128,42 @@ describe("handleTopupStartResult", () => {
 		expect(setup.toastInfo).not.toHaveBeenCalled();
 		expect(setup.toastError).not.toHaveBeenCalled();
 		unsubscribe();
+	});
+});
+
+describe("walletTopupCreditIsApplied", () => {
+	const entry: WalletLedgerEntry = {
+		operation: "topup",
+		description: "Card top-up",
+		amount_usd: "25.00",
+		status: "applied",
+		payment_reference: "pi_previous",
+		receipt_url: null,
+		created_at: "2026-07-27T12:00:00Z",
+		applied_at: "2026-07-27T12:00:01Z",
+	};
+
+	test("confirms only the exact applied top-up payment reference", () => {
+		expect(walletTopupCreditIsApplied("pi_current", [entry])).toBe(false);
+		expect(walletTopupCreditIsApplied(null, [{ ...entry, payment_reference: null }])).toBe(false);
+		expect(
+			walletTopupCreditIsApplied("pi_current", [
+				{ ...entry, payment_reference: "pi_current", status: "pending" },
+			]),
+		).toBe(false);
+		expect(
+			walletTopupCreditIsApplied("pi_current", [
+				{ ...entry, payment_reference: "pi_current", operation: "x402" },
+			]),
+		).toBe(false);
+		expect(
+			walletTopupCreditIsApplied("pi_current", [
+				{ ...entry, payment_reference: "pi_current", operation: "invoice" },
+			]),
+		).toBe(false);
+		expect(
+			walletTopupCreditIsApplied("pi_current", [{ ...entry, payment_reference: "pi_current" }]),
+		).toBe(true);
 	});
 });
 

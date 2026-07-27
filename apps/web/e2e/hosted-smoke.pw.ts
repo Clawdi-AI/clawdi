@@ -805,6 +805,7 @@ type HostedApiStubOptions = {
 	cloudAgentResponses?: Record<string, StubResponse[]>;
 	createDeploymentResponse?: StubResponse;
 	createDeploymentRequests?: Array<{ body: string; idempotencyKey: string | null }>;
+	deleteRequestBodies?: string[];
 	deleteRequests?: string[];
 	completedDeleteIds?: Set<string>;
 	failedDeleteRetryability?: Map<string, boolean>;
@@ -1302,6 +1303,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		if (p.startsWith("/v2/deployments/") && r.request().method() === "DELETE") {
+			options.deleteRequestBodies?.push(r.request().postData() ?? "");
 			options.deleteRequests?.push(p);
 			options.mutationOrder?.push("delete");
 			const response = options.deleteResponses?.shift();
@@ -3122,14 +3124,14 @@ test("paid Basic cancellation stays conditional with the included slot vacant or
 	expect(errors, `paid Basic cancellation: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("paid agent deletion cancels the subscription before teardown by default", async ({
-	page,
-}) => {
+test("paid agent deletion sends one delete carrying the cancel choice", async ({ page }) => {
 	const cancelRequests: string[] = [];
+	const deleteRequestBodies: string[] = [];
 	const deleteRequests: string[] = [];
 	const mutationOrder: string[] = [];
 	await stubHostedApi(page, {
 		cancelRequests,
+		deleteRequestBodies,
 		deleteRequests,
 		deployments: [paidBasicDeployment],
 		mutationOrder,
@@ -3148,17 +3150,25 @@ test("paid agent deletion cancels the subscription before teardown by default", 
 		.getByRole("button", { name: "Delete agent and cancel subscription", exact: true })
 		.click();
 
-	await expect.poll(() => mutationOrder).toEqual(["cancel", "delete"]);
-	expect(JSON.parse(cancelRequests[0] ?? "{}")).toEqual({ deployment_id: "hdep_paid" });
+	await expect.poll(() => mutationOrder).toEqual(["delete"]);
+	expect(cancelRequests).toEqual([]);
 	expect(deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
+	expect(deleteRequestBodies).toHaveLength(1);
+	expect(JSON.parse(deleteRequestBodies[0] ?? "{}")).toEqual({
+		subscription_choice: "cancel_subscription",
+	});
 });
 
-test("paid agent deletion explicitly keeps the reusable subscription", async ({ page }) => {
+test("paid agent deletion sends one delete carrying the reusable subscription choice", async ({
+	page,
+}) => {
 	const cancelRequests: string[] = [];
+	const deleteRequestBodies: string[] = [];
 	const deleteRequests: string[] = [];
 	const mutationOrder: string[] = [];
 	await stubHostedApi(page, {
 		cancelRequests,
+		deleteRequestBodies,
 		deleteRequests,
 		deployments: [paidBasicDeployment],
 		mutationOrder,
@@ -3176,76 +3186,10 @@ test("paid agent deletion explicitly keeps the reusable subscription", async ({ 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
 	expect(cancelRequests).toEqual([]);
 	expect(mutationOrder).toEqual(["delete"]);
-});
-
-test("paid agent deletion does not teardown when cancellation fails", async ({ page }) => {
-	const cancelRequests: string[] = [];
-	const deleteRequests: string[] = [];
-	const mutationOrder: string[] = [];
-	await stubHostedApi(page, {
-		cancelRequests,
-		cancelResponses: [
-			{
-				status: 503,
-				body: { detail: "Cancellation service is temporarily unavailable." },
-			},
-		],
-		deleteRequests,
-		deployments: [paidBasicDeployment],
-		mutationOrder,
-		plans: [basicPlan, performancePlan],
+	expect(deleteRequestBodies).toHaveLength(1);
+	expect(JSON.parse(deleteRequestBodies[0] ?? "{}")).toEqual({
+		subscription_choice: "keep_subscription",
 	});
-	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
-
-	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
-	const dialog = page.getByRole("alertdialog");
-	await dialog.getByRole("radio").nth(1).check();
-	await dialog
-		.getByRole("button", { name: "Delete agent and cancel subscription", exact: true })
-		.click();
-
-	await expect.poll(() => cancelRequests.length).toBe(1);
-	await expect(page.getByText("Couldn’t cancel subscription", { exact: true })).toBeVisible();
-	await expect(dialog).toBeVisible();
-	expect(deleteRequests).toEqual([]);
-	expect(mutationOrder).toEqual(["cancel"]);
-});
-
-test("paid agent deletion surfaces preserved cancellation when teardown fails", async ({
-	page,
-}) => {
-	const cancelRequests: string[] = [];
-	const deleteRequests: string[] = [];
-	const mutationOrder: string[] = [];
-	await stubHostedApi(page, {
-		cancelRequests,
-		deleteRequests,
-		deleteResponses: [
-			{
-				status: 503,
-				body: { detail: "Deployment teardown is temporarily unavailable." },
-			},
-		],
-		deployments: [paidBasicDeployment],
-		mutationOrder,
-		plans: [basicPlan, performancePlan],
-	});
-	await gotoHostedAgentSettings(page, "hdep_paid", "Basic");
-
-	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
-	const dialog = page.getByRole("alertdialog");
-	await dialog.getByRole("radio").nth(1).check();
-	await dialog
-		.getByRole("button", { name: "Delete agent and cancel subscription", exact: true })
-		.click();
-
-	await expect.poll(() => mutationOrder).toEqual(["cancel", "delete"]);
-	await expect(
-		page.getByText("Subscription cancellation kept; agent not deleted", { exact: true }),
-	).toBeVisible();
-	await expect(dialog).toBeVisible();
-	expect(JSON.parse(cancelRequests[0] ?? "{}")).toEqual({ deployment_id: "hdep_paid" });
-	expect(deleteRequests).toEqual(["/v2/deployments/hdep_paid"]);
 });
 
 test("paid Performance exposes subscription actions without a direct Basic switch", async ({
@@ -3702,8 +3646,85 @@ test("top-up validates the amount and blocks duplicate submission or close in fl
 	await expect(topUpPanel).toBeVisible();
 	await expect.poll(() => topUpRequests.length).toBe(1);
 	await expect(topUpPanel).toHaveCount(0);
+	await expect(
+		page.getByText("Wallet credit can’t be confirmed automatically", { exact: true }),
+	).toBeVisible();
 	expect(JSON.parse(topUpRequests[0] ?? "{}")).toEqual({ amount_cents: 4_000 });
 	expect(errors, `top-up interaction: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("wallet confirms a card top-up only from its exact payment reference", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const ledgerRequests: string[] = [];
+	const walletRequests: string[] = [];
+	let topUpAccepted = false;
+	let postTopUpLedgerReads = 0;
+	const previousTopUp = {
+		operation: "topup",
+		description: "Previous card top-up",
+		amount_usd: "25.00",
+		status: "applied",
+		payment_reference: "pi_previous_25",
+		receipt_url: null,
+		created_at: "2026-07-27T12:00:00Z",
+		applied_at: "2026-07-27T12:00:01Z",
+	};
+	const currentTopUp = {
+		...previousTopUp,
+		description: "Current card top-up",
+		payment_reference: "pi_current_25",
+		created_at: "2026-07-27T12:00:02Z",
+		applied_at: "2026-07-27T12:00:03Z",
+	};
+	await stubHostedApi(page, {
+		ledgerRequests,
+		ledgerResponseForRequest: () => {
+			if (!topUpAccepted) return { items: [], has_more: false };
+			postTopUpLedgerReads += 1;
+			return postTopUpLedgerReads === 1
+				? { items: [previousTopUp], has_more: false }
+				: { items: [currentTopUp, previousTopUp], has_more: false };
+		},
+		onTopUpSuccess: () => {
+			topUpAccepted = true;
+		},
+		plans: [basicPlan, performancePlan],
+		topUpResponses: [
+			{
+				status: 200,
+				body: {
+					status: "succeeded",
+					flow_type: "mock",
+					payment_intent_id: "pi_current_25",
+					client_secret: null,
+					amount_usd: "25.00",
+				},
+			},
+		],
+		walletRequests,
+		walletResponses: [
+			{ status: 200, body: { ...walletState, balance_usd: "0.00" } },
+			{ status: 200, body: { ...walletState, balance_usd: "25.00" } },
+		],
+	});
+	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
+	await expect(settingsDialog.getByText("$0.00", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByText("No activity yet", { exact: true })).toBeVisible();
+
+	await settingsDialog.getByRole("button", { name: "Top up" }).last().click();
+	await settingsDialog
+		.getByRole("region", { name: "Top up Wallet" })
+		.getByRole("button", { name: "Continue with $25.00" })
+		.click();
+
+	await expect(page.getByText("Wallet credited", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByText("$25.00", { exact: true })).toBeVisible();
+	await expect(
+		settingsDialog.getByRole("table").getByText("Current card top-up", { exact: true }),
+	).toBeVisible();
+	expect(postTopUpLedgerReads).toBeGreaterThanOrEqual(2);
+	expect(walletRequests.length).toBeGreaterThanOrEqual(2);
+	expect(errors, `exact payment-reference wallet confirmation: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("top-up rotates its idempotency key after an explicit reuse conflict", async ({ page }) => {

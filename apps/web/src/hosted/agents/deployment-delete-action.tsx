@@ -16,15 +16,12 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
-import {
-	type DeploymentDeleteChoice,
-	deleteDeploymentWithSubscriptionChoice,
-	offersSubscriptionDeleteChoice,
-} from "@/hosted/agents/deployment-delete-action.logic";
 import { useDeleteDeployment } from "@/hosted/agents/deployment-hooks";
-import type { ComputeSubscriptionActionResult, HostedDeployment } from "@/hosted/billing/contracts";
-import { normalizeBillingError } from "@/hosted/billing/errors";
-import { useCancelSubscription } from "@/hosted/billing/hooks";
+import type { DeploymentDeleteRequest, HostedDeployment } from "@/hosted/billing/contracts";
+import {
+	computeFundingMode,
+	isComputeSubscriptionRenewing,
+} from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -38,13 +35,15 @@ export function HostedDeploymentDeleteAction({
 	onAccepted?: () => Promise<void> | void;
 }) {
 	const deleteDeployment = useDeleteDeployment();
-	const cancelSubscription = useCancelSubscription();
 	const [open, setOpen] = useState(false);
-	const [choice, setChoice] = useState<DeploymentDeleteChoice>("cancel_subscription");
+	const [choice, setChoice] =
+		useState<DeploymentDeleteRequest["subscription_choice"]>("cancel_subscription");
 	const [pending, setPending] = useState(false);
 	const locked = useRef(false);
 	const subscription = deployment.commercial_display?.compute_subscription;
-	const offerChoice = offersSubscriptionDeleteChoice(deployment);
+	const offerChoice =
+		computeFundingMode(deployment.current_plan_slug, subscription) === "subscription" &&
+		isComputeSubscriptionRenewing(subscription);
 	const periodEnd = formatShortDate(subscription?.current_period_end);
 	const name = deploymentDisplayName(deployment.resource.spec.name);
 
@@ -52,52 +51,22 @@ export function HostedDeploymentDeleteAction({
 		if (locked.current) return;
 		locked.current = true;
 		setPending(true);
-		const cancellationState: {
-			recorded: boolean;
-			result: ComputeSubscriptionActionResult | null;
-		} = { recorded: false, result: null };
 		let deletionAccepted = false;
 		try {
-			await deleteDeploymentWithSubscriptionChoice({
-				choice: offerChoice ? choice : "keep_subscription",
-				cancelSubscription: async () => {
-					cancellationState.result = await cancelSubscription.mutateAsync({
-						deployment_id: deployment.resource.id,
-					});
-					cancellationState.recorded = true;
-				},
-				deleteDeployment: async () => {
-					await deleteDeployment.mutateAsync(deployment.resource.id);
-					deletionAccepted = true;
+			await deleteDeployment.mutateAsync({
+				id: deployment.resource.id,
+				request: {
+					subscription_choice: offerChoice ? choice : "keep_subscription",
 				},
 			});
-			if (cancellationState.recorded) {
-				toast.success("Subscription cancellation scheduled", {
-					description: cancellationState.result?.current_period_end
-						? `It stops at the end of the current period on ${formatShortDate(
-								cancellationState.result.current_period_end,
-							)}.`
-						: "It stops at the end of the current billing period.",
-				});
-			}
+			deletionAccepted = true;
 			setOpen(false);
 			await onAccepted?.();
-		} catch (error) {
+		} catch {
 			if (deletionAccepted) {
 				toast.error("Agent removed, but navigation failed", {
 					description: "Use Agents in the sidebar to check its status.",
 				});
-			} else if (offerChoice && choice === "cancel_subscription") {
-				if (cancellationState.recorded) {
-					toast.warning("Subscription cancellation kept; agent not deleted", {
-						description:
-							"The subscription will still stop at period end. Retry deleting the agent.",
-					});
-				} else {
-					toast.error("Couldn’t cancel subscription", {
-						description: `The agent was not deleted. ${normalizeBillingError(error)}`,
-					});
-				}
 			}
 		} finally {
 			setPending(false);

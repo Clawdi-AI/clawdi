@@ -23,8 +23,6 @@ import type {
 	HostedComputeSubscription,
 	HostedDeployment,
 	PortalRequest,
-	WalletAutoReloadRequest,
-	WalletTopupRequest,
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/query-keys";
@@ -143,23 +141,6 @@ export function useManagedModelCatalog() {
 
 // ── Wallet ───────────────────────────────────────────────────────────────────
 
-/**
- * Wallet balance + auto-reload config. The balance is a sub2api snapshot, so
- * it can lag a few seconds — poll every 30s to keep it reasonably fresh while
- * the page is open. `billingQueryRetry` keeps deterministic 4xx failures
- * surfacing immediately while still absorbing transient 5xx / network blips
- * with up to two retries.
- */
-export function useWallet({ enabled = true }: { enabled?: boolean } = {}) {
-	const client = useBillingClient();
-	return useBillingQuery({
-		queryKey: billingKeys.wallet,
-		queryFn: () => client.getWallet(),
-		enabled: isDeployApiConfigured() && enabled,
-		refetchInterval: 30_000,
-	});
-}
-
 export function useWalletLedger(limit = 50) {
 	const client = useBillingClient();
 	return useBillingQuery({
@@ -168,26 +149,6 @@ export function useWalletLedger(limit = 50) {
 		// Bumping the limit ("Show more") keeps the current rows on screen
 		// instead of flashing the skeleton while the larger page loads.
 		placeholderData: keepPreviousData,
-	});
-}
-
-export function useTopUp() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: ({ body, idempotencyKey }: { body: WalletTopupRequest; idempotencyKey: string }) =>
-			client.topUp(body, idempotencyKey),
-	});
-}
-
-export function useSetAutoReload() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (body: WalletAutoReloadRequest) => client.setAutoReload(body),
-		onSuccess: (next) => {
-			qc.setQueryData(billingKeys.wallet, next);
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-		},
 	});
 }
 
