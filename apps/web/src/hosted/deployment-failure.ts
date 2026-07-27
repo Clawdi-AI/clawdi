@@ -1,4 +1,10 @@
 import type { HostedDeployment } from "@/hosted/billing/contracts";
+import {
+	BillingApiError,
+	BillingNetworkError,
+	billingErrorDetail,
+	DeploymentConflictError,
+} from "@/hosted/billing/errors";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 
 const DEFAULT_FAILURE_REASON_MAX_LENGTH = 96;
@@ -7,6 +13,8 @@ const PLAN_CHANGE_FAILURE_REASON =
 const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service could not complete this request.";
 
 const CUSTOMER_FAILURE_REASONS_BY_CODE = new Map<string, string>([
+	["provider_not_found", "The selected provider is no longer available in your Clawdi account."],
+	["invalid_managed_provider_id", "Managed by Clawdi cannot be combined with a saved provider."],
 	[
 		"insufficient_balance",
 		"Your Wallet balance was too low for the Clawdi service to complete this request.",
@@ -31,6 +39,7 @@ export type DeploymentFailureProjection = {
 export type DeploymentFailureRemediation =
 	| { kind: "restart"; label: string; requiresWalletTopUp: boolean }
 	| { kind: "review_plan_change"; label: string; requiresWalletTopUp: boolean }
+	| { kind: "review_provider"; label: string; requiresWalletTopUp: false }
 	| { kind: "retry_delete"; label: string; requiresWalletTopUp: false }
 	| { kind: "none"; label: null; requiresWalletTopUp: boolean };
 
@@ -45,6 +54,45 @@ const WALLET_FUNDING_CODES = new Set([
 	"insufficient_wallet_balance",
 	"open_refund_debt",
 ]);
+const PROVIDER_CONFIGURATION_CODES = new Set(["provider_not_found", "invalid_managed_provider_id"]);
+
+/** Customer-safe copy for declarative agent mutations handled by the deploy API. */
+export function deploymentMutationErrorMessage(error: unknown): string {
+	if (error instanceof DeploymentConflictError) return error.message;
+	if (error instanceof BillingNetworkError) {
+		return error.kind === "timeout"
+			? "Clawdi couldn’t confirm whether the agent service accepted this change. Check the latest status, then try again."
+			: "Clawdi couldn’t reach the agent service. Check your connection, then try again.";
+	}
+	if (error instanceof BillingApiError) {
+		const code = billingErrorDetail(error)?.code;
+		if (
+			error.status === 403 &&
+			error.detail === "The Compute Basic free slot allows only one active deployment."
+		) {
+			return "Your free Basic compute slot is already in use. Stop that agent or choose paid compute, then try again.";
+		}
+		if (code === "provider_not_found") {
+			return "The selected provider is no longer available in your Clawdi account. Choose Managed by Clawdi or save the provider again, then retry.";
+		}
+		if (code === "invalid_managed_provider_id") {
+			return "Managed by Clawdi can’t be combined with a saved provider. Choose Managed alone or choose a saved provider, then retry.";
+		}
+		if (error.status === 401) {
+			return "Your session has expired. Sign in again before changing this agent.";
+		}
+		if (error.status === 403) {
+			return "Your Clawdi account can’t change this agent. Ask the agent owner to update it.";
+		}
+		if (error.status === 404) {
+			return "This agent is no longer available. Return to Agents and refresh the list.";
+		}
+		if (error.status >= 500 || error.status === 429) {
+			return "The Clawdi agent service couldn’t complete this change. Check the latest status, then try again in a moment.";
+		}
+	}
+	return "Clawdi couldn’t apply this agent change. Check the latest status and settings, then try again.";
+}
 
 /** Stable product name for every operation verb; never render the wire value. */
 export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): string {
@@ -85,6 +133,19 @@ export function deploymentFailurePresentation(
 	const operationLabel = deploymentOperationLabel(failure.failedVerb);
 	const operationName = operationLabel.toLocaleLowerCase();
 	const requiresWalletTopUp = deploymentFailureNeedsWalletTopUp(failure);
+	if (PROVIDER_CONFIGURATION_CODES.has(failure.code)) {
+		return {
+			...failure,
+			title: "Provider configuration failed",
+			description:
+				"The current provider settings could not start this agent. Fix or switch the provider, then save the agent settings.",
+			remediation: {
+				kind: "review_provider",
+				label: "Fix provider",
+				requiresWalletTopUp: false,
+			},
+		};
+	}
 
 	switch (failure.failedVerb) {
 		case "create":
@@ -184,17 +245,25 @@ export function deploymentFailureProjection(
 ): DeploymentFailureProjection | null {
 	if (!deployment) return null;
 	const status = deployment.resource.status;
-	if (status === null || status.summary_state !== "failed") return null;
-	const failure = status.failure;
-	if (!failure) return null;
-	const failedVerb = deployment.accepted_operation?.metadata.verb ?? null;
-	const reason = deploymentFailureReason(status, failedVerb);
+	const operation = deployment.accepted_operation;
+	const operationFailed = operation?.done === true && operation.error != null;
+	const failure =
+		status?.summary_state === "failed" && status.failure
+			? status.failure
+			: operationFailed
+				? operation.error?.details[0]
+				: null;
+	if (!failure && !operationFailed) return null;
+	const failedVerb = operation?.metadata.verb ?? null;
+	const reason = failure
+		? deploymentFailureReason({ failure }, failedVerb)
+		: DEFAULT_SERVICE_FAILURE_REASON;
 	if (!reason) return null;
 	return {
 		reason,
 		failedVerb,
-		retryable: failure.retryable ?? null,
-		code: failure.code,
+		retryable: failure?.retryable ?? null,
+		code: failure?.code ?? "operation_failed",
 	};
 }
 

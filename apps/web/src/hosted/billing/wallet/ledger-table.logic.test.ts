@@ -13,6 +13,7 @@ function entry(overrides: Partial<WalletLedgerEntry> = {}): WalletLedgerEntry {
 		description: "Wallet top-up",
 		amount_usd: "1",
 		status: "applied",
+		payment_reference: null,
 		receipt_url: null,
 		created_at: "2026-07-01T00:00:00Z",
 		applied_at: "2026-07-01T00:00:00Z",

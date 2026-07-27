@@ -108,9 +108,9 @@ describe("AI provider binding fields", () => {
 	test("uses one auth mapping and selection order for create and update bootstraps", () => {
 		const draft = {
 			bindingMode: "configured" as const,
-			providerChoices: [MANAGED_AI_CHOICE, oauthProvider.provider_id, apiKeyProvider.provider_id],
-			primaryProviderChoice: MANAGED_AI_CHOICE,
-			primaryModel: "gpt-managed",
+			providerChoices: [oauthProvider.provider_id, apiKeyProvider.provider_id],
+			primaryProviderChoice: oauthProvider.provider_id,
+			primaryModel: "gpt-custom",
 		};
 
 		for (const mode of ["create", "update"] as const) {
@@ -120,11 +120,7 @@ describe("AI provider binding fields", () => {
 				providers: [apiKeyProvider, oauthProvider],
 			});
 
-			expect(fields.provider_ids).toEqual([
-				MANAGED_PROVIDER_ID,
-				oauthProvider.provider_id,
-				apiKeyProvider.provider_id,
-			]);
+			expect(fields.provider_ids).toEqual([oauthProvider.provider_id, apiKeyProvider.provider_id]);
 			expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe(oauthProvider.provider_id);
 			expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
 			expect(
@@ -181,6 +177,30 @@ describe("AI provider binding draft transitions", () => {
 		).toEqual([apiKeyProvider.provider_id]);
 	});
 
+	test("replaces a BYO provider with a managed-only update request", () => {
+		const managed = toggleAiBindingProvider(
+			{
+				bindingMode: "configured",
+				providerChoices: [apiKeyProvider.provider_id],
+				primaryProviderChoice: apiKeyProvider.provider_id,
+				primaryModel: "gpt-custom",
+			},
+			MANAGED_AI_CHOICE,
+			{ managedModels, operationMode: "update", providers: [apiKeyProvider] },
+		);
+
+		expect(managed.providerChoices).toEqual([MANAGED_AI_CHOICE]);
+		expect(buildAiBindingFields(managed, { managedModels, mode: "update", providers: [] })).toEqual(
+			{
+				ai_provider_auth_kind: "managed",
+				ai_provider_id: null,
+				provider_ids: [MANAGED_PROVIDER_ID],
+				primary_model: { provider_id: MANAGED_PROVIDER_ID, model: "gpt-managed" },
+				ai_provider_bootstrap: null,
+			},
+		);
+	});
+
 	test("preserves the create and update model-fallback difference", () => {
 		const draft = {
 			bindingMode: "configured" as const,
@@ -205,7 +225,7 @@ describe("AI provider binding draft transitions", () => {
 		).toBe("   ");
 	});
 
-	test("keeps unresolved providers visible only for update and replaces them with managed", () => {
+	test("keeps unresolved providers visible until the user replaces them", () => {
 		const unresolved = updateProviderChoiceFromRef("deleted-provider", []);
 		expect(unresolved).toBe(unresolvedProviderChoice("deleted-provider"));
 		expect(unresolved && isUnresolvedProviderChoice(unresolved)).toBe(true);
@@ -222,17 +242,9 @@ describe("AI provider binding draft transitions", () => {
 			operationMode: "update",
 			providers: [],
 		});
-		const createDraft = toggleAiBindingProvider(draft, MANAGED_AI_CHOICE, {
-			managedModels,
-			operationMode: "create",
-			providers: [],
-		});
-
 		expect(updateDraft.providerChoices).toEqual([MANAGED_AI_CHOICE]);
 		expect(updateDraft.primaryProviderChoice).toBe(MANAGED_AI_CHOICE);
 		expect(updateDraft.primaryModel).toBe("gpt-managed");
-		expect(createDraft.providerChoices).toEqual([unresolved, MANAGED_AI_CHOICE]);
-		expect(createDraft.primaryProviderChoice).toBe(unresolved);
 		expect(() =>
 			buildAiBindingFields(draft, { managedModels, mode: "update", providers: [] }),
 		).toThrow(AiBindingBuildError);

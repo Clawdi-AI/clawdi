@@ -1401,6 +1401,16 @@ export interface components {
              */
             deployment_id: string;
         };
+        /** V2DeleteDeploymentRequest */
+        V2DeleteDeploymentRequest: {
+            /**
+             * Subscription Choice
+             * @description Whether deletion keeps the paid subscription available for reuse or cancels it at the provider. Omission safely keeps the subscription.
+             * @default keep_subscription
+             * @enum {string}
+             */
+            subscription_choice: "keep_subscription" | "cancel_subscription";
+        };
         /** V2DeploymentTerminalSessionResponse */
         V2DeploymentTerminalSessionResponse: {
             /**
@@ -1869,6 +1879,11 @@ export interface components {
             amount_usd: string;
             /** Status */
             status: string;
+            /**
+             * Payment Reference
+             * @description Reference for matching a card payment to this wallet entry
+             */
+            payment_reference: string | null;
             /** Receipt Url */
             receipt_url?: string | null;
             /** Created At */
@@ -2167,7 +2182,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["V2DeleteDeploymentRequest"];
+            };
+        };
         responses: {
             /** @description The declarative spec change was accepted. */
             202: {

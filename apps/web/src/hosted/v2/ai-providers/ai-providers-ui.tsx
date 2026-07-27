@@ -53,7 +53,7 @@ export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
 export function ProviderUsabilityBadge({ usable }: { usable: boolean }) {
 	return (
 		<StatusBadge status={usable ? "success" : "warning"} withDot>
-			{usable ? "Connected" : "Needs setup"}
+			{usable ? "Saved" : "Needs setup"}
 		</StatusBadge>
 	);
 }

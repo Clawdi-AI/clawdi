@@ -92,6 +92,7 @@ describe("deployment failure remediation rendering", () => {
 			createElement(overviewFailedPanel, {
 				deployment,
 				planChangeHref: "/agents/env_test/settings?source=on-clawdi",
+				providerSettingsHref: "/agents/env_test/model-provider?source=on-clawdi",
 				onDeleteAccepted: () => undefined,
 			}),
 		);
@@ -116,6 +117,7 @@ describe("deployment failure remediation rendering", () => {
 			createElement(overviewFailedPanel, {
 				deployment: hostedDeploymentFixture({ status: "failed" }),
 				planChangeHref: "/agents/env_test/settings?source=on-clawdi",
+				providerSettingsHref: "/agents/env_test/model-provider?source=on-clawdi",
 				onDeleteAccepted: () => undefined,
 			}),
 		);

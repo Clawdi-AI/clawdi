@@ -2023,6 +2023,52 @@ test("failed deployment with a retained projection keeps status-authoritative na
 		.toEqual(["/v2/deployments/hdep_failed_retained_projection"]);
 });
 
+test("terminal provider failure replaces Starting with provider recovery", async ({ page }) => {
+	const starting = {
+		...includedBasicDeployment,
+		id: "hdep_provider_failed",
+		name: "Provider recovery",
+		status: "starting",
+	};
+	const deployment = mutationDeploymentReadFixture(starting);
+	deployment.accepted_operation = {
+		...completedDeploymentOperation(starting, "create"),
+		done: true,
+		response: null,
+		error: {
+			code: 5,
+			message: "provider unavailable",
+			details: [
+				{
+					"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+					type: "https://api.clawdi.ai/problems/provider-not-found",
+					title: "Provider not found",
+					status: 404,
+					detail: "Provider unavailable",
+					code: "provider_not_found",
+					retryable: false,
+					conditionReason: "ProviderNotFound",
+					conditionMessage: "Provider unavailable",
+					observedGeneration: 1,
+				},
+			],
+		},
+	};
+	await stubHostedApi(page, { deployments: [deployment] });
+
+	await page.goto(`/agents/${starting.id}?source=on-clawdi`);
+	const main = page.locator("main");
+	await expect(main.getByText("Provider configuration failed", { exact: true })).toBeVisible();
+	await expect(
+		main.getByText("The selected provider is no longer available in your Clawdi account.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(main.getByText("Starting your agent…", { exact: true })).toHaveCount(0);
+	await main.getByRole("button", { name: "Fix provider", exact: true }).click();
+	await expect(page).toHaveURL(new RegExp(`/agents/${starting.id}/model-provider`));
+});
+
 test("missing live projection recovers on Check again without losing deployment tools", async ({
 	page,
 }) => {
@@ -3219,9 +3265,7 @@ test("paid Performance exposes subscription actions without a direct Basic switc
 	expect(errors, `paid Performance actions: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("occupied included Basic start surfaces the backend slot entitlement error", async ({
-	page,
-}) => {
+test("occupied included Basic start explains the slot entitlement recovery", async ({ page }) => {
 	const startRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments: [stoppedIncludedBasicDeployment, includedBasicDeployment],
@@ -3243,9 +3287,12 @@ test("occupied included Basic start surfaces the backend slot entitlement error"
 	await expect.poll(() => startRequests.length).toBe(1);
 	await expect(page.getByText("Couldn't update lifecycle", { exact: true })).toBeVisible();
 	await expect(
-		page.getByText("The Compute Basic free slot allows only one active deployment.", {
-			exact: true,
-		}),
+		page.getByText(
+			"Your free Basic compute slot is already in use. Stop that agent or choose paid compute, then try again.",
+			{
+				exact: true,
+			},
+		),
 	).toBeVisible();
 	expect(errors.length, `included Basic start entitlement: ${errors.join(" | ")}`).toBeGreaterThan(
 		0,

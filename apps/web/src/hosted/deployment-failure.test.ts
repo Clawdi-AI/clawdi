@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { DeploymentOperation } from "@/hosted/billing/contracts";
+import { BillingApiError, BillingNetworkError } from "@/hosted/billing/errors";
 import {
 	deploymentFailurePresentation,
 	deploymentFailureProjection,
 	deploymentFailureReason,
+	deploymentMutationErrorMessage,
 } from "@/hosted/deployment-failure";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
@@ -148,13 +150,101 @@ describe("deploymentFailureReason", () => {
 	});
 
 	test("does not expose a stale failure outside the authoritative failed state", () => {
-		const deployment = hostedDeploymentFixture({ status: "starting" });
+		const deployment = hostedDeploymentFixture({
+			status: "starting",
+			failure: {
+				type: "https://api.clawdi.ai/problems/old_failure",
+				title: "Old failure",
+				status: 409,
+				detail: "Old failure",
+				code: "old_failure",
+				retryable: false,
+				conditionReason: "OldFailure",
+				conditionMessage: "Old failure",
+				observedGeneration: 0,
+			},
+		});
 		expect(deploymentFailureProjection(deployment)).toBeNull();
+	});
+
+	test("surfaces a terminal provider operation before the resource summary catches up", () => {
+		const operation: DeploymentOperation = {
+			name: "operations/provider-failed",
+			metadata: {
+				"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+				deploymentId: "hdep_provider_failed",
+				verb: "create",
+				targetGeneration: 1,
+				manifestETag: "manifest-provider-failed",
+				createTime: "2026-07-27T00:00:00Z",
+				updateTime: "2026-07-27T00:01:00Z",
+			},
+			done: true,
+			error: {
+				code: 5,
+				message: "provider unavailable",
+				details: [
+					{
+						"@type": "type.googleapis.com/clawdi.v2.LifecycleProblemDetails",
+						type: "https://api.clawdi.ai/problems/provider-not-found",
+						title: "Provider not found",
+						status: 404,
+						detail: "Provider unavailable",
+						code: "provider_not_found",
+						retryable: false,
+						conditionReason: "ProviderNotFound",
+						conditionMessage: "Provider unavailable",
+						observedGeneration: 1,
+					},
+				],
+			},
+			response: null,
+		};
+		const deployment = hostedDeploymentFixture({
+			id: "hdep_provider_failed",
+			status: "starting",
+			acceptedOperation: operation,
+		});
+
+		expect(deploymentFailurePresentation(deployment)).toMatchObject({
+			title: "Provider configuration failed",
+			reason: "The selected provider is no longer available in your Clawdi account.",
+			remediation: { kind: "review_provider", label: "Fix provider" },
+		});
 	});
 
 	test("does not classify unavailable status as a failure", () => {
 		const deployment = hostedDeploymentFixture({ status: null });
 		expect(deploymentFailureReason(deployment.resource.status)).toBeNull();
 		expect(deploymentFailureProjection(deployment)).toBeNull();
+	});
+});
+
+describe("deploymentMutationErrorMessage", () => {
+	test("maps provider failures to provider recovery instead of billing copy", () => {
+		const error = new BillingApiError(404, "provider_not_found", {
+			detail: { code: "provider_not_found" },
+		});
+		const message = deploymentMutationErrorMessage(error);
+
+		expect(message).toContain("selected provider is no longer available");
+		expect(message).toContain("Choose Managed by Clawdi");
+		expect(message).not.toContain("billing");
+	});
+
+	test("keeps an unconfirmed timeout distinct from a rejection", () => {
+		expect(deploymentMutationErrorMessage(new BillingNetworkError("timeout"))).toContain(
+			"couldn’t confirm whether the agent service accepted this change",
+		);
+	});
+
+	test("maps the Basic slot entitlement to its actual recovery", () => {
+		expect(
+			deploymentMutationErrorMessage(
+				new BillingApiError(403, "The Compute Basic free slot allows only one active deployment."),
+			),
+		).toBe(
+			"Your free Basic compute slot is already in use. Stop that agent or choose paid compute, then try again.",
+		);
 	});
 });

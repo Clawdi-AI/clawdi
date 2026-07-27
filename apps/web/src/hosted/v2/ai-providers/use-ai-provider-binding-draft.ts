@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { ManagedModelCatalogItem } from "@/hosted/billing/contracts";
-import {
-	type AiBindingMode,
-	type AiBindingOperationMode,
-	type AiProviderBindingDraft,
-	isUnresolvedProviderChoice,
+import type {
+	AiBindingMode,
+	AiBindingOperationMode,
+	AiProviderBindingDraft,
 } from "@/hosted/v2/ai-providers/ai-provider-binding";
 import {
 	dedupeProviderIds,
@@ -54,7 +53,13 @@ export function changeAiBindingPrimaryProvider(
 	return {
 		...draft,
 		bindingMode: "configured",
-		providerChoices: normalizeSelectedProviderIds(draft.providerChoices, choice),
+		providerChoices:
+			choice === MANAGED_AI_CHOICE
+				? [MANAGED_AI_CHOICE]
+				: normalizeSelectedProviderIds(
+						draft.providerChoices.filter((item) => item !== MANAGED_AI_CHOICE),
+						choice,
+					),
 		primaryProviderChoice: choice,
 		primaryModel,
 	};
@@ -67,9 +72,7 @@ export function toggleAiBindingProvider(
 ): AiProviderBindingDraft {
 	const selected = draft.providerChoices.includes(choice);
 	let choices =
-		context.operationMode === "update" &&
-		choice === MANAGED_AI_CHOICE &&
-		draft.providerChoices.some(isUnresolvedProviderChoice)
+		choice === MANAGED_AI_CHOICE
 			? [MANAGED_AI_CHOICE]
 			: selected
 				? draft.providerChoices.filter((item) => item !== choice)

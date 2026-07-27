@@ -385,6 +385,7 @@ export function deploymentPollingState(
 	let refetchInterval: number | false = false;
 
 	for (const deployment of deployments ?? []) {
+		if (deployment.accepted_operation?.done && deployment.accepted_operation.error) continue;
 		const status = deploymentStatusFromResource(deployment.resource.status);
 		if (!isTransitionalStatus(status)) continue;
 

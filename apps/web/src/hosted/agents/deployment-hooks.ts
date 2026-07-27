@@ -10,12 +10,7 @@ import type {
 	HostedDeployment,
 	HostedDeploymentStatus,
 } from "@/hosted/billing/contracts";
-import {
-	DeploymentConflictError,
-	isNetworkError,
-	normalizeBillingError,
-	toastBillingError,
-} from "@/hosted/billing/errors";
+import { DeploymentConflictError, isNetworkError } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/hooks";
 import {
 	forgetIdempotencyAttempt,
@@ -23,6 +18,7 @@ import {
 	idempotencyFingerprint,
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
+import { deploymentMutationErrorMessage } from "@/hosted/deployment-failure";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
 import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
@@ -106,7 +102,7 @@ async function runStableDeploymentIntent<T>(
 
 function toastDeploymentConflict(error: unknown): boolean {
 	if (!(error instanceof DeploymentConflictError)) return false;
-	toast.error("Agent state changed", { description: normalizeBillingError(error) });
+	toast.error("Agent state changed", { description: deploymentMutationErrorMessage(error) });
 	return true;
 }
 
@@ -171,7 +167,8 @@ export function useCreateTerminalSession() {
 	const client = useBillingClient();
 	return useMutation({
 		mutationFn: (vars: { id: string }) => client.createTerminalSession(vars.id),
-		onError: toastBillingError("Couldn't open terminal"),
+		onError: (error) =>
+			toast.error("Couldn't open terminal", { description: deploymentMutationErrorMessage(error) }),
 	});
 }
 
@@ -205,7 +202,9 @@ export function useDeploymentLifecycle() {
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
-			toast.error("Couldn't update lifecycle", { description: normalizeBillingError(error) });
+			toast.error("Couldn't update lifecycle", {
+				description: deploymentMutationErrorMessage(error),
+			});
 		},
 		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});
@@ -226,7 +225,9 @@ export function useDeleteDeployment() {
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
-			toastBillingError("Couldn't delete agent")(error);
+			toast.error("Couldn't delete agent", {
+				description: deploymentMutationErrorMessage(error),
+			});
 		},
 		onSettled: () => invalidateDeploymentSnapshots(qc),
 	});
@@ -247,7 +248,7 @@ export function useUpdateDeployment() {
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
 			toast.error("Couldn't update agent settings", {
-				description: normalizeBillingError(error),
+				description: deploymentMutationErrorMessage(error),
 			});
 		},
 		onSettled: () => invalidateDeploymentSnapshots(qc),
