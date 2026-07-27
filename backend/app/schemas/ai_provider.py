@@ -368,6 +368,13 @@ class AiProviderManagedApiKeyRequest(BaseModel):
     runtime_env_name: str | None = Field(default=None, max_length=128)
 
 
+class AiProviderApiKeyAcceptCredential(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    type: Literal["api_key"]
+    value: SecretStr
+
+
 class _AiProviderAuthImportRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
@@ -426,6 +433,20 @@ class AiProviderOAuthStartRequest(BaseModel):
     redirect_uri: str | None = Field(default=None, max_length=1000)
 
 
+class AiProviderOAuthAcceptCredential(AiProviderOAuthStartRequest):
+    type: Literal["oauth"]
+
+
+class AiProviderAcceptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    provider: AiProviderUpsert
+    credential: Annotated[
+        AiProviderApiKeyAcceptCredential | AiProviderOAuthAcceptCredential,
+        Field(discriminator="type"),
+    ]
+
+
 class AiProviderOAuthStartResponse(BaseModel):
     provider_id: str
     oauth_provider: str
@@ -434,6 +455,23 @@ class AiProviderOAuthStartResponse(BaseModel):
     state: str
     redirect_uri: str
     expires_at: datetime
+
+
+class AiProviderReadyAcceptResponse(BaseModel):
+    status: Literal["ready"]
+    provider: AiProviderResponse
+
+
+class AiProviderOAuthPendingAcceptResponse(BaseModel):
+    status: Literal["pending"]
+    provider: AiProviderResponse
+    authorization: AiProviderOAuthStartResponse
+
+
+type AiProviderAcceptResponse = Annotated[
+    AiProviderReadyAcceptResponse | AiProviderOAuthPendingAcceptResponse,
+    Field(discriminator="status"),
+]
 
 
 class AiProviderOAuthCompleteRequest(BaseModel):

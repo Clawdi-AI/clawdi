@@ -1,17 +1,21 @@
 import base64
+import hashlib
 import json
 import uuid
 from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
 from app.main import app
-from app.models.ai_provider import AiProvider
+from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
+from app.models.platform_idempotency import PlatformMutationIdempotency
 from app.services import sync_events
 from app.services.managed_ai_provider import (
     CLAWDI_MANAGED_PROVIDER_ID,
@@ -27,6 +31,7 @@ from app.services.managed_ai_provider import (
     runtime_managed_provider_id,
     v2_deployment_managed_provider_id,
 )
+from app.services.vault_crypto import decrypt
 from tests.conftest import create_env_with_project
 
 _TEST_SYSTEM = {}
@@ -204,6 +209,43 @@ def _test_jwt(account_id: str = "account-123") -> str:
     )
 
 
+def _api_key_accept_body(value: str = "sk-atomic-secret") -> dict:
+    return {
+        "provider": {
+            "provider_id": "openai-atomic",
+            "type": "openai",
+            "label": "OpenAI",
+            "base_url": "https://api.openai.com/v1",
+            "models": [{"id": "gpt-5.2"}],
+            "api_mode": "openai_responses",
+            "auth": {"type": "api_key", "source": "managed", "profile": "default"},
+            "managed_by": "user",
+            "runtime_env_name": "OPENAI_API_KEY",
+        },
+        "credential": {"type": "api_key", "value": value},
+    }
+
+
+def _oauth_accept_body() -> dict:
+    return {
+        "provider": {
+            "provider_id": "openai-codex-accept",
+            "type": "openai",
+            "label": "OpenAI Codex",
+            "base_url": "https://api.openai.com/v1",
+            "models": [{"id": "gpt-5.2"}],
+            "api_mode": "openai_responses",
+            "auth": {"type": "agent_profile", "tool": "codex", "profile": "default"},
+            "managed_by": "user",
+        },
+        "credential": {
+            "type": "oauth",
+            "provider": "codex",
+            "redirect_uri": "https://cloud.example/oauth/callback",
+        },
+    }
+
+
 @pytest.mark.asyncio
 async def test_ai_provider_crud_is_account_scoped_metadata(client: httpx.AsyncClient):
     created = await client.post(
@@ -327,6 +369,220 @@ async def test_ai_provider_usability_requires_the_active_stored_credential(
         provider["provider_id"]: provider["usable"]
         for provider in completed_listing.json()["providers"]
     } == {"openai-codex": True, "openai-main": True}
+
+
+@pytest.mark.asyncio
+async def test_api_key_accept_is_atomic_usable_and_idempotent(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    user_id = seed_user.id
+    env = await create_env_with_project(
+        db_session,
+        user_id=user_id,
+        machine_id=f"provider-accept-{uuid.uuid4().hex[:8]}",
+        machine_name="Provider Accept",
+        agent_type="openclaw",
+    )
+    environment_id = env.id
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=environment_id,
+            deployment_id="dep-provider-accept",
+            instance_id="hri-provider-accept",
+            generation=1,
+            cli_package_spec="clawdi@0.13.0",
+            locale={"language": "en", "timezone": "UTC"},
+            system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            runtimes={
+                "openclaw": {
+                    "enabled": True,
+                    "providerMode": "configured",
+                    "provider_ids": ["openai-atomic"],
+                    "primary_model": {
+                        "provider_id": "openai-atomic",
+                        "model": "gpt-5.2",
+                    },
+                    "install": {"source": "official"},
+                }
+            },
+        )
+    )
+    await db_session.commit()
+
+    queue = sync_events.subscribe(user_id, frozenset(), environment_id=environment_id)
+    headers = {"Idempotency-Key": "provider-accept-api-key"}
+    try:
+        accepted = await client.post(
+            "/v1/ai-providers/accept",
+            headers=headers,
+            json=_api_key_accept_body(),
+        )
+        assert accepted.status_code == 201, accepted.text
+        assert "sk-atomic-secret" not in accepted.text
+        assert accepted.json()["status"] == "ready"
+        assert accepted.json()["provider"]["usable"] is True
+        assert queue.get_nowait() == {
+            "type": "runtime_manifest_changed",
+            "environment_id": str(environment_id),
+        }
+
+        replay = await client.post(
+            "/v1/ai-providers/accept",
+            headers=headers,
+            json=_api_key_accept_body(),
+        )
+        assert replay.status_code == 201, replay.text
+        assert replay.json() == accepted.json()
+        assert queue.empty()
+
+        listing = await client.get("/v1/ai-providers")
+        assert listing.status_code == 200, listing.text
+        assert listing.json()["providers"][0]["usable"] is True
+
+        assert (
+            await db_session.scalar(
+                select(func.count())
+                .select_from(AiProvider)
+                .where(
+                    AiProvider.owner_user_id == user_id,
+                    AiProvider.provider_id == "openai-atomic",
+                )
+            )
+            == 1
+        )
+        payload = (
+            await db_session.execute(
+                select(AiProviderAuthPayload).where(
+                    AiProviderAuthPayload.owner_user_id == user_id,
+                    AiProviderAuthPayload.provider_id == "openai-atomic",
+                    AiProviderAuthPayload.archived_at.is_(None),
+                )
+            )
+        ).scalar_one()
+        assert payload.encrypted_payload != b"sk-atomic-secret"
+        assert decrypt(payload.encrypted_payload, payload.nonce) == "sk-atomic-secret"
+
+        idempotency = (
+            await db_session.execute(
+                select(PlatformMutationIdempotency).where(
+                    PlatformMutationIdempotency.operation == "ai_provider.accept",
+                    PlatformMutationIdempotency.idempotency_key == "provider-accept-api-key",
+                )
+            )
+        ).scalar_one()
+        assert idempotency.resource_type == "ai_provider"
+        assert b"sk-atomic-secret" not in idempotency.encrypted_response
+
+        reused = await client.post(
+            "/v1/ai-providers/accept",
+            headers=headers,
+            json=_api_key_accept_body("sk-different-secret"),
+        )
+        assert reused.status_code == 409, reused.text
+        assert "sk-different-secret" not in reused.text
+    finally:
+        sync_events.unsubscribe(user_id, queue)
+
+
+@pytest.mark.asyncio
+async def test_api_key_accept_rolls_back_everything_after_provider_write_failure(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user_id = seed_user.id
+    env = await create_env_with_project(
+        db_session,
+        user_id=user_id,
+        machine_id=f"provider-accept-failure-{uuid.uuid4().hex[:8]}",
+        machine_name="Provider Accept Failure",
+        agent_type="openclaw",
+    )
+    environment_id = env.id
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=environment_id,
+            deployment_id="dep-provider-accept-failure",
+            instance_id="hri-provider-accept-failure",
+            generation=1,
+            cli_package_spec="clawdi@0.13.0",
+            locale={"language": "en", "timezone": "UTC"},
+            system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            runtimes={
+                "openclaw": {
+                    "enabled": True,
+                    "providerMode": "configured",
+                    "provider_ids": ["openai-atomic"],
+                    "primary_model": {
+                        "provider_id": "openai-atomic",
+                        "model": "gpt-5.2",
+                    },
+                    "install": {"source": "official"},
+                }
+            },
+        )
+    )
+    await db_session.commit()
+
+    def _fail_idempotency_write(*args, **kwargs):
+        raise RuntimeError("forced accept failure")
+
+    monkeypatch.setattr(
+        "app.routes.ai_providers.store_platform_response",
+        _fail_idempotency_write,
+    )
+    queue = sync_events.subscribe(user_id, frozenset(), environment_id=environment_id)
+    try:
+        with pytest.raises(RuntimeError, match="forced accept failure"):
+            await client.post(
+                "/v1/ai-providers/accept",
+                headers={"Idempotency-Key": "provider-accept-failure"},
+                json=_api_key_accept_body(),
+            )
+
+        assert queue.empty()
+        assert (
+            await db_session.scalar(
+                select(func.count())
+                .select_from(AiProvider)
+                .where(
+                    AiProvider.owner_user_id == user_id,
+                    AiProvider.provider_id == "openai-atomic",
+                )
+            )
+            == 0
+        )
+        assert (
+            await db_session.scalar(
+                select(func.count())
+                .select_from(AiProviderAuthPayload)
+                .where(
+                    AiProviderAuthPayload.owner_user_id == user_id,
+                    AiProviderAuthPayload.provider_id == "openai-atomic",
+                )
+            )
+            == 0
+        )
+        assert (
+            await db_session.scalar(
+                select(func.count())
+                .select_from(PlatformMutationIdempotency)
+                .where(
+                    PlatformMutationIdempotency.operation == "ai_provider.accept",
+                    PlatformMutationIdempotency.idempotency_key == "provider-accept-failure",
+                )
+            )
+            == 0
+        )
+    finally:
+        sync_events.unsubscribe(user_id, queue)
 
 
 @pytest.mark.asyncio
@@ -1659,6 +1915,158 @@ async def test_ai_provider_oauth_start_requires_clean_redirect_and_params(
         )
         assert unsupported_provider.status_code == 422, unsupported_provider.text
         assert "Codex only" in unsupported_provider.text
+    finally:
+        settings.ai_provider_oauth_config_json = previous
+
+
+@pytest.mark.asyncio
+async def test_oauth_accept_persists_pending_then_completes_same_provider_idempotently(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user_id = seed_user.id
+    connection = await db_session.connection()
+    completion_session_factory = async_sessionmaker(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    monkeypatch.setattr(
+        "app.routes.ai_providers.async_session_factory",
+        completion_session_factory,
+    )
+    previous = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "scope": "openid profile",
+            }
+        }
+    )
+    token_requests: list[dict] = []
+
+    class FakeOAuthClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            token_requests.append({"url": url, "data": data})
+            if data["grant_type"] == "urn:ietf:params:oauth:grant-type:token-exchange":
+                return httpx.Response(200, json={"access_token": "sk-codex-api-key"})
+            return httpx.Response(
+                200,
+                json={
+                    "id_token": _test_jwt(),
+                    "access_token": "oauth-access-token",
+                    "refresh_token": "oauth-refresh-token",
+                },
+            )
+
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", FakeOAuthClient)
+    try:
+        start_headers = {"Idempotency-Key": "provider-accept-oauth-start"}
+        started = await client.post(
+            "/v1/ai-providers/accept",
+            headers=start_headers,
+            json=_oauth_accept_body(),
+        )
+        assert started.status_code == 201, started.text
+        assert started.json()["status"] == "pending"
+        assert started.json()["provider"]["usable"] is False
+        authorization = started.json()["authorization"]
+        params = parse_qs(urlparse(authorization["auth_url"]).query)
+        assert params["state"] == [authorization["state"]]
+
+        pending_metadata = await db_session.scalar(
+            select(AiProvider.auth_metadata).where(
+                AiProvider.owner_user_id == user_id,
+                AiProvider.provider_id == "openai-codex-accept",
+            )
+        )
+        assert pending_metadata["source"] == "oauth_pending"
+        assert (
+            pending_metadata["state_sha256"]
+            == hashlib.sha256(authorization["state"].encode()).hexdigest()
+        )
+
+        start_replay = await client.post(
+            "/v1/ai-providers/accept",
+            headers=start_headers,
+            json=_oauth_accept_body(),
+        )
+        assert start_replay.status_code == 201, start_replay.text
+        assert start_replay.json() == started.json()
+
+        completion_body = {
+            "state": authorization["state"],
+            "code": "oauth-code",
+            "redirect_uri": "https://cloud.example/oauth/callback",
+        }
+        completion_headers = {"Idempotency-Key": "provider-accept-oauth-complete"}
+        completed = await client.post(
+            "/v1/ai-providers/openai-codex-accept/accept",
+            headers=completion_headers,
+            json=completion_body,
+        )
+        assert completed.status_code == 200, completed.text
+        assert completed.json()["status"] == "ready"
+        assert completed.json()["provider"]["usable"] is True
+        assert "oauth-access-token" not in completed.text
+        assert "oauth-refresh-token" not in completed.text
+        assert "sk-codex-api-key" not in completed.text
+        assert len(token_requests) == 2
+
+        completion_replay = await client.post(
+            "/v1/ai-providers/openai-codex-accept/accept",
+            headers=completion_headers,
+            json=completion_body,
+        )
+        assert completion_replay.status_code == 200, completion_replay.text
+        assert completion_replay.json() == completed.json()
+        assert len(token_requests) == 2
+
+        db_session.expire_all()
+        await db_session.refresh(seed_user)
+        listing = await client.get("/v1/ai-providers")
+        assert listing.status_code == 200, listing.text
+        assert listing.json()["providers"][0]["usable"] is True
+        assert (
+            await db_session.scalar(
+                select(func.count())
+                .select_from(AiProvider)
+                .where(
+                    AiProvider.owner_user_id == user_id,
+                    AiProvider.provider_id == "openai-codex-accept",
+                )
+            )
+            == 1
+        )
+        assert (
+            await db_session.scalar(
+                select(func.count())
+                .select_from(PlatformMutationIdempotency)
+                .where(
+                    PlatformMutationIdempotency.idempotency_key.in_(
+                        [
+                            "provider-accept-oauth-start",
+                            "provider-accept-oauth-complete",
+                        ]
+                    )
+                )
+            )
+            == 2
+        )
     finally:
         settings.ai_provider_oauth_config_json = previous
 
