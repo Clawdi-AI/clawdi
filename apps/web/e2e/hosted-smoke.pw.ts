@@ -1547,6 +1547,7 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 
 	await page.getByRole("button", { name: "Deploy agent" }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
+	await expect.poll(() => new URL(page.url()).searchParams.get("setup")).toBe("accepted");
 	await expect(page.getByTestId("accepted-agent-setup")).toBeVisible();
 	await expect(page.getByText("Setting up your agent", { exact: true }).first()).toBeVisible();
 	await expect(page.getByText("Agent unavailable", { exact: true })).toHaveCount(0);

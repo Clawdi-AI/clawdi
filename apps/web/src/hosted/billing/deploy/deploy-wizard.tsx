@@ -182,7 +182,10 @@ const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const DEPLOY_MANAGED_AI_LABEL = "Managed AI";
 
 function acceptedDeploymentNavigation(deploymentId: string, replace = false) {
-	return { href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"), replace };
+	return {
+		href: agentSectionHref(deploymentId, "overview", "source=on-clawdi&setup=accepted"),
+		replace,
+	};
 }
 
 const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";

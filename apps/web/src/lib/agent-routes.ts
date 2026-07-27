@@ -13,6 +13,7 @@ export type RouteSearchParamsRecord = Record<string, string | string[] | undefin
 export type AgentRouteQuery = string | URLSearchParams | RouteSearchParamsRecord | null | undefined;
 
 export const AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY = "d";
+const AGENT_ACCEPTED_SETUP_QUERY_KEY = "setup";
 
 export const CONNECTED_AGENT_SECTION_IDS = [
 	"overview",
@@ -142,6 +143,7 @@ export function isAcceptedHostedAgentRoute(agentId: string, query?: AgentRouteQu
 	return (
 		agentId.toLowerCase().startsWith("hdep_") &&
 		params.get("source") === "on-clawdi" &&
+		params.get(AGENT_ACCEPTED_SETUP_QUERY_KEY) === "accepted" &&
 		agentDeploymentSelector(params) === null
 	);
 }
