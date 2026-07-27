@@ -109,6 +109,24 @@ describe("deployment failure remediation rendering", () => {
 		expect(markup).not.toContain("retry startup");
 		expect(markup).not.toContain("Restart compute");
 	});
+
+	test("gives an unexplained failure customer language and a working next step", () => {
+		if (!overviewFailedPanel) throw new Error("agent detail was not loaded");
+		const markup = renderToStaticMarkup(
+			createElement(overviewFailedPanel, {
+				deployment: hostedDeploymentFixture({ status: "failed" }),
+				planChangeHref: "/agents/env_test/settings?source=on-clawdi",
+				onDeleteAccepted: () => undefined,
+			}),
+		);
+
+		expect(markup).toContain("Agent change failed");
+		expect(markup).toContain("Clawdi couldn’t complete the last change to this agent");
+		expect(markup).toContain("It isn’t safe to try again automatically");
+		expect(markup).toContain('href="mailto:support@clawdi.ai"');
+		expect(markup).not.toContain("Deployment operation");
+		expect(markup).not.toContain("failure reason and operation");
+	});
 });
 
 describe("deployment transition timeout rendering", () => {
@@ -195,6 +213,8 @@ describe("hosted agent customer language", () => {
 			"Manage hosted compute independently of synced agent data.",
 			"Apply locale changes directly",
 			"finishes booting",
+			"Deployment operation failed",
+			"failure reason and operation",
 		]) {
 			expect(customerCopy).not.toContain(internalCopy);
 		}

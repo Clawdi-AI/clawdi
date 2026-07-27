@@ -10,6 +10,7 @@ import {
 	Cpu,
 	ExternalLink,
 	Info,
+	LifeBuoy,
 	Link2,
 	Link2Off,
 	type LucideIcon,
@@ -1026,19 +1027,29 @@ export function OverviewFailedPanel({
 	}
 	return (
 		<div className="rounded-xl border border-destructive-muted bg-destructive-muted p-5 text-destructive-muted-foreground">
-			<div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+			<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
 				<div className="flex min-w-0 gap-3">
 					<div className="flex size-10 shrink-0 items-center justify-center rounded-lg border border-destructive-muted bg-background">
 						<AlertCircle className="size-5" />
 					</div>
 					<div className="min-w-0">
-						<h2 className="text-sm font-semibold text-foreground">Deployment operation failed</h2>
+						<h2 className="text-sm font-semibold text-foreground">Agent change failed</h2>
 						<p className="mt-1 text-sm">
-							The failure reason and operation are unavailable, so there is no safe automatic retry.
-							Current status: {deploymentStatusLabel(status)}.
+							Clawdi couldn’t complete the last change to this agent or determine why. It isn’t safe
+							to try again automatically. Contact support before trying again. Current status:{" "}
+							{deploymentStatusLabel(status)}.
 						</p>
 					</div>
 				</div>
+				<Button
+					render={<a href="mailto:support@clawdi.ai" />}
+					nativeButton={false}
+					variant="outline"
+					size="sm"
+					className="shrink-0"
+				>
+					<LifeBuoy data-icon="inline-start" /> Contact support
+				</Button>
 			</div>
 		</div>
 	);
