@@ -26,6 +26,7 @@ type HostedDeploymentFixtureOptions = {
 	occupiesSlot?: boolean;
 	computeSlotOccupancy?: HostedDeployment["compute_slot_occupancy"];
 	upgradeAvailable?: boolean;
+	upgradeEligibility?: HostedDeployment["upgrade_eligibility"];
 	acceptedOperation?: HostedDeployment["accepted_operation"];
 	cloudEnvironments?: HostedDeployment["clawdi_cloud_environments"];
 	aiProviderAuthKinds?: HostedDeployment["ai_provider_auth_kinds"];
@@ -43,6 +44,7 @@ export function hostedDeploymentFixture(
 	const backingInfrastructure =
 		options.backingInfrastructure ?? (occupiesSlot ? "present" : "absent");
 	const runtime = options.runtime ?? "openclaw";
+	const upgradeAvailable = options.upgradeAvailable ?? false;
 
 	return {
 		resource: {
@@ -97,7 +99,11 @@ export function hostedDeploymentFixture(
 			latest_funding_fact: options.fundingFact ?? null,
 		},
 		current_plan_slug: options.currentPlanSlug ?? "compute_basic",
-		upgrade_available: options.upgradeAvailable ?? false,
+		upgrade_available: upgradeAvailable,
+		upgrade_eligibility: options.upgradeEligibility ?? {
+			eligible: upgradeAvailable,
+			reason: null,
+		},
 		compute_slot_occupancy:
 			options.computeSlotOccupancy === undefined
 				? {

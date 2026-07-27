@@ -113,15 +113,16 @@ describe("performanceUpgradeUnavailableReason", () => {
 		planChangeUnavailable: null,
 		deploymentStatusSupportsUpgrade: true,
 		upgradeAvailable: true,
+		upgradeEligibilityReason: null,
 	};
 
 	test("distinguishes each upgrade block from a pending upgrade", () => {
-		expect(performanceUpgradeUnavailableReason({ ...available, isIncludedBasic: false })).toContain(
-			"only available for included Basic",
+		expect(performanceUpgradeUnavailableReason({ ...available, isIncludedBasic: false })).toBe(
+			"This upgrade is only available for Basic agents without a separate subscription. Use this agent’s subscription controls to change its plan.",
 		);
 		expect(
 			performanceUpgradeUnavailableReason({ ...available, performancePlanAvailable: false }),
-		).toBe("Performance compute is unavailable right now.");
+		).toBe("The Performance plan is unavailable right now. Try again later.");
 		expect(
 			performanceUpgradeUnavailableReason({
 				...available,
@@ -134,9 +135,71 @@ describe("performanceUpgradeUnavailableReason", () => {
 				pendingPlanSlug: "compute_performance",
 			}),
 		).toBe("An upgrade to Performance is already scheduled.");
-		expect(performanceUpgradeUnavailableReason({ ...available, upgradeAvailable: false })).toBe(
-			"This Basic agent is not currently eligible for an upgrade.",
-		);
+	});
+
+	test("gives every server ineligibility reason its matching next step", () => {
+		const cases = [
+			[
+				"deployment_deleted",
+				"This agent has been deleted, so it can’t be upgraded. Create a new agent if you need Performance.",
+			],
+			[
+				"compute_basic_required",
+				"Only agents on the Basic plan can be upgraded to Performance. No upgrade is available for this agent’s current plan.",
+			],
+			[
+				"compute_subscription_unavailable",
+				"Clawdi couldn’t read this agent’s subscription details, so it can’t safely start an upgrade. Check again in a moment.",
+			],
+			[
+				"included_basic_required",
+				"This agent’s subscription is managed separately, so it can’t be upgraded here. Use the subscription controls to change its plan instead.",
+			],
+			[
+				"compute_subscription_not_active",
+				"Clawdi can’t start this upgrade because this agent’s no-cost subscription is not active. You were not charged, and there’s nothing you need to fix. Check again later.",
+			],
+			[
+				"compute_subscription_canceling",
+				"This agent’s subscription is set to cancel, so it can’t be upgraded. Resume the subscription first, then try again.",
+			],
+			[
+				"deployment_state_unknown",
+				"Clawdi couldn’t read this agent’s current state. Check again before trying to upgrade.",
+			],
+			[
+				"deployment_must_be_running_or_stopped",
+				"Wait until this agent is running or stopped before trying to upgrade again.",
+			],
+			[
+				"upgrade_already_in_progress",
+				"An upgrade to Performance is already in progress. Wait for it to finish; there is no second upgrade to start.",
+			],
+		] as const;
+
+		for (const [upgradeEligibilityReason, expected] of cases) {
+			expect(
+				performanceUpgradeUnavailableReason({
+					...available,
+					upgradeAvailable: false,
+					upgradeEligibilityReason,
+				}),
+			).toBe(expected);
+		}
+	});
+
+	test("renders an honest fallback for an absent or unrecognised reason", () => {
+		const expected =
+			"Clawdi can’t confirm why this agent can’t be upgraded right now. Check again later, or contact support if this continues.";
+		for (const upgradeEligibilityReason of [null, "new_server_reason"]) {
+			expect(
+				performanceUpgradeUnavailableReason({
+					...available,
+					upgradeAvailable: false,
+					upgradeEligibilityReason,
+				}),
+			).toBe(expected);
+		}
 	});
 
 	test("returns no reason only when every upgrade condition is met", () => {

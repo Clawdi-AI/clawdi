@@ -486,6 +486,44 @@ export interface components {
              */
             secret_references: components["schemas"]["SecretReference"][];
         };
+        /** ComputePlanChangeProgress */
+        ComputePlanChangeProgress: {
+            /**
+             * @Type
+             * @constant
+             */
+            "@type": "type.googleapis.com/clawdi.v2.ComputePlanChangeProgress";
+            /** Operationid */
+            operationId: string;
+            /** Subscriptionid */
+            subscriptionId: number;
+            /**
+             * Fundingsource
+             * @enum {string}
+             */
+            fundingSource: "stripe" | "wallet";
+            /** Sourceplanslug */
+            sourcePlanSlug: string;
+            /** Targetplanslug */
+            targetPlanSlug: string;
+            /**
+             * Targetbillingtermmonths
+             * @enum {integer}
+             */
+            targetBillingTermMonths: 1 | 12;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "quoted" | "wallet_debit_pending" | "wallet_debit_applied" | "stripe_update_pending" | "invoice_pending" | "settlement_pending" | "awaiting_payment" | "awaiting_projection" | "compensation_pending" | "reversal_pending" | "reconciliation_required" | "scheduled" | "complete" | "compensated" | "failed" | "terminated_paid_unapplied";
+            /**
+             * Effectiveat
+             * Format: date-time
+             */
+            effectiveAt: string;
+            /** Fundinginvoiceid */
+            fundingInvoiceId?: string | null;
+        };
         /** DeploymentCondition */
         DeploymentCondition: {
             /**
@@ -553,7 +591,7 @@ export interface components {
              * Verb
              * @enum {string}
              */
-            verb: "create" | "start" | "stop" | "restart" | "update" | "rename" | "delete";
+            verb: "create" | "plan_change" | "start" | "stop" | "restart" | "update" | "rename" | "delete";
             /** Targetgeneration */
             targetGeneration: number;
             /** Manifestetag */
@@ -568,6 +606,9 @@ export interface components {
              * Format: date-time
              */
             updateTime: string;
+            /** @description Acceptance-time deployment snapshot for create operations so clients can render the resource without a follow-up read. */
+            initialDeployment?: components["schemas"]["HostedDeploymentResource"] | null;
+            planChange?: components["schemas"]["ComputePlanChangeProgress"] | null;
         };
         /** DeploymentOperationResponse */
         DeploymentOperationResponse: {
@@ -613,7 +654,7 @@ export interface components {
              */
             read_only: true;
             /** Deployments */
-            deployments: components["schemas"]["HostedDeploymentResource"][];
+            deployments: components["schemas"]["V2HostedDeploymentReadResponse"][];
             /** Operations */
             operations: components["schemas"]["LongRunningOperation"][];
             /** Event Stream Cursor */
@@ -764,7 +805,7 @@ export interface components {
             /** Detail */
             detail: string;
             /** Instance */
-            instance: string;
+            instance?: string | null;
             /** Code */
             code: string;
             /** Phase */
@@ -792,7 +833,7 @@ export interface components {
             /** Detail */
             detail: string;
             /** Instance */
-            instance: string;
+            instance?: string | null;
             /** Code */
             code: string;
             /** Phase */
@@ -825,7 +866,7 @@ export interface components {
             /** Detail */
             detail: string;
             /** Instance */
-            instance: string;
+            instance?: string | null;
             /** Code */
             code: string;
             /** Phase */
@@ -1221,36 +1262,6 @@ export interface components {
             /** Operation Id */
             operation_id: string;
         };
-        /** V2ComputePlanChangeResponse */
-        V2ComputePlanChangeResponse: {
-            /** Operation Id */
-            operation_id: string;
-            /** Subscription Id */
-            subscription_id: number;
-            /** Funding Source */
-            funding_source?: ("stripe" | "wallet") | null;
-            /** Current Plan Slug */
-            current_plan_slug: string;
-            /** Target Plan Slug */
-            target_plan_slug: string;
-            /**
-             * Target Billing Term Months
-             * @enum {integer}
-             */
-            target_billing_term_months: 1 | 12;
-            /**
-             * Status
-             * @enum {string}
-             */
-            status: "awaiting_payment" | "awaiting_projection" | "scheduled" | "complete";
-            /**
-             * Effective At
-             * Format: date-time
-             */
-            effective_at: string;
-            /** Funding Invoice Id */
-            funding_invoice_id?: string | null;
-        };
         /** V2ComputePortalRequest */
         V2ComputePortalRequest: {
             /** Locale */
@@ -1500,6 +1511,13 @@ export interface components {
             /** Pending Plan Slug */
             pending_plan_slug?: string | null;
         };
+        /** V2HostedComputeUpgradeEligibility */
+        V2HostedComputeUpgradeEligibility: {
+            /** Eligible */
+            eligible: boolean;
+            /** Reason */
+            reason: ("deployment_deleted" | "compute_basic_required" | "compute_subscription_unavailable" | "included_basic_required" | "compute_subscription_not_active" | "compute_subscription_canceling" | "deployment_state_unknown" | "deployment_must_be_running_or_stopped" | "upgrade_already_in_progress") | null;
+        };
         /** V2HostedConfigRequest */
         V2HostedConfigRequest: {
             /** Primary Model */
@@ -1649,6 +1667,7 @@ export interface components {
              * @default false
              */
             upgrade_available: boolean;
+            upgrade_eligibility: components["schemas"]["V2HostedComputeUpgradeEligibility"];
             compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"] | null;
         };
         /** V2HostedRuntimeUiCredentials */
@@ -2746,7 +2765,9 @@ export interface operations {
     change_v2_subscription_plan_v2_subscription_plan_change_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "Idempotency-Key"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -2757,12 +2778,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2ComputePlanChangeResponse"];
+                    "application/json": components["schemas"]["LongRunningOperation"];
                 };
             };
             /** @description Validation Error */

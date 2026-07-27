@@ -2919,8 +2919,9 @@ function ComputeSettingsSections({
 		deploymentStatusSupportsUpgrade:
 			isRunningStatus(deploymentStatus) || deploymentStatus.kind === "stopped",
 		upgradeAvailable: deployment.upgrade_available,
+		upgradeEligibilityReason: deployment.upgrade_eligibility.reason,
 	});
-	const canUpgrade = upgradeUnavailableMessage === null;
+	const canUpgrade = deployment.upgrade_available && upgradeUnavailableMessage === null;
 	const canStartNewSubscription =
 		hostedAccess.canCreateCloudAgents && hasTerminalFallback && !!(basicPlan || perfPlan);
 	const subscriptionCreatePlanSlug = resolveSubscriptionCreatePlanSlug(
