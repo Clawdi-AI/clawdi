@@ -1,6 +1,33 @@
 import { describe, expect, test } from "bun:test";
 import { QueryClient } from "@tanstack/react-query";
-import { channelKeys, removeDeletedChannelQueries } from "@/hosted/v2/channels/channel-query-cache";
+import {
+	channelKeys,
+	invalidateCreatedChannelQueries,
+	removeDeletedChannelQueries,
+} from "@/hosted/v2/channels/channel-query-cache";
+
+describe("invalidateCreatedChannelQueries", () => {
+	test("invalidates the auto-linked agent page before connect reports success", async () => {
+		const qc = new QueryClient();
+		const channelId = "channel_123";
+		const agentId = "agent_123";
+		qc.setQueryData(channelKeys.list, []);
+		qc.setQueryData(channelKeys.pool, { providers: {} });
+		qc.setQueryData(channelKeys.health, { items: [] });
+		qc.setQueryData(channelKeys.agentLinks(channelId), []);
+		qc.setQueryData(["agent-channel-links", agentId], []);
+		qc.setQueryData(["agent-channel-links", "agent_other"], []);
+
+		await invalidateCreatedChannelQueries(qc, { id: channelId, agent_id: agentId });
+
+		expect(qc.getQueryState(channelKeys.list)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(channelKeys.pool)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(channelKeys.health)?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(channelKeys.agentLinks(channelId))?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(["agent-channel-links", agentId])?.isInvalidated).toBe(true);
+		expect(qc.getQueryState(["agent-channel-links", "agent_other"])?.isInvalidated).toBe(false);
+	});
+});
 
 describe("removeDeletedChannelQueries", () => {
 	test("removes deleted channel detail caches and invalidates related summaries", async () => {

@@ -787,7 +787,11 @@ type HostedApiStubOptions = {
 	checkoutRequests?: string[];
 	checkoutResponses?: StubResponse[];
 	channelAccount?: unknown;
+	channelAccounts?: unknown[];
 	channelAgentLinks?: readonly unknown[];
+	createChannelRequests?: string[];
+	createChannelResponse?: unknown;
+	onCreateChannel?: (response: unknown) => void;
 	cloudAgentOverrides?: Record<string, unknown>;
 	cloudAgents?: readonly unknown[];
 	cloudAgentsResponse?: StubResponse;
@@ -1353,11 +1357,23 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			});
 		}
 		if (p === "/v1/ai-providers") return fulfillJson(r, { providers: [] });
-		if (p === "/v1/channels") {
-			return fulfillJson(r, options.channelAccount ? [options.channelAccount] : []);
+		if (p === "/v1/channels" && r.request().method() === "GET") {
+			return fulfillJson(
+				r,
+				options.channelAccounts ?? (options.channelAccount ? [options.channelAccount] : []),
+			);
+		}
+		if (p === "/v1/channels" && r.request().method() === "POST") {
+			options.createChannelRequests?.push(r.request().postData() ?? "");
+			const response = options.createChannelResponse ?? {};
+			options.onCreateChannel?.(response);
+			return fulfillJson(r, response, 201);
 		}
 		if (p === "/v1/channels/bot-pool") return fulfillJson(r, { providers: {} });
 		if (p === "/v1/channels/health") return fulfillJson(r, { items: [] });
+		if (p === "/v1/channels/agent-links" && r.request().method() === "GET") {
+			return fulfillJson(r, options.channelAgentLinks ?? []);
+		}
 		if (p.match(/^\/v1\/channels\/[^/]+$/) && r.request().method() === "GET") {
 			return fulfillJson(r, options.channelAccount ?? { detail: "Channel not found" }, 200);
 		}
@@ -3785,26 +3801,87 @@ test("app 404 offers a working exit to the dashboard", async ({ page }) => {
 	expect(errors, `app 404: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("channels connect dialog opens without browser errors", async ({ page }) => {
+test("channel connect updates its auto-linked agent page without reload", async ({ page }) => {
 	const errors = collectBrowserErrors(page);
-	await stubHostedApi(page);
+	const channelId = "11111111-1111-4111-8111-111111111111";
+	const linkId = "22222222-2222-4222-8222-222222222222";
+	const channelAccounts: unknown[] = [];
+	const channelAgentLinks: unknown[] = [];
+	const createChannelRequests: string[] = [];
+	const channelAccount = {
+		id: channelId,
+		provider: "telegram",
+		name: "Browser Telegram",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/browser",
+		created_at: "2026-07-27T12:00:00Z",
+	};
+	const channelLink = {
+		id: linkId,
+		account_id: channelId,
+		agent_id: missingProjectionEnvironmentId,
+		status: "active",
+		created_at: "2026-07-27T12:00:00Z",
+		account: channelAccount,
+	};
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		channelAccounts,
+		channelAgentLinks,
+		createChannelRequests,
+		createChannelResponse: {
+			...channelAccount,
+			webhook_secret: "one-time-webhook-secret",
+			agent_link_id: linkId,
+			agent_id: missingProjectionEnvironmentId,
+			agent_token: "one-time-agent-token",
+		},
+		onCreateChannel: () => {
+			channelAccounts.push(channelAccount);
+			channelAgentLinks.push(channelLink);
+		},
+	});
 	await page.goto("/channels");
-
-	const connect = page.getByRole("button", { name: "Connect your own bot", exact: true }).first();
-	await expect(connect).toBeVisible();
-	await page.waitForTimeout(150);
-	expect(errors, `channels render: ${errors.join(" | ")}`).toEqual([]);
-
+	const globalConnect = page
+		.getByRole("button", { name: "Connect your own bot", exact: true })
+		.first();
+	await expect(globalConnect).toBeVisible();
 	await expect(page.locator('[data-slot="tabs-list"]')).toHaveCount(0);
 	await expect(page.getByText("Ready-to-go bots", { exact: true })).toBeVisible();
 	await expect(page.getByText("Your bots", { exact: true })).toBeVisible();
 	await expectNonZeroBox(page.locator('[data-sidebar="separator"]').first(), "sidebar separator");
+	await globalConnect.click();
+	const globalDialog = page.getByRole("dialog");
+	await expect(globalDialog).toBeVisible();
+	await globalDialog.getByRole("button", { name: "Cancel", exact: true }).click();
 
-	// Open the Base UI Dialog + interact with its provider picker.
+	await page.goto(
+		`/agents/${missingProjectionEnvironmentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+	);
+
+	await expect(page.getByText("No channels linked", { exact: true })).toBeVisible();
+	const connect = page.getByRole("button", { name: "Connect my bot", exact: true });
+	await expect(connect).toBeVisible();
 	await connect.click();
-	await expect(page.locator('[data-slot="dialog-content"]').first()).toBeVisible();
-	await page.waitForTimeout(150);
-	expect(errors, `connect dialog: ${errors.join(" | ")}`).toEqual([]);
+	const dialog = page.getByRole("dialog");
+	await dialog.getByLabel("Name").fill("Browser Telegram");
+	await dialog.getByLabel("Bot token").fill("123456:browser-test-token");
+	await dialog.getByRole("button", { name: "Connect", exact: true }).click();
+
+	await expect.poll(() => createChannelRequests.length).toBe(1);
+	await expect(dialog.getByText("Channel connected", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("An agent was auto-linked", { exact: false })).toBeVisible();
+	await dialog.getByRole("button", { name: "Close", exact: true }).first().click();
+	await expect(page.getByText("No channels linked", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Browser Telegram", { exact: true }).first()).toBeVisible();
+	expect(JSON.parse(createChannelRequests[0] ?? "{}")).toEqual({
+		provider: "telegram",
+		name: "Browser Telegram",
+		provider_token: "123456:browser-test-token",
+	});
+	expect(errors, `channel connect convergence: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("rotated channel token blocks silent loss and explains recovery", async ({
