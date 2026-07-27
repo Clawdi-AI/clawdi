@@ -43,6 +43,7 @@ type DeploymentMutationFixture = {
 	status: string;
 	created_at: string;
 	upgrade_available: boolean;
+	upgrade_eligibility?: DeploymentRead["upgrade_eligibility"];
 	compute_subscription: DeploymentComputeSubscription | null;
 	config_info: {
 		compute_plan_slug: string;
@@ -694,6 +695,10 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 		},
 		current_plan_slug: config.compute_plan_slug,
 		upgrade_available: deployment.upgrade_available,
+		upgrade_eligibility: deployment.upgrade_eligibility ?? {
+			eligible: deployment.upgrade_available,
+			reason: null,
+		},
 		compute_slot_occupancy: {
 			occupies_slot: backingInfrastructure === "present",
 			backing_infra: backingInfrastructure,
@@ -2592,6 +2597,34 @@ test("included Basic uses unified card quote and change without creating a secon
 	expect(subscriptionQuoteRequests).toEqual([]);
 	await expect(page.getByText("Plan changed", { exact: true })).toBeVisible();
 	expect(errors, `included Basic card upgrade: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("included Basic explains an unknown upgrade state and offers a re-check", async ({ page }) => {
+	const errors = collectBrowserErrors(page);
+	const deployment = {
+		...includedBasicDeployment,
+		id: "hdep_upgrade_state_unknown",
+		name: "Upgrade state unknown",
+		upgrade_available: false,
+		upgrade_eligibility: {
+			eligible: false,
+			reason: "deployment_state_unknown",
+		},
+	} satisfies DeploymentMutationFixture;
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		plans: [basicPlan, performancePlan],
+	});
+
+	await gotoHostedAgentSettings(page, deployment.id, "Basic");
+	await expect(page.getByRole("button", { name: "Upgrade to Performance" })).toBeDisabled();
+	await expect(
+		page.getByText(
+			"Clawdi couldn’t read this agent’s current state. Check again before trying to upgrade.",
+			{ exact: true },
+		),
+	).toBeVisible();
+	expect(errors, `unknown upgrade state: ${errors.join(" | ")}`).toEqual([]);
 });
 
 test("included Basic uses unified wallet quote and change with exact debit", async ({ page }) => {
