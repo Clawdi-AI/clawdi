@@ -124,7 +124,7 @@ export function HostedDeploymentDeleteAction({
 				<AlertDialogHeader>
 					<AlertDialogTitle>{`Delete ${name}?`}</AlertDialogTitle>
 					<AlertDialogDescription>
-						The hosted agent and its deployment are torn down. This can’t be undone.
+						This permanently deletes the agent and releases its resources. This can’t be undone.
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 

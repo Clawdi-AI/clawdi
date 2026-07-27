@@ -54,13 +54,13 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 		case "start":
 			return "Agent startup";
 		case "stop":
-			return "Compute stop";
+			return "Agent stop";
 		case "restart":
-			return "Compute restart";
+			return "Agent restart";
 		case "update":
 			return "Agent update";
 		case "runtime_switch":
-			return "Runtime switch";
+			return "Agent software change";
 		case "rename":
 			return "Agent rename";
 		case "delete":
@@ -68,7 +68,7 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 		case "plan_change":
 			return "Plan change";
 		case null:
-			return "Deployment operation";
+			return "Agent action";
 	}
 }
 
@@ -94,7 +94,7 @@ export function deploymentFailurePresentation(
 				title: `${operationLabel} failed`,
 				description: requiresWalletTopUp
 					? `Top up your Wallet, then retry ${operationName}.`
-					: `Restart the compute to retry ${operationName}.`,
+					: `The Clawdi service could not finish ${operationName}. Restart the agent to try again.`,
 				remediation: {
 					kind: "restart",
 					label: "Retry startup",
@@ -106,8 +106,8 @@ export function deploymentFailurePresentation(
 				...failure,
 				title: `${operationLabel} failed`,
 				description: requiresWalletTopUp
-					? "Top up your Wallet, then retry the compute restart."
-					: "Retry the compute restart after reviewing the reason below.",
+					? "The Clawdi service could not restart the agent. Top up your Wallet, then try again."
+					: "The Clawdi service could not restart the agent. Review the reason below, then try again.",
 				remediation: {
 					kind: "restart",
 					label: "Retry restart",
@@ -131,7 +131,8 @@ export function deploymentFailurePresentation(
 			return {
 				...failure,
 				title: `${operationLabel} failed`,
-				description: "The deployment was not deleted. Review the reason, then retry deletion.",
+				description:
+					"The Clawdi service did not delete the agent. Review the reason, then try again.",
 				remediation: {
 					kind: "retry_delete",
 					label: "Retry delete",

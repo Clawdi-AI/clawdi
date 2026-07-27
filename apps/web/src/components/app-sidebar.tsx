@@ -194,22 +194,22 @@ const HOSTED_AGENT_SECTIONS: {
 	{
 		id: "overview",
 		icon: LayoutDashboard,
-		tooltip: "Runtime overview",
+		tooltip: "Agent overview",
 	},
 	{
 		id: "console",
 		icon: MonitorPlay,
-		tooltip: "Open the hosted runtime UI",
+		tooltip: "Open this agent's browser interface",
 	},
 	{
 		id: "terminal",
 		icon: TerminalSquare,
-		tooltip: "Open a hosted shell",
+		tooltip: "Open a terminal for this agent",
 	},
 	{
 		id: "sessions",
 		icon: MessageSquare,
-		tooltip: "Sessions from this runtime",
+		tooltip: "Sessions from this agent",
 	},
 	{
 		id: "skills",
@@ -219,17 +219,17 @@ const HOSTED_AGENT_SECTIONS: {
 	{
 		id: "ai",
 		icon: Zap,
-		tooltip: "Runtime model provider binding",
+		tooltip: "AI provider and model",
 	},
 	{
 		id: "channels",
 		icon: Link2,
-		tooltip: "Channels linked to this runtime",
+		tooltip: "Channels linked to this agent",
 	},
 	{
 		id: "settings",
 		icon: Settings,
-		tooltip: "Profile, compute, and lifecycle",
+		tooltip: "Name, preferences, plan, and lifecycle",
 	},
 ];
 
@@ -1218,7 +1218,7 @@ function agentHeaderMeta(
 		kind === "cloud" ? agentSourceKindLabel("hosted") : kind === "legacy" ? "Legacy" : null;
 	// Legacy v1 agents run in a hosted runtime image too, so both hosted
 	// kinds get the "runtime" suffix.
-	const runtime = kind !== "connected";
+	const runtime = kind === "legacy";
 	const typeLabel = agentTypeLabel(agent.agent_type);
 	const version = agentVersionLabel(agent.agent_version);
 	const relativeSeen = agent.last_seen_at ? relativeTime(agent.last_seen_at) : null;
@@ -1286,8 +1286,8 @@ function FocusHeader({
 	const displayName = displayMachineName(name);
 	const meta = activeAgent ? agentHeaderMeta(activeAgent, activeAgentKind) : null;
 	const contextLabel = activeAgentTile?.contextLabel ?? null;
-	const activityLabel = meta?.activityLabel ?? "Sync record unavailable";
-	const visibleLabel = meta?.visibleLabel ?? runtimeDisplayLabel(activeAgentTile?.agentType);
+	const activityLabel = meta?.activityLabel ?? "Agent details unavailable";
+	const visibleLabel = meta?.visibleLabel ?? hostedAgentDisplayLabel(activeAgentTile?.agentType);
 	const detailLabel = [contextLabel, meta?.detailLabel ?? visibleLabel].filter(Boolean).join(" · ");
 	const title = [name, detailLabel, activityLabel].filter(Boolean).join(" · ");
 	const manageHref =
@@ -1358,8 +1358,8 @@ function FocusHeader({
 	);
 }
 
-function runtimeDisplayLabel(agentType: string | null | undefined): string {
-	return agentType ? `${agentTypeLabel(agentType)} runtime` : "Hosted runtime";
+function hostedAgentDisplayLabel(agentType: string | null | undefined): string {
+	return agentType ? agentTypeLabel(agentType) : "Clawdi Cloud agent";
 }
 
 function HostedFocusTileStatus({ tile }: { tile: AgentTile }) {

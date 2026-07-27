@@ -101,10 +101,10 @@ describe("deploymentFailureReason", () => {
 		const cases = [
 			["create", "Agent setup failed", "restart"],
 			["start", "Agent startup failed", "restart"],
-			["stop", "Compute stop failed", "none"],
-			["restart", "Compute restart failed", "restart"],
+			["stop", "Agent stop failed", "none"],
+			["restart", "Agent restart failed", "restart"],
 			["update", "Agent update failed", "none"],
-			["runtime_switch", "Runtime switch failed", "none"],
+			["runtime_switch", "Agent software change failed", "none"],
 			["rename", "Agent rename failed", "none"],
 			["delete", "Agent deletion failed", "retry_delete"],
 			["plan_change", "Plan change failed", "review_plan_change"],

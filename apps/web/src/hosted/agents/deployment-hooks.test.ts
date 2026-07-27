@@ -185,6 +185,35 @@ describe("deployment transition timeout rendering", () => {
 	});
 });
 
+describe("hosted agent customer language", () => {
+	test("keeps delayed and unavailable states honest without implementation vocabulary", () => {
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+		const sidebarSource = readFileSync(
+			new URL("../../components/app-sidebar.tsx", import.meta.url),
+			"utf8",
+		);
+		const customerCopy = `${detailSource}\n${sidebarSource}`;
+
+		for (const internalCopy of [
+			"Sync record unavailable",
+			"synced agent record",
+			"Deployment actions",
+			"Manage hosted compute independently of synced agent data.",
+			"Apply locale changes directly",
+			"finishes booting",
+		]) {
+			expect(customerCopy).not.toContain(internalCopy);
+		}
+		expect(detailSource).toContain("Some agent details are unavailable");
+		expect(detailSource).toContain("Clawdi can’t load every part of this agent right now.");
+		expect(detailSource).toContain("title={`Agent status: ");
+		expect(sidebarSource).toContain('"Agent details unavailable"');
+	});
+});
+
 describe("runtime UI settling polling", () => {
 	test("derives the same pending tracker across repeated render-phase calculations", () => {
 		if (!settlingPollState) throw new Error("deployment hooks were not loaded");
