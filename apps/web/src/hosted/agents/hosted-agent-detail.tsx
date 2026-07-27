@@ -69,6 +69,7 @@ import {
 	type ResolvedRuntimeUiCredentials,
 	resolveRuntimeUiCredentials,
 } from "@/hosted/agents/runtime-ui-credentials";
+import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { useCheckoutReturnHandler } from "@/hosted/billing/checkout-return";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
@@ -296,12 +297,12 @@ function LiveNote({ children }: { children: React.ReactNode }) {
 	);
 }
 
-function isProvisioningStatus(status: DeploymentStatus): boolean {
+function isStartingStatus(status: DeploymentStatus): boolean {
 	return status.kind === "creating" || status.kind === "starting";
 }
 
-function provisioningTitle(status: DeploymentStatus): string {
-	return status.kind === "starting" ? "Starting your agent…" : "Setting up your agent…";
+function startingTitle(): string {
+	return "Starting your agent…";
 }
 
 function RestartComputeAction({
@@ -885,13 +886,13 @@ export function OverviewReadinessPanel({
 	const title = deploymentTransitionTimedOut
 		? "Your agent is taking longer than expected"
 		: ready
-			? "Your agent is ready"
-			: "Getting your agent ready…";
+			? "Your agent is running"
+			: startingTitle();
 	const description = deploymentTransitionTimedOut
-		? "Your agent did not finish getting ready within five minutes. Automatic checks have stopped. Check again to load the latest update."
+		? "Your agent did not reach Running within five minutes. Automatic checks have stopped. Check again to load the latest update."
 		: ready
-			? "Your agent is running and ready to use."
-			: "This step should finish within five minutes. Your agent will keep getting ready if you leave this page.";
+			? "It is ready to use."
+			: "This step should finish within five minutes. Startup continues if you leave this page.";
 	return (
 		<div
 			className={cn(
@@ -1111,7 +1112,7 @@ function OverviewTab({
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const showReadinessPanel =
 		deploymentTransitionTimedOut ||
-		isProvisioningStatus(deploymentStatus) ||
+		isStartingStatus(deploymentStatus) ||
 		deploymentStatus.kind === "running";
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
@@ -1290,6 +1291,7 @@ function RuntimeUiOpenButton({
 				toast.dismiss(RUNTIME_UI_LAUNCH_TOAST_ID);
 				if (resolved.runtime === "hermes") onHermesCredentials?.(resolved.value);
 				popup.location.replace(resolved.value.url);
+				trackRuntimeWindow(deployment.resource.id, popup);
 			} catch {
 				popup.close();
 				if (requestVersionRef.current === requestVersion) {
@@ -1304,7 +1306,7 @@ function RuntimeUiOpenButton({
 				if (requestVersionRef.current === requestVersion) setIsPending(false);
 			}
 		},
-		[label, onHermesCredentials, requestCredentials],
+		[deployment.resource.id, label, onHermesCredentials, requestCredentials],
 	);
 
 	return (
@@ -1346,7 +1348,7 @@ function ConsoleTab({
 }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
-	const isProvisioning = isProvisioningStatus(status);
+	const isStarting = isStartingStatus(status);
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
@@ -1407,14 +1409,14 @@ function ConsoleTab({
 				title={
 					deploymentTransitionTimedOut
 						? "Your agent is taking longer than expected"
-						: isProvisioning
-							? provisioningTitle(status)
+						: isStarting
+							? startingTitle()
 							: "Agent is not running"
 				}
 				description={
 					deploymentTransitionTimedOut
 						? "The latest change to this agent did not finish within five minutes. Automatic checks have stopped. Check again to load the latest status."
-						: isProvisioning
+						: isStarting
 							? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
 							: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}
@@ -1448,7 +1450,7 @@ function ConsoleTab({
 			<EmptyState
 				icon={MonitorPlay}
 				title={`${browserUiLabel} isn’t ready yet`}
-				description={`Your agent is ready. Check again in a moment, or use Terminal now while ${label} starts its browser interface.`}
+				description={`Your agent is running. Check again in a moment, or use Terminal now while ${label} starts its browser interface.`}
 				action={
 					<div className="flex flex-wrap justify-center gap-2">
 						<Button
@@ -1634,7 +1636,7 @@ function TerminalStatusIndicator({ status }: { status: HostedTerminalStatus }) {
 function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	const status = deploymentStatusFromResource(deployment.resource.status);
 	const isRunning = isRunningStatus(status);
-	const isProvisioning = isProvisioningStatus(status);
+	const isStarting = isStartingStatus(status);
 	const label = deploymentDisplayName(
 		deployment.resource.spec.name,
 		deployment.resource.spec.runtime,
@@ -1723,9 +1725,9 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 		return (
 			<EmptyState
 				icon={TerminalSquare}
-				title={isProvisioning ? provisioningTitle(status) : "Agent is not running"}
+				title={isStarting ? startingTitle() : "Agent is not running"}
 				description={
-					isProvisioning
+					isStarting
 						? "The browser terminal opens once your agent is running. This page updates automatically."
 						: `Start the agent to open a terminal. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
 				}

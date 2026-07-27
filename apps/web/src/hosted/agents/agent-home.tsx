@@ -236,7 +236,7 @@ export function AgentHome({
 			>
 				<EmptyState
 					title="Clawdi Cloud agent not found"
-					description="This Clawdi Cloud agent may still be getting ready or may have been removed."
+					description="This Clawdi Cloud agent may still be starting or may have been removed."
 					action={
 						<Button type="button" variant="outline" size="sm" onClick={handleCheckAgain}>
 							<RefreshCw /> Check again
@@ -267,10 +267,10 @@ export function AcceptedAgentSetupState({
 		>
 			<EmptyState
 				icon={statusTimedOut ? AlertCircle : <Spinner className="size-5" />}
-				title={statusTimedOut ? "Agent setup status is unavailable" : "Setting up your agent"}
+				title={statusTimedOut ? "Agent status is unavailable" : "Starting your agent"}
 				description={
 					statusTimedOut
-						? "Clawdi accepted your request, but couldn’t load a progress update within two minutes. Setup may still be continuing."
+						? "Clawdi accepted your request, but couldn’t load a progress update within two minutes. Startup may still be continuing."
 						: "Your request was accepted. Clawdi is preparing your agent now. This usually takes a few minutes."
 				}
 				action={

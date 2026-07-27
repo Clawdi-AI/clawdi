@@ -152,21 +152,21 @@ describe("deployment transition timeout rendering", () => {
 			}),
 		);
 
-		expect(converging).toContain("Getting your agent ready…");
+		expect(converging).toContain("Starting your agent…");
 		expect(converging).toContain("This step should finish within five minutes.");
-		expect(converging).toContain("will keep getting ready if you leave this page");
+		expect(converging).toContain("Startup continues if you leave this page");
 		expect(converging).not.toContain("Provisioning");
 		expect(converging).not.toContain("Booting");
 		expect(converging).not.toContain("Current status");
 		expect(converging).not.toContain("Deployment progress");
 		expect(timedOut).toContain("Your agent is taking longer than expected");
-		expect(timedOut).toContain("did not finish getting ready within five minutes");
+		expect(timedOut).toContain("did not reach Running within five minutes");
 		expect(timedOut).toContain("Automatic checks have stopped.");
 		expect(timedOut).toContain("Check again");
-		expect(timedOut).not.toContain("will keep getting ready if you leave this page");
+		expect(timedOut).not.toContain("Startup continues if you leave this page");
 	});
 
-	test("makes the authoritative running state unambiguously ready", () => {
+	test("makes the authoritative running state unambiguously Running", () => {
 		if (!overviewReadinessPanel) throw new Error("agent detail was not loaded");
 		const ready = renderToStaticMarkup(
 			createElement(overviewReadinessPanel, {
@@ -177,8 +177,8 @@ describe("deployment transition timeout rendering", () => {
 			}),
 		);
 
-		expect(ready).toContain("Your agent is ready");
-		expect(ready).toContain("running and ready to use");
+		expect(ready).toContain("Your agent is running");
+		expect(ready).toContain("It is ready to use");
 		expect(ready).not.toContain("automatically");
 		expect(ready).not.toContain("Provisioning");
 		expect(ready).not.toContain("Booting");
@@ -195,6 +195,39 @@ describe("deployment transition timeout rendering", () => {
 });
 
 describe("hosted agent customer language", () => {
+	test("uses Starting and Running as lifecycle state vocabulary across surfaces", () => {
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+		const agentHomeSource = readFileSync(new URL("./agent-home.tsx", import.meta.url), "utf8");
+		const sidebarSource = readFileSync(
+			new URL("../../components/app-sidebar.tsx", import.meta.url),
+			"utf8",
+		);
+		const wizardSource = readFileSync(
+			new URL("../billing/deploy/deploy-wizard.tsx", import.meta.url),
+			"utf8",
+		);
+		const customerCopy = `${detailSource}\n${agentHomeSource}\n${sidebarSource}\n${wizardSource}`;
+
+		for (const staleLifecycleCopy of [
+			"Provisioning",
+			"Booting",
+			"Getting your agent ready",
+			"Setting up your agent",
+			"Your agent is ready",
+			"After your agent is ready",
+		]) {
+			expect(customerCopy).not.toContain(staleLifecycleCopy);
+		}
+		expect(detailSource).toContain("Starting your agent…");
+		expect(detailSource).toContain("Your agent is running");
+		expect(agentHomeSource).toContain('"Starting your agent"');
+		expect(sidebarSource).toContain('"Starting your agent"');
+		expect(wizardSource).toContain("After your agent is running");
+	});
+
 	test("keeps delayed and unavailable states honest without implementation vocabulary", () => {
 		const detailSource = readFileSync(
 			new URL("./hosted-agent-detail.tsx", import.meta.url),
@@ -279,6 +312,14 @@ describe("deployment mutation settlement", () => {
 		// Declarative lifecycle, delete, and settings updates all reconcile even
 		// when the request rejects or times out.
 		expect(settlementInvalidations).toHaveLength(3);
+	});
+
+	test("retires old runtime windows only after restart or delete is accepted", () => {
+		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
+
+		expect(source).toContain('if (vars.action === "restart") {');
+		expect(source).toContain("retireRuntimeWindows(accepted.deploymentId);");
+		expect(source.match(/retireRuntimeWindows\(accepted\.deploymentId/g)).toHaveLength(2);
 	});
 
 	test("projects every accepted operation through the shared transition model", () => {

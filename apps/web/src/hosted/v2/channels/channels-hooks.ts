@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { useChannelEditApi } from "@/hosted/v2/channels/channel-edit-client";
 import { channelHealthQueryOptions } from "@/hosted/v2/channels/channel-health-query";
 import {
+	invalidateCreatedChannelQueries,
 	channelKeys as keys,
 	removeDeletedChannelQueries,
 } from "@/hosted/v2/channels/channel-query-cache";
@@ -114,9 +115,7 @@ export function useCreateChannel() {
 	return useSensitiveAction(async (body: ChannelCreate) => {
 		try {
 			const result = unwrap(await api.POST("/v1/channels", { body }));
-			qc.invalidateQueries({ queryKey: keys.list });
-			qc.invalidateQueries({ queryKey: keys.pool });
-			qc.invalidateQueries({ queryKey: keys.health });
+			await invalidateCreatedChannelQueries(qc, result);
 			return result;
 		} catch (error) {
 			toastApiError("Couldn't connect channel")(error);

@@ -36,14 +36,14 @@ function setupControls(queryClient: QueryClient) {
 	const resetAttempt = mock(() => {});
 	const closeDialog = mock(() => {});
 	const startPayment = mock((_clientSecret: string) => {});
-	const toastSuccess = mock((_message: string, _options: { description: string }) => {});
+	const toastInfo = mock((_message: string, _options: { description: string }) => {});
 	const toastError = mock((_message: string, _options: { description: string }) => {});
 	return {
 		queryClient,
 		resetAttempt,
 		closeDialog,
 		startPayment,
-		toastSuccess,
+		toastInfo,
 		toastError,
 	};
 }
@@ -74,8 +74,8 @@ describe("handleTopupStartResult", () => {
 		expect(qc.getQueryState(["agents"])?.isInvalidated).toBe(true);
 		expect(setup.resetAttempt).toHaveBeenCalledTimes(1);
 		expect(setup.closeDialog).toHaveBeenCalledTimes(1);
-		expect(setup.toastSuccess).toHaveBeenCalledWith("Top-up complete", {
-			description: "Your balance and any open wallet invoice will update automatically.",
+		expect(setup.toastInfo).toHaveBeenCalledWith("Payment accepted", {
+			description: "We're confirming your Wallet credit now.",
 		});
 		expect(setup.toastError).not.toHaveBeenCalled();
 		expect(setup.startPayment).not.toHaveBeenCalled();
@@ -120,7 +120,7 @@ describe("handleTopupStartResult", () => {
 		expect(qc.getQueryState(billingKeys.billingHistory(20))?.isInvalidated).toBe(false);
 		expect(setup.closeDialog).not.toHaveBeenCalled();
 		expect(setup.resetAttempt).not.toHaveBeenCalled();
-		expect(setup.toastSuccess).not.toHaveBeenCalled();
+		expect(setup.toastInfo).not.toHaveBeenCalled();
 		expect(setup.toastError).not.toHaveBeenCalled();
 		unsubscribe();
 	});

@@ -131,7 +131,7 @@ export function TopUpDialog({
 					reset();
 					onOpenChange(false);
 				},
-				toastSuccess: toast.success,
+				toastInfo: toast.info,
 				toastError: toast.error,
 				onComplete,
 				startPayment: (nextClientSecret) => {
@@ -161,7 +161,7 @@ export function TopUpDialog({
 				topupKeyRef.current = null;
 			},
 			closeDialog: () => onOpenChange(false),
-			toastSuccess: toast.success,
+			toastInfo: toast.info,
 			onComplete,
 		});
 	}

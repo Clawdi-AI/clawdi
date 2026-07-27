@@ -85,7 +85,7 @@ export function HostedDeploymentDeleteAction({
 		} catch (error) {
 			if (deletionAccepted) {
 				toast.error("Agent removed, but navigation failed", {
-					description: "Refresh the page to update the agent list.",
+					description: "Use Agents in the sidebar to check its status.",
 				});
 			} else if (offerChoice && choice === "cancel_subscription") {
 				if (cancellationState.recorded) {

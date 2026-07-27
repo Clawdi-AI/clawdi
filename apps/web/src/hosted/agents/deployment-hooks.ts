@@ -3,6 +3,7 @@
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
+import { retireRuntimeWindows } from "@/hosted/agents/runtime-window-lifecycle";
 import { type AcceptedOperation, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
 	DeploymentUpdateRequest,
@@ -134,7 +135,7 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 	// The env id to drive per-env queries (sessions, channel links). For an
 	// env-id route it's the route param itself; for a deployment-id route
 	// (post-deploy redirect) resolve to the stored cloud-api env id, falling back
-	// to the route param while provisioning has not projected an env id yet.
+	// to the route param while deployment creation has not projected an env id yet.
 	const resolvedEnvId = useMemo(() => {
 		if (!match || match.runtime) return environmentId;
 		const runtime = deploymentRuntime(match.deployment);
@@ -191,6 +192,9 @@ export function useDeploymentLifecycle() {
 			}),
 		onSuccess: (accepted, vars) => {
 			projectAcceptedDeploymentTransition(qc, accepted);
+			if (vars.action === "restart") {
+				retireRuntimeWindows(accepted.deploymentId);
+			}
 			const msg =
 				vars.action === "restart"
 					? "Restarting…"
@@ -217,9 +221,8 @@ export function useDeleteDeployment() {
 			),
 		onSuccess: (accepted) => {
 			projectAcceptedDeploymentTransition(qc, accepted);
-			toast.message("Agent removed", {
-				description: "Cleanup continues in the background.",
-			});
+			retireRuntimeWindows(accepted.deploymentId);
+			toast.message("Agent removed");
 		},
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;

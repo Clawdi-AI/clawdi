@@ -75,7 +75,7 @@ describe("deploy wizard product copy and flow", () => {
 		expect(wizardSource).toContain('title="Agent software"');
 		expect(wizardSource).toContain("<DeploySectionSkeleton columns={2} />");
 		expect(wizardSource).toContain('description="Choose a compute plan and how paid plans renew."');
-		expect(wizardSource).toContain("After your agent is ready, connect channels from its page.");
+		expect(wizardSource).toContain("After your agent is running, connect channels from its page.");
 		expect(wizardSource).not.toContain('title="Runtimes"');
 		expect(wizardSource).not.toContain("execution engine");
 		expect(wizardSource).not.toContain("per-deployment funding");
