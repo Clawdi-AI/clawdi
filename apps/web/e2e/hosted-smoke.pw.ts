@@ -1120,6 +1120,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.startsWith("/v2/operations/") && r.request().method() === "GET") {
 			const response = options.planChangeOperationResponses?.shift();
+			if (response?.delayMs) {
+				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+			}
 			return response
 				? fulfillJson(r, response.body, response.status)
 				: fulfillJson(r, { detail: "Operation not found" }, 404);
@@ -2616,6 +2619,7 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 					effectiveAt: "2026-07-16T00:00:00Z",
 				}),
 				status: 200,
+				delayMs: 1_500,
 			},
 		],
 		planQuoteRequests,
@@ -2656,6 +2660,13 @@ test("paid card subscription confirms an immediate quoted upgrade", async ({ pag
 	expect(JSON.parse(planChangeRequests[0] ?? "{}")).toEqual({
 		operation_id: "op_paid_card",
 	});
+	await expect(
+		changeDialog.getByText("Still waiting for confirmation", { exact: true }),
+	).toBeVisible();
+	await changeDialog.getByRole("button", { name: "Close", exact: true }).last().click();
+	await expect(changeDialog).not.toBeVisible();
+	await expect(page.getByRole("button", { name: "Check plan change status" })).toBeVisible();
+	await expect(page.getByText("Plan changed", { exact: true })).toBeVisible();
 	expect(errors, `paid card upgrade: ${errors.join(" | ")}`).toEqual([]);
 });
 

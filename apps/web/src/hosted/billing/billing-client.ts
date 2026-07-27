@@ -308,11 +308,13 @@ export function createBillingClient(
 	const waitForPlanChange = async (
 		initial: unknown,
 		expectedOperationId: string,
+		onAccepted?: (operationName: string) => void,
 	): Promise<ComputePlanChangeResult> => {
 		let operation = parsePlanChangeOperation(initial);
 		if (operationIdFromName(operation.name) !== expectedOperationId) {
 			throw invalidPlanChangeResponse();
 		}
+		onAccepted?.(operation.name);
 		for (let poll = 0; poll <= pollLimit; poll += 1) {
 			const completed = completedPlanChange(operation);
 			if (completed) return completed;
@@ -432,7 +434,10 @@ export function createBillingClient(
 			unwrapDeploy(await api.POST("/v2/subscription/quote", { body })),
 		quotePlanChange: async (body: ComputePlanChangeQuoteRequest) =>
 			unwrapDeploy(await api.POST("/v2/subscription/plan/quote", { body })),
-		changePlan: async (body: ComputePlanChangeRequest): Promise<ComputePlanChangeResult> => {
+		changePlan: async (
+			body: ComputePlanChangeRequest,
+			onAccepted?: (operationName: string) => void,
+		): Promise<ComputePlanChangeResult> => {
 			const response: unknown = unwrapDeploy(
 				await api.POST("/v2/subscription/plan/change", {
 					headers: { "Idempotency-Key": body.operation_id },
@@ -440,7 +445,7 @@ export function createBillingClient(
 				}),
 			);
 			const legacy = legacyPlanChangeResult(response);
-			return legacy ?? waitForPlanChange(response, body.operation_id);
+			return legacy ?? waitForPlanChange(response, body.operation_id, onAccepted);
 		},
 		checkPlanChange: async (operationName: string) =>
 			getOperation(operationIdFromName(operationName)).then((value) => {

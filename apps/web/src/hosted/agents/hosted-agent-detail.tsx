@@ -2885,7 +2885,8 @@ function ComputeSettingsSections({
 	const lifecycle = useDeploymentLifecycle();
 	const plans = usePlans();
 	const quotePlanChange = useQuotePlanChange();
-	const changePlan = useChangePlan();
+	const [pendingPlanChangeName, setPendingPlanChangeName] = useState<string | null>(null);
+	const changePlan = useChangePlan(setPendingPlanChangeName);
 	const checkPlanChange = useCheckPlanChange();
 	const [subscriptionCreateOpen, setSubscriptionCreateOpen] = useState(false);
 	const [planChangeOpen, setPlanChangeOpen] = useState(false);
@@ -2932,7 +2933,6 @@ function ComputeSettingsSections({
 	const [planChangeQuote, setPlanChangeQuote] = useState<ComputePlanChangeQuoteResponse | null>(
 		null,
 	);
-	const [pendingPlanChangeName, setPendingPlanChangeName] = useState<string | null>(null);
 	const walletTopUp = useWalletTopUpDialog(PLAN_CHANGE_WALLET_FUNDING_ERROR_COPY);
 	const basicPlan = useMemo(() => resolveBasicPlan(plans.data), [plans.data]);
 	const perfPlan = useMemo(() => resolvePerformancePlan(plans.data), [plans.data]);
@@ -3086,7 +3086,8 @@ function ComputeSettingsSections({
 			if (error instanceof PlanChangePendingError) {
 				setPendingPlanChangeName(error.operationName);
 				toast.info("Still waiting for confirmation", {
-					description: "No result is available yet. Check the status again in a moment.",
+					description:
+						"We don’t have a final result yet. Don’t submit another plan change. Check again in a few minutes; if it still hasn’t finished, contact support. Checking only reads the status and does not submit another charge.",
 				});
 				return;
 			}

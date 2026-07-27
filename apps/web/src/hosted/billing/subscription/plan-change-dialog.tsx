@@ -158,15 +158,16 @@ export function PlanChangeDialog({
 		quote?.change_kind === "immediate_upgrade"
 			? "Confirming plan change…"
 			: "Scheduling downgrade…";
+	const blocksClose = isQuoting || (isConfirming && !hasAcceptedChange);
 
 	return (
 		<Dialog
 			open={open}
 			onOpenChange={(nextOpen) => {
-				if (!isQuoting && !isConfirming) onOpenChange(nextOpen);
+				if (!blocksClose) onOpenChange(nextOpen);
 			}}
 		>
-			<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!isConfirming}>
+			<DialogContent data-hosted="true" className="sm:max-w-lg" showCloseButton={!blocksClose}>
 				<DialogHeader>
 					<DialogTitle>{quote ? quoteTitle : "Change compute subscription"}</DialogTitle>
 					<DialogDescription>
@@ -252,14 +253,15 @@ export function PlanChangeDialog({
 								<CalendarClock aria-hidden />
 								<AlertTitle>Still waiting for confirmation</AlertTitle>
 								<AlertDescription>
-									The request was received, but no final result is available yet. Checking again
-									only reads its status and does not submit another charge.
+									We don’t have a final result yet. Don’t submit another plan change. You can close
+									this window and check again in a few minutes; if it still hasn’t finished, contact
+									support. Checking only reads the status and does not submit another charge.
 								</AlertDescription>
 							</Alert>
 						) : null}
 						<DialogFooter>
-							<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={isConfirming}>
-								Back
+							<Button variant="ghost" onClick={() => onOpenChange(false)} disabled={blocksClose}>
+								{hasAcceptedChange ? "Close" : "Back"}
 							</Button>
 							<Button
 								onClick={() => onConfirm(quote.operation_id)}

@@ -253,11 +253,11 @@ export function useQuotePlanChange() {
 	});
 }
 
-export function useChangePlan() {
+export function useChangePlan(onAccepted?: (operationName: string) => void) {
 	const client = useBillingClient();
 	const qc = useQueryClient();
 	return useMutation<ComputePlanChangeResult, Error, ComputePlanChangeRequest>({
-		mutationFn: (body) => client.changePlan(body),
+		mutationFn: (body) => client.changePlan(body, onAccepted),
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: billingKeys.deployments });
 			qc.invalidateQueries({ queryKey: billingKeys.wallet });

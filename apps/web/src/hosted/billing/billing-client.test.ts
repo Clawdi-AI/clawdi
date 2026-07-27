@@ -487,6 +487,7 @@ describe("declarative deployment mutations", () => {
 describe("compute plan changes", () => {
 	it("accepts once and waits through awaiting_payment for terminal success", async () => {
 		const requests: Request[] = [];
+		const acceptedOperations: string[] = [];
 		const responses = [
 			planChangeOperation("quoted"),
 			planChangeOperation("awaiting_payment"),
@@ -494,15 +495,23 @@ describe("compute plan changes", () => {
 		];
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
+			if (request.method === "GET") {
+				expect(acceptedOperations).toEqual(["operations/plan-change-1"]);
+			}
 			const response = responses.shift();
 			if (!response) throw new Error("Unexpected plan-change request");
 			return jsonResponse(response, request.method === "POST" ? 202 : 200);
 		});
 
-		await expect(client.changePlan({ operation_id: "plan-change-1" })).resolves.toEqual({
+		await expect(
+			client.changePlan({ operation_id: "plan-change-1" }, (operationName) => {
+				acceptedOperations.push(operationName);
+			}),
+		).resolves.toEqual({
 			kind: "complete",
 			effectiveAt: NOW,
 		});
+		expect(acceptedOperations).toEqual(["operations/plan-change-1"]);
 		expect(requests.map((request) => request.method)).toEqual(["POST", "GET", "GET"]);
 		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
 			"/v2/subscription/plan/change",
