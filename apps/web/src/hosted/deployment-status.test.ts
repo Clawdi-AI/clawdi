@@ -106,7 +106,7 @@ describe("DeploymentStatus", () => {
 
 	test("labels and tones the hosted backend statuses", () => {
 		const expected = [
-			["creating", "Getting ready", "info"],
+			["creating", "Starting", "info"],
 			["starting", "Starting", "info"],
 			["running", "Running", "success"],
 			["stopping", "Stopping", "info"],

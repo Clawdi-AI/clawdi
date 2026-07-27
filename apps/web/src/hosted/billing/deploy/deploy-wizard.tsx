@@ -1345,7 +1345,7 @@ export function DeployWizard() {
 							paymentMethod={paymentMethod}
 						/>
 						<p className="text-xs text-muted-foreground">
-							After your agent is ready, connect channels from its page.
+							After your agent is running, connect channels from its page.
 						</p>
 					</div>
 				</SettingsSection>

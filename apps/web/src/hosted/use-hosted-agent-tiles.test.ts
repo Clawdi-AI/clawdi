@@ -430,7 +430,7 @@ describe("hostedRuntimeStatusView", () => {
 		const creating = hostedRuntimeStatusView("creating", null);
 
 		expect(running.secondary?.label).toBe("Sync pending");
-		expect(creating.primary.label).toBe("Getting ready");
+		expect(creating.primary.label).toBe("Starting");
 		expect(creating.secondary).toBeNull();
 	});
 

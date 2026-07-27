@@ -135,7 +135,7 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 	// The env id to drive per-env queries (sessions, channel links). For an
 	// env-id route it's the route param itself; for a deployment-id route
 	// (post-deploy redirect) resolve to the stored cloud-api env id, falling back
-	// to the route param while provisioning has not projected an env id yet.
+	// to the route param while deployment creation has not projected an env id yet.
 	const resolvedEnvId = useMemo(() => {
 		if (!match || match.runtime) return environmentId;
 		const runtime = deploymentRuntime(match.deployment);

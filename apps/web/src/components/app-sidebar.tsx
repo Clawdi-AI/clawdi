@@ -1248,7 +1248,7 @@ function FocusHeader({
 		return (
 			<div className="min-w-0">
 				<div className="truncate text-sm font-semibold leading-5">
-					{acceptedSetupRoute ? "Setting up your agent" : "Agent not found"}
+					{acceptedSetupRoute ? "Starting your agent" : "Agent not found"}
 				</div>
 				<div className="truncate text-xs leading-4 text-muted-foreground">
 					{acceptedSetupRoute ? "This usually takes a few minutes" : "No details are available"}

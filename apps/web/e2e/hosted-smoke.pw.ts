@@ -1597,7 +1597,7 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
 	await expect.poll(() => new URL(page.url()).searchParams.get("setup")).toBe("accepted");
 	await expect(page.getByTestId("accepted-agent-setup")).toBeVisible();
-	await expect(page.getByText("Setting up your agent", { exact: true }).first()).toBeVisible();
+	await expect(page.getByText("Starting your agent", { exact: true })).toHaveCount(2);
 	await expect(page.getByText("Agent unavailable", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
 	await expect(page.locator("body")).not.toContainText("hdep_included_created");
@@ -1625,7 +1625,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 		if (path.startsWith("/v2/operations/")) operationPollRequests.push(path);
 	});
 	await stubCompletedStripeCheckout(page);
-	const provisioningDeployment: DeploymentMutationFixture = {
+	const startingDeployment: DeploymentMutationFixture = {
 		...paidBasicDeployment,
 		id: "hdep_created",
 		name: "Created Basic",
@@ -1645,7 +1645,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 			},
 		],
 		deploymentRequestReads,
-		deployments: [includedBasicDeployment, provisioningDeployment],
+		deployments: [includedBasicDeployment, startingDeployment],
 		plans: [basicPlan],
 		unfinishedDeploymentRequests: true,
 	});
@@ -1657,7 +1657,7 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
 
 	await expect(page).toHaveURL(/\/agents\/hdep_created/);
-	await expect(page.getByText("Getting your agent ready…", { exact: true })).toBeVisible();
+	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("This step should finish within five minutes.", { exact: false }),
 	).toBeVisible();
@@ -2061,7 +2061,7 @@ test("projection service errors stay visible while deployment tools remain avail
 	expect(renderErrors, `projection failure render: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("deployment detail stays put, becomes ready, and keeps manual Runtime UI access", async ({
+test("deployment detail stays put, becomes running, and keeps manual Runtime UI access", async ({
 	page,
 }) => {
 	const pendingRuntimeUiDeployment = {
@@ -2104,7 +2104,7 @@ test("deployment detail stays put, becomes ready, and keeps manual Runtime UI ac
 
 	await page.goto(`/agents/${pendingRuntimeUiDeployment.id}?source=on-clawdi`);
 	const main = page.locator("main");
-	await expect(main.getByText("Getting your agent ready…", { exact: true })).toBeVisible();
+	await expect(main.getByText("Starting your agent…", { exact: true })).toBeVisible();
 	await expect(page).toHaveURL(
 		(url) => url.pathname === `/agents/${pendingRuntimeUiDeployment.id}`,
 	);
@@ -2114,7 +2114,7 @@ test("deployment detail stays put, becomes ready, and keeps manual Runtime UI ac
 	await expect
 		.poll(() => deploymentListRequests.length, { timeout: 15_000 })
 		.toBeGreaterThanOrEqual(2);
-	await expect(main.getByText("Your agent is ready", { exact: true })).toBeVisible();
+	await expect(main.getByText("Your agent is running", { exact: true })).toBeVisible();
 	await expect(page).toHaveURL(
 		(url) => url.pathname === `/agents/${pendingRuntimeUiDeployment.id}`,
 	);
