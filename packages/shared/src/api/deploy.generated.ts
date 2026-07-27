@@ -805,7 +805,7 @@ export interface components {
             /** Detail */
             detail: string;
             /** Instance */
-            instance: string;
+            instance?: string | null;
             /** Code */
             code: string;
             /** Phase */
@@ -833,7 +833,7 @@ export interface components {
             /** Detail */
             detail: string;
             /** Instance */
-            instance: string;
+            instance?: string | null;
             /** Code */
             code: string;
             /** Phase */
@@ -866,7 +866,7 @@ export interface components {
             /** Detail */
             detail: string;
             /** Instance */
-            instance: string;
+            instance?: string | null;
             /** Code */
             code: string;
             /** Phase */

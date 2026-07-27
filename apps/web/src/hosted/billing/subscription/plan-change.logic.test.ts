@@ -157,7 +157,7 @@ describe("performanceUpgradeUnavailableReason", () => {
 			],
 			[
 				"compute_subscription_not_active",
-				"This agent’s subscription is not active, so Clawdi can’t start the upgrade. Resolve the subscription status, then try again.",
+				"Clawdi can’t start this upgrade because this agent’s no-cost subscription is not active. You were not charged, and there’s nothing you need to fix. Check again later.",
 			],
 			[
 				"compute_subscription_canceling",
