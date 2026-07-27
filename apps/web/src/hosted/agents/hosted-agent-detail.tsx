@@ -65,10 +65,12 @@ import {
 } from "@/hosted/agents/hosted-terminal-panel";
 import {
 	type HermesUiCredentials,
+	openClawdiRuntimeWindow,
 	openSecureRuntimeWindow,
 	type ResolvedRuntimeUiCredentials,
 	resolveRuntimeUiCredentials,
 } from "@/hosted/agents/runtime-ui-credentials";
+import { launchHermesRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { useCheckoutReturnHandler } from "@/hosted/billing/checkout-return";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
@@ -1268,7 +1270,10 @@ function RuntimeUiOpenButton({
 	);
 	const openUi = useCallback(
 		async function openUi() {
-			const popup = openSecureRuntimeWindow(window.open.bind(window));
+			const popup =
+				runtime === "hermes"
+					? openClawdiRuntimeWindow(window.open.bind(window))
+					: openSecureRuntimeWindow(window.open.bind(window));
 			if (!popup) {
 				toast.error(`Couldn't open ${label}`, {
 					id: RUNTIME_UI_LAUNCH_TOAST_ID,
@@ -1288,8 +1293,14 @@ function RuntimeUiOpenButton({
 					return;
 				}
 				toast.dismiss(RUNTIME_UI_LAUNCH_TOAST_ID);
-				if (resolved.runtime === "hermes") onHermesCredentials?.(resolved.value);
-				popup.location.replace(resolved.value.url);
+				if (resolved.runtime === "hermes") {
+					onHermesCredentials?.(resolved.value);
+					if (!launchHermesRuntimeWindow(deployment.resource.id, resolved.value.url, popup)) {
+						throw new Error("Could not open the Clawdi runtime window");
+					}
+				} else {
+					popup.location.replace(resolved.value.url);
+				}
 			} catch {
 				popup.close();
 				if (requestVersionRef.current === requestVersion) {
@@ -1304,7 +1315,7 @@ function RuntimeUiOpenButton({
 				if (requestVersionRef.current === requestVersion) setIsPending(false);
 			}
 		},
-		[label, onHermesCredentials, requestCredentials],
+		[deployment.resource.id, label, onHermesCredentials, requestCredentials, runtime],
 	);
 
 	return (

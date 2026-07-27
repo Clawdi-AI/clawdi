@@ -3,6 +3,7 @@
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo } from "react";
 import { toast } from "sonner";
+import { retireRuntimeWindows } from "@/hosted/agents/runtime-window-lifecycle";
 import { type AcceptedOperation, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
 	DeploymentUpdateRequest,
@@ -191,6 +192,9 @@ export function useDeploymentLifecycle() {
 			}),
 		onSuccess: (accepted, vars) => {
 			projectAcceptedDeploymentTransition(qc, accepted);
+			if (vars.action === "restart") {
+				retireRuntimeWindows(accepted.deploymentId, "restarted");
+			}
 			const msg =
 				vars.action === "restart"
 					? "Restarting…"
@@ -217,7 +221,8 @@ export function useDeleteDeployment() {
 			),
 		onSuccess: (accepted) => {
 			projectAcceptedDeploymentTransition(qc, accepted);
-			toast.message("Agent removed", {
+			retireRuntimeWindows(accepted.deploymentId, "deleting");
+			toast.message("Agent removal started", {
 				description: "Cleanup continues in the background.",
 			});
 		},

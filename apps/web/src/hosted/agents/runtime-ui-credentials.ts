@@ -19,6 +19,7 @@ type RuntimeWindow = {
 	close(): void;
 	location: { replace(url: string | URL): void };
 	opener: unknown;
+	sessionStorage: Pick<Storage, "setItem">;
 };
 type OpenRuntimeWindow = (
 	url?: string | URL,
@@ -26,11 +27,15 @@ type OpenRuntimeWindow = (
 	features?: string,
 ) => RuntimeWindow | null;
 
+export function openClawdiRuntimeWindow(openWindow: OpenRuntimeWindow): RuntimeWindow | null {
+	return openWindow("about:blank", "_blank");
+}
+
 export function openSecureRuntimeWindow(openWindow: OpenRuntimeWindow): RuntimeWindow | null {
 	// `noopener` may intentionally make window.open return null even when the
 	// browser opened the tab, which would leave an async token handoff unable
 	// to navigate it. Detach the synchronously opened placeholder immediately.
-	const popup = openWindow("about:blank", "_blank");
+	const popup = openClawdiRuntimeWindow(openWindow);
 	if (popup) popup.opener = null;
 	return popup;
 }

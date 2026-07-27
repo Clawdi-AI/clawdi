@@ -281,6 +281,15 @@ describe("deployment mutation settlement", () => {
 		expect(settlementInvalidations).toHaveLength(3);
 	});
 
+	test("retires old runtime windows only after restart or delete is accepted", () => {
+		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
+
+		expect(source).toContain('if (vars.action === "restart") {');
+		expect(source).toContain('retireRuntimeWindows(accepted.deploymentId, "restarted");');
+		expect(source).toContain('retireRuntimeWindows(accepted.deploymentId, "deleting");');
+		expect(source.match(/retireRuntimeWindows\(accepted\.deploymentId/g)).toHaveLength(2);
+	});
+
 	test("projects every accepted operation through the shared transition model", () => {
 		if (!projectAcceptedTransition) throw new Error("deployment hooks were not loaded");
 		const queryClient = new QueryClient();

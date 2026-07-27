@@ -1689,7 +1689,7 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
 	await expect(page).toHaveURL(/\/agents\/?$/);
-	await expect(page.getByText("Agent removed", { exact: true })).toBeVisible();
+	await expect(page.getByText("Agent removal started", { exact: true })).toBeVisible();
 	await expect(page.getByRole("link", { name: "Open Basic", exact: true })).toHaveCount(0);
 	await expect(page.getByTestId("app-sidebar-agent-tiles").getByLabel("Basic")).toHaveCount(0);
 	// The deployment is still in the stubbed inventory as `deleting`; dismissal
@@ -2079,9 +2079,26 @@ test("deployment detail stays put, becomes ready, and keeps manual Runtime UI ac
 	const deployments: unknown[] = [pendingRuntimeUiDeployment];
 	const deploymentListRequests: string[] = [];
 	const runtimeUiRedemptionRequests: string[] = [];
+	const restartRequests: string[] = [];
+	await page.context().route(`${DEPLOY_API}/**`, async (route) => {
+		const path = new URL(route.request().url()).pathname;
+		if (path === "/v1/me") return fulfillJson(route, hostedUser());
+		if (path === "/v2/deployments") {
+			return fulfillJson(route, [mutationDeploymentReadFixture(readyRuntimeUiDeployment)]);
+		}
+		return fulfillJson(route, {});
+	});
+	await page.context().route(`${CLOUD_API}/**`, (route) => fulfillJson(route, {}));
+	await page.context().route("https://runtime.example/**", (route) =>
+		route.fulfill({
+			contentType: "text/html",
+			body: "<!doctype html><title>Hermes runtime</title><p>Gateway Status: Running</p>",
+		}),
+	);
 	await stubHostedApi(page, {
 		deployments,
 		deploymentListRequests,
+		restartRequests,
 		runtimeUiRedemptionRequests,
 	});
 
@@ -2116,6 +2133,32 @@ test("deployment detail stays put, becomes ready, and keeps manual Runtime UI ac
 		"https://runtime.example/hermes",
 	);
 	await expect(main.getByRole("button", { name: "Open Hermes Dashboard" })).toBeVisible();
+
+	const popupPromise = page.waitForEvent("popup");
+	await main.getByRole("button", { name: "Open Hermes Dashboard" }).click();
+	const popup = await popupPromise;
+	await expect(popup).toHaveURL(/\/runtime-window$/);
+	await expect(popup.locator('iframe[title="Hermes Dashboard"]')).toHaveAttribute(
+		"src",
+		"https://runtime.example/hermes",
+	);
+	await expect(popup).not.toHaveURL(/hdep_|runtime\.example/);
+
+	await page.getByRole("link", { name: "Settings", exact: true }).click();
+	await page.getByRole("button", { name: "Restart", exact: true }).click();
+	await page
+		.getByRole("alertdialog", { name: "Restart agent?" })
+		.getByRole("button", { name: "Restart agent", exact: true })
+		.click();
+
+	await expect.poll(() => restartRequests.length).toBe(1);
+	await expect(popup).toHaveURL(/\/runtime-window\?reason=restarted$/);
+	await expect(
+		popup.getByText("This runtime window is out of date", { exact: true }),
+	).toBeVisible();
+	await expect(popup.getByRole("button", { name: "Close this window" })).toBeVisible();
+	await popup.getByText("View Agents here", { exact: true }).click();
+	await expect(popup).toHaveURL(/\/agents$/);
 });
 
 test("Runtime UI credential failure renders a retryable error instead of a permanent spinner", async ({

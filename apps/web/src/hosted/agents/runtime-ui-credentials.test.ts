@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
+	openClawdiRuntimeWindow,
 	openSecureRuntimeWindow,
 	resolveRuntimeUiCredentials,
 } from "@/hosted/agents/runtime-ui-credentials";
@@ -12,6 +13,7 @@ describe("runtime UI credential targeting", () => {
 			close() {},
 			location: { replace() {} },
 			opener: { unsafe: true },
+			sessionStorage: { setItem() {} },
 		};
 		const opened = openSecureRuntimeWindow((...args) => {
 			calls.push(args);
@@ -19,6 +21,18 @@ describe("runtime UI credential targeting", () => {
 		});
 		expect(calls).toEqual([["about:blank", "_blank"]]);
 		expect(opened?.opener).toBeNull();
+	});
+
+	test("keeps the opener only for a same-origin Clawdi runtime shell", () => {
+		const popup = {
+			close() {},
+			location: { replace() {} },
+			opener: { clawdi: true },
+			sessionStorage: { setItem() {} },
+		};
+		const opened = openClawdiRuntimeWindow(() => popup);
+
+		expect(opened?.opener).toEqual({ clawdi: true });
 	});
 
 	test("keeps Hermes credentials separate from its secret-free URL", () => {
