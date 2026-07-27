@@ -1459,6 +1459,7 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	await page.goto("/deploy");
 
 	const nameInput = page.getByRole("textbox", { name: "Name in Clawdi" });
+	await expect(nameInput).toHaveValue("Hermes");
 	const maxLengthName = "a".repeat(64);
 	await nameInput.fill(maxLengthName);
 	await expect(
@@ -1485,22 +1486,18 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("deploy keeps Managed AI compact and provider selection exclusive", async ({ page }) => {
+test("deploy keeps AI providers expanded and provider selection exclusive", async ({ page }) => {
 	await stubHostedApi(page, { plans: [basicPlan], deployments: [] });
 	await page.goto("/deploy");
 
 	await expect(page.getByRole("button", { name: /^Hermes/ })).toContainText("Recommended");
 	await expect(
 		page.getByText("Agent software can’t be changed later", { exact: true }),
-	).toBeVisible();
-	await expect(page.getByText("Using Managed AI", { exact: true })).toBeVisible();
+	).toHaveCount(0);
 	const addProvider = page.getByRole("button", { name: /^Add a provider/ });
-	await expect(addProvider).toHaveCount(0);
-	await page.getByRole("button", { name: "Change", exact: true }).click();
-
+	await expect(addProvider).toBeVisible();
 	const managed = page.getByRole("button", { name: /^Managed AI/ });
 	const unmanaged = page.getByRole("button", { name: /^Configure inside agent/ });
-	await expect(addProvider).toBeVisible();
 	await expect(managed).toHaveAttribute("aria-pressed", "true");
 	await expect(unmanaged).toHaveAttribute("aria-pressed", "false");
 
@@ -1510,10 +1507,7 @@ test("deploy keeps Managed AI compact and provider selection exclusive", async (
 	await managed.click();
 	await expect(managed).toHaveAttribute("aria-pressed", "true");
 	await expect(unmanaged).toHaveAttribute("aria-pressed", "false");
-
-	await page.getByRole("button", { name: "Done", exact: true }).click();
-	await expect(addProvider).toHaveCount(0);
-	await expect(page.getByText("Using Managed AI", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Change", exact: true })).toHaveCount(0);
 });
 
 test("free Basic Deploy submits the declarative create contract", async ({ page }) => {
@@ -1659,7 +1653,6 @@ test("managed model picker lists the curated catalog without Custom or image mod
 	});
 	await page.goto("/deploy");
 
-	await page.getByRole("button", { name: "Change", exact: true }).click();
 	await expect(page.locator("#deploy-catalog-model")).toContainText("Luna");
 	await page.locator("#deploy-catalog-model").click();
 	await expect(page.getByRole("option", { name: "Luna", exact: true })).toBeVisible();
