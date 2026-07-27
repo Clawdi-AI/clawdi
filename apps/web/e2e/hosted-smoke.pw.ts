@@ -1694,34 +1694,6 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 	await expect(page.getByRole("link", { name: "Open Basic", exact: true })).toHaveCount(0);
 });
 
-test("failed background deletion stays dismissed and surfaces an honest recovery action", async ({
-	page,
-}) => {
-	const failedDeleteRetryability = new Map<string, boolean>();
-	await stubHostedApi(page, {
-		deployments: [includedBasicDeployment],
-		plans: [basicPlan, performancePlan],
-		failedDeleteRetryability,
-	});
-	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
-
-	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
-	await page
-		.getByRole("alertdialog")
-		.getByRole("button", { name: "Delete agent", exact: true })
-		.click();
-	await expect(page).toHaveURL(/\/agents\/?$/);
-
-	failedDeleteRetryability.set("hdep_included", false);
-	await expect(
-		page.getByText("Cleanup for Included Basic needs attention", { exact: true }),
-	).toBeVisible();
-	await expect(page.getByRole("button", { name: "Contact support", exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Retry cleanup", exact: true })).toHaveCount(0);
-	await expect(page.getByRole("link", { name: "Open Basic", exact: true })).toHaveCount(0);
-	await expect(page.getByTestId("app-sidebar-agent-tiles").getByLabel("Basic")).toHaveCount(0);
-});
-
 test("managed model picker lists the curated catalog without Custom or image models", async ({
 	page,
 }) => {
@@ -2291,9 +2263,11 @@ test("shared legacy environment direct route asks the user to choose an agent", 
 
 test("identity-less interrupted deployment tile exposes delete", async ({ page }) => {
 	const deleteRequests: string[] = [];
+	const failedDeleteRetryability = new Map<string, boolean>();
 	await stubHostedApi(page, {
 		deployments: [interruptedIdentitylessDeployment],
 		deleteRequests,
+		failedDeleteRetryability,
 	});
 
 	await page.goto("/agents");
@@ -2305,6 +2279,15 @@ test("identity-less interrupted deployment tile exposes delete", async ({ page }
 		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_creation_interrupted"]);
+	await expect(deleteAction).toHaveCount(0);
+
+	failedDeleteRetryability.set("hdep_creation_interrupted", false);
+	await expect(
+		page.getByText("Cleanup for Interrupted deployment needs attention", { exact: true }),
+	).toBeVisible();
+	await expect(page.getByRole("button", { name: "Contact support", exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Retry cleanup", exact: true })).toHaveCount(0);
+	await expect(deleteAction).toHaveCount(0);
 });
 
 test("Basic create always follows the wizard-selected funding path", async ({ page }) => {
