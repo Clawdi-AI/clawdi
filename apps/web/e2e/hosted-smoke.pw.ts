@@ -2281,9 +2281,19 @@ test("shared legacy environment routes an older tile's actions to its deployment
 	await expect(newerTile.locator("..").getByText("Running", { exact: true })).toHaveCount(0);
 	await expect(olderTile.locator("..").getByText("Stopped", { exact: true })).toHaveCount(0);
 	const rail = page.getByTestId("app-sidebar-agent-tiles");
-	await expect(rail.getByLabel("Newer twin", { exact: true })).toBeVisible();
-	await expect(rail.getByLabel("Older twin", { exact: true })).toBeVisible();
-	await olderTile.click();
+	const newerRailTile = rail.getByLabel("Newer twin", { exact: true });
+	const olderRailTile = rail.getByLabel("Older twin", { exact: true });
+	await expect(newerRailTile).toBeVisible();
+	await expect(olderRailTile).toBeVisible();
+	await newerRailTile.click();
+	await expect(page).toHaveURL(
+		new RegExp(`/agents/${sharedLegacyEnvironmentId}(?:\\?|/).*d=hdep_shared_newer`),
+	);
+	await page.goto("/agents");
+	await olderRailTile.click();
+	await expect(page).toHaveURL(
+		new RegExp(`/agents/${sharedLegacyEnvironmentId}(?:\\?|/).*d=hdep_shared_older`),
+	);
 	await page.getByRole("link", { name: "Settings", exact: true }).click();
 	await expect(page).toHaveURL(
 		new RegExp(`/agents/${sharedLegacyEnvironmentId}/settings\\?.*d=hdep_shared_older`),

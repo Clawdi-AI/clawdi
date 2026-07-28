@@ -7,7 +7,7 @@ import {
 	type DragEndEvent,
 	type DragOverEvent,
 	type Modifier,
-	PointerSensor,
+	MouseSensor,
 	TouchSensor,
 	useSensor,
 	useSensors,
@@ -752,10 +752,7 @@ function RailFocusButton({
 	caption,
 	active,
 	onNavigate,
-	onClickCapture,
-	onPointerDownCapture,
-	onPointerDown,
-	onTouchStartCapture,
+	onMouseDown,
 	onTouchStart,
 	showTooltip = true,
 	children,
@@ -765,10 +762,7 @@ function RailFocusButton({
 	caption?: string;
 	active: boolean;
 	onNavigate?: React.MouseEventHandler<HTMLAnchorElement>;
-	onClickCapture?: React.MouseEventHandler<HTMLAnchorElement>;
-	onPointerDownCapture?: React.PointerEventHandler<HTMLAnchorElement>;
-	onPointerDown?: React.PointerEventHandler<HTMLAnchorElement>;
-	onTouchStartCapture?: React.TouchEventHandler<HTMLAnchorElement>;
+	onMouseDown?: React.MouseEventHandler<HTMLAnchorElement>;
 	onTouchStart?: React.TouchEventHandler<HTMLAnchorElement>;
 	showTooltip?: boolean;
 	children: React.ReactNode;
@@ -778,11 +772,8 @@ function RailFocusButton({
 		<Link
 			to={href}
 			draggable={false}
-			onClickCapture={onClickCapture}
 			onClick={onNavigate}
-			onPointerDownCapture={onPointerDownCapture}
-			onPointerDown={onPointerDown}
-			onTouchStartCapture={onTouchStartCapture}
+			onMouseDown={onMouseDown}
 			onTouchStart={onTouchStart}
 			className="cursor-default"
 		/>
@@ -852,17 +843,11 @@ function SortableAgentRailItem({
 	agent,
 	active,
 	onNavigate,
-	onClickCapture,
-	onPointerDownCapture,
-	onTouchStartCapture,
 	showTooltip,
 }: {
 	agent: AgentTile;
 	active: boolean;
 	onNavigate: React.MouseEventHandler<HTMLAnchorElement>;
-	onClickCapture: React.MouseEventHandler<HTMLAnchorElement>;
-	onPointerDownCapture: React.PointerEventHandler<HTMLAnchorElement>;
-	onTouchStartCapture: React.TouchEventHandler<HTMLAnchorElement>;
 	showTooltip: boolean;
 }) {
 	const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -887,8 +872,8 @@ function SortableAgentRailItem({
 		transition: isDragging ? undefined : transition,
 		zIndex: isDragging ? 20 : undefined,
 	};
-	const dragPointerDown: React.PointerEventHandler<HTMLAnchorElement> | undefined =
-		listeners?.onPointerDown ? (event) => listeners.onPointerDown?.(event) : undefined;
+	const dragMouseDown: React.MouseEventHandler<HTMLAnchorElement> | undefined =
+		listeners?.onMouseDown ? (event) => listeners.onMouseDown?.(event) : undefined;
 	const dragTouchStart: React.TouchEventHandler<HTMLAnchorElement> | undefined =
 		listeners?.onTouchStart ? (event) => listeners.onTouchStart?.(event) : undefined;
 
@@ -908,10 +893,7 @@ function SortableAgentRailItem({
 				caption={caption}
 				active={active}
 				onNavigate={onNavigate}
-				onClickCapture={onClickCapture}
-				onPointerDownCapture={onPointerDownCapture}
-				onPointerDown={dragPointerDown}
-				onTouchStartCapture={onTouchStartCapture}
+				onMouseDown={dragMouseDown}
 				onTouchStart={dragTouchStart}
 				showTooltip={showTooltip}
 			>
@@ -952,8 +934,6 @@ function FocusRailContent({
 	const api = useApi();
 	const queryClient = useQueryClient();
 	const draggingRailItem = useRef(false);
-	const railPointerStart = useRef<{ x: number; y: number } | null>(null);
-	const suppressCurrentRailPointerClick = useRef(false);
 	const [railAgents, setRailAgents] = useState<AgentTile[]>(() =>
 		[...agents].sort(compareAgentTiles),
 	);
@@ -963,8 +943,11 @@ function FocusRailContent({
 		railAgentsRef.current = next;
 		setRailAgents(next);
 	};
+	// Separate mouse and touch activators so a touch pointerdown cannot claim the
+	// gesture before TouchSensor applies its long-press activation constraint.
+	// After activation, dnd-kit captures the post-drag click before it reaches the link.
 	const sensors = useSensors(
-		useSensor(PointerSensor, { activationConstraint: { distance: RAIL_DRAG_ACTIVATION_DISTANCE } }),
+		useSensor(MouseSensor, { activationConstraint: { distance: RAIL_DRAG_ACTIVATION_DISTANCE } }),
 		useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
 	);
 	useEffect(() => {
@@ -1041,52 +1024,8 @@ function FocusRailContent({
 	const beginRailDragGesture = () => {
 		draggingRailItem.current = true;
 		dragStartRailAgents.current = railAgentsRef.current;
-		suppressCurrentRailPointerClick.current = true;
 	};
-	const recordRailPointerStart: React.PointerEventHandler<HTMLAnchorElement> = (event) => {
-		suppressCurrentRailPointerClick.current = false;
-		if (event.pointerType === "mouse" && event.button !== 0) {
-			railPointerStart.current = null;
-			return;
-		}
-		railPointerStart.current = { x: event.clientX, y: event.clientY };
-	};
-	const recordRailTouchStart: React.TouchEventHandler<HTMLAnchorElement> = (event) => {
-		suppressCurrentRailPointerClick.current = false;
-		const touch = event.touches.item(0);
-		railPointerStart.current = touch ? { x: touch.clientX, y: touch.clientY } : null;
-	};
-	const railClickMovedPastDragThreshold = (event: React.MouseEvent<HTMLAnchorElement>) => {
-		const start = railPointerStart.current;
-		if (!start) return false;
-		const dx = event.clientX - start.x;
-		const dy = event.clientY - start.y;
-		return Math.hypot(dx, dy) >= RAIL_DRAG_ACTIVATION_DISTANCE;
-	};
-	const shouldSuppressRailClick = (event: React.MouseEvent<HTMLAnchorElement>) =>
-		draggingRailItem.current ||
-		suppressCurrentRailPointerClick.current ||
-		railClickMovedPastDragThreshold(event);
-	const suppressRailNavigation = (event: React.MouseEvent<HTMLAnchorElement>) => {
-		event.preventDefault();
-		event.stopPropagation();
-		suppressCurrentRailPointerClick.current = false;
-		railPointerStart.current = null;
-	};
-	const onRailAgentClickCapture: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
-		if (shouldSuppressRailClick(event)) {
-			suppressRailNavigation(event);
-		}
-	};
-	const onRailAgentNavigate: React.MouseEventHandler<HTMLAnchorElement> = (event) => {
-		if (event.defaultPrevented) return;
-		if (shouldSuppressRailClick(event)) {
-			suppressRailNavigation(event);
-		} else {
-			railPointerStart.current = null;
-			onNavigate?.();
-		}
-	};
+	const onRailAgentNavigate = () => onNavigate?.();
 
 	return (
 		<>
@@ -1158,9 +1097,6 @@ function FocusRailContent({
 									agent={agent}
 									active={Boolean(activeAgentId && agentTileMatchesRouteId(agent, activeAgentId))}
 									onNavigate={onRailAgentNavigate}
-									onClickCapture={onRailAgentClickCapture}
-									onPointerDownCapture={recordRailPointerStart}
-									onTouchStartCapture={recordRailTouchStart}
 									showTooltip={showTooltips}
 								/>
 							))}
