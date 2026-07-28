@@ -286,6 +286,7 @@ function managedProviderEgressProfileForProvider(
 export function normalizeSecretRef(value: string | null | undefined): string | null {
 	const trimmed = value?.trim();
 	if (!trimmed) return null;
+	if (trimmed.startsWith("env://")) return trimmed;
 	return trimmed.startsWith("secret://") ? trimmed : `secret://${trimmed}`;
 }
 

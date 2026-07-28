@@ -4,8 +4,10 @@ import type { RuntimePaths } from "./paths";
 
 export const secretRefSchema = z
 	.string()
-	.min(1)
-	.regex(/^(?:secret|env):\/\//);
+	.regex(
+		/^(?:secret:\/\/.+|env:\/\/[A-Za-z_][A-Za-z0-9_]*)$/,
+		"must be a non-empty secret:// reference or canonical env:// reference",
+	);
 const profileIdSchema = z
 	.string()
 	.min(1)

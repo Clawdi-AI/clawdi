@@ -318,7 +318,43 @@ describe("hosted runtime bundle v2", () => {
 							remote: {
 								url: "https://cloud-api.test/v1/mcp/remote",
 								transport: "streamable-http",
+								headers: { Authorization: { secretRef: "secret://" } },
+							},
+						},
+					},
+				},
+			}),
+		).toThrow();
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					mcp: {
+						servers: {
+							remote: {
+								url: "https://cloud-api.test/v1/mcp/remote",
+								transport: "streamable-http",
 								headers: { Authorization: "public-a", authorization: "public-b" },
+							},
+						},
+					},
+				},
+			}),
+		).toThrow();
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					mcp: {
+						servers: {
+							remote: {
+								url: "https://cloud-api.test/v1/mcp/remote",
+								transport: "streamable-http",
+								headers: {
+									Authorization: { secretRef: "env://INVALID-NAME" },
+								},
 							},
 						},
 					},

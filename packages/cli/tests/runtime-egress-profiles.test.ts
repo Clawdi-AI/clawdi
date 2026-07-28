@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { egressProfileSchema } from "../src/runtime/egress-profiles";
+import { egressProfileSchema, secretRefSchema } from "../src/runtime/egress-profiles";
 import {
 	hostedManifestEgressProfiles,
 	runtimeInstallerEgressProfiles,
@@ -9,6 +9,15 @@ const providerProfiles = (profiles: ReturnType<typeof hostedManifestEgressProfil
 	profiles.filter((profile) => profile.owner === "provider-projection");
 
 describe("runtime egress profile schema", () => {
+	it("shares canonical secretRef semantics with hosted MCP resources", () => {
+		for (const value of ["secret://provider.default.apiKey", "env://CLAWDI_AUTH_TOKEN"]) {
+			expect(secretRefSchema.safeParse(value).success).toBe(true);
+		}
+		for (const value of ["secret://", "env://", "env://INVALID-NAME", "env://9TOKEN"]) {
+			expect(secretRefSchema.safeParse(value).success).toBe(false);
+		}
+	});
+
 	it("accepts HTTP and websocket upstream base URLs", () => {
 		const base = {
 			id: "discord-rest",

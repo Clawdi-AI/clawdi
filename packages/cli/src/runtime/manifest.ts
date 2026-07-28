@@ -45,9 +45,7 @@ import {
 	mergeHermesChannelConfig,
 	mergeHermesConfig,
 	mergeHermesDashboardBasicAuth,
-	mergeHermesMcpServer,
 	mergeHermesRuntimeLocale,
-	removeHermesMcpServer,
 	renderHermesChannelConfig,
 	renderHermesConfig,
 	renderHermesMcpServer,
@@ -3151,7 +3149,7 @@ function applyHostedBundledSkills(
 	manifest: RuntimeManifest,
 	home: string,
 ): string[] {
-	if (!hostedBundledSkillsEnabled()) return [];
+	const installEnabled = hostedBundledSkillsEnabled();
 	const targets: string[] = [];
 	for (const [skillName, bundled] of HOSTED_BUNDLED_SKILL_REGISTRY) {
 		const targetDir = hostedBundledSkillTargetDir(name, skillName, home);
@@ -3159,7 +3157,7 @@ function applyHostedBundledSkills(
 		targets.push(targetDir);
 		const desired = manifest.projection?.skills?.entries[skillName];
 		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
-		if (!runtimeEnabled || desired?.enabled !== true) {
+		if (!installEnabled || !runtimeEnabled || desired?.enabled !== true) {
 			if (isManagedHostedBundledSkill(targetDir, skillName)) {
 				rmSync(targetDir, { recursive: true, force: true });
 			}
@@ -3191,84 +3189,194 @@ function applyHostedMcpProjections(
 ): string[] {
 	const intent = hostedMcpIntent(manifest);
 	if (intent.kind === "opaque") return [];
+	const plan = buildHostedMcpReconciliationPlan(manifest, paths, observations);
+	const ledgerPath = hostedMcpLedgerPath(paths);
+	const outputs = new Set<string>();
+	// Hermes is one staged atomic file write. Apply it before OpenClaw so the
+	// unified runtime snapshot proves cross-runtime rollback on a later command failure.
+	for (const runtime of [...plan.runtimes].sort((left, right) =>
+		left.name === right.name ? 0 : left.name === "hermes" ? -1 : 1,
+	)) {
+		if (runtime.mutations.length === 0) continue;
+		if (runtime.name === "hermes") {
+			if (runtime.nextHermesContent === null) {
+				throw new Error("Hermes MCP reconciliation did not produce staged config");
+			}
+			writePrivateFileAtomic(runtime.native.path, runtime.nextHermesContent);
+			makeRuntimeUserOwned(runtime.native.path);
+			outputs.add(runtime.native.path);
+			continue;
+		}
+		if (!runtime.commandPath) {
+			throw new Error("OpenClaw MCP reconciliation command is unavailable");
+		}
+		for (const mutation of runtime.mutations) {
+			const args =
+				mutation.kind === "remove"
+					? ["mcp", "unset", mutation.serverName]
+					: ["mcp", "set", mutation.serverName, JSON.stringify(mutation.server)];
+			runRuntimeUserCommand(runtime.commandPath, args, "", plan.home, workspaceRoot);
+		}
+		outputs.add(runtime.commandPath);
+	}
+	// The last-applied ownership map advances only after every native target.
+	if (Object.keys(plan.nextLedger.runtimes).length > 0 || existsSync(ledgerPath)) {
+		writeHostedMcpManagedLedger(paths, plan.nextLedger);
+	}
+	return [...outputs];
+}
+
+type HostedMcpTarget = (typeof HOSTED_RUNTIME_TARGETS)[number];
+type HostedMcpNativeServer = ReturnType<typeof hostedMcpNativeServerConfig>;
+type HostedMcpMutation =
+	| { kind: "remove"; serverName: string }
+	| { kind: "set"; serverName: string; server: HostedMcpNativeServer };
+
+interface HostedMcpNativeState {
+	path: string;
+	content: string | null;
+	servers: Record<string, unknown>;
+}
+
+interface HostedMcpRuntimePlan {
+	name: HostedMcpTarget;
+	native: HostedMcpNativeState;
+	mutations: HostedMcpMutation[];
+	commandPath: string | null;
+	nextHermesContent: string | null;
+}
+
+interface HostedMcpReconciliationPlan {
+	home: string;
+	runtimes: HostedMcpRuntimePlan[];
+	nextLedger: HostedMcpManagedLedger;
+}
+
+function buildHostedMcpReconciliationPlan(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+	observations: ReadonlyMap<string, RuntimeInstallObservation>,
+): HostedMcpReconciliationPlan {
+	const intent = hostedMcpIntent(manifest);
+	if (intent.kind === "opaque") {
+		throw new Error("opaque MCP state does not have a managed reconciliation plan");
+	}
 	const home = projectionSystemHome(manifest) ?? paths.userHome;
 	const ledger = readHostedMcpManagedLedger(paths);
 	const nextLedger: HostedMcpManagedLedger = {
 		schemaVersion: HOSTED_MCP_LEDGER_SCHEMA_VERSION,
 		runtimes: {},
 	};
-	const outputs: string[] = [];
-	for (const name of HOSTED_RUNTIME_TARGETS) {
-		const observation = observations.get(name);
-		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
-		const desiredServers = runtimeEnabled ? intent.servers : {};
+	const runtimes = HOSTED_RUNTIME_TARGETS.map((name) => {
+		const desiredServers = manifest.runtimes[name]?.enabled === true ? intent.servers : {};
 		const previousServers = ledger.runtimes[name] ?? {};
-		for (const serverName of Object.keys(previousServers).sort()) {
-			if (Object.hasOwn(desiredServers, serverName)) continue;
-			const removed = removeHostedMcpServer(name, serverName, observation, home, workspaceRoot);
-			if (!removed) throw new Error(`could not remove managed ${name} MCP server ${serverName}`);
-			outputs.push(removed);
+		const native = readHostedMcpNativeState(name, home);
+		for (const serverName of Object.keys(desiredServers).sort()) {
+			if (Object.hasOwn(previousServers, serverName)) continue;
+			if (Object.hasOwn(native.servers, serverName)) {
+				throw new Error(`refusing to replace unmanaged ${name} MCP server ${serverName}`);
+			}
 		}
-		if (!runtimeEnabled || Object.keys(desiredServers).length === 0) continue;
-		if (
-			!observation?.enabled ||
-			observation.status === "install_failed" ||
-			!observation.commandPath
-		) {
-			throw new Error(`could not apply managed ${name} MCP servers: runtime is unavailable`);
+		const mutations: HostedMcpMutation[] = [];
+		for (const serverName of Object.keys(previousServers).sort()) {
+			if (!Object.hasOwn(desiredServers, serverName) && Object.hasOwn(native.servers, serverName)) {
+				// The ledger owns this name even if its native value drifted. Native
+				// absence, however, already satisfies deletion and must not invoke an
+				// `mcp unset` command that rejects missing names.
+				mutations.push({ kind: "remove", serverName });
+			}
 		}
 		for (const [serverName, desired] of Object.entries(desiredServers).sort(([a], [b]) =>
 			a.localeCompare(b),
 		)) {
-			const output = setHostedMcpServer(
-				name,
-				serverName,
-				desired,
-				observation,
-				home,
-				workspaceRoot,
-			);
-			if (!output) throw new Error(`could not set managed ${name} MCP server ${serverName}`);
-			outputs.push(output);
+			const server = hostedMcpNativeServerConfig(serverName, desired);
+			if (!canonicalJsonEqual(native.servers[serverName], server)) {
+				mutations.push({ kind: "set", serverName, server });
+			}
 		}
 		if (Object.keys(desiredServers).length > 0) {
 			nextLedger.runtimes[name] = Object.fromEntries(
 				Object.entries(desiredServers).sort(([a], [b]) => a.localeCompare(b)),
 			);
 		}
-	}
-	if (Object.keys(nextLedger.runtimes).length > 0 || existsSync(hostedMcpLedgerPath(paths))) {
-		writeHostedMcpManagedLedger(paths, nextLedger);
-	}
-	return outputs;
+		const observation = observations.get(name);
+		const hasSet = mutations.some((mutation) => mutation.kind === "set");
+		if (hasSet && (!observation?.enabled || observation.status === "install_failed")) {
+			throw new Error(`could not apply managed ${name} MCP servers: runtime is unavailable`);
+		}
+		const commandPath =
+			name === "openclaw" ? (observation?.commandPath ?? runtimeCommandPath(name, home)) : null;
+		if (
+			name === "openclaw" &&
+			mutations.length > 0 &&
+			(!commandPath || !executableExists(commandPath))
+		) {
+			throw new Error("could not mutate managed OpenClaw MCP servers: runtime is unavailable");
+		}
+		let nextHermesContent: string | null = null;
+		if (name === "hermes" && mutations.length > 0) {
+			nextHermesContent = native.content ?? "";
+			for (const mutation of mutations) {
+				nextHermesContent =
+					mutation.kind === "remove"
+						? renderHermesMcpServerRemoval(nextHermesContent, mutation.serverName)
+						: renderHermesMcpServer(nextHermesContent, mutation.serverName, mutation.server);
+			}
+		}
+		return { name, native, mutations, commandPath, nextHermesContent };
+	});
+	return { home, runtimes, nextLedger };
 }
 
-function setHostedMcpServer(
-	name: (typeof HOSTED_RUNTIME_TARGETS)[number],
-	serverName: string,
-	desired: HostedMcpServerDesiredState,
-	observation: RuntimeInstallObservation,
-	home: string,
-	workspaceRoot: string,
-): string | null {
-	const server = hostedMcpNativeServerConfig(serverName, desired);
-	if (name === "openclaw" && observation.commandPath) {
-		runRuntimeUserCommand(
-			observation.commandPath,
-			["mcp", "set", serverName, JSON.stringify(server)],
-			"",
-			home,
-			workspaceRoot,
+function readHostedMcpNativeState(name: HostedMcpTarget, home: string): HostedMcpNativeState {
+	const path =
+		name === "openclaw"
+			? join(home, ".openclaw", "openclaw.json")
+			: join(home, ".hermes", "config.yaml");
+	if (!existsSync(path)) return { path, content: null, servers: {} };
+	const content = readFileSync(path, "utf-8");
+	let parsed: unknown;
+	try {
+		parsed = name === "openclaw" ? JSON.parse(content) : parseYaml(content);
+	} catch (error) {
+		throw new Error(
+			`${name} config is invalid: ${error instanceof Error ? error.message : String(error)}`,
 		);
-		return observation.commandPath;
 	}
-	if (name === "hermes") {
-		const configPath = join(home, ".hermes", "config.yaml");
-		mergeHermesMcpServer(configPath, serverName, server);
-		makeRuntimeUserOwned(configPath);
-		return configPath;
+	if (parsed === null && name === "hermes") return { path, content, servers: {} };
+	if (!isPlainRecord(parsed)) throw new Error(`${name} config must be an object`);
+	if (name === "openclaw" && parsed.mcpServers !== undefined) {
+		throw new Error(
+			"openclaw config uses unsupported legacy field mcpServers; canonical MCP state is mcp.servers",
+		);
 	}
-	return null;
+	const mcp = name === "openclaw" ? parsed.mcp : parsed;
+	if (name === "openclaw" && mcp !== undefined && !isPlainRecord(mcp)) {
+		throw new Error("openclaw config field mcp must be an object");
+	}
+	const field = name === "openclaw" ? "servers" : "mcp_servers";
+	const servers = isPlainRecord(mcp) ? mcp[field] : undefined;
+	if (servers === undefined) return { path, content, servers: {} };
+	if (!isPlainRecord(servers)) {
+		throw new Error(
+			`${name} config field ${name === "openclaw" ? "mcp.servers" : field} must be an object`,
+		);
+	}
+	return { path, content, servers };
+}
+
+function canonicalJsonEqual(left: unknown, right: unknown): boolean {
+	return JSON.stringify(canonicalJsonValue(left)) === JSON.stringify(canonicalJsonValue(right));
+}
+
+function canonicalJsonValue(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(canonicalJsonValue);
+	if (!isPlainRecord(value)) return value;
+	return Object.fromEntries(
+		Object.entries(value)
+			.sort(([a], [b]) => a.localeCompare(b))
+			.map(([key, entry]) => [key, canonicalJsonValue(entry)]),
+	);
 }
 
 function hostedMcpNativeServerConfig(
@@ -3292,28 +3400,6 @@ function hostedMcpNativeServerConfig(
 	};
 }
 
-function removeHostedMcpServer(
-	name: string,
-	serverName: string,
-	observation: RuntimeInstallObservation | undefined,
-	home: string,
-	workspaceRoot: string,
-): string | null {
-	if (name === "openclaw") {
-		const commandPath = observation?.commandPath ?? runtimeCommandPath(name, home);
-		if (!commandPath || !executableExists(commandPath)) return null;
-		runRuntimeUserCommand(commandPath, ["mcp", "unset", serverName], "", home, workspaceRoot);
-		return commandPath;
-	}
-	if (name === "hermes") {
-		const configPath = join(home, ".hermes", "config.yaml");
-		removeHermesMcpServer(configPath, serverName);
-		makeRuntimeUserOwned(configPath);
-		return configPath;
-	}
-	return null;
-}
-
 function validateHostedMcpProjectionPlan(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
@@ -3321,35 +3407,7 @@ function validateHostedMcpProjectionPlan(
 ): void {
 	const intent = hostedMcpIntent(manifest);
 	if (intent.kind === "opaque") return;
-	const ledger = readHostedMcpManagedLedger(paths);
-	const home = projectionSystemHome(manifest) ?? paths.userHome;
-	let hermesConfig = existsSync(join(home, ".hermes", "config.yaml"))
-		? readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")
-		: "";
-	for (const runtime of HOSTED_RUNTIME_TARGETS) {
-		const runtimeEnabled = manifest.runtimes[runtime]?.enabled === true;
-		const desiredServers = runtimeEnabled ? intent.servers : {};
-		for (const serverName of Object.keys(ledger.runtimes[runtime] ?? {})) {
-			if (Object.hasOwn(desiredServers, serverName)) continue;
-			if (runtime === "hermes") {
-				hermesConfig = renderHermesMcpServerRemoval(hermesConfig, serverName);
-			} else {
-				JSON.stringify({ remove: serverName });
-			}
-		}
-		const observation = observations.get(runtime);
-		if (!runtimeEnabled || !observation?.enabled || observation.status === "install_failed") {
-			continue;
-		}
-		for (const [serverName, desired] of Object.entries(desiredServers)) {
-			const server = hostedMcpNativeServerConfig(serverName, desired);
-			if (runtime === "hermes") {
-				hermesConfig = renderHermesMcpServer(hermesConfig, serverName, server);
-			} else {
-				JSON.stringify(server);
-			}
-		}
-	}
+	buildHostedMcpReconciliationPlan(manifest, paths, observations);
 }
 
 function projectionSystemHome(manifest: RuntimeManifest): string | null {
@@ -5212,12 +5270,10 @@ export function runtimeLiveSnapshotPaths(
 	for (const name of ["clawdi-runtime-watch", "clawdi-daemon", "clawdi-runtime-sidecar"]) {
 		result.add(join(paths.systemdSystemRoot, systemdUnitFileName(name)));
 	}
-	if (hostedBundledSkillsEnabled()) {
-		for (const runtime of HOSTED_RUNTIME_TARGETS) {
-			for (const skillName of HOSTED_BUNDLED_SKILL_REGISTRY.keys()) {
-				const skillTarget = hostedBundledSkillTargetDir(runtime, skillName, home);
-				if (skillTarget) result.add(skillTarget);
-			}
+	for (const runtime of HOSTED_RUNTIME_TARGETS) {
+		for (const skillName of HOSTED_BUNDLED_SKILL_REGISTRY.keys()) {
+			const skillTarget = hostedBundledSkillTargetDir(runtime, skillName, home);
+			if (skillTarget) result.add(skillTarget);
 		}
 	}
 	for (const [runtime, settings] of Object.entries(manifest.runtimes)) {

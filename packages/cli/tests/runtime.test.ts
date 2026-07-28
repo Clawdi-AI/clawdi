@@ -754,6 +754,82 @@ function readHermesConfigYaml(home: string): Record<string, unknown> {
 	return parsed;
 }
 
+function readOpenClawMcpServers(home: string): Record<string, unknown> {
+	const config = expectRecord(
+		JSON.parse(readFileSync(join(home, ".openclaw", "openclaw.json"), "utf-8")),
+		"OpenClaw config",
+	);
+	const mcp = expectRecord(config.mcp, "OpenClaw MCP config");
+	return expectRecord(mcp.servers, "OpenClaw MCP servers");
+}
+
+function writeFakeOpenClawMcpBinary(
+	home: string,
+	options: {
+		callsPath?: string;
+		failSetFile?: string;
+		failUnsetFile?: string;
+		failSetServer?: string;
+	} = {},
+): { commandPath: string; configPath: string } {
+	const commandPath = join(home, ".openclaw", "bin", "openclaw");
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const logSet = options.callsPath
+		? `printf 'set %s\\n' "\${3:?missing server name}" >> '${options.callsPath}'`
+		: ":";
+	const logUnset = options.callsPath
+		? `printf 'unset %s\\n' "\${3:?missing server name}" >> '${options.callsPath}'`
+		: ":";
+	const failSetFile = options.failSetFile
+		? `if [ -e '${options.failSetFile}' ]; then exit 42; fi`
+		: ":";
+	const failUnsetFile = options.failUnsetFile
+		? `if [ -e '${options.failUnsetFile}' ]; then exit 43; fi`
+		: ":";
+	const failSetServer = options.failSetServer
+		? `if [ "\${3}" = '${options.failSetServer}' ]; then exit 42; fi`
+		: ":";
+	mkdirSync(dirname(commandPath), { recursive: true });
+	writeFileSync(
+		commandPath,
+		`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ]; then
+  ${logSet}
+  ${failSetFile}
+  ${failSetServer}
+  node - '${configPath}' "\${3}" "\${4:?missing server config}" <<'NODE'
+const fs = require("node:fs");
+const [path, name, raw] = process.argv.slice(2);
+const config = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : {};
+config.mcp ??= {};
+config.mcp.servers ??= {};
+config.mcp.servers[name] = JSON.parse(raw);
+fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\\n");
+NODE
+  exit 0
+fi
+if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "unset" ]; then
+  ${logUnset}
+  ${failUnsetFile}
+  node - '${configPath}' "\${3:?missing server name}" <<'NODE'
+const fs = require("node:fs");
+const [path, name] = process.argv.slice(2);
+const config = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : {};
+if (!config.mcp?.servers || !Object.hasOwn(config.mcp.servers, name)) process.exit(44);
+delete config.mcp.servers[name];
+fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\\n");
+NODE
+  exit 0
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+`,
+	);
+	chmodSync(commandPath, 0o700);
+	return { commandPath, configPath };
+}
+
 function expectRecord(input: unknown, label: string): Record<string, unknown> {
 	if (!isRecord(input)) {
 		throw new Error(`Expected ${label} to be a YAML object.`);
@@ -5913,7 +5989,10 @@ exit 42
 		];
 		for (const [index, path] of rollbackFixtures.entries()) {
 			mkdirSync(dirname(path), { recursive: true });
-			writeFileSync(path, `previous-${index}\n`);
+			writeFileSync(
+				path,
+				path === targetConfig ? '{"mcp":{"servers":{}}}\n' : `previous-${index}\n`,
+			);
 		}
 		const rollbackContents = new Map(rollbackFixtures.map((path) => [path, readFileSync(path)]));
 		writeFileSync(paths.manifestLastGood, '{"generation":12}\n');
@@ -10288,29 +10367,10 @@ exit 64
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "workspace");
 		const manifestPath = join(root, "runtime-mcp.json");
-		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const { configPath: openclawConfigPath } = writeFakeOpenClawMcpBinary(home);
 		const hermesBin = join(home, ".local", "bin", "hermes");
-		const openclawMcp = join(root, "openclaw-mcp.json");
-		mkdirSync(dirname(openclawBin), { recursive: true });
 		mkdirSync(dirname(hermesBin), { recursive: true });
-		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ] && [ "\${3:-}" = "clawdi" ]; then
-  printf '%s\\n' "\${4:-}" > '${openclawMcp}'
-  exit 0
-fi
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "unset" ] && [ "\${3:-}" = "clawdi" ]; then
-  rm -f '${openclawMcp}'
-  exit 0
-fi
-printf 'unexpected openclaw command: %s\\n' "$*" >&2
-exit 64
-`,
-		);
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
-		chmodSync(openclawBin, 0o700);
 		chmodSync(hermesBin, 0o700);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "local";
@@ -10328,6 +10388,22 @@ exit 64
 				issuedAt: "2026-06-06T00:00:00Z",
 				workspaceRoot: workspace,
 				controlPlane: { apiUrl: "https://cloud-api.test" },
+				egressProfiles: hostedManifestEgressProfiles({
+					mcp: {
+						servers: {
+							clawdi: {
+								url: "https://cloud-api.test/v1/mcp/clawdi",
+								transport: "streamable-http",
+								headers: {
+									Authorization: {
+										secretRef: "env://CLAWDI_AUTH_TOKEN",
+										prefix: "Bearer ",
+									},
+								},
+							},
+						},
+					},
+				}),
 				runtimes: {
 					openclaw: {
 						enabled: true,
@@ -10379,7 +10455,7 @@ exit 64
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const openclawConfig = JSON.parse(readFileSync(openclawMcp, "utf-8"));
+		const openclawConfig = readOpenClawMcpServers(home).clawdi;
 		expect(openclawConfig).toEqual({
 			url: "https://cloud-api.test/v1/mcp/clawdi",
 			transport: "streamable-http",
@@ -10389,6 +10465,12 @@ exit 64
 		});
 		expect(JSON.stringify(openclawConfig)).not.toContain("deploy-key-secret");
 		expect(JSON.stringify(openclawConfig)).not.toContain("CLAWDI_AUTH_TOKEN");
+		expectMitmSecretFileIsSidecarOnly(
+			getRuntimePaths(),
+			convergence.outputs.egressSecretFile,
+			"env://CLAWDI_AUTH_TOKEN",
+			"deploy-key-secret",
+		);
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("mcp_servers:");
 		expect(hermesConfig).toContain("clawdi:");
@@ -10479,7 +10561,8 @@ exit 64
 		const disabledConvergence = convergeRuntimeManifest(disabled, getRuntimePaths());
 
 		expect(disabledConvergence.installErrors).toEqual([]);
-		expect(existsSync(openclawMcp)).toBe(false);
+		expect(existsSync(openclawConfigPath)).toBe(true);
+		expect(readOpenClawMcpServers(home).clawdi).toBeUndefined();
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).not.toContain("clawdi:");
 		expect(existsSync(join(home, ".openclaw", "agents", "main", "skills", "clawdi"))).toBe(false);
 		expect(existsSync(join(home, ".hermes", "skills", "clawdi"))).toBe(false);
@@ -10490,11 +10573,11 @@ exit 64
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "workspace");
-		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 		const hermesBin = join(home, ".local", "bin", "hermes");
-		const openclawMcpRoot = join(root, "openclaw-mcp");
 		const openclawCalls = join(root, "openclaw-mcp-calls.log");
-		const openclawUserEntry = join(openclawMcpRoot, "user-entry.json");
+		const { configPath: openclawConfigPath } = writeFakeOpenClawMcpBinary(home, {
+			callsPath: openclawCalls,
+		});
 		const openclawUserSkill = join(
 			home,
 			".openclaw",
@@ -10505,32 +10588,21 @@ exit 64
 			"SKILL.md",
 		);
 		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
-		mkdirSync(dirname(openclawBin), { recursive: true });
 		mkdirSync(dirname(hermesBin), { recursive: true });
-		mkdirSync(openclawMcpRoot, { recursive: true });
 		mkdirSync(dirname(openclawUserSkill), { recursive: true });
-		writeFileSync(openclawUserEntry, '{"command":"user-owned","args":["keep"]}\n');
-		writeFileSync(openclawUserSkill, "user-owned skill\n");
 		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ]; then
-  printf 'set %s %s\\n' "\${3:?missing server name}" "\${4:?missing server config}" >> '${openclawCalls}'
-  printf '%s\\n' "\${4}" > '${openclawMcpRoot}/'"\${3}"'.json'
-  exit 0
-fi
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "unset" ]; then
-  printf 'unset %s\\n' "\${3:?missing server name}" >> '${openclawCalls}'
-  rm -f '${openclawMcpRoot}/'"\${3}"'.json'
-  exit 0
-fi
-printf 'unexpected openclaw command: %s\\n' "$*" >&2
-exit 64
-`,
+			openclawConfigPath,
+			`${JSON.stringify(
+				{
+					custom: "keep",
+					mcp: { servers: { "user-entry": { command: "user-owned", args: ["keep"] } } },
+				},
+				null,
+				2,
+			)}\n`,
 		);
+		writeFileSync(openclawUserSkill, "user-owned skill\n");
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
-		chmodSync(openclawBin, 0o700);
 		chmodSync(hermesBin, 0o700);
 		mkdirSync(join(home, ".hermes"), { recursive: true });
 		writeFileSync(
@@ -10603,13 +10675,12 @@ exit 64
 
 		const initial = convergeRuntimeManifest(load(1, "openclaw", initialServers), getRuntimePaths());
 		expect(initial.installErrors).toEqual([]);
-		expect(JSON.parse(readFileSync(join(openclawMcpRoot, "clawdi.json"), "utf-8"))).toEqual(
-			initialServers.clawdi,
-		);
-		expect(JSON.parse(readFileSync(join(openclawMcpRoot, "search-proxy.json"), "utf-8"))).toEqual(
-			initialServers["search-proxy"],
-		);
-		expect(readFileSync(openclawUserEntry, "utf-8")).toContain("user-owned");
+		expect(readOpenClawMcpServers(home).clawdi).toEqual(initialServers.clawdi);
+		expect(readOpenClawMcpServers(home)["search-proxy"]).toEqual(initialServers["search-proxy"]);
+		expect(readOpenClawMcpServers(home)["user-entry"]).toEqual({
+			command: "user-owned",
+			args: ["keep"],
+		});
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
 			openclaw: initialServers,
 		});
@@ -10618,22 +10689,27 @@ exit 64
 
 		const updated = convergeRuntimeManifest(load(2, "openclaw", updatedServers), getRuntimePaths());
 		expect(updated.installErrors).toEqual([]);
-		const updatedConfig = readFileSync(join(openclawMcpRoot, "search-proxy.json"), "utf-8");
-		expect(JSON.parse(updatedConfig)).toEqual(updatedServers["search-proxy"]);
+		expect(readOpenClawMcpServers(home)["search-proxy"]).toEqual(updatedServers["search-proxy"]);
+		const updatedConfig = readFileSync(openclawConfigPath, "utf-8");
 		const updatedLedger = readFileSync(ledgerPath, "utf-8");
+		const callsBeforeIdempotent = readFileSync(openclawCalls, "utf-8");
 		const idempotent = convergeRuntimeManifest(
 			load(2, "openclaw", updatedServers),
 			getRuntimePaths(),
 		);
 		expect(idempotent.installErrors).toEqual([]);
-		expect(readFileSync(join(openclawMcpRoot, "search-proxy.json"), "utf-8")).toBe(updatedConfig);
+		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(updatedConfig);
 		expect(readFileSync(ledgerPath, "utf-8")).toBe(updatedLedger);
+		expect(readFileSync(openclawCalls, "utf-8")).toBe(callsBeforeIdempotent);
 
 		const switched = convergeRuntimeManifest(load(3, "hermes", updatedServers), getRuntimePaths());
 		expect(switched.installErrors).toEqual([]);
-		expect(existsSync(join(openclawMcpRoot, "clawdi.json"))).toBe(false);
-		expect(existsSync(join(openclawMcpRoot, "search-proxy.json"))).toBe(false);
-		expect(readFileSync(openclawUserEntry, "utf-8")).toContain("user-owned");
+		expect(readOpenClawMcpServers(home).clawdi).toBeUndefined();
+		expect(readOpenClawMcpServers(home)["search-proxy"]).toBeUndefined();
+		expect(readOpenClawMcpServers(home)["user-entry"]).toEqual({
+			command: "user-owned",
+			args: ["keep"],
+		});
 		expect(existsSync(openclawSkill)).toBe(false);
 		expect(readFileSync(openclawUserSkill, "utf-8")).toBe("user-owned skill\n");
 		const hermesAfterSwitch = expectRecord(
@@ -10651,9 +10727,18 @@ exit 64
 		});
 		const hermesSkill = join(home, ".hermes", "skills", "clawdi");
 		expect(existsSync(join(hermesSkill, ".clawdi-managed.json"))).toBe(true);
+		process.env.CLAWDI_RUNTIME_MODE = "local";
+		const localMode = convergeRuntimeManifest(
+			load(4, "hermes", updatedServers, true),
+			getRuntimePaths(),
+		);
+		expect(localMode.installErrors).toEqual([]);
+		expect(existsSync(hermesSkill)).toBe(false);
+		expect(readFileSync(openclawUserSkill, "utf-8")).toBe("user-owned skill\n");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 
 		const removedGeneric = convergeRuntimeManifest(
-			load(4, "hermes", { clawdi: initialServers.clawdi }, false),
+			load(5, "hermes", { clawdi: initialServers.clawdi }, false),
 			getRuntimePaths(),
 		);
 		expect(removedGeneric.installErrors).toEqual([]);
@@ -10674,7 +10759,7 @@ exit 64
 		mkdirSync(hermesSkill, { recursive: true });
 		writeFileSync(join(hermesSkill, "SKILL.md"), "user-owned canonical skill\n");
 
-		const disabled = convergeRuntimeManifest(load(5, "hermes", {}, false), getRuntimePaths());
+		const disabled = convergeRuntimeManifest(load(6, "hermes", {}, false), getRuntimePaths());
 		expect(disabled.installErrors).toEqual([]);
 		const hermesAfterDisable = expectRecord(
 			readHermesConfigYaml(home).mcp_servers,
@@ -10697,36 +10782,26 @@ exit 64
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "workspace");
-		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
-		const openclawMcpRoot = join(root, "openclaw-mcp-failure");
 		const calls = join(root, "openclaw-mcp-failure-calls.log");
 		const failSet = join(root, "fail-set");
 		const failUnset = join(root, "fail-unset");
-		const userOwned = join(openclawMcpRoot, "user-owned.json");
+		const { configPath: openclawConfigPath } = writeFakeOpenClawMcpBinary(home, {
+			callsPath: calls,
+			failSetFile: failSet,
+			failUnsetFile: failUnset,
+		});
 		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
-		mkdirSync(dirname(openclawBin), { recursive: true });
-		mkdirSync(openclawMcpRoot, { recursive: true });
-		writeFileSync(userOwned, "user-owned bytes\n");
 		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ]; then
-  printf 'set %s\\n' "\${3:?missing server name}" >> '${calls}'
-  if [ -e '${failSet}' ]; then exit 42; fi
-  printf '%s\\n' "\${4:?missing server config}" > '${openclawMcpRoot}/'"\${3}"'.json'
-  exit 0
-fi
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "unset" ]; then
-  printf 'unset %s\\n' "\${3:?missing server name}" >> '${calls}'
-  if [ -e '${failUnset}' ]; then exit 43; fi
-  rm -f '${openclawMcpRoot}/'"\${3}"'.json'
-  exit 0
-fi
-exit 64
-`,
+			openclawConfigPath,
+			`${JSON.stringify(
+				{
+					custom: "keep",
+					mcp: { servers: { "user-owned": { command: "user", args: ["keep"] } } },
+				},
+				null,
+				2,
+			)}\n`,
 		);
-		chmodSync(openclawBin, 0o700);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -10767,44 +10842,77 @@ exit 64
 			secretValues: {},
 		});
 
+		const beforeCollision = readFileSync(openclawConfigPath, "utf-8");
+		expect(() =>
+			convergeRuntimeManifest(
+				load(1, { "user-owned": { command: "platform-command", args: [] } }),
+				getRuntimePaths(),
+			),
+		).toThrow(/refusing to replace unmanaged openclaw MCP server user-owned/);
+		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(beforeCollision);
+		expect(existsSync(ledgerPath)).toBe(false);
+		expect(existsSync(calls)).toBe(false);
+
 		writeFileSync(failSet, "fail\n");
 		const failedSet = convergeRuntimeManifest(
-			load(1, { "user-owned": { command: "platform-command", args: [] } }),
+			load(2, { "failed-new": { command: "platform-command", args: [] } }),
 			getRuntimePaths(),
 		);
 		expect(failedSet.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(existsSync(ledgerPath)).toBe(false);
-		expect(readFileSync(userOwned, "utf-8")).toBe("user-owned bytes\n");
+		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(beforeCollision);
 		rmSync(failSet);
 
-		const omittedAfterFailure = convergeRuntimeManifest(load(2, {}), getRuntimePaths());
+		const omittedAfterFailure = convergeRuntimeManifest(load(3, {}), getRuntimePaths());
 		expect(omittedAfterFailure.installErrors).toEqual([]);
-		expect(readFileSync(userOwned, "utf-8")).toBe("user-owned bytes\n");
-		expect(readFileSync(calls, "utf-8")).not.toContain("unset user-owned");
+		expect(readOpenClawMcpServers(home)["user-owned"]).toEqual({
+			command: "user",
+			args: ["keep"],
+		});
+		expect(readFileSync(calls, "utf-8")).not.toContain("unset failed-new");
 
 		const managed = convergeRuntimeManifest(
-			load(3, { "owned-server": { command: "owned", args: ["serve"] } }),
+			load(4, { "owned-server": { command: "owned", args: ["serve"] } }),
 			getRuntimePaths(),
 		);
 		expect(managed.installErrors).toEqual([]);
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
 			openclaw: { "owned-server": { command: "owned", args: ["serve"] } },
 		});
+		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
+			command: "owned",
+			args: ["serve"],
+		});
 		writeFileSync(failUnset, "fail\n");
-		const failedRemoval = convergeRuntimeManifest(load(4, {}), getRuntimePaths());
+		const failedRemoval = convergeRuntimeManifest(load(5, {}), getRuntimePaths());
 		expect(failedRemoval.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
 			openclaw: { "owned-server": { command: "owned", args: ["serve"] } },
 		});
-		expect(existsSync(join(openclawMcpRoot, "owned-server.json"))).toBe(true);
-		rmSync(failUnset);
+		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
+			command: "owned",
+			args: ["serve"],
+		});
 
-		const retriedRemoval = convergeRuntimeManifest(load(5, {}), getRuntimePaths());
+		const driftedConfig = expectRecord(
+			JSON.parse(readFileSync(openclawConfigPath, "utf-8")),
+			"drifted OpenClaw config",
+		);
+		const driftedMcp = expectRecord(driftedConfig.mcp, "drifted OpenClaw MCP config");
+		const driftedServers = expectRecord(driftedMcp.servers, "drifted OpenClaw MCP servers");
+		delete driftedServers["owned-server"];
+		writeFileSync(openclawConfigPath, `${JSON.stringify(driftedConfig, null, 2)}\n`);
+		const callsBeforeDriftReconcile = readFileSync(calls, "utf-8");
+		const retriedRemoval = convergeRuntimeManifest(load(6, {}), getRuntimePaths());
 		expect(retriedRemoval.installErrors).toEqual([]);
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({});
-		expect(existsSync(join(openclawMcpRoot, "owned-server.json"))).toBe(false);
-		expect(readFileSync(userOwned, "utf-8")).toBe("user-owned bytes\n");
-		expect(readFileSync(calls, "utf-8").match(/unset owned-server/g)?.length).toBe(2);
+		expect(readOpenClawMcpServers(home)["owned-server"]).toBeUndefined();
+		expect(readOpenClawMcpServers(home)["user-owned"]).toEqual({
+			command: "user",
+			args: ["keep"],
+		});
+		expect(readFileSync(calls, "utf-8")).toBe(callsBeforeDriftReconcile);
+		rmSync(failUnset);
 	});
 
 	it("rolls back native MCP config and last-applied ownership after a partial map failure", () => {
@@ -10812,41 +10920,21 @@ exit 64
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "workspace");
-		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
-		const openclawConfig = join(home, ".openclaw", "openclaw.json");
 		const calls = join(root, "partial-mcp-calls.log");
+		const { configPath: openclawConfig } = writeFakeOpenClawMcpBinary(home, {
+			callsPath: calls,
+			failSetServer: "second",
+		});
 		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
 		const originalConfig = `${JSON.stringify(
 			{
 				custom: "keep",
-				mcpServers: { "user-entry": { command: "user-owned", args: ["keep"] } },
+				mcp: { servers: { "user-entry": { command: "user-owned", args: ["keep"] } } },
 			},
 			null,
 			2,
 		)}\n`;
-		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(openclawConfig, originalConfig);
-		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ]; then
-  printf 'set %s\\n' "\${3:?missing server name}" >> '${calls}'
-  if [ "\${3}" = "second" ]; then exit 42; fi
-  node - '${openclawConfig}' "\${3}" "\${4}" <<'NODE'
-const fs = require("node:fs");
-const [path, name, raw] = process.argv.slice(2);
-const config = JSON.parse(fs.readFileSync(path, "utf8"));
-config.mcpServers ??= {};
-config.mcpServers[name] = JSON.parse(raw);
-fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\\n");
-NODE
-  exit 0
-fi
-exit 64
-`,
-		);
-		chmodSync(openclawBin, 0o700);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -10898,6 +10986,103 @@ exit 64
 		expect(readFileSync(calls, "utf-8")).toBe("set first\nset second\n");
 		expect(readFileSync(openclawConfig, "utf-8")).toBe(originalConfig);
 		expect(existsSync(ledgerPath)).toBe(false);
+	});
+
+	it("rolls back existing managed OpenClaw and Hermes MCP state as one runtime apply", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "workspace");
+		const calls = join(root, "existing-managed-mcp-calls.log");
+		const { configPath: openclawConfig } = writeFakeOpenClawMcpBinary(home, {
+			callsPath: calls,
+			failSetServer: "second",
+		});
+		const hermesBin = join(home, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesBin), { recursive: true });
+		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(hermesBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
+		const hermesConfig = join(home, ".hermes", "config.yaml");
+
+		const load = (
+			generation: number,
+			servers: Record<string, { command: string; args: string[] }>,
+		): RuntimeManifestLoad => ({
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_existing_managed_mcp",
+				environmentId: "env_existing_managed_mcp",
+				instanceId: "iid_existing_managed_mcp",
+				generation,
+				issuedAt: "2026-07-28T00:00:00Z",
+				workspaceRoot: workspace,
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+					hermes: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://hermes-agent.nousresearch.com/install.sh",
+							home,
+							args: [],
+						},
+					},
+				},
+				projection: { system: { home, workspace }, mcp: { servers } },
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: `test://existing-managed-mcp-${generation}`,
+			offline: false,
+			secretValues: {},
+		});
+
+		const initial = convergeRuntimeManifest(
+			load(1, { owned: { command: "owned", args: ["v1"] } }),
+			getRuntimePaths(),
+		);
+		expect(initial.installErrors).toEqual([]);
+		const previousOpenClaw = readFileSync(openclawConfig);
+		const previousHermes = readFileSync(hermesConfig);
+		const previousLedger = readFileSync(ledgerPath);
+		const previousOpenClawStat = statSync(openclawConfig);
+		const previousHermesStat = statSync(hermesConfig);
+
+		const failed = convergeRuntimeManifest(
+			load(2, {
+				owned: { command: "owned", args: ["v2"] },
+				second: { command: "second", args: [] },
+			}),
+			getRuntimePaths(),
+		);
+
+		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
+		expect(readFileSync(calls, "utf-8")).toContain("set owned\nset owned\nset second\n");
+		expect(readFileSync(openclawConfig)).toEqual(previousOpenClaw);
+		expect(readFileSync(hermesConfig)).toEqual(previousHermes);
+		expect(readFileSync(ledgerPath)).toEqual(previousLedger);
+		expect(statSync(openclawConfig).mode).toBe(previousOpenClawStat.mode);
+		expect(statSync(openclawConfig).uid).toBe(previousOpenClawStat.uid);
+		expect(statSync(openclawConfig).gid).toBe(previousOpenClawStat.gid);
+		expect(statSync(hermesConfig).mode).toBe(previousHermesStat.mode);
+		expect(statSync(hermesConfig).uid).toBe(previousHermesStat.uid);
+		expect(statSync(hermesConfig).gid).toBe(previousHermesStat.gid);
 	});
 
 	it("does not add the hosted runtime sidecar without egress profiles", () => {

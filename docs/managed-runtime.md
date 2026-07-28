@@ -647,6 +647,25 @@ outputs include:
 | `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units, plus Clawdi-owned user support units such as the sidecar |
 | `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Transparent hosted drop-ins for official runtime units |
 
+Generic MCP reconciliation compares desired servers, the previous managed
+last-applied map, and the current native map. OpenClaw current state is the
+canonical `mcp.servers` object in `~/.openclaw/openclaw.json`; Hermes uses
+`mcp_servers` in `~/.hermes/config.yaml`. A desired name that already exists
+without last-applied ownership fails closed. Native absence already satisfies a
+managed deletion. The runtime apply snapshots both complete native configs and
+the ledger, preserves unrelated entries, writes the ledger last, and restores
+the exact previous files and metadata if any later mutation fails.
+These paths and transports are pinned to official fixed-commit sources:
+OpenClaw's
+[`mcp-config.ts` read path](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/mcp-config.ts#L51-L65),
+its
+[`setConfiguredMcpServer` write path](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/mcp-config.ts#L162-L184),
+and
+[`docs/cli/mcp.md` lines 661-767](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/docs/cli/mcp.md#L661-L767),
+plus Hermes'
+[`tools/mcp_tool.py` lines 1-64](https://github.com/NousResearch/hermes-agent/blob/8208fc52701332f213e6c51ebc0b610be00300de/tools/mcp_tool.py#L1-L64),
+which defines `mcp_servers` URL, header, transport, and SSE handling.
+
 Short-lived secrets belong under the runtime run directory, not in durable
 config. Offline secret recovery uses only the existing root-only,
 reference-scoped secret cache. The complete plaintext bundle is never cached.
@@ -873,6 +892,12 @@ generations with material differences return structured `generation_conflict`
 responses. Both include `current_generation`. Equal identical state is an
 idempotent `200`, while higher generations apply. Rejected and idempotent writes
 do not create duplicate state, audit events, or manifest invalidation.
+
+Additive manifest capabilities roll out consumer first: publish and select a
+CLI version that understands the new fields, then advance existing deployments
+through ordinary higher-generation runtime-state reconciliation. Database
+migrations backfill stored authority where required; operators do not patch
+individual production rows to advance deployments.
 
 Committed manifest changes emit a signal-only `runtime_manifest_changed` event
 through `/v1/sync/events`. The payload contains only `type` and

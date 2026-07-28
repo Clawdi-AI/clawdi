@@ -33,6 +33,8 @@ from app.routes.sessions import _runtime_observed_health
 from app.schemas.admin import AdminRuntimeStateUpsert
 from app.schemas.runtime import (
     HostedEgressEngine,
+    HostedEgressProfiles,
+    HostedRuntimeMcp,
     validate_clawdi_cli_package_spec,
 )
 from app.services import sync_events
@@ -126,6 +128,42 @@ TEST_HERMES_DASHBOARD_AUTH = {
 OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "skills")
 TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
 TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
+
+
+@pytest.mark.parametrize(
+    ("secret_ref", "accepted"),
+    [
+        ("secret://provider.default.apiKey", True),
+        ("env://CLAWDI_AUTH_TOKEN", True),
+        ("secret://", False),
+        ("env://", False),
+        ("env://INVALID-NAME", False),
+        ("env://9TOKEN", False),
+    ],
+)
+def test_hosted_mcp_and_egress_share_canonical_secret_ref_semantics(
+    secret_ref: str,
+    accepted: bool,
+) -> None:
+    mcp = {
+        "servers": {
+            "remote": {
+                "url": "https://cloud-api.test/v1/mcp/remote",
+                "transport": "streamable-http",
+                "headers": {"Authorization": {"secretRef": secret_ref}},
+            }
+        }
+    }
+    egress = json.loads(json.dumps(TEST_EGRESS_PROFILES))
+    egress["profiles"][0]["rewrite"]["setHeaders"]["authorization"]["secretRef"] = secret_ref
+    if accepted:
+        HostedRuntimeMcp.model_validate(mcp)
+        HostedEgressProfiles.model_validate(egress)
+        return
+    with pytest.raises(ValidationError):
+        HostedRuntimeMcp.model_validate(mcp)
+    with pytest.raises(ValidationError):
+        HostedEgressProfiles.model_validate(egress)
 
 
 async def _create_bundle_runtime(admin_client, db_session, seed_user):
@@ -3383,6 +3421,18 @@ async def test_admin_runtime_state_rejects_removed_bridge_field(
         ),
         ("mcp", {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"], "token": "secret"}}}),
         ("mcp", {"servers": {"bad name": {"command": "clawdi", "args": ["mcp"]}}}),
+        (
+            "mcp",
+            {
+                "servers": {
+                    "remote": {
+                        "url": "https://cloud-api.test/v1/mcp/remote",
+                        "transport": "streamable-http",
+                        "headers": {"Authorization": {"secretRef": "env://INVALID-NAME"}},
+                    }
+                }
+            },
+        ),
         ("skills", {"entries": {"clawdi": {"enabled": True, "token": "secret"}}}),
         ("skills", {"entries": {"bad name": {"enabled": True}}}),
         ("tools", {"connectors": [{"apiKey": "secret"}]}),
