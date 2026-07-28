@@ -10576,7 +10576,7 @@ exit 64
 			owner: "clawdi runtime init",
 			id: "clawdi",
 			version: 1,
-			digest: "cb09a80e596336af826d0b9b400e11c2be781894a0ab39e67f53fa60dde58855",
+			digest: "4cbe65e0ece46784d871cddcf1169e73a61bd12994cfab1a3f66de6119d60757",
 		});
 		const mcpProjection = JSON.parse(
 			readFileSync(join(state, "config", "projections", "clawdi-mcp.json"), "utf-8"),

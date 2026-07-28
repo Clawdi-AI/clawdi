@@ -491,9 +491,11 @@ version changes, drift, and legacy ownership markers use staged replacement.
 Managed-bundle integrity does not reuse `computeSkillFolderHash`. That function
 is an established client/server sync protocol with upload exclusions, ignores
 symlinks during its scan, and retains its historical unframed `path + content`
-hash. The managed catalog instead uses a private, length-framed full-file scan,
-rejects source symlinks, and treats target symlinks as drift without following
-them. The public sync hash remains unchanged for old and new clients.
+hash. The managed catalog instead uses a private, framed full-file scan over
+relative path, regular-file permission bits, and bytes. It does not hash
+ownership or timestamps, rejects source symlinks, and treats target symlinks as
+drift without following them. The public sync hash remains unchanged for old
+and new clients.
 
 Manifest `generation` is part of the remote manifest ETag. The CLI applies any
 non-304 manifest without monotonic generation gating, while treating generation

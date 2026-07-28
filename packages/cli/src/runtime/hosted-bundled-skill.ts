@@ -46,7 +46,7 @@ const HOSTED_BUNDLED_SKILL_CATALOG = new Map<
 					id: "clawdi",
 					version: 1,
 					assetDirectory: "hosted-versions/1/clawdi",
-					digest: "cb09a80e596336af826d0b9b400e11c2be781894a0ab39e67f53fa60dde58855",
+					digest: "4cbe65e0ece46784d871cddcf1169e73a61bd12994cfab1a3f66de6119d60757",
 				}),
 			],
 		]),
@@ -126,7 +126,7 @@ function collectHostedBundledSkillFiles(
 			continue;
 		}
 		if (stat.isFile()) {
-			files.push({ relativePath, content: readFileSync(path) });
+			files.push({ relativePath, mode: stat.mode & 0o777, content: readFileSync(path) });
 			continue;
 		}
 		throw new Error(`unsupported file type in bundled hosted skill: ${path}`);

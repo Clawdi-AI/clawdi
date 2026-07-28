@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
+	chmodSync,
 	cpSync,
 	existsSync,
 	mkdirSync,
@@ -109,6 +110,28 @@ describe("hosted bundled skill reconciliation", () => {
 		expect(readFileSync(join(targetDir, "SKILL.md"))).toEqual(
 			readFileSync(join(bundledSourceDir, "SKILL.md")),
 		);
+	});
+
+	it("replaces target regular-file permission drift", () => {
+		expect(reconcile()).toBe("replaced");
+		const targetSkill = join(targetDir, "SKILL.md");
+		const sourceMode = statSync(join(bundledSourceDir, "SKILL.md")).mode & 0o777;
+		const driftMode = sourceMode === 0o755 ? 0o644 : 0o755;
+		chmodSync(targetSkill, driftMode);
+
+		expect(reconcile()).toBe("replaced");
+		expect(statSync(targetSkill).mode & 0o777).toBe(sourceMode);
+	});
+
+	it("fails closed when source regular-file permissions differ from the catalog", () => {
+		const copiedSource = join(root, "mode-drift-source");
+		cpSync(bundledSourceDir, copiedSource, { recursive: true });
+		const copiedSkill = join(copiedSource, "SKILL.md");
+		const sourceMode = statSync(copiedSkill).mode & 0o777;
+		chmodSync(copiedSkill, sourceMode === 0o755 ? 0o644 : 0o755);
+
+		expect(() => reconcile(copiedSource)).toThrow("catalog digest mismatch");
+		expect(existsSync(targetDir)).toBe(false);
 	});
 
 	it("fails closed for source symlinks and catalog digest mismatch", () => {
