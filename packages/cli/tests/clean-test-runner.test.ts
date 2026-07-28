@@ -6,6 +6,7 @@ const repoRoot = resolve(import.meta.dir, "../../..");
 const readRepoFile = (path: string): string => readFileSync(resolve(repoRoot, path), "utf8");
 const clientWorkflow = readRepoFile(".github/workflows/client-ci.yml");
 const cleanRunnerWorkflow = readRepoFile(".github/workflows/clean-test-runner-ci.yml");
+const setupBunAction = readRepoFile(".github/actions/setup-bun-ci/action.yml");
 const outerRunner = readRepoFile("scripts/test.sh");
 const innerRunner = readRepoFile("docker/test-runner.sh");
 const compose = readRepoFile("docker-compose.test.yml");
@@ -46,32 +47,32 @@ function calledCompositionFunctions(shellFunction: string): string[] {
 }
 
 describe("client workflow contract", () => {
-	test("keeps build and typecheck as independent required gates", () => {
-		const typecheckJob = section(clientWorkflow, "  typecheck:\n", "  cli-test:\n");
-		const buildJob = section(clientWorkflow, "  build:\n", "  deploy-contract-drift:\n");
+	// Lint, typecheck, build, and the CLI tests run in a single `verify` job.
+	// The invariant worth protecting is that typecheck and build stay
+	// independent gates — neither serialized behind the other, neither
+	// consuming the other's output as an artifact. A single Turbo graph
+	// satisfies that more directly than separate jobs did, so assert the
+	// property rather than the job layout.
+	test("keeps build and typecheck as independent gates", () => {
+		const verifyJob = section(clientWorkflow, "  verify:\n", "  deploy-contract-drift:\n");
 
-		expect(typecheckJob).toContain("needs: changes");
-		expect(buildJob).toContain("needs: changes");
-		expect(buildJob).not.toMatch(/needs:.*typecheck/);
-		for (const job of [typecheckJob, buildJob]) {
-			expect(job).toContain("uses: actions/checkout@v6");
-			expect(job).not.toContain("actions/upload-artifact");
-			expect(job).not.toContain("actions/download-artifact");
-		}
+		expect(verifyJob).toContain("needs: changes");
+		expect(verifyJob).toContain("uses: actions/checkout@v6");
+		expect(clientWorkflow).not.toContain("actions/upload-artifact");
+		expect(clientWorkflow).not.toContain("actions/download-artifact");
+
 		const typecheckTask = section(turboConfig, '\t\t"typecheck": {\n', '\t\t"lint": {\n');
 		expect(typecheckTask).toContain('"outputs": []');
 
-		expect(typecheckJob).toContain(`bunx turbo typecheck --filter=\${{ matrix.filter }}`);
-		expect(typecheckJob).toContain("target: web");
-		expect(typecheckJob).toContain("target: cli");
-		expect(typecheckJob).toContain("target: shared");
-		expect(buildJob).toContain("bunx turbo build --filter=web");
+		expect(verifyJob).toContain("bunx turbo typecheck build");
+		for (const filter of ["--filter=web", "--filter=clawdi", "--filter=@clawdi/shared"]) {
+			expect(verifyJob).toContain(filter);
+		}
 	});
 
 	test("retains the existing client build and test commands", () => {
 		for (const command of [
 			"bun run check",
-			"bun run --cwd packages/cli build",
 			"bun run --cwd packages/cli build:binary",
 			"packages/cli/dist-bin/clawdi --version",
 			"bun run --cwd packages/cli check:publish-manifest",
@@ -79,6 +80,14 @@ describe("client workflow contract", () => {
 		]) {
 			expect(clientWorkflow).toContain(command);
 		}
+	});
+
+	// Restoring the ~1.1GB `~/.bun/install/cache` entry cost ~100s in every
+	// job that used this action, to save a ~3s cold `bun install`. The cache
+	// also grew without bound via its `restore-keys` prefix match.
+	test("does not cache the Bun install directory", () => {
+		expect(setupBunAction).not.toContain("actions/cache");
+		expect(setupBunAction).toContain("bun install --frozen-lockfile");
 	});
 });
 
