@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
+import {
+	hostedManifestEgressProfiles,
+	managedMcpHeaderPlaceholder,
+} from "./hosted-egress-profiles";
 import { cacheRuntimeLastGoodManifest, convergeRuntimeManifest } from "./manifest";
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
@@ -58,6 +62,130 @@ describe("hosted runtime bundle v2", () => {
 				},
 			},
 		});
+	});
+
+	test("accepts generic hosted MCP and skill resource intent with a future CLI fixture", () => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		const load = normalizeHostedRuntimeBundleV2({
+			...raw,
+			manifest: {
+				...manifest,
+				minimumCliVersion: "0.13.2-test",
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@0.13.2-test",
+					registry: "https://registry.npmjs.org",
+				},
+				mcp: {
+					servers: {
+						clawdi: {
+							url: "https://cloud-api.test/v1/mcp/clawdi",
+							transport: "streamable-http",
+							headers: {
+								Authorization: {
+									secretRef: "env://CLAWDI_AUTH_TOKEN",
+									prefix: "Bearer ",
+								},
+							},
+						},
+						"search-proxy": { command: "searchctl", args: ["serve"] },
+					},
+				},
+				skills: { entries: { clawdi: { enabled: true } } },
+			},
+		});
+		expect(load.manifest.projection?.mcp).toEqual({
+			servers: {
+				clawdi: {
+					url: "https://cloud-api.test/v1/mcp/clawdi",
+					transport: "streamable-http",
+					headers: {
+						Authorization: {
+							secretRef: "env://CLAWDI_AUTH_TOKEN",
+							prefix: "Bearer ",
+						},
+					},
+				},
+				"search-proxy": { command: "searchctl", args: ["serve"] },
+			},
+		});
+		expect(load.manifest.projection?.skills).toEqual({
+			entries: { clawdi: { enabled: true } },
+		});
+		expect(load.manifest.egressProfiles?.profiles).toContainEqual(
+			expect.objectContaining({
+				id: "managed-mcp-clawdi",
+				owner: "mcp-projection",
+				match: expect.objectContaining({
+					scheme: "https",
+					host: "cloud-api.test:443",
+					path: { type: "equals", value: "/v1/mcp/clawdi" },
+					headers: {
+						Authorization: {
+							type: "equals",
+							value: managedMcpHeaderPlaceholder("clawdi", "Authorization"),
+							prefix: "Bearer ",
+						},
+					},
+				}),
+				rewrite: expect.objectContaining({
+					setHeaders: {
+						Authorization: {
+							type: "secretRef",
+							secretRef: "env://CLAWDI_AUTH_TOKEN",
+							prefix: "Bearer ",
+						},
+					},
+				}),
+			}),
+		);
+	});
+
+	test("uses distinct public placeholders for each remote MCP server and header", () => {
+		const profiles = hostedManifestEgressProfiles({
+			mcp: {
+				servers: {
+					alpha: {
+						url: "https://cloud-api.test/v1/mcp/shared",
+						transport: "streamable-http",
+						headers: {
+							Authorization: { secretRef: "env://ALPHA_TOKEN", prefix: "Bearer " },
+							"X-Client-Token": { secretRef: "secret://alpha.client", prefix: "" },
+						},
+					},
+					beta: {
+						url: "https://cloud-api.test/v1/mcp/shared",
+						transport: "streamable-http",
+						headers: {
+							Authorization: { secretRef: "env://BETA_TOKEN", prefix: "Bearer " },
+						},
+					},
+				},
+			},
+		}).profiles.filter((profile) => profile.owner === "mcp-projection");
+
+		expect(profiles).toHaveLength(2);
+		const alpha = profiles.find((profile) => profile.id === "managed-mcp-alpha");
+		const beta = profiles.find((profile) => profile.id === "managed-mcp-beta");
+		expect(alpha?.match.headers.Authorization).toMatchObject({
+			value: managedMcpHeaderPlaceholder("alpha", "Authorization"),
+		});
+		expect(alpha?.match.headers["X-Client-Token"]).toMatchObject({
+			value: managedMcpHeaderPlaceholder("alpha", "X-Client-Token"),
+		});
+		expect(beta?.match.headers.Authorization).toMatchObject({
+			value: managedMcpHeaderPlaceholder("beta", "Authorization"),
+		});
+		expect(
+			new Set([
+				managedMcpHeaderPlaceholder("alpha", "Authorization"),
+				managedMcpHeaderPlaceholder("alpha", "X-Client-Token"),
+				managedMcpHeaderPlaceholder("beta", "Authorization"),
+			]).size,
+		).toBe(3);
 	});
 
 	test("keeps live-sync channel bindings applicable from the runtime watch service", () => {
@@ -160,6 +288,83 @@ describe("hosted runtime bundle v2", () => {
 			normalizeHostedRuntimeBundleV2({
 				...raw,
 				channelBindings: [{ ...binding, provider: "whatsapp" }],
+			}),
+		).toThrow();
+	});
+
+	test("keeps opaque MCP compatibility and validates server declarations independently", () => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		const opaque = normalizeHostedRuntimeBundleV2({
+			...raw,
+			manifest: { ...manifest, mcp: { future: true } },
+		});
+		expect(opaque.manifest.projection?.mcp).toEqual({ future: true });
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: { ...manifest, mcp: { servers: { future: true } } },
+			}),
+		).toThrow();
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					mcp: {
+						servers: {
+							remote: {
+								url: "https://cloud-api.test/v1/mcp/remote",
+								transport: "streamable-http",
+								headers: { Authorization: "public-a", authorization: "public-b" },
+							},
+						},
+					},
+				},
+			}),
+		).toThrow();
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					mcp: {
+						servers: {
+							clawdi: { command: "clawdi", args: ["mcp"], token: "secret" },
+						},
+					},
+				},
+			}),
+		).toThrow();
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					mcp: {
+						servers: {
+							clawdi: {
+								url: "https://cloud-api.test/v1/mcp/clawdi",
+								transport: "streamable-http",
+								headers: { Authorization: { token: "secret" } },
+							},
+						},
+					},
+				},
+			}),
+		).toThrow();
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					skills: { entries: { clawdi: { enabled: true } } },
+					mcp: {
+						servers: { clawdi: { command: " clawdi", args: ["mcp"] } },
+					},
+				},
 			}),
 		).toThrow();
 	});

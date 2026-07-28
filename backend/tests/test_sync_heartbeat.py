@@ -42,6 +42,7 @@ pytestmark = pytest.mark.committed_db
 
 _TEST_LOCALE = {"language": "en", "timezone": "UTC"}
 _TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
+_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
 _TEST_SYSTEM = {}
 
 
@@ -532,13 +533,14 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         deployment_id="dep-observed-api",
         instance_id="iid-observed-api",
         generation=4,
-        cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
+        cli_package_spec=_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC,
         locale=_TEST_LOCALE,
         system=_TEST_SYSTEM,
         live_sync={"enabled": False, "agents": []},
         recovery={"cacheManifest": True, "allowOfflineBoot": True},
         runtimes=_test_runtimes(),
-        mcp={"enabled": True},
+        mcp={"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
+        skills={"entries": {"clawdi": {"enabled": True}}},
         tools={**CANONICAL_CODEX_TOOLS, "catalog": "clawdi-default"},
     )
     db_session.add(state)
@@ -549,6 +551,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     ).json()["desired"]["desired_source_revision"]
     observed = _runtime_observed(
         source_revision=desired_source_revision,
+        active_cli_version="0.13.2-test",
         applied_generation=4,
         applied_instance_id="iid-observed-api",
     )

@@ -15,11 +15,11 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 import app.services.runtime_observation as runtime_observation_service
-from app.core.auth import AuthContext, get_auth
+from app.core.auth import AuthContext, get_auth, is_runtime_deployment_principal
 from app.core.config import settings
 from app.core.database import get_session
 from app.main import app
-from app.models.api_key import ApiKey
+from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
 from app.models.audit import ControlPlaneAuditEvent
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
 from app.models.runtime_observation import (
@@ -418,16 +418,20 @@ async def test_database_guards_reject_runtime_rebinding_regression_and_tombstone
 
     with pytest.raises(IntegrityError):
         async with db_session.begin_nested():
-            await mint_api_key(
-                db_session,
-                user_id=seed_user.id,
-                label="invalid-full-access-runtime",
-                scopes=None,
-                environment_id=environment.id,
-                runtime_deployment_id=_DEPLOYMENT_ID,
-                managed=True,
-                commit=False,
+            db_session.add(
+                ApiKey(
+                    id=uuid.uuid4(),
+                    user_id=seed_user.id,
+                    key_hash=uuid.uuid4().hex * 2,
+                    key_prefix="invalid_runtime",
+                    label="invalid-unmanaged-runtime",
+                    scopes=None,
+                    environment_id=environment.id,
+                    runtime_deployment_id=_DEPLOYMENT_ID,
+                    managed=False,
+                )
             )
+            await db_session.flush()
 
     legacy_key = await mint_api_key(
         db_session,
@@ -446,7 +450,7 @@ async def test_database_guards_reject_runtime_rebinding_regression_and_tombstone
         db_session,
         user_id=seed_user.id,
         label="strict-runtime-key",
-        scopes=["runtime-observations:write"],
+        scopes=list(RUNTIME_DEPLOYMENT_KEY_SCOPES),
         environment_id=environment.id,
         runtime_deployment_id=_DEPLOYMENT_ID,
         managed=True,
@@ -2076,7 +2080,7 @@ async def test_v1_heartbeat_is_byte_frozen_and_has_no_companion_side_effects(
 
 
 @pytest.mark.asyncio
-async def test_v2_ingestion_only_writes_companion_tables_and_requires_dedicated_scope(
+async def test_v2_ingestion_only_writes_companion_tables_and_requires_runtime_scope_bundle(
     db_session: AsyncSession,
     seed_user,
 ) -> None:
@@ -2110,14 +2114,16 @@ async def test_v2_ingestion_only_writes_companion_tables_and_requires_dedicated_
         managed=True,
         environment_id=environment.id,
         runtime_deployment_id=_DEPLOYMENT_ID,
-        scopes=["skills:write"],
+        scopes=["skills:write", "future:runtime-capability"],
     )
+    runtime_auth = AuthContext(user=seed_user, api_key=runtime_key)
+    assert is_runtime_deployment_principal(runtime_auth)
 
     async def override_session() -> AsyncIterator[AsyncSession]:
         yield db_session
 
     async def override_auth() -> AuthContext:
-        return AuthContext(user=seed_user, api_key=runtime_key)
+        return runtime_auth
 
     app.dependency_overrides[get_session] = override_session
     app.dependency_overrides[get_auth] = override_auth
@@ -2131,7 +2137,7 @@ async def test_v2_ingestion_only_writes_companion_tables_and_requires_dedicated_
                 f"/v2/runtime/environments/{environment.id}/observations",
                 json=_payload().model_dump(mode="json", by_alias=True),
             )
-            runtime_key.scopes = ["runtime-observations:write"]
+            runtime_key.scopes = [*RUNTIME_DEPLOYMENT_KEY_SCOPES, "future:runtime-capability"]
             accepted = await client.post(
                 f"/v2/runtime/environments/{environment.id}/observations",
                 json=_payload(event_id=event_id).model_dump(mode="json", by_alias=True),
@@ -2192,7 +2198,7 @@ async def test_v2_ingestion_audits_every_service_rejection_without_private_paylo
         managed=True,
         environment_id=environment_id,
         runtime_deployment_id=_DEPLOYMENT_ID,
-        scopes=["runtime-observations:write"],
+        scopes=list(RUNTIME_DEPLOYMENT_KEY_SCOPES),
     )
     auth_context = AuthContext(user=seed_user, api_key=runtime_key)
 

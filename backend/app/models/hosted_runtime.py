@@ -30,6 +30,7 @@ class HostedRuntimeState(Base, TimestampMixin):
     recovery: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     egress_profiles: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     mcp: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    skills: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     tools: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
 
 

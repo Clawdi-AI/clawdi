@@ -618,6 +618,216 @@ async def test_clawdi_mcp_connector_tools_denied_for_scoped_api_key(
 
 
 @pytest.mark.asyncio
+async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_without_memory(
+    db_session,
+    seed_user,
+    monkeypatch,
+):
+    from app.core.auth import AuthContext, get_auth, is_runtime_deployment_principal
+    from app.core.database import get_session
+    from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
+    from app.models.session import Session
+    from app.routes import mcp_bridge
+    from app.services.composio import ComposioMcpSession
+    from tests.conftest import create_env_with_project
+
+    env_a = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="strict-mcp-a",
+        machine_name="Strict MCP A",
+        agent_type="openclaw",
+    )
+    env_b = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="strict-mcp-b",
+        machine_name="Strict MCP B",
+        agent_type="hermes",
+    )
+    now = datetime.now(UTC)
+    session_a = Session(
+        user_id=seed_user.id,
+        environment_id=env_a.id,
+        local_session_id="strict-a",
+        started_at=now,
+        summary="Alpha hosted runtime work",
+    )
+    session_b = Session(
+        user_id=seed_user.id,
+        environment_id=env_b.id,
+        local_session_id="strict-b",
+        started_at=now,
+        summary="Beta hosted runtime work",
+        file_key="sessions/strict-b.json",
+    )
+    db_session.add_all([session_a, session_b])
+    await db_session.commit()
+
+    runtime_key = ApiKey(
+        user_id=seed_user.id,
+        environment_id=env_a.id,
+        runtime_deployment_id="strict-deployment",
+        managed=True,
+        scopes=[*RUNTIME_DEPLOYMENT_KEY_SCOPES, "future:runtime-capability"],
+    )
+    runtime_auth = AuthContext(user=seed_user, api_key=runtime_key)
+    assert is_runtime_deployment_principal(runtime_auth)
+
+    async def override_session():
+        yield db_session
+
+    async def override_auth() -> AuthContext:
+        return runtime_auth
+
+    async def fake_session(user_id: str) -> ComposioMcpSession:
+        assert user_id == seed_user.clerk_id
+        return ComposioMcpSession(
+            url="https://composio.test/mcp",
+            headers={},
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+
+    async def fake_forward(session, payload):
+        if payload["method"] == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "tools": [{"name": "connector_calendar", "inputSchema": {"type": "object"}}]
+                },
+            }
+        return {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {"content": [{"type": "text", "text": "connector ok"}]},
+        }
+
+    async def fake_messages(session, store):
+        return [{"role": "user", "content": "Cross-agent session detail"}]
+
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
+    monkeypatch.setattr(mcp_bridge, "_forward_composio_mcp_request", fake_forward)
+    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
+    monkeypatch.setattr(mcp_bridge, "load_session_messages", fake_messages)
+    app.dependency_overrides[get_session] = override_session
+    app.dependency_overrides[get_auth] = override_auth
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
+            )
+            searched = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "session_search",
+                        "arguments": {"query": "hosted runtime work"},
+                    },
+                },
+            )
+            read = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 3,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "session_read",
+                        "arguments": {"reference": str(session_b.id)},
+                    },
+                },
+            )
+            connector = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 4,
+                    "method": "tools/call",
+                    "params": {"name": "connector_calendar", "arguments": {}},
+                },
+            )
+            memory = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 5,
+                    "method": "tools/call",
+                    "params": {"name": "memory_search", "arguments": {"query": "x"}},
+                },
+            )
+            runtime_key.scopes = None
+            identity_only_listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 6, "method": "tools/list", "params": {}},
+            )
+            identity_only_session = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "session_search",
+                        "arguments": {"query": "hosted runtime work"},
+                    },
+                },
+            )
+            identity_only_connector = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 8,
+                    "method": "tools/call",
+                    "params": {"name": "connector_calendar", "arguments": {}},
+                },
+            )
+            identity_only_memory = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 9,
+                    "method": "tools/call",
+                    "params": {"name": "memory_search", "arguments": {"query": "x"}},
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_auth, None)
+
+    names = [tool["name"] for tool in listed.json()["result"]["tools"]]
+    assert "connector_calendar" in names
+    assert "session_search" in names
+    assert "session_read" in names
+    assert not {"memory_search", "memory_add", "memory_extract"} & set(names)
+    search_text = searched.json()["result"]["content"][0]["text"]
+    assert "Alpha hosted runtime work" in search_text
+    assert "Beta hosted runtime work" in search_text
+    assert "Cross-agent session detail" in read.json()["result"]["content"][0]["text"]
+    assert connector.json()["result"]["content"][0]["text"] == "connector ok"
+    assert memory.json()["result"]["isError"] is True
+    assert "not available" in memory.json()["result"]["content"][0]["text"]
+    identity_only_names = {tool["name"] for tool in identity_only_listed.json()["result"]["tools"]}
+    assert "session_search" in identity_only_names
+    assert "connector_calendar" not in identity_only_names
+    assert not {"memory_search", "memory_add", "memory_extract"} & identity_only_names
+    assert (
+        "missing scope: sessions:read"
+        in identity_only_session.json()["result"]["content"][0]["text"]
+    )
+    assert (
+        "missing scope: connectors:invoke"
+        in identity_only_connector.json()["result"]["content"][0]["text"]
+    )
+    assert "not available" in identity_only_memory.json()["result"]["content"][0]["text"]
+
+
+@pytest.mark.asyncio
 async def test_clawdi_mcp_session_read_share_url_respects_env_binding(
     db_session,
     seed_user,
