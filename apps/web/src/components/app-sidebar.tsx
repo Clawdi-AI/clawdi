@@ -278,7 +278,7 @@ const RAIL_DRAG_ACTIVATION_DISTANCE = 10;
 const RAIL_KEYBOARD_CODES = {
 	start: [KeyboardCode.Space],
 	cancel: [KeyboardCode.Esc],
-	end: [KeyboardCode.Space],
+	end: [KeyboardCode.Space, KeyboardCode.Enter, KeyboardCode.Tab],
 };
 
 const restrictRailDragToVerticalAxis: Modifier = ({ transform }) => ({

@@ -276,6 +276,31 @@ test("agent rail tile buttons support touch taps and Enter activation", async ({
 	}
 });
 
+test("Enter drops an active keyboard sort before navigating when inactive", async ({ page }) => {
+	const agentOrderRequests: string[] = [];
+	await stubDashboardApi(page, agentOrderRequests);
+	await page.goto("/");
+
+	const tiles = page.getByTestId("app-sidebar-agent-tile");
+	await expect(tiles).toHaveCount(2, { timeout: 15_000 });
+	const firstButton = tiles.filter({ hasText: "Smoke Codex" }).locator("button");
+	await firstButton.focus();
+	await page.keyboard.down("Space");
+	await expect(firstButton).toHaveAttribute("aria-pressed", "true");
+	await page.keyboard.up("Space");
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("Enter");
+
+	await expect(firstButton).not.toHaveAttribute("aria-pressed", "true");
+	await expect(page).toHaveURL("/");
+	await expect.poll(() => agentOrderRequests.length).toBe(1);
+	await expect(tiles.nth(0)).toContainText("Smoke Hermes");
+	await expect(firstButton).toBeFocused();
+
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL("/agents/agent-smoke-1");
+});
+
 test("agent rail uses each whole tile for Space keyboard sorting", async ({ page }) => {
 	const agentOrderRequests: string[] = [];
 	await stubDashboardApi(page, agentOrderRequests);
