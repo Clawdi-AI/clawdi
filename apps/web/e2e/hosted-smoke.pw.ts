@@ -1548,7 +1548,7 @@ test("empty account offers two working first-agent paths", async ({ page }) => {
 	).toBeVisible();
 });
 
-test("hosted mixed agent rail keeps navigation separate from sorting", async ({
+test("hosted mixed agent rail uses whole semantic buttons for context switching", async ({
 	page,
 	browser,
 	baseURL,
@@ -1564,63 +1564,44 @@ test("hosted mixed agent rail keeps navigation separate from sorting", async ({
 	await page.goto("/agents");
 	const rail = page.getByTestId("app-sidebar-agent-rail");
 	const consoleLink = rail.getByRole("link", { name: "Console", exact: true });
-	const cloudLink = rail.getByRole("link", { name: "Rail Cloud", exact: true });
-	const connectedLink = rail.getByRole("link", { name: /Rail Connected/ });
+	const cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
+	const connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
 
 	await expect(consoleLink).toHaveAttribute("href", "/");
-	await expect(cloudLink).toHaveAttribute(
-		"href",
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
-	);
-	await expect(connectedLink).toHaveAttribute("href", `/agents/${railConnectedEnvironmentId}`);
+	await expect(cloudButton).toHaveAttribute("type", "button");
+	await expect(connectedButton).toHaveAttribute("type", "button");
+	await expect(rail.getByRole("button", { name: /^Reorder / })).toHaveCount(0);
+	await expect(rail.getByTitle(/^Reorder /)).toHaveCount(0);
 
-	await consoleLink.click();
-	await expect(page).toHaveURL("/");
-	await page.goto("/");
-	await cloudLink.click();
-	await expect(page).toHaveURL(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
-	);
-	await page.goto("/");
-	await connectedLink.click();
-	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
-
-	await page.goto("/");
-	await connectedLink.focus();
-	await page.keyboard.press("Enter");
-	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
-
-	await page.goto("/");
-	const connectedHandle = rail.getByRole("button", { name: /Reorder Rail Connected/ });
-	const cloudHandle = rail.getByRole("button", { name: /Reorder .*Rail Cloud projection/ });
 	const connectedTileBox = await rail
 		.getByTestId("app-sidebar-agent-tile")
 		.filter({ hasText: "Rail Connected" })
 		.boundingBox();
-	const connectedLinkBox = await connectedLink.boundingBox();
-	const sourceBox = await connectedHandle.boundingBox();
-	const targetBox = await cloudHandle.boundingBox();
-	if (!connectedTileBox || !connectedLinkBox || !sourceBox || !targetBox) {
-		throw new Error("Hosted rail links and drag handles should render.");
+	const connectedButtonBox = await connectedButton.boundingBox();
+	if (!connectedTileBox || !connectedButtonBox) {
+		throw new Error("Hosted rail agent tile should be a whole interactive button.");
 	}
 	expect(connectedTileBox.height).toBeCloseTo(72, 0);
-	expect(connectedLinkBox.height).toBeCloseTo(connectedTileBox.height, 0);
-	expect(sourceBox.x).toBeGreaterThanOrEqual(connectedLinkBox.x + connectedLinkBox.width - 0.5);
-	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
-	await page.mouse.down();
-	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
-		steps: 10,
-	});
-	await page.mouse.up();
-	expect(page.url()).toBe(new URL("/", baseURL).href);
-	await connectedLink.click();
+	expect(connectedButtonBox.x).toBeCloseTo(connectedTileBox.x, 0);
+	expect(connectedButtonBox.y).toBeCloseTo(connectedTileBox.y, 0);
+	expect(connectedButtonBox.height).toBeCloseTo(connectedTileBox.height, 0);
+	expect(connectedButtonBox.width).toBeCloseTo(connectedTileBox.width, 0);
+
+	await consoleLink.click();
+	await expect(page).toHaveURL("/");
+	await page.goto("/");
+	await cloudButton.click();
+	await expect(page).toHaveURL(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
+	);
+	await page.goto("/");
+	await connectedButton.click();
 	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
 
-	await expect.poll(() => agentOrderRequests.length).toBe(1);
-	expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
-		agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
-	});
-	await expect(rail.getByTestId("app-sidebar-agent-tile").nth(0)).toContainText("Rail Connected");
+	await page.goto("/");
+	await connectedButton.focus();
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
 
 	const touchContext = await browser.newContext({
 		baseURL,
@@ -1636,33 +1617,113 @@ test("hosted mixed agent rail keeps navigation separate from sorting", async ({
 			cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
 		});
 		await touchPage.goto("/");
-		const touchConnectedLink = touchPage
+		const touchConnectedButton = touchPage
 			.getByTestId("app-sidebar-agent-rail")
-			.getByRole("link", { name: /Rail Connected/ });
-		await touchConnectedLink.tap();
+			.getByRole("button", { name: /Rail Connected/ });
+		await touchConnectedButton.tap();
 		await expect(touchPage).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+	} finally {
+		await touchContext.close();
+	}
+	expect(agentOrderRequests).toEqual([]);
+	expect(touchOrderRequests).toEqual([]);
+});
 
-		await touchPage.goto("/");
-		const touchRail = touchPage.getByTestId("app-sidebar-agent-rail");
-		const touchSourceBox = await touchRail
-			.getByRole("button", { name: /Reorder Rail Connected/ })
-			.boundingBox();
-		const touchTargetBox = await touchRail
-			.getByRole("button", { name: /Reorder .*Rail Cloud projection/ })
-			.boundingBox();
-		if (!touchSourceBox || !touchTargetBox) {
-			throw new Error("Hosted rail touch drag handles should render.");
-		}
-		const cdp = await touchContext.newCDPSession(touchPage);
+test("whole agent tile mouse drag reorders without navigation", async ({ page, baseURL }) => {
+	if (!baseURL) throw new Error("Playwright baseURL is required for the hosted rail test.");
+	const agentOrderRequests: string[] = [];
+	await stubHostedApi(page, {
+		agentOrderRequests,
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
+	});
+	await page.goto("/");
+
+	const rail = page.getByTestId("app-sidebar-agent-rail");
+	const connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
+	const cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
+	const sourceBox = await connectedButton.boundingBox();
+	const targetBox = await cloudButton.boundingBox();
+	if (!sourceBox || !targetBox) throw new Error("Hosted rail agent buttons should render.");
+
+	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+		steps: 10,
+	});
+	await page.mouse.up();
+	expect(page.url()).toBe(new URL("/", baseURL).href);
+
+	await connectedButton.click();
+	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+	await expect.poll(() => agentOrderRequests.length).toBe(1);
+	expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
+		agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
+	});
+	await expect(rail.getByTestId("app-sidebar-agent-tile").nth(0)).toContainText("Rail Connected");
+});
+
+test("whole agent tile preserves touch scroll intent and supports long-press drag", async ({
+	browser,
+	baseURL,
+}) => {
+	if (!baseURL) throw new Error("Playwright baseURL is required for the hosted rail test.");
+	const context = await browser.newContext({
+		baseURL,
+		hasTouch: true,
+		viewport: { width: 1280, height: 360 },
+	});
+	const page = await context.newPage();
+	const agentOrderRequests: string[] = [];
+	try {
+		await stubHostedApi(page, {
+			agentOrderRequests,
+			deployments: [railHostedDeployment],
+			cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
+		});
+		await page.goto("/");
+
+		const rail = page.getByTestId("app-sidebar-agent-rail");
+		const scrollContainer = rail.locator('[data-slot="sidebar-content"]');
+		const cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
+		const connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
+		const scrollSourceBox = await cloudButton.boundingBox();
+		if (!scrollSourceBox) throw new Error("Hosted rail cloud button should render.");
+		const cdp = await context.newCDPSession(page);
+		const scrollStart = await scrollContainer.evaluate((element) => element.scrollTop);
+		const scrollSource = {
+			x: scrollSourceBox.x + scrollSourceBox.width / 2,
+			y: scrollSourceBox.y + scrollSourceBox.height / 2,
+		};
+		await cdp.send("Input.dispatchTouchEvent", {
+			type: "touchStart",
+			touchPoints: [scrollSource],
+		});
+		await cdp.send("Input.dispatchTouchEvent", {
+			type: "touchMove",
+			touchPoints: [{ x: scrollSource.x, y: scrollSource.y - 40 }],
+		});
+		await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		expect(page.url()).toBe(new URL("/", baseURL).href);
+		expect(agentOrderRequests).toEqual([]);
+		await expect
+			.poll(() => scrollContainer.evaluate((element) => element.scrollTop))
+			.toBeGreaterThan(scrollStart);
+
+		await page.reload();
+		const sourceBox = await connectedButton.boundingBox();
+		const targetBox = await cloudButton.boundingBox();
+		if (!sourceBox || !targetBox) throw new Error("Hosted rail agent buttons should render.");
 		const source = {
-			x: touchSourceBox.x + touchSourceBox.width / 2,
-			y: touchSourceBox.y + touchSourceBox.height / 2,
+			x: sourceBox.x + sourceBox.width / 2,
+			y: sourceBox.y + sourceBox.height / 2,
 		};
 		const target = {
-			x: touchTargetBox.x + touchTargetBox.width / 2,
-			y: touchTargetBox.y + touchTargetBox.height / 2,
+			x: targetBox.x + targetBox.width / 2,
+			y: targetBox.y + targetBox.height / 2,
 		};
 		await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [source] });
+		await expect(connectedButton).toHaveAttribute("aria-pressed", "true");
 		for (let step = 1; step <= 10; step += 1) {
 			await cdp.send("Input.dispatchTouchEvent", {
 				type: "touchMove",
@@ -1675,10 +1736,13 @@ test("hosted mixed agent rail keeps navigation separate from sorting", async ({
 			});
 		}
 		await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-		expect(touchPage.url()).toBe(new URL("/", baseURL).href);
-		await expect.poll(() => touchOrderRequests.length).toBe(1);
+		expect(page.url()).toBe(new URL("/", baseURL).href);
+		await expect.poll(() => agentOrderRequests.length).toBe(1);
+		expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
+			agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
+		});
 	} finally {
-		await touchContext.close();
+		await context.close();
 	}
 });
 
