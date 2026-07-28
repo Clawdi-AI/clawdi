@@ -694,7 +694,10 @@ async def test_strict_runtime_mcp_has_cross_agent_sessions_connectors_without_me
                 "jsonrpc": "2.0",
                 "id": 1,
                 "result": {
-                    "tools": [{"name": "connector_calendar", "inputSchema": {"type": "object"}}]
+                    "tools": [
+                        {"name": "connector_calendar", "inputSchema": {"type": "object"}},
+                        {"name": "memory_search", "inputSchema": {"type": "object"}},
+                    ],
                 },
             }
         return {

@@ -410,12 +410,10 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
 
 
 async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
-    native_tools = (
-        [tool for tool in _NATIVE_TOOLS if tool["name"] not in _HOSTED_MEMORY_TOOLS]
-        if is_runtime_deployment_principal(auth)
-        else list(_NATIVE_TOOLS)
-    )
-    return native_tools + await _connector_mcp_tools(auth)
+    tools = [*_NATIVE_TOOLS, *(await _connector_mcp_tools(auth))]
+    if is_runtime_deployment_principal(auth):
+        return [tool for tool in tools if tool.get("name") not in _HOSTED_MEMORY_TOOLS]
+    return tools
 
 
 async def _call_clawdi_mcp_tool(
