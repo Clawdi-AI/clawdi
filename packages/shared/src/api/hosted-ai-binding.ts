@@ -192,7 +192,14 @@ export function buildHostedAiBindingFields({
 	}
 
 	const providerIds = selectedProviderIds(selection.providerIds, selection.primaryProviderId);
-	const selectedProviders = savedProvidersForIds(providerIds, providers, "reject");
+	if (selection.primaryProviderId === CLAWDI_MANAGED_PROVIDER_ID) {
+		throw firstPartyManagedProviderError(selection.primaryProviderId);
+	}
+	const selectedProviders = savedProvidersForIds(
+		providerIds.filter((providerId) => providerId !== CLAWDI_MANAGED_PROVIDER_ID),
+		providers,
+		"reject",
+	);
 	const primaryProvider = selectedProviders.find(
 		(provider) => provider.provider_id === selection.primaryProviderId,
 	);

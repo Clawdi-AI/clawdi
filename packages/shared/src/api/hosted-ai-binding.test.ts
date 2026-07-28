@@ -178,36 +178,90 @@ describe("shared Hosted AI provider binding", () => {
 		}
 	});
 
-	test("preserves a saved primary with another saved provider", () => {
-		for (const mode of ["create", "update"] as const) {
-			const fields = buildHostedAiBindingFields({
-				managedModels,
-				mode,
-				providers: [apiKeyProvider, codexProvider, secondaryProvider],
-				selection: {
-					mode: "saved",
-					model: "gpt-codex",
-					primaryProviderId: codexProvider.provider_id,
-					providerIds: [codexProvider.provider_id, secondaryProvider.provider_id],
-				},
-			});
+	test("preserves a canonical managed secondary without materializing it in saved bootstrap", () => {
+		const canonicalManagedProvider = {
+			...apiKeyProvider,
+			id: "row-managed-v2",
+			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+			managed_by: "clawdi",
+		} satisfies HostedSavedAiProvider;
 
-			expect(fields.provider_ids).toEqual(["codex-main", "openai-secondary"]);
-			expect(fields.primary_model).toEqual({ provider_id: "codex-main", model: "gpt-codex" });
-			expect(fields.ai_provider_id).toBe("codex-main");
-			expect(fields.ai_provider_auth_kind).toBe("codex_oauth");
-			expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe("codex-main");
-			expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
-			expect(
-				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
-			).toEqual(["codex-main", "openai-secondary"]);
+		for (const includeCanonicalRow of [false, true]) {
+			for (const mode of ["create", "update"] as const) {
+				const fields = buildHostedAiBindingFields({
+					managedModels,
+					mode,
+					providers: [
+						apiKeyProvider,
+						codexProvider,
+						...(includeCanonicalRow ? [canonicalManagedProvider] : []),
+						secondaryProvider,
+					],
+					selection: {
+						mode: "saved",
+						model: "gpt-codex",
+						primaryProviderId: codexProvider.provider_id,
+						providerIds: [
+							codexProvider.provider_id,
+							CLAWDI_MANAGED_PROVIDER_ID,
+							secondaryProvider.provider_id,
+						],
+					},
+				});
+
+				expect(fields.provider_ids).toEqual([
+					"codex-main",
+					CLAWDI_MANAGED_PROVIDER_ID,
+					"openai-secondary",
+				]);
+				expect(fields.primary_model).toEqual({
+					provider_id: "codex-main",
+					model: "gpt-codex",
+				});
+				expect(fields.ai_provider_id).toBe("codex-main");
+				expect(fields.ai_provider_auth_kind).toBe("codex_oauth");
+				expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe("codex-main");
+				expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
+				expect(
+					fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
+				).toEqual(["codex-main", "openai-secondary"]);
+			}
 		}
 	});
 
-	test("rejects first-party managed providers anywhere in a saved provider pool", () => {
+	test("rejects canonical managed provider as a saved primary with or without its row", () => {
+		const canonicalManagedProvider = {
+			...apiKeyProvider,
+			id: "row-managed-v2",
+			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+			managed_by: "clawdi",
+		} satisfies HostedSavedAiProvider;
+
+		for (const providers of [[], [canonicalManagedProvider]]) {
+			try {
+				buildHostedAiBindingFields({
+					managedModels,
+					mode: "create",
+					providers,
+					selection: {
+						mode: "saved",
+						providerIds: [CLAWDI_MANAGED_PROVIDER_ID],
+						primaryProviderId: CLAWDI_MANAGED_PROVIDER_ID,
+						model: "gpt-catalog",
+					},
+				});
+				throw new Error("Expected canonical managed provider primary to be rejected.");
+			} catch (error) {
+				expect(error).toBeInstanceOf(HostedAiBindingError);
+				if (!(error instanceof HostedAiBindingError)) throw error;
+				expect(error.code).toBe("first_party_managed_provider");
+			}
+		}
+	});
+
+	test("rejects noncanonical first-party managed providers anywhere in a saved pool", () => {
 		const managedProviders: HostedSavedAiProvider[] = [
 			{ ...apiKeyProvider, id: "row-v1", provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID },
-			{ ...apiKeyProvider, id: "row-v2", provider_id: CLAWDI_MANAGED_PROVIDER_ID },
 			{
 				...apiKeyProvider,
 				id: "row-legacy-public",
@@ -232,39 +286,29 @@ describe("shared Hosted AI provider binding", () => {
 		];
 
 		for (const provider of managedProviders) {
-			try {
-				buildHostedAiBindingFields({
-					managedModels,
-					mode: "create",
-					providers: [provider],
-					selection: {
-						mode: "saved",
-						providerIds: [provider.provider_id],
-						primaryProviderId: provider.provider_id,
-						model: "gpt-catalog",
-					},
-				});
-				throw new Error(`Expected ${provider.provider_id} to be rejected.`);
-			} catch (error) {
-				expect(error).toBeInstanceOf(HostedAiBindingError);
-				if (!(error instanceof HostedAiBindingError)) throw error;
-				expect(error.code).toBe("first_party_managed_provider");
+			for (const asPrimary of [false, true]) {
+				try {
+					buildHostedAiBindingFields({
+						managedModels,
+						mode: "create",
+						providers: [apiKeyProvider, provider],
+						selection: {
+							mode: "saved",
+							providerIds: asPrimary
+								? [provider.provider_id]
+								: [apiKeyProvider.provider_id, provider.provider_id],
+							primaryProviderId: asPrimary ? provider.provider_id : apiKeyProvider.provider_id,
+							model: "gpt-catalog",
+						},
+					});
+					throw new Error(`Expected ${provider.provider_id} to be rejected.`);
+				} catch (error) {
+					expect(error).toBeInstanceOf(HostedAiBindingError);
+					if (!(error instanceof HostedAiBindingError)) throw error;
+					expect(error.code).toBe("first_party_managed_provider");
+				}
 			}
 		}
-
-		expect(() =>
-			buildHostedAiBindingFields({
-				managedModels,
-				mode: "create",
-				providers: [apiKeyProvider],
-				selection: {
-					mode: "saved",
-					providerIds: [apiKeyProvider.provider_id, CLAWDI_MANAGED_PROVIDER_ID],
-					primaryProviderId: apiKeyProvider.provider_id,
-					model: "gpt-catalog",
-				},
-			}),
-		).toThrow("cannot be used as a saved provider");
 	});
 
 	test("rejects missing, unusable, and unknown managed selections", () => {
