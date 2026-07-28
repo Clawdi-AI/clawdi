@@ -89,11 +89,12 @@ Use the Composio Tool Router meta-tools exposed through the `clawdi` MCP server.
 3. If search reports no active connection, call `COMPOSIO_MANAGE_CONNECTIONS` exactly as its
    exposed schema requires. Present its returned `redirect_url` as a clickable Markdown
    authentication link. Say that authentication is pending, ask the user to complete it,
-   and do not claim it is complete. Never request or expose OAuth credentials, API keys, or
-   tokens.
-4. After the user reports completing authentication, re-run `COMPOSIO_SEARCH_TOOLS` or use a
-   connection-status operation only when the exposed schema provides one. Verify that the
-   connection is active, then retry the interrupted workflow.
+   and do not claim it is complete. Return only the authorization link supplied by the tool;
+   never ask for or copy OAuth credentials, API keys, or tokens into the conversation.
+4. Use a connection wait or status operation when the MCP server exposes one; otherwise stop
+   and wait for the user to report completing authentication. Then re-run
+   `COMPOSIO_SEARCH_TOOLS` or use the exposed status operation, verify that the connection is
+   active, and retry the interrupted workflow.
 5. Execute discovered app tools through `COMPOSIO_MULTI_EXECUTE_TOOL` with schema-compliant
    inputs. Batch only independent actions; preserve dependencies between steps.
 6. Use `COMPOSIO_REMOTE_BASH_TOOL` or `COMPOSIO_REMOTE_WORKBENCH` only for justified large,

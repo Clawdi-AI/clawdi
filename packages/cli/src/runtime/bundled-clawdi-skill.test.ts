@@ -35,16 +35,17 @@ describe("bundled Clawdi skill connector contract", () => {
 		}
 	});
 
-	it("documents the auth-link handshake without requiring a seventh meta-tool", () => {
+	it("documents a schema-driven auth-link handshake", () => {
 		for (const connectors of [genericConnectors, hostedConnectors]) {
 			expect(connectors).toContain("`COMPOSIO_MANAGE_CONNECTIONS`");
 			expect(connectors).toContain("returned `redirect_url` as a clickable Markdown");
 			expect(connectors).toContain("authentication is pending");
 			expect(connectors).toContain("do not claim it is complete");
-			expect(connectors).toContain("re-run `COMPOSIO_SEARCH_TOOLS`");
-			expect(connectors).toContain("connection is active, then retry the interrupted workflow");
-			expect(connectors).toContain("Never request or expose OAuth credentials, API keys, or");
-			expect(connectors).not.toContain("COMPOSIO_WAIT_FOR_CONNECTIONS");
+			expect(connectors).toContain("connection wait or status operation when");
+			expect(connectors).toContain("otherwise stop");
+			expect(connectors).toContain("`COMPOSIO_SEARCH_TOOLS`");
+			expect(connectors).toMatch(/connection is\s+active, and retry the interrupted workflow/);
+			expect(connectors).toContain("never ask for or copy OAuth credentials, API keys, or tokens");
 			expect(connectors).not.toMatch(/dashboard/i);
 		}
 	});
