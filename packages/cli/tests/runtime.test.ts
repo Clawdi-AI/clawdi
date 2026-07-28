@@ -1533,7 +1533,7 @@ describe("runtime manifest datasource", () => {
 		expect(loaded.errors[0]).toContain("hosted manifest path must end with /v1/runtime/manifest");
 	});
 
-	it("loads last-good offline boot when cached secret values satisfy refs", async () => {
+	it("does not load cached secrets for a disabled runtime", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -1580,10 +1580,7 @@ describe("runtime manifest datasource", () => {
 		if (!("manifest" in loaded)) throw new Error("expected offline manifest load success");
 		expect(loaded.source).toBe("last-good-cache");
 		expect(loaded.offline).toBe(true);
-		expect(loaded.secretValues).toEqual({
-			"provider.default.apiKey": "sk-cached-provider",
-			"secret://provider.default.apiKey": "sk-cached-provider",
-		});
+		expect(loaded.secretValues).toBeUndefined();
 	});
 
 	it("reports degraded-offline apply and boot state after remote fetch failure", async () => {
@@ -1808,7 +1805,7 @@ describe("runtime manifest datasource", () => {
 		);
 	});
 
-	it("refuses last-good offline boot when cached secret values are missing", async () => {
+	it("does not require an unselected provider secret for offline boot", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -1847,12 +1844,11 @@ describe("runtime manifest datasource", () => {
 		);
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths());
-		expect("errors" in loaded).toBe(true);
-		if (!("errors" in loaded)) throw new Error("expected manifest load failure");
-		expect(loaded.mode).toBe("repair");
-		expect(loaded.errors).toContain(
-			"cached manifest references secretValues (provider.default.apiKey); refusing offline boot because cached secret values are missing",
-		);
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected offline manifest load success");
+		expect(loaded.source).toBe("last-good-cache");
+		expect(loaded.offline).toBe(true);
+		expect(loaded.secretValues).toBeUndefined();
 	});
 
 	it("fetches hosted-runtime manifests from a configured runtime source", async () => {
@@ -11904,7 +11900,7 @@ exit 64
 		expect(loaded.manifest.instanceId).toBe("iid_generation_reset");
 	});
 
-	it("rejects fixture manifests that reference secretValues without inline values", async () => {
+	it("does not require egress secrets when every runtime is disabled", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -11949,10 +11945,9 @@ exit 64
 
 		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
 
-		expect("errors" in loaded).toBe(true);
-		if (!("errors" in loaded)) throw new Error("expected manifest rejection");
-		expect(loaded.mode).toBe("manifest-rejected");
-		expect(loaded.errors[0]).toContain("fixture references secretValues");
+		expect("manifest" in loaded).toBe(true);
+		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+		expect(loaded.secretValues).toBeUndefined();
 	});
 
 	it("rejects hosted manifests without cloudApiUrl instead of deriving it from the source URL", async () => {

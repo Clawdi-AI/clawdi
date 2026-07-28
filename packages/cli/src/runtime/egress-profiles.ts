@@ -212,8 +212,8 @@ export function egressProfileSecretRefs(bundle: EgressProfileInputBundle | undef
 		if (!profile.enabled) continue;
 		for (const matcher of [
 			profile.match.path,
-			...Object.values(profile.match.headers),
-			...Object.values(profile.match.query),
+			...Object.values(profile.match.headers ?? {}),
+			...Object.values(profile.match.query ?? {}),
 		]) {
 			if (matcher && "secretRef" in matcher) refs.add(matcher.secretRef);
 		}
