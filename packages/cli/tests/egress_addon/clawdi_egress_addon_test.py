@@ -120,6 +120,21 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(flow.request.host, "unmatched.test")
         self.assertIsNone(flow.response)
 
+    def test_enabled_profiles_require_all_referenced_secrets(self):
+        with self.assertRaisesRegex(
+            addon.ConfigError, "egress profile secrets are missing: secret://provider-key"
+        ):
+            self.load([self.managed_provider_profile()])
+
+    def test_enabled_profiles_reject_empty_referenced_secrets(self):
+        with self.assertRaisesRegex(
+            addon.ConfigError, "egress profile secrets are missing: secret://provider-key"
+        ):
+            self.load(
+                [self.managed_provider_profile()],
+                {"secret://provider-key": ""},
+            )
+
     def test_passthrough_only_profile_does_not_intercept_sni(self):
         egress = self.load(
             [

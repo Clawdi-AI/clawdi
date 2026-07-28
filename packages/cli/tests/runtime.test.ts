@@ -5151,7 +5151,6 @@ exit 64
 			"provider.default.apiKey": "sk-provider",
 			"secret://channels/telegram/clawdi_accttelegram/agent-token": "telegram-agent-token",
 			"secret://channels/discord/clawdi_acctdiscord1/agent-token": "discord-agent-token",
-			"secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token": "whatsapp-agent-token",
 		});
 		expect(projected.sourceManifest).toEqual(loaded.manifest);
 		expect(JSON.stringify(projected.sourceManifest)).not.toContain('"channels"');
@@ -5169,10 +5168,10 @@ exit 64
 		).toMatch(/^clawdi_[a-f0-9]{32}$/);
 		expect(
 			projected.secretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token"],
-		).toBe("whatsapp-agent-token");
+		).toBeUndefined();
 		expect(
 			projected.secretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/placeholder-token"],
-		).toMatch(/^clawdi_[a-f0-9]{32}$/);
+		).toBeUndefined();
 		expect(projected.manifest.projection?.channels).toMatchObject({
 			telegram: { enabled: true },
 			discord: { enabled: true },
@@ -5253,18 +5252,12 @@ exit 64
 
 		expect(projected.manifest.projection?.channels).toEqual({});
 		expect(projected.manifest.projection?.channelCredentials).toEqual([]);
-		expect(projected.manifest.egressProfiles?.profiles).toEqual([
-			expect.objectContaining({
-				id: "native-whatsapp-clawdi_000000000000-graph-managed",
-				kind: "http",
-				owner: "clawdi-native-channels",
-			}),
-		]);
+		expect(projected.manifest.egressProfiles?.profiles).toEqual([]);
 		expect(JSON.stringify(projected.manifest)).not.toContain(accountId);
 		expect(JSON.stringify(projected.manifest)).not.toContain("baileys");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-agent-token");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-adv-secret");
-		expect(JSON.stringify(projected.secretValues ?? {})).toContain("wa-agent-token");
+		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-agent-token");
 		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-adv-secret");
 	});
 

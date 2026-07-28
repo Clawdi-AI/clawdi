@@ -208,7 +208,12 @@ export function managedProviderEgressProfiles(
 		const profile = managedProviderEgressProfileForProvider(providerId, provider);
 		if (!profile) continue;
 		const secretRef = normalizeSecretRef(provider.apiKeySecretRef);
-		const matchKey = `${profile.match.scheme}:${profile.match.host}:${secretRef ?? ""}`;
+		const matchKey = [
+			profile.match.scheme,
+			profile.match.host,
+			profile.match.pathPrefix ?? "",
+			secretRef ?? "",
+		].join(":");
 		if (seenMatches.has(matchKey)) continue;
 		seenMatches.add(matchKey);
 		profiles.push(profile);
@@ -258,6 +263,7 @@ function managedProviderEgressProfileForProvider(
 		match: {
 			scheme: parsed.protocol.replace(/:$/, "") as "http" | "https" | "ws" | "wss",
 			host: parsed.host.toLowerCase(),
+			pathPrefix: managedProviderPathPrefix(parsed.pathname),
 			headers: {
 				authorization: {
 					type: "equals",
@@ -281,6 +287,11 @@ function managedProviderEgressProfileForProvider(
 		priority: 80,
 		owner: "provider-projection",
 	};
+}
+
+function managedProviderPathPrefix(pathname: string): string {
+	if (pathname === "/") return pathname;
+	return `${pathname.replace(/\/+$/, "")}/`;
 }
 
 export function normalizeSecretRef(value: string | null | undefined): string | null {

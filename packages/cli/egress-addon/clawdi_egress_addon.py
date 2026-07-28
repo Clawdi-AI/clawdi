@@ -12,7 +12,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote, unquote, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 try:  # pragma: no cover - exercised only under mitmdump.
     from mitmproxy import ctx, http
@@ -114,6 +114,7 @@ class ClawdiEgressAddon:
         self.secret_file_path = Path(secret_file) if secret_file else None
         self.profiles = load_profiles(self.profile_bundle_path)
         self.secrets = load_secrets(self.secret_file_path)
+        validate_profile_secrets(self.profiles, self.secrets)
         self.profile_hosts = profile_host_set(self.profiles)
 
     def should_intercept_sni(self, server_name: str) -> bool:
@@ -203,6 +204,30 @@ def load_secrets(path: Path | None) -> dict[str, str]:
     if not isinstance(raw, dict):
         return {}
     return {str(key): str(value) for key, value in raw.items() if isinstance(value, str)}
+
+
+def validate_profile_secrets(
+    profiles: list[dict[str, Any]], secrets: dict[str, str]
+) -> None:
+    required: set[str] = set()
+    for profile in profiles:
+        collect_secret_refs(profile, required)
+    missing = sorted(ref for ref in required if not secrets.get(ref))
+    if missing:
+        raise ConfigError(f"egress profile secrets are missing: {', '.join(missing)}")
+
+
+def collect_secret_refs(value: Any, refs: set[str]) -> None:
+    if isinstance(value, list):
+        for item in value:
+            collect_secret_refs(item, refs)
+        return
+    if not isinstance(value, dict):
+        return
+    for key, entry in value.items():
+        if isinstance(entry, str) and (key == "secretRef" or key.endswith("SecretRef")):
+            refs.add(entry)
+        collect_secret_refs(entry, refs)
 
 
 def profile_host_set(profiles: list[dict[str, Any]]) -> set[str]:

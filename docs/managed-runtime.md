@@ -715,6 +715,12 @@ programs therefore receive only CA-trust env such as `NODE_EXTRA_CA_CERTS`,
 `REQUESTS_CA_BUNDLE`, and `SSL_CERT_FILE`; sidecar control env and secret-file
 paths stay out of the official runtime process.
 
+Generated managed-provider profiles match the configured origin, base-URL path,
+and public authorization placeholder before replacing the header. The sidecar
+validates every secret reference in enabled profiles at load time and refuses to
+start when material is missing. A channel that is feature-gated off contributes
+neither runtime configuration, egress profiles, nor channel secret material.
+
 This ownership boundary is codified in
 [ADR-0002](adr/0002-runtime-image-is-a-stable-capability-envelope.md).
 
