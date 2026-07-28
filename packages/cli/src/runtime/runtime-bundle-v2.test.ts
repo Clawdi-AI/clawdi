@@ -40,7 +40,7 @@ describe("hosted runtime bundle v2", () => {
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
-			"6a65e1da8ba5c467a1a6d65d1959431b72de7e596e5dbed0caada491e4dad5cd",
+			"cea24fcd93d29700fd4fb18a1d6a953e77cd32fa7324be1bf7a450ee608f1dd1",
 		);
 		expect(projected.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
@@ -94,7 +94,7 @@ describe("hosted runtime bundle v2", () => {
 						"search-proxy": { command: "searchctl", args: ["serve"] },
 					},
 				},
-				skills: { entries: { clawdi: { enabled: true } } },
+				skills: { entries: { clawdi: { enabled: true, version: 1 } } },
 			},
 		});
 		expect(load.manifest.projection?.mcp).toEqual({
@@ -113,7 +113,7 @@ describe("hosted runtime bundle v2", () => {
 			},
 		});
 		expect(load.manifest.projection?.skills).toEqual({
-			entries: { clawdi: { enabled: true } },
+			entries: { clawdi: { enabled: true, version: 1 } },
 		});
 		expect(load.manifest.egressProfiles?.profiles).toContainEqual(
 			expect.objectContaining({
@@ -142,6 +142,72 @@ describe("hosted runtime bundle v2", () => {
 				}),
 			}),
 		);
+	});
+
+	test("normalizes an enabled-only pre-expand Skill entry to the pinned v1 bundle", () => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		const load = normalizeHostedRuntimeBundleV2({
+			...raw,
+			manifest: {
+				...manifest,
+				skills: { entries: { clawdi: { enabled: true } } },
+			},
+		});
+
+		expect(load.manifest.projection?.skills).toEqual({
+			entries: { clawdi: { enabled: true, version: 1 } },
+		});
+	});
+
+	test.each([
+		"latest",
+		"1",
+		true,
+		0,
+		-1,
+		1.5,
+		null,
+	])("rejects invalid hosted Skill version %p", (version) => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					skills: { entries: { clawdi: { enabled: true, version } } },
+				},
+			}),
+		).toThrow();
+	});
+
+	test.each([
+		"source",
+		"variant",
+		"path",
+		"content",
+		"packageSpec",
+	])("rejects hosted Skill entry field %s", (field) => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					skills: {
+						entries: { clawdi: { enabled: true, version: 1, [field]: "forbidden" } },
+					},
+				},
+			}),
+		).toThrow();
 	});
 
 	test("uses distinct public placeholders for each remote MCP server and header", () => {
@@ -396,7 +462,7 @@ describe("hosted runtime bundle v2", () => {
 				...raw,
 				manifest: {
 					...manifest,
-					skills: { entries: { clawdi: { enabled: true } } },
+					skills: { entries: { clawdi: { enabled: true, version: 1 } } },
 					mcp: {
 						servers: { clawdi: { command: " clawdi", args: ["mcp"] } },
 					},
@@ -514,7 +580,7 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe('"bundle-golden"');
 		expect(loaded.sourceRevision).toBe(
-			"6a65e1da8ba5c467a1a6d65d1959431b72de7e596e5dbed0caada491e4dad5cd",
+			"cea24fcd93d29700fd4fb18a1d6a953e77cd32fa7324be1bf7a450ee608f1dd1",
 		);
 		expect(loaded.channelBindings).toHaveLength(1);
 	});

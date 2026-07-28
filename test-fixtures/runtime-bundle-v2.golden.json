@@ -82,6 +82,14 @@
 			}
 		},
 		"schemaVersion": "clawdi.hosted-runtime.manifest.v1",
+		"skills": {
+			"entries": {
+				"clawdi": {
+					"enabled": true,
+					"version": 1
+				}
+			}
+		},
 		"system": {
 			"openclawControlUiAllowedOrigins": ["https://agent.example.test"],
 			"openclawGatewayAuth": {
@@ -120,5 +128,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "6a65e1da8ba5c467a1a6d65d1959431b72de7e596e5dbed0caada491e4dad5cd"
+	"sourceRevision": "cea24fcd93d29700fd4fb18a1d6a953e77cd32fa7324be1bf7a450ee608f1dd1"
 }

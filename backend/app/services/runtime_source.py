@@ -33,9 +33,9 @@ from app.schemas.runtime import (
     HostedRuntimeLocale,
     HostedRuntimeName,
     HostedRuntimeRecovery,
-    HostedRuntimeSkills,
     HostedRuntimeSystem,
     HostedRuntimeTools,
+    PersistedHostedRuntimeSkills,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_desired_state,
     validate_hosted_runtime_mcp_desired_state,
@@ -226,7 +226,13 @@ def render_runtime_source(
     try:
         mcp = validate_hosted_runtime_mcp_desired_state(state.mcp)
         skills = (
-            HostedRuntimeSkills.model_validate(state.skills) if state.skills is not None else None
+            PersistedHostedRuntimeSkills.model_validate(state.skills).model_dump(
+                exclude_none=True,
+                exclude_unset=True,
+                mode="json",
+            )
+            if state.skills is not None
+            else None
         )
     except (ValidationError, ValueError) as exc:
         raise RuntimeSourceError("Hosted runtime MCP or skills state is invalid") from exc
@@ -398,7 +404,7 @@ def render_runtime_source(
     if mcp:
         manifest["mcp"] = mcp
     if skills is not None:
-        manifest["skills"] = skills.model_dump(mode="json")
+        manifest["skills"] = skills
     if tool_projection:
         manifest["tools"] = tool_projection
     manifest["terminalTooling"] = terminal_tooling

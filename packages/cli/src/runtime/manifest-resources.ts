@@ -80,6 +80,9 @@ export const hostedMcpDesiredStateSchema = z
 export const hostedSkillEntryDesiredStateSchema = z
 	.object({
 		enabled: z.boolean(),
+		// Expand-phase compatibility for enabled-only manifests is pinned to the
+		// first immutable bundle. It must never resolve relative to the CLI package.
+		version: z.number().int().positive().default(1),
 	})
 	.strict();
 

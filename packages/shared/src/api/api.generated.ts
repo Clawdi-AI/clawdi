@@ -4992,6 +4992,8 @@ export interface components {
         HostedRuntimeSkillEntry: {
             /** Enabled */
             enabled: boolean;
+            /** Version */
+            version: number;
         };
         /** HostedRuntimeSkills */
         HostedRuntimeSkills: {

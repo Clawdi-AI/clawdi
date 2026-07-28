@@ -540,7 +540,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         recovery={"cacheManifest": True, "allowOfflineBoot": True},
         runtimes=_test_runtimes(),
         mcp={"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
-        skills={"entries": {"clawdi": {"enabled": True}}},
+        skills={"entries": {"clawdi": {"enabled": True, "version": 1}}},
         tools={**CANONICAL_CODEX_TOOLS, "catalog": "clawdi-default"},
     )
     db_session.add(state)

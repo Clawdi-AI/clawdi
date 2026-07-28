@@ -353,7 +353,7 @@ The CLI normalizes these wire contracts into the desired-state shape:
   and `environmentId` fields and rejects unknown fields instead of accepting
   compatibility payloads. `system`, `controlPlane`, `clawdiCli`, `runtimes`,
   `providers`, `liveSync`, and `recovery` are required. `egressProfiles`, `mcp`,
-  and `tools` remain explicit optional projections.
+  `skills`, and `tools` remain explicit optional projections.
 - `clawdi.runtimeDesiredState.v1` is the normalized internal convergence shape
   consumed by `runtime init`.
 - `clawdi.hosted-runtime.bundle.v2` wraps an inner
@@ -388,7 +388,7 @@ Normalization maps hosted fields into the internal shape:
 | `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids`; `{}` in unmanaged mode |
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with one Clawdi-managed provider metadata and secret reference, independent of runtime providers |
 | `mcp.servers` | Generic named stdio or remote HTTP server declarations; an MCP object without `servers` remains the released opaque pass-through shape |
-| `skills.entries` | Generic named bundled-skill enablement; the CLI registry owns bytes and runtime target paths |
+| `skills.entries.<id>.{enabled,version}` | Generic bundled-Skill intent; the entry key is the Skill id and `version` is a positive integer |
 | `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
@@ -475,6 +475,25 @@ entry point. Remote fetches cannot use that fixture schema. Generic
 `clawdi.runtimeDesiredState.v1` manifests retain their existing floating package
 support; exact Hosted updates do not call `npm view` and can move to either a
 higher or lower exact version.
+
+Hosted bundled Skills have separate version authority. The trusted CLI catalog
+maps `(id, version)` to an immutable directory and SHA-256 digest;
+`clawdiCli.packageSpec` may locate installed CLI assets but never selects a
+Skill version. The current `clawdi` entry is version `1` at
+`skills/hosted-versions/1/clawdi/SKILL.md`, so the Skill file's direct parent
+still matches its frontmatter name. Public entries contain exactly `enabled`
+and `version`; source paths, variants, content, digests, and package specs are
+not manifest fields. Unknown ids or versions, unmanaged targets, source digest
+mismatches, and unsupported source file types fail closed. An exact managed
+marker plus an actual target-content digest match is a filesystem no-op;
+version changes, drift, and legacy ownership markers use staged replacement.
+
+Managed-bundle integrity does not reuse `computeSkillFolderHash`. That function
+is an established client/server sync protocol with upload exclusions, ignores
+symlinks during its scan, and retains its historical unframed `path + content`
+hash. The managed catalog instead uses a private, length-framed full-file scan,
+rejects source symlinks, and treats target symlinks as drift without following
+them. The public sync hash remains unchanged for old and new clients.
 
 Manifest `generation` is part of the remote manifest ETag. The CLI applies any
 non-304 manifest without monotonic generation gating, while treating generation
@@ -944,6 +963,20 @@ CLI version that understands the new fields, then advance existing deployments
 through ordinary higher-generation runtime-state reconciliation. Database
 migrations backfill stored authority where required; operators do not patch
 individual production rows to advance deployments.
+
+Bundled-Skill versioning follows expand, migrate, contract ordering. During
+expand, the CLI accepts the prior enabled-only Skill entry and canonicalizes
+only that missing value to pinned integer `1`; explicit versions must be
+positive integers, and no value resolves as a moving version. Runtime-state
+writers require and persist explicit `version: 1` for new desired state.
+Existing enabled-only rows continue to emit their stored enabled-only payload
+at their existing generation. A controlled backfill or normal reconcile may
+add explicit v1 only with a higher generation; the compare-and-swap contract
+rejects the same material change at an equal generation. Future Skill upgrades
+likewise require an explicit desired-state write and new generation, so a CLI
+upgrade cannot change Skill bytes implicitly. After every consumer is upgraded
+and stored rows are migrated, a later contract release removes the CLI's
+missing-version parser branch and requires the field at read time.
 
 Committed manifest changes emit a signal-only `runtime_manifest_changed` event
 through `/v1/sync/events`. The payload contains only `type` and

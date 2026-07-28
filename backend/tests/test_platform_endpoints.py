@@ -130,7 +130,7 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
         },
         "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
         "mcp": {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
-        "skills": {"entries": {"clawdi": {"enabled": True}}},
+        "skills": {"entries": {"clawdi": {"enabled": True, "version": 1}}},
         "tools": _TEST_TOOLS,
     }
 
@@ -312,7 +312,7 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     runtime_state = await db_session.get(HostedRuntimeState, agent_id)
     assert runtime_state is not None
     assert runtime_state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
-    assert runtime_state.skills == {"entries": {"clawdi": {"enabled": True}}}
+    assert runtime_state.skills == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
     assert runtime_state.tools == _TEST_TOOLS
 
     minted = await platform_client.post(

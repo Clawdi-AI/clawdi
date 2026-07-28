@@ -671,6 +671,7 @@ def validate_hosted_runtime_mcp_desired_state(
 
 class HostedRuntimeSkillEntry(_StrictHostedWireModel):
     enabled: bool
+    version: int = Field(ge=1)
 
 
 class HostedRuntimeSkills(_StrictHostedWireModel):
@@ -681,6 +682,26 @@ class HostedRuntimeSkills(_StrictHostedWireModel):
     def _validate_entry_names(
         cls, value: dict[str, HostedRuntimeSkillEntry]
     ) -> dict[str, HostedRuntimeSkillEntry]:
+        if any(_MANAGED_ENTRY_NAME_PATTERN.fullmatch(name) is None for name in value):
+            raise ValueError("skill entry names must be canonical")
+        return value
+
+
+class PersistedHostedRuntimeSkillEntry(_StrictHostedWireModel):
+    """Expand-phase reader for already-persisted enabled-only Skill intent."""
+
+    enabled: bool
+    version: int | None = Field(default=None, ge=1)
+
+
+class PersistedHostedRuntimeSkills(_StrictHostedWireModel):
+    entries: dict[str, PersistedHostedRuntimeSkillEntry]
+
+    @field_validator("entries")
+    @classmethod
+    def _validate_entry_names(
+        cls, value: dict[str, PersistedHostedRuntimeSkillEntry]
+    ) -> dict[str, PersistedHostedRuntimeSkillEntry]:
         if any(_MANAGED_ENTRY_NAME_PATTERN.fullmatch(name) is None for name in value):
             raise ValueError("skill entry names must be canonical")
         return value
