@@ -13,6 +13,13 @@ const MARKER_PARAMS = [
 	"mockCheckout",
 ] as const;
 
+type CheckoutReturnAttempt = {
+	marker: string;
+	pathname: string;
+	completion: Promise<unknown>;
+	settled: boolean;
+};
+
 export function checkoutReturnWasCanceled(searchStr: string): boolean {
 	return new URLSearchParams(searchStr).get("checkout") === "cancel";
 }
@@ -48,23 +55,46 @@ export function useCheckoutReturnHandler({
 	const pathname = useLocation({ select: (location) => location.pathname });
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const marker = checkoutReturnMarker(searchStr);
-	const handledMarkerRef = useRef<string | null>(null);
+	// Reuse an in-flight refresh across React's development effect replay, but
+	// never reacquire it after the marker or owning pathname has changed.
+	const attemptRef = useRef<CheckoutReturnAttempt | null>(null);
 	const copyRef = useRef(onCancelCopy);
 	const navigateRef = useRef(onNavigate);
 	copyRef.current = onCancelCopy;
 	navigateRef.current = onNavigate;
 
 	useEffect(() => {
-		if (!marker || handledMarkerRef.current === marker) return;
-		handledMarkerRef.current = marker;
-		if (checkoutReturnWasCanceled(marker)) {
-			toast.message("Checkout canceled", { description: copyRef.current });
+		const currentAttempt = attemptRef.current;
+		if (!marker) {
+			if (currentAttempt) currentAttempt.settled = true;
 			return;
 		}
+		let attempt: CheckoutReturnAttempt;
+		if (currentAttempt?.marker === marker) {
+			if (currentAttempt.pathname !== pathname) {
+				currentAttempt.settled = true;
+				return;
+			}
+			if (currentAttempt.settled) return;
+			attempt = currentAttempt;
+		} else {
+			attempt = {
+				marker,
+				pathname,
+				completion: refreshCheckoutReturn(),
+				settled: false,
+			};
+			attemptRef.current = attempt;
+		}
 		let ownsReturnLocation = true;
-		void refreshCheckoutReturn()
+		void attempt.completion
 			.then(() => {
-				if (!ownsReturnLocation) return;
+				if (!ownsReturnLocation || attemptRef.current !== attempt || attempt.settled) return;
+				attempt.settled = true;
+				if (checkoutReturnWasCanceled(marker)) {
+					toast.message("Checkout canceled", { description: copyRef.current });
+					return;
+				}
 				const deploymentId = checkoutReturnDeploymentId(marker);
 				if (deploymentId && navigateRef.current(deploymentId) !== false) return;
 				toast.message("Checkout status refreshed", {
@@ -72,7 +102,8 @@ export function useCheckoutReturnHandler({
 				});
 			})
 			.catch(() => {
-				if (!ownsReturnLocation) return;
+				if (!ownsReturnLocation || attemptRef.current !== attempt || attempt.settled) return;
+				attempt.settled = true;
 				toast.error("Couldn’t refresh checkout status", {
 					description: "Refresh the page to check your agents, subscription, and wallet.",
 				});

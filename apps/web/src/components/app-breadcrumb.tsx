@@ -10,7 +10,14 @@ import {
 	BreadcrumbPage,
 	BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { agentSectionLabelFromSegment } from "@/lib/agent-routes";
+import {
+	type AgentRouteSearch,
+	agentDeploymentRouteQuery,
+	agentSectionLabelFromSegment,
+	agentSectionLink,
+	type ParsedAgentPathname,
+	parseAgentPathname,
+} from "@/lib/agent-routes";
 import { safeDecodeURIComponent } from "@/lib/url";
 
 /**
@@ -60,9 +67,23 @@ function segmentLabel(
 	return SEGMENT_LABELS[seg] ?? fallbackLabel(seg);
 }
 
+function agentBreadcrumbLink(
+	route: ParsedAgentPathname | null,
+	index: number,
+	search: AgentRouteSearch,
+) {
+	if (!route) return null;
+	const deploymentSearch = agentDeploymentRouteQuery(search);
+	if (index === 1) return agentSectionLink(route.agentId, "overview", deploymentSearch);
+	if (index === 2) return agentSectionLink(route.agentId, route.section, deploymentSearch);
+	return null;
+}
+
 export function AppBreadcrumb() {
 	const pathname = useLocation({ select: (location) => location.pathname });
+	const routeSearch = useLocation({ select: (location) => location.search });
 	const segments = pathname.split("/").filter(Boolean);
+	const agentRoute = parseAgentPathname(pathname);
 	const overrideTitle = useBreadcrumbTitle();
 	const segmentTitles = useBreadcrumbSegmentTitles();
 
@@ -97,6 +118,7 @@ export function AppBreadcrumb() {
 						const href = `/${segments.slice(0, i + 1).join("/")}`;
 						const isLast = i === segments.length - 1;
 						const label = segmentLabel(segments, i, href, overrideTitle, segmentTitles);
+						const agentLink = agentBreadcrumbLink(agentRoute, i, routeSearch);
 						return (
 							<span key={href} className="contents">
 								<BreadcrumbItem>
@@ -107,7 +129,11 @@ export function AppBreadcrumb() {
 									) : (
 										// render lets us pass our own router-aware link while
 										// preserving shadcn's breadcrumb anchor semantics.
-										<BreadcrumbLink render={<Link to={href} />}>{label}</BreadcrumbLink>
+										<BreadcrumbLink
+											render={agentLink ? <Link {...agentLink} /> : <Link to={href} />}
+										>
+											{label}
+										</BreadcrumbLink>
 									)}
 								</BreadcrumbItem>
 								{!isLast ? <BreadcrumbSeparator /> : null}

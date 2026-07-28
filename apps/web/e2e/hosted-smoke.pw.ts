@@ -924,11 +924,14 @@ type HostedApiStubOptions = {
 	deploymentRequestReads?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
+	deploymentsResponses?: StubResponse[];
 	fixPaymentRequests?: string[];
 	ledgerResponseForRequest?: (limit: number) => unknown;
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
 	legacyAgentEnvironmentIds?: readonly string[];
+	linkAgentRequests?: string[];
+	linkAgentResponse?: unknown;
 	managedModels?: typeof managedModelCatalog;
 	planRequests?: string[];
 	mutationOrder?: string[];
@@ -1085,12 +1088,14 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			options.deploymentListRequests?.push(p);
-			if (options.deploymentsResponse) {
-				if (options.deploymentsResponse.gate) await options.deploymentsResponse.gate;
-				if (options.deploymentsResponse.delayMs) {
-					await new Promise((resolve) => setTimeout(resolve, options.deploymentsResponse?.delayMs));
+			const deploymentResponse =
+				options.deploymentsResponses?.shift() ?? options.deploymentsResponse;
+			if (deploymentResponse) {
+				if (deploymentResponse.gate) await deploymentResponse.gate;
+				if (deploymentResponse.delayMs) {
+					await new Promise((resolve) => setTimeout(resolve, deploymentResponse.delayMs));
 				}
-				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
+				return fulfillJson(r, deploymentResponse.body, deploymentResponse.status);
 			}
 			return fulfillJson(
 				r,
@@ -1548,6 +1553,10 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.endsWith("/agent-links") && r.request().method() === "GET") {
 			return fulfillJson(r, options.channelAgentLinks ?? []);
+		}
+		if (p.endsWith("/agent-links") && r.request().method() === "POST") {
+			options.linkAgentRequests?.push(r.request().postData() ?? "");
+			return fulfillJson(r, options.linkAgentResponse ?? {}, 201);
 		}
 		if (p.endsWith("/token") && r.request().method() === "POST") {
 			options.rotateAgentTokenRequests?.push(p);
@@ -2056,6 +2065,14 @@ test("agent detail navigation preserves deployment identity without stale route 
 	await expect
 		.poll(() => new URL(page.url()).pathname)
 		.toBe(`/agents/${railHostedEnvironmentId}/sessions/${routingSession.id}`);
+	await page
+		.getByRole("navigation", { name: "breadcrumb" })
+		.locator('a[data-slot="breadcrumb-link"]')
+		.filter({ hasText: /^Sessions$/ })
+		.click();
+	await expect(page).toHaveURL(new RegExp(`/agents/${railHostedEnvironmentId}/sessions(?:\\?|$)`));
+	expect(new URL(page.url()).searchParams.get("source")).toBe("on-clawdi");
+	expect(new URL(page.url()).searchParams.get("d")).toBe(railHostedDeployment.id);
 
 	await page.goto(`/agents/${railHostedEnvironmentId}/skills?${routeSearch}`);
 	await page.getByRole("link", { name: `Open ${routingSkill.name}` }).click();
@@ -2065,6 +2082,52 @@ test("agent detail navigation preserves deployment identity without stale route 
 	await expect
 		.poll(() => new URL(page.url()).pathname)
 		.toBe(`/agents/${railHostedEnvironmentId}/skills/${routingSkill.skill_key}`);
+	await page
+		.getByRole("navigation", { name: "breadcrumb" })
+		.locator('a[data-slot="breadcrumb-link"]')
+		.filter({ hasText: /^Skills$/ })
+		.click();
+	await expect(page).toHaveURL(new RegExp(`/agents/${railHostedEnvironmentId}/skills(?:\\?|$)`));
+	expect(new URL(page.url()).searchParams.get("source")).toBe("on-clawdi");
+	expect(new URL(page.url()).searchParams.get("d")).toBe(railHostedDeployment.id);
+});
+
+test("stopped projection-absent detail breadcrumbs retain their deployment owner", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		deployments: [stoppedProjectionGoneDeployment],
+		sessionsPage: { ...emptyPage, items: [routingSession], total: 1 },
+		skillsPage: { ...emptyPage, items: [routingSkill], total: 1 },
+	});
+	const agentId = stoppedProjectionGoneDeployment.id;
+	const routeSearch = `source=on-clawdi&d=${stoppedProjectionGoneDeployment.id}`;
+	const details = [
+		{
+			path: `/agents/${agentId}/sessions/${routingSession.id}?${routeSearch}`,
+			section: "sessions",
+			label: "Sessions",
+		},
+		{
+			path: `/agents/${agentId}/skills/${routingSkill.skill_key}?${routeSearch}&project=${routingSkill.project_id}`,
+			section: "skills",
+			label: "Skills",
+		},
+	] as const;
+
+	for (const detail of details) {
+		await page.goto(detail.path);
+		await page
+			.getByRole("navigation", { name: "breadcrumb" })
+			.locator('a[data-slot="breadcrumb-link"]')
+			.filter({ hasText: new RegExp(`^${detail.label}$`) })
+			.click();
+		await expect(page).toHaveURL(new RegExp(`/agents/${agentId}/${detail.section}(?:\\?|$)`));
+		const destination = new URL(page.url());
+		expect(destination.searchParams.get("source")).toBe("on-clawdi");
+		expect(destination.searchParams.get("d")).toBe(stoppedProjectionGoneDeployment.id);
+		await expect(page.getByText("Stopped", { exact: true }).first()).toBeVisible();
+	}
 });
 
 test("agent URL compatibility, case identity, and malformed components fail safely", async ({
@@ -2089,9 +2152,33 @@ test("agent URL compatibility, case identity, and malformed components fail safe
 	await page.goto("/agents/%25ZZ");
 	await expect(page.getByTestId("app-sidebar")).toBeVisible();
 	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toBeVisible();
-	await page.goto("/vault/%25ZZ");
-	await expect(page.getByTestId("app-sidebar")).toBeVisible();
-	await expect(page.getByText("Vault not found", { exact: true })).toBeVisible();
+	const pushMalformedPathname = (pathname: string) =>
+		page.evaluate((nextPathname) => {
+			const currentState = window.history.state;
+			const currentIndex =
+				typeof currentState === "object" &&
+				currentState !== null &&
+				typeof Reflect.get(currentState, "__TSR_index") === "number"
+					? Reflect.get(currentState, "__TSR_index")
+					: 0;
+			const key = crypto.randomUUID();
+			window.history.pushState(
+				{
+					...(typeof currentState === "object" && currentState !== null ? currentState : {}),
+					key,
+					__TSR_key: key,
+					__TSR_index: currentIndex + 1,
+				},
+				"",
+				nextPathname,
+			);
+		}, pathname);
+	await pushMalformedPathname("/agents/%E0%A4");
+	expect(await page.evaluate(() => window.location.pathname)).toBe("/agents/%E0%A4");
+	await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
+	await pushMalformedPathname("/vault/%E0%A4");
+	expect(await page.evaluate(() => window.location.pathname)).toBe("/vault/%E0%A4");
+	await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
 	expect(errors, `malformed route errors: ${errors.join(" | ")}`).toEqual([]);
 });
 
@@ -4096,14 +4183,18 @@ test("terminal fallback starts a new subscription against the fallback deploymen
 
 test("included Basic checkout abandonment preserves the current plan", async ({ page }) => {
 	const checkoutRequests: string[] = [];
+	const deploymentListRequests: string[] = [];
 	await stubHostedApi(page, {
 		checkoutRequests,
+		deploymentListRequests,
 		deployments: [includedBasicDeployment],
 		plans: [basicPlan, performancePlan],
 	});
-	await gotoHostedAgentSettings(page, "hdep_included", "Basic", "?checkout=cancel");
+	await page.goto(`/agents/${includedBasicDeployment.id}/settings?checkout=cancel`);
 	const errors = collectBrowserErrors(page);
 
+	await expect(page.getByText("Basic compute", { exact: true })).toBeVisible();
+	await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
 	await expect(page.getByText("Checkout canceled", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("You were not charged. Your compute plan is unchanged.", { exact: true }),
@@ -4112,6 +4203,39 @@ test("included Basic checkout abandonment preserves the current plan", async ({ 
 	await expect(page.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
 	expect(checkoutRequests).toEqual([]);
 	expect(errors, `included Basic checkout abandonment: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("checkout cancellation completion is silent after route ownership is lost", async ({
+	page,
+}) => {
+	const deploymentListRequests: string[] = [];
+	const refreshGate = deferred();
+	const deploymentBody = [readDeploymentFixture(includedBasicDeployment)];
+	await stubHostedApi(page, {
+		deploymentListRequests,
+		deployments: [includedBasicDeployment],
+		deploymentsResponses: [
+			{ status: 200, body: deploymentBody },
+			{ status: 200, body: deploymentBody, gate: refreshGate.promise },
+		],
+		plans: [basicPlan, performancePlan],
+	});
+
+	await page.goto(
+		`/agents/${includedBasicDeployment.id}/settings?checkout=cancel&deployment_id=${includedBasicDeployment.id}`,
+		{ waitUntil: "domcontentloaded" },
+	);
+	await expect(page.getByText("Basic compute", { exact: true })).toBeVisible();
+	await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
+	await page.locator('a[href="/agents"]').first().click();
+	await expect(page).toHaveURL(/\/agents\/?$/);
+
+	refreshGate.resolve();
+	await page.waitForLoadState("networkidle");
+	await expect(page).toHaveURL(/\/agents\/?$/);
+	await expect(page.getByText("Checkout canceled", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Checkout status refreshed", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Couldn’t refresh checkout status", { exact: true })).toHaveCount(0);
 });
 
 test("paid Basic cancellation stays conditional with the included slot vacant or occupied", async ({
@@ -4644,12 +4768,25 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 });
 
 test("dirty Settings blocks Router push, Back, Forward, and document exit", async ({ page }) => {
+	await page.addInitScript(() => {
+		const calls: number[] = [];
+		const nativeGo = window.history.go.bind(window.history);
+		Object.defineProperty(window, "__clawdiHistoryGoDeltas", { value: calls });
+		window.history.go = (delta?: number) => {
+			calls.push(delta ?? 0);
+			nativeGo(delta);
+		};
+	});
 	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
 	const sidebar = page.getByTestId("app-sidebar");
 	await page.goto("/agents");
 	await sidebar.locator('a[href="/channels"]').first().click();
 	await expect(page).toHaveURL(/\/channels\/?$/);
 	await sidebar.locator('a[href="/projects"]').first().click();
+	await expect(page).toHaveURL(/\/projects\/?$/);
+	await sidebar.locator('a[href="/vault"]').first().click();
+	await expect(page).toHaveURL(/\/vault\/?$/);
+	await page.goBack();
 	await expect(page).toHaveURL(/\/projects\/?$/);
 	await page.goBack();
 	await expect(page).toHaveURL(/\/channels\/?$/);
@@ -4672,6 +4809,17 @@ test("dirty Settings blocks Router push, Back, Forward, and document exit", asyn
 	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
 	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
 	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
+	expect(await page.evaluate(() => Reflect.get(window, "__clawdiHistoryGoDeltas"))).toEqual([-1]);
+
+	await page.evaluate(() => window.history.go(2));
+	blocker = page.getByRole("alertdialog");
+	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
+	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
+	expect(await page.evaluate(() => Reflect.get(window, "__clawdiHistoryGoDeltas"))).toEqual([
+		-1, 2, -2,
+	]);
 
 	await page.evaluate(() => window.history.back());
 	blocker = page.getByRole("alertdialog");
@@ -4679,6 +4827,9 @@ test("dirty Settings blocks Router push, Back, Forward, and document exit", asyn
 	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
 	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
 	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
+	expect(await page.evaluate(() => Reflect.get(window, "__clawdiHistoryGoDeltas"))).toEqual([
+		-1, 2, -2, 1,
+	]);
 
 	await page
 		.getByTestId("app-sidebar")
@@ -4689,6 +4840,90 @@ test("dirty Settings blocks Router push, Back, Forward, and document exit", asyn
 	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
 	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
 	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
+});
+
+test("dirty Settings serializes rapid POP attempts and preserves indexed history", async ({
+	page,
+}) => {
+	await page.addInitScript(() => {
+		const goDeltas: number[] = [];
+		const counters = { replaceState: 0 };
+		const nativeGo = window.history.go.bind(window.history);
+		const nativeReplaceState = window.history.replaceState.bind(window.history);
+		Reflect.set(window, "__rapidPopGoDeltas", goDeltas);
+		Reflect.set(window, "__rapidPopCounters", counters);
+		window.history.go = (delta?: number) => {
+			goDeltas.push(delta ?? 0);
+			nativeGo(delta);
+		};
+		window.history.replaceState = (state, title, url) => {
+			counters.replaceState += 1;
+			nativeReplaceState(state, title, url);
+		};
+	});
+	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
+	const identity = () =>
+		page.evaluate(() => ({
+			href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+			index: Reflect.get(window.history.state, "__TSR_index"),
+			key: Reflect.get(window.history.state, "__TSR_key"),
+		}));
+	const historyLength = () => page.evaluate(() => window.history.length);
+	const replaceCalls = () =>
+		page.evaluate(() => {
+			const counters = Reflect.get(window, "__rapidPopCounters");
+			return typeof counters === "object" && counters !== null
+				? Reflect.get(counters, "replaceState")
+				: null;
+		});
+
+	await page.goto("/agents");
+	const sidebar = page.getByTestId("app-sidebar");
+	await sidebar.locator('a[href="/channels"]').first().click();
+	await expect(page).toHaveURL(/\/channels\/?$/);
+	const channelsEntry = await identity();
+	await sidebar.locator('a[href="/projects"]').first().click();
+	await expect(page).toHaveURL(/\/projects\/?$/);
+	const projectsEntry = await identity();
+	await sidebar.locator('a[href="/vault"]').first().click();
+	await expect(page).toHaveURL(/\/vault\/?$/);
+
+	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	const settingsDialog = page.getByTestId("settings-dialog");
+	await settingsDialog.getByRole("button", { name: /^Wallet/ }).click();
+	const autoReload = settingsDialog
+		.locator('[data-slot="card"]')
+		.filter({ hasText: "Auto-reload" });
+	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	const origin = await identity();
+	const originLength = await historyLength();
+	const replaceCallsAtOrigin = await replaceCalls();
+
+	await page.evaluate(() => window.history.back());
+	const blocker = page.getByRole("alertdialog");
+	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
+	await page.evaluate(() => window.history.back());
+	await expect.poll(() => page.evaluate(() => window.location.pathname)).toBe("/channels");
+	await expect(page.getByRole("alertdialog")).toHaveCount(1);
+	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
+
+	await expect.poll(identity).toEqual(origin);
+	expect(await historyLength()).toBe(originLength);
+	expect(await replaceCalls()).toBe(replaceCallsAtOrigin);
+	expect(await page.evaluate(() => Reflect.get(window, "__rapidPopGoDeltas"))).toEqual([2]);
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+
+	await autoReload.getByLabel("When balance is below (USD)").fill("5.00");
+	await expect(autoReload.getByText("All changes saved", { exact: true })).toBeVisible();
+	await page.evaluate(() => window.history.back());
+	await expect.poll(identity).toEqual(projectsEntry);
+	await page.evaluate(() => window.history.back());
+	await expect.poll(identity).toEqual(channelsEntry);
+	await page.evaluate(() => window.history.forward());
+	await expect.poll(identity).toEqual(projectsEntry);
+	await page.evaluate(() => window.history.forward());
+	await expect.poll(identity).toEqual(origin);
 });
 
 test("dirty Settings blocks asynchronous Router replace canonicalization", async ({ page }) => {
@@ -5195,6 +5430,56 @@ test("channel connect updates its auto-linked agent page without reload", async 
 		provider_token: "123456:browser-test-token",
 	});
 	expect(errors, `channel connect convergence: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("Finish channel setup uses the typed agent route and preserves deployment search", async ({
+	page,
+}) => {
+	const channelId = "11111111-1111-4111-8111-111111111111";
+	const linkId = "22222222-2222-4222-8222-222222222222";
+	const linkAgentRequests: string[] = [];
+	const channelAccount = {
+		id: channelId,
+		provider: "telegram",
+		name: "Browser Telegram",
+		status: "active",
+		visibility: "private",
+		has_provider_token: true,
+		webhook_url: "https://cloud.example.test/channels/browser",
+		created_at: "2026-07-27T12:00:00Z",
+	};
+	await stubHostedApi(page, {
+		channelAccount,
+		channelAccounts: [channelAccount],
+		cloudAgents: [railHostedCloudAgent],
+		deployments: [railHostedDeployment],
+		linkAgentRequests,
+		linkAgentResponse: {
+			id: linkId,
+			account_id: channelId,
+			agent_id: railHostedEnvironmentId,
+			status: "active",
+			created_at: "2026-07-27T12:00:00Z",
+			agent_token: "one-time-finish-link-token",
+		},
+	});
+	await page.goto(`/channels/${channelId}?source=on-clawdi&d=${railHostedDeployment.id}`);
+	await page.getByRole("button", { name: "Link an agent", exact: true }).click();
+	const dialog = page.getByRole("dialog");
+	await dialog.getByRole("combobox").click();
+	await page.getByRole("option", { name: /Rail Cloud/ }).click();
+	await dialog.getByRole("button", { name: "Link agent", exact: true }).click();
+	await expect.poll(() => linkAgentRequests.length).toBe(1);
+	await dialog.getByRole("button", { name: "Finish channel setup", exact: true }).click();
+
+	await expect(page).toHaveURL(
+		new RegExp(`/agents/${railHostedEnvironmentId}/channel-links(?:\\?|$)`),
+	);
+	const destination = new URL(page.url());
+	expect(destination.searchParams.get("source")).toBe("on-clawdi");
+	expect(destination.searchParams.get("d")).toBe(railHostedDeployment.id);
+	await expect(page.getByText("Page not found", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("No channels linked", { exact: true })).toBeVisible();
 });
 
 test("rotated channel token blocks silent loss and explains recovery", async ({

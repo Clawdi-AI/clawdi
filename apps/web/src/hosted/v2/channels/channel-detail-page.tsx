@@ -587,6 +587,8 @@ function useRotatedTokenLifecycle(accountId: string) {
 		tokenAtRiskRef.current = false;
 		for (const controller of rotationControllersRef.current.values()) controller.abort();
 		rotationControllersRef.current.clear();
+		rotatingLinksRef.current.clear();
+		setRotatingLinks(new Set());
 		setRotated((prev) =>
 			Object.fromEntries(Object.keys(prev).map((linkId) => [linkId, { status: "unrecoverable" }])),
 		);

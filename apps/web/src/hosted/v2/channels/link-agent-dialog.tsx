@@ -1,7 +1,7 @@
 "use client";
 
 import type { components } from "@clawdi/shared/api";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { CircleCheck, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -49,7 +49,7 @@ import {
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
-import { agentSectionHref } from "@/lib/agent-routes";
+import { agentDeploymentRouteQuery, agentSectionLink } from "@/lib/agent-routes";
 
 type Environment = components["schemas"]["AgentResponse"];
 
@@ -75,6 +75,7 @@ export function LinkAgentDialog({
 	const link = useLinkAgent(accountId);
 	const createWhatsappCredential = useCreateWhatsappTenantCred(accountId);
 	const ownership = useAgentOwnership();
+	const routeSearch = useSearch({ from: "/_protected/_dashboard" });
 	// Empty string is the "no selection" sentinel: keeps the Select controlled
 	// (never flips undefined↔string, which warns), and reads as falsy so submit
 	// stays gated. Radix renders the placeholder for value="".
@@ -285,7 +286,15 @@ export function LinkAgentDialog({
 								Close
 							</Button>
 							<Button
-								render={<Link to={agentSectionHref(agentId, "channels")} />}
+								render={
+									<Link
+										{...agentSectionLink(
+											agentId,
+											"channels",
+											agentDeploymentRouteQuery(routeSearch),
+										)}
+									/>
+								}
 								nativeButton={false}
 							>
 								Finish channel setup
