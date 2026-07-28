@@ -31,7 +31,6 @@ import {
 	ledgerEmptyStateCopy,
 	ledgerOperationLabel,
 } from "@/hosted/billing/wallet/ledger-table.logic";
-import { safeExternalNavigationUrl } from "@/lib/external-navigation";
 import { cn, relativeTime } from "@/lib/utils";
 
 const STATUS_LABELS: Record<WalletLedgerStatus, string> = {
@@ -74,11 +73,10 @@ function ledgerEntryKey(entry: WalletLedgerEntry): string {
 }
 
 function ReceiptLink({ entry }: { entry: WalletLedgerEntry }) {
-	const receiptUrl = safeExternalNavigationUrl(entry.receipt_url);
-	if (!receiptUrl) return null;
+	if (!entry.receipt_url) return null;
 	return (
 		<Button
-			render={<a href={receiptUrl} target="_blank" rel="noopener noreferrer" />}
+			render={<a href={entry.receipt_url} target="_blank" rel="noopener noreferrer" />}
 			nativeButton={false}
 			variant="link"
 			size="xs"

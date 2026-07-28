@@ -1,6 +1,6 @@
 "use client";
 
-import { Link } from "@tanstack/react-router";
+import { Link, useLocation } from "@tanstack/react-router";
 import { Check, Cpu, Rocket, Sparkles, WalletCards, Zap } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +28,7 @@ import {
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { TOPUP_AMOUNT_RANGE_LABEL } from "@/hosted/billing/wallet/wallet-constants";
-import { settingsLink } from "@/lib/settings-routes";
+import { settingsQueryHref } from "@/lib/settings-routes";
 
 function partitionPlans(plans: Plan[]): { basic?: Plan; performance?: Plan } {
 	return {
@@ -62,6 +62,8 @@ export function PlanComparison({
 	onTermChange?: (term: number) => void;
 	canCreateCloudAgents?: boolean;
 } = {}) {
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const searchParams = new URLSearchParams(searchStr);
 	const plansQuery = usePlans();
 	const [internalTerm, setInternalTerm] = useState(1);
 	const term = termProp ?? internalTerm;
@@ -279,7 +281,7 @@ export function PlanComparison({
 					</CardContent>
 					<CardFooter>
 						<Button
-							render={<Link {...settingsLink("billing-wallet")} />}
+							render={<Link to={settingsQueryHref("billing-wallet", searchParams)} />}
 							nativeButton={false}
 							className="w-full"
 							variant="outline"

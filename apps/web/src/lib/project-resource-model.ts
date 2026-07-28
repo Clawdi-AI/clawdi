@@ -1,5 +1,4 @@
 import type { DashboardStats } from "@/lib/api-schemas";
-import { safeDecodeURIComponent } from "@/lib/url";
 
 export type ProjectResourceId =
 	| "projects"
@@ -8,22 +7,6 @@ export type ProjectResourceId =
 	| "sessions"
 	| "memories"
 	| "connectors";
-
-export type ProjectDetailSearch = Record<string, unknown> & {
-	joined?: string;
-	useWithAgent?: 1;
-};
-
-export function validateProjectDetailSearch(search: Record<string, unknown>): ProjectDetailSearch {
-	const validated = { ...search };
-	if (typeof validated.joined !== "string") delete validated.joined;
-	if (validated.useWithAgent === 1 || validated.useWithAgent === "1") {
-		validated.useWithAgent = 1;
-	} else {
-		delete validated.useWithAgent;
-	}
-	return validated;
-}
 
 export type ProjectResourceScope = "container" | "project-managed" | "activity" | "account-wide";
 export type ProjectResourceGroup = "project-registry" | "project-resources" | "user-resources";
@@ -222,7 +205,11 @@ export function skillDetailHref(skillKey: string, projectId?: string | null): st
 }
 
 export function decodeResourceRouteParam(value: string): string {
-	return safeDecodeURIComponent(value);
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
 }
 
 export function sessionDetailHref(sessionId: string): string {

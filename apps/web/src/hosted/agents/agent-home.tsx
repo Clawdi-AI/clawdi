@@ -2,7 +2,7 @@
 
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import { AlertCircle, ChevronRight, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
@@ -86,22 +86,13 @@ export function AgentHome({
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
 	const isFetchingRef = useRef(isFetching);
 	const [acceptedSetupStatusTimedOut, setAcceptedSetupStatusTimedOut] = useState(false);
-	const ownsRenderedDeploymentRef = useRef(false);
 	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
 	const hostedSection = HOSTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
 	const connectedSection = CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
-	ownsRenderedDeploymentRef.current = Boolean(deployment && ownsCurrentSection && hostedSection);
-	const handleDeleteAccepted = useCallback(() => {
-		if (!ownsRenderedDeploymentRef.current) return;
-		return router.navigate({ href: "/agents", replace: true });
-	}, [router]);
 
-	// Hosted membership is asynchronous, so this is the one canonicalization
-	// boundary that cannot run in route beforeLoad. It only acts for the exact
-	// current section root; an old match retained during a pending navigation
-	// cannot rewrite a session/skill detail or a different section. Search updates
-	// are functional so they augment the current Router location rather than
-	// rebuilding a pathname from rendered props.
+	// Hosted membership is asynchronous, so it cannot be resolved in beforeLoad.
+	// Only the exact current section may add deployment identity or redirect an
+	// unsupported section; a stale rendered match cannot rewrite a newer route.
 	useEffect(() => {
 		if (!ownsCurrentSection) return;
 
@@ -273,7 +264,7 @@ export function AgentHome({
 				runtime={runtime}
 				section={section}
 				routeSearch={deploymentRouteSearch}
-				onDeleteAccepted={handleDeleteAccepted}
+				onDeleteAccepted={() => router.navigate({ href: "/agents", replace: true })}
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 				isCheckingDeployment={isFetching}
 				onCheckDeploymentAgain={handleCheckAgain}

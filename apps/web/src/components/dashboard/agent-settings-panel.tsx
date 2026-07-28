@@ -27,7 +27,6 @@ import {
 } from "@/lib/agent-ownership";
 import { toastApiError, unwrap, useAgentAvatarUploader, useApi } from "@/lib/api";
 import { legacyHostedDashboardUrl } from "@/lib/legacy-hosted-dashboard";
-import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, errorMessage } from "@/lib/utils";
 
 type Environment = components["schemas"]["AgentResponse"];
@@ -54,7 +53,6 @@ export function AgentSettingsPanel({
 }) {
 	const api = useApi();
 	const router = useRouter();
-	const locationOwnership = useLocationOwnership();
 	const queryClient = useQueryClient();
 	const ownership = useAgentOwnership();
 	const uploadAvatar = useAgentAvatarUploader();
@@ -131,13 +129,13 @@ export function AgentSettingsPanel({
 	});
 
 	const disconnect = useMutation({
-		mutationFn: async (_locationGeneration: number) =>
+		mutationFn: async () =>
 			unwrap(
 				await api.DELETE("/v1/agents/{agent_id}", {
 					params: { path: { agent_id: environmentId } },
 				}),
 			),
-		onSuccess: (_data, locationGeneration) => {
+		onSuccess: () => {
 			toast.success("Agent disconnected", {
 				description: "Sessions and skills stay in your account.",
 			});
@@ -147,9 +145,7 @@ export function AgentSettingsPanel({
 					return key === "agents" || key === "sessions";
 				},
 			});
-			if (locationOwnership.isCurrent(locationGeneration)) {
-				void router.navigate({ href: "/" });
-			}
+			void router.navigate({ href: "/" });
 		},
 		onError: toastApiError("Couldn't disconnect agent"),
 	});
@@ -392,7 +388,7 @@ export function AgentSettingsPanel({
 							}
 							confirmLabel="Disconnect agent"
 							destructive
-							onConfirm={() => disconnect.mutateAsync(locationOwnership.capture())}
+							onConfirm={() => disconnect.mutateAsync()}
 						>
 							<Button
 								type="button"

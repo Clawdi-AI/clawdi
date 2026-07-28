@@ -47,7 +47,6 @@ import {
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
-import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 import {
 	removeDeletedSkillQueries,
@@ -91,7 +90,6 @@ export function SkillDetailContent({
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const locationOwnership = useLocationOwnership();
 
 	// `?project=<project_id>` is set by the skills list page when the
 	// row knows its project. Without it, the legacy GET /api/skills/{key}
@@ -273,7 +271,7 @@ export function SkillDetailContent({
 	});
 
 	const uninstall = useMutation({
-		mutationFn: async (_locationGeneration: number) => {
+		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("Project not loaded yet");
 			return unwrap(
 				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
@@ -281,16 +279,14 @@ export function SkillDetailContent({
 				}),
 			);
 		},
-		onSuccess: async (_data, locationGeneration) => {
+		onSuccess: async () => {
 			toast.success("Skill Uninstalled", {
 				description: skillAgentLabel
 					? `Removed from ${skillAgentLabel}. Other agents keep their copies.`
 					: "Removed from this agent. Other agents keep their copies.",
 			});
 			await removeDeletedSkillQueries(queryClient, skillKey);
-			if (locationOwnership.isCurrent(locationGeneration)) {
-				void router.navigate({ href: skillListHref });
-			}
+			void router.navigate({ href: skillListHref });
 		},
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
@@ -304,7 +300,7 @@ export function SkillDetailContent({
 			toast.error("Shared Skills Are Read-only");
 			return;
 		}
-		uninstall.mutate(locationOwnership.capture());
+		uninstall.mutate();
 	};
 
 	const sourceProjectName = skill?.project_name ?? null;

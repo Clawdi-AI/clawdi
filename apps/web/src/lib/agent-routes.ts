@@ -1,5 +1,4 @@
 import { defaultParseSearch, defaultStringifySearch, linkOptions } from "@tanstack/react-router";
-import { safeDecodeURIComponent } from "@/lib/url";
 
 export type AgentSectionId =
 	| "overview"
@@ -379,4 +378,12 @@ export function agentSkillDetailLink(
 		params: { id: agentId, _splat: skillKey },
 		search: Object.keys(search).length > 0 ? search : undefined,
 	});
+}
+
+function safeDecodeURIComponent(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
 }

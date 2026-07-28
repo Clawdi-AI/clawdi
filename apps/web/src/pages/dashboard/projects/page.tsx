@@ -39,7 +39,6 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition, projectDetailHref } from "@/lib/project-resource-model";
-import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, errorMessage } from "@/lib/utils";
 
 type Env = components["schemas"]["AgentResponse"];
@@ -54,7 +53,6 @@ export default function ProjectsPage() {
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const locationOwnership = useLocationOwnership();
 	const [newProjectName, setNewProjectName] = useState("");
 	const [newProjectSlug, setNewProjectSlug] = useState("");
 	const [createOpen, setCreateOpen] = useState(false);
@@ -148,13 +146,13 @@ export default function ProjectsPage() {
 	}, [customProjects, sharedProjects, search]);
 
 	const createProject = useMutation({
-		mutationFn: async (_locationGeneration: number): Promise<ProjectRow> => {
+		mutationFn: async (): Promise<ProjectRow> => {
 			const payload: { name: string; slug?: string } = { name: newProjectName.trim() };
 			const slug = normalizeSlugInput(newProjectSlug);
 			if (slug) payload.slug = slug;
 			return unwrap(await api.POST("/v1/projects", { body: payload }));
 		},
-		onSuccess: (project, locationGeneration) => {
+		onSuccess: (project) => {
 			setNewProjectName("");
 			setNewProjectSlug("");
 			setCreateOpen(false);
@@ -162,9 +160,7 @@ export default function ProjectsPage() {
 			toast.success("Project created", {
 				description: `${project.name} is ready for skills, vaults, and sharing.`,
 			});
-			if (locationOwnership.isCurrent(locationGeneration)) {
-				void router.navigate({ href: projectDetailHref(project.id) });
-			}
+			void router.navigate({ href: projectDetailHref(project.id) });
 		},
 		onError: (e) => {
 			toast.error("Couldn't create project", {
@@ -239,7 +235,7 @@ export default function ProjectsPage() {
 						onSubmit={(event) => {
 							event.preventDefault();
 							if (!newProjectName.trim() || createProject.isPending) return;
-							createProject.mutate(locationOwnership.capture());
+							createProject.mutate();
 						}}
 					>
 						<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">

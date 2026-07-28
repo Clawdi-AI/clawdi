@@ -109,7 +109,6 @@ import {
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
-import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, relativeTime } from "@/lib/utils";
 
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
@@ -216,7 +215,6 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	const health = useChannelHealth();
 	const rotatedTokens = useRotatedTokenLifecycle(id);
 	const router = useRouter();
-	const locationOwnership = useLocationOwnership();
 	const del = useDeleteChannel();
 	const [removing, setRemoving] = useState(false);
 	const removeLockedRef = useRef(false);
@@ -225,21 +223,16 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 		if (removeLockedRef.current) return;
 		removeLockedRef.current = true;
 		setRemoving(true);
-		const locationGeneration = locationOwnership.capture();
 		void (async () => {
-			let removed = false;
 			try {
 				await del.mutateAsync(id);
-				removed = true;
+				rotatedTokens.discardAtRiskToken();
+				await router.navigate({ href: "/channels" });
 			} catch {
 				// useDeleteChannel already surfaces the API error.
 			} finally {
 				removeLockedRef.current = false;
 				setRemoving(false);
-			}
-			if (removed && locationOwnership.isCurrent(locationGeneration)) {
-				rotatedTokens.discardAtRiskToken();
-				void router.navigate({ href: "/channels" });
 			}
 		})();
 	}
@@ -318,14 +311,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				actions={
 					<ConfirmAction
 						title={`Remove ${ch.name}?`}
-						description={
-							<p>
-								Agents linked to this channel will stop sending and receiving. This can't be undone.
-								{rotatedTokens.hasTokenAtRisk
-									? " The one-time token shown here will also be discarded."
-									: ""}
-							</p>
-						}
+						description={`Agents linked to this channel will stop sending and receiving. This can't be undone.${rotatedTokens.hasTokenAtRisk ? " The one-time token shown here will also be discarded." : ""}`}
 						confirmLabel="Remove channel"
 						destructive
 						onConfirm={removeChannel}

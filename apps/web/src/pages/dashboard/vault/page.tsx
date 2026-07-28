@@ -36,7 +36,6 @@ import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
-import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -333,7 +332,6 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const locationOwnership = useLocationOwnership();
 	const [open, setOpen] = useState(false);
 	const [name, setName] = useState("");
 
@@ -369,7 +367,7 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 		defaultProject !== undefined;
 
 	const create = useMutation({
-		mutationFn: async (_locationGeneration: number) => {
+		mutationFn: async () => {
 			if (!defaultProject) throw new Error("No writable Project available yet");
 			if (!slug) throw new Error("Use letters or numbers in the vault name");
 			if ((vaultsQuery.data?.items ?? []).some((v) => v.is_owner !== false && v.slug === slug)) {
@@ -382,18 +380,16 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 				}),
 			);
 		},
-		onSuccess: (created, locationGeneration) => {
+		onSuccess: (created) => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			setOpen(false);
 			setName("");
 			toast.success("Vault created", { description: "Add keys, then share it through a Project." });
-			if (locationOwnership.isCurrent(locationGeneration)) {
-				void router.navigate({
-					to: "/vault/$slug",
-					params: { slug },
-					search: { vault: created.id },
-				});
-			}
+			void router.navigate({
+				to: "/vault/$slug",
+				params: { slug },
+				search: { vault: created.id },
+			});
 		},
 		onError: (e) => toast.error("Couldn't create vault", { description: errorMessage(e) }),
 	});
@@ -424,7 +420,7 @@ function NewVaultDialog({ trigger }: { trigger?: ReactElement }) {
 					className="space-y-4"
 					onSubmit={(e) => {
 						e.preventDefault();
-						if (canCreate && !create.isPending) create.mutate(locationOwnership.capture());
+						if (canCreate && !create.isPending) create.mutate();
 					}}
 				>
 					<div className="space-y-1.5">

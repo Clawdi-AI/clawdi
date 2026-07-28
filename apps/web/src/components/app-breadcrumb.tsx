@@ -18,7 +18,6 @@ import {
 	type ParsedAgentPathname,
 	parseAgentPathname,
 } from "@/lib/agent-routes";
-import { safeDecodeURIComponent } from "@/lib/url";
 
 /**
  * Route-derived header label. Top-level segments map to friendly names
@@ -45,7 +44,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 // breadcrumb just push everything off-screen and tell the user nothing.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function fallbackLabel(seg: string): string {
-	const decoded = safeDecodeURIComponent(seg);
+	const decoded = decodeURIComponent(seg);
 	return UUID_RE.test(decoded) ? `${decoded.slice(0, 8)}…` : decoded;
 }
 

@@ -17,14 +17,12 @@ import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { MEMORY_CATEGORY_COLORS } from "@/lib/memory-utils";
 import { projectResourceHref } from "@/lib/project-resource-model";
-import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
 export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const locationOwnership = useLocationOwnership();
 
 	const {
 		data: memory,
@@ -48,25 +46,23 @@ export default function MemoryDetailPage({ memoryId }: { memoryId: string }) {
 	useSetBreadcrumbTitle(memoryTitle);
 
 	const deleteMemory = useMutation({
-		mutationFn: async (_locationGeneration: number) =>
+		mutationFn: async () =>
 			unwrap(
 				await api.DELETE("/v1/memories/{memory_id}", {
 					params: { path: { memory_id: memoryId } },
 				}),
 			),
-		onSuccess: (_data, locationGeneration) => {
+		onSuccess: () => {
 			toast.success("Memory Deleted", {
 				description: "Your agents will no longer recall it.",
 			});
 			queryClient.invalidateQueries({ queryKey: ["memories"] });
-			if (locationOwnership.isCurrent(locationGeneration)) {
-				void router.navigate({ href: projectResourceHref("memories") });
-			}
+			void router.navigate({ href: projectResourceHref("memories") });
 		},
 		onError: (e) => toast.error("Couldn't delete memory", { description: errorMessage(e) }),
 	});
 
-	const onDelete = () => deleteMemory.mutate(locationOwnership.capture());
+	const onDelete = () => deleteMemory.mutate();
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>

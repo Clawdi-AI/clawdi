@@ -14,7 +14,6 @@ import {
 	projectResourceScopeLabel,
 	sessionDetailHref,
 	skillDetailHref,
-	validateProjectDetailSearch,
 } from "./project-resource-model";
 
 describe("project resource model", () => {
@@ -38,16 +37,6 @@ describe("project resource model", () => {
 		expect(decodeResourceRouteParam("team%2Ffoo")).toBe("team/foo");
 		expect(decodeResourceRouteParam("already-decoded")).toBe("already-decoded");
 		expect(decodeResourceRouteParam("%E0%A4%A")).toBe("%E0%A4%A");
-	});
-
-	it("normalizes the Router-owned use-with-agent presence marker", () => {
-		expect(validateProjectDetailSearch({ joined: "share", useWithAgent: 1, keep: "yes" })).toEqual({
-			joined: "share",
-			useWithAgent: 1,
-			keep: "yes",
-		});
-		expect(validateProjectDetailSearch({ useWithAgent: "1" })).toEqual({ useWithAgent: 1 });
-		expect(validateProjectDetailSearch({ useWithAgent: "no" })).toEqual({});
 	});
 
 	it("keeps the current Project resource contract explicit", () => {

@@ -21,7 +21,6 @@ import { formatCents, formatUsdExact } from "@/hosted/billing/format";
 import { useComputeBillingHistory } from "@/hosted/billing/hooks";
 import { billingHistoryFundingLabel } from "@/hosted/billing/subscription/billing-history.logic";
 import { computeTierLabel } from "@/hosted/billing/subscription/subscription-utils";
-import { safeExternalNavigationUrl } from "@/lib/external-navigation";
 import { formatShortDate } from "@/lib/format";
 
 function statusLabel(status: string): string {
@@ -70,11 +69,10 @@ function amountLabel(row: ComputeBillingHistoryItem): string {
 }
 
 function InvoiceLink({ row }: { row: ComputeBillingHistoryItem }) {
-	const invoiceUrl = safeExternalNavigationUrl(row.hosted_invoice_url);
-	if (!invoiceUrl) return null;
+	if (!row.hosted_invoice_url) return null;
 	return (
 		<Button
-			render={<a href={invoiceUrl} target="_blank" rel="noopener noreferrer" />}
+			render={<a href={row.hosted_invoice_url} target="_blank" rel="noopener noreferrer" />}
 			nativeButton={false}
 			variant="outline"
 			size="sm"

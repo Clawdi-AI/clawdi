@@ -31,11 +31,12 @@ describe("channel default path", () => {
 		expect(connectDialog).not.toContain("Guild ID");
 	});
 
-	test("explains the agent finish line after a successful ready-bot link", () => {
+	test("moves a successful ready-bot link into the agent finish line", () => {
 		const linkDialog = source("./link-agent-dialog.tsx");
 
 		expect(linkDialog).toContain("The bot is linked to this agent");
 		expect(linkDialog).toContain("Next, create a pairing code");
+		expect(linkDialog).toContain('params={{ id: agentId, section: "channels" }}');
 		expect(linkDialog).toContain("Finish channel setup");
 		expect(linkDialog).toContain("Agent token (advanced)");
 	});

@@ -224,7 +224,7 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { settingsLink } from "@/lib/settings-routes";
+import { settingsQueryHref } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
 
@@ -958,7 +958,7 @@ function OverviewFailureAction({
 		<div className="flex shrink-0 flex-wrap gap-2">
 			{remediation.requiresWalletTopUp && remediation.kind === "restart" ? (
 				<Button
-					render={<Link {...settingsLink("billing-wallet")} />}
+					render={<a href={settingsQueryHref("billing-wallet")} />}
 					nativeButton={false}
 					variant="outline"
 					size="sm"

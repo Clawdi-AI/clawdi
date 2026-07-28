@@ -5,10 +5,17 @@ import {
 	parseAgentSectionSegment,
 } from "@/lib/agent-routes";
 import { routeHeadTitle } from "@/lib/document-title";
-import { safeDecodeURIComponent } from "@/lib/url";
 import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client";
 
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
+
+function safeDecodeURIComponent(value: string): string {
+	try {
+		return decodeURIComponent(value);
+	} catch {
+		return value;
+	}
+}
 
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/$section")({
 	head: () => routeHeadTitle("Agent"),

@@ -1,7 +1,6 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -20,7 +19,7 @@ import { LedgerTable } from "@/hosted/billing/wallet/ledger-table";
 import { confirmWalletTopup, TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { invalidateWalletActivity } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
-	clearWalletTopupReturnSearch,
+	cleanWalletTopupReturnUrl,
 	readWalletTopupReturn,
 	type WalletTopupReturnToast,
 	walletTopupReturnToast,
@@ -29,8 +28,6 @@ import { LEDGER_MAX_ROWS, LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/walle
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
-import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
-import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "One balance for managed AI, wallet-funded compute, top-ups, and auto-reload.";
@@ -58,8 +55,6 @@ export function WalletPage() {
 	const portal = useSensitiveBillingPortal();
 	const runAction = useActionLock();
 	const queryClient = useQueryClient();
-	const router = useRouter();
-	const { capture: captureLocation, isCurrent: isLocationCurrent } = useLocationOwnership();
 	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
 	const ledger = useWalletLedger(ledgerLimit);
 	const lastLedgerDataRef = useRef(ledger.data);
@@ -68,22 +63,17 @@ export function WalletPage() {
 	const [topUpOpen, setTopUpOpen] = useState(false);
 
 	async function openBillingPortal() {
-		const locationGeneration = captureLocation();
 		try {
 			const res = await portal.execute({});
-			if (!isLocationCurrent(locationGeneration)) return;
-			const portalUrl = safeBrowserNavigationUrl(res.url || res.portal_url);
-			if (portalUrl) {
-				window.location.assign(portalUrl);
+			if (res.url || res.portal_url) {
+				window.location.href = res.url || res.portal_url;
 				return;
 			}
 			toast.error("Billing portal unavailable", {
 				description: "Refresh this page and try again in a moment.",
 			});
 		} catch (error) {
-			if (isLocationCurrent(locationGeneration)) {
-				toast.error("Couldn’t open billing", { description: normalizeBillingError(error) });
-			}
+			toast.error("Couldn’t open billing", { description: normalizeBillingError(error) });
 		}
 	}
 
@@ -91,59 +81,50 @@ export function WalletPage() {
 		const topupReturn = readWalletTopupReturn(window.location.search);
 		if (!topupReturn) return;
 		const { clientSecret } = topupReturn;
-		const locationGeneration = captureLocation();
 		let cancelled = false;
-		const ownsReturn = () => !cancelled && isLocationCurrent(locationGeneration);
 
 		async function refreshReturnedTopup() {
 			try {
 				const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
 				if (!key) {
-					if (ownsReturn())
-						toast.error("Couldn't refresh top-up", {
-							description: "Stripe isn't configured in this environment.",
-						});
+					toast.error("Couldn't refresh top-up", {
+						description: "Stripe isn't configured in this environment.",
+					});
 					return;
 				}
 				const stripe = await getStripe(key);
 				if (!stripe) {
-					if (ownsReturn())
-						toast.error("Couldn't refresh top-up", {
-							description: "Reload the page and try again.",
-						});
+					toast.error("Couldn't refresh top-up", {
+						description: "Reload the page and try again.",
+					});
 					return;
 				}
 				const result = await stripe.retrievePaymentIntent(clientSecret);
+				if (cancelled) return;
 				if (result.error) {
-					if (ownsReturn())
-						toast.error("Couldn't refresh top-up", {
-							description: result.error.message ?? "Open Wallet and try again.",
-						});
+					toast.error("Couldn't refresh top-up", {
+						description: result.error.message ?? "Open Wallet and try again.",
+					});
 					return;
 				}
 				const paymentIntent = result.paymentIntent;
 				const status = paymentIntent?.status;
-				if (ownsReturn()) showWalletTopupReturnToast(walletTopupReturnToast(status));
+				showWalletTopupReturnToast(walletTopupReturnToast(status));
 				invalidateWalletActivity(queryClient);
 				if (status === "succeeded") {
-					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null, ownsReturn);
+					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null);
 				} else if (status === "processing" || status === "requires_capture") {
-					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null, ownsReturn);
+					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null);
 				}
 			} catch {
-				if (ownsReturn()) {
+				if (!cancelled) {
 					toast.error("Couldn't refresh top-up", {
 						description: "Check your connection and reload Wallet.",
 					});
 				}
 			} finally {
-				if (ownsReturn()) {
-					void router.navigate({
-						to: ".",
-						search: clearWalletTopupReturnSearch,
-						hash: true,
-						replace: true,
-					});
+				if (!cancelled) {
+					window.history.replaceState(null, "", cleanWalletTopupReturnUrl(window.location.href));
 				}
 			}
 		}
@@ -152,7 +133,7 @@ export function WalletPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, [captureLocation, isLocationCurrent, queryClient, router]);
+	}, [queryClient]);
 
 	if (wallet.isLoading) {
 		return (

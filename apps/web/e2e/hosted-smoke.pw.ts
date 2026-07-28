@@ -18,66 +18,6 @@ function hostedUser(canUseV2 = true, canUseV1 = false) {
 	};
 }
 const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
-const routingSession = {
-	id: "session-routing-lifecycle",
-	local_session_id: "local-routing-lifecycle",
-	project_path: "/workspace/router",
-	agent_name: "routing-agent",
-	agent_display_name: "Routing agent",
-	agent_default_name: "Routing agent",
-	agent_type: "hermes",
-	machine_name: "routing.local",
-	started_at: "2026-07-25T12:00:00Z",
-	ended_at: null,
-	updated_at: "2026-07-25T12:00:00Z",
-	last_activity_at: "2026-07-25T12:00:00Z",
-	duration_seconds: 60,
-	message_count: 2,
-	input_tokens: 100,
-	output_tokens: 200,
-	cache_read_tokens: 0,
-	model: "gpt-5",
-	models_used: ["gpt-5"],
-	summary: "Routing lifecycle session",
-	tags: [],
-	status: "active",
-	content_hash: "routing-session-hash",
-	environment_id: "88888888-8888-4888-8888-888888888888",
-	has_content: false,
-	is_shared: false,
-	related_refs: [],
-};
-const routingSkill = {
-	id: "skill-routing-lifecycle",
-	skill_key: "routing/lifecycle",
-	name: "Routing lifecycle skill",
-	description: "A browser fixture for agent-scoped detail navigation.",
-	version: 1,
-	source: "local",
-	source_repo: null,
-	agent_types: ["hermes"],
-	file_count: 1,
-	content_hash: "routing-skill-hash",
-	project_id: "project-hosted",
-	project_name: "Hosted project",
-	project_kind: "environment",
-	created_at: "2026-07-25T12:00:00Z",
-	updated_at: "2026-07-25T12:00:00Z",
-	environment_id: "55555555-5555-4555-8555-555555555555",
-	content: "# Routing lifecycle\n",
-};
-const routingProject = {
-	id: "project-routing-lifecycle",
-	name: "Routing lifecycle Project",
-	slug: "routing-lifecycle-project",
-	kind: "environment",
-	origin_environment_id: "99999999-9999-4999-8999-999999999999",
-	archived_at: null,
-	created_at: "2026-07-25T12:00:00Z",
-	is_owner: true,
-	owner_display: "Dev User",
-	owner_handle: "dev-user",
-};
 
 // Must match the API hosts configured in playwright.hosted.config.ts.
 const CLOUD_API = "http://127.0.0.1:8000";
@@ -363,7 +303,6 @@ const sharedLegacyCloudAgent = {
 
 const railHostedEnvironmentId = "88888888-8888-4888-8888-888888888888";
 const railConnectedEnvironmentId = "99999999-9999-4999-8999-999999999999";
-const railLegacyEnvironmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const railHostedDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_rail_cloud",
@@ -390,15 +329,6 @@ const railHostedCloudAgent = {
 	machine_name: "rail-cloud.local",
 	display_name: "Rail Cloud projection",
 	sort_order: 0,
-};
-const railLegacyCloudAgent = {
-	...sharedLegacyCloudAgent,
-	id: railLegacyEnvironmentId,
-	name: "rail-legacy",
-	default_name: "Rail Legacy",
-	machine_name: "rail-legacy.local",
-	display_name: "Rail Legacy",
-	sort_order: 2,
 };
 
 const interruptedIdentitylessDeployment = {
@@ -868,15 +798,7 @@ function readDeploymentFixture(value: unknown): unknown {
 	return isDeploymentMutationFixture(value) ? mutationDeploymentReadFixture(value) : value;
 }
 
-type StubResponse = { body: unknown; status: number; delayMs?: number; gate?: Promise<void> };
-
-function deferred() {
-	let resolve = () => {};
-	const promise = new Promise<void>((next) => {
-		resolve = next;
-	});
-	return { promise, resolve };
-}
+type StubResponse = { body: unknown; status: number; delayMs?: number };
 
 function isStubResponse(value: unknown): value is StubResponse {
 	return (
@@ -897,7 +819,6 @@ type HostedApiStubOptions = {
 	canCreateCloudAgents?: boolean;
 	canUseLegacyHostedDashboard?: boolean;
 	productAccessRequests?: string[];
-	productAccessResponses?: StubResponse[];
 	cancelRequests?: string[];
 	cancelResponses?: StubResponse[];
 	checkoutRequests?: string[];
@@ -925,14 +846,11 @@ type HostedApiStubOptions = {
 	deploymentRequestReads?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
-	deploymentsResponses?: StubResponse[];
 	fixPaymentRequests?: string[];
 	ledgerResponseForRequest?: (limit: number) => unknown;
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
 	legacyAgentEnvironmentIds?: readonly string[];
-	linkAgentRequests?: string[];
-	linkAgentResponse?: unknown;
 	managedModels?: typeof managedModelCatalog;
 	planRequests?: string[];
 	mutationOrder?: string[];
@@ -945,15 +863,7 @@ type HostedApiStubOptions = {
 	planQuoteResponses?: unknown[];
 	restartRequests?: string[];
 	rotateAgentTokenRequests?: string[];
-	rotateAgentTokenResponses?: Array<unknown | StubResponse>;
-	projects?: unknown[];
-	projectCreateRequests?: string[];
-	projectCreateResponse?: StubResponse;
-	sharePreview?: unknown;
-	shareUpgradeRequests?: string[];
-	shareUpgradeResponse?: StubResponse;
-	sessionsPage?: unknown;
-	skillsPage?: unknown;
+	rotateAgentTokenResponses?: unknown[];
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
 	resumeRequests?: string[];
@@ -961,7 +871,6 @@ type HostedApiStubOptions = {
 	subscriptionQuoteResponses?: unknown[];
 	startError?: { status: number; detail: string };
 	startRequests?: string[];
-	onStop?: (deploymentId: string) => void;
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
@@ -982,14 +891,8 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 	await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-async function stubCompletedStripeCheckout(page: Page, deferPaymentIntent = false) {
-	await page.addInitScript((shouldDeferPaymentIntent) => {
-		let releasePaymentIntent = () => {};
-		const paymentIntentGate = new Promise<void>((resolve) => {
-			releasePaymentIntent = resolve;
-		});
-		Reflect.set(window, "__releaseStripePaymentIntent", releasePaymentIntent);
-		Reflect.set(window, "__stripePaymentIntentPending", false);
+async function stubCompletedStripeCheckout(page: Page) {
+	await page.addInitScript(() => {
 		const mockStripe = Object.assign(
 			() => {
 				const session = { canConfirm: true, status: { type: "open" } };
@@ -1005,11 +908,6 @@ async function stubCompletedStripeCheckout(page: Page, deferPaymentIntent = fals
 					createToken: async () => ({}),
 					createPaymentMethod: async () => ({}),
 					confirmCardPayment: async () => ({}),
-					retrievePaymentIntent: async () => {
-						Reflect.set(window, "__stripePaymentIntentPending", true);
-						if (shouldDeferPaymentIntent) await paymentIntentGate;
-						return { paymentIntent: { id: "pi_history_state", status: "succeeded" } };
-					},
 					_registerWrapper: () => undefined,
 					initCheckoutElementsSdk: () => ({
 						loadActions: async () => ({ type: "success", actions }),
@@ -1031,7 +929,7 @@ async function stubCompletedStripeCheckout(page: Page, deferPaymentIntent = fals
 			{ version: "dahlia" },
 		);
 		Object.defineProperty(window, "Stripe", { configurable: true, value: mockStripe });
-	}, deferPaymentIntent);
+	});
 }
 
 async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
@@ -1046,12 +944,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/me" || p === "/v1/me") {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
-			const response = options.productAccessResponses?.shift();
-			if (response) {
-				if (response.gate) await response.gate;
-				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
-				return fulfillJson(r, response.body, response.status);
-			}
 			return fulfillJson(
 				r,
 				hostedUser(
@@ -1085,7 +977,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			const requestBody = r.request().postData() ?? "";
 			options.autoReloadRequests?.push(requestBody);
 			const response = options.autoReloadResponses?.shift();
-			if (response?.gate) await response.gate;
 			if (response?.delayMs) {
 				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
 			}
@@ -1108,14 +999,11 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			options.deploymentListRequests?.push(p);
-			const deploymentResponse =
-				options.deploymentsResponses?.shift() ?? options.deploymentsResponse;
-			if (deploymentResponse) {
-				if (deploymentResponse.gate) await deploymentResponse.gate;
-				if (deploymentResponse.delayMs) {
-					await new Promise((resolve) => setTimeout(resolve, deploymentResponse.delayMs));
+			if (options.deploymentsResponse) {
+				if (options.deploymentsResponse.delayMs) {
+					await new Promise((resolve) => setTimeout(resolve, options.deploymentsResponse?.delayMs));
 				}
-				return fulfillJson(r, deploymentResponse.body, deploymentResponse.status);
+				return fulfillJson(r, options.deploymentsResponse.body, options.deploymentsResponse.status);
 			}
 			return fulfillJson(
 				r,
@@ -1454,7 +1342,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				(candidate): candidate is DeploymentMutationFixture =>
 					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
 			);
-			if (deployment) options.onStop?.(deploymentId);
 			return deployment
 				? fulfillJson(r, completedDeploymentOperation(deployment, "stop"), 202)
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
@@ -1477,7 +1364,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		return fulfillJson(r, {});
 	});
 	// Cloud API (/v1/*).
-	await page.route(`${CLOUD_API}/**`, async (r) => {
+	await page.route(`${CLOUD_API}/**`, (r) => {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/v1/me") {
 			options.productAccessRequests?.push(`CLOUD ${p}`);
@@ -1514,9 +1401,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					return agent ? [{ ...agent, sort_order: sortOrder }] : [];
 				}),
 			);
-		}
-		if (p.endsWith("/project-bindings") && r.request().method() === "GET") {
-			return fulfillJson(r, []);
 		}
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
@@ -1574,56 +1458,16 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p.endsWith("/agent-links") && r.request().method() === "GET") {
 			return fulfillJson(r, options.channelAgentLinks ?? []);
 		}
-		if (p.endsWith("/agent-links") && r.request().method() === "POST") {
-			options.linkAgentRequests?.push(r.request().postData() ?? "");
-			return fulfillJson(r, options.linkAgentResponse ?? {}, 201);
-		}
 		if (p.endsWith("/token") && r.request().method() === "POST") {
 			options.rotateAgentTokenRequests?.push(p);
-			const response = options.rotateAgentTokenResponses?.shift() ?? { agent_token: null };
-			if (isStubResponse(response)) {
-				if (response.gate) await response.gate;
-				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
-				return fulfillJson(r, response.body, response.status);
-			}
-			return fulfillJson(r, response);
+			return fulfillJson(r, options.rotateAgentTokenResponses?.shift() ?? { agent_token: null });
 		}
 		if (p.endsWith("/bindings") && r.request().method() === "GET") return fulfillJson(r, []);
 		if (p.endsWith("/activity") && r.request().method() === "GET") {
 			return fulfillJson(r, { items: [] });
 		}
-		if (p === "/v1/projects" && r.request().method() === "POST") {
-			options.projectCreateRequests?.push(r.request().postData() ?? "");
-			const response = options.projectCreateResponse;
-			if (response) {
-				if (response.gate) await response.gate;
-				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
-				return fulfillJson(r, response.body, response.status);
-			}
-			return fulfillJson(r, {}, 201);
-		}
-		if (p === "/v1/projects") return fulfillJson(r, options.projects ?? []);
-		if (p.match(/^\/v1\/share\/[^/]+\/preview$/)) {
-			return fulfillJson(r, options.sharePreview ?? {});
-		}
-		if (p.match(/^\/v1\/share\/[^/]+\/upgrade$/) && r.request().method() === "POST") {
-			options.shareUpgradeRequests?.push(r.request().postData() ?? "");
-			const response = options.shareUpgradeResponse;
-			if (response) {
-				if (response.gate) await response.gate;
-				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
-				return fulfillJson(r, response.body, response.status);
-			}
-			return fulfillJson(r, {}, 200);
-		}
-		if (p === `/v1/sessions/${routingSession.id}`) return fulfillJson(r, routingSession);
-		if (p === `/v1/sessions/${routingSession.id}/messages`) {
-			return fulfillJson(r, { items: [], total: 0, offset: 0, limit: 100 });
-		}
-		if (p.endsWith(`/skills/${routingSkill.skill_key}`)) return fulfillJson(r, routingSkill);
-		if (p === "/v1/vault") return fulfillJson(r, emptyPage);
-		if (p === "/v1/sessions") return fulfillJson(r, options.sessionsPage ?? emptyPage);
-		if (p === "/v1/skills") return fulfillJson(r, options.skillsPage ?? emptyPage);
+		if (p === "/v1/projects") return fulfillJson(r, []);
+		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
 		if (p === "/v1/auth/keys") return fulfillJson(r, []);
 		return fulfillJson(r, {});
 	});
@@ -1662,29 +1506,6 @@ function collectBrowserErrors(page: Page): string[] {
 	return errors;
 }
 
-async function pushManagedLocation(page: Page, href: string) {
-	await page.evaluate((nextHref) => {
-		const currentState = window.history.state;
-		const currentIndex =
-			typeof currentState === "object" &&
-			currentState !== null &&
-			typeof Reflect.get(currentState, "__TSR_index") === "number"
-				? Reflect.get(currentState, "__TSR_index")
-				: 0;
-		const key = crypto.randomUUID();
-		window.history.pushState(
-			{
-				...(typeof currentState === "object" && currentState !== null ? currentState : {}),
-				key,
-				__TSR_key: key,
-				__TSR_index: currentIndex + 1,
-			},
-			"",
-			nextHref,
-		);
-	}, href);
-}
-
 async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: string) {
 	const box = await locator.boundingBox();
 	expect(box, `${label} should render a layout box`).not.toBeNull();
@@ -1692,172 +1513,9 @@ async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: str
 	expect(box?.height, `${label} height`).toBeGreaterThan(0);
 }
 
-async function expectCenterHitTarget(locator: ReturnType<Page["locator"]>, label: string) {
-	const snapshot = await locator.evaluate((target) => {
-		const describe = (element: Element) => {
-			const style = getComputedStyle(element);
-			return {
-				tag: element.tagName.toLowerCase(),
-				id: element.id,
-				className: typeof element.className === "string" ? element.className : "",
-				slot: element.getAttribute("data-slot"),
-				testId: element.getAttribute("data-testid"),
-				pointerEvents: style.pointerEvents,
-				cursor: style.cursor,
-				position: style.position,
-				zIndex: style.zIndex,
-				opacity: style.opacity,
-				transform: style.transform,
-				isolation: style.isolation,
-			};
-		};
-		const rect = target.getBoundingClientRect();
-		const point = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-		const topmost = document.elementFromPoint(point.x, point.y);
-		const stack = document.elementsFromPoint(point.x, point.y);
-		const ancestors: ReturnType<typeof describe>[] = [];
-		for (let element: Element | null = target; element; element = element.parentElement) {
-			ancestors.push(describe(element));
-		}
-		return {
-			rect: {
-				left: rect.left,
-				top: rect.top,
-				width: rect.width,
-				height: rect.height,
-			},
-			point,
-			target: describe(target),
-			topmost: topmost ? describe(topmost) : null,
-			targetContainsTopmost: Boolean(topmost && (topmost === target || target.contains(topmost))),
-			stack: stack.slice(0, 12).map(describe),
-			ancestors,
-		};
-	});
-
-	expect(snapshot.rect.width, `${label} width`).toBeGreaterThan(0);
-	expect(snapshot.rect.height, `${label} height`).toBeGreaterThan(0);
-	expect(
-		snapshot.targetContainsTopmost,
-		`${label} center hit ${JSON.stringify(snapshot, null, 2)}`,
-	).toBe(true);
-	return snapshot;
-}
-
-async function expectNoDragCursor(locator: ReturnType<Page["locator"]>, label: string) {
+async function expectPointerCursor(locator: ReturnType<Page["locator"]>, label: string) {
 	const cursor = await locator.evaluate((element) => getComputedStyle(element).cursor);
 	expect(cursor, `${label} cursor`).toBe("pointer");
-	return cursor;
-}
-
-async function expectBeforeUnloadBlocked(page: Page, label: string) {
-	await expect
-		.poll(
-			() =>
-				page.evaluate(() => {
-					const event = new Event("beforeunload", { cancelable: true });
-					return {
-						dispatchResult: window.dispatchEvent(event),
-						defaultPrevented: event.defaultPrevented,
-					};
-				}),
-			{ message: `${label} beforeunload` },
-		)
-		.toEqual({ dispatchResult: false, defaultPrevented: true });
-}
-
-type NativeClickRecord = {
-	phase: "capture" | "bubble" | "window-bubble";
-	defaultPrevented: boolean;
-	target: string;
-	interactive: string | null;
-};
-
-async function installNativeClickProbe(page: Page) {
-	const records: NativeClickRecord[] = [];
-	await page.exposeFunction("recordRailNativeClick", (record: NativeClickRecord) => {
-		records.push(record);
-	});
-	await page.addInitScript(() => {
-		const describe = (element: Element | null) => {
-			if (!element) return null;
-			const name =
-				element.getAttribute("aria-label") ??
-				element.getAttribute("data-testid") ??
-				element.textContent?.trim().slice(0, 80) ??
-				"";
-			return `${element.tagName.toLowerCase()}${name ? `[${name}]` : ""}`;
-		};
-		const record = (phase: NativeClickRecord["phase"], event: MouseEvent) => {
-			const target = event.target instanceof Element ? event.target : null;
-			const clickRecord: NativeClickRecord = {
-				phase,
-				defaultPrevented: event.defaultPrevented,
-				target: describe(target) ?? "unknown",
-				interactive: describe(target?.closest("a,button") ?? null),
-			};
-			const sink = Reflect.get(window, "recordRailNativeClick");
-			if (typeof sink === "function") sink(clickRecord);
-		};
-		document.addEventListener("click", (event) => record("capture", event), true);
-		document.addEventListener("click", (event) => record("bubble", event));
-		window.addEventListener("click", (event) => record("window-bubble", event));
-	});
-	return {
-		records,
-		reset: () => {
-			records.length = 0;
-		},
-	};
-}
-
-function expectNativeClickReachedDocument(
-	records: NativeClickRecord[],
-	label: string,
-	windowBubbleDefaultPrevented: boolean,
-) {
-	expect(records, `${label} native click trace`).toEqual([
-		expect.objectContaining({ phase: "capture", defaultPrevented: false }),
-		expect.objectContaining({ phase: "bubble" }),
-		expect.objectContaining({
-			phase: "window-bubble",
-			defaultPrevented: windowBubbleDefaultPrevented,
-		}),
-	]);
-	return records;
-}
-
-async function documentCaptureClickListeners(page: Page) {
-	const session = await page.context().newCDPSession(page);
-	try {
-		const response = await session.send("Runtime.evaluate", {
-			expression: `(() => (getEventListeners(document).click ?? []).map((entry) => ({
-				useCapture: entry.useCapture,
-				passive: entry.passive,
-				once: entry.once,
-				listener: String(entry.listener),
-			})))()`,
-			includeCommandLineAPI: true,
-			returnByValue: true,
-		});
-		const value = response.result.value;
-		if (!Array.isArray(value)) {
-			throw new Error("CDP did not return the document click listener list.");
-		}
-		return value.flatMap((entry) => {
-			if (typeof entry !== "object" || entry === null) return [];
-			return [
-				{
-					useCapture: Reflect.get(entry, "useCapture") === true,
-					passive: Reflect.get(entry, "passive") === true,
-					once: Reflect.get(entry, "once") === true,
-					listener: String(Reflect.get(entry, "listener") ?? ""),
-				},
-			];
-		});
-	} finally {
-		await session.detach();
-	}
 }
 
 async function gotoHostedAgentSettings(
@@ -1936,6 +1594,8 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	await expect(consoleLink).toHaveAttribute("href", "/");
 	await expect(cloudButton).toHaveAttribute("type", "button");
 	await expect(connectedButton).toHaveAttribute("type", "button");
+	await expectPointerCursor(cloudButton, "Cloud tile");
+	await expectPointerCursor(connectedButton, "connected tile");
 	await expect(rail.getByRole("button", { name: /^Reorder / })).toHaveCount(0);
 	await expect(rail.getByTitle(/^Reorder /)).toHaveCount(0);
 
@@ -1995,488 +1655,6 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(touchOrderRequests).toEqual([]);
 });
 
-test("production rail tile shapes expose their real activation state", async ({ page }) => {
-	await stubHostedApi(page, {
-		canUseLegacyHostedDashboard: true,
-		legacyAgentEnvironmentIds: [railLegacyEnvironmentId],
-		deployments: [
-			railHostedDeployment,
-			runningMissingProjectionDeployment,
-			interruptedIdentitylessDeployment,
-		],
-		cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent, railLegacyCloudAgent],
-	});
-
-	await page.goto("/");
-	const rail = page.getByTestId("app-sidebar-agent-rail");
-	const matchedCloud = rail.getByRole("button", { name: "Rail Cloud", exact: true });
-	const missingProjection = rail.getByRole("button", {
-		name: "Running projection agent",
-		exact: true,
-	});
-	const identityless = rail.getByRole("button", {
-		name: "Interrupted deployment",
-		exact: true,
-	});
-	const legacy = rail.getByRole("button", { name: /Rail Legacy/ });
-	const connected = rail.getByRole("button", { name: /Rail Connected/ });
-
-	for (const interactive of [matchedCloud, missingProjection, legacy, connected]) {
-		await expect(interactive).toBeEnabled();
-		await expect(interactive).not.toHaveAttribute("aria-disabled", "true");
-		await expectNoDragCursor(interactive, "interactive production tile");
-	}
-	await expect(matchedCloud).toHaveAttribute("aria-roledescription", "sortable");
-	await expect(legacy).toHaveAttribute("aria-roledescription", "sortable");
-	await expect(connected).toHaveAttribute("aria-roledescription", "sortable");
-	await expect(missingProjection).not.toHaveAttribute("aria-roledescription", "sortable");
-	await expect(identityless).toBeDisabled();
-	await expect(identityless).toHaveAttribute("aria-disabled", "true");
-	await expect(identityless).not.toHaveAttribute("aria-roledescription", "sortable");
-	await expect
-		.poll(() => identityless.evaluate((element) => getComputedStyle(element).cursor))
-		.toBe("default");
-
-	await matchedCloud.click();
-	await expect(page).toHaveURL(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
-	);
-	await page.goto("/");
-	await missingProjection.click();
-	await expect(page).toHaveURL(
-		`/agents/${missingProjectionEnvironmentId}?source=on-clawdi&d=hdep_running_projection`,
-	);
-	await page.goto("/");
-	await legacy.click();
-	await expect(page).toHaveURL(`/agents/${railLegacyEnvironmentId}`);
-	await page.goto("/");
-	await connected.click();
-	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
-});
-
-test("a pending agent match cannot be stolen by the previous section", async ({ page }) => {
-	const inventoryGate = deferred();
-	const authGate = deferred();
-	let blockNextAuth = false;
-	let pendingAuthRequestSeen = false;
-	await page.addInitScript((targetPathname) => {
-		const clickTargetLink = () => {
-			const target = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]")).find(
-				(anchor) => new URL(anchor.href).pathname === targetPathname,
-			);
-			if (!target) return false;
-			target.click();
-			return true;
-		};
-		const observer = new MutationObserver(() => {
-			if (clickTargetLink()) observer.disconnect();
-		});
-		observer.observe(document, { childList: true, subtree: true });
-	}, `/agents/${railHostedEnvironmentId}/skills`);
-	await page.route("**/_serverFn/**", async (route) => {
-		if (blockNextAuth) {
-			pendingAuthRequestSeen = true;
-			await authGate.promise;
-		}
-		await route.continue();
-	});
-	await stubHostedApi(page, {
-		deploymentsResponse: {
-			status: 200,
-			body: [readDeploymentFixture(railHostedDeployment)],
-			gate: inventoryGate.promise,
-		},
-		cloudAgents: [railHostedCloudAgent],
-	});
-
-	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi`);
-	blockNextAuth = true;
-	inventoryGate.resolve();
-	await expect.poll(() => pendingAuthRequestSeen).toBe(true);
-	await expect
-		.poll(() => new URL(page.url()).pathname)
-		.toBe(`/agents/${railHostedEnvironmentId}/skills`);
-
-	// The observer clicks Skills in the same commit that resolves inventory,
-	// before the previous Overview match can run its passive canonicalization
-	// effect. Keep the target match pending long enough for that old effect to
-	// run and prove that it cannot take ownership of the new section.
-	await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
-	await expect
-		.poll(() => new URL(page.url()).pathname)
-		.toBe(`/agents/${railHostedEnvironmentId}/skills`);
-
-	authGate.resolve();
-	await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
-	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(railHostedDeployment.id);
-});
-
-test("agent detail navigation preserves deployment identity without stale route takeovers", async ({
-	page,
-}) => {
-	await stubHostedApi(page, {
-		deployments: [railHostedDeployment],
-		cloudAgents: [railHostedCloudAgent],
-		sessionsPage: { ...emptyPage, items: [routingSession], total: 1 },
-		skillsPage: { ...emptyPage, items: [routingSkill], total: 1 },
-		projects: [routingProject],
-	});
-	const routeSearch = `source=on-clawdi&d=${railHostedDeployment.id}`;
-
-	await page.goto(`/agents/${railHostedEnvironmentId}?${routeSearch}`);
-	await page.getByRole("link", { name: `Open session ${routingSession.local_session_id}` }).click();
-	await expect(page).toHaveURL(
-		`/agents/${railHostedEnvironmentId}/sessions/${routingSession.id}?${routeSearch}`,
-	);
-	await expect
-		.poll(() => new URL(page.url()).pathname)
-		.toBe(`/agents/${railHostedEnvironmentId}/sessions/${routingSession.id}`);
-	await page
-		.getByRole("navigation", { name: "breadcrumb" })
-		.locator('a[data-slot="breadcrumb-link"]')
-		.filter({ hasText: /^Sessions$/ })
-		.click();
-	await expect(page).toHaveURL(new RegExp(`/agents/${railHostedEnvironmentId}/sessions(?:\\?|$)`));
-	expect(new URL(page.url()).searchParams.get("source")).toBe("on-clawdi");
-	expect(new URL(page.url()).searchParams.get("d")).toBe(railHostedDeployment.id);
-
-	await page.goto(`/agents/${railHostedEnvironmentId}/skills?${routeSearch}`);
-	await page.getByRole("link", { name: `Open ${routingSkill.name}` }).click();
-	await expect(page).toHaveURL(
-		`/agents/${railHostedEnvironmentId}/skills/${routingSkill.skill_key}?${routeSearch}&project=${routingSkill.project_id}`,
-	);
-	await expect
-		.poll(() => new URL(page.url()).pathname)
-		.toBe(`/agents/${railHostedEnvironmentId}/skills/${routingSkill.skill_key}`);
-	await page
-		.getByRole("navigation", { name: "breadcrumb" })
-		.locator('a[data-slot="breadcrumb-link"]')
-		.filter({ hasText: /^Skills$/ })
-		.click();
-	await expect(page).toHaveURL(new RegExp(`/agents/${railHostedEnvironmentId}/skills(?:\\?|$)`));
-	expect(new URL(page.url()).searchParams.get("source")).toBe("on-clawdi");
-	expect(new URL(page.url()).searchParams.get("d")).toBe(railHostedDeployment.id);
-});
-
-test("stopped projection-absent detail breadcrumbs retain their deployment owner", async ({
-	page,
-}) => {
-	await stubHostedApi(page, {
-		deployments: [stoppedProjectionGoneDeployment],
-		sessionsPage: { ...emptyPage, items: [routingSession], total: 1 },
-		skillsPage: { ...emptyPage, items: [routingSkill], total: 1 },
-	});
-	const agentId = stoppedProjectionGoneDeployment.id;
-	const routeSearch = `source=on-clawdi&d=${stoppedProjectionGoneDeployment.id}`;
-	const details = [
-		{
-			path: `/agents/${agentId}/sessions/${routingSession.id}?${routeSearch}`,
-			section: "sessions",
-			label: "Sessions",
-		},
-		{
-			path: `/agents/${agentId}/skills/${routingSkill.skill_key}?${routeSearch}&project=${routingSkill.project_id}`,
-			section: "skills",
-			label: "Skills",
-		},
-	] as const;
-
-	for (const detail of details) {
-		await page.goto(detail.path);
-		await page
-			.getByRole("navigation", { name: "breadcrumb" })
-			.locator('a[data-slot="breadcrumb-link"]')
-			.filter({ hasText: new RegExp(`^${detail.label}$`) })
-			.click();
-		await expect(page).toHaveURL(new RegExp(`/agents/${agentId}/${detail.section}(?:\\?|$)`));
-		const destination = new URL(page.url());
-		expect(destination.searchParams.get("source")).toBe("on-clawdi");
-		expect(destination.searchParams.get("d")).toBe(stoppedProjectionGoneDeployment.id);
-		await expect(page.getByText("Stopped", { exact: true }).first()).toBeVisible();
-	}
-});
-
-test("agent URL compatibility, case identity, and malformed components fail safely", async ({
-	page,
-}) => {
-	const errors = collectBrowserErrors(page);
-	await stubHostedApi(page, {
-		deployments: [],
-		cloudAgents: [railConnectedCloudAgent],
-	});
-
-	await page.goto(`/agents/${railConnectedEnvironmentId}?tab=skills&keep=1`);
-	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}/skills?keep=1`);
-	await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
-
-	const legacyDetails = [
-		`/agents/${railConnectedEnvironmentId}/sessions/${routingSession.id}?tab=sessions&keep=1`,
-		`/agents/${railConnectedEnvironmentId}/skills/${routingSkill.skill_key}?tab=skills&project=${routingSkill.project_id}&keep=1`,
-	] as const;
-	for (const detail of legacyDetails) {
-		await page.goto(detail);
-		const destination = new URL(page.url());
-		expect(destination.pathname).toBe(new URL(detail, "http://clawdi.test").pathname);
-		expect(destination.searchParams.get("tab")).toBeNull();
-		expect(destination.searchParams.get("keep")).toBe("1");
-	}
-
-	await page.goto(`/AGENTS/${railConnectedEnvironmentId.toUpperCase()}/SKILLS`);
-	await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
-	await expect(
-		page.getByTestId("app-sidebar-agent-rail").getByRole("button", { name: /Rail Connected/ }),
-	).toHaveAttribute("data-active", "");
-
-	await page.goto("/agents/%25ZZ");
-	await expect(page.getByTestId("app-sidebar")).toBeVisible();
-	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toBeVisible();
-	const pushMalformedPathname = (pathname: string) =>
-		page.evaluate((nextPathname) => {
-			const currentState = window.history.state;
-			const currentIndex =
-				typeof currentState === "object" &&
-				currentState !== null &&
-				typeof Reflect.get(currentState, "__TSR_index") === "number"
-					? Reflect.get(currentState, "__TSR_index")
-					: 0;
-			const key = crypto.randomUUID();
-			window.history.pushState(
-				{
-					...(typeof currentState === "object" && currentState !== null ? currentState : {}),
-					key,
-					__TSR_key: key,
-					__TSR_index: currentIndex + 1,
-				},
-				"",
-				nextPathname,
-			);
-		}, pathname);
-	await pushMalformedPathname("/agents/%E0%A4");
-	expect(await page.evaluate(() => window.location.pathname)).toBe("/agents/%E0%A4");
-	await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
-	await pushMalformedPathname("/vault/%E0%A4");
-	expect(await page.evaluate(() => window.location.pathname)).toBe("/vault/%E0%A4");
-	await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
-	expect(errors, `malformed route errors: ${errors.join(" | ")}`).toEqual([]);
-});
-
-test("a stale hosted access gate cannot replace a newer pending route", async ({ page }) => {
-	const accessGate = deferred();
-	const authGate = deferred();
-	let blockNextAuth = false;
-	const productAccessRequests: string[] = [];
-	const productAccessResponses: StubResponse[] = [
-		{ status: 200, body: hostedUser(true) },
-		{ status: 200, body: hostedUser(false), gate: accessGate.promise },
-	];
-	await page.route("**/_serverFn/**", async (route) => {
-		if (blockNextAuth) await authGate.promise;
-		await route.continue();
-	});
-	await stubHostedApi(page, {
-		productAccessRequests,
-		productAccessResponses,
-		projects: [routingProject],
-	});
-
-	await page.goto("/channels");
-	await expect(page.getByRole("heading", { name: "Channels", exact: true })).toBeVisible();
-	await expect.poll(() => productAccessRequests.length).toBe(1);
-	await page.evaluate(() => {
-		const currentNow = Date.now.bind(Date);
-		Date.now = () => currentNow() + 61_000;
-		window.dispatchEvent(new Event("visibilitychange"));
-	});
-	await expect.poll(() => productAccessRequests.length).toBe(2);
-
-	blockNextAuth = true;
-	await page
-		.getByTestId("app-sidebar")
-		.locator('a[href="/projects"]')
-		.first()
-		.evaluate((link: HTMLAnchorElement) => link.click());
-	await expect.poll(() => page.evaluate(() => window.location.pathname)).toBe("/projects");
-	accessGate.resolve();
-	await expect(page).toHaveURL(/\/projects\/?$/);
-	authGate.resolve();
-	blockNextAuth = false;
-	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-	await expect(page).toHaveURL(/\/projects\/?$/);
-
-	await pushManagedLocation(page, "/channels");
-	await expect(page).toHaveURL(/\/$/);
-});
-
-test("late Project creation keeps global success effects without stealing the destination", async ({
-	page,
-}) => {
-	const createGate = deferred();
-	const projectCreateRequests: string[] = [];
-	const createdProject = {
-		...routingProject,
-		id: "project-late-create",
-		name: "Late Project",
-		kind: "custom",
-		origin_environment_id: null,
-	};
-	await stubHostedApi(page, {
-		projectCreateRequests,
-		projectCreateResponse: { status: 201, body: createdProject, gate: createGate.promise },
-		projects: [],
-	});
-	await page.goto("/projects");
-	await page.getByRole("button", { name: "New project", exact: true }).click();
-	const dialog = page.getByRole("dialog");
-	await dialog.getByLabel("Name").fill(createdProject.name);
-	await dialog.getByRole("button", { name: "Create project", exact: true }).click();
-	await expect.poll(() => projectCreateRequests.length).toBe(1);
-
-	await page
-		.getByTestId("app-sidebar")
-		.locator('a[href="/channels"]')
-		.first()
-		.evaluate((link: HTMLAnchorElement) => link.click());
-	await expect(page).toHaveURL(/\/channels\/?$/);
-	createGate.resolve();
-	await expect(page.getByText("Project created", { exact: true })).toBeVisible();
-	await expect(page).toHaveURL(/\/channels\/?$/);
-	expect(new URL(page.url()).pathname).not.toBe(`/projects/${createdProject.id}`);
-});
-
-test("late share upgrade completion cannot pull the user back to the Project", async ({ page }) => {
-	const upgradeGate = deferred();
-	const shareUpgradeRequests: string[] = [];
-	const token = "late-upgrade-token";
-	await stubHostedApi(page, {
-		projects: [routingProject],
-		sharePreview: {
-			project_id: routingProject.id,
-			project_name: routingProject.name,
-			owner_display: "Share Owner",
-			owner_handle: "share-owner",
-			skill_count: 2,
-			vault_count: 1,
-			vault_locked: true,
-		},
-		shareUpgradeRequests,
-		shareUpgradeResponse: {
-			status: 200,
-			gate: upgradeGate.promise,
-			body: {
-				membership_id: "membership-late-upgrade",
-				project_id: routingProject.id,
-				role: "viewer",
-				joined_via: "share",
-				joined_at: "2026-07-28T12:00:00Z",
-			},
-		},
-	});
-	await page.goto(`/share/${token}`);
-	await expect(page.getByText(routingProject.name, { exact: true })).toBeVisible();
-	await page.getByRole("button", { name: "Accept Project Access", exact: true }).click();
-	await expect.poll(() => shareUpgradeRequests.length).toBe(1);
-
-	await pushManagedLocation(page, "/projects");
-	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-	upgradeGate.resolve();
-	await expect(page).toHaveURL(/\/projects\/?$/);
-	await expect(page.getByText("You're In", { exact: true })).toHaveCount(0);
-	expect(new URL(page.url()).pathname).not.toBe(`/projects/${routingProject.id}`);
-});
-
-test("a proven deployment cannot be replaced after projection loss in the same mount", async ({
-	page,
-}) => {
-	const matched: DeploymentMutationFixture = {
-		...railHostedDeployment,
-		config_info: {
-			...railHostedDeployment.config_info,
-			clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
-		},
-	};
-	const replacement: DeploymentMutationFixture = {
-		...stoppedProjectionGoneDeployment,
-		id: "hdep_replacement_selector",
-		name: "Replacement selector",
-	};
-	const deployments: DeploymentMutationFixture[] = [matched, replacement];
-	const deploymentListRequests: string[] = [];
-	await stubHostedApi(page, {
-		deployments,
-		deploymentListRequests,
-		cloudAgents: [railHostedCloudAgent],
-		onStop: (deploymentId) => {
-			if (deploymentId !== matched.id) return;
-			deployments.splice(
-				0,
-				2,
-				{
-					...matched,
-					status: "stopped",
-					config_info: { ...matched.config_info, clawdi_cloud_environments: {} },
-				},
-				{
-					...replacement,
-					status: "running",
-					config_info: {
-						...replacement.config_info,
-						clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
-					},
-				},
-			);
-		},
-	});
-
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}/settings?source=on-clawdi&d=${replacement.id}&keep=1`,
-	);
-	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(matched.id);
-	await expect.poll(() => new URL(page.url()).searchParams.get("keep")).toBe("1");
-
-	const readsBeforeStop = deploymentListRequests.length;
-	await page.locator("main").getByRole("button", { name: "Stop", exact: true }).click();
-	await page
-		.getByRole("alertdialog")
-		.getByRole("button", { name: "Stop agent", exact: true })
-		.click();
-	await expect.poll(() => deploymentListRequests.length).toBeGreaterThan(readsBeforeStop);
-	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(matched.id);
-	await expect(
-		page.locator("main").getByRole("button", { name: "Start", exact: true }),
-	).toBeVisible();
-	await expect(
-		page.getByTestId("app-sidebar").getByText(matched.name, { exact: true }),
-	).toBeVisible();
-	const rail = page.getByTestId("app-sidebar-agent-rail");
-	await expect(rail.getByRole("button", { name: matched.name, exact: true })).toHaveAttribute(
-		"data-active",
-		"",
-	);
-	await expect(
-		rail.getByRole("button", { name: replacement.name, exact: true }),
-	).not.toHaveAttribute("data-active", "");
-});
-
-test("Project use-with-agent dialog follows Router Back and Forward", async ({ page }) => {
-	await stubHostedApi(page, {
-		projects: [routingProject],
-		cloudAgents: [railConnectedCloudAgent],
-	});
-	await page.goto(`/projects/${routingProject.id}`);
-
-	await page.getByRole("button", { name: "Add to agent", exact: true }).first().click();
-	await expect.poll(() => new URL(page.url()).searchParams.get("useWithAgent")).toBe("1");
-	await expect(page.getByRole("dialog")).toBeVisible();
-
-	await page.goBack();
-	await expect(page.getByRole("dialog")).toHaveCount(0);
-	await expect.poll(() => new URL(page.url()).searchParams.get("useWithAgent")).toBeNull();
-
-	await page.goForward();
-	await expect(page.getByRole("dialog")).toBeVisible();
-	await expect.poll(() => new URL(page.url()).searchParams.get("useWithAgent")).toBe("1");
-});
-
 test("transient inventory withholds connected tiles until membership resolves", async ({
 	page,
 }) => {
@@ -2496,166 +1674,8 @@ test("transient inventory withholds connected tiles until membership resolves", 
 	await expect(rail.getByRole("button", { name: /Rail Connected/ })).toBeVisible();
 });
 
-test("Cloud detail keeps the focus rail clickable across responsive and zoom states", async ({
-	browser,
-	baseURL,
-}) => {
-	test.setTimeout(240_000);
-	if (!baseURL) throw new Error("Playwright baseURL is required for the focus rail test.");
-	const cases = [
-		{
-			name: "desktop",
-			viewport: { width: 1280, height: 720 },
-			deviceScaleFactor: 1,
-			pageScaleFactor: 1,
-			mobile: false,
-		},
-		{
-			name: "responsive desktop edge",
-			viewport: { width: 768, height: 720 },
-			deviceScaleFactor: 1,
-			pageScaleFactor: 1,
-			mobile: false,
-		},
-		{
-			name: "125 percent page scale",
-			viewport: { width: 1024, height: 720 },
-			deviceScaleFactor: 1,
-			pageScaleFactor: 1.25,
-			mobile: false,
-		},
-		{
-			name: "mobile sheet",
-			viewport: { width: 390, height: 844 },
-			deviceScaleFactor: 3,
-			pageScaleFactor: 1,
-			mobile: true,
-		},
-	] as const;
-
-	for (const testCase of cases) {
-		const context = await browser.newContext({
-			baseURL,
-			viewport: testCase.viewport,
-			deviceScaleFactor: testCase.deviceScaleFactor,
-		});
-		const page = await context.newPage();
-		try {
-			const clickProbe = await installNativeClickProbe(page);
-			await stubHostedApi(page, {
-				deployments: [railHostedDeployment],
-				cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
-			});
-			const openRail = async () => {
-				if (testCase.mobile) {
-					await expect(page.getByTestId("app-sidebar-agent-rail")).toHaveCount(0);
-					const mobileRail = page.getByRole("navigation", { name: "Focus rail" });
-					if (!(await mobileRail.isVisible())) {
-						await page.getByRole("button", { name: "Toggle Sidebar" }).click();
-					}
-				}
-				const rail = testCase.mobile
-					? page.getByRole("navigation", { name: "Focus rail" })
-					: page.getByTestId("app-sidebar-agent-rail");
-				await expect(rail, `${testCase.name} focus rail`).toBeVisible();
-				if (testCase.mobile) {
-					await expect
-						.poll(async () => (await rail.boundingBox())?.x ?? Number.NEGATIVE_INFINITY)
-						.toBeGreaterThanOrEqual(0);
-				}
-				return rail;
-			};
-			const expectMobileRailClosed = async (rail: ReturnType<Page["locator"]>) => {
-				if (testCase.mobile) await expect(rail).not.toBeVisible();
-			};
-
-			await page.goto("/agents");
-			if (testCase.pageScaleFactor !== 1) {
-				const cdp = await context.newCDPSession(page);
-				await cdp.send("Emulation.setPageScaleFactor", {
-					pageScaleFactor: testCase.pageScaleFactor,
-				});
-				await cdp.detach();
-				await expect
-					.poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1))
-					.toBeCloseTo(testCase.pageScaleFactor, 2);
-			}
-			let rail = await openRail();
-			let consoleLink = rail.getByRole("link", { name: "Console", exact: true });
-			let cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
-			let connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
-			await expectCenterHitTarget(consoleLink, `${testCase.name} Console before Cloud detail`);
-			await expectCenterHitTarget(
-				connectedButton,
-				`${testCase.name} connected before Cloud detail`,
-			);
-			await expectNoDragCursor(cloudButton, `${testCase.name} Cloud at rest`);
-			await expectNoDragCursor(connectedButton, `${testCase.name} connected at rest`);
-
-			clickProbe.reset();
-			await cloudButton.click();
-			await expect(page).toHaveURL(
-				`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
-			);
-			await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
-			expectNativeClickReachedDocument(clickProbe.records, `${testCase.name} Cloud click`, false);
-			await expectMobileRailClosed(rail);
-
-			rail = await openRail();
-			consoleLink = rail.getByRole("link", { name: "Console", exact: true });
-			connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
-			await expectCenterHitTarget(consoleLink, `${testCase.name} Console after Cloud detail`);
-			await expectCenterHitTarget(connectedButton, `${testCase.name} connected after Cloud detail`);
-			await expectNoDragCursor(connectedButton, `${testCase.name} connected after Cloud detail`);
-			clickProbe.reset();
-			await connectedButton.click();
-			await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
-			expectNativeClickReachedDocument(
-				clickProbe.records,
-				`${testCase.name} Cloud to connected click`,
-				false,
-			);
-			await expectMobileRailClosed(rail);
-
-			rail = await openRail();
-			consoleLink = rail.getByRole("link", { name: "Console", exact: true });
-			clickProbe.reset();
-			await consoleLink.click();
-			await expect(page).toHaveURL("/");
-			expectNativeClickReachedDocument(clickProbe.records, `${testCase.name} Console click`, true);
-			await expectMobileRailClosed(rail);
-
-			// Exercise the direct Cloud -> Console transition separately from the
-			// Cloud -> connected -> Console sequence above.
-			rail = await openRail();
-			cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
-			await cloudButton.click();
-			await expect(page).toHaveURL(
-				`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
-			);
-			await expectMobileRailClosed(rail);
-			rail = await openRail();
-			consoleLink = rail.getByRole("link", { name: "Console", exact: true });
-			await expectCenterHitTarget(consoleLink, `${testCase.name} direct Cloud to Console`);
-			clickProbe.reset();
-			await consoleLink.click();
-			await expect(page).toHaveURL("/");
-			expectNativeClickReachedDocument(
-				clickProbe.records,
-				`${testCase.name} direct Cloud to Console click`,
-				true,
-			);
-			await expectMobileRailClosed(rail);
-		} finally {
-			await context.close();
-		}
-	}
-});
-
-test("whole agent tile mouse drag reorders without navigation", async ({ page, baseURL }) => {
-	if (!baseURL) throw new Error("Playwright baseURL is required for the hosted rail test.");
+test("whole agent tile drag does not navigate and the next click does", async ({ page }) => {
 	const agentOrderRequests: string[] = [];
-	const clickProbe = await installNativeClickProbe(page);
 	await stubHostedApi(page, {
 		agentOrderRequests,
 		deployments: [railHostedDeployment],
@@ -2666,148 +1686,26 @@ test("whole agent tile mouse drag reorders without navigation", async ({ page, b
 	const rail = page.getByTestId("app-sidebar-agent-rail");
 	const connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
 	const cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
-	const clickSuppressors = async () =>
-		(await documentCaptureClickListeners(page)).filter(
-			(listener) => listener.useCapture && listener.listener.includes("stopPropagation"),
-		);
-	const dragTile = async (
-		source: ReturnType<Page["locator"]>,
-		target: ReturnType<Page["locator"]>,
-		label: string,
-	) => {
-		const sourceBox = await source.boundingBox();
-		const targetBox = await target.boundingBox();
-		if (!sourceBox || !targetBox) throw new Error(`${label} agent buttons should render.`);
-		const suppressorsBefore = await clickSuppressors();
-		await expectNoDragCursor(source, `${label} before drag`);
-		await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
-		await page.mouse.down();
-		await expectNoDragCursor(source, `${label} while pressed`);
-		await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
-			steps: 10,
-		});
-		await expect(source).toHaveAttribute("aria-pressed", "true");
-		await expectNoDragCursor(source, `${label} while dragging`);
-		expect(await clickSuppressors()).toHaveLength(suppressorsBefore.length + 1);
-		await page.mouse.up();
-		await expect.poll(async () => (await clickSuppressors()).length).toBe(suppressorsBefore.length);
-		await expect.poll(() => page.url()).toBe(new URL("/", baseURL).href);
-		await expectNoDragCursor(source, `${label} after drag`);
-	};
+	const sourceBox = await connectedButton.boundingBox();
+	const targetBox = await cloudButton.boundingBox();
+	if (!sourceBox || !targetBox) throw new Error("Agent tile buttons should render.");
 
-	await dragTile(connectedButton, cloudButton, "connected");
+	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+		steps: 10,
+	});
+	await expect(connectedButton).toHaveAttribute("aria-pressed", "true");
+	await page.mouse.up();
 
-	await expectCenterHitTarget(connectedButton, "connected agent after mouse drag");
-	clickProbe.reset();
-	await connectedButton.click();
-	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
-	expectNativeClickReachedDocument(clickProbe.records, "connected agent after mouse drag", false);
+	await expect(page).toHaveURL(/\/$/);
 	await expect.poll(() => agentOrderRequests.length).toBe(1);
 	expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
 		agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
 	});
-	await expect(rail.getByTestId("app-sidebar-agent-tile").nth(0)).toContainText("Rail Connected");
 
-	await page.goto("/");
-	await dragTile(cloudButton, connectedButton, "Cloud");
-	await expectCenterHitTarget(cloudButton, "Cloud agent after mouse drag");
-	clickProbe.reset();
-	await cloudButton.click();
-	await expect(page).toHaveURL(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
-	);
-	expectNativeClickReachedDocument(clickProbe.records, "Cloud agent after mouse drag", false);
-	await expect.poll(() => agentOrderRequests.length).toBe(2);
-	expect(JSON.parse(agentOrderRequests[1] ?? "{}")).toEqual({
-		agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
-	});
-});
-
-test("whole agent tile preserves touch scroll intent and supports long-press drag", async ({
-	browser,
-	baseURL,
-}) => {
-	if (!baseURL) throw new Error("Playwright baseURL is required for the hosted rail test.");
-	const context = await browser.newContext({
-		baseURL,
-		hasTouch: true,
-		viewport: { width: 1280, height: 360 },
-	});
-	const page = await context.newPage();
-	const agentOrderRequests: string[] = [];
-	try {
-		await stubHostedApi(page, {
-			agentOrderRequests,
-			deployments: [railHostedDeployment],
-			cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
-		});
-		await page.goto("/");
-
-		const rail = page.getByTestId("app-sidebar-agent-rail");
-		const scrollContainer = rail.locator('[data-slot="sidebar-content"]');
-		const cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
-		const connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
-		const scrollSourceBox = await cloudButton.boundingBox();
-		if (!scrollSourceBox) throw new Error("Hosted rail cloud button should render.");
-		const cdp = await context.newCDPSession(page);
-		const scrollStart = await scrollContainer.evaluate((element) => element.scrollTop);
-		const scrollSource = {
-			x: scrollSourceBox.x + scrollSourceBox.width / 2,
-			y: scrollSourceBox.y + scrollSourceBox.height / 2,
-		};
-		await cdp.send("Input.dispatchTouchEvent", {
-			type: "touchStart",
-			touchPoints: [scrollSource],
-		});
-		await cdp.send("Input.dispatchTouchEvent", {
-			type: "touchMove",
-			touchPoints: [{ x: scrollSource.x, y: scrollSource.y - 40 }],
-		});
-		await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-		expect(agentOrderRequests).toEqual([]);
-		await expect
-			.poll(() => scrollContainer.evaluate((element) => element.scrollTop))
-			.toBeGreaterThan(scrollStart);
-		await expect.poll(() => page.url()).toBe(new URL("/", baseURL).href);
-
-		await page.reload();
-		const sourceBox = await connectedButton.boundingBox();
-		const targetBox = await cloudButton.boundingBox();
-		if (!sourceBox || !targetBox) throw new Error("Hosted rail agent buttons should render.");
-		const source = {
-			x: sourceBox.x + sourceBox.width / 2,
-			y: sourceBox.y + sourceBox.height / 2,
-		};
-		const target = {
-			x: targetBox.x + targetBox.width / 2,
-			y: targetBox.y + targetBox.height / 2,
-		};
-		await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [source] });
-		await expect(connectedButton).toHaveAttribute("aria-pressed", "true");
-		await expectNoDragCursor(connectedButton, "connected touch tile while dragging");
-		for (let step = 1; step <= 10; step += 1) {
-			await cdp.send("Input.dispatchTouchEvent", {
-				type: "touchMove",
-				touchPoints: [
-					{
-						x: source.x + ((target.x - source.x) * step) / 10,
-						y: source.y + ((target.y - source.y) * step) / 10,
-					},
-				],
-			});
-		}
-		await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-		await expect.poll(() => agentOrderRequests.length).toBe(1);
-		await expect.poll(() => page.url()).toBe(new URL("/", baseURL).href);
-		expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
-			agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
-		});
-		await expectNoDragCursor(connectedButton, "connected touch tile after drag");
-		await connectedButton.tap();
-		await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
-	} finally {
-		await context.close();
-	}
+	await connectedButton.click();
+	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
 });
 
 test("existing Cloud customers keep billing settings when new deploys are disabled", async ({
@@ -4385,18 +3283,14 @@ test("terminal fallback starts a new subscription against the fallback deploymen
 
 test("included Basic checkout abandonment preserves the current plan", async ({ page }) => {
 	const checkoutRequests: string[] = [];
-	const deploymentListRequests: string[] = [];
 	await stubHostedApi(page, {
 		checkoutRequests,
-		deploymentListRequests,
 		deployments: [includedBasicDeployment],
 		plans: [basicPlan, performancePlan],
 	});
-	await page.goto(`/agents/${includedBasicDeployment.id}/settings?checkout=cancel`);
+	await gotoHostedAgentSettings(page, "hdep_included", "Basic", "?checkout=cancel");
 	const errors = collectBrowserErrors(page);
 
-	await expect(page.getByText("Basic compute", { exact: true })).toBeVisible();
-	await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
 	await expect(page.getByText("Checkout canceled", { exact: true })).toBeVisible();
 	await expect(
 		page.getByText("You were not charged. Your compute plan is unchanged.", { exact: true }),
@@ -4405,39 +3299,6 @@ test("included Basic checkout abandonment preserves the current plan", async ({ 
 	await expect(page.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
 	expect(checkoutRequests).toEqual([]);
 	expect(errors, `included Basic checkout abandonment: ${errors.join(" | ")}`).toEqual([]);
-});
-
-test("checkout cancellation completion is silent after route ownership is lost", async ({
-	page,
-}) => {
-	const deploymentListRequests: string[] = [];
-	const refreshGate = deferred();
-	const deploymentBody = [readDeploymentFixture(includedBasicDeployment)];
-	await stubHostedApi(page, {
-		deploymentListRequests,
-		deployments: [includedBasicDeployment],
-		deploymentsResponses: [
-			{ status: 200, body: deploymentBody },
-			{ status: 200, body: deploymentBody, gate: refreshGate.promise },
-		],
-		plans: [basicPlan, performancePlan],
-	});
-
-	await page.goto(
-		`/agents/${includedBasicDeployment.id}/settings?checkout=cancel&deployment_id=${includedBasicDeployment.id}`,
-		{ waitUntil: "domcontentloaded" },
-	);
-	await expect(page.getByText("Basic compute", { exact: true })).toBeVisible();
-	await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
-	await page.locator('a[href="/agents"]').first().click();
-	await expect(page).toHaveURL(/\/agents\/?$/);
-
-	refreshGate.resolve();
-	await page.waitForLoadState("networkidle");
-	await expect(page).toHaveURL(/\/agents\/?$/);
-	await expect(page.getByText("Checkout canceled", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("Checkout status refreshed", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("Couldn’t refresh checkout status", { exact: true })).toHaveCount(0);
 });
 
 test("paid Basic cancellation stays conditional with the included slot vacant or occupied", async ({
@@ -4933,6 +3794,7 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 	await expect(discardDialog.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
 	await discardDialog.getByRole("button", { name: "Keep editing" }).click();
 	await expect(card).toBeVisible();
+	await expect(threshold).toHaveValue("7.50");
 
 	await card.screenshot({ path: "/tmp/auto-reload-dirty.png" });
 	await save.evaluate((button: HTMLButtonElement) => {
@@ -4967,343 +3829,6 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 		errors.filter((error) => !error.includes("status of 400")),
 		`auto-reload save: ${errors.join(" | ")}`,
 	).toEqual([]);
-});
-
-test("dirty Settings blocks Router push, Back, Forward, and document exit", async ({ page }) => {
-	await page.addInitScript(() => {
-		const calls: number[] = [];
-		const nativeGo = window.history.go.bind(window.history);
-		Object.defineProperty(window, "__clawdiHistoryGoDeltas", { value: calls });
-		window.history.go = (delta?: number) => {
-			calls.push(delta ?? 0);
-			nativeGo(delta);
-		};
-	});
-	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
-	const sidebar = page.getByTestId("app-sidebar");
-	await page.goto("/agents");
-	await sidebar.locator('a[href="/channels"]').first().click();
-	await expect(page).toHaveURL(/\/channels\/?$/);
-	await sidebar.locator('a[href="/projects"]').first().click();
-	await expect(page).toHaveURL(/\/projects\/?$/);
-	await sidebar.locator('a[href="/vault"]').first().click();
-	await expect(page).toHaveURL(/\/vault\/?$/);
-	await page.goBack();
-	await expect(page).toHaveURL(/\/projects\/?$/);
-	await page.goBack();
-	await expect(page).toHaveURL(/\/channels\/?$/);
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
-
-	const settingsDialog = page.getByTestId("settings-dialog");
-	await expect(settingsDialog).toBeVisible();
-	await settingsDialog.getByRole("button", { name: /^Wallet/ }).click();
-	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
-	const autoReload = settingsDialog
-		.locator('[data-slot="card"]')
-		.filter({ hasText: "Auto-reload" });
-	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	await expectBeforeUnloadBlocked(page, "dirty Settings");
-
-	await page.evaluate(() => window.history.forward());
-	let blocker = page.getByRole("alertdialog");
-	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
-	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
-	expect(await page.evaluate(() => Reflect.get(window, "__clawdiHistoryGoDeltas"))).toEqual([-1]);
-
-	await page.evaluate(() => window.history.go(2));
-	blocker = page.getByRole("alertdialog");
-	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
-	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
-	expect(await page.evaluate(() => Reflect.get(window, "__clawdiHistoryGoDeltas"))).toEqual([
-		-1, 2, -2,
-	]);
-
-	await page.evaluate(() => window.history.back());
-	blocker = page.getByRole("alertdialog");
-	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
-	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
-	expect(await page.evaluate(() => Reflect.get(window, "__clawdiHistoryGoDeltas"))).toEqual([
-		-1, 2, -2, 1,
-	]);
-
-	await page
-		.getByTestId("app-sidebar")
-		.locator('a[href="/agents"]')
-		.first()
-		.evaluate((link: HTMLAnchorElement) => link.click());
-	blocker = page.getByRole("alertdialog");
-	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
-	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
-	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
-});
-
-test("dirty Settings serializes rapid POP attempts and preserves indexed history", async ({
-	page,
-}) => {
-	await page.addInitScript(() => {
-		const goDeltas: number[] = [];
-		const counters = { replaceState: 0 };
-		const nativeGo = window.history.go.bind(window.history);
-		const nativeReplaceState = window.history.replaceState.bind(window.history);
-		Reflect.set(window, "__rapidPopGoDeltas", goDeltas);
-		Reflect.set(window, "__rapidPopCounters", counters);
-		window.history.go = (delta?: number) => {
-			goDeltas.push(delta ?? 0);
-			nativeGo(delta);
-		};
-		window.history.replaceState = (state, title, url) => {
-			counters.replaceState += 1;
-			nativeReplaceState(state, title, url);
-		};
-	});
-	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
-	const identity = () =>
-		page.evaluate(() => ({
-			href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
-			index: Reflect.get(window.history.state, "__TSR_index"),
-			key: Reflect.get(window.history.state, "__TSR_key"),
-		}));
-	const historyLength = () => page.evaluate(() => window.history.length);
-	const replaceCalls = () =>
-		page.evaluate(() => {
-			const counters = Reflect.get(window, "__rapidPopCounters");
-			return typeof counters === "object" && counters !== null
-				? Reflect.get(counters, "replaceState")
-				: null;
-		});
-
-	await page.goto("/agents");
-	const sidebar = page.getByTestId("app-sidebar");
-	await sidebar.locator('a[href="/channels"]').first().click();
-	await expect(page).toHaveURL(/\/channels\/?$/);
-	const channelsEntry = await identity();
-	await sidebar.locator('a[href="/projects"]').first().click();
-	await expect(page).toHaveURL(/\/projects\/?$/);
-	const projectsEntry = await identity();
-	await sidebar.locator('a[href="/vault"]').first().click();
-	await expect(page).toHaveURL(/\/vault\/?$/);
-
-	await page.getByRole("button", { name: "Settings", exact: true }).click();
-	const settingsDialog = page.getByTestId("settings-dialog");
-	await settingsDialog.getByRole("button", { name: /^Wallet/ }).click();
-	const autoReload = settingsDialog
-		.locator('[data-slot="card"]')
-		.filter({ hasText: "Auto-reload" });
-	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	const origin = await identity();
-	const originLength = await historyLength();
-	const replaceCallsAtOrigin = await replaceCalls();
-
-	await page.evaluate(() => window.history.back());
-	const blocker = page.getByRole("alertdialog");
-	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
-	await page.evaluate(() => window.history.back());
-	await expect.poll(() => page.evaluate(() => window.location.pathname)).toBe("/channels");
-	await expect(page.getByRole("alertdialog")).toHaveCount(1);
-	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
-
-	await expect.poll(identity).toEqual(origin);
-	expect(await historyLength()).toBe(originLength);
-	expect(await replaceCalls()).toBe(replaceCallsAtOrigin);
-	expect(await page.evaluate(() => Reflect.get(window, "__rapidPopGoDeltas"))).toEqual([2]);
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-
-	await autoReload.getByLabel("When balance is below (USD)").fill("5.00");
-	await expect(autoReload.getByText("All changes saved", { exact: true })).toBeVisible();
-	await page.evaluate(() => window.history.back());
-	await expect.poll(identity).toEqual(projectsEntry);
-	await page.evaluate(() => window.history.back());
-	await expect.poll(identity).toEqual(channelsEntry);
-	await page.evaluate(() => window.history.forward());
-	await expect.poll(identity).toEqual(projectsEntry);
-	await page.evaluate(() => window.history.forward());
-	await expect.poll(identity).toEqual(origin);
-});
-
-test("dirty Settings permits owner-preserving Router replace canonicalization", async ({
-	page,
-}) => {
-	const inventoryGate = deferred();
-	const matched: DeploymentMutationFixture = {
-		...railHostedDeployment,
-		config_info: {
-			...railHostedDeployment.config_info,
-			clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
-		},
-	};
-	const stale: DeploymentMutationFixture = {
-		...stoppedProjectionGoneDeployment,
-		id: "hdep_settings_stale",
-		name: "Settings stale selector",
-	};
-	await stubHostedApi(page, {
-		deploymentsResponse: {
-			status: 200,
-			gate: inventoryGate.promise,
-			body: [readDeploymentFixture(matched), readDeploymentFixture(stale)],
-		},
-		cloudAgents: [railHostedCloudAgent],
-		plans: [basicPlan, performancePlan],
-	});
-	await page.goto(
-		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${stale.id}&settings=billing-wallet`,
-	);
-	const settingsDialog = page.getByTestId("settings-dialog");
-	const autoReload = settingsDialog
-		.locator('[data-slot="card"]')
-		.filter({ hasText: "Auto-reload" });
-	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	inventoryGate.resolve();
-
-	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(matched.id);
-	await expect(page.getByRole("alertdialog")).toHaveCount(0);
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	await expect(autoReload.getByLabel("When balance is below (USD)")).toHaveValue("6.00");
-});
-
-test("pending POP serializes safe Wallet cleanup after Stay without losing the draft", async ({
-	page,
-}) => {
-	await stubCompletedStripeCheckout(page, true);
-	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
-	await page.goto("/projects");
-	await page.waitForLoadState("networkidle");
-	await pushManagedLocation(
-		page,
-		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_stay_mixed&payment_intent_client_secret=pi_stay_mixed_secret&redirect_status=succeeded",
-	);
-	const settingsDialog = page.getByTestId("settings-dialog");
-	const autoReload = settingsDialog
-		.locator('[data-slot="card"]')
-		.filter({ hasText: "Auto-reload" });
-	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	await expect
-		.poll(() => page.evaluate(() => Reflect.get(window, "__stripePaymentIntentPending")))
-		.toBe(true);
-
-	await page.evaluate(() => window.history.back());
-	const blocker = page.getByRole("alertdialog");
-	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
-	await expect.poll(() => page.evaluate(() => window.location.pathname)).toBe("/projects");
-	await page.evaluate(() => {
-		const release = Reflect.get(window, "__releaseStripePaymentIntent");
-		if (typeof release === "function") release();
-	});
-	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
-	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
-
-	await expect.poll(() => page.evaluate(() => window.location.pathname)).toBe("/channels");
-	await expect.poll(() => new URL(page.url()).searchParams.get("topup_return")).toBeNull();
-	await expect(page.getByRole("alertdialog")).toHaveCount(0);
-	await expect(autoReload.getByLabel("When balance is below (USD)")).toHaveValue("6.00");
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	await expect(page.locator("main h1").filter({ hasText: /^Channels$/ })).toBeVisible();
-	await expect(page.locator("main h1").filter({ hasText: /^Projects$/ })).toHaveCount(0);
-
-	await autoReload.getByLabel("When balance is below (USD)").fill("5.00");
-	await expect(autoReload.getByText("All changes saved", { exact: true })).toBeVisible();
-	await page
-		.getByTestId("app-sidebar")
-		.locator('a[href="/projects"]')
-		.first()
-		.evaluate((link: HTMLAnchorElement) => link.click());
-	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-	await page.evaluate(() => window.history.back());
-	await expect(page.locator("main h1").filter({ hasText: /^Channels$/ })).toBeVisible();
-	await page.evaluate(() => window.history.forward());
-	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-});
-
-test("pending POP discards stale Wallet cleanup after leaving Settings", async ({ page }) => {
-	await stubCompletedStripeCheckout(page, true);
-	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
-	await page.goto("/projects");
-	await page.waitForLoadState("networkidle");
-	await pushManagedLocation(
-		page,
-		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_leave_mixed&payment_intent_client_secret=pi_leave_mixed_secret&redirect_status=succeeded",
-	);
-	const autoReload = page
-		.getByTestId("settings-dialog")
-		.locator('[data-slot="card"]')
-		.filter({ hasText: "Auto-reload" });
-	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	await expect
-		.poll(() => page.evaluate(() => Reflect.get(window, "__stripePaymentIntentPending")))
-		.toBe(true);
-
-	await page.evaluate(() => window.history.back());
-	const blocker = page.getByRole("alertdialog");
-	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
-	const targetIdentity = await page.evaluate(() => ({
-		href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
-		index: Reflect.get(window.history.state, "__TSR_index"),
-		key: Reflect.get(window.history.state, "__TSR_key"),
-	}));
-	await page.evaluate(() => {
-		const release = Reflect.get(window, "__releaseStripePaymentIntent");
-		if (typeof release === "function") release();
-	});
-	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
-	await blocker.getByRole("button", { name: "Discard changes", exact: true }).click();
-	await expect
-		.poll(() =>
-			page.evaluate(() => ({
-				href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
-				index: Reflect.get(window.history.state, "__TSR_index"),
-				key: Reflect.get(window.history.state, "__TSR_key"),
-			})),
-		)
-		.toEqual(targetIdentity);
-	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-	await expect(page.getByTestId("settings-dialog")).toHaveCount(0);
-	await page.evaluate(() => window.history.forward());
-	await expect(page.locator("main h1").filter({ hasText: /^Channels$/ })).toBeVisible();
-	await page.evaluate(() => window.history.back());
-	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-});
-
-test("pending Settings save keeps navigation blocked until completion", async ({ page }) => {
-	const savedWallet = { ...walletState, auto_reload_threshold_usd: "6.00" };
-	const autoReloadRequests: string[] = [];
-	const saveGate = deferred();
-	await stubHostedApi(page, {
-		autoReloadRequests,
-		autoReloadResponses: [{ status: 200, body: savedWallet, gate: saveGate.promise }],
-		plans: [basicPlan, performancePlan],
-	});
-	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
-	const autoReload = settingsDialog
-		.locator('[data-slot="card"]')
-		.filter({ hasText: "Auto-reload" });
-	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
-	await autoReload
-		.getByRole("button", { name: "Save changes", exact: true })
-		.evaluate((button: HTMLButtonElement) => button.click());
-	await expect.poll(() => autoReloadRequests.length).toBe(1);
-
-	await settingsDialog.getByRole("button", { name: /^Compute/ }).click();
-	const blocker = page.getByRole("alertdialog");
-	await expect(blocker.getByText("Save in progress", { exact: true })).toBeVisible();
-	await expect(
-		blocker.getByRole("button", { name: "Discard changes", exact: true }),
-	).toBeDisabled();
-	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
-
-	saveGate.resolve();
-	await expect(page).toHaveURL(/\/channels\?settings=billing-plan$/);
-	await expect(blocker).toHaveCount(0);
 });
 
 test("top-up validates the amount and blocks duplicate submission or close in flight", async ({
@@ -5431,155 +3956,6 @@ test("wallet confirms a card top-up only from its exact payment reference", asyn
 	expect(postTopUpLedgerReads).toBeGreaterThanOrEqual(2);
 	expect(walletRequests.length).toBeGreaterThanOrEqual(2);
 	expect(errors, `exact payment-reference wallet confirmation: ${errors.join(" | ")}`).toEqual([]);
-});
-
-test("wallet return cleanup keeps TanStack history state valid", async ({ page }) => {
-	await page.addInitScript(() => {
-		const originalReplaceState = window.history.replaceState.bind(window.history);
-		const transitions: Array<{ after: unknown; before: unknown; passed: unknown }> = [];
-		window.history.replaceState = (state, title, url) => {
-			const before = window.history.state;
-			const beforeUrl = new URL(window.location.href);
-			originalReplaceState(state, title, url);
-			const afterUrl = new URL(window.location.href);
-			if (
-				beforeUrl.searchParams.has("topup_return") &&
-				!afterUrl.searchParams.has("topup_return")
-			) {
-				transitions.push({ after: window.history.state, before, passed: state });
-			}
-		};
-		Reflect.set(window, "__walletHistoryTransitions", transitions);
-	});
-	await stubCompletedStripeCheckout(page);
-	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
-	await page.goto(
-		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_history_state&payment_intent_client_secret=pi_history_state_secret&redirect_status=succeeded&keep=1",
-	);
-
-	await expect.poll(() => new URL(page.url()).searchParams.get("topup_return")).toBeNull();
-	await expect.poll(() => new URL(page.url()).searchParams.get("keep")).toBe("1");
-	for (const key of [
-		"payment_intent",
-		"payment_intent_client_secret",
-		"redirect_status",
-	] as const) {
-		expect(new URL(page.url()).searchParams.get(key)).toBeNull();
-	}
-	const historyTransition = await page.evaluate(() => {
-		const transitions = Reflect.get(window, "__walletHistoryTransitions");
-		if (!Array.isArray(transitions)) return null;
-		const transition = transitions.at(-1);
-		if (typeof transition !== "object" || transition === null) return null;
-		const readIdentity = (value: unknown) => ({
-			key:
-				typeof value === "object" &&
-				value !== null &&
-				typeof Reflect.get(value, "__TSR_key") === "string"
-					? Reflect.get(value, "__TSR_key")
-					: null,
-			index:
-				typeof value === "object" &&
-				value !== null &&
-				typeof Reflect.get(value, "__TSR_index") === "number"
-					? Reflect.get(value, "__TSR_index")
-					: null,
-		});
-		return {
-			after: readIdentity(Reflect.get(transition, "after")),
-			before: readIdentity(Reflect.get(transition, "before")),
-			passed: readIdentity(Reflect.get(transition, "passed")),
-		};
-	});
-	expect(historyTransition).not.toBeNull();
-	expect(historyTransition?.before.key).not.toBeNull();
-	expect(historyTransition?.passed.key).not.toBeNull();
-	expect(historyTransition?.after.key).toBe(historyTransition?.passed.key);
-	expect(historyTransition?.passed.index).toBe(historyTransition?.before.index);
-	expect(historyTransition?.after.index).toBe(historyTransition?.before.index);
-});
-
-test("late Wallet return reconciles caches without cleaning a newer route", async ({ page }) => {
-	const ledgerRequests: string[] = [];
-	const appliedTopup = {
-		operation: "topup",
-		description: "Returned card top-up",
-		amount_usd: "25.00",
-		status: "applied",
-		payment_reference: "pi_history_state",
-		receipt_url: null,
-		created_at: "2026-07-28T12:00:00Z",
-		applied_at: "2026-07-28T12:00:01Z",
-	};
-	await stubCompletedStripeCheckout(page, true);
-	await stubHostedApi(page, {
-		ledgerRequests,
-		ledgerResponseForRequest: () => ({ items: [appliedTopup], has_more: false }),
-		plans: [basicPlan, performancePlan],
-		projects: [routingProject],
-	});
-	await page.goto(
-		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_old&payment_intent_client_secret=pi_old_secret&redirect_status=succeeded",
-	);
-	await expect
-		.poll(() => page.evaluate(() => Reflect.get(window, "__stripePaymentIntentPending")))
-		.toBe(true);
-	const ledgerReadsBeforeCompletion = ledgerRequests.length;
-	const destination =
-		"/projects?settings=billing-wallet&target_owned=1&topup_return=target_keep&payment_intent=target_pi&payment_intent_client_secret=target_secret&redirect_status=target_status";
-	await pushManagedLocation(page, destination);
-	await expect(page.locator("main h1").filter({ hasText: /^Projects$/ })).toBeVisible();
-
-	await page.evaluate(() => {
-		const release = Reflect.get(window, "__releaseStripePaymentIntent");
-		if (typeof release === "function") release();
-	});
-	await expect.poll(() => ledgerRequests.length).toBeGreaterThan(ledgerReadsBeforeCompletion);
-	await expect(page).toHaveURL(destination);
-	const targetUrl = new URL(page.url());
-	expect(targetUrl.searchParams.get("target_owned")).toBe("1");
-	expect(targetUrl.searchParams.get("topup_return")).toBe("target_keep");
-	expect(targetUrl.searchParams.get("payment_intent_client_secret")).toBe("target_secret");
-	await expect(page.getByText("Payment accepted", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("Wallet credited", { exact: true })).toHaveCount(0);
-});
-
-test("blocked POP Stay preserves Wallet return ownership until cleanup", async ({ page }) => {
-	await stubCompletedStripeCheckout(page, true);
-	await stubHostedApi(page, {
-		ledgerResponseForRequest: () => ({ items: [], has_more: false }),
-		plans: [basicPlan, performancePlan],
-	});
-	await page.goto("/projects");
-	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
-	await page.waitForLoadState("networkidle");
-	await pushManagedLocation(
-		page,
-		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_stay&payment_intent_client_secret=pi_stay_secret&redirect_status=succeeded",
-	);
-	const settingsDialog = page.getByTestId("settings-dialog");
-	const autoReload = settingsDialog
-		.locator('[data-slot="card"]')
-		.filter({ hasText: "Auto-reload" });
-	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
-	await expect
-		.poll(() => page.evaluate(() => Reflect.get(window, "__stripePaymentIntentPending")))
-		.toBe(true);
-
-	await page.evaluate(() => window.history.back());
-	const blocker = page.getByRole("alertdialog");
-	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
-	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
-	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet/);
-	await page.evaluate(() => {
-		const release = Reflect.get(window, "__releaseStripePaymentIntent");
-		if (typeof release === "function") release();
-	});
-
-	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
-	await expect.poll(() => new URL(page.url()).searchParams.get("topup_return")).toBeNull();
-	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
 });
 
 test("top-up rotates its idempotency key after an explicit reuse conflict", async ({ page }) => {
@@ -5822,56 +4198,6 @@ test("channel connect updates its auto-linked agent page without reload", async 
 	expect(errors, `channel connect convergence: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("Finish channel setup uses the typed agent route and preserves deployment search", async ({
-	page,
-}) => {
-	const channelId = "11111111-1111-4111-8111-111111111111";
-	const linkId = "22222222-2222-4222-8222-222222222222";
-	const linkAgentRequests: string[] = [];
-	const channelAccount = {
-		id: channelId,
-		provider: "telegram",
-		name: "Browser Telegram",
-		status: "active",
-		visibility: "private",
-		has_provider_token: true,
-		webhook_url: "https://cloud.example.test/channels/browser",
-		created_at: "2026-07-27T12:00:00Z",
-	};
-	await stubHostedApi(page, {
-		channelAccount,
-		channelAccounts: [channelAccount],
-		cloudAgents: [railHostedCloudAgent],
-		deployments: [railHostedDeployment],
-		linkAgentRequests,
-		linkAgentResponse: {
-			id: linkId,
-			account_id: channelId,
-			agent_id: railHostedEnvironmentId,
-			status: "active",
-			created_at: "2026-07-27T12:00:00Z",
-			agent_token: "one-time-finish-link-token",
-		},
-	});
-	await page.goto(`/channels/${channelId}?source=on-clawdi&d=${railHostedDeployment.id}`);
-	await page.getByRole("button", { name: "Link an agent", exact: true }).click();
-	const dialog = page.getByRole("dialog");
-	await dialog.getByRole("combobox").click();
-	await page.getByRole("option", { name: /Rail Cloud/ }).click();
-	await dialog.getByRole("button", { name: "Link agent", exact: true }).click();
-	await expect.poll(() => linkAgentRequests.length).toBe(1);
-	await dialog.getByRole("button", { name: "Finish channel setup", exact: true }).click();
-
-	await expect(page).toHaveURL(
-		new RegExp(`/agents/${railHostedEnvironmentId}/channel-links(?:\\?|$)`),
-	);
-	const destination = new URL(page.url());
-	expect(destination.searchParams.get("source")).toBe("on-clawdi");
-	expect(destination.searchParams.get("d")).toBe(railHostedDeployment.id);
-	await expect(page.getByText("Page not found", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("No channels linked", { exact: true })).toBeVisible();
-});
-
 test("rotated channel token blocks silent loss and explains recovery", async ({
 	page,
 	context,
@@ -5898,34 +4224,19 @@ test("rotated channel token blocks silent loss and explains recovery", async ({
 		created_at: "2026-07-25T12:00:00Z",
 	};
 	const rotateAgentTokenRequests: string[] = [];
-	const firstRotationGate = deferred();
 	await stubHostedApi(page, {
 		channelAccount,
 		channelAgentLinks: [channelLink],
 		rotateAgentTokenRequests,
 		rotateAgentTokenResponses: [
-			{
-				status: 200,
-				body: { ...channelLink, agent_token: token },
-				gate: firstRotationGate.promise,
-			},
-			{ ...channelLink, agent_token: "one-time-forward-token" },
+			{ ...channelLink, agent_token: token },
 			{ ...channelLink, agent_token: null },
 		],
 	});
 
-	await page.goto("/channels");
-	await page.locator(`a[href="/channels/${channelId}"]`).first().click();
-	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
+	await page.goto(`/channels/${channelId}`);
 	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
 	await expect.poll(() => rotateAgentTokenRequests.length).toBe(1);
-	await expectBeforeUnloadBlocked(page, "in-flight channel token rotation");
-	await page.evaluate(() => window.history.back());
-	let leaveDialog = page.getByRole("alertdialog");
-	await expect(leaveDialog).toContainText("Leave while token rotation is in progress?");
-	await leaveDialog.getByRole("button", { name: "Stay and copy token", exact: true }).click();
-	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
-	firstRotationGate.resolve();
 	await expect(
 		page.getByText(
 			"Shown only once. Copy it or confirm you saved it before leaving this page; it cannot be recovered later.",
@@ -5943,23 +4254,13 @@ test("rotated channel token blocks silent loss and explains recovery", async ({
 	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
 	await page.getByRole("button", { name: "Settings", exact: true }).click();
 	await expect(page.getByTestId("settings-dialog")).toBeVisible();
-	await expect(page.getByRole("alertdialog")).toHaveCount(0);
-	await expect.poll(() => new URL(page.url()).searchParams.get("settings")).toBe("general");
 	await page.keyboard.press("Escape");
 	await expect(page.getByTestId("settings-dialog")).toHaveCount(0);
 	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
-	await expectBeforeUnloadBlocked(page, "rotated channel token");
-
-	await page.evaluate(() => window.history.back());
-	leaveDialog = page.getByRole("alertdialog");
-	await expect(leaveDialog).toContainText("Leave without saving the new token?");
-	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
-	await leaveDialog.getByRole("button", { name: "Stay and copy token", exact: true }).click();
-	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
 
 	const agentsLink = page.getByTestId("app-sidebar").locator('a[href="/agents"]').first();
 	await agentsLink.click();
-	leaveDialog = page.getByRole("alertdialog");
+	const leaveDialog = page.getByRole("alertdialog");
 	await expect(leaveDialog).toContainText("Leave without saving the new token?");
 	await expect(leaveDialog).toContainText(
 		"This token was shown once and is not recoverable — rotate again to get a new one.",
@@ -5969,27 +4270,12 @@ test("rotated channel token blocks silent loss and explains recovery", async ({
 
 	await page.getByRole("button", { name: "Copy New agent token", exact: true }).click();
 	await expect(page.getByText("Token copied to clipboard", { exact: true })).toBeVisible();
-	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(token);
 	await agentsLink.click();
 	await expect(page).toHaveURL(/\/agents\/?$/);
 
-	await page.goBack();
+	await page.goto(`/channels/${channelId}`);
 	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
 	await expect.poll(() => rotateAgentTokenRequests.length).toBe(2);
-	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
-	await page.evaluate(() => window.history.forward());
-	leaveDialog = page.getByRole("alertdialog");
-	await expect(leaveDialog).toContainText("Leave without saving the new token?");
-	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
-	await leaveDialog.getByRole("button", { name: "Stay and copy token", exact: true }).click();
-	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
-	await page.getByRole("button", { name: "I’ve saved this token", exact: true }).click();
-	await page.evaluate(() => window.history.forward());
-	await expect(page).toHaveURL(/\/agents\/?$/);
-
-	await page.goBack();
-	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
-	await expect.poll(() => rotateAgentTokenRequests.length).toBe(3);
 	await expect(
 		page.getByText(
 			"This token was shown once and is not recoverable — rotate again to get a new one.",

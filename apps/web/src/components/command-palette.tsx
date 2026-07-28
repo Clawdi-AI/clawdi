@@ -27,7 +27,6 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
-import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import {
@@ -198,9 +197,8 @@ function CommandPalette({
 	const jump = useCallback(
 		(href: string) => {
 			onOpenChange(false);
-			if (/^[a-z][a-z0-9+.-]*:/i.test(href) && typeof window !== "undefined") {
-				const externalHref = safeBrowserNavigationUrl(href);
-				if (externalHref) window.location.assign(externalHref);
+			if (/^https?:\/\//i.test(href) && typeof window !== "undefined") {
+				window.location.assign(href);
 				return;
 			}
 			void router.navigate({ href });

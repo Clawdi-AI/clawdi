@@ -1,4 +1,4 @@
-import { isRuntimeUiCredentials, type RuntimeUiCredentials } from "@clawdi/shared/api";
+import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 
 export interface HermesUiCredentials {
 	url: string;
@@ -97,7 +97,6 @@ export function resolveRuntimeUiCredentials(
 	credentials: RuntimeUiCredentials,
 	endpointUrl: string,
 ): ResolvedRuntimeUiCredentials | null {
-	if (!isRuntimeUiCredentials(credentials)) return null;
 	if (credentials.runtime === "hermes") {
 		const value = hermesUiCredentials(credentials, endpointUrl);
 		return value ? { runtime: "hermes", value } : null;

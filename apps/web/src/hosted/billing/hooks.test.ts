@@ -391,12 +391,6 @@ describe("checkout return parsing", () => {
 		expect(checkoutReturnMarker("?checkout=cancel")).toBe("checkout=cancel");
 	});
 
-	test("keeps checkout ownership stable across unrelated search updates", () => {
-		expect(checkoutReturnMarker("?session_id=cs_1&d=hdep_old")).toBe(
-			checkoutReturnMarker("?settings=billing-plan&session_id=cs_1&d=hdep_new"),
-		);
-	});
-
 	test("does not treat passive checkout success copy as a refresh marker", () => {
 		expect(checkoutReturnWasCanceled("?checkout=success")).toBe(false);
 		expect(checkoutReturnMarker("?checkout=success")).toBeNull();

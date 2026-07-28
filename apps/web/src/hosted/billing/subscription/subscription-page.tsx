@@ -18,9 +18,7 @@ import { BillingHistorySection } from "@/hosted/billing/subscription/billing-his
 import { PlanComparison } from "@/hosted/billing/subscription/plan-comparison";
 import { WelcomeWalletCard } from "@/hosted/billing/subscription/welcome-wallet-card";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
-import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION =
@@ -35,17 +33,13 @@ export function SubscriptionPage() {
 	const portal = useSensitiveBillingPortal();
 	const hostedAccess = useHostedProductAccess();
 	const runAction = useActionLock();
-	const locationOwnership = useLocationOwnership();
 	const [term, setTerm] = useState(1);
 
 	async function openBillingPortal() {
-		const locationGeneration = locationOwnership.capture();
 		try {
 			const res = await portal.execute({});
-			if (!locationOwnership.isCurrent(locationGeneration)) return;
-			const portalUrl = safeBrowserNavigationUrl(res.url || res.portal_url);
-			if (portalUrl) {
-				window.location.assign(portalUrl);
+			if (res.url || res.portal_url) {
+				window.location.href = res.url || res.portal_url;
 				return;
 			}
 			toast.error("Billing portal unavailable", {

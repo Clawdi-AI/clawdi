@@ -5,7 +5,6 @@ import { type ReactNode, useEffect } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { useCurrentRouteOwnership } from "@/lib/use-location-ownership";
 
 export function HostedProductGate({
 	children,
@@ -16,13 +15,10 @@ export function HostedProductGate({
 }) {
 	const router = useRouter();
 	const access = useHostedProductAccess();
-	const ownsCurrentRoute = useCurrentRouteOwnership();
 
 	useEffect(() => {
-		if (access.isDenied && ownsCurrentRoute) {
-			void router.navigate({ href: fallbackHref, replace: true });
-		}
-	}, [access.isDenied, fallbackHref, ownsCurrentRoute, router]);
+		if (access.isDenied) void router.navigate({ href: fallbackHref, replace: true });
+	}, [access.isDenied, fallbackHref, router]);
 
 	if (access.isLoading) return <HostedRouteSkeleton />;
 	if (access.isError) {

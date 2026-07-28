@@ -23,7 +23,6 @@ import { unwrap, useApi } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { useCurrentUser, useDashboardAuth } from "@/lib/auth-client";
 import { projectDetailHref } from "@/lib/project-resource-model";
-import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 
 /**
@@ -76,7 +75,6 @@ function hasStructuredDetailError(error: unknown, code: string): boolean {
 export default function SharePage({ token }: { token: string }) {
 	const api = useApi();
 	const router = useRouter();
-	const locationOwnership = useLocationOwnership();
 	const { isSignedIn, getToken } = useDashboardAuth();
 	const { user } = useCurrentUser();
 	const previewRequestRef = useRef(0);
@@ -113,7 +111,6 @@ export default function SharePage({ token }: { token: string }) {
 	}, [api, token]);
 
 	const upgrade = useSensitiveAction(async () => {
-		const locationGeneration = locationOwnership.capture();
 		const bearer = await getToken();
 		if (!bearer) throw new ShareError("unknown");
 		const result = await api.POST("/v1/share/{token}/upgrade", {
@@ -122,10 +119,8 @@ export default function SharePage({ token }: { token: string }) {
 		});
 		if (result.error !== undefined) throw shareErrorFromApi(result.response.status, result.error);
 		const body = unwrap(result);
-		if (locationOwnership.isCurrent(locationGeneration)) {
-			setUpgradeSucceeded(true);
-			void router.navigate({ href: `${projectDetailHref(body.project_id)}?joined=share` });
-		}
+		setUpgradeSucceeded(true);
+		void router.navigate({ href: `${projectDetailHref(body.project_id)}?joined=share` });
 		return body;
 	});
 

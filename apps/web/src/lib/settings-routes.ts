@@ -1,5 +1,3 @@
-import { linkOptions } from "@tanstack/react-router";
-
 export const SETTINGS_QUERY_KEY = "settings";
 
 export const SETTINGS_SECTION_IDS = [
@@ -53,14 +51,15 @@ export function settingsDraftOwnerChanges(
 	return current.pathname !== next.pathname || currentSection !== nextSection;
 }
 
-/** Route-native options for opening Settings without replacing child-route state. */
-export function settingsLink(section: SettingsSectionId = DEFAULT_SETTINGS_SECTION) {
-	return linkOptions({
-		to: ".",
-		search: (current: DashboardSettingsSearch): DashboardSettingsSearch => ({
-			...current,
-			settings: section,
-		}),
-		hash: true,
-	});
+export function settingsQueryHref(
+	section: SettingsSectionId = DEFAULT_SETTINGS_SECTION,
+	params?: URLSearchParams | ReadonlyURLSearchParams,
+) {
+	const next = new URLSearchParams(params?.toString());
+	next.set(SETTINGS_QUERY_KEY, section);
+	return `?${next.toString()}`;
 }
+
+type ReadonlyURLSearchParams = {
+	toString: () => string;
+};

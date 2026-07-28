@@ -80,15 +80,4 @@ describe("runtime UI credential targeting", () => {
 		};
 		expect(resolveRuntimeUiCredentials(credentials, credentials.url)).toBeNull();
 	});
-
-	test("rejects executable credential URLs before popup navigation", () => {
-		const credentials: RuntimeUiCredentials = {
-			runtime: "hermes",
-			auth_mode: "password",
-			url: "javascript:alert(document.domain)",
-			username: "admin",
-			password: "deployment-password",
-		};
-		expect(resolveRuntimeUiCredentials(credentials, credentials.url)).toBeNull();
-	});
 });

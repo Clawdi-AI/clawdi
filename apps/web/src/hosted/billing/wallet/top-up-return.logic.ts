@@ -32,15 +32,13 @@ export function readWalletTopupReturn(search: string): WalletTopupReturnState | 
 	return { clientSecret };
 }
 
-export function clearWalletTopupReturnSearch(
-	current: Record<string, unknown>,
-): Record<string, unknown> {
-	const next = { ...current };
-	delete next[WALLET_TOPUP_RETURN_PARAM];
-	delete next[STRIPE_PAYMENT_INTENT_PARAM];
-	delete next[STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM];
-	delete next[STRIPE_REDIRECT_STATUS_PARAM];
-	return next;
+export function cleanWalletTopupReturnUrl(currentHref: string): string {
+	const url = new URL(currentHref);
+	url.searchParams.delete(WALLET_TOPUP_RETURN_PARAM);
+	url.searchParams.delete(STRIPE_PAYMENT_INTENT_PARAM);
+	url.searchParams.delete(STRIPE_PAYMENT_INTENT_CLIENT_SECRET_PARAM);
+	url.searchParams.delete(STRIPE_REDIRECT_STATUS_PARAM);
+	return url.toString();
 }
 
 export function walletTopupReturnToast(status: string | null | undefined): WalletTopupReturnToast {

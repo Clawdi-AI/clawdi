@@ -1,7 +1,7 @@
 "use client";
 
 import { type QueryClient, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { toast } from "sonner";
 import { retireRuntimeWindows } from "@/hosted/agents/runtime-window-lifecycle";
 import { type AcceptedOperation, useBillingClient } from "@/hosted/billing/billing-client";
@@ -21,10 +21,7 @@ import {
 } from "@/hosted/billing/idempotency";
 import { deploymentMutationErrorMessage } from "@/hosted/deployment-failure";
 import type { DeploymentOperationVerb } from "@/hosted/deployment-status";
-import {
-	resolveAgentDeployment,
-	retainBoundAgentDeployment,
-} from "@/hosted/hosted-agent-resolution";
+import { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 import { deploymentRuntime, runtimeEnvironmentId } from "@/hosted/runtimes";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 
@@ -119,36 +116,10 @@ export function useAgentDeployment(environmentId: string, deploymentSelector?: s
 	const inventory = useHostedDeploymentInventory({
 		pollBillingRecoveryFor: deploymentSelector ?? environmentId,
 	});
-	const rawResolution = useMemo(
+	const resolution = useMemo(
 		() => resolveAgentDeployment(inventory.deployments ?? [], environmentId, deploymentSelector),
 		[inventory.deployments, environmentId, deploymentSelector],
 	);
-	const requestIdentity = `${environmentId.toLowerCase()}\u0000${deploymentSelector?.toLowerCase() ?? ""}`;
-	const bindingRef = useRef<{ requestIdentity: string; deploymentId: string | null }>({
-		requestIdentity,
-		deploymentId: null,
-	});
-	const boundDeploymentId =
-		bindingRef.current.requestIdentity === requestIdentity ? bindingRef.current.deploymentId : null;
-	const resolution = retainBoundAgentDeployment(
-		inventory.deployments ?? [],
-		rawResolution,
-		boundDeploymentId,
-	);
-	useEffect(() => {
-		const provenDeploymentId =
-			rawResolution.match &&
-			(rawResolution.matchKind === "deployment-id" || rawResolution.matchKind === "environment-id")
-				? rawResolution.match.deployment.resource.id
-				: null;
-		if (bindingRef.current.requestIdentity !== requestIdentity) {
-			bindingRef.current = { requestIdentity, deploymentId: provenDeploymentId };
-			return;
-		}
-		if (provenDeploymentId && bindingRef.current.deploymentId === null) {
-			bindingRef.current.deploymentId = provenDeploymentId;
-		}
-	}, [rawResolution.match, rawResolution.matchKind, requestIdentity]);
 	const match = resolution.match;
 	const deploymentId = match?.deployment.resource.id;
 	const deploymentTransition = deploymentId
