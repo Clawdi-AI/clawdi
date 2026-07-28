@@ -3012,9 +3012,9 @@ function hostedMcpProjectionDeclared(manifest: RuntimeManifest): boolean {
 	return manifest.projection?.mcp !== undefined;
 }
 
-type HostedMcpIntent =
-	| { kind: "managed"; servers: Record<string, HostedMcpServerDesiredState> }
-	| { kind: "opaque" };
+interface HostedMcpIntent {
+	servers: Record<string, HostedMcpServerDesiredState>;
+}
 
 const HOSTED_RUNTIME_TARGETS = ["openclaw", "hermes"] as const satisfies readonly RuntimeName[];
 const HOSTED_MCP_LEDGER_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v1";
@@ -3029,9 +3029,8 @@ interface HostedMcpManagedLedger {
 
 function hostedMcpIntent(manifest: RuntimeManifest): HostedMcpIntent {
 	const value = manifest.projection?.mcp;
-	if (value === undefined) return { kind: "managed", servers: {} };
-	if (!isPlainRecord(value) || !Object.hasOwn(value, "servers")) return { kind: "opaque" };
-	return { kind: "managed", servers: hostedMcpDesiredStateSchema.parse(value).servers };
+	if (value === undefined) return { servers: {} };
+	return { servers: hostedMcpDesiredStateSchema.parse(value).servers };
 }
 
 function hostedMcpLedgerPath(paths: RuntimePaths): string {
@@ -3188,8 +3187,6 @@ function applyHostedMcpProjections(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 	workspaceRoot: string,
 ): string[] {
-	const intent = hostedMcpIntent(manifest);
-	if (intent.kind === "opaque") return [];
 	const plan = buildHostedMcpReconciliationPlan(manifest, paths, observations);
 	const ledgerPath = hostedMcpLedgerPath(paths);
 	const outputs = new Set<string>();
@@ -3259,9 +3256,6 @@ function buildHostedMcpReconciliationPlan(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 ): HostedMcpReconciliationPlan {
 	const intent = hostedMcpIntent(manifest);
-	if (intent.kind === "opaque") {
-		throw new Error("opaque MCP state does not have a managed reconciliation plan");
-	}
 	const home = projectionSystemHome(manifest) ?? paths.userHome;
 	const ledger = readHostedMcpManagedLedger(paths);
 	const nextLedger: HostedMcpManagedLedger = {
@@ -3406,8 +3400,6 @@ function validateHostedMcpProjectionPlan(
 	paths: RuntimePaths,
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 ): void {
-	const intent = hostedMcpIntent(manifest);
-	if (intent.kind === "opaque") return;
 	buildHostedMcpReconciliationPlan(manifest, paths, observations);
 }
 

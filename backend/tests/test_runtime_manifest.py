@@ -2910,7 +2910,7 @@ async def test_runtime_manifest_projects_mcp_skills_and_tools_desired_state(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_preserves_opaque_mcp_desired_state(
+async def test_runtime_manifest_rejects_persisted_mcp_without_servers(
     admin_client,
     db_session,
     seed_user,
@@ -2922,19 +2922,19 @@ async def test_runtime_manifest_preserves_opaque_mcp_desired_state(
         machine_name="Opaque runtime MCP",
         agent_type="openclaw",
     )
-    legacy_mcp = {"future": True}
-    await _write_runtime_state(admin_client, str(env.id), mcp=legacy_mcp)
+    await _write_runtime_state(admin_client, str(env.id), mcp={"servers": {}})
 
     state = await db_session.get(HostedRuntimeState, env.id)
     assert state is not None
-    assert state.mcp == legacy_mcp
+    state.mcp = {"future": True}
+    await db_session.commit()
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
-    assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["mcp"] == legacy_mcp
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Hosted runtime MCP or skills state is invalid"
 
 
 @pytest.mark.asyncio

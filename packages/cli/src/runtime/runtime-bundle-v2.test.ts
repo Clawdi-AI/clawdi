@@ -358,16 +358,17 @@ describe("hosted runtime bundle v2", () => {
 		).toThrow();
 	});
 
-	test("keeps opaque MCP compatibility and validates server declarations independently", () => {
+	test("requires the canonical MCP servers map", () => {
 		const raw = z
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		const opaque = normalizeHostedRuntimeBundleV2({
-			...raw,
-			manifest: { ...manifest, mcp: { future: true } },
-		});
-		expect(opaque.manifest.projection?.mcp).toEqual({ future: true });
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: { ...manifest, mcp: { future: true } },
+			}),
+		).toThrow();
 		expect(() =>
 			normalizeHostedRuntimeBundleV2({
 				...raw,

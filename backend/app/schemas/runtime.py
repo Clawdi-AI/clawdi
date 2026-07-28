@@ -610,10 +610,13 @@ def _is_mcp_credential_header(name: str) -> bool:
     normalized = name.lower()
     if normalized in {"authorization", "proxy-authorization", "cookie"}:
         return True
-    return re.search(
-        r"(?:^|[-_])(?:api[-_]?key|apikey|tokens?|secrets?|credentials?)(?:$|[-_])",
-        normalized,
-    ) is not None
+    return (
+        re.search(
+            r"(?:^|[-_])(?:api[-_]?key|apikey|tokens?|secrets?|credentials?)(?:$|[-_])",
+            normalized,
+        )
+        is not None
+    )
 
 
 class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
@@ -677,10 +680,7 @@ def validate_hosted_runtime_mcp_desired_state(
 ) -> dict[str, object] | None:
     if value is None:
         return None
-    if "servers" in value:
-        HostedRuntimeMcp.model_validate(value)
-    else:
-        validate_no_plaintext_tool_secrets(value)
+    HostedRuntimeMcp.model_validate(value)
     return value
 
 
