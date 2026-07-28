@@ -220,7 +220,7 @@ class Settings(BaseSettings):
     dev_auth_name: str = "Dev User"
 
     vault_encryption_key: str = ""
-    encryption_key: str = ""  # For JWT signing (MCP bridge tokens)
+    encryption_key: str = ""  # Channel credential derivation and cursor-key fallback
 
     # Strict-v2 runtime observation companion. Cursor tokens are encrypted and
     # opaque to Hosted; empty uses encryption_key so existing deployments need

@@ -27,7 +27,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import httpx
-import jwt
 
 from app.core.config import settings
 
@@ -95,39 +94,12 @@ async def close_composio_client() -> None:
         _client = None
 
 
-def _jwt_signing_key() -> str:
-    """Return the MCP bridge JWT signing key."""
-    key = settings.encryption_key
-    if not key:
-        raise RuntimeError(
-            "ENCRYPTION_KEY is not configured. Generate a 32-byte hex value and "
-            "set it in backend/.env — it must be distinct from VAULT_ENCRYPTION_KEY."
-        )
-    return key
-
-
-def create_mcp_bridge_token(user_id: str) -> str:
-    """Create a JWT for MCP bridge authentication."""
-    payload = {
-        "sub": "mcp",
-        "user_id": user_id,
-        "exp": datetime.now(UTC) + timedelta(days=30),
-    }
-    return jwt.encode(payload, _jwt_signing_key(), algorithm="HS256")
-
-
-def verify_mcp_bridge_token(token: str) -> str:
-    """Verify MCP bridge JWT, return user_id."""
-    payload = jwt.decode(token, _jwt_signing_key(), algorithms=["HS256"])
-    return payload["user_id"]
-
-
 async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
     """Return a user-scoped Composio Tool Router MCP session.
 
-    The CLI must never receive the Composio project API key. We create the
-    Composio session server-side, cache its MCP URL briefly, and let the
-    authenticated Clawdi MCP bridge forward JSON-RPC to that URL.
+    The agent must never receive the Composio project API key. We create the
+    Composio session server-side, cache its MCP URL briefly, and forward
+    JSON-RPC through the authenticated Clawdi MCP endpoint.
     """
     now = datetime.now(UTC)
     cached = _tool_router_session_cache.get(user_id)

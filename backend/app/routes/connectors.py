@@ -13,7 +13,6 @@ from app.schemas.connector import (
     ConnectorCredentialsConnectRequest,
     ConnectorCredentialsConnectResponse,
     ConnectorDisconnectResponse,
-    ConnectorMcpConfigResponse,
     ConnectorToolResponse,
     ConnectRequest,
 )
@@ -22,7 +21,6 @@ from app.services.composio import (
     ConnectorCustomAuthConfigRequired,
     connect_with_credentials,
     create_connect_link,
-    create_mcp_bridge_token,
     disconnect_account,
     get_app_by_name,
     get_app_tools,
@@ -432,23 +430,6 @@ async def disconnect(
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, "Failed to disconnect")
     invalidate_tool_router_mcp_session(auth.user.clerk_id)
     return ConnectorDisconnectResponse(status="disconnected")
-
-
-@router.get("/mcp-config")
-async def get_mcp_config(
-    auth: AuthContext = Depends(require_user_auth),
-) -> ConnectorMcpConfigResponse:
-    """Get MCP bridge config for the current user."""
-    if not settings.composio_api_key:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Composio not configured")
-
-    token = create_mcp_bridge_token(auth.user.clerk_id)
-    base = settings.public_api_url.rstrip("/")
-
-    return ConnectorMcpConfigResponse(
-        mcp_url=f"{base}/v1/mcp/composio",
-        mcp_token=token,
-    )
 
 
 @router.get("/{app_name}/tools")

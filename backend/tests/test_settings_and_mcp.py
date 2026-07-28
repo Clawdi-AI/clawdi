@@ -1,8 +1,8 @@
-"""Settings secret-masking + MCP bridge JWT verification.
+"""Settings secret-masking and the Clawdi MCP contract.
 
 These cover two small-but-sharp security edges: secrets stored via PATCH
-/api/settings must come back masked on GET, and the MCP bridge endpoint
-must reject requests without a valid HS256 token.
+/api/settings must come back masked on GET, and the authenticated Clawdi MCP
+endpoint must remain the only public MCP surface.
 """
 
 from __future__ import annotations
@@ -84,108 +84,17 @@ async def test_project_migration_banner_dismiss_persists(client: httpx.AsyncClie
     assert body["project_migration_banner_dismissed_at"] == dismissed_at
 
 
-@pytest.mark.asyncio
-async def test_connector_mcp_config_points_at_composio_bridge(monkeypatch):
-    from app.core.auth import AuthContext, get_auth
-    from app.models.user import User
-    from app.services.composio import verify_mcp_bridge_token
+def test_clawdi_is_the_only_public_mcp_contract():
+    route_methods = {
+        (route.path, method)
+        for route in app.routes
+        for method in (getattr(route, "methods", None) or set())
+    }
 
-    async def fake_auth() -> AuthContext:
-        return AuthContext(
-            user=User(
-                email="mcp-config-test@clawdi.local",
-                name="MCP Config Test",
-                clerk_id="clerk_user_123",
-            )
-        )
-
-    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
-    monkeypatch.setattr(settings, "public_api_url", "https://api.example.test/")
-
-    app.dependency_overrides[get_auth] = fake_auth
-    try:
-        transport = ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            r = await ac.get("/v1/connectors/mcp-config")
-    finally:
-        app.dependency_overrides.clear()
-
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["mcp_url"] == "https://api.example.test/v1/mcp/composio"
-    assert verify_mcp_bridge_token(body["mcp_token"]) == "clerk_user_123"
-
-
-@pytest.mark.asyncio
-async def test_mcp_bridge_rejects_missing_and_invalid_tokens():
-    transport = ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        r_missing = await ac.post("/v1/mcp/composio", json={"method": "tools/list"})
-        assert r_missing.status_code == 401, r_missing.text
-
-        r_bad = await ac.post(
-            "/v1/mcp/composio",
-            json={"method": "tools/list"},
-            headers={"Authorization": "Bearer not.a.valid.jwt"},
-        )
-        assert r_bad.status_code == 401, r_bad.text
-
-
-@pytest.mark.asyncio
-async def test_mcp_composio_bridge_forwards_json_rpc_with_user_scoped_session(monkeypatch):
-    from app.routes import mcp_bridge
-    from app.services.composio import ComposioMcpSession, create_mcp_bridge_token
-
-    seen: dict = {}
-
-    async def fake_session(user_id: str) -> ComposioMcpSession:
-        seen["user_id"] = user_id
-        return ComposioMcpSession(
-            url="https://app.composio.dev/tool_router/v3/trs_test/mcp",
-            headers={"x-session": "trs_test"},
-            expires_at=datetime.now(UTC) + timedelta(minutes=30),
-        )
-
-    async def fake_forward(session: ComposioMcpSession, body):
-        seen["session"] = session
-        seen["body"] = body
-        return {
-            "jsonrpc": "2.0",
-            "id": body["id"],
-            "result": {
-                "tools": [
-                    {
-                        "name": "COMPOSIO_SEARCH_TOOLS",
-                        "description": "Search Composio tools",
-                        "inputSchema": {
-                            "type": "object",
-                            "properties": {"query": {"type": "string"}},
-                            "required": ["query"],
-                        },
-                    }
-                ]
-            },
-        }
-
-    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_session)
-    monkeypatch.setattr(mcp_bridge, "_forward_composio_mcp_request", fake_forward)
-
-    token = create_mcp_bridge_token("clerk_user_123")
-    payload = {"jsonrpc": "2.0", "id": 7, "method": "tools/list", "params": {}}
-    transport = ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-        r = await ac.post(
-            "/v1/mcp/composio",
-            json=payload,
-            headers={"Authorization": f"Bearer {token}"},
-        )
-
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["result"]["tools"][0]["name"] == "COMPOSIO_SEARCH_TOOLS"
-    assert body["result"]["tools"][0]["inputSchema"]["properties"]["query"]["type"] == "string"
-    assert seen["user_id"] == "clerk_user_123"
-    assert seen["body"] == payload
+    for prefix in ("/v1", "/api"):
+        assert (f"{prefix}/connectors/mcp-config", "GET") not in route_methods
+        assert (f"{prefix}/mcp/composio", "POST") not in route_methods
+        assert (f"{prefix}/mcp/clawdi", "POST") in route_methods
 
 
 @pytest.mark.asyncio
@@ -229,18 +138,23 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
                     },
                 },
             )
-            legacy_listed = await ac.post(
+            pinged = await ac.post(
                 "/v1/mcp/clawdi",
-                json={"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+                json={"jsonrpc": "2.0", "id": 2, "method": "ping", "params": {}},
+            )
+            listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 3, "method": "tools/list", "params": {}},
             )
     finally:
         app.dependency_overrides.clear()
 
     assert canonical_init.status_code == 200, canonical_init.text
     assert canonical_init.json()["result"]["capabilities"]["tools"]["listChanged"] is False
+    assert pinged.json() == {"jsonrpc": "2.0", "id": 2, "result": {}}
 
-    assert legacy_listed.status_code == 200, legacy_listed.text
-    names = {tool["name"] for tool in legacy_listed.json()["result"]["tools"]}
+    assert listed.status_code == 200, listed.text
+    names = {tool["name"] for tool in listed.json()["result"]["tools"]}
     assert {"memory_search", "memory_add", "memory_extract", "session_search", "session_read"} <= (
         names
     )

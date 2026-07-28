@@ -77,9 +77,9 @@ describe("doctor --json", () => {
 					}),
 			},
 			{
-				method: "GET",
-				path: "/v1/connectors/mcp-config",
-				response: () => jsonResponse({ ok: true }),
+				method: "POST",
+				path: "/v1/mcp/clawdi",
+				response: () => jsonResponse({ jsonrpc: "2.0", id: 1, result: {} }),
 			},
 		]);
 		try {
@@ -96,8 +96,14 @@ describe("doctor --json", () => {
 		expect(checks.find((c) => c.name === "Environments")?.detail).toContain("hermes");
 		expect(checks.find((c) => c.name === "Vault metadata")?.ok).toBe(true);
 		expect(checks.find((c) => c.name === "Vault metadata")?.detail).toContain("2 vaults reachable");
-		expect(checks.find((c) => c.name === "MCP connectors")?.ok).toBe(true);
+		expect(checks.find((c) => c.name === "Clawdi MCP")?.ok).toBe(true);
 		expect(fetchCalls.some((request) => request.path.startsWith("/v1/vault/resolve"))).toBe(false);
+		expect(fetchCalls.find((request) => request.path === "/v1/mcp/clawdi")?.body).toEqual({
+			jsonrpc: "2.0",
+			id: 1,
+			method: "ping",
+			params: {},
+		});
 
 		// Hermes fixture present → that agent shows ✓, others show ✗ (not installed)
 		const hermesCheck = checks.find((c) => c.name === "Agent: Hermes");
@@ -125,8 +131,8 @@ describe("doctor --json", () => {
 				response: () => new Response("", { status: 503 }),
 			},
 			{
-				method: "GET",
-				path: "/v1/connectors/mcp-config",
+				method: "POST",
+				path: "/v1/mcp/clawdi",
 				response: () => new Response("", { status: 503 }),
 			},
 		]);

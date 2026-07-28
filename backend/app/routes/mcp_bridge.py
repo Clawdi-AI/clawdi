@@ -1,4 +1,4 @@
-"""MCP bridge: forwards authenticated JSON-RPC to Composio Tool Router."""
+"""Clawdi MCP endpoint with internal Composio Tool Router forwarding."""
 
 import json
 import logging
@@ -26,11 +26,7 @@ from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
 from app.routes.memories import _attach_source_machines, _project_filter_memories
 from app.routes.public_sessions import _resolve_session_for_view
-from app.services.composio import (
-    ComposioMcpSession,
-    get_tool_router_mcp_session,
-    verify_mcp_bridge_token,
-)
+from app.services.composio import ComposioMcpSession, get_tool_router_mcp_session
 from app.services.file_store import get_file_store
 from app.services.memory_provider import get_memory_provider
 from app.services.secret_detection import find_likely_secret, secret_memory_warning
@@ -252,18 +248,6 @@ _MEMORY_EXTRACT_INSTRUCTIONS = (
     "(unless they demonstrate a preferred pattern); anything readable from the current code "
     "state; conversational noise."
 )
-
-
-def _extract_user_id(request: Request) -> str:
-    """Extract and verify user_id from the MCP bridge JWT."""
-    auth = request.headers.get("authorization", "")
-    if not auth.startswith("Bearer "):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing auth token")
-    token = auth[7:]
-    try:
-        return verify_mcp_bridge_token(token)
-    except Exception:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
 
 
 @router.post("/clawdi", include_in_schema=False)
@@ -648,25 +632,6 @@ async def _tool_connector_call(
         return result
     text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, indent=2)
     return _tool_text(text)
-
-
-@router.post("/composio", include_in_schema=False)
-async def mcp_composio_bridge_post(request: Request):
-    """Forward MCP JSON-RPC to Composio Tool Router for an authenticated user."""
-    user_id = _extract_user_id(request)
-    body = await request.json()
-    rpc_id = body.get("id", 1) if isinstance(body, dict) else None
-
-    try:
-        session = await get_tool_router_mcp_session(user_id)
-        return await _forward_composio_mcp_request(session, body)
-    except Exception:
-        logger.exception("Composio MCP bridge error: user=%s", user_id)
-        return {
-            "jsonrpc": "2.0",
-            "id": rpc_id,
-            "error": {"code": -32000, "message": "internal error"},
-        }
 
 
 async def _forward_composio_mcp_request(session: ComposioMcpSession, body) -> dict | list:

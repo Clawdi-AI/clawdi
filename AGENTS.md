@@ -107,7 +107,7 @@ bun run packages/cli/src/index.ts doctor
 ```
 
 Done: `doctor` shows green `Auth`, `API reachability`, `Environments`, `Vault
-metadata`, and `MCP connectors`; unavailable local agents may show `not
+metadata`, and `Clawdi MCP`; unavailable local agents may show `not
 installed`.
 
 Cleanup:
