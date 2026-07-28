@@ -301,6 +301,36 @@ const sharedLegacyCloudAgent = {
 	default_project_id: "project-hosted",
 };
 
+const railHostedEnvironmentId = "88888888-8888-4888-8888-888888888888";
+const railConnectedEnvironmentId = "99999999-9999-4999-8999-999999999999";
+const railHostedDeployment = {
+	...includedBasicDeployment,
+	id: "hdep_rail_cloud",
+	name: "Rail Cloud",
+	config_info: {
+		...includedBasicDeployment.config_info,
+		clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
+	},
+};
+const railConnectedCloudAgent = {
+	...sharedLegacyCloudAgent,
+	id: railConnectedEnvironmentId,
+	name: "rail-connected",
+	default_name: "Rail Connected",
+	machine_name: "rail-connected.local",
+	display_name: "Rail Connected",
+	sort_order: 1,
+};
+const railHostedCloudAgent = {
+	...sharedLegacyCloudAgent,
+	id: railHostedEnvironmentId,
+	name: "rail-cloud",
+	default_name: "Rail Cloud",
+	machine_name: "rail-cloud.local",
+	display_name: "Rail Cloud projection",
+	sort_order: 0,
+};
+
 const interruptedIdentitylessDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_creation_interrupted",
@@ -781,6 +811,7 @@ function isStubResponse(value: unknown): value is StubResponse {
 }
 
 type HostedApiStubOptions = {
+	agentOrderRequests?: string[];
 	autoReloadRequests?: string[];
 	autoReloadResponses?: StubResponse[];
 	billingHistoryRequests?: string[];
@@ -1331,6 +1362,27 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				? fulfillJson(r, options.cloudAgentsResponse.body, options.cloudAgentsResponse.status)
 				: fulfillJson(r, options.cloudAgents ?? []);
 		}
+		if (p === "/v1/agents/order" && r.request().method() === "PATCH") {
+			const postData = r.request().postData() ?? "";
+			options.agentOrderRequests?.push(postData);
+			const body: unknown = JSON.parse(postData || "{}");
+			const agentIds =
+				isRecord(body) && Array.isArray(body.agent_ids)
+					? body.agent_ids.filter((id): id is string => typeof id === "string")
+					: [];
+			const agentsById = new Map(
+				(options.cloudAgents ?? [])
+					.filter(isRecord)
+					.flatMap((agent) => (typeof agent.id === "string" ? [[agent.id, agent] as const] : [])),
+			);
+			return fulfillJson(
+				r,
+				agentIds.flatMap((id, sortOrder) => {
+					const agent = agentsById.get(id);
+					return agent ? [{ ...agent, sort_order: sortOrder }] : [];
+				}),
+			);
+		}
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
 			const response = options.cloudAgentResponses?.[id]?.shift();
@@ -1494,6 +1546,140 @@ test("empty account offers two working first-agent paths", async ({ page }) => {
 	await expect(
 		page.getByText("Run the setup command on the machine where your agent lives."),
 	).toBeVisible();
+});
+
+test("hosted mixed agent rail keeps navigation separate from sorting", async ({
+	page,
+	browser,
+	baseURL,
+}) => {
+	if (!baseURL) throw new Error("Playwright baseURL is required for the hosted rail test.");
+	const agentOrderRequests: string[] = [];
+	await stubHostedApi(page, {
+		agentOrderRequests,
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
+	});
+
+	await page.goto("/agents");
+	const rail = page.getByTestId("app-sidebar-agent-rail");
+	const consoleLink = rail.getByRole("link", { name: "Console", exact: true });
+	const cloudLink = rail.getByRole("link", { name: "Rail Cloud", exact: true });
+	const connectedLink = rail.getByRole("link", { name: /Rail Connected/ });
+
+	await expect(consoleLink).toHaveAttribute("href", "/");
+	await expect(cloudLink).toHaveAttribute(
+		"href",
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
+	);
+	await expect(connectedLink).toHaveAttribute("href", `/agents/${railConnectedEnvironmentId}`);
+
+	await consoleLink.click();
+	await expect(page).toHaveURL("/");
+	await page.goto("/");
+	await cloudLink.click();
+	await expect(page).toHaveURL(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
+	);
+	await page.goto("/");
+	await connectedLink.click();
+	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+
+	await page.goto("/");
+	await connectedLink.focus();
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+
+	await page.goto("/");
+	const connectedHandle = rail.getByRole("button", { name: /Reorder Rail Connected/ });
+	const cloudHandle = rail.getByRole("button", { name: /Reorder .*Rail Cloud projection/ });
+	const connectedTileBox = await rail
+		.getByTestId("app-sidebar-agent-tile")
+		.filter({ hasText: "Rail Connected" })
+		.boundingBox();
+	const connectedLinkBox = await connectedLink.boundingBox();
+	const sourceBox = await connectedHandle.boundingBox();
+	const targetBox = await cloudHandle.boundingBox();
+	if (!connectedTileBox || !connectedLinkBox || !sourceBox || !targetBox) {
+		throw new Error("Hosted rail links and drag handles should render.");
+	}
+	expect(connectedTileBox.height).toBeCloseTo(72, 0);
+	expect(connectedLinkBox.height).toBeCloseTo(connectedTileBox.height, 0);
+	expect(sourceBox.x).toBeGreaterThanOrEqual(connectedLinkBox.x + connectedLinkBox.width - 0.5);
+	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+		steps: 10,
+	});
+	await page.mouse.up();
+	expect(page.url()).toBe(new URL("/", baseURL).href);
+	await connectedLink.click();
+	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+
+	await expect.poll(() => agentOrderRequests.length).toBe(1);
+	expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
+		agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
+	});
+	await expect(rail.getByTestId("app-sidebar-agent-tile").nth(0)).toContainText("Rail Connected");
+
+	const touchContext = await browser.newContext({
+		baseURL,
+		hasTouch: true,
+		viewport: { width: 1280, height: 720 },
+	});
+	const touchPage = await touchContext.newPage();
+	const touchOrderRequests: string[] = [];
+	try {
+		await stubHostedApi(touchPage, {
+			agentOrderRequests: touchOrderRequests,
+			deployments: [railHostedDeployment],
+			cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
+		});
+		await touchPage.goto("/");
+		const touchConnectedLink = touchPage
+			.getByTestId("app-sidebar-agent-rail")
+			.getByRole("link", { name: /Rail Connected/ });
+		await touchConnectedLink.tap();
+		await expect(touchPage).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+
+		await touchPage.goto("/");
+		const touchRail = touchPage.getByTestId("app-sidebar-agent-rail");
+		const touchSourceBox = await touchRail
+			.getByRole("button", { name: /Reorder Rail Connected/ })
+			.boundingBox();
+		const touchTargetBox = await touchRail
+			.getByRole("button", { name: /Reorder .*Rail Cloud projection/ })
+			.boundingBox();
+		if (!touchSourceBox || !touchTargetBox) {
+			throw new Error("Hosted rail touch drag handles should render.");
+		}
+		const cdp = await touchContext.newCDPSession(touchPage);
+		const source = {
+			x: touchSourceBox.x + touchSourceBox.width / 2,
+			y: touchSourceBox.y + touchSourceBox.height / 2,
+		};
+		const target = {
+			x: touchTargetBox.x + touchTargetBox.width / 2,
+			y: touchTargetBox.y + touchTargetBox.height / 2,
+		};
+		await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [source] });
+		for (let step = 1; step <= 10; step += 1) {
+			await cdp.send("Input.dispatchTouchEvent", {
+				type: "touchMove",
+				touchPoints: [
+					{
+						x: source.x + ((target.x - source.x) * step) / 10,
+						y: source.y + ((target.y - source.y) * step) / 10,
+					},
+				],
+			});
+		}
+		await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+		expect(touchPage.url()).toBe(new URL("/", baseURL).href);
+		await expect.poll(() => touchOrderRequests.length).toBe(1);
+	} finally {
+		await touchContext.close();
+	}
 });
 
 test("existing Cloud customers keep billing settings when new deploys are disabled", async ({
