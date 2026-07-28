@@ -1,5 +1,6 @@
 "use client";
 
+import { validateHostedDeployPersona } from "@clawdi/shared/api";
 import { useRouter } from "@tanstack/react-router";
 import {
 	Cpu,
@@ -547,15 +548,16 @@ export function DeployWizard() {
 		compute === "performance" ? !!perfPlan && !!perfOfferSelection : !basicUnavailable;
 	const trimmedAssistantName = assistantName.trim();
 	const nameLimitReached = assistantName.length >= DEPLOY_ASSISTANT_NAME_MAX_LENGTH;
-	const nameError =
-		trimmedAssistantName.length === 0
-			? "Enter a name for this agent."
-			: trimmedAssistantName.length > DEPLOY_ASSISTANT_NAME_MAX_LENGTH
-				? `Use ${DEPLOY_ASSISTANT_NAME_MAX_LENGTH} characters or fewer.`
-				: null;
+	const personaIssues = validateHostedDeployPersona({
+		assistantName: trimmedAssistantName,
+		language,
+		timezone,
+	});
+	const nameError = personaIssues.find((issue) => issue.field === "assistantName")?.message ?? null;
+	const personaError = personaIssues[0]?.message ?? null;
 	const submitBlockingReason = (() => {
 		if (submitting) return null;
-		if (nameError) return nameError;
+		if (personaError) return personaError;
 		if (!plans.isSuccess) return "Waiting for compute plans.";
 		if (!deployments.isSuccess) {
 			return deployments.error

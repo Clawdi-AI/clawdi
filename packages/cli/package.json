@@ -1,6 +1,6 @@
 {
 	"name": "clawdi",
-	"version": "0.13.2",
+	"version": "0.13.3",
 	"description": "iCloud for AI Agents — cross-agent sessions, skills, memory, and vault.",
 	"license": "MIT",
 	"type": "module",
@@ -23,7 +23,7 @@
 	},
 	"scripts": {
 		"dev": "bun run src/index.ts",
-		"build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --minify --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' && cp -r skills dist/skills",
+		"build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --minify --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' --define 'process.env.CLAWDI_DEFAULT_DEPLOY_API_URL=\"https://api.clawdi.ai\"' && cp -r skills dist/skills",
 		"build:binary": "bun run scripts/build-binary.mjs",
 		"package:binary-release": "bun run scripts/package-binary-release.mjs",
 		"build:dev": "rm -rf dist && bun build src/index.ts --outdir dist --target node && cp -r skills dist/skills",

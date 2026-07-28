@@ -17,5 +17,7 @@ export {
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "./deploy";
+export * from "./deploy-wizard";
 export { extractApiDetail } from "./error-detail";
+export * from "./hosted-ai-binding";
 export * from "./schemas";

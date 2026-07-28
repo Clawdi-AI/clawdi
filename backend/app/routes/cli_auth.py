@@ -1,7 +1,9 @@
-"""CLI device-authorization flow.
+"""CLI authentication routes.
 
-Standard OAuth2 device-grant shape (RFC 8628). The CLI doesn't have any
-credentials yet, so it can't authenticate to the API. Instead:
+The published device-named endpoints below are a legacy browser-approved
+API-key bootstrap, not an RFC 8628 device grant. The CLI doesn't have any
+credentials yet, so it asks the browser-authenticated dashboard to approve
+one API key:
 
   1. CLI calls /device with no auth — backend returns a long secret
      `device_code` (kept on the CLI) and a short `user_code` (printed in
@@ -13,9 +15,8 @@ credentials yet, so it can't authenticate to the API. Instead:
      read it gets the api_key, the row is consumed, and the raw key is
      wiped from the DB.
 
-Why this and not paste-the-key: the user authenticates once (Clerk) and never
-sees an API key. Less to misplace, less to lose. Manual paste is still
-available via the CLI's `--manual` flag for SSH/headless cases.
+This remains additive for existing released CLI clients. New first-party CLI
+login uses Clerk's Public OAuth App Authorization Code + PKCE flow instead.
 """
 
 import hashlib
@@ -24,13 +25,15 @@ import time
 from collections import deque
 from datetime import UTC, datetime, timedelta
 from threading import Lock
+from urllib.parse import quote
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, require_web_auth
+from app.core.auth import AuthContext, require_oauth_cli_auth, require_web_auth
 from app.core.config import settings
 from app.core.database import get_session
 from app.models.api_key import ApiKey
@@ -44,7 +47,13 @@ from app.schemas.cli_auth import (
     DeviceStartRequest,
     DeviceStartResponse,
     DeviceTerminalResponse,
+    OAuthConfigResponse,
+    OAuthRevokeRequest,
+    OAuthRevokeResponse,
 )
+from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
+from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
+from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
 
 router = APIRouter(prefix="/cli/auth", tags=["cli-auth"])
 
@@ -64,14 +73,14 @@ _POLL_INTERVAL_SEC = 2
 # retry in ≤ 10 min once expired rows clear.
 _MAX_ACTIVE_DEVICES = 10_000
 
-# Per-IP rolling-window throttle for the unauthenticated device-flow
+# Per-IP rolling-window throttle for the unauthenticated legacy bootstrap
 # endpoints. Protects against a single client hammering /device or
 # /poll faster than legitimate user-driven retries — without it, a
 # bot loop fits inside the global table cap but still chews DB
 # round-trips. In-process state, resets on restart; matches the
 # pattern used in routes/internal.py.
 _DEVICE_RATE_WINDOW_S = 60.0
-# 90/min: a normal device-flow login is 1× POST /device + N× POST /poll
+# 90/min: a normal legacy browser-approved bootstrap is 1× POST /device + N× POST /poll
 # (poll cadence is ~2s). A user who takes the full 60s before approving
 # in-browser hits 1 + 30 = 31 calls inside one window. The previous 30
 # cap reliably 429'd that legitimate path; the CLI surfaces 429 as a
@@ -87,11 +96,100 @@ _DEVICE_PER_IP_MAX = 90
 # `_device_per_ip_attempts` until OOM. Cap × per-bucket cost
 # (~90 timestamps each) keeps the limiter bounded regardless of
 # request rate. Legitimate concurrency: ~the number of in-flight
-# device flows = ≤ `_MAX_ACTIVE_DEVICES` (10 000), so 12 000 is
+# legacy browser approvals = ≤ `_MAX_ACTIVE_DEVICES` (10 000), so 12 000 is
 # headroom for /device IP buckets + poll buckets together.
 _DEVICE_RATE_MAX_BUCKETS = 12_000
 _device_per_ip_attempts: dict[str, deque[float]] = {}
 _device_rate_lock = Lock()
+
+
+async def _oauth_setting_or_503(db: AsyncSession) -> ClerkCliOAuthSetting:
+    try:
+        oauth_setting = await resolve_app_setting(db, CLERK_CLI_OAUTH_SPEC)
+    except AppSettingUnavailable as error:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "OAuth CLI authentication is not configured",
+        ) from error
+    if not oauth_setting.enabled:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "OAuth CLI authentication is not configured",
+        )
+    return oauth_setting
+
+
+async def _oauth_public_config_or_503(db: AsyncSession) -> OAuthConfigResponse:
+    oauth_setting = await _oauth_setting_or_503(db)
+    return OAuthConfigResponse(
+        issuer=oauth_setting.issuer,
+        client_id=oauth_setting.client_id,
+        audience=oauth_setting.audience,
+        authorized_parties=oauth_setting.authorized_parties,
+        redirect_uri=oauth_setting.redirect_uri,
+    )
+
+
+@router.get("/oauth/config", response_model=OAuthConfigResponse)
+async def get_oauth_config(db: AsyncSession = Depends(get_session)) -> OAuthConfigResponse:
+    """Return only the Public OAuth App values needed by the local CLI."""
+    return await _oauth_public_config_or_503(db)
+
+
+@router.post("/oauth/revoke", response_model=OAuthRevokeResponse)
+async def revoke_oauth_refresh_grant(
+    body: OAuthRevokeRequest,
+    auth: AuthContext = Depends(require_oauth_cli_auth),
+    db: AsyncSession = Depends(get_session),
+) -> OAuthRevokeResponse:
+    """Revoke a Clerk OAuth refresh grant without logging or returning it.
+
+    Clerk's Backend API identifies the OAuth application in the path and
+    accepts the refresh token as `token`. JWT access tokens are self-contained
+    and remain valid until their normal expiry; this only prevents refreshes.
+    """
+    _ = auth
+    oauth_setting = await _oauth_setting_or_503(db)
+    application_id = oauth_setting.application_id
+    secret_key = settings.clerk_secret_key
+    if not application_id or not secret_key:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "OAuth CLI revocation is not configured",
+        )
+
+    escaped_application_id = quote(application_id, safe="")
+    url = f"https://api.clerk.com/v1/oauth_applications/{escaped_application_id}/revoke_token"
+    headers = {
+        "Authorization": f"Bearer {secret_key}",
+        "User-Agent": "clawdi-backend/1.0",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.post(
+                url,
+                headers=headers,
+                json={"token": body.refresh_token.get_secret_value()},
+            )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "OAuth CLI revocation is temporarily unavailable",
+        ) from None
+    except httpx.HTTPError:
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            "OAuth CLI revocation failed",
+        ) from None
+
+    if response.status_code >= 500:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "OAuth CLI revocation is temporarily unavailable",
+        )
+    if not 200 <= response.status_code < 300:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "OAuth CLI revocation failed")
+    return OAuthRevokeResponse(status="revoked")
 
 
 def _real_client_ip(request: Request) -> str:
@@ -120,7 +218,7 @@ def _real_client_ip(request: Request) -> str:
 
 
 def _check_device_rate_limit(bucket_key: str) -> None:
-    """Raise 429 if `bucket_key` has hit the cap on device-flow
+    """Raise 429 if `bucket_key` has hit the legacy bootstrap cap on
     endpoints inside the rolling window. The key is the real
     client IP for `/device` (no device_code yet) and the
     device_code itself for `/poll` (each in-flight authorization

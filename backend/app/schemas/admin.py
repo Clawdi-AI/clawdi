@@ -17,6 +17,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    JsonValue,
     SecretStr,
     field_validator,
 )
@@ -325,6 +326,26 @@ class AdminChannelCreatedResponse(AdminChannelResponse):
 class AdminChannelWebhookSecretResponse(BaseModel):
     id: UUID
     webhook_secret: str
+
+
+class AdminAppSettingUpsert(BaseModel):
+    """Replace one registered global setting as a single JSON value."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    value: JsonValue
+
+
+class AdminAppSettingResponse(BaseModel):
+    key: str
+    value: JsonValue
+    description: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class AdminAppSettingListResponse(BaseModel):
+    items: list[AdminAppSettingResponse]
 
 
 def _clean_channel_secret_values(value: dict[str, str] | None) -> dict[str, str] | None:

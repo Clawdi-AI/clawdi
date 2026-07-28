@@ -129,6 +129,63 @@ describe("AI provider binding fields", () => {
 		}
 	});
 
+	test("keeps managed primary and saved secondary fields identical across create and update", () => {
+		const draft = {
+			bindingMode: "configured" as const,
+			providerChoices: [MANAGED_AI_CHOICE, apiKeyProvider.provider_id],
+			primaryProviderChoice: MANAGED_AI_CHOICE,
+			primaryModel: "gpt-managed",
+		};
+
+		for (const mode of ["create", "update"] as const) {
+			const fields = buildAiBindingFields(draft, {
+				managedModels,
+				mode,
+				providers: [apiKeyProvider],
+			});
+			expect(fields.provider_ids).toEqual([MANAGED_PROVIDER_ID, apiKeyProvider.provider_id]);
+			expect(fields.primary_model).toEqual({
+				provider_id: MANAGED_PROVIDER_ID,
+				model: "gpt-managed",
+			});
+			expect(fields.ai_provider_auth_kind).toBe("managed");
+			expect(fields.ai_provider_id).toBeNull();
+			expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe(apiKeyProvider.provider_id);
+			expect(
+				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
+			).toEqual([apiKeyProvider.provider_id]);
+		}
+	});
+
+	test("keeps saved primary with managed and another saved provider in the ordered pool", () => {
+		const draft = {
+			bindingMode: "configured" as const,
+			providerChoices: [oauthProvider.provider_id, MANAGED_AI_CHOICE, apiKeyProvider.provider_id],
+			primaryProviderChoice: oauthProvider.provider_id,
+			primaryModel: "gpt-custom",
+		};
+
+		for (const mode of ["create", "update"] as const) {
+			const fields = buildAiBindingFields(draft, {
+				managedModels,
+				mode,
+				providers: [apiKeyProvider, oauthProvider],
+			});
+			expect(fields.provider_ids).toEqual([
+				oauthProvider.provider_id,
+				MANAGED_PROVIDER_ID,
+				apiKeyProvider.provider_id,
+			]);
+			expect(fields.primary_model).toEqual({
+				provider_id: oauthProvider.provider_id,
+				model: "gpt-custom",
+			});
+			expect(
+				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
+			).toEqual([oauthProvider.provider_id, apiKeyProvider.provider_id]);
+		}
+	});
+
 	test("rejects an unusable provider even if stale UI state selects it", () => {
 		const unfinishedProvider = { ...oauthProvider, usable: false };
 		const draft = {

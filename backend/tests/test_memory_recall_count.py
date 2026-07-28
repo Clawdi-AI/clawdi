@@ -8,6 +8,8 @@ memory.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import httpx
 import pytest
 
@@ -51,6 +53,45 @@ async def test_dashboard_search_does_not_count_as_recall(client: httpx.AsyncClie
 
     detail = (await client.get(f"/v1/memories/{memory_id}")).json()
     assert detail["access_count"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_oauth_cli_search_bumps_access_count(
+    client: httpx.AsyncClient,
+    seed_user,
+):
+    from app.core.auth import AuthContext, get_auth
+    from app.main import app
+
+    created = await client.post(
+        "/v1/memories",
+        json={"content": "OAuth agents recall ranked memories", "category": "fact"},
+    )
+    assert created.status_code == 200, created.text
+    memory_id = created.json()["id"]
+
+    async def _oauth_cli_auth() -> AuthContext:
+        return AuthContext(
+            user=seed_user,
+            oauth_cli=True,
+            oauth_access_expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+
+    previous = app.dependency_overrides.get(get_auth)
+    app.dependency_overrides[get_auth] = _oauth_cli_auth
+    try:
+        response = await client.get("/v1/memories?q=oauth+agents+recall")
+        assert response.status_code == 200, response.text
+        assert any(item["id"] == memory_id for item in response.json()["items"])
+    finally:
+        if previous is None:
+            app.dependency_overrides.pop(get_auth, None)
+        else:
+            app.dependency_overrides[get_auth] = previous
+
+    detail = (await client.get(f"/v1/memories/{memory_id}")).json()
+    assert detail["access_count"] == 1
 
 
 @pytest.mark.asyncio

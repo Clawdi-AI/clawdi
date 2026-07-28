@@ -229,6 +229,28 @@ Use `/v1/admin/agents` for new local debugging. `/v1/admin/environments`
 remains a compatibility alias, but admin routes are hidden from the public
 OpenAPI schema.
 
+Global runtime configuration uses the registered `app_settings` surface. The
+first setting, `clerk_cli_oauth`, is one atomic JSON value; there are no
+per-user overrides or environment fallbacks. List/read/update it with the
+existing admin key:
+
+```bash
+curl -sS -X PUT http://localhost:8000/v1/admin/settings/clerk_cli_oauth \
+  -H "X-Admin-Key: ${ADMIN_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"value":{"enabled":true,"schema_version":1,"issuer":"https://clerk.example","client_id":"client_cli","application_id":"oauthapp_cli","redirect_uri":"http://127.0.0.1:18473/oauth/callback","audience":"clawdi-cloud-api","authorized_parties":["https://accounts.example"]}}'
+```
+
+Done: the command returns HTTP 200 JSON containing
+`"key":"clerk_cli_oauth"` and the canonicalized whole value.
+
+The value is strictly validated and canonicalized before the setting and its
+control-plane audit event commit together. `CLERK_PEM_PUBLIC_KEY` remains the
+JWT signature verifier, and `CLERK_SECRET_KEY` remains the server-only key used
+to revoke a refresh grant. Never include either secret in the setting. Empty
+`audience` and `authorized_parties` values disable binding for those optional
+token claims.
+
 ## Logs in development
 
 Backend logs go to the terminal running `pdm dev`; there is no repo-managed log

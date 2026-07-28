@@ -562,6 +562,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/cli/auth/oauth/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Oauth Config
+         * @description Return only the Public OAuth App values needed by the local CLI.
+         */
+        get: operations["get_oauth_config_v1_cli_auth_oauth_config_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/cli/auth/oauth/revoke": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Revoke Oauth Refresh Grant
+         * @description Revoke a Clerk OAuth refresh grant without logging or returning it.
+         *
+         *     Clerk's Backend API identifies the OAuth application in the path and
+         *     accepts the refresh token as `token`. JWT access tokens are self-contained
+         *     and remain valid until their normal expiry; this only prevents refreshes.
+         */
+        post: operations["revoke_oauth_refresh_grant_v1_cli_auth_oauth_revoke_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/cli/auth/device": {
         parameters: {
             query?: never;
@@ -5180,6 +5224,41 @@ export interface components {
             /** Source Machine Name */
             source_machine_name?: string | null;
         };
+        /**
+         * OAuthConfigResponse
+         * @description Public configuration for the first-party Clerk OAuth CLI client.
+         */
+        OAuthConfigResponse: {
+            /** Issuer */
+            issuer: string;
+            /** Client Id */
+            client_id: string;
+            /** Audience */
+            audience: string;
+            /** Authorized Parties */
+            authorized_parties?: string[];
+            /** Redirect Uri */
+            redirect_uri: string;
+        };
+        /**
+         * OAuthRevokeRequest
+         * @description Refresh credential forwarded only to Clerk's revoke-grant endpoint.
+         */
+        OAuthRevokeRequest: {
+            /**
+             * Refresh Token
+             * Format: password
+             */
+            refresh_token: string;
+        };
+        /** OAuthRevokeResponse */
+        OAuthRevokeResponse: {
+            /**
+             * Status
+             * @constant
+             */
+            status: "revoked";
+        };
         /** Paginated[ConnectorAvailableAppResponse] */
         Paginated_ConnectorAvailableAppResponse_: {
             /** Items */
@@ -8234,6 +8313,59 @@ export interface operations {
                     "application/json": {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_oauth_config_v1_cli_auth_oauth_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthConfigResponse"];
+                };
+            };
+        };
+    };
+    revoke_oauth_refresh_grant_v1_cli_auth_oauth_revoke_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthRevokeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthRevokeResponse"];
                 };
             };
             /** @description Validation Error */

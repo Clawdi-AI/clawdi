@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient, { type Client } from "openapi-fetch";
+import { getClawdiAccessToken } from "./clerk-oauth";
 import { getAuth, getConfig } from "./config";
 import { assertValidSkillKey } from "./skill-key";
 import { getCliVersion } from "./version";
@@ -165,15 +166,14 @@ async function retryingFetch(
  */
 export class ApiClient {
 	readonly baseUrl: string;
-	readonly apiKey: string;
 	private readonly client: Client<paths>;
 	private readonly abortSignal: AbortSignal | undefined;
+	private readonly requireAuth: boolean;
 
 	/**
-	 * @param opts.requireAuth — Default true. Set false for the device-flow
-	 *   login bootstrap, which has to call `/v1/cli/auth/device` and
-	 *   `/v1/cli/auth/poll` before any credentials exist. Unauthenticated
-	 *   instances skip the Authorization header entirely.
+	 * @param opts.requireAuth — Default true. Set false for public bootstrap
+	 *   calls that run before credentials exist. Unauthenticated instances
+	 *   skip the Authorization header entirely.
 	 * @param opts.abortSignal — Optional engine-wide abort. When the
 	 *   daemon's main `AbortController` fires (SSE auth failure,
 	 *   shutdown), every in-flight ApiClient request unwinds
@@ -192,16 +192,16 @@ export class ApiClient {
 			});
 		}
 		this.baseUrl = config.apiUrl;
-		this.apiKey = auth?.apiKey ?? "";
+		this.requireAuth = requireAuth;
 		this.abortSignal = opts.abortSignal;
 		this.client = createClient<paths>({
 			baseUrl: this.baseUrl,
 			fetch: (req) => retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal),
 		});
 		this.client.use({
-			onRequest: ({ request }) => {
-				if (this.apiKey) {
-					request.headers.set("Authorization", `Bearer ${this.apiKey}`);
+			async onRequest({ request }) {
+				if (requireAuth) {
+					request.headers.set("Authorization", `Bearer ${await getClawdiAccessToken()}`);
 				}
 				request.headers.set("User-Agent", USER_AGENT);
 				// Generate a per-request correlation ID. Backend's
@@ -217,6 +217,15 @@ export class ApiClient {
 				return request;
 			},
 		});
+	}
+
+	/** Current bearer snapshot for compatibility helpers; requests refresh it asynchronously. */
+	get apiKey(): string {
+		return getAuth()?.apiKey ?? "";
+	}
+
+	async getAccessToken(): Promise<string> {
+		return this.requireAuth ? getClawdiAccessToken() : "";
 	}
 
 	get GET(): Client<paths>["GET"] {
@@ -291,6 +300,7 @@ export class ApiClient {
 		filename: string,
 		extraHeaders?: Record<string, string>,
 	): Promise<T> {
+		const accessToken = await this.getAccessToken();
 		const formData = new FormData();
 		for (const [k, v] of Object.entries(fields)) formData.append(k, v);
 		// Buffer → Uint8Array: Buffer's `ArrayBufferLike` doesn't satisfy
@@ -310,7 +320,7 @@ export class ApiClient {
 		this.abortSignal?.addEventListener("abort", onEngineAbort, { once: true });
 		try {
 			const headers: Record<string, string> = {
-				Authorization: `Bearer ${this.apiKey}`,
+				Authorization: `Bearer ${accessToken}`,
 				"User-Agent": USER_AGENT,
 				...(extraHeaders ?? {}),
 			};
@@ -332,6 +342,7 @@ export class ApiClient {
 	}
 
 	async postJson<T>(path: string, query?: Record<string, string | undefined>): Promise<T> {
+		const accessToken = await this.getAccessToken();
 		const url = new URL(`${this.baseUrl}${path}`);
 		for (const [key, value] of Object.entries(query ?? {})) {
 			if (value !== undefined) url.searchParams.set(key, value);
@@ -339,7 +350,7 @@ export class ApiClient {
 		const req = new Request(url, {
 			method: "POST",
 			headers: {
-				Authorization: `Bearer ${this.apiKey}`,
+				Authorization: `Bearer ${accessToken}`,
 				"X-Request-ID": randomUUID(),
 			},
 		});
@@ -356,6 +367,7 @@ export class ApiClient {
 		body: unknown,
 		query?: Record<string, string | undefined>,
 	): Promise<T> {
+		const accessToken = await this.getAccessToken();
 		const url = new URL(`${this.baseUrl}${path}`);
 		for (const [key, value] of Object.entries(query ?? {})) {
 			if (value !== undefined) url.searchParams.set(key, value);
@@ -363,7 +375,7 @@ export class ApiClient {
 		const req = new Request(url, {
 			method: "POST",
 			headers: {
-				Authorization: `Bearer ${this.apiKey}`,
+				Authorization: `Bearer ${accessToken}`,
 				"Content-Type": "application/json",
 				"X-Request-ID": randomUUID(),
 			},
@@ -378,8 +390,9 @@ export class ApiClient {
 	}
 
 	async getBytes(path: string): Promise<Buffer> {
+		const accessToken = await this.getAccessToken();
 		const req = new Request(`${this.baseUrl}${path}`, {
-			headers: { Authorization: `Bearer ${this.apiKey}` },
+			headers: { Authorization: `Bearer ${accessToken}` },
 		});
 		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
 		if (!res.ok) {

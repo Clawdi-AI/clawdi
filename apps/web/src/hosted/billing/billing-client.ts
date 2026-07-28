@@ -3,6 +3,7 @@
 import {
 	type DeployPaths,
 	extractApiDetail,
+	projectHostedDeployRequest,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
@@ -338,33 +339,30 @@ export function createBillingClient(
 	const waitForDeploymentRequest = async (deployRequestId: string) => {
 		for (let poll = 0; poll <= pollLimit; poll += 1) {
 			const status = await getDeploymentByRequest(deployRequestId);
-			if (
-				status.request_status === "failed" ||
-				status.request_status === "expired" ||
-				status.request_status === "superseded"
-			) {
+			const projection = projectHostedDeployRequest(status);
+			if (projection.kind === "terminal") {
 				throw terminalDeployRequestError(status);
 			}
-
-			const deploymentId = status.lineage_tail?.deployment_id ?? null;
-			const projectedOperation = status.lineage_tail?.operation ?? null;
-			if (projectedOperation) {
-				return acceptDeclarativeOperation({ operation: projectedOperation, deploymentId });
-			}
-			if (
-				(status.request_status === "processing" || status.request_status === "succeeded") &&
-				deploymentId
-			) {
-				return acceptDeclarativeOperation({ deploymentId, operation: null });
-			}
-			const operationName = status.lineage_tail?.operation_name ?? null;
-			if (operationName) {
+			if (projection.kind === "operation") {
 				return acceptDeclarativeOperation({
-					operation: await getOperation(operationIdFromName(operationName)),
+					operation: projection.operation,
+					deploymentId: projection.deploymentId,
 				});
 			}
-			if (status.request_status === "succeeded") {
-				return acceptDeclarativeOperation({ deploymentId, operation: null });
+			if (projection.kind === "operation_name") {
+				return acceptDeclarativeOperation({
+					operation: await getOperation(operationIdFromName(projection.operationName)),
+					deploymentId: projection.deploymentId,
+				});
+			}
+			if (projection.kind === "deployment") {
+				return acceptDeclarativeOperation({
+					deploymentId: projection.deploymentId,
+					operation: null,
+				});
+			}
+			if (projection.kind === "invalid_success") {
+				return acceptDeclarativeOperation({ deploymentId: null, operation: null });
 			}
 			if (poll === pollLimit) break;
 			await sleep(pollIntervalMs);

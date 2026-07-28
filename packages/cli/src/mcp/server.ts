@@ -2,7 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v3";
-import { getAuth, getConfig, isLoggedIn } from "../lib/config";
+import { getClawdiAccessToken } from "../lib/clerk-oauth";
+import { getConfig, isLoggedIn } from "../lib/config";
 
 // Minimal shape of a JSON Schema property we care about when mapping
 // Composio tool definitions to Zod. Unknown fields are ignored.
@@ -219,11 +220,11 @@ const MCP_ENDPOINT_PATH = "/v1/mcp/clawdi";
 
 async function callClawdiMcp(method: string, params?: Record<string, unknown>): Promise<unknown> {
 	const config = getConfig();
-	const auth = getAuth();
+	const accessToken = await getClawdiAccessToken();
 	const response = await fetch(`${config.apiUrl}${MCP_ENDPOINT_PATH}`, {
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${auth?.apiKey ?? ""}`,
+			Authorization: `Bearer ${accessToken}`,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params ?? {} }),

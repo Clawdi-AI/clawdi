@@ -194,10 +194,10 @@ async def list_memories(
         # Re-cap to page_size so the response shape stays predictable
         # regardless of how much we overfetched.
         hits = hits[:page_size]
-        # A ranked search from an AGENT (api-key auth) is a recall — count
+        # A ranked search from an agent CLI (legacy API key or OAuth) is a recall — count
         # it (background task, own session, zero request latency; see
         # app/services/memory_recall.py). Dashboard/JWT browsing doesn't count.
-        if auth.is_cli and hits and recall_counting_enabled():
+        if (auth.is_cli or auth.oauth_cli) and hits and recall_counting_enabled():
             background_tasks.add_task(bump_recall_counts, auth.user_id, recall_ids_from_hits(hits))
         items = [MemoryResponse.model_validate(m) for m in hits]
         return Paginated[MemoryResponse](

@@ -222,8 +222,9 @@ async function scanOneAgent(
 	if (modules.includes("skills") && skillsLock) {
 		const adapter = adapterForType(agentType);
 		if (adapter && opts.project) {
-			skillProjectId = await resolveProjectId(api.baseUrl, api.apiKey, opts.project);
-			const project = (await listProjects(api.baseUrl, api.apiKey)).find(
+			const accessToken = await api.getAccessToken();
+			skillProjectId = await resolveProjectId(api.baseUrl, accessToken, opts.project);
+			const project = (await listProjects(api.baseUrl, accessToken)).find(
 				(p) => p.id === skillProjectId,
 			);
 			if (project?.is_owner === false) {

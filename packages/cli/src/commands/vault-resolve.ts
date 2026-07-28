@@ -1,5 +1,6 @@
 import chalk from "chalk";
 import { readJson } from "../lib/api-client";
+import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
 import { resolveProjectId } from "../lib/project-resolver";
 import { getEnvIdByAgent } from "../lib/select-adapter";
@@ -53,6 +54,7 @@ export async function vaultResolveCommand(
 		process.exitCode = 1;
 		return;
 	}
+	const accessToken = await getClawdiAccessToken();
 	if (opts.project && opts.agent) {
 		console.error(chalk.red("Pass either --project or --agent, not both."));
 		process.exitCode = 1;
@@ -63,7 +65,7 @@ export async function vaultResolveCommand(
 		key,
 	});
 	if (opts.project) {
-		const projectId = await resolveProjectId(apiUrl, auth.apiKey, opts.project);
+		const projectId = await resolveProjectId(apiUrl, accessToken, opts.project);
 		params.set("project_id", projectId);
 	}
 	if (opts.agent) {
@@ -75,7 +77,7 @@ export async function vaultResolveCommand(
 
 	const r = await fetch(`${apiUrl}/v1/vault/resolve?${params.toString()}`, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${auth.apiKey}` },
+		headers: { Authorization: `Bearer ${accessToken}` },
 	});
 	let body: VaultResolveHit | { detail?: unknown };
 	try {

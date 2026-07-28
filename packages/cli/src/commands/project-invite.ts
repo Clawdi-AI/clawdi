@@ -32,7 +32,7 @@ export async function projectInviteCommand(
 	projectArg: string,
 	opts: { email: string },
 ): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 	const { apiUrl, apiKey } = ctx;
 	if (!opts.email || !/^\S+@\S+\.\S+$/.test(opts.email)) {

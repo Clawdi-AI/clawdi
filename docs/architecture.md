@@ -227,6 +227,7 @@ Core tables verified under `backend/app/models/`:
 | Tables | Purpose |
 | --- | --- |
 | `users`, `user_settings` | Clerk user mirror, profile fields, skill revision counter, user settings such as memory provider. |
+| `app_settings` | Strictly registered global JSON settings. Values are replaced atomically and have no per-user overrides. |
 | `api_keys` | SHA-256-hashed CLI/API tokens, optionally scoped to an Agent. |
 | `agent_environments` | Stable Agent identities plus refreshable machine metadata, labels, daemon observability, and fixed Agent Project id. |
 | `hosted_runtime_states` | Runtime desired CONFIG state keyed to an Agent identity for hosted surfaces and local mock flows. |

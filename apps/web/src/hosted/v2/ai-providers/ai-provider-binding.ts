@@ -1,20 +1,17 @@
+import {
+	buildHostedAiBindingFields,
+	HostedAiBindingError,
+	type HostedAiProviderBootstrap,
+} from "@clawdi/shared";
 import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import {
 	MANAGED_AI_CHOICE,
-	MANAGED_PROVIDER_ID,
 	MANAGED_PROVIDER_LABEL,
-	modelIdsForProvider,
 	normalizeSelectedProviderIds,
-	primaryModelRef,
+	type primaryModelRef,
 	providerChoiceFromRef,
 	providerRefFromChoice,
 } from "@/hosted/v2/ai-providers/model-binding";
-import {
-	aiProviderRuntimeId,
-	buildAiProviderPoolBootstrap,
-	type RuntimeAiProviderAuthKind,
-	type RuntimeAiProviderBootstrap,
-} from "@/hosted/v2/ai-providers/runtime-bootstrap";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 export type AiBindingOperationMode = "create" | "update";
@@ -32,7 +29,7 @@ export type AiBindingFields = {
 	ai_provider_id?: string | null;
 	provider_ids?: string[];
 	primary_model?: ReturnType<typeof primaryModelRef>;
-	ai_provider_bootstrap?: RuntimeAiProviderBootstrap | null;
+	ai_provider_bootstrap?: HostedAiProviderBootstrap | null;
 };
 
 export class AiBindingBuildError extends Error {
@@ -90,25 +87,12 @@ export function buildAiBindingFields(
 	},
 ): AiBindingFields {
 	if (draft.bindingMode === "unmanaged") {
-		return mode === "create"
-			? { ai_provider_auth_kind: "unmanaged" }
-			: {
-					ai_provider_auth_kind: "unmanaged",
-					ai_provider_id: null,
-					provider_ids: [],
-					primary_model: null,
-					ai_provider_bootstrap: null,
-				};
-	}
-
-	const unusableProvider = draft.providerChoices
-		.map((choice) => providers.find((provider) => provider.provider_id === choice))
-		.find((provider) => provider?.usable === false);
-	if (unusableProvider) {
-		throw new AiBindingBuildError(
-			"Provider needs setup",
-			`${unusableProvider.label?.trim() || unusableProvider.provider_id} has no usable credential. Finish its setup or choose another provider.`,
-		);
+		return buildHostedAiBindingFields({
+			managedModels,
+			mode,
+			providers,
+			selection: { mode: "unmanaged" },
+		});
 	}
 
 	const selectedChoices = normalizeSelectedProviderIds(
@@ -127,61 +111,44 @@ export function buildAiBindingFields(
 		);
 	}
 
-	const primaryProviderRef =
-		providerRefFromChoice(draft.primaryProviderChoice, providers) ?? MANAGED_PROVIDER_ID;
-	if (
-		draft.primaryProviderChoice === MANAGED_AI_CHOICE &&
-		!modelIdsForProvider(MANAGED_AI_CHOICE, [], managedModels).includes(draft.primaryModel)
-	) {
-		throw new AiBindingBuildError(
-			"Managed model unavailable",
-			mode === "create"
-				? "Load the managed model catalog and choose a model before deploying."
-				: "Load the managed model catalog and choose a model before applying.",
-		);
-	}
-
-	const modelRef = primaryModelRef(primaryProviderRef, draft.primaryModel);
-	if (!modelRef) {
-		throw new AiBindingBuildError(
-			"Primary model required",
-			mode === "create" ? "Choose a catalog model or enter a model id." : undefined,
-		);
-	}
-
-	const primaryProvider = providers.find(
-		(provider) => provider.provider_id === draft.primaryProviderChoice,
-	);
-	const customProviders = selectedChoices
-		.filter((choice) => choice !== MANAGED_AI_CHOICE)
-		.map((choice) => providers.find((provider) => provider.provider_id === choice))
-		.filter((provider): provider is AiProvider => Boolean(provider));
-	const fields: AiBindingFields = {
-		ai_provider_auth_kind: primaryProvider ? providerAuthKind(primaryProvider) : "managed",
-		ai_provider_id: primaryProvider ? aiProviderRuntimeId(primaryProvider) : null,
-		provider_ids: providerRefs,
-		primary_model: modelRef,
-	};
-
-	if (customProviders.length > 0) {
-		const bootstrapProvider = primaryProvider ?? customProviders[0];
-		try {
-			fields.ai_provider_bootstrap = buildAiProviderPoolBootstrap(
-				customProviders,
-				bootstrapProvider.provider_id,
-				providerAuthKind(bootstrapProvider),
-			);
-		} catch (error) {
-			throw new AiBindingBuildError(
-				mode === "create" ? "Provider unavailable" : "Provider configuration is invalid",
-				error instanceof Error ? error.message : "Check provider configuration.",
-			);
+	try {
+		if (draft.primaryProviderChoice === MANAGED_AI_CHOICE) {
+			return buildHostedAiBindingFields({
+				managedModels,
+				mode,
+				providers,
+				selection: { mode: "managed", model: draft.primaryModel, providerIds: providerRefs },
+			});
 		}
-	} else if (mode === "update") {
-		fields.ai_provider_bootstrap = null;
+		const primaryProviderId =
+			providerRefFromChoice(draft.primaryProviderChoice, providers) ?? draft.primaryProviderChoice;
+		return buildHostedAiBindingFields({
+			managedModels,
+			mode,
+			providers,
+			selection: {
+				mode: "saved",
+				model: draft.primaryModel,
+				primaryProviderId,
+				providerIds: providerRefs,
+			},
+		});
+	} catch (error) {
+		if (error instanceof HostedAiBindingError) {
+			const title =
+				error.code === "provider_unusable"
+					? "Provider needs setup"
+					: error.code === "managed_model_unavailable"
+						? "Managed model unavailable"
+						: error.code === "model_required"
+							? "Primary model required"
+							: mode === "create"
+								? "Provider unavailable"
+								: "Provider configuration is invalid";
+			throw new AiBindingBuildError(title, error.message);
+		}
+		throw error;
 	}
-
-	return fields;
 }
 
 export function aiBindingBuildErrorCopy(
@@ -195,10 +162,4 @@ export function aiBindingBuildErrorCopy(
 		title: mode === "create" ? "Provider unavailable" : "Provider configuration is invalid",
 		description: error instanceof Error ? error.message : "Check provider configuration.",
 	};
-}
-
-function providerAuthKind(provider: AiProvider): RuntimeAiProviderAuthKind {
-	return provider.auth.type === "agent_profile" || provider.auth.type === "oauth_profile"
-		? "codex_oauth"
-		: "api_key";
 }

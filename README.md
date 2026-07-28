@@ -60,11 +60,19 @@ You can also try without installing:
 npx clawdi --help
 ```
 
-Headless environment? Use the manual flow:
+SSH or headless environment? Keep the same Clerk login and print the PKCE URL:
 
 ```bash
-clawdi auth login --manual
+clawdi auth login --no-open
 ```
+
+Open the URL on your local computer. If the browser cannot reach the registered
+loopback callback on the remote machine, copy the complete failed callback URL
+from the browser address bar and paste it into the CLI's masked prompt. For a
+non-interactive first step, finish later with `clawdi auth complete` and provide
+that URL on stdin; never put the authorization code in a command-line flag.
+`--manual` is retained only for legacy Cloud API keys and cannot deploy Hosted
+agents.
 
 ## Why Clawdi
 
@@ -278,6 +286,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | --- | --- |
 | `clawdi auth login` / `logout` | Authenticate this machine |
 | `clawdi auth status [--json]` | Show credential source without printing secrets |
+| `clawdi deploy [--json]` | Create a Hosted agent with interactive or automation-safe payment handling; every non-interactive deploy requires a caller-supplied `--request-id <uuid>` before create or checkout mutation |
 | `clawdi status [--json]` | Show auth and sync state |
 | `clawdi config list/get/set/unset/paths` | Read/write CLI configuration and inspect local/runtime paths |
 | `clawdi setup [--agent <type>] [--no-daemon]` | Register local agents, install MCP, install the bundled skill, and install/start the singleton daemon by default |
@@ -432,7 +441,7 @@ clawdi doctor
 
 Common issues:
 
-- **`clawdi auth login` fails** - Re-run login, or use `clawdi auth login --manual` in headless environments.
+- **`clawdi auth login` fails** - Re-run login; over SSH use `clawdi auth login --no-open` and paste the complete failed loopback callback URL. `--manual` is legacy API-key compatibility and does not authorize Hosted deploys.
 - **No supported agent detected** - Install a supported agent or pass `--agent claude_code`, `--agent codex`, `--agent hermes`, or `--agent openclaw`.
 - **Memory search is empty** - Add a memory first with `clawdi memory add "..."`, then verify with `clawdi memory search "..."`.
 - **Local backend cannot start because `vector` is missing** - Install `pgvector` for your PostgreSQL 16 instance, or use the included Docker Compose database.

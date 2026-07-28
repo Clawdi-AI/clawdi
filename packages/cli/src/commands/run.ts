@@ -538,7 +538,7 @@ function assertVaultResolved(value: unknown): VaultResolved {
 async function selectProject(api: ApiClient, opts: RunOpts): Promise<SelectedProject | null> {
 	if (opts.agent) return null;
 	if (opts.project) {
-		const projectId = await resolveProjectId(api.baseUrl, api.apiKey, opts.project);
+		const projectId = await resolveProjectId(api.baseUrl, await api.getAccessToken(), opts.project);
 		return {
 			projectId,
 			label: (await projectLabel(api, projectId).catch(() => null)) ?? opts.project,
@@ -554,7 +554,7 @@ async function selectProject(api: ApiClient, opts: RunOpts): Promise<SelectedPro
 }
 
 async function projectLabel(api: ApiClient, projectId: string): Promise<string | null> {
-	const projects = await listProjects(api.baseUrl, api.apiKey);
+	const projects = await listProjects(api.baseUrl, await api.getAccessToken());
 	const project = projects.find((item) => item.id === projectId);
 	if (!project) return null;
 	if (project.is_owner === false && project.owner_handle) {
