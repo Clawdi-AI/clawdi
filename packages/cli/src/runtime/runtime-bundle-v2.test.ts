@@ -1,5 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	chmodSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	statSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
@@ -271,6 +279,8 @@ describe("hosted runtime bundle v2", () => {
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const channelPatchPath = join(root, "openclaw-channel-patch.json");
+		const mcpSecretRef = "secret://mcp/sidecar-only/token";
+		const mcpSecret = "mcp-sidecar-only-secret";
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -288,7 +298,27 @@ describe("hosted runtime bundle v2", () => {
 		);
 		chmodSync(openclawBin, 0o700);
 
-		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
+		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as {
+			manifest: Record<string, unknown>;
+			secretValues: Record<string, string>;
+			sourceRevision: string;
+		};
+		raw.manifest = {
+			...raw.manifest,
+			mcp: {
+				servers: {
+					"sidecar-only": {
+						url: "https://mcp.test/v1/service",
+						transport: "streamable-http",
+						headers: {
+							Authorization: { secretRef: mcpSecretRef, prefix: "Bearer " },
+						},
+					},
+				},
+			},
+		};
+		raw.secretValues = { ...raw.secretValues, [mcpSecretRef]: mcpSecret };
+		raw.sourceRevision = "f".repeat(64);
 		const projected = applyRuntimeBundleChannelsToManifestLoad(normalizeHostedRuntimeBundleV2(raw));
 		const openclaw = structuredClone(projected.manifest.runtimes.openclaw);
 		openclaw.providerMode = "unmanaged";
@@ -322,10 +352,20 @@ describe("hosted runtime bundle v2", () => {
 		const watchEnvPath = join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env");
 		expect(watchUnit).toContain(`EnvironmentFile=${watchEnvPath}`);
 		const gatewayTokenLine = 'OPENCLAW_GATEWAY_TOKEN="gateway-token"';
-		expect(readFileSync(watchEnvPath, "utf-8")).toContain(gatewayTokenLine);
+		const watchEnv = readFileSync(watchEnvPath, "utf-8");
+		expect(watchEnv).toContain(gatewayTokenLine);
+		expect(statSync(watchEnvPath).mode & 0o777).toBe(0o600);
+		const sidecarOnlySecrets = ["sk-provider-golden", "123456789:telegram-agent-golden", mcpSecret];
+		for (const secret of sidecarOnlySecrets) expect(watchEnv).not.toContain(secret);
+		expect(watchEnv).toContain("999999999:9ded1453047ec0a48ec3b735075f7448");
 		expect(
 			readFileSync(join(paths.systemdEnvRoot, "openclaw-gateway.service.env"), "utf-8"),
 		).toContain(gatewayTokenLine);
+		const persistentLastGood = [
+			readFileSync(paths.manifestLastGood, "utf-8"),
+			readFileSync(paths.managedSecretCacheFile, "utf-8"),
+		].join("\n");
+		for (const secret of sidecarOnlySecrets) expect(persistentLastGood).not.toContain(secret);
 		expect(JSON.parse(readFileSync(channelPatchPath, "utf-8"))).toMatchObject({
 			channels: {
 				telegram: {

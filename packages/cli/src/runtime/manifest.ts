@@ -225,6 +225,7 @@ function writeLastGoodManifest(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	secretValues: Record<string, string> | undefined,
+	secretScopeManifest: RuntimeManifest = manifest,
 ): string | null {
 	if (manifest.recovery.cacheManifest === false) {
 		rmSync(paths.manifestLastGood, { force: true });
@@ -232,7 +233,7 @@ function writeLastGoodManifest(
 		return null;
 	}
 	writeJsonFile(paths.manifestLastGood, manifest);
-	writeLastGoodSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(manifest));
+	writeLastGoodSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(secretScopeManifest));
 	return paths.manifestLastGood;
 }
 
@@ -4045,6 +4046,7 @@ interface RuntimeSystemdUserProgram {
 	args: string[];
 	cwd: string;
 	env: Record<string, string>;
+	resolvedSecretEnv: Record<string, string>;
 }
 
 interface RuntimeEgressSystemdProgram {
@@ -4106,12 +4108,14 @@ function buildRuntimeSystemdUserProgram(input: {
 		...input.config.env,
 		PATH: pathPrefix ? [pathPrefix, currentPath].filter(Boolean).join(":") : currentPath,
 	};
+	const resolvedSecretEnv: Record<string, string> = {};
 	for (const [envName, ref] of Object.entries(input.config.secretEnv)) {
 		const value = runtimeSecretValue(input.secretValues ?? {}, ref);
 		if (!value) {
 			throw new Error(`Runtime secret ${ref} for ${envName} is unavailable.`);
 		}
 		env[envName] = value;
+		resolvedSecretEnv[envName] = value;
 	}
 	if (input.egress) {
 		applyEgressTransparentRuntimeEnv(env, { caFile: input.egress.systemCaBundle });
@@ -4129,6 +4133,7 @@ function buildRuntimeSystemdUserProgram(input: {
 		args: input.config.defaultArgs,
 		cwd: input.config.cwd ?? input.paths.workspaceRoot,
 		env,
+		resolvedSecretEnv,
 	};
 }
 
@@ -4774,16 +4779,26 @@ function runtimeSystemdCommonEnvironment(
 }
 
 function runtimeWatchSecretEnvironment(
-	manifest: RuntimeManifest,
-	secretValues: Record<string, string> | undefined,
+	programs: RuntimeSystemdUserProgram[],
 ): Record<string, string> {
-	const tokenRef = manifest.runtimes.openclaw?.run?.secretEnv?.[OPENCLAW_GATEWAY_TOKEN_ENV];
-	if (!tokenRef) return {};
-	const token = resolveRuntimeSecretValue(secretValues ?? {}, tokenRef);
-	if (!token) {
-		throw new Error(`Runtime secret ${tokenRef} for ${OPENCLAW_GATEWAY_TOKEN_ENV} is unavailable.`);
+	const retained = new Map<string, { value: string; program: string }>();
+	for (const program of [...programs].sort((a, b) =>
+		runtimeSystemdProgramName(a).localeCompare(runtimeSystemdProgramName(b)),
+	)) {
+		const programName = runtimeSystemdProgramName(program);
+		for (const [envName, value] of Object.entries(program.resolvedSecretEnv).sort(([a], [b]) =>
+			a.localeCompare(b),
+		)) {
+			const existing = retained.get(envName);
+			if (existing && existing.value !== value) {
+				throw new Error(
+					`Runtime watch secret environment ${envName} conflicts between ${existing.program} and ${programName}.`,
+				);
+			}
+			retained.set(envName, { value, program: existing?.program ?? programName });
+		}
 	}
-	return { [OPENCLAW_GATEWAY_TOKEN_ENV]: token };
+	return Object.fromEntries([...retained].map(([envName, entry]) => [envName, entry.value]));
 }
 
 function writeRuntimeSystemdUserProgram(input: {
@@ -4876,7 +4891,7 @@ function writeSystemdUnits(
 				env: {
 					...commonEnvironment,
 					...applyIdentityEnvironment,
-					...runtimeWatchSecretEnvironment(manifest, secretValues),
+					...runtimeWatchSecretEnvironment(runtimePrograms),
 					CLAWDI_AUTH_TOKEN: "",
 				},
 			}),
@@ -6127,6 +6142,7 @@ export function convergeRuntimeManifest(
 				load.sourceManifest ?? manifest,
 				paths,
 				load.secretValues,
+				manifest,
 			);
 		}
 

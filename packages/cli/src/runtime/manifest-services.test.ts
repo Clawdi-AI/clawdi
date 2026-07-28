@@ -131,6 +131,7 @@ describe("runtime manifest services", () => {
 	test("renders systemd runtime services without creating user command shims", () => {
 		const paths = tempRuntimePaths();
 		process.env.PATH = `${dirname(paths.cliManagedBin)}:${process.env.PATH ?? ""}`;
+		process.env.BYOK_RUNTIME_SECRET = "stale-watcher-value";
 		const manifest: RuntimeManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "hdep_test",
@@ -143,21 +144,28 @@ describe("runtime manifest services", () => {
 			runtimes: {
 				openclaw: {
 					enabled: true,
-					run: runSettings("openclaw", ["gateway", "run"]),
+					run: {
+						...runSettings("openclaw", ["gateway", "run"]),
+						env: { NON_SECRET_RUNTIME_SETTING: "public-value" },
+						secretEnv: { BYOK_RUNTIME_SECRET: "secret://runtime/openclaw" },
+					},
 					services: {},
 				},
 				hermes: {
 					enabled: true,
 					run: runSettings("hermes", ["gateway", "run"]),
 					services: {
-						dashboard: runSettings("hermes", [
-							"dashboard",
-							"--host",
-							"127.0.0.1",
-							"--port",
-							"9119",
-							"--no-open",
-						]),
+						dashboard: {
+							...runSettings("hermes", [
+								"dashboard",
+								"--host",
+								"127.0.0.1",
+								"--port",
+								"9119",
+								"--no-open",
+							]),
+							secretEnv: { BYOK_SERVICE_SECRET: "secret://service/hermes-dashboard" },
+						},
 					},
 				},
 			},
@@ -168,6 +176,10 @@ describe("runtime manifest services", () => {
 			source: "fixture-file",
 			sourcePath: "inline-test",
 			offline: false,
+			secretValues: {
+				"secret://runtime/openclaw": "runtime-byok-value",
+				"secret://service/hermes-dashboard": "service-byok-value",
+			},
 		};
 
 		const previousUmask = process.umask(0o077);
@@ -224,8 +236,16 @@ describe("runtime manifest services", () => {
 			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
 			"utf8",
 		);
+		const runtimeWatchEnv = readFileSync(
+			join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
+			"utf8",
+		);
 		expect(runtimeWatchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
 		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
+		expect(runtimeWatchEnv).toContain('BYOK_RUNTIME_SECRET="runtime-byok-value"');
+		expect(runtimeWatchEnv).toContain('BYOK_SERVICE_SECRET="service-byok-value"');
+		expect(runtimeWatchEnv).not.toContain("stale-watcher-value");
+		expect(runtimeWatchEnv).not.toContain("NON_SECRET_RUNTIME_SETTING");
 		for (const unit of [hermesUnit, dashboardUnit, openclawUnit]) {
 			expect(unit).not.toContain("clawdi run --");
 			expect(unit).not.toContain("supervisord");
@@ -353,12 +373,18 @@ describe("runtime manifest services", () => {
 			join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env"),
 			"utf8",
 		);
+		const watchEnv = readFileSync(
+			join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
+			"utf8",
+		);
 		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_USERNAME="admin"');
 		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"');
 		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"');
 		expect(dashboardEnv).toContain(
 			'HERMES_DASHBOARD_PUBLIC_URL="https://agent.example.test/hermes"',
 		);
+		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"');
+		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"');
 		const hermesConfig = readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8");
 		expect(hermesConfig).toContain("basic_auth:");
 		expect(hermesConfig).toContain("username: admin");
@@ -369,6 +395,89 @@ describe("runtime manifest services", () => {
 		expect(hermesConfig).not.toContain("dashboard-password");
 		expect(hermesConfig).not.toContain("dashboard-session-secret");
 		expect(existsSync(runtimeRunConfigPath("openclaw", paths))).toBe(false);
+	});
+
+	test("merges watcher secret environments deterministically and fails closed on conflicts", () => {
+		const converge = (
+			runtimeOrder: Array<"hermes" | "openclaw">,
+			secretValues: Record<string, string>,
+		) => {
+			const paths = tempRuntimePaths();
+			process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+			const runtimeSettings: RuntimeManifest["runtimes"] = {
+				hermes: {
+					enabled: true,
+					run: {
+						...runSettings("hermes", ["gateway", "run"]),
+						secretEnv: { SHARED_RUNTIME_SECRET: "secret://runtime/hermes" },
+					},
+					services: {},
+				},
+				openclaw: {
+					enabled: true,
+					run: {
+						...runSettings("openclaw", ["gateway", "run"]),
+						secretEnv: { SHARED_RUNTIME_SECRET: "secret://runtime/openclaw" },
+					},
+					services: {},
+				},
+			};
+			const runtimes = Object.fromEntries(
+				runtimeOrder.map((runtime) => [runtime, runtimeSettings[runtime]]),
+			) as RuntimeManifest["runtimes"];
+			const manifest: RuntimeManifest = {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "hdep_conflicting_watch_secrets",
+				environmentId: "env_conflicting_watch_secrets",
+				instanceId: "hri_conflicting_watch_secrets",
+				generation: 1,
+				issuedAt: "2026-07-01T00:00:00.000Z",
+				workspaceRoot: join(paths.userHome, "clawdi"),
+				controlPlane: { apiUrl: "https://cloud-api.example.test" },
+				runtimes,
+				recovery: {},
+			};
+			return {
+				paths,
+				result: convergeRuntimeManifest(
+					{
+						manifest,
+						source: "fixture-file",
+						sourcePath: "inline-conflicting-watch-secrets",
+						offline: false,
+						secretValues,
+					},
+					paths,
+				),
+			};
+		};
+
+		const conflictingValues = {
+			"secret://runtime/hermes": "hermes-secret",
+			"secret://runtime/openclaw": "openclaw-secret",
+		};
+		const forward = converge(["hermes", "openclaw"], conflictingValues).result;
+		const reverse = converge(["openclaw", "hermes"], conflictingValues).result;
+		const expectedError =
+			"runtime apply failed: Runtime watch secret environment SHARED_RUNTIME_SECRET conflicts between hermes-gateway and openclaw-gateway.";
+
+		expect(forward.installErrors).toEqual([expectedError]);
+		expect(reverse.installErrors).toEqual([expectedError]);
+		expect(forward.outputs.systemdSystemUnits).toEqual([]);
+		expect(reverse.outputs.systemdSystemUnits).toEqual([]);
+		expect(expectedError).not.toContain("hermes-secret");
+		expect(expectedError).not.toContain("openclaw-secret");
+
+		const deduplicated = converge(["openclaw", "hermes"], {
+			"secret://runtime/hermes": "shared-secret",
+			"secret://runtime/openclaw": "shared-secret",
+		});
+		expect(deduplicated.result.installErrors).toEqual([]);
+		const watchEnv = readFileSync(
+			join(deduplicated.paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
+			"utf8",
+		);
+		expect(watchEnv.match(/^SHARED_RUNTIME_SECRET="shared-secret"$/gm)).toHaveLength(1);
 	});
 
 	test("converges official service state before installers restart units", () => {
