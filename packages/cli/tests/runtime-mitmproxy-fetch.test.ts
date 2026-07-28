@@ -70,6 +70,52 @@ describe("runtime egress engine maintained fetch", () => {
 		expect(second.binaryPath).toBe(first.binaryPath);
 	});
 
+	it("repairs legacy egress engine directory permissions on a cache hit", () => {
+		const paths = runtimePaths();
+		const pin = {
+			type: "mitmproxy" as const,
+			version: "12.2.3",
+			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+			sha256: "a".repeat(64),
+		};
+		const egressEngineRoot = dirname(paths.egressEngineMaintainedRoot);
+		const versionRoot = join(paths.egressEngineMaintainedRoot, pin.version);
+		const cacheDir = join(versionRoot, pin.sha256);
+		const binaryPath = join(cacheDir, "mitmdump");
+		const unrelatedPrivateDir = join(paths.maintainedRoot, "private");
+		const unrelatedPrivateFile = join(unrelatedPrivateDir, "secret");
+
+		mkdirSync(cacheDir, { recursive: true, mode: 0o755 });
+		writeFileSync(binaryPath, "cached mitmdump", { mode: 0o755 });
+		chmodSync(binaryPath, 0o755);
+		mkdirSync(unrelatedPrivateDir, { mode: 0o700 });
+		writeFileSync(unrelatedPrivateFile, "private", { mode: 0o600 });
+		chmodSync(unrelatedPrivateDir, 0o700);
+		chmodSync(unrelatedPrivateFile, 0o600);
+		chmodSync(egressEngineRoot, 0o700);
+		expect(statSync(egressEngineRoot).mode & 0o777).toBe(0o700);
+
+		const result = ensureRuntimeMitmproxy(pin, paths, {
+			downloadCommand: "missing-curl-for-cache-hit",
+		});
+
+		expect(result.status).toBe("ready");
+		if (result.status !== "ready") throw new Error(result.error);
+		expect(result.binaryPath).toBe(binaryPath);
+		expect(statSync(egressEngineRoot).mode & 0o777).toBe(0o755);
+		for (const path of [
+			egressEngineRoot,
+			paths.egressEngineMaintainedRoot,
+			versionRoot,
+			cacheDir,
+		]) {
+			expect(statSync(path).mode & 0o005).toBe(0o005);
+		}
+		expect(statSync(binaryPath).mode & 0o005).toBe(0o005);
+		expect(statSync(unrelatedPrivateDir).mode & 0o777).toBe(0o700);
+		expect(statSync(unrelatedPrivateFile).mode & 0o777).toBe(0o600);
+	});
+
 	it("degrades instead of installing on checksum mismatch", () => {
 		const { archive } = makeMitmproxyArchive();
 		const paths = runtimePaths();
