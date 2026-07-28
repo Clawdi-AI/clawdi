@@ -402,6 +402,49 @@ function hostedRuntimeWatchLocalePayload(
 	};
 }
 
+function hostedEgressSecretRotationPayload(
+	home: string,
+	egressEngine: typeof TEST_EGRESS_ENGINE_PIN,
+	secret: string,
+): HostedRuntimeResponseFixture {
+	return {
+		manifest: {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
+			runtime: "openclaw",
+			deploymentId: "dep_watch_egress_secret_rotation",
+			environmentId: "env_watch_egress_secret_rotation",
+			...hostedRequiredState(),
+			instanceId: "iid_watch_egress_secret_rotation",
+			generation: 41,
+			issuedAt: "2026-07-28T00:00:00Z",
+			locale: TEST_HOSTED_LOCALE,
+			system: hostedSystemFixture(home),
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			egressEngine,
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.13.0-test",
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: { openclaw: hostedOpenClawRuntime() },
+			providers: {
+				default: {
+					kind: "openai-compatible",
+					type: "custom_openai_compatible",
+					baseUrl: "https://provider.test/v1",
+					models: [{ id: "gpt-test" }],
+					apiMode: "openai_responses",
+					managed_by: "clawdi",
+					runtimeEnvName: "OPENAI_API_KEY",
+					apiKeySecretRef: "provider.default.apiKey",
+				},
+			},
+		},
+		secretValues: { "provider.default.apiKey": secret },
+	};
+}
+
 function hostedCliManifestResponse(
 	home: string,
 	packageSpec: string,
@@ -7178,6 +7221,243 @@ chmod +x "$prefix/bin/clawdi"
 		expect(statSync(activeTarget).mode & 0o777).toBe(0o700);
 		expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
 		expect(statSync(legacyImageShim).mode & 0o777).toBe(0o700);
+	});
+
+	it("keeps public sidecar artifacts stable while forcing private egress secret restarts", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const systemctlLog = join(root, "systemctl-egress-rotation.log");
+		const failNextSidecarRestart = join(root, "fail-next-sidecar-restart");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		seedOpenClawBinary(home);
+		writeFileSync(
+			join(bin, "systemctl"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> '${systemctlLog}'
+if [ "$*" = "restart clawdi-runtime-sidecar.service" ] && [ -f '${failNextSidecarRestart}' ]; then
+  rm -f '${failNextSidecarRestart}'
+  printf 'injected sidecar restart failure\\n' >&2
+  exit 42
+fi
+printf 'ActiveState=active\\nSubState=running\\n'
+`,
+		);
+		chmodSync(join(bin, "systemctl"), 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		process.env.CLAWDI_RUNTIME_USER = "root";
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => {
+			logs.push(String(value));
+		};
+		try {
+			seedCurrentCliInstall(
+				state,
+				"clawdi@0.13.0-test",
+				"0.13.0-test",
+				"https://registry.npmjs.org",
+			);
+			writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+			const paths = getRuntimePaths();
+			const mitmproxy = seedMitmproxyCache(paths);
+			const initialSecret = "000000";
+			const rotatedSecret = "000001";
+			const rejectedSecret = "000002";
+			const missingSidecarSecret = "000003";
+			const initialFetch = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: () =>
+						hostedRuntimeBundleResponse(
+							hostedEgressSecretRotationPayload(home, mitmproxy, initialSecret),
+							{ etag: '"egress-secret-revision-a"' },
+						),
+				},
+			]);
+			try {
+				const initialLoad = await loadRemoteRuntimeManifest(paths);
+				if (!("manifest" in initialLoad) || "notModified" in initialLoad) {
+					throw new Error("expected initial egress rotation manifest load");
+				}
+				const appliedLoad = applyRuntimeBundleChannelsToManifestLoad(initialLoad);
+				const initialConvergence = convergeRuntimeManifest(appliedLoad, paths);
+				expect(initialConvergence.installErrors).toEqual([]);
+				writeTestRuntimeAppliedState(paths, appliedLoad, initialConvergence);
+			} finally {
+				initialFetch.restore();
+			}
+
+			const egressSecretFile = join(run, "secrets", "egress-secrets.json");
+			const initialSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
+			const initialSidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
+			const initialEnvironmentRevision = initialSidecarUnit.match(
+				/^# ClawdiEnvironmentRevision=([^\n]+)$/m,
+			)?.[1];
+			expect(initialEnvironmentRevision).toBeTruthy();
+			expect(statSync(egressSecretFile).mode & 0o777).toBe(0o600);
+			expect(JSON.parse(readFileSync(egressSecretFile, "utf-8"))).toMatchObject({
+				"secret://provider.default.apiKey": initialSecret,
+			});
+			writeFileSync(systemctlLog, "");
+
+			const rotationFetch = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: () =>
+						hostedRuntimeBundleResponse(
+							hostedEgressSecretRotationPayload(home, mitmproxy, rotatedSecret),
+							{ etag: '"egress-secret-revision-b"' },
+						),
+				},
+			]);
+			try {
+				await runtimeWatch({ once: true, json: true });
+			} finally {
+				rotationFetch.restore();
+			}
+			if (process.exitCode !== undefined && process.exitCode !== 0) {
+				throw new Error(logs.join("\n"));
+			}
+			const appliedEvent = JSON.parse(logs.at(-1) ?? "{}");
+			const appliedEventText = JSON.stringify(appliedEvent);
+			expect(appliedEvent.status).toBe("applied");
+			expect(appliedEvent.systemdUnitsChanged).toBe(false);
+			expect(appliedEvent.systemdApply).toEqual({
+				applied: true,
+				systemUnitsChanged: [],
+				userUnitsChanged: [],
+			});
+			expect(appliedEventText).not.toContain(initialSecret);
+			expect(appliedEventText).not.toContain(rotatedSecret);
+			expect(appliedEventText).not.toContain("egressSecretsChanged");
+			const rotatedSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
+			const rotatedSidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
+			expect(rotatedSidecarUnit).toBe(initialSidecarUnit);
+			expect(rotatedSidecarEnv).toBe(initialSidecarEnv);
+			expect(rotatedSidecarUnit.match(/^# ClawdiEnvironmentRevision=([^\n]+)$/m)?.[1]).toBe(
+				initialEnvironmentRevision,
+			);
+			expect(JSON.parse(readFileSync(egressSecretFile, "utf-8"))).toMatchObject({
+				"secret://provider.default.apiKey": rotatedSecret,
+			});
+			expect(statSync(egressSecretFile).mode & 0o777).toBe(0o600);
+			const rotationSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(
+				rotationSystemctlCalls.filter((call) => call === "restart clawdi-runtime-sidecar.service"),
+			).toHaveLength(1);
+
+			const committedAppliedState = readFileSync(paths.appliedState, "utf-8");
+			const committedLastGood = readFileSync(paths.manifestLastGood, "utf-8");
+			const committedSecretCache = readFileSync(paths.managedSecretCacheFile, "utf-8");
+			writeFileSync(systemctlLog, "");
+			writeFileSync(failNextSidecarRestart, "fail\n");
+			logs.length = 0;
+			process.exitCode = undefined;
+			const rejectedFetch = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: () =>
+						hostedRuntimeBundleResponse(
+							hostedEgressSecretRotationPayload(home, mitmproxy, rejectedSecret),
+							{ etag: '"egress-secret-revision-c"' },
+						),
+				},
+			]);
+			try {
+				await runtimeWatch({ once: true, json: true });
+			} finally {
+				rejectedFetch.restore();
+			}
+
+			expect(process.exitCode).toBe(1);
+			const rejectedEvent = JSON.parse(logs.at(-1) ?? "{}");
+			const rejectedEventText = JSON.stringify(rejectedEvent);
+			expect(rejectedEvent.status).toBe("error");
+			expect(rejectedEvent.error).toContain("systemd apply failed");
+			expect(rejectedEvent.systemdUnitsChanged).toBe(false);
+			expect(rejectedEvent.systemdApply).toEqual({
+				applied: false,
+				systemUnitsChanged: [],
+				userUnitsChanged: [],
+			});
+			expect(rejectedEventText).not.toContain(rotatedSecret);
+			expect(rejectedEventText).not.toContain(rejectedSecret);
+			expect(rejectedEventText).not.toContain("egressSecretsChanged");
+			expect(readSystemdSystemUnit(paths, "clawdi-runtime-sidecar")).toBe(initialSidecarUnit);
+			expect(readSystemdEnvFile(paths, "clawdi-runtime-sidecar")).toBe(initialSidecarEnv);
+			expect(JSON.parse(readFileSync(egressSecretFile, "utf-8"))).toMatchObject({
+				"secret://provider.default.apiKey": rotatedSecret,
+			});
+			expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedAppliedState);
+			expect(readFileSync(paths.manifestLastGood, "utf-8")).toBe(committedLastGood);
+			expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedSecretCache);
+			const rollbackSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(
+				rollbackSystemctlCalls.filter((call) => call === "restart clawdi-runtime-sidecar.service"),
+			).toHaveLength(2);
+
+			writeFileSync(systemctlLog, "");
+			logs.length = 0;
+			process.exitCode = undefined;
+			const missingSidecarFetch = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: () =>
+						hostedRuntimeBundleResponse(
+							hostedEgressSecretRotationPayload(
+								home,
+								{
+									...mitmproxy,
+									url: "https://invalid.example.test/mitmproxy.tar.gz",
+								},
+								missingSidecarSecret,
+							),
+							{ etag: '"egress-secret-revision-d"' },
+						),
+				},
+			]);
+			try {
+				await runtimeWatch({ once: true, json: true });
+			} finally {
+				missingSidecarFetch.restore();
+			}
+			expect(process.exitCode ?? 0).toBe(0);
+			const missingSidecarEvent = JSON.parse(logs.at(-1) ?? "{}");
+			expect(missingSidecarEvent.status).toBe("applied");
+			expect(missingSidecarEvent.systemdApply.systemUnitsChanged).toEqual([]);
+			expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(
+				false,
+			);
+			expect(JSON.parse(readFileSync(egressSecretFile, "utf-8"))).toMatchObject({
+				"secret://provider.default.apiKey": missingSidecarSecret,
+			});
+			const missingSidecarSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(
+				missingSidecarSystemctlCalls.filter(
+					(call) => call === "restart clawdi-runtime-sidecar.service",
+				),
+			).toHaveLength(0);
+		} finally {
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
 	});
 
 	it("runtime watch reapplies transparent egress across CLI self-upgrade", async () => {

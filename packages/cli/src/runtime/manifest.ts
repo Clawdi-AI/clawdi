@@ -181,9 +181,15 @@ type RuntimeSystemdApplyResult = {
 	userUnitsChanged: string[];
 };
 
+interface RuntimeSystemdApplySignal {
+	// Private, in-memory apply metadata. It must not enter convergence outputs,
+	// status, diagnostics, logs, or any generated public artifact.
+	egressSecretsChanged: boolean;
+}
+
 interface RuntimeSystemdApplyHooks {
-	activate: () => RuntimeSystemdApplyResult;
-	rollback: () => void;
+	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
+	rollback: (signal: RuntimeSystemdApplySignal) => void;
 }
 
 type RuntimeLiveSnapshotNode =
@@ -4045,6 +4051,12 @@ export function runtimeProgramRevision(
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevision: string | null = null,
 ): string {
+	const desiredRuntime = manifest.runtimes[runtime];
+	const runtimeSecretRefs = desiredRuntime
+		? Object.values(
+				mergeRuntimeSecretEnv(runtime, desiredRuntime, hostedProviderSecretEnv(manifest, runtime)),
+			)
+		: [];
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
@@ -4052,8 +4064,8 @@ export function runtimeProgramRevision(
 		locale: manifest.locale ?? null,
 		projection: manifest.projection ?? null,
 		providerProjectionRevision,
-		runtime: manifest.runtimes[runtime] ?? null,
-		secretValues: secretValues ?? {},
+		runtime: desiredRuntime ?? null,
+		secretValues: scopedSecretValues(secretValues, runtimeSecretRefs),
 	});
 }
 
@@ -4188,10 +4200,8 @@ function hashToUInt16(input: string): number {
 
 export function runtimeSidecarProgramRevision(
 	manifest: RuntimeManifest,
-	secretValues: Record<string, string>,
 	egressProgram: RuntimeEgressSystemdProgram | null = null,
 	egressIdentity: RuntimeEgressIdentity | null = null,
-	resolvedEgressSecretValues?: Readonly<Record<string, string>>,
 ): string {
 	if (egressProgram && !egressIdentity) {
 		throw new Error("runtime sidecar egress revision requires the configured numeric identity");
@@ -4202,8 +4212,6 @@ export function runtimeSidecarProgramRevision(
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		egressProfiles: manifest.egressProfiles ?? null,
-		egressSecrets:
-			resolvedEgressSecretValues ?? scopedSecretValues(secretValues, egressSecretRefs(manifest)),
 		egress: egressProgram
 			? {
 					transparentPort: egressProgram.transparentPort,
@@ -4912,7 +4920,6 @@ function writeSystemdUnits(
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
 	secretValues: Record<string, string> | undefined,
-	resolvedEgressSecretValues: Readonly<Record<string, string>>,
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
 	commonEnvironment: Record<string, string>,
 ): { systemUnits: string[]; userUnits: string[] } {
@@ -4994,10 +5001,8 @@ function writeSystemdUnits(
 					CLAWDI_EGRESS_ENV_FILE: activeEgressProgram.envFilePath,
 					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
 						manifest,
-						secretValues ?? {},
 						activeEgressProgram,
 						activeEgressIdentity,
-						resolvedEgressSecretValues,
 					),
 				},
 				serviceType: "notify",
@@ -5805,6 +5810,7 @@ export function convergeRuntimeManifest(
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
 	const liveSnapshot = captureRuntimeLiveSnapshot(manifest, paths, workspaceRoot);
 	let systemdActivationAttempted = false;
+	let egressSecretsChanged = false;
 	try {
 		const plannedUserUnits = plannedRuntimePrograms.map((program) =>
 			join(paths.systemdUserRoot, systemdUnitFileName(runtimeSystemdProgramName(program))),
@@ -5902,8 +5908,16 @@ export function convergeRuntimeManifest(
 				}`,
 			);
 		}
+		const egressSecretPath = egressSecretFilePath(paths);
+		const previousEgressSecretContent = existsSync(egressSecretPath)
+			? readFileSync(egressSecretPath, "utf-8")
+			: null;
 		const resolvedEgressSecretValues = resolveEgressSecretValues(manifest, secretValues, paths);
 		const egressSecretFile = writeEgressSecretFile(resolvedEgressSecretValues, paths);
+		const currentEgressSecretContent = egressSecretFile
+			? readFileSync(egressSecretFile, "utf-8")
+			: null;
+		egressSecretsChanged = previousEgressSecretContent !== currentEgressSecretContent;
 		const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 		const egressSystemdProgram = runtimeEgressSystemdProgram(
 			manifest,
@@ -6185,7 +6199,6 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			daemonAuthTokenFile,
 			secretValues,
-			resolvedEgressSecretValues,
 			providerProjectionRevisions,
 			commonSystemdEnvironment,
 		);
@@ -6196,7 +6209,7 @@ export function convergeRuntimeManifest(
 		removeStaleRuntimeSecretFiles(writtenRuntimeSecretIds, paths);
 		if (opts.systemdApply) {
 			systemdActivationAttempted = true;
-			opts.systemdApply.activate();
+			opts.systemdApply.activate({ egressSecretsChanged });
 		}
 		if (installErrors.length === 0 && opts.cacheLastGood !== false) {
 			manifestLastGood = writeLastGoodManifest(
@@ -6270,7 +6283,7 @@ export function convergeRuntimeManifest(
 		}
 		if (systemdActivationAttempted && opts.systemdApply) {
 			try {
-				opts.systemdApply.rollback();
+				opts.systemdApply.rollback({ egressSecretsChanged });
 			} catch (rollbackError) {
 				installErrors.push(
 					`runtime systemd rollback failed: ${

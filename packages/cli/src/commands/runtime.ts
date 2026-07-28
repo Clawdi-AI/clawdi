@@ -1495,6 +1495,7 @@ interface SystemdUnitSnapshot {
 }
 
 const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
+const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 
 function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
 	return {
@@ -1555,14 +1556,21 @@ function applySystemdRuntimeUpdate(
 	paths: ReturnType<typeof getRuntimePaths>,
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
+	opts: { forceRestartSystemUnits?: readonly string[] } = {},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
 	const system = changedSystemdUnits(before.system, after.system);
 	const user = changedSystemdUnits(before.user, after.user);
+	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter((unit) =>
+		after.system.has(unit),
+	);
+	// Forced restarts are private apply effects, not public unit-byte changes.
+	// Keep them out of systemUnitsChanged while still making activation mandatory.
 	if (
 		system.changed.length === 0 &&
 		system.removed.length === 0 &&
 		user.changed.length === 0 &&
-		user.removed.length === 0
+		user.removed.length === 0 &&
+		forcedSystemRestarts.length === 0
 	) {
 		return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 	}
@@ -1578,7 +1586,12 @@ function applySystemdRuntimeUpdate(
 	}
 	systemctl(["daemon-reload"]);
 	if (system.present.length > 0) systemctl(["start", ...system.present]);
-	const restartSystemUnits = system.changed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
+	const restartSystemUnits = [
+		...new Set([
+			...system.changed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT),
+			...forcedSystemRestarts,
+		]),
+	].sort();
 	if (restartSystemUnits.length > 0) {
 		systemctl(["restart", ...restartSystemUnits]);
 	}
@@ -2276,10 +2289,17 @@ function applyRuntimeDesiredState(
 			opts.authorityCommit?.(committedConvergence);
 		},
 		systemdApply: {
-			activate: () => {
+			activate: ({ egressSecretsChanged }) => {
 				failedSystemdUnits = readSystemdUnitSnapshot(paths);
 				try {
-					systemdApply = applySystemdRuntimeUpdate(paths, previousSystemdUnits, failedSystemdUnits);
+					systemdApply = applySystemdRuntimeUpdate(
+						paths,
+						previousSystemdUnits,
+						failedSystemdUnits,
+						{
+							forceRestartSystemUnits: egressSecretsChanged ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+						},
+					);
 					return systemdApply;
 				} catch (error) {
 					throw new Error(
@@ -2287,9 +2307,11 @@ function applyRuntimeDesiredState(
 					);
 				}
 			},
-			rollback: () => {
+			rollback: ({ egressSecretsChanged }) => {
 				if (!failedSystemdUnits) return;
-				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths));
+				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths), {
+					forceRestartSystemUnits: egressSecretsChanged ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+				});
 			},
 		},
 	});

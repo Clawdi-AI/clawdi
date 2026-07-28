@@ -2216,18 +2216,29 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("keeps runtime secret revisions scoped to runtime programs", () => {
 		const paths = tempRuntimePaths();
+		const runtimeSecretRef = "secret://runtimes/openclaw/api-key";
+		const egressSecretRef = "secret://providers/default/api-key";
 		const manifest = baseManifest(paths, {
 			openclaw: {
 				enabled: true,
-				run: runSettings("openclaw", ["gateway", "run"]),
+				run: {
+					...runSettings("openclaw", ["gateway", "run"]),
+					secretEnv: { OPENAI_API_KEY: runtimeSecretRef },
+				},
 				services: {},
 			},
 		});
 		const secretValues = {
-			"secret://providers/default/api-key": "sk-before",
+			[runtimeSecretRef]: "sk-runtime-before",
+			[egressSecretRef]: "sk-egress-before",
 		};
-		const rotatedSecretValues = {
-			"secret://providers/default/api-key": "sk-after",
+		const rotatedRuntimeSecretValues = {
+			...secretValues,
+			[runtimeSecretRef]: "sk-runtime-after",
+		};
+		const rotatedEgressSecretValues = {
+			...secretValues,
+			[egressSecretRef]: "sk-egress-after",
 		};
 		const metadataOnlyChange: RuntimeManifest = {
 			...manifest,
@@ -2236,6 +2247,12 @@ describe("runtime manifest reconciliation invariants", () => {
 		};
 		const egressManifest: RuntimeManifest = {
 			...manifest,
+			runtimes: {
+				openclaw: {
+					...manifest.runtimes.openclaw,
+					run: runSettings("openclaw", ["gateway", "run"]),
+				},
+			},
 			egressProfiles: {
 				profiles: [
 					{
@@ -2255,7 +2272,7 @@ describe("runtime manifest reconciliation invariants", () => {
 							setHeaders: {
 								authorization: {
 									type: "secretRef",
-									secretRef: "secret://providers/default/api-key",
+									secretRef: egressSecretRef,
 									prefix: "Bearer ",
 								},
 							},
@@ -2268,20 +2285,141 @@ describe("runtime manifest reconciliation invariants", () => {
 		};
 
 		const runtimeRevision = runtimeProgramRevision(manifest, "openclaw", secretValues);
-		expect(runtimeProgramRevision(manifest, "openclaw", rotatedSecretValues)).not.toBe(
+		expect(runtimeProgramRevision(manifest, "openclaw", rotatedRuntimeSecretValues)).not.toBe(
 			runtimeRevision,
+		);
+		expect(runtimeProgramRevision(manifest, "openclaw", rotatedEgressSecretValues)).toBe(
+			runtimeRevision,
+		);
+		expect(runtimeProgramRevision(egressManifest, "openclaw", rotatedEgressSecretValues)).toBe(
+			runtimeProgramRevision(egressManifest, "openclaw", secretValues),
 		);
 		expect(runtimeProgramRevision(metadataOnlyChange, "openclaw", secretValues)).toBe(
 			runtimeRevision,
 		);
-		const sidecarRevision = runtimeSidecarProgramRevision(manifest, secretValues);
-		expect(runtimeSidecarProgramRevision(manifest, rotatedSecretValues)).toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(egressManifest, rotatedSecretValues)).not.toBe(
-			runtimeSidecarProgramRevision(egressManifest, secretValues),
+		const sidecarRevision = runtimeSidecarProgramRevision(manifest);
+		expect(runtimeSidecarProgramRevision(egressManifest)).not.toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(metadataOnlyChange)).not.toBe(sidecarRevision);
+	});
+
+	test("signals only material egress secret file changes across its lifecycle", () => {
+		const paths = tempRuntimePaths();
+		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const egressEngine = {
+			type: "mitmproxy" as const,
+			version: "12.2.3",
+			url: "https://downloads.example.test/mitmproxy.tar.gz",
+			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+		};
+		const engineBinary = join(
+			paths.egressEngineMaintainedRoot,
+			egressEngine.version,
+			egressEngine.sha256,
+			"mitmdump",
 		);
-		expect(runtimeSidecarProgramRevision(metadataOnlyChange, secretValues)).not.toBe(
-			sidecarRevision,
+		mkdirSync(dirname(commandPath), { recursive: true });
+		writeFileSync(commandPath, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(commandPath, 0o700);
+		mkdirSync(dirname(engineBinary), { recursive: true });
+		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(engineBinary, 0o700);
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const secretRef = "secret://providers/default/api-key";
+		const activeManifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings(commandPath, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{
+				egressEngine,
+				egressProfiles: {
+					profiles: [
+						{
+							id: "managed-provider",
+							enabled: true,
+							kind: "provider",
+							match: {
+								scheme: "https",
+								host: "provider.example.test",
+								headers: {},
+								query: {},
+							},
+							rewrite: {
+								preservePath: true,
+								setHeaders: {
+									authorization: {
+										type: "secretRef",
+										secretRef,
+										prefix: "Bearer ",
+									},
+								},
+							},
+							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+							priority: 80,
+						},
+					],
+				},
+			},
 		);
+		const signals: boolean[] = [];
+		const converge = (manifest: RuntimeManifest, secret: string | undefined) =>
+			convergeRuntimeManifest(
+				manifestLoad(
+					manifest,
+					"inline-egress-secret-lifecycle",
+					secret === undefined ? {} : { [secretRef]: secret },
+				),
+				paths,
+				{
+					cacheLastGood: false,
+					systemdApply: {
+						activate: ({ egressSecretsChanged }) => {
+							signals.push(egressSecretsChanged);
+							return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+						},
+						rollback: () => {},
+					},
+				},
+			);
+		const secretFile = join(paths.managedSecretRoot, "egress-secrets.json");
+		const sidecarUnit = join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service");
+
+		expect(converge(activeManifest, "000000").installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(true);
+		expect(statSync(secretFile).mode & 0o777).toBe(0o600);
+		expect(readFileSync(secretFile, "utf-8")).toContain("000000");
+
+		expect(converge(activeManifest, "000000").installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(false);
+
+		expect(converge(activeManifest, "000001").installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(true);
+		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
+
+		const noSidecarManifest: RuntimeManifest = {
+			...activeManifest,
+			runtimes: { openclaw: { ...activeManifest.runtimes.openclaw, enabled: false } },
+		};
+		expect(converge(noSidecarManifest, "000002").installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(true);
+		expect(readFileSync(secretFile, "utf-8")).toContain("000002");
+		expect(existsSync(sidecarUnit)).toBe(false);
+
+		const deletedManifest: RuntimeManifest = {
+			...noSidecarManifest,
+			egressProfiles: { profiles: [] },
+		};
+		expect(converge(deletedManifest, undefined).installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(true);
+		expect(existsSync(secretFile)).toBe(false);
+
+		expect(converge(deletedManifest, undefined).installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(false);
+		expect(signals).toEqual([true, false, true, true, true, false]);
 	});
 
 	test("advances last-good manifest only after a clean converge", () => {
