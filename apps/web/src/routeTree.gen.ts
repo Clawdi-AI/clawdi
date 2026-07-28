@@ -9,46 +9,45 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SignUpRouteImport } from './routes/sign-up'
-import { Route as SignInRouteImport } from './routes/sign-in'
 import { Route as ProtectedRouteImport } from './routes/_protected'
-import { Route as SignUpSplatRouteImport } from './routes/sign-up/$'
-import { Route as SignInSplatRouteImport } from './routes/sign-in/$'
-import { Route as ShareTokenRouteImport } from './routes/share/$token'
-import { Route as SChar123idChar125DotmdRouteImport } from './routes/s/{$id}[.]md'
-import { Route as SChar123idChar125DotjsonRouteImport } from './routes/s/{$id}[.]json'
-import { Route as SIdRouteImport } from './routes/s/$id'
-import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
+import { Route as SignInRouteImport } from './routes/sign-in'
+import { Route as SignUpRouteImport } from './routes/sign-up'
 import { Route as ProtectedDashboardRouteImport } from './routes/_protected/_dashboard'
+import { Route as ProtectedCliAuthorizeRouteImport } from './routes/_protected/cli-authorize'
+import { Route as SIdRouteImport } from './routes/s/$id'
+import { Route as SChar123idChar125DotjsonRouteImport } from './routes/s/{$id}[.]json'
+import { Route as SChar123idChar125DotmdRouteImport } from './routes/s/{$id}[.]md'
+import { Route as ShareTokenRouteImport } from './routes/share/$token'
+import { Route as SignInSplatRouteImport } from './routes/sign-in/$'
+import { Route as SignUpSplatRouteImport } from './routes/sign-up/$'
 import { Route as ProtectedDashboardIndexRouteImport } from './routes/_protected/_dashboard/index'
-import { Route as ProtectedDashboardDeployRouteImport } from './routes/_protected/_dashboard/deploy'
 import { Route as ProtectedDashboardAiProvidersRouteImport } from './routes/_protected/_dashboard/ai-providers'
-import { Route as ProtectedDashboardVaultIndexRouteImport } from './routes/_protected/_dashboard/vault/index'
-import { Route as ProtectedDashboardSkillsIndexRouteImport } from './routes/_protected/_dashboard/skills/index'
-import { Route as ProtectedDashboardSessionsIndexRouteImport } from './routes/_protected/_dashboard/sessions/index'
-import { Route as ProtectedDashboardProjectsIndexRouteImport } from './routes/_protected/_dashboard/projects/index'
-import { Route as ProtectedDashboardMemoriesIndexRouteImport } from './routes/_protected/_dashboard/memories/index'
-import { Route as ProtectedDashboardConnectorsIndexRouteImport } from './routes/_protected/_dashboard/connectors/index'
-import { Route as ProtectedDashboardChannelsIndexRouteImport } from './routes/_protected/_dashboard/channels/index'
+import { Route as ProtectedDashboardDeployRouteImport } from './routes/_protected/_dashboard/deploy'
 import { Route as ProtectedDashboardAgentsIndexRouteImport } from './routes/_protected/_dashboard/agents/index'
-import { Route as ProtectedOauthCodexCallbackRouteImport } from './routes/_protected/oauth/codex/callback'
-import { Route as ProtectedDashboardVaultSlugRouteImport } from './routes/_protected/_dashboard/vault/$slug'
-import { Route as ProtectedDashboardSkillsKeyRouteImport } from './routes/_protected/_dashboard/skills/$key'
-import { Route as ProtectedDashboardSessionsIdRouteImport } from './routes/_protected/_dashboard/sessions/$id'
-import { Route as ProtectedDashboardProjectsIdRouteImport } from './routes/_protected/_dashboard/projects/$id'
-import { Route as ProtectedDashboardMemoriesIdRouteImport } from './routes/_protected/_dashboard/memories/$id'
-import { Route as ProtectedDashboardConnectorsNameRouteImport } from './routes/_protected/_dashboard/connectors/$name'
-import { Route as ProtectedDashboardChannelsIdRouteImport } from './routes/_protected/_dashboard/channels/$id'
 import { Route as ProtectedDashboardAgentsIdRouteImport } from './routes/_protected/_dashboard/agents/$id'
+import { Route as ProtectedDashboardChannelsIndexRouteImport } from './routes/_protected/_dashboard/channels/index'
+import { Route as ProtectedDashboardChannelsIdRouteImport } from './routes/_protected/_dashboard/channels/$id'
+import { Route as ProtectedDashboardConnectorsIndexRouteImport } from './routes/_protected/_dashboard/connectors/index'
+import { Route as ProtectedDashboardConnectorsNameRouteImport } from './routes/_protected/_dashboard/connectors/$name'
+import { Route as ProtectedDashboardMemoriesIndexRouteImport } from './routes/_protected/_dashboard/memories/index'
+import { Route as ProtectedDashboardMemoriesIdRouteImport } from './routes/_protected/_dashboard/memories/$id'
+import { Route as ProtectedDashboardProjectsIndexRouteImport } from './routes/_protected/_dashboard/projects/index'
+import { Route as ProtectedDashboardProjectsIdRouteImport } from './routes/_protected/_dashboard/projects/$id'
+import { Route as ProtectedDashboardSessionsIndexRouteImport } from './routes/_protected/_dashboard/sessions/index'
+import { Route as ProtectedDashboardSessionsIdRouteImport } from './routes/_protected/_dashboard/sessions/$id'
+import { Route as ProtectedDashboardSkillsIndexRouteImport } from './routes/_protected/_dashboard/skills/index'
+import { Route as ProtectedDashboardSkillsKeyRouteImport } from './routes/_protected/_dashboard/skills/$key'
+import { Route as ProtectedDashboardVaultIndexRouteImport } from './routes/_protected/_dashboard/vault/index'
+import { Route as ProtectedDashboardVaultSlugRouteImport } from './routes/_protected/_dashboard/vault/$slug'
+import { Route as ProtectedOauthCodexCallbackRouteImport } from './routes/_protected/oauth/codex/callback'
 import { Route as ProtectedDashboardAgentsIdIndexRouteImport } from './routes/_protected/_dashboard/agents/$id/index'
 import { Route as ProtectedDashboardAgentsIdSectionRouteImport } from './routes/_protected/_dashboard/agents/$id/$section'
+import { Route as ProtectedDashboardAgentsIdSessionsSessionIdRouteImport } from './routes/_protected/_dashboard/agents/$id/sessions/$sessionId'
 import { Route as ProtectedDashboardAgentsIdSkillsIndexRouteImport } from './routes/_protected/_dashboard/agents/$id/skills/index'
 import { Route as ProtectedDashboardAgentsIdSkillsSplatRouteImport } from './routes/_protected/_dashboard/agents/$id/skills/$'
-import { Route as ProtectedDashboardAgentsIdSessionsSessionIdRouteImport } from './routes/_protected/_dashboard/agents/$id/sessions/$sessionId'
 
-const SignUpRoute = SignUpRouteImport.update({
-  id: '/sign-up',
-  path: '/sign-up',
+const ProtectedRoute = ProtectedRouteImport.update({
+  id: '/_protected',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SignInRoute = SignInRouteImport.update({
@@ -56,28 +55,23 @@ const SignInRoute = SignInRouteImport.update({
   path: '/sign-in',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProtectedRoute = ProtectedRouteImport.update({
-  id: '/_protected',
+const SignUpRoute = SignUpRouteImport.update({
+  id: '/sign-up',
+  path: '/sign-up',
   getParentRoute: () => rootRouteImport,
 } as any)
-const SignUpSplatRoute = SignUpSplatRouteImport.update({
-  id: '/$',
-  path: '/$',
-  getParentRoute: () => SignUpRoute,
+const ProtectedDashboardRoute = ProtectedDashboardRouteImport.update({
+  id: '/_dashboard',
+  getParentRoute: () => ProtectedRoute,
 } as any)
-const SignInSplatRoute = SignInSplatRouteImport.update({
-  id: '/$',
-  path: '/$',
-  getParentRoute: () => SignInRoute,
+const ProtectedCliAuthorizeRoute = ProtectedCliAuthorizeRouteImport.update({
+  id: '/cli-authorize',
+  path: '/cli-authorize',
+  getParentRoute: () => ProtectedRoute,
 } as any)
-const ShareTokenRoute = ShareTokenRouteImport.update({
-  id: '/share/$token',
-  path: '/share/$token',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SChar123idChar125DotmdRoute = SChar123idChar125DotmdRouteImport.update({
-  id: '/s/{$id}.md',
-  path: '/s/{$id}.md',
+const SIdRoute = SIdRouteImport.update({
+  id: '/s/$id',
+  path: '/s/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SChar123idChar125DotjsonRoute =
@@ -86,77 +80,41 @@ const SChar123idChar125DotjsonRoute =
     path: '/s/{$id}.json',
     getParentRoute: () => rootRouteImport,
   } as any)
-const SIdRoute = SIdRouteImport.update({
-  id: '/s/$id',
-  path: '/s/$id',
+const SChar123idChar125DotmdRoute = SChar123idChar125DotmdRouteImport.update({
+  id: '/s/{$id}.md',
+  path: '/s/{$id}.md',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ProtectedCliAuthorizeRoute = ProtectedCliAuthorizeRouteImport.update({
-  id: '/cli-authorize',
-  path: '/cli-authorize',
-  getParentRoute: () => ProtectedRoute,
+const ShareTokenRoute = ShareTokenRouteImport.update({
+  id: '/share/$token',
+  path: '/share/$token',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const ProtectedDashboardRoute = ProtectedDashboardRouteImport.update({
-  id: '/_dashboard',
-  getParentRoute: () => ProtectedRoute,
+const SignInSplatRoute = SignInSplatRouteImport.update({
+  id: '/$',
+  path: '/$',
+  getParentRoute: () => SignInRoute,
+} as any)
+const SignUpSplatRoute = SignUpSplatRouteImport.update({
+  id: '/$',
+  path: '/$',
+  getParentRoute: () => SignUpRoute,
 } as any)
 const ProtectedDashboardIndexRoute = ProtectedDashboardIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ProtectedDashboardRoute,
 } as any)
-const ProtectedDashboardDeployRoute =
-  ProtectedDashboardDeployRouteImport.update({
-    id: '/deploy',
-    path: '/deploy',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
 const ProtectedDashboardAiProvidersRoute =
   ProtectedDashboardAiProvidersRouteImport.update({
     id: '/ai-providers',
     path: '/ai-providers',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
-const ProtectedDashboardVaultIndexRoute =
-  ProtectedDashboardVaultIndexRouteImport.update({
-    id: '/vault/',
-    path: '/vault/',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardSkillsIndexRoute =
-  ProtectedDashboardSkillsIndexRouteImport.update({
-    id: '/skills/',
-    path: '/skills/',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardSessionsIndexRoute =
-  ProtectedDashboardSessionsIndexRouteImport.update({
-    id: '/sessions/',
-    path: '/sessions/',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardProjectsIndexRoute =
-  ProtectedDashboardProjectsIndexRouteImport.update({
-    id: '/projects/',
-    path: '/projects/',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardMemoriesIndexRoute =
-  ProtectedDashboardMemoriesIndexRouteImport.update({
-    id: '/memories/',
-    path: '/memories/',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardConnectorsIndexRoute =
-  ProtectedDashboardConnectorsIndexRouteImport.update({
-    id: '/connectors/',
-    path: '/connectors/',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardChannelsIndexRoute =
-  ProtectedDashboardChannelsIndexRouteImport.update({
-    id: '/channels/',
-    path: '/channels/',
+const ProtectedDashboardDeployRoute =
+  ProtectedDashboardDeployRouteImport.update({
+    id: '/deploy',
+    path: '/deploy',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
 const ProtectedDashboardAgentsIndexRoute =
@@ -165,46 +123,16 @@ const ProtectedDashboardAgentsIndexRoute =
     path: '/agents/',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
-const ProtectedOauthCodexCallbackRoute =
-  ProtectedOauthCodexCallbackRouteImport.update({
-    id: '/oauth/codex/callback',
-    path: '/oauth/codex/callback',
-    getParentRoute: () => ProtectedRoute,
-  } as any)
-const ProtectedDashboardVaultSlugRoute =
-  ProtectedDashboardVaultSlugRouteImport.update({
-    id: '/vault/$slug',
-    path: '/vault/$slug',
+const ProtectedDashboardAgentsIdRoute =
+  ProtectedDashboardAgentsIdRouteImport.update({
+    id: '/agents/$id',
+    path: '/agents/$id',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
-const ProtectedDashboardSkillsKeyRoute =
-  ProtectedDashboardSkillsKeyRouteImport.update({
-    id: '/skills/$key',
-    path: '/skills/$key',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardSessionsIdRoute =
-  ProtectedDashboardSessionsIdRouteImport.update({
-    id: '/sessions/$id',
-    path: '/sessions/$id',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardProjectsIdRoute =
-  ProtectedDashboardProjectsIdRouteImport.update({
-    id: '/projects/$id',
-    path: '/projects/$id',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardMemoriesIdRoute =
-  ProtectedDashboardMemoriesIdRouteImport.update({
-    id: '/memories/$id',
-    path: '/memories/$id',
-    getParentRoute: () => ProtectedDashboardRoute,
-  } as any)
-const ProtectedDashboardConnectorsNameRoute =
-  ProtectedDashboardConnectorsNameRouteImport.update({
-    id: '/connectors/$name',
-    path: '/connectors/$name',
+const ProtectedDashboardChannelsIndexRoute =
+  ProtectedDashboardChannelsIndexRouteImport.update({
+    id: '/channels/',
+    path: '/channels/',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
 const ProtectedDashboardChannelsIdRoute =
@@ -213,11 +141,83 @@ const ProtectedDashboardChannelsIdRoute =
     path: '/channels/$id',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
-const ProtectedDashboardAgentsIdRoute =
-  ProtectedDashboardAgentsIdRouteImport.update({
-    id: '/agents/$id',
-    path: '/agents/$id',
+const ProtectedDashboardConnectorsIndexRoute =
+  ProtectedDashboardConnectorsIndexRouteImport.update({
+    id: '/connectors/',
+    path: '/connectors/',
     getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardConnectorsNameRoute =
+  ProtectedDashboardConnectorsNameRouteImport.update({
+    id: '/connectors/$name',
+    path: '/connectors/$name',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardMemoriesIndexRoute =
+  ProtectedDashboardMemoriesIndexRouteImport.update({
+    id: '/memories/',
+    path: '/memories/',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardMemoriesIdRoute =
+  ProtectedDashboardMemoriesIdRouteImport.update({
+    id: '/memories/$id',
+    path: '/memories/$id',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardProjectsIndexRoute =
+  ProtectedDashboardProjectsIndexRouteImport.update({
+    id: '/projects/',
+    path: '/projects/',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardProjectsIdRoute =
+  ProtectedDashboardProjectsIdRouteImport.update({
+    id: '/projects/$id',
+    path: '/projects/$id',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardSessionsIndexRoute =
+  ProtectedDashboardSessionsIndexRouteImport.update({
+    id: '/sessions/',
+    path: '/sessions/',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardSessionsIdRoute =
+  ProtectedDashboardSessionsIdRouteImport.update({
+    id: '/sessions/$id',
+    path: '/sessions/$id',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardSkillsIndexRoute =
+  ProtectedDashboardSkillsIndexRouteImport.update({
+    id: '/skills/',
+    path: '/skills/',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardSkillsKeyRoute =
+  ProtectedDashboardSkillsKeyRouteImport.update({
+    id: '/skills/$key',
+    path: '/skills/$key',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardVaultIndexRoute =
+  ProtectedDashboardVaultIndexRouteImport.update({
+    id: '/vault/',
+    path: '/vault/',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedDashboardVaultSlugRoute =
+  ProtectedDashboardVaultSlugRouteImport.update({
+    id: '/vault/$slug',
+    path: '/vault/$slug',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
+const ProtectedOauthCodexCallbackRoute =
+  ProtectedOauthCodexCallbackRouteImport.update({
+    id: '/oauth/codex/callback',
+    path: '/oauth/codex/callback',
+    getParentRoute: () => ProtectedRoute,
   } as any)
 const ProtectedDashboardAgentsIdIndexRoute =
   ProtectedDashboardAgentsIdIndexRouteImport.update({
@@ -231,6 +231,12 @@ const ProtectedDashboardAgentsIdSectionRoute =
     path: '/$section',
     getParentRoute: () => ProtectedDashboardAgentsIdRoute,
   } as any)
+const ProtectedDashboardAgentsIdSessionsSessionIdRoute =
+  ProtectedDashboardAgentsIdSessionsSessionIdRouteImport.update({
+    id: '/sessions/$sessionId',
+    path: '/sessions/$sessionId',
+    getParentRoute: () => ProtectedDashboardAgentsIdRoute,
+  } as any)
 const ProtectedDashboardAgentsIdSkillsIndexRoute =
   ProtectedDashboardAgentsIdSkillsIndexRouteImport.update({
     id: '/skills/',
@@ -241,12 +247,6 @@ const ProtectedDashboardAgentsIdSkillsSplatRoute =
   ProtectedDashboardAgentsIdSkillsSplatRouteImport.update({
     id: '/skills/$',
     path: '/skills/$',
-    getParentRoute: () => ProtectedDashboardAgentsIdRoute,
-  } as any)
-const ProtectedDashboardAgentsIdSessionsSessionIdRoute =
-  ProtectedDashboardAgentsIdSessionsSessionIdRouteImport.update({
-    id: '/sessions/$sessionId',
-    path: '/sessions/$sessionId',
     getParentRoute: () => ProtectedDashboardAgentsIdRoute,
   } as any)
 
@@ -484,11 +484,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/sign-up': {
-      id: '/sign-up'
-      path: '/sign-up'
-      fullPath: '/sign-up'
-      preLoaderRoute: typeof SignUpRouteImport
+    '/_protected': {
+      id: '/_protected'
+      path: ''
+      fullPath: '/'
+      preLoaderRoute: typeof ProtectedRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/sign-in': {
@@ -498,39 +498,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignInRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_protected': {
-      id: '/_protected'
+    '/sign-up': {
+      id: '/sign-up'
+      path: '/sign-up'
+      fullPath: '/sign-up'
+      preLoaderRoute: typeof SignUpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/_protected/_dashboard': {
+      id: '/_protected/_dashboard'
       path: ''
       fullPath: '/'
-      preLoaderRoute: typeof ProtectedRouteImport
-      parentRoute: typeof rootRouteImport
+      preLoaderRoute: typeof ProtectedDashboardRouteImport
+      parentRoute: typeof ProtectedRoute
     }
-    '/sign-up/$': {
-      id: '/sign-up/$'
-      path: '/$'
-      fullPath: '/sign-up/$'
-      preLoaderRoute: typeof SignUpSplatRouteImport
-      parentRoute: typeof SignUpRoute
+    '/_protected/cli-authorize': {
+      id: '/_protected/cli-authorize'
+      path: '/cli-authorize'
+      fullPath: '/cli-authorize'
+      preLoaderRoute: typeof ProtectedCliAuthorizeRouteImport
+      parentRoute: typeof ProtectedRoute
     }
-    '/sign-in/$': {
-      id: '/sign-in/$'
-      path: '/$'
-      fullPath: '/sign-in/$'
-      preLoaderRoute: typeof SignInSplatRouteImport
-      parentRoute: typeof SignInRoute
-    }
-    '/share/$token': {
-      id: '/share/$token'
-      path: '/share/$token'
-      fullPath: '/share/$token'
-      preLoaderRoute: typeof ShareTokenRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/s/{$id}.md': {
-      id: '/s/{$id}.md'
-      path: '/s/{$id}.md'
-      fullPath: '/s/{$id}.md'
-      preLoaderRoute: typeof SChar123idChar125DotmdRouteImport
+    '/s/$id': {
+      id: '/s/$id'
+      path: '/s/$id'
+      fullPath: '/s/$id'
+      preLoaderRoute: typeof SIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/s/{$id}.json': {
@@ -540,39 +533,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SChar123idChar125DotjsonRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/s/$id': {
-      id: '/s/$id'
-      path: '/s/$id'
-      fullPath: '/s/$id'
-      preLoaderRoute: typeof SIdRouteImport
+    '/s/{$id}.md': {
+      id: '/s/{$id}.md'
+      path: '/s/{$id}.md'
+      fullPath: '/s/{$id}.md'
+      preLoaderRoute: typeof SChar123idChar125DotmdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/_protected/cli-authorize': {
-      id: '/_protected/cli-authorize'
-      path: '/cli-authorize'
-      fullPath: '/cli-authorize'
-      preLoaderRoute: typeof ProtectedCliAuthorizeRouteImport
-      parentRoute: typeof ProtectedRoute
+    '/share/$token': {
+      id: '/share/$token'
+      path: '/share/$token'
+      fullPath: '/share/$token'
+      preLoaderRoute: typeof ShareTokenRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/_protected/_dashboard': {
-      id: '/_protected/_dashboard'
-      path: ''
-      fullPath: '/'
-      preLoaderRoute: typeof ProtectedDashboardRouteImport
-      parentRoute: typeof ProtectedRoute
+    '/sign-in/$': {
+      id: '/sign-in/$'
+      path: '/$'
+      fullPath: '/sign-in/$'
+      preLoaderRoute: typeof SignInSplatRouteImport
+      parentRoute: typeof SignInRoute
+    }
+    '/sign-up/$': {
+      id: '/sign-up/$'
+      path: '/$'
+      fullPath: '/sign-up/$'
+      preLoaderRoute: typeof SignUpSplatRouteImport
+      parentRoute: typeof SignUpRoute
     }
     '/_protected/_dashboard/': {
       id: '/_protected/_dashboard/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof ProtectedDashboardIndexRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/deploy': {
-      id: '/_protected/_dashboard/deploy'
-      path: '/deploy'
-      fullPath: '/deploy'
-      preLoaderRoute: typeof ProtectedDashboardDeployRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
     '/_protected/_dashboard/ai-providers': {
@@ -582,53 +575,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedDashboardAiProvidersRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
-    '/_protected/_dashboard/vault/': {
-      id: '/_protected/_dashboard/vault/'
-      path: '/vault'
-      fullPath: '/vault/'
-      preLoaderRoute: typeof ProtectedDashboardVaultIndexRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/skills/': {
-      id: '/_protected/_dashboard/skills/'
-      path: '/skills'
-      fullPath: '/skills/'
-      preLoaderRoute: typeof ProtectedDashboardSkillsIndexRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/sessions/': {
-      id: '/_protected/_dashboard/sessions/'
-      path: '/sessions'
-      fullPath: '/sessions/'
-      preLoaderRoute: typeof ProtectedDashboardSessionsIndexRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/projects/': {
-      id: '/_protected/_dashboard/projects/'
-      path: '/projects'
-      fullPath: '/projects/'
-      preLoaderRoute: typeof ProtectedDashboardProjectsIndexRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/memories/': {
-      id: '/_protected/_dashboard/memories/'
-      path: '/memories'
-      fullPath: '/memories/'
-      preLoaderRoute: typeof ProtectedDashboardMemoriesIndexRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/connectors/': {
-      id: '/_protected/_dashboard/connectors/'
-      path: '/connectors'
-      fullPath: '/connectors/'
-      preLoaderRoute: typeof ProtectedDashboardConnectorsIndexRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/channels/': {
-      id: '/_protected/_dashboard/channels/'
-      path: '/channels'
-      fullPath: '/channels/'
-      preLoaderRoute: typeof ProtectedDashboardChannelsIndexRouteImport
+    '/_protected/_dashboard/deploy': {
+      id: '/_protected/_dashboard/deploy'
+      path: '/deploy'
+      fullPath: '/deploy'
+      preLoaderRoute: typeof ProtectedDashboardDeployRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
     '/_protected/_dashboard/agents/': {
@@ -638,53 +589,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedDashboardAgentsIndexRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
-    '/_protected/oauth/codex/callback': {
-      id: '/_protected/oauth/codex/callback'
-      path: '/oauth/codex/callback'
-      fullPath: '/oauth/codex/callback'
-      preLoaderRoute: typeof ProtectedOauthCodexCallbackRouteImport
-      parentRoute: typeof ProtectedRoute
-    }
-    '/_protected/_dashboard/vault/$slug': {
-      id: '/_protected/_dashboard/vault/$slug'
-      path: '/vault/$slug'
-      fullPath: '/vault/$slug'
-      preLoaderRoute: typeof ProtectedDashboardVaultSlugRouteImport
+    '/_protected/_dashboard/agents/$id': {
+      id: '/_protected/_dashboard/agents/$id'
+      path: '/agents/$id'
+      fullPath: '/agents/$id'
+      preLoaderRoute: typeof ProtectedDashboardAgentsIdRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
-    '/_protected/_dashboard/skills/$key': {
-      id: '/_protected/_dashboard/skills/$key'
-      path: '/skills/$key'
-      fullPath: '/skills/$key'
-      preLoaderRoute: typeof ProtectedDashboardSkillsKeyRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/sessions/$id': {
-      id: '/_protected/_dashboard/sessions/$id'
-      path: '/sessions/$id'
-      fullPath: '/sessions/$id'
-      preLoaderRoute: typeof ProtectedDashboardSessionsIdRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/projects/$id': {
-      id: '/_protected/_dashboard/projects/$id'
-      path: '/projects/$id'
-      fullPath: '/projects/$id'
-      preLoaderRoute: typeof ProtectedDashboardProjectsIdRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/memories/$id': {
-      id: '/_protected/_dashboard/memories/$id'
-      path: '/memories/$id'
-      fullPath: '/memories/$id'
-      preLoaderRoute: typeof ProtectedDashboardMemoriesIdRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
-    }
-    '/_protected/_dashboard/connectors/$name': {
-      id: '/_protected/_dashboard/connectors/$name'
-      path: '/connectors/$name'
-      fullPath: '/connectors/$name'
-      preLoaderRoute: typeof ProtectedDashboardConnectorsNameRouteImport
+    '/_protected/_dashboard/channels/': {
+      id: '/_protected/_dashboard/channels/'
+      path: '/channels'
+      fullPath: '/channels/'
+      preLoaderRoute: typeof ProtectedDashboardChannelsIndexRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
     '/_protected/_dashboard/channels/$id': {
@@ -694,12 +610,96 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedDashboardChannelsIdRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
-    '/_protected/_dashboard/agents/$id': {
-      id: '/_protected/_dashboard/agents/$id'
-      path: '/agents/$id'
-      fullPath: '/agents/$id'
-      preLoaderRoute: typeof ProtectedDashboardAgentsIdRouteImport
+    '/_protected/_dashboard/connectors/': {
+      id: '/_protected/_dashboard/connectors/'
+      path: '/connectors'
+      fullPath: '/connectors/'
+      preLoaderRoute: typeof ProtectedDashboardConnectorsIndexRouteImport
       parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/connectors/$name': {
+      id: '/_protected/_dashboard/connectors/$name'
+      path: '/connectors/$name'
+      fullPath: '/connectors/$name'
+      preLoaderRoute: typeof ProtectedDashboardConnectorsNameRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/memories/': {
+      id: '/_protected/_dashboard/memories/'
+      path: '/memories'
+      fullPath: '/memories/'
+      preLoaderRoute: typeof ProtectedDashboardMemoriesIndexRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/memories/$id': {
+      id: '/_protected/_dashboard/memories/$id'
+      path: '/memories/$id'
+      fullPath: '/memories/$id'
+      preLoaderRoute: typeof ProtectedDashboardMemoriesIdRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/projects/': {
+      id: '/_protected/_dashboard/projects/'
+      path: '/projects'
+      fullPath: '/projects/'
+      preLoaderRoute: typeof ProtectedDashboardProjectsIndexRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/projects/$id': {
+      id: '/_protected/_dashboard/projects/$id'
+      path: '/projects/$id'
+      fullPath: '/projects/$id'
+      preLoaderRoute: typeof ProtectedDashboardProjectsIdRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/sessions/': {
+      id: '/_protected/_dashboard/sessions/'
+      path: '/sessions'
+      fullPath: '/sessions/'
+      preLoaderRoute: typeof ProtectedDashboardSessionsIndexRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/sessions/$id': {
+      id: '/_protected/_dashboard/sessions/$id'
+      path: '/sessions/$id'
+      fullPath: '/sessions/$id'
+      preLoaderRoute: typeof ProtectedDashboardSessionsIdRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/skills/': {
+      id: '/_protected/_dashboard/skills/'
+      path: '/skills'
+      fullPath: '/skills/'
+      preLoaderRoute: typeof ProtectedDashboardSkillsIndexRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/skills/$key': {
+      id: '/_protected/_dashboard/skills/$key'
+      path: '/skills/$key'
+      fullPath: '/skills/$key'
+      preLoaderRoute: typeof ProtectedDashboardSkillsKeyRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/vault/': {
+      id: '/_protected/_dashboard/vault/'
+      path: '/vault'
+      fullPath: '/vault/'
+      preLoaderRoute: typeof ProtectedDashboardVaultIndexRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/_dashboard/vault/$slug': {
+      id: '/_protected/_dashboard/vault/$slug'
+      path: '/vault/$slug'
+      fullPath: '/vault/$slug'
+      preLoaderRoute: typeof ProtectedDashboardVaultSlugRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
+    '/_protected/oauth/codex/callback': {
+      id: '/_protected/oauth/codex/callback'
+      path: '/oauth/codex/callback'
+      fullPath: '/oauth/codex/callback'
+      preLoaderRoute: typeof ProtectedOauthCodexCallbackRouteImport
+      parentRoute: typeof ProtectedRoute
     }
     '/_protected/_dashboard/agents/$id/': {
       id: '/_protected/_dashboard/agents/$id/'
@@ -715,6 +715,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedDashboardAgentsIdSectionRouteImport
       parentRoute: typeof ProtectedDashboardAgentsIdRoute
     }
+    '/_protected/_dashboard/agents/$id/sessions/$sessionId': {
+      id: '/_protected/_dashboard/agents/$id/sessions/$sessionId'
+      path: '/sessions/$sessionId'
+      fullPath: '/agents/$id/sessions/$sessionId'
+      preLoaderRoute: typeof ProtectedDashboardAgentsIdSessionsSessionIdRouteImport
+      parentRoute: typeof ProtectedDashboardAgentsIdRoute
+    }
     '/_protected/_dashboard/agents/$id/skills/': {
       id: '/_protected/_dashboard/agents/$id/skills/'
       path: '/skills'
@@ -727,13 +734,6 @@ declare module '@tanstack/react-router' {
       path: '/skills/$'
       fullPath: '/agents/$id/skills/$'
       preLoaderRoute: typeof ProtectedDashboardAgentsIdSkillsSplatRouteImport
-      parentRoute: typeof ProtectedDashboardAgentsIdRoute
-    }
-    '/_protected/_dashboard/agents/$id/sessions/$sessionId': {
-      id: '/_protected/_dashboard/agents/$id/sessions/$sessionId'
-      path: '/sessions/$sessionId'
-      fullPath: '/agents/$id/sessions/$sessionId'
-      preLoaderRoute: typeof ProtectedDashboardAgentsIdSessionsSessionIdRouteImport
       parentRoute: typeof ProtectedDashboardAgentsIdRoute
     }
   }
