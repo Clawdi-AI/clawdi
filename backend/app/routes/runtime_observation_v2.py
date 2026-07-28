@@ -9,8 +9,14 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.auth import AuthContext, get_auth, require_admin_api_key
+from app.core.auth import (
+    AuthContext,
+    get_auth,
+    is_runtime_deployment_principal,
+    require_admin_api_key,
+)
 from app.core.database import get_runtime_observation_session, get_session
+from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES
 from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.user import PRINCIPAL_KIND_CLERK, PRINCIPAL_KIND_PARTNER_TENANT, User
 from app.schemas.api_key import ApiKeyCreated
@@ -73,18 +79,23 @@ async def require_runtime_observation_writer(
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
 ) -> AuthContext:
-    """Require one explicit, narrow deployment credential for v2 ingestion."""
+    """Require the immutable deployment credential for v2 ingestion."""
 
     api_key = auth.api_key
     rejection_reason: str | None = None
-    if not auth.is_cli or api_key is None:
-        rejection_reason = "runtime_credential_required"
-    elif not api_key.managed:
-        rejection_reason = "managed_credential_required"
+    if not is_runtime_deployment_principal(auth):
+        if not auth.is_cli or api_key is None:
+            rejection_reason = "runtime_credential_required"
+        elif not api_key.managed:
+            rejection_reason = "managed_credential_required"
+        elif api_key.environment_id is None:
+            rejection_reason = "environment_binding_mismatch"
+        elif api_key.runtime_deployment_id is None:
+            rejection_reason = "deployment_binding_missing"
+        else:
+            rejection_reason = "runtime_credential_required"
     elif api_key.environment_id != environment_id:
         rejection_reason = "environment_binding_mismatch"
-    elif api_key.runtime_deployment_id is None:
-        rejection_reason = "deployment_binding_missing"
     elif api_key.scopes is None or RUNTIME_OBSERVATION_WRITE_SCOPE not in api_key.scopes:
         rejection_reason = "scope_missing"
     if rejection_reason is None:
@@ -334,7 +345,7 @@ async def create_runtime_deployment_key(
             db,
             user_id=owner.id,
             label=body.label,
-            scopes=body.scopes,
+            scopes=list(RUNTIME_DEPLOYMENT_KEY_SCOPES),
             environment_id=body.environment_id,
             runtime_deployment_id=body.deployment_id,
             managed=True,

@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { CLAWDI_MANAGED_PROVIDER_ID, isClawdiManagedV2ProviderId } from "@clawdi/shared";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { type EgressProfileInputBundle, egressProfileInputBundleSchema } from "./egress-profiles";
+import { hostedMcpDesiredStateSchema } from "./manifest-contract";
 
 type HostedEgressProfile = EgressProfileInputBundle["profiles"][number];
 
@@ -8,6 +10,7 @@ interface HostedRuntimeManifestProjection {
 	egressProfiles?: unknown;
 	providers?: unknown;
 	terminalTooling?: unknown;
+	mcp?: unknown;
 }
 
 interface HostedProviderProjection {
@@ -28,7 +31,79 @@ export function hostedManifestEgressProfiles(
 	return mergeGeneratedProfiles(explicit, [
 		...runtimeInstallerEgressProfiles(),
 		...managedProviderEgressProfiles(hosted),
+		...managedMcpEgressProfiles(hosted),
 	]);
+}
+
+export function managedMcpEgressProfiles(
+	hosted: HostedRuntimeManifestProjection,
+): HostedEgressProfile[] {
+	if (
+		typeof hosted.mcp !== "object" ||
+		hosted.mcp === null ||
+		Array.isArray(hosted.mcp) ||
+		!Object.hasOwn(hosted.mcp, "servers")
+	) {
+		return [];
+	}
+	const parsed = hostedMcpDesiredStateSchema.parse(hosted.mcp);
+	const profiles: HostedEgressProfile[] = [];
+	for (const [name, server] of Object.entries(parsed.servers)) {
+		if (!("url" in server)) continue;
+		const secretHeaders = Object.entries(server.headers).filter(
+			(entry): entry is [string, { secretRef: string; prefix: string }] =>
+				typeof entry[1] !== "string",
+		);
+		if (secretHeaders.length === 0) continue;
+		const url = new URL(server.url);
+		const port = url.port || (url.protocol === "https:" ? "443" : "80");
+		profiles.push({
+			id: `managed-mcp-${profileIdSuffix(name)}`,
+			enabled: true,
+			kind: "provider",
+			match: {
+				scheme: url.protocol.slice(0, -1) as "http" | "https",
+				host: `${url.hostname.toLowerCase()}:${port}`,
+				path: { type: "equals", value: url.pathname || "/" },
+				headers: Object.fromEntries(
+					secretHeaders.map(([header, value]) => [
+						header,
+						{
+							type: "equals" as const,
+							value: managedMcpHeaderPlaceholder(name, header),
+							prefix: value.prefix,
+						},
+					]),
+				),
+				query: {},
+			},
+			rewrite: {
+				preservePath: true,
+				setHeaders: Object.fromEntries(
+					secretHeaders.map(([header, value]) => [
+						header,
+						{ type: "secretRef" as const, secretRef: value.secretRef, prefix: value.prefix },
+					]),
+				),
+			},
+			logging: {
+				redactHeaders: secretHeaders.map(([header]) => header),
+				redactUrlPatterns: [],
+			},
+			priority: 70,
+			owner: "mcp-projection",
+			description: `Managed remote MCP credentials for ${name}.`,
+		});
+	}
+	return profiles;
+}
+
+export function managedMcpHeaderPlaceholder(serverName: string, headerName: string): string {
+	const suffix = createHash("sha256")
+		.update(`${serverName}\0${headerName.toLowerCase()}`)
+		.digest("hex")
+		.slice(0, 16);
+	return `${MANAGED_EGRESS_PLACEHOLDER_VALUE}-mcp-${suffix}`;
 }
 
 export function runtimeInstallerEgressProfiles(): HostedEgressProfile[] {

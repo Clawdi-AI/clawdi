@@ -6,7 +6,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator, model_validator
 
-from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES
 from app.schemas.platform import PlatformOwner
 from app.schemas.runtime_observed import (
     HostedRuntimeObservedAppliedV2,
@@ -85,21 +84,6 @@ class RuntimeDeploymentKeyCreate(RuntimeObservationRequestModel):
     label: str = Field(min_length=1, max_length=200)
     environment_id: UUID = Field(alias="environmentId")
     deployment_id: str = Field(alias="deploymentId", min_length=1, max_length=200)
-    scopes: list[str] = Field(default_factory=lambda: list(RUNTIME_DEPLOYMENT_KEY_SCOPES))
-
-    @field_validator("scopes")
-    @classmethod
-    def validate_scopes(cls, value: list[str]) -> list[str]:
-        if not value:
-            raise ValueError("scopes cannot be empty")
-        if len(value) != len(set(value)):
-            raise ValueError("scopes cannot contain duplicates")
-        unknown = sorted(set(value) - set(RUNTIME_DEPLOYMENT_KEY_SCOPES))
-        if unknown:
-            raise ValueError(f"scopes exceed runtime deployment ceiling: {', '.join(unknown)}")
-        if RUNTIME_OBSERVATION_WRITE_SCOPE not in value:
-            raise ValueError(f"scopes must include {RUNTIME_OBSERVATION_WRITE_SCOPE}")
-        return [scope for scope in RUNTIME_DEPLOYMENT_KEY_SCOPES if scope in value]
 
 
 class RuntimeEnvironmentRetireRequest(RuntimeObservationRequestModel):

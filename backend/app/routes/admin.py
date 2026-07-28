@@ -1361,6 +1361,7 @@ async def _admin_upsert_runtime_state(
             "locale": body.locale.model_dump(),
             "enabled_runtimes": _enabled_runtime_names(desired_state["runtimes"]),
             "has_mcp": body.mcp is not None,
+            "has_skills": body.skills is not None,
             "has_tools": body.tools is not None,
             "changed_fields": changed_fields,
         },
@@ -1444,6 +1445,7 @@ async def _admin_delete_runtime_state(
                 "cli_package_spec": state.cli_package_spec,
                 "enabled_runtimes": _enabled_runtime_names(state.runtimes),
                 "has_mcp": state.mcp is not None,
+                "has_skills": state.skills is not None,
                 "has_tools": state.tools is not None,
             }
         )
@@ -1565,6 +1567,7 @@ def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
         "recovery": body.recovery.model_dump(mode="json"),
         "egress_profiles": optional_wire_value("egress_profiles"),
         "mcp": body.mcp,
+        "skills": optional_wire_value("skills"),
         "tools": (
             body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")
             if body.tools is not None

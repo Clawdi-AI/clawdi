@@ -2481,7 +2481,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			},
 		});
-
 		expect(result.installErrors.join("\n")).toContain(
 			"runtime openclaw provider projection failed",
 		);
@@ -2587,7 +2586,11 @@ describe("runtime manifest reconciliation invariants", () => {
 					services: {},
 				},
 			},
-			{ projection: { mcp: { enabled: true } } },
+			{
+				projection: {
+					mcp: { servers: { clawdi: { command: "clawdi", args: ["mcp"] } } },
+				},
+			},
 		);
 
 		expect(() =>

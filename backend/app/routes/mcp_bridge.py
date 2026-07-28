@@ -13,7 +13,13 @@ from sqlalchemy import cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.types import String
 
-from app.core.auth import AuthContext, _is_env_bound_api_key, _is_scoped_api_key, get_auth
+from app.core.auth import (
+    AuthContext,
+    _is_env_bound_api_key,
+    _is_scoped_api_key,
+    get_auth,
+    is_runtime_deployment_principal,
+)
 from app.core.config import settings
 from app.core.database import get_session
 from app.core.query_utils import like_needle
@@ -363,14 +369,21 @@ def _http_exception_message(exc: HTTPException) -> str:
 _CONNECTOR_TOOLS_CACHE_TTL_SECONDS = 60.0
 _connector_tools_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 
+_HOSTED_MEMORY_TOOLS = {"memory_search", "memory_add", "memory_extract"}
+
 
 async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
     # Mirror `require_user_auth`, which guarded the old connector MCP
     # config route: narrowly-scoped api keys are deliberate capability
     # narrowing and get no connector surface. Don't list what the
     # caller can't call.
-    if _is_scoped_api_key(auth):
+    if _is_scoped_api_key(auth) and not is_runtime_deployment_principal(auth):
         return []
+    if is_runtime_deployment_principal(auth):
+        try:
+            _require_scope(auth, "connectors:read")
+        except HTTPException:
+            return []
     now = time.monotonic()
     cached = _connector_tools_cache.get(auth.user.clerk_id)
     if cached and cached[0] > now:
@@ -397,12 +410,22 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
 
 
 async def _list_clawdi_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
-    return list(_NATIVE_TOOLS) + await _connector_mcp_tools(auth)
+    native_tools = (
+        [tool for tool in _NATIVE_TOOLS if tool["name"] not in _HOSTED_MEMORY_TOOLS]
+        if is_runtime_deployment_principal(auth)
+        else list(_NATIVE_TOOLS)
+    )
+    return native_tools + await _connector_mcp_tools(auth)
 
 
 async def _call_clawdi_mcp_tool(
     name: str, arguments: dict[str, Any], *, auth: AuthContext, db: AsyncSession
 ) -> dict[str, Any]:
+    if is_runtime_deployment_principal(auth) and name in _HOSTED_MEMORY_TOOLS:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Memory tools are not available to hosted runtime principals",
+        )
     if name == "memory_search":
         return await _tool_memory_search(arguments, auth=auth, db=db)
     if name == "memory_add":
@@ -417,9 +440,12 @@ async def _call_clawdi_mcp_tool(
 
 
 def _require_scope(auth: AuthContext, *needed: str) -> None:
-    if not auth.is_cli or auth.api_key is None or auth.api_key.scopes is None:
+    if not auth.is_cli or auth.api_key is None:
         return
-    missing = [scope for scope in needed if scope not in auth.api_key.scopes]
+    scopes = auth.api_key.scopes
+    if scopes is None and not is_runtime_deployment_principal(auth):
+        return
+    missing = list(needed) if scopes is None else [scope for scope in needed if scope not in scopes]
     if missing:
         raise HTTPException(status.HTTP_403_FORBIDDEN, f"missing scope: {', '.join(missing)}")
 
@@ -498,7 +524,11 @@ def _user_sessions_stmt(auth: AuthContext):
         .where(Session.user_id == auth.user_id)
     )
     bound_env = (
-        auth.api_key.environment_id if _is_env_bound_api_key(auth) and auth.api_key else None
+        auth.api_key.environment_id
+        if _is_env_bound_api_key(auth)
+        and not is_runtime_deployment_principal(auth)
+        and auth.api_key
+        else None
     )
     if bound_env is not None:
         stmt = stmt.where(Session.environment_id == bound_env)
@@ -557,7 +587,7 @@ async def _tool_session_read(
             "reference must be a session UUID or a Clawdi share URL",
         ) from None
     if match:
-        if _is_env_bound_api_key(auth):
+        if _is_env_bound_api_key(auth) and not is_runtime_deployment_principal(auth):
             # No owner-bypass for env-bound agent keys: a share URL for a
             # same-user session in another environment must not sidestep
             # the bare-UUID env filter. Own-environment sessions resolve
@@ -596,11 +626,13 @@ async def _tool_session_read(
 async def _tool_connector_call(
     name: str, arguments: dict[str, Any], *, auth: AuthContext
 ) -> dict[str, Any]:
-    if _is_scoped_api_key(auth):
+    if _is_scoped_api_key(auth) and not is_runtime_deployment_principal(auth):
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Connector tools are not available to scoped api keys",
         )
+    if is_runtime_deployment_principal(auth):
+        _require_scope(auth, "connectors:invoke")
     session = await get_tool_router_mcp_session(auth.user.clerk_id)
     response = await _forward_composio_mcp_request(
         session,

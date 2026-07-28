@@ -611,9 +611,9 @@ def require_scope(*needed: str):
     have implicit full access for now; tightening that comes with
     the authz overhaul, not v1.
 
-    Scoped api_keys with `scopes=NULL` keep wide access (legacy
-    keys minted before the v1 migration). v1 only narrows the new
-    deploy-keys; nothing in the existing CLI flow regresses.
+    API keys with `scopes=NULL` keep wide access for legacy
+    compatibility. Strict-v2 runtime deployment keys instead carry
+    an explicit issuer-owned scope bundle.
     """
 
     async def _check(auth: AuthContext = Depends(get_auth)) -> AuthContext:
@@ -650,14 +650,27 @@ def _is_scoped_api_key(auth: AuthContext) -> bool:
     return auth.is_cli and auth.api_key is not None and auth.api_key.scopes is not None
 
 
+def is_runtime_deployment_principal(auth: AuthContext) -> bool:
+    """Identify one fenced strict-v2 workload independently of its permissions."""
+    key = auth.api_key
+    return bool(
+        auth.is_cli
+        and key is not None
+        and key.managed
+        and key.environment_id is not None
+        and key.runtime_deployment_id
+    )
+
+
 def _is_env_bound_api_key(auth: AuthContext) -> bool:
     """An api_key pinned to a specific `environment_id` —
     independent of whether its `scopes` list is narrow or full.
-    Deploy keys mint with `scopes=None` by default (full account
-    capability, same as a user's own laptop key), but their
-    BLAST RADIUS still has to honour the env binding: a leaked
-    env-A key must not read env-B's data. Memory / session /
-    skill / vault routes all filter by env when this is true.
+    Legacy v1 Agent keys may have `scopes=None` (full account
+    capability, same as a user's own laptop key), while strict-v2
+    runtime deployment keys carry an issuer-owned scope bundle.
+    Either way, their BLAST RADIUS still has to honour the env
+    binding: a leaked env-A key must not read env-B's data. Memory /
+    session / skill / vault routes filter by env when this is true.
 
     Distinct from `_is_scoped_api_key`: the latter is about
     capability narrowing (used to reject from user-only routes);
@@ -672,14 +685,13 @@ async def require_user_auth(auth: AuthContext = Depends(get_auth)) -> AuthContex
     surface is intended for the user themselves (their laptop
     CLI, the dashboard).
 
-    Agent environment deploy keys with `scopes=None` (the default for
-    keys minted via `POST /v1/auth/keys` with `environment_id`
-    set) PASS this gate by explicit policy: a hosted agent pod
-    behaves like a self-installed clawdi — same vault, connectors,
-    settings access the user's own laptop has. The blast-radius
-    boundary for Agent API keys is enforced inside the route's
-    own `project_ids_visible_to` / `_project_filter_*` calls, not
-    here.
+    Legacy v1 Agent environment keys with `scopes=None` (the default
+    for keys minted via `POST /v1/auth/keys` with `environment_id`
+    set) PASS this gate by explicit policy. Strict-v2 runtime
+    deployment keys carry explicit scopes and are evaluated as scoped
+    keys. The blast-radius boundary for Agent API keys is enforced
+    inside the route's own `project_ids_visible_to` /
+    `_project_filter_*` calls, not here.
 
     Only narrowly-scoped keys (explicit `scopes` list) are
     rejected — those are deliberate capability narrowing and
@@ -713,11 +725,10 @@ async def require_user_auth_unbound(
 
 async def require_user_cli(auth: AuthContext = Depends(get_auth)) -> AuthContext:
     """CLI auth only (rejects Clerk JWT — no plaintext to web)
-    and rejects narrowly-scoped api_keys. Agent API keys
-    pass by the same "behaves like user-installed clawdi" policy
-    as `require_user_auth` — `clawdi run` from a hosted agent pod
-    must resolve vault plaintext for the env it's bound to.
-    Per-env data filtering is enforced inside the resolve handler."""
+    and rejects narrowly-scoped api_keys. Legacy unscoped Agent API
+    keys pass by the same "behaves like user-installed clawdi" policy
+    as `require_user_auth`. Per-env data filtering is enforced inside
+    the resolve handler."""
     if not auth.is_cli:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint requires CLI authentication")
     if _is_scoped_api_key(auth):

@@ -297,8 +297,12 @@ def host_matches(flow: Any, profile: dict[str, Any]) -> bool:
     match = profile.get("match")
     if not isinstance(match, dict):
         return False
-    expected = normalize_host(str(match.get("host", "")))
+    expected_authority = str(match.get("host", "")).strip().lower()
+    expected_host, expected_port = split_authority(expected_authority)
+    expected = normalize_host(expected_host)
     if not expected:
+        return False
+    if expected_port is not None and getattr(flow.request, "port", None) != expected_port:
         return False
     return expected in request_host_candidates(flow)
 

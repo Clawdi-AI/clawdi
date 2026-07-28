@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { isValidSemver } from "../lib/semver";
-import { egressProfileInputBundleSchema } from "./egress-profiles";
+import { egressProfileInputBundleSchema, secretRefSchema } from "./egress-profiles";
 import {
 	runtimeNameSchema,
 	runtimeRunSettingsSchema,
@@ -208,18 +208,119 @@ const liveSyncSchema = z.object({
 	agents: z.array(liveSyncAgentSchema).default([]),
 });
 
-const runtimeProjectionSchema = z.object({
-	sourceSchemaVersion: z.string().min(1).optional(),
-	sourceBundleVersion: z.literal("clawdi.hosted-runtime.bundle.v2").optional(),
-	system: z.unknown().nullable().optional(),
-	providers: z.record(z.string().min(1), z.unknown()).optional(),
-	channels: z.record(z.string().min(1), z.unknown()).optional(),
-	channelCredentials: z.array(z.unknown()).optional(),
-	aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
-	mcp: z.unknown().optional(),
-	tools: z.unknown().optional(),
-	terminalTooling: z.unknown().optional(),
-});
+const managedEntryNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
+
+const mcpHeaderNameSchema = z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/);
+const mcpSecretHeaderSchema = z
+	.object({
+		secretRef: secretRefSchema,
+		prefix: z.string().max(100).default(""),
+	})
+	.strict();
+
+const hostedStdioMcpServerDesiredStateSchema = z
+	.object({
+		command: z
+			.string()
+			.min(1)
+			.max(200)
+			.refine((value) => value === value.trim(), "command must not have surrounding whitespace"),
+		args: z
+			.array(
+				z
+					.string()
+					.min(1)
+					.refine((value) => value === value.trim(), "args must be canonical strings"),
+			)
+			.max(32),
+	})
+	.strict();
+
+const hostedRemoteMcpServerDesiredStateSchema = z
+	.object({
+		url: z
+			.string()
+			.url()
+			.refine((value) => {
+				const url = new URL(value);
+				return (
+					(url.protocol === "http:" || url.protocol === "https:") &&
+					!url.username &&
+					!url.password &&
+					!url.search &&
+					!url.hash
+				);
+			}, "must be an HTTP(S) URL without credentials, query, or fragment"),
+		transport: z.enum(["streamable-http", "sse"]),
+		headers: z
+			.record(mcpHeaderNameSchema, z.union([z.string(), mcpSecretHeaderSchema]))
+			.default({}),
+	})
+	.strict()
+	.superRefine((server, ctx) => {
+		const seen = new Set<string>();
+		for (const header of Object.keys(server.headers)) {
+			const normalized = header.toLowerCase();
+			if (seen.has(normalized)) {
+				ctx.addIssue({
+					code: "custom",
+					message: `duplicate HTTP header ${header}`,
+					path: ["headers", header],
+				});
+			}
+			seen.add(normalized);
+		}
+	});
+
+export const hostedMcpServerDesiredStateSchema = z.union([
+	hostedStdioMcpServerDesiredStateSchema,
+	hostedRemoteMcpServerDesiredStateSchema,
+]);
+export type HostedMcpServerDesiredState = z.infer<typeof hostedMcpServerDesiredStateSchema>;
+
+export const hostedMcpDesiredStateSchema = z
+	.object({
+		servers: z.record(managedEntryNameSchema, hostedMcpServerDesiredStateSchema),
+	})
+	.strict();
+
+function validateMcpServerDeclarations(mcp: unknown, ctx: z.RefinementCtx): void {
+	if (typeof mcp !== "object" || mcp === null || Array.isArray(mcp)) return;
+	if (!Object.hasOwn(mcp, "servers")) return;
+	const parsed = hostedMcpDesiredStateSchema.safeParse(mcp);
+	if (parsed.success) return;
+	for (const issue of parsed.error.issues) {
+		ctx.addIssue({ code: "custom", message: issue.message, path: ["mcp", ...issue.path] });
+	}
+}
+
+export const hostedSkillEntryDesiredStateSchema = z
+	.object({
+		enabled: z.boolean(),
+	})
+	.strict();
+
+export const hostedSkillsDesiredStateSchema = z
+	.object({
+		entries: z.record(managedEntryNameSchema, hostedSkillEntryDesiredStateSchema),
+	})
+	.strict();
+
+const runtimeProjectionSchema = z
+	.object({
+		sourceSchemaVersion: z.string().min(1).optional(),
+		sourceBundleVersion: z.literal("clawdi.hosted-runtime.bundle.v2").optional(),
+		system: z.unknown().nullable().optional(),
+		providers: z.record(z.string().min(1), z.unknown()).optional(),
+		channels: z.record(z.string().min(1), z.unknown()).optional(),
+		channelCredentials: z.array(z.unknown()).optional(),
+		aiProviders: z.record(z.string().min(1), z.unknown()).optional(),
+		mcp: z.unknown().optional(),
+		skills: hostedSkillsDesiredStateSchema.optional(),
+		tools: z.unknown().optional(),
+		terminalTooling: z.unknown().optional(),
+	})
+	.superRefine((projection, ctx) => validateMcpServerDeclarations(projection.mcp, ctx));
 
 const runtimeDesiredStateShape = {
 	deploymentId: z.string().min(1),
@@ -615,6 +716,7 @@ const hostedRuntimeManifestBaseSchema = z
 		liveSync: hostedLiveSyncSchema,
 		egressProfiles: egressProfileInputBundleSchema.strict().optional(),
 		mcp: z.unknown().optional(),
+		skills: hostedSkillsDesiredStateSchema.optional(),
 		tools: z.unknown().optional(),
 		terminalTooling: hostedTerminalToolingSchema,
 		recovery: z
@@ -632,6 +734,7 @@ function validateHostedRuntimeManifest(
 	manifest: HostedRuntimeManifestBase,
 	ctx: z.RefinementCtx,
 ): void {
+	validateMcpServerDeclarations(manifest.mcp, ctx);
 	const runtimeKeys = Object.keys(manifest.runtimes);
 	const unexpectedRuntimeKeys = runtimeKeys.filter((runtime) => runtime !== manifest.runtime);
 	if (!manifest.runtimes[manifest.runtime]) {

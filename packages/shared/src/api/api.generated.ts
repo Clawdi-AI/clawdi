@@ -4971,6 +4971,18 @@ export interface components {
             /** Prependpath */
             prependPath?: string[] | null;
         };
+        /** HostedRuntimeSkillEntry */
+        HostedRuntimeSkillEntry: {
+            /** Enabled */
+            enabled: boolean;
+        };
+        /** HostedRuntimeSkills */
+        HostedRuntimeSkills: {
+            /** Entries */
+            entries: {
+                [key: string]: components["schemas"]["HostedRuntimeSkillEntry"];
+            };
+        };
         /** HostedRuntimeSystem */
         HostedRuntimeSystem: {
             /** Openclawcontroluiallowedorigins */
@@ -5333,6 +5345,7 @@ export interface components {
             mcp?: {
                 [key: string]: unknown;
             } | null;
+            skills?: components["schemas"]["HostedRuntimeSkills"] | null;
             tools: components["schemas"]["HostedRuntimeTools"];
         };
         /** ProjectCreate */
@@ -5522,8 +5535,6 @@ export interface components {
             environmentId: string;
             /** Deploymentid */
             deploymentId: string;
-            /** Scopes */
-            scopes?: string[];
         };
         /** RuntimeEnvironmentRetireRequest */
         RuntimeEnvironmentRetireRequest: {
