@@ -91,11 +91,12 @@ Treat their live names and schemas as authoritative; never assume a fixed meta-t
    guessing a missing recipient, account, resource, or other target. Ask only for what is
    missing, and do not request redundant confirmation once the exact action is authorized.
 3. When search reports no active connection, call `COMPOSIO_MANAGE_CONNECTIONS` with its
-   exposed schema and interpret only the fields it returns. For an initiated connection,
-   present the returned `redirect_url` as a clickable authentication link with a concise
-   explanation that authorization is pending. The link URL must be exactly that value; never
-   construct a substitute or ask for OAuth credentials, API keys, or tokens. If initiation
-   returns no `redirect_url`, report that terminal failure instead of suggesting an
+   exposed schema and interpret only the fields it returns. Continue on `active`. On
+   `initiated`, present its non-empty `redirect_url` as a clickable authentication link with
+   a concise explanation that authorization is pending; the link URL must be exactly that
+   value. If `initiated` has no non-empty `redirect_url`, report that authorization cannot
+   continue and stop. On `failed`, report the returned error and stop. Never construct a
+   substitute link, ask for OAuth credentials, API keys, or tokens, or suggest an
    out-of-band fallback.
 4. Use a wait or status operation only when `tools/list` exposes one. Follow its actual schema
    and status values without inventing polling arguments. Continue only when it reports an
@@ -103,9 +104,10 @@ Treat their live names and schemas as authoritative; never assume a fixed meta-t
    report any terminal failure. If none is exposed, stop until the user reports completing
    authorization, then re-run search to verify the active connection before continuing.
 5. Execute exact returned slugs through `COMPOSIO_MULTI_EXECUTE_TOOL` with schema-compliant
-   arguments. Batch only independent calls. Keep ordinary results inline; set
-   `sync_response_to_workbench` or use `COMPOSIO_REMOTE_WORKBENCH` /
-   `COMPOSIO_REMOTE_BASH_TOOL` only for large, bulk, or remote-file results.
+   arguments. Batch only independent calls. Keep ordinary results inline. Set
+   `sync_response_to_workbench` only when a result may be large or needs later remote
+   processing; use `COMPOSIO_REMOTE_WORKBENCH` / `COMPOSIO_REMOTE_BASH_TOOL` only for large
+   responses saved remotely or remote artifacts.
 6. Preserve dependencies and returned semantics. Follow signed-file metadata, pagination
    fields, and termination signals exactly as exposed. Select an account only when the schema
    supports it, and use additional or future meta-tools only according to their live schemas.

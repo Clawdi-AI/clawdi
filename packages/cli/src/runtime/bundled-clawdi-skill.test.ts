@@ -42,19 +42,24 @@ describe("bundled Clawdi skill connector contract", () => {
 	it("documents a schema-driven auth-link handshake", () => {
 		for (const connectors of [genericConnectors, hostedConnectors]) {
 			const compact = connectors.replace(/\s+/g, " ");
-			// ComposioHQ/composio@a84d05f exposes active|initiated|failed and nullable redirect_url.
+			// ComposioHQ/composio@a84d05fc99f00c2d77d7f25ba6553805d7d28b92
+			// exposes active|initiated|failed and a nullable redirect_url.
 			expect(compact).toContain("`COMPOSIO_MANAGE_CONNECTIONS`");
-			expect(compact).toContain("returned `redirect_url` as a clickable authentication link");
+			expect(compact).toContain("Continue on `active`");
+			expect(compact).toContain("On `initiated`");
+			expect(compact).toContain("non-empty `redirect_url` as a clickable authentication link");
 			expect(compact).toContain("authorization is pending");
 			expect(compact).toContain("link URL must be exactly that value");
-			expect(compact).toContain("returns no `redirect_url`, report that terminal failure");
+			expect(compact).toContain("has no non-empty `redirect_url`");
+			expect(compact).toContain("authorization cannot continue and stop");
+			expect(compact).toContain("On `failed`, report the returned error and stop");
 			expect(compact).toContain("only when `tools/list` exposes one");
 			expect(compact).toContain("without inventing polling arguments");
 			expect(compact).toContain("Continue only when it reports an active connection");
 			expect(compact).toContain("non-terminal status its schema defines");
 			expect(compact).toContain("report any terminal failure");
 			expect(compact).toContain("re-run search to");
-			expect(compact).toContain("never construct a substitute or ask for OAuth credentials");
+			expect(compact).toContain("Never construct a substitute link, ask for OAuth credentials");
 			expect(connectors).not.toContain("COMPOSIO_WAIT_FOR_CONNECTIONS");
 			expect(connectors).not.toContain("Return only the authorization link");
 			expect(connectors).not.toMatch(/dashboard/i);
@@ -67,6 +72,8 @@ describe("bundled Clawdi skill connector contract", () => {
 			expect(compact).toContain("`COMPOSIO_REMOTE_BASH_TOOL`");
 			expect(compact).toContain("`COMPOSIO_REMOTE_WORKBENCH`");
 			expect(compact).toContain("`sync_response_to_workbench`");
+			expect(compact).toContain("only when a result may be large or needs later remote processing");
+			expect(compact).toContain("only for large responses saved remotely or remote artifacts");
 			expect(compact).toContain("complete target identity");
 			expect(compact).toContain("never authorizes guessing a missing recipient");
 			expect(compact).toContain("do not request redundant confirmation");
