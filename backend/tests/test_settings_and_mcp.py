@@ -273,6 +273,7 @@ async def test_clawdi_mcp_preserves_future_composio_tool_contract(monkeypatch):
             "properties": {"redirect_url": {"type": ["string", "null"]}},
         },
         "annotations": {"openWorldHint": True},
+        "_meta": {"composio": {"future_contract": True}},
     }
     expected_arguments = {"target": {"id": "recipient_123"}, "preserve": [1, {"x": True}]}
     expected_result = {
