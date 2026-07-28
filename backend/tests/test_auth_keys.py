@@ -95,16 +95,26 @@ async def test_me_reflects_cli_auth(cli_client: httpx.AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_revoke_api_key_marks_row(client: httpx.AsyncClient):
+async def test_revoke_api_key_hides_row_but_preserves_audit_record(
+    client: httpx.AsyncClient, db_session
+):
+    from sqlalchemy import select
+
+    from app.models.api_key import ApiKey
+
     created = (await client.post("/v1/auth/keys", json={"label": "to-revoke"})).json()
     r = await client.delete(f"/v1/auth/keys/{created['id']}")
     assert r.status_code == 200, r.text
     assert r.json() == {"status": "revoked"}
 
-    # After revoke, the key still shows in the list but with ``revoked_at`` set.
+    # The user-facing list is active-only, but soft revocation keeps the row for audit.
     listing = (await client.get("/v1/auth/keys")).json()
-    match = next(k for k in listing if k["id"] == created["id"])
-    assert match["revoked_at"] is not None
+    assert created["id"] not in {key["id"] for key in listing}
+
+    revoked_at = await db_session.scalar(
+        select(ApiKey.revoked_at).where(ApiKey.id == created["id"])
+    )
+    assert revoked_at is not None
 
 
 @pytest.mark.asyncio
