@@ -38,6 +38,38 @@ export interface SessionWatcherOptions {
 	forcePoll?: boolean;
 }
 
+interface SessionFsWatcher {
+	close: () => void;
+	on: (event: "error", listener: (error: Error) => void) => SessionFsWatcher;
+}
+
+export interface SessionTimerScheduler {
+	schedule: (callback: () => void, delayMs: number) => () => void;
+}
+
+export interface SessionWatcherDependencies {
+	createWatcher: (
+		path: string,
+		options: { persistent: false; recursive: boolean },
+		onChange: () => void,
+	) => SessionFsWatcher;
+	poll: (opts: SessionWatcherOptions) => Promise<void>;
+	stableTimer: SessionTimerScheduler;
+}
+
+const defaultSessionTimerScheduler: SessionTimerScheduler = {
+	schedule: (callback, delayMs) => {
+		const timer = setTimeout(callback, delayMs);
+		return () => clearTimeout(timer);
+	},
+};
+
+const defaultSessionWatcherDependencies: SessionWatcherDependencies = {
+	createWatcher: (path, options, onChange) => watch(path, options, onChange),
+	poll: pollSessionPaths,
+	stableTimer: defaultSessionTimerScheduler,
+};
+
 // File-stable window: how long after the last detected change
 // before we consider the session log "ready to push". Shorter ⇒
 // more frequent partial pushes (and the next push catches up
@@ -53,39 +85,48 @@ export const SESSION_STABLE_AFTER_MS = 30_000;
 // for another full idle interval.
 export const SESSION_IDLE_POLL_INTERVAL_MS = 60_000;
 
-export async function watchSessions(opts: SessionWatcherOptions): Promise<void> {
+export async function watchSessions(
+	opts: SessionWatcherOptions,
+	dependencies: SessionWatcherDependencies = defaultSessionWatcherDependencies,
+): Promise<void> {
 	if (opts.forcePoll) {
 		log.info("sessions_watcher.mode", { mode: "poll", reason: "forced" });
-		await pollSessionPaths(opts);
+		await dependencies.poll(opts);
 		return;
 	}
 	try {
-		await fsWatchLoop(opts);
+		await fsWatchLoop(opts, dependencies);
 	} catch (e) {
 		log.warn("sessions_watcher.fs_watch_failed", {
 			error: toErrorMessage(e),
 			fallback: "poll",
 		});
-		await pollSessionPaths(opts);
+		await dependencies.poll(opts);
 	}
 }
 
-async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
-	const watchers: ReturnType<typeof watch>[] = [];
-	let stableTimer: ReturnType<typeof setTimeout> | null = null;
+async function fsWatchLoop(
+	opts: SessionWatcherOptions,
+	dependencies: SessionWatcherDependencies,
+): Promise<void> {
+	const watchers: SessionFsWatcher[] = [];
+	let cancelStableTimer: (() => void) | null = null;
 	let cleaned = false;
-	let resolveAbort = () => {};
-	const aborted = new Promise<void>((resolve) => {
-		resolveAbort = resolve;
+	let settled = false;
+	let resolveCompletion = () => {};
+	let rejectCompletion: (error: Error) => void = () => {};
+	const completion = new Promise<void>((resolve, reject) => {
+		resolveCompletion = resolve;
+		rejectCompletion = reject;
 	});
 
 	const cleanup = () => {
 		if (cleaned) return;
 		cleaned = true;
 		opts.abort.removeEventListener("abort", onAbort);
-		if (stableTimer) {
-			clearTimeout(stableTimer);
-			stableTimer = null;
+		if (cancelStableTimer) {
+			cancelStableTimer();
+			cancelStableTimer = null;
 		}
 		for (const watcher of watchers) {
 			try {
@@ -95,9 +136,15 @@ async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
 			}
 		}
 	};
-	const onAbort = () => {
+	const settle = (error?: Error) => {
+		if (settled) return;
+		settled = true;
 		cleanup();
-		resolveAbort();
+		if (error) rejectCompletion(error);
+		else resolveCompletion();
+	};
+	const onAbort = () => {
+		settle();
 	};
 
 	opts.abort.addEventListener("abort", onAbort, { once: true });
@@ -106,11 +153,11 @@ async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
 	if (opts.abort.aborted) onAbort();
 
 	const armStable = () => {
-		if (opts.abort.aborted) return;
-		if (stableTimer) clearTimeout(stableTimer);
-		stableTimer = setTimeout(() => {
-			stableTimer = null;
-			if (opts.abort.aborted) return;
+		if (settled || opts.abort.aborted) return;
+		cancelStableTimer?.();
+		cancelStableTimer = dependencies.stableTimer.schedule(() => {
+			cancelStableTimer = null;
+			if (settled || opts.abort.aborted) return;
 			opts.onPathStable();
 		}, SESSION_STABLE_AFTER_MS);
 	};
@@ -119,6 +166,7 @@ async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
 		if (opts.abort.aborted) return;
 		let missingOrFailed = 0;
 		for (const p of opts.paths) {
+			if (settled || opts.abort.aborted) break;
 			if (!existsSync(p)) {
 				log.debug("sessions_watcher.path_missing", { path: p });
 				missingOrFailed += 1;
@@ -126,10 +174,18 @@ async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
 			}
 			try {
 				const isDir = statSync(p).isDirectory();
-				const watcher = watch(p, { persistent: false, recursive: isDir }, () => {
-					if (!opts.abort.aborted) armStable();
-				});
+				const watcher = dependencies.createWatcher(
+					p,
+					{ persistent: false, recursive: isDir },
+					() => {
+						if (!opts.abort.aborted) armStable();
+					},
+				);
 				watchers.push(watcher);
+				watcher.on("error", (error) => {
+					settle(new Error(`fs.watch failed for ${p}: ${toErrorMessage(error)}`));
+				});
+				if (settled) break;
 			} catch (e) {
 				log.warn("sessions_watcher.attach_failed", {
 					path: p,
@@ -147,8 +203,8 @@ async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
 				path_count: opts.paths.length,
 				fs_event_paths: watchers.length,
 			});
-			cleanup();
-			await pollSessionPaths(opts);
+			settle();
+			await dependencies.poll(opts);
 			return;
 		}
 
@@ -157,7 +213,7 @@ async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
 			path_count: watchers.length,
 			stable_after_ms: SESSION_STABLE_AFTER_MS,
 		});
-		await aborted;
+		await completion;
 	} finally {
 		cleanup();
 	}
@@ -325,21 +381,10 @@ export async function sessionPathSignature(p: string): Promise<string> {
 	}
 }
 
-export interface SessionPollTimerScheduler {
-	schedule: (callback: () => void, delayMs: number) => () => void;
-}
-
-const defaultSessionPollTimerScheduler: SessionPollTimerScheduler = {
-	schedule: (callback, delayMs) => {
-		const timer = setTimeout(callback, delayMs);
-		return () => clearTimeout(timer);
-	},
-};
-
 export function sleepForSessionPoll(
 	ms: number,
 	signal: AbortSignal,
-	scheduler: SessionPollTimerScheduler = defaultSessionPollTimerScheduler,
+	scheduler: SessionTimerScheduler = defaultSessionTimerScheduler,
 ): Promise<void> {
 	if (signal.aborted) return Promise.resolve();
 	return new Promise((resolve) => {

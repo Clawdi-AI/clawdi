@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -299,6 +300,126 @@ test("watchSessions returns immediately for a pre-aborted real fs watch", async 
 		rmSync(root, { recursive: true, force: true });
 	}
 }, 1_000);
+
+test("falls back once when an attached fs watcher emits an asynchronous error", async () => {
+	class InjectedWatcher extends EventEmitter {
+		closeCalls = 0;
+
+		close(): void {
+			this.closeCalls += 1;
+		}
+	}
+
+	const roots = [
+		mkdtempSync(join(tmpdir(), "clawdi-session-async-watch-error-a-")),
+		mkdtempSync(join(tmpdir(), "clawdi-session-async-watch-error-b-")),
+	];
+	const abort = new AbortController();
+	const watchers: InjectedWatcher[] = [];
+	let onChange = () => {};
+	let scheduledStableCallback = () => {};
+	let pendingStableTimers = 0;
+	let stableCalls = 0;
+	let pollCalls = 0;
+	try {
+		const running = watchSessions(
+			{
+				paths: roots,
+				abort: abort.signal,
+				onPathStable: () => {
+					stableCalls += 1;
+				},
+			},
+			{
+				createWatcher: (_path, _options, callback) => {
+					onChange = callback;
+					const watcher = new InjectedWatcher();
+					watchers.push(watcher);
+					return watcher;
+				},
+				poll: async () => {
+					pollCalls += 1;
+				},
+				stableTimer: {
+					schedule: (callback) => {
+						scheduledStableCallback = callback;
+						pendingStableTimers += 1;
+						let pending = true;
+						return () => {
+							if (!pending) return;
+							pending = false;
+							pendingStableTimers -= 1;
+						};
+					},
+				},
+			},
+		);
+
+		onChange();
+		expect(watchers).toHaveLength(2);
+		expect(pendingStableTimers).toBe(1);
+		expect(watchers[0]?.emit("error", new Error("injected asynchronous watch failure"))).toBe(true);
+		abort.abort();
+		await running;
+
+		expect(pollCalls).toBe(1);
+		expect(watchers.map((watcher) => watcher.closeCalls)).toEqual([1, 1]);
+		expect(pendingStableTimers).toBe(0);
+		onChange();
+		scheduledStableCallback();
+		expect(stableCalls).toBe(0);
+		expect(watchers[1]?.emit("error", new Error("late duplicate watch failure"))).toBe(true);
+		expect(watchers.map((watcher) => watcher.closeCalls)).toEqual([1, 1]);
+		expect(pollCalls).toBe(1);
+	} finally {
+		for (const root of roots) rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("absorbs late watcher errors after a partial attach has switched to polling", async () => {
+	class InjectedWatcher extends EventEmitter {
+		closeCalls = 0;
+
+		close(): void {
+			this.closeCalls += 1;
+		}
+	}
+
+	const root = mkdtempSync(join(tmpdir(), "clawdi-session-partial-watch-error-"));
+	const watcher = new InjectedWatcher();
+	const abort = new AbortController();
+	let pollCalls = 0;
+	try {
+		await watchSessions(
+			{
+				paths: [root, join(root, "missing")],
+				abort: abort.signal,
+				onPathStable: () => {
+					throw new Error("partial watcher must switch directly to polling");
+				},
+			},
+			{
+				createWatcher: () => watcher,
+				poll: async () => {
+					pollCalls += 1;
+				},
+				stableTimer: {
+					schedule: () => {
+						throw new Error("partial watcher must not schedule a stable callback");
+					},
+				},
+			},
+		);
+
+		expect(pollCalls).toBe(1);
+		expect(watcher.closeCalls).toBe(1);
+		expect(watcher.emit("error", new Error("late partial-watch failure"))).toBe(true);
+		expect(watcher.closeCalls).toBe(1);
+		expect(pollCalls).toBe(1);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+});
 
 test("Hermes WAL commits change the production watch signature while state.db stays fixed", async () => {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-hermes-wal-watch-"));

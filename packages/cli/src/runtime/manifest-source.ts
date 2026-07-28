@@ -31,7 +31,7 @@ import {
 } from "./manifest-contract";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
-import { canonicalSecretRefName, envSecretRefName, normalizeSecretValues } from "./secret-values";
+import { canonicalSecretRefName, normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -904,10 +904,35 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 		}
 		const appliedState = readRuntimeAppliedState(paths);
 		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
+		const strictV2Cache =
+			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
 		const cached = loadCachedSecretValues(paths);
 		if ("errors" in cached) return cached;
+		const secretRefs = manifestSecretRefs(manifest);
+		if (secretRefs.length > 0) {
+			const missingSecretRefs = manifestSecretRefsMissingValues(manifest, cached.secretValues);
+			if (missingSecretRefs.length > 0) {
+				return {
+					mode: "repair",
+					stage: "local",
+					errors: [
+						`cached manifest references secretValues (${missingSecretRefs.join(", ")}); refusing offline boot because cached secret values are missing`,
+					],
+				};
+			}
+		}
+		if (strictV2Cache && !appliedState) {
+			return {
+				mode: "repair",
+				stage: "local",
+				errors: [
+					"cached strict-v2 manifest has no durable applied authority; refusing offline boot",
+				],
+			};
+		}
 		if (
-			cachedApplyIdentity &&
+			(strictV2Cache || cachedApplyIdentity) &&
+			appliedState &&
 			(appliedState?.generation !== manifest.generation ||
 				appliedState.instanceId !== manifest.instanceId ||
 				appliedState.contentIdentity.sha256 !==
@@ -922,24 +947,13 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 				activeGeneration: appliedState?.generation ?? null,
 			};
 		}
-		const secretRefs = manifestSecretRefs(manifest);
 		if (secretRefs.length > 0) {
-			const missingSecretRefs = manifestSecretRefsMissingValues(manifest, cached.secretValues);
-			if (missingSecretRefs.length === 0) {
-				return {
-					manifest,
-					source: "last-good-cache",
-					sourcePath: paths.manifestLastGood,
-					offline: true,
-					secretValues: cached.secretValues,
-				};
-			}
 			return {
-				mode: "repair",
-				stage: "local",
-				errors: [
-					`cached manifest references secretValues (${missingSecretRefs.join(", ")}); refusing offline boot because cached secret values are missing`,
-				],
+				manifest,
+				source: "last-good-cache",
+				sourcePath: paths.manifestLastGood,
+				offline: true,
+				secretValues: cached.secretValues,
 			};
 		}
 		return {
@@ -1028,11 +1042,9 @@ function manifestSecretRefsMissingValues(
 	secretValues: Record<string, string> | undefined,
 ): string[] {
 	const normalizedValues = normalizeSecretValues(secretValues ?? {});
-	return manifestSecretRefs(manifest).filter((ref) => {
-		const envName = envSecretRefName(ref);
-		if (envName) return !process.env[envName]?.trim();
-		return normalizedValues[ref] === undefined;
-	});
+	return manifestSecretRefs(manifest).filter(
+		(ref) => runtimeSecretValue(normalizedValues, ref) === null,
+	);
 }
 
 function addSecretEnvRefs(secretEnv: Record<string, string> | undefined, refs: Set<string>): void {

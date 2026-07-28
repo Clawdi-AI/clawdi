@@ -239,7 +239,7 @@ function writeLastGoodManifest(
 		return null;
 	}
 	writeJsonFile(paths.manifestLastGood, manifest);
-	writeLastGoodSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(secretScopeManifest));
+	writeLastGoodSecretValues(secretScopeManifest, secretValues, paths);
 	return paths.manifestLastGood;
 }
 
@@ -252,19 +252,23 @@ export function cacheRuntimeLastGoodManifest(
 }
 
 function writeLastGoodSecretValues(
+	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
-	excludedRefs: readonly string[] = [],
 ): void {
-	const normalized = omitSecretRefs(secretValues, excludedRefs);
-	if (Object.keys(normalized).length === 0) {
+	const recoverable = runtimeRecoverableSecretValues(manifest, secretValues);
+	if (Object.keys(recoverable).length === 0) {
 		rmSync(paths.managedSecretCacheFile, { force: true });
 		return;
 	}
-	writePrivateFileAtomic(paths.managedSecretCacheFile, `${JSON.stringify(normalized, null, 2)}\n`, {
-		mode: 0o600,
-		dirMode: 0o755,
-	});
+	writePrivateFileAtomic(
+		paths.managedSecretCacheFile,
+		`${JSON.stringify(recoverable, null, 2)}\n`,
+		{
+			mode: 0o600,
+			dirMode: 0o755,
+		},
+	);
 	makeRootOwned(dirname(paths.managedSecretCacheFile));
 	makeRootOwned(paths.managedSecretCacheFile);
 }
@@ -696,6 +700,13 @@ function scopedSecretValues(
 	return scoped;
 }
 
+export function runtimeRecoverableSecretValues(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): Record<string, string> {
+	return scopedSecretValues(secretValues, manifestSecretRefs(manifest));
+}
+
 function writeProviderHealthStatus(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
@@ -751,8 +762,7 @@ function writeProviderHealthStatus(
 }
 
 function providerSecretAvailable(secretValues: Record<string, string>, ref: string): boolean {
-	const normalized = normalizeSecretRef(ref);
-	return Boolean(secretValues[ref] || (normalized ? secretValues[normalized] : undefined));
+	return resolveRuntimeSecretValue(secretValues, ref) !== null;
 }
 
 function providerHealthReasons(

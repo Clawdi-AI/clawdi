@@ -9,6 +9,7 @@ import type {
 	RuntimeChannelsLoad,
 	RuntimeManifestLoad,
 } from "./manifest-source";
+import { runtimeSecretValue } from "./secret-values";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 type EgressProfile = EgressProfileInputBundle["profiles"][number];
@@ -108,8 +109,8 @@ function managedBundleChannelLink(
 	binding: RuntimeBundleChannelBinding,
 	secretValues: Record<string, string>,
 ): ManagedChannelLink {
-	const agentToken = secretValues[binding.agentTokenSecretRef];
-	const placeholderToken = secretValues[binding.placeholderTokenSecretRef];
+	const agentToken = runtimeSecretValue(secretValues, binding.agentTokenSecretRef);
+	const placeholderToken = runtimeSecretValue(secretValues, binding.placeholderTokenSecretRef);
 	if (!agentToken) throw new Error(`runtime bundle is missing ${binding.agentTokenSecretRef}`);
 	if (!placeholderToken) {
 		throw new Error(`runtime bundle is missing ${binding.placeholderTokenSecretRef}`);

@@ -56,6 +56,8 @@ describe("hosted runtime observed v2", () => {
 			instanceId: "hri_observed",
 			appliedProviderIds: ["managed"],
 		});
+		expect(JSON.stringify(observed)).not.toContain("b".repeat(64));
+		expect(observed?.applied).not.toHaveProperty("contentIdentity");
 	});
 
 	test("reports missing applied state as unknown authority", () => {

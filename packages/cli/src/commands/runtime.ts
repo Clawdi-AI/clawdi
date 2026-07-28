@@ -48,6 +48,7 @@ import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
+	runtimeRecoverableSecretValues,
 	withRuntimeConvergeLockAsync,
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
@@ -1280,9 +1281,15 @@ export function runtimeAppliedContentIdentity(
 		sourcePath: load.sourcePath,
 		sha256: runtimeContentSha256({
 			manifest: load.manifest,
-			secretValues: load.secretValues ?? {},
+			secretValues: runtimeRecoverableSecretValues(load.manifest, load.secretValues),
 		}),
 	};
+}
+
+// This revision may be surfaced through status/observation fallback fields.
+// Keep secret-dependent recoverability verification in the root-only applied state.
+export function runtimePublicContentRevision(load: RuntimeManifestLoad): string {
+	return runtimeContentSha256({ manifest: load.manifest });
 }
 
 export function commitRuntimeAppliedState(input: {
@@ -1859,7 +1866,7 @@ async function runtimeInitLocked(
 		let applyResult: RuntimeApplyResult;
 		try {
 			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded);
-			const contentRevision = runtimeAppliedContentIdentity(convergenceLoad).sha256;
+			const contentRevision = runtimePublicContentRevision(convergenceLoad);
 			const applyIdentity = readRuntimeApplyIdentityFromEnv();
 			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
 				authorityCommit: (convergence) =>

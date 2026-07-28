@@ -505,9 +505,15 @@ watch` converges immediately.
 
 Reconciliation validates and plans projections before live mutation, completes
 required installers before Apply, and commits last-good, remote ETags, and
-`status/runtime-applied.json` only after managed files and systemd state apply
-successfully. A recoverable Apply failure restores the previous Clawdi-owned
-files and systemd declaration and leaves those authority records unchanged.
+root-owned `0600` `status/runtime-applied.json` only after managed files and
+systemd state apply successfully. A recoverable Apply failure restores the
+previous Clawdi-owned files and systemd declaration and leaves those authority
+records unchanged.
+The last-good manifest and scoped secret cache are each replaced atomically,
+then `runtime-applied.json` is replaced atomically as the final commit record.
+After a crash, strict-v2 offline load requires that final record to match the
+cached generation, instance, manifest, and canonical secret union exactly, so
+a partially advanced cache fails closed instead of becoming mixed authority.
 Last-good remains an offline recovery cache; `runtime-applied.json` is the
 online record of the applied instance, config generation, content identity,
 source manifest provider IDs, and the target-specific projected provider ID map
@@ -647,8 +653,12 @@ desired state should contain only non-secret configuration such as enabled
 runtimes, command launch settings, channel projections, and provider routing
 metadata. Secret values are delivered separately and must not be embedded in
 the manifest or general runtime config. When offline recovery is explicitly
-enabled, the CLI may retain only its root-owned, reference-scoped `0600` secret
-cache; it never persists the complete plaintext bundle as one document.
+enabled, the CLI retains a root-owned, reference-scoped `0600` cache containing
+the canonical union of every active non-`env://` secret required to reproduce
+the applied state. It never persists the complete transport bundle or inactive
+secret values as one document. Raw refs and their `secret://` aliases must
+carry the same value when both are present; conflicting aliases are rejected at
+the datasource boundary before manifest validation or projection.
 
 At the boundary:
 
@@ -688,8 +698,9 @@ outputs include:
 | `config/clawdi.json` | Redacted managed runtime config |
 | `sync/runtimes.json` | Runtime sync state |
 | `cache/manifest.last-good.json` | Last successfully applied effective, channel-projected manifest for offline recovery |
+| `cache/runtime-secrets.last-good.json` | Root-only `0600` canonical union of active non-`env://` secret refs required to reproduce last-good |
 | `cache/manifest.etag`, `cache/channels.etag` | Legacy v1 cache validators; not Agent v2 authority |
-| `status/runtime-applied.json` | Agent v2 authority for one ETag, source revision, instance, generation, content identity, source provider IDs, and target-specific projected provider IDs |
+| `status/runtime-applied.json` | Root-only `0600` Agent v2 authority for one ETag, source revision, instance, generation, private recoverability content identity, source provider IDs, and target-specific projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
 | `managed-cli/bin/clawdi` | Root-only active managed CLI link used by system services |
 | `npm/` | Root-only managed CLI package prefixes and active targets |
@@ -721,10 +732,25 @@ plus Hermes'
 [`tools/mcp_tool.py` lines 1-64](https://github.com/NousResearch/hermes-agent/blob/8208fc52701332f213e6c51ebc0b610be00300de/tools/mcp_tool.py#L1-L64),
 which defines `mcp_servers` URL, header, transport, and SSE handling.
 
-Short-lived secrets belong under the runtime run directory, not in durable
-config. Offline secret recovery uses only the existing root-only,
-reference-scoped secret cache. The complete plaintext bundle is never cached.
+Short-lived consumer projections belong under the runtime run directory, not
+in durable config. The runtime-user aggregate continues to exclude refs used
+only by the egress sidecar; the egress identity receives those refs through its
+separate ephemeral `0600` file. Offline recovery uses the root-only persistent
+cache to reconstruct both projections exactly. The applied content identity is
+computed from the same canonical recoverable union, and any missing or changed
+cached value fails closed. The complete transport bundle is never cached.
 Status and diagnostic output must redact secrets.
+
+The recoverability content identity hashes the canonical secret union and is
+therefore private verifier material, not a public integrity checksum. In hosted
+operation only root-side init/apply and the root system services
+`clawdi-runtime-watch` and `clawdi-daemon` consume that file; runtime-user units
+and the ordinary `runtime status`/`runtime doctor` paths do not. Readers repair
+a legacy world-readable mode (and, when root, legacy ownership) only when it is
+not already secure, and fail closed if the file cannot be secured. Status and
+observation payloads omit the private identity; when a non-v2 fixture has no
+transport ETag or source revision, its public fallback revision hashes only the
+manifest.
 
 ## Command And Launch Model
 
@@ -923,7 +949,9 @@ fallback for environments that reject custom WebSocket subprotocols.
   errors.
 - Use ETags for remote refreshes where the datasource supports them.
 - Offline boot is allowed only when `recovery.allowOfflineBoot` is true and the
-  cached manifest does not require missing secret values.
+  cached manifest does not require missing secret values. Its root-only secret
+  cache must reproduce the applied canonical secret union exactly, including
+  active egress-only refs; missing or stale values enter repair instead.
 - `runtime status --json` and `runtime doctor --json` should surface enough
   state to distinguish manifest fetch failures, manifest rejection, degraded
   offline boot, install failures, and disabled runtimes.

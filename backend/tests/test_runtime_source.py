@@ -111,7 +111,7 @@ def _batch(
         id=PROVIDER_ROW_ID,
         owner_user_id=USER_ID,
         provider_id="managed",
-        type="openai",
+        type="custom_openai_compatible",
         label=provider_label,
         base_url="https://provider.test/v1",
         api_mode="openai_chat",

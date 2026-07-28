@@ -21,6 +21,7 @@ import {
 	commitRuntimeAppliedState,
 	runtimeAppliedContentIdentity,
 	runtimeInit,
+	runtimePublicContentRevision,
 	runtimeWatch,
 } from "../src/commands/runtime";
 import {
@@ -1455,7 +1456,7 @@ describe("host policy", () => {
 });
 
 describe("runtime applied content identity", () => {
-	it("changes when fixture secret values rotate without an ETag", () => {
+	it("keeps low-entropy secret rotation private when a fixture has no ETag", () => {
 		const manifest: RuntimeManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "dep_identity",
@@ -1464,7 +1465,12 @@ describe("runtime applied content identity", () => {
 			generation: 1,
 			issuedAt: "2026-07-13T00:00:00.000Z",
 			controlPlane: { apiUrl: "https://cloud-api.test" },
-			runtimes: {},
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					run: { secretEnv: { OPENAI_API_KEY: "provider.default.apiKey" } },
+				},
+			},
 			recovery: {},
 		};
 		const load = (secret: string): RuntimeManifestLoad => ({
@@ -1476,8 +1482,11 @@ describe("runtime applied content identity", () => {
 			offline: false,
 		});
 
-		expect(runtimeAppliedContentIdentity(load("sk-one")).sha256).not.toBe(
-			runtimeAppliedContentIdentity(load("sk-two")).sha256,
+		expect(runtimeAppliedContentIdentity(load("000000")).sha256).not.toBe(
+			runtimeAppliedContentIdentity(load("000001")).sha256,
+		);
+		expect(runtimePublicContentRevision(load("000000"))).toBe(
+			runtimePublicContentRevision(load("000001")),
 		);
 	});
 });
@@ -2122,6 +2131,70 @@ describe("runtime manifest datasource", () => {
 		expect("errors" in loaded).toBe(true);
 		if (!("errors" in loaded)) throw new Error("expected missing fixture secret rejection");
 		expect(loaded.errors.join("\n")).toContain("fixture references secretValues");
+	});
+
+	it("resolves required fixture secrets across aliases and env refs while rejecting empties", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const packageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-0.13.0-test.tgz";
+		process.env.HOME = home;
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths({ mode: "hosted" });
+		const loadFixture = async (
+			name: string,
+			providerSecretRef: string | undefined,
+			secretValues: Record<string, string>,
+		) => {
+			const manifestPath = join(root, `${name}.json`);
+			const fixture = hostedCliManifestResponse(
+				home,
+				packageSpec,
+				providerSecretRef ? { providerSecretRef } : {},
+			);
+			writeFileSync(
+				manifestPath,
+				JSON.stringify({
+					...fixture,
+					secretValues: { ...TEST_HOSTED_CODEX_SECRET_VALUES, ...secretValues },
+				}),
+			);
+			return loadRuntimeManifest(paths, { manifestPath });
+		};
+
+		const rawFromCanonical = await loadFixture(
+			"raw-ref-canonical-value",
+			"provider.default.apiKey",
+			{ "secret://provider.default.apiKey": "sk-canonical" },
+		);
+		expect("manifest" in rawFromCanonical).toBe(true);
+
+		const canonicalFromRaw = await loadFixture(
+			"canonical-ref-raw-value",
+			"secret://provider.default.apiKey",
+			{ "provider.default.apiKey": "sk-raw" },
+		);
+		expect("manifest" in canonicalFromRaw).toBe(true);
+
+		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token-from-env";
+		const fromEnv = await loadFixture("env-ref", undefined, {});
+		expect("manifest" in fromEnv).toBe(true);
+
+		const emptyBundleValue = await loadFixture("empty-bundle-value", "provider.default.apiKey", {
+			"secret://provider.default.apiKey": "",
+		});
+		expect("errors" in emptyBundleValue).toBe(true);
+		if (!("errors" in emptyBundleValue)) throw new Error("expected empty bundle secret failure");
+		expect(emptyBundleValue.errors.join("\n")).toContain("fixture references secretValues");
+
+		process.env.OPENCLAW_GATEWAY_TOKEN = "";
+		const emptyEnvValue = await loadFixture("empty-env-value", undefined, {
+			"env://OPENCLAW_GATEWAY_TOKEN": "must-not-substitute-bundle-value",
+		});
+		expect("errors" in emptyEnvValue).toBe(true);
+		if (!("errors" in emptyEnvValue)) throw new Error("expected empty env secret failure");
+		expect(emptyEnvValue.errors.join("\n")).toContain("fixture references secretValues");
 	});
 
 	for (const packageSpec of [
@@ -8980,8 +9053,8 @@ exit 64
 			expect(cachedSecretsText).toContain("placeholder-token");
 			expect(cachedSecretsText).toContain("999999999:");
 			expect(cachedSecretsText).toContain("clawdi_");
-			expect(cachedSecretsText).not.toContain("agent-token-init");
-			expect(cachedSecretsText).not.toContain("discord-agent-token-init");
+			expect(cachedSecretsText).toContain("agent-token-init");
+			expect(cachedSecretsText).toContain("discord-agent-token-init");
 			const profileBundleText = readFileSync(
 				join(state, "config", "egress", "profiles.json"),
 				"utf-8",
@@ -12094,10 +12167,9 @@ exit 64
 				"sk-runtime",
 			);
 			expectExistingFileNotToContain(join(run, "secrets", "runtime-secrets.json"), "sk-runtime");
-			expectExistingFileNotToContain(
-				join(state, "cache", "runtime-secrets.last-good.json"),
-				"sk-runtime",
-			);
+			expect(
+				readFileSync(join(state, "cache", "runtime-secrets.last-good.json"), "utf-8"),
+			).toContain("sk-runtime");
 			expect(convergence.outputs.processManager).toBe("systemd");
 			expect(convergence.outputs.systemdSystemUnits).toEqual([
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),

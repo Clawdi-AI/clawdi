@@ -43,7 +43,7 @@
 				"kind": "openai-compatible",
 				"managed_by": "clawdi",
 				"runtimeEnvName": "OPENAI_API_KEY",
-				"type": "openai"
+				"type": "custom_openai_compatible"
 			}
 		},
 		"recovery": {
@@ -116,7 +116,7 @@
 					"kind": "openai-compatible",
 					"managed_by": "clawdi",
 					"runtimeEnvName": "OPENAI_API_KEY",
-					"type": "openai"
+					"type": "custom_openai_compatible"
 				},
 				"provider_id": "managed"
 			}

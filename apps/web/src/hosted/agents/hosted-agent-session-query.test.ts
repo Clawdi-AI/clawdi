@@ -19,12 +19,43 @@ const sharedSessionQuerySource = readFileSync(
 );
 
 describe("hosted agent sessions refresh", () => {
-	test("blocks initial errors but preserves stale data after a background error", () => {
+	test("preserves successful data and stays non-blocking after a refetch error", async () => {
 		const error = new Error("background refresh failed");
-		expect(shouldBlockHostedSessionsError(error, false)).toBe(true);
-		expect(shouldBlockHostedSessionsError(error, true)).toBe(false);
-		expect(shouldBlockHostedSessionsError(null, false)).toBe(false);
-		expect(shouldBlockHostedSessionsError(undefined, true)).toBe(false);
+		const cachedData = { items: [{ id: "session-1" }], total: 1 };
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		let calls = 0;
+		const observer = new QueryObserver(queryClient, {
+			queryKey: ["test", "hosted-sessions-refetch-error"],
+			queryFn: async () => {
+				calls += 1;
+				if (calls === 1) return cachedData;
+				throw error;
+			},
+		});
+		let resolveFirstSuccess = (_result: ReturnType<typeof observer.getCurrentResult>) => {};
+		const firstSuccess = new Promise<ReturnType<typeof observer.getCurrentResult>>((resolve) => {
+			resolveFirstSuccess = resolve;
+		});
+		const unsubscribe = observer.subscribe((result) => {
+			if (result.isSuccess && !result.isFetching) resolveFirstSuccess(result);
+		});
+
+		try {
+			const first = await firstSuccess;
+			expect(first.data).toEqual(cachedData);
+			expect(first.isSuccess).toBe(true);
+
+			const second = await observer.refetch();
+			expect(calls).toBe(2);
+			expect(second.data).toEqual(cachedData);
+			expect(second.error).toBe(error);
+			expect(second.isRefetchError).toBe(true);
+			expect(shouldBlockHostedSessionsError(second.error, second.data !== undefined)).toBe(false);
+			expect(shouldBlockHostedSessionsError(error, false)).toBe(true);
+		} finally {
+			unsubscribe();
+			queryClient.clear();
+		}
 	});
 
 	test("polls only while an observer is mounted in the foreground", async () => {
@@ -84,11 +115,6 @@ describe("hosted agent sessions refresh", () => {
 		expect(componentSource).toContain("...HOSTED_AGENT_SESSIONS_REFRESH_POLICY");
 		expect(parentComponentSource).not.toContain("...HOSTED_AGENT_SESSIONS_REFRESH_POLICY");
 		expect(sharedSessionQuerySource).not.toContain("refetchInterval");
-		expect(componentSource).toContain("placeholderData: keepPreviousData");
-		expect(componentSource).toContain(
-			"shouldBlockHostedSessionsError(sessions.error, sessions.data !== undefined)",
-		);
-		expect(componentSource).toContain("onRetry={() => sessions.refetch()}");
 		expect(componentSource).toContain("page={page}");
 		expect(componentSource).toContain("pageSize={pageSize}");
 		expect(componentSource).toContain("onPageChange={setPage}");

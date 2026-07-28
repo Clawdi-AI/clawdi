@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { chmodSync, chownSync, existsSync, readFileSync, statSync } from "node:fs";
 import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
@@ -93,6 +93,7 @@ export function runtimeContentSha256(value: unknown): string {
 export function readRuntimeAppliedState(paths: RuntimePaths): RuntimeAppliedState | null {
 	if (!existsSync(paths.appliedState)) return null;
 	try {
+		secureRuntimeAppliedStateFile(paths.appliedState);
 		const raw = JSON.parse(readFileSync(paths.appliedState, "utf-8")) as unknown;
 		const parsed = runtimeAppliedStateSchema.safeParse(raw);
 		return parsed.success ? parsed.data : null;
@@ -107,10 +108,18 @@ export function writeRuntimeAppliedState(
 ): string {
 	const parsed = runtimeAppliedStateSchema.parse(state);
 	writePrivateFileAtomic(paths.appliedState, `${JSON.stringify(parsed, null, 2)}\n`, {
-		mode: 0o644,
+		mode: 0o600,
 		dirMode: 0o755,
 	});
+	secureRuntimeAppliedStateFile(paths.appliedState);
 	return paths.appliedState;
+}
+
+function secureRuntimeAppliedStateFile(path: string): void {
+	if (typeof process.getuid !== "function") return;
+	const stat = statSync(path);
+	if ((stat.mode & 0o777) !== 0o600) chmodSync(path, 0o600);
+	if (process.getuid() === 0 && (stat.uid !== 0 || stat.gid !== 0)) chownSync(path, 0, 0);
 }
 
 function canonicalize(value: unknown): unknown {
