@@ -83,6 +83,7 @@ import {
 	hostedMcpServerDesiredStateSchema,
 } from "./manifest-resources";
 import {
+	envSecretRefName,
 	isEnvSecretRef,
 	normalizeSecretValues,
 	runtimeSecretValue as resolveRuntimeSecretValue,
@@ -106,7 +107,7 @@ import {
 	hasEnabledEgressProfiles,
 	writeEgressProfileBundle,
 } from "./egress-profiles";
-import type { RuntimeManifestLoad } from "./manifest-source";
+import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { ensureRuntimeMitmproxy, type RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import type { RuntimePaths } from "./paths";
 import { detectRuntimeMode } from "./paths";
@@ -4448,12 +4449,13 @@ function writeSystemdProgramEnvironment(input: {
 	name: string;
 	owner: "root" | "runtime-user";
 	env: Record<string, string>;
+	revisionEnv?: Record<string, string>;
 }): { envFile: string; envRevision: string } {
 	return {
 		envFile: writeSystemdEnvironmentFile(input),
 		envRevision: revisionHash({
 			systemdEnvironmentFile: "v1",
-			env: input.env,
+			env: input.revisionEnv ?? input.env,
 		}),
 	};
 }
@@ -4468,6 +4470,7 @@ function writeSystemdUnit(input: {
 	args: string[];
 	cwd: string;
 	env: Record<string, string>;
+	revisionEnv?: Record<string, string>;
 	unitEnv?: Record<string, string>;
 	serviceType?: "simple" | "oneshot" | "notify";
 	restart?: boolean;
@@ -4483,6 +4486,7 @@ function writeSystemdUnit(input: {
 		name: input.name,
 		owner: input.owner,
 		env: input.env,
+		revisionEnv: input.revisionEnv,
 	});
 	const lines = [
 		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
@@ -4914,6 +4918,7 @@ function writeSystemdUnits(
 		readRuntimeApplyIdentityFromEnv(),
 	);
 	if (daemonAuthTokenFile) {
+		const watchSecretEnvironment = runtimeWatchSecretEnvironment(runtimePrograms);
 		systemUnits.push(
 			writeSystemdSystemUnit({
 				paths,
@@ -4925,7 +4930,17 @@ function writeSystemdUnits(
 				env: {
 					...commonEnvironment,
 					...applyIdentityEnvironment,
-					...runtimeWatchSecretEnvironment(runtimePrograms),
+					...watchSecretEnvironment,
+					CLAWDI_AUTH_TOKEN: "",
+				},
+				// Unit files are 0644. Hash only secret destination names into their
+				// revision so the unit cannot become an offline verifier for values.
+				// A running watcher acquires rotated values only after the platform
+				// reinjects its environment and restarts it.
+				revisionEnv: {
+					...commonEnvironment,
+					...applyIdentityEnvironment,
+					...Object.fromEntries(Object.keys(watchSecretEnvironment).map((name) => [name, ""])),
 					CLAWDI_AUTH_TOKEN: "",
 				},
 			}),

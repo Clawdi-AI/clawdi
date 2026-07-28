@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
 	chmodSync,
 	existsSync,
@@ -17,6 +18,7 @@ import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 
 const originalEnv = { ...process.env };
+const originalConsoleWarn = console.warn;
 const tempRoots: string[] = [];
 
 function tempRuntimePaths(): RuntimePaths {
@@ -124,6 +126,7 @@ exit ${input.exitCode ?? 0}
 
 afterEach(() => {
 	process.env = { ...originalEnv };
+	console.warn = originalConsoleWarn;
 	for (const root of tempRoots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -294,7 +297,13 @@ describe("runtime manifest services", () => {
 		const paths = tempRuntimePaths();
 		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "dashboard-password";
 		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "dashboard-session-secret";
+		process.env.RUNTIME_SOURCE_TOKEN = "runtime-source-token";
+		process.env.UNRELATED_RUNTIME_SECRET = "must-not-be-exposed";
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const warnings: string[] = [];
+		console.warn = (...values: unknown[]) => {
+			warnings.push(values.map(String).join(" "));
+		};
 		const manifest: RuntimeManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			runtime: "hermes",
@@ -321,7 +330,13 @@ describe("runtime manifest services", () => {
 			runtimes: {
 				hermes: {
 					enabled: true,
-					run: runSettings("hermes", ["gateway", "run", "--replace"]),
+					run: {
+						...runSettings("hermes", ["gateway", "run", "--replace"]),
+						secretEnv: {
+							RUNTIME_TARGET_TOKEN: "env://RUNTIME_SOURCE_TOKEN",
+							RUNTIME_BUNDLE_TOKEN: "secret://runtime/token",
+						},
+					},
 					services: {
 						dashboard: runSettings("hermes", [
 							"dashboard",
@@ -341,6 +356,10 @@ describe("runtime manifest services", () => {
 			source: "fixture-file",
 			sourcePath: "inline-hermes-single",
 			offline: false,
+			secretValues: {
+				"secret://runtime/token": "bundle-runtime-token",
+				"secret://unrelated": "unrelated-inline-secret",
+			},
 		};
 
 		const result = convergeRuntimeManifest(load, paths);
@@ -373,18 +392,63 @@ describe("runtime manifest services", () => {
 			join(paths.systemdEnvRoot, "clawdi-hermes-dashboard.service.env"),
 			"utf8",
 		);
+		const gatewayEnv = readFileSync(
+			join(paths.systemdEnvRoot, "hermes-gateway.service.env"),
+			"utf8",
+		);
 		const watchEnv = readFileSync(
 			join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
 			"utf8",
 		);
+		const watchUnitPath = join(paths.systemdSystemRoot, "clawdi-runtime-watch.service");
+		const watchUnit = readFileSync(watchUnitPath, "utf8");
+		const watchEnvPath = join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env");
+		const watchEnvStat = statSync(watchEnvPath);
 		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_USERNAME="admin"');
 		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"');
 		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"');
 		expect(dashboardEnv).toContain(
 			'HERMES_DASHBOARD_PUBLIC_URL="https://agent.example.test/hermes"',
 		);
+		expect(gatewayEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
+		expect(gatewayEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
 		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"');
 		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"');
+		expect(watchEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
+		expect(watchEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
+		expect(watchEnv).not.toContain("RUNTIME_SOURCE_TOKEN");
+		expect(watchEnv).not.toContain("must-not-be-exposed");
+		expect(watchEnv).not.toContain("UNRELATED_RUNTIME_SECRET");
+		expect(watchEnv).not.toContain("unrelated-inline-secret");
+		expect(watchUnit).toContain(`EnvironmentFile=${watchEnvPath}`);
+		for (const secret of [
+			"dashboard-password",
+			"dashboard-session-secret",
+			"runtime-source-token",
+			"bundle-runtime-token",
+		]) {
+			expect(watchUnit).not.toContain(secret);
+		}
+		expect(watchEnvStat.mode & 0o777).toBe(0o600);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(watchEnvStat.uid).toBe(0);
+			expect(watchEnvStat.gid).toBe(0);
+			if (process.platform === "linux") {
+				const nonRootRead = spawnSync(
+					"setpriv",
+					["--reuid=65534", "--regid=65534", "--clear-groups", "cat", watchEnvPath],
+					{ encoding: "utf8" },
+				);
+				expect(nonRootRead.error).toBeUndefined();
+				expect(nonRootRead.status).not.toBe(0);
+				expect(nonRootRead.stdout).not.toContain("dashboard-password");
+			}
+		}
+		const convergenceDiagnostics = JSON.stringify(result);
+		expect(convergenceDiagnostics).not.toContain("dashboard-password");
+		expect(convergenceDiagnostics).not.toContain("dashboard-session-secret");
+		expect(convergenceDiagnostics).not.toContain("runtime-source-token");
+		expect(convergenceDiagnostics).not.toContain("bundle-runtime-token");
 		const hermesConfig = readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8");
 		expect(hermesConfig).toContain("basic_auth:");
 		expect(hermesConfig).toContain("username: admin");
@@ -395,6 +459,108 @@ describe("runtime manifest services", () => {
 		expect(hermesConfig).not.toContain("dashboard-password");
 		expect(hermesConfig).not.toContain("dashboard-session-secret");
 		expect(existsSync(runtimeRunConfigPath("openclaw", paths))).toBe(false);
+
+		// Changing process.env here models platform reinjection before a watcher
+		// restart. A running watcher cannot acquire a newly injected or rotated
+		// source variable by rewriting its EnvironmentFile.
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "rotated-dashboard-password";
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "rotated-dashboard-session-secret";
+		process.env.RUNTIME_SOURCE_TOKEN = "rotated-runtime-source-token";
+		const rotated = convergeRuntimeManifest(load, paths);
+		expect(rotated.installErrors).toEqual([]);
+		const rotatedWatchEnv = readFileSync(watchEnvPath, "utf8");
+		const rotatedWatchUnit = readFileSync(watchUnitPath, "utf8");
+		expect(rotatedWatchEnv).toContain(
+			'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="rotated-dashboard-password"',
+		);
+		expect(rotatedWatchEnv).toContain(
+			'HERMES_DASHBOARD_BASIC_AUTH_SECRET="rotated-dashboard-session-secret"',
+		);
+		expect(rotatedWatchEnv).toContain('RUNTIME_TARGET_TOKEN="rotated-runtime-source-token"');
+		expect(rotatedWatchEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
+		expect(rotatedWatchEnv).not.toContain(
+			'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"',
+		);
+		expect(rotatedWatchEnv).not.toContain(
+			'HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"',
+		);
+		expect(rotatedWatchEnv).not.toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
+		// Value-only rotation must not alter the public unit or its revision.
+		expect(rotatedWatchUnit).toBe(watchUnit);
+		expect(rotatedWatchUnit).not.toContain("runtime-source-token");
+		expect(rotatedWatchUnit).not.toContain("rotated-runtime-source-token");
+		expect(rotatedWatchUnit).not.toContain("dashboard-password");
+		expect(rotatedWatchUnit).not.toContain("rotated-dashboard-password");
+		expect(warnings.join("\n")).not.toContain("runtime-source-token");
+		expect(warnings.join("\n")).not.toContain("rotated-runtime-source-token");
+		expect(warnings.join("\n")).not.toContain("dashboard-password");
+		expect(warnings.join("\n")).not.toContain("rotated-dashboard-password");
+
+		const sourceChangedManifest = structuredClone(manifest);
+		const sourceChangedRun = sourceChangedManifest.runtimes.hermes?.run;
+		if (!sourceChangedRun?.secretEnv) throw new Error("expected Hermes secret env");
+		process.env.NEXT_RUNTIME_SOURCE_TOKEN = "next-runtime-source-value";
+		sourceChangedRun.secretEnv.RUNTIME_TARGET_TOKEN = "env://NEXT_RUNTIME_SOURCE_TOKEN";
+		const sourceChanged = convergeRuntimeManifest(
+			{ ...load, manifest: sourceChangedManifest },
+			paths,
+		);
+		expect(sourceChanged.installErrors).toEqual([]);
+		const sourceChangedWatchEnv = readFileSync(watchEnvPath, "utf8");
+		const sourceChangedWatchUnit = readFileSync(watchUnitPath, "utf8");
+		expect(sourceChangedWatchEnv).toContain('RUNTIME_TARGET_TOKEN="next-runtime-source-value"');
+		expect(sourceChangedWatchEnv).not.toContain("NEXT_RUNTIME_SOURCE_TOKEN");
+		// The public unit binds only destination names. Source and value changes
+		// stay in the root-only EnvironmentFile instead of creating a verifier.
+		expect(sourceChangedWatchUnit).toBe(rotatedWatchUnit);
+		expect(sourceChangedWatchUnit).not.toContain("next-runtime-source-value");
+		expect(warnings.join("\n")).not.toContain("next-runtime-source-value");
+	});
+
+	test("fails closed when a manifest-referenced env secret source is missing", () => {
+		const paths = tempRuntimePaths();
+		delete process.env.RUNTIME_WATCH_REQUIRED_SECRET;
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "hdep_watch_missing_secret",
+			environmentId: "env_watch_missing_secret",
+			instanceId: "hri_watch_missing_secret",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			runtimes: {
+				openclaw: {
+					enabled: true,
+					run: {
+						...runSettings("openclaw", ["gateway", "run"]),
+						secretEnv: {
+							RUNTIME_TARGET_SECRET: "env://RUNTIME_WATCH_REQUIRED_SECRET",
+						},
+					},
+					services: {},
+				},
+			},
+			recovery: {},
+		};
+
+		const result = convergeRuntimeManifest(
+			{
+				manifest,
+				source: "fixture-file",
+				sourcePath: "inline-watch-missing-secret",
+				offline: false,
+				secretValues: {
+					"env://RUNTIME_WATCH_REQUIRED_SECRET": "must-not-substitute-bundle-value",
+				},
+			},
+			paths,
+		);
+
+		expect(result.installErrors).toContain(
+			"runtime apply failed: " +
+				"Runtime secret env://RUNTIME_WATCH_REQUIRED_SECRET for RUNTIME_TARGET_SECRET is unavailable.",
+		);
+		expect(existsSync(join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"))).toBe(false);
 	});
 
 	test("merges watcher secret environments deterministically and fails closed on conflicts", () => {

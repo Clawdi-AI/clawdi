@@ -3,7 +3,7 @@
  *
  * Hosted sync design requirement: session push is "write-on-detect
  * with file-stable debounce". Push happens after a file has been quiescent for
- * `STABLE_AFTER_MS` so we don't upload half-written transcripts
+ * `SESSION_STABLE_AFTER_MS` so we don't upload half-written transcripts
  * mid-conversation.
  *
  * One watcher per adapter. Adapters return a list of paths via
@@ -31,7 +31,7 @@ import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { log, toErrorMessage } from "./log";
 
-interface Opts {
+export interface SessionWatcherOptions {
 	paths: string[];
 	abort: AbortSignal;
 	onPathStable: () => void;
@@ -42,20 +42,21 @@ interface Opts {
 // before we consider the session log "ready to push". Shorter ⇒
 // more frequent partial pushes (and the next push catches up
 // anyway, this is just for politeness). 30s matches the spec's
-// "file-stable debounce" cadence and is short enough that the
-// dashboard shows new sessions within a minute of completion.
-const STABLE_AFTER_MS = 30_000;
+// "file-stable debounce" cadence. Upload detection and dashboard
+// refresh have separate schedules, so neither implies a visibility SLA.
+export const SESSION_STABLE_AFTER_MS = 30_000;
 
-// Polling fallback cadence. Longer than the skill watcher's
-// (60s vs 30s) because session files mutate constantly during a
-// live conversation; we don't want to wake every 30s for every
-// keystroke. The stable-window is what gates the actual push.
-const POLL_INTERVAL_MS = 60_000;
+// Idle polling remains deliberately less frequent than the skill
+// watcher because session files mutate constantly during a live
+// conversation. Once a change is observed, pollSessionPaths schedules a
+// follow-up at the exact quiescence deadline instead of waiting
+// for another full idle interval.
+export const SESSION_IDLE_POLL_INTERVAL_MS = 60_000;
 
-export async function watchSessions(opts: Opts): Promise<void> {
+export async function watchSessions(opts: SessionWatcherOptions): Promise<void> {
 	if (opts.forcePoll) {
 		log.info("sessions_watcher.mode", { mode: "poll", reason: "forced" });
-		await pollLoop(opts);
+		await pollSessionPaths(opts);
 		return;
 	}
 	try {
@@ -65,11 +66,11 @@ export async function watchSessions(opts: Opts): Promise<void> {
 			error: toErrorMessage(e),
 			fallback: "poll",
 		});
-		await pollLoop(opts);
+		await pollSessionPaths(opts);
 	}
 }
 
-async function fsWatchLoop(opts: Opts): Promise<void> {
+async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
 	const watchers: ReturnType<typeof watch>[] = [];
 	let stableTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -78,7 +79,7 @@ async function fsWatchLoop(opts: Opts): Promise<void> {
 		stableTimer = setTimeout(() => {
 			stableTimer = null;
 			opts.onPathStable();
-		}, STABLE_AFTER_MS);
+		}, SESSION_STABLE_AFTER_MS);
 	};
 
 	let missingOrFailed = 0;
@@ -126,14 +127,14 @@ async function fsWatchLoop(opts: Opts): Promise<void> {
 				/* already closed */
 			}
 		}
-		await pollLoop(opts);
+		await pollSessionPaths(opts);
 		return;
 	}
 
 	log.info("sessions_watcher.mode", {
 		mode: "fs_events",
 		path_count: watchers.length,
-		stable_after_ms: STABLE_AFTER_MS,
+		stable_after_ms: SESSION_STABLE_AFTER_MS,
 	});
 
 	await new Promise<void>((resolve) => {
@@ -158,41 +159,61 @@ async function fsWatchLoop(opts: Opts): Promise<void> {
 /** Polling fallback. Compares per-path mtime + size signatures
  * against the previous snapshot; emits a stable event when a
  * path that previously changed has been stable for >=
- * STABLE_AFTER_MS.
+ * SESSION_STABLE_AFTER_MS.
  *
  * State per path:
  *   - lastSig: signature observed last poll
  *   - lastChangeAt: epoch ms of the most recent change (sig
  *     differed from prior). Reset to null after we emit. */
-async function pollLoop(opts: Opts): Promise<void> {
+export interface SessionPollDependencies {
+	now: () => number;
+	pathSignature: (path: string) => Promise<string>;
+	sleep: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+const defaultSessionPollDependencies: SessionPollDependencies = {
+	now: Date.now,
+	pathSignature,
+	sleep: sleepForSessionPoll,
+};
+
+export async function pollSessionPaths(
+	opts: SessionWatcherOptions,
+	dependencies: SessionPollDependencies = defaultSessionPollDependencies,
+): Promise<void> {
 	const lastSig = new Map<string, string>();
 	const lastChangeAt = new Map<string, number>();
 	for (const p of opts.paths) {
-		lastSig.set(p, await pathSignature(p));
+		lastSig.set(p, await dependencies.pathSignature(p));
 	}
 
 	log.info("sessions_watcher.mode", {
 		mode: "poll",
 		path_count: opts.paths.length,
-		poll_ms: POLL_INTERVAL_MS,
-		stable_after_ms: STABLE_AFTER_MS,
+		poll_ms: SESSION_IDLE_POLL_INTERVAL_MS,
+		stable_after_ms: SESSION_STABLE_AFTER_MS,
 	});
 
 	while (!opts.abort.aborted) {
-		await sleep(POLL_INTERVAL_MS, opts.abort);
+		const now = dependencies.now();
+		let delayMs = SESSION_IDLE_POLL_INTERVAL_MS;
+		for (const changedAt of lastChangeAt.values()) {
+			delayMs = Math.min(delayMs, Math.max(0, changedAt + SESSION_STABLE_AFTER_MS - now));
+		}
+		await dependencies.sleep(delayMs, opts.abort);
 		if (opts.abort.aborted) return;
 
-		const now = Date.now();
 		let anyStable = false;
 		for (const p of opts.paths) {
-			const cur = await pathSignature(p);
+			const cur = await dependencies.pathSignature(p);
 			const prev = lastSig.get(p) ?? "";
+			const observedAt = dependencies.now();
 			if (cur !== prev) {
 				lastSig.set(p, cur);
-				lastChangeAt.set(p, now);
+				lastChangeAt.set(p, observedAt);
 			} else {
 				const lc = lastChangeAt.get(p);
-				if (lc !== undefined && now - lc >= STABLE_AFTER_MS) {
+				if (lc !== undefined && observedAt - lc >= SESSION_STABLE_AFTER_MS) {
 					lastChangeAt.delete(p);
 					anyStable = true;
 				}
@@ -292,16 +313,42 @@ async function pathSignature(p: string): Promise<string> {
 	}
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+export interface SessionPollTimerScheduler {
+	schedule: (callback: () => void, delayMs: number) => () => void;
+}
+
+const defaultSessionPollTimerScheduler: SessionPollTimerScheduler = {
+	schedule: (callback, delayMs) => {
+		const timer = setTimeout(callback, delayMs);
+		return () => clearTimeout(timer);
+	},
+};
+
+export function sleepForSessionPoll(
+	ms: number,
+	signal: AbortSignal,
+	scheduler: SessionPollTimerScheduler = defaultSessionPollTimerScheduler,
+): Promise<void> {
+	if (signal.aborted) return Promise.resolve();
 	return new Promise((resolve) => {
-		const onAbort = () => {
-			clearTimeout(t);
-			resolve();
-		};
-		const t = setTimeout(() => {
+		let settled = false;
+		let cancelTimer = () => {};
+		const finish = () => {
+			if (settled) return;
+			settled = true;
 			signal.removeEventListener("abort", onAbort);
 			resolve();
-		}, ms);
+		};
+		const onAbort = () => {
+			cancelTimer();
+			finish();
+		};
+		cancelTimer = scheduler.schedule(finish, ms);
+		if (settled) {
+			cancelTimer();
+			return;
+		}
 		signal.addEventListener("abort", onAbort, { once: true });
+		if (signal.aborted) onAbort();
 	});
 }

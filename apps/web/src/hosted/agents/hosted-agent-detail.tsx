@@ -59,6 +59,7 @@ import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import { useDeploymentLifecycle, useUpdateDeployment } from "@/hosted/agents/deployment-hooks";
+import { HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS } from "@/hosted/agents/hosted-agent-session-query";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
@@ -762,6 +763,9 @@ function HostedAgentSessionsTab({
 		...sessionListQueryOptions(api, { environment_id: environmentId, page, page_size: pageSize }),
 		enabled: enabled && isCloudEnvId(environmentId),
 		placeholderData: keepPreviousData,
+		// staleTime only controls freshness; this mounted-tab observer owns visibility refreshes.
+		refetchInterval: HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS,
+		refetchIntervalInBackground: false,
 	});
 	const total = sessions.data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / pageSize));

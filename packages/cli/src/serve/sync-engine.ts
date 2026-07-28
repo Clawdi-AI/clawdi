@@ -695,7 +695,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	};
 
 	// Triggered by the sessions watcher after a path has been
-	// quiet for `STABLE_AFTER_MS`. Re-enumerates the adapter's
+	// quiet for the session watcher's stable window. Re-enumerates the adapter's
 	// sessions, hashes each, and enqueues a `session_push` for any
 	// whose content_hash has changed since we last pushed. The
 	// watcher itself doesn't know which session changed; this

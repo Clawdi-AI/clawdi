@@ -987,7 +987,7 @@ function loadCachedSecretValues(
 	}
 }
 
-function manifestSecretRefs(manifest: RuntimeManifest): string[] {
+export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 	const refs = new Set<string>();
 	collectSecretRefs(manifest, refs);
 	return [...refs].sort();
