@@ -37,15 +37,11 @@ function targetsCleanPublishedEndpoint(credentialUrl: string, endpointUrl: strin
 	}
 }
 
-function hasCurrentRolloutIdentity(
+function hasCurrentDeploymentResourceVersion(
 	credentials: RuntimeUiCredentials,
 	deploymentResourceVersion: string,
 ): boolean {
-	return (
-		Number.isSafeInteger(credentials.access_revision) &&
-		credentials.access_revision >= 1 &&
-		credentials.deployment_resource_version === deploymentResourceVersion
-	);
+	return credentials.deployment_resource_version === deploymentResourceVersion;
 }
 
 export function resolveRuntimeUiCredentials(
@@ -55,7 +51,7 @@ export function resolveRuntimeUiCredentials(
 ): RuntimeUiCredentials | null {
 	if (
 		!isRuntimeUiCredentials(credentials) ||
-		!hasCurrentRolloutIdentity(credentials, deploymentResourceVersion) ||
+		!hasCurrentDeploymentResourceVersion(credentials, deploymentResourceVersion) ||
 		!targetsCleanPublishedEndpoint(credentials.url, endpointUrl)
 	) {
 		return null;

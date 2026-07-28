@@ -1453,8 +1453,6 @@ export interface components {
             runtime: "hermes";
             /** Url */
             url: string;
-            /** Access Revision */
-            access_revision: number;
             /** Deployment Resource Version */
             deployment_resource_version: string;
             /**
@@ -1813,8 +1811,6 @@ export interface components {
             runtime: "openclaw";
             /** Url */
             url: string;
-            /** Access Revision */
-            access_revision: number;
             /** Deployment Resource Version */
             deployment_resource_version: string;
             /**

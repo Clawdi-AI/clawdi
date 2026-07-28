@@ -1325,7 +1325,6 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				body: {
 					runtime: "hermes",
 					url: "https://runtime.example/hermes",
-					access_revision: 1,
 					deployment_resource_version: `rv_${deploymentId}`,
 					auth_mode: "password",
 					username: "admin",
@@ -2463,7 +2462,6 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 				body: {
 					runtime: "hermes",
 					url: "https://runtime.example/hermes",
-					access_revision: 1,
 					deployment_resource_version: "rv_hdep_running_projection",
 					auth_mode: "password",
 					username: "admin",
@@ -2509,7 +2507,6 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 				body: {
 					runtime: "openclaw",
 					url: "https://runtime.example/openclaw/",
-					access_revision: 1,
 					deployment_resource_version: "rv_hdep_openclaw_included",
 					auth_mode: "openclaw_token",
 					token: "gateway-token",
@@ -2545,7 +2542,10 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 	expect(popup).toBeDefined();
 	await page.keyboard.press("Escape");
 	await expect(dialog).toHaveCount(0);
-	await expect(iframe).toHaveAttribute("src", "about:blank");
+	await expect(iframe).toHaveAttribute(
+		"src",
+		"https://runtime.example/openclaw/#token=gateway-token",
+	);
 	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
 });
 

@@ -361,7 +361,6 @@ describe("declarative deployment mutations", () => {
 				runtime: "openclaw",
 				auth_mode: "openclaw_token",
 				url: "https://runtime.example/openclaw/",
-				access_revision: 4,
 				deployment_resource_version: "rv-runtime-ui",
 				token: "gateway-token",
 				handoff_url: "https://runtime.example/openclaw/#token=gateway-token",

@@ -525,7 +525,7 @@ export function HostedAgentDetail({
 			consoleUrl &&
 			canOpenHostedRuntimeUi(deploymentStatus, consoleUrl) ? (
 			<Button
-				render={<Link to={agentSectionHref(environmentId, "console", searchStr)} />}
+				render={<Link to={agentSectionHref(environmentId, "console", routeSearch)} />}
 				nativeButton={false}
 				variant="outline"
 				size="sm"
@@ -1462,13 +1462,9 @@ function RuntimeUiAccessDialog({
 	const handleOpenChange = useCallback(
 		(nextOpen: boolean) => {
 			setOpen(nextOpen);
-			if (nextOpen) {
-				if (!credentials && !isLoading) void loadCredentials();
-			} else {
-				clearSensitiveState();
-			}
+			if (nextOpen && !credentials && !isLoading) void loadCredentials();
 		},
-		[clearSensitiveState, credentials, isLoading, loadCredentials],
+		[credentials, isLoading, loadCredentials],
 	);
 
 	const openRuntime = useCallback(() => {

@@ -58,9 +58,6 @@ export function isRuntimeUiCredentials(value: unknown): value is RuntimeUiCreden
 	if (
 		!isRecord(value) ||
 		typeof value.url !== "string" ||
-		typeof value.access_revision !== "number" ||
-		!Number.isSafeInteger(value.access_revision) ||
-		value.access_revision < 1 ||
 		typeof value.deployment_resource_version !== "string" ||
 		!value.deployment_resource_version
 	) {
