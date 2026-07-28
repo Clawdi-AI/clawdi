@@ -22,6 +22,13 @@ function updatePermissionBits(hash: ReturnType<typeof createHash>, mode: number)
 	hash.update(encoded);
 }
 
+export function canonicalManagedBundleFileMode(mode: number): 0o644 | 0o755 {
+	if (!Number.isSafeInteger(mode) || mode < 0 || mode > 0o777) {
+		throw new Error(`invalid regular-file permission bits: ${mode}`);
+	}
+	return (mode & 0o111) !== 0 ? 0o755 : 0o644;
+}
+
 /** Hash a deterministic regular-file tree with unambiguous path/mode/content framing. */
 export function computeManagedBundleHash(entries: readonly ManagedBundleHashEntry[]): string {
 	const sorted = [...entries].sort((left, right) =>
@@ -36,7 +43,7 @@ export function computeManagedBundleHash(entries: readonly ManagedBundleHashEntr
 		}
 		previousPath = entry.relativePath;
 		updateLengthPrefixed(hash, Buffer.from(entry.relativePath, "utf-8"));
-		updatePermissionBits(hash, entry.mode);
+		updatePermissionBits(hash, canonicalManagedBundleFileMode(entry.mode));
 		updateLengthPrefixed(hash, entry.content);
 	}
 	return hash.digest("hex");

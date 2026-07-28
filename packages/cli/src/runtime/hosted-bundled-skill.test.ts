@@ -112,15 +112,25 @@ describe("hosted bundled skill reconciliation", () => {
 		);
 	});
 
-	it("replaces target regular-file permission drift", () => {
+	it("repairs target group-write drift to the canonical mode", () => {
 		expect(reconcile()).toBe("replaced");
 		const targetSkill = join(targetDir, "SKILL.md");
-		const sourceMode = statSync(join(bundledSourceDir, "SKILL.md")).mode & 0o777;
-		const driftMode = sourceMode === 0o755 ? 0o644 : 0o755;
-		chmodSync(targetSkill, driftMode);
+		chmodSync(targetSkill, 0o664);
 
 		expect(reconcile()).toBe("replaced");
-		expect(statSync(targetSkill).mode & 0o777).toBe(sourceMode);
+		expect(statSync(targetSkill).mode & 0o777).toBe(0o644);
+	});
+
+	it("normalizes source group-write mode without changing bundle identity", () => {
+		const copiedSource = join(root, "group-write-source");
+		cpSync(bundledSourceDir, copiedSource, { recursive: true });
+		chmodSync(join(copiedSource, "SKILL.md"), 0o664);
+
+		expect(reconcile(copiedSource)).toBe("replaced");
+		expect(statSync(join(targetDir, "SKILL.md")).mode & 0o777).toBe(0o644);
+		expect(JSON.parse(readFileSync(join(targetDir, ".clawdi-managed.json"), "utf-8")).digest).toBe(
+			catalogEntry.digest,
+		);
 	});
 
 	it("fails closed when source regular-file permissions differ from the catalog", () => {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+	chmodSync,
 	cpSync,
 	existsSync,
 	lstatSync,
@@ -12,7 +13,11 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { computeManagedBundleHash, type ManagedBundleHashEntry } from "./managed-bundle-hash";
+import {
+	canonicalManagedBundleFileMode,
+	computeManagedBundleHash,
+	type ManagedBundleHashEntry,
+} from "./managed-bundle-hash";
 
 const HOSTED_BUNDLED_SKILL_MARKER = ".clawdi-managed.json";
 const HOSTED_BUNDLED_SKILL_MARKER_SCHEMA = "clawdi.hostedBundledSkillMarker.v1";
@@ -108,6 +113,7 @@ function collectHostedBundledSkillFiles(
 	currentDir: string,
 	relativeDir: string,
 	excludeMarker: boolean,
+	requireCanonicalModes: boolean,
 	files: ManagedBundleHashEntry[],
 ): void {
 	const entries = readdirSync(currentDir, { withFileTypes: true }).sort((left, right) =>
@@ -122,25 +128,58 @@ function collectHostedBundledSkillFiles(
 			throw new Error(`symbolic links are not supported in bundled hosted skills: ${path}`);
 		}
 		if (stat.isDirectory()) {
-			collectHostedBundledSkillFiles(path, relativePath, excludeMarker, files);
+			collectHostedBundledSkillFiles(
+				path,
+				relativePath,
+				excludeMarker,
+				requireCanonicalModes,
+				files,
+			);
 			continue;
 		}
 		if (stat.isFile()) {
-			files.push({ relativePath, mode: stat.mode & 0o777, content: readFileSync(path) });
+			const mode = stat.mode & 0o777;
+			if (requireCanonicalModes && mode !== canonicalManagedBundleFileMode(mode)) {
+				throw new Error(`bundled hosted skill file mode is not canonical: ${path}`);
+			}
+			files.push({ relativePath, mode, content: readFileSync(path) });
 			continue;
 		}
 		throw new Error(`unsupported file type in bundled hosted skill: ${path}`);
 	}
 }
 
-function hostedBundledSkillDigest(directory: string, excludeMarker: boolean): string {
+function hostedBundledSkillDigest(
+	directory: string,
+	excludeMarker: boolean,
+	requireCanonicalModes = false,
+): string {
 	const stat = lstatSync(directory);
 	if (!stat.isDirectory()) {
 		throw new Error(`bundled hosted skill path is not a directory: ${directory}`);
 	}
 	const files: ManagedBundleHashEntry[] = [];
-	collectHostedBundledSkillFiles(directory, "", excludeMarker, files);
+	collectHostedBundledSkillFiles(directory, "", excludeMarker, requireCanonicalModes, files);
 	return computeManagedBundleHash(files);
+}
+
+function normalizeHostedBundledSkillFileModes(currentDir: string): void {
+	for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
+		const path = join(currentDir, entry.name);
+		const stat = lstatSync(path);
+		if (stat.isSymbolicLink()) {
+			throw new Error(`symbolic links are not supported in bundled hosted skills: ${path}`);
+		}
+		if (stat.isDirectory()) {
+			normalizeHostedBundledSkillFileModes(path);
+			continue;
+		}
+		if (stat.isFile()) {
+			chmodSync(path, canonicalManagedBundleFileMode(stat.mode & 0o777));
+			continue;
+		}
+		throw new Error(`unsupported file type in bundled hosted skill: ${path}`);
+	}
 }
 
 function markerMatches(
@@ -205,7 +244,8 @@ export function reconcileHostedBundledSkill(
 	}
 	if (targetExists && markerMatches(readHostedBundledSkillMarker(input.targetDir), marker)) {
 		try {
-			if (hostedBundledSkillDigest(input.targetDir, true) === marker.digest) return "unchanged";
+			if (hostedBundledSkillDigest(input.targetDir, true, true) === marker.digest)
+				return "unchanged";
 		} catch {
 			// A recognized managed target with tampered content is replaced below.
 		}
@@ -218,7 +258,12 @@ export function reconcileHostedBundledSkill(
 	const trash = join(parent, `.${basename(input.targetDir)}-trash-${process.pid}-${randomUUID()}`);
 	try {
 		cpSync(input.sourceDir, stagedTarget, { recursive: true });
-		assertHostedBundledSkillCatalogDigest(catalogEntry, stagedTarget);
+		normalizeHostedBundledSkillFileModes(stagedTarget);
+		if (hostedBundledSkillDigest(stagedTarget, false, true) !== catalogEntry.digest) {
+			throw new Error(
+				`bundled hosted skill catalog digest mismatch for ${catalogEntry.id} version ${catalogEntry.version}`,
+			);
+		}
 		writeFileSync(
 			join(stagedTarget, HOSTED_BUNDLED_SKILL_MARKER),
 			`${JSON.stringify(marker, null, 2)}\n`,
