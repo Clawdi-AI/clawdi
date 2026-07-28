@@ -67,7 +67,7 @@ describe("selfManagedAgentTiles", () => {
 
 describe("agentTileMatchesRouteId", () => {
 	it("matches hosted tiles by deployment id or projected environment id", () => {
-		const projected = env();
+		const projected = env({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
 		const tile: AgentTile = {
 			id: "hdep_paid",
 			source: "on-clawdi",
@@ -80,7 +80,32 @@ describe("agentTileMatchesRouteId", () => {
 
 		expect(agentTileMatchesRouteId(tile, "hdep_paid")).toBe(true);
 		expect(agentTileMatchesRouteId(tile, projected.id)).toBe(true);
+		expect(agentTileMatchesRouteId(tile, projected.id.toUpperCase())).toBe(true);
 		expect(agentTileMatchesRouteId(tile, "hdep_other")).toBe(false);
+	});
+
+	it("uses the deployment selector when multiple hosted tiles claim the route id", () => {
+		const projected = env({ id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" });
+		const selected: AgentTile = {
+			id: "hdep_selected",
+			source: "on-clawdi",
+			name: "Selected deployment",
+			agentType: "openclaw",
+			href: `/agents/${projected.id}?source=on-clawdi&d=hdep_selected`,
+			active: false,
+			env: null,
+		};
+		const replacement: AgentTile = {
+			...selected,
+			id: "hdep_replacement",
+			name: "Replacement deployment",
+			active: true,
+			env: projected,
+		};
+
+		expect(agentTileMatchesRouteId(selected, projected.id, "hdep_selected")).toBe(true);
+		expect(agentTileMatchesRouteId(replacement, projected.id, "hdep_selected")).toBe(false);
+		expect(agentTileMatchesRouteId(replacement, projected.id, "hdep_missing")).toBe(false);
 	});
 });
 

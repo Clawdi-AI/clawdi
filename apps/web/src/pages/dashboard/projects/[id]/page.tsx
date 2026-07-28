@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
 	ArrowLeft,
 	BookOpen,
@@ -13,7 +13,7 @@ import {
 	Plus,
 	Share2,
 } from "lucide-react";
-import { type ReactElement, type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -58,7 +58,6 @@ import {
 	DialogDescription,
 	DialogHeader,
 	DialogTitle,
-	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -79,7 +78,8 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { formatShortDate } from "@/lib/format";
 import { identityFor } from "@/lib/identity";
-import { projectDetailHref, projectResourceHref } from "@/lib/project-resource-model";
+import { type ProjectDetailSearch, projectResourceHref } from "@/lib/project-resource-model";
+import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -91,20 +91,23 @@ type ProjectRow = components["schemas"]["ProjectResponse"];
 type Member = components["schemas"]["MemberResponse"];
 type CountValue = number | "unavailable";
 
-export default function ProjectDetailPage({ projectId }: { projectId: string }) {
+export default function ProjectDetailPage({
+	projectId,
+	routeSearch,
+}: {
+	projectId: string;
+	routeSearch: ProjectDetailSearch;
+}) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const searchParams = useMemo(() => new URLSearchParams(searchStr), [searchStr]);
-	const [useWithAgentOpen, setUseWithAgentOpen] = useState(
-		searchParams.get("useWithAgent") === "1",
-	);
+	const locationOwnership = useLocationOwnership();
+	const useWithAgentOpen = routeSearch.useWithAgent === 1;
 	// Forms are progressive-disclosure (taste audit #2): content first,
 	// inputs on demand.
 	const [showInstallSkill, setShowInstallSkill] = useState(false);
 	const [showCreateVault, setShowCreateVault] = useState(false);
-	const joinedFromShare = searchParams.get("joined") === "share";
+	const joinedFromShare = routeSearch.joined === "share";
 
 	const projects = useQuery({
 		queryKey: ["projects"],
@@ -117,19 +120,15 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const isShareableProject = project ? isCustomProject(project) : false;
 	const isManaged = project ? isManagedProject(project) : false;
 
-	useEffect(() => {
-		if (searchParams.get("useWithAgent") === "1") setUseWithAgentOpen(true);
-	}, [searchParams]);
-
 	const handleUseWithAgentOpenChange = (open: boolean) => {
-		setUseWithAgentOpen(open);
-		if (!open && searchParams.get("useWithAgent") === "1") {
-			void router.navigate({
-				href: projectDetailHref(projectId),
-				replace: true,
-				resetScroll: false,
-			});
-		}
+		if (open === useWithAgentOpen) return;
+		void router.navigate({
+			to: "/projects/$id",
+			params: { id: projectId },
+			search: (current) => ({ ...current, useWithAgent: open ? 1 : undefined }),
+			replace: !open,
+			resetScroll: false,
+		});
 	};
 
 	const environments = useQuery({
@@ -217,17 +216,19 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	};
 
 	const leaveSharedProject = useMutation({
-		mutationFn: async () =>
+		mutationFn: async (_locationGeneration: number) =>
 			unwrap(
 				await api.POST("/v1/projects/{project_id}/leave", {
 					params: { path: { project_id: projectId } },
 				}),
 			),
-		onSuccess: () => {
+		onSuccess: (_data, locationGeneration) => {
 			refresh();
 			qc.invalidateQueries({ queryKey: ["agent-project-bindings"] });
 			toast.success("Left Shared Project", { description: "Membership removed." });
-			void router.navigate({ href: projectResourceHref("projects") });
+			if (locationOwnership.isCurrent(locationGeneration)) {
+				void router.navigate({ href: projectResourceHref("projects") });
+			}
 		},
 		onError: (e) => {
 			toast.error("Couldn't leave shared project", {
@@ -326,20 +327,19 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const agentCount: CountValue | undefined =
 		environments.error || boundAgents.error ? "unavailable" : boundAgents.data?.length;
 
-	const addToAgentDialog = (trigger: ReactElement) => (
+	const useWithAgentDialog = (
 		<UseProjectWithAgentDialog
 			project={project}
 			environments={environments.data ?? []}
 			isLoadingEnvironments={environments.isLoading}
 			open={useWithAgentOpen}
 			onOpenChange={handleUseWithAgentOpenChange}
-		>
-			{trigger}
-		</UseProjectWithAgentDialog>
+		/>
 	);
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6")}>
+			{useWithAgentDialog}
 			<Button
 				render={<Link to="/projects" />}
 				nativeButton={false}
@@ -374,12 +374,10 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 					</div>
 				</div>
 				<div className="flex shrink-0 items-center gap-2">
-					{addToAgentDialog(
-						<Button size="sm">
-							<Bot className="mr-1.5 size-3.5" />
-							Add to agent
-						</Button>,
-					)}
+					<Button size="sm" onClick={() => handleUseWithAgentOpenChange(true)}>
+						<Bot className="mr-1.5 size-3.5" />
+						Add to agent
+					</Button>
 					{isOwner && isShareableProject ? (
 						<ShareProjectDialog
 							projectId={project.id}
@@ -404,7 +402,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 							Skills and Vault keys are used by agents. Add this Project to an agent to make them
 							available.
 						</span>
-						<Button type="button" size="sm" onClick={() => setUseWithAgentOpen(true)}>
+						<Button type="button" size="sm" onClick={() => handleUseWithAgentOpenChange(true)}>
 							<Bot className="mr-1.5 size-3.5" />
 							Add to agent
 						</Button>
@@ -412,14 +410,14 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 				</Alert>
 			) : null}
 
-			{/* Stat tiles — anchors into the sections below. */}
+			{/* Stat tiles — Router-owned fragment entries into the sections below. */}
 			<div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-				<StatTile label="Skills" value={skillCount} href="#skills" />
-				<StatTile label="Vaults" value={vaultCount} href="#vaults" />
+				<StatTile label="Skills" value={skillCount} hash="skills" />
+				<StatTile label="Vaults" value={vaultCount} hash="vaults" />
 				{isOwner && isShareableProject ? (
-					<StatTile label="People" value={peopleCount} href="#people" />
+					<StatTile label="People" value={peopleCount} hash="people" />
 				) : null}
-				<StatTile label="Agents" value={agentCount} href="#agents" />
+				<StatTile label="Agents" value={agentCount} hash="agents" />
 			</div>
 
 			<HubSection
@@ -572,13 +570,17 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 						project={project}
 						agent={projectAgent}
 						isLeaving={leaveSharedProject.isPending}
-						onLeave={() => leaveSharedProject.mutate()}
-						useWithAgentControl={addToAgentDialog(
-							<Button size="sm" className="w-fit">
+						onLeave={() => leaveSharedProject.mutate(locationOwnership.capture())}
+						useWithAgentControl={
+							<Button
+								size="sm"
+								className="w-fit"
+								onClick={() => handleUseWithAgentOpenChange(true)}
+							>
 								<Bot className="mr-1.5 size-3.5" />
 								Add to agent
-							</Button>,
-						)}
+							</Button>
+						}
 					/>
 				</HubSection>
 			) : null}
@@ -588,12 +590,12 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 				title="Agents"
 				count={agentCount}
 				description="Agents that can use this Project at runtime."
-				action={addToAgentDialog(
-					<Button variant="outline" size="sm">
+				action={
+					<Button variant="outline" size="sm" onClick={() => handleUseWithAgentOpenChange(true)}>
 						<Bot className="mr-1.5 size-3.5" />
 						Add to agent
-					</Button>,
-				)}
+					</Button>
+				}
 			>
 				{boundAgents.isLoading || environments.isLoading ? (
 					<Skeleton className="h-16 w-full" />
@@ -663,10 +665,12 @@ const STAT_TILE_TINTS: Record<string, string> = {
 	Agents: "bg-identity-5-bg/50",
 };
 
-function StatTile({ label, value, href }: { label: string; value?: CountValue; href: string }) {
+function StatTile({ label, value, hash }: { label: string; value?: CountValue; hash: string }) {
 	return (
-		<a
-			href={href}
+		<Link
+			to="."
+			search={(current) => current}
+			hash={hash}
 			className={cn(
 				"group rounded-xl border border-transparent p-4 transition-all duration-150 hover:-translate-y-px hover:border-foreground/20 focus-visible:ring-2 focus-visible:ring-ring focus:outline-none",
 				STAT_TILE_TINTS[label] ?? "bg-card",
@@ -679,7 +683,7 @@ function StatTile({ label, value, href }: { label: string; value?: CountValue; h
 				{label}
 				<ChevronRight className="size-3 opacity-0 transition-opacity duration-150 group-hover:opacity-100" />
 			</div>
-		</a>
+		</Link>
 	);
 }
 
@@ -844,18 +848,17 @@ function UseProjectWithAgentDialog({
 	isLoadingEnvironments,
 	open,
 	onOpenChange,
-	children,
 }: {
 	project: ProjectRow;
 	environments: Env[];
 	isLoadingEnvironments: boolean;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
-	children: ReactElement;
 }) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
+	const locationOwnership = useLocationOwnership();
 	const projectName = displayProjectName(project);
 	const [selectedAgentId, setSelectedAgentId] = useState("");
 	const orderedEnvironments = useMemo(
@@ -889,7 +892,7 @@ function UseProjectWithAgentDialog({
 	}, [open, orderedEnvironments, selectedAgentId]);
 
 	const addProjectToAgent = useMutation({
-		mutationFn: async () => {
+		mutationFn: async (_locationGeneration: number) => {
 			if (!selectedAgentId) throw new Error("Choose an agent first");
 			return unwrap(
 				await api.POST("/v1/agents/{agent_id}/project-bindings/context", {
@@ -898,7 +901,7 @@ function UseProjectWithAgentDialog({
 				}),
 			);
 		},
-		onSuccess: () => {
+		onSuccess: (_data, locationGeneration) => {
 			const agentName = selectedEnv ? displayAgentName(selectedEnv) : "the agent";
 			qc.invalidateQueries({ queryKey: ["agent-project-bindings", selectedAgentId] });
 			qc.invalidateQueries({ queryKey: ["skills"] });
@@ -911,7 +914,7 @@ function UseProjectWithAgentDialog({
 						void router.navigate({ href: agentSectionHref(selectedAgentId, "projects") }),
 				},
 			});
-			onOpenChange(false);
+			if (locationOwnership.isCurrent(locationGeneration)) onOpenChange(false);
 		},
 		onError: (e) => {
 			toast.error("Couldn't add project", {
@@ -922,7 +925,6 @@ function UseProjectWithAgentDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogTrigger render={children} />
 			<DialogContent className="sm:max-w-lg">
 				<DialogHeader>
 					<DialogTitle>Add project to agent</DialogTitle>
@@ -1067,7 +1069,7 @@ function UseProjectWithAgentDialog({
 								</Button>
 							) : (
 								<Button
-									onClick={() => addProjectToAgent.mutate()}
+									onClick={() => addProjectToAgent.mutate(locationOwnership.capture())}
 									disabled={
 										!selectedAgentId ||
 										addProjectToAgent.isPending ||

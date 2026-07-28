@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	buildWalletTopupReturnUrl,
-	cleanWalletTopupReturnUrl,
+	clearWalletTopupReturnSearch,
 	readWalletTopupReturn,
 	walletTopupReturnToast,
 } from "@/hosted/billing/wallet/top-up-return.logic";
@@ -25,12 +25,17 @@ describe("wallet top-up return URL helpers", () => {
 		expect(readWalletTopupReturn("?settings=billing-wallet&topup_return=1")).toBe(null);
 	});
 
-	test("cleans Stripe return params while preserving the wallet settings section", () => {
-		const clean = cleanWalletTopupReturnUrl(
-			"https://cloud.clawdi.ai/?settings=billing-wallet&topup_return=1&payment_intent=pi_1&payment_intent_client_secret=secret&redirect_status=succeeded&keep=1",
-		);
-
-		expect(clean).toBe("https://cloud.clawdi.ai/?settings=billing-wallet&keep=1");
+	test("cleans Stripe return params while preserving unrelated Router search", () => {
+		expect(
+			clearWalletTopupReturnSearch({
+				settings: "billing-wallet",
+				topup_return: "1",
+				payment_intent: "pi_1",
+				payment_intent_client_secret: "secret",
+				redirect_status: "succeeded",
+				keep: "1",
+			}),
+		).toEqual({ settings: "billing-wallet", keep: "1" });
 	});
 });
 

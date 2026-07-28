@@ -64,7 +64,9 @@ import {
 	useWalletTopUpDialog,
 } from "@/hosted/billing/wallet/wallet-funding";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
+import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
+import { useLocationOwnership } from "@/lib/use-location-ownership";
 
 const PLAN_ITEMS = [
 	{ value: "compute_basic", label: "Basic" },
@@ -104,6 +106,7 @@ export function SubscriptionCreateDialog({
 	const hostedAccess = useHostedProductAccess();
 	const createSubscription = useSensitiveCreateSubscription();
 	const runAction = useActionLock();
+	const locationOwnership = useLocationOwnership();
 	const createAttemptRef = useRef<IdempotencyAttempt | null>(null);
 	const [planSlug, setPlanSlug] = useState(initialPlanSlug);
 	const [billingTermMonths, setBillingTermMonths] = useState(initialBillingTermMonths);
@@ -186,8 +189,11 @@ export function SubscriptionCreateDialog({
 		}
 		const target = { kind: "terminal_fallback", deploymentId } as const;
 		const fingerprint = idempotencyFingerprint({ selection: createSelection, target });
+		const locationGeneration = locationOwnership.capture();
 		try {
-			if (!(await hostedAccess.recheckCanCreateCloudAgents())) {
+			const canCreate = await hostedAccess.recheckCanCreateCloudAgents();
+			if (!locationOwnership.isCurrent(locationGeneration)) return;
+			if (!canCreate) {
 				onOpenChange(false);
 				return;
 			}
@@ -204,6 +210,7 @@ export function SubscriptionCreateDialog({
 				idempotencyKey: createAttemptRef.current.key,
 				quote: createQuote.data ?? null,
 			});
+			if (!locationOwnership.isCurrent(locationGeneration)) return;
 			if (outcome.flowType === "subscription_activation") {
 				forgetIdempotencyAttempt("subscription-terminal-fallback", fingerprint);
 				createAttemptRef.current = null;
@@ -214,9 +221,9 @@ export function SubscriptionCreateDialog({
 				return;
 			}
 
-			const checkoutUrl = checkoutRedirectUrl(outcome.checkout);
+			const checkoutUrl = safeBrowserNavigationUrl(checkoutRedirectUrl(outcome.checkout));
 			if (checkoutUrl) {
-				window.location.href = checkoutUrl;
+				window.location.assign(checkoutUrl);
 				return;
 			}
 			toast.error("Couldn’t start checkout", {

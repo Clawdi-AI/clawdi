@@ -39,6 +39,7 @@ import { Route as ProtectedDashboardProjectsIdRouteImport } from './routes/_prot
 import { Route as ProtectedDashboardMemoriesIdRouteImport } from './routes/_protected/_dashboard/memories/$id'
 import { Route as ProtectedDashboardConnectorsNameRouteImport } from './routes/_protected/_dashboard/connectors/$name'
 import { Route as ProtectedDashboardChannelsIdRouteImport } from './routes/_protected/_dashboard/channels/$id'
+import { Route as ProtectedDashboardAgentsIdRouteImport } from './routes/_protected/_dashboard/agents/$id'
 import { Route as ProtectedDashboardAgentsIdIndexRouteImport } from './routes/_protected/_dashboard/agents/$id/index'
 import { Route as ProtectedDashboardAgentsIdSectionRouteImport } from './routes/_protected/_dashboard/agents/$id/$section'
 import { Route as ProtectedDashboardAgentsIdSkillsIndexRouteImport } from './routes/_protected/_dashboard/agents/$id/skills/index'
@@ -212,35 +213,41 @@ const ProtectedDashboardChannelsIdRoute =
     path: '/channels/$id',
     getParentRoute: () => ProtectedDashboardRoute,
   } as any)
+const ProtectedDashboardAgentsIdRoute =
+  ProtectedDashboardAgentsIdRouteImport.update({
+    id: '/agents/$id',
+    path: '/agents/$id',
+    getParentRoute: () => ProtectedDashboardRoute,
+  } as any)
 const ProtectedDashboardAgentsIdIndexRoute =
   ProtectedDashboardAgentsIdIndexRouteImport.update({
-    id: '/agents/$id/',
-    path: '/agents/$id/',
-    getParentRoute: () => ProtectedDashboardRoute,
+    id: '/',
+    path: '/',
+    getParentRoute: () => ProtectedDashboardAgentsIdRoute,
   } as any)
 const ProtectedDashboardAgentsIdSectionRoute =
   ProtectedDashboardAgentsIdSectionRouteImport.update({
-    id: '/agents/$id/$section',
-    path: '/agents/$id/$section',
-    getParentRoute: () => ProtectedDashboardRoute,
+    id: '/$section',
+    path: '/$section',
+    getParentRoute: () => ProtectedDashboardAgentsIdRoute,
   } as any)
 const ProtectedDashboardAgentsIdSkillsIndexRoute =
   ProtectedDashboardAgentsIdSkillsIndexRouteImport.update({
-    id: '/agents/$id/skills/',
-    path: '/agents/$id/skills/',
-    getParentRoute: () => ProtectedDashboardRoute,
+    id: '/skills/',
+    path: '/skills/',
+    getParentRoute: () => ProtectedDashboardAgentsIdRoute,
   } as any)
 const ProtectedDashboardAgentsIdSkillsSplatRoute =
   ProtectedDashboardAgentsIdSkillsSplatRouteImport.update({
-    id: '/agents/$id/skills/$',
-    path: '/agents/$id/skills/$',
-    getParentRoute: () => ProtectedDashboardRoute,
+    id: '/skills/$',
+    path: '/skills/$',
+    getParentRoute: () => ProtectedDashboardAgentsIdRoute,
   } as any)
 const ProtectedDashboardAgentsIdSessionsSessionIdRoute =
   ProtectedDashboardAgentsIdSessionsSessionIdRouteImport.update({
-    id: '/agents/$id/sessions/$sessionId',
-    path: '/agents/$id/sessions/$sessionId',
-    getParentRoute: () => ProtectedDashboardRoute,
+    id: '/sessions/$sessionId',
+    path: '/sessions/$sessionId',
+    getParentRoute: () => ProtectedDashboardAgentsIdRoute,
   } as any)
 
 export interface FileRoutesByFullPath {
@@ -256,6 +263,7 @@ export interface FileRoutesByFullPath {
   '/sign-up/$': typeof SignUpSplatRoute
   '/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/deploy': typeof ProtectedDashboardDeployRoute
+  '/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
   '/channels/$id': typeof ProtectedDashboardChannelsIdRoute
   '/connectors/$name': typeof ProtectedDashboardConnectorsNameRoute
   '/memories/$id': typeof ProtectedDashboardMemoriesIdRoute
@@ -329,6 +337,7 @@ export interface FileRoutesById {
   '/_protected/_dashboard/ai-providers': typeof ProtectedDashboardAiProvidersRoute
   '/_protected/_dashboard/deploy': typeof ProtectedDashboardDeployRoute
   '/_protected/_dashboard/': typeof ProtectedDashboardIndexRoute
+  '/_protected/_dashboard/agents/$id': typeof ProtectedDashboardAgentsIdRouteWithChildren
   '/_protected/_dashboard/channels/$id': typeof ProtectedDashboardChannelsIdRoute
   '/_protected/_dashboard/connectors/$name': typeof ProtectedDashboardConnectorsNameRoute
   '/_protected/_dashboard/memories/$id': typeof ProtectedDashboardMemoriesIdRoute
@@ -366,6 +375,7 @@ export interface FileRouteTypes {
     | '/sign-up/$'
     | '/ai-providers'
     | '/deploy'
+    | '/agents/$id'
     | '/channels/$id'
     | '/connectors/$name'
     | '/memories/$id'
@@ -438,6 +448,7 @@ export interface FileRouteTypes {
     | '/_protected/_dashboard/ai-providers'
     | '/_protected/_dashboard/deploy'
     | '/_protected/_dashboard/'
+    | '/_protected/_dashboard/agents/$id'
     | '/_protected/_dashboard/channels/$id'
     | '/_protected/_dashboard/connectors/$name'
     | '/_protected/_dashboard/memories/$id'
@@ -683,48 +694,82 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProtectedDashboardChannelsIdRouteImport
       parentRoute: typeof ProtectedDashboardRoute
     }
+    '/_protected/_dashboard/agents/$id': {
+      id: '/_protected/_dashboard/agents/$id'
+      path: '/agents/$id'
+      fullPath: '/agents/$id'
+      preLoaderRoute: typeof ProtectedDashboardAgentsIdRouteImport
+      parentRoute: typeof ProtectedDashboardRoute
+    }
     '/_protected/_dashboard/agents/$id/': {
       id: '/_protected/_dashboard/agents/$id/'
-      path: '/agents/$id'
+      path: '/'
       fullPath: '/agents/$id/'
       preLoaderRoute: typeof ProtectedDashboardAgentsIdIndexRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
+      parentRoute: typeof ProtectedDashboardAgentsIdRoute
     }
     '/_protected/_dashboard/agents/$id/$section': {
       id: '/_protected/_dashboard/agents/$id/$section'
-      path: '/agents/$id/$section'
+      path: '/$section'
       fullPath: '/agents/$id/$section'
       preLoaderRoute: typeof ProtectedDashboardAgentsIdSectionRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
+      parentRoute: typeof ProtectedDashboardAgentsIdRoute
     }
     '/_protected/_dashboard/agents/$id/skills/': {
       id: '/_protected/_dashboard/agents/$id/skills/'
-      path: '/agents/$id/skills'
+      path: '/skills'
       fullPath: '/agents/$id/skills/'
       preLoaderRoute: typeof ProtectedDashboardAgentsIdSkillsIndexRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
+      parentRoute: typeof ProtectedDashboardAgentsIdRoute
     }
     '/_protected/_dashboard/agents/$id/skills/$': {
       id: '/_protected/_dashboard/agents/$id/skills/$'
-      path: '/agents/$id/skills/$'
+      path: '/skills/$'
       fullPath: '/agents/$id/skills/$'
       preLoaderRoute: typeof ProtectedDashboardAgentsIdSkillsSplatRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
+      parentRoute: typeof ProtectedDashboardAgentsIdRoute
     }
     '/_protected/_dashboard/agents/$id/sessions/$sessionId': {
       id: '/_protected/_dashboard/agents/$id/sessions/$sessionId'
-      path: '/agents/$id/sessions/$sessionId'
+      path: '/sessions/$sessionId'
       fullPath: '/agents/$id/sessions/$sessionId'
       preLoaderRoute: typeof ProtectedDashboardAgentsIdSessionsSessionIdRouteImport
-      parentRoute: typeof ProtectedDashboardRoute
+      parentRoute: typeof ProtectedDashboardAgentsIdRoute
     }
   }
 }
+
+interface ProtectedDashboardAgentsIdRouteChildren {
+  ProtectedDashboardAgentsIdSectionRoute: typeof ProtectedDashboardAgentsIdSectionRoute
+  ProtectedDashboardAgentsIdIndexRoute: typeof ProtectedDashboardAgentsIdIndexRoute
+  ProtectedDashboardAgentsIdSessionsSessionIdRoute: typeof ProtectedDashboardAgentsIdSessionsSessionIdRoute
+  ProtectedDashboardAgentsIdSkillsSplatRoute: typeof ProtectedDashboardAgentsIdSkillsSplatRoute
+  ProtectedDashboardAgentsIdSkillsIndexRoute: typeof ProtectedDashboardAgentsIdSkillsIndexRoute
+}
+
+const ProtectedDashboardAgentsIdRouteChildren: ProtectedDashboardAgentsIdRouteChildren =
+  {
+    ProtectedDashboardAgentsIdSectionRoute:
+      ProtectedDashboardAgentsIdSectionRoute,
+    ProtectedDashboardAgentsIdIndexRoute: ProtectedDashboardAgentsIdIndexRoute,
+    ProtectedDashboardAgentsIdSessionsSessionIdRoute:
+      ProtectedDashboardAgentsIdSessionsSessionIdRoute,
+    ProtectedDashboardAgentsIdSkillsSplatRoute:
+      ProtectedDashboardAgentsIdSkillsSplatRoute,
+    ProtectedDashboardAgentsIdSkillsIndexRoute:
+      ProtectedDashboardAgentsIdSkillsIndexRoute,
+  }
+
+const ProtectedDashboardAgentsIdRouteWithChildren =
+  ProtectedDashboardAgentsIdRoute._addFileChildren(
+    ProtectedDashboardAgentsIdRouteChildren,
+  )
 
 interface ProtectedDashboardRouteChildren {
   ProtectedDashboardAiProvidersRoute: typeof ProtectedDashboardAiProvidersRoute
   ProtectedDashboardDeployRoute: typeof ProtectedDashboardDeployRoute
   ProtectedDashboardIndexRoute: typeof ProtectedDashboardIndexRoute
+  ProtectedDashboardAgentsIdRoute: typeof ProtectedDashboardAgentsIdRouteWithChildren
   ProtectedDashboardChannelsIdRoute: typeof ProtectedDashboardChannelsIdRoute
   ProtectedDashboardConnectorsNameRoute: typeof ProtectedDashboardConnectorsNameRoute
   ProtectedDashboardMemoriesIdRoute: typeof ProtectedDashboardMemoriesIdRoute
@@ -740,17 +785,13 @@ interface ProtectedDashboardRouteChildren {
   ProtectedDashboardSessionsIndexRoute: typeof ProtectedDashboardSessionsIndexRoute
   ProtectedDashboardSkillsIndexRoute: typeof ProtectedDashboardSkillsIndexRoute
   ProtectedDashboardVaultIndexRoute: typeof ProtectedDashboardVaultIndexRoute
-  ProtectedDashboardAgentsIdSectionRoute: typeof ProtectedDashboardAgentsIdSectionRoute
-  ProtectedDashboardAgentsIdIndexRoute: typeof ProtectedDashboardAgentsIdIndexRoute
-  ProtectedDashboardAgentsIdSessionsSessionIdRoute: typeof ProtectedDashboardAgentsIdSessionsSessionIdRoute
-  ProtectedDashboardAgentsIdSkillsSplatRoute: typeof ProtectedDashboardAgentsIdSkillsSplatRoute
-  ProtectedDashboardAgentsIdSkillsIndexRoute: typeof ProtectedDashboardAgentsIdSkillsIndexRoute
 }
 
 const ProtectedDashboardRouteChildren: ProtectedDashboardRouteChildren = {
   ProtectedDashboardAiProvidersRoute: ProtectedDashboardAiProvidersRoute,
   ProtectedDashboardDeployRoute: ProtectedDashboardDeployRoute,
   ProtectedDashboardIndexRoute: ProtectedDashboardIndexRoute,
+  ProtectedDashboardAgentsIdRoute: ProtectedDashboardAgentsIdRouteWithChildren,
   ProtectedDashboardChannelsIdRoute: ProtectedDashboardChannelsIdRoute,
   ProtectedDashboardConnectorsNameRoute: ProtectedDashboardConnectorsNameRoute,
   ProtectedDashboardMemoriesIdRoute: ProtectedDashboardMemoriesIdRoute,
@@ -767,15 +808,6 @@ const ProtectedDashboardRouteChildren: ProtectedDashboardRouteChildren = {
   ProtectedDashboardSessionsIndexRoute: ProtectedDashboardSessionsIndexRoute,
   ProtectedDashboardSkillsIndexRoute: ProtectedDashboardSkillsIndexRoute,
   ProtectedDashboardVaultIndexRoute: ProtectedDashboardVaultIndexRoute,
-  ProtectedDashboardAgentsIdSectionRoute:
-    ProtectedDashboardAgentsIdSectionRoute,
-  ProtectedDashboardAgentsIdIndexRoute: ProtectedDashboardAgentsIdIndexRoute,
-  ProtectedDashboardAgentsIdSessionsSessionIdRoute:
-    ProtectedDashboardAgentsIdSessionsSessionIdRoute,
-  ProtectedDashboardAgentsIdSkillsSplatRoute:
-    ProtectedDashboardAgentsIdSkillsSplatRoute,
-  ProtectedDashboardAgentsIdSkillsIndexRoute:
-    ProtectedDashboardAgentsIdSkillsIndexRoute,
 }
 
 const ProtectedDashboardRouteWithChildren =

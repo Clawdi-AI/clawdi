@@ -27,6 +27,7 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { unwrap, useApi } from "@/lib/api";
 import type { SearchHit } from "@/lib/api-schemas";
+import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
 import { IS_HOSTED } from "@/lib/hosted";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import {
@@ -35,16 +36,13 @@ import {
 	projectResourcePathLabel,
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
-import {
-	DEFAULT_SETTINGS_SECTION,
-	normalizeSettingsSection,
-	settingsQueryHref,
-} from "@/lib/settings-routes";
+import type { SettingsSectionId } from "@/lib/settings-routes";
 import { useDebouncedValue } from "@/lib/use-debounced";
 
 interface NavShortcut {
 	label: string;
 	href: string;
+	settingsSection?: SettingsSectionId;
 	icon: LucideIcon;
 	subtitle: string;
 	searchText: string;
@@ -165,7 +163,8 @@ function CommandPalette({
 	const navShortcuts = useMemo(() => {
 		const settingsShortcut: NavShortcut = {
 			label: "Settings",
-			href: settingsQueryHref("general"),
+			href: ".",
+			settingsSection: "general",
 			icon: Settings,
 			subtitle: "General, Profile, API Keys",
 			searchText: "settings general profile api keys model providers billing preferences account",
@@ -199,22 +198,26 @@ function CommandPalette({
 	const jump = useCallback(
 		(href: string) => {
 			onOpenChange(false);
-			if (href.startsWith("?settings=") && typeof window !== "undefined") {
-				const section =
-					normalizeSettingsSection(new URLSearchParams(href).get("settings")) ??
-					DEFAULT_SETTINGS_SECTION;
-				void router.navigate({
-					href: settingsQueryHref(section, new URLSearchParams(window.location.search)),
-				});
-				return;
-			}
-			if (/^https?:\/\//i.test(href) && typeof window !== "undefined") {
-				window.location.assign(href);
+			if (/^[a-z][a-z0-9+.-]*:/i.test(href) && typeof window !== "undefined") {
+				const externalHref = safeBrowserNavigationUrl(href);
+				if (externalHref) window.location.assign(externalHref);
 				return;
 			}
 			void router.navigate({ href });
 		},
 		[router, onOpenChange],
+	);
+	const openSettings = useCallback(
+		(section: SettingsSectionId) => {
+			onOpenChange(false);
+			void router.navigate({
+				to: ".",
+				search: (current) => ({ ...current, settings: section }),
+				hash: true,
+				replace: true,
+			});
+		},
+		[onOpenChange, router],
 	);
 
 	// Group hits by type — cmdk groups handle the visual separator/label.
@@ -291,7 +294,9 @@ function CommandPalette({
 								<CommandItem
 									key={s.href}
 									value={s.searchText}
-									onSelect={() => jump(s.href)}
+									onSelect={() =>
+										s.settingsSection ? openSettings(s.settingsSection) : jump(s.href)
+									}
 									className={COMMAND_RESULT_ROW_CLASS}
 								>
 									<s.icon className="mt-0.5 size-4 shrink-0" />

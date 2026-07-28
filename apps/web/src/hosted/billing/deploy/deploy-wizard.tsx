@@ -157,6 +157,8 @@ import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picke
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 import { agentSectionHref } from "@/lib/agent-routes";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
+import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
+import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn } from "@/lib/utils";
 
 type Compute = "basic" | "performance";
@@ -369,6 +371,7 @@ function computeStatusLine({
 
 export function DeployWizard() {
 	const router = useRouter();
+	const locationOwnership = useLocationOwnership();
 	const navigateCheckoutReturn = useCallback(
 		(deploymentId: string): undefined => {
 			void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
@@ -652,8 +655,9 @@ export function DeployWizard() {
 	}
 
 	function redirectTo(url: string | null | undefined): boolean {
-		if (url) {
-			window.location.href = url;
+		const safeUrl = safeBrowserNavigationUrl(url);
+		if (safeUrl) {
+			window.location.assign(safeUrl);
 			return true;
 		}
 		return false;
@@ -667,6 +671,7 @@ export function DeployWizard() {
 		previousDeploymentIds: readonly string[],
 		request: SubscriptionCreateRequestView | null,
 	) {
+		const locationGeneration = locationOwnership.capture();
 		setCheckoutSession(null);
 		setSubmitError(null);
 		setSubmitTakingLong(false);
@@ -686,9 +691,11 @@ export function DeployWizard() {
 					const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
 					forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 					checkoutAttemptRef.current = null;
+					if (!locationOwnership.isCurrent(locationGeneration)) return;
 					void router.navigate(acceptedDeploymentNavigation(resolved.deploymentId, true));
 					return;
 				} catch (error) {
+					if (!locationOwnership.isCurrent(locationGeneration)) return;
 					if (error instanceof DeploymentRequestTerminalError) {
 						forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 						checkoutAttemptRef.current = null;
@@ -709,6 +716,7 @@ export function DeployWizard() {
 			try {
 				refreshedDeployments = await refreshCheckoutReturn();
 			} catch {
+				if (!locationOwnership.isCurrent(locationGeneration)) return;
 				setSubmitError({
 					blocksRetry: true,
 					title: "Payment succeeded; agent status is unavailable",
@@ -717,6 +725,7 @@ export function DeployWizard() {
 				});
 				return;
 			}
+			if (!locationOwnership.isCurrent(locationGeneration)) return;
 			const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
 			if (!deploymentId) {
 				setSubmitError({
@@ -740,6 +749,7 @@ export function DeployWizard() {
 
 	async function onDeploy() {
 		if (!canSubmit) return;
+		const locationGeneration = locationOwnership.capture();
 		setSubmitError(null);
 		setSubmitTakingLong(false);
 		setSubmitBusyLabel(
@@ -799,6 +809,7 @@ export function DeployWizard() {
 							}
 							throw error;
 						});
+					if (!locationOwnership.isCurrent(locationGeneration)) return;
 					if (outcome.flowType !== "subscription_activation") {
 						throw new Error(
 							"Wallet payment could not be confirmed. Review the payment method and try again.",
@@ -836,6 +847,7 @@ export function DeployWizard() {
 						}
 						throw error;
 					});
+				if (!locationOwnership.isCurrent(locationGeneration)) return;
 				if (outcome.flowType === "subscription_activation") {
 					forgetIdempotencyAttempt("subscription-checkout", checkoutFingerprint);
 					checkoutAttemptRef.current = null;
@@ -892,8 +904,10 @@ export function DeployWizard() {
 				});
 			forgetIdempotencyAttempt("deployment-create", fingerprint);
 			includedCreateAttemptRef.current = null;
+			if (!locationOwnership.isCurrent(locationGeneration)) return;
 			void router.navigate(acceptedDeploymentNavigation(created.deploymentId));
 		} catch (e) {
+			if (!locationOwnership.isCurrent(locationGeneration)) return;
 			const normalized = normalizeBillingError(e);
 			setSubmitError(
 				isNetworkError(e)

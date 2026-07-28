@@ -30,6 +30,7 @@ import {
 	useConnectorTools,
 	useDisconnect,
 } from "@/lib/connectors-data";
+import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -231,7 +232,15 @@ function ConnectorDetail({ name }: { name: string }) {
 		void connectAction
 			.execute(redirectUrl)
 			.then((result) => {
-				if (!popup.closed) popup.location.href = result.connect_url;
+				const connectUrl = safeBrowserNavigationUrl(result.connect_url);
+				if (!connectUrl) {
+					popup.close();
+					toast.error("Couldn’t start connection", {
+						description: "The connector returned an invalid authorization URL.",
+					});
+					return;
+				}
+				if (!popup.closed) popup.location.href = connectUrl;
 			})
 			.catch((error) => {
 				popup.close();

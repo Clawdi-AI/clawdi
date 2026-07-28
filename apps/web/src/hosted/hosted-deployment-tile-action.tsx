@@ -1,5 +1,6 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import { Play, RefreshCw, Trash2, WalletCards } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
@@ -10,7 +11,7 @@ import type { HostedDeployment } from "@/hosted/billing/contracts";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { deploymentFailurePresentation } from "@/hosted/deployment-failure";
 import { canDelete, canStart, deploymentStatusFromResource } from "@/hosted/deployment-status";
-import { settingsQueryHref } from "@/lib/settings-routes";
+import { settingsLink } from "@/lib/settings-routes";
 
 export function HostedDeploymentTileAction({
 	deployment,
@@ -60,7 +61,7 @@ export function HostedDeploymentTileAction({
 		<div data-hosted="true" className="flex items-center gap-1">
 			{remediation?.requiresWalletTopUp && remediation.kind === "restart" ? (
 				<Button
-					render={<a href={settingsQueryHref("billing-wallet")} />}
+					render={<Link {...settingsLink("billing-wallet")} />}
 					nativeButton={false}
 					variant="outline"
 					size="xs"

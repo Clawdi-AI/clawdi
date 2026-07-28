@@ -80,6 +80,7 @@ import {
 } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 import { normalizeApiError } from "@/lib/api-errors";
+import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
 
 function isApiMode(value: string | null): value is ApiMode {
 	return (
@@ -467,8 +468,16 @@ export function AddProviderDialog({
 
 	function openSignIn(url: string) {
 		setOauthIssue(null);
+		const authUrl = safeBrowserNavigationUrl(url);
+		if (!authUrl) {
+			setOauthIssue("blocked");
+			toast.error("Couldn’t open ChatGPT sign-in", {
+				description: "The authorization service returned an invalid URL. Restart sign-in.",
+			});
+			return;
+		}
 		// window.open returns null (no throw) when the popup is blocked.
-		const win = window.open(url, "codex-oauth", "width=520,height=720");
+		const win = window.open(authUrl, "codex-oauth", "width=520,height=720");
 		popupRef.current = win;
 		if (!win) {
 			// Persist a recoverable state (not just a toast) so the dialog swaps the

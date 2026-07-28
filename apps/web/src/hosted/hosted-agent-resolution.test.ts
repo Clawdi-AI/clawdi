@@ -11,6 +11,7 @@ import {
 	resolveAgentDeployment,
 	resolveHostedAgentProjection,
 	resolveHostedInventory,
+	retainBoundAgentDeployment,
 } from "@/hosted/hosted-agent-resolution";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 import { ApiError } from "@/lib/api-errors";
@@ -178,6 +179,49 @@ describe("hosted detail projection resolution", () => {
 		const resolution = resolveAgentDeployment([matched, selected], environmentId, "hdep_selected");
 
 		expect(resolution.match?.deployment.resource.id).toBe("hdep_matched");
+		expect(resolution.matchKind).toBe("environment-id");
+	});
+
+	test("does not transfer a proven route to its stale selector after projection loss", () => {
+		const environmentId = "55555555-5555-4555-8555-555555555555";
+		const matched = hostedDeploymentFixture({
+			id: "hdep_matched",
+			cloudEnvironments: {},
+			status: "stopped",
+		});
+		const staleSelector = hostedDeploymentFixture({
+			id: "hdep_stale",
+			cloudEnvironments: {},
+			status: "stopped",
+		});
+		const unbound = resolveAgentDeployment([matched, staleSelector], environmentId, "hdep_stale");
+
+		expect(unbound.match?.deployment.resource.id).toBe("hdep_stale");
+		expect(
+			retainBoundAgentDeployment([matched, staleSelector], unbound, "hdep_matched").match
+				?.deployment.resource.id,
+		).toBe("hdep_matched");
+		expect(retainBoundAgentDeployment([staleSelector], unbound, "hdep_matched").match).toBeNull();
+	});
+
+	test("does not transfer a proven route to a newly matching deployment", () => {
+		const environmentId = "55555555-5555-4555-8555-555555555555";
+		const bound = hostedDeploymentFixture({
+			id: "hdep_bound",
+			cloudEnvironments: {},
+			status: "stopped",
+		});
+		const replacement = hostedDeploymentFixture({
+			id: "hdep_replacement",
+			cloudEnvironments: { openclaw: environmentId },
+		});
+		const unbound = resolveAgentDeployment([bound, replacement], environmentId, "hdep_bound");
+
+		expect(unbound.match?.deployment.resource.id).toBe("hdep_replacement");
+		expect(
+			retainBoundAgentDeployment([bound, replacement], unbound, "hdep_bound").match?.deployment
+				.resource.id,
+		).toBe("hdep_bound");
 	});
 
 	test("keeps missing, service-error, loading, unavailable, and resolved states distinct", () => {

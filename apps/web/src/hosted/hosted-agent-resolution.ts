@@ -79,6 +79,7 @@ export type AgentDeploymentMatch = {
 export type AgentDeploymentResolution = {
 	match: AgentDeploymentMatch | null;
 	ambiguousMatches: AgentDeploymentMatch[];
+	matchKind: "deployment-id" | "environment-id" | "selector-retained" | "bound-retained" | null;
 };
 
 /** Resolve detail membership from deployment identity, never from projection presence. */
@@ -91,7 +92,11 @@ export function resolveAgentDeployment(
 	const target = environmentId.toLowerCase();
 	const direct = members.find((deployment) => deployment.resource.id.toLowerCase() === target);
 	if (direct) {
-		return { match: { deployment: direct, runtime: null }, ambiguousMatches: [] };
+		return {
+			match: { deployment: direct, runtime: null },
+			ambiguousMatches: [],
+			matchKind: "deployment-id",
+		};
 	}
 	const selectedDeployment = deploymentSelector
 		? members.find(
@@ -110,17 +115,52 @@ export function resolveAgentDeployment(
 	if (deploymentSelector) {
 		const selector = deploymentSelector.toLowerCase();
 		const selected = matches.find((item) => item.deployment.resource.id.toLowerCase() === selector);
-		if (selected) return { match: selected, ambiguousMatches: [] };
+		if (selected) {
+			return { match: selected, ambiguousMatches: [], matchKind: "environment-id" };
+		}
 	}
 
-	if (matches.length === 1) return { match: matches[0], ambiguousMatches: [] };
+	if (matches.length === 1) {
+		return { match: matches[0], ambiguousMatches: [], matchKind: "environment-id" };
+	}
 	// Stop removes the runtime projection (and therefore its environment-id
 	// mapping) but leaves the deployment itself. Tile/detail links carry this
 	// selector specifically so the retained deployment remains addressable.
 	if (matches.length === 0 && selectedDeployment) {
-		return { match: { deployment: selectedDeployment, runtime: null }, ambiguousMatches: [] };
+		return {
+			match: { deployment: selectedDeployment, runtime: null },
+			ambiguousMatches: [],
+			matchKind: "selector-retained",
+		};
 	}
-	return { match: null, ambiguousMatches: matches };
+	return { match: null, ambiguousMatches: matches, matchKind: null };
+}
+
+/**
+ * Once a live projection proves which deployment owns a route, a stale `d=`
+ * may not retarget that same mounted URL if the projection disappears. Keep
+ * the proven deployment when it is still an inventory member; otherwise fail
+ * closed. A new selector creates a new request identity in the calling hook.
+ */
+export function retainBoundAgentDeployment(
+	deployments: readonly HostedDeployment[],
+	resolution: AgentDeploymentResolution,
+	boundDeploymentId: string | null,
+): AgentDeploymentResolution {
+	if (!boundDeploymentId || resolution.ambiguousMatches.length > 0) return resolution;
+	const normalizedBoundId = boundDeploymentId.toLowerCase();
+	if (resolution.match?.deployment.resource.id.toLowerCase() === normalizedBoundId)
+		return resolution;
+	const bound = deployments
+		.filter(isHostedDeploymentVisible)
+		.find((deployment) => deployment.resource.id.toLowerCase() === normalizedBoundId);
+	return bound
+		? {
+				match: { deployment: bound, runtime: null },
+				ambiguousMatches: [],
+				matchKind: "bound-retained",
+			}
+		: { match: null, ambiguousMatches: [], matchKind: null };
 }
 
 /**

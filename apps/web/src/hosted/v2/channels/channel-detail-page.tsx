@@ -1,6 +1,6 @@
 "use client";
 
-import { useBlocker, useRouter } from "@tanstack/react-router";
+import { type ShouldBlockFn, useBlocker, useRouter } from "@tanstack/react-router";
 import {
 	ArrowDownLeft,
 	ArrowUpRight,
@@ -109,6 +109,7 @@ import {
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
+import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, relativeTime } from "@/lib/utils";
 
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
@@ -213,7 +214,9 @@ function SectionHeader({
 export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 	const channel = useChannel(id);
 	const health = useChannelHealth();
+	const rotatedTokens = useRotatedTokenLifecycle(id);
 	const router = useRouter();
+	const locationOwnership = useLocationOwnership();
 	const del = useDeleteChannel();
 	const [removing, setRemoving] = useState(false);
 	const removeLockedRef = useRef(false);
@@ -222,15 +225,21 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 		if (removeLockedRef.current) return;
 		removeLockedRef.current = true;
 		setRemoving(true);
+		const locationGeneration = locationOwnership.capture();
 		void (async () => {
+			let removed = false;
 			try {
 				await del.mutateAsync(id);
-				await router.navigate({ href: "/channels" });
+				removed = true;
 			} catch {
 				// useDeleteChannel already surfaces the API error.
 			} finally {
 				removeLockedRef.current = false;
 				setRemoving(false);
+			}
+			if (removed && locationOwnership.isCurrent(locationGeneration)) {
+				rotatedTokens.discardAtRiskToken();
+				void router.navigate({ href: "/channels" });
 			}
 		})();
 	}
@@ -312,6 +321,9 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 						description={
 							<p>
 								Agents linked to this channel will stop sending and receiving. This can't be undone.
+								{rotatedTokens.hasTokenAtRisk
+									? " The one-time token shown here will also be discarded."
+									: ""}
 							</p>
 						}
 						confirmLabel="Remove channel"
@@ -363,6 +375,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 						accountName={ch.name}
 						provider={ch.provider}
 						readOnly={providerUnavailable}
+						rotatedTokens={rotatedTokens}
 					/>
 				</TabsContent>
 				{ch.provider === "whatsapp" && !providerUnavailable ? (
@@ -390,6 +403,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 					</TabsContent>
 				)}
 			</Tabs>
+			<RotatedTokenNavigationAlert lifecycle={rotatedTokens} />
 		</div>
 	);
 }
@@ -489,45 +503,36 @@ function RotatedTokenCard({
 	);
 }
 
-function AgentsTab({
-	accountId,
-	accountName,
-	provider,
-	readOnly = false,
-}: {
-	accountId: string;
-	accountName: string;
-	provider: string;
-	readOnly?: boolean;
-}) {
+function useRotatedTokenLifecycle(accountId: string) {
 	const api = useApi();
-	const links = useChannelAgentLinks(accountId);
-	const envs = useEnvironments();
-	const unlink = useUnlinkChannelAgent(accountId);
-	const [linkOpen, setLinkOpen] = useState(false);
 	const [rotated, setRotated] = useState<Record<string, RotatedTokenDisplayState>>({});
 	const rotationControllersRef = useRef<Map<string, AbortController>>(new Map());
 	const rotatingLinksRef = useRef<Set<string>>(new Set());
 	const [rotatingLinks, setRotatingLinks] = useState<ReadonlySet<string>>(() => new Set());
-	const unlinkingLinksRef = useRef<Set<string>>(new Set());
-	const [unlinkingLinks, setUnlinkingLinks] = useState<ReadonlySet<string>>(() => new Set());
 	const hasTokenAtRisk = hasAtRiskRotatedToken(rotated, rotatingLinks.size > 0);
 	const tokenAtRiskRef = useRef(hasTokenAtRisk);
 	tokenAtRiskRef.current = hasTokenAtRisk;
-	const shouldBlockNavigation = useCallback(() => tokenAtRiskRef.current, []);
+	const shouldBlockNavigation: ShouldBlockFn = useCallback(
+		({ current, next }) =>
+			tokenAtRiskRef.current && current.pathname.toLowerCase() !== next.pathname.toLowerCase(),
+		[],
+	);
+	const shouldBlockDocumentExit = useCallback(() => tokenAtRiskRef.current, []);
 	const blocker = useBlocker({
 		shouldBlockFn: shouldBlockNavigation,
-		enableBeforeUnload: shouldBlockNavigation,
+		enableBeforeUnload: shouldBlockDocumentExit,
 		withResolver: true,
 	});
 
-	useEffect(
-		() => () => {
+	useEffect(() => {
+		setRotated({});
+		setRotatingLinks(new Set());
+		rotatingLinksRef.current.clear();
+		return () => {
 			for (const controller of rotationControllersRef.current.values()) controller.abort();
 			rotationControllersRef.current.clear();
-		},
-		[],
-	);
+		};
+	}, [accountId]);
 
 	async function rotateToken(linkId: string) {
 		if (rotatingLinksRef.current.has(linkId)) return;
@@ -578,6 +583,87 @@ function AgentsTab({
 		});
 	}
 
+	function discardAtRiskToken() {
+		tokenAtRiskRef.current = false;
+		for (const controller of rotationControllersRef.current.values()) controller.abort();
+		rotationControllersRef.current.clear();
+		setRotated((prev) =>
+			Object.fromEntries(Object.keys(prev).map((linkId) => [linkId, { status: "unrecoverable" }])),
+		);
+	}
+
+	function leaveWithoutToken() {
+		discardAtRiskToken();
+		if (blocker.status === "blocked") blocker.proceed();
+	}
+
+	return {
+		acknowledgeToken,
+		blocker,
+		discardAtRiskToken,
+		hasTokenAtRisk,
+		leaveWithoutToken,
+		rotated,
+		rotateToken,
+		rotatingLinks,
+	};
+}
+
+type RotatedTokenLifecycle = ReturnType<typeof useRotatedTokenLifecycle>;
+
+function RotatedTokenNavigationAlert({ lifecycle }: { lifecycle: RotatedTokenLifecycle }) {
+	const { blocker, leaveWithoutToken, rotatingLinks } = lifecycle;
+	return (
+		<AlertDialog
+			open={blocker.status === "blocked"}
+			onOpenChange={(open) => {
+				if (!open && blocker.status === "blocked") blocker.reset();
+			}}
+		>
+			<AlertDialogContent>
+				<AlertDialogHeader>
+					<AlertDialogTitle>
+						{rotatingLinks.size > 0
+							? "Leave while token rotation is in progress?"
+							: "Leave without saving the new token?"}
+					</AlertDialogTitle>
+					<AlertDialogDescription>
+						{rotatingLinks.size > 0
+							? "The one-time token may be returned after this page closes. If you leave, it could be lost and cannot be recovered — rotate again to get a new one."
+							: "This token is shown only once and has not been copied or acknowledged. If you leave, it will be lost. This token was shown once and is not recoverable — rotate again to get a new one."}
+					</AlertDialogDescription>
+				</AlertDialogHeader>
+				<AlertDialogFooter>
+					<AlertDialogCancel>Stay and copy token</AlertDialogCancel>
+					<AlertDialogAction variant="destructive" onClick={leaveWithoutToken}>
+						Leave and lose token
+					</AlertDialogAction>
+				</AlertDialogFooter>
+			</AlertDialogContent>
+		</AlertDialog>
+	);
+}
+
+function AgentsTab({
+	accountId,
+	accountName,
+	provider,
+	readOnly = false,
+	rotatedTokens,
+}: {
+	accountId: string;
+	accountName: string;
+	provider: string;
+	readOnly?: boolean;
+	rotatedTokens: RotatedTokenLifecycle;
+}) {
+	const links = useChannelAgentLinks(accountId);
+	const envs = useEnvironments();
+	const unlink = useUnlinkChannelAgent(accountId);
+	const [linkOpen, setLinkOpen] = useState(false);
+	const { acknowledgeToken, rotateToken, rotated, rotatingLinks } = rotatedTokens;
+	const unlinkingLinksRef = useRef<Set<string>>(new Set());
+	const [unlinkingLinks, setUnlinkingLinks] = useState<ReadonlySet<string>>(() => new Set());
 	function unlinkAgent(linkId: string) {
 		if (unlinkingLinksRef.current.has(linkId)) return;
 		unlinkingLinksRef.current.add(linkId);
@@ -596,16 +682,6 @@ function AgentsTab({
 				});
 			}
 		})();
-	}
-
-	function leaveWithoutToken() {
-		tokenAtRiskRef.current = false;
-		for (const controller of rotationControllersRef.current.values()) controller.abort();
-		rotationControllersRef.current.clear();
-		setRotated((prev) =>
-			Object.fromEntries(Object.keys(prev).map((linkId) => [linkId, { status: "unrecoverable" }])),
-		);
-		if (blocker.status === "blocked") blocker.proceed();
 	}
 
 	if (links.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
@@ -730,34 +806,6 @@ function AgentsTab({
 					provider={provider}
 				/>
 			)}
-
-			<AlertDialog
-				open={blocker.status === "blocked"}
-				onOpenChange={(open) => {
-					if (!open && blocker.status === "blocked") blocker.reset();
-				}}
-			>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>
-							{rotatingLinks.size > 0
-								? "Leave while token rotation is in progress?"
-								: "Leave without saving the new token?"}
-						</AlertDialogTitle>
-						<AlertDialogDescription>
-							{rotatingLinks.size > 0
-								? "The one-time token may be returned after this page closes. If you leave, it could be lost and cannot be recovered — rotate again to get a new one."
-								: "This token is shown only once and has not been copied or acknowledged. If you leave, it will be lost. This token was shown once and is not recoverable — rotate again to get a new one."}
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Stay and copy token</AlertDialogCancel>
-						<AlertDialogAction variant="destructive" onClick={leaveWithoutToken}>
-							Leave and lose token
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
 		</div>
 	);
 }

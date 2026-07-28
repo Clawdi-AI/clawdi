@@ -11,6 +11,7 @@ import {
 	BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { agentSectionLabelFromSegment } from "@/lib/agent-routes";
+import { safeDecodeURIComponent } from "@/lib/url";
 
 /**
  * Route-derived header label. Top-level segments map to friendly names
@@ -37,7 +38,7 @@ const SEGMENT_LABELS: Record<string, string> = {
 // breadcrumb just push everything off-screen and tell the user nothing.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function fallbackLabel(seg: string): string {
-	const decoded = decodeURIComponent(seg);
+	const decoded = safeDecodeURIComponent(seg);
 	return UUID_RE.test(decoded) ? `${decoded.slice(0, 8)}…` : decoded;
 }
 
@@ -52,8 +53,8 @@ function segmentLabel(
 	const isLast = index === segments.length - 1;
 	if (isLast && overrideTitle) return overrideTitle;
 	if (segmentTitles[href]) return segmentTitles[href];
-	if (segments[0] === "agents" && index === 1) return "Agent";
-	if (segments[0] === "agents" && index === 2) {
+	if (segments[0]?.toLowerCase() === "agents" && index === 1) return "Agent";
+	if (segments[0]?.toLowerCase() === "agents" && index === 2) {
 		return agentSectionLabelFromSegment(seg) ?? fallbackLabel(seg);
 	}
 	return SEGMENT_LABELS[seg] ?? fallbackLabel(seg);
@@ -85,8 +86,8 @@ export function AppBreadcrumb() {
 					.filter(
 						(i) =>
 							!(
-								segments[0] === "agents" &&
-								segments[2] === "skills" &&
+								segments[0]?.toLowerCase() === "agents" &&
+								segments[2]?.toLowerCase() === "skills" &&
 								segments.length > 4 &&
 								i > 2 &&
 								i < segments.length - 1

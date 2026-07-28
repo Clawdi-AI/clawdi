@@ -119,6 +119,9 @@
   "trustedDependencies": [
     "sharp",
   ],
+  "patchedDependencies": {
+    "@tanstack/history@1.162.0": "patches/@tanstack%2Fhistory@1.162.0.patch",
+  },
   "overrides": {
     "dompurify": "3.4.11",
     "fast-uri": "4.1.0",

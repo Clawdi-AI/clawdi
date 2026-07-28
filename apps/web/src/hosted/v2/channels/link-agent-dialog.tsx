@@ -49,6 +49,7 @@ import {
 	agentOwnershipKindFromId,
 	useAgentOwnership,
 } from "@/lib/agent-ownership";
+import { agentSectionHref } from "@/lib/agent-routes";
 
 type Environment = components["schemas"]["AgentResponse"];
 
@@ -284,9 +285,7 @@ export function LinkAgentDialog({
 								Close
 							</Button>
 							<Button
-								render={
-									<Link to="/agents/$id/$section" params={{ id: agentId, section: "channels" }} />
-								}
+								render={<Link to={agentSectionHref(agentId, "channels")} />}
 								nativeButton={false}
 							>
 								Finish channel setup

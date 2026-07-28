@@ -39,10 +39,15 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { agentSectionHref } from "@/lib/agent-routes";
+import {
+	type AgentRouteSearch,
+	agentDeploymentRouteQuery,
+	agentSectionHref,
+} from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
+import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 import {
 	removeDeletedSkillQueries,
@@ -77,13 +82,16 @@ function SkillDetailPageInner({ routeKey }: { routeKey: string }) {
 export function SkillDetailContent({
 	skillKey,
 	agentId,
+	routeSearch,
 }: {
 	skillKey: string;
 	agentId?: string | null;
+	routeSearch?: AgentRouteSearch;
 }) {
 	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
+	const locationOwnership = useLocationOwnership();
 
 	// `?project=<project_id>` is set by the skills list page when the
 	// row knows its project. Without it, the legacy GET /api/skills/{key}
@@ -97,7 +105,7 @@ export function SkillDetailContent({
 	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
 	const selectedProjectId = projectIdParam;
 	const skillListHref = agentId
-		? agentSectionHref(agentId, "skills")
+		? agentSectionHref(agentId, "skills", agentDeploymentRouteQuery(routeSearch))
 		: projectResourceHref("skills");
 
 	const {
@@ -265,7 +273,7 @@ export function SkillDetailContent({
 	});
 
 	const uninstall = useMutation({
-		mutationFn: async () => {
+		mutationFn: async (_locationGeneration: number) => {
 			if (!targetProjectId) throw new Error("Project not loaded yet");
 			return unwrap(
 				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
@@ -273,14 +281,16 @@ export function SkillDetailContent({
 				}),
 			);
 		},
-		onSuccess: async () => {
+		onSuccess: async (_data, locationGeneration) => {
 			toast.success("Skill Uninstalled", {
 				description: skillAgentLabel
 					? `Removed from ${skillAgentLabel}. Other agents keep their copies.`
 					: "Removed from this agent. Other agents keep their copies.",
 			});
 			await removeDeletedSkillQueries(queryClient, skillKey);
-			void router.navigate({ href: skillListHref });
+			if (locationOwnership.isCurrent(locationGeneration)) {
+				void router.navigate({ href: skillListHref });
+			}
 		},
 		onError: (e) => toast.error("Couldn't uninstall skill", { description: errorMessage(e) }),
 	});
@@ -294,7 +304,7 @@ export function SkillDetailContent({
 			toast.error("Shared Skills Are Read-only");
 			return;
 		}
-		uninstall.mutate();
+		uninstall.mutate(locationOwnership.capture());
 	};
 
 	const sourceProjectName = skill?.project_name ?? null;

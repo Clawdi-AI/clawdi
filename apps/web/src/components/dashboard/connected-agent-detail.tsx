@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useRouter } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import {
 	ArrowDown,
 	ArrowUp,
@@ -13,7 +13,7 @@ import {
 	Sparkles,
 	Trash2,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
@@ -42,9 +42,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import {
+	type AgentRouteSearch,
 	type AgentSectionId,
-	agentSectionHref,
 	agentSectionLabel,
+	agentSessionDetailLink,
 	CONNECTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
@@ -84,24 +85,19 @@ const AGENT_DETAIL_NAV_META: Record<AgentTab, DetailSectionMeta> = {
 export function ConnectedAgentDetail({
 	environmentId,
 	section = "overview",
+	routeSearch,
 	showSourceBadge = true,
 }: {
 	environmentId: string;
 	section?: AgentSectionId;
+	routeSearch: AgentRouteSearch;
 	showSourceBadge?: boolean;
 }) {
 	const id = environmentId;
-	const router = useRouter();
 	const api = useApi();
 	const queryClient = useQueryClient();
 	const ownership = useAgentOwnership();
-	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const activeTab = parseAgentTab(section) ?? "overview";
-
-	useEffect(() => {
-		if (parseAgentTab(section)) return;
-		void router.navigate({ href: agentSectionHref(id, "overview", searchStr), replace: true });
-	}, [id, router, searchStr, section]);
 
 	const {
 		data: agent,
@@ -194,8 +190,7 @@ export function ConnectedAgentDetail({
 			</Button>
 		) : null;
 	const scopedSessionLink = (sessionId: string) => ({
-		to: "/agents/$id/sessions/$sessionId" as const,
-		params: { id, sessionId },
+		...agentSessionDetailLink(id, sessionId, routeSearch),
 	});
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6")}>
@@ -299,6 +294,7 @@ export function ConnectedAgentDetail({
 						<AgentSkillsTab
 							agentId={id}
 							agentProjectId={agentProjectId}
+							routeSearch={routeSearch}
 							writableProjectIds={writableProjectIds}
 						/>
 					) : null}

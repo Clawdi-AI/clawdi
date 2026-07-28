@@ -1,3 +1,4 @@
+import { isRuntimeUiEndpointInfo } from "@clawdi/shared/api";
 import type { AiProviderAuthKind, HostedDeployment } from "@/hosted/billing/contracts";
 
 export const HOSTED_RUNTIMES = ["openclaw", "hermes"] as const;
@@ -42,7 +43,7 @@ export function runtimeConsoleUrl(
 	runtime: HostedRuntime = deploymentRuntime(deployment),
 ): string | null {
 	const endpoint = deployment.runtime_ui_endpoint;
-	return endpoint?.runtime === runtime && endpoint.role === "control_ui" ? endpoint.url : null;
+	return isRuntimeUiEndpointInfo(endpoint) && endpoint.runtime === runtime ? endpoint.url : null;
 }
 
 export function runtimeAiProviderAuthKind(

@@ -52,6 +52,23 @@ describe("deploymentRuntime", () => {
 			),
 		).toBeNull();
 	});
+
+	test("rejects unsafe API-provided runtime UI endpoints", () => {
+		expect(
+			runtimeConsoleUrl(
+				hostedDeploymentFixture({
+					runtime: "hermes",
+					runtimeUiEndpoint: {
+						runtime: "hermes",
+						role: "control_ui",
+						url: "javascript:alert(document.domain)",
+						auth_mode: "password",
+						browser_mode: "top_level",
+					},
+				}),
+			),
+		).toBeNull();
+	});
 });
 
 describe("runtimeAiProviderAuthKind", () => {

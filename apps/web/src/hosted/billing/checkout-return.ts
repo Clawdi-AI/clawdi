@@ -45,29 +45,40 @@ export function useCheckoutReturnHandler({
 	onNavigate: (deploymentId: string) => false | undefined;
 }): void {
 	const refreshCheckoutReturn = useCheckoutReturnRefresh();
+	const pathname = useLocation({ select: (location) => location.pathname });
 	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const marker = checkoutReturnMarker(searchStr);
 	const handledMarkerRef = useRef<string | null>(null);
+	const copyRef = useRef(onCancelCopy);
+	const navigateRef = useRef(onNavigate);
+	copyRef.current = onCancelCopy;
+	navigateRef.current = onNavigate;
 
 	useEffect(() => {
-		const marker = checkoutReturnMarker(searchStr);
 		if (!marker || handledMarkerRef.current === marker) return;
 		handledMarkerRef.current = marker;
+		if (checkoutReturnWasCanceled(marker)) {
+			toast.message("Checkout canceled", { description: copyRef.current });
+			return;
+		}
+		let ownsReturnLocation = true;
 		void refreshCheckoutReturn()
 			.then(() => {
-				if (checkoutReturnWasCanceled(searchStr)) {
-					toast.message("Checkout canceled", { description: onCancelCopy });
-					return;
-				}
-				const deploymentId = checkoutReturnDeploymentId(searchStr);
-				if (deploymentId && onNavigate(deploymentId) !== false) return;
+				if (!ownsReturnLocation) return;
+				const deploymentId = checkoutReturnDeploymentId(marker);
+				if (deploymentId && navigateRef.current(deploymentId) !== false) return;
 				toast.message("Checkout status refreshed", {
 					description: "We checked your agents, subscription, and wallet.",
 				});
 			})
 			.catch(() => {
+				if (!ownsReturnLocation) return;
 				toast.error("Couldn’t refresh checkout status", {
 					description: "Refresh the page to check your agents, subscription, and wallet.",
 				});
 			});
-	}, [onCancelCopy, onNavigate, refreshCheckoutReturn, searchStr]);
+		return () => {
+			ownsReturnLocation = false;
+		};
+	}, [marker, pathname, refreshCheckoutReturn]);
 }

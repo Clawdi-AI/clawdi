@@ -23,6 +23,7 @@ import {
 	isComputeSubscriptionRenewing,
 } from "@/hosted/billing/subscription/subscription-utils";
 import { formatShortDate } from "@/lib/format";
+import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn } from "@/lib/utils";
 
 export function HostedDeploymentDeleteAction({
@@ -35,6 +36,7 @@ export function HostedDeploymentDeleteAction({
 	onAccepted?: () => Promise<void> | void;
 }) {
 	const deleteDeployment = useDeleteDeployment();
+	const locationOwnership = useLocationOwnership();
 	const [open, setOpen] = useState(false);
 	const [choice, setChoice] =
 		useState<DeploymentDeleteRequest["subscription_choice"]>("cancel_subscription");
@@ -52,6 +54,7 @@ export function HostedDeploymentDeleteAction({
 		locked.current = true;
 		setPending(true);
 		let deletionAccepted = false;
+		const locationGeneration = locationOwnership.capture();
 		try {
 			await deleteDeployment.mutateAsync({
 				id: deployment.resource.id,
@@ -61,7 +64,7 @@ export function HostedDeploymentDeleteAction({
 			});
 			deletionAccepted = true;
 			setOpen(false);
-			await onAccepted?.();
+			if (locationOwnership.isCurrent(locationGeneration)) await onAccepted?.();
 		} catch {
 			if (deletionAccepted) {
 				toast.error("Agent removed, but navigation failed", {

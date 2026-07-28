@@ -10,6 +10,7 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id/skills/$
 
 function AgentSkillDetailRoute() {
 	const { id, _splat } = Route.useParams();
+	const search = Route.useSearch();
 	const skillKey = (_splat ?? "").split("/").map(decodeResourceRouteParam).join("/");
-	return <SkillDetailContent agentId={id} skillKey={skillKey} />;
+	return <SkillDetailContent agentId={id} skillKey={skillKey} routeSearch={search} />;
 }

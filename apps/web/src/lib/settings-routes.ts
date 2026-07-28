@@ -1,3 +1,5 @@
+import { linkOptions } from "@tanstack/react-router";
+
 export const SETTINGS_QUERY_KEY = "settings";
 
 export const SETTINGS_SECTION_IDS = [
@@ -13,6 +15,10 @@ export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
 
 export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = "general";
 
+export type DashboardSettingsSearch = Record<string, unknown> & {
+	settings?: SettingsSectionId;
+};
+
 const SETTINGS_SECTION_SET = new Set<string>(SETTINGS_SECTION_IDS);
 
 export function normalizeSettingsSection(
@@ -22,15 +28,26 @@ export function normalizeSettingsSection(
 	return SETTINGS_SECTION_SET.has(value) ? (value as SettingsSectionId) : null;
 }
 
-export function settingsQueryHref(
-	section: SettingsSectionId = DEFAULT_SETTINGS_SECTION,
-	params?: URLSearchParams | ReadonlyURLSearchParams,
-) {
-	const next = new URLSearchParams(params?.toString());
-	next.set(SETTINGS_QUERY_KEY, section);
-	return `?${next.toString()}`;
+export function validateDashboardSettingsSearch(
+	search: Record<string, unknown>,
+): DashboardSettingsSearch {
+	const validated = { ...search };
+	const section = normalizeSettingsSection(
+		typeof validated.settings === "string" ? validated.settings : null,
+	);
+	if (section) validated.settings = section;
+	else delete validated.settings;
+	return validated;
 }
 
-type ReadonlyURLSearchParams = {
-	toString: () => string;
-};
+/** Route-native options for opening Settings without replacing child-route state. */
+export function settingsLink(section: SettingsSectionId = DEFAULT_SETTINGS_SECTION) {
+	return linkOptions({
+		to: ".",
+		search: (current: DashboardSettingsSearch): DashboardSettingsSearch => ({
+			...current,
+			settings: section,
+		}),
+		hash: true,
+	});
+}

@@ -1,5 +1,6 @@
 "use client";
 
+import { Link } from "@tanstack/react-router";
 import {
 	CreditCard,
 	ExternalLink,
@@ -21,9 +22,11 @@ import { useSensitiveFixPayment } from "@/hosted/billing/sensitive-actions";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
+import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
 import { formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
-import { settingsQueryHref } from "@/lib/settings-routes";
+import { settingsLink } from "@/lib/settings-routes";
+import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { computeDunningState, fallbackReasonSentence } from "./compute-dunning.logic";
 
 export function ComputeDunningBanner({ deployment }: { deployment: HostedDeployment }) {
@@ -31,6 +34,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	const hostedAccess = useHostedProductAccess();
 	const fixPayment = useSensitiveFixPayment();
 	const runAction = useActionLock();
+	const locationOwnership = useLocationOwnership();
 	const wallet = useWalletSnapshot({
 		enabled: state?.ctaTarget === "top_up",
 	});
@@ -55,14 +59,19 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 	async function handleFixPayment() {
 		if (!state) return;
 		if (state.ctaTarget === "invoice" && state.invoiceUrl) {
-			window.location.href = state.invoiceUrl;
-			return;
+			const invoiceUrl = safeBrowserNavigationUrl(state.invoiceUrl);
+			if (invoiceUrl) {
+				window.location.assign(invoiceUrl);
+				return;
+			}
 		}
+		const locationGeneration = locationOwnership.capture();
 		try {
 			const result = await fixPayment.execute({ deployment_id: deployment.resource.id });
-			const url = result.url || result.portal_url;
+			if (!locationOwnership.isCurrent(locationGeneration)) return;
+			const url = safeBrowserNavigationUrl(result.url || result.portal_url);
 			if (url) {
-				window.location.href = url;
+				window.location.assign(url);
 				return;
 			}
 			toast.message("Payment update unavailable", {
@@ -111,7 +120,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 						</Button>
 					) : state.ctaTarget === "start_new" ? (
 						<Button
-							render={<a href="#compute-plan-controls" />}
+							render={<Link to="." search={(current) => current} hash="compute-plan-controls" />}
 							nativeButton={false}
 							size="sm"
 							variant={destructive ? "destructive" : "default"}
@@ -120,7 +129,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 						</Button>
 					) : state.ctaTarget === "billing_history" ? (
 						<Button
-							render={<a href={settingsQueryHref("billing-plan")} />}
+							render={<Link {...settingsLink("billing-plan")} />}
 							nativeButton={false}
 							size="sm"
 							variant="outline"
@@ -155,7 +164,7 @@ export function ComputeDunningBanner({ deployment }: { deployment: HostedDeploym
 					) : null}
 					{state.secondaryTarget === "billing_history" ? (
 						<Button
-							render={<a href={settingsQueryHref("billing-plan")} />}
+							render={<Link {...settingsLink("billing-plan")} />}
 							nativeButton={false}
 							size="sm"
 							variant="outline"

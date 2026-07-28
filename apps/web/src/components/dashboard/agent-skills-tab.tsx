@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { isProjectOwner } from "@/components/projects/project-metadata";
 import { SkillCardGrid } from "@/components/skills/skill-card";
+import { type AgentRouteSearch, agentSkillDetailLink } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
@@ -48,11 +49,13 @@ export function useAgentProjectSkills(agentProjectId: string | null | undefined)
 export function AgentSkillsTab({
 	agentId,
 	agentProjectId,
+	routeSearch,
 	isResolvingAgentProject = false,
 	writableProjectIds,
 }: {
 	agentId: string;
 	agentProjectId: string | null | undefined;
+	routeSearch: AgentRouteSearch;
 	isResolvingAgentProject?: boolean;
 	writableProjectIds?: ReadonlySet<string> | null;
 }) {
@@ -100,11 +103,9 @@ export function AgentSkillsTab({
 			}
 			onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
 			uninstallPending={uninstallSkill.isPending}
-			skillLink={(skill) => ({
-				to: "/agents/$id/skills/$" as const,
-				params: { id: agentId, _splat: skill.skill_key },
-				search: skill.project_id ? { project: skill.project_id } : undefined,
-			})}
+			skillLink={(skill) =>
+				agentSkillDetailLink(agentId, skill.skill_key, skill.project_id, routeSearch)
+			}
 		/>
 	);
 }

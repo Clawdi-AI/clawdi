@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { useRouter } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -19,7 +20,7 @@ import { LedgerTable } from "@/hosted/billing/wallet/ledger-table";
 import { confirmWalletTopup, TopUpDialog } from "@/hosted/billing/wallet/top-up-dialog";
 import { invalidateWalletActivity } from "@/hosted/billing/wallet/top-up-dialog.logic";
 import {
-	cleanWalletTopupReturnUrl,
+	clearWalletTopupReturnSearch,
 	readWalletTopupReturn,
 	type WalletTopupReturnToast,
 	walletTopupReturnToast,
@@ -28,6 +29,8 @@ import { LEDGER_MAX_ROWS, LEDGER_PAGE_SIZE } from "@/hosted/billing/wallet/walle
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
+import { safeBrowserNavigationUrl } from "@/lib/external-navigation";
+import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION = "One balance for managed AI, wallet-funded compute, top-ups, and auto-reload.";
@@ -55,6 +58,8 @@ export function WalletPage() {
 	const portal = useSensitiveBillingPortal();
 	const runAction = useActionLock();
 	const queryClient = useQueryClient();
+	const router = useRouter();
+	const locationOwnership = useLocationOwnership();
 	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
 	const ledger = useWalletLedger(ledgerLimit);
 	const lastLedgerDataRef = useRef(ledger.data);
@@ -63,10 +68,13 @@ export function WalletPage() {
 	const [topUpOpen, setTopUpOpen] = useState(false);
 
 	async function openBillingPortal() {
+		const locationGeneration = locationOwnership.capture();
 		try {
 			const res = await portal.execute({});
-			if (res.url || res.portal_url) {
-				window.location.href = res.url || res.portal_url;
+			if (!locationOwnership.isCurrent(locationGeneration)) return;
+			const portalUrl = safeBrowserNavigationUrl(res.url || res.portal_url);
+			if (portalUrl) {
+				window.location.assign(portalUrl);
 				return;
 			}
 			toast.error("Billing portal unavailable", {
@@ -124,7 +132,12 @@ export function WalletPage() {
 				}
 			} finally {
 				if (!cancelled) {
-					window.history.replaceState(null, "", cleanWalletTopupReturnUrl(window.location.href));
+					void router.navigate({
+						to: ".",
+						search: clearWalletTopupReturnSearch,
+						hash: true,
+						replace: true,
+					});
 				}
 			}
 		}
@@ -133,7 +146,7 @@ export function WalletPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, [queryClient]);
+	}, [queryClient, router]);
 
 	if (wallet.isLoading) {
 		return (

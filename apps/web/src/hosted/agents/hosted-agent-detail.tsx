@@ -2,7 +2,7 @@
 
 import type { components } from "@clawdi/shared/api";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useRouter } from "@tanstack/react-router";
+import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
 	Bot,
@@ -212,9 +212,11 @@ import {
 	pairingCommand,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
 import {
+	type AgentRouteSearch,
 	type AgentSectionId,
 	agentSectionHref,
 	agentSectionLabel,
+	agentSessionDetailLink,
 	HOSTED_AGENT_SECTION_IDS,
 } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
@@ -222,7 +224,7 @@ import type { SessionListItem } from "@/lib/api-schemas";
 import { formatMemoryMib, formatShortDate } from "@/lib/format";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { settingsQueryHref } from "@/lib/settings-routes";
+import { settingsLink } from "@/lib/settings-routes";
 import { useSensitiveAction } from "@/lib/use-sensitive-action";
 import { cn } from "@/lib/utils";
 
@@ -420,6 +422,7 @@ export function HostedAgentDetail({
 	deployment,
 	runtime,
 	section = "overview",
+	routeSearch,
 	onDeleteAccepted,
 	deploymentTransitionTimedOut,
 	isCheckingDeployment,
@@ -429,13 +432,13 @@ export function HostedAgentDetail({
 	deployment: HostedDeployment;
 	runtime: Runtime;
 	section?: AgentSectionId;
+	routeSearch: AgentRouteSearch;
 	onDeleteAccepted: (deploymentId: string) => void;
 	deploymentTransitionTimedOut: boolean;
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
 }) {
 	const api = useApi();
-	const router = useRouter();
 	const deploymentStatus = deploymentStatusFromResource(deployment.resource.status);
 	const deploymentRunning = isRunningStatus(deploymentStatus);
 	const deploymentProjectionQueryable = canQueryDeploymentProjection(deploymentStatus);
@@ -478,23 +481,13 @@ export function HostedAgentDetail({
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
 	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const terminalHref = agentSectionHref(environmentId, "terminal", searchStr);
-	const planChangeHref = `${agentSectionHref(environmentId, "settings", searchStr)}#compute-plan-controls`;
-	const providerSettingsHref = agentSectionHref(environmentId, "ai", searchStr);
+	const terminalHref = agentSectionHref(environmentId, "terminal", routeSearch);
+	const planChangeHref = `${agentSectionHref(environmentId, "settings", routeSearch)}#compute-plan-controls`;
+	const providerSettingsHref = agentSectionHref(environmentId, "ai", routeSearch);
 
 	const scopedSessionLink = (sessionId: string) => ({
-		to: "/agents/$id/sessions/$sessionId" as const,
-		params: { id: environmentId, sessionId },
+		...agentSessionDetailLink(environmentId, sessionId, routeSearch),
 	});
-
-	useEffect(() => {
-		if (parseHostedAgentTab(section)) return;
-		void router.navigate({
-			href: agentSectionHref(environmentId, "overview", searchStr),
-			replace: true,
-		});
-	}, [environmentId, router, searchStr, section]);
 
 	const sessions = useQuery({
 		...sessionListQueryOptions(api, { environment_id: environmentId, page_size: 20 }),
@@ -610,6 +603,7 @@ export function HostedAgentDetail({
 							<HostedAgentSessionsTab
 								environmentId={environmentId}
 								enabled={deploymentProjectionQueryable}
+								routeSearch={routeSearch}
 							/>
 						) : (
 							<ProjectionDependentUnavailable label="Sessions" />
@@ -622,6 +616,7 @@ export function HostedAgentDetail({
 							<AgentSkillsTab
 								agentId={environmentId}
 								agentProjectId={agent?.default_project_id}
+								routeSearch={routeSearch}
 								isResolvingAgentProject={false}
 							/>
 						) : (
@@ -749,9 +744,11 @@ function StoppedAgentState({
 function HostedAgentSessionsTab({
 	environmentId,
 	enabled,
+	routeSearch,
 }: {
 	environmentId: string;
 	enabled: boolean;
+	routeSearch: AgentRouteSearch;
 }) {
 	const api = useApi();
 	const [page, setPage] = useState(1);
@@ -795,10 +792,7 @@ function HostedAgentSessionsTab({
 				isLoading={sessions.isLoading && !sessions.data}
 				emptyMessage="No sessions from this agent yet."
 				showAgent={false}
-				sessionLink={(session) => ({
-					to: "/agents/$id/sessions/$sessionId" as const,
-					params: { id: environmentId, sessionId: session.id },
-				})}
+				sessionLink={(session) => agentSessionDetailLink(environmentId, session.id, routeSearch)}
 			/>
 			{sessions.data ? (
 				<DataTablePagination
@@ -964,7 +958,7 @@ function OverviewFailureAction({
 		<div className="flex shrink-0 flex-wrap gap-2">
 			{remediation.requiresWalletTopUp && remediation.kind === "restart" ? (
 				<Button
-					render={<a href={settingsQueryHref("billing-wallet")} />}
+					render={<Link {...settingsLink("billing-wallet")} />}
 					nativeButton={false}
 					variant="outline"
 					size="sm"

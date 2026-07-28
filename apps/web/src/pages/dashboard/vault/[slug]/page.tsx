@@ -56,6 +56,8 @@ import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
+import { safeDecodeURIComponent } from "@/lib/url";
+import { useLocationOwnership } from "@/lib/use-location-ownership";
 import { cn, errorMessage } from "@/lib/utils";
 
 type VaultSummary = components["schemas"]["VaultResponse"];
@@ -77,11 +79,12 @@ function apiSection(section: string): string {
  * attachments, and the guided "Share keys" chain. */
 
 export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
-	const slug = decodeURIComponent(rawSlug);
+	const slug = safeDecodeURIComponent(rawSlug);
 	const [vaultId] = useQueryState("vault", parseAsString);
 	const api = useApi();
 	const qc = useQueryClient();
 	const router = useRouter();
+	const locationOwnership = useLocationOwnership();
 
 	// UUID links use an exact authorized metadata lookup. Slug-only deep links
 	// remain a compatibility fallback for bookmarks created before stable IDs.
@@ -248,19 +251,21 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 	});
 
 	const deleteVault = useMutation({
-		mutationFn: async () =>
+		mutationFn: async (_locationGeneration: number) =>
 			unwrap(
 				await api.DELETE("/v1/vault/{slug}", {
 					params: { path: { slug }, query: { vault_id: vault?.id } },
 				}),
 			),
-		onSuccess: () => {
+		onSuccess: (_data, locationGeneration) => {
 			qc.invalidateQueries({ queryKey: ["vaults"] });
 			qc.removeQueries({ queryKey: ["vault-items", vault?.id, slug] });
 			toast.success("Vault deleted", {
 				description: `${vault?.name ?? slug} and its keys were removed.`,
 			});
-			void router.navigate({ href: "/vault" });
+			if (locationOwnership.isCurrent(locationGeneration)) {
+				void router.navigate({ href: "/vault" });
+			}
 		},
 		onError: (e) => toast.error("Couldn't delete vault", { description: errorMessage(e) }),
 	});
@@ -391,7 +396,7 @@ export default function VaultDetailPage({ slug: rawSlug }: { slug: string }) {
 							}
 							confirmLabel="Delete vault"
 							destructive
-							onConfirm={() => deleteVault.mutateAsync()}
+							onConfirm={() => deleteVault.mutateAsync(locationOwnership.capture())}
 						>
 							<Button
 								variant="outline"

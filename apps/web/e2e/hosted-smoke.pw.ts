@@ -18,6 +18,66 @@ function hostedUser(canUseV2 = true, canUseV1 = false) {
 	};
 }
 const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
+const routingSession = {
+	id: "session-routing-lifecycle",
+	local_session_id: "local-routing-lifecycle",
+	project_path: "/workspace/router",
+	agent_name: "routing-agent",
+	agent_display_name: "Routing agent",
+	agent_default_name: "Routing agent",
+	agent_type: "hermes",
+	machine_name: "routing.local",
+	started_at: "2026-07-25T12:00:00Z",
+	ended_at: null,
+	updated_at: "2026-07-25T12:00:00Z",
+	last_activity_at: "2026-07-25T12:00:00Z",
+	duration_seconds: 60,
+	message_count: 2,
+	input_tokens: 100,
+	output_tokens: 200,
+	cache_read_tokens: 0,
+	model: "gpt-5",
+	models_used: ["gpt-5"],
+	summary: "Routing lifecycle session",
+	tags: [],
+	status: "active",
+	content_hash: "routing-session-hash",
+	environment_id: "88888888-8888-4888-8888-888888888888",
+	has_content: false,
+	is_shared: false,
+	related_refs: [],
+};
+const routingSkill = {
+	id: "skill-routing-lifecycle",
+	skill_key: "routing/lifecycle",
+	name: "Routing lifecycle skill",
+	description: "A browser fixture for agent-scoped detail navigation.",
+	version: 1,
+	source: "local",
+	source_repo: null,
+	agent_types: ["hermes"],
+	file_count: 1,
+	content_hash: "routing-skill-hash",
+	project_id: "project-hosted",
+	project_name: "Hosted project",
+	project_kind: "environment",
+	created_at: "2026-07-25T12:00:00Z",
+	updated_at: "2026-07-25T12:00:00Z",
+	environment_id: "55555555-5555-4555-8555-555555555555",
+	content: "# Routing lifecycle\n",
+};
+const routingProject = {
+	id: "project-routing-lifecycle",
+	name: "Routing lifecycle Project",
+	slug: "routing-lifecycle-project",
+	kind: "environment",
+	origin_environment_id: "99999999-9999-4999-8999-999999999999",
+	archived_at: null,
+	created_at: "2026-07-25T12:00:00Z",
+	is_owner: true,
+	owner_display: "Dev User",
+	owner_handle: "dev-user",
+};
 
 // Must match the API hosts configured in playwright.hosted.config.ts.
 const CLOUD_API = "http://127.0.0.1:8000";
@@ -808,7 +868,15 @@ function readDeploymentFixture(value: unknown): unknown {
 	return isDeploymentMutationFixture(value) ? mutationDeploymentReadFixture(value) : value;
 }
 
-type StubResponse = { body: unknown; status: number; delayMs?: number };
+type StubResponse = { body: unknown; status: number; delayMs?: number; gate?: Promise<void> };
+
+function deferred() {
+	let resolve = () => {};
+	const promise = new Promise<void>((next) => {
+		resolve = next;
+	});
+	return { promise, resolve };
+}
 
 function isStubResponse(value: unknown): value is StubResponse {
 	return (
@@ -873,7 +941,10 @@ type HostedApiStubOptions = {
 	planQuoteResponses?: unknown[];
 	restartRequests?: string[];
 	rotateAgentTokenRequests?: string[];
-	rotateAgentTokenResponses?: unknown[];
+	rotateAgentTokenResponses?: Array<unknown | StubResponse>;
+	projects?: unknown[];
+	sessionsPage?: unknown;
+	skillsPage?: unknown;
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
 	resumeRequests?: string[];
@@ -881,6 +952,7 @@ type HostedApiStubOptions = {
 	subscriptionQuoteResponses?: unknown[];
 	startError?: { status: number; detail: string };
 	startRequests?: string[];
+	onStop?: (deploymentId: string) => void;
 	topUpIdempotencyKeys?: string[];
 	topUpRequests?: string[];
 	topUpResponses?: StubResponse[];
@@ -918,6 +990,9 @@ async function stubCompletedStripeCheckout(page: Page) {
 					createToken: async () => ({}),
 					createPaymentMethod: async () => ({}),
 					confirmCardPayment: async () => ({}),
+					retrievePaymentIntent: async () => ({
+						paymentIntent: { id: "pi_history_state", status: "succeeded" },
+					}),
 					_registerWrapper: () => undefined,
 					initCheckoutElementsSdk: () => ({
 						loadActions: async () => ({ type: "success", actions }),
@@ -987,6 +1062,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			const requestBody = r.request().postData() ?? "";
 			options.autoReloadRequests?.push(requestBody);
 			const response = options.autoReloadResponses?.shift();
+			if (response?.gate) await response.gate;
 			if (response?.delayMs) {
 				await new Promise((resolve) => setTimeout(resolve, response.delayMs));
 			}
@@ -1010,6 +1086,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			options.deploymentListRequests?.push(p);
 			if (options.deploymentsResponse) {
+				if (options.deploymentsResponse.gate) await options.deploymentsResponse.gate;
 				if (options.deploymentsResponse.delayMs) {
 					await new Promise((resolve) => setTimeout(resolve, options.deploymentsResponse?.delayMs));
 				}
@@ -1352,6 +1429,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				(candidate): candidate is DeploymentMutationFixture =>
 					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
 			);
+			if (deployment) options.onStop?.(deploymentId);
 			return deployment
 				? fulfillJson(r, completedDeploymentOperation(deployment, "stop"), 202)
 				: fulfillJson(r, { detail: "Deployment not found" }, 404);
@@ -1374,7 +1452,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		return fulfillJson(r, {});
 	});
 	// Cloud API (/v1/*).
-	await page.route(`${CLOUD_API}/**`, (r) => {
+	await page.route(`${CLOUD_API}/**`, async (r) => {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/v1/me") {
 			options.productAccessRequests?.push(`CLOUD ${p}`);
@@ -1411,6 +1489,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 					return agent ? [{ ...agent, sort_order: sortOrder }] : [];
 				}),
 			);
+		}
+		if (p.endsWith("/project-bindings") && r.request().method() === "GET") {
+			return fulfillJson(r, []);
 		}
 		if (p.startsWith("/v1/agents/") && r.request().method() === "GET") {
 			const id = decodeURIComponent(p.slice("/v1/agents/".length));
@@ -1470,14 +1551,27 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.endsWith("/token") && r.request().method() === "POST") {
 			options.rotateAgentTokenRequests?.push(p);
-			return fulfillJson(r, options.rotateAgentTokenResponses?.shift() ?? { agent_token: null });
+			const response = options.rotateAgentTokenResponses?.shift() ?? { agent_token: null };
+			if (isStubResponse(response)) {
+				if (response.gate) await response.gate;
+				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+				return fulfillJson(r, response.body, response.status);
+			}
+			return fulfillJson(r, response);
 		}
 		if (p.endsWith("/bindings") && r.request().method() === "GET") return fulfillJson(r, []);
 		if (p.endsWith("/activity") && r.request().method() === "GET") {
 			return fulfillJson(r, { items: [] });
 		}
-		if (p === "/v1/projects") return fulfillJson(r, []);
-		if (p === "/v1/sessions") return fulfillJson(r, emptyPage);
+		if (p === "/v1/projects") return fulfillJson(r, options.projects ?? []);
+		if (p === `/v1/sessions/${routingSession.id}`) return fulfillJson(r, routingSession);
+		if (p === `/v1/sessions/${routingSession.id}/messages`) {
+			return fulfillJson(r, { items: [], total: 0, offset: 0, limit: 100 });
+		}
+		if (p.endsWith(`/skills/${routingSkill.skill_key}`)) return fulfillJson(r, routingSkill);
+		if (p === "/v1/vault") return fulfillJson(r, emptyPage);
+		if (p === "/v1/sessions") return fulfillJson(r, options.sessionsPage ?? emptyPage);
+		if (p === "/v1/skills") return fulfillJson(r, options.skillsPage ?? emptyPage);
 		if (p === "/v1/auth/keys") return fulfillJson(r, []);
 		return fulfillJson(r, {});
 	});
@@ -1577,8 +1671,24 @@ async function expectCenterHitTarget(locator: ReturnType<Page["locator"]>, label
 
 async function expectNoDragCursor(locator: ReturnType<Page["locator"]>, label: string) {
 	const cursor = await locator.evaluate((element) => getComputedStyle(element).cursor);
-	expect(["grab", "grabbing"], `${label} cursor`).not.toContain(cursor);
+	expect(cursor, `${label} cursor`).toBe("pointer");
 	return cursor;
+}
+
+async function expectBeforeUnloadBlocked(page: Page, label: string) {
+	await expect
+		.poll(
+			() =>
+				page.evaluate(() => {
+					const event = new Event("beforeunload", { cancelable: true });
+					return {
+						dispatchResult: window.dispatchEvent(event),
+						defaultPrevented: event.defaultPrevented,
+					};
+				}),
+			{ message: `${label} beforeunload` },
+		)
+		.toEqual({ dispatchResult: false, defaultPrevented: true });
 }
 
 type NativeClickRecord = {
@@ -1848,7 +1958,9 @@ test("production rail tile shapes expose their real activation state", async ({ 
 	await expect(identityless).toBeDisabled();
 	await expect(identityless).toHaveAttribute("aria-disabled", "true");
 	await expect(identityless).not.toHaveAttribute("aria-roledescription", "sortable");
-	await expectNoDragCursor(identityless, "identity-less disabled production tile");
+	await expect
+		.poll(() => identityless.evaluate((element) => getComputedStyle(element).cursor))
+		.toBe("default");
 
 	await matchedCloud.click();
 	await expect(page).toHaveURL(
@@ -1865,6 +1977,215 @@ test("production rail tile shapes expose their real activation state", async ({ 
 	await page.goto("/");
 	await connected.click();
 	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+});
+
+test("a pending agent match cannot be stolen by the previous section", async ({ page }) => {
+	const inventoryGate = deferred();
+	const authGate = deferred();
+	let blockNextAuth = false;
+	let pendingAuthRequestSeen = false;
+	await page.addInitScript((targetPathname) => {
+		const clickTargetLink = () => {
+			const target = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]")).find(
+				(anchor) => new URL(anchor.href).pathname === targetPathname,
+			);
+			if (!target) return false;
+			target.click();
+			return true;
+		};
+		const observer = new MutationObserver(() => {
+			if (clickTargetLink()) observer.disconnect();
+		});
+		observer.observe(document, { childList: true, subtree: true });
+	}, `/agents/${railHostedEnvironmentId}/skills`);
+	await page.route("**/_serverFn/**", async (route) => {
+		if (blockNextAuth) {
+			pendingAuthRequestSeen = true;
+			await authGate.promise;
+		}
+		await route.continue();
+	});
+	await stubHostedApi(page, {
+		deploymentsResponse: {
+			status: 200,
+			body: [readDeploymentFixture(railHostedDeployment)],
+			gate: inventoryGate.promise,
+		},
+		cloudAgents: [railHostedCloudAgent],
+	});
+
+	await page.goto(`/agents/${railHostedEnvironmentId}?source=on-clawdi`);
+	blockNextAuth = true;
+	inventoryGate.resolve();
+	await expect.poll(() => pendingAuthRequestSeen).toBe(true);
+	await expect
+		.poll(() => new URL(page.url()).pathname)
+		.toBe(`/agents/${railHostedEnvironmentId}/skills`);
+
+	// The observer clicks Skills in the same commit that resolves inventory,
+	// before the previous Overview match can run its passive canonicalization
+	// effect. Keep the target match pending long enough for that old effect to
+	// run and prove that it cannot take ownership of the new section.
+	await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+	await expect
+		.poll(() => new URL(page.url()).pathname)
+		.toBe(`/agents/${railHostedEnvironmentId}/skills`);
+
+	authGate.resolve();
+	await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
+	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(railHostedDeployment.id);
+});
+
+test("agent detail navigation preserves deployment identity without stale route takeovers", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		sessionsPage: { ...emptyPage, items: [routingSession], total: 1 },
+		skillsPage: { ...emptyPage, items: [routingSkill], total: 1 },
+		projects: [routingProject],
+	});
+	const routeSearch = `source=on-clawdi&d=${railHostedDeployment.id}`;
+
+	await page.goto(`/agents/${railHostedEnvironmentId}?${routeSearch}`);
+	await page.getByRole("link", { name: `Open session ${routingSession.local_session_id}` }).click();
+	await expect(page).toHaveURL(
+		`/agents/${railHostedEnvironmentId}/sessions/${routingSession.id}?${routeSearch}`,
+	);
+	await expect
+		.poll(() => new URL(page.url()).pathname)
+		.toBe(`/agents/${railHostedEnvironmentId}/sessions/${routingSession.id}`);
+
+	await page.goto(`/agents/${railHostedEnvironmentId}/skills?${routeSearch}`);
+	await page.getByRole("link", { name: `Open ${routingSkill.name}` }).click();
+	await expect(page).toHaveURL(
+		`/agents/${railHostedEnvironmentId}/skills/${routingSkill.skill_key}?${routeSearch}&project=${routingSkill.project_id}`,
+	);
+	await expect
+		.poll(() => new URL(page.url()).pathname)
+		.toBe(`/agents/${railHostedEnvironmentId}/skills/${routingSkill.skill_key}`);
+});
+
+test("agent URL compatibility, case identity, and malformed components fail safely", async ({
+	page,
+}) => {
+	const errors = collectBrowserErrors(page);
+	await stubHostedApi(page, {
+		deployments: [],
+		cloudAgents: [railConnectedCloudAgent],
+	});
+
+	await page.goto(`/agents/${railConnectedEnvironmentId}?tab=skills&keep=1`);
+	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}/skills?keep=1`);
+	await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
+
+	await page.goto(`/AGENTS/${railConnectedEnvironmentId.toUpperCase()}/SKILLS`);
+	await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
+	await expect(
+		page.getByTestId("app-sidebar-agent-rail").getByRole("button", { name: /Rail Connected/ }),
+	).toHaveAttribute("data-active", "");
+
+	await page.goto("/agents/%25ZZ");
+	await expect(page.getByTestId("app-sidebar")).toBeVisible();
+	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toBeVisible();
+	await page.goto("/vault/%25ZZ");
+	await expect(page.getByTestId("app-sidebar")).toBeVisible();
+	await expect(page.getByText("Vault not found", { exact: true })).toBeVisible();
+	expect(errors, `malformed route errors: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("a proven deployment cannot be replaced after projection loss in the same mount", async ({
+	page,
+}) => {
+	const matched: DeploymentMutationFixture = {
+		...railHostedDeployment,
+		config_info: {
+			...railHostedDeployment.config_info,
+			clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
+		},
+	};
+	const replacement: DeploymentMutationFixture = {
+		...stoppedProjectionGoneDeployment,
+		id: "hdep_replacement_selector",
+		name: "Replacement selector",
+	};
+	const deployments: DeploymentMutationFixture[] = [matched, replacement];
+	const deploymentListRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments,
+		deploymentListRequests,
+		cloudAgents: [railHostedCloudAgent],
+		onStop: (deploymentId) => {
+			if (deploymentId !== matched.id) return;
+			deployments.splice(
+				0,
+				2,
+				{
+					...matched,
+					status: "stopped",
+					config_info: { ...matched.config_info, clawdi_cloud_environments: {} },
+				},
+				{
+					...replacement,
+					status: "running",
+					config_info: {
+						...replacement.config_info,
+						clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
+					},
+				},
+			);
+		},
+	});
+
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}/settings?source=on-clawdi&d=${replacement.id}&keep=1`,
+	);
+	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(matched.id);
+	await expect.poll(() => new URL(page.url()).searchParams.get("keep")).toBe("1");
+
+	const readsBeforeStop = deploymentListRequests.length;
+	await page.locator("main").getByRole("button", { name: "Stop", exact: true }).click();
+	await page
+		.getByRole("alertdialog")
+		.getByRole("button", { name: "Stop agent", exact: true })
+		.click();
+	await expect.poll(() => deploymentListRequests.length).toBeGreaterThan(readsBeforeStop);
+	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(matched.id);
+	await expect(
+		page.locator("main").getByRole("button", { name: "Start", exact: true }),
+	).toBeVisible();
+	await expect(
+		page.getByTestId("app-sidebar").getByText(matched.name, { exact: true }),
+	).toBeVisible();
+	const rail = page.getByTestId("app-sidebar-agent-rail");
+	await expect(rail.getByRole("button", { name: matched.name, exact: true })).toHaveAttribute(
+		"data-active",
+		"",
+	);
+	await expect(
+		rail.getByRole("button", { name: replacement.name, exact: true }),
+	).not.toHaveAttribute("data-active", "");
+});
+
+test("Project use-with-agent dialog follows Router Back and Forward", async ({ page }) => {
+	await stubHostedApi(page, {
+		projects: [routingProject],
+		cloudAgents: [railConnectedCloudAgent],
+	});
+	await page.goto(`/projects/${routingProject.id}`);
+
+	await page.getByRole("button", { name: "Add to agent", exact: true }).first().click();
+	await expect.poll(() => new URL(page.url()).searchParams.get("useWithAgent")).toBe("1");
+	await expect(page.getByRole("dialog")).toBeVisible();
+
+	await page.goBack();
+	await expect(page.getByRole("dialog")).toHaveCount(0);
+	await expect.poll(() => new URL(page.url()).searchParams.get("useWithAgent")).toBeNull();
+
+	await page.goForward();
+	await expect(page.getByRole("dialog")).toBeVisible();
+	await expect.poll(() => new URL(page.url()).searchParams.get("useWithAgent")).toBe("1");
 });
 
 test("transient inventory withholds connected tiles until membership resolves", async ({
@@ -2080,8 +2401,8 @@ test("whole agent tile mouse drag reorders without navigation", async ({ page, b
 		await expectNoDragCursor(source, `${label} while dragging`);
 		expect(await clickSuppressors()).toHaveLength(suppressorsBefore.length + 1);
 		await page.mouse.up();
-		expect(page.url()).toBe(new URL("/", baseURL).href);
 		await expect.poll(async () => (await clickSuppressors()).length).toBe(suppressorsBefore.length);
+		await expect.poll(() => page.url()).toBe(new URL("/", baseURL).href);
 		await expectNoDragCursor(source, `${label} after drag`);
 	};
 
@@ -2154,11 +2475,11 @@ test("whole agent tile preserves touch scroll intent and supports long-press dra
 			touchPoints: [{ x: scrollSource.x, y: scrollSource.y - 40 }],
 		});
 		await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-		expect(page.url()).toBe(new URL("/", baseURL).href);
 		expect(agentOrderRequests).toEqual([]);
 		await expect
 			.poll(() => scrollContainer.evaluate((element) => element.scrollTop))
 			.toBeGreaterThan(scrollStart);
+		await expect.poll(() => page.url()).toBe(new URL("/", baseURL).href);
 
 		await page.reload();
 		const sourceBox = await connectedButton.boundingBox();
@@ -2187,8 +2508,8 @@ test("whole agent tile preserves touch scroll intent and supports long-press dra
 			});
 		}
 		await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-		expect(page.url()).toBe(new URL("/", baseURL).href);
 		await expect.poll(() => agentOrderRequests.length).toBe(1);
+		await expect.poll(() => page.url()).toBe(new URL("/", baseURL).href);
 		expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
 			agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
 		});
@@ -4322,6 +4643,127 @@ test("auto-reload batches toggle and fields into one explicit save", async ({ pa
 	).toEqual([]);
 });
 
+test("dirty Settings blocks Router push, Back, Forward, and document exit", async ({ page }) => {
+	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
+	const sidebar = page.getByTestId("app-sidebar");
+	await page.goto("/agents");
+	await sidebar.locator('a[href="/channels"]').first().click();
+	await expect(page).toHaveURL(/\/channels\/?$/);
+	await sidebar.locator('a[href="/projects"]').first().click();
+	await expect(page).toHaveURL(/\/projects\/?$/);
+	await page.goBack();
+	await expect(page).toHaveURL(/\/channels\/?$/);
+	await page.getByRole("button", { name: "Settings", exact: true }).click();
+
+	const settingsDialog = page.getByTestId("settings-dialog");
+	await expect(settingsDialog).toBeVisible();
+	await settingsDialog.getByRole("button", { name: /^Wallet/ }).click();
+	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
+	const autoReload = settingsDialog
+		.locator('[data-slot="card"]')
+		.filter({ hasText: "Auto-reload" });
+	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await expectBeforeUnloadBlocked(page, "dirty Settings");
+
+	await page.evaluate(() => window.history.forward());
+	let blocker = page.getByRole("alertdialog");
+	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
+	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
+
+	await page.evaluate(() => window.history.back());
+	blocker = page.getByRole("alertdialog");
+	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
+	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
+
+	await page
+		.getByTestId("app-sidebar")
+		.locator('a[href="/agents"]')
+		.first()
+		.evaluate((link: HTMLAnchorElement) => link.click());
+	blocker = page.getByRole("alertdialog");
+	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
+	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
+	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
+});
+
+test("dirty Settings blocks asynchronous Router replace canonicalization", async ({ page }) => {
+	const inventoryGate = deferred();
+	const matched: DeploymentMutationFixture = {
+		...railHostedDeployment,
+		config_info: {
+			...railHostedDeployment.config_info,
+			clawdi_cloud_environments: { hermes: railHostedEnvironmentId },
+		},
+	};
+	const stale: DeploymentMutationFixture = {
+		...stoppedProjectionGoneDeployment,
+		id: "hdep_settings_stale",
+		name: "Settings stale selector",
+	};
+	await stubHostedApi(page, {
+		deploymentsResponse: {
+			status: 200,
+			gate: inventoryGate.promise,
+			body: [readDeploymentFixture(matched), readDeploymentFixture(stale)],
+		},
+		cloudAgents: [railHostedCloudAgent],
+		plans: [basicPlan, performancePlan],
+	});
+	await page.goto(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=${stale.id}&settings=billing-wallet`,
+	);
+	const settingsDialog = page.getByTestId("settings-dialog");
+	const autoReload = settingsDialog
+		.locator('[data-slot="card"]')
+		.filter({ hasText: "Auto-reload" });
+	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	inventoryGate.resolve();
+
+	const blocker = page.getByRole("alertdialog");
+	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
+	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(stale.id);
+	await blocker.getByRole("button", { name: "Discard changes", exact: true }).click();
+	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(matched.id);
+});
+
+test("pending Settings save keeps navigation blocked until completion", async ({ page }) => {
+	const savedWallet = { ...walletState, auto_reload_threshold_usd: "6.00" };
+	const autoReloadRequests: string[] = [];
+	const saveGate = deferred();
+	await stubHostedApi(page, {
+		autoReloadRequests,
+		autoReloadResponses: [{ status: 200, body: savedWallet, gate: saveGate.promise }],
+		plans: [basicPlan, performancePlan],
+	});
+	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
+	const autoReload = settingsDialog
+		.locator('[data-slot="card"]')
+		.filter({ hasText: "Auto-reload" });
+	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
+	await autoReload
+		.getByRole("button", { name: "Save changes", exact: true })
+		.evaluate((button: HTMLButtonElement) => button.click());
+	await expect.poll(() => autoReloadRequests.length).toBe(1);
+
+	await settingsDialog.getByRole("button", { name: /^Compute/ }).click();
+	const blocker = page.getByRole("alertdialog");
+	await expect(blocker.getByText("Save in progress", { exact: true })).toBeVisible();
+	await expect(
+		blocker.getByRole("button", { name: "Discard changes", exact: true }),
+	).toBeDisabled();
+	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet$/);
+
+	saveGate.resolve();
+	await expect(page).toHaveURL(/\/channels\?settings=billing-plan$/);
+	await expect(blocker).toHaveCount(0);
+});
+
 test("top-up validates the amount and blocks duplicate submission or close in flight", async ({
 	page,
 }) => {
@@ -4447,6 +4889,72 @@ test("wallet confirms a card top-up only from its exact payment reference", asyn
 	expect(postTopUpLedgerReads).toBeGreaterThanOrEqual(2);
 	expect(walletRequests.length).toBeGreaterThanOrEqual(2);
 	expect(errors, `exact payment-reference wallet confirmation: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("wallet return cleanup keeps TanStack history state valid", async ({ page }) => {
+	await page.addInitScript(() => {
+		const originalReplaceState = window.history.replaceState.bind(window.history);
+		const transitions: Array<{ after: unknown; before: unknown; passed: unknown }> = [];
+		window.history.replaceState = (state, title, url) => {
+			const before = window.history.state;
+			const beforeUrl = new URL(window.location.href);
+			originalReplaceState(state, title, url);
+			const afterUrl = new URL(window.location.href);
+			if (
+				beforeUrl.searchParams.has("topup_return") &&
+				!afterUrl.searchParams.has("topup_return")
+			) {
+				transitions.push({ after: window.history.state, before, passed: state });
+			}
+		};
+		Reflect.set(window, "__walletHistoryTransitions", transitions);
+	});
+	await stubCompletedStripeCheckout(page);
+	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
+	await page.goto(
+		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_history_state&payment_intent_client_secret=pi_history_state_secret&redirect_status=succeeded&keep=1",
+	);
+
+	await expect.poll(() => new URL(page.url()).searchParams.get("topup_return")).toBeNull();
+	await expect.poll(() => new URL(page.url()).searchParams.get("keep")).toBe("1");
+	for (const key of [
+		"payment_intent",
+		"payment_intent_client_secret",
+		"redirect_status",
+	] as const) {
+		expect(new URL(page.url()).searchParams.get(key)).toBeNull();
+	}
+	const historyTransition = await page.evaluate(() => {
+		const transitions = Reflect.get(window, "__walletHistoryTransitions");
+		if (!Array.isArray(transitions)) return null;
+		const transition = transitions.at(-1);
+		if (typeof transition !== "object" || transition === null) return null;
+		const readIdentity = (value: unknown) => ({
+			key:
+				typeof value === "object" &&
+				value !== null &&
+				typeof Reflect.get(value, "__TSR_key") === "string"
+					? Reflect.get(value, "__TSR_key")
+					: null,
+			index:
+				typeof value === "object" &&
+				value !== null &&
+				typeof Reflect.get(value, "__TSR_index") === "number"
+					? Reflect.get(value, "__TSR_index")
+					: null,
+		});
+		return {
+			after: readIdentity(Reflect.get(transition, "after")),
+			before: readIdentity(Reflect.get(transition, "before")),
+			passed: readIdentity(Reflect.get(transition, "passed")),
+		};
+	});
+	expect(historyTransition).not.toBeNull();
+	expect(historyTransition?.before.key).not.toBeNull();
+	expect(historyTransition?.passed.key).not.toBeNull();
+	expect(historyTransition?.after.key).toBe(historyTransition?.passed.key);
+	expect(historyTransition?.passed.index).toBe(historyTransition?.before.index);
+	expect(historyTransition?.after.index).toBe(historyTransition?.before.index);
 });
 
 test("top-up rotates its idempotency key after an explicit reuse conflict", async ({ page }) => {
@@ -4715,19 +5223,34 @@ test("rotated channel token blocks silent loss and explains recovery", async ({
 		created_at: "2026-07-25T12:00:00Z",
 	};
 	const rotateAgentTokenRequests: string[] = [];
+	const firstRotationGate = deferred();
 	await stubHostedApi(page, {
 		channelAccount,
 		channelAgentLinks: [channelLink],
 		rotateAgentTokenRequests,
 		rotateAgentTokenResponses: [
-			{ ...channelLink, agent_token: token },
+			{
+				status: 200,
+				body: { ...channelLink, agent_token: token },
+				gate: firstRotationGate.promise,
+			},
+			{ ...channelLink, agent_token: "one-time-forward-token" },
 			{ ...channelLink, agent_token: null },
 		],
 	});
 
-	await page.goto(`/channels/${channelId}`);
+	await page.goto("/channels");
+	await page.locator(`a[href="/channels/${channelId}"]`).first().click();
+	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
 	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
 	await expect.poll(() => rotateAgentTokenRequests.length).toBe(1);
+	await expectBeforeUnloadBlocked(page, "in-flight channel token rotation");
+	await page.evaluate(() => window.history.back());
+	let leaveDialog = page.getByRole("alertdialog");
+	await expect(leaveDialog).toContainText("Leave while token rotation is in progress?");
+	await leaveDialog.getByRole("button", { name: "Stay and copy token", exact: true }).click();
+	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
+	firstRotationGate.resolve();
 	await expect(
 		page.getByText(
 			"Shown only once. Copy it or confirm you saved it before leaving this page; it cannot be recovered later.",
@@ -4739,10 +5262,29 @@ test("rotated channel token blocks silent loss and explains recovery", async ({
 		JSON.stringify({ localStorage: { ...localStorage }, sessionStorage: { ...sessionStorage } }),
 	);
 	expect(serializedBrowserStorage).not.toContain(token);
+	await page.getByRole("tab", { name: "Activity", exact: true }).click();
+	await expect(page.getByText("New agent token", { exact: true })).toHaveCount(0);
+	await page.getByRole("tab", { name: "Agents", exact: true }).click();
+	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Settings", exact: true }).click();
+	await expect(page.getByTestId("settings-dialog")).toBeVisible();
+	await expect(page.getByRole("alertdialog")).toHaveCount(0);
+	await expect.poll(() => new URL(page.url()).searchParams.get("settings")).toBe("general");
+	await page.keyboard.press("Escape");
+	await expect(page.getByTestId("settings-dialog")).toHaveCount(0);
+	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
+	await expectBeforeUnloadBlocked(page, "rotated channel token");
+
+	await page.evaluate(() => window.history.back());
+	leaveDialog = page.getByRole("alertdialog");
+	await expect(leaveDialog).toContainText("Leave without saving the new token?");
+	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
+	await leaveDialog.getByRole("button", { name: "Stay and copy token", exact: true }).click();
+	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
 
 	const agentsLink = page.getByTestId("app-sidebar").locator('a[href="/agents"]').first();
 	await agentsLink.click();
-	const leaveDialog = page.getByRole("alertdialog");
+	leaveDialog = page.getByRole("alertdialog");
 	await expect(leaveDialog).toContainText("Leave without saving the new token?");
 	await expect(leaveDialog).toContainText(
 		"This token was shown once and is not recoverable — rotate again to get a new one.",
@@ -4752,12 +5294,27 @@ test("rotated channel token blocks silent loss and explains recovery", async ({
 
 	await page.getByRole("button", { name: "Copy New agent token", exact: true }).click();
 	await expect(page.getByText("Token copied to clipboard", { exact: true })).toBeVisible();
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(token);
 	await agentsLink.click();
 	await expect(page).toHaveURL(/\/agents\/?$/);
 
-	await page.goto(`/channels/${channelId}`);
+	await page.goBack();
 	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
 	await expect.poll(() => rotateAgentTokenRequests.length).toBe(2);
+	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
+	await page.evaluate(() => window.history.forward());
+	leaveDialog = page.getByRole("alertdialog");
+	await expect(leaveDialog).toContainText("Leave without saving the new token?");
+	await expect(page.getByText("New agent token", { exact: true })).toBeVisible();
+	await leaveDialog.getByRole("button", { name: "Stay and copy token", exact: true }).click();
+	await expect(page).toHaveURL(new RegExp(`/channels/${channelId}$`));
+	await page.getByRole("button", { name: "I’ve saved this token", exact: true }).click();
+	await page.evaluate(() => window.history.forward());
+	await expect(page).toHaveURL(/\/agents\/?$/);
+
+	await page.goBack();
+	await page.getByRole("button", { name: "Rotate token", exact: true }).click();
+	await expect.poll(() => rotateAgentTokenRequests.length).toBe(3);
 	await expect(
 		page.getByText(
 			"This token was shown once and is not recoverable — rotate again to get a new one.",
