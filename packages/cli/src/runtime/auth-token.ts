@@ -21,17 +21,16 @@ export function runtimeAuthEnvName(): string {
 
 export function readRuntimeAuthToken(paths: RuntimePaths): string | null {
 	try {
-		const token = readFileSync(paths.daemonAuthToken, "utf-8").trim();
-		return token || null;
+		return normalizeRuntimeAuthToken(readFileSync(paths.daemonAuthToken, "utf-8"));
 	} catch {
 		return null;
 	}
 }
 
 export function writeRuntimeAuthToken(paths: RuntimePaths, token: string): string {
-	const normalized = token.trim();
+	const normalized = normalizeRuntimeAuthToken(token);
 	if (!normalized) {
-		throw new Error("runtime auth token must not be empty");
+		throw new Error("runtime auth token must be non-empty and contain no control characters");
 	}
 	writePrivateFileAtomic(paths.daemonAuthToken, `${normalized}\n`, {
 		mode: PRIVATE_FILE_MODE,
@@ -53,4 +52,14 @@ export function ensureRuntimeAuthTokenFile(paths: RuntimePaths): string | null {
 
 export function runtimeAuthTokenFileLabel(paths: RuntimePaths): string {
 	return paths.daemonAuthToken;
+}
+
+function normalizeRuntimeAuthToken(token: string): string | null {
+	const normalized = token.trim();
+	if (!normalized) return null;
+	for (const character of normalized) {
+		const code = character.charCodeAt(0);
+		if (code <= 0x1f || code === 0x7f) return null;
+	}
+	return normalized;
 }

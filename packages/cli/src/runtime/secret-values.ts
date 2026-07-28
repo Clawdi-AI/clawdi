@@ -16,13 +16,24 @@ export function isEnvSecretRef(ref: string): boolean {
 export function normalizeSecretValues(
 	secretValues: Record<string, string> | undefined,
 ): Record<string, string> {
+	const canonicalValues = new Map<string, string>();
+	for (const [ref, value] of Object.entries(secretValues ?? {})) {
+		if (isEnvSecretRef(ref)) continue;
+		const secretRef = normalizeSecretRef(ref);
+		if (!secretRef) continue;
+		const existing = canonicalValues.get(secretRef);
+		if (existing !== undefined && existing !== value) {
+			throw new Error(`conflicting secret values for ${secretRef}`);
+		}
+		canonicalValues.set(secretRef, value);
+	}
+
 	const normalized: Record<string, string> = {};
 	for (const [ref, value] of Object.entries(secretValues ?? {})) {
 		normalized[ref] = value;
-		const secretRef = normalizeSecretRef(ref);
-		if (secretRef && normalized[secretRef] === undefined) {
-			normalized[secretRef] = value;
-		}
+	}
+	for (const [secretRef, value] of canonicalValues) {
+		normalized[secretRef] = value;
 	}
 	return normalized;
 }

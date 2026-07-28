@@ -11,7 +11,11 @@ import {
 	readRuntimeAuthToken,
 	runtimeAuthTokenFileLabel,
 } from "./auth-token";
-import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
+import { egressProfileSecretRefs } from "./egress-profiles";
+import {
+	hostedManifestEgressProfiles,
+	isClawdiManagedProviderProjection,
+} from "./hosted-egress-profiles";
 import {
 	type HostedRuntimeManifest,
 	hostedCliPayloadPolicySchema,
@@ -27,7 +31,8 @@ import {
 } from "./manifest-contract";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
-import { canonicalSecretRefName, envSecretRefName, normalizeSecretValues } from "./secret-values";
+import { createRuntimeSecretResolver } from "./runtime-secret-resolver";
+import { canonicalSecretRefName, normalizeSecretValues } from "./secret-values";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -856,6 +861,7 @@ export async function loadRuntimeManifest(
 	const missingSecretRefs = manifestSecretRefsMissingValues(
 		normalized.manifest,
 		normalized.secretValues,
+		paths,
 	);
 	if (missingSecretRefs.length > 0) {
 		return {
@@ -872,7 +878,22 @@ export async function loadRuntimeManifest(
 	return validateLoadedManifest(normalized, paths, "fixture-file", manifestPath);
 }
 
-function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | RuntimeManifestFailure {
+interface LastGoodManifestLoadOptions {
+	requireOfflineBoot: boolean;
+	requireAppliedAuthority: boolean;
+	requireSemanticValidity: boolean;
+}
+
+const offlineLastGoodManifestLoadOptions: LastGoodManifestLoadOptions = {
+	requireOfflineBoot: true,
+	requireAppliedAuthority: false,
+	requireSemanticValidity: true,
+};
+
+function loadLastGoodManifest(
+	paths: RuntimePaths,
+	opts: LastGoodManifestLoadOptions = offlineLastGoodManifestLoadOptions,
+): RuntimeManifestLoad | RuntimeManifestFailure {
 	if (!existsSync(paths.manifestLastGood)) {
 		return {
 			mode: "repair",
@@ -882,28 +903,61 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 	}
 	try {
 		const manifest = parseManifest(readJsonFile(paths.manifestLastGood));
-		if (manifest.recovery.allowOfflineBoot !== true) {
+		if (opts.requireOfflineBoot && manifest.recovery.allowOfflineBoot !== true) {
 			return {
 				mode: "repair",
 				stage: "local",
 				errors: ["cached manifest does not allow offline boot"],
 			};
 		}
-		const trustDomain = paths.mode === "hosted" ? "hosted" : "generic";
-		const semanticErrors = validateManifestSemantics(manifest, paths, trustDomain);
-		if (semanticErrors.length > 0) {
-			return {
-				mode: "repair",
-				stage: "local",
-				errors: semanticErrors.map((error) => `cached ${error}`),
-			};
+		if (opts.requireSemanticValidity) {
+			const trustDomain = paths.mode === "hosted" ? "hosted" : "generic";
+			const semanticErrors = validateManifestSemantics(manifest, paths, trustDomain);
+			if (semanticErrors.length > 0) {
+				return {
+					mode: "repair",
+					stage: "local",
+					errors: semanticErrors.map((error) => `cached ${error}`),
+				};
+			}
 		}
 		const appliedState = readRuntimeAppliedState(paths);
 		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
+		const strictV2Cache =
+			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
 		const cached = loadCachedSecretValues(paths);
 		if ("errors" in cached) return cached;
+		const secretRefs = manifestSecretRefs(manifest);
+		if (secretRefs.length > 0) {
+			const missingSecretRefs = manifestSecretRefsMissingValues(
+				manifest,
+				cached.secretValues,
+				paths,
+			);
+			if (missingSecretRefs.length > 0) {
+				return {
+					mode: "repair",
+					stage: "local",
+					errors: [
+						`cached manifest references secretValues (${missingSecretRefs.join(", ")}); refusing offline boot because cached secret values are missing`,
+					],
+				};
+			}
+		}
+		if ((strictV2Cache || opts.requireAppliedAuthority) && !appliedState) {
+			return {
+				mode: "repair",
+				stage: "local",
+				errors: [
+					strictV2Cache
+						? "cached strict-v2 manifest has no durable applied authority; refusing offline boot"
+						: "cached manifest has no durable applied authority",
+				],
+			};
+		}
 		if (
-			cachedApplyIdentity &&
+			(strictV2Cache || cachedApplyIdentity || opts.requireAppliedAuthority) &&
+			appliedState &&
 			(appliedState?.generation !== manifest.generation ||
 				appliedState.instanceId !== manifest.instanceId ||
 				appliedState.contentIdentity.sha256 !==
@@ -918,24 +972,13 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 				activeGeneration: appliedState?.generation ?? null,
 			};
 		}
-		const secretRefs = manifestSecretRefs(manifest);
 		if (secretRefs.length > 0) {
-			const missingSecretRefs = manifestSecretRefsMissingValues(manifest, cached.secretValues);
-			if (missingSecretRefs.length === 0) {
-				return {
-					manifest,
-					source: "last-good-cache",
-					sourcePath: paths.manifestLastGood,
-					offline: true,
-					secretValues: cached.secretValues,
-				};
-			}
 			return {
-				mode: "repair",
-				stage: "local",
-				errors: [
-					`cached manifest references secretValues (${missingSecretRefs.join(", ")}); refusing offline boot because cached secret values are missing`,
-				],
+				manifest,
+				source: "last-good-cache",
+				sourcePath: paths.manifestLastGood,
+				offline: true,
+				secretValues: cached.secretValues,
 			};
 		}
 		return {
@@ -955,6 +998,20 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 			],
 		};
 	}
+}
+
+// Internal recovery input for convergence rollback only. This does not
+// authorize the cached manifest to boot or converge under current semantics;
+// schema parsing plus an exact root-only applied content identity prove only
+// the previously committed secret material needed to roll back the sidecar.
+export function loadCommittedRuntimeManifest(
+	paths: RuntimePaths,
+): RuntimeManifestLoad | RuntimeManifestFailure {
+	return loadLastGoodManifest(paths, {
+		requireOfflineBoot: false,
+		requireAppliedAuthority: true,
+		requireSemanticValidity: false,
+	});
 }
 
 function loadCachedSecretValues(
@@ -987,41 +1044,56 @@ function loadCachedSecretValues(
 	}
 }
 
-function manifestSecretRefs(manifest: RuntimeManifest): string[] {
+export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 	const refs = new Set<string>();
-	collectSecretRefs(manifest, refs);
+	const providers = plainRecord(manifest.projection?.providers);
+	let hasEnabledRuntime = false;
+	for (const [runtimeName, runtime] of Object.entries(manifest.runtimes)) {
+		if (!runtime.enabled) continue;
+		hasEnabledRuntime = true;
+		addSecretEnvRefs(runtime.run?.secretEnv, refs);
+		for (const service of Object.values(runtime.services ?? {})) {
+			addSecretEnvRefs(service.secretEnv, refs);
+		}
+		if (runtimeName === "openclaw" && manifest.openclawGatewayAuth) {
+			refs.add(manifest.openclawGatewayAuth.tokenRef);
+		}
+		if (runtimeName === "hermes" && runtime.services?.dashboard && manifest.hermesDashboardAuth) {
+			refs.add(manifest.hermesDashboardAuth.passwordSecretRef);
+			refs.add(manifest.hermesDashboardAuth.sessionSecretRef);
+		}
+		for (const providerId of runtime.provider_ids ?? []) {
+			const provider = plainRecord(providers?.[providerId]);
+			if (!provider || isClawdiManagedProviderProjection(provider)) continue;
+			if (typeof provider.apiKeySecretRef === "string") {
+				refs.add(provider.apiKeySecretRef);
+			}
+		}
+	}
+	if (hasEnabledRuntime) {
+		for (const ref of egressProfileSecretRefs(manifest.egressProfiles)) refs.add(ref);
+	}
 	return [...refs].sort();
 }
 
 function manifestSecretRefsMissingValues(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	paths: RuntimePaths,
 ): string[] {
 	const normalizedValues = normalizeSecretValues(secretValues ?? {});
-	return manifestSecretRefs(manifest).filter((ref) => {
-		const envName = envSecretRefName(ref);
-		if (envName) return !process.env[envName]?.trim();
-		return normalizedValues[ref] === undefined;
-	});
+	const resolver = createRuntimeSecretResolver(manifest, paths, normalizedValues);
+	return manifestSecretRefs(manifest).filter((ref) => resolver.resolve(ref) === null);
 }
 
-function collectSecretRefs(value: unknown, refs: Set<string>): void {
-	if (!value || typeof value !== "object") return;
-	if (Array.isArray(value)) {
-		for (const item of value) collectSecretRefs(item, refs);
-		return;
-	}
-	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-		if (typeof entry === "string" && (key === "secretRef" || key.endsWith("SecretRef"))) {
-			refs.add(entry);
-		}
-		if (key === "secretEnv" && entry && typeof entry === "object" && !Array.isArray(entry)) {
-			for (const ref of Object.values(entry as Record<string, unknown>)) {
-				if (typeof ref === "string") refs.add(ref);
-			}
-		}
-		collectSecretRefs(entry, refs);
-	}
+function addSecretEnvRefs(secretEnv: Record<string, string> | undefined, refs: Set<string>): void {
+	for (const ref of Object.values(secretEnv ?? {})) refs.add(ref);
+}
+
+function plainRecord(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
 }
 
 function validateLoadedManifest(

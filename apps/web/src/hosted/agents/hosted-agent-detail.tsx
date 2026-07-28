@@ -60,6 +60,10 @@ import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import { useDeploymentLifecycle, useUpdateDeployment } from "@/hosted/agents/deployment-hooks";
 import {
+	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
+	shouldBlockHostedSessionsError,
+} from "@/hosted/agents/hosted-agent-session-query";
+import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
@@ -762,6 +766,8 @@ function HostedAgentSessionsTab({
 		...sessionListQueryOptions(api, { environment_id: environmentId, page, page_size: pageSize }),
 		enabled: enabled && isCloudEnvId(environmentId),
 		placeholderData: keepPreviousData,
+		// staleTime only controls freshness; this mounted-tab observer owns visibility refreshes.
+		...HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
 	});
 	const total = sessions.data?.total ?? 0;
 	const pageCount = Math.max(1, Math.ceil(total / pageSize));
@@ -770,7 +776,7 @@ function HostedAgentSessionsTab({
 		if (sessions.data && page > pageCount) setPage(pageCount);
 	}, [page, pageCount, sessions.data]);
 
-	if (sessions.error) {
+	if (shouldBlockHostedSessionsError(sessions.error, sessions.data !== undefined)) {
 		return (
 			<ApiErrorPanel
 				error={sessions.error}

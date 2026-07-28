@@ -15,6 +15,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
+import { commitRuntimeAppliedState, runtimeAppliedContentIdentity } from "../commands/runtime";
+import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
 import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
 import {
 	hostedManifestEgressProfiles,
@@ -24,6 +26,7 @@ import { cacheRuntimeLastGoodManifest, convergeRuntimeManifest } from "./manifes
 import {
 	HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
 	loadRemoteRuntimeManifest,
+	loadRuntimeManifest,
 	normalizeHostedRuntimeBundleV2,
 } from "./manifest-source";
 import { getRuntimePaths } from "./paths";
@@ -85,7 +88,7 @@ describe("hosted runtime bundle v2", () => {
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
-			"cea24fcd93d29700fd4fb18a1d6a953e77cd32fa7324be1bf7a450ee608f1dd1",
+			"f7aecccd700e4c6e3fa21cd8f7935b95bdcc9de1540c5aa9ff41c2984bcac6f5",
 		);
 		expect(projected.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
@@ -540,7 +543,9 @@ describe("hosted runtime bundle v2", () => {
 			/^CLAWDI_RUNTIME_REV="([^"]+)"$/m,
 		)?.[1];
 		expect(reconciledSidecarRevision).toBeTruthy();
-		expect(reconciledSidecarRevision).not.toBe(initialSidecarRevision);
+		// Secret value rotation is tracked by the root-only applied authority and
+		// must not turn the public unit revision into an offline value verifier.
+		expect(reconciledSidecarRevision).toBe(initialSidecarRevision);
 		expect(reconciledSidecarEnv).not.toContain("deployment-auth-token-rotated");
 		expect(readFileSync(paths.daemonAuthToken, "utf-8")).toBe("deployment-auth-token-rotated\n");
 		const reconciledPersistentState = [
@@ -741,6 +746,64 @@ describe("hosted runtime bundle v2", () => {
 		).not.toThrow();
 	});
 
+	test("resolves bundle channel secret aliases in both directions and rejects empty values", () => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const bindings = z.array(z.record(z.string(), z.unknown())).parse(raw.channelBindings);
+		const binding = bindings[0];
+		if (!binding) throw new Error("golden bundle has no channel binding");
+		const secretValues = z.record(z.string(), z.string()).parse(raw.secretValues);
+		const canonicalAgentRef = z.string().parse(binding.agentTokenSecretRef);
+		const canonicalPlaceholderRef = z.string().parse(binding.placeholderTokenSecretRef);
+		const rawAgentRef = canonicalAgentRef.slice("secret://".length);
+		const rawPlaceholderRef = canonicalPlaceholderRef.slice("secret://".length);
+		const agentValue = secretValues[canonicalAgentRef];
+		const placeholderValue = secretValues[canonicalPlaceholderRef];
+		if (!agentValue) throw new Error("golden bundle has no agent secret value");
+		if (!placeholderValue) throw new Error("golden bundle has no placeholder secret value");
+		secretValues[rawAgentRef] = agentValue;
+		delete secretValues[canonicalPlaceholderRef];
+		secretValues[rawPlaceholderRef] = placeholderValue;
+
+		const aliased = normalizeHostedRuntimeBundleV2({
+			...raw,
+			channelBindings: [
+				{
+					...binding,
+					agentTokenSecretRef: rawAgentRef,
+					placeholderTokenSecretRef: canonicalPlaceholderRef,
+				},
+			],
+			secretValues,
+		});
+		expect(() => applyRuntimeBundleChannelsToManifestLoad(aliased)).not.toThrow();
+		for (const agentTokenSecretRef of [canonicalAgentRef, rawAgentRef]) {
+			expect(() =>
+				normalizeHostedRuntimeBundleV2({
+					...raw,
+					channelBindings: [{ ...binding, agentTokenSecretRef }],
+					secretValues: { ...secretValues, [rawAgentRef]: "conflicting-agent-token" },
+				}),
+			).toThrow(`conflicting secret values for ${canonicalAgentRef}`);
+		}
+
+		const emptyAgentValues = {
+			...secretValues,
+			[canonicalAgentRef]: "",
+			[rawAgentRef]: "",
+		};
+		expect(() =>
+			applyRuntimeBundleChannelsToManifestLoad(
+				normalizeHostedRuntimeBundleV2({
+					...raw,
+					channelBindings: [{ ...binding, agentTokenSecretRef: canonicalAgentRef }],
+					secretValues: emptyAgentValues,
+				}),
+			),
+		).toThrow(`runtime bundle is missing ${canonicalAgentRef}`);
+	});
+
 	test("rejects response-carried apply identity and keeps the inner manifest v1-only", () => {
 		const raw = z
 			.record(z.string(), z.unknown())
@@ -850,12 +913,12 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe('"bundle-golden"');
 		expect(loaded.sourceRevision).toBe(
-			"cea24fcd93d29700fd4fb18a1d6a953e77cd32fa7324be1bf7a450ee608f1dd1",
+			"f7aecccd700e4c6e3fa21cd8f7935b95bdcc9de1540c5aa9ff41c2984bcac6f5",
 		);
 		expect(loaded.channelBindings).toHaveLength(1);
 	});
 
-	test("caches the effective projected manifest and only the scoped secret map", () => {
+	test("caches the effective projected manifest and complete active secret union", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-cache-"));
 		roots.push(root);
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
@@ -873,9 +936,256 @@ describe("hosted runtime bundle v2", () => {
 		);
 		expect(manifestCache).not.toContain("telegram-agent-golden");
 		expect(secretCache).toContain("999999999:9ded1453047ec0a48ec3b735075f7448");
-		expect(secretCache).not.toContain("telegram-agent-golden");
+		expect(secretCache).toContain("telegram-agent-golden");
+		expect(secretCache).toContain("sk-provider-golden");
 		expect(secretCache).not.toContain("channelBindings");
 		expect(secretCache).not.toContain("sourceRevision");
+		const cacheStat = statSync(paths.managedSecretCacheFile);
+		expect(cacheStat.mode & 0o777).toBe(0o600);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(cacheStat.uid).toBe(0);
+			expect(cacheStat.gid).toBe(0);
+		}
+	});
+
+	test("rebuilds the exact active egress secret file from the golden bundle offline", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-offline-"));
+		roots.push(root);
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		process.env.CLAWDI_RUN_DIR = join(root, "run");
+		process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(root, "run", "systemd", "system");
+		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
+		process.env.CLAWDI_HOME = join(root, "clawdi-home");
+		process.env.HOME = process.env.CLAWDI_RUNTIME_HOME;
+		process.env.CLAWDI_AUTH_TOKEN = "test-token";
+		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
+		process.env.CLAWDI_TEST_TOKEN = "test-token";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		process.env.CLAWDI_EGRESS_UID = "10002";
+		process.env.CLAWDI_EGRESS_GID = "10002";
+		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
+		const paths = getRuntimePaths({ mode: "hosted" });
+		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		writeFileSync(openclawBin, "#!/usr/bin/env sh\ncat >/dev/null || true\nexit 0\n");
+		chmodSync(openclawBin, 0o700);
+
+		let networkAvailable = true;
+		globalThis.fetch = Object.assign(
+			async () => {
+				if (!networkAvailable) throw new Error("control plane unavailable");
+				return new Response(readFileSync(goldenPath, "utf-8"), {
+					status: 200,
+					headers: {
+						"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+						etag: '"bundle-golden"',
+					},
+				});
+			},
+			{ preconnect: () => undefined },
+		);
+		const converge = (load: Parameters<typeof convergeRuntimeManifest>[0]) =>
+			convergeRuntimeManifest(load, paths, {
+				cacheLastGood: false,
+				managedGatewayModelListFetcher: ({ baseUrl }) => ({
+					status: "ok",
+					endpoint: `${baseUrl}/models`,
+					models: [{ id: "gpt-test" }],
+				}),
+			});
+
+		const remote = await loadRemoteRuntimeManifest(paths);
+		if (!("manifest" in remote)) throw new Error(JSON.stringify(remote));
+		const onlineLoad = applyRuntimeBundleChannelsToManifestLoad(remote);
+		const onlineConvergence = converge(onlineLoad);
+		expect(onlineConvergence.installErrors).toEqual([]);
+		const sourceRevision = onlineLoad.sourceRevision;
+		if (!sourceRevision) throw new Error("golden bundle has no source revision");
+		commitRuntimeAppliedState({
+			load: onlineLoad,
+			paths,
+			etag: remote.etag ?? '"bundle-golden"',
+			sourceRevision,
+			convergence: onlineConvergence,
+			applyIdentity: {
+				generation: onlineLoad.manifest.generation,
+				manifestETag: '"manifest-golden-7"',
+				applyReceiptId: "apply-receipt-golden-0007",
+				bootNonce: "boot-nonce-golden-000007",
+			},
+		});
+
+		const cacheText = readFileSync(paths.managedSecretCacheFile, "utf-8");
+		const cachedSecrets = z.record(z.string(), z.string()).parse(JSON.parse(cacheText));
+		const agentRef =
+			"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token";
+		const placeholderRef =
+			"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token";
+		const providerRef = "secret://tool.codex.apiKey";
+		expect(cachedSecrets).toMatchObject({
+			[agentRef]: "123456789:telegram-agent-golden",
+			[agentRef.slice("secret://".length)]: "123456789:telegram-agent-golden",
+			[placeholderRef]: "999999999:9ded1453047ec0a48ec3b735075f7448",
+			[providerRef]: "sk-provider-golden",
+			"tool.codex.apiKey": "sk-provider-golden",
+		});
+		expect(cachedSecrets).not.toHaveProperty("unused.secret");
+		const cacheStat = statSync(paths.managedSecretCacheFile);
+		expect(cacheStat.mode & 0o777).toBe(0o600);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(cacheStat.uid).toBe(0);
+			expect(cacheStat.gid).toBe(0);
+		}
+
+		const applied = readRuntimeAppliedState(paths);
+		if (!applied) throw new Error("online apply did not commit durable authority");
+		const appliedStateText = readFileSync(paths.appliedState, "utf-8");
+		const appliedStateStat = statSync(paths.appliedState);
+		expect(appliedStateStat.mode & 0o777).toBe(0o600);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(appliedStateStat.uid).toBe(0);
+			expect(appliedStateStat.gid).toBe(0);
+		}
+		const canonicalContentSha = runtimeContentSha256({
+			manifest: onlineLoad.manifest,
+			secretValues: cachedSecrets,
+		});
+		expect(applied.contentIdentity.sha256).toBe(canonicalContentSha);
+		expect(runtimeAppliedContentIdentity(onlineLoad).sha256).toBe(canonicalContentSha);
+
+		const egressSecretFile = onlineConvergence.outputs.egressSecretFile;
+		if (!egressSecretFile) throw new Error("online converge did not write egress secrets");
+		const onlineEgressSecretText = readFileSync(egressSecretFile, "utf-8");
+		const onlineEgressSecretStat = statSync(egressSecretFile);
+		expect(onlineEgressSecretStat.mode & 0o777).toBe(0o600);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(onlineEgressSecretStat.uid).toBe(10002);
+			expect(onlineEgressSecretStat.gid).toBe(10002);
+		}
+		const runtimeAggregateText = readFileSync(paths.managedSecretFile, "utf-8");
+		expect(runtimeAggregateText).toContain("999999999:9ded1453047ec0a48ec3b735075f7448");
+		expect(runtimeAggregateText).not.toContain("telegram-agent-golden");
+		expect(runtimeAggregateText).not.toContain("sk-provider-golden");
+		const manifestCacheText = readFileSync(paths.manifestLastGood, "utf-8");
+		const generatedUnitPaths = [...onlineConvergence.outputs.systemdSystemUnits];
+		for (const unitPath of onlineConvergence.outputs.systemdUserUnits) {
+			const candidates = [unitPath, join(`${unitPath}.d`, "10-clawdi-hosted.conf")].filter(
+				existsSync,
+			);
+			expect(candidates).not.toEqual([]);
+			generatedUnitPaths.push(...candidates);
+		}
+		for (const unitPath of generatedUnitPaths) expect(existsSync(unitPath)).toBe(true);
+		for (const unitName of ["clawdi-runtime-watch.service", "clawdi-daemon.service"]) {
+			const unitPath = join(paths.systemdSystemRoot, unitName);
+			expect(onlineConvergence.outputs.systemdSystemUnits).toContain(unitPath);
+			expect(readFileSync(unitPath, "utf-8")).not.toMatch(/^User=/m);
+		}
+		for (const secret of [
+			"123456789:telegram-agent-golden",
+			"999999999:9ded1453047ec0a48ec3b735075f7448",
+			"sk-provider-golden",
+		]) {
+			expect(manifestCacheText).not.toContain(secret);
+			expect(appliedStateText).not.toContain(secret);
+			for (const unitPath of generatedUnitPaths) {
+				expect(readFileSync(unitPath, "utf-8")).not.toContain(secret);
+			}
+			expect(readFileSync(paths.providerHealthStatus, "utf-8")).not.toContain(secret);
+		}
+
+		rmSync(egressSecretFile);
+		expect(existsSync(egressSecretFile)).toBe(false);
+		networkAvailable = false;
+		const offlineLoad = await loadRuntimeManifest(paths);
+		if (!("manifest" in offlineLoad)) throw new Error(JSON.stringify(offlineLoad));
+		expect(offlineLoad.source).toBe("last-good-cache");
+		expect(offlineLoad.offline).toBe(true);
+		expect(runtimeAppliedContentIdentity(offlineLoad).sha256).toBe(canonicalContentSha);
+		const offlineConvergence = converge(offlineLoad);
+		expect(offlineConvergence.mode).toBe("degraded-offline");
+		expect(offlineConvergence.installErrors).toEqual([]);
+		expect(readFileSync(egressSecretFile, "utf-8")).toBe(onlineEgressSecretText);
+		const offlineEgressSecretStat = statSync(egressSecretFile);
+		expect(offlineEgressSecretStat.mode & 0o777).toBe(0o600);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(offlineEgressSecretStat.uid).toBe(10002);
+			expect(offlineEgressSecretStat.gid).toBe(10002);
+		}
+
+		rmSync(paths.appliedState);
+		const uncommittedCacheLoad = await loadRuntimeManifest(paths);
+		expect("errors" in uncommittedCacheLoad).toBe(true);
+		if (!("errors" in uncommittedCacheLoad)) {
+			throw new Error("expected uncommitted strict-v2 cache failure");
+		}
+		expect(uncommittedCacheLoad.errors.join("\n")).toContain(
+			"cached strict-v2 manifest has no durable applied authority",
+		);
+		writeFileSync(paths.appliedState, appliedStateText);
+
+		const committedManifest = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(manifestCacheText));
+		writeFileSync(
+			paths.manifestLastGood,
+			`${JSON.stringify({
+				...committedManifest,
+				generation: onlineLoad.manifest.generation + 1,
+			})}\n`,
+		);
+		const manifestOnlyCrashLoad = await loadRuntimeManifest(paths);
+		expect("errors" in manifestOnlyCrashLoad).toBe(true);
+		if (!("errors" in manifestOnlyCrashLoad)) {
+			throw new Error("expected manifest-only mixed snapshot failure");
+		}
+		expect(manifestOnlyCrashLoad.errors.join("\n")).toContain(
+			"cached manifest does not match the durable strict-v2 apply identity",
+		);
+		writeFileSync(
+			paths.managedSecretCacheFile,
+			`${JSON.stringify({
+				...cachedSecrets,
+				[agentRef]: "123456789:telegram-agent-next",
+				[agentRef.slice("secret://".length)]: "123456789:telegram-agent-next",
+			})}\n`,
+		);
+		const manifestAndSecretsCrashLoad = await loadRuntimeManifest(paths);
+		expect("errors" in manifestAndSecretsCrashLoad).toBe(true);
+		if (!("errors" in manifestAndSecretsCrashLoad)) {
+			throw new Error("expected manifest-plus-secret mixed snapshot failure");
+		}
+		expect(manifestAndSecretsCrashLoad.errors.join("\n")).toContain(
+			"cached manifest does not match the durable strict-v2 apply identity",
+		);
+		writeFileSync(paths.manifestLastGood, manifestCacheText);
+		writeFileSync(paths.managedSecretCacheFile, cacheText);
+		const restoredCommittedLoad = await loadRuntimeManifest(paths);
+		expect("manifest" in restoredCommittedLoad).toBe(true);
+
+		const missingSecrets = { ...cachedSecrets };
+		delete missingSecrets[agentRef];
+		delete missingSecrets[agentRef.slice("secret://".length)];
+		writeFileSync(paths.managedSecretCacheFile, `${JSON.stringify(missingSecrets)}\n`);
+		const missingLoad = await loadRuntimeManifest(paths);
+		expect("errors" in missingLoad).toBe(true);
+		if (!("errors" in missingLoad)) throw new Error("expected missing cache failure");
+		expect(missingLoad.errors.join("\n")).toContain("cached secret values are missing");
+
+		const staleSecrets = {
+			...cachedSecrets,
+			[providerRef]: "sk-provider-stale",
+			"tool.codex.apiKey": "sk-provider-stale",
+		};
+		writeFileSync(paths.managedSecretCacheFile, `${JSON.stringify(staleSecrets)}\n`);
+		const staleLoad = await loadRuntimeManifest(paths);
+		expect("errors" in staleLoad).toBe(true);
+		if (!("errors" in staleLoad)) throw new Error("expected stale cache failure");
+		expect(staleLoad.errors.join("\n")).toContain(
+			"cached manifest does not match the durable strict-v2 apply identity",
+		);
 	});
 
 	test("treats secret rotation at unchanged generation as a new applied identity", () => {

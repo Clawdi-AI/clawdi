@@ -112,7 +112,7 @@ export interface AgentAdapter {
 	getSharedSkillPath(skillKey: string, ownerHandle: string): string;
 	/** Path(s) `clawdi daemon` should watch for session changes. May
 	 * be directories (Claude Code, Codex, OpenClaw all dump JSONL
-	 * files there) or a single file (Hermes uses a SQLite DB). The
+	 * files there) or database/sidecar files (Hermes uses SQLite). The
 	 * daemon walks each path on a change event, then runs
 	 * `collectSessions` to enumerate what's actually there.
 	 *

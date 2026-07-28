@@ -2,12 +2,14 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { CollectSessionsResult } from "../adapters/base";
 import { ApiError } from "../lib/api-client";
 import type { PendingSkillUploadEcho } from "./sync-engine";
 import {
 	addInFlight,
 	classifyHeartbeatFailure,
 	consumePendingSkillUploadEcho,
+	enqueueChangedSessionsAfterStability,
 	filterValidSkillKeysForSync,
 	heartbeatDelayMs,
 	isAuthFailure,
@@ -21,6 +23,52 @@ import {
 	rememberPendingSkillUploadEcho,
 	resolveOwningSkillKey,
 } from "./sync-engine";
+
+describe("stable session enqueue abort fence", () => {
+	it("does not enqueue after collection resolves into an abort", async () => {
+		const abort = new AbortController();
+		let resolveCollection: ((result: CollectSessionsResult) => void) | undefined;
+		const collection = new Promise<CollectSessionsResult>((resolve) => {
+			resolveCollection = resolve;
+		});
+		const queued: unknown[] = [];
+		const inFlight = new Map<string, string>();
+		const running = enqueueChangedSessionsAfterStability({
+			abort: abort.signal,
+			collectSessions: () => collection,
+			queue: { enqueue: (item: unknown) => queued.push(item) },
+			lastPushedHash: new Map(),
+			inFlightHash: inFlight,
+		});
+
+		abort.abort();
+		resolveCollection?.({
+			sessions: [
+				{
+					localSessionId: "session-1",
+					projectPath: null,
+					startedAt: new Date(0),
+					endedAt: null,
+					messageCount: 1,
+					inputTokens: 0,
+					outputTokens: 0,
+					cacheReadTokens: 0,
+					model: null,
+					modelsUsed: [],
+					durationSeconds: null,
+					summary: null,
+					messages: [{ role: "user", content: "not queued" }],
+					rawFilePath: "/sessions/1.jsonl",
+				},
+			],
+			dedupedCount: 0,
+		});
+
+		expect(await running).toBe(0);
+		expect(queued).toEqual([]);
+		expect(inFlight.size).toBe(0);
+	});
+});
 
 describe("daemon SSE routing", () => {
 	it("ignores runtime manifest notifications without dispatching skill work", () => {

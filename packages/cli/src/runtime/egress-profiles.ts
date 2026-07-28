@@ -206,6 +206,29 @@ export const egressProfileBundleSchema = z.object({
 export type EgressProfileInputBundle = z.infer<typeof egressProfileInputBundleSchema>;
 export type EgressProfileBundle = z.infer<typeof egressProfileBundleSchema>;
 
+export function egressProfileSecretRefs(bundle: EgressProfileInputBundle | undefined): string[] {
+	const refs = new Set<string>();
+	for (const profile of bundle?.profiles ?? []) {
+		if (!profile.enabled) continue;
+		for (const matcher of [
+			profile.match.path,
+			...Object.values(profile.match.headers ?? {}),
+			...Object.values(profile.match.query ?? {}),
+		]) {
+			if (matcher && "secretRef" in matcher) refs.add(matcher.secretRef);
+		}
+		const pathReplace = profile.rewrite?.pathReplace;
+		if (pathReplace) {
+			refs.add(pathReplace.secretRef);
+			refs.add(pathReplace.replacementSecretRef);
+		}
+		for (const setter of Object.values(profile.rewrite?.setHeaders ?? {})) {
+			if (typeof setter !== "string") refs.add(setter.secretRef);
+		}
+	}
+	return [...refs].sort();
+}
+
 export function buildEgressProfileBundle(input: {
 	generatedAt: string;
 	generation: number;

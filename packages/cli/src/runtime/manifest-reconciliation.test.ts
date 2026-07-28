@@ -13,13 +13,19 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { writeRuntimeAppliedState } from "./applied-state";
 import {
+	readRuntimeAppliedState,
+	runtimeContentSha256,
+	writeRuntimeAppliedState,
+} from "./applied-state";
+import {
+	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	hostedAiProviderCatalog,
 	type RuntimeManifest,
 	runtimeLiveSnapshotPaths,
 	runtimeProgramRevision,
+	runtimeRecoverableSecretValues,
 	runtimeSecretValue,
 	runtimeSidecarProgramRevision,
 } from "./manifest";
@@ -2216,18 +2222,29 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("keeps runtime secret revisions scoped to runtime programs", () => {
 		const paths = tempRuntimePaths();
+		const runtimeSecretRef = "secret://runtimes/openclaw/api-key";
+		const egressSecretRef = "secret://providers/default/api-key";
 		const manifest = baseManifest(paths, {
 			openclaw: {
 				enabled: true,
-				run: runSettings("openclaw", ["gateway", "run"]),
+				run: {
+					...runSettings("openclaw", ["gateway", "run"]),
+					secretEnv: { OPENAI_API_KEY: runtimeSecretRef },
+				},
 				services: {},
 			},
 		});
 		const secretValues = {
-			"secret://providers/default/api-key": "sk-before",
+			[runtimeSecretRef]: "sk-runtime-before",
+			[egressSecretRef]: "sk-egress-before",
 		};
-		const rotatedSecretValues = {
-			"secret://providers/default/api-key": "sk-after",
+		const rotatedRuntimeSecretValues = {
+			...secretValues,
+			[runtimeSecretRef]: "sk-runtime-after",
+		};
+		const rotatedEgressSecretValues = {
+			...secretValues,
+			[egressSecretRef]: "sk-egress-after",
 		};
 		const metadataOnlyChange: RuntimeManifest = {
 			...manifest,
@@ -2236,6 +2253,12 @@ describe("runtime manifest reconciliation invariants", () => {
 		};
 		const egressManifest: RuntimeManifest = {
 			...manifest,
+			runtimes: {
+				openclaw: {
+					...manifest.runtimes.openclaw,
+					run: runSettings("openclaw", ["gateway", "run"]),
+				},
+			},
 			egressProfiles: {
 				profiles: [
 					{
@@ -2255,7 +2278,7 @@ describe("runtime manifest reconciliation invariants", () => {
 							setHeaders: {
 								authorization: {
 									type: "secretRef",
-									secretRef: "secret://providers/default/api-key",
+									secretRef: egressSecretRef,
 									prefix: "Bearer ",
 								},
 							},
@@ -2268,20 +2291,710 @@ describe("runtime manifest reconciliation invariants", () => {
 		};
 
 		const runtimeRevision = runtimeProgramRevision(manifest, "openclaw", secretValues);
-		expect(runtimeProgramRevision(manifest, "openclaw", rotatedSecretValues)).not.toBe(
+		expect(runtimeProgramRevision(manifest, "openclaw", rotatedRuntimeSecretValues)).not.toBe(
 			runtimeRevision,
+		);
+		expect(runtimeProgramRevision(manifest, "openclaw", rotatedEgressSecretValues)).toBe(
+			runtimeRevision,
+		);
+		expect(runtimeProgramRevision(egressManifest, "openclaw", rotatedEgressSecretValues)).toBe(
+			runtimeProgramRevision(egressManifest, "openclaw", secretValues),
 		);
 		expect(runtimeProgramRevision(metadataOnlyChange, "openclaw", secretValues)).toBe(
 			runtimeRevision,
 		);
-		const sidecarRevision = runtimeSidecarProgramRevision(manifest, secretValues);
-		expect(runtimeSidecarProgramRevision(manifest, rotatedSecretValues)).toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(egressManifest, rotatedSecretValues)).not.toBe(
-			runtimeSidecarProgramRevision(egressManifest, secretValues),
+		const sidecarRevision = runtimeSidecarProgramRevision(manifest);
+		expect(runtimeSidecarProgramRevision(egressManifest)).not.toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(metadataOnlyChange)).not.toBe(sidecarRevision);
+	});
+
+	test("restarts only active sidecars for committed egress secret lifecycle changes", () => {
+		const paths = tempRuntimePaths();
+		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const egressEngine = {
+			type: "mitmproxy" as const,
+			version: "12.2.3",
+			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+		};
+		const engineBinary = join(
+			paths.egressEngineMaintainedRoot,
+			egressEngine.version,
+			egressEngine.sha256,
+			"mitmdump",
 		);
-		expect(runtimeSidecarProgramRevision(metadataOnlyChange, secretValues)).not.toBe(
-			sidecarRevision,
+		mkdirSync(dirname(commandPath), { recursive: true });
+		writeFileSync(commandPath, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(commandPath, 0o700);
+		mkdirSync(dirname(engineBinary), { recursive: true });
+		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(engineBinary, 0o700);
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const secretRef = "secret://providers/default/api-key";
+		const activeManifest = baseManifest(
+			paths,
+			{
+				openclaw: {
+					enabled: true,
+					run: runSettings(commandPath, ["gateway", "run"]),
+					services: {},
+				},
+			},
+			{
+				egressEngine,
+				egressProfiles: {
+					profiles: [
+						{
+							id: "managed-provider",
+							enabled: true,
+							kind: "provider",
+							match: {
+								scheme: "https",
+								host: "provider.example.test",
+								headers: {},
+								query: {},
+							},
+							rewrite: {
+								preservePath: true,
+								setHeaders: {
+									authorization: {
+										type: "secretRef",
+										secretRef,
+										prefix: "Bearer ",
+									},
+								},
+							},
+							logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+							priority: 80,
+						},
+					],
+				},
+			},
 		);
+		const signals: boolean[] = [];
+		const converge = (manifest: RuntimeManifest, secret: string | undefined) =>
+			convergeRuntimeManifest(
+				manifestLoad(
+					manifest,
+					"inline-egress-secret-lifecycle",
+					secret === undefined ? {} : { [secretRef]: secret },
+				),
+				paths,
+				{
+					cacheLastGood: false,
+					commitAuthority: (_convergence, authority) => {
+						writeRuntimeAppliedState(
+							{
+								schemaVersion: "clawdi.runtimeAppliedState.v2",
+								appliedAt: "2026-07-28T00:00:00.000Z",
+								instanceId: manifest.instanceId,
+								etag: '"egress-lifecycle"',
+								sourceRevision: "a".repeat(64),
+								generation: manifest.generation,
+								contentIdentity: {
+									sourcePath: "inline-egress-secret-lifecycle",
+									sha256: "b".repeat(64),
+								},
+								...authority,
+								providerIds: [],
+								projectedProviderIds: {},
+							},
+							paths,
+						);
+					},
+					systemdApply: {
+						activate: ({ restartEgressSidecar }) => {
+							signals.push(restartEgressSidecar);
+							return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+						},
+						rollback: () => {},
+					},
+				},
+			);
+		const secretFile = join(paths.managedSecretRoot, "egress-secrets.json");
+		const sidecarUnit = join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service");
+
+		expect(converge(activeManifest, "000000").installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(true);
+		expect(statSync(secretFile).mode & 0o777).toBe(0o600);
+		expect(readFileSync(secretFile, "utf-8")).toContain("000000");
+
+		expect(converge(activeManifest, "000000").installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(false);
+
+		expect(converge(activeManifest, "000001").installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(true);
+		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
+
+		const noSidecarManifest: RuntimeManifest = {
+			...activeManifest,
+			runtimes: { openclaw: { ...activeManifest.runtimes.openclaw, enabled: false } },
+		};
+		expect(converge(noSidecarManifest, "000002").installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(false);
+		expect(readFileSync(secretFile, "utf-8")).toContain("000002");
+		expect(existsSync(sidecarUnit)).toBe(false);
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
+
+		const deletedManifest: RuntimeManifest = {
+			...noSidecarManifest,
+			egressProfiles: { profiles: [] },
+		};
+		expect(converge(deletedManifest, undefined).installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(false);
+		expect(existsSync(secretFile)).toBe(false);
+
+		expect(converge(deletedManifest, undefined).installErrors).toEqual([]);
+		expect(signals.at(-1)).toBe(false);
+		expect(signals).toEqual([true, false, true, false, false, false]);
+	});
+
+	test("recovers committed egress secrets before retrying a crash-interrupted sidecar load", () => {
+		const paths = tempRuntimePaths();
+		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const egressEngine = {
+			type: "mitmproxy" as const,
+			version: "12.2.3",
+			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+		};
+		const engineBinary = join(
+			paths.egressEngineMaintainedRoot,
+			egressEngine.version,
+			egressEngine.sha256,
+			"mitmdump",
+		);
+		mkdirSync(dirname(commandPath), { recursive: true });
+		writeFileSync(commandPath, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(commandPath, 0o700);
+		mkdirSync(dirname(engineBinary), { recursive: true });
+		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(engineBinary, 0o700);
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const secretRef = "secret://providers/default/api-key";
+		const manifest = manifestSchema.parse(
+			baseManifest(
+				paths,
+				{
+					openclaw: {
+						enabled: true,
+						run: runSettings(commandPath, ["gateway", "run"]),
+						services: {},
+					},
+				},
+				{
+					egressEngine,
+					egressProfiles: {
+						profiles: [
+							{
+								id: "managed-provider",
+								enabled: true,
+								kind: "provider",
+								match: {
+									scheme: "https",
+									host: "provider.example.test",
+									headers: {},
+									query: {},
+								},
+								rewrite: {
+									preservePath: true,
+									setHeaders: {
+										authorization: {
+											type: "secretRef",
+											secretRef,
+											prefix: "Bearer ",
+										},
+									},
+								},
+								logging: { redactHeaders: ["authorization"], redactUrlPatterns: [] },
+								priority: 80,
+							},
+						],
+					},
+				},
+			),
+		);
+		const secretFile = join(paths.managedSecretRoot, "egress-secrets.json");
+		const secrets = (value: string) => ({ [secretRef]: value });
+		const load = (value: string) =>
+			manifestLoad(manifest, "inline-egress-crash-recovery", secrets(value));
+		const writeAuthority = (value: string, egressSidecarSecretRevision?: string) => {
+			writeRuntimeAppliedState(
+				{
+					schemaVersion: "clawdi.runtimeAppliedState.v2",
+					appliedAt: "2026-07-28T00:00:00.000Z",
+					instanceId: manifest.instanceId,
+					etag: `"egress-${value}"`,
+					sourceRevision: runtimeContentSha256({ value }),
+					generation: manifest.generation,
+					contentIdentity: {
+						sourcePath: "inline-egress-crash-recovery",
+						sha256: runtimeContentSha256({
+							manifest,
+							secretValues: runtimeRecoverableSecretValues(manifest, secrets(value)),
+						}),
+					},
+					...(egressSidecarSecretRevision ? { egressSidecarSecretRevision } : {}),
+					providerIds: [],
+					projectedProviderIds: {},
+				},
+				paths,
+			);
+		};
+		const overwriteLiveSecret = (value: string) => {
+			const current = JSON.parse(readFileSync(secretFile, "utf-8")) as Record<string, string>;
+			writeFileSync(
+				secretFile,
+				`${JSON.stringify(
+					Object.fromEntries(Object.keys(current).map((ref) => [ref, value])),
+					null,
+					2,
+				)}\n`,
+			);
+			chmodSync(secretFile, 0o600);
+		};
+		const commit = (value: string, egressSidecarSecretRevision?: string) => {
+			cacheRuntimeLastGoodManifest(manifest, paths, secrets(value));
+			writeAuthority(value, egressSidecarSecretRevision);
+		};
+
+		let revisionA: string | undefined;
+		const baseline = convergeRuntimeManifest(load("000000"), paths, {
+			commitAuthority: (_convergence, authority) => {
+				revisionA = authority.egressSidecarSecretRevision;
+			},
+			systemdApply: {
+				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+				rollback: () => {},
+			},
+		});
+		expect(baseline.installErrors).toEqual([]);
+		expect(revisionA).toMatch(/^[a-f0-9]{64}$/);
+		commit("000000", revisionA);
+		const committedA = readFileSync(paths.appliedState, "utf-8");
+
+		// Simulate SIGKILL after the atomic A -> B file write but before restart.
+		overwriteLiveSecret("000001");
+		const recoverySignals: boolean[] = [];
+		let revisionB: string | undefined;
+		const recovered = convergeRuntimeManifest(load("000001"), paths, {
+			cacheLastGood: false,
+			commitAuthority: (_convergence, authority) => {
+				revisionB = authority.egressSidecarSecretRevision;
+				commit("000001", revisionB);
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					recoverySignals.push(restartEgressSidecar);
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					throw new Error("successful recovery must not roll back");
+				},
+			},
+		});
+		expect(recovered.installErrors).toEqual([]);
+		expect(recoverySignals).toEqual([true]);
+		expect(revisionB).toMatch(/^[a-f0-9]{64}$/);
+		expect(revisionB).not.toBe(revisionA);
+		expect(readFileSync(paths.appliedState, "utf-8")).not.toBe(committedA);
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionB);
+		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
+		expect(JSON.stringify(recovered)).not.toContain("egressSidecarSecretRevision");
+		expect(JSON.stringify(recovered)).not.toContain(revisionB ?? "missing-private-revision");
+
+		// A failed retry restores the verified committed B material before the
+		// rollback restart, even though the pre-apply live file already held C.
+		overwriteLiveSecret("000002");
+		let restartFailureRollbackSecret = "";
+		const restartFailed = convergeRuntimeManifest(load("000002"), paths, {
+			cacheLastGood: false,
+			commitAuthority: () => {
+				throw new Error("restart failure must not commit authority");
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					throw new Error("injected sidecar restart failure");
+				},
+				rollback: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					restartFailureRollbackSecret = readFileSync(secretFile, "utf-8");
+				},
+			},
+		});
+		expect(restartFailed.installErrors.join("\n")).toContain("injected sidecar restart failure");
+		expect(restartFailureRollbackSecret).toContain("000001");
+		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionB);
+
+		// If activation succeeded but the atomic authority commit reports a
+		// failure, both authority files and loaded secret material return to B.
+		overwriteLiveSecret("000002");
+		const committedB = readFileSync(paths.appliedState, "utf-8");
+		const committedCacheB = readFileSync(paths.managedSecretCacheFile, "utf-8");
+		let commitFailureRollbackSecret = "";
+		const commitFailed = convergeRuntimeManifest(load("000002"), paths, {
+			cacheLastGood: false,
+			commitAuthority: (_convergence, authority) => {
+				commit("000002", authority.egressSidecarSecretRevision);
+				throw new Error("injected authority commit failure");
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					commitFailureRollbackSecret = readFileSync(secretFile, "utf-8");
+				},
+			},
+		});
+		expect(commitFailed.installErrors.join("\n")).toContain("injected authority commit failure");
+		expect(commitFailureRollbackSecret).toContain("000001");
+		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedB);
+		expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedCacheB);
+
+		// A crash may also advance the live file and cache while applied state
+		// remains at B. The desired C restart must run before rollback material
+		// is needed, and a successful restart may then commit C.
+		overwriteLiveSecret("000002");
+		cacheRuntimeLastGoodManifest(manifest, paths, secrets("000002"));
+		let mixedSnapshotActivations = 0;
+		let revisionC: string | undefined;
+		const mixedSnapshot = convergeRuntimeManifest(load("000002"), paths, {
+			cacheLastGood: false,
+			commitAuthority: (_convergence, authority) => {
+				revisionC = authority.egressSidecarSecretRevision;
+				commit("000002", revisionC);
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					mixedSnapshotActivations++;
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					throw new Error("successful mixed-snapshot recovery must not roll back");
+				},
+			},
+		});
+		expect(mixedSnapshot.installErrors).toEqual([]);
+		expect(mixedSnapshotActivations).toBe(1);
+		expect(revisionC).toMatch(/^[a-f0-9]{64}$/);
+		expect(revisionC).not.toBe(revisionB);
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionC);
+
+		// If the restart from a mixed D/cache-D/applied-C snapshot fails, only
+		// the failure path attempts to recover C. The unverifiable cache then
+		// fails closed without a rollback restart or an authority commit.
+		overwriteLiveSecret("000003");
+		cacheRuntimeLastGoodManifest(manifest, paths, secrets("000003"));
+		const committedC = readFileSync(paths.appliedState, "utf-8");
+		let mixedFailureCommits = 0;
+		let mixedFailureRollbacks = 0;
+		const mixedFailure = convergeRuntimeManifest(load("000003"), paths, {
+			cacheLastGood: false,
+			commitAuthority: () => {
+				mixedFailureCommits++;
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					throw new Error("injected mixed-snapshot restart failure");
+				},
+				rollback: () => {
+					mixedFailureRollbacks++;
+				},
+			},
+		});
+		expect(mixedFailure.installErrors.join("\n")).toContain(
+			"injected mixed-snapshot restart failure",
+		);
+		expect(mixedFailure.installErrors.join("\n")).toContain(
+			"could not verify committed egress secret rollback authority",
+		);
+		expect(mixedFailure.installErrors.join("\n")).toContain(
+			"runtime systemd rollback skipped because filesystem authority restoration failed",
+		);
+		expect(mixedFailureCommits).toBe(0);
+		expect(mixedFailureRollbacks).toBe(0);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedC);
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionC);
+		expect(readFileSync(secretFile, "utf-8")).toContain("000003");
+
+		// Legacy applied state can recover A from an exact content-identity
+		// match even when an interrupted write left unrelated live B bytes. A
+		// failed desired-C restart must load only the verified A material.
+		const legacyCommitted = "legacy-committed-a";
+		const legacyInterrupted = "legacy-live-b";
+		const legacyDesired = "legacy-desired-c";
+		cacheRuntimeLastGoodManifest(manifest, paths, secrets(legacyCommitted));
+		writeAuthority(legacyCommitted);
+		overwriteLiveSecret(legacyInterrupted);
+		const legacyAppliedA = readFileSync(paths.appliedState, "utf-8");
+		let legacyFailureCommits = 0;
+		const legacyRollbackSecrets: string[] = [];
+		const legacyRestartFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
+			cacheLastGood: false,
+			commitAuthority: () => {
+				legacyFailureCommits++;
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					expect(readFileSync(secretFile, "utf-8")).toContain(legacyDesired);
+					throw new Error("injected legacy desired restart failure");
+				},
+				rollback: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					legacyRollbackSecrets.push(readFileSync(secretFile, "utf-8"));
+				},
+			},
+		});
+		expect(legacyRestartFailure.installErrors.join("\n")).toContain(
+			"injected legacy desired restart failure",
+		);
+		expect(legacyFailureCommits).toBe(0);
+		expect(legacyRollbackSecrets).toHaveLength(1);
+		expect(legacyRollbackSecrets[0]).toContain(legacyCommitted);
+		expect(legacyRollbackSecrets[0]).not.toContain(legacyInterrupted);
+		expect(readFileSync(secretFile, "utf-8")).toContain(legacyCommitted);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyAppliedA);
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
+		expect(JSON.stringify(legacyRestartFailure)).not.toContain("egressSidecarSecretRevision");
+
+		// A legacy cache without its active egress secret cannot prove A. The
+		// desired restart still runs, but its failure must not restart the
+		// sidecar with the unverified snapshot B or attempt an authority commit.
+		cacheRuntimeLastGoodManifest(manifest, paths, secrets(legacyCommitted));
+		rmSync(paths.managedSecretCacheFile);
+		writeAuthority(legacyCommitted);
+		overwriteLiveSecret(legacyInterrupted);
+		const legacyMissingCacheApplied = readFileSync(paths.appliedState, "utf-8");
+		let legacyMissingCacheRestartCommits = 0;
+		let legacyMissingCacheRestartRollbacks = 0;
+		const legacyMissingCacheRestartFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
+			cacheLastGood: false,
+			commitAuthority: () => {
+				legacyMissingCacheRestartCommits++;
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					expect(readFileSync(secretFile, "utf-8")).toContain(legacyDesired);
+					throw new Error("injected legacy missing-cache restart failure");
+				},
+				rollback: () => {
+					legacyMissingCacheRestartRollbacks++;
+				},
+			},
+		});
+		expect(legacyMissingCacheRestartFailure.installErrors[0]).toBe(
+			"runtime apply failed: injected legacy missing-cache restart failure",
+		);
+		expect(legacyMissingCacheRestartFailure.installErrors.join("\n")).toContain(
+			"injected legacy missing-cache restart failure",
+		);
+		expect(legacyMissingCacheRestartFailure.installErrors.join("\n")).toContain(
+			"runtime systemd rollback skipped because committed egress secret rollback authority could not be verified",
+		);
+		expect(legacyMissingCacheRestartCommits).toBe(0);
+		expect(legacyMissingCacheRestartRollbacks).toBe(0);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyMissingCacheApplied);
+		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
+		expect(readFileSync(secretFile, "utf-8")).toContain(legacyInterrupted);
+
+		// The same unverified legacy state also skips rollback if desired
+		// activation succeeds but the following authority commit fails.
+		let legacyMissingCacheCommits = 0;
+		let legacyMissingCacheRollbacks = 0;
+		const legacyMissingCacheActivationSecrets: string[] = [];
+		const legacyMissingCacheFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
+			cacheLastGood: false,
+			commitAuthority: (_convergence, authority) => {
+				legacyMissingCacheCommits++;
+				commit(legacyDesired, authority.egressSidecarSecretRevision);
+				throw new Error("injected legacy authority commit failure");
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					legacyMissingCacheActivationSecrets.push(readFileSync(secretFile, "utf-8"));
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					legacyMissingCacheRollbacks++;
+				},
+			},
+		});
+		expect(legacyMissingCacheFailure.installErrors[0]).toBe(
+			"runtime apply failed: injected legacy authority commit failure",
+		);
+		expect(legacyMissingCacheFailure.installErrors.join("\n")).toContain(
+			"injected legacy authority commit failure",
+		);
+		expect(legacyMissingCacheFailure.installErrors.join("\n")).toContain(
+			"runtime systemd rollback skipped because committed egress secret rollback authority could not be verified",
+		);
+		expect(legacyMissingCacheCommits).toBe(1);
+		expect(legacyMissingCacheRollbacks).toBe(0);
+		expect(legacyMissingCacheActivationSecrets).toHaveLength(1);
+		expect(legacyMissingCacheActivationSecrets[0]).toContain(legacyDesired);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyMissingCacheApplied);
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
+		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
+		expect(readFileSync(secretFile, "utf-8")).toContain(legacyInterrupted);
+		expect(JSON.stringify(legacyMissingCacheFailure)).not.toContain("egressSidecarSecretRevision");
+
+		// A legacy content identity deliberately excludes env:// values, so it
+		// cannot prove which env-backed material the sidecar last loaded. Current
+		// env C may be activated, but neither failure path may restart the sidecar
+		// with material reconstructed from C while authority still describes A.
+		const legacyEnvRef = "env://CLAWDI_TEST_LEGACY_EGRESS_SECRET";
+		const legacyEnvManifest = manifestSchema.parse({
+			...manifest,
+			egressProfiles: {
+				profiles: (manifest.egressProfiles?.profiles ?? []).map((profile) => ({
+					...profile,
+					rewrite: {
+						...profile.rewrite,
+						setHeaders: {
+							authorization: {
+								type: "secretRef",
+								secretRef: legacyEnvRef,
+								prefix: "Bearer ",
+							},
+						},
+					},
+				})),
+			},
+		});
+		const legacyEnvLoad = () => manifestLoad(legacyEnvManifest, "inline-legacy-env-egress", {});
+		const writeLegacyEnvAuthority = (egressSidecarSecretRevision?: string) => {
+			writeRuntimeAppliedState(
+				{
+					schemaVersion: "clawdi.runtimeAppliedState.v2",
+					appliedAt: "2026-07-28T00:00:00.000Z",
+					instanceId: legacyEnvManifest.instanceId,
+					etag: '"legacy-env-a"',
+					sourceRevision: "e".repeat(64),
+					generation: legacyEnvManifest.generation,
+					contentIdentity: {
+						sourcePath: "inline-legacy-env-egress",
+						sha256: runtimeContentSha256({
+							manifest: legacyEnvManifest,
+							secretValues: runtimeRecoverableSecretValues(legacyEnvManifest, {}),
+						}),
+					},
+					...(egressSidecarSecretRevision ? { egressSidecarSecretRevision } : {}),
+					providerIds: [],
+					projectedProviderIds: {},
+				},
+				paths,
+			);
+		};
+		process.env.CLAWDI_TEST_LEGACY_EGRESS_SECRET = "legacy-env-a";
+		const legacyEnvBaseline = convergeRuntimeManifest(legacyEnvLoad(), paths, {
+			cacheLastGood: false,
+			systemdApply: {
+				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+				rollback: () => {},
+			},
+		});
+		expect(legacyEnvBaseline.installErrors).toEqual([]);
+		cacheRuntimeLastGoodManifest(legacyEnvManifest, paths, {});
+		writeLegacyEnvAuthority();
+		const legacyEnvAppliedA = readFileSync(paths.appliedState, "utf-8");
+		expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-a");
+
+		process.env.CLAWDI_TEST_LEGACY_EGRESS_SECRET = "legacy-env-c";
+		let legacyEnvRestartFailureCommits = 0;
+		let legacyEnvRestartFailureRollbacks = 0;
+		const legacyEnvRestartFailure = convergeRuntimeManifest(legacyEnvLoad(), paths, {
+			cacheLastGood: false,
+			commitAuthority: () => {
+				legacyEnvRestartFailureCommits++;
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-c");
+					throw new Error("injected legacy env restart failure");
+				},
+				rollback: () => {
+					legacyEnvRestartFailureRollbacks++;
+				},
+			},
+		});
+		expect(legacyEnvRestartFailure.installErrors.join("\n")).toContain(
+			"injected legacy env restart failure",
+		);
+		expect(legacyEnvRestartFailure.installErrors.join("\n")).toContain(
+			"committed egress secret rollback authority could not be verified",
+		);
+		expect(legacyEnvRestartFailureCommits).toBe(0);
+		expect(legacyEnvRestartFailureRollbacks).toBe(0);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyEnvAppliedA);
+		expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-a");
+
+		let legacyEnvCommitFailureCommits = 0;
+		let legacyEnvCommitFailureRollbacks = 0;
+		const legacyEnvCommitFailure = convergeRuntimeManifest(legacyEnvLoad(), paths, {
+			cacheLastGood: false,
+			commitAuthority: (_convergence, authority) => {
+				legacyEnvCommitFailureCommits++;
+				writeLegacyEnvAuthority(authority.egressSidecarSecretRevision);
+				throw new Error("injected legacy env authority commit failure");
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-c");
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					legacyEnvCommitFailureRollbacks++;
+				},
+			},
+		});
+		expect(legacyEnvCommitFailure.installErrors.join("\n")).toContain(
+			"injected legacy env authority commit failure",
+		);
+		expect(legacyEnvCommitFailure.installErrors.join("\n")).toContain(
+			"committed egress secret rollback authority could not be verified",
+		);
+		expect(legacyEnvCommitFailureCommits).toBe(1);
+		expect(legacyEnvCommitFailureRollbacks).toBe(0);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyEnvAppliedA);
+		expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-a");
+		expect(JSON.stringify(legacyEnvCommitFailure)).not.toContain("legacy-env-c");
+
+		// Legacy v2 authority has no private revision. An active sidecar restarts
+		// once, commits it, and then an identical apply no longer forces restart.
+		cacheRuntimeLastGoodManifest(manifest, paths, secrets("000001"));
+		overwriteLiveSecret("000001");
+		writeAuthority("000001");
+		const legacySignals: boolean[] = [];
+		const convergeLegacy = () =>
+			convergeRuntimeManifest(load("000001"), paths, {
+				cacheLastGood: false,
+				commitAuthority: (_convergence, authority) =>
+					writeAuthority("000001", authority.egressSidecarSecretRevision),
+				systemdApply: {
+					activate: ({ restartEgressSidecar }) => {
+						legacySignals.push(restartEgressSidecar);
+						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+					},
+					rollback: () => {},
+				},
+			});
+		expect(convergeLegacy().installErrors).toEqual([]);
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionB);
+		expect(convergeLegacy().installErrors).toEqual([]);
+		expect(legacySignals).toEqual([true, false]);
 	});
 
 	test("advances last-good manifest only after a clean converge", () => {

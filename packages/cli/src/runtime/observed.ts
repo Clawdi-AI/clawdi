@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { getCliVersion } from "../lib/version";
 import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
-import { normalizeSecretRef } from "./hosted-egress-profiles";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
 import {
 	isGeneratedRuntimeSystemdFile,
@@ -181,8 +181,7 @@ function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProvide
 }
 
 function providerSecretAvailable(secrets: JsonRecord, ref: string): boolean {
-	const normalized = normalizeSecretRef(ref);
-	return Boolean(secrets[ref] || (normalized ? secrets[normalized] : undefined));
+	return runtimeSecretValue(secrets, ref) !== null;
 }
 
 function providerReasons(provider: JsonRecord, secretAvailable: boolean | null): string[] {

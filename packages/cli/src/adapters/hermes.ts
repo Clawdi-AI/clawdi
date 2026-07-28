@@ -289,12 +289,12 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	getSessionsWatchPaths(): string[] {
-		// Hermes stores sessions in a single SQLite DB
-		// (`~/.hermes/state.db`). fs.watch on the file works on
-		// every supported platform; we treat any change as a
-		// "sessions changed" signal and let `collectSessions` re-
-		// query the DB to enumerate.
-		return [stateDbPath()];
+		// SQLite may keep committed session rows in WAL or rollback-journal
+		// sidecars while state.db itself remains unchanged. All three paths
+		// therefore belong to one global quiescence window; missing sidecars
+		// have an empty poll signature and become observable when created.
+		const database = stateDbPath();
+		return [database, `${database}-wal`, `${database}-journal`];
 	}
 
 	async removeLocalSkill(key: string): Promise<void> {

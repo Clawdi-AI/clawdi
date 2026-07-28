@@ -52,13 +52,9 @@ import {
 	renderHermesRuntimeLocale,
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { readRuntimeAppliedState } from "./applied-state";
+import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
 import { readRuntimeApplyIdentityFromEnv, runtimeApplyIdentityEnvironment } from "./apply-identity";
-import {
-	ensureRuntimeAuthTokenFile,
-	RUNTIME_AUTH_TOKEN_SECRET_REF,
-	readRuntimeAuthToken,
-} from "./auth-token";
+import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import {
 	assertHostedBundledSkillCatalogDigest,
 	hostedBundledSkillIds,
@@ -103,10 +99,15 @@ import {
 } from "./egress-env";
 import {
 	buildEgressProfileBundle,
+	egressProfileSecretRefs,
 	hasEnabledEgressProfiles,
 	writeEgressProfileBundle,
 } from "./egress-profiles";
-import type { RuntimeManifestLoad } from "./manifest-source";
+import {
+	loadCommittedRuntimeManifest,
+	manifestSecretRefs,
+	type RuntimeManifestLoad,
+} from "./manifest-source";
 import { ensureRuntimeMitmproxy, type RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import type { RuntimePaths } from "./paths";
 import { detectRuntimeMode } from "./paths";
@@ -124,6 +125,7 @@ import {
 	withoutPathEntry,
 	writeRuntimeRunConfig,
 } from "./run-config";
+import { createRuntimeSecretResolver, type RuntimeSecretResolver } from "./runtime-secret-resolver";
 import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 	isGeneratedRuntimeSystemdFile,
@@ -179,9 +181,21 @@ type RuntimeSystemdApplyResult = {
 	userUnitsChanged: string[];
 };
 
+interface RuntimeSystemdApplySignal {
+	// Private, in-memory apply metadata. It must not enter convergence outputs,
+	// status, diagnostics, logs, or any generated public artifact.
+	restartEgressSidecar: boolean;
+}
+
 interface RuntimeSystemdApplyHooks {
-	activate: () => RuntimeSystemdApplyResult;
-	rollback: () => void;
+	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
+	rollback: (signal: RuntimeSystemdApplySignal) => void;
+}
+
+export interface RuntimePrivateAppliedAuthority {
+	// This is a secret-dependent verifier and may only be persisted in the
+	// root-owned 0600 applied-state authority.
+	egressSidecarSecretRevision?: string;
 }
 
 type RuntimeLiveSnapshotNode =
@@ -230,6 +244,7 @@ function writeLastGoodManifest(
 	paths: RuntimePaths,
 	secretValues: Record<string, string> | undefined,
 	secretScopeManifest: RuntimeManifest = manifest,
+	excludedSecretRefs: readonly string[] = egressSidecarOnlySecretRefs(secretScopeManifest),
 ): string | null {
 	if (manifest.recovery.cacheManifest === false) {
 		rmSync(paths.manifestLastGood, { force: true });
@@ -237,7 +252,7 @@ function writeLastGoodManifest(
 		return null;
 	}
 	writeJsonFile(paths.manifestLastGood, manifest);
-	writeLastGoodSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(secretScopeManifest));
+	writeLastGoodSecretValues(secretScopeManifest, secretValues, paths, excludedSecretRefs);
 	return paths.manifestLastGood;
 }
 
@@ -246,23 +261,33 @@ export function cacheRuntimeLastGoodManifest(
 	paths: RuntimePaths,
 	secretValues?: Record<string, string>,
 ): string | null {
-	return writeLastGoodManifest(manifest, paths, secretValues);
+	// This runs only with successfully committed authority, so persist the full
+	// active consumer union needed for exact offline reconstruction.
+	return writeLastGoodManifest(manifest, paths, secretValues, manifest, []);
 }
 
 function writeLastGoodSecretValues(
+	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
 	excludedRefs: readonly string[] = [],
 ): void {
-	const normalized = omitSecretRefs(secretValues, excludedRefs);
-	if (Object.keys(normalized).length === 0) {
+	const recoverable = omitSecretRefs(
+		runtimeRecoverableSecretValues(manifest, secretValues),
+		excludedRefs,
+	);
+	if (Object.keys(recoverable).length === 0) {
 		rmSync(paths.managedSecretCacheFile, { force: true });
 		return;
 	}
-	writePrivateFileAtomic(paths.managedSecretCacheFile, `${JSON.stringify(normalized, null, 2)}\n`, {
-		mode: 0o600,
-		dirMode: 0o755,
-	});
+	writePrivateFileAtomic(
+		paths.managedSecretCacheFile,
+		`${JSON.stringify(recoverable, null, 2)}\n`,
+		{
+			mode: 0o600,
+			dirMode: 0o755,
+		},
+	);
 	makeRootOwned(dirname(paths.managedSecretCacheFile));
 	makeRootOwned(paths.managedSecretCacheFile);
 }
@@ -672,7 +697,8 @@ function writeResolvedSecretValues(
 
 interface ScopedSecretValuesOptions {
 	resolveEnv?: boolean;
-	explicitValues?: Readonly<Record<string, string>>;
+	resolver?: RuntimeSecretResolver;
+	require?: (ref: string) => boolean;
 }
 
 function scopedSecretValues(
@@ -684,14 +710,26 @@ function scopedSecretValues(
 	const scoped: Record<string, string> = {};
 	for (const ref of refs) {
 		if (isEnvSecretRef(ref) && !options.resolveEnv) continue;
-		const value = options.explicitValues?.[ref] ?? resolveRuntimeSecretValue(normalizedValues, ref);
-		if (!value) continue;
+		const value = options.resolver
+			? options.resolver.resolve(ref)
+			: resolveRuntimeSecretValue(normalizedValues, ref);
+		if (!value) {
+			if (options.require?.(ref)) throw new Error(`Runtime secret ${ref} is unavailable.`);
+			continue;
+		}
 		scoped[ref] = value;
 		const normalized = normalizeSecretRef(ref);
 		if (normalized) scoped[normalized] = value;
 		if (ref.startsWith("secret://")) scoped[ref.slice("secret://".length)] = value;
 	}
 	return scoped;
+}
+
+export function runtimeRecoverableSecretValues(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): Record<string, string> {
+	return scopedSecretValues(secretValues, manifestSecretRefs(manifest));
 }
 
 function writeProviderHealthStatus(
@@ -749,8 +787,7 @@ function writeProviderHealthStatus(
 }
 
 function providerSecretAvailable(secretValues: Record<string, string>, ref: string): boolean {
-	const normalized = normalizeSecretRef(ref);
-	return Boolean(secretValues[ref] || (normalized ? secretValues[normalized] : undefined));
+	return resolveRuntimeSecretValue(secretValues, ref) !== null;
 }
 
 function providerHealthReasons(
@@ -1948,38 +1985,123 @@ function egressSecretFilePath(paths: RuntimePaths): string {
 	return join(paths.managedSecretRoot, "egress-secrets.json");
 }
 
-function writeEgressSecretFile(
-	resolvedSecretValues: Readonly<Record<string, string>>,
-	paths: RuntimePaths,
-): string | null {
-	return writeResolvedSecretValues(
-		egressSecretFilePath(paths),
-		resolvedSecretValues,
-		paths,
-		"egress-identity",
-	);
+interface RuntimeEgressSecretMaterial {
+	content: string | null;
+	revision: string;
 }
 
-function resolveEgressSecretValues(
-	manifest: RuntimeManifest,
-	secretValues: Record<string, string> | undefined,
-	paths: RuntimePaths,
-): Record<string, string> {
-	const runtimeAuthToken = readRuntimeAuthToken(paths);
-	// The hosted watcher deliberately clears CLAWDI_AUTH_TOKEN and authenticates
-	// through this root-owned file. Resolve only the canonical sidecar ref here.
-	return scopedSecretValues(secretValues, egressSecretRefs(manifest), {
-		resolveEnv: true,
-		explicitValues: runtimeAuthToken
-			? { [RUNTIME_AUTH_TOKEN_SECRET_REF]: runtimeAuthToken }
-			: undefined,
+function egressSecretMaterialRevision(secretValues: Record<string, string>): string {
+	return runtimeContentSha256({
+		schemaVersion: "clawdi.runtimeEgressSidecarSecrets.v1",
+		secretValues,
 	});
 }
 
+function egressSecretMaterial(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+	paths: RuntimePaths,
+): RuntimeEgressSecretMaterial {
+	const resolver = createRuntimeSecretResolver(manifest, paths, secretValues);
+	const scoped = scopedSecretValues(secretValues, egressSecretRefs(manifest), {
+		resolveEnv: true,
+		resolver,
+		require: (ref) => resolver.isPrivateFileBacked(ref),
+	});
+	return {
+		content: Object.keys(scoped).length > 0 ? `${JSON.stringify(scoped, null, 2)}\n` : null,
+		revision: egressSecretMaterialRevision(scoped),
+	};
+}
+
+function egressSecretRevisionFromContent(content: string | null): string | null {
+	if (content === null) return egressSecretMaterialRevision({});
+	try {
+		const parsed = JSON.parse(content) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+		const secretValues: Record<string, string> = {};
+		for (const [ref, value] of Object.entries(parsed as Record<string, unknown>)) {
+			if (typeof value !== "string") return null;
+			secretValues[ref] = value;
+		}
+		return egressSecretMaterialRevision(secretValues);
+	} catch {
+		return null;
+	}
+}
+
+function writeEgressSecretMaterial(
+	material: RuntimeEgressSecretMaterial,
+	paths: RuntimePaths,
+): string | null {
+	const path = egressSecretFilePath(paths);
+	if (material.content === null) {
+		rmSync(path, { force: true });
+		return null;
+	}
+	writePrivateFileAtomic(path, material.content, { mode: 0o600, dirMode: 0o700 });
+	makeRootOwned(dirname(path));
+	makeEgressIdentityOwned(path);
+	makeManagedSecretRoot(paths.managedSecretRoot);
+	try {
+		chmodSync(path, 0o600);
+	} catch {
+		// Best effort for non-POSIX local development environments.
+	}
+	return path;
+}
+
+function writeEgressSecretFile(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+	paths: RuntimePaths,
+): {
+	path: string | null;
+	changed: boolean;
+	material: RuntimeEgressSecretMaterial;
+	previousRevision: string | null;
+} {
+	const secretFilePath = egressSecretFilePath(paths);
+	const previousContent = existsSync(secretFilePath) ? readFileSync(secretFilePath, "utf-8") : null;
+	const material = egressSecretMaterial(manifest, secretValues, paths);
+	const path = writeEgressSecretMaterial(material, paths);
+	return {
+		path,
+		changed: previousContent !== material.content,
+		material,
+		previousRevision: egressSecretRevisionFromContent(previousContent),
+	};
+}
+
+function committedEgressSecretMaterial(
+	paths: RuntimePaths,
+	committedRevision: string,
+): RuntimeEgressSecretMaterial {
+	const material = verifiedCommittedEgressSecretMaterial(paths);
+	if (!material) {
+		throw new Error("could not verify committed egress secret rollback authority");
+	}
+	if (material.revision !== committedRevision) {
+		throw new Error("committed egress secret rollback authority does not match applied state");
+	}
+	return material;
+}
+
+function verifiedCommittedEgressSecretMaterial(
+	paths: RuntimePaths,
+): RuntimeEgressSecretMaterial | null {
+	try {
+		const committed = loadCommittedRuntimeManifest(paths);
+		if ("errors" in committed) return null;
+		if (egressSecretRefs(committed.manifest).some(isEnvSecretRef)) return null;
+		return egressSecretMaterial(committed.manifest, committed.secretValues, paths);
+	} catch {
+		return null;
+	}
+}
+
 function egressSecretRefs(manifest: RuntimeManifest): string[] {
-	const refs = new Set<string>();
-	collectSecretRefs(manifest.egressProfiles, refs);
-	return [...refs].sort();
+	return egressProfileSecretRefs(manifest.egressProfiles);
 }
 
 function egressSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {
@@ -4035,6 +4157,12 @@ export function runtimeProgramRevision(
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevision: string | null = null,
 ): string {
+	const desiredRuntime = manifest.runtimes[runtime];
+	const runtimeSecretRefs = desiredRuntime
+		? Object.values(
+				mergeRuntimeSecretEnv(runtime, desiredRuntime, hostedProviderSecretEnv(manifest, runtime)),
+			)
+		: [];
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
@@ -4042,8 +4170,8 @@ export function runtimeProgramRevision(
 		locale: manifest.locale ?? null,
 		projection: manifest.projection ?? null,
 		providerProjectionRevision,
-		runtime: manifest.runtimes[runtime] ?? null,
-		secretValues: secretValues ?? {},
+		runtime: desiredRuntime ?? null,
+		secretValues: scopedSecretValues(secretValues, runtimeSecretRefs),
 	});
 }
 
@@ -4178,10 +4306,8 @@ function hashToUInt16(input: string): number {
 
 export function runtimeSidecarProgramRevision(
 	manifest: RuntimeManifest,
-	secretValues: Record<string, string>,
 	egressProgram: RuntimeEgressSystemdProgram | null = null,
 	egressIdentity: RuntimeEgressIdentity | null = null,
-	resolvedEgressSecretValues?: Readonly<Record<string, string>>,
 ): string {
 	if (egressProgram && !egressIdentity) {
 		throw new Error("runtime sidecar egress revision requires the configured numeric identity");
@@ -4192,8 +4318,6 @@ export function runtimeSidecarProgramRevision(
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		egressProfiles: manifest.egressProfiles ?? null,
-		egressSecrets:
-			resolvedEgressSecretValues ?? scopedSecretValues(secretValues, egressSecretRefs(manifest)),
 		egress: egressProgram
 			? {
 					transparentPort: egressProgram.transparentPort,
@@ -4448,12 +4572,13 @@ function writeSystemdProgramEnvironment(input: {
 	name: string;
 	owner: "root" | "runtime-user";
 	env: Record<string, string>;
+	revisionEnv?: Record<string, string>;
 }): { envFile: string; envRevision: string } {
 	return {
 		envFile: writeSystemdEnvironmentFile(input),
 		envRevision: revisionHash({
 			systemdEnvironmentFile: "v1",
-			env: input.env,
+			env: input.revisionEnv ?? input.env,
 		}),
 	};
 }
@@ -4468,6 +4593,7 @@ function writeSystemdUnit(input: {
 	args: string[];
 	cwd: string;
 	env: Record<string, string>;
+	revisionEnv?: Record<string, string>;
 	unitEnv?: Record<string, string>;
 	serviceType?: "simple" | "oneshot" | "notify";
 	restart?: boolean;
@@ -4483,6 +4609,7 @@ function writeSystemdUnit(input: {
 		name: input.name,
 		owner: input.owner,
 		env: input.env,
+		revisionEnv: input.revisionEnv,
 	});
 	const lines = [
 		GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
@@ -4899,10 +5026,9 @@ function writeSystemdUnits(
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
 	secretValues: Record<string, string> | undefined,
-	resolvedEgressSecretValues: Readonly<Record<string, string>>,
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
 	commonEnvironment: Record<string, string>,
-): { systemUnits: string[]; userUnits: string[] } {
+): { systemUnits: string[]; userUnits: string[]; egressSidecarActive: boolean } {
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const systemUnits: string[] = [];
 	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;
@@ -4914,6 +5040,7 @@ function writeSystemdUnits(
 		readRuntimeApplyIdentityFromEnv(),
 	);
 	if (daemonAuthTokenFile) {
+		const watchSecretEnvironment = runtimeWatchSecretEnvironment(runtimePrograms);
 		systemUnits.push(
 			writeSystemdSystemUnit({
 				paths,
@@ -4925,7 +5052,17 @@ function writeSystemdUnits(
 				env: {
 					...commonEnvironment,
 					...applyIdentityEnvironment,
-					...runtimeWatchSecretEnvironment(runtimePrograms),
+					...watchSecretEnvironment,
+					CLAWDI_AUTH_TOKEN: "",
+				},
+				// Unit files are 0644. Hash only secret destination names into their
+				// revision so the unit cannot become an offline verifier for values.
+				// A running watcher acquires rotated values only after the platform
+				// reinjects its environment and restarts it.
+				revisionEnv: {
+					...commonEnvironment,
+					...applyIdentityEnvironment,
+					...Object.fromEntries(Object.keys(watchSecretEnvironment).map((name) => [name, ""])),
 					CLAWDI_AUTH_TOKEN: "",
 				},
 			}),
@@ -4970,10 +5107,8 @@ function writeSystemdUnits(
 					CLAWDI_EGRESS_ENV_FILE: activeEgressProgram.envFilePath,
 					CLAWDI_RUNTIME_REV: runtimeSidecarProgramRevision(
 						manifest,
-						secretValues ?? {},
 						activeEgressProgram,
 						activeEgressIdentity,
-						resolvedEgressSecretValues,
 					),
 				},
 				serviceType: "notify",
@@ -4999,7 +5134,7 @@ function writeSystemdUnits(
 	removeStaleSystemdSystemUnits(paths, systemUnits);
 	removeStaleSystemdUserUnits(paths, userUnits);
 	removeStaleSystemdEnvironmentFiles(paths, [...systemUnits, ...userUnits]);
-	return { systemUnits, userUnits };
+	return { systemUnits, userUnits, egressSidecarActive: shouldRunEgress };
 }
 
 function runtimeWorkspaceRoot(manifest: RuntimeManifest, paths: RuntimePaths): string {
@@ -5615,7 +5750,10 @@ export function convergeRuntimeManifest(
 	paths: RuntimePaths,
 	opts: {
 		cacheLastGood?: boolean;
-		commitAuthority?: (convergence: RuntimeConvergenceResult) => void;
+		commitAuthority?: (
+			convergence: RuntimeConvergenceResult,
+			authority: RuntimePrivateAppliedAuthority,
+		) => void;
 		managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
 		systemdApply?: RuntimeSystemdApplyHooks;
 	} = {},
@@ -5781,6 +5919,12 @@ export function convergeRuntimeManifest(
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
 	const liveSnapshot = captureRuntimeLiveSnapshot(manifest, paths, workspaceRoot);
 	let systemdActivationAttempted = false;
+	let systemdActivationApplied = false;
+	let restartEgressSidecar = false;
+	let desiredEgressSidecarSecretRevision: string | undefined;
+	let rollbackEgressSecretOverride: RuntimeEgressSecretMaterial | undefined;
+	let rollbackEgressSecretRevision: string | undefined;
+	let egressRollbackAuthorityVerified = true;
 	try {
 		const plannedUserUnits = plannedRuntimePrograms.map((program) =>
 			join(paths.systemdUserRoot, systemdUnitFileName(runtimeSystemdProgramName(program))),
@@ -5878,8 +6022,8 @@ export function convergeRuntimeManifest(
 				}`,
 			);
 		}
-		const resolvedEgressSecretValues = resolveEgressSecretValues(manifest, secretValues, paths);
-		const egressSecretFile = writeEgressSecretFile(resolvedEgressSecretValues, paths);
+		const egressSecretWrite = writeEgressSecretFile(manifest, secretValues, paths);
+		const egressSecretFile = egressSecretWrite.path;
 		const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 		const egressSystemdProgram = runtimeEgressSystemdProgram(
 			manifest,
@@ -6161,10 +6305,39 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			daemonAuthTokenFile,
 			secretValues,
-			resolvedEgressSecretValues,
 			providerProjectionRevisions,
 			commonSystemdEnvironment,
 		);
+		const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
+		if (systemdUnits.egressSidecarActive) {
+			desiredEgressSidecarSecretRevision = egressSecretWrite.material.revision;
+			restartEgressSidecar =
+				egressSecretWrite.changed ||
+				committedEgressSidecarSecretRevision === undefined ||
+				committedEgressSidecarSecretRevision !== desiredEgressSidecarSecretRevision;
+			if (committedEgressSidecarSecretRevision === undefined) {
+				// Legacy applied state has no private egress revision. An exact
+				// applied content identity can still prove complete last-good material
+				// for rollback, but its absence must not block loading the desired
+				// material. If desired activation later fails, unverified live bytes
+				// must never be loaded by a rollback restart.
+				rollbackEgressSecretOverride = verifiedCommittedEgressSecretMaterial(paths) ?? undefined;
+				egressRollbackAuthorityVerified = rollbackEgressSecretOverride !== undefined;
+			} else if (
+				restartEgressSidecar &&
+				egressSecretWrite.previousRevision !== committedEgressSidecarSecretRevision
+			) {
+				if (desiredEgressSidecarSecretRevision === committedEgressSidecarSecretRevision) {
+					rollbackEgressSecretOverride = egressSecretWrite.material;
+				} else {
+					// A crash may have already advanced both the live file and last-good
+					// cache while the applied authority still describes the loaded secret.
+					// Do not require rollback material until activation actually fails:
+					// successfully restarting the desired material can safely commit it.
+					rollbackEgressSecretRevision = committedEgressSidecarSecretRevision;
+				}
+			}
+		}
 
 		const bootFinished = join(instanceRoot, "boot-finished");
 		writePrivateFileAtomic(bootFinished, `${generatedAt}\n`);
@@ -6172,7 +6345,8 @@ export function convergeRuntimeManifest(
 		removeStaleRuntimeSecretFiles(writtenRuntimeSecretIds, paths);
 		if (opts.systemdApply) {
 			systemdActivationAttempted = true;
-			opts.systemdApply.activate();
+			const activation = opts.systemdApply.activate({ restartEgressSidecar });
+			systemdActivationApplied = activation.applied;
 		}
 		if (installErrors.length === 0 && opts.cacheLastGood !== false) {
 			manifestLastGood = writeLastGoodManifest(
@@ -6220,12 +6394,32 @@ export function convergeRuntimeManifest(
 				bootFinished,
 			},
 		};
-		if (installErrors.length === 0) opts.commitAuthority?.(convergence);
+		if (installErrors.length === 0) {
+			const egressRevisionPreviouslyCommitted =
+				desiredEgressSidecarSecretRevision !== undefined &&
+				desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
+			opts.commitAuthority?.(convergence, {
+				...(desiredEgressSidecarSecretRevision !== undefined &&
+				(systemdActivationApplied || egressRevisionPreviouslyCommitted)
+					? { egressSidecarSecretRevision: desiredEgressSidecarSecretRevision }
+					: {}),
+			});
+		}
 		return convergence;
 	} catch (error) {
 		const applyError = error instanceof Error ? error.message : String(error);
+		let filesystemRollbackSucceeded = false;
 		try {
 			restoreRuntimeLiveSnapshot(liveSnapshot);
+			if (rollbackEgressSecretOverride) {
+				writeEgressSecretMaterial(rollbackEgressSecretOverride, paths);
+			} else if (rollbackEgressSecretRevision) {
+				writeEgressSecretMaterial(
+					committedEgressSecretMaterial(paths, rollbackEgressSecretRevision),
+					paths,
+				);
+			}
+			filesystemRollbackSucceeded = true;
 		} catch (rollbackError) {
 			installErrors.push(
 				`runtime filesystem rollback failed: ${
@@ -6244,9 +6438,14 @@ export function convergeRuntimeManifest(
 				);
 			}
 		}
-		if (systemdActivationAttempted && opts.systemdApply) {
+		if (
+			systemdActivationAttempted &&
+			opts.systemdApply &&
+			filesystemRollbackSucceeded &&
+			egressRollbackAuthorityVerified
+		) {
 			try {
-				opts.systemdApply.rollback();
+				opts.systemdApply.rollback({ restartEgressSidecar });
 			} catch (rollbackError) {
 				installErrors.push(
 					`runtime systemd rollback failed: ${
@@ -6254,6 +6453,12 @@ export function convergeRuntimeManifest(
 					}`,
 				);
 			}
+		} else if (systemdActivationAttempted && opts.systemdApply) {
+			installErrors.push(
+				filesystemRollbackSucceeded
+					? "runtime systemd rollback skipped because committed egress secret rollback authority could not be verified"
+					: "runtime systemd rollback skipped because filesystem authority restoration failed",
+			);
 		}
 		installErrors.unshift(`runtime apply failed: ${applyError}`);
 		return runtimeConvergenceWithoutApply({

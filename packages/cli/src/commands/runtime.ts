@@ -48,6 +48,8 @@ import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
+	type RuntimePrivateAppliedAuthority,
+	runtimeRecoverableSecretValues,
 	withRuntimeConvergeLockAsync,
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
@@ -1223,7 +1225,10 @@ interface RuntimeApplyCliUpdateFailedResult {
 }
 
 interface RuntimeApplyOptions {
-	authorityCommit?: (convergence: ReturnType<typeof convergeRuntimeManifest>) => void;
+	authorityCommit?: (
+		convergence: ReturnType<typeof convergeRuntimeManifest>,
+		authority: RuntimePrivateAppliedAuthority,
+	) => void;
 	continueOnCliUpdateError?: boolean;
 	deferCliInstall?: boolean;
 	deferCliInstallReason?: string;
@@ -1280,9 +1285,15 @@ export function runtimeAppliedContentIdentity(
 		sourcePath: load.sourcePath,
 		sha256: runtimeContentSha256({
 			manifest: load.manifest,
-			secretValues: load.secretValues ?? {},
+			secretValues: runtimeRecoverableSecretValues(load.manifest, load.secretValues),
 		}),
 	};
+}
+
+// This revision may be surfaced through status/observation fallback fields.
+// Keep secret-dependent recoverability verification in the root-only applied state.
+export function runtimePublicContentRevision(load: RuntimeManifestLoad): string {
+	return runtimeContentSha256({ manifest: load.manifest });
 }
 
 export function commitRuntimeAppliedState(input: {
@@ -1292,6 +1303,7 @@ export function commitRuntimeAppliedState(input: {
 	sourceRevision: string;
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	applyIdentity: RuntimeApplyIdentity | null;
+	egressSidecarSecretRevision?: string;
 }): void {
 	if (
 		input.applyIdentity &&
@@ -1319,6 +1331,9 @@ export function commitRuntimeAppliedState(input: {
 					}
 				: {}),
 			contentIdentity: runtimeAppliedContentIdentity(input.load),
+			...(input.egressSidecarSecretRevision
+				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
+				: {}),
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
 		},
@@ -1488,6 +1503,7 @@ interface SystemdUnitSnapshot {
 }
 
 const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
+const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 
 function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
 	return {
@@ -1548,14 +1564,21 @@ function applySystemdRuntimeUpdate(
 	paths: ReturnType<typeof getRuntimePaths>,
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
+	opts: { forceRestartSystemUnits?: readonly string[] } = {},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
 	const system = changedSystemdUnits(before.system, after.system);
 	const user = changedSystemdUnits(before.user, after.user);
+	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter((unit) =>
+		after.system.has(unit),
+	);
+	// Forced restarts are private apply effects, not public unit-byte changes.
+	// Keep them out of systemUnitsChanged while still making activation mandatory.
 	if (
 		system.changed.length === 0 &&
 		system.removed.length === 0 &&
 		user.changed.length === 0 &&
-		user.removed.length === 0
+		user.removed.length === 0 &&
+		forcedSystemRestarts.length === 0
 	) {
 		return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 	}
@@ -1571,7 +1594,12 @@ function applySystemdRuntimeUpdate(
 	}
 	systemctl(["daemon-reload"]);
 	if (system.present.length > 0) systemctl(["start", ...system.present]);
-	const restartSystemUnits = system.changed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
+	const restartSystemUnits = [
+		...new Set([
+			...system.changed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT),
+			...forcedSystemRestarts,
+		]),
+	].sort();
 	if (restartSystemUnits.length > 0) {
 		systemctl(["restart", ...restartSystemUnits]);
 	}
@@ -1859,10 +1887,10 @@ async function runtimeInitLocked(
 		let applyResult: RuntimeApplyResult;
 		try {
 			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded);
-			const contentRevision = runtimeAppliedContentIdentity(convergenceLoad).sha256;
+			const contentRevision = runtimePublicContentRevision(convergenceLoad);
 			const applyIdentity = readRuntimeApplyIdentityFromEnv();
 			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
-				authorityCommit: (convergence) =>
+				authorityCommit: (convergence, authority) =>
 					commitRuntimeAppliedState({
 						load: convergenceLoad,
 						paths,
@@ -1870,6 +1898,7 @@ async function runtimeInitLocked(
 						sourceRevision: loaded.sourceRevision ?? contentRevision,
 						convergence,
 						applyIdentity,
+						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 					}),
 				manifestIdentity: {
 					generation: convergenceLoad.manifest.generation,
@@ -2117,7 +2146,7 @@ async function runtimeWatchTickLocked(
 		);
 		const applyIdentity = readRuntimeApplyIdentityFromEnv();
 		const applyResult = applyRuntimeDesiredState(loaded, paths, {
-			authorityCommit: (convergence) =>
+			authorityCommit: (convergence, authority) =>
 				commitRuntimeAppliedState({
 					load: loaded,
 					paths,
@@ -2125,6 +2154,7 @@ async function runtimeWatchTickLocked(
 					sourceRevision,
 					convergence,
 					applyIdentity,
+					egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 				}),
 			continueOnCliUpdateError: true,
 			deferCliInstall: opts.deferCliInstall,
@@ -2262,17 +2292,24 @@ function applyRuntimeDesiredState(
 	};
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
-		commitAuthority: (committedConvergence) => {
+		commitAuthority: (committedConvergence, authority) => {
 			if (opts.requireSystemdApplied && !systemdApply.applied) {
 				throw new Error("systemd apply did not activate the rendered runtime manifest");
 			}
-			opts.authorityCommit?.(committedConvergence);
+			opts.authorityCommit?.(committedConvergence, authority);
 		},
 		systemdApply: {
-			activate: () => {
+			activate: ({ restartEgressSidecar }) => {
 				failedSystemdUnits = readSystemdUnitSnapshot(paths);
 				try {
-					systemdApply = applySystemdRuntimeUpdate(paths, previousSystemdUnits, failedSystemdUnits);
+					systemdApply = applySystemdRuntimeUpdate(
+						paths,
+						previousSystemdUnits,
+						failedSystemdUnits,
+						{
+							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+						},
+					);
 					return systemdApply;
 				} catch (error) {
 					throw new Error(
@@ -2280,9 +2317,11 @@ function applyRuntimeDesiredState(
 					);
 				}
 			},
-			rollback: () => {
+			rollback: ({ restartEgressSidecar }) => {
 				if (!failedSystemdUnits) return;
-				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths));
+				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths), {
+					forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+				});
 			},
 		},
 	});
