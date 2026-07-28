@@ -103,11 +103,14 @@ describe("deploy wizard product copy and flow", () => {
 });
 
 describe("hosted agent security and copy", () => {
-	test("masks the required Hermes password and keeps the OpenClaw token out of the page", () => {
+	test("masks every Runtime UI access field behind reveal and copy controls", () => {
 		expect(agentDetailSource).toContain(
-			'<TokenReveal label="Password" value={hermesCredentials.password} />',
+			'<TokenReveal label="Username" value={credentials.username} />',
 		);
-		expect(agentDetailSource).not.toContain('<TokenReveal label="Token"');
+		expect(agentDetailSource).toContain(
+			'<TokenReveal label="Password" value={credentials.password} />',
+		);
+		expect(agentDetailSource).toContain('<TokenReveal label="Token" value={credentials.token} />');
 		expect(agentDetailSource).not.toContain("hermes-password-");
 		expect(agentDetailSource).not.toContain("openclaw-token-");
 	});

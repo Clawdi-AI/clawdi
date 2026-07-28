@@ -31,6 +31,7 @@ const ACCEPTED_OPERATION_TRANSITIONS = {
 	start: "starting",
 	stop: "stopping",
 	restart: "restarting",
+	reset_runtime_ui_access: "restarting",
 	update: "updating",
 	plan_change: "updating",
 	runtime_switch: "updating",
@@ -204,6 +205,29 @@ export function useDeploymentLifecycle() {
 		onError: (error) => {
 			if (toastDeploymentConflict(error)) return;
 			toast.error("Couldn't update lifecycle", {
+				description: deploymentMutationErrorMessage(error),
+			});
+		},
+		onSettled: () => invalidateDeploymentSnapshots(qc),
+	});
+}
+
+export function useResetRuntimeUiAccess() {
+	const client = useBillingClient();
+	const qc = useQueryClient();
+	return useMutation({
+		mutationFn: (vars: { id: string }) =>
+			runStableDeploymentIntent("runtime-ui-access-reset", vars, (idempotencyKey) =>
+				client.resetRuntimeUiAccess(vars.id, idempotencyKey),
+			),
+		onSuccess: (accepted) => {
+			projectAcceptedDeploymentTransition(qc, accepted);
+			retireRuntimeWindows(accepted.deploymentId);
+			toast.message("Resetting Runtime UI access…");
+		},
+		onError: (error) => {
+			if (toastDeploymentConflict(error)) return;
+			toast.error("Couldn't reset Runtime UI access", {
 				description: deploymentMutationErrorMessage(error),
 			});
 		},

@@ -710,13 +710,21 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 		clawdi_cloud_environments: config.clawdi_cloud_environments ?? {},
 		ai_provider_auth_kinds: { [runtime]: providerAuthKind },
 		runtime_ui_endpoint: runtimeUiUrl
-			? {
-					runtime,
-					role: "control_ui",
-					url: runtimeUiUrl,
-					auth_mode: runtime === "hermes" ? "password" : "openclaw_device",
-					browser_mode: "top_level",
-				}
+			? runtime === "hermes"
+				? {
+						runtime,
+						role: "control_ui",
+						url: runtimeUiUrl,
+						auth_mode: "password",
+						browser_mode: "embedded_and_top_level",
+					}
+				: {
+						runtime,
+						role: "control_ui",
+						url: runtimeUiUrl,
+						auth_mode: "openclaw_token",
+						browser_mode: "embedded_and_top_level",
+					}
 			: null,
 		accepted_operation: null,
 		commercial_display: {
@@ -740,7 +748,7 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 
 function completedDeploymentOperation(
 	deployment: DeploymentMutationFixture,
-	verb: "create" | "start" | "stop" | "restart" | "delete" | "update",
+	verb: "create" | "start" | "stop" | "restart" | "delete" | "update" | "reset_runtime_ui_access",
 ): NonNullable<DeploymentRead["accepted_operation"]> {
 	const resource = mutationDeploymentReadFixture(deployment).resource;
 	return {
@@ -866,6 +874,7 @@ type HostedApiStubOptions = {
 	rotateAgentTokenResponses?: unknown[];
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
+	runtimeUiResetRequests?: Array<{ idempotencyKey: string | null; ifMatch: string | null }>;
 	resumeRequests?: string[];
 	subscriptionQuoteRequests?: string[];
 	subscriptionQuoteResponses?: unknown[];
@@ -1310,17 +1319,34 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		}
 		if (p.endsWith("/runtime-ui/credentials") && r.request().method() === "POST") {
 			options.runtimeUiRedemptionRequests?.push(p);
+			const deploymentId = p.split("/")[3] ?? "";
 			const response = options.runtimeUiRedemptionResponses?.shift() ?? {
 				status: 200,
 				body: {
 					runtime: "hermes",
 					url: "https://runtime.example/hermes",
+					access_revision: 1,
+					deployment_resource_version: `rv_${deploymentId}`,
 					auth_mode: "password",
 					username: "admin",
 					password: "test-password",
 				},
 			};
 			return fulfillJson(r, response.body, response.status);
+		}
+		if (p.endsWith("/runtime-ui/access/reset") && r.request().method() === "POST") {
+			options.runtimeUiResetRequests?.push({
+				idempotencyKey: r.request().headers()["idempotency-key"] ?? null,
+				ifMatch: r.request().headers()["if-match"] ?? null,
+			});
+			const deploymentId = p.split("/")[3] ?? "";
+			const deployment = deployments.find(
+				(candidate): candidate is DeploymentMutationFixture =>
+					isDeploymentMutationFixture(candidate) && candidate.id === deploymentId,
+			);
+			return deployment
+				? fulfillJson(r, completedDeploymentOperation(deployment, "reset_runtime_ui_access"), 202)
+				: fulfillJson(r, { detail: "Deployment not found" }, 404);
 		}
 		if (p.endsWith("/start") && r.request().method() === "POST") {
 			options.startRequests?.push(r.request().postData() ?? "");
@@ -2380,7 +2406,47 @@ test("deployment detail stays put, becomes running, and keeps manual Runtime UI 
 		"src",
 		"https://runtime.example/hermes",
 	);
-	await expect(main.getByRole("button", { name: "Open Hermes Dashboard" })).toBeVisible();
+	await expect(main.getByRole("button", { name: "Access Hermes Dashboard" })).toBeVisible();
+});
+
+test("Runtime UI Access masks both Hermes fields and submits one declarative reset", async ({
+	context,
+	page,
+}) => {
+	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+	const runtimeUiRedemptionRequests: string[] = [];
+	const runtimeUiResetRequests: Array<{ idempotencyKey: string | null; ifMatch: string | null }> =
+		[];
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		runtimeUiRedemptionRequests,
+		runtimeUiResetRequests,
+	});
+
+	await page.goto(`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi`);
+	const main = page.locator("main");
+	const iframe = main.locator('iframe[title="Hermes Dashboard"]');
+	await expect(iframe).toHaveAttribute("src", "https://runtime.example/hermes");
+	await main.getByRole("button", { name: "Access Hermes Dashboard" }).click();
+	const dialog = page.getByRole("dialog", { name: "Runtime UI access" });
+	await expect(dialog).toBeVisible();
+	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
+	await expect(dialog.locator("code")).toHaveText(["••••••••••••", "••••••••••••"]);
+	await dialog.getByRole("button", { name: "Show Username" }).click();
+	await expect(dialog.getByText("admin", { exact: true })).toBeVisible();
+	await dialog.getByRole("button", { name: "Copy Password" }).click();
+	await expect
+		.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+		.toBe("test-password");
+
+	await dialog.getByRole("button", { name: "Reset access", exact: true }).click();
+	const confirmation = page.getByRole("alertdialog", { name: "Reset Runtime UI access?" });
+	await confirmation.getByRole("button", { name: "Reset access", exact: true }).click();
+	await expect.poll(() => runtimeUiResetRequests.length).toBe(1);
+	expect(runtimeUiResetRequests[0]).toMatchObject({ ifMatch: '"rv_hdep_running_projection"' });
+	expect(runtimeUiResetRequests[0]?.idempotencyKey).toBeTruthy();
+	await expect(dialog).toHaveCount(0);
+	await expect(page.getByText("test-password", { exact: true })).toHaveCount(0);
 });
 
 test("Runtime UI credential failure renders a retryable error instead of a permanent spinner", async ({
@@ -2397,6 +2463,8 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 				body: {
 					runtime: "hermes",
 					url: "https://runtime.example/hermes",
+					access_revision: 1,
+					deployment_resource_version: "rv_hdep_running_projection",
 					auth_mode: "password",
 					username: "admin",
 					password: "recovered-password",
@@ -2411,19 +2479,22 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 		"src",
 		"https://runtime.example/hermes",
 	);
-	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
+	await main.getByRole("button", { name: "Access Hermes Dashboard", exact: true }).click();
+	const dialog = page.getByRole("dialog", { name: "Runtime UI access" });
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
-	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toBeVisible();
+	await expect(
+		dialog.getByText("Couldn't load Hermes Dashboard access", { exact: true }),
+	).toBeVisible();
 	await expect(page.getByText("credentials temporarily unavailable", { exact: true })).toHaveCount(
 		0,
 	);
-	await main.getByRole("button", { name: "Retry", exact: true }).click();
-	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toHaveCount(0);
-	const passwordValue = main.locator("code");
-	await expect(passwordValue).toHaveText("••••••••••••");
-	await expect(passwordValue).not.toContainText("recovered-password");
-	await main.getByRole("button", { name: "Show Password", exact: true }).click();
-	await expect(passwordValue).toHaveText("recovered-password");
+	await dialog.getByRole("button", { name: "Retry", exact: true }).click();
+	await expect(
+		dialog.getByText("Couldn't load Hermes Dashboard access", { exact: true }),
+	).toHaveCount(0);
+	await expect(dialog.locator("code")).toHaveText(["••••••••••••", "••••••••••••"]);
+	await dialog.getByRole("button", { name: "Show Password", exact: true }).click();
+	await expect(dialog.getByText("recovered-password", { exact: true })).toBeVisible();
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
 });
 
@@ -2437,9 +2508,12 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 				status: 200,
 				body: {
 					runtime: "openclaw",
-					url: "https://runtime.example/openclaw/#token=gateway-token",
-					auth_mode: "openclaw_device",
+					url: "https://runtime.example/openclaw/",
+					access_revision: 1,
+					deployment_resource_version: "rv_hdep_openclaw_included",
+					auth_mode: "openclaw_token",
 					token: "gateway-token",
+					handoff_url: "https://runtime.example/openclaw/#token=gateway-token",
 				},
 			},
 		],
@@ -2447,14 +2521,32 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 
 	await page.goto("/agents/hdep_openclaw_included/console?source=on-clawdi");
 	const main = page.locator("main");
-	await expect(main.locator("iframe")).toHaveCount(0);
-	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
-	const popupPromise = page.waitForEvent("popup");
-	await main.getByRole("button", { name: "Open OpenClaw Control UI" }).click();
-	const popup = await popupPromise;
+	const iframe = main.locator('iframe[title="OpenClaw Control UI"]');
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
+	await expect(iframe).toHaveAttribute(
+		"src",
+		"https://runtime.example/openclaw/#token=gateway-token",
+	);
 	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
+	await main.getByRole("button", { name: "Access OpenClaw Control UI" }).click();
+	const dialog = page.getByRole("dialog", { name: "Runtime UI access" });
+	expect(runtimeUiRedemptionRequests).toHaveLength(1);
+	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
+	await expect(iframe).toHaveAttribute(
+		"src",
+		"https://runtime.example/openclaw/#token=gateway-token",
+	);
+	await expect(dialog.locator("code")).toHaveText("••••••••••••");
+	await dialog.getByRole("button", { name: "Show Token" }).click();
+	await expect(dialog.getByText("gateway-token", { exact: true })).toBeVisible();
+	const popupPromise = page.waitForEvent("popup");
+	await dialog.getByRole("button", { name: "Open in new window", exact: true }).click();
+	const popup = await popupPromise;
 	expect(popup).toBeDefined();
+	await page.keyboard.press("Escape");
+	await expect(dialog).toHaveCount(0);
+	await expect(iframe).toHaveAttribute("src", "about:blank");
+	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
 });
 
 test("revoked deployment inventory never reclassifies cloud projections as connected", async ({

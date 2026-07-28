@@ -588,9 +588,10 @@ enabled.
 Strict-v2 OpenClaw binds the official gateway directly to the pod network with
 `gateway run --allow-unconfigured --port 18789 --bind lan --force`, and provide
 `OPENCLAW_GATEWAY_TOKEN` only through `run.secretEnv`. The local config patch
-sets official token auth, preserves device authentication, disables insecure
-and Host-header fallback modes, derives `gateway.controlUi.basePath` from the
-clean public URL, and includes that URL's origin in `allowedOrigins`.
+sets official shared-token auth, intentionally sets
+`dangerouslyDisableDeviceAuth: true` for the managed v2 product, disables
+insecure and Host-header fallback modes, derives `gateway.controlUi.basePath`
+from the clean public URL, and includes that URL's origin in `allowedOrigins`.
 The patch writes `gateway.auth.token: null` to delete any stale durable token;
 OpenClaw documents this RFC 7396 behavior in
 [`merge-patch.ts` lines 88-113](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/config/merge-patch.ts#L88-L113),
@@ -598,25 +599,31 @@ while the active token comes from the ephemeral service environment.
 
 Direct OpenClaw exposure remains fail closed behind the typed
 `openclaw-native-auth-v1` capability and an available
-`OPENCLAW_GATEWAY_TOKEN`. Hosted returns the token only through an owner-checked,
-no-store credential endpoint and places it in the URL fragment for the official
-Control UI. Device authentication remains enabled; first-time approval follows
-the official OpenClaw workflow.
+`OPENCLAW_GATEWAY_TOKEN`. Hosted returns a clean endpoint plus an explicit token
+and `handoff_url` through an owner-checked, no-store credential endpoint. The
+handoff carries exactly one official `#token=` fragment. Device pairing and
+device-auth behavior are deliberately outside this managed token-only contract.
 
 Hermes direct exposure requires `hermes-basic-auth-v1`, a stable HTTPS public
 URL (including any path prefix), exact `0.0.0.0:9119` service args, and the
 official Basic password/session environment secret references. Hosted derives
-the password and an independent session-signing secret from the deployment
-credential. The CLI projects non-secret settings to `dashboard.basic_auth` and
-secrets to the official `HERMES_DASHBOARD_BASIC_AUTH_*` environment variables.
+the password and an independent session-signing secret from the gateway token
+and durable Runtime UI access revision. The CLI projects non-secret settings to
+`dashboard.basic_auth` and secrets to the official
+`HERMES_DASHBOARD_BASIC_AUTH_*` environment variables.
 
-The dashboard consumes the deployment endpoint's typed metadata; it does not
+The dashboard consumes generated discriminated deployment metadata; it does not
 infer auth from the runtime name or fall back to legacy `native_url` fields.
-`password` and `openclaw_device` both require `browser_mode: top_level`. Public
-endpoint URLs contain no secret. The owner-checked credential response carries
-the Hermes password in its no-store response or the OpenClaw token in exactly
-one URL fragment parameter, never a query. Runtime/auth mismatches, unsafe URLs,
-or incomplete metadata are unavailable. Neither v2 runtime uses an iframe.
+Both runtimes declare `browser_mode: embedded_and_top_level` and remain embedded
+in the Console. Public endpoint URLs contain no secret. The owner-checked
+credential response carries the Hermes username/password or the OpenClaw token
+and exact `handoff_url`, never a query token. Credentials fail closed unless the
+displayed resource version is the exact converged current Ready rollout.
+
+Both runtimes use the same Runtime UI Access dialog and declarative reset. Reset
+rotates the existing encrypted gateway credential and advances the durable
+access revision through the ordinary generation, manifest, reconcile, and LRO
+completion path; restart and ordinary updates do not rotate it.
 
 The Hermes contract was verified against NousResearch/hermes-agent commit
 [`8208fc52701332f213e6c51ebc0b610be00300de`](https://github.com/NousResearch/hermes-agent/tree/8208fc52701332f213e6c51ebc0b610be00300de),
@@ -637,11 +644,11 @@ All behavior evidence below is pinned to the newer exact `main` commit.
 | Requirement | Official line evidence | Contract consequence |
 | --- | --- | --- |
 | Gateway bind, port, auth, and token | [`docs/cli/gateway.md` lines 26-85](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/cli/gateway.md#L26-L85), [`configuration-reference.md` lines 629-661](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/configuration-reference.md#L629-L661) | Use native `18789`, container-reachable `lan`, required token auth, and explicit public `allowedOrigins`. |
-| Control UI auth and device pairing | [`docs/web/control-ui.md` lines 33-69](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L33-L69) | Token is sent in `connect.params.auth.token`; a new non-loopback browser still needs device approval. |
-| Device-auth downgrade | [`docs/web/control-ui.md` lines 588-632](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L588-L632) | Never enable `dangerouslyDisableDeviceAuth`; official docs call it a severe downgrade. |
+| Control UI auth | [`docs/web/control-ui.md` lines 33-69](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L33-L69) | Token is sent in `connect.params.auth.token`; managed v2 uses this shared-token path without device pairing. |
+| Device-auth policy | [`docs/web/control-ui.md` lines 588-632](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L588-L632) | `dangerouslyDisableDeviceAuth: true` is an intentional managed-product policy tradeoff, not an inferred security default. |
 | Dashboard URL discovery | [`docs/cli/dashboard.md` lines 20-42](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/cli/dashboard.md#L20-L42), [`src/commands/dashboard.ts` lines 33-118](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/src/commands/dashboard.ts#L33-L118) | Official JSON discovery reports resolved HTTP/WS URLs; the official handoff uses `#token=`, not a query token. |
-| Fragment and top-level browser flow | [`ui/src/app/startup-settings.ts` lines 91-172](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/ui/src/app/startup-settings.ts#L91-L172), [`docs/web/control-ui.md` lines 742-754](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L742-L754) | Query tokens are legacy, warned, and stripped; `gatewayUrl` is top-level-only, so Clawdi uses a top-level fragment handoff and no iframe. |
-| WebSocket auth | [`docs/concepts/architecture.md` lines 75-112](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/concepts/architecture.md#L75-L112) | The first frame is `connect`; shared-secret auth and device identity/pairing remain native OpenClaw protocol responsibilities. |
+| Fragment browser handoff | [`ui/src/app/startup-settings.ts` lines 91-172](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/ui/src/app/startup-settings.ts#L91-L172), [`docs/web/control-ui.md` lines 742-754](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L742-L754) | Query tokens are legacy, warned, and stripped; Clawdi loads the clean URL plus the official `#token=` handoff in its embedded iframe and optional top-level window. |
+| WebSocket auth | [`docs/concepts/architecture.md` lines 75-112](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/concepts/architecture.md#L75-L112) | The first frame is `connect`; managed v2 supplies the shared token and does not initiate a device-pairing flow. |
 | Auth-aware readiness | [`docs/gateway/embedding.md` lines 91-107](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/embedding.md#L91-L107), [`docs/gateway/index.md` lines 40-49](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/gateway/index.md#L40-L49) | A TCP check is insufficient. Readiness requires authenticated WS `connect` through `hello-ok`, equivalent to `gateway status --require-rpc`. |
 | Base path/prefix | [`docs/web/control-ui.md` lines 10-15](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/web/control-ui.md#L10-L15) | Configure official `gateway.controlUi.basePath`; do not inject or rewrite browser paths. |
 | Service lifecycle | [`docs/cli/daemon.md` lines 13-47](https://github.com/openclaw/openclaw/blob/ba467fbd3efa9ab109e620c4e42cfe92388171c5/docs/cli/daemon.md#L13-L47) | Use official gateway install/start/stop/restart/status lifecycle and keep Clawdi ownership limited to its hosted drop-in/env. |

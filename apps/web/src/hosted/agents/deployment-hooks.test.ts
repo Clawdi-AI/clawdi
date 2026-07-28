@@ -259,7 +259,7 @@ describe("hosted agent customer language", () => {
 		expect(sidebarSource).toContain('"Agent details unavailable"');
 	});
 
-	test("keeps one credential handover path and restores the Hermes embedded interface", () => {
+	test("shares one access dialog and keeps both runtime interfaces embedded", () => {
 		const detailSource = readFileSync(
 			new URL("./hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
@@ -268,10 +268,15 @@ describe("hosted agent customer language", () => {
 		expect(detailSource.match(/getRuntimeUiCredentials/g)).toHaveLength(1);
 		expect(detailSource).toContain("openSecureRuntimeWindow");
 		expect(detailSource).toContain("resolveRuntimeUiCredentials");
+		expect(detailSource).toContain("RuntimeUiAccessDialog");
+		expect(detailSource).toContain("Runtime UI access");
 		expect(detailSource).toContain("<iframe");
 		expect(detailSource).toContain('allow="clipboard-read; clipboard-write"');
-		expect(detailSource).toContain("Show credentials");
-		expect(detailSource).toContain("OpenClaw protects its interface from embedding");
+		expect(detailSource).toContain("credentials.handoff_url");
+		expect(detailSource).toContain('<TokenReveal label="Username"');
+		expect(detailSource).toContain('<TokenReveal label="Password"');
+		expect(detailSource).toContain('<TokenReveal label="Token"');
+		expect(detailSource).not.toContain("reconciliationRequired");
 	});
 });
 
@@ -311,17 +316,17 @@ describe("deployment mutation settlement", () => {
 			/onSettled: \(\) => invalidateDeploymentSnapshots\(qc\)/g,
 		);
 
-		// Declarative lifecycle, delete, and settings updates all reconcile even
+		// Declarative lifecycle, access reset, delete, and settings updates all reconcile even
 		// when the request rejects or times out.
-		expect(settlementInvalidations).toHaveLength(3);
+		expect(settlementInvalidations).toHaveLength(4);
 	});
 
-	test("retires old runtime windows only after restart or delete is accepted", () => {
+	test("retires old runtime windows only after restart, access reset, or delete is accepted", () => {
 		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
 
 		expect(source).toContain('if (vars.action === "restart") {');
 		expect(source).toContain("retireRuntimeWindows(accepted.deploymentId);");
-		expect(source.match(/retireRuntimeWindows\(accepted\.deploymentId/g)).toHaveLength(2);
+		expect(source.match(/retireRuntimeWindows\(accepted\.deploymentId/g)).toHaveLength(3);
 	});
 
 	test("projects every accepted operation through the shared transition model", () => {
@@ -335,6 +340,7 @@ describe("deployment mutation settlement", () => {
 			["start", "starting"],
 			["stop", "stopping"],
 			["restart", "restarting"],
+			["reset_runtime_ui_access", "restarting"],
 			["update", "updating"],
 			["plan_change", "updating"],
 			["runtime_switch", "updating"],

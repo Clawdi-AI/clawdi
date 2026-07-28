@@ -6,6 +6,8 @@ import type {
 } from "./deploy";
 import {
 	isDeploymentEventStreamSnapshotHandoff,
+	isRuntimeUiCredentials,
+	isRuntimeUiEndpointInfo,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "./deploy";
@@ -67,6 +69,44 @@ describe("deployment list response split", () => {
 				read_only: false,
 			}),
 		).toBe(false);
+	});
+});
+
+describe("Runtime UI access contracts", () => {
+	test("accepts embedded endpoints and the explicit OpenClaw fragment handoff", () => {
+		expect(
+			isRuntimeUiEndpointInfo({
+				runtime: "openclaw",
+				role: "control_ui",
+				url: "https://runtime.example/openclaw/",
+				auth_mode: "openclaw_token",
+				browser_mode: "embedded_and_top_level",
+			}),
+		).toBe(true);
+		expect(
+			isRuntimeUiCredentials({
+				runtime: "openclaw",
+				auth_mode: "openclaw_token",
+				url: "https://runtime.example/openclaw/",
+				access_revision: 2,
+				deployment_resource_version: "rv-current",
+				token: "gateway-token",
+				handoff_url: "https://runtime.example/openclaw/#token=gateway-token",
+			}),
+		).toBe(true);
+	});
+
+	test("rejects token query parameters and mismatched OpenClaw handoffs", () => {
+		const credential = {
+			runtime: "openclaw",
+			auth_mode: "openclaw_token",
+			url: "https://runtime.example/openclaw/?token=gateway-token",
+			access_revision: 2,
+			deployment_resource_version: "rv-current",
+			token: "gateway-token",
+			handoff_url: "https://runtime.example/openclaw/#token=other-token",
+		};
+		expect(isRuntimeUiCredentials(credential)).toBe(false);
 	});
 });
 

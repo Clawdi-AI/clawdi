@@ -139,8 +139,7 @@ export function acceptDeclarativeOperation<T extends DeploymentOperation | null>
 	return { deploymentId, operation: acceptance.operation };
 }
 
-function strongResourceEtag(deployment: HostedDeployment): string {
-	const resourceVersion = deployment.resource.metadata.resourceVersion;
+function strongResourceEtag(resourceVersion: string): string {
 	const valid =
 		resourceVersion.length > 0 &&
 		resourceVersion.length <= 128 &&
@@ -379,7 +378,7 @@ export function createBillingClient(
 		for (let attempt = 0; attempt < 2; attempt += 1) {
 			const headers: MutationHeaders = {
 				"Idempotency-Key": idempotencyKey,
-				"If-Match": strongResourceEtag(deployment),
+				"If-Match": strongResourceEtag(deployment.resource.metadata.resourceVersion),
 			};
 			try {
 				return acceptDeclarativeOperation({ operation: unwrapDeploy(await send(headers)) });
@@ -497,10 +496,19 @@ export function createBillingClient(
 					params: { path: { deployment_id: id } },
 				}),
 			),
-		getRuntimeUiCredentials: async (id: string) =>
+		getRuntimeUiCredentials: async (id: string, resourceVersion: string) =>
 			unwrapDeploy(
 				await api.POST("/v2/deployments/{deployment_id}/runtime-ui/credentials", {
-					params: { path: { deployment_id: id } },
+					params: {
+						path: { deployment_id: id },
+						header: { "If-Match": strongResourceEtag(resourceVersion) },
+					},
+				}),
+			),
+		resetRuntimeUiAccess: async (id: string, idempotencyKey: string) =>
+			acceptDeploymentMutation(id, idempotencyKey, (headers) =>
+				api.POST("/v2/deployments/{deployment_id}/runtime-ui/access/reset", {
+					params: { path: { deployment_id: id }, header: headers },
 				}),
 			),
 		setDeploymentDesiredState: async (

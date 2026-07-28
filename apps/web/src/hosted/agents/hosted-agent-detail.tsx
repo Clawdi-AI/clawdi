@@ -1,6 +1,6 @@
 "use client";
 
-import type { components } from "@clawdi/shared/api";
+import type { components, RuntimeUiCredentials } from "@clawdi/shared/api";
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouter } from "@tanstack/react-router";
 import {
@@ -44,7 +44,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
-import { Input } from "@/components/ui/input";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import {
 	Select,
@@ -58,7 +64,11 @@ import { Spinner } from "@/components/ui/spinner";
 import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
-import { useDeploymentLifecycle, useUpdateDeployment } from "@/hosted/agents/deployment-hooks";
+import {
+	useDeploymentLifecycle,
+	useResetRuntimeUiAccess,
+	useUpdateDeployment,
+} from "@/hosted/agents/deployment-hooks";
 import {
 	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
 	shouldBlockHostedSessionsError,
@@ -68,9 +78,7 @@ import {
 	type HostedTerminalStatus,
 } from "@/hosted/agents/hosted-terminal-panel";
 import {
-	type HermesUiCredentials,
 	openSecureRuntimeWindow,
-	type ResolvedRuntimeUiCredentials,
 	resolveRuntimeUiCredentials,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
@@ -513,20 +521,18 @@ export function HostedAgentDetail({
 				<Plus />
 				Install skills
 			</Button>
-		) : runtime === "openclaw" &&
+		) : activeTab !== "console" &&
 			consoleUrl &&
 			canOpenHostedRuntimeUi(deploymentStatus, consoleUrl) ? (
-			<RuntimeUiOpenButton
-				deployment={deployment}
-				endpointUrl={consoleUrl}
-				label={runtimeBrowserUiLabel(runtime)}
-				runtime={runtime}
+			<Button
+				render={<Link to={agentSectionHref(environmentId, "console", searchStr)} />}
+				nativeButton={false}
 				variant="outline"
 				size="sm"
 			>
-				Open {runtimeBrowserUiLabel(runtime)}
-				<ExternalLink className="size-3.5" />
-			</RuntimeUiOpenButton>
+				Access {runtimeBrowserUiLabel(runtime)}
+				<MonitorPlay className="size-3.5" />
+			</Button>
 		) : null;
 
 	return (
@@ -1243,114 +1249,20 @@ function useRuntimeUiCredentialRequest(
 	deployment: HostedDeployment,
 	endpointUrl: string,
 	runtime: Runtime,
-): () => Promise<ResolvedRuntimeUiCredentials> {
+): () => Promise<RuntimeUiCredentials> {
 	const client = useBillingClient();
+	const deploymentId = deployment.resource.id;
+	const resourceVersion = deployment.resource.metadata.resourceVersion;
 	return useCallback(async () => {
-		const credentials = await client.getRuntimeUiCredentials(deployment.resource.id);
-		const resolved = resolveRuntimeUiCredentials(credentials, endpointUrl);
+		const credentials = await client.getRuntimeUiCredentials(deploymentId, resourceVersion);
+		const resolved = resolveRuntimeUiCredentials(credentials, endpointUrl, resourceVersion);
 		if (!resolved || resolved.runtime !== runtime) {
 			throw new Error("Runtime UI credential response was invalid");
 		}
 		return resolved;
-	}, [client, deployment.resource.id, endpointUrl, runtime]);
+	}, [client, deploymentId, endpointUrl, resourceVersion, runtime]);
 }
 
-function RuntimeUiOpenButton({
-	deployment,
-	endpointUrl,
-	label,
-	runtime,
-	onHermesCredentials,
-	children,
-	className,
-	disabled = false,
-	variant = "outline",
-	size = "sm",
-}: {
-	deployment: HostedDeployment;
-	endpointUrl: string;
-	label: string;
-	runtime: Runtime;
-	onHermesCredentials?: (credentials: HermesUiCredentials) => void;
-	children: React.ReactNode;
-	className?: string;
-	disabled?: boolean;
-	variant?: React.ComponentProps<typeof Button>["variant"];
-	size?: React.ComponentProps<typeof Button>["size"];
-}) {
-	const requestCredentials = useRuntimeUiCredentialRequest(deployment, endpointUrl, runtime);
-	const [isPending, setIsPending] = useState(false);
-	const requestVersionRef = useRef(0);
-	useEffect(
-		() => () => {
-			requestVersionRef.current += 1;
-		},
-		[],
-	);
-	const openUi = useCallback(
-		async function openUi() {
-			const popup = openSecureRuntimeWindow(window.open.bind(window));
-			if (!popup) {
-				toast.error(`Couldn't open ${label}`, {
-					id: RUNTIME_UI_LAUNCH_TOAST_ID,
-					description:
-						"Your browser blocked the new window. Allow pop-ups for Clawdi, then try again.",
-					action: { label: "Try again", onClick: () => void openUi() },
-				});
-				return;
-			}
-			const requestVersion = requestVersionRef.current + 1;
-			requestVersionRef.current = requestVersion;
-			setIsPending(true);
-			try {
-				const resolved = await requestCredentials();
-				if (requestVersionRef.current !== requestVersion) {
-					popup.close();
-					return;
-				}
-				toast.dismiss(RUNTIME_UI_LAUNCH_TOAST_ID);
-				if (resolved.runtime === "hermes") onHermesCredentials?.(resolved.value);
-				popup.location.replace(resolved.value.url);
-				trackRuntimeWindow(deployment.resource.id, popup);
-			} catch {
-				popup.close();
-				if (requestVersionRef.current === requestVersion) {
-					toast.error(`Couldn't open ${label}`, {
-						id: RUNTIME_UI_LAUNCH_TOAST_ID,
-						description:
-							"Clawdi couldn’t load valid sign-in details. Your agent was not changed. Try again.",
-						action: { label: "Try again", onClick: () => void openUi() },
-					});
-				}
-			} finally {
-				if (requestVersionRef.current === requestVersion) setIsPending(false);
-			}
-		},
-		[deployment.resource.id, label, onHermesCredentials, requestCredentials],
-	);
-
-	return (
-		<Button
-			type="button"
-			variant={variant}
-			size={size}
-			className={className}
-			disabled={disabled || isPending}
-			aria-label={`Open ${label}`}
-			onClick={() => void openUi()}
-		>
-			{isPending ? <Spinner className="size-3.5" /> : null}
-			{children}
-		</Button>
-	);
-}
-
-/**
- * Hermes keeps its live dashboard embedded. Its SameSite=Lax session cookie
- * cannot persist in a cross-site frame, so the top-level action remains the
- * reliable sign-in path. OpenClaw is top-level only: its upstream UI denies
- * framing and its fragment token must never be rendered into Clawdi's DOM.
- */
 function ConsoleTab({
 	deployment,
 	runtime,
@@ -1372,51 +1284,7 @@ function ConsoleTab({
 	const label = runtimeDisplayName(runtime);
 	const browserUiLabel = runtimeBrowserUiLabel(runtime);
 	const url = runtimeConsoleUrl(deployment, runtime);
-	const requestCredentials = useRuntimeUiCredentialRequest(deployment, url ?? "", runtime);
-	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.generation}\0${runtime}\0${url ?? ""}`;
-	const [credentials, setCredentials] = useState<ResolvedRuntimeUiCredentials | null>(null);
-	const [showCredentials, setShowCredentials] = useState(false);
-	const [credentialError, setCredentialError] = useState<Error | null>(null);
-	const [isLoadingCredentials, setIsLoadingCredentials] = useState(false);
-	const credentialRequestRef = useRef(0);
-	useEffect(() => {
-		credentialRequestRef.current += 1;
-		setCredentials(null);
-		setShowCredentials(false);
-		setCredentialError(null);
-		setIsLoadingCredentials(false);
-	}, [credentialIdentity]);
-	const loadHermesCredentials = useCallback(async () => {
-		if (!url || runtime !== "hermes") return;
-		const requestId = credentialRequestRef.current + 1;
-		credentialRequestRef.current = requestId;
-		setIsLoadingCredentials(true);
-		setCredentialError(null);
-		try {
-			const resolved = await requestCredentials();
-			if (credentialRequestRef.current !== requestId) return;
-			if (resolved.runtime !== "hermes") {
-				throw new Error("Runtime UI credential response was invalid");
-			}
-			setCredentials(resolved);
-			setShowCredentials(true);
-		} catch (error) {
-			if (credentialRequestRef.current !== requestId) return;
-			setCredentialError(error instanceof Error ? error : new Error("Credential request failed"));
-		} finally {
-			if (credentialRequestRef.current === requestId) setIsLoadingCredentials(false);
-		}
-	}, [requestCredentials, runtime, url]);
-
-	const toggleHermesCredentials = () => {
-		if (showCredentials) {
-			setShowCredentials(false);
-			setCredentials(null);
-			return;
-		}
-		if (credentials?.runtime === "hermes") setShowCredentials(true);
-		else void loadHermesCredentials();
-	};
+	const [credentials, setCredentials] = useState<RuntimeUiCredentials | null>(null);
 
 	if (status.kind === "stopped") {
 		return <StoppedAgentState deployment={deployment} />;
@@ -1501,94 +1369,212 @@ function ConsoleTab({
 			/>
 		);
 	}
-	const hermesCredentials = credentials?.runtime === "hermes" ? credentials.value : null;
-	const runtimeActions = (
-		<>
-			{runtime === "hermes" ? (
-				<Button
-					type="button"
-					variant="outline"
-					size="sm"
-					disabled={isLoadingCredentials}
-					onClick={toggleHermesCredentials}
-				>
-					{isLoadingCredentials ? <Spinner className="size-3.5" /> : null}
-					{showCredentials ? "Hide credentials" : "Show credentials"}
-				</Button>
-			) : null}
-			<RuntimeUiOpenButton
-				key={credentialIdentity}
-				deployment={deployment}
-				endpointUrl={url}
-				label={browserUiLabel}
-				runtime={runtime}
-				disabled={isLoadingCredentials}
-				onHermesCredentials={
-					runtime === "hermes"
-						? (value) => {
-								setCredentialError(null);
-								setCredentials({ runtime: "hermes", value });
-								setShowCredentials(true);
-							}
-						: undefined
-				}
-			>
-				Open in new window
-				<ExternalLink className="size-3.5" />
-			</RuntimeUiOpenButton>
-		</>
-	);
+	const iframeUrl =
+		runtime === "openclaw"
+			? credentials?.runtime === "openclaw"
+				? credentials.handoff_url
+				: "about:blank"
+			: url;
 
 	return (
-		<LiveToolFrame icon={MonitorPlay} title={browserUiLabel} action={runtimeActions}>
-			{runtime === "hermes" ? (
-				<>
-					<div className="shrink-0 border-y bg-muted/20 px-4 py-2 text-xs text-muted-foreground lg:px-6">
-						If Hermes returns to sign-in after you submit, use Open in new window. Some browser
-						session policies do not work inside an embedded page.
-					</div>
-					{showCredentials && hermesCredentials ? (
-						<div className="grid shrink-0 gap-3 border-b bg-muted/20 p-4 sm:grid-cols-2 lg:px-6">
-							<div className="space-y-1.5">
-								<Label htmlFor={`hermes-username-${deployment.resource.id}`}>Username</Label>
-								<Input
-									id={`hermes-username-${deployment.resource.id}`}
-									readOnly
-									value={hermesCredentials.username}
-								/>
-							</div>
-							<TokenReveal label="Password" value={hermesCredentials.password} />
-						</div>
-					) : null}
-					{credentialError ? (
-						<div className="shrink-0 p-4 lg:px-6">
-							<ApiErrorPanel
-								error={credentialError}
-								onRetry={() => void loadHermesCredentials()}
-								normalizer={billingErrorNormalizer}
-								title={`Couldn't load ${label} credentials`}
-							/>
-						</div>
-					) : null}
-					<iframe
-						key={`${runtime}:${url}`}
-						src={url}
-						title={browserUiLabel}
-						className="min-h-[420px] flex-1 border-0 bg-background"
-						allow="clipboard-read; clipboard-write"
-					/>
-				</>
-			) : (
-				<div className="flex min-h-[420px] flex-1 items-center justify-center p-6">
-					<div className="max-w-xl space-y-2 text-center">
-						<h2 className="text-lg font-semibold">Open in a new window</h2>
-						<p className="text-sm text-muted-foreground">
-							OpenClaw protects its interface from embedding. Use the secure window to sign in.
-						</p>
-					</div>
-				</div>
-			)}
+		<LiveToolFrame
+			icon={MonitorPlay}
+			title={browserUiLabel}
+			action={
+				<RuntimeUiAccessDialog
+					deployment={deployment}
+					endpointUrl={url}
+					runtime={runtime}
+					credentials={credentials}
+					onCredentialsChange={setCredentials}
+				/>
+			}
+		>
+			<iframe
+				key={`${runtime}:${iframeUrl}`}
+				src={iframeUrl}
+				title={browserUiLabel}
+				className="min-h-[420px] flex-1 border-0 bg-background"
+				allow="clipboard-read; clipboard-write"
+			/>
 		</LiveToolFrame>
+	);
+}
+
+function RuntimeUiAccessDialog({
+	deployment,
+	endpointUrl,
+	runtime,
+	credentials,
+	onCredentialsChange,
+}: {
+	deployment: HostedDeployment;
+	endpointUrl: string;
+	runtime: Runtime;
+	credentials: RuntimeUiCredentials | null;
+	onCredentialsChange: (credentials: RuntimeUiCredentials | null) => void;
+}) {
+	const label = runtimeBrowserUiLabel(runtime);
+	const requestCredentials = useRuntimeUiCredentialRequest(deployment, endpointUrl, runtime);
+	const reset = useResetRuntimeUiAccess();
+	const [open, setOpen] = useState(false);
+	const [credentialError, setCredentialError] = useState<Error | null>(null);
+	const [isLoading, setIsLoading] = useState(false);
+	const requestVersionRef = useRef(0);
+	const loadedIdentityRef = useRef<string | null>(null);
+	const triggerRef = useRef<HTMLButtonElement>(null);
+	const identity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${endpointUrl}`;
+
+	const clearSensitiveState = useCallback(() => {
+		requestVersionRef.current += 1;
+		onCredentialsChange(null);
+		setCredentialError(null);
+		setIsLoading(false);
+	}, [onCredentialsChange]);
+
+	const loadCredentials = useCallback(async () => {
+		const requestVersion = requestVersionRef.current + 1;
+		requestVersionRef.current = requestVersion;
+		setIsLoading(true);
+		setCredentialError(null);
+		try {
+			const resolved = await requestCredentials();
+			if (requestVersionRef.current === requestVersion) onCredentialsChange(resolved);
+		} catch (error) {
+			if (requestVersionRef.current === requestVersion) {
+				setCredentialError(
+					error instanceof Error ? error : new Error("Runtime UI credential request failed"),
+				);
+			}
+		} finally {
+			if (requestVersionRef.current === requestVersion) setIsLoading(false);
+		}
+	}, [onCredentialsChange, requestCredentials]);
+
+	useEffect(() => {
+		if (loadedIdentityRef.current === identity) return;
+		loadedIdentityRef.current = identity;
+		clearSensitiveState();
+		setOpen(false);
+		if (runtime === "openclaw") void loadCredentials();
+	}, [clearSensitiveState, identity, loadCredentials, runtime]);
+
+	const handleOpenChange = useCallback(
+		(nextOpen: boolean) => {
+			setOpen(nextOpen);
+			if (nextOpen) {
+				if (!credentials && !isLoading) void loadCredentials();
+			} else {
+				clearSensitiveState();
+			}
+		},
+		[clearSensitiveState, credentials, isLoading, loadCredentials],
+	);
+
+	const openRuntime = useCallback(() => {
+		if (!credentials) return;
+		const popup = openSecureRuntimeWindow(window.open.bind(window));
+		if (!popup) {
+			toast.error(`Couldn't open ${label}`, {
+				id: RUNTIME_UI_LAUNCH_TOAST_ID,
+				description:
+					"Your browser blocked the new window. Allow pop-ups for Clawdi, then try again.",
+			});
+			return;
+		}
+		popup.location.replace(
+			credentials.runtime === "openclaw" ? credentials.handoff_url : credentials.url,
+		);
+		trackRuntimeWindow(deployment.resource.id, popup);
+	}, [credentials, deployment.resource.id, label]);
+
+	const acceptReset = useCallback(async () => {
+		await reset.mutateAsync({ id: deployment.resource.id });
+		clearSensitiveState();
+		setOpen(false);
+	}, [clearSensitiveState, deployment.resource.id, reset]);
+
+	return (
+		<Dialog open={open} onOpenChange={handleOpenChange}>
+			<Button
+				ref={triggerRef}
+				type="button"
+				variant="outline"
+				size="sm"
+				onClick={() => handleOpenChange(true)}
+				aria-label={`Access ${label}`}
+			>
+				Access
+			</Button>
+			<DialogContent
+				data-hosted="true"
+				data-v2="true"
+				className="sm:max-w-md"
+				finalFocus={triggerRef}
+			>
+				<DialogHeader>
+					<DialogTitle>Runtime UI access</DialogTitle>
+					<DialogDescription>
+						Reveal or copy the current {label} sign-in details. Reset rotates the same access
+						material through the normal agent rollout.
+					</DialogDescription>
+				</DialogHeader>
+
+				{isLoading ? (
+					<div
+						role="status"
+						className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground"
+					>
+						<Spinner className="size-4" />
+						Loading Runtime UI access…
+					</div>
+				) : null}
+
+				{credentialError ? (
+					<ApiErrorPanel
+						error={credentialError}
+						onRetry={() => void loadCredentials()}
+						normalizer={billingErrorNormalizer}
+						title={`Couldn't load ${label} access`}
+					/>
+				) : null}
+
+				{credentials?.runtime === "hermes" ? (
+					<div className="space-y-3">
+						<TokenReveal label="Username" value={credentials.username} />
+						<TokenReveal label="Password" value={credentials.password} />
+					</div>
+				) : null}
+
+				{credentials?.runtime === "openclaw" ? (
+					<TokenReveal label="Token" value={credentials.token} />
+				) : null}
+
+				<div className="flex flex-wrap justify-end gap-2">
+					<ConfirmAction
+						title="Reset Runtime UI access?"
+						description={
+							<p>
+								This rotates the {runtime === "hermes" ? "Hermes credentials" : "OpenClaw token"}
+								and restarts the agent through its normal rollout.
+							</p>
+						}
+						confirmLabel="Reset access"
+						destructive
+						onConfirm={acceptReset}
+					>
+						<Button type="button" variant="outline" disabled={isLoading || reset.isPending}>
+							{reset.isPending ? <Spinner className="size-3.5" /> : null}
+							Reset access
+						</Button>
+					</ConfirmAction>
+					<Button type="button" disabled={!credentials || isLoading} onClick={openRuntime}>
+						Open in new window
+						<ExternalLink className="size-3.5" />
+					</Button>
+				</div>
+			</DialogContent>
+		</Dialog>
 	);
 }
 

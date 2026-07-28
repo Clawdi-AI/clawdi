@@ -27,9 +27,13 @@ export type DeploymentRead = S["V2HostedDeploymentReadResponse"];
 export type Deployment = DeploymentRead;
 export type DeployRequestRead = S["V2HostedDeployRequestReadResponse"];
 export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff"];
-export type RuntimeUiAuthMode = "password" | "openclaw_device";
-export type RuntimeUiCredentials = S["V2HostedRuntimeUiCredentials"];
-export type RuntimeUiEndpointInfo = S["V2HostedRuntimeUiEndpointInfo"];
+export type RuntimeUiCredentials =
+	| S["V2HermesRuntimeUiCredentials"]
+	| S["V2OpenClawRuntimeUiCredentials"];
+export type RuntimeUiEndpointInfo =
+	| S["V2HermesRuntimeUiEndpointInfo"]
+	| S["V2OpenClawRuntimeUiEndpointInfo"];
+export type RuntimeUiAuthMode = RuntimeUiEndpointInfo["auth_mode"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -41,46 +45,57 @@ export function isRuntimeUiEndpointInfo(value: unknown): value is RuntimeUiEndpo
 		(value.runtime === "openclaw" || value.runtime === "hermes") &&
 		value.role === "control_ui" &&
 		typeof value.url === "string" &&
-		(value.auth_mode === "openclaw_device" || value.auth_mode === "password") &&
-		value.browser_mode === "top_level" &&
+		(value.auth_mode === "openclaw_token" || value.auth_mode === "password") &&
+		value.browser_mode === "embedded_and_top_level" &&
 		(value.runtime === "openclaw"
-			? value.auth_mode === "openclaw_device"
+			? value.auth_mode === "openclaw_token"
 			: value.auth_mode === "password") &&
-		isSafeRuntimeUiUrl(value.url, false)
+		isCleanRuntimeUiUrl(value.url)
 	);
 }
 
 export function isRuntimeUiCredentials(value: unknown): value is RuntimeUiCredentials {
-	if (!isRecord(value) || typeof value.url !== "string") return false;
+	if (
+		!isRecord(value) ||
+		typeof value.url !== "string" ||
+		typeof value.access_revision !== "number" ||
+		!Number.isSafeInteger(value.access_revision) ||
+		value.access_revision < 1 ||
+		typeof value.deployment_resource_version !== "string" ||
+		!value.deployment_resource_version
+	) {
+		return false;
+	}
 	if (value.runtime === "hermes") {
 		return (
 			value.auth_mode === "password" &&
-			value.username === "admin" &&
+			typeof value.username === "string" &&
+			Boolean(value.username) &&
 			typeof value.password === "string" &&
-			Boolean(value.password.trim()) &&
-			isSafeRuntimeUiUrl(value.url, false)
+			Boolean(value.password) &&
+			isCleanRuntimeUiUrl(value.url)
 		);
 	}
 	return (
 		value.runtime === "openclaw" &&
-		value.auth_mode === "openclaw_device" &&
-		(value.username === undefined || value.username === null) &&
-		(value.password === undefined || value.password === null) &&
-		isSafeRuntimeUiUrl(value.url, true)
+		value.auth_mode === "openclaw_token" &&
+		typeof value.token === "string" &&
+		Boolean(value.token) &&
+		typeof value.handoff_url === "string" &&
+		value.handoff_url === `${value.url}#token=${encodeURIComponent(value.token)}` &&
+		isCleanRuntimeUiUrl(value.url)
 	);
 }
 
-function isSafeRuntimeUiUrl(value: string, tokenFragment: boolean): boolean {
+function isCleanRuntimeUiUrl(value: string): boolean {
 	try {
 		const url = new URL(value);
-		if (url.protocol !== "https:" || url.username || url.password || url.search) return false;
-		if (!tokenFragment) return url.hash === "";
-		const fragment = new URLSearchParams(url.hash.slice(1));
 		return (
-			url.hash.startsWith("#") &&
-			fragment.getAll("token").length === 1 &&
-			Boolean(fragment.get("token")?.trim()) &&
-			[...fragment.keys()].every((key) => key === "token")
+			url.protocol === "https:" &&
+			!url.username &&
+			!url.password &&
+			url.search === "" &&
+			url.hash === ""
 		);
 	} catch {
 		return false;

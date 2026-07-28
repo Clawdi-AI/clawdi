@@ -349,6 +349,38 @@ describe("declarative deployment mutations", () => {
 		await expect(result).rejects.toThrow(DEPLOYMENT_CONFLICT_MESSAGE);
 	});
 
+	it("reveals Runtime UI credentials against the displayed resource version", async () => {
+		const requests: Request[] = [];
+		const deployment = hostedDeploymentFixture({
+			id: "hdep_runtime_ui",
+			resourceVersion: "rv-runtime-ui",
+		});
+		const client = testClient(async (nextRequest) => {
+			requests.push(nextRequest.clone());
+			return jsonResponse({
+				runtime: "openclaw",
+				auth_mode: "openclaw_token",
+				url: "https://runtime.example/openclaw/",
+				access_revision: 4,
+				deployment_resource_version: "rv-runtime-ui",
+				token: "gateway-token",
+				handoff_url: "https://runtime.example/openclaw/#token=gateway-token",
+			});
+		});
+
+		await client.getRuntimeUiCredentials(
+			deployment.resource.id,
+			deployment.resource.metadata.resourceVersion,
+		);
+
+		const request = requests[0];
+		expect(request ? new URL(request.url).pathname : null).toBe(
+			"/v2/deployments/hdep_runtime_ui/runtime-ui/credentials",
+		);
+		expect(request?.headers.get("If-Match")).toBe('"rv-runtime-ui"');
+		expect(request?.headers.get("Idempotency-Key")).toBeNull();
+	});
+
 	it("always sends the required headers on every declarative mutation", async () => {
 		const mutations: Request[] = [];
 		const client = testClient(async (request) => {
@@ -358,21 +390,24 @@ describe("declarative deployment mutations", () => {
 				return jsonResponse(hostedDeploymentFixture({ id, resourceVersion: `rv-${id}` }));
 			}
 			mutations.push(request.clone());
-			const verb = path.endsWith("/restart")
-				? "restart"
-				: path.endsWith("/start")
-					? "start"
-					: path.endsWith("/stop")
-						? "stop"
-						: request.method === "DELETE"
-							? "delete"
-							: "update";
+			const verb = path.endsWith("/runtime-ui/access/reset")
+				? "reset_runtime_ui_access"
+				: path.endsWith("/restart")
+					? "restart"
+					: path.endsWith("/start")
+						? "start"
+						: path.endsWith("/stop")
+							? "stop"
+							: request.method === "DELETE"
+								? "delete"
+								: "update";
 			return jsonResponse(operation({ id: `headers-${verb}`, verb }), 202);
 		});
 
 		await client.setDeploymentDesiredState("hdep_start", "running", "intent-start");
 		await client.setDeploymentDesiredState("hdep_stop", "stopped", "intent-stop");
 		await client.restartDeployment("hdep_restart", "intent-restart");
+		await client.resetRuntimeUiAccess("hdep_access", "intent-access-reset");
 		await client.updateDeployment("hdep_update", { name: "Renamed" }, "intent-update");
 		await client.deleteDeployment(
 			"hdep_delete",
@@ -380,7 +415,7 @@ describe("declarative deployment mutations", () => {
 			"intent-delete",
 		);
 
-		expect(mutations).toHaveLength(5);
+		expect(mutations).toHaveLength(6);
 		for (const request of mutations) {
 			expect(request.headers.get("Idempotency-Key")).toMatch(/^intent-/);
 			expect(request.headers.get("If-Match")).toMatch(/^"rv-hdep_[a-z]+"$/);
@@ -404,15 +439,17 @@ describe("declarative deployment mutations", () => {
 			if (path.startsWith("/v2/operations/")) {
 				throw new Error("Accepted declarative mutations must not poll their operations");
 			}
-			const verb = path.endsWith("/restart")
-				? "restart"
-				: path.endsWith("/start")
-					? "start"
-					: path.endsWith("/stop")
-						? "stop"
-						: request.method === "DELETE"
-							? "delete"
-							: "update";
+			const verb = path.endsWith("/runtime-ui/access/reset")
+				? "reset_runtime_ui_access"
+				: path.endsWith("/restart")
+					? "restart"
+					: path.endsWith("/start")
+						? "start"
+						: path.endsWith("/stop")
+							? "stop"
+							: request.method === "DELETE"
+								? "delete"
+								: "update";
 			return jsonResponse(operation({ done: false, id: `accepted-${verb}`, verb }), 202);
 		});
 
@@ -420,6 +457,7 @@ describe("declarative deployment mutations", () => {
 			client.setDeploymentDesiredState("hdep_start", "running", "intent-start"),
 			client.setDeploymentDesiredState("hdep_stop", "stopped", "intent-stop"),
 			client.restartDeployment("hdep_restart", "intent-restart"),
+			client.resetRuntimeUiAccess("hdep_access", "intent-access-reset"),
 			client.updateDeployment(
 				"hdep_provider",
 				{
