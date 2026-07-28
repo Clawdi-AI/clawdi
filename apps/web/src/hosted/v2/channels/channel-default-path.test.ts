@@ -36,7 +36,9 @@ describe("channel default path", () => {
 
 		expect(linkDialog).toContain("The bot is linked to this agent");
 		expect(linkDialog).toContain("Next, create a pairing code");
-		expect(linkDialog).toContain('params={{ id: agentId, section: "channels" }}');
+		expect(linkDialog).toContain("agentSectionLink(");
+		expect(linkDialog).toContain('"channels"');
+		expect(linkDialog).toContain("agentDeploymentRouteQuery(routeSearch)");
 		expect(linkDialog).toContain("Finish channel setup");
 		expect(linkDialog).toContain("Agent token (advanced)");
 	});
