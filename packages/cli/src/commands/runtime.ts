@@ -48,6 +48,7 @@ import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
+	type RuntimePrivateAppliedAuthority,
 	runtimeRecoverableSecretValues,
 	withRuntimeConvergeLockAsync,
 } from "../runtime/manifest";
@@ -1224,7 +1225,10 @@ interface RuntimeApplyCliUpdateFailedResult {
 }
 
 interface RuntimeApplyOptions {
-	authorityCommit?: (convergence: ReturnType<typeof convergeRuntimeManifest>) => void;
+	authorityCommit?: (
+		convergence: ReturnType<typeof convergeRuntimeManifest>,
+		authority: RuntimePrivateAppliedAuthority,
+	) => void;
 	continueOnCliUpdateError?: boolean;
 	deferCliInstall?: boolean;
 	deferCliInstallReason?: string;
@@ -1299,6 +1303,7 @@ export function commitRuntimeAppliedState(input: {
 	sourceRevision: string;
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	applyIdentity: RuntimeApplyIdentity | null;
+	egressSidecarSecretRevision?: string;
 }): void {
 	if (
 		input.applyIdentity &&
@@ -1326,6 +1331,9 @@ export function commitRuntimeAppliedState(input: {
 					}
 				: {}),
 			contentIdentity: runtimeAppliedContentIdentity(input.load),
+			...(input.egressSidecarSecretRevision
+				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
+				: {}),
 			providerIds,
 			projectedProviderIds: input.convergence.projectedProviderIds,
 		},
@@ -1882,7 +1890,7 @@ async function runtimeInitLocked(
 			const contentRevision = runtimePublicContentRevision(convergenceLoad);
 			const applyIdentity = readRuntimeApplyIdentityFromEnv();
 			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
-				authorityCommit: (convergence) =>
+				authorityCommit: (convergence, authority) =>
 					commitRuntimeAppliedState({
 						load: convergenceLoad,
 						paths,
@@ -1890,6 +1898,7 @@ async function runtimeInitLocked(
 						sourceRevision: loaded.sourceRevision ?? contentRevision,
 						convergence,
 						applyIdentity,
+						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 					}),
 				manifestIdentity: {
 					generation: convergenceLoad.manifest.generation,
@@ -2137,7 +2146,7 @@ async function runtimeWatchTickLocked(
 		);
 		const applyIdentity = readRuntimeApplyIdentityFromEnv();
 		const applyResult = applyRuntimeDesiredState(loaded, paths, {
-			authorityCommit: (convergence) =>
+			authorityCommit: (convergence, authority) =>
 				commitRuntimeAppliedState({
 					load: loaded,
 					paths,
@@ -2145,6 +2154,7 @@ async function runtimeWatchTickLocked(
 					sourceRevision,
 					convergence,
 					applyIdentity,
+					egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 				}),
 			continueOnCliUpdateError: true,
 			deferCliInstall: opts.deferCliInstall,
@@ -2282,14 +2292,14 @@ function applyRuntimeDesiredState(
 	};
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
-		commitAuthority: (committedConvergence) => {
+		commitAuthority: (committedConvergence, authority) => {
 			if (opts.requireSystemdApplied && !systemdApply.applied) {
 				throw new Error("systemd apply did not activate the rendered runtime manifest");
 			}
-			opts.authorityCommit?.(committedConvergence);
+			opts.authorityCommit?.(committedConvergence, authority);
 		},
 		systemdApply: {
-			activate: ({ egressSecretsChanged }) => {
+			activate: ({ restartEgressSidecar }) => {
 				failedSystemdUnits = readSystemdUnitSnapshot(paths);
 				try {
 					systemdApply = applySystemdRuntimeUpdate(
@@ -2297,7 +2307,7 @@ function applyRuntimeDesiredState(
 						previousSystemdUnits,
 						failedSystemdUnits,
 						{
-							forceRestartSystemUnits: egressSecretsChanged ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
 						},
 					);
 					return systemdApply;
@@ -2307,10 +2317,10 @@ function applyRuntimeDesiredState(
 					);
 				}
 			},
-			rollback: ({ egressSecretsChanged }) => {
+			rollback: ({ restartEgressSidecar }) => {
 				if (!failedSystemdUnits) return;
 				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths), {
-					forceRestartSystemUnits: egressSecretsChanged ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+					forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
 				});
 			},
 		},

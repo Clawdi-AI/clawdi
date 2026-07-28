@@ -1202,6 +1202,7 @@ function writeTestRuntimeAppliedState(
 	input: {
 		etag?: string;
 		sourceRevision?: string;
+		egressSidecarSecretRevision?: string;
 	} = {},
 ): void {
 	const sourceRevision =
@@ -1231,6 +1232,9 @@ function writeTestRuntimeAppliedState(
 					secretValues: load.secretValues ?? {},
 				}),
 			},
+			...(input.egressSidecarSecretRevision
+				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
+				: {}),
 			providerIds,
 			projectedProviderIds: convergence.projectedProviderIds,
 		},
@@ -7294,9 +7298,34 @@ printf 'ActiveState=active\\nSubState=running\\n'
 					throw new Error("expected initial egress rotation manifest load");
 				}
 				const appliedLoad = applyRuntimeBundleChannelsToManifestLoad(initialLoad);
-				const initialConvergence = convergeRuntimeManifest(appliedLoad, paths);
+				let committedRevision: string | undefined;
+				const initialConvergence = convergeRuntimeManifest(appliedLoad, paths, {
+					commitAuthority: (_convergence, authority) => {
+						committedRevision = authority.egressSidecarSecretRevision;
+					},
+					systemdApply: {
+						activate: () => ({
+							applied: true,
+							systemUnitsChanged: [],
+							userUnitsChanged: [],
+						}),
+						rollback: () => {},
+					},
+				});
 				expect(initialConvergence.installErrors).toEqual([]);
-				writeTestRuntimeAppliedState(paths, appliedLoad, initialConvergence);
+				expect(committedRevision).toMatch(/^[a-f0-9]{64}$/);
+				if (!appliedLoad.sourceRevision) {
+					throw new Error("expected initial egress source revision");
+				}
+				commitRuntimeAppliedState({
+					load: appliedLoad,
+					paths,
+					etag: initialLoad.etag ?? '"egress-secret-revision-a"',
+					sourceRevision: appliedLoad.sourceRevision,
+					convergence: initialConvergence,
+					applyIdentity: null,
+					egressSidecarSecretRevision: committedRevision,
+				});
 			} finally {
 				initialFetch.restore();
 			}
@@ -7312,6 +7341,22 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(JSON.parse(readFileSync(egressSecretFile, "utf-8"))).toMatchObject({
 				"secret://provider.default.apiKey": initialSecret,
 			});
+			const initialAppliedState = readRuntimeAppliedState(paths);
+			const initialPrivateRevision = initialAppliedState?.egressSidecarSecretRevision;
+			expect(initialPrivateRevision).toMatch(/^[a-f0-9]{64}$/);
+			const crashWrittenSecrets = JSON.parse(readFileSync(egressSecretFile, "utf-8")) as Record<
+				string,
+				string
+			>;
+			writeFileSync(
+				egressSecretFile,
+				`${JSON.stringify(
+					Object.fromEntries(Object.keys(crashWrittenSecrets).map((ref) => [ref, rotatedSecret])),
+					null,
+					2,
+				)}\n`,
+			);
+			chmodSync(egressSecretFile, 0o600);
 			writeFileSync(systemctlLog, "");
 
 			const rotationFetch = mockFetch([
@@ -7344,7 +7389,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			});
 			expect(appliedEventText).not.toContain(initialSecret);
 			expect(appliedEventText).not.toContain(rotatedSecret);
-			expect(appliedEventText).not.toContain("egressSecretsChanged");
+			expect(appliedEventText).not.toContain("egressSidecarSecretRevision");
 			const rotatedSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
 			const rotatedSidecarEnv = readSystemdEnvFile(paths, "clawdi-runtime-sidecar");
 			expect(rotatedSidecarUnit).toBe(initialSidecarUnit);
@@ -7356,6 +7401,20 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				"secret://provider.default.apiKey": rotatedSecret,
 			});
 			expect(statSync(egressSecretFile).mode & 0o777).toBe(0o600);
+			const rotatedAppliedState = readRuntimeAppliedState(paths);
+			const rotatedPrivateRevision = rotatedAppliedState?.egressSidecarSecretRevision;
+			expect(rotatedPrivateRevision).toMatch(/^[a-f0-9]{64}$/);
+			expect(rotatedPrivateRevision).not.toBe(initialPrivateRevision);
+			expect(appliedEventText).not.toContain(rotatedPrivateRevision ?? "missing-private-revision");
+			expect(rotatedSidecarUnit).not.toContain(
+				rotatedPrivateRevision ?? "missing-private-revision",
+			);
+			expect(rotatedSidecarEnv).not.toContain(rotatedPrivateRevision ?? "missing-private-revision");
+			const observedText = JSON.stringify(readHostedRuntimeObserved(paths));
+			expect(observedText).not.toContain("egressSidecarSecretRevision");
+			expect(observedText).not.toContain(rotatedPrivateRevision ?? "missing-private-revision");
+			expect(observedText).not.toContain(rotatedSecret);
+			expect(statSync(paths.appliedState).mode & 0o777).toBe(0o600);
 			const rotationSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
 			expect(
 				rotationSystemctlCalls.filter((call) => call === "restart clawdi-runtime-sidecar.service"),
@@ -7364,6 +7423,20 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			const committedAppliedState = readFileSync(paths.appliedState, "utf-8");
 			const committedLastGood = readFileSync(paths.manifestLastGood, "utf-8");
 			const committedSecretCache = readFileSync(paths.managedSecretCacheFile, "utf-8");
+			const crashWrittenRejectedSecrets = JSON.parse(
+				readFileSync(egressSecretFile, "utf-8"),
+			) as Record<string, string>;
+			writeFileSync(
+				egressSecretFile,
+				`${JSON.stringify(
+					Object.fromEntries(
+						Object.keys(crashWrittenRejectedSecrets).map((ref) => [ref, rejectedSecret]),
+					),
+					null,
+					2,
+				)}\n`,
+			);
+			chmodSync(egressSecretFile, 0o600);
 			writeFileSync(systemctlLog, "");
 			writeFileSync(failNextSidecarRestart, "fail\n");
 			logs.length = 0;
@@ -7398,7 +7471,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			});
 			expect(rejectedEventText).not.toContain(rotatedSecret);
 			expect(rejectedEventText).not.toContain(rejectedSecret);
-			expect(rejectedEventText).not.toContain("egressSecretsChanged");
+			expect(rejectedEventText).not.toContain("egressSidecarSecretRevision");
 			expect(readSystemdSystemUnit(paths, "clawdi-runtime-sidecar")).toBe(initialSidecarUnit);
 			expect(readSystemdEnvFile(paths, "clawdi-runtime-sidecar")).toBe(initialSidecarEnv);
 			expect(JSON.parse(readFileSync(egressSecretFile, "utf-8"))).toMatchObject({
@@ -7454,6 +7527,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 					(call) => call === "restart clawdi-runtime-sidecar.service",
 				),
 			).toHaveLength(0);
+			expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
 		} finally {
 			console.log = previousLog;
 			process.exitCode = previousExitCode;

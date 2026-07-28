@@ -37,6 +37,10 @@ export const runtimeAppliedStateSchema = z
 		applyReceiptId: z.string().min(16).max(128).optional(),
 		bootNonce: z.string().min(16).max(128).optional(),
 		contentIdentity: appliedContentSourceSchema,
+		egressSidecarSecretRevision: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.optional(),
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
 	})

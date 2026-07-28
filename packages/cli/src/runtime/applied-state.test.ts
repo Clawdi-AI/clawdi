@@ -60,10 +60,25 @@ describe("runtime applied state", () => {
 				projectedProviderIds: { openclaw: ["default", "default"] },
 			}).success,
 		).toBe(false);
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				egressSidecarSecretRevision: "e".repeat(64),
+			}).success,
+		).toBe(true);
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				egressSidecarSecretRevision: "not-a-private-revision",
+			}).success,
+		).toBe(false);
 	});
 
 	test("accepts the frozen apply identity only as a complete bounded tuple", () => {
-		const state = appliedStateFixture();
+		const state = {
+			...appliedStateFixture(),
+			egressSidecarSecretRevision: "e".repeat(64),
+		};
 		const complete = {
 			...state,
 			manifestETag: '"manifest-generation-7"',
@@ -107,7 +122,10 @@ describe("runtime applied state", () => {
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		const paths = getRuntimePaths({ mode: "hosted" });
-		const state = appliedStateFixture();
+		const state = {
+			...appliedStateFixture(),
+			egressSidecarSecretRevision: "e".repeat(64),
+		};
 
 		expect(paths.appliedState).toBe(join(root, "state", "status", "runtime-applied.json"));
 		expect(writeRuntimeAppliedState(state, paths)).toBe(paths.appliedState);

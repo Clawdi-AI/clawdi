@@ -876,7 +876,22 @@ export async function loadRuntimeManifest(
 	return validateLoadedManifest(normalized, paths, "fixture-file", manifestPath);
 }
 
-function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | RuntimeManifestFailure {
+interface LastGoodManifestLoadOptions {
+	requireOfflineBoot: boolean;
+	requireAppliedAuthority: boolean;
+	requireSemanticValidity: boolean;
+}
+
+const offlineLastGoodManifestLoadOptions: LastGoodManifestLoadOptions = {
+	requireOfflineBoot: true,
+	requireAppliedAuthority: false,
+	requireSemanticValidity: true,
+};
+
+function loadLastGoodManifest(
+	paths: RuntimePaths,
+	opts: LastGoodManifestLoadOptions = offlineLastGoodManifestLoadOptions,
+): RuntimeManifestLoad | RuntimeManifestFailure {
 	if (!existsSync(paths.manifestLastGood)) {
 		return {
 			mode: "repair",
@@ -886,21 +901,23 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 	}
 	try {
 		const manifest = parseManifest(readJsonFile(paths.manifestLastGood));
-		if (manifest.recovery.allowOfflineBoot !== true) {
+		if (opts.requireOfflineBoot && manifest.recovery.allowOfflineBoot !== true) {
 			return {
 				mode: "repair",
 				stage: "local",
 				errors: ["cached manifest does not allow offline boot"],
 			};
 		}
-		const trustDomain = paths.mode === "hosted" ? "hosted" : "generic";
-		const semanticErrors = validateManifestSemantics(manifest, paths, trustDomain);
-		if (semanticErrors.length > 0) {
-			return {
-				mode: "repair",
-				stage: "local",
-				errors: semanticErrors.map((error) => `cached ${error}`),
-			};
+		if (opts.requireSemanticValidity) {
+			const trustDomain = paths.mode === "hosted" ? "hosted" : "generic";
+			const semanticErrors = validateManifestSemantics(manifest, paths, trustDomain);
+			if (semanticErrors.length > 0) {
+				return {
+					mode: "repair",
+					stage: "local",
+					errors: semanticErrors.map((error) => `cached ${error}`),
+				};
+			}
 		}
 		const appliedState = readRuntimeAppliedState(paths);
 		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
@@ -921,17 +938,19 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 				};
 			}
 		}
-		if (strictV2Cache && !appliedState) {
+		if ((strictV2Cache || opts.requireAppliedAuthority) && !appliedState) {
 			return {
 				mode: "repair",
 				stage: "local",
 				errors: [
-					"cached strict-v2 manifest has no durable applied authority; refusing offline boot",
+					strictV2Cache
+						? "cached strict-v2 manifest has no durable applied authority; refusing offline boot"
+						: "cached manifest has no durable applied authority",
 				],
 			};
 		}
 		if (
-			(strictV2Cache || cachedApplyIdentity) &&
+			(strictV2Cache || cachedApplyIdentity || opts.requireAppliedAuthority) &&
 			appliedState &&
 			(appliedState?.generation !== manifest.generation ||
 				appliedState.instanceId !== manifest.instanceId ||
@@ -973,6 +992,20 @@ function loadLastGoodManifest(paths: RuntimePaths): RuntimeManifestLoad | Runtim
 			],
 		};
 	}
+}
+
+// Internal recovery input for convergence rollback only. This does not
+// authorize the cached manifest to boot or converge under current semantics;
+// schema parsing plus an exact root-only applied content identity prove only
+// the previously committed secret material needed to roll back the sidecar.
+export function loadCommittedRuntimeManifest(
+	paths: RuntimePaths,
+): RuntimeManifestLoad | RuntimeManifestFailure {
+	return loadLastGoodManifest(paths, {
+		requireOfflineBoot: false,
+		requireAppliedAuthority: true,
+		requireSemanticValidity: false,
+	});
 }
 
 function loadCachedSecretValues(
