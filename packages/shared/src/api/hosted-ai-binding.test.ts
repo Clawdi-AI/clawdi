@@ -51,6 +51,31 @@ const secondaryProvider = {
 	models: [{ id: "gpt-secondary" }],
 } satisfies HostedSavedAiProvider;
 
+const noncanonicalManagedProviders: HostedSavedAiProvider[] = [
+	{ ...apiKeyProvider, id: "row-v1", provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID },
+	{
+		...apiKeyProvider,
+		id: "row-legacy-public",
+		provider_id: CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
+	},
+	{
+		...apiKeyProvider,
+		id: "row-legacy",
+		provider_id: CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+	},
+	{
+		...apiKeyProvider,
+		id: "row-deployment",
+		provider_id: `${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
+	},
+	{
+		...apiKeyProvider,
+		id: "row-managed-by",
+		provider_id: "custom-managed-id",
+		managed_by: "clawdi",
+	},
+];
+
 describe("shared Hosted AI provider binding", () => {
 	test("builds the same managed and unmanaged deployment fields for every adapter", () => {
 		expect(
@@ -178,6 +203,27 @@ describe("shared Hosted AI provider binding", () => {
 		}
 	});
 
+	test("rejects noncanonical first-party managed secondaries in a managed pool", () => {
+		for (const provider of noncanonicalManagedProviders) {
+			expect(() =>
+				buildHostedAiBindingFields({
+					managedModels,
+					mode: "create",
+					providers: [apiKeyProvider, provider],
+					selection: {
+						mode: "managed",
+						model: "gpt-managed",
+						providerIds: [
+							CLAWDI_MANAGED_PROVIDER_ID,
+							apiKeyProvider.provider_id,
+							provider.provider_id,
+						],
+					},
+				}),
+			).toThrow("cannot be used as a saved provider");
+		}
+	});
+
 	test("preserves a canonical managed secondary without materializing it in saved bootstrap", () => {
 		const canonicalManagedProvider = {
 			...apiKeyProvider,
@@ -260,32 +306,7 @@ describe("shared Hosted AI provider binding", () => {
 	});
 
 	test("rejects noncanonical first-party managed providers anywhere in a saved pool", () => {
-		const managedProviders: HostedSavedAiProvider[] = [
-			{ ...apiKeyProvider, id: "row-v1", provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID },
-			{
-				...apiKeyProvider,
-				id: "row-legacy-public",
-				provider_id: CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
-			},
-			{
-				...apiKeyProvider,
-				id: "row-legacy",
-				provider_id: CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
-			},
-			{
-				...apiKeyProvider,
-				id: "row-deployment",
-				provider_id: `${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
-			},
-			{
-				...apiKeyProvider,
-				id: "row-managed-by",
-				provider_id: "custom-managed-id",
-				managed_by: "clawdi",
-			},
-		];
-
-		for (const provider of managedProviders) {
+		for (const provider of noncanonicalManagedProviders) {
 			for (const asPrimary of [false, true]) {
 				try {
 					buildHostedAiBindingFields({

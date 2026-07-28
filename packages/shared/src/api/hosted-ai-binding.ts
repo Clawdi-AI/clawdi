@@ -167,7 +167,10 @@ export function buildHostedAiBindingFields({
 			selection.providerIds ?? [CLAWDI_MANAGED_PROVIDER_ID],
 			CLAWDI_MANAGED_PROVIDER_ID,
 		);
-		const customProviders = savedProvidersForIds(providerIds, providers, "skip");
+		const customProviders = savedProvidersForIds(
+			providerIds.filter((providerId) => providerId !== CLAWDI_MANAGED_PROVIDER_ID),
+			providers,
+		);
 		const fields: ReturnType<typeof buildHostedAiBindingFields> = {
 			ai_provider_auth_kind: "managed",
 			ai_provider_id: null,
@@ -198,7 +201,6 @@ export function buildHostedAiBindingFields({
 	const selectedProviders = savedProvidersForIds(
 		providerIds.filter((providerId) => providerId !== CLAWDI_MANAGED_PROVIDER_ID),
 		providers,
-		"reject",
 	);
 	const primaryProvider = selectedProviders.find(
 		(provider) => provider.provider_id === selection.primaryProviderId,
@@ -229,13 +231,11 @@ function selectedProviderIds(providerIds: readonly string[], primaryProviderId: 
 function savedProvidersForIds(
 	providerIds: readonly string[],
 	providers: readonly HostedSavedAiProvider[],
-	firstPartyManaged: "reject" | "skip",
 ): HostedSavedAiProvider[] {
 	const selectedProviders: HostedSavedAiProvider[] = [];
 	for (const providerId of providerIds) {
 		if (isFirstPartyManagedAiProvider({ provider_id: providerId })) {
-			if (firstPartyManaged === "reject") throw firstPartyManagedProviderError(providerId);
-			continue;
+			throw firstPartyManagedProviderError(providerId);
 		}
 		const provider = providers.find((candidate) => candidate.provider_id === providerId);
 		if (!provider) {
@@ -245,8 +245,7 @@ function savedProvidersForIds(
 			);
 		}
 		if (isFirstPartyManagedAiProvider(provider)) {
-			if (firstPartyManaged === "reject") throw firstPartyManagedProviderError(providerId);
-			continue;
+			throw firstPartyManagedProviderError(providerId);
 		}
 		if (!provider.usable) {
 			throw new HostedAiBindingError(
