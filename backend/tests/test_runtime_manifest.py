@@ -123,8 +123,9 @@ TEST_HERMES_DASHBOARD_AUTH = {
         "capability": "hermes-basic-auth-v1",
     },
 }
-OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp")
+OPTIONAL_RUNTIME_STATE_FIELDS = ("egress_engine", "egress_profiles", "mcp", "skills")
 TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
+TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
 
 
 async def _create_bundle_runtime(admin_client, db_session, seed_user):
@@ -2570,9 +2571,11 @@ async def test_admin_runtime_state_clears_optional_state(
     initial = await _write_runtime_state(
         admin_client,
         str(env.id),
+        cli_package_spec=TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC,
         egress_engine=TEST_EGRESS_ENGINE_PIN,
         egress_profiles=TEST_EGRESS_PROFILES,
-        mcp={"enabled": True},
+        mcp={"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
+        skills={"entries": {"clawdi": {"enabled": True}}},
         tools={**TEST_CODEX_TOOLS, "catalog": "clawdi-default"},
     )
     update = _clear_optional_runtime_state({**initial, "generation": 8}, clear_mode)
@@ -2589,6 +2592,7 @@ async def test_admin_runtime_state_clears_optional_state(
     assert state.egress_engine is None
     assert state.egress_profiles is None
     assert state.mcp is None
+    assert state.skills is None
     assert state.tools == {**TEST_CODEX_TOOLS, "catalog": "clawdi-default"}
 
 
@@ -2610,9 +2614,11 @@ async def test_equal_generation_optional_state_clear_is_material_conflict(
     initial = await _write_runtime_state(
         admin_client,
         str(env.id),
+        cli_package_spec=TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC,
         egress_engine=TEST_EGRESS_ENGINE_PIN,
         egress_profiles=TEST_EGRESS_PROFILES,
-        mcp={"enabled": True},
+        mcp={"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
+        skills={"entries": {"clawdi": {"enabled": True}}},
         tools={**TEST_CODEX_TOOLS, "catalog": "clawdi-default"},
     )
     environment_id = env.id
@@ -2631,7 +2637,8 @@ async def test_equal_generation_optional_state_clear_is_material_conflict(
     assert state.generation == 7
     assert state.egress_engine == TEST_EGRESS_ENGINE_PIN
     assert state.egress_profiles == TEST_EGRESS_PROFILES
-    assert state.mcp == {"enabled": True}
+    assert state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
+    assert state.skills == {"entries": {"clawdi": {"enabled": True}}}
     assert state.tools == {**TEST_CODEX_TOOLS, "catalog": "clawdi-default"}
 
 
@@ -2658,7 +2665,7 @@ def test_control_plane_audit_sanitizes_auth_cookie_and_credential_keys():
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_projects_mcp_and_tools_desired_state(
+async def test_runtime_manifest_projects_mcp_skills_and_tools_desired_state(
     admin_client,
     db_session,
     seed_user,
@@ -2673,7 +2680,9 @@ async def test_runtime_manifest_projects_mcp_and_tools_desired_state(
     await _write_runtime_state(
         admin_client,
         str(env.id),
-        mcp={"enabled": True, "profile": "clawdi-default"},
+        cli_package_spec=TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC,
+        mcp={"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
+        skills={"entries": {"clawdi": {"enabled": True}}},
         tools={
             **TEST_CODEX_TOOLS,
             "catalog": "clawdi-default",
@@ -2688,13 +2697,42 @@ async def test_runtime_manifest_projects_mcp_and_tools_desired_state(
 
     assert response.status_code == 200, response.text
     manifest = response.json()["manifest"]
-    assert manifest["mcp"] == {"enabled": True, "profile": "clawdi-default"}
+    assert manifest["mcp"] == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
+    assert manifest["skills"] == {"entries": {"clawdi": {"enabled": True}}}
     assert manifest["tools"] == {
         "catalog": "clawdi-default",
         "enabled": ["memory", "connectors"],
     }
     assert manifest["terminalTooling"]["codex"]["provider_id"] == CLAWDI_MANAGED_PROVIDER_ID
     assert "channels" not in manifest
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_preserves_opaque_mcp_desired_state(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"opaque-mcp-{uuid4().hex[:8]}",
+        machine_name="Opaque runtime MCP",
+        agent_type="openclaw",
+    )
+    legacy_mcp = {"future": True}
+    await _write_runtime_state(admin_client, str(env.id), mcp=legacy_mcp)
+
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    assert state.mcp == legacy_mcp
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        response = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert response.status_code == 200, response.text
+    assert response.json()["manifest"]["mcp"] == legacy_mcp
 
 
 @pytest.mark.asyncio
@@ -3327,10 +3365,30 @@ async def test_admin_runtime_state_rejects_removed_bridge_field(
     ("field", "value"),
     [
         ("mcp", {"headers": {"authorization": "Bearer secret"}}),
+        ("mcp", {"servers": {"future": True}}),
+        (
+            "mcp",
+            {
+                "servers": {
+                    "remote": {
+                        "url": "https://cloud-api.test/v1/mcp/remote",
+                        "transport": "streamable-http",
+                        "headers": {
+                            "Authorization": "public-a",
+                            "authorization": "public-b",
+                        },
+                    }
+                }
+            },
+        ),
+        ("mcp", {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"], "token": "secret"}}}),
+        ("mcp", {"servers": {"bad name": {"command": "clawdi", "args": ["mcp"]}}}),
+        ("skills", {"entries": {"clawdi": {"enabled": True, "token": "secret"}}}),
+        ("skills", {"entries": {"bad name": {"enabled": True}}}),
         ("tools", {"connectors": [{"apiKey": "secret"}]}),
     ],
 )
-async def test_admin_runtime_state_rejects_mcp_tool_plaintext_secrets(
+async def test_admin_runtime_state_rejects_unknown_or_secret_bearing_integration_fields(
     admin_client,
     db_session,
     seed_user,
@@ -3353,7 +3411,6 @@ async def test_admin_runtime_state_rejects_mcp_tool_plaintext_secrets(
         "runtimes": _runtime_state(),
         field: value,
     }
-
     response = await admin_client.put(
         f"/v1/admin/environments/{env.id}/runtime-state",
         headers=_AUTH,
@@ -3534,6 +3591,8 @@ async def test_runtime_bundle_revision_tracks_projected_and_secret_changes_only(
         admin_client, db_session, seed_user
     )
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle")
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
 
     async def fetch(client):
         response = await client.get(
@@ -3549,6 +3608,10 @@ async def test_runtime_bundle_revision_tracks_projected_and_secret_changes_only(
         account.name = "Renamed channel"
         await db_session.commit()
         irrelevant = await fetch(client)
+        state.mcp = {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
+        state.skills = {"entries": {"clawdi": {"enabled": True}}}
+        await db_session.commit()
+        integrations_enabled = await fetch(client)
         provider.base_url = "https://rotated-provider.test/v1"
         await db_session.commit()
         projected = await fetch(client)
@@ -3587,7 +3650,14 @@ async def test_runtime_bundle_revision_tracks_projected_and_secret_changes_only(
         return response.json()["sourceRevision"], response.headers["etag"]
 
     assert identity(irrelevant) == identity(initial)
-    assert identity(projected) != identity(initial)
+    assert identity(integrations_enabled) != identity(irrelevant)
+    assert integrations_enabled.json()["manifest"]["mcp"] == {
+        "servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}
+    }
+    assert integrations_enabled.json()["manifest"]["skills"] == {
+        "entries": {"clawdi": {"enabled": True}}
+    }
+    assert identity(projected) != identity(integrations_enabled)
     assert identity(key_rotated) != identity(projected)
     assert identity(channel_added) != identity(key_rotated)
     assert identity(channel_removed) == identity(key_rotated)

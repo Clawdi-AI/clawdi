@@ -30,10 +30,11 @@ from app.schemas.runtime import (
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
     HostedRuntimeRecovery,
+    HostedRuntimeSkills,
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
-    validate_no_plaintext_tool_secrets,
+    validate_hosted_runtime_mcp_desired_state,
 )
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
@@ -143,6 +144,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     recovery: HostedRuntimeRecovery
     egress_profiles: HostedEgressProfiles | None = None
     mcp: dict[str, Any] | None = None
+    skills: HostedRuntimeSkills | None = None
     tools: HostedRuntimeTools
 
     @field_validator("cli_package_spec")
@@ -169,10 +171,8 @@ class AdminRuntimeStateUpsert(BaseModel):
 
     @field_validator("mcp")
     @classmethod
-    def _validate_tool_desired_state(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        if value is not None:
-            validate_no_plaintext_tool_secrets(value)
-        return value
+    def _validate_mcp(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
+        return validate_hosted_runtime_mcp_desired_state(value)
 
 
 class AdminRuntimeStateResponse(BaseModel):

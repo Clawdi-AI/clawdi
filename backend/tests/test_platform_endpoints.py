@@ -26,6 +26,7 @@ from tests.conftest import create_env_with_project
 _ADMIN_KEY = "test-platform-admin-secret"
 _ADMIN_AUTH = {"X-Admin-Key": _ADMIN_KEY}
 _TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
+_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
 _TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
 _TEST_SYSTEM = {}
 _TEST_HERMES_DASHBOARD_AUTH = {
@@ -101,7 +102,7 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
         "deployment_id": "deployment-1",
         "instance_id": "instance-1",
         "generation": 1,
-        "cli_package_spec": _TEST_CLI_PACKAGE_SPEC,
+        "cli_package_spec": _TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC,
         "locale": _TEST_LOCALE,
         "system": _TEST_SYSTEM,
         "runtimes": {
@@ -128,6 +129,8 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
             ],
         },
         "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
+        "mcp": {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
+        "skills": {"entries": {"clawdi": {"enabled": True}}},
         "tools": _TEST_TOOLS,
     }
 
@@ -308,6 +311,8 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     assert runtime.json()["environment_id"] == str(agent_id)
     runtime_state = await db_session.get(HostedRuntimeState, agent_id)
     assert runtime_state is not None
+    assert runtime_state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
+    assert runtime_state.skills == {"entries": {"clawdi": {"enabled": True}}}
     assert runtime_state.tools == _TEST_TOOLS
 
     minted = await platform_client.post(

@@ -63,8 +63,8 @@ router; cloud-api appends evidence and never writes a Hosted deployment status.
 Cloud-api reuses these existing runtime primitives:
 
 - `AgentEnvironment.id` as the stable environment identity;
-- managed, environment-bound `ApiKey` authentication with the dedicated
-  `runtime-observations:write` scope for the runtime credential;
+- managed, environment-bound `ApiKey` authentication with an immutable
+  `runtime_deployment_id` identity binding;
 - the first-party `X-Admin-Key` gate, mutation idempotency, and control-plane
   audit events for Hosted-facing provisioning and retirement calls;
 - PostgreSQL transactions and `FOR UPDATE` locks for ingestion and retirement
@@ -88,9 +88,14 @@ Four PostgreSQL tables form the additive companion boundary:
 Strict-v2 credential provisioning is only available through
 admin-authenticated `POST /v2/runtime/auth/keys`. The admin and platform v1 key
 APIs keep their original wire shape and cannot create a fence or
-deployment-bound credential. The database requires every deployment-bound key
-to be managed, environment-bound, explicitly scoped, to include
-`runtime-observations:write`, and to stay within the runtime scope ceiling.
+deployment-bound credential. The provisioning endpoint represents one
+canonical Hosted Runtime role, so its request does not negotiate scopes. The
+Cloud issuer assigns the auditable bundle `connectors:read`,
+`connectors:invoke`, `runtime-observations:write`, `sessions:read`,
+`sessions:write`, `skills:read`, and `skills:write`. Principal identity comes
+only from the managed environment/deployment binding; each data-plane operation
+separately requires its scope. The database constrains only the identity
+binding, while the issuer and migration own the canonical authorization bundle.
 
 Hosted-facing `/v2` registration, read, acknowledgement, reset, retirement, and
 provisioning calls all require the first-party `X-Admin-Key`. The server binds
@@ -378,7 +383,9 @@ Normalization maps hosted fields into the internal shape:
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids`; `{}` in unmanaged mode |
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with one Clawdi-managed provider metadata and secret reference, independent of runtime providers |
-| `mcp`, `tools` | Existing runtime MCP/tool projection input; unrelated tool fields remain pass-through and do not include terminal Codex |
+| `mcp.servers` | Generic named stdio or remote HTTP server declarations; an MCP object without `servers` remains the released opaque pass-through shape |
+| `skills.entries` | Generic named bundled-skill enablement; the CLI registry owns bytes and runtime target paths |
+| `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
 | `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
@@ -400,9 +407,10 @@ Hosted CLI wire and are validated at admin write and manifest read boundaries.
 Invalid stored egress JSON fails closed with `409`. `terminalTooling.codex` is
 the one typed terminal-tool subset in this release. It does not declare MCP and
 does not participate in runtime `provider_ids`, runtime primary-model selection,
-source-level applied provider IDs, or runtime provider health. `mcp` and
-unrelated `tools` fields retain their existing pass-through behavior. `mcp` and
-`tools` remain explicit pass-through projections. The normalized generic
+source-level applied provider IDs, or runtime provider health. An `mcp` object
+with an own `servers` field is validated as the generic stdio/remote declaration
+collection; an object without `servers` and unrelated `tools` fields retain
+their released pass-through behavior. The normalized generic
 `clawdi.runtimeDesiredState.v1` shape also retains optional install metadata,
 default install args, and arbitrary provider projection data such as singular
 `model` for non-Hosted inputs.
@@ -631,6 +639,7 @@ outputs include:
 | `status/runtime-applied.json` | Agent v2 authority for one ETag, source revision, instance, generation, content identity, source provider IDs, and target-specific projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
 | `config/projections/<runtime>.json` | Runtime projection payload |
+| `config/projections/managed-mcp-servers.json` | Canonical last-applied MCP server map per runtime, written atomically only after the full native-config apply succeeds |
 | `config/run/<runtime>.json`, `config/run/<runtime>+<service>.json` | `clawdi run` launch config for runtime main processes and internal runtime-owned services |
 | `$CLAWDI_RUN_DIR/secrets/*` | Short-lived token and secret files for the current runtime session |
 | `$CLAWDI_RUN_DIR/systemd/env/*.service.env` | Ephemeral env files for local systemd services, including short-lived runtime secrets |
