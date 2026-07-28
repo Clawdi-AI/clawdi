@@ -44,6 +44,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { DataTablePagination } from "@/components/ui/data-table-pagination";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -73,6 +80,7 @@ import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import { useBillingClient } from "@/hosted/billing/billing-client";
 import { useCheckoutReturnHandler } from "@/hosted/billing/checkout-return";
 import { ComputeDunningBanner } from "@/hosted/billing/components/compute-dunning-banner";
+import { CopyButton } from "@/hosted/billing/components/copy-button";
 import type {
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeQuoteResponse,
@@ -1375,14 +1383,15 @@ function ConsoleTab({
 	const requestCredentials = useRuntimeUiCredentialRequest(deployment, url ?? "", runtime);
 	const credentialIdentity = `${deployment.resource.id}\0${deployment.resource.metadata.generation}\0${runtime}\0${url ?? ""}`;
 	const [credentials, setCredentials] = useState<ResolvedRuntimeUiCredentials | null>(null);
-	const [showCredentials, setShowCredentials] = useState(false);
+	const [isCredentialsDialogOpen, setIsCredentialsDialogOpen] = useState(false);
 	const [credentialError, setCredentialError] = useState<Error | null>(null);
 	const [isLoadingCredentials, setIsLoadingCredentials] = useState(false);
 	const credentialRequestRef = useRef(0);
+	const showCredentialsButtonRef = useRef<HTMLButtonElement>(null);
 	useEffect(() => {
 		credentialRequestRef.current += 1;
 		setCredentials(null);
-		setShowCredentials(false);
+		setIsCredentialsDialogOpen(false);
 		setCredentialError(null);
 		setIsLoadingCredentials(false);
 	}, [credentialIdentity]);
@@ -1399,7 +1408,6 @@ function ConsoleTab({
 				throw new Error("Runtime UI credential response was invalid");
 			}
 			setCredentials(resolved);
-			setShowCredentials(true);
 		} catch (error) {
 			if (credentialRequestRef.current !== requestId) return;
 			setCredentialError(error instanceof Error ? error : new Error("Credential request failed"));
@@ -1408,14 +1416,19 @@ function ConsoleTab({
 		}
 	}, [requestCredentials, runtime, url]);
 
-	const toggleHermesCredentials = () => {
-		if (showCredentials) {
-			setShowCredentials(false);
+	const handleCredentialsDialogOpenChange = (open: boolean) => {
+		setIsCredentialsDialogOpen(open);
+		if (!open) {
+			credentialRequestRef.current += 1;
 			setCredentials(null);
-			return;
+			setCredentialError(null);
+			setIsLoadingCredentials(false);
 		}
-		if (credentials?.runtime === "hermes") setShowCredentials(true);
-		else void loadHermesCredentials();
+	};
+
+	const showHermesCredentials = () => {
+		setIsCredentialsDialogOpen(true);
+		if (credentials?.runtime !== "hermes") void loadHermesCredentials();
 	};
 
 	if (status.kind === "stopped") {
@@ -1506,14 +1519,15 @@ function ConsoleTab({
 		<>
 			{runtime === "hermes" ? (
 				<Button
+					ref={showCredentialsButtonRef}
 					type="button"
 					variant="outline"
 					size="sm"
 					disabled={isLoadingCredentials}
-					onClick={toggleHermesCredentials}
+					onClick={showHermesCredentials}
 				>
 					{isLoadingCredentials ? <Spinner className="size-3.5" /> : null}
-					{showCredentials ? "Hide credentials" : "Show credentials"}
+					Show credentials
 				</Button>
 			) : null}
 			<RuntimeUiOpenButton
@@ -1528,7 +1542,7 @@ function ConsoleTab({
 						? (value) => {
 								setCredentialError(null);
 								setCredentials({ runtime: "hermes", value });
-								setShowCredentials(true);
+								setIsCredentialsDialogOpen(true);
 							}
 						: undefined
 				}
@@ -1540,36 +1554,9 @@ function ConsoleTab({
 	);
 
 	return (
-		<LiveToolFrame icon={MonitorPlay} title={browserUiLabel} action={runtimeActions}>
-			{runtime === "hermes" ? (
-				<>
-					<div className="shrink-0 border-y bg-muted/20 px-4 py-2 text-xs text-muted-foreground lg:px-6">
-						If Hermes returns to sign-in after you submit, use Open in new window. Some browser
-						session policies do not work inside an embedded page.
-					</div>
-					{showCredentials && hermesCredentials ? (
-						<div className="grid shrink-0 gap-3 border-b bg-muted/20 p-4 sm:grid-cols-2 lg:px-6">
-							<div className="space-y-1.5">
-								<Label htmlFor={`hermes-username-${deployment.resource.id}`}>Username</Label>
-								<Input
-									id={`hermes-username-${deployment.resource.id}`}
-									readOnly
-									value={hermesCredentials.username}
-								/>
-							</div>
-							<TokenReveal label="Password" value={hermesCredentials.password} />
-						</div>
-					) : null}
-					{credentialError ? (
-						<div className="shrink-0 p-4 lg:px-6">
-							<ApiErrorPanel
-								error={credentialError}
-								onRetry={() => void loadHermesCredentials()}
-								normalizer={billingErrorNormalizer}
-								title={`Couldn't load ${label} credentials`}
-							/>
-						</div>
-					) : null}
+		<>
+			<LiveToolFrame icon={MonitorPlay} title={browserUiLabel} action={runtimeActions}>
+				{runtime === "hermes" ? (
 					<iframe
 						key={`${runtime}:${url}`}
 						src={url}
@@ -1577,18 +1564,78 @@ function ConsoleTab({
 						className="min-h-[420px] flex-1 border-0 bg-background"
 						allow="clipboard-read; clipboard-write"
 					/>
-				</>
-			) : (
-				<div className="flex min-h-[420px] flex-1 items-center justify-center p-6">
-					<div className="max-w-xl space-y-2 text-center">
-						<h2 className="text-lg font-semibold">Open in a new window</h2>
-						<p className="text-sm text-muted-foreground">
-							OpenClaw protects its interface from embedding. Use the secure window to sign in.
-						</p>
+				) : (
+					<div className="flex min-h-[420px] flex-1 items-center justify-center p-6">
+						<div className="max-w-xl space-y-2 text-center">
+							<h2 className="text-lg font-semibold">Open in a new window</h2>
+							<p className="text-sm text-muted-foreground">
+								OpenClaw protects its interface from embedding. Use the secure window to sign in.
+							</p>
+						</div>
 					</div>
-				</div>
-			)}
-		</LiveToolFrame>
+				)}
+			</LiveToolFrame>
+
+			{runtime === "hermes" ? (
+				<Dialog open={isCredentialsDialogOpen} onOpenChange={handleCredentialsDialogOpenChange}>
+					<DialogContent
+						data-hosted="true"
+						data-v2="true"
+						className="sm:max-w-md"
+						finalFocus={showCredentialsButtonRef}
+					>
+						<DialogHeader>
+							<DialogTitle>Hermes sign-in credentials</DialogTitle>
+							<DialogDescription>
+								Use these credentials to sign in to the Hermes Dashboard. They disappear when you
+								close this dialog.
+							</DialogDescription>
+						</DialogHeader>
+
+						{isLoadingCredentials ? (
+							<div
+								role="status"
+								className="flex items-center gap-2 rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground"
+							>
+								<Spinner className="size-4" />
+								Loading sign-in credentials…
+							</div>
+						) : null}
+
+						{credentialError ? (
+							<ApiErrorPanel
+								error={credentialError}
+								onRetry={() => void loadHermesCredentials()}
+								normalizer={billingErrorNormalizer}
+								title={`Couldn't load ${label} credentials`}
+							/>
+						) : null}
+
+						{hermesCredentials ? (
+							<div className="space-y-4">
+								<div className="space-y-1.5">
+									<Label htmlFor={`hermes-username-${deployment.resource.id}`}>Username</Label>
+									<div className="flex items-center gap-1">
+										<Input
+											id={`hermes-username-${deployment.resource.id}`}
+											className="font-mono"
+											readOnly
+											value={hermesCredentials.username}
+										/>
+										<CopyButton
+											value={hermesCredentials.username}
+											label="Copy Username"
+											toastMessage="Username copied to clipboard"
+										/>
+									</div>
+								</div>
+								<TokenReveal label="Password" value={hermesCredentials.password} />
+							</div>
+						) : null}
+					</DialogContent>
+				</Dialog>
+			) : null}
+		</>
 	);
 }
 
