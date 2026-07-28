@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { CLAWDI_MANAGED_PROVIDER_ID, isClawdiManagedV2ProviderId } from "@clawdi/shared";
 import { MANAGED_EGRESS_PLACEHOLDER_VALUE } from "./egress-env";
 import { type EgressProfileInputBundle, egressProfileInputBundleSchema } from "./egress-profiles";
-import { hostedMcpDesiredStateSchema } from "./manifest-contract";
+import { hostedMcpDesiredStateSchema } from "./manifest-resources";
 
 type HostedEgressProfile = EgressProfileInputBundle["profiles"][number];
 
