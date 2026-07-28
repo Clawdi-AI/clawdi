@@ -428,7 +428,7 @@ export function parseAgentCredentialProfilePayload(
 async function resolveProjectOption(project?: string): Promise<string | undefined> {
 	if (!project) return undefined;
 	const { apiUrl } = getConfig();
-	return await resolveProjectId(apiUrl, await getClawdiAccessToken(), project);
+	return await resolveProjectId(apiUrl, await getClawdiAccessToken(apiUrl), project);
 }
 
 function previewFiles(

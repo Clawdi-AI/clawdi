@@ -155,7 +155,11 @@ export async function vaultList(opts: { json?: boolean; project?: string } = {})
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
 		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		projectId = await resolveProjectId(cfg.apiUrl, await getClawdiAccessToken(), opts.project);
+		projectId = await resolveProjectId(
+			cfg.apiUrl,
+			await getClawdiAccessToken(cfg.apiUrl),
+			opts.project,
+		);
 	}
 	const page = await fetchAllVaults(api, projectId);
 	const vaults = page.items;

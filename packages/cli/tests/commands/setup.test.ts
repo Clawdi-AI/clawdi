@@ -56,7 +56,7 @@ beforeEach(() => {
 
 	process.env.CI = "1";
 	process.env.HOME = home;
-	process.env.CLAWDI_API_URL = "http://api.test";
+	process.env.CLAWDI_API_URL = "https://api.test";
 
 	originalArgv1 = process.argv[1];
 	const fakeEntry = join(home, "clawdi-bin");
@@ -295,7 +295,12 @@ function seedAuth(): void {
 	mkdirSync(clawdiDir, { recursive: true });
 	writeFileSync(
 		join(clawdiDir, "auth.json"),
-		`${JSON.stringify({ apiKey: "test-key", userId: "u1", email: "u@example.test" })}\n`,
+		`${JSON.stringify({
+			apiKey: "test-key",
+			userId: "u1",
+			email: "u@example.test",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		})}\n`,
 		{ mode: 0o600 },
 	);
 }

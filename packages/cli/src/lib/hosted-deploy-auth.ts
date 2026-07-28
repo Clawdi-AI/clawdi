@@ -1,4 +1,8 @@
-import { getClawdiAccessToken, isClerkOAuthAuth } from "./clerk-oauth";
+import {
+	assertClerkOAuthEndpointProfile,
+	getClawdiAccessToken,
+	isClerkOAuthAuth,
+} from "./clerk-oauth";
 import { getAuth } from "./config";
 
 const ACCESS_TOKEN_EXPIRY_SKEW_MS = 5_000;
@@ -76,8 +80,15 @@ export function assertHostedDeployAccessToken(
 	return token;
 }
 
+export type HostedDeployEndpointProfile = {
+	cloudApiUrl: string;
+	hostedApiUrl: string;
+};
+
 /** Reuses the single canonical Clerk OAuth session established by `clawdi auth login`. */
-export function createHostedDeployAuthProvider(): HostedDeployAuthProvider {
+export function createHostedDeployAuthProvider(
+	profile: HostedDeployEndpointProfile,
+): HostedDeployAuthProvider {
 	return {
 		async getAccessToken() {
 			const beforeRefresh = getAuth();
@@ -87,12 +98,28 @@ export function createHostedDeployAuthProvider(): HostedDeployAuthProvider {
 					"Hosted deployment requires the canonical Clerk OAuth login. Run `clawdi auth login` without --manual.",
 				);
 			}
-			const token = await getClawdiAccessToken();
+			try {
+				assertClerkOAuthEndpointProfile(beforeRefresh, profile.cloudApiUrl, profile.hostedApiUrl);
+			} catch {
+				throw new HostedDeployAuthorizationError(
+					"hosted_endpoint_binding_mismatch",
+					"This Clerk OAuth login is not bound to the current Cloud and Hosted endpoints. Restore endpoint configuration or run `clawdi auth logout` followed by `clawdi auth login`.",
+				);
+			}
+			const token = await getClawdiAccessToken(profile.cloudApiUrl);
 			const refreshed = getAuth();
 			if (!isClerkOAuthAuth(refreshed)) {
 				throw new HostedDeployAuthorizationError(
 					"hosted_oauth_login_required",
 					"Clerk OAuth login is unavailable. Run `clawdi auth login` again.",
+				);
+			}
+			try {
+				assertClerkOAuthEndpointProfile(refreshed, profile.cloudApiUrl, profile.hostedApiUrl);
+			} catch {
+				throw new HostedDeployAuthorizationError(
+					"hosted_endpoint_binding_mismatch",
+					"The refreshed Clerk OAuth login is not bound to the current Cloud and Hosted endpoints. Run `clawdi auth login` again.",
 				);
 			}
 			return { token, expiresAt: refreshed.accessTokenExpiresAt };

@@ -155,7 +155,13 @@ beforeEach(() => {
 	origApiUrl = process.env.CLAWDI_API_URL;
 	tmpHome = join(tmpdir(), `clawdi-runtime-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
-	writeFileSync(join(tmpHome, ".clawdi", "auth.json"), JSON.stringify({ apiKey: "test-key" }));
+	writeFileSync(
+		join(tmpHome, ".clawdi", "auth.json"),
+		JSON.stringify({
+			apiKey: "test-key",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		}),
+	);
 	process.env.HOME = tmpHome;
 	process.env.CLAWDI_API_URL = "https://api.test";
 	process.exitCode = 0;

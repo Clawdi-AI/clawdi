@@ -342,6 +342,7 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 	return {
 		CLAWDI_API_URL: server.url.origin,
 		CLAWDI_AUTH_TOKEN: API_KEY,
+		CLAWDI_AUTH_TOKEN_ORIGIN: server.url.origin,
 		CLAWDI_ENVIRONMENT_ID: ENV_ID,
 		CLAWDI_HOME: fixture.clawdiHome,
 		CLAWDI_NO_AUTO_UPDATE: "1",

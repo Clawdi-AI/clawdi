@@ -45,6 +45,13 @@ export interface LegacyClawdiAuth {
 	apiKey: string;
 	userId?: string;
 	email?: string;
+	endpointBinding?: CredentialEndpointBinding;
+}
+
+export interface CredentialEndpointBinding {
+	version: 1;
+	cloudApiOrigin: string;
+	hostedApiOrigin?: string;
 }
 
 export interface ClerkOAuthAuth {
@@ -65,6 +72,8 @@ export interface ClerkOAuthAuth {
 	/** Cloud-local user id, populated after `/v1/auth/me` succeeds. */
 	userId: string;
 	email?: string;
+	/** Exact Cloud + Hosted origins selected when this OAuth grant was created. */
+	endpointBinding?: CredentialEndpointBinding;
 }
 
 export type ClawdiAuth = LegacyClawdiAuth | ClerkOAuthAuth;
@@ -87,6 +96,7 @@ export interface PendingAuth {
 	tokenEndpoint: string;
 	expiresAt: string;
 	apiUrl: string;
+	endpointBinding?: CredentialEndpointBinding;
 	scopes: string[];
 }
 

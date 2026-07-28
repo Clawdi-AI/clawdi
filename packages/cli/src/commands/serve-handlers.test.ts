@@ -64,6 +64,11 @@ function rpcPendingAuth(): PendingAuth {
 		tokenEndpoint: "https://clerk.example.test/oauth/token",
 		expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
 		apiUrl: "https://cloud.example.test",
+		endpointBinding: {
+			version: 1,
+			cloudApiOrigin: "https://cloud.example.test",
+			hostedApiOrigin: "https://deploy.example.test",
+		},
 		scopes: ["openid", "profile", "email", "offline_access"],
 	};
 }
@@ -316,6 +321,55 @@ describe("full control RPC handler surface", () => {
 					}))(),
 			).rejects.toThrow("API key verification failed with HTTP 401");
 			expect(getAuth()?.apiKey).toBe("old-key");
+		} finally {
+			globalThis.fetch = originalFetch;
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
+	});
+
+	it("binds a verified imported API key to its canonical custom Cloud origin", async () => {
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalFetch = globalThis.fetch;
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-auth-binding-"));
+		process.env.CLAWDI_HOME = join(tmpHome, ".clawdi");
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		const requests: Request[] = [];
+		globalThis.fetch = Object.assign(
+			async (input: RequestInfo | URL) => {
+				const request = input instanceof Request ? input : new Request(input);
+				requests.push(request.clone());
+				return Response.json({ id: "custom-user", email: "custom@example.test" });
+			},
+			{ preconnect: originalFetch.preconnect },
+		);
+		try {
+			const [{ createControlRpcHandlers }, { getStoredAuth }] = await Promise.all([
+				import("./serve"),
+				import("../lib/config"),
+			]);
+			const handler = createControlRpcHandlers()["auth.login"];
+			if (!handler) throw new Error("missing auth.login handler");
+
+			await handler({
+				api_key: "custom-api-key-secret",
+				api_url: "https://CUSTOM.example.test:443/",
+				confirm_secret_access: true,
+			});
+			expect(requests.map((request) => request.url)).toEqual([
+				"https://custom.example.test/v1/auth/me",
+			]);
+			expect(getStoredAuth()).toMatchObject({
+				apiKey: "custom-api-key-secret",
+				endpointBinding: {
+					version: 1,
+					cloudApiOrigin: "https://custom.example.test",
+				},
+			});
 		} finally {
 			globalThis.fetch = originalFetch;
 			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;

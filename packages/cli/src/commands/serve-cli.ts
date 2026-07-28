@@ -71,6 +71,7 @@ export function registerServeCommand(program: Command, handlers?: ServeHandlers)
 			`
 Environment:
   CLAWDI_AUTH_TOKEN       Bearer token (preferred over ~/.clawdi/auth.json)
+  CLAWDI_AUTH_TOKEN_ORIGIN Explicit Cloud origin binding for the bearer token
   CLAWDI_SERVE_MODE       "container" forces polling watcher + graceful SIGTERM
   CLAWDI_STATE_DIR        Override location of queue.jsonl + health (default ~/.clawdi/serve)
   CLAWDI_DAEMON_RPC_HOST         HTTP RPC host (default 127.0.0.1)

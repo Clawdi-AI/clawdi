@@ -11,7 +11,7 @@ export interface ProjectAuthContext {
 
 export async function requireProjectAuth(): Promise<ProjectAuthContext> {
 	const { apiUrl } = getConfig();
-	return { apiUrl, apiKey: await getClawdiAccessToken() };
+	return { apiUrl, apiKey: await getClawdiAccessToken(apiUrl) };
 }
 
 export async function projectAuthOrExit(): Promise<ProjectAuthContext | null> {

@@ -56,6 +56,7 @@ Examples:
 Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
   CLAWDI_DEPLOY_API_URL    Override the Hosted deploy API endpoint
+  CLAWDI_AUTH_TOKEN_ORIGIN Explicit Cloud origin binding for CLAWDI_AUTH_TOKEN
   CLAWDI_DEBUG             Print stack traces on error
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)

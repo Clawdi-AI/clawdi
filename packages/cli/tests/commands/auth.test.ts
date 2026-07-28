@@ -48,7 +48,12 @@ function oauthPending(): PendingAuth {
 		authorizedParties: ["https://accounts.clawdi.test"],
 		tokenEndpoint: "https://clerk.example.test/oauth/token",
 		expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
-		apiUrl: "http://api.test",
+		apiUrl: "https://api.test",
+		endpointBinding: {
+			version: 1,
+			cloudApiOrigin: "https://api.test",
+			hostedApiOrigin: "http://localhost:50021",
+		},
 		scopes: ["openid", "profile", "email", "offline_access"],
 	};
 }
@@ -64,12 +69,17 @@ beforeEach(() => {
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
 	writeFileSync(
 		join(tmpHome, ".clawdi", "auth.json"),
-		JSON.stringify({ apiKey: "bob-key", userId: "bob", email: "bob@example.test" }),
+		JSON.stringify({
+			apiKey: "bob-key",
+			userId: "bob",
+			email: "bob@example.test",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		}),
 	);
 
 	process.env.HOME = tmpHome;
 	delete process.env.CLAWDI_HOME;
-	process.env.CLAWDI_API_URL = "http://api.test";
+	process.env.CLAWDI_API_URL = "https://api.test";
 	delete process.env.CLAWDI_AUTH_TOKEN;
 	process.exitCode = undefined;
 });
@@ -138,6 +148,11 @@ describe("authLogin pending share upgrade", () => {
 			const { getPendingAuth } = await import("../../src/lib/config");
 			const pending = getPendingAuth();
 			expect(pending?.authType).toBe("clerk_oauth_pkce");
+			expect(pending?.endpointBinding).toEqual({
+				version: 1,
+				cloudApiOrigin: "https://api.test",
+				hostedApiOrigin: "http://localhost:50021",
+			});
 			const authorizationUrl = new URL(pending?.authorizationUrl ?? "");
 			expect(authorizationUrl.searchParams.get("code_challenge_method")).toBe("S256");
 			expect(authorizationUrl.searchParams.has("client_secret")).toBe(false);
@@ -313,6 +328,7 @@ describe("interactive OAuth Cloud verification boundary", () => {
 						}
 					: { refreshToken: `refresh-${cloudCase}`, userId: "oauth-user" },
 			);
+			expect(getAuth()?.endpointBinding).toEqual(pending.endpointBinding);
 			expect(getPendingAuth()).toBeNull();
 			expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
 				"POST /oauth/token",

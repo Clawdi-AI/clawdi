@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { readJson } from "../lib/api-client";
+import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { openInBrowser } from "../lib/browser";
 import {
 	ClerkOAuthError,
@@ -10,6 +11,8 @@ import {
 	clearPendingClerkOAuthLogin,
 	commitClawdiCredential,
 	createClerkOAuthAuthorization,
+	createCredentialEndpointBinding,
+	describeCredentialEndpointBinding,
 	exchangeClerkOAuthCode,
 	fetchClerkOAuthClientConfig,
 	fetchClerkOAuthDiscovery,
@@ -55,12 +58,16 @@ async function verifyAndSaveLegacy(
 	apiUrl: string,
 	expectedCredential: StoredCredentialIdentity,
 ): Promise<MeResponse | null> {
-	const res = await fetch(`${apiUrl}/v1/auth/me`, {
+	const endpointBinding = createCredentialEndpointBinding(apiUrl);
+	const res = await fetch(`${endpointBinding.cloudApiOrigin}/v1/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!res.ok) return null;
 	const me = await readJson<MeResponse>(res, "/v1/auth/me");
-	await commitClawdiCredential({ apiKey, userId: me.id, email: me.email }, expectedCredential);
+	await commitClawdiCredential(
+		{ apiKey, userId: me.id, email: me.email, endpointBinding },
+		expectedCredential,
+	);
 	return me;
 }
 
@@ -247,14 +254,23 @@ function pendingAuthExpired(pending: PendingAuth): boolean {
 
 async function startOAuthLogin(
 	apiUrl: string,
+	hostedApiUrl: string,
 	expectedCredential: StoredCredentialIdentity,
 ): Promise<PendingAuth> {
-	const clientConfig = await fetchClerkOAuthClientConfig(apiUrl);
+	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
+	if (!endpointBinding.hostedApiOrigin) {
+		throw new ClerkOAuthError(
+			"invalid_credential_endpoint_binding",
+			"Hosted endpoint binding is required for OAuth login.",
+		);
+	}
+	const clientConfig = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin);
 	const discovery = await fetchClerkOAuthDiscovery(clientConfig);
 	const pending = createClerkOAuthAuthorization({
 		config: clientConfig,
 		discovery,
-		apiUrl,
+		apiUrl: endpointBinding.cloudApiOrigin,
+		hostedApiUrl: endpointBinding.hostedApiOrigin,
 	});
 	await persistPendingClerkOAuthLogin(pending, expectedCredential);
 	return pending;
@@ -380,7 +396,7 @@ export async function authLogin(opts: { manual?: boolean; open?: boolean } = {})
 		p.log.info("Run `clawdi auth logout` first to switch accounts.");
 		const { apiUrl } = getConfig();
 		try {
-			await autoUpgradePendingShares(apiUrl, await getClawdiAccessToken());
+			await autoUpgradePendingShares(apiUrl, await getClawdiAccessToken(apiUrl));
 		} catch (error) {
 			reportOAuthError(error);
 		}
@@ -408,7 +424,7 @@ export async function authLogin(opts: { manual?: boolean; open?: boolean } = {})
 
 	let pending: PendingAuth;
 	try {
-		pending = await startOAuthLogin(config.apiUrl, expectedCredential);
+		pending = await startOAuthLogin(config.apiUrl, config.deployApiUrl, expectedCredential);
 	} catch (error) {
 		reportOAuthError(error);
 		return;
@@ -575,12 +591,21 @@ export async function authStatus(opts: { json?: boolean } = {}) {
 	const paths = getRuntimePaths({ mode });
 	const source = detectAuthSource();
 	const authenticated = Boolean(auth) || source === "runtime-instance-data";
+	let safeApiUrl = "<invalid>";
+	try {
+		safeApiUrl = normalizeCloudApiBaseUrl(config.apiUrl);
+	} catch {
+		// Do not echo malformed raw URLs: userinfo could contain a password.
+	}
 	const payload = {
 		schemaVersion: "clawdi.authStatus.v1",
 		authenticated,
 		source,
 		credentialType: isClerkOAuthAuth(auth) ? "clerk-oauth" : auth ? "legacy-api-key" : undefined,
-		apiUrl: config.apiUrl,
+		endpointBinding: auth
+			? describeCredentialEndpointBinding(auth, config.apiUrl, config.deployApiUrl)
+			: undefined,
+		apiUrl: safeApiUrl,
 		runtimeMode: mode,
 		user: auth ? { email: auth.email, id: auth.userId } : undefined,
 		paths: {
@@ -602,7 +627,10 @@ export async function authStatus(opts: { json?: boolean } = {}) {
 	console.log(`  Authenticated: ${authenticated ? chalk.green("yes") : chalk.red("no")}`);
 	console.log(`  Source: ${source}`);
 	if (payload.credentialType) console.log(`  Credential: ${payload.credentialType}`);
-	console.log(chalk.gray(`  API: ${config.apiUrl}`));
+	if (payload.endpointBinding) {
+		console.log(`  Endpoint binding: ${payload.endpointBinding.state}`);
+	}
+	console.log(chalk.gray(`  API: ${safeApiUrl}`));
 	if (auth?.email || auth?.userId) {
 		console.log(chalk.gray(`  User: ${auth.email || auth.userId}`));
 	}
