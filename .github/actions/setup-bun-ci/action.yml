@@ -1,7 +1,14 @@
-# Reusable composite action: set up Bun + install workspace dependencies
-# with a shared cache. Used by JS-dependent CI jobs so caching is consistent.
+# Reusable composite action: set up Bun + install workspace dependencies.
+# Used by JS-dependent CI jobs so setup is consistent.
+#
+# Deliberately uncached: a cold `bun install --frozen-lockfile` for this
+# workspace takes ~3s, while restoring the ~1.1GB `~/.bun/install/cache`
+# entry took ~100s in every job. The cache also grew without bound —
+# `restore-keys` prefix-matched the previous entry, bun appended newly
+# resolved versions, and the save wrote back a strictly larger union until
+# the repo blew past its cache quota. Do not reintroduce it.
 name: Setup Bun CI
-description: Install Bun and run `bun install --frozen-lockfile` with Bun download cache
+description: Install Bun and run `bun install --frozen-lockfile`
 
 inputs:
   node-version:
@@ -25,14 +32,6 @@ runs:
       uses: oven-sh/setup-bun@v2
       with:
         bun-version: ${{ inputs.bun-version }}
-
-    - name: Cache Bun package downloads
-      uses: actions/cache@v5
-      with:
-        path: ~/.bun/install/cache
-        key: bun-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-${{ hashFiles('bun.lock') }}
-        restore-keys: |
-          bun-cache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.bun-version }}-
 
     - name: Install dependencies
       shell: bash

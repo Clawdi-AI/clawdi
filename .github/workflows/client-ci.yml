@@ -88,8 +88,15 @@ jobs:
               - "apps/web/package.json"
               - ".github/workflows/client-ci.yml"
 
-  # Lint + format check across the whole JS/TS tree in one fast job.
-  lint:
+  # Lint, typecheck, build, and CLI tests in one job.
+  #
+  # These are seconds of work each (Biome ~2s, each typecheck 1-4s, web build
+  # ~6s). Splitting them across five jobs plus a matrix meant paying job setup
+  # five times and holding five runner slots for ~35s of actual work, which is
+  # what drove this workflow's queueing. Turbo already resolves the task graph
+  # and skips unaffected packages, so the per-target guard logic these jobs
+  # carried was redundant with it.
+  verify:
     needs: changes
     if: >-
       github.event_name != 'schedule' && (
@@ -99,7 +106,12 @@ jobs:
         needs.changes.outputs.infra == 'true'
       )
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
-    timeout-minutes: 10
+    timeout-minutes: 20
+    env:
+      # Required for web typecheck/build — CI doesn't need real values
+      VITE_CLERK_PUBLISHABLE_KEY: pk_test_dummy
+      VITE_CLAWDI_API_URL: http://localhost:8000
+      CLERK_SECRET_KEY: sk_test_dummy
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-bun-ci
@@ -107,120 +119,20 @@ jobs:
           bun-version: ${{ env.BUN_VERSION }}
       - name: Biome check
         run: bun run check
-
-  typecheck:
-    needs: changes
-    if: >-
-      github.event_name != 'schedule' && (
-        needs.changes.outputs.web == 'true' ||
-        needs.changes.outputs.cli == 'true' ||
-        needs.changes.outputs.shared == 'true' ||
-        needs.changes.outputs.infra == 'true'
-      )
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: web
-            filter: "web"
-          - target: cli
-            filter: "clawdi"
-          - target: shared
-            filter: "@clawdi/shared"
-    steps:
-      - name: Guard — run only if this target changed
-        id: guard
-        env:
-          TARGET: ${{ matrix.target }}
-          WEB: ${{ needs.changes.outputs.web }}
-          CLI: ${{ needs.changes.outputs.cli }}
-          SHARED: ${{ needs.changes.outputs.shared }}
-          INFRA: ${{ needs.changes.outputs.infra }}
-        run: |
-          run=false
-          if [ "$INFRA" = "true" ]; then
-            run=true
-          elif [ "$TARGET" = "web" ] && { [ "$WEB" = "true" ] || [ "$SHARED" = "true" ]; }; then
-            run=true
-          elif [ "$TARGET" = "cli" ] && { [ "$CLI" = "true" ] || [ "$SHARED" = "true" ]; }; then
-            run=true
-          elif [ "$TARGET" = "shared" ] && [ "$SHARED" = "true" ]; then
-            run=true
-          fi
-
-          if [ "$run" = "true" ]; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-          fi
-      - if: steps.guard.outputs.run == 'true'
-        uses: actions/checkout@v6
-      - if: steps.guard.outputs.run == 'true'
-        uses: ./.github/actions/setup-bun-ci
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - if: steps.guard.outputs.run == 'true'
-        name: Typecheck
-        env:
-          # Required for web typecheck/build — CI doesn't need real values
-          VITE_CLERK_PUBLISHABLE_KEY: pk_test_dummy
-          VITE_CLAWDI_API_URL: http://localhost:8000
-        run: bunx turbo typecheck --filter=${{ matrix.filter }}
-
-  cli-test:
-    needs: changes
-    if: >-
-      github.event_name != 'schedule' && (
-        needs.changes.outputs.cli == 'true' ||
-        needs.changes.outputs.shared == 'true' ||
-        needs.changes.outputs.infra == 'true'
-      )
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-bun-ci
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      # Smoke tests exercise the compiled bin wrapper, so build before testing.
-      - name: Build CLI
-        run: bun run --cwd packages/cli build
+      - name: Typecheck and build
+        run: >-
+          bunx turbo typecheck build
+          --filter=web --filter=clawdi --filter=@clawdi/shared
+          --output-logs=errors-only
+      # Smoke tests exercise the compiled bin wrapper, built above by Turbo.
       - name: Build standalone CLI binary
         run: bun run --cwd packages/cli build:binary
       - name: Smoke standalone CLI binary
-        run: |
-          packages/cli/dist-bin/clawdi --version
+        run: packages/cli/dist-bin/clawdi --version
       - name: Validate CLI publish payload
-        run: |
-          bun run --cwd packages/cli check:publish-manifest
+        run: bun run --cwd packages/cli check:publish-manifest
       - name: Test CLI
         run: bun test --isolate --max-concurrency=1 packages/cli
-
-  build:
-    # This job starts from its own checkout and consumes no typecheck artifact,
-    # so build and typecheck are independent required gates.
-    needs: changes
-    if: >-
-      github.event_name != 'schedule' && (
-        needs.changes.outputs.web == 'true' ||
-        needs.changes.outputs.shared == 'true' ||
-        needs.changes.outputs.infra == 'true'
-      )
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v6
-      - uses: ./.github/actions/setup-bun-ci
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-      - name: Build web
-        env:
-          VITE_CLERK_PUBLISHABLE_KEY: pk_test_dummy
-          VITE_CLAWDI_API_URL: http://localhost:8000
-          CLERK_SECRET_KEY: sk_test_dummy
-        run: bunx turbo build --filter=web
 
   deploy-contract-drift:
     needs: changes
