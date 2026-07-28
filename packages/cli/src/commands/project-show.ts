@@ -60,7 +60,7 @@ export async function projectShowCommand(
 	projectArg: string,
 	opts: { json?: boolean } = {},
 ): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 	const { apiUrl, apiKey } = ctx;
 

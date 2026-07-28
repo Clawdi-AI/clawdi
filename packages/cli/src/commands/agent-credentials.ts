@@ -7,7 +7,8 @@ import * as p from "@clack/prompts";
 import chalk from "chalk";
 import { getClaudeHome, getCodexHome, getGhConfigHome } from "../adapters/paths";
 import { ApiClient } from "../lib/api-client";
-import { getAuth, getConfig, isLoggedIn } from "../lib/config";
+import { getClawdiAccessToken } from "../lib/clerk-oauth";
+import { getConfig, isLoggedIn } from "../lib/config";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { resolveProjectId } from "../lib/project-resolver";
 
@@ -427,11 +428,7 @@ export function parseAgentCredentialProfilePayload(
 async function resolveProjectOption(project?: string): Promise<string | undefined> {
 	if (!project) return undefined;
 	const { apiUrl } = getConfig();
-	const auth = getAuth();
-	if (!auth?.apiKey) {
-		throw new Error("Not signed in. Run `clawdi auth login` first.");
-	}
-	return await resolveProjectId(apiUrl, auth.apiKey, project);
+	return await resolveProjectId(apiUrl, await getClawdiAccessToken(), project);
 }
 
 function previewFiles(

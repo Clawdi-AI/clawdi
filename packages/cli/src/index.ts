@@ -40,6 +40,7 @@ program
 		`
 Examples:
   $ clawdi auth login               Authenticate with Clawdi Cloud
+  $ clawdi deploy                   Create a Hosted agent with the deploy wizard
   $ clawdi auth status --json       Inspect credential source without printing secrets
   $ clawdi setup                    Detect agents and register the current machine
   $ clawdi session list             Preview local sessions before pushing
@@ -54,6 +55,7 @@ Examples:
 
 Environment:
   CLAWDI_API_URL           Override the Clawdi Cloud API endpoint
+  CLAWDI_DEPLOY_API_URL    Override the Hosted deploy API endpoint
   CLAWDI_DEBUG             Print stack traces on error
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
@@ -81,16 +83,65 @@ program.hook("preAction", (_thisCommand, actionCommand) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// deploy
+// ─────────────────────────────────────────────────────────────
+program
+	.command("deploy")
+	.description("Create a Hosted agent with an interactive, payment-aware wizard")
+	.option("--runtime <runtime>", "Runtime: hermes or openclaw")
+	.option("--provider <provider>", "AI provider: managed, unmanaged, or an exact saved provider id")
+	.option(
+		"--model <model>",
+		"Primary model id (required when a saved provider has no unique default)",
+	)
+	.option("--compute <tier>", "Compute: basic or performance")
+	.option("--term <months>", "Billing term for paid compute: 1 or 12")
+	.option("--payment <method>", "Paid compute payment: wallet or card")
+	.option("--name <name>", "Agent display name")
+	.option("--language <code>", "Language code or default")
+	.option("--timezone <timezone>", "IANA timezone or empty for runtime default")
+	.option(
+		"--request-id <uuid>",
+		"Stable UUID for safe retries (required for every non-interactive deploy)",
+	)
+	.option("-y, --yes", "Confirm the deployment and any exact Wallet debit")
+	.option("--no-wait", "Return after the server accepts the request")
+	.option("--no-open", "Print secure card checkout without opening a browser")
+	.option("--json", "Emit one machine-readable result object")
+	.addHelpText(
+		"after",
+		`
+Examples:
+  $ clawdi deploy
+  $ clawdi deploy --runtime hermes --provider managed --model <id> --compute basic --request-id <uuid> --yes --json
+  $ clawdi deploy --provider <saved-provider-id> --model <id> --compute basic --request-id <uuid> --yes --json
+  $ clawdi deploy --compute performance --term 12 --payment wallet --request-id <uuid> --yes --json
+  $ clawdi deploy --compute performance --payment card --request-id <uuid> --yes --json
+
+Card payment uses Hosted Checkout in your browser. Reuse --request-id to recover
+the same logical deployment. Every non-interactive deploy requires it before
+any create or checkout mutation. No provider secrets are accepted as flags.`,
+	)
+	.action(async (opts) => {
+		const { deployCommand } = await import("./commands/deploy.js");
+		await deployCommand(opts);
+	});
+
+// ─────────────────────────────────────────────────────────────
 // auth
 // ─────────────────────────────────────────────────────────────
 const authCmd = program.command("auth").description("Authenticate with Clawdi Cloud");
 
 authCmd
 	.command("login")
-	.description("Authorize this machine via the dashboard (browser-based)")
+	.description("Sign in once with Clerk OAuth Authorization Code + PKCE")
 	.option("--manual", "Skip the browser flow and paste an API key instead")
-	.addHelpText("after", "\nExamples:\n  $ clawdi auth login\n  $ clawdi auth login --manual")
-	.action(async (opts: { manual?: boolean }) => {
+	.option("--no-open", "Print the authorization URL and securely paste the callback")
+	.addHelpText(
+		"after",
+		"\nExamples:\n  $ clawdi auth login\n  $ clawdi auth login --no-open\n  $ clawdi auth login --manual",
+	)
+	.action(async (opts: { manual?: boolean; open?: boolean }) => {
 		const { authLogin } = await import("./commands/auth.js");
 		await authLogin(opts);
 	});

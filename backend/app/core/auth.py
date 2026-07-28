@@ -20,6 +20,9 @@ from app.core.config import settings
 from app.core.database import get_session
 from app.models.api_key import ApiKey
 from app.models.user import PRINCIPAL_KIND_CLERK, User
+from app.services.app_setting_registry import CLERK_CLI_OAUTH_SPEC
+from app.services.app_settings import AppSettingUnavailable, resolve_app_setting
+from app.services.clerk_cli_oauth_settings import ClerkCliOAuthSetting
 from app.services.user_provisioning import lazy_create_user_with_personal_project
 
 bearer_scheme = HTTPBearer()
@@ -34,6 +37,7 @@ optional_bearer_scheme = HTTPBearer(auto_error=False)
 logger = logging.getLogger(__name__)
 
 API_KEY_PREFIX = "clawdi_"
+_OAUTH_ACCESS_JWT_TYPES = frozenset({"at+jwt", "application/at+jwt"})
 
 # Only touch api_key.last_used_at if the previous update was at least this
 # long ago. Every authenticated CLI request used to write+commit the row,
@@ -168,9 +172,22 @@ class AuthContext:
         user: User,
         api_key: ApiKey | None = None,
         api_key_project_id: UUID | None = None,
+        oauth_cli: bool = False,
+        oauth_access_expires_at: datetime | None = None,
     ):
         self.user = user
         self.api_key = api_key
+        # Keep `is_cli` API-key-only for compatibility with the existing
+        # scope and capability gates. OAuth CLI access tokens carry this
+        # separate marker so routes can explicitly opt into that identity.
+        self.oauth_cli = oauth_cli
+        if oauth_cli and (
+            oauth_access_expires_at is None
+            or oauth_access_expires_at.tzinfo is None
+            or oauth_access_expires_at.utcoffset() is None
+        ):
+            raise ValueError("OAuth CLI auth requires a timezone-aware access-token expiry")
+        self.oauth_access_expires_at: datetime | None = oauth_access_expires_at
         self.is_cli = api_key is not None
         self.api_key_project_id = api_key_project_id
         self._user_id = user.id
@@ -329,20 +346,139 @@ async def _fetch_clerk_primary_email(clerk_user_id: str) -> str | None:
     return None
 
 
+def _is_oauth_access_jwt(token: str) -> bool:
+    """Return whether a token declares Clerk's OAuth access-token media type.
+
+    Header inspection only selects the validation profile; all trust decisions
+    still happen in the signature-verified decode below.
+    """
+    try:
+        header = jwt.get_unverified_header(token)
+    except jwt.InvalidTokenError:
+        return False
+    return header.get("typ") in _OAUTH_ACCESS_JWT_TYPES
+
+
+def _oauth_audience_matches(payload: dict, oauth_setting: ClerkCliOAuthSetting) -> bool:
+    expected = oauth_setting.audience
+    audience = payload.get("aud")
+    if not expected or audience is None:
+        return True
+    if isinstance(audience, str):
+        token_audiences = {audience}
+    elif (
+        isinstance(audience, list) and audience and all(isinstance(item, str) for item in audience)
+    ):
+        token_audiences = set(audience)
+    else:
+        return False
+
+    return expected in token_audiences
+
+
+def _oauth_authorized_party_matches(payload: dict, oauth_setting: ClerkCliOAuthSetting) -> bool:
+    expected = set(oauth_setting.authorized_parties)
+    if not expected:
+        return True
+    authorized_party = payload.get("azp")
+    if not isinstance(authorized_party, str) or not authorized_party:
+        return False
+    return authorized_party in expected
+
+
+def _session_claims_match_configured_clerk_values(payload: dict) -> bool:
+    """Apply independently configured claim binding to browser sessions.
+
+    Browser session JWTs predate the OAuth Public App integration, so an empty
+    setting preserves the historical signature-only behavior. Once an issuer
+    or audience is configured, its claim is required and must match exactly.
+    """
+    if settings.clerk_jwt_issuer and payload.get("iss") != settings.clerk_jwt_issuer:
+        return False
+
+    if settings.clerk_jwt_audience:
+        audience = payload.get("aud")
+        if isinstance(audience, str):
+            return audience == settings.clerk_jwt_audience
+        if isinstance(audience, list):
+            return settings.clerk_jwt_audience in audience
+        return False
+
+    return True
+
+
+def _decode_clerk_session_jwt(token: str) -> dict | None:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.clerk_pem_public_key,
+            algorithms=["RS256"],
+            options={"verify_aud": False, "verify_iss": False},
+        )
+    except jwt.InvalidTokenError:
+        return None
+    return payload if _session_claims_match_configured_clerk_values(payload) else None
+
+
+def _decode_clerk_oauth_access_jwt(token: str, oauth_setting: ClerkCliOAuthSetting) -> dict | None:
+    try:
+        payload = jwt.decode(
+            token,
+            settings.clerk_pem_public_key,
+            algorithms=["RS256"],
+            issuer=oauth_setting.issuer,
+            leeway=5,
+            options={
+                "require": ["iss", "exp", "sub", "client_id"],
+                # Clerk OAuth JWTs do not always include aud. Match Clerk's
+                # SDK contract: validate it only when the claim is present.
+                "verify_aud": False,
+                "verify_exp": True,
+                "verify_iat": True,
+                "verify_iss": True,
+                "verify_nbf": True,
+            },
+        )
+    except jwt.InvalidTokenError:
+        return None
+
+    clerk_id = payload.get("sub")
+    client_id = payload.get("client_id")
+    if not isinstance(clerk_id, str) or not clerk_id.strip():
+        return None
+    if client_id != oauth_setting.client_id:
+        return None
+    if not _oauth_audience_matches(payload, oauth_setting):
+        return None
+    if not _oauth_authorized_party_matches(payload, oauth_setting):
+        return None
+    return payload
+
+
 async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | None:
     if not settings.clerk_pem_public_key:
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, "Clerk public key not configured"
         )
 
-    try:
-        payload = jwt.decode(
-            token,
-            settings.clerk_pem_public_key,
-            algorithms=["RS256"],
-            options={"verify_aud": False},
-        )
-    except jwt.InvalidTokenError:
+    oauth_cli = _is_oauth_access_jwt(token)
+    if oauth_cli:
+        try:
+            oauth_setting = await resolve_app_setting(db, CLERK_CLI_OAUTH_SPEC)
+        except AppSettingUnavailable as error:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "OAuth CLI authentication is not configured",
+            ) from error
+        if not oauth_setting.enabled:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "OAuth CLI authentication is not configured",
+            )
+        payload = _decode_clerk_oauth_access_jwt(token, oauth_setting)
+    else:
+        payload = _decode_clerk_session_jwt(token)
+    if payload is None:
         return None
 
     clerk_id = payload.get("sub")
@@ -524,7 +660,24 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
             # of being silently swallowed.
             await db.rollback()
 
-    return AuthContext(user=user)
+    oauth_access_expires_at: datetime | None = None
+    if oauth_cli:
+        expires_at = payload.get("exp")
+        if not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool):
+            return None
+        try:
+            oauth_access_expires_at = datetime.fromtimestamp(expires_at, UTC)
+        except (OverflowError, OSError, ValueError):
+            # PyJWT can validate a numerically huge future exp even when the
+            # platform datetime cannot represent it. Treat hostile/unusable
+            # timestamps as invalid auth instead of turning them into a 500.
+            return None
+
+    return AuthContext(
+        user=user,
+        oauth_cli=oauth_cli,
+        oauth_access_expires_at=oauth_access_expires_at,
+    )
 
 
 async def get_auth(
@@ -633,9 +786,19 @@ def require_scope(*needed: str):
 
 
 async def require_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
-    """Require CLI authentication (ApiKey only, not Clerk JWT)."""
-    if not auth.is_cli:
+    """Require a legacy API key or the first-party OAuth CLI identity."""
+    if not auth.is_cli and not auth.oauth_cli:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint requires CLI authentication")
+    return auth
+
+
+async def require_oauth_cli_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
+    """Require a validated Clerk Public OAuth App CLI access token."""
+    if not auth.oauth_cli:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "This endpoint requires OAuth CLI authentication",
+        )
     return auth
 
 
@@ -724,12 +887,15 @@ async def require_user_auth_unbound(
 
 
 async def require_user_cli(auth: AuthContext = Depends(get_auth)) -> AuthContext:
-    """CLI auth only (rejects Clerk JWT — no plaintext to web)
-    and rejects narrowly-scoped api_keys. Legacy unscoped Agent API
-    keys pass by the same "behaves like user-installed clawdi" policy
-    as `require_user_auth`. Per-env data filtering is enforced inside
-    the resolve handler."""
-    if not auth.is_cli:
+    """CLI auth only (legacy API key or first-party OAuth access token).
+
+    Browser session JWTs remain rejected so plaintext is never exposed to the
+    web adapter. Narrowly-scoped API keys are also rejected. Agent API keys
+    pass by the same "behaves like user-installed clawdi" policy
+    as `require_user_auth` — `clawdi run` from a hosted agent pod
+    must resolve vault plaintext for the env it's bound to.
+    Per-env data filtering is enforced inside the resolve handler."""
+    if not auth.is_cli and not auth.oauth_cli:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "This endpoint requires CLI authentication")
     if _is_scoped_api_key(auth):
         raise HTTPException(
@@ -766,7 +932,7 @@ async def optional_web_auth(
         # public access permissions. We deliberately do NOT fall back to
         # API-key auth here (see docstring).
         return None
-    return ctx
+    return None if ctx is not None and ctx.oauth_cli else ctx
 
 
 async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext:
@@ -777,7 +943,7 @@ async def require_web_auth(auth: AuthContext = Depends(get_auth)) -> AuthContext
     can't be turned into a *new* API key by an attacker calling the approve
     endpoint themselves.
     """
-    if auth.is_cli:
+    if auth.is_cli or auth.oauth_cli:
         raise HTTPException(
             status.HTTP_403_FORBIDDEN, "This endpoint requires dashboard authentication"
         )

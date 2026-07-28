@@ -24,21 +24,24 @@
 
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { hostname } from "node:os";
 import { join } from "node:path";
 import { AGENT_TYPES, type AgentType } from "../adapters/registry";
 import { loadAuthTokenFile } from "../lib/auth-token-file";
 import {
-	clearAuth,
-	clearPendingAuth,
-	getAuth,
-	getClawdiDir,
-	getConfig,
-	getPendingAuth,
-	isLoggedIn,
-	setAuth,
-	setPendingAuth,
-} from "../lib/config";
+	captureStoredCredentialIdentity,
+	clearPendingClerkOAuthLogin,
+	commitClawdiCredential,
+	createClerkOAuthAuthorization,
+	exchangeClerkOAuthCode,
+	fetchClerkOAuthClientConfig,
+	fetchClerkOAuthDiscovery,
+	isClerkOAuthAuth,
+	logoutClawdiCredentials,
+	persistPendingClerkOAuthLogin,
+	type StoredCredentialIdentity,
+	verifyAndPersistClerkOAuthLogin,
+} from "../lib/clerk-oauth";
+import { getAuth, getClawdiDir, getConfig, getPendingAuth, isLoggedIn } from "../lib/config";
 import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
 import { runRuntimeObservationProducer } from "../runtime/observation-producer";
@@ -978,13 +981,13 @@ function authStatusRpc(params: unknown): unknown {
 	return {
 		logged_in: auth !== null,
 		user: auth ? { email: auth.email, id: auth.userId } : null,
+		credential_type: isClerkOAuthAuth(auth) ? "clerk-oauth" : auth ? "legacy-api-key" : null,
 		api_url: getConfig().apiUrl,
 		pending_auth: pending
 			? {
-					user_code: pending.userCode,
-					verification_uri: pending.verificationUri,
+					authorization_url: pending.authorizationUrl,
+					redirect_uri: pending.redirectUri,
 					expires_at: pending.expiresAt,
-					interval_ms: pending.intervalMs,
 					api_url: pending.apiUrl,
 				}
 			: null,
@@ -995,6 +998,7 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set(["api_key", "api_url", "replace", "confirm_secret_access"]));
 	const existing = getAuth();
+	const expectedCredential = captureStoredCredentialIdentity();
 	const replace = optionalBooleanParam(record.replace, "replace") ?? false;
 	if (existing && !replace) {
 		return { status: "already_logged_in", user: { email: existing.email, id: existing.userId } };
@@ -1005,42 +1009,58 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 	const apiUrl = optionalStringParam(record.api_url, "api_url") ?? getConfig().apiUrl;
 	const apiKey = optionalStringParam(record.api_key, "api_key");
 	if (existing && replace && !apiKey) {
-		throw new Error(
-			"auth.login replace requires api_key, or call auth.logout before device login.",
-		);
+		throw new Error("auth.login replace requires api_key, or call auth.logout before OAuth login.");
 	}
 	if (apiKey) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "auth.login API key import");
-		const me = await verifyAndSaveRpcAuth(apiUrl, apiKey);
+		const me = await verifyAndSaveRpcAuth(apiUrl, apiKey, expectedCredential);
 		return { status: "logged_in", user: me, api_url: apiUrl };
 	}
-	return startDeviceAuthRpc(apiUrl);
+	return startOAuthAuthRpc(apiUrl, expectedCredential);
 }
 
 async function authCompleteRpc(params: unknown): Promise<unknown> {
 	const record = rpcParamsRecord(params);
-	rejectRpcParams(record, new Set(["wait_ms"]));
+	rejectRpcParams(record, new Set(["callback_url", "confirm_secret_access"]));
 	if (getAuth()) return { status: "already_logged_in" };
 	const pending = getPendingAuth();
 	if (!pending) return { status: "no_pending_auth" };
-	if (Date.now() / 1000 >= pending.expiresAt) {
-		clearPendingAuth();
+	if (Date.parse(pending.expiresAt) <= Date.now()) {
+		await clearPendingClerkOAuthLogin(pending);
 		return { status: "expired" };
 	}
-	return pollPendingAuthRpc(
-		pending,
-		optionalLimitParam(record.wait_ms, "wait_ms", 0, 600_000, 30_000),
+	requireBooleanConfirmation(
+		record,
+		"confirm_secret_access",
+		"auth.complete OAuth callback import",
 	);
+	const callbackUrl = requiredStringParam(record, "callback_url");
+	const auth = await exchangeClerkOAuthCode(pending, callbackUrl);
+	const verification = await verifyAndPersistClerkOAuthLogin(pending.apiUrl, auth, {
+		expectedCredential: { kind: "none" },
+		pending,
+	});
+	if (verification.kind === "cloud_unverified") {
+		return {
+			status: "cloud_unverified",
+			cloud_verified: false,
+			reason: verification.reason,
+			...(verification.httpStatus ? { http_status: verification.httpStatus } : {}),
+		};
+	}
+	return { status: "logged_in", cloud_verified: true, user: verification.user };
 }
 
-function authLogoutRpc(params: unknown): unknown {
+async function authLogoutRpc(params: unknown): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set(["confirm"]));
 	requireBooleanConfirmation(record, "confirm", "auth.logout");
-	const wasLoggedIn = isLoggedIn();
-	clearAuth();
-	clearPendingAuth();
-	return { logged_out: wasLoggedIn };
+	const result = await logoutClawdiCredentials(getConfig().apiUrl);
+	return {
+		logged_out: result.loggedOut,
+		remote_revoked: result.remoteRevoked,
+		environment_credential: result.environmentCredential,
+	};
 }
 
 function updateCheckRpc(params: unknown): Promise<unknown> {
@@ -1126,20 +1146,11 @@ interface AuthMeResponse {
 	name?: string;
 }
 
-interface DeviceStartResponse {
-	device_code: string;
-	user_code: string;
-	verification_uri: string;
-	expires_in: number;
-	interval: number;
-}
-
-interface AuthPollResponse {
-	status: string;
-	api_key?: string | null;
-}
-
-async function verifyAndSaveRpcAuth(apiUrl: string, apiKey: string): Promise<AuthMeResponse> {
+async function verifyAndSaveRpcAuth(
+	apiUrl: string,
+	apiKey: string,
+	expectedCredential: StoredCredentialIdentity,
+): Promise<AuthMeResponse> {
 	const response = await fetch(`${apiUrl}/v1/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
@@ -1147,81 +1158,25 @@ async function verifyAndSaveRpcAuth(apiUrl: string, apiKey: string): Promise<Aut
 		throw new Error(`API key verification failed with HTTP ${response.status}`);
 	}
 	const me = await readJsonObject<AuthMeResponse>(response, isAuthMeResponse, "/v1/auth/me");
-	setAuth({ apiKey, userId: me.id, email: me.email });
+	await commitClawdiCredential({ apiKey, userId: me.id, email: me.email }, expectedCredential);
 	return me;
 }
 
-async function startDeviceAuthRpc(apiUrl: string): Promise<unknown> {
-	const response = await fetch(`${apiUrl}/v1/cli/auth/device`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ client_label: `clawdi daemon control · ${hostname()}` }),
-	});
-	if (!response.ok) {
-		throw new Error(`Failed to start device authorization: HTTP ${response.status}`);
-	}
-	const start = await readJsonObject<DeviceStartResponse>(
-		response,
-		isDeviceStartResponse,
-		"/v1/cli/auth/device",
-	);
-	const pending = {
-		deviceCode: start.device_code,
-		userCode: start.user_code,
-		verificationUri: start.verification_uri,
-		expiresAt: Math.floor(Date.now() / 1000) + start.expires_in,
-		intervalMs: Math.max(1, start.interval) * 1000,
-		apiUrl,
-	};
-	setPendingAuth(pending);
+async function startOAuthAuthRpc(
+	apiUrl: string,
+	expectedCredential: StoredCredentialIdentity,
+): Promise<unknown> {
+	const config = await fetchClerkOAuthClientConfig(apiUrl);
+	const discovery = await fetchClerkOAuthDiscovery(config);
+	const pending = createClerkOAuthAuthorization({ config, discovery, apiUrl });
+	await persistPendingClerkOAuthLogin(pending, expectedCredential);
 	return {
 		status: "pending",
-		user_code: pending.userCode,
-		verification_uri: pending.verificationUri,
+		authorization_url: pending.authorizationUrl,
+		redirect_uri: pending.redirectUri,
 		expires_at: pending.expiresAt,
-		interval_ms: pending.intervalMs,
 		api_url: pending.apiUrl,
 	};
-}
-
-async function pollPendingAuthRpc(
-	pending: NonNullable<ReturnType<typeof getPendingAuth>>,
-	waitMs: number,
-): Promise<unknown> {
-	const deadline = Date.now() + waitMs;
-	while (true) {
-		const poll = await pollAuthOnce(pending.apiUrl, pending.deviceCode);
-		if (poll.status === "approved" && poll.api_key) {
-			setAuth({ apiKey: poll.api_key });
-			const me = await verifyAndSaveRpcAuth(pending.apiUrl, poll.api_key);
-			clearPendingAuth();
-			return { status: "logged_in", user: me };
-		}
-		if (poll.status === "denied" || poll.status === "expired") {
-			clearPendingAuth();
-			return { status: poll.status };
-		}
-		if (Date.now() >= deadline || waitMs === 0) {
-			return {
-				status: "pending",
-				user_code: pending.userCode,
-				expires_at: pending.expiresAt,
-			};
-		}
-		await new Promise((resolve) =>
-			setTimeout(resolve, Math.min(pending.intervalMs, Math.max(0, deadline - Date.now()))),
-		);
-	}
-}
-
-async function pollAuthOnce(apiUrl: string, deviceCode: string): Promise<AuthPollResponse> {
-	const response = await fetch(`${apiUrl}/v1/cli/auth/poll`, {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ device_code: deviceCode }),
-	});
-	if (!response.ok) throw new Error(`Auth polling failed with HTTP ${response.status}`);
-	return readJsonObject<AuthPollResponse>(response, isAuthPollResponse, "/v1/cli/auth/poll");
 }
 
 async function readJsonObject<T>(
@@ -1237,25 +1192,6 @@ async function readJsonObject<T>(
 function isAuthMeResponse(value: unknown): value is AuthMeResponse {
 	if (!isRecord(value)) return false;
 	return typeof value.id === "string";
-}
-
-function isDeviceStartResponse(value: unknown): value is DeviceStartResponse {
-	if (!isRecord(value)) return false;
-	return (
-		typeof value.device_code === "string" &&
-		typeof value.user_code === "string" &&
-		typeof value.verification_uri === "string" &&
-		typeof value.expires_in === "number" &&
-		typeof value.interval === "number"
-	);
-}
-
-function isAuthPollResponse(value: unknown): value is AuthPollResponse {
-	if (!isRecord(value)) return false;
-	return (
-		typeof value.status === "string" &&
-		(value.api_key === undefined || value.api_key === null || typeof value.api_key === "string")
-	);
 }
 
 function daemonInstallRpc(params: unknown): unknown {

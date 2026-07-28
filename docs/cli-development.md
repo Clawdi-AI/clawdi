@@ -146,11 +146,60 @@ backend, dashboard, local key minting, and cleanup.
 Once it's up, a canonical smoke loop:
 
 ```bash
-clawdi auth login     # paste an API key from the web dashboard
+clawdi auth login     # Clerk OAuth Authorization Code + PKCE
 clawdi setup          # register this agent + install the built-in skill
 clawdi doctor         # all ✓ means the full pipe is wired up
 clawdi push --dry-run # preview what push would upload
 ```
+
+`clawdi auth login` is the canonical human login for both Cloud and Hosted. It
+stores the current short-lived access token and Clerk refresh grant in the
+existing private atomic CLI state file (0700 directory, 0600 file), refreshes
+before expiry, and rotates the persisted refresh value when Clerk returns one.
+`clawdi auth logout` asks the Cloud backend to revoke the refresh grant before
+removing local state. The legacy `--manual` API-key path remains Cloud-only.
+The Clerk Public OAuth Application must allow `openid`, `profile`, `email`, and
+`offline_access`; the last scope is required for the persisted refresh grant.
+At the Clerk instance level, `oauth_jwt_access_tokens` must be enabled through
+the Backend API. This setting may not appear on the OAuth Application screen.
+Cloud and Hosted verify the resulting RS256 access JWT and deliberately reject
+opaque tokens.
+Cloud reads its public-client identifiers from the strictly registered global
+`clerk_cli_oauth` App Setting. Cloud and Hosted are configured independently;
+there is no automatic synchronization or shared secret reference between them.
+
+On SSH, run `clawdi auth login --no-open`, open the printed URL locally, then
+paste the complete failed loopback callback URL into the masked terminal
+prompt. Clerk does not advertise RFC 8628 device authorization. A non-TTY flow
+can save the pending PKCE transaction and later run `clawdi auth complete` with
+the callback URL on stdin; the authorization code is never accepted as a flag.
+
+The Hosted deploy wizard shares its defaults, validation, request builder,
+compute/payment selection, and deployment-request projection with the Web
+Deploy Wizard:
+
+```bash
+clawdi deploy
+clawdi deploy --runtime hermes --provider managed --model <id> \
+  --compute basic --request-id <uuid> --yes --json
+clawdi deploy --provider <saved-provider-id> --model <id> \
+  --compute basic --request-id <uuid> --yes --json
+clawdi deploy --compute performance --term 12 --payment wallet \
+  --request-id <uuid> --yes --json
+clawdi deploy --compute performance --payment card --request-id <uuid> --yes --json
+```
+
+Included Basic deploys create directly. Wallet deploys require an exact quote
+and explicit confirmation. Card deploys open Hosted Checkout and reuse the
+stable request ID for recovery; the CLI never accepts provider/card secrets in
+flags. Every non-interactive deploy requires `--yes` and a caller-supplied
+`--request-id`; paid deploys also require `--payment`. Use `--json` for
+deterministic automation and reuse the same request ID after an ambiguous
+create or checkout response.
+`--provider` also accepts an exact Cloud saved-provider id. The CLI reads only
+secret-free provider metadata and sends a provider binding/bootstrap; it never
+accepts or prints the saved credential. Pass `--model` unless that provider has
+one unambiguous default model.
 
 ## Typecheck / test / build
 

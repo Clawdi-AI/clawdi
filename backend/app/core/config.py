@@ -1,5 +1,8 @@
+from ipaddress import AddressValueError, IPv6Address
 from typing import Annotated, Self
+from urllib.parse import urlsplit, urlunsplit
 
+import idna
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
@@ -10,6 +13,59 @@ def _normalize_pem_env_value(value: str) -> str:
     # pattern explicitly so Python source line-continuation rules cannot change
     # the string we are matching.
     return value.replace("\\" + "\r\n", "\n").replace("\\" + "\n", "\n").replace("\\n", "\n")
+
+
+def _canonical_clerk_url(value: str, *, origin_only: bool, label: str) -> str:
+    raw = value.strip()
+    if not raw:
+        return ""
+    try:
+        parsed = urlsplit(raw)
+    except ValueError as error:
+        raise ValueError(f"{label} must be a valid absolute URL") from error
+    host = parsed.hostname
+    if not host or parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{label} must be a URL without userinfo")
+    try:
+        if ":" in host:
+            canonical_host = IPv6Address(host).compressed
+            rendered_host = f"[{canonical_host}]"
+        else:
+            canonical_host = idna.encode(host, uts46=True, std3_rules=True).decode("ascii").lower()
+            if canonical_host.endswith("."):
+                raise ValueError(f"{label} contains an invalid host")
+            rendered_host = canonical_host
+    except (AddressValueError, idna.IDNAError, UnicodeError) as error:
+        raise ValueError(f"{label} contains an invalid host") from error
+    scheme = parsed.scheme.lower()
+    loopback = canonical_host in {"localhost", "127.0.0.1", "::1"}
+    if scheme != "https" and not (scheme == "http" and loopback):
+        raise ValueError(f"{label} must use HTTPS (HTTP is allowed only for exact loopback hosts)")
+    if parsed.query or parsed.fragment or "?" in raw or "#" in raw:
+        raise ValueError(f"{label} must not contain query parameters or a fragment")
+    if origin_only:
+        if parsed.path not in {"", "/"}:
+            raise ValueError(f"{label} must be an origin without a path")
+        path = ""
+    else:
+        path = parsed.path.rstrip("/")
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError(f"{label} contains an invalid port") from error
+    default_port = 443 if scheme == "https" else 80
+    netloc = (
+        f"{rendered_host}:{port}" if port is not None and port != default_port else rendered_host
+    )
+    return urlunsplit((scheme, netloc, path, "", ""))
+
+
+def canonical_clerk_issuer(value: str) -> str:
+    return _canonical_clerk_url(value, origin_only=True, label="Clerk issuer")
+
+
+def canonical_clerk_authorized_party(value: str) -> str:
+    return _canonical_clerk_url(value, origin_only=True, label="Clerk OAuth authorized party")
 
 
 class Settings(BaseSettings):
@@ -29,7 +85,13 @@ class Settings(BaseSettings):
             return ""
         return v
 
-    @field_validator("clerk_secret_key", "clerk_pem_public_key", mode="before")
+    @field_validator(
+        "clerk_secret_key",
+        "clerk_pem_public_key",
+        "clerk_jwt_issuer",
+        "clerk_jwt_audience",
+        mode="before",
+    )
     @classmethod
     def _strip_wrapping_quotes(cls, v: object) -> object:
         # Coolify's UI sometimes round-trips secret values with literal
@@ -43,6 +105,11 @@ class Settings(BaseSettings):
         if isinstance(v, str) and "BEGIN PUBLIC KEY" in v:
             return _normalize_pem_env_value(v)
         return v
+
+    @field_validator("clerk_jwt_issuer")
+    @classmethod
+    def _canonicalize_clerk_issuer(cls, value: str) -> str:
+        return canonical_clerk_issuer(value)
 
     @model_validator(mode="after")
     def _normalize_loaded_env_values(self) -> Self:
@@ -120,6 +187,13 @@ class Settings(BaseSettings):
     # doesn't carry an `email` claim. Only consulted when
     # `enable_snapshot_email_rebind` is true.
     clerk_secret_key: str = ""
+
+    # Optional strict claim binding for dashboard/browser session JWTs.
+    # Keep these separate from the Public OAuth App resource values: Clerk
+    # session templates and OAuth access tokens can use different audiences.
+    # Empty values preserve the historical signature-only session validation.
+    clerk_jwt_issuer: str = ""
+    clerk_jwt_audience: str = ""
 
     # Opt-in for the email-rebind authentication path. When true, an
     # incoming Clerk JWT whose `sub` doesn't match any existing user is

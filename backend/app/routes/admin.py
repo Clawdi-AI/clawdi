@@ -41,6 +41,7 @@ from app.core.auth import invalidate_api_key_auth_cache, require_admin_api_key
 from app.core.database import get_session
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
+from app.models.app_setting import AppSetting
 from app.models.channel import (
     CHANNEL_PROVIDERS,
     ChannelAccount,
@@ -55,6 +56,9 @@ from app.models.user import (
 from app.schemas.admin import (
     AdminAgentCreate,
     AdminApiKeyCreate,
+    AdminAppSettingListResponse,
+    AdminAppSettingResponse,
+    AdminAppSettingUpsert,
     AdminChannelCreate,
     AdminChannelCreatedResponse,
     AdminChannelResponse,
@@ -80,6 +84,12 @@ from app.services.agent_environments import (
     register_agent_environment,
 )
 from app.services.api_key import mint_api_key
+from app.services.app_setting_registry import (
+    APP_SETTING_SPEC_BY_KEY,
+    AppSettingValueError,
+    get_app_setting_spec,
+)
+from app.services.app_settings import stage_app_setting_upsert
 from app.services.audit import record_control_plane_audit
 from app.services.channel_config import validate_channel_account_config_urls
 from app.services.channels import (
@@ -126,6 +136,104 @@ logger = logging.getLogger(__name__)
 # tell admin endpoints exist let alone what header they expect. The
 # routes themselves stay live — gating is `require_admin_api_key`.
 router = APIRouter(prefix="/admin", tags=["admin"], include_in_schema=False)
+
+
+def _admin_app_setting_response(setting: AppSetting) -> AdminAppSettingResponse:
+    spec = get_app_setting_spec(setting.key)
+    return AdminAppSettingResponse(
+        key=setting.key,
+        value=setting.value_json,
+        description=spec.description,
+        created_at=setting.created_at,
+        updated_at=setting.updated_at,
+    )
+
+
+def _setting_enabled(value: object | None) -> bool | None:
+    if isinstance(value, dict) and isinstance(value.get("enabled"), bool):
+        return value["enabled"]
+    return None
+
+
+@router.get("/settings", response_model=AdminAppSettingListResponse)
+async def admin_list_app_settings(
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminAppSettingListResponse:
+    """List registered global application settings."""
+
+    rows = list(
+        (
+            await db.execute(
+                select(AppSetting)
+                .where(AppSetting.key.in_(APP_SETTING_SPEC_BY_KEY))
+                .order_by(AppSetting.key)
+            )
+        ).scalars()
+    )
+    return AdminAppSettingListResponse(
+        items=[_admin_app_setting_response(setting) for setting in rows]
+    )
+
+
+@router.get("/settings/{key}", response_model=AdminAppSettingResponse)
+async def admin_get_app_setting(
+    key: str,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminAppSettingResponse:
+    """Read one registered global application setting."""
+
+    try:
+        get_app_setting_spec(key)
+    except AppSettingValueError as error:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "App setting not found") from error
+    setting = await db.get(AppSetting, key)
+    if setting is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "App setting not found")
+    return _admin_app_setting_response(setting)
+
+
+@router.put("/settings/{key}", response_model=AdminAppSettingResponse)
+async def admin_upsert_app_setting(
+    key: str,
+    body: AdminAppSettingUpsert,
+    _: None = Depends(require_admin_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> AdminAppSettingResponse:
+    """Atomically replace one registered global setting and audit the mutation."""
+
+    try:
+        setting, previous, created = await stage_app_setting_upsert(
+            db,
+            key=key,
+            value=body.value,
+        )
+    except AppSettingValueError as error:
+        if key not in APP_SETTING_SPEC_BY_KEY:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "App setting not found") from error
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Invalid app setting value") from error
+
+    current = setting.value_json
+    record_control_plane_audit(
+        db,
+        actor_type="admin",
+        action="app_setting.upsert",
+        resource_type="app_setting",
+        resource_id=key,
+        source="api.admin",
+        details={
+            "created": created,
+            "previous_enabled": _setting_enabled(previous),
+            "enabled": _setting_enabled(current),
+            "schema_version": (
+                current.get("schema_version") if isinstance(current, dict) else None
+            ),
+        },
+    )
+    await db.commit()
+    await db.refresh(setting)
+    return _admin_app_setting_response(setting)
 
 
 async def _resolve_or_create_user(db: AsyncSession, clerk_id: str) -> User:

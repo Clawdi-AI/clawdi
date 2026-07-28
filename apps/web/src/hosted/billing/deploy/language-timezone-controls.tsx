@@ -1,5 +1,6 @@
 "use client";
 
+import { HOSTED_DEPLOY_LANGUAGE_OPTIONS, normalizeHostedDeployLanguage } from "@clawdi/shared/api";
 import { Check, ChevronsUpDown } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -15,23 +16,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 
 /** Common UI languages offered during onboarding and hosted runtime settings. */
-export const LANGUAGE_OPTIONS = [
-	{ code: "en", label: "English" },
-	{ code: "zh-CN", label: "简体中文" },
-	{ code: "zh-TW", label: "繁體中文" },
-	{ code: "ja", label: "日本語" },
-	{ code: "ko", label: "한국어" },
-	{ code: "es", label: "Español" },
-	{ code: "fr", label: "Français" },
-	{ code: "de", label: "Deutsch" },
-	{ code: "pt", label: "Português" },
-] as const;
+export const LANGUAGE_OPTIONS = HOSTED_DEPLOY_LANGUAGE_OPTIONS;
 
 export type HostedLanguage = (typeof LANGUAGE_OPTIONS)[number]["code"];
-
-const HOSTED_LANGUAGE_CODES = new Set<HostedLanguage>(
-	LANGUAGE_OPTIONS.map((option) => option.code),
-);
 
 export const LANGUAGE_SELECT_ITEMS = [
 	{ value: "default", label: "Default" },
@@ -39,8 +26,7 @@ export const LANGUAGE_SELECT_ITEMS = [
 ] as const;
 
 export function normalizeHostedLanguage(value: string | null | undefined): HostedLanguage | null {
-	if (!value) return null;
-	return HOSTED_LANGUAGE_CODES.has(value as HostedLanguage) ? (value as HostedLanguage) : null;
+	return normalizeHostedDeployLanguage(value);
 }
 
 /**

@@ -36,7 +36,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
@@ -65,6 +66,43 @@ PER_USER_CONNECTION_CAP = 10
 # typical 60s default. Daemon treats 60s of silence as "stale,
 # reconnect."
 HEARTBEAT_INTERVAL_S = 25.0
+OAUTH_ACCESS_EXPIRY_SKEW = timedelta(seconds=1)
+
+
+def _oauth_cli_access_expired(
+    auth: AuthContext,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    if not auth.oauth_cli:
+        return False
+    expires_at = auth.oauth_access_expires_at
+    if expires_at is None:
+        return True
+    current = now or datetime.now(UTC)
+    return current >= expires_at - OAUTH_ACCESS_EXPIRY_SKEW
+
+
+async def _close_on_oauth_access_expiry(
+    auth: AuthContext,
+    close_stream: asyncio.Event,
+    *,
+    now: Callable[[], datetime] = lambda: datetime.now(UTC),
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> None:
+    """Close only OAuth CLI streams when their verified access JWT expires."""
+    if not auth.oauth_cli:
+        return
+    expires_at = auth.oauth_access_expires_at
+    if expires_at is None:
+        close_stream.set()
+        return
+    while not close_stream.is_set():
+        remaining = (expires_at - OAUTH_ACCESS_EXPIRY_SKEW - now()).total_seconds()
+        if remaining <= 0:
+            close_stream.set()
+            return
+        await sleep(min(remaining, HEARTBEAT_INTERVAL_S))
 
 
 async def _stream(
@@ -83,12 +121,24 @@ async def _stream(
     while True:
         if await request.is_disconnected() or revoked.is_set():
             return
-        try:
-            event_payload = await asyncio.wait_for(queue.get(), timeout=HEARTBEAT_INTERVAL_S)
-        except TimeoutError:
+        event_task = asyncio.create_task(queue.get())
+        revoked_task = asyncio.create_task(revoked.wait())
+        done, pending = await asyncio.wait(
+            {event_task, revoked_task},
+            timeout=HEARTBEAT_INTERVAL_S,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        if revoked_task in done or revoked.is_set():
+            return
+        if event_task not in done:
             # No event in 25s; emit heartbeat comment and loop.
             yield b": ping\n\n"
             continue
+        event_payload = event_task.result()
         # Re-check revocation BEFORE emitting. The refresher can
         # set `revoked` while `wait_for` is parked on `queue.get()`;
         # an event landing in the queue right after revocation
@@ -140,6 +190,8 @@ async def events(
     pool free for normal request traffic.
     """
     user_id = auth.user_id
+    if _oauth_cli_access_expired(auth):
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OAuth access token has expired")
 
     # Resolve the caller's initial visible-project set, then atomic
     # cap-and-subscribe. The cap check + register pair is wrapped
@@ -248,13 +300,19 @@ async def events(
 
     async def gen() -> AsyncIterator[bytes]:
         refresh_task = asyncio.create_task(refresh_visibility())
+        expiry_task = asyncio.create_task(_close_on_oauth_access_expiry(auth, revoked))
         try:
             async for chunk in _stream(queue, request, revoked):
                 yield chunk
         finally:
             refresh_task.cancel()
+            expiry_task.cancel()
             try:
                 await refresh_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            try:
+                await expiry_task
             except (asyncio.CancelledError, Exception):
                 pass
             sync_events.unsubscribe(user_id, queue)

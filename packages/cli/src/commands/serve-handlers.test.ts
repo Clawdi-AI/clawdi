@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import type { PendingAuth } from "../lib/config";
 import { adapterForType } from "../lib/select-adapter";
 import { rejectUnsupportedOpts, runDaemonWorkers } from "./serve";
 
@@ -35,6 +36,36 @@ class ExitCalled extends Error {
 	constructor(public code: number) {
 		super(`process.exit(${code})`);
 	}
+}
+
+function rpcOAuthAccessToken(): string {
+	const encode = (value: unknown) => Buffer.from(JSON.stringify(value)).toString("base64url");
+	return `${encode({ alg: "RS256", typ: "at+jwt" })}.${encode({
+		iss: "https://clerk.example.test",
+		client_id: "clawdi-cli",
+		aud: "clawdi-api",
+		azp: "https://accounts.clawdi.test",
+		sub: "rpc-oauth-user",
+		exp: Math.floor(Date.now() / 1_000) + 3_600,
+	})}.signature`;
+}
+
+function rpcPendingAuth(): PendingAuth {
+	return {
+		authType: "clerk_oauth_pkce",
+		state: "rpc-state",
+		codeVerifier: "rpc-verifier",
+		authorizationUrl: "https://clerk.example.test/oauth/authorize",
+		redirectUri: "http://127.0.0.1:18473/oauth/callback",
+		issuer: "https://clerk.example.test",
+		clientId: "clawdi-cli",
+		audience: "clawdi-api",
+		authorizedParties: ["https://accounts.clawdi.test"],
+		tokenEndpoint: "https://clerk.example.test/oauth/token",
+		expiresAt: new Date(Date.now() + 5 * 60_000).toISOString(),
+		apiUrl: "https://cloud.example.test",
+		scopes: ["openid", "profile", "email", "offline_access"],
+	};
 }
 
 let restoreExit: (() => void) | null = null;
@@ -295,7 +326,7 @@ describe("full control RPC handler surface", () => {
 		}
 	});
 
-	it("rejects device-flow auth replacement while existing auth is present", async () => {
+	it("rejects OAuth auth replacement while existing auth is present", async () => {
 		const originalClawdiHome = process.env.CLAWDI_HOME;
 		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
 		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-auth-replace-"));
@@ -318,6 +349,120 @@ describe("full control RPC handler surface", () => {
 					}))(),
 			).rejects.toThrow("auth.login replace requires api_key");
 		} finally {
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps auth.complete Cloud verification outcomes explicit and secret-free", async () => {
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalFetch = globalThis.fetch;
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-rpc-oauth-complete-"));
+		process.env.CLAWDI_HOME = join(tmpHome, ".clawdi");
+		delete process.env.CLAWDI_AUTH_TOKEN;
+		try {
+			const [{ createControlRpcHandlers }, config] = await Promise.all([
+				import("./serve"),
+				import("../lib/config"),
+			]);
+			const handler = createControlRpcHandlers()["auth.complete"];
+			if (!handler) throw new Error("missing auth.complete handler");
+
+			for (const cloudCase of [
+				"verified",
+				"server_error",
+				"network",
+				"rejected",
+				"forbidden",
+				"malformed",
+			] as const) {
+				config.clearAuth();
+				config.setPendingAuth(rpcPendingAuth());
+				const paths: string[] = [];
+				globalThis.fetch = Object.assign(
+					async (input: RequestInfo | URL) => {
+						const request = input instanceof Request ? input : new Request(input);
+						const path = new URL(request.url).pathname;
+						paths.push(path);
+						if (path === "/oauth/token") {
+							return Response.json({
+								access_token: rpcOAuthAccessToken(),
+								refresh_token: `refresh-${cloudCase}-secret`,
+								token_type: "Bearer",
+								scope: "openid profile email offline_access",
+							});
+						}
+						if (path === "/v1/auth/me") {
+							if (cloudCase === "network") {
+								throw new TypeError("private network detail");
+							}
+							if (cloudCase === "server_error") {
+								return new Response("private server detail", { status: 503 });
+							}
+							if (cloudCase === "rejected") {
+								return new Response("private rejection detail", { status: 401 });
+							}
+							if (cloudCase === "forbidden") {
+								return new Response("private forbidden detail", { status: 403 });
+							}
+							return cloudCase === "malformed"
+								? Response.json({ email: "missing-id@example.test" })
+								: Response.json({
+										id: "rpc-cloud-user",
+										email: "rpc@example.test",
+										name: "RPC User",
+									});
+						}
+						if (path === "/v1/cli/auth/oauth/revoke") {
+							return Response.json({ status: "revoked" });
+						}
+						return new Response("unexpected", { status: 404 });
+					},
+					{ preconnect: originalFetch.preconnect },
+				);
+
+				let result: unknown;
+				let caught: unknown;
+				try {
+					result = await handler({
+						callback_url: "http://127.0.0.1:18473/oauth/callback?code=rpc-code&state=rpc-state",
+						confirm_secret_access: true,
+					});
+				} catch (error) {
+					caught = error;
+				}
+
+				if (cloudCase === "verified") {
+					expect(result).toMatchObject({
+						status: "logged_in",
+						cloud_verified: true,
+						user: { id: "rpc-cloud-user" },
+					});
+					expect(config.getStoredAuth()).toMatchObject({ userId: "rpc-cloud-user" });
+				} else if (cloudCase === "server_error" || cloudCase === "network") {
+					expect(result).toEqual({
+						status: "cloud_unverified",
+						cloud_verified: false,
+						reason: cloudCase === "network" ? "network" : "server_error",
+						...(cloudCase === "server_error" ? { http_status: 503 } : {}),
+					});
+					expect(config.getStoredAuth()).toMatchObject({
+						refreshToken: `refresh-${cloudCase}-secret`,
+					});
+				} else {
+					expect(caught).toBeInstanceOf(Error);
+					expect(config.getStoredAuth()).toBeNull();
+					expect(paths).toContain("/v1/cli/auth/oauth/revoke");
+				}
+				expect(config.getPendingAuth()).toBeNull();
+				expect(JSON.stringify(result ?? caught)).not.toContain(`refresh-${cloudCase}-secret`);
+			}
+		} finally {
+			globalThis.fetch = originalFetch;
 			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
 			else process.env.CLAWDI_HOME = originalClawdiHome;
 			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;

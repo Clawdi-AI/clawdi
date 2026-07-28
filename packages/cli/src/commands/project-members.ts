@@ -26,7 +26,7 @@ export async function projectMembersCommand(
 	projectArg: string,
 	opts: { json?: boolean; remove?: string },
 ): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
@@ -108,7 +108,7 @@ export async function projectLeaveCommand(
 	projectArg: string,
 	opts: { json?: boolean },
 ): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);
@@ -132,7 +132,7 @@ export async function projectUnshareCommand(
 	projectArg: string,
 	opts: { json?: boolean },
 ): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 
 	const projectId = await resolveProjectId(ctx.apiUrl, ctx.apiKey, projectArg);

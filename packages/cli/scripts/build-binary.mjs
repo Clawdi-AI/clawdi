@@ -10,6 +10,7 @@ const packageJson = JSON.parse(readFileSync(resolve(cliRoot, "package.json"), "u
 const target = process.env.CLAWDI_BINARY_TARGET || "bun-linux-x64-baseline";
 const outfile = resolve(cliRoot, process.env.CLAWDI_BINARY_OUTFILE || "dist-bin/clawdi");
 const defaultApiUrl = process.env.CLAWDI_DEFAULT_API_URL || "https://cloud-api.clawdi.ai";
+const defaultDeployApiUrl = process.env.CLAWDI_DEFAULT_DEPLOY_API_URL || "https://api.clawdi.ai";
 
 rmSync(dirname(outfile), { recursive: true, force: true });
 mkdirSync(dirname(outfile), { recursive: true });
@@ -23,6 +24,7 @@ const result = await Bun.build({
 	define: {
 		CLAWDI_CLI_VERSION: JSON.stringify(packageJson.version),
 		"process.env.CLAWDI_DEFAULT_API_URL": JSON.stringify(defaultApiUrl),
+		"process.env.CLAWDI_DEFAULT_DEPLOY_API_URL": JSON.stringify(defaultDeployApiUrl),
 	},
 	minify: true,
 });

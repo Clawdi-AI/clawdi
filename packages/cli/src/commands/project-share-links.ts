@@ -54,7 +54,7 @@ export async function projectShareLinksCommand(
 	projectArg: string,
 	opts: { revoke?: string },
 ): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 	const { apiUrl, apiKey } = ctx;
 

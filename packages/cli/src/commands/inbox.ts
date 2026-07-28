@@ -16,6 +16,7 @@ import chalk from "chalk";
 
 import { allAdapterEntries } from "../adapters/registry";
 import { ApiError, readJson } from "../lib/api-client";
+import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
 import { listProjects } from "../lib/project-resolver";
 import { pullSharedSkills } from "../share/eager-pull";
@@ -204,9 +205,10 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 		);
 		return;
 	}
+	const accessToken = await getClawdiAccessToken();
 
 	const r = await fetch(`${apiUrl}/v1/me/invitations`, {
-		headers: { Authorization: `Bearer ${auth.apiKey}` },
+		headers: { Authorization: `Bearer ${accessToken}` },
 	});
 	if (!r.ok) {
 		throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
@@ -284,13 +286,14 @@ export async function inboxAcceptCommand(
 		await acceptAnonymousUrl(apiUrl, normalized, opts);
 		return;
 	}
+	const accessToken = await getClawdiAccessToken();
 
 	if (opts.invite) {
-		await acceptInvitation(apiUrl, auth.apiKey, opts.invite, opts);
+		await acceptInvitation(apiUrl, accessToken, opts.invite, opts);
 		return;
 	}
 	if (opts.url) {
-		await acceptUrl(apiUrl, auth.apiKey, opts.url, opts);
+		await acceptUrl(apiUrl, accessToken, opts.url, opts);
 		return;
 	}
 	if (!posArg) {
@@ -310,9 +313,9 @@ export async function inboxAcceptCommand(
 	const normalized = normalizeAcceptArg(posArg);
 	const shape = detectAcceptArgShape(normalized);
 	if (shape === "uuid") {
-		await acceptInvitation(apiUrl, auth.apiKey, normalized, opts);
+		await acceptInvitation(apiUrl, accessToken, normalized, opts);
 	} else if (shape === "url" || shape === "raw_token") {
-		await acceptUrl(apiUrl, auth.apiKey, normalized, opts);
+		await acceptUrl(apiUrl, accessToken, normalized, opts);
 	} else {
 		console.error(
 			chalk.red(
@@ -338,9 +341,10 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 		process.exitCode = 1;
 		return;
 	}
+	const accessToken = await getClawdiAccessToken();
 	const r = await fetch(`${apiUrl}/v1/me/invitations/${invitationId}/decline`, {
 		method: "POST",
-		headers: { Authorization: `Bearer ${auth.apiKey}` },
+		headers: { Authorization: `Bearer ${accessToken}` },
 	});
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 	console.log(`${chalk.green("✓")} Invitation declined.`);

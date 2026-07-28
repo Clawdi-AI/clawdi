@@ -42,7 +42,8 @@ export async function fetchDefaultProjectId(
 ): Promise<string> {
 	const baseUrl = api.baseUrl;
 	const headers: Record<string, string> = {};
-	if (api.apiKey) headers.Authorization = `Bearer ${api.apiKey}`;
+	const accessToken = await api.getAccessToken();
+	if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
 
 	const projectRes = await fetch(`${baseUrl}/v1/projects/default`, { headers });
 	const body: { project_id?: string } = await readJson<{ project_id?: string }>(

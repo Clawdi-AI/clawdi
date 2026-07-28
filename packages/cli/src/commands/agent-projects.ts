@@ -30,7 +30,7 @@ export async function agentProjectsListCommand(
 	agentId: string,
 	opts: { json?: boolean } = {},
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
 		apiKey,
@@ -96,7 +96,7 @@ export async function agentProjectsAddContextCommand(
 	agentId: string,
 	opts: { project: string; order?: string },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	let priority: number | undefined;
 	if (opts.order !== undefined) {
@@ -120,7 +120,7 @@ export async function agentProjectsRemoveContextCommand(
 	agentId: string,
 	opts: { project: string },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const projectId = await resolveProjectId(apiUrl, apiKey, opts.project);
 	const rows = await authedJson<BindingRow[]>(
 		apiUrl,
@@ -154,7 +154,7 @@ export async function agentProjectsReorderCommand(
 	agentId: string,
 	opts: { item?: string[] },
 ): Promise<void> {
-	const { apiUrl, apiKey } = requireProjectAuth();
+	const { apiUrl, apiKey } = await requireProjectAuth();
 	const itemError = "--item must use <id>:<order> with order >= 1.";
 	const items = (opts.item ?? []).map((raw) => {
 		const parts = raw.split(":");

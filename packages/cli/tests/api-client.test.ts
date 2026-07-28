@@ -39,7 +39,7 @@ describe("ApiClient construction", () => {
 		expect(() => new ApiClient()).toThrow(ApiError);
 	});
 
-	it("`requireAuth: false` constructs without credentials (device-flow bootstrap)", async () => {
+	it("`requireAuth: false` constructs without credentials (public bootstrap)", async () => {
 		// The CLI auth login flow needs a transport BEFORE a key exists. Any
 		// other caller passing this flag is a bug — gate it behind an explicit
 		// review. This test pins the contract so a refactor that makes

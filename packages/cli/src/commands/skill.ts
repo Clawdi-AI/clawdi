@@ -17,6 +17,7 @@ import type { AgentAdapter } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import type { SkillSummary } from "../lib/api-schemas";
+import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { parseFrontmatter } from "../lib/frontmatter";
@@ -89,14 +90,9 @@ export async function skillList(opts: { json?: boolean; project?: string } = {})
 	let projectId: string | undefined;
 	if (opts.project) {
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
+		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+		projectId = await resolveProjectId(cfg.apiUrl, await getClawdiAccessToken(), opts.project);
 	}
 	const skills = await fetchAllSkills(api, projectId);
 
@@ -245,14 +241,9 @@ export async function skillAdd(
 		// Explicit project by UUID, slug, or name. The shared project
 		// resolver handles disambiguation + default fallback.
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
+		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+		projectId = await resolveProjectId(cfg.apiUrl, await getClawdiAccessToken(), opts.project);
 	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {
@@ -351,14 +342,9 @@ export async function skillInstall(
 	}
 	if (opts.project) {
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
+		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+		projectId = await resolveProjectId(cfg.apiUrl, await getClawdiAccessToken(), opts.project);
 		targetAgent = "__skip_local__";
 	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
@@ -534,14 +520,9 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 	}
 	if (opts.project) {
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
-		const { getAuth, getConfig } = await import("../lib/config.js");
+		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		const auth = getAuth();
-		if (!auth?.apiKey) {
-			console.log(chalk.red("Not signed in. Run `clawdi auth login` first."));
-			process.exit(1);
-		}
-		projectId = await resolveProjectId(cfg.apiUrl, auth.apiKey, opts.project);
+		projectId = await resolveProjectId(cfg.apiUrl, await getClawdiAccessToken(), opts.project);
 	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {

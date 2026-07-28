@@ -21,11 +21,13 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
 from app.services import sync_events
@@ -37,6 +39,157 @@ from app.services.managed_ai_provider import (
 )
 
 pytestmark = pytest.mark.committed_db
+
+
+def test_oauth_cli_sse_handshake_uses_verified_utc_expiry_only():
+    from app.core.auth import AuthContext
+    from app.routes.sync import _oauth_cli_access_expired
+
+    now = datetime(2026, 7, 28, tzinfo=UTC)
+    user = User(clerk_id="oauth-sse-handshake")
+    oauth = AuthContext(
+        user=user,
+        oauth_cli=True,
+        oauth_access_expires_at=now + timedelta(minutes=5),
+    )
+    expired = AuthContext(
+        user=user,
+        oauth_cli=True,
+        oauth_access_expires_at=now,
+    )
+    browser = AuthContext(user=user)
+    api_key = AuthContext(user=user, api_key=ApiKey())
+
+    assert _oauth_cli_access_expired(oauth, now=now) is False
+    assert _oauth_cli_access_expired(expired, now=now) is True
+    assert _oauth_cli_access_expired(browser, now=now) is False
+    assert _oauth_cli_access_expired(api_key, now=now) is False
+
+
+@pytest.mark.asyncio
+async def test_oauth_cli_sse_closes_at_expiry_without_changing_other_auth_types():
+    from app.core.auth import AuthContext
+    from app.routes.sync import _close_on_oauth_access_expiry
+
+    start = datetime(2026, 7, 28, tzinfo=UTC)
+    current = start
+    delays: list[float] = []
+
+    async def advance(seconds: float) -> None:
+        nonlocal current
+        delays.append(seconds)
+        current += timedelta(seconds=seconds)
+        await asyncio.sleep(0)
+
+    user = User(clerk_id="oauth-sse-expiry")
+    oauth_close = asyncio.Event()
+    await _close_on_oauth_access_expiry(
+        AuthContext(
+            user=user,
+            oauth_cli=True,
+            oauth_access_expires_at=start + timedelta(seconds=6),
+        ),
+        oauth_close,
+        now=lambda: current,
+        sleep=advance,
+    )
+    assert oauth_close.is_set()
+    assert delays == [5.0]
+
+    for auth in (AuthContext(user=user), AuthContext(user=user, api_key=ApiKey())):
+        unchanged = asyncio.Event()
+        await _close_on_oauth_access_expiry(auth, unchanged, now=lambda: current, sleep=advance)
+        assert not unchanged.is_set()
+
+
+@pytest.mark.asyncio
+async def test_oauth_cli_sse_expiry_rechecks_clock_at_heartbeat_cadence():
+    from app.core.auth import AuthContext
+    from app.routes.sync import HEARTBEAT_INTERVAL_S, _close_on_oauth_access_expiry
+
+    start = datetime(2026, 7, 28, tzinfo=UTC)
+    current = start
+    delays: list[float] = []
+
+    async def jump_forward(seconds: float) -> None:
+        nonlocal current
+        delays.append(seconds)
+        current += timedelta(minutes=10)
+        await asyncio.sleep(0)
+
+    close_stream = asyncio.Event()
+    await _close_on_oauth_access_expiry(
+        AuthContext(
+            user=User(clerk_id="oauth-sse-clock-jump"),
+            oauth_cli=True,
+            oauth_access_expires_at=start + timedelta(minutes=5),
+        ),
+        close_stream,
+        now=lambda: current,
+        sleep=jump_forward,
+    )
+
+    assert close_stream.is_set()
+    assert delays == [HEARTBEAT_INTERVAL_S]
+
+
+@pytest.mark.asyncio
+async def test_oauth_cli_events_route_subscribes_then_closes_at_verified_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from unittest.mock import Mock
+
+    from fastapi import HTTPException
+
+    import app.routes.sync as sync_route
+    from app.core.auth import AuthContext
+
+    class ShortSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, _exc_type, _exc, _traceback):
+            return False
+
+    async def visible_projects(_db, _auth):
+        return []
+
+    monkeypatch.setattr(sync_route, "async_session_factory", ShortSession)
+    monkeypatch.setattr(sync_route, "project_ids_visible_to", visible_projects)
+    monkeypatch.setattr(sync_route, "OAUTH_ACCESS_EXPIRY_SKEW", timedelta(0))
+
+    request = Mock()
+
+    async def not_disconnected():
+        return False
+
+    request.is_disconnected = not_disconnected
+    user = User(id=uuid.uuid4(), clerk_id="oauth-sse-route")
+    expired = AuthContext(
+        user=user,
+        oauth_cli=True,
+        oauth_access_expires_at=datetime.now(UTC) - timedelta(seconds=1),
+    )
+    with pytest.raises(HTTPException) as rejected:
+        await sync_route.events(request, expired)
+    assert rejected.value.status_code == 401
+    assert sync_events.connection_count(user.id) == 0
+
+    oauth = AuthContext(
+        user=user,
+        oauth_cli=True,
+        oauth_access_expires_at=datetime.now(UTC) + timedelta(milliseconds=100),
+    )
+    response = await sync_route.events(request, oauth)
+    assert response.media_type == "text/event-stream"
+    assert response.headers["x-accel-buffering"] == "no"
+    assert sync_events.connection_count(user.id) == 1
+
+    iterator = response.body_iterator.__aiter__()
+    assert await iterator.__anext__() == b": connected\n\n"
+    with pytest.raises(StopAsyncIteration):
+        await asyncio.wait_for(iterator.__anext__(), timeout=1)
+    assert sync_events.connection_count(user.id) == 0
 
 
 @pytest.mark.asyncio

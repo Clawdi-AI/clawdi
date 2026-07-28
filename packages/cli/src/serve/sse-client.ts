@@ -74,6 +74,8 @@ const MAX_BACKOFF_MS = 60_000;
 interface Opts {
 	apiUrl: string;
 	apiKey: string;
+	/** Refresh-aware provider used by durable OAuth CLI sessions on reconnect. */
+	getAccessToken?: () => Promise<string>;
 	abort: AbortSignal;
 	onEvent: (event: ServerEvent) => void | Promise<void>;
 	/** Called when the stream connects. Used by the daemon to
@@ -251,10 +253,11 @@ function parseRateLimit(reason: string): number | null {
 
 async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise<void> {
 	const url = `${opts.apiUrl.replace(/\/+$/, "")}/v1/sync/events`;
+	const accessToken = opts.getAccessToken ? await opts.getAccessToken() : opts.apiKey;
 	const res = await fetch(url, {
 		method: "GET",
 		headers: {
-			Authorization: `Bearer ${opts.apiKey}`,
+			Authorization: `Bearer ${accessToken}`,
 			Accept: "text/event-stream",
 			"Cache-Control": "no-cache",
 		},

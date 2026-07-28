@@ -1,4 +1,4 @@
-"""Device authorization flow.
+"""Legacy browser-approved API-key bootstrap.
 
 Covers the four end states a poll can land in (pending → approved+consumed,
 denied, expired) and verifies that an unauthenticated /poll never leaks

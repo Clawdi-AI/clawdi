@@ -776,6 +776,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		consumeSse({
 			apiUrl: api.baseUrl,
 			apiKey: api.apiKey,
+			getAccessToken: () => api.getAccessToken(),
 			abort: opts.abort,
 			onEvent: onServerEvent,
 			onConnect: () => {

@@ -14,7 +14,7 @@ export async function projectListCommand(opts: {
 	owned?: boolean;
 	includeEnvs?: boolean;
 }): Promise<void> {
-	const ctx = projectAuthOrExit();
+	const ctx = await projectAuthOrExit();
 	if (!ctx) return;
 	const { apiUrl, apiKey } = ctx;
 	if (opts.sharedWithMe && opts.owned) {

@@ -1,3 +1,8 @@
+import {
+	buildHostedDeployCheckoutRequest,
+	buildHostedDeploySubscriptionQuoteRequest,
+	type HostedDeployCheckoutUiMode,
+} from "@clawdi/shared/api";
 import { acceptDeclarativeOperation } from "@/hosted/billing/billing-client";
 import type {
 	CheckoutRequest,
@@ -43,7 +48,7 @@ export type SubscriptionCreateTarget =
 export type SubscriptionCreateRequestView = {
 	selection: SubscriptionCreateSelection;
 	target: SubscriptionCreateTarget;
-	uiMode: string;
+	uiMode: HostedDeployCheckoutUiMode;
 	idempotencyKey: string;
 	quote: SubscriptionCreateQuoteView | null;
 };
@@ -65,11 +70,7 @@ export function subscriptionCreateQuoteRequest(
 	selection: SubscriptionCreateSelection | null,
 ): ComputeSubscriptionQuoteRequest | null {
 	if (!selection) return null;
-	return {
-		plan_slug: selection.planSlug,
-		billing_term_months: selection.billingTermMonths,
-		funding_source: selection.fundingSource,
-	};
+	return buildHostedDeploySubscriptionQuoteRequest(selection);
 }
 
 function decimalString(value: string | null | undefined, field: string): string {
@@ -107,25 +108,16 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 	idempotencyKey: string;
 } {
 	const { selection, target } = request;
-	const body: CheckoutRequest = {
-		plan_slug: selection.planSlug,
-		billing_term_months: selection.billingTermMonths,
-		funding_source: selection.fundingSource,
-		ui_mode: request.uiMode,
-		...(target.kind === "new_deployment"
-			? {
-					deploy_config: {
-						...target.deployConfig,
-						// The post-#980 create path is funding-driven. Bind its pending
-						// deploy request to the same stable logical-intent key as checkout.
-						deploy_request_id: target.deployConfig.deploy_request_id ?? request.idempotencyKey,
-					},
-				}
-			: { upgrade_deployment_id: target.deploymentId }),
-		...(selection.fundingSource === "wallet" && request.quote
-			? { quote: request.quote.serverQuote }
-			: {}),
-	};
+	const body: CheckoutRequest = buildHostedDeployCheckoutRequest({
+		selection,
+		target:
+			target.kind === "new_deployment"
+				? { kind: "new_deployment", deployRequest: target.deployConfig }
+				: { kind: "upgrade_deployment", deploymentId: target.deploymentId },
+		idempotencyKey: request.idempotencyKey,
+		quote: request.quote?.serverQuote ?? null,
+		uiMode: request.uiMode,
+	});
 	return { body, idempotencyKey: request.idempotencyKey };
 }
 
