@@ -9,10 +9,10 @@ import { expect, type Page, type Route, test } from "@playwright/test";
 // own modules live under /src/hosted/v2/... and a path glob would intercept
 // them and break module loading.
 
-function hostedUser(canUseV2 = true) {
+function hostedUser(canUseV2 = true, canUseV1 = false) {
 	return {
 		capabilities: {
-			can_use_v1: false,
+			can_use_v1: canUseV1,
 			can_use_v2: canUseV2,
 		},
 	};
@@ -303,6 +303,7 @@ const sharedLegacyCloudAgent = {
 
 const railHostedEnvironmentId = "88888888-8888-4888-8888-888888888888";
 const railConnectedEnvironmentId = "99999999-9999-4999-8999-999999999999";
+const railLegacyEnvironmentId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const railHostedDeployment = {
 	...includedBasicDeployment,
 	id: "hdep_rail_cloud",
@@ -329,6 +330,15 @@ const railHostedCloudAgent = {
 	machine_name: "rail-cloud.local",
 	display_name: "Rail Cloud projection",
 	sort_order: 0,
+};
+const railLegacyCloudAgent = {
+	...sharedLegacyCloudAgent,
+	id: railLegacyEnvironmentId,
+	name: "rail-legacy",
+	default_name: "Rail Legacy",
+	machine_name: "rail-legacy.local",
+	display_name: "Rail Legacy",
+	sort_order: 2,
 };
 
 const interruptedIdentitylessDeployment = {
@@ -817,6 +827,7 @@ type HostedApiStubOptions = {
 	billingHistoryRequests?: string[];
 	billingHistoryResponses?: unknown[];
 	canCreateCloudAgents?: boolean;
+	canUseLegacyHostedDashboard?: boolean;
 	productAccessRequests?: string[];
 	cancelRequests?: string[];
 	cancelResponses?: StubResponse[];
@@ -849,6 +860,7 @@ type HostedApiStubOptions = {
 	ledgerResponseForRequest?: (limit: number) => unknown;
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
+	legacyAgentEnvironmentIds?: readonly string[];
 	managedModels?: typeof managedModelCatalog;
 	planRequests?: string[];
 	mutationOrder?: string[];
@@ -942,7 +954,18 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/me" || p === "/v1/me") {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
-			return fulfillJson(r, hostedUser(options.canCreateCloudAgents ?? true));
+			return fulfillJson(
+				r,
+				hostedUser(
+					options.canCreateCloudAgents ?? true,
+					options.canUseLegacyHostedDashboard ?? false,
+				),
+			);
+		}
+		if (p === "/v1/agent-environments") {
+			return fulfillJson(r, {
+				environment_ids: options.legacyAgentEnvironmentIds ?? [],
+			});
 		}
 		if (p === "/v2/subscription/plans") {
 			options.planRequests?.push(r.request().url());
@@ -1355,7 +1378,13 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/v1/me") {
 			options.productAccessRequests?.push(`CLOUD ${p}`);
-			return fulfillJson(r, hostedUser(options.canCreateCloudAgents ?? true));
+			return fulfillJson(
+				r,
+				hostedUser(
+					options.canCreateCloudAgents ?? true,
+					options.canUseLegacyHostedDashboard ?? false,
+				),
+			);
 		}
 		if (p === "/v1/agents") {
 			return options.cloudAgentsResponse
@@ -1494,6 +1523,158 @@ async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: str
 	expect(box?.height, `${label} height`).toBeGreaterThan(0);
 }
 
+async function expectCenterHitTarget(locator: ReturnType<Page["locator"]>, label: string) {
+	const snapshot = await locator.evaluate((target) => {
+		const describe = (element: Element) => {
+			const style = getComputedStyle(element);
+			return {
+				tag: element.tagName.toLowerCase(),
+				id: element.id,
+				className: typeof element.className === "string" ? element.className : "",
+				slot: element.getAttribute("data-slot"),
+				testId: element.getAttribute("data-testid"),
+				pointerEvents: style.pointerEvents,
+				cursor: style.cursor,
+				position: style.position,
+				zIndex: style.zIndex,
+				opacity: style.opacity,
+				transform: style.transform,
+				isolation: style.isolation,
+			};
+		};
+		const rect = target.getBoundingClientRect();
+		const point = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+		const topmost = document.elementFromPoint(point.x, point.y);
+		const stack = document.elementsFromPoint(point.x, point.y);
+		const ancestors: ReturnType<typeof describe>[] = [];
+		for (let element: Element | null = target; element; element = element.parentElement) {
+			ancestors.push(describe(element));
+		}
+		return {
+			rect: {
+				left: rect.left,
+				top: rect.top,
+				width: rect.width,
+				height: rect.height,
+			},
+			point,
+			target: describe(target),
+			topmost: topmost ? describe(topmost) : null,
+			targetContainsTopmost: Boolean(topmost && (topmost === target || target.contains(topmost))),
+			stack: stack.slice(0, 12).map(describe),
+			ancestors,
+		};
+	});
+
+	expect(snapshot.rect.width, `${label} width`).toBeGreaterThan(0);
+	expect(snapshot.rect.height, `${label} height`).toBeGreaterThan(0);
+	expect(
+		snapshot.targetContainsTopmost,
+		`${label} center hit ${JSON.stringify(snapshot, null, 2)}`,
+	).toBe(true);
+	return snapshot;
+}
+
+async function expectNoDragCursor(locator: ReturnType<Page["locator"]>, label: string) {
+	const cursor = await locator.evaluate((element) => getComputedStyle(element).cursor);
+	expect(["grab", "grabbing"], `${label} cursor`).not.toContain(cursor);
+	return cursor;
+}
+
+type NativeClickRecord = {
+	phase: "capture" | "bubble" | "window-bubble";
+	defaultPrevented: boolean;
+	target: string;
+	interactive: string | null;
+};
+
+async function installNativeClickProbe(page: Page) {
+	const records: NativeClickRecord[] = [];
+	await page.exposeFunction("recordRailNativeClick", (record: NativeClickRecord) => {
+		records.push(record);
+	});
+	await page.addInitScript(() => {
+		const describe = (element: Element | null) => {
+			if (!element) return null;
+			const name =
+				element.getAttribute("aria-label") ??
+				element.getAttribute("data-testid") ??
+				element.textContent?.trim().slice(0, 80) ??
+				"";
+			return `${element.tagName.toLowerCase()}${name ? `[${name}]` : ""}`;
+		};
+		const record = (phase: NativeClickRecord["phase"], event: MouseEvent) => {
+			const target = event.target instanceof Element ? event.target : null;
+			const clickRecord: NativeClickRecord = {
+				phase,
+				defaultPrevented: event.defaultPrevented,
+				target: describe(target) ?? "unknown",
+				interactive: describe(target?.closest("a,button") ?? null),
+			};
+			const sink = Reflect.get(window, "recordRailNativeClick");
+			if (typeof sink === "function") sink(clickRecord);
+		};
+		document.addEventListener("click", (event) => record("capture", event), true);
+		document.addEventListener("click", (event) => record("bubble", event));
+		window.addEventListener("click", (event) => record("window-bubble", event));
+	});
+	return {
+		records,
+		reset: () => {
+			records.length = 0;
+		},
+	};
+}
+
+function expectNativeClickReachedDocument(
+	records: NativeClickRecord[],
+	label: string,
+	windowBubbleDefaultPrevented: boolean,
+) {
+	expect(records, `${label} native click trace`).toEqual([
+		expect.objectContaining({ phase: "capture", defaultPrevented: false }),
+		expect.objectContaining({ phase: "bubble" }),
+		expect.objectContaining({
+			phase: "window-bubble",
+			defaultPrevented: windowBubbleDefaultPrevented,
+		}),
+	]);
+	return records;
+}
+
+async function documentCaptureClickListeners(page: Page) {
+	const session = await page.context().newCDPSession(page);
+	try {
+		const response = await session.send("Runtime.evaluate", {
+			expression: `(() => (getEventListeners(document).click ?? []).map((entry) => ({
+				useCapture: entry.useCapture,
+				passive: entry.passive,
+				once: entry.once,
+				listener: String(entry.listener),
+			})))()`,
+			includeCommandLineAPI: true,
+			returnByValue: true,
+		});
+		const value = response.result.value;
+		if (!Array.isArray(value)) {
+			throw new Error("CDP did not return the document click listener list.");
+		}
+		return value.flatMap((entry) => {
+			if (typeof entry !== "object" || entry === null) return [];
+			return [
+				{
+					useCapture: Reflect.get(entry, "useCapture") === true,
+					passive: Reflect.get(entry, "passive") === true,
+					once: Reflect.get(entry, "once") === true,
+					listener: String(Reflect.get(entry, "listener") ?? ""),
+				},
+			];
+		});
+	} finally {
+		await session.detach();
+	}
+}
+
 async function gotoHostedAgentSettings(
 	page: Page,
 	deploymentId: string,
@@ -1589,14 +1770,14 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 
 	await consoleLink.click();
 	await expect(page).toHaveURL("/");
-	await page.goto("/");
 	await cloudButton.click();
 	await expect(page).toHaveURL(
 		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
 	);
-	await page.goto("/");
 	await connectedButton.click();
 	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+	await consoleLink.click();
+	await expect(page).toHaveURL("/");
 
 	await page.goto("/");
 	await connectedButton.focus();
@@ -1629,9 +1810,242 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(touchOrderRequests).toEqual([]);
 });
 
+test("production rail tile shapes expose their real activation state", async ({ page }) => {
+	await stubHostedApi(page, {
+		canUseLegacyHostedDashboard: true,
+		legacyAgentEnvironmentIds: [railLegacyEnvironmentId],
+		deployments: [
+			railHostedDeployment,
+			runningMissingProjectionDeployment,
+			interruptedIdentitylessDeployment,
+		],
+		cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent, railLegacyCloudAgent],
+	});
+
+	await page.goto("/");
+	const rail = page.getByTestId("app-sidebar-agent-rail");
+	const matchedCloud = rail.getByRole("button", { name: "Rail Cloud", exact: true });
+	const missingProjection = rail.getByRole("button", {
+		name: "Running projection agent",
+		exact: true,
+	});
+	const identityless = rail.getByRole("button", {
+		name: "Interrupted deployment",
+		exact: true,
+	});
+	const legacy = rail.getByRole("button", { name: /Rail Legacy/ });
+	const connected = rail.getByRole("button", { name: /Rail Connected/ });
+
+	for (const interactive of [matchedCloud, missingProjection, legacy, connected]) {
+		await expect(interactive).toBeEnabled();
+		await expect(interactive).not.toHaveAttribute("aria-disabled", "true");
+		await expectNoDragCursor(interactive, "interactive production tile");
+	}
+	await expect(matchedCloud).toHaveAttribute("aria-roledescription", "sortable");
+	await expect(legacy).toHaveAttribute("aria-roledescription", "sortable");
+	await expect(connected).toHaveAttribute("aria-roledescription", "sortable");
+	await expect(missingProjection).not.toHaveAttribute("aria-roledescription", "sortable");
+	await expect(identityless).toBeDisabled();
+	await expect(identityless).toHaveAttribute("aria-disabled", "true");
+	await expect(identityless).not.toHaveAttribute("aria-roledescription", "sortable");
+	await expectNoDragCursor(identityless, "identity-less disabled production tile");
+
+	await matchedCloud.click();
+	await expect(page).toHaveURL(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
+	);
+	await page.goto("/");
+	await missingProjection.click();
+	await expect(page).toHaveURL(
+		`/agents/${missingProjectionEnvironmentId}?source=on-clawdi&d=hdep_running_projection`,
+	);
+	await page.goto("/");
+	await legacy.click();
+	await expect(page).toHaveURL(`/agents/${railLegacyEnvironmentId}`);
+	await page.goto("/");
+	await connected.click();
+	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+});
+
+test("transient inventory withholds connected tiles until membership resolves", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
+		deploymentsResponse: {
+			status: 200,
+			delayMs: 1_000,
+			body: [mutationDeploymentReadFixture(railHostedDeployment)],
+		},
+	});
+
+	await page.goto("/");
+	const rail = page.getByTestId("app-sidebar-agent-rail");
+	await expect(rail.getByRole("button", { name: /Rail Connected/ })).toHaveCount(0);
+	await expect(rail.getByRole("button", { name: "Rail Cloud", exact: true })).toBeVisible();
+	await expect(rail.getByRole("button", { name: /Rail Connected/ })).toBeVisible();
+});
+
+test("Cloud detail keeps the focus rail clickable across responsive and zoom states", async ({
+	browser,
+	baseURL,
+}) => {
+	test.setTimeout(240_000);
+	if (!baseURL) throw new Error("Playwright baseURL is required for the focus rail test.");
+	const cases = [
+		{
+			name: "desktop",
+			viewport: { width: 1280, height: 720 },
+			deviceScaleFactor: 1,
+			pageScaleFactor: 1,
+			mobile: false,
+		},
+		{
+			name: "responsive desktop edge",
+			viewport: { width: 768, height: 720 },
+			deviceScaleFactor: 1,
+			pageScaleFactor: 1,
+			mobile: false,
+		},
+		{
+			name: "125 percent page scale",
+			viewport: { width: 1024, height: 720 },
+			deviceScaleFactor: 1,
+			pageScaleFactor: 1.25,
+			mobile: false,
+		},
+		{
+			name: "mobile sheet",
+			viewport: { width: 390, height: 844 },
+			deviceScaleFactor: 3,
+			pageScaleFactor: 1,
+			mobile: true,
+		},
+	] as const;
+
+	for (const testCase of cases) {
+		const context = await browser.newContext({
+			baseURL,
+			viewport: testCase.viewport,
+			deviceScaleFactor: testCase.deviceScaleFactor,
+		});
+		const page = await context.newPage();
+		try {
+			const clickProbe = await installNativeClickProbe(page);
+			await stubHostedApi(page, {
+				deployments: [railHostedDeployment],
+				cloudAgents: [railHostedCloudAgent, railConnectedCloudAgent],
+			});
+			const openRail = async () => {
+				if (testCase.mobile) {
+					await expect(page.getByTestId("app-sidebar-agent-rail")).toHaveCount(0);
+					const mobileRail = page.getByRole("navigation", { name: "Focus rail" });
+					if (!(await mobileRail.isVisible())) {
+						await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+					}
+				}
+				const rail = testCase.mobile
+					? page.getByRole("navigation", { name: "Focus rail" })
+					: page.getByTestId("app-sidebar-agent-rail");
+				await expect(rail, `${testCase.name} focus rail`).toBeVisible();
+				if (testCase.mobile) {
+					await expect
+						.poll(async () => (await rail.boundingBox())?.x ?? Number.NEGATIVE_INFINITY)
+						.toBeGreaterThanOrEqual(0);
+				}
+				return rail;
+			};
+			const expectMobileRailClosed = async (rail: ReturnType<Page["locator"]>) => {
+				if (testCase.mobile) await expect(rail).not.toBeVisible();
+			};
+
+			await page.goto("/agents");
+			if (testCase.pageScaleFactor !== 1) {
+				const cdp = await context.newCDPSession(page);
+				await cdp.send("Emulation.setPageScaleFactor", {
+					pageScaleFactor: testCase.pageScaleFactor,
+				});
+				await cdp.detach();
+				await expect
+					.poll(() => page.evaluate(() => window.visualViewport?.scale ?? 1))
+					.toBeCloseTo(testCase.pageScaleFactor, 2);
+			}
+			let rail = await openRail();
+			let consoleLink = rail.getByRole("link", { name: "Console", exact: true });
+			let cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
+			let connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
+			await expectCenterHitTarget(consoleLink, `${testCase.name} Console before Cloud detail`);
+			await expectCenterHitTarget(
+				connectedButton,
+				`${testCase.name} connected before Cloud detail`,
+			);
+			await expectNoDragCursor(cloudButton, `${testCase.name} Cloud at rest`);
+			await expectNoDragCursor(connectedButton, `${testCase.name} connected at rest`);
+
+			clickProbe.reset();
+			await cloudButton.click();
+			await expect(page).toHaveURL(
+				`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
+			);
+			await expect(page.getByRole("heading", { name: "Overview", exact: true })).toBeVisible();
+			expectNativeClickReachedDocument(clickProbe.records, `${testCase.name} Cloud click`, false);
+			await expectMobileRailClosed(rail);
+
+			rail = await openRail();
+			consoleLink = rail.getByRole("link", { name: "Console", exact: true });
+			connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
+			await expectCenterHitTarget(consoleLink, `${testCase.name} Console after Cloud detail`);
+			await expectCenterHitTarget(connectedButton, `${testCase.name} connected after Cloud detail`);
+			await expectNoDragCursor(connectedButton, `${testCase.name} connected after Cloud detail`);
+			clickProbe.reset();
+			await connectedButton.click();
+			await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+			expectNativeClickReachedDocument(
+				clickProbe.records,
+				`${testCase.name} Cloud to connected click`,
+				false,
+			);
+			await expectMobileRailClosed(rail);
+
+			rail = await openRail();
+			consoleLink = rail.getByRole("link", { name: "Console", exact: true });
+			clickProbe.reset();
+			await consoleLink.click();
+			await expect(page).toHaveURL("/");
+			expectNativeClickReachedDocument(clickProbe.records, `${testCase.name} Console click`, true);
+			await expectMobileRailClosed(rail);
+
+			// Exercise the direct Cloud -> Console transition separately from the
+			// Cloud -> connected -> Console sequence above.
+			rail = await openRail();
+			cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
+			await cloudButton.click();
+			await expect(page).toHaveURL(
+				`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
+			);
+			await expectMobileRailClosed(rail);
+			rail = await openRail();
+			consoleLink = rail.getByRole("link", { name: "Console", exact: true });
+			await expectCenterHitTarget(consoleLink, `${testCase.name} direct Cloud to Console`);
+			clickProbe.reset();
+			await consoleLink.click();
+			await expect(page).toHaveURL("/");
+			expectNativeClickReachedDocument(
+				clickProbe.records,
+				`${testCase.name} direct Cloud to Console click`,
+				true,
+			);
+			await expectMobileRailClosed(rail);
+		} finally {
+			await context.close();
+		}
+	}
+});
+
 test("whole agent tile mouse drag reorders without navigation", async ({ page, baseURL }) => {
 	if (!baseURL) throw new Error("Playwright baseURL is required for the hosted rail test.");
 	const agentOrderRequests: string[] = [];
+	const clickProbe = await installNativeClickProbe(page);
 	await stubHostedApi(page, {
 		agentOrderRequests,
 		deployments: [railHostedDeployment],
@@ -1642,25 +2056,61 @@ test("whole agent tile mouse drag reorders without navigation", async ({ page, b
 	const rail = page.getByTestId("app-sidebar-agent-rail");
 	const connectedButton = rail.getByRole("button", { name: /Rail Connected/ });
 	const cloudButton = rail.getByRole("button", { name: "Rail Cloud", exact: true });
-	const sourceBox = await connectedButton.boundingBox();
-	const targetBox = await cloudButton.boundingBox();
-	if (!sourceBox || !targetBox) throw new Error("Hosted rail agent buttons should render.");
+	const clickSuppressors = async () =>
+		(await documentCaptureClickListeners(page)).filter(
+			(listener) => listener.useCapture && listener.listener.includes("stopPropagation"),
+		);
+	const dragTile = async (
+		source: ReturnType<Page["locator"]>,
+		target: ReturnType<Page["locator"]>,
+		label: string,
+	) => {
+		const sourceBox = await source.boundingBox();
+		const targetBox = await target.boundingBox();
+		if (!sourceBox || !targetBox) throw new Error(`${label} agent buttons should render.`);
+		const suppressorsBefore = await clickSuppressors();
+		await expectNoDragCursor(source, `${label} before drag`);
+		await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+		await page.mouse.down();
+		await expectNoDragCursor(source, `${label} while pressed`);
+		await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+			steps: 10,
+		});
+		await expect(source).toHaveAttribute("aria-pressed", "true");
+		await expectNoDragCursor(source, `${label} while dragging`);
+		expect(await clickSuppressors()).toHaveLength(suppressorsBefore.length + 1);
+		await page.mouse.up();
+		expect(page.url()).toBe(new URL("/", baseURL).href);
+		await expect.poll(async () => (await clickSuppressors()).length).toBe(suppressorsBefore.length);
+		await expectNoDragCursor(source, `${label} after drag`);
+	};
 
-	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
-	await page.mouse.down();
-	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
-		steps: 10,
-	});
-	await page.mouse.up();
-	expect(page.url()).toBe(new URL("/", baseURL).href);
+	await dragTile(connectedButton, cloudButton, "connected");
 
+	await expectCenterHitTarget(connectedButton, "connected agent after mouse drag");
+	clickProbe.reset();
 	await connectedButton.click();
 	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
+	expectNativeClickReachedDocument(clickProbe.records, "connected agent after mouse drag", false);
 	await expect.poll(() => agentOrderRequests.length).toBe(1);
 	expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
 		agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
 	});
 	await expect(rail.getByTestId("app-sidebar-agent-tile").nth(0)).toContainText("Rail Connected");
+
+	await page.goto("/");
+	await dragTile(cloudButton, connectedButton, "Cloud");
+	await expectCenterHitTarget(cloudButton, "Cloud agent after mouse drag");
+	clickProbe.reset();
+	await cloudButton.click();
+	await expect(page).toHaveURL(
+		`/agents/${railHostedEnvironmentId}?source=on-clawdi&d=hdep_rail_cloud`,
+	);
+	expectNativeClickReachedDocument(clickProbe.records, "Cloud agent after mouse drag", false);
+	await expect.poll(() => agentOrderRequests.length).toBe(2);
+	expect(JSON.parse(agentOrderRequests[1] ?? "{}")).toEqual({
+		agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
+	});
 });
 
 test("whole agent tile preserves touch scroll intent and supports long-press drag", async ({
@@ -1724,6 +2174,7 @@ test("whole agent tile preserves touch scroll intent and supports long-press dra
 		};
 		await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [source] });
 		await expect(connectedButton).toHaveAttribute("aria-pressed", "true");
+		await expectNoDragCursor(connectedButton, "connected touch tile while dragging");
 		for (let step = 1; step <= 10; step += 1) {
 			await cdp.send("Input.dispatchTouchEvent", {
 				type: "touchMove",
@@ -1741,6 +2192,9 @@ test("whole agent tile preserves touch scroll intent and supports long-press dra
 		expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
 			agent_ids: [railConnectedEnvironmentId, railHostedEnvironmentId],
 		});
+		await expectNoDragCursor(connectedButton, "connected touch tile after drag");
+		await connectedButton.tap();
+		await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}`);
 	} finally {
 		await context.close();
 	}

@@ -33,6 +33,7 @@ import {
 	agentDeploymentSelector,
 	agentSectionHref,
 	isAcceptedHostedAgentRoute,
+	parseAgentPathname,
 } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -55,8 +56,10 @@ export function AgentHome({
 	section: AgentSectionId;
 }) {
 	const router = useRouter();
+	const pathname = useLocation({ select: (location) => location.pathname });
 	const searchStr = useLocation({ select: (location) => location.searchStr });
 	const searchParams = new URLSearchParams(searchStr);
+	const locationAgentId = parseAgentPathname(pathname)?.agentId ?? null;
 	const deploymentSelector = agentDeploymentSelector(searchParams);
 	const {
 		deployment,
@@ -84,9 +87,11 @@ export function AgentHome({
 
 	// Canonicalize a resolved hosted route with its deployment selector before
 	// Stop removes the env mapping. The selector is then sufficient to retain
-	// detail ownership while the cloud-agent projection is absent.
+	// detail ownership while the cloud-agent projection is absent. During a
+	// pending route transition, the old match can briefly render against the new
+	// location. Only that location's owner may canonicalize it.
 	useEffect(() => {
-		if (!deployment || deploymentSelector) return;
+		if (locationAgentId !== environmentId || !deployment || deploymentSelector) return;
 		const query = new URLSearchParams(searchStr);
 		query.set("source", "on-clawdi");
 		query.set(AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, deployment.resource.id);
@@ -94,7 +99,7 @@ export function AgentHome({
 			href: agentSectionHref(environmentId, section, query),
 			replace: true,
 		});
-	}, [deployment, deploymentSelector, environmentId, router, searchStr, section]);
+	}, [deployment, deploymentSelector, environmentId, locationAgentId, router, searchStr, section]);
 
 	useEffect(() => {
 		isFetchingRef.current = isFetching;
