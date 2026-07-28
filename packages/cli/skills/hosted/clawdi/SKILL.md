@@ -18,12 +18,35 @@ session. Do not use a generic web fetcher for Clawdi share URLs.
 
 ## Connectors
 
-Connected-service tools are registered dynamically from the user's Clawdi Cloud account.
-They can include Gmail, GitHub, Notion, Drive, Calendar, and other services.
+Use the Composio Tool Router meta-tools returned by `tools/list` on the `clawdi` MCP server.
+Treat their live names and schemas as authoritative; never assume a fixed meta-tool set.
 
-- Treat the tools as already authenticated for this runtime.
-- If a call reports that no account is connected, ask the user to connect that service in
-  the Clawdi Cloud dashboard.
-- Download files returned as signed URLs before processing them.
-- Confirm with the user before side-effecting actions such as sending mail or creating an
-  issue.
+1. Start each external-app workflow with `COMPOSIO_SEARCH_TOOLS`. Follow its exposed
+   `queries` and `session` schema, reuse the returned session ID throughout that workflow,
+   and use only the exact toolkit and tool slugs it returns. If a required schema is absent
+   or incomplete, call `COMPOSIO_GET_TOOL_SCHEMAS`; never invent fields or inputs.
+2. Before a side effect, require a complete target identity and all schema-required inputs.
+   Explicit intent authorizes the exact requested action and target, but never authorizes
+   guessing a missing recipient, account, resource, or other target. Ask only for what is
+   missing, and do not request redundant confirmation once the exact action is authorized.
+3. When search reports no active connection, call `COMPOSIO_MANAGE_CONNECTIONS` with its
+   exposed schema and interpret only the fields it returns. Continue on `active`. On
+   `initiated`, present its non-empty `redirect_url` as a clickable authentication link with
+   a concise explanation that authorization is pending; the link URL must be exactly that
+   value. If `initiated` has no non-empty `redirect_url`, report that authorization cannot
+   continue and stop. On `failed`, report the returned error and stop. Never construct a
+   substitute link, ask for OAuth credentials, API keys, or tokens, or suggest an
+   out-of-band fallback.
+4. Use a wait or status operation only when `tools/list` exposes one. Follow its actual schema
+   and status values without inventing polling arguments. Continue only when it reports an
+   active connection; keep waiting only for a non-terminal status its schema defines, and
+   report any terminal failure. If none is exposed, stop until the user reports completing
+   authorization, then re-run search to verify the active connection before continuing.
+5. Execute exact returned slugs through `COMPOSIO_MULTI_EXECUTE_TOOL` with schema-compliant
+   arguments. Batch only independent calls. Keep ordinary results inline. Set
+   `sync_response_to_workbench` only when a result may be large or needs later remote
+   processing; use `COMPOSIO_REMOTE_WORKBENCH` / `COMPOSIO_REMOTE_BASH_TOOL` only for large
+   responses saved remotely or remote artifacts.
+6. Preserve dependencies and returned semantics. Follow signed-file metadata, pagination
+   fields, and termination signals exactly as exposed. Select an account only when the schema
+   supports it, and use additional or future meta-tools only according to their live schemas.
