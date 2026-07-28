@@ -243,7 +243,7 @@ Local self-hosting currently expects:
 - Python 3.12, uv for dependency sync, and PDM for backend scripts
 - PostgreSQL 16 with `pg_trgm` and `pgvector`
 - Clerk keys for dashboard auth
-- Two generated encryption keys for vault data and MCP bridge JWTs
+- Two generated encryption keys for vault data and backend security material
 - **One backend process** until v1.5. The `clawdi daemon` realtime SSE fan-out lives in process memory (`backend/app/services/sync_events.py`), so a broadcast on worker A doesn't reach a daemon attached to worker B. Run a single uvicorn worker (or one gunicorn worker with `--workers 1`) behind your reverse proxy. Multi-process fan-out via Postgres LISTEN/NOTIFY ships in v1.5.
 
 See [`backend/.env.example`](backend/.env.example) and [`apps/web/.env.example`](apps/web/.env.example) for the exact environment variables.

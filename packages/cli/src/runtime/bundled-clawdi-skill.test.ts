@@ -4,7 +4,10 @@ import { resolve } from "node:path";
 
 const cliRoot = resolve(import.meta.dir, "../..");
 const genericSkill = readFileSync(resolve(cliRoot, "skills/clawdi/SKILL.md"), "utf-8");
-const hostedSkill = readFileSync(resolve(cliRoot, "skills/hosted/clawdi/SKILL.md"), "utf-8");
+const hostedSkill = readFileSync(
+	resolve(cliRoot, "skills/hosted-versions/1/clawdi/SKILL.md"),
+	"utf-8",
+);
 
 function section(content: string, heading: string): string {
 	const marker = `## ${heading}`;

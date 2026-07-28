@@ -166,6 +166,55 @@ def test_hosted_mcp_and_egress_share_canonical_secret_ref_semantics(
         HostedEgressProfiles.model_validate(egress)
 
 
+@pytest.mark.parametrize(
+    "header_name",
+    [
+        "Authorization",
+        "aUtHoRiZaTiOn",
+        "Proxy-Authorization",
+        "COOKIE",
+        "X-API-Key",
+        "X-Client-Token",
+        "X-Service-Secret",
+        "X-Access-Credential",
+    ],
+)
+def test_hosted_mcp_rejects_literal_credential_headers(header_name: str) -> None:
+    with pytest.raises(ValidationError, match="must use secretRef"):
+        HostedRuntimeMcp.model_validate(
+            {
+                "servers": {
+                    "remote": {
+                        "url": "https://mcp.example.test/server",
+                        "transport": "streamable-http",
+                        "headers": {header_name: "literal-value"},
+                    }
+                }
+            }
+        )
+
+
+def test_hosted_mcp_accepts_public_literals_and_secret_ref_credentials() -> None:
+    HostedRuntimeMcp.model_validate(
+        {
+            "servers": {
+                "remote": {
+                    "url": "https://mcp.example.test/server",
+                    "transport": "streamable-http",
+                    "headers": {
+                        "Accept": "application/json",
+                        "X-Client-Version": "2026-07-28",
+                        "Authorization": {
+                            "secretRef": "secret://mcp.remote.token",
+                            "prefix": "Bearer ",
+                        },
+                    },
+                }
+            }
+        }
+    )
+
+
 async def _create_bundle_runtime(admin_client, db_session, seed_user):
     env = await create_env_with_project(
         db_session,
@@ -2580,6 +2629,121 @@ async def test_runtime_manifest_generation_advance_changes_etag_and_returns_gene
     assert not_modified.json()["manifest"]["generation"] == 8
 
 
+@pytest.mark.asyncio
+async def test_skill_version_expand_rollout_preserves_generation_identity(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"skill-version-rollout-{uuid4().hex[:8]}",
+        machine_name="Skill version rollout",
+        agent_type="openclaw",
+    )
+    environment_id = env.id
+    initial = await _write_runtime_state(
+        admin_client,
+        str(environment_id),
+        generation=7,
+        skills={"entries": {"clawdi": {"enabled": True, "version": 1}}},
+    )
+    state = await db_session.get(HostedRuntimeState, environment_id)
+    assert state is not None
+    state.skills = {"entries": {"clawdi": {"enabled": True}}}
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=seed_user.id, environment_id=environment_id, label="hosted")
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        legacy = await client.get("/v1/runtime/manifest")
+    assert legacy.status_code == 200, legacy.text
+    assert legacy.json()["manifest"]["generation"] == 7
+    assert legacy.json()["manifest"]["skills"] == {"entries": {"clawdi": {"enabled": True}}}
+    legacy_etag = legacy.headers["etag"]
+
+    equal_generation = await admin_client.put(
+        f"/v1/admin/environments/{environment_id}/runtime-state",
+        headers=_AUTH,
+        json=initial,
+    )
+    assert equal_generation.status_code == 409, equal_generation.text
+    assert equal_generation.json() == {
+        "detail": {"code": "generation_conflict", "current_generation": 7}
+    }
+
+    await _write_runtime_state(
+        admin_client,
+        str(environment_id),
+        **{**initial, "generation": 8},
+    )
+    await db_session.refresh(seed_user)
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        expanded = await client.get("/v1/runtime/manifest")
+    app.dependency_overrides.clear()
+
+    assert expanded.status_code == 200, expanded.text
+    assert expanded.headers["etag"] != legacy_etag
+    assert expanded.json()["manifest"]["generation"] == 8
+    assert expanded.json()["manifest"]["skills"] == {
+        "entries": {"clawdi": {"enabled": True, "version": 1}}
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", [None, "latest", "1", True, 0, -1, 1.5])
+async def test_runtime_state_writer_rejects_invalid_skill_versions(
+    admin_client,
+    db_session,
+    seed_user,
+    version,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"invalid-skill-version-{uuid4().hex[:8]}",
+        machine_name="Invalid Skill version",
+        agent_type="openclaw",
+    )
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=_runtime_state_body(
+            str(env.id),
+            skills={"entries": {"clawdi": {"enabled": True, "version": version}}},
+        ),
+    )
+
+    assert response.status_code == 422, response.text
+    assert await db_session.get(HostedRuntimeState, env.id) is None
+
+
+@pytest.mark.asyncio
+async def test_runtime_state_writer_requires_explicit_skill_version(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"missing-skill-version-{uuid4().hex[:8]}",
+        machine_name="Missing Skill version",
+        agent_type="openclaw",
+    )
+    response = await admin_client.put(
+        f"/v1/admin/environments/{env.id}/runtime-state",
+        headers=_AUTH,
+        json=_runtime_state_body(
+            str(env.id),
+            skills={"entries": {"clawdi": {"enabled": True}}},
+        ),
+    )
+
+    assert response.status_code == 422, response.text
+    assert await db_session.get(HostedRuntimeState, env.id) is None
+
+
 def _clear_optional_runtime_state(body: dict, clear_mode: str) -> dict:
     cleared = dict(body)
     if clear_mode == "omitted":
@@ -2613,7 +2777,7 @@ async def test_admin_runtime_state_clears_optional_state(
         egress_engine=TEST_EGRESS_ENGINE_PIN,
         egress_profiles=TEST_EGRESS_PROFILES,
         mcp={"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
-        skills={"entries": {"clawdi": {"enabled": True}}},
+        skills={"entries": {"clawdi": {"enabled": True, "version": 1}}},
         tools={**TEST_CODEX_TOOLS, "catalog": "clawdi-default"},
     )
     update = _clear_optional_runtime_state({**initial, "generation": 8}, clear_mode)
@@ -2656,7 +2820,7 @@ async def test_equal_generation_optional_state_clear_is_material_conflict(
         egress_engine=TEST_EGRESS_ENGINE_PIN,
         egress_profiles=TEST_EGRESS_PROFILES,
         mcp={"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
-        skills={"entries": {"clawdi": {"enabled": True}}},
+        skills={"entries": {"clawdi": {"enabled": True, "version": 1}}},
         tools={**TEST_CODEX_TOOLS, "catalog": "clawdi-default"},
     )
     environment_id = env.id
@@ -2676,7 +2840,7 @@ async def test_equal_generation_optional_state_clear_is_material_conflict(
     assert state.egress_engine == TEST_EGRESS_ENGINE_PIN
     assert state.egress_profiles == TEST_EGRESS_PROFILES
     assert state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
-    assert state.skills == {"entries": {"clawdi": {"enabled": True}}}
+    assert state.skills == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
     assert state.tools == {**TEST_CODEX_TOOLS, "catalog": "clawdi-default"}
 
 
@@ -2720,7 +2884,7 @@ async def test_runtime_manifest_projects_mcp_skills_and_tools_desired_state(
         str(env.id),
         cli_package_spec=TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC,
         mcp={"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
-        skills={"entries": {"clawdi": {"enabled": True}}},
+        skills={"entries": {"clawdi": {"enabled": True, "version": 1}}},
         tools={
             **TEST_CODEX_TOOLS,
             "catalog": "clawdi-default",
@@ -2736,7 +2900,7 @@ async def test_runtime_manifest_projects_mcp_skills_and_tools_desired_state(
     assert response.status_code == 200, response.text
     manifest = response.json()["manifest"]
     assert manifest["mcp"] == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
-    assert manifest["skills"] == {"entries": {"clawdi": {"enabled": True}}}
+    assert manifest["skills"] == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
     assert manifest["tools"] == {
         "catalog": "clawdi-default",
         "enabled": ["memory", "connectors"],
@@ -2746,7 +2910,7 @@ async def test_runtime_manifest_projects_mcp_skills_and_tools_desired_state(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_preserves_opaque_mcp_desired_state(
+async def test_runtime_manifest_rejects_persisted_mcp_without_servers(
     admin_client,
     db_session,
     seed_user,
@@ -2758,19 +2922,19 @@ async def test_runtime_manifest_preserves_opaque_mcp_desired_state(
         machine_name="Opaque runtime MCP",
         agent_type="openclaw",
     )
-    legacy_mcp = {"future": True}
-    await _write_runtime_state(admin_client, str(env.id), mcp=legacy_mcp)
+    await _write_runtime_state(admin_client, str(env.id), mcp={"servers": {}})
 
     state = await db_session.get(HostedRuntimeState, env.id)
     assert state is not None
-    assert state.mcp == legacy_mcp
+    state.mcp = {"future": True}
+    await db_session.commit()
     api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="hosted")
     async with await _runtime_client(db_session, seed_user, api_key) as client:
         response = await client.get("/v1/runtime/manifest")
     app.dependency_overrides.clear()
 
-    assert response.status_code == 200, response.text
-    assert response.json()["manifest"]["mcp"] == legacy_mcp
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"] == "Hosted runtime MCP or skills state is invalid"
 
 
 @pytest.mark.asyncio
@@ -3433,8 +3597,11 @@ async def test_admin_runtime_state_rejects_removed_bridge_field(
                 }
             },
         ),
-        ("skills", {"entries": {"clawdi": {"enabled": True, "token": "secret"}}}),
-        ("skills", {"entries": {"bad name": {"enabled": True}}}),
+        (
+            "skills",
+            {"entries": {"clawdi": {"enabled": True, "version": 1, "token": "secret"}}},
+        ),
+        ("skills", {"entries": {"bad name": {"enabled": True, "version": 1}}}),
         ("tools", {"connectors": [{"apiKey": "secret"}]}),
     ],
 )
@@ -3659,7 +3826,7 @@ async def test_runtime_bundle_revision_tracks_projected_and_secret_changes_only(
         await db_session.commit()
         irrelevant = await fetch(client)
         state.mcp = {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
-        state.skills = {"entries": {"clawdi": {"enabled": True}}}
+        state.skills = {"entries": {"clawdi": {"enabled": True, "version": 1}}}
         await db_session.commit()
         integrations_enabled = await fetch(client)
         provider.base_url = "https://rotated-provider.test/v1"
@@ -3705,7 +3872,7 @@ async def test_runtime_bundle_revision_tracks_projected_and_secret_changes_only(
         "servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}
     }
     assert integrations_enabled.json()["manifest"]["skills"] == {
-        "entries": {"clawdi": {"enabled": True}}
+        "entries": {"clawdi": {"enabled": True, "version": 1}}
     }
     assert identity(projected) != identity(integrations_enabled)
     assert identity(key_rotated) != identity(projected)

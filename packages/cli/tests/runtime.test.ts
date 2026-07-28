@@ -1923,7 +1923,7 @@ describe("runtime manifest datasource", () => {
 							mcp: {
 								servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
 							},
-							skills: { entries: { clawdi: { enabled: true } } },
+							skills: { entries: { clawdi: { enabled: true, version: 1 } } },
 							tools: { catalog: "clawdi-default" },
 						},
 						secretValues: {
@@ -1951,7 +1951,7 @@ describe("runtime manifest datasource", () => {
 				servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
 			});
 			expect(loaded.manifest.projection?.skills).toEqual({
-				entries: { clawdi: { enabled: true } },
+				entries: { clawdi: { enabled: true, version: 1 } },
 			});
 			expect(loaded.manifest.projection?.tools).toEqual({ catalog: "clawdi-default" });
 			expect(loaded.manifest.projection?.terminalTooling).toEqual(
@@ -10518,7 +10518,7 @@ exit 64
 							},
 						},
 					},
-					skills: { entries: { clawdi: { enabled: true } } },
+					skills: { entries: { clawdi: { enabled: true, version: 1 } } },
 					tools: { catalog: "clawdi-default" },
 				},
 			}),
@@ -10567,6 +10567,17 @@ exit 64
 		expect(
 			readFileSync(join(home, ".hermes", "skills", "clawdi", "SKILL.md"), "utf-8"),
 		).not.toContain("Memory");
+		expect(
+			JSON.parse(
+				readFileSync(join(home, ".hermes", "skills", "clawdi", ".clawdi-managed.json"), "utf-8"),
+			),
+		).toEqual({
+			schema: "clawdi.hostedBundledSkillMarker.v1",
+			owner: "clawdi runtime init",
+			id: "clawdi",
+			version: 1,
+			digest: "4cbe65e0ece46784d871cddcf1169e73a61bd12994cfab1a3f66de6119d60757",
+		});
 		const mcpProjection = JSON.parse(
 			readFileSync(join(state, "config", "projections", "clawdi-mcp.json"), "utf-8"),
 		);
@@ -10585,7 +10596,7 @@ exit 64
 			},
 		});
 		expect(mcpProjection.projection.skills).toEqual({
-			entries: { clawdi: { enabled: true } },
+			entries: { clawdi: { enabled: true, version: 1 } },
 		});
 		expect(mcpProjection.projection.tools).toEqual({ catalog: "clawdi-default" });
 
@@ -10625,7 +10636,7 @@ exit 64
 				projection: {
 					system: { home, workspace },
 					mcp: { servers: {} },
-					skills: { entries: { clawdi: { enabled: false } } },
+					skills: { entries: { clawdi: { enabled: false, version: 1 } } },
 				},
 			}),
 		);
@@ -10731,7 +10742,7 @@ exit 64
 				projection: {
 					system: { home, workspace },
 					mcp: { servers },
-					skills: { entries: { clawdi: { enabled: skillEnabled } } },
+					skills: { entries: { clawdi: { enabled: skillEnabled, version: 1 } } },
 				},
 				recovery: {},
 			},
@@ -10748,6 +10759,36 @@ exit 64
 			...initialServers,
 			"search-proxy": { command: "searchctl", args: ["serve", "v2"] },
 		};
+		const loadWithSkillEntry = (
+			skillId: string,
+			entry: { enabled: boolean; version: number },
+		): RuntimeManifestLoad => {
+			const candidate = load(0, "openclaw", initialServers);
+			return {
+				...candidate,
+				manifest: {
+					...candidate.manifest,
+					projection: {
+						...candidate.manifest.projection,
+						skills: { entries: { [skillId]: entry } },
+					},
+				},
+			};
+		};
+
+		expect(() =>
+			convergeRuntimeManifest(
+				loadWithSkillEntry("unknown", { enabled: true, version: 1 }),
+				getRuntimePaths(),
+			),
+		).toThrow("no bundled hosted skill is registered for unknown");
+		expect(() =>
+			convergeRuntimeManifest(
+				loadWithSkillEntry("clawdi", { enabled: true, version: 2 }),
+				getRuntimePaths(),
+			),
+		).toThrow("no bundled hosted skill clawdi version 2 is registered");
+		expect(existsSync(ledgerPath)).toBe(false);
 
 		const initial = convergeRuntimeManifest(load(1, "openclaw", initialServers), getRuntimePaths());
 		expect(initial.installErrors).toEqual([]);

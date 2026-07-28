@@ -2272,26 +2272,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/v1/connectors/mcp-config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Mcp Config
-         * @description Get MCP bridge config for the current user.
-         */
-        get: operations["get_mcp_config_v1_connectors_mcp_config_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/v1/connectors/{app_name}/tools": {
         parameters: {
             query?: never;
@@ -4190,13 +4170,6 @@ export interface components {
              */
             status: "disconnected";
         };
-        /** ConnectorMcpConfigResponse */
-        ConnectorMcpConfigResponse: {
-            /** Mcp Url */
-            mcp_url: string;
-            /** Mcp Token */
-            mcp_token: string;
-        };
         /** ConnectorToolParametersResponse */
         ConnectorToolParametersResponse: {
             /** Properties */
@@ -5019,6 +4992,8 @@ export interface components {
         HostedRuntimeSkillEntry: {
             /** Enabled */
             enabled: boolean;
+            /** Version */
+            version: number;
         };
         /** HostedRuntimeSkills */
         HostedRuntimeSkills: {
@@ -11462,26 +11437,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_mcp_config_v1_connectors_mcp_config_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ConnectorMcpConfigResponse"];
                 };
             };
         };

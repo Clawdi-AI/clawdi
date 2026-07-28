@@ -606,6 +606,19 @@ class HostedRuntimeMcpSecretHeader(_StrictHostedWireModel):
     prefix: str = Field(default="", max_length=100)
 
 
+def _is_mcp_credential_header(name: str) -> bool:
+    normalized = name.lower()
+    if normalized in {"authorization", "proxy-authorization", "cookie"}:
+        return True
+    return (
+        re.search(
+            r"(?:^|[-_])(?:api[-_]?key|apikey|tokens?|secrets?|credentials?)(?:$|[-_])",
+            normalized,
+        )
+        is not None
+    )
+
+
 class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
     url: str = Field(min_length=1, max_length=2000)
     transport: Literal["streamable-http", "sse"]
@@ -638,6 +651,11 @@ class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
         normalized = [name.lower() for name in value]
         if len(normalized) != len(set(normalized)):
             raise ValueError("MCP header names must be unique case-insensitively")
+        if any(
+            isinstance(header_value, str) and _is_mcp_credential_header(name)
+            for name, header_value in value.items()
+        ):
+            raise ValueError("credential-bearing MCP headers must use secretRef")
         return value
 
 
@@ -662,15 +680,13 @@ def validate_hosted_runtime_mcp_desired_state(
 ) -> dict[str, object] | None:
     if value is None:
         return None
-    if "servers" in value:
-        HostedRuntimeMcp.model_validate(value)
-    else:
-        validate_no_plaintext_tool_secrets(value)
+    HostedRuntimeMcp.model_validate(value)
     return value
 
 
 class HostedRuntimeSkillEntry(_StrictHostedWireModel):
     enabled: bool
+    version: int = Field(ge=1)
 
 
 class HostedRuntimeSkills(_StrictHostedWireModel):
@@ -681,6 +697,26 @@ class HostedRuntimeSkills(_StrictHostedWireModel):
     def _validate_entry_names(
         cls, value: dict[str, HostedRuntimeSkillEntry]
     ) -> dict[str, HostedRuntimeSkillEntry]:
+        if any(_MANAGED_ENTRY_NAME_PATTERN.fullmatch(name) is None for name in value):
+            raise ValueError("skill entry names must be canonical")
+        return value
+
+
+class PersistedHostedRuntimeSkillEntry(_StrictHostedWireModel):
+    """Expand-phase reader for already-persisted enabled-only Skill intent."""
+
+    enabled: bool
+    version: int | None = Field(default=None, ge=1)
+
+
+class PersistedHostedRuntimeSkills(_StrictHostedWireModel):
+    entries: dict[str, PersistedHostedRuntimeSkillEntry]
+
+    @field_validator("entries")
+    @classmethod
+    def _validate_entry_names(
+        cls, value: dict[str, PersistedHostedRuntimeSkillEntry]
+    ) -> dict[str, PersistedHostedRuntimeSkillEntry]:
         if any(_MANAGED_ENTRY_NAME_PATTERN.fullmatch(name) is None for name in value):
             raise ValueError("skill entry names must be canonical")
         return value

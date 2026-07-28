@@ -5,7 +5,6 @@ import {
 	chmodSync,
 	chownSync,
 	constants,
-	cpSync,
 	existsSync,
 	lchownSync,
 	lstatSync,
@@ -56,6 +55,13 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState } from "./applied-state";
 import { readRuntimeApplyIdentityFromEnv, runtimeApplyIdentityEnvironment } from "./apply-identity";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
+import {
+	assertHostedBundledSkillCatalogDigest,
+	hostedBundledSkillIds,
+	isManagedHostedBundledSkill,
+	reconcileHostedBundledSkill,
+	resolveHostedBundledSkill,
+} from "./hosted-bundled-skill";
 import {
 	isClawdiManagedProviderProjection,
 	managedMcpHeaderPlaceholder,
@@ -3006,9 +3012,9 @@ function hostedMcpProjectionDeclared(manifest: RuntimeManifest): boolean {
 	return manifest.projection?.mcp !== undefined;
 }
 
-type HostedMcpIntent =
-	| { kind: "managed"; servers: Record<string, HostedMcpServerDesiredState> }
-	| { kind: "opaque" };
+interface HostedMcpIntent {
+	servers: Record<string, HostedMcpServerDesiredState>;
+}
 
 const HOSTED_RUNTIME_TARGETS = ["openclaw", "hermes"] as const satisfies readonly RuntimeName[];
 const HOSTED_MCP_LEDGER_SCHEMA_VERSION = "clawdi.hostedManagedMcpServers.v1";
@@ -3023,9 +3029,8 @@ interface HostedMcpManagedLedger {
 
 function hostedMcpIntent(manifest: RuntimeManifest): HostedMcpIntent {
 	const value = manifest.projection?.mcp;
-	if (value === undefined) return { kind: "managed", servers: {} };
-	if (!isPlainRecord(value) || !Object.hasOwn(value, "servers")) return { kind: "opaque" };
-	return { kind: "managed", servers: hostedMcpDesiredStateSchema.parse(value).servers };
+	if (value === undefined) return { servers: {} };
+	return { servers: hostedMcpDesiredStateSchema.parse(value).servers };
 }
 
 function hostedMcpLedgerPath(paths: RuntimePaths): string {
@@ -3099,10 +3104,6 @@ function writeHostedMcpManagedLedger(paths: RuntimePaths, ledger: HostedMcpManag
 	});
 }
 
-const HOSTED_BUNDLED_SKILL_MARKER = ".clawdi-managed.json";
-const HOSTED_BUNDLED_SKILL_OWNER = "clawdi runtime init";
-const HOSTED_BUNDLED_SKILL_REGISTRY = new Map([["clawdi", { assetDirectory: "hosted/clawdi" }]]);
-
 function hostedBundledSkillsEnabled(): boolean {
 	return detectRuntimeMode() === "hosted";
 }
@@ -3122,21 +3123,6 @@ function hostedBundledSkillTargetDir(name: string, skillName: string, home: stri
 	return agentSkillTargetDir(name, skillName, agentHome);
 }
 
-function isManagedHostedBundledSkill(targetDir: string, skillName: string): boolean {
-	try {
-		const marker = JSON.parse(
-			readFileSync(join(targetDir, HOSTED_BUNDLED_SKILL_MARKER), "utf-8"),
-		) as unknown;
-		return (
-			isPlainRecord(marker) &&
-			marker.managedBy === HOSTED_BUNDLED_SKILL_OWNER &&
-			marker.skillName === skillName
-		);
-	} catch {
-		return false;
-	}
-}
-
 function validateHostedBundledSkillsPlan(
 	name: string,
 	manifest: RuntimeManifest,
@@ -3144,16 +3130,12 @@ function validateHostedBundledSkillsPlan(
 ): void {
 	if (!hostedBundledSkillsEnabled()) return;
 	for (const [skillName, desired] of Object.entries(manifest.projection?.skills?.entries ?? {})) {
-		if (desired.enabled && !HOSTED_BUNDLED_SKILL_REGISTRY.has(skillName)) {
-			throw new Error(`no bundled hosted skill is registered for ${skillName}`);
-		}
-	}
-	for (const [skillName, bundled] of HOSTED_BUNDLED_SKILL_REGISTRY) {
-		const desired = manifest.projection?.skills?.entries[skillName];
+		const bundled = resolveHostedBundledSkill(skillName, desired.version);
 		const targetDir = hostedBundledSkillTargetDir(name, skillName, home);
 		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
-		if (!targetDir || !runtimeEnabled || desired?.enabled !== true) continue;
-		hostedBundledSkillSourceDir(bundled.assetDirectory);
+		if (!targetDir || !runtimeEnabled || desired.enabled !== true) continue;
+		const sourceDir = hostedBundledSkillSourceDir(bundled.assetDirectory);
+		assertHostedBundledSkillCatalogDigest(bundled, sourceDir);
 		if (existsSync(targetDir) && !isManagedHostedBundledSkill(targetDir, skillName)) {
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
 		}
@@ -3168,7 +3150,7 @@ function applyHostedBundledSkills(
 ): string[] {
 	const installEnabled = hostedBundledSkillsEnabled();
 	const targets: string[] = [];
-	for (const [skillName, bundled] of HOSTED_BUNDLED_SKILL_REGISTRY) {
+	for (const skillName of hostedBundledSkillIds()) {
 		const targetDir = hostedBundledSkillTargetDir(name, skillName, home);
 		if (!targetDir) continue;
 		targets.push(targetDir);
@@ -3184,13 +3166,14 @@ function applyHostedBundledSkills(
 		if (existsSync(targetDir) && !isManagedHostedBundledSkill(targetDir, skillName)) {
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
 		}
-		rmSync(targetDir, { recursive: true, force: true });
-		mkdirSync(dirname(targetDir), { recursive: true });
-		cpSync(hostedBundledSkillSourceDir(bundled.assetDirectory), targetDir, { recursive: true });
-		writeJsonFile(join(targetDir, HOSTED_BUNDLED_SKILL_MARKER), {
-			managedBy: HOSTED_BUNDLED_SKILL_OWNER,
-			skillName,
+		const bundled = resolveHostedBundledSkill(skillName, desired.version);
+		const result = reconcileHostedBundledSkill({
+			skillId: skillName,
+			version: desired.version,
+			sourceDir: hostedBundledSkillSourceDir(bundled.assetDirectory),
+			targetDir,
 		});
+		if (result === "unchanged") continue;
 		makeRuntimeUserOwnedAncestors(targetDir);
 		makeRuntimeUserOwned(targetDir);
 		for (const entry of readdirSync(targetDir)) makeRuntimeUserOwned(join(targetDir, entry));
@@ -3204,8 +3187,6 @@ function applyHostedMcpProjections(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 	workspaceRoot: string,
 ): string[] {
-	const intent = hostedMcpIntent(manifest);
-	if (intent.kind === "opaque") return [];
 	const plan = buildHostedMcpReconciliationPlan(manifest, paths, observations);
 	const ledgerPath = hostedMcpLedgerPath(paths);
 	const outputs = new Set<string>();
@@ -3275,9 +3256,6 @@ function buildHostedMcpReconciliationPlan(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 ): HostedMcpReconciliationPlan {
 	const intent = hostedMcpIntent(manifest);
-	if (intent.kind === "opaque") {
-		throw new Error("opaque MCP state does not have a managed reconciliation plan");
-	}
 	const home = projectionSystemHome(manifest) ?? paths.userHome;
 	const ledger = readHostedMcpManagedLedger(paths);
 	const nextLedger: HostedMcpManagedLedger = {
@@ -3422,8 +3400,6 @@ function validateHostedMcpProjectionPlan(
 	paths: RuntimePaths,
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 ): void {
-	const intent = hostedMcpIntent(manifest);
-	if (intent.kind === "opaque") return;
 	buildHostedMcpReconciliationPlan(manifest, paths, observations);
 }
 
@@ -5288,7 +5264,7 @@ export function runtimeLiveSnapshotPaths(
 		result.add(join(paths.systemdSystemRoot, systemdUnitFileName(name)));
 	}
 	for (const runtime of HOSTED_RUNTIME_TARGETS) {
-		for (const skillName of HOSTED_BUNDLED_SKILL_REGISTRY.keys()) {
+		for (const skillName of hostedBundledSkillIds()) {
 			const skillTarget = hostedBundledSkillTargetDir(runtime, skillName, home);
 			if (skillTarget) result.add(skillTarget);
 		}

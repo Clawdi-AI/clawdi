@@ -155,11 +155,6 @@ class ConnectorDisconnectResponse(BaseModel):
     status: Literal["disconnected"]
 
 
-class ConnectorMcpConfigResponse(BaseModel):
-    mcp_url: str
-    mcp_token: str
-
-
 class ConnectorToolParametersResponse(BaseModel):
     properties: dict
     required: list[str]

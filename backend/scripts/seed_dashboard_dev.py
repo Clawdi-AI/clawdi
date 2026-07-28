@@ -311,7 +311,7 @@ async def _create_hosted_runtime_graph(
                 },
                 recovery={"cacheManifest": True, "allowOfflineBoot": True},
                 egress_profiles={},
-                mcp={"enabled": True},
+                mcp={"servers": {}},
                 tools={
                     "codex": {
                         "enabled": True,

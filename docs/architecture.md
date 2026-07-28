@@ -252,7 +252,8 @@ Core tables verified under `backend/app/models/`:
 - API-key auth powers CLI, local MCP, vault plaintext resolution, daemon sync,
   and agent-local operations.
 - `VAULT_ENCRYPTION_KEY` encrypts vault and credential payloads at rest.
-- `ENCRYPTION_KEY` signs MCP bridge JWTs and must remain separate.
+- `ENCRYPTION_KEY` derives channel credentials and acts as the runtime cursor
+  encryption fallback; it must remain separate.
 
 ## Known Absences
 

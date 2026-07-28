@@ -38,7 +38,7 @@ def test_hosted_runtime_docs_pin_final_authority_boundaries() -> None:
         "`controlplane` contains only `cloudapiurl`",
         "`egressengine` and `egressprofiles` use closed schemas",
         "invalid stored egress json fails closed with `409`",
-        "an mcp object without `servers` remains the released opaque pass-through shape",
+        "invalid stored mcp state fails closed with `409`",
         "existing unrelated tool projection pass-through",
         "standard npm `beta` dist-tag",
         "non-authoritative publication metadata",
