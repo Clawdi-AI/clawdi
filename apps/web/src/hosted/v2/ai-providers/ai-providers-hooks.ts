@@ -1,6 +1,6 @@
 "use client";
 
-import { isFirstPartyManagedAiProvider } from "@clawdi/shared";
+import { projectUserSelectableAiProviders } from "@clawdi/shared";
 import { queryOptions, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type {
@@ -14,8 +14,8 @@ import { useSensitiveAction } from "@/lib/use-sensitive-action";
 /** Typed data hooks for the AI Providers surface (cloud-api `/v1/ai-providers`). */
 
 const KEY = ["ai-providers"] as const;
-const selectUserAiProviders = (data: AiProviderList) =>
-	data.providers.filter((provider) => !isFirstPartyManagedAiProvider(provider));
+export const selectUserAiProviders = (data: AiProviderList) =>
+	projectUserSelectableAiProviders(data.providers);
 
 function aiProvidersQueryOptions(api: ReturnType<typeof useApi>) {
 	return queryOptions({

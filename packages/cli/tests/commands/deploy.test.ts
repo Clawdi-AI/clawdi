@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
+import {
+	CLAWDI_MANAGED_PROVIDER_ID,
+	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX,
+	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
+} from "@clawdi/shared";
 import type {
 	HostedDeployCheckoutRequest,
 	HostedDeployCheckoutResult,
@@ -71,6 +78,7 @@ function savedProvider(
 	providerId: string,
 	options: {
 		auth?: HostedSavedAiProvider["auth"];
+		managedBy?: HostedSavedAiProvider["managed_by"];
 		models?: HostedSavedAiProvider["models"];
 		usable?: boolean;
 	} = {},
@@ -82,7 +90,7 @@ function savedProvider(
 		label: `Provider ${providerId}`,
 		base_url: "https://provider.example.test/v1",
 		api_mode: "openai_responses",
-		managed_by: "user",
+		managed_by: options.managedBy ?? "user",
 		scope: "account_global",
 		auth: options.auth ?? {
 			type: "api_key",
@@ -477,6 +485,47 @@ describe("deploy orchestration", () => {
 		expect(JSON.stringify(notes)).not.toContain("secret upstream detail");
 	});
 
+	test("interactive provider choices use the shared user-selectable projection", async () => {
+		const client = new FakeDeployGateway();
+		client.savedProviders = [
+			savedProvider(CLAWDI_MANAGED_V1_PROVIDER_ID),
+			savedProvider(CLAWDI_MANAGED_PROVIDER_ID),
+			savedProvider(CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID),
+			savedProvider(CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID),
+			savedProvider(`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`),
+			savedProvider("custom-managed-id", { managedBy: "clawdi" }),
+			savedProvider("openai-team"),
+		];
+		let providerChoices: readonly string[] = [];
+		const prompts: DeployPromptAdapter = {
+			...noUnexpectedPrompts,
+			async select(message, options) {
+				if (message === "AI provider") {
+					providerChoices = options.map((option) => option.value);
+					return "openai-team";
+				}
+				if (message === "Primary model") return "gpt-saved";
+				throw new Error(`Unexpected select prompt: ${message}`);
+			},
+		};
+
+		await runDeployFlow(
+			parseDeployCommandOptions({
+				runtime: "hermes",
+				compute: "basic",
+				name: "Hermes",
+				language: "default",
+				timezone: "Etc/UTC",
+				yes: true,
+				wait: false,
+			}),
+			{ client, interactive: true, prompts },
+		);
+
+		expect(providerChoices).toEqual(["managed", "openai-team", "unmanaged"]);
+		expect(client.created?.body.ai_provider_id).toBe("openai-team");
+	});
+
 	test("exact saved provider selection fails closed when metadata cannot load", async () => {
 		const client = new FakeDeployGateway();
 		client.getSavedAiProviders = async () => {
@@ -498,6 +547,35 @@ describe("deploy orchestration", () => {
 		).rejects.toThrow("Saved AI provider metadata could not be loaded");
 		expect(client.created).toBeNull();
 		expect(client.savedProviderReads).toBe(1);
+	});
+
+	test("exact provider ids cannot bypass the user-selectable projection", async () => {
+		const managedProviders = [
+			savedProvider(CLAWDI_MANAGED_V1_PROVIDER_ID),
+			savedProvider(CLAWDI_MANAGED_PROVIDER_ID),
+			savedProvider(CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID),
+			savedProvider(CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID),
+			savedProvider(`${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`),
+			savedProvider("custom-managed-id", { managedBy: "clawdi" }),
+		];
+
+		for (const provider of managedProviders) {
+			const client = new FakeDeployGateway();
+			client.savedProviders = [provider];
+			await expect(
+				runDeployFlow(
+					parseDeployCommandOptions({
+						provider: provider.provider_id,
+						model: "gpt-saved",
+						compute: "basic",
+						requestId: "123e4567-e89b-42d3-a456-426614174084",
+						yes: true,
+					}),
+					{ client, interactive: false },
+				),
+			).rejects.toMatchObject({ code: "provider_missing" });
+			expect(client.created).toBeNull();
+		}
 	});
 
 	test("binds exact saved API-key and Codex OAuth providers without credential material", async () => {

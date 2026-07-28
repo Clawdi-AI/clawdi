@@ -157,7 +157,7 @@ describe("AI provider binding fields", () => {
 		}
 	});
 
-	test("keeps saved primary with managed and another saved provider in the ordered pool", () => {
+	test("rejects a managed secondary in a saved provider pool", () => {
 		const draft = {
 			bindingMode: "configured" as const,
 			providerChoices: [oauthProvider.provider_id, MANAGED_AI_CHOICE, apiKeyProvider.provider_id],
@@ -166,23 +166,13 @@ describe("AI provider binding fields", () => {
 		};
 
 		for (const mode of ["create", "update"] as const) {
-			const fields = buildAiBindingFields(draft, {
-				managedModels,
-				mode,
-				providers: [apiKeyProvider, oauthProvider],
-			});
-			expect(fields.provider_ids).toEqual([
-				oauthProvider.provider_id,
-				MANAGED_PROVIDER_ID,
-				apiKeyProvider.provider_id,
-			]);
-			expect(fields.primary_model).toEqual({
-				provider_id: oauthProvider.provider_id,
-				model: "gpt-custom",
-			});
-			expect(
-				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
-			).toEqual([oauthProvider.provider_id, apiKeyProvider.provider_id]);
+			expect(() =>
+				buildAiBindingFields(draft, {
+					managedModels,
+					mode,
+					providers: [apiKeyProvider, oauthProvider],
+				}),
+			).toThrow("cannot be used as a saved provider");
 		}
 	});
 

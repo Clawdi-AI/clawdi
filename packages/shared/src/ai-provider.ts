@@ -227,6 +227,12 @@ export function isFirstPartyManagedAiProvider(provider: AiProviderManagedIdentit
 	);
 }
 
+export function projectUserSelectableAiProviders<T extends AiProviderManagedIdentity>(
+	providers: readonly T[],
+): T[] {
+	return providers.filter((provider) => !isFirstPartyManagedAiProvider(provider));
+}
+
 export function isAiProviderId(input: string): boolean {
 	return PROVIDER_ID_RE.test(input);
 }
