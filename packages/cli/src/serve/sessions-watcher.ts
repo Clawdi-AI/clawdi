@@ -8,8 +8,8 @@
  *
  * One watcher per adapter. Adapters return a list of paths via
  * `getSessionsWatchPaths()` — directories (Claude Code / Codex /
- * OpenClaw) or a single file (Hermes' SQLite DB). Any change
- * resets the per-path quiescence timer; once the timer fires,
+ * OpenClaw) or SQLite database/sidecar files (Hermes). Any change
+ * resets the adapter-wide quiescence timer; once the timer fires,
  * `onPathStable` runs and the engine re-enumerates sessions to
  * find what changed.
  *
@@ -73,87 +73,94 @@ export async function watchSessions(opts: SessionWatcherOptions): Promise<void> 
 async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
 	const watchers: ReturnType<typeof watch>[] = [];
 	let stableTimer: ReturnType<typeof setTimeout> | null = null;
+	let cleaned = false;
+	let resolveAbort = () => {};
+	const aborted = new Promise<void>((resolve) => {
+		resolveAbort = resolve;
+	});
 
-	const armStable = () => {
-		if (stableTimer) clearTimeout(stableTimer);
-		stableTimer = setTimeout(() => {
+	const cleanup = () => {
+		if (cleaned) return;
+		cleaned = true;
+		opts.abort.removeEventListener("abort", onAbort);
+		if (stableTimer) {
+			clearTimeout(stableTimer);
 			stableTimer = null;
-			opts.onPathStable();
-		}, SESSION_STABLE_AFTER_MS);
-	};
-
-	let missingOrFailed = 0;
-	for (const p of opts.paths) {
-		if (!existsSync(p)) {
-			log.debug("sessions_watcher.path_missing", { path: p });
-			missingOrFailed += 1;
-			continue;
 		}
-		try {
-			const isDir = statSync(p).isDirectory();
-			const w = watch(p, { persistent: false, recursive: isDir }, () => {
-				armStable();
-			});
-			watchers.push(w);
-		} catch (e) {
-			log.warn("sessions_watcher.attach_failed", {
-				path: p,
-				error: toErrorMessage(e),
-			});
-			missingOrFailed += 1;
-		}
-	}
-
-	// Fall back to poll mode if ANY path is missing or its watch
-	// attach failed. Pre-fix the daemon would just `await abort` and
-	// silently never fire — a missing `~/.codex/sessions` dir at
-	// boot meant Codex sessions never synced for the rest of the
-	// daemon's lifetime, even after the directory appeared. Poll
-	// mode handles late-appearing paths via the empty-signature
-	// detection in pathSignature() and is cheap enough at 60s
-	// cadence to use unconditionally when fs.watch couldn't cover
-	// every path.
-	if (missingOrFailed > 0 || watchers.length === 0) {
-		log.info("sessions_watcher.mode", {
-			mode: "poll",
-			reason: watchers.length === 0 ? "all_paths_unavailable" : "partial_fs_events",
-			path_count: opts.paths.length,
-			fs_event_paths: watchers.length,
-		});
-		for (const w of watchers) {
+		for (const watcher of watchers) {
 			try {
-				w.close();
+				watcher.close();
 			} catch {
 				/* already closed */
 			}
 		}
-		await pollSessionPaths(opts);
-		return;
+	};
+	const onAbort = () => {
+		cleanup();
+		resolveAbort();
+	};
+
+	opts.abort.addEventListener("abort", onAbort, { once: true });
+	// AbortSignal does not replay an abort to listeners registered after it.
+	// Re-check after registration to close the race with a pre-aborted caller.
+	if (opts.abort.aborted) onAbort();
+
+	const armStable = () => {
+		if (opts.abort.aborted) return;
+		if (stableTimer) clearTimeout(stableTimer);
+		stableTimer = setTimeout(() => {
+			stableTimer = null;
+			if (opts.abort.aborted) return;
+			opts.onPathStable();
+		}, SESSION_STABLE_AFTER_MS);
+	};
+
+	try {
+		if (opts.abort.aborted) return;
+		let missingOrFailed = 0;
+		for (const p of opts.paths) {
+			if (!existsSync(p)) {
+				log.debug("sessions_watcher.path_missing", { path: p });
+				missingOrFailed += 1;
+				continue;
+			}
+			try {
+				const isDir = statSync(p).isDirectory();
+				const watcher = watch(p, { persistent: false, recursive: isDir }, () => {
+					if (!opts.abort.aborted) armStable();
+				});
+				watchers.push(watcher);
+			} catch (e) {
+				log.warn("sessions_watcher.attach_failed", {
+					path: p,
+					error: toErrorMessage(e),
+				});
+				missingOrFailed += 1;
+			}
+		}
+
+		// Missing paths need polling so a later creation is observable.
+		if (missingOrFailed > 0 || watchers.length === 0) {
+			log.info("sessions_watcher.mode", {
+				mode: "poll",
+				reason: watchers.length === 0 ? "all_paths_unavailable" : "partial_fs_events",
+				path_count: opts.paths.length,
+				fs_event_paths: watchers.length,
+			});
+			cleanup();
+			await pollSessionPaths(opts);
+			return;
+		}
+
+		log.info("sessions_watcher.mode", {
+			mode: "fs_events",
+			path_count: watchers.length,
+			stable_after_ms: SESSION_STABLE_AFTER_MS,
+		});
+		await aborted;
+	} finally {
+		cleanup();
 	}
-
-	log.info("sessions_watcher.mode", {
-		mode: "fs_events",
-		path_count: watchers.length,
-		stable_after_ms: SESSION_STABLE_AFTER_MS,
-	});
-
-	await new Promise<void>((resolve) => {
-		opts.abort.addEventListener(
-			"abort",
-			() => {
-				if (stableTimer) clearTimeout(stableTimer);
-				for (const w of watchers) {
-					try {
-						w.close();
-					} catch {
-						/* already closed */
-					}
-				}
-				resolve();
-			},
-			{ once: true },
-		);
-	});
 }
 
 /** Polling fallback. Compares per-path mtime + size signatures
@@ -161,10 +168,8 @@ async function fsWatchLoop(opts: SessionWatcherOptions): Promise<void> {
  * path that previously changed has been stable for >=
  * SESSION_STABLE_AFTER_MS.
  *
- * State per path:
- *   - lastSig: signature observed last poll
- *   - lastChangeAt: epoch ms of the most recent change (sig
- *     differed from prior). Reset to null after we emit. */
+ * Signatures remain per path, but the quiescence deadline is global: a
+ * change on any watched path postpones the one full-session collection. */
 export interface SessionPollDependencies {
 	now: () => number;
 	pathSignature: (path: string) => Promise<string>;
@@ -172,8 +177,8 @@ export interface SessionPollDependencies {
 }
 
 const defaultSessionPollDependencies: SessionPollDependencies = {
-	now: Date.now,
-	pathSignature,
+	now: () => performance.now(),
+	pathSignature: sessionPathSignature,
 	sleep: sleepForSessionPoll,
 };
 
@@ -182,9 +187,11 @@ export async function pollSessionPaths(
 	dependencies: SessionPollDependencies = defaultSessionPollDependencies,
 ): Promise<void> {
 	const lastSig = new Map<string, string>();
-	const lastChangeAt = new Map<string, number>();
 	for (const p of opts.paths) {
-		lastSig.set(p, await dependencies.pathSignature(p));
+		if (opts.abort.aborted) return;
+		const signature = await dependencies.pathSignature(p);
+		if (opts.abort.aborted) return;
+		lastSig.set(p, signature);
 	}
 
 	log.info("sessions_watcher.mode", {
@@ -194,32 +201,37 @@ export async function pollSessionPaths(
 		stable_after_ms: SESSION_STABLE_AFTER_MS,
 	});
 
+	let stableDeadline: number | null = null;
 	while (!opts.abort.aborted) {
 		const now = dependencies.now();
-		let delayMs = SESSION_IDLE_POLL_INTERVAL_MS;
-		for (const changedAt of lastChangeAt.values()) {
-			delayMs = Math.min(delayMs, Math.max(0, changedAt + SESSION_STABLE_AFTER_MS - now));
-		}
+		const delayMs =
+			stableDeadline === null
+				? SESSION_IDLE_POLL_INTERVAL_MS
+				: Math.min(SESSION_IDLE_POLL_INTERVAL_MS, Math.max(0, stableDeadline - now));
 		await dependencies.sleep(delayMs, opts.abort);
 		if (opts.abort.aborted) return;
 
-		let anyStable = false;
+		let anyChanged = false;
 		for (const p of opts.paths) {
+			if (opts.abort.aborted) return;
 			const cur = await dependencies.pathSignature(p);
+			if (opts.abort.aborted) return;
 			const prev = lastSig.get(p) ?? "";
-			const observedAt = dependencies.now();
 			if (cur !== prev) {
 				lastSig.set(p, cur);
-				lastChangeAt.set(p, observedAt);
-			} else {
-				const lc = lastChangeAt.get(p);
-				if (lc !== undefined && observedAt - lc >= SESSION_STABLE_AFTER_MS) {
-					lastChangeAt.delete(p);
-					anyStable = true;
-				}
+				anyChanged = true;
 			}
 		}
-		if (anyStable) opts.onPathStable();
+		const observedAt = dependencies.now();
+		if (anyChanged) {
+			stableDeadline = observedAt + SESSION_STABLE_AFTER_MS;
+			continue;
+		}
+		if (stableDeadline !== null && observedAt >= stableDeadline) {
+			stableDeadline = null;
+			if (opts.abort.aborted) return;
+			opts.onPathStable();
+		}
 	}
 }
 
@@ -263,7 +275,7 @@ export async function pollSessionPaths(
 // the deepest supported adapter.
 const SIG_MAX_DEPTH = 3;
 
-async function pathSignature(p: string): Promise<string> {
+export async function sessionPathSignature(p: string): Promise<string> {
 	try {
 		const s = await stat(p);
 		if (!s.isDirectory()) {
@@ -343,7 +355,14 @@ export function sleepForSessionPoll(
 			cancelTimer();
 			finish();
 		};
-		cancelTimer = scheduler.schedule(finish, ms);
+		const onTimer = () => {
+			if (signal.aborted) {
+				onAbort();
+				return;
+			}
+			finish();
+		};
+		cancelTimer = scheduler.schedule(onTimer, ms);
 		if (settled) {
 			cancelTimer();
 			return;

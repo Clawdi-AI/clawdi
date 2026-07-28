@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import { HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS } from "./hosted-agent-session-query";
+import {
+	HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS,
+	shouldBlockHostedSessionsError,
+} from "./hosted-agent-session-query";
 
 const detailSource = readFileSync(new URL("./hosted-agent-detail.tsx", import.meta.url), "utf8");
 const sharedSessionQuerySource = readFileSync(
@@ -9,6 +12,14 @@ const sharedSessionQuerySource = readFileSync(
 );
 
 describe("hosted agent sessions refresh", () => {
+	test("blocks initial errors but preserves stale data after a background error", () => {
+		const error = new Error("background refresh failed");
+		expect(shouldBlockHostedSessionsError(error, false)).toBe(true);
+		expect(shouldBlockHostedSessionsError(error, true)).toBe(false);
+		expect(shouldBlockHostedSessionsError(null, false)).toBe(false);
+		expect(shouldBlockHostedSessionsError(undefined, true)).toBe(false);
+	});
+
 	test("uses a low-frequency foreground refresh", () => {
 		expect(HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS).toBe(30_000);
 
@@ -26,6 +37,9 @@ describe("hosted agent sessions refresh", () => {
 		);
 		expect(sharedSessionQuerySource).not.toContain("refetchInterval");
 		expect(componentSource).toContain("placeholderData: keepPreviousData");
+		expect(componentSource).toContain(
+			"shouldBlockHostedSessionsError(sessions.error, sessions.data !== undefined)",
+		);
 		expect(componentSource).toContain("onRetry={() => sessions.refetch()}");
 		expect(componentSource).toContain("page={page}");
 		expect(componentSource).toContain("pageSize={pageSize}");

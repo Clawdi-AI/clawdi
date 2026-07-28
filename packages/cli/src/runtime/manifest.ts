@@ -104,6 +104,7 @@ import {
 } from "./egress-env";
 import {
 	buildEgressProfileBundle,
+	egressProfileSecretRefs,
 	hasEnabledEgressProfiles,
 	writeEgressProfileBundle,
 } from "./egress-profiles";
@@ -1978,9 +1979,7 @@ function resolveEgressSecretValues(
 }
 
 function egressSecretRefs(manifest: RuntimeManifest): string[] {
-	const refs = new Set<string>();
-	collectSecretRefs(manifest.egressProfiles, refs);
-	return [...refs].sort();
+	return egressProfileSecretRefs(manifest.egressProfiles);
 }
 
 function egressSidecarOnlySecretRefs(manifest: RuntimeManifest): string[] {

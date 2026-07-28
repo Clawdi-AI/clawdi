@@ -11,7 +11,11 @@ import {
 	readRuntimeAuthToken,
 	runtimeAuthTokenFileLabel,
 } from "./auth-token";
-import { hostedManifestEgressProfiles } from "./hosted-egress-profiles";
+import { egressProfileSecretRefs } from "./egress-profiles";
+import {
+	hostedManifestEgressProfiles,
+	isClawdiManagedProviderProjection,
+} from "./hosted-egress-profiles";
 import {
 	type HostedRuntimeManifest,
 	hostedCliPayloadPolicySchema,
@@ -989,7 +993,33 @@ function loadCachedSecretValues(
 
 export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 	const refs = new Set<string>();
-	collectSecretRefs(manifest, refs);
+	const providers = plainRecord(manifest.projection?.providers);
+	let hasEnabledRuntime = false;
+	for (const [runtimeName, runtime] of Object.entries(manifest.runtimes)) {
+		if (!runtime.enabled) continue;
+		hasEnabledRuntime = true;
+		addSecretEnvRefs(runtime.run?.secretEnv, refs);
+		for (const service of Object.values(runtime.services ?? {})) {
+			addSecretEnvRefs(service.secretEnv, refs);
+		}
+		if (runtimeName === "openclaw" && manifest.openclawGatewayAuth) {
+			refs.add(manifest.openclawGatewayAuth.tokenRef);
+		}
+		if (runtimeName === "hermes" && runtime.services?.dashboard && manifest.hermesDashboardAuth) {
+			refs.add(manifest.hermesDashboardAuth.passwordSecretRef);
+			refs.add(manifest.hermesDashboardAuth.sessionSecretRef);
+		}
+		for (const providerId of runtime.provider_ids ?? []) {
+			const provider = plainRecord(providers?.[providerId]);
+			if (!provider || isClawdiManagedProviderProjection(provider)) continue;
+			if (typeof provider.apiKeySecretRef === "string") {
+				refs.add(provider.apiKeySecretRef);
+			}
+		}
+	}
+	if (hasEnabledRuntime) {
+		for (const ref of egressProfileSecretRefs(manifest.egressProfiles)) refs.add(ref);
+	}
 	return [...refs].sort();
 }
 
@@ -1005,23 +1035,14 @@ function manifestSecretRefsMissingValues(
 	});
 }
 
-function collectSecretRefs(value: unknown, refs: Set<string>): void {
-	if (!value || typeof value !== "object") return;
-	if (Array.isArray(value)) {
-		for (const item of value) collectSecretRefs(item, refs);
-		return;
-	}
-	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-		if (typeof entry === "string" && (key === "secretRef" || key.endsWith("SecretRef"))) {
-			refs.add(entry);
-		}
-		if (key === "secretEnv" && entry && typeof entry === "object" && !Array.isArray(entry)) {
-			for (const ref of Object.values(entry as Record<string, unknown>)) {
-				if (typeof ref === "string") refs.add(ref);
-			}
-		}
-		collectSecretRefs(entry, refs);
-	}
+function addSecretEnvRefs(secretEnv: Record<string, string> | undefined, refs: Set<string>): void {
+	for (const ref of Object.values(secretEnv ?? {})) refs.add(ref);
+}
+
+function plainRecord(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: null;
 }
 
 function validateLoadedManifest(

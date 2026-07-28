@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { convergeRuntimeManifest, type RuntimeManifest } from "./manifest";
-import type { RuntimeManifestLoad } from "./manifest-source";
+import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 
@@ -23,6 +23,7 @@ const tempRoots: string[] = [];
 
 function tempRuntimePaths(): RuntimePaths {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-manifest-service-test-"));
+	chmodSync(root, 0o755);
 	tempRoots.push(root);
 	process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 	process.env.CLAWDI_RUN_DIR = join(root, "run");
@@ -434,14 +435,16 @@ describe("runtime manifest services", () => {
 			expect(watchEnvStat.uid).toBe(0);
 			expect(watchEnvStat.gid).toBe(0);
 			if (process.platform === "linux") {
-				const nonRootRead = spawnSync(
-					"setpriv",
-					["--reuid=65534", "--regid=65534", "--clear-groups", "cat", watchEnvPath],
-					{ encoding: "utf8" },
-				);
-				expect(nonRootRead.error).toBeUndefined();
-				expect(nonRootRead.status).not.toBe(0);
-				expect(nonRootRead.stdout).not.toContain("dashboard-password");
+				const setpriv = spawnSync("setpriv", ["--version"], { encoding: "utf8" });
+				if (!setpriv.error && setpriv.status === 0) {
+					const nonRootRead = spawnSync(
+						"setpriv",
+						["--reuid=65534", "--regid=65534", "--clear-groups", "cat", watchEnvPath],
+						{ encoding: "utf8" },
+					);
+					expect(nonRootRead.status).not.toBe(0);
+					expect(nonRootRead.stdout).not.toContain("dashboard-password");
+				}
 			}
 		}
 		const convergenceDiagnostics = JSON.stringify(result);
@@ -517,7 +520,124 @@ describe("runtime manifest services", () => {
 		expect(warnings.join("\n")).not.toContain("next-runtime-source-value");
 	});
 
-	test("fails closed when a manifest-referenced env secret source is missing", () => {
+	test("enumerates only enabled schema-known secret consumers", () => {
+		const manifest: RuntimeManifest = {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "hdep_secret_consumers",
+			environmentId: "env_secret_consumers",
+			instanceId: "hri_secret_consumers",
+			generation: 1,
+			issuedAt: "2026-07-01T00:00:00.000Z",
+			controlPlane: { apiUrl: "https://cloud-api.example.test" },
+			hermesDashboardAuth: {
+				mode: "password",
+				provider: "basic",
+				username: "admin",
+				passwordSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+				sessionSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+				sessionTtlSeconds: 43_200,
+				publicUrl: "https://agent.example.test/hermes",
+				activation: { enabled: true, capability: "hermes-basic-auth-v1" },
+			},
+			runtimes: {
+				hermes: {
+					enabled: true,
+					providerMode: "configured",
+					provider_ids: ["selected"],
+					primary_model: { provider_id: "selected", model: "model-1" },
+					run: {
+						...runSettings("hermes", ["gateway", "run"]),
+						secretEnv: { ACTIVE: "env://ACTIVE_RUNTIME_SECRET" },
+					},
+					services: {
+						dashboard: {
+							...runSettings("hermes", ["dashboard"]),
+							secretEnv: { SERVICE: "env://ACTIVE_SERVICE_SECRET" },
+						},
+					},
+				},
+				openclaw: {
+					enabled: false,
+					run: {
+						...runSettings("openclaw", ["gateway", "run"]),
+						secretEnv: { DISABLED: "env://DISABLED_RUNTIME_SECRET" },
+					},
+					services: {},
+				},
+			},
+			projection: {
+				providers: {
+					selected: {
+						baseUrl: "https://provider.example.test/v1",
+						managed_by: "user",
+						apiKeySecretRef: "env://SELECTED_PROVIDER_SECRET",
+					},
+					unselected: { apiKeySecretRef: "env://UNSELECTED_PROVIDER_SECRET" },
+				},
+				tools: { opaqueSecretRef: "env://OPAQUE_PROJECTION_SECRET" },
+			},
+			egressProfiles: {
+				profiles: [
+					{
+						id: "disabled-secret-profile",
+						enabled: false,
+						kind: "http",
+						match: { host: "disabled.example.test", headers: {}, query: {} },
+						rewrite: {
+							upstreamBaseUrl: "https://disabled-upstream.example.test",
+							preservePath: true,
+							setHeaders: {
+								authorization: {
+									type: "secretRef",
+									secretRef: "secret://disabled/profile",
+									prefix: "Bearer ",
+								},
+							},
+						},
+						logging: { redactHeaders: [], redactUrlPatterns: [] },
+						priority: 100,
+					},
+					{
+						id: "active-secret-profile",
+						enabled: true,
+						kind: "http",
+						match: { host: "active.example.test", headers: {}, query: {} },
+						rewrite: {
+							upstreamBaseUrl: "https://active-upstream.example.test",
+							preservePath: true,
+							setHeaders: {
+								authorization: {
+									type: "secretRef",
+									secretRef: "secret://active/profile",
+									prefix: "Bearer ",
+								},
+							},
+						},
+						logging: { redactHeaders: [], redactUrlPatterns: [] },
+						priority: 100,
+					},
+				],
+			},
+			recovery: {},
+		};
+
+		expect(manifestSecretRefs(manifest)).toEqual([
+			"env://ACTIVE_RUNTIME_SECRET",
+			"env://ACTIVE_SERVICE_SECRET",
+			"env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+			"env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+			"env://SELECTED_PROVIDER_SECRET",
+			"secret://active/profile",
+		]);
+
+		const inactiveManifest = structuredClone(manifest);
+		const inactiveHermes = inactiveManifest.runtimes.hermes;
+		if (!inactiveHermes) throw new Error("expected Hermes runtime");
+		inactiveHermes.enabled = false;
+		expect(manifestSecretRefs(inactiveManifest)).toEqual([]);
+	});
+
+	test("fails closed when an enabled consumer's env secret source is missing", () => {
 		const paths = tempRuntimePaths();
 		delete process.env.RUNTIME_WATCH_REQUIRED_SECRET;
 		const manifest: RuntimeManifest = {
@@ -543,22 +663,21 @@ describe("runtime manifest services", () => {
 			recovery: {},
 		};
 
-		const result = convergeRuntimeManifest(
-			{
-				manifest,
-				source: "fixture-file",
-				sourcePath: "inline-watch-missing-secret",
-				offline: false,
-				secretValues: {
-					"env://RUNTIME_WATCH_REQUIRED_SECRET": "must-not-substitute-bundle-value",
+		expect(() =>
+			convergeRuntimeManifest(
+				{
+					manifest,
+					source: "fixture-file",
+					sourcePath: "inline-watch-missing-secret",
+					offline: false,
+					secretValues: {
+						"env://RUNTIME_WATCH_REQUIRED_SECRET": "must-not-substitute-bundle-value",
+					},
 				},
-			},
-			paths,
-		);
-
-		expect(result.installErrors).toContain(
-			"runtime apply failed: " +
-				"Runtime secret env://RUNTIME_WATCH_REQUIRED_SECRET for RUNTIME_TARGET_SECRET is unavailable.",
+				paths,
+			),
+		).toThrow(
+			"Runtime secret env://RUNTIME_WATCH_REQUIRED_SECRET for RUNTIME_TARGET_SECRET is unavailable.",
 		);
 		expect(existsSync(join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"))).toBe(false);
 	});

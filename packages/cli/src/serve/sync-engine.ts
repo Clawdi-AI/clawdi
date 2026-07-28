@@ -51,7 +51,7 @@ import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
-import type { AgentAdapter } from "../adapters/base";
+import type { AgentAdapter, CollectSessionsResult } from "../adapters/base";
 import { ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { computeLastActivityIso } from "../lib/session-activity";
@@ -137,6 +137,40 @@ export type PendingSkillUploadEcho = {
 	contentHash: string;
 	expiresAtMs: number;
 };
+
+interface StableSessionEnqueueOptions {
+	abort: AbortSignal;
+	collectSessions: () => Promise<CollectSessionsResult>;
+	queue: Pick<RetryQueue, "enqueue">;
+	lastPushedHash: ReadonlyMap<string, string>;
+	inFlightHash: Map<string, string>;
+}
+
+export async function enqueueChangedSessionsAfterStability(
+	opts: StableSessionEnqueueOptions,
+): Promise<number> {
+	if (opts.abort.aborted) return 0;
+	const { sessions } = await opts.collectSessions();
+	if (opts.abort.aborted) return 0;
+	let enqueued = 0;
+	for (const session of sessions) {
+		if (opts.abort.aborted) return enqueued;
+		const hash = createHash("sha256").update(JSON.stringify(session.messages)).digest("hex");
+		if (opts.lastPushedHash.get(session.localSessionId) === hash) continue;
+		if (opts.inFlightHash.get(session.localSessionId) === hash) continue;
+		if (opts.abort.aborted) return enqueued;
+		opts.queue.enqueue({
+			kind: "session_push",
+			local_session_id: session.localSessionId,
+			content_hash: hash,
+			enqueued_at: new Date().toISOString(),
+			attempts: 0,
+		});
+		opts.inFlightHash.set(session.localSessionId, hash);
+		enqueued += 1;
+	}
+	return enqueued;
+}
 
 interface EngineOpts {
 	environmentId: string;
@@ -702,31 +736,21 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// function is the source-of-truth diff against the in-memory
 	// + persisted lock.
 	const onSessionsStable = async () => {
+		if (opts.abort.aborted) return;
 		try {
-			const { sessions } = await opts.adapter.collectSessions();
-			let enqueued = 0;
-			for (const s of sessions) {
-				const hash = createHash("sha256").update(JSON.stringify(s.messages)).digest("hex");
-				// Skip if confirmed-shipped OR currently in flight with
-				// the same content. Both are dedup signals; the in-flight
-				// map gets cleared on drop/evict so the next watcher
-				// tick re-enqueues if upload didn't actually land.
-				if (lastPushedSessionHash.get(s.localSessionId) === hash) continue;
-				if (inFlightSessionHash.get(s.localSessionId) === hash) continue;
-				queue.enqueue({
-					kind: "session_push",
-					local_session_id: s.localSessionId,
-					content_hash: hash,
-					enqueued_at: new Date().toISOString(),
-					attempts: 0,
-				});
-				inFlightSessionHash.set(s.localSessionId, hash);
-				enqueued += 1;
-			}
+			const enqueued = await enqueueChangedSessionsAfterStability({
+				abort: opts.abort,
+				collectSessions: () => opts.adapter.collectSessions(),
+				queue,
+				lastPushedHash: lastPushedSessionHash,
+				inFlightHash: inFlightSessionHash,
+			});
+			if (opts.abort.aborted) return;
 			if (enqueued > 0) {
 				log.info("engine.sessions_enqueued", { count: enqueued });
 			}
 		} catch (e) {
+			if (opts.abort.aborted) return;
 			log.warn("engine.sessions_enumerate_failed", { error: toErrorMessage(e) });
 		}
 	};
@@ -765,6 +789,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			paths: opts.adapter.getSessionsWatchPaths(),
 			abort: opts.abort,
 			onPathStable: () => {
+				if (opts.abort.aborted) return;
 				// Fire-and-forget — onPathStable is a sync callback
 				// from the watcher, but the enumeration can be slow
 				// (hundreds of JSONLs). Catch errors here so a

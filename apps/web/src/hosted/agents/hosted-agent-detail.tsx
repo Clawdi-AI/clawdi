@@ -59,7 +59,10 @@ import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import { useDeploymentLifecycle, useUpdateDeployment } from "@/hosted/agents/deployment-hooks";
-import { HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS } from "@/hosted/agents/hosted-agent-session-query";
+import {
+	HOSTED_AGENT_SESSIONS_REFETCH_INTERVAL_MS,
+	shouldBlockHostedSessionsError,
+} from "@/hosted/agents/hosted-agent-session-query";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
@@ -774,7 +777,7 @@ function HostedAgentSessionsTab({
 		if (sessions.data && page > pageCount) setPage(pageCount);
 	}, [page, pageCount, sessions.data]);
 
-	if (sessions.error) {
+	if (shouldBlockHostedSessionsError(sessions.error, sessions.data !== undefined)) {
 		return (
 			<ApiErrorPanel
 				error={sessions.error}

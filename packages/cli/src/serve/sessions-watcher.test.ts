@@ -1,9 +1,16 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { HermesAdapter } from "../adapters/hermes";
 import {
 	pollSessionPaths,
 	SESSION_IDLE_POLL_INTERVAL_MS,
 	SESSION_STABLE_AFTER_MS,
+	sessionPathSignature,
 	sleepForSessionPoll,
+	watchSessions,
 } from "./sessions-watcher";
 
 describe("pollSessionPaths", () => {
@@ -63,6 +70,45 @@ describe("pollSessionPaths", () => {
 		expect(stableAt).toEqual([SESSION_IDLE_POLL_INTERVAL_MS + SESSION_STABLE_AFTER_MS]);
 	});
 
+	test("uses the injected monotonic clock rather than wall-clock time", async () => {
+		const abort = new AbortController();
+		let monotonicNow = 0;
+		let wallNow = 1_000_000;
+		const delays: number[] = [];
+		const stableAt: number[] = [];
+		const originalDateNow = Date.now;
+		Date.now = () => wallNow;
+
+		try {
+			await pollSessionPaths(
+				{
+					paths: ["sessions"],
+					abort: abort.signal,
+					onPathStable: () => {
+						stableAt.push(monotonicNow);
+						abort.abort();
+					},
+				},
+				{
+					now: () => monotonicNow,
+					pathSignature: async () =>
+						monotonicNow < SESSION_IDLE_POLL_INTERVAL_MS ? "initial" : "changed",
+					sleep: async (delayMs) => {
+						delays.push(delayMs);
+						monotonicNow += delayMs;
+						wallNow += delays.length === 1 ? -900_000 : 3_600_000;
+					},
+				},
+			);
+		} finally {
+			Date.now = originalDateNow;
+		}
+
+		expect(wallNow).toBeGreaterThan(1_000_000);
+		expect(delays).toEqual([SESSION_IDLE_POLL_INTERVAL_MS, SESSION_STABLE_AFTER_MS]);
+		expect(stableAt).toEqual([SESSION_IDLE_POLL_INTERVAL_MS + SESSION_STABLE_AFTER_MS]);
+	});
+
 	test("defers continuously changing paths and emits only once after they settle", async () => {
 		const abort = new AbortController();
 		let now = 0;
@@ -103,6 +149,82 @@ describe("pollSessionPaths", () => {
 			SESSION_STABLE_AFTER_MS,
 		]);
 		expect(stableAt).toEqual([SESSION_IDLE_POLL_INTERVAL_MS + SESSION_STABLE_AFTER_MS * 5]);
+	});
+
+	test("uses one quiescence deadline across all watched paths", async () => {
+		const abort = new AbortController();
+		let now = 0;
+		const delays: number[] = [];
+		const stableAt: number[] = [];
+
+		await pollSessionPaths(
+			{
+				paths: ["first", "second"],
+				abort: abort.signal,
+				onPathStable: () => {
+					stableAt.push(now);
+					abort.abort();
+				},
+			},
+			{
+				now: () => now,
+				pathSignature: async (path) => {
+					if (path === "first") return now >= SESSION_IDLE_POLL_INTERVAL_MS ? "a1" : "a0";
+					return now >= SESSION_IDLE_POLL_INTERVAL_MS + 10_000 ? "b1" : "b0";
+				},
+				sleep: async (delayMs) => {
+					delays.push(delayMs);
+					now += delayMs;
+				},
+			},
+		);
+
+		expect(delays).toEqual([
+			SESSION_IDLE_POLL_INTERVAL_MS,
+			SESSION_STABLE_AFTER_MS,
+			SESSION_STABLE_AFTER_MS,
+		]);
+		expect(stableAt).toEqual([SESSION_IDLE_POLL_INTERVAL_MS + SESSION_STABLE_AFTER_MS * 2]);
+	});
+
+	test("stops after an abort that occurs during a signature read", async () => {
+		const abort = new AbortController();
+		let resolveSignature: ((value: string) => void) | undefined;
+		let signatureCalls = 0;
+		let stableCalls = 0;
+		let markReadStarted: (() => void) | undefined;
+		const readStarted = new Promise<void>((resolve) => {
+			markReadStarted = resolve;
+		});
+		const running = pollSessionPaths(
+			{
+				paths: ["sessions"],
+				abort: abort.signal,
+				onPathStable: () => {
+					stableCalls += 1;
+				},
+			},
+			{
+				now: () => 0,
+				pathSignature: async () => {
+					signatureCalls += 1;
+					if (signatureCalls === 1) return "initial";
+					markReadStarted?.();
+					return new Promise<string>((resolve) => {
+						resolveSignature = resolve;
+					});
+				},
+				sleep: async () => {},
+			},
+		);
+
+		await readStarted;
+		abort.abort();
+		resolveSignature?.("changed");
+		await running;
+
+		expect(signatureCalls).toBe(2);
+		expect(stableCalls).toBe(0);
 	});
 
 	test("aborts a pending scheduler wait without further signature or stable work", async () => {
@@ -157,4 +279,77 @@ describe("pollSessionPaths", () => {
 		expect(signatureCalls).toBe(1);
 		expect(stableCalls).toBe(0);
 	});
+});
+
+test("watchSessions returns immediately for a pre-aborted real fs watch", async () => {
+	const root = mkdtempSync(join(tmpdir(), "clawdi-session-pre-abort-"));
+	const abort = new AbortController();
+	abort.abort();
+	let stableCalls = 0;
+	try {
+		await watchSessions({
+			paths: [root],
+			abort: abort.signal,
+			onPathStable: () => {
+				stableCalls += 1;
+			},
+		});
+		expect(stableCalls).toBe(0);
+	} finally {
+		rmSync(root, { recursive: true, force: true });
+	}
+}, 1_000);
+
+test("Hermes WAL commits change the production watch signature while state.db stays fixed", async () => {
+	const root = mkdtempSync(join(tmpdir(), "clawdi-hermes-wal-watch-"));
+	const previousHermesHome = process.env.HERMES_HOME;
+	process.env.HERMES_HOME = root;
+	mkdirSync(root, { recursive: true });
+	const databasePath = join(root, "state.db");
+	const database = new Database(databasePath);
+	try {
+		database.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0");
+		database.exec("CREATE TABLE session_writes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)");
+		database.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+		const adapter = new HermesAdapter();
+		const paths = adapter.getSessionsWatchPaths();
+		expect(paths).toEqual([databasePath, `${databasePath}-wal`, `${databasePath}-journal`]);
+		const mainBefore = await sessionPathSignature(databasePath);
+		const walBefore = await sessionPathSignature(`${databasePath}-wal`);
+		const abort = new AbortController();
+		let now = 0;
+		const delays: number[] = [];
+		let mainAfter = "";
+		let walAfter = "";
+
+		await pollSessionPaths(
+			{
+				paths,
+				abort: abort.signal,
+				onPathStable: () => abort.abort(),
+			},
+			{
+				now: () => now,
+				pathSignature: sessionPathSignature,
+				sleep: async (delayMs) => {
+					delays.push(delayMs);
+					if (delays.length === 1) {
+						database.exec("INSERT INTO session_writes (body) VALUES ('committed in wal')");
+						mainAfter = await sessionPathSignature(databasePath);
+						walAfter = await sessionPathSignature(`${databasePath}-wal`);
+					}
+					now += delayMs;
+				},
+			},
+		);
+
+		expect(mainAfter).toBe(mainBefore);
+		expect(walAfter).not.toBe(walBefore);
+		expect(delays).toEqual([SESSION_IDLE_POLL_INTERVAL_MS, SESSION_STABLE_AFTER_MS]);
+	} finally {
+		database.close();
+		if (previousHermesHome === undefined) delete process.env.HERMES_HOME;
+		else process.env.HERMES_HOME = previousHermesHome;
+		rmSync(root, { recursive: true, force: true });
+	}
 });
