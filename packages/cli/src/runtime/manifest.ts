@@ -68,14 +68,12 @@ import {
 	extractManagedLiveModels,
 	resolveManagedPrimaryModel,
 } from "./managed-model-resolution";
+import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import {
 	type HostedMcpServerDesiredState,
 	hostedMcpDesiredStateSchema,
 	hostedMcpServerDesiredStateSchema,
-	type LiveSyncAgent,
-	type RuntimeInstall,
-	type RuntimeManifest,
-} from "./manifest-contract";
+} from "./manifest-resources";
 import {
 	isEnvSecretRef,
 	normalizeSecretValues,
