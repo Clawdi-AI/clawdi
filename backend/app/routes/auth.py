@@ -92,7 +92,11 @@ async def list_api_keys(
 ):
     result = await db.execute(
         select(ApiKey)
-        .where(ApiKey.user_id == auth.user_id, ApiKey.managed.is_(False))
+        .where(
+            ApiKey.user_id == auth.user_id,
+            ApiKey.managed.is_(False),
+            ApiKey.revoked_at.is_(None),
+        )
         .order_by(ApiKey.created_at.desc())
     )
     keys = result.scalars().all()
