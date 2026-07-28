@@ -54,7 +54,11 @@ import {
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState } from "./applied-state";
 import { readRuntimeApplyIdentityFromEnv, runtimeApplyIdentityEnvironment } from "./apply-identity";
-import { ensureRuntimeAuthTokenFile } from "./auth-token";
+import {
+	ensureRuntimeAuthTokenFile,
+	RUNTIME_AUTH_TOKEN_SECRET_REF,
+	readRuntimeAuthToken,
+} from "./auth-token";
 import {
 	assertHostedBundledSkillCatalogDigest,
 	hostedBundledSkillIds,
@@ -623,14 +627,23 @@ function writeScopedSecretValues(
 	refs: readonly string[],
 	paths: RuntimePaths,
 	owner: "root" | "runtime-user" | "egress-identity",
-	options: { resolveEnv?: boolean } = {},
+	options: ScopedSecretValuesOptions = {},
 ): string | null {
 	const scoped = scopedSecretValues(secretValues, refs, options);
-	if (Object.keys(scoped).length === 0) {
+	return writeResolvedSecretValues(path, scoped, paths, owner);
+}
+
+function writeResolvedSecretValues(
+	path: string,
+	resolvedSecretValues: Readonly<Record<string, string>>,
+	paths: RuntimePaths,
+	owner: "root" | "runtime-user" | "egress-identity",
+): string | null {
+	if (Object.keys(resolvedSecretValues).length === 0) {
 		rmSync(path, { force: true });
 		return null;
 	}
-	writePrivateFileAtomic(path, `${JSON.stringify(scoped, null, 2)}\n`, {
+	writePrivateFileAtomic(path, `${JSON.stringify(resolvedSecretValues, null, 2)}\n`, {
 		mode: 0o600,
 		dirMode: 0o700,
 	});
@@ -657,16 +670,21 @@ function writeScopedSecretValues(
 	return path;
 }
 
+interface ScopedSecretValuesOptions {
+	resolveEnv?: boolean;
+	explicitValues?: Readonly<Record<string, string>>;
+}
+
 function scopedSecretValues(
 	secretValues: Record<string, string> | undefined,
 	refs: readonly string[],
-	options: { resolveEnv?: boolean } = {},
+	options: ScopedSecretValuesOptions = {},
 ): Record<string, string> {
 	const normalizedValues = normalizeSecretValues(secretValues);
 	const scoped: Record<string, string> = {};
 	for (const ref of refs) {
 		if (isEnvSecretRef(ref) && !options.resolveEnv) continue;
-		const value = resolveRuntimeSecretValue(normalizedValues, ref);
+		const value = options.explicitValues?.[ref] ?? resolveRuntimeSecretValue(normalizedValues, ref);
 		if (!value) continue;
 		scoped[ref] = value;
 		const normalized = normalizeSecretRef(ref);
@@ -1931,18 +1949,31 @@ function egressSecretFilePath(paths: RuntimePaths): string {
 }
 
 function writeEgressSecretFile(
+	resolvedSecretValues: Readonly<Record<string, string>>,
+	paths: RuntimePaths,
+): string | null {
+	return writeResolvedSecretValues(
+		egressSecretFilePath(paths),
+		resolvedSecretValues,
+		paths,
+		"egress-identity",
+	);
+}
+
+function resolveEgressSecretValues(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
-): string | null {
-	return writeScopedSecretValues(
-		egressSecretFilePath(paths),
-		secretValues,
-		egressSecretRefs(manifest),
-		paths,
-		"egress-identity",
-		{ resolveEnv: true },
-	);
+): Record<string, string> {
+	const runtimeAuthToken = readRuntimeAuthToken(paths);
+	// The hosted watcher deliberately clears CLAWDI_AUTH_TOKEN and authenticates
+	// through this root-owned file. Resolve only the canonical sidecar ref here.
+	return scopedSecretValues(secretValues, egressSecretRefs(manifest), {
+		resolveEnv: true,
+		explicitValues: runtimeAuthToken
+			? { [RUNTIME_AUTH_TOKEN_SECRET_REF]: runtimeAuthToken }
+			: undefined,
+	});
 }
 
 function egressSecretRefs(manifest: RuntimeManifest): string[] {
@@ -4150,6 +4181,7 @@ export function runtimeSidecarProgramRevision(
 	secretValues: Record<string, string>,
 	egressProgram: RuntimeEgressSystemdProgram | null = null,
 	egressIdentity: RuntimeEgressIdentity | null = null,
+	resolvedEgressSecretValues?: Readonly<Record<string, string>>,
 ): string {
 	if (egressProgram && !egressIdentity) {
 		throw new Error("runtime sidecar egress revision requires the configured numeric identity");
@@ -4160,7 +4192,8 @@ export function runtimeSidecarProgramRevision(
 		instanceId: manifest.instanceId,
 		generation: manifest.generation,
 		egressProfiles: manifest.egressProfiles ?? null,
-		egressSecrets: scopedSecretValues(secretValues, egressSecretRefs(manifest)),
+		egressSecrets:
+			resolvedEgressSecretValues ?? scopedSecretValues(secretValues, egressSecretRefs(manifest)),
 		egress: egressProgram
 			? {
 					transparentPort: egressProgram.transparentPort,
@@ -4866,6 +4899,7 @@ function writeSystemdUnits(
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
 	secretValues: Record<string, string> | undefined,
+	resolvedEgressSecretValues: Readonly<Record<string, string>>,
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
 	commonEnvironment: Record<string, string>,
 ): { systemUnits: string[]; userUnits: string[] } {
@@ -4939,6 +4973,7 @@ function writeSystemdUnits(
 						secretValues ?? {},
 						activeEgressProgram,
 						activeEgressIdentity,
+						resolvedEgressSecretValues,
 					),
 				},
 				serviceType: "notify",
@@ -5843,7 +5878,8 @@ export function convergeRuntimeManifest(
 				}`,
 			);
 		}
-		const egressSecretFile = writeEgressSecretFile(manifest, secretValues, paths);
+		const resolvedEgressSecretValues = resolveEgressSecretValues(manifest, secretValues, paths);
+		const egressSecretFile = writeEgressSecretFile(resolvedEgressSecretValues, paths);
 		const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 		const egressSystemdProgram = runtimeEgressSystemdProgram(
 			manifest,
@@ -6125,6 +6161,7 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			daemonAuthTokenFile,
 			secretValues,
+			resolvedEgressSecretValues,
 			providerProjectionRevisions,
 			commonSystemdEnvironment,
 		);
