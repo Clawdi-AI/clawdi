@@ -121,6 +121,14 @@ describe("hosted bundled skill reconciliation", () => {
 		expect(statSync(targetSkill).mode & 0o777).toBe(0o644);
 	});
 
+	it("repairs target directory permission drift to the canonical mode", () => {
+		expect(reconcile()).toBe("replaced");
+		chmodSync(targetDir, 0o700);
+
+		expect(reconcile()).toBe("replaced");
+		expect(statSync(targetDir).mode & 0o777).toBe(0o755);
+	});
+
 	it("normalizes source group-write mode without changing bundle identity", () => {
 		const copiedSource = join(root, "group-write-source");
 		cpSync(bundledSourceDir, copiedSource, { recursive: true });

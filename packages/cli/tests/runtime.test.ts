@@ -1951,7 +1951,7 @@ describe("runtime manifest datasource", () => {
 				servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
 			});
 			expect(loaded.manifest.projection?.skills).toEqual({
-				entries: { clawdi: { enabled: true } },
+				entries: { clawdi: { enabled: true, version: 1 } },
 			});
 			expect(loaded.manifest.projection?.tools).toEqual({ catalog: "clawdi-default" });
 			expect(loaded.manifest.projection?.terminalTooling).toEqual(

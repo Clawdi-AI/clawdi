@@ -22,6 +22,7 @@ import {
 const HOSTED_BUNDLED_SKILL_MARKER = ".clawdi-managed.json";
 const HOSTED_BUNDLED_SKILL_MARKER_SCHEMA = "clawdi.hostedBundledSkillMarker.v1";
 const HOSTED_BUNDLED_SKILL_OWNER = "clawdi runtime init";
+const HOSTED_BUNDLED_SKILL_DIRECTORY_MODE = 0o755;
 
 interface HostedBundledSkillMarker {
 	schema: typeof HOSTED_BUNDLED_SKILL_MARKER_SCHEMA;
@@ -128,6 +129,9 @@ function collectHostedBundledSkillFiles(
 			throw new Error(`symbolic links are not supported in bundled hosted skills: ${path}`);
 		}
 		if (stat.isDirectory()) {
+			if (requireCanonicalModes && (stat.mode & 0o777) !== HOSTED_BUNDLED_SKILL_DIRECTORY_MODE) {
+				throw new Error(`bundled hosted skill directory mode is not canonical: ${path}`);
+			}
 			collectHostedBundledSkillFiles(
 				path,
 				relativePath,
@@ -158,12 +162,16 @@ function hostedBundledSkillDigest(
 	if (!stat.isDirectory()) {
 		throw new Error(`bundled hosted skill path is not a directory: ${directory}`);
 	}
+	if (requireCanonicalModes && (stat.mode & 0o777) !== HOSTED_BUNDLED_SKILL_DIRECTORY_MODE) {
+		throw new Error(`bundled hosted skill directory mode is not canonical: ${directory}`);
+	}
 	const files: ManagedBundleHashEntry[] = [];
 	collectHostedBundledSkillFiles(directory, "", excludeMarker, requireCanonicalModes, files);
 	return computeManagedBundleHash(files);
 }
 
-function normalizeHostedBundledSkillFileModes(currentDir: string): void {
+function normalizeHostedBundledSkillModes(currentDir: string): void {
+	chmodSync(currentDir, HOSTED_BUNDLED_SKILL_DIRECTORY_MODE);
 	for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
 		const path = join(currentDir, entry.name);
 		const stat = lstatSync(path);
@@ -171,7 +179,7 @@ function normalizeHostedBundledSkillFileModes(currentDir: string): void {
 			throw new Error(`symbolic links are not supported in bundled hosted skills: ${path}`);
 		}
 		if (stat.isDirectory()) {
-			normalizeHostedBundledSkillFileModes(path);
+			normalizeHostedBundledSkillModes(path);
 			continue;
 		}
 		if (stat.isFile()) {
@@ -258,7 +266,7 @@ export function reconcileHostedBundledSkill(
 	const trash = join(parent, `.${basename(input.targetDir)}-trash-${process.pid}-${randomUUID()}`);
 	try {
 		cpSync(input.sourceDir, stagedTarget, { recursive: true });
-		normalizeHostedBundledSkillFileModes(stagedTarget);
+		normalizeHostedBundledSkillModes(stagedTarget);
 		if (hostedBundledSkillDigest(stagedTarget, false, true) !== catalogEntry.digest) {
 			throw new Error(
 				`bundled hosted skill catalog digest mismatch for ${catalogEntry.id} version ${catalogEntry.version}`,
