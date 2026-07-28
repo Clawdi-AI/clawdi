@@ -148,4 +148,43 @@ describe("doctor --json", () => {
 		expect(api?.ok).toBe(false);
 		expect(api?.hint).toContain("retry");
 	});
+
+	it("rejects a malformed Clawdi MCP response", async () => {
+		seedAuthAndEnv(tmpHome, "hermes");
+
+		const orig = console.log;
+		let captured = "";
+		console.log = (...args: unknown[]) => {
+			captured = args.map(String).join(" ");
+		};
+
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/auth/me",
+				response: () => jsonResponse({ id: "u1", email: "e" }),
+			},
+			{
+				method: "GET",
+				path: "/v1/vault",
+				response: () => jsonResponse({ items: [], total: 0 }),
+			},
+			{
+				method: "POST",
+				path: "/v1/mcp/clawdi",
+				response: () => jsonResponse({}),
+			},
+		]);
+		try {
+			await doctor({ json: true });
+		} finally {
+			console.log = orig;
+			restore();
+		}
+
+		const checks = JSON.parse(captured) as Array<{ name: string; ok: boolean; detail?: string }>;
+		const mcp = checks.find((check) => check.name === "Clawdi MCP");
+		expect(mcp?.ok).toBe(false);
+		expect(mcp?.detail).toBe("Error: invalid JSON-RPC response");
+	});
 });

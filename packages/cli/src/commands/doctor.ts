@@ -18,6 +18,9 @@ interface Check {
 }
 
 interface JsonRpcResponse {
+	jsonrpc?: unknown;
+	id?: unknown;
+	result?: unknown;
 	error?: unknown;
 }
 
@@ -148,10 +151,13 @@ async function checkMcp(): Promise<Check> {
 			method: "ping",
 			params: {},
 		});
-		if (response.error !== undefined) {
-			throw new Error(
-				typeof response.error === "string" ? response.error : JSON.stringify(response.error),
-			);
+		if (
+			response.jsonrpc !== "2.0" ||
+			response.id !== 1 ||
+			!("result" in response) ||
+			response.error !== undefined
+		) {
+			throw new Error("invalid JSON-RPC response");
 		}
 		return { name: "Clawdi MCP", ok: true, detail: "endpoint reachable" };
 	} catch (e) {
