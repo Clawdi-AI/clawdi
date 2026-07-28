@@ -3,6 +3,7 @@
 import { Coins, CreditCard, Info, TriangleAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatUsdExact } from "@/hosted/billing/format";
 import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
@@ -17,15 +18,19 @@ export function BalanceCard({
 	wallet,
 	hasWalletCompute = false,
 	onTopUp,
+	onManagePaymentMethods,
+	isManagePaymentMethodsPending = false,
 }: {
 	wallet: WalletCacheSnapshot;
 	hasWalletCompute?: boolean;
 	onTopUp: () => void;
+	onManagePaymentMethods: () => void;
+	isManagePaymentMethodsPending?: boolean;
 }) {
 	const low = isLowBalance(wallet.balance_usd);
 	return (
 		<Card data-hosted="true">
-			<CardContent className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+			<CardContent className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
 				<div className="space-y-1.5">
 					<div className="flex items-center gap-1.5 text-sm text-muted-foreground">
 						<Coins className="size-4" aria-hidden />
@@ -68,9 +73,21 @@ export function BalanceCard({
 						) : null}
 					</div>
 				</div>
-				<Button onClick={onTopUp} size="lg" className="w-full sm:w-auto">
-					<CreditCard /> Top up
-				</Button>
+				<div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto lg:shrink-0">
+					<Button onClick={onTopUp} size="lg" className="w-full sm:w-auto">
+						<CreditCard /> Top up
+					</Button>
+					<Button
+						variant="outline"
+						size="lg"
+						className="w-full sm:w-auto"
+						onClick={onManagePaymentMethods}
+						disabled={isManagePaymentMethodsPending}
+						aria-busy={isManagePaymentMethodsPending}
+					>
+						{isManagePaymentMethodsPending ? <Spinner /> : <CreditCard />} Manage payment methods
+					</Button>
+				</div>
 			</CardContent>
 		</Card>
 	);

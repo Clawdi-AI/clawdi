@@ -1,14 +1,11 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CreditCard } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { Button } from "@/components/ui/button";
-import { Spinner } from "@/components/ui/spinner";
 import { LowBalanceBanner } from "@/hosted/billing/components/low-balance-banner";
 import { WalletSkeleton } from "@/hosted/billing/components/state-views";
 import { billingErrorNormalizer, normalizeBillingError } from "@/hosted/billing/errors";
@@ -80,16 +77,6 @@ export function WalletPage() {
 		}
 	}
 
-	const portalAction = (
-		<Button
-			variant="outline"
-			onClick={() => runAction(openBillingPortal)}
-			disabled={portal.isPending}
-		>
-			{portal.isPending ? <Spinner /> : <CreditCard />} Manage payment methods
-		</Button>
-	);
-
 	useEffect(() => {
 		const topupReturn = readWalletTopupReturn(window.location.search);
 		if (!topupReturn) return;
@@ -151,7 +138,7 @@ export function WalletPage() {
 	if (wallet.isLoading) {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-				<PageHeader title="Wallet" description={DESCRIPTION} actions={portalAction} />
+				<PageHeader title="Wallet" description={DESCRIPTION} />
 				<WalletSkeleton />
 			</div>
 		);
@@ -160,7 +147,7 @@ export function WalletPage() {
 	if (wallet.error || !wallet.data) {
 		return (
 			<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-				<PageHeader title="Wallet" description={DESCRIPTION} actions={portalAction} />
+				<PageHeader title="Wallet" description={DESCRIPTION} />
 				<ApiErrorPanel
 					normalizer={billingErrorNormalizer}
 					error={wallet.error}
@@ -179,11 +166,7 @@ export function WalletPage() {
 
 	return (
 		<div data-hosted="true" className={WALLET_PAGE_CLASS}>
-			<PageHeader
-				title="Wallet"
-				description={DESCRIPTION}
-				actions={topUpOpen ? undefined : portalAction}
-			/>
+			<PageHeader title="Wallet" description={DESCRIPTION} />
 
 			<TopUpDialog open={topUpOpen} onOpenChange={setTopUpOpen} presentation="inline" />
 
@@ -199,6 +182,8 @@ export function WalletPage() {
 					wallet={w}
 					hasWalletCompute={walletComputeCount > 0}
 					onTopUp={() => setTopUpOpen(true)}
+					onManagePaymentMethods={() => void runAction(openBillingPortal)}
+					isManagePaymentMethodsPending={portal.isPending}
 				/>
 
 				<div id="auto-reload" className="grid gap-4 lg:grid-cols-2">
