@@ -29,7 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
-import { AgentSourceBadge, agentDisplayName } from "@/components/dashboard/agent-label";
+import { agentDisplayName } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
 import type { DetailSectionMeta } from "@/components/detail/layout";
@@ -549,7 +549,6 @@ export function HostedAgentDetail({
 						title={activeTabLabel}
 						description={activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
-						status={<AgentSourceBadge source="hosted" compact />}
 						actions={headerActions}
 					/>
 				)}
