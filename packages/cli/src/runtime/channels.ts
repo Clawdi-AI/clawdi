@@ -138,6 +138,7 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 	const links: ManagedChannelLink[] = [];
 	for (const account of channels) {
 		if (account.status !== "active") continue;
+		if (account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		for (const link of account.runtime_links) {
 			if (link.status !== "active" || !link.agent_token) continue;
 			const accountKey = channelAccountKey(account);

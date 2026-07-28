@@ -22,6 +22,8 @@ _ENV_KEY_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _EGRESS_HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _EGRESS_PROFILE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_.]*$")
 _RUNTIME_SERVICE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_MANAGED_ENTRY_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+_SECRET_REF_PATTERN = re.compile(r"^(?:secret://.+|env://[A-Za-z_][A-Za-z0-9_]*)$")
 _SHA256_PATTERN = re.compile(r"^[0-9A-Fa-f]{64}$")
 _SEMVER_CORE_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
 _SEMVER_PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -223,7 +225,7 @@ class HostedEgressHeaderEqualsMatcher(_StrictHostedWireModel):
 
 class HostedEgressHeaderSecretRefEqualsMatcher(_StrictHostedWireModel):
     type: Literal["secretRefEquals"]
-    secretRef: str = Field(min_length=1, pattern=r"^secret://")
+    secretRef: str = Field(min_length=1, pattern=_SECRET_REF_PATTERN.pattern)
     prefix: str | None = None
 
 
@@ -247,7 +249,7 @@ class HostedEgressPathPrefixMatcher(_StrictHostedWireModel):
 
 class HostedEgressPathSecretRefMatcher(_StrictHostedWireModel):
     type: Literal["secretRefEquals", "secretRefPrefix"]
-    secretRef: str = Field(min_length=1, pattern=r"^secret://")
+    secretRef: str = Field(min_length=1, pattern=_SECRET_REF_PATTERN.pattern)
     prefix: str | None = None
     suffix: str | None = None
 
@@ -262,14 +264,14 @@ HostedEgressPathMatcher = Annotated[
 
 class HostedEgressHeaderSecretRefSetter(_StrictHostedWireModel):
     type: Literal["secretRef"]
-    secretRef: str = Field(min_length=1, pattern=r"^secret://")
+    secretRef: str = Field(min_length=1, pattern=_SECRET_REF_PATTERN.pattern)
     prefix: str | None = None
 
 
 class HostedEgressPathReplace(_StrictHostedWireModel):
     type: Literal["secretRefPrefix"]
-    secretRef: str = Field(min_length=1, pattern=r"^secret://")
-    replacementSecretRef: str = Field(min_length=1, pattern=r"^secret://")
+    secretRef: str = Field(min_length=1, pattern=_SECRET_REF_PATTERN.pattern)
+    replacementSecretRef: str = Field(min_length=1, pattern=_SECRET_REF_PATTERN.pattern)
     prefix: str | None = None
     suffix: str | None = None
 
@@ -577,6 +579,110 @@ class HostedRuntimeTools(BaseModel):
     @classmethod
     def _validate_no_plaintext_secrets(cls, value: object) -> object:
         validate_no_plaintext_tool_secrets(value)
+        return value
+
+
+class HostedRuntimeStdioMcpServer(_StrictHostedWireModel):
+    command: str = Field(min_length=1, max_length=200)
+    args: list[str] = Field(max_length=32)
+
+    @field_validator("command")
+    @classmethod
+    def _validate_command(cls, value: str) -> str:
+        if value != value.strip():
+            raise ValueError("MCP server command must not contain surrounding whitespace")
+        return value
+
+    @field_validator("args")
+    @classmethod
+    def _validate_args(cls, value: list[str]) -> list[str]:
+        if any(not arg or arg != arg.strip() for arg in value):
+            raise ValueError("MCP server args must be non-empty canonical strings")
+        return value
+
+
+class HostedRuntimeMcpSecretHeader(_StrictHostedWireModel):
+    secretRef: str = Field(min_length=1, pattern=_SECRET_REF_PATTERN.pattern)
+    prefix: str = Field(default="", max_length=100)
+
+
+class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
+    url: str = Field(min_length=1, max_length=2000)
+    transport: Literal["streamable-http", "sse"]
+    headers: dict[str, str | HostedRuntimeMcpSecretHeader] = Field(default_factory=dict)
+
+    @field_validator("url")
+    @classmethod
+    def _validate_url(cls, value: str) -> str:
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in {"http", "https"}
+            or parsed.hostname is None
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(
+                "remote MCP URL must be HTTP(S) without credentials, query, or fragment"
+            )
+        return value
+
+    @field_validator("headers")
+    @classmethod
+    def _validate_headers(
+        cls, value: dict[str, str | HostedRuntimeMcpSecretHeader]
+    ) -> dict[str, str | HostedRuntimeMcpSecretHeader]:
+        if any(_EGRESS_HEADER_NAME_PATTERN.fullmatch(name) is None for name in value):
+            raise ValueError("MCP header names must be canonical")
+        normalized = [name.lower() for name in value]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("MCP header names must be unique case-insensitively")
+        return value
+
+
+HostedRuntimeMcpServer = HostedRuntimeStdioMcpServer | HostedRuntimeRemoteMcpServer
+
+
+class HostedRuntimeMcp(_StrictHostedWireModel):
+    servers: dict[str, HostedRuntimeMcpServer]
+
+    @field_validator("servers")
+    @classmethod
+    def _validate_server_names(
+        cls, value: dict[str, HostedRuntimeMcpServer]
+    ) -> dict[str, HostedRuntimeMcpServer]:
+        if any(_MANAGED_ENTRY_NAME_PATTERN.fullmatch(name) is None for name in value):
+            raise ValueError("MCP server names must be canonical")
+        return value
+
+
+def validate_hosted_runtime_mcp_desired_state(
+    value: dict[str, object] | None,
+) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if "servers" in value:
+        HostedRuntimeMcp.model_validate(value)
+    else:
+        validate_no_plaintext_tool_secrets(value)
+    return value
+
+
+class HostedRuntimeSkillEntry(_StrictHostedWireModel):
+    enabled: bool
+
+
+class HostedRuntimeSkills(_StrictHostedWireModel):
+    entries: dict[str, HostedRuntimeSkillEntry]
+
+    @field_validator("entries")
+    @classmethod
+    def _validate_entry_names(
+        cls, value: dict[str, HostedRuntimeSkillEntry]
+    ) -> dict[str, HostedRuntimeSkillEntry]:
+        if any(_MANAGED_ENTRY_NAME_PATTERN.fullmatch(name) is None for name in value):
+            raise ValueError("skill entry names must be canonical")
         return value
 
 

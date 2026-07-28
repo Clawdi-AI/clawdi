@@ -12,7 +12,7 @@ import {
 	statSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { EgressEnginePin } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
 
@@ -76,6 +76,7 @@ export function ensureRuntimeMitmproxy(
 			copyFileSync(extractedMitmdump, binaryPath);
 			chmodSync(binaryPath, 0o755);
 			rootOwnedBestEffort(paths.maintainedRoot);
+			rootOwnedBestEffort(dirname(paths.egressEngineMaintainedRoot));
 			rootOwnedBestEffort(paths.egressEngineMaintainedRoot);
 			rootOwnedBestEffort(join(paths.egressEngineMaintainedRoot, pin.version));
 			rootOwnedBestEffort(cacheDir);
@@ -184,7 +185,7 @@ function rootOwnedBestEffort(path: string): void {
 		// Non-root local verification cannot chown; hosted converge runs as root.
 	}
 	try {
-		chmodSync(path, statSync(path).isDirectory() ? 0o755 : 0o755);
+		chmodSync(path, 0o755);
 	} catch {
 		// Best effort on non-POSIX filesystems.
 	}

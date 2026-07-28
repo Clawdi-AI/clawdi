@@ -14,6 +14,7 @@ export interface RuntimePaths {
 	localEnvironments: string;
 	serveState: string;
 	imageShim: string;
+	legacyImageShim: string | null;
 	hostPolicy: string;
 	runtimeSource: string;
 	shareRoot: string;
@@ -108,9 +109,14 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 	const clawdiHome = getClawdiDir();
 	const serviceStateRoot = envPath("CLAWDI_SERVICE_STATE_DIR") ?? "/var/lib/clawdi";
 	const runRoot = envPath("CLAWDI_RUN_DIR") ?? "/run/clawdi";
-	const imageShim = envPath("CLAWDI_IMAGE_SHIM_PATH") ?? "/usr/local/bin/clawdi";
+	const configuredImageShim = envPath("CLAWDI_IMAGE_SHIM_PATH");
+	const imageShim =
+		configuredImageShim ??
+		(mode === "hosted" ? "/usr/local/lib/clawdi/bootstrap/clawdi" : "/usr/local/bin/clawdi");
+	const legacyImageShim =
+		mode === "hosted" && configuredImageShim === undefined ? "/usr/local/bin/clawdi" : null;
 	const shareRoot = envPath("CLAWDI_SHARE_DIR") ?? "/usr/share/clawdi";
-	const binRoot = join(serviceStateRoot, "bin");
+	const managedCliRoot = join(serviceStateRoot, "managed-cli");
 	const npmRoot = join(serviceStateRoot, "npm");
 	const cacheRoot = join(serviceStateRoot, "cache");
 	const bootRoot = join(serviceStateRoot, "boot");
@@ -126,6 +132,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		localEnvironments: join(clawdiHome, "environments"),
 		serveState: join(clawdiHome, "serve"),
 		imageShim,
+		legacyImageShim,
 		hostPolicy: getHostPolicyPath(),
 		runtimeSource: getRuntimeSourcePath(),
 		shareRoot,
@@ -133,7 +140,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		managedConfig: join(serviceStateRoot, "config", "clawdi.json"),
 		syncState: join(serviceStateRoot, "sync", "runtimes.json"),
 		cliShim: imageShim,
-		cliManagedBin: join(binRoot, "clawdi"),
+		cliManagedBin: join(managedCliRoot, "bin", "clawdi"),
 		cliNpmPrefix: npmRoot,
 		cliNpmCache: join(serviceStateRoot, "npm-cache"),
 		cliBootstrapStatus: join(serviceStateRoot, "status", "cli-bootstrap.json"),

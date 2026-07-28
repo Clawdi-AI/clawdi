@@ -19,7 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import settings
 from app.core.database import get_runtime_observation_session, get_session
 from app.main import app
-from app.models.api_key import ApiKey
+from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
 from app.models.audit import ControlPlaneAuditEvent
 from app.models.platform_workload_auth import (
     PLATFORM_WORKLOAD_CLIENT_ACTIVE,
@@ -688,13 +688,12 @@ async def test_companion_routes_require_and_accept_admin_key(
 
 
 @pytest.mark.asyncio
-async def test_v2_provision_precedes_narrow_key_and_retirement_replays_exact_receipt(
+async def test_v2_provision_precedes_scoped_deploy_key_and_retirement_replays_exact_receipt(
     workload_harness,
     seed_user,
     db_session,
     monkeypatch,
 ):
-    from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES
     from app.routes import runtime_observation_v2 as v2_routes
     from tests.conftest import create_env_with_project
 
@@ -718,6 +717,22 @@ async def test_v2_provision_precedes_narrow_key_and_retirement_replays_exact_rec
         return await original_mint(db, **kwargs)
 
     monkeypatch.setattr(v2_routes, "mint_api_key", assert_fence_precedes_key)
+    caller_scoped = await workload_harness.client.post(
+        "/v2/runtime/auth/keys",
+        headers={
+            "X-Admin-Key": _ADMIN_KEY,
+            "Idempotency-Key": f"mint-caller-scopes-{environment_id}",
+        },
+        json={
+            "owner": _owner(seed_user),
+            "label": "strict-v2-runtime",
+            "environmentId": str(environment_id),
+            "deploymentId": deployment_id,
+            "scopes": ["runtime-observations:write"],
+        },
+    )
+    assert caller_scoped.status_code == 422, caller_scoped.text
+
     minted = await workload_harness.client.post(
         "/v2/runtime/auth/keys",
         headers={
@@ -736,7 +751,15 @@ async def test_v2_provision_precedes_narrow_key_and_retirement_replays_exact_rec
     assert key is not None
     assert key.runtime_deployment_id == deployment_id
     assert key.scopes == list(RUNTIME_DEPLOYMENT_KEY_SCOPES)
-    assert "runtime-observations:write" in key.scopes
+    assert set(key.scopes) == {
+        "connectors:read",
+        "connectors:invoke",
+        "runtime-observations:write",
+        "sessions:read",
+        "sessions:write",
+        "skills:read",
+        "skills:write",
+    }
     provision_audit = (
         await db_session.execute(
             select(ControlPlaneAuditEvent).where(

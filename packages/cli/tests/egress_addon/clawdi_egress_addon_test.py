@@ -120,6 +120,21 @@ class AddonProfileInterpreterTest(unittest.TestCase):
         self.assertEqual(flow.request.host, "unmatched.test")
         self.assertIsNone(flow.response)
 
+    def test_enabled_profiles_require_all_referenced_secrets(self):
+        with self.assertRaisesRegex(
+            addon.ConfigError, "egress profile secrets are missing: secret://provider-key"
+        ):
+            self.load([self.managed_provider_profile()])
+
+    def test_enabled_profiles_reject_empty_referenced_secrets(self):
+        with self.assertRaisesRegex(
+            addon.ConfigError, "egress profile secrets are missing: secret://provider-key"
+        ):
+            self.load(
+                [self.managed_provider_profile()],
+                {"secret://provider-key": ""},
+            )
+
     def test_passthrough_only_profile_does_not_intercept_sni(self):
         egress = self.load(
             [
@@ -424,6 +439,62 @@ class AddonProfileInterpreterTest(unittest.TestCase):
             decision.profile,
         )
         self.assertNotIn("real-agent-token", redacted)
+
+    def test_provider_profile_with_explicit_port_matches_exact_origin(self):
+        egress = self.load(
+            [
+                {
+                    "id": "managed-mcp",
+                    "enabled": True,
+                    "kind": "provider",
+                    "match": {
+                        "scheme": "http",
+                        "host": "cloud.test:18080",
+                        "path": {"type": "equals", "value": "/v1/mcp/clawdi"},
+                        "headers": {
+                            "authorization": {
+                                "type": "equals",
+                                "value": "clawdi-egress-placeholder",
+                                "prefix": "Bearer ",
+                            }
+                        },
+                    },
+                    "rewrite": {
+                        "preservePath": True,
+                        "setHeaders": {
+                            "authorization": {
+                                "type": "secretRef",
+                                "secretRef": "env://CLAWDI_AUTH_TOKEN",
+                                "prefix": "Bearer ",
+                            }
+                        },
+                    },
+                }
+            ],
+            {"env://CLAWDI_AUTH_TOKEN": "deployment-token"},
+        )
+        wrong_port = Flow(
+            scheme="http",
+            host="cloud.test",
+            path="/v1/mcp/clawdi",
+            headers={"authorization": "Bearer clawdi-egress-placeholder"},
+        )
+        wrong_port.request.port = 18081
+        self.assertIsNone(egress.apply_to_flow(wrong_port).profile)
+        self.assertEqual(
+            wrong_port.request.headers["authorization"],
+            "Bearer clawdi-egress-placeholder",
+        )
+
+        exact_origin = Flow(
+            scheme="http",
+            host="cloud.test",
+            path="/v1/mcp/clawdi",
+            headers={"authorization": "Bearer clawdi-egress-placeholder"},
+        )
+        exact_origin.request.port = 18080
+        self.assertEqual(egress.apply_to_flow(exact_origin).profile_id, "managed-mcp")
+        self.assertEqual(exact_origin.request.headers["authorization"], "Bearer deployment-token")
 
     def test_telegram_rewrite_keeps_non_secret_route_and_moves_credential_to_header(self):
         egress = self.load(

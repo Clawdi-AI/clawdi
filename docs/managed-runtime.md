@@ -63,8 +63,8 @@ router; cloud-api appends evidence and never writes a Hosted deployment status.
 Cloud-api reuses these existing runtime primitives:
 
 - `AgentEnvironment.id` as the stable environment identity;
-- managed, environment-bound `ApiKey` authentication with the dedicated
-  `runtime-observations:write` scope for the runtime credential;
+- managed, environment-bound `ApiKey` authentication with an immutable
+  `runtime_deployment_id` identity binding;
 - the first-party `X-Admin-Key` gate, mutation idempotency, and control-plane
   audit events for Hosted-facing provisioning and retirement calls;
 - PostgreSQL transactions and `FOR UPDATE` locks for ingestion and retirement
@@ -88,9 +88,14 @@ Four PostgreSQL tables form the additive companion boundary:
 Strict-v2 credential provisioning is only available through
 admin-authenticated `POST /v2/runtime/auth/keys`. The admin and platform v1 key
 APIs keep their original wire shape and cannot create a fence or
-deployment-bound credential. The database requires every deployment-bound key
-to be managed, environment-bound, explicitly scoped, to include
-`runtime-observations:write`, and to stay within the runtime scope ceiling.
+deployment-bound credential. The provisioning endpoint represents one
+canonical Hosted Runtime role, so its request does not negotiate scopes. The
+Cloud issuer assigns the auditable bundle `connectors:read`,
+`connectors:invoke`, `runtime-observations:write`, `sessions:read`,
+`sessions:write`, `skills:read`, and `skills:write`. Principal identity comes
+only from the managed environment/deployment binding; each data-plane operation
+separately requires its scope. The database constrains only the identity
+binding, while the issuer and migration own the canonical authorization bundle.
 
 Hosted-facing `/v2` registration, read, acknowledgement, reset, retirement, and
 provisioning calls all require the first-party `X-Admin-Key`. The server binds
@@ -131,10 +136,11 @@ boundary.
 ## Core Architecture
 
 The primary hosted runtime model is a Linux-like runtime host. The host image
-provides the OS envelope, a runtime user, a stable `clawdi` bootstrap path,
+provides the OS envelope, a runtime user, a root-only `clawdi` bootstrap path,
 official Hermes/OpenClaw installs, and a process manager. Runtime behavior
 comes from the manifest and official runtime binaries, not from per-agent
-wrappers.
+wrappers. The managed Clawdi CLI is an administrator capability: the runtime
+user, model tools, and browser terminal cannot resolve, read, or execute it.
 
 ```mermaid
 flowchart TB
@@ -146,7 +152,7 @@ flowchart TB
         RunConfigs[config/run/<runtime>.json]
         Projections[config/projections/<runtime>.json]
         Inventory[install-inventory/<runtime>.json]
-        CliBin[managed bin/clawdi]
+        CliBin[root-only managed-cli/bin/clawdi]
         UserUnits[$HOME/.config/systemd/user/*.service]
     end
 
@@ -172,7 +178,7 @@ flowchart TB
 
     Systemd[systemd PID 1] --> Watch
     Systemd --> Daemon
-    UserSystemd[systemd --user] --> Sidecar
+    Systemd --> Sidecar
     Sidecar --> Egress
     UserSystemd --> HermesGateway
     UserSystemd --> HermesDashboard
@@ -201,9 +207,12 @@ replaces files, the process manager may restart the relevant official program,
 but the update transaction remains owned by the runtime.
 
 The bootstrap boundary is deliberately small: system boot prepares writable
-runtime directories, starts the runtime user's systemd manager, and calls
-`clawdi runtime init --non-interactive`. `runtime init` is the local
-administrator convergence step. It uses official installers/config commands
+runtime directories, starts the runtime user's systemd manager, and calls the
+root-owned image bootstrap entrypoint by absolute path. That entrypoint installs
+the exact managed CLI under the root-only npm prefix, atomically activates
+`/var/lib/clawdi/managed-cli/bin/clawdi`, and runs
+`runtime init --non-interactive`. `runtime init` is the local administrator
+convergence step. It uses official installers/config commands
 first, invokes official non-interactive service installers for runtime gateway
 base units, and writes only transparent hosted drop-ins/env files for those
 official units. When a later manifest removes an official gateway service,
@@ -378,7 +387,9 @@ Normalization maps hosted fields into the internal shape:
 | `runtimes.<name>.services` | Runtime-owned auxiliary processes, such as a browser dashboard, managed without user command shims |
 | `providers` | Required runtime-scoped AI provider projections whose keys exactly match selected `provider_ids`; `{}` in unmanaged mode |
 | `terminalTooling.codex` | Required typed Hosted terminal-tool projection with one Clawdi-managed provider metadata and secret reference, independent of runtime providers |
-| `mcp`, `tools` | Existing runtime MCP/tool projection input; unrelated tool fields remain pass-through and do not include terminal Codex |
+| `mcp.servers` | Generic named stdio or remote HTTP server declarations; an MCP object without `servers` remains the released opaque pass-through shape |
+| `skills.entries` | Generic named bundled-skill enablement; the CLI registry owns bytes and runtime target paths |
+| `tools` | Existing unrelated tool projection pass-through; it does not include terminal Codex |
 | `liveSync.{enabled,agents}` | Required explicit daemon sync configuration; Hosted does not infer it from agent metadata |
 | `egressProfiles` | Explicit local sidecar profiles |
 | `recovery.{cacheManifest,allowOfflineBoot}` | Required explicit manifest cache and offline-boot behavior |
@@ -400,9 +411,10 @@ Hosted CLI wire and are validated at admin write and manifest read boundaries.
 Invalid stored egress JSON fails closed with `409`. `terminalTooling.codex` is
 the one typed terminal-tool subset in this release. It does not declare MCP and
 does not participate in runtime `provider_ids`, runtime primary-model selection,
-source-level applied provider IDs, or runtime provider health. `mcp` and
-unrelated `tools` fields retain their existing pass-through behavior. `mcp` and
-`tools` remain explicit pass-through projections. The normalized generic
+source-level applied provider IDs, or runtime provider health. An `mcp` object
+with an own `servers` field is validated as the generic stdio/remote declaration
+collection; an object without `servers` and unrelated `tools` fields retain
+their released pass-through behavior. The normalized generic
 `clawdi.runtimeDesiredState.v1` shape also retains optional install metadata,
 default install args, and arbitrary provider projection data such as singular
 `model` for non-Hosted inputs.
@@ -493,9 +505,37 @@ argument behavior. Unknown generic runtime names require `run.command`;
 otherwise the manifest is rejected so the image does not need to know every
 future agent.
 
+## Managed CLI privilege boundary
+
+The shared `/var/lib/clawdi/bin` directory remains traversable because it also
+contains explicitly intended runtime-user tools such as the Codex shim. It must
+not contain a `clawdi` entry. The active managed CLI instead lives at
+`/var/lib/clawdi/managed-cli/bin/clawdi`; its parent directories, active npm
+package prefix under `/var/lib/clawdi/npm`, and executable target are root-owned
+and mode `0700`. The image bootstrap entrypoint is also root-owned and mode
+`0700`.
+
+Root system services use the absolute managed CLI path for watch, daemon, and
+sidecar commands. OpenClaw and Hermes user services execute their official
+binaries and keep `/var/lib/clawdi/managed-cli/bin` and `/var/lib/clawdi/npm`
+out of `PATH`. The interactive runtime-user shell may retain
+`/var/lib/clawdi/bin` for explicit tools such as Codex without exposing the
+managed CLI.
+
+CLI self-upgrade verifies a new exact package before making its target and npm
+prefix root-only, then atomically switches the active link inside the root-only
+managed directory. Reconciliation also removes the legacy shared-bin link and
+best-effort tightens a writable baked image shim. That last step is migration
+defense, not a rollout guarantee: a container with a read-only root filesystem
+cannot have its baked shim retrofitted in place. Full non-discoverability for an
+existing workload therefore requires the paired hosted image containing the
+root-only shim, the matching exact CLI package, and workload replacement or
+recreation. Manifest reconciliation alone cannot retrofit an old read-only
+container.
+
 ## Commands
 
-Runtime operators can use these commands in controlled environments:
+Root runtime operators can use these commands in controlled environments:
 
 ```bash
 clawdi runtime init --non-interactive
@@ -630,13 +670,35 @@ outputs include:
 | `cache/manifest.etag`, `cache/channels.etag` | Legacy v1 cache validators; not Agent v2 authority |
 | `status/runtime-applied.json` | Agent v2 authority for one ETag, source revision, instance, generation, content identity, source provider IDs, and target-specific projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
+| `managed-cli/bin/clawdi` | Root-only active managed CLI link used by system services |
+| `npm/` | Root-only managed CLI package prefixes and active targets |
 | `config/projections/<runtime>.json` | Runtime projection payload |
+| `config/projections/managed-mcp-servers.json` | Canonical last-applied MCP server map per runtime, written atomically only after the full native-config apply succeeds |
 | `config/run/<runtime>.json`, `config/run/<runtime>+<service>.json` | `clawdi run` launch config for runtime main processes and internal runtime-owned services |
 | `$CLAWDI_RUN_DIR/secrets/*` | Short-lived token and secret files for the current runtime session |
 | `$CLAWDI_RUN_DIR/systemd/env/*.service.env` | Ephemeral env files for local systemd services, including short-lived runtime secrets |
 | `$CLAWDI_RUN_DIR/systemd/system/*.service` or `/run/systemd/system/*.service` | Generated system units for root-owned Clawdi support programs |
-| `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units, plus Clawdi-owned user support units such as the sidecar |
+| `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units and direct runtime-user programs |
 | `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Transparent hosted drop-ins for official runtime units |
+
+Generic MCP reconciliation compares desired servers, the previous managed
+last-applied map, and the current native map. OpenClaw current state is the
+canonical `mcp.servers` object in `~/.openclaw/openclaw.json`; Hermes uses
+`mcp_servers` in `~/.hermes/config.yaml`. A desired name that already exists
+without last-applied ownership fails closed. Native absence already satisfies a
+managed deletion. The runtime apply snapshots both complete native configs and
+the ledger, preserves unrelated entries, writes the ledger last, and restores
+the exact previous files and metadata if any later mutation fails.
+These paths and transports are pinned to official fixed-commit sources:
+OpenClaw's
+[`mcp-config.ts` read path](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/mcp-config.ts#L51-L65),
+its
+[`setConfiguredMcpServer` write path](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/src/config/mcp-config.ts#L162-L184),
+and
+[`docs/cli/mcp.md` lines 661-767](https://github.com/openclaw/openclaw/blob/2d2ddc43d0dcf71f31283d780f9fe9ff4cc04fe4/docs/cli/mcp.md#L661-L767),
+plus Hermes'
+[`tools/mcp_tool.py` lines 1-64](https://github.com/NousResearch/hermes-agent/blob/8208fc52701332f213e6c51ebc0b610be00300de/tools/mcp_tool.py#L1-L64),
+which defines `mcp_servers` URL, header, transport, and SSE handling.
 
 Short-lived secrets belong under the runtime run directory, not in durable
 config. Offline secret recovery uses only the existing root-only,
@@ -686,6 +748,12 @@ injected. Egress profile/CA/secret config stays inside the sidecar. Runtime
 programs therefore receive only CA-trust env such as `NODE_EXTRA_CA_CERTS`,
 `REQUESTS_CA_BUNDLE`, and `SSL_CERT_FILE`; sidecar control env and secret-file
 paths stay out of the official runtime process.
+
+Generated managed-provider profiles match the configured origin, base-URL path,
+and public authorization placeholder before replacing the header. The sidecar
+validates every secret reference in enabled profiles at load time and refuses to
+start when material is missing. A channel that is feature-gated off contributes
+neither runtime configuration, egress profiles, nor channel secret material.
 
 This ownership boundary is codified in
 [ADR-0002](adr/0002-runtime-image-is-a-stable-capability-envelope.md).
@@ -857,6 +925,12 @@ revalidated on every read and fails closed with `409` when invalid or below the
 floor. There is no default, nullable fallback, floating tag, local path, or
 forward compatibility use of the historical `clawdi_cli` column.
 
+The security boundary is delivered as a paired artifact rollout: the Hosted
+runtime image supplies the root-only bootstrap entrypoint and replaces the
+workload, while the manifest pins the matching exact CLI. Updating only the
+manifest or reconciling an existing container is insufficient when the old
+image root filesystem is read-only.
+
 Runtime-state writes use generation compare-and-swap while locking the
 corresponding `AgentEnvironment` before the optional `HostedRuntimeState`.
 Lower generations return structured `stale_generation` conflicts; equal
@@ -864,6 +938,12 @@ generations with material differences return structured `generation_conflict`
 responses. Both include `current_generation`. Equal identical state is an
 idempotent `200`, while higher generations apply. Rejected and idempotent writes
 do not create duplicate state, audit events, or manifest invalidation.
+
+Additive manifest capabilities roll out consumer first: publish and select a
+CLI version that understands the new fields, then advance existing deployments
+through ordinary higher-generation runtime-state reconciliation. Database
+migrations backfill stored authority where required; operators do not patch
+individual production rows to advance deployments.
 
 Committed manifest changes emit a signal-only `runtime_manifest_changed` event
 through `/v1/sync/events`. The payload contains only `type` and

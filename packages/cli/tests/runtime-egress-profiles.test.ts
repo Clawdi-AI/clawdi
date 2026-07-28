@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { egressProfileSchema } from "../src/runtime/egress-profiles";
+import { egressProfileSchema, secretRefSchema } from "../src/runtime/egress-profiles";
 import {
 	hostedManifestEgressProfiles,
 	runtimeInstallerEgressProfiles,
@@ -9,6 +9,15 @@ const providerProfiles = (profiles: ReturnType<typeof hostedManifestEgressProfil
 	profiles.filter((profile) => profile.owner === "provider-projection");
 
 describe("runtime egress profile schema", () => {
+	it("shares canonical secretRef semantics with hosted MCP resources", () => {
+		for (const value of ["secret://provider.default.apiKey", "env://CLAWDI_AUTH_TOKEN"]) {
+			expect(secretRefSchema.safeParse(value).success).toBe(true);
+		}
+		for (const value of ["secret://", "env://", "env://INVALID-NAME", "env://9TOKEN"]) {
+			expect(secretRefSchema.safeParse(value).success).toBe(false);
+		}
+	});
+
 	it("accepts HTTP and websocket upstream base URLs", () => {
 		const base = {
 			id: "discord-rest",
@@ -150,6 +159,7 @@ describe("runtime egress profile schema", () => {
 				match: {
 					scheme: "https",
 					host: "ai-gateway.example.test",
+					pathPrefix: "/v1/",
 					headers: {
 						authorization: {
 							type: "equals",
@@ -306,6 +316,10 @@ describe("runtime egress profile schema", () => {
 			"hermes-provider.example.test",
 			"openclaw-provider.example.test",
 		]);
+		expect(providerProfiles(bundle.profiles).map((profile) => profile.match.pathPrefix)).toEqual([
+			"/v1/",
+			"/v1/",
+		]);
 	});
 
 	it("builds the Codex tool provider profile without runtime providers", () => {
@@ -331,6 +345,7 @@ describe("runtime egress profile schema", () => {
 			match: {
 				scheme: "https",
 				host: "ai-gateway.example.test",
+				pathPrefix: "/v1/",
 				headers: {
 					authorization: {
 						type: "equals",
@@ -369,6 +384,30 @@ describe("runtime egress profile schema", () => {
 
 		expect(providerProfiles(bundle.profiles)).toHaveLength(1);
 		expect(providerProfiles(bundle.profiles)[0]?.id).toBe("managed-provider-shared");
+	});
+
+	it("keeps separate managed provider profiles for distinct paths on one origin", () => {
+		const bundle = hostedManifestEgressProfiles({
+			providers: {
+				chat: {
+					baseUrl: "https://ai-gateway.example.test/chat/v1",
+					apiMode: "openai_chat",
+					managed_by: "clawdi",
+					apiKeySecretRef: "provider.shared.apiKey",
+				},
+				responses: {
+					baseUrl: "https://ai-gateway.example.test/responses/v1",
+					apiMode: "openai_responses",
+					managed_by: "clawdi",
+					apiKeySecretRef: "provider.shared.apiKey",
+				},
+			},
+		});
+
+		expect(providerProfiles(bundle.profiles).map((profile) => profile.match.pathPrefix)).toEqual([
+			"/chat/v1/",
+			"/responses/v1/",
+		]);
 	});
 
 	it("does not derive provider egress profiles without a managed provider secret ref", () => {

@@ -39,7 +39,10 @@ import {
 	evaluateHostPolicyForCommand,
 	readHostPolicy,
 } from "../src/runtime/host-policy";
-import { hostedManifestEgressProfiles } from "../src/runtime/hosted-egress-profiles";
+import {
+	hostedManifestEgressProfiles,
+	managedMcpHeaderPlaceholder,
+} from "../src/runtime/hosted-egress-profiles";
 import {
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
@@ -74,6 +77,7 @@ const ENV_KEYS = [
 	"CLAWDI_HOST_POLICY_PATH",
 	"CLAWDI_SERVICE_STATE_DIR",
 	"CLAWDI_RUN_DIR",
+	"CLAWDI_IMAGE_SHIM_PATH",
 	"CLAWDI_RUNTIME_HOME",
 	"CLAWDI_AUTH_TOKEN",
 	"CLAWDI_RUNTIME_AUTH_ENV",
@@ -123,6 +127,7 @@ beforeEach(() => {
 	}
 	root = join(tmpdir(), `clawdi-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(root, { recursive: true });
+	process.env.CLAWDI_IMAGE_SHIM_PATH = join(root, "usr", "local", "bin", "clawdi");
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
 	process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "test-hermes-dashboard-password";
@@ -148,7 +153,7 @@ function seedCurrentCliInstall(
 	version = "0.13.0-test",
 	registry: string | null = null,
 ): void {
-	const active = join(state, "bin", "clawdi");
+	const active = join(state, "managed-cli", "bin", "clawdi");
 	const target = join(state, "npm", "bin", "clawdi");
 	mkdirSync(dirname(active), { recursive: true });
 	mkdirSync(dirname(target), { recursive: true });
@@ -751,6 +756,82 @@ function readHermesConfigYaml(home: string): Record<string, unknown> {
 	return parsed;
 }
 
+function readOpenClawMcpServers(home: string): Record<string, unknown> {
+	const config = expectRecord(
+		JSON.parse(readFileSync(join(home, ".openclaw", "openclaw.json"), "utf-8")),
+		"OpenClaw config",
+	);
+	const mcp = expectRecord(config.mcp, "OpenClaw MCP config");
+	return expectRecord(mcp.servers, "OpenClaw MCP servers");
+}
+
+function writeFakeOpenClawMcpBinary(
+	home: string,
+	options: {
+		callsPath?: string;
+		failSetFile?: string;
+		failUnsetFile?: string;
+		failSetServer?: string;
+	} = {},
+): { commandPath: string; configPath: string } {
+	const commandPath = join(home, ".openclaw", "bin", "openclaw");
+	const configPath = join(home, ".openclaw", "openclaw.json");
+	const logSet = options.callsPath
+		? `printf 'set %s\\n' "\${3:?missing server name}" >> '${options.callsPath}'`
+		: ":";
+	const logUnset = options.callsPath
+		? `printf 'unset %s\\n' "\${3:?missing server name}" >> '${options.callsPath}'`
+		: ":";
+	const failSetFile = options.failSetFile
+		? `if [ -e '${options.failSetFile}' ]; then exit 42; fi`
+		: ":";
+	const failUnsetFile = options.failUnsetFile
+		? `if [ -e '${options.failUnsetFile}' ]; then exit 43; fi`
+		: ":";
+	const failSetServer = options.failSetServer
+		? `if [ "\${3}" = '${options.failSetServer}' ]; then exit 42; fi`
+		: ":";
+	mkdirSync(dirname(commandPath), { recursive: true });
+	writeFileSync(
+		commandPath,
+		`#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ]; then
+  ${logSet}
+  ${failSetFile}
+  ${failSetServer}
+  node - '${configPath}' "\${3}" "\${4:?missing server config}" <<'NODE'
+const fs = require("node:fs");
+const [path, name, raw] = process.argv.slice(2);
+const config = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : {};
+config.mcp ??= {};
+config.mcp.servers ??= {};
+config.mcp.servers[name] = JSON.parse(raw);
+fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\\n");
+NODE
+  exit 0
+fi
+if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "unset" ]; then
+  ${logUnset}
+  ${failUnsetFile}
+  node - '${configPath}' "\${3:?missing server name}" <<'NODE'
+const fs = require("node:fs");
+const [path, name] = process.argv.slice(2);
+const config = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path, "utf8")) : {};
+if (!config.mcp?.servers || !Object.hasOwn(config.mcp.servers, name)) process.exit(44);
+delete config.mcp.servers[name];
+fs.writeFileSync(path, JSON.stringify(config, null, 2) + "\\n");
+NODE
+  exit 0
+fi
+printf 'unexpected openclaw command: %s\\n' "$*" >&2
+exit 64
+`,
+	);
+	chmodSync(commandPath, 0o700);
+	return { commandPath, configPath };
+}
+
 function expectRecord(input: unknown, label: string): Record<string, unknown> {
 	if (!isRecord(input)) {
 		throw new Error(`Expected ${label} to be a YAML object.`);
@@ -1194,6 +1275,8 @@ describe("runtime paths", () => {
 		expect(paths.workspaceRoot).toBe(home);
 		expect(paths.managedConfig).toBe(join(state, "config", "clawdi.json"));
 		expect(paths.syncState).toBe(join(state, "sync", "runtimes.json"));
+		expect(paths.cliManagedBin).toBe(join(state, "managed-cli", "bin", "clawdi"));
+		expect(paths.cliNpmPrefix).toBe(join(state, "npm"));
 		expect(paths.runtimeSource).toBe("/etc/clawdi/runtime-source.json");
 		expect(paths.egressProfileRoot).toBe(join(state, "config", "egress"));
 		expect(paths.egressProfileBundle).toBe(join(state, "config", "egress", "profiles.json"));
@@ -1837,7 +1920,10 @@ describe("runtime manifest datasource", () => {
 								},
 							},
 							terminalTooling: TEST_HOSTED_CODEX_TERMINAL_TOOLING,
-							mcp: { enabled: true, profile: "clawdi-default" },
+							mcp: {
+								servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
+							},
+							skills: { entries: { clawdi: { enabled: true } } },
 							tools: { catalog: "clawdi-default" },
 						},
 						secretValues: {
@@ -1862,8 +1948,10 @@ describe("runtime manifest datasource", () => {
 			expect(loaded.manifest.clawdiCli?.source).toBe("npm:clawdi");
 			expect(loaded.manifest.clawdiCli?.packageSpec).toBe("clawdi@0.13.0-test");
 			expect(loaded.manifest.projection?.mcp).toEqual({
-				enabled: true,
-				profile: "clawdi-default",
+				servers: { clawdi: { command: "clawdi", args: ["mcp"] } },
+			});
+			expect(loaded.manifest.projection?.skills).toEqual({
+				entries: { clawdi: { enabled: true } },
 			});
 			expect(loaded.manifest.projection?.tools).toEqual({ catalog: "clawdi-default" });
 			expect(loaded.manifest.projection?.terminalTooling).toEqual(
@@ -2696,6 +2784,7 @@ exit 0
 		const userCodexConfig = join(home, ".codex", "config.toml");
 		const userConfigBytes = Buffer.from('# user config\nmodel = "user-model"\n');
 		const previousPath = process.env.PATH;
+		const previousUmask = process.umask(0o077);
 		mkdirSync(binDir, { recursive: true });
 		mkdirSync(dirname(userCodexConfig), { recursive: true });
 		writeFileSync(userCodexConfig, userConfigBytes);
@@ -2782,6 +2871,7 @@ exit 0
 
 			expect(convergence.installErrors).toEqual([]);
 		} finally {
+			process.umask(previousUmask);
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;
 			process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
@@ -2791,8 +2881,12 @@ exit 0
 		expect(npmArgs).toContain("@openai/codex@0.142.4");
 		expect(npmArgs).toContain(`${join(state, "codex", "npm")}\n`);
 		const realBin = join(state, "codex", "npm", "bin", "codex");
+		const packageJson = join(state, "codex", "npm", "lib/node_modules/@openai/codex/package.json");
 		const commandShim = join(state, "bin", "codex");
+		expect(statSync(join(state, "codex")).mode & 0o777).toBe(0o755);
+		expect(statSync(dirname(realBin)).mode & 0o777).toBe(0o755);
 		expect(statSync(realBin).mode & 0o777).toBe(0o755);
+		expect(statSync(packageJson).mode & 0o777).toBe(0o644);
 		expect(statSync(commandShim).mode & 0o777).toBe(0o755);
 		expect(readFileSync(commandShim, "utf8")).not.toContain("--profile");
 		expect(readFileSync(userCodexConfig, "utf8")).toContain('model_provider = "clawdi-managed"');
@@ -5067,7 +5161,6 @@ exit 64
 			"provider.default.apiKey": "sk-provider",
 			"secret://channels/telegram/clawdi_accttelegram/agent-token": "telegram-agent-token",
 			"secret://channels/discord/clawdi_acctdiscord1/agent-token": "discord-agent-token",
-			"secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token": "whatsapp-agent-token",
 		});
 		expect(projected.sourceManifest).toEqual(loaded.manifest);
 		expect(JSON.stringify(projected.sourceManifest)).not.toContain('"channels"');
@@ -5085,10 +5178,10 @@ exit 64
 		).toMatch(/^clawdi_[a-f0-9]{32}$/);
 		expect(
 			projected.secretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/agent-token"],
-		).toBe("whatsapp-agent-token");
+		).toBeUndefined();
 		expect(
 			projected.secretValues?.["secret://channels/whatsapp/clawdi_acctwhatsapp/placeholder-token"],
-		).toMatch(/^clawdi_[a-f0-9]{32}$/);
+		).toBeUndefined();
 		expect(projected.manifest.projection?.channels).toMatchObject({
 			telegram: { enabled: true },
 			discord: { enabled: true },
@@ -5169,18 +5262,12 @@ exit 64
 
 		expect(projected.manifest.projection?.channels).toEqual({});
 		expect(projected.manifest.projection?.channelCredentials).toEqual([]);
-		expect(projected.manifest.egressProfiles?.profiles).toEqual([
-			expect.objectContaining({
-				id: "native-whatsapp-clawdi_000000000000-graph-managed",
-				kind: "http",
-				owner: "clawdi-native-channels",
-			}),
-		]);
+		expect(projected.manifest.egressProfiles?.profiles).toEqual([]);
 		expect(JSON.stringify(projected.manifest)).not.toContain(accountId);
 		expect(JSON.stringify(projected.manifest)).not.toContain("baileys");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-agent-token");
 		expect(JSON.stringify(projected.manifest)).not.toContain("wa-adv-secret");
-		expect(JSON.stringify(projected.secretValues ?? {})).toContain("wa-agent-token");
+		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-agent-token");
 		expect(JSON.stringify(projected.secretValues ?? {})).not.toContain("wa-adv-secret");
 	});
 
@@ -5765,7 +5852,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			});
 			const paths = getRuntimePaths();
 			expect(readSystemdSystemUnit(paths, "clawdi-runtime-watch")).toContain(
-				'ExecStart="clawdi" "runtime" "watch"',
+				`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`,
 			);
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
@@ -5905,7 +5992,10 @@ exit 42
 		];
 		for (const [index, path] of rollbackFixtures.entries()) {
 			mkdirSync(dirname(path), { recursive: true });
-			writeFileSync(path, `previous-${index}\n`);
+			writeFileSync(
+				path,
+				path === targetConfig ? '{"mcp":{"servers":{}}}\n' : `previous-${index}\n`,
+			);
 		}
 		const rollbackContents = new Map(rollbackFixtures.map((path) => [path, readFileSync(path)]));
 		writeFileSync(paths.manifestLastGood, '{"generation":12}\n');
@@ -6928,7 +7018,7 @@ chmod +x "$prefix/bin/clawdi"
 			}
 			expect(process.exitCode ?? 0).toBe(0);
 			expect(captured).toHaveLength(1);
-			const active = join(state, "bin", "clawdi");
+			const active = join(state, "managed-cli", "bin", "clawdi");
 			const sharedPrefixTarget = join(state, "npm", "bin", "clawdi");
 			const activeTarget = readlinkSync(active);
 			expect(readlinkSync(active)).toBe(activeTarget);
@@ -6958,6 +7048,67 @@ chmod +x "$prefix/bin/clawdi"
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;
 		}
+	});
+
+	it("migrates a writable legacy hosted CLI entrypoint into the root-only boundary", () => {
+		const version = "0.13.1-beta.0";
+		const packageSpec = `clawdi@${version}`;
+		const home = join(root, "home-cli-boundary", "clawdi");
+		const state = join(root, "state-cli-boundary");
+		const run = join(root, "run-cli-boundary");
+		const legacyActive = join(state, "bin", "clawdi");
+		const activeTarget = join(state, "npm", "bin", "clawdi");
+		const statusPath = join(state, "status", "cli-bootstrap.json");
+		const legacyImageShim = join(root, "usr", "local", "bin", "clawdi");
+		mkdirSync(dirname(legacyActive), { recursive: true });
+		mkdirSync(dirname(activeTarget), { recursive: true });
+		mkdirSync(dirname(statusPath), { recursive: true });
+		mkdirSync(dirname(legacyImageShim), { recursive: true });
+		writeFileSync(
+			activeTarget,
+			`#!/usr/bin/env bash\nif [ "\${1:-}" = "--version" ]; then echo "${version}"; exit 0; fi\nexit 64\n`,
+		);
+		writeFileSync(legacyImageShim, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(activeTarget, 0o755);
+		chmodSync(legacyImageShim, 0o755);
+		symlinkSync(activeTarget, legacyActive);
+		writeFileSync(
+			statusPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
+				status: "installed",
+				source: "npm",
+				packageSpec,
+				registry: "https://registry.npmjs.org",
+				npmPrefix: join(state, "npm"),
+				activePath: legacyActive,
+				activeTarget,
+				version,
+			}),
+			{ mode: 0o644 },
+		);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		delete process.env.CLAWDI_IMAGE_SHIM_PATH;
+		const paths = getRuntimePaths();
+		paths.imageShim = join(root, "usr", "local", "lib", "clawdi", "bootstrap", "clawdi");
+		paths.legacyImageShim = legacyImageShim;
+
+		const desired = normalizeManifestPayload(hostedCliManifestResponse(home, packageSpec));
+		const result = applyRuntimeCliDesiredState(desired.manifest, paths);
+
+		expect(result.status).toBe("current");
+		expect(paths.cliManagedBin).toBe(join(state, "managed-cli", "bin", "clawdi"));
+		expect(readlinkSync(paths.cliManagedBin)).toBe(activeTarget);
+		expect(existsSync(legacyActive)).toBe(false);
+		expect(statSync(join(state, "managed-cli")).mode & 0o777).toBe(0o700);
+		expect(statSync(dirname(paths.cliManagedBin)).mode & 0o777).toBe(0o700);
+		expect(statSync(paths.cliNpmPrefix).mode & 0o777).toBe(0o700);
+		expect(statSync(activeTarget).mode & 0o777).toBe(0o700);
+		expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
+		expect(statSync(legacyImageShim).mode & 0o777).toBe(0o700);
 	});
 
 	it("runtime watch reapplies transparent egress across CLI self-upgrade", async () => {
@@ -7179,7 +7330,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			const transparentEgressEnv = readFileSync(paths.egressTransparentEnv, "utf-8");
 			expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 			expect(sidecarEnv).toContain('CLAWDI_RUNTIME_REV="');
-			expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+			expect(sidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 			expect(transparentEgressEnv).toContain(
 				'CLAWDI_EGRESS_TRANSPORT_VERSION="clawdi-transparent-egress-v1"',
 			);
@@ -7251,11 +7402,23 @@ chmod +x "$prefix/bin/clawdi"
 
 		try {
 			const desired = normalizeManifestPayload(hostedCliManifestResponse(home, desiredSpec));
-			const result = applyRuntimeCliDesiredState(desired.manifest, getRuntimePaths());
+			const paths = getRuntimePaths();
+			const result = applyRuntimeCliDesiredState(desired.manifest, paths);
 
 			expect(result.status).toBe("installed");
 			expect(result.packageSpec).toBe(desiredSpec);
 			expect(result.version).toBe(desiredVersion);
+			expect(result.activePath).toBe(join(state, "managed-cli", "bin", "clawdi"));
+			expect(readlinkSync(result.activePath)).toBe(result.activeTarget);
+			expect(existsSync(join(state, "bin", "clawdi"))).toBe(false);
+			expect(statSync(join(state, "managed-cli")).mode & 0o777).toBe(0o700);
+			expect(statSync(dirname(result.activePath)).mode & 0o777).toBe(0o700);
+			expect(statSync(paths.cliNpmPrefix).mode & 0o777).toBe(0o700);
+			expect(statSync(result.npmPrefix).mode & 0o777).toBe(0o700);
+			if (!result.activeTarget) throw new Error("CLI update did not return an active target");
+			expect(statSync(result.activeTarget).mode & 0o777).toBe(0o700);
+			expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
+			expect(statSync(paths.cliUpgradeState).mode & 0o777).toBe(0o600);
 			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
 			expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
 			expect(npmCalls.some((call) => call.includes(desiredSpec))).toBe(true);
@@ -10280,29 +10443,10 @@ exit 64
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "workspace");
 		const manifestPath = join(root, "runtime-mcp.json");
-		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const { configPath: openclawConfigPath } = writeFakeOpenClawMcpBinary(home);
 		const hermesBin = join(home, ".local", "bin", "hermes");
-		const openclawMcp = join(root, "openclaw-mcp.json");
-		mkdirSync(dirname(openclawBin), { recursive: true });
 		mkdirSync(dirname(hermesBin), { recursive: true });
-		writeFileSync(
-			openclawBin,
-			`#!/usr/bin/env bash
-set -euo pipefail
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "set" ] && [ "\${3:-}" = "clawdi" ]; then
-  printf '%s\\n' "\${4:-}" > '${openclawMcp}'
-  exit 0
-fi
-if [ "\${1:-}" = "mcp" ] && [ "\${2:-}" = "unset" ] && [ "\${3:-}" = "clawdi" ]; then
-  rm -f '${openclawMcp}'
-  exit 0
-fi
-printf 'unexpected openclaw command: %s\\n' "$*" >&2
-exit 64
-`,
-		);
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
-		chmodSync(openclawBin, 0o700);
 		chmodSync(hermesBin, 0o700);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "local";
@@ -10320,6 +10464,22 @@ exit 64
 				issuedAt: "2026-06-06T00:00:00Z",
 				workspaceRoot: workspace,
 				controlPlane: { apiUrl: "https://cloud-api.test" },
+				egressProfiles: hostedManifestEgressProfiles({
+					mcp: {
+						servers: {
+							clawdi: {
+								url: "https://cloud-api.test/v1/mcp/clawdi",
+								transport: "streamable-http",
+								headers: {
+									Authorization: {
+										secretRef: "env://CLAWDI_AUTH_TOKEN",
+										prefix: "Bearer ",
+									},
+								},
+							},
+						},
+					},
+				}),
 				runtimes: {
 					openclaw: {
 						enabled: true,
@@ -10344,7 +10504,21 @@ exit 64
 				},
 				projection: {
 					system: { home, workspace },
-					mcp: { enabled: true, profile: "clawdi-default" },
+					mcp: {
+						servers: {
+							clawdi: {
+								url: "https://cloud-api.test/v1/mcp/clawdi",
+								transport: "streamable-http",
+								headers: {
+									Authorization: {
+										secretRef: "env://CLAWDI_AUTH_TOKEN",
+										prefix: "Bearer ",
+									},
+								},
+							},
+						},
+					},
+					skills: { entries: { clawdi: { enabled: true } } },
 					tools: { catalog: "clawdi-default" },
 				},
 			}),
@@ -10353,36 +10527,65 @@ exit 64
 		const loaded = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
 		expect("manifest" in loaded).toBe(true);
 		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		const convergence = convergeRuntimeManifest(loaded, getRuntimePaths());
 
 		expect(convergence.installErrors).toEqual([]);
-		const authTokenFile = join(run, "secrets", "auth-token");
-		const openclawConfig = JSON.parse(readFileSync(openclawMcp, "utf-8"));
-		expect(openclawConfig.command).toBe("clawdi");
-		expect(openclawConfig.args).toEqual([
-			"mcp",
-			"--api-url",
-			"https://cloud-api.test",
-			"--auth-token-file",
-			authTokenFile,
-		]);
+		const openclawConfig = readOpenClawMcpServers(home).clawdi;
+		expect(openclawConfig).toEqual({
+			url: "https://cloud-api.test/v1/mcp/clawdi",
+			transport: "streamable-http",
+			headers: {
+				Authorization: `Bearer ${managedMcpHeaderPlaceholder("clawdi", "Authorization")}`,
+			},
+		});
 		expect(JSON.stringify(openclawConfig)).not.toContain("deploy-key-secret");
+		expect(JSON.stringify(openclawConfig)).not.toContain("CLAWDI_AUTH_TOKEN");
+		expectMitmSecretFileIsSidecarOnly(
+			getRuntimePaths(),
+			convergence.outputs.egressSecretFile,
+			"env://CLAWDI_AUTH_TOKEN",
+			"deploy-key-secret",
+		);
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("mcp_servers:");
 		expect(hermesConfig).toContain("clawdi:");
-		expect(hermesConfig).toContain("command: clawdi");
-		expect(hermesConfig).toContain("- mcp");
-		expect(hermesConfig).toContain("- --api-url");
-		expect(hermesConfig).toContain("- https://cloud-api.test");
-		expect(hermesConfig).toContain("- --auth-token-file");
-		expect(hermesConfig).toContain(authTokenFile);
+		expect(hermesConfig).toContain("url: https://cloud-api.test/v1/mcp/clawdi");
+		expect(hermesConfig).toContain("transport: streamable-http");
+		expect(hermesConfig).toContain(
+			`Authorization: Bearer ${managedMcpHeaderPlaceholder("clawdi", "Authorization")}`,
+		);
+		expect(hermesConfig).not.toContain("--api-url");
+		expect(hermesConfig).not.toContain("--auth-token-file");
 		expect(hermesConfig).not.toContain("deploy-key-secret");
+		expect(
+			readFileSync(
+				join(home, ".openclaw", "agents", "main", "skills", "clawdi", "SKILL.md"),
+				"utf-8",
+			),
+		).not.toContain("Memory");
+		expect(
+			readFileSync(join(home, ".hermes", "skills", "clawdi", "SKILL.md"), "utf-8"),
+		).not.toContain("Memory");
 		const mcpProjection = JSON.parse(
 			readFileSync(join(state, "config", "projections", "clawdi-mcp.json"), "utf-8"),
 		);
 		expect(mcpProjection.projection.mcp).toEqual({
-			enabled: true,
-			profile: "clawdi-default",
+			servers: {
+				clawdi: {
+					url: "https://cloud-api.test/v1/mcp/clawdi",
+					transport: "streamable-http",
+					headers: {
+						Authorization: {
+							secretRef: "env://CLAWDI_AUTH_TOKEN",
+							prefix: "Bearer ",
+						},
+					},
+				},
+			},
+		});
+		expect(mcpProjection.projection.skills).toEqual({
+			entries: { clawdi: { enabled: true } },
 		});
 		expect(mcpProjection.projection.tools).toEqual({ catalog: "clawdi-default" });
 
@@ -10421,18 +10624,541 @@ exit 64
 				},
 				projection: {
 					system: { home, workspace },
-					mcp: { enabled: false },
+					mcp: { servers: {} },
+					skills: { entries: { clawdi: { enabled: false } } },
 				},
 			}),
 		);
+		process.env.CLAWDI_RUNTIME_MODE = "local";
 		const disabled = await loadRuntimeManifest(getRuntimePaths(), { manifestPath });
 		expect("manifest" in disabled).toBe(true);
 		if (!("manifest" in disabled)) throw new Error("expected disabled manifest load success");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		const disabledConvergence = convergeRuntimeManifest(disabled, getRuntimePaths());
 
 		expect(disabledConvergence.installErrors).toEqual([]);
-		expect(existsSync(openclawMcp)).toBe(false);
+		expect(existsSync(openclawConfigPath)).toBe(true);
+		expect(readOpenClawMcpServers(home).clawdi).toBeUndefined();
 		expect(readFileSync(join(home, ".hermes", "config.yaml"), "utf-8")).not.toContain("clawdi:");
+		expect(existsSync(join(home, ".openclaw", "agents", "main", "skills", "clawdi"))).toBe(false);
+		expect(existsSync(join(home, ".hermes", "skills", "clawdi"))).toBe(false);
+	});
+
+	it("reconciles generic MCP maps and cleans the previously managed runtime on switch", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "workspace");
+		const hermesBin = join(home, ".local", "bin", "hermes");
+		const openclawCalls = join(root, "openclaw-mcp-calls.log");
+		const { configPath: openclawConfigPath } = writeFakeOpenClawMcpBinary(home, {
+			callsPath: openclawCalls,
+		});
+		const openclawUserSkill = join(
+			home,
+			".openclaw",
+			"agents",
+			"main",
+			"skills",
+			"user-skill",
+			"SKILL.md",
+		);
+		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
+		mkdirSync(dirname(hermesBin), { recursive: true });
+		mkdirSync(dirname(openclawUserSkill), { recursive: true });
+		writeFileSync(
+			openclawConfigPath,
+			`${JSON.stringify(
+				{
+					custom: "keep",
+					mcp: { servers: { "user-entry": { command: "user-owned", args: ["keep"] } } },
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		writeFileSync(openclawUserSkill, "user-owned skill\n");
+		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(hermesBin, 0o700);
+		mkdirSync(join(home, ".hermes"), { recursive: true });
+		writeFileSync(
+			join(home, ".hermes", "config.yaml"),
+			"mcp_servers:\n  user-entry:\n    command: user-owned\n    args:\n      - keep\n",
+		);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_AUTH_TOKEN = "deploy-key-secret";
+
+		const load = (
+			generation: number,
+			selectedRuntime: "openclaw" | "hermes",
+			servers: Record<string, { command: string; args: string[] }>,
+			skillEnabled = true,
+		): RuntimeManifestLoad => ({
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_generic_mcp",
+				environmentId: "env_generic_mcp",
+				instanceId: "iid_generic_mcp",
+				generation,
+				issuedAt: "2026-07-28T00:00:00Z",
+				workspaceRoot: workspace,
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: selectedRuntime === "openclaw",
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+					hermes: {
+						enabled: selectedRuntime === "hermes",
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://hermes-agent.nousresearch.com/install.sh",
+							home,
+							args: [],
+						},
+					},
+				},
+				projection: {
+					system: { home, workspace },
+					mcp: { servers },
+					skills: { entries: { clawdi: { enabled: skillEnabled } } },
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: `test://generic-mcp-${generation}`,
+			offline: false,
+			secretValues: {},
+		});
+		const initialServers = {
+			clawdi: { command: "clawdi", args: ["mcp"] },
+			"search-proxy": { command: "searchctl", args: ["serve", "v1"] },
+		};
+		const updatedServers = {
+			...initialServers,
+			"search-proxy": { command: "searchctl", args: ["serve", "v2"] },
+		};
+
+		const initial = convergeRuntimeManifest(load(1, "openclaw", initialServers), getRuntimePaths());
+		expect(initial.installErrors).toEqual([]);
+		expect(readOpenClawMcpServers(home).clawdi).toEqual(initialServers.clawdi);
+		expect(readOpenClawMcpServers(home)["search-proxy"]).toEqual(initialServers["search-proxy"]);
+		expect(readOpenClawMcpServers(home)["user-entry"]).toEqual({
+			command: "user-owned",
+			args: ["keep"],
+		});
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
+			openclaw: initialServers,
+		});
+		const openclawSkill = join(home, ".openclaw", "agents", "main", "skills", "clawdi");
+		expect(existsSync(join(openclawSkill, ".clawdi-managed.json"))).toBe(true);
+
+		const updated = convergeRuntimeManifest(load(2, "openclaw", updatedServers), getRuntimePaths());
+		expect(updated.installErrors).toEqual([]);
+		expect(readOpenClawMcpServers(home)["search-proxy"]).toEqual(updatedServers["search-proxy"]);
+		const updatedConfig = readFileSync(openclawConfigPath, "utf-8");
+		const updatedLedger = readFileSync(ledgerPath, "utf-8");
+		const callsBeforeIdempotent = readFileSync(openclawCalls, "utf-8");
+		const idempotent = convergeRuntimeManifest(
+			load(2, "openclaw", updatedServers),
+			getRuntimePaths(),
+		);
+		expect(idempotent.installErrors).toEqual([]);
+		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(updatedConfig);
+		expect(readFileSync(ledgerPath, "utf-8")).toBe(updatedLedger);
+		expect(readFileSync(openclawCalls, "utf-8")).toBe(callsBeforeIdempotent);
+
+		const switched = convergeRuntimeManifest(load(3, "hermes", updatedServers), getRuntimePaths());
+		expect(switched.installErrors).toEqual([]);
+		expect(readOpenClawMcpServers(home).clawdi).toBeUndefined();
+		expect(readOpenClawMcpServers(home)["search-proxy"]).toBeUndefined();
+		expect(readOpenClawMcpServers(home)["user-entry"]).toEqual({
+			command: "user-owned",
+			args: ["keep"],
+		});
+		expect(existsSync(openclawSkill)).toBe(false);
+		expect(readFileSync(openclawUserSkill, "utf-8")).toBe("user-owned skill\n");
+		const hermesAfterSwitch = expectRecord(
+			readHermesConfigYaml(home).mcp_servers,
+			"Hermes MCP servers",
+		);
+		expect(hermesAfterSwitch["user-entry"]).toEqual({
+			command: "user-owned",
+			args: ["keep"],
+		});
+		expect(hermesAfterSwitch.clawdi).toEqual(initialServers.clawdi);
+		expect(hermesAfterSwitch["search-proxy"]).toEqual(updatedServers["search-proxy"]);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
+			hermes: updatedServers,
+		});
+		const hermesSkill = join(home, ".hermes", "skills", "clawdi");
+		expect(existsSync(join(hermesSkill, ".clawdi-managed.json"))).toBe(true);
+		process.env.CLAWDI_RUNTIME_MODE = "local";
+		const localMode = convergeRuntimeManifest(
+			load(4, "hermes", updatedServers, true),
+			getRuntimePaths(),
+		);
+		expect(localMode.installErrors).toEqual([]);
+		expect(existsSync(hermesSkill)).toBe(false);
+		expect(readFileSync(openclawUserSkill, "utf-8")).toBe("user-owned skill\n");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+
+		const removedGeneric = convergeRuntimeManifest(
+			load(5, "hermes", { clawdi: initialServers.clawdi }, false),
+			getRuntimePaths(),
+		);
+		expect(removedGeneric.installErrors).toEqual([]);
+		const hermesAfterRemoval = expectRecord(
+			readHermesConfigYaml(home).mcp_servers,
+			"Hermes MCP servers",
+		);
+		expect(hermesAfterRemoval["search-proxy"]).toBeUndefined();
+		expect(hermesAfterRemoval.clawdi).toEqual(initialServers.clawdi);
+		expect(hermesAfterRemoval["user-entry"]).toEqual({
+			command: "user-owned",
+			args: ["keep"],
+		});
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
+			hermes: { clawdi: initialServers.clawdi },
+		});
+		expect(existsSync(hermesSkill)).toBe(false);
+		mkdirSync(hermesSkill, { recursive: true });
+		writeFileSync(join(hermesSkill, "SKILL.md"), "user-owned canonical skill\n");
+
+		const disabled = convergeRuntimeManifest(load(6, "hermes", {}, false), getRuntimePaths());
+		expect(disabled.installErrors).toEqual([]);
+		const hermesAfterDisable = expectRecord(
+			readHermesConfigYaml(home).mcp_servers,
+			"Hermes MCP servers",
+		);
+		expect(hermesAfterDisable.clawdi).toBeUndefined();
+		expect(hermesAfterDisable["user-entry"]).toEqual({
+			command: "user-owned",
+			args: ["keep"],
+		});
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({});
+		expect(readFileSync(join(hermesSkill, "SKILL.md"), "utf-8")).toBe(
+			"user-owned canonical skill\n",
+		);
+		expect(readFileSync(openclawCalls, "utf-8")).toContain("unset search-proxy");
+	});
+
+	it("claims MCP ownership only after successful mutations and retries failed cleanup", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "workspace");
+		const calls = join(root, "openclaw-mcp-failure-calls.log");
+		const failSet = join(root, "fail-set");
+		const failUnset = join(root, "fail-unset");
+		const { configPath: openclawConfigPath } = writeFakeOpenClawMcpBinary(home, {
+			callsPath: calls,
+			failSetFile: failSet,
+			failUnsetFile: failUnset,
+		});
+		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
+		writeFileSync(
+			openclawConfigPath,
+			`${JSON.stringify(
+				{
+					custom: "keep",
+					mcp: { servers: { "user-owned": { command: "user", args: ["keep"] } } },
+				},
+				null,
+				2,
+			)}\n`,
+		);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_AUTH_TOKEN = "deploy-key-secret";
+
+		const load = (
+			generation: number,
+			servers: Record<string, { command: string; args: string[] }>,
+		): RuntimeManifestLoad => ({
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_mcp_ownership",
+				environmentId: "env_mcp_ownership",
+				instanceId: "iid_mcp_ownership",
+				generation,
+				issuedAt: "2026-07-28T00:00:00Z",
+				workspaceRoot: workspace,
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+				},
+				projection: { system: { home, workspace }, mcp: { servers } },
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: `test://mcp-ownership-${generation}`,
+			offline: false,
+			secretValues: {},
+		});
+
+		const beforeCollision = readFileSync(openclawConfigPath, "utf-8");
+		expect(() =>
+			convergeRuntimeManifest(
+				load(1, { "user-owned": { command: "platform-command", args: [] } }),
+				getRuntimePaths(),
+			),
+		).toThrow(/refusing to replace unmanaged openclaw MCP server user-owned/);
+		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(beforeCollision);
+		expect(existsSync(ledgerPath)).toBe(false);
+		expect(existsSync(calls)).toBe(false);
+
+		writeFileSync(failSet, "fail\n");
+		const failedSet = convergeRuntimeManifest(
+			load(2, { "failed-new": { command: "platform-command", args: [] } }),
+			getRuntimePaths(),
+		);
+		expect(failedSet.installErrors.join("\n")).toContain("runtime MCP projection failed");
+		expect(existsSync(ledgerPath)).toBe(false);
+		expect(readFileSync(openclawConfigPath, "utf-8")).toBe(beforeCollision);
+		rmSync(failSet);
+
+		const omittedAfterFailure = convergeRuntimeManifest(load(3, {}), getRuntimePaths());
+		expect(omittedAfterFailure.installErrors).toEqual([]);
+		expect(readOpenClawMcpServers(home)["user-owned"]).toEqual({
+			command: "user",
+			args: ["keep"],
+		});
+		expect(readFileSync(calls, "utf-8")).not.toContain("unset failed-new");
+
+		const managed = convergeRuntimeManifest(
+			load(4, { "owned-server": { command: "owned", args: ["serve"] } }),
+			getRuntimePaths(),
+		);
+		expect(managed.installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
+			openclaw: { "owned-server": { command: "owned", args: ["serve"] } },
+		});
+		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
+			command: "owned",
+			args: ["serve"],
+		});
+		writeFileSync(failUnset, "fail\n");
+		const failedRemoval = convergeRuntimeManifest(load(5, {}), getRuntimePaths());
+		expect(failedRemoval.installErrors.join("\n")).toContain("runtime MCP projection failed");
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
+			openclaw: { "owned-server": { command: "owned", args: ["serve"] } },
+		});
+		expect(readOpenClawMcpServers(home)["owned-server"]).toEqual({
+			command: "owned",
+			args: ["serve"],
+		});
+
+		const driftedConfig = expectRecord(
+			JSON.parse(readFileSync(openclawConfigPath, "utf-8")),
+			"drifted OpenClaw config",
+		);
+		const driftedMcp = expectRecord(driftedConfig.mcp, "drifted OpenClaw MCP config");
+		const driftedServers = expectRecord(driftedMcp.servers, "drifted OpenClaw MCP servers");
+		delete driftedServers["owned-server"];
+		writeFileSync(openclawConfigPath, `${JSON.stringify(driftedConfig, null, 2)}\n`);
+		const callsBeforeDriftReconcile = readFileSync(calls, "utf-8");
+		const retriedRemoval = convergeRuntimeManifest(load(6, {}), getRuntimePaths());
+		expect(retriedRemoval.installErrors).toEqual([]);
+		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({});
+		expect(readOpenClawMcpServers(home)["owned-server"]).toBeUndefined();
+		expect(readOpenClawMcpServers(home)["user-owned"]).toEqual({
+			command: "user",
+			args: ["keep"],
+		});
+		expect(readFileSync(calls, "utf-8")).toBe(callsBeforeDriftReconcile);
+		rmSync(failUnset);
+	});
+
+	it("rolls back native MCP config and last-applied ownership after a partial map failure", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "workspace");
+		const calls = join(root, "partial-mcp-calls.log");
+		const { configPath: openclawConfig } = writeFakeOpenClawMcpBinary(home, {
+			callsPath: calls,
+			failSetServer: "second",
+		});
+		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
+		const originalConfig = `${JSON.stringify(
+			{
+				custom: "keep",
+				mcp: { servers: { "user-entry": { command: "user-owned", args: ["keep"] } } },
+			},
+			null,
+			2,
+		)}\n`;
+		writeFileSync(openclawConfig, originalConfig);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+
+		const failed = convergeRuntimeManifest(
+			{
+				manifest: {
+					schemaVersion: "clawdi.runtimeDesiredState.v1",
+					deploymentId: "dep_partial_mcp",
+					environmentId: "env_partial_mcp",
+					instanceId: "iid_partial_mcp",
+					generation: 1,
+					issuedAt: "2026-07-28T00:00:00Z",
+					workspaceRoot: workspace,
+					controlPlane: { apiUrl: "https://cloud-api.test" },
+					runtimes: {
+						openclaw: {
+							enabled: true,
+							install: {
+								authority: "official",
+								method: "official-installer",
+								url: "https://openclaw.ai/install-cli.sh",
+								home,
+								args: [],
+							},
+						},
+					},
+					projection: {
+						system: { home, workspace },
+						mcp: {
+							servers: {
+								first: { command: "first", args: [] },
+								second: { command: "second", args: [] },
+							},
+						},
+					},
+					recovery: {},
+				},
+				source: "fixture-file",
+				sourcePath: "test://partial-mcp",
+				offline: false,
+				secretValues: {},
+			},
+			getRuntimePaths(),
+		);
+
+		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
+		expect(readFileSync(calls, "utf-8")).toBe("set first\nset second\n");
+		expect(readFileSync(openclawConfig, "utf-8")).toBe(originalConfig);
+		expect(existsSync(ledgerPath)).toBe(false);
+	});
+
+	it("rolls back existing managed OpenClaw and Hermes MCP state as one runtime apply", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "workspace");
+		const calls = join(root, "existing-managed-mcp-calls.log");
+		const { configPath: openclawConfig } = writeFakeOpenClawMcpBinary(home, {
+			callsPath: calls,
+			failSetServer: "second",
+		});
+		const hermesBin = join(home, ".local", "bin", "hermes");
+		mkdirSync(dirname(hermesBin), { recursive: true });
+		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(hermesBin, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const ledgerPath = join(state, "config", "projections", "managed-mcp-servers.json");
+		const hermesConfig = join(home, ".hermes", "config.yaml");
+
+		const load = (
+			generation: number,
+			servers: Record<string, { command: string; args: string[] }>,
+		): RuntimeManifestLoad => ({
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_existing_managed_mcp",
+				environmentId: "env_existing_managed_mcp",
+				instanceId: "iid_existing_managed_mcp",
+				generation,
+				issuedAt: "2026-07-28T00:00:00Z",
+				workspaceRoot: workspace,
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: {
+					openclaw: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://openclaw.ai/install-cli.sh",
+							home,
+							args: [],
+						},
+					},
+					hermes: {
+						enabled: true,
+						install: {
+							authority: "official",
+							method: "official-installer",
+							url: "https://hermes-agent.nousresearch.com/install.sh",
+							home,
+							args: [],
+						},
+					},
+				},
+				projection: { system: { home, workspace }, mcp: { servers } },
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: `test://existing-managed-mcp-${generation}`,
+			offline: false,
+			secretValues: {},
+		});
+
+		const initial = convergeRuntimeManifest(
+			load(1, { owned: { command: "owned", args: ["v1"] } }),
+			getRuntimePaths(),
+		);
+		expect(initial.installErrors).toEqual([]);
+		const previousOpenClaw = readFileSync(openclawConfig);
+		const previousHermes = readFileSync(hermesConfig);
+		const previousLedger = readFileSync(ledgerPath);
+		const previousOpenClawStat = statSync(openclawConfig);
+		const previousHermesStat = statSync(hermesConfig);
+
+		const failed = convergeRuntimeManifest(
+			load(2, {
+				owned: { command: "owned", args: ["v2"] },
+				second: { command: "second", args: [] },
+			}),
+			getRuntimePaths(),
+		);
+
+		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
+		expect(readFileSync(calls, "utf-8")).toContain("set owned\nset owned\nset second\n");
+		expect(readFileSync(openclawConfig)).toEqual(previousOpenClaw);
+		expect(readFileSync(hermesConfig)).toEqual(previousHermes);
+		expect(readFileSync(ledgerPath)).toEqual(previousLedger);
+		expect(statSync(openclawConfig).mode).toBe(previousOpenClawStat.mode);
+		expect(statSync(openclawConfig).uid).toBe(previousOpenClawStat.uid);
+		expect(statSync(openclawConfig).gid).toBe(previousOpenClawStat.gid);
+		expect(statSync(hermesConfig).mode).toBe(previousHermesStat.mode);
+		expect(statSync(hermesConfig).uid).toBe(previousHermesStat.uid);
+		expect(statSync(hermesConfig).gid).toBe(previousHermesStat.gid);
 	});
 
 	it("does not add the hosted runtime sidecar without egress profiles", () => {
@@ -10584,7 +11310,7 @@ exit 64
 		expect(existsSync(join(state, "supervisor", "supervisord.conf"))).toBe(false);
 		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
 		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
-		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+		expect(runtimeSidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 		expect(runtimeSidecarUnit).toContain("Before=user@10001.service");
 		expect(runtimeSidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_USER="clawdi"');
@@ -10599,7 +11325,7 @@ exit 64
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_SECRET_FILE="${egressSecretPath}"`);
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_ENGINE_BINARY_PATH="`);
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_ADDON_PATH="${paths.egressAddon}"`);
-		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+		expect(runtimeSidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 		expect(runtimeSidecarUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawUnit).not.toContain("user=clawdi");
@@ -10736,7 +11462,7 @@ exit 64
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
 		expect(sidecarUnit).toContain("Type=notify");
 		expect(sidecarUnit).toContain("Before=user@10001.service");
-		expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+		expect(sidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 		expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain(
 			'CLAWDI_EGRESS_TRANSPORT_VERSION="clawdi-transparent-egress-v1"',
@@ -11348,7 +12074,7 @@ exit 64
 			const watchUnit = readSystemdSystemUnit(paths, "clawdi-runtime-watch");
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
-			expect(watchUnit).toContain('ExecStart="clawdi" "runtime" "watch"');
+			expect(watchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
 			expect(daemonEnv).toContain('CLAWDI_ENVIRONMENT_ID="env_test"');
 			expect(daemonEnv).toContain('CLAWDI_SERVE_MODE="container"');
 			expect(watchUnit).not.toContain("sk-runtime");
@@ -11625,13 +12351,13 @@ exit 64
 			expect(codexEnv.id).toBe("env-codex");
 			expect(systemUnitNames).toContain("clawdi-runtime-watch.service");
 			expect(systemUnitNames).toContain("clawdi-daemon.service");
-			expect(watchUnit).toContain('ExecStart="clawdi" "runtime" "watch"');
+			expect(watchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
 			expect(watchEnv).toContain(
 				'CLAWDI_RUNTIME_MANIFEST_URL="https://runtime-source.test/v1/runtime/manifest"',
 			);
 			expect(watchEnv).not.toContain("runtime-auth-token");
 			expect(daemonUnit).toContain(
-				`ExecStart="clawdi" "daemon" "run" "--auth-token-file" "${join(
+				`ExecStart="${paths.cliManagedBin}" "daemon" "run" "--auth-token-file" "${join(
 					run,
 					"secrets",
 					"auth-token",

@@ -29,7 +29,7 @@ export function normalizeSecretValues(
 
 export function canonicalSecretRefName(ref: string | null | undefined): string | null {
 	const normalized = normalizeSecretRef(ref ?? undefined);
-	return normalized?.slice("secret://".length) ?? null;
+	return normalized?.startsWith("secret://") ? normalized.slice("secret://".length) : null;
 }
 
 export function runtimeSecretValue(secrets: Record<string, unknown>, ref: string): string | null {

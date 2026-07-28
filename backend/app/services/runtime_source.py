@@ -33,10 +33,12 @@ from app.schemas.runtime import (
     HostedRuntimeLocale,
     HostedRuntimeName,
     HostedRuntimeRecovery,
+    HostedRuntimeSkills,
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_desired_state,
+    validate_hosted_runtime_mcp_desired_state,
 )
 from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
 from app.services.managed_ai_provider import (
@@ -222,6 +224,13 @@ def render_runtime_source(
     except ValidationError as exc:
         raise RuntimeSourceError("Hosted runtime tools state is invalid") from exc
     try:
+        mcp = validate_hosted_runtime_mcp_desired_state(state.mcp)
+        skills = (
+            HostedRuntimeSkills.model_validate(state.skills) if state.skills is not None else None
+        )
+    except (ValidationError, ValueError) as exc:
+        raise RuntimeSourceError("Hosted runtime MCP or skills state is invalid") from exc
+    try:
         cli_package_spec = validate_clawdi_cli_package_spec(state.cli_package_spec)
     except ValueError as exc:
         raise RuntimeSourceError(
@@ -386,8 +395,10 @@ def render_runtime_source(
         manifest["egressProfiles"] = egress_profiles.model_dump(
             exclude_none=True, exclude_unset=True, mode="json"
         )
-    if state.mcp:
-        manifest["mcp"] = state.mcp
+    if mcp:
+        manifest["mcp"] = mcp
+    if skills is not None:
+        manifest["skills"] = skills.model_dump(mode="json")
     if tool_projection:
         manifest["tools"] = tool_projection
     manifest["terminalTooling"] = terminal_tooling

@@ -2,10 +2,12 @@ import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import type { RuntimePaths } from "./paths";
 
-const secretRefSchema = z
+export const secretRefSchema = z
 	.string()
-	.min(1)
-	.regex(/^secret:\/\//);
+	.regex(
+		/^(?:secret:\/\/.+|env:\/\/[A-Za-z_][A-Za-z0-9_]*)$/,
+		"must be a non-empty secret:// reference or canonical env:// reference",
+	);
 const profileIdSchema = z
 	.string()
 	.min(1)

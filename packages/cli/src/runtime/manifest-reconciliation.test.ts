@@ -39,6 +39,7 @@ import {
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
+import { normalizeSecretValues } from "./secret-values";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const originalEnv = { ...process.env };
@@ -2451,7 +2452,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		];
 		for (const [index, path] of preservedPaths.entries()) {
 			mkdirSync(dirname(path), { recursive: true });
-			writeFileSync(path, `old-${index}\n`);
+			writeFileSync(path, path === targetConfig ? '{"mcp":{"servers":{}}}\n' : `old-${index}\n`);
 		}
 		chmodSync(paths.managedConfig, 0o640);
 		const previousManagedStat = statSync(paths.managedConfig);
@@ -2481,7 +2482,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			},
 		});
-
 		expect(result.installErrors.join("\n")).toContain(
 			"runtime openclaw provider projection failed",
 		);
@@ -2587,12 +2587,16 @@ describe("runtime manifest reconciliation invariants", () => {
 					services: {},
 				},
 			},
-			{ projection: { mcp: { enabled: true } } },
+			{
+				projection: {
+					mcp: { servers: { clawdi: { command: "clawdi", args: ["mcp"] } } },
+				},
+			},
 		);
 
 		expect(() =>
 			convergeRuntimeManifest(manifestLoad(manifest, "inline-hermes-patch-failure"), paths),
-		).toThrow(/mcp_servers must be a YAML object/);
+		).toThrow(/config field mcp_servers must be an object/);
 		expect(readFileSync(hermesConfig)).toEqual(previousConfig);
 		expect(readFileSync(paths.managedConfig)).toEqual(previousManaged);
 	});
@@ -2679,6 +2683,9 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test("resolves runtime secret refs by exact, normalized, and stripped forms", () => {
+		expect(normalizeSecretValues({ "env://CLAWDI_AUTH_TOKEN": "deployment-token" })).toEqual({
+			"env://CLAWDI_AUTH_TOKEN": "deployment-token",
+		});
 		expect(
 			runtimeSecretValue(
 				{ "secret://providers/default/api-key": "sk-exact" },

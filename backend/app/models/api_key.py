@@ -8,7 +8,10 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base, TimestampMixin
 
 RUNTIME_DEPLOYMENT_KEY_SCOPES = (
+    "connectors:read",
+    "connectors:invoke",
     "runtime-observations:write",
+    "sessions:read",
     "sessions:write",
     "skills:read",
     "skills:write",
@@ -28,11 +31,7 @@ class ApiKey(Base, TimestampMixin):
             ondelete="RESTRICT",
         ),
         CheckConstraint(
-            "runtime_deployment_id IS NULL OR (managed AND environment_id IS NOT NULL "
-            "AND scopes IS NOT NULL AND cardinality(scopes) > 0 AND scopes <@ "
-            "ARRAY['runtime-observations:write','sessions:write',"
-            "'skills:read','skills:write']::varchar[] "
-            "AND 'runtime-observations:write' = ANY(scopes))",
+            "runtime_deployment_id IS NULL OR (managed AND environment_id IS NOT NULL)",
             name="ck_api_keys_runtime_deployment_binding",
         ),
     )
@@ -73,7 +72,7 @@ class ApiKey(Base, TimestampMixin):
         index=True,
     )
 
-    # Immutable strict-v2 authority minted only after the matching runtime
+    # Immutable strict-v2 hosted runtime authority minted only after the matching runtime
     # environment fence exists. Legacy managed keys keep this NULL and can
     # never gain companion-ingestion authority merely because a fence appears
     # later for their environment.

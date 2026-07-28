@@ -531,6 +531,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 			system: hosted.system,
 			providers: hosted.providers,
 			...(hosted.mcp === undefined ? {} : { mcp: hosted.mcp }),
+			...(hosted.skills === undefined ? {} : { skills: hosted.skills }),
 			...(hosted.tools === undefined ? {} : { tools: hosted.tools }),
 			...(hosted.terminalTooling === undefined ? {} : { terminalTooling: hosted.terminalTooling }),
 		},
