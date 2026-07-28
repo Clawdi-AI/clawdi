@@ -6,6 +6,7 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -129,6 +130,7 @@ afterEach(() => {
 describe("runtime manifest services", () => {
 	test("renders systemd runtime services without creating user command shims", () => {
 		const paths = tempRuntimePaths();
+		process.env.PATH = `${dirname(paths.cliManagedBin)}:${process.env.PATH ?? ""}`;
 		const manifest: RuntimeManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "hdep_test",
@@ -168,8 +170,16 @@ describe("runtime manifest services", () => {
 			offline: false,
 		};
 
-		const result = convergeRuntimeManifest(load, paths);
+		const previousUmask = process.umask(0o077);
+		let result: ReturnType<typeof convergeRuntimeManifest>;
+		try {
+			result = convergeRuntimeManifest(load, paths);
+		} finally {
+			process.umask(previousUmask);
+		}
 		expect(result.installErrors).toEqual([]);
+		expect(statSync(dirname(paths.systemdEnvRoot)).mode & 0o777).toBe(0o755);
+		expect(statSync(paths.systemdEnvRoot).mode & 0o777).toBe(0o755);
 		expect(result.outputs.runConfigs.map((path) => path.split("/").at(-1)).sort()).toEqual([
 			"hermes+dashboard.json",
 			"hermes.json",
@@ -214,6 +224,7 @@ describe("runtime manifest services", () => {
 			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
 			"utf8",
 		);
+		expect(runtimeWatchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
 		expect(runtimeWatchUnit).not.toContain("ConditionPathExists=");
 		for (const unit of [hermesUnit, dashboardUnit, openclawUnit]) {
 			expect(unit).not.toContain("clawdi run --");
@@ -226,6 +237,10 @@ describe("runtime manifest services", () => {
 		);
 		expect(openclawEnv).toContain('OPENCLAW_SYSTEMD_UNIT="openclaw-gateway.service"');
 		expect(openclawEnv).toContain('CLAWDI_AUTH_TOKEN=""');
+		for (const name of ["openclaw-gateway", "hermes-gateway", "clawdi-hermes-dashboard"]) {
+			const env = readFileSync(join(paths.systemdEnvRoot, `${name}.service.env`), "utf8");
+			expect(env).not.toContain(dirname(paths.cliManagedBin));
+		}
 
 		const serviceConfig = JSON.parse(
 			readFileSync(join(paths.runConfigRoot, "hermes+dashboard.json"), "utf8"),
@@ -248,6 +263,7 @@ describe("runtime manifest services", () => {
 		expect(serviceConfig.egressProfileBundlePath).toBeNull();
 
 		expect(existsSync(join(paths.serviceStateRoot, "bin", "hermes"))).toBe(false);
+		expect(existsSync(join(paths.serviceStateRoot, "bin", "clawdi"))).toBe(false);
 		expect(existsSync(join(paths.serviceStateRoot, "bin", ".clawdi-runtime-command-shim"))).toBe(
 			false,
 		);

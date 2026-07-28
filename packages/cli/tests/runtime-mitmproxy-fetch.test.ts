@@ -8,10 +8,11 @@ import {
 	mkdtempSync,
 	readFileSync,
 	rmSync,
+	statSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ensureRuntimeMitmproxy } from "../src/runtime/mitmproxy-fetch";
 import { getRuntimePaths } from "../src/runtime/paths";
@@ -35,6 +36,7 @@ describe("runtime egress engine maintained fetch", () => {
 	it("verifies and caches a pinned mitmdump archive", () => {
 		const { archive, sha256 } = makeMitmproxyArchive();
 		const paths = runtimePaths();
+		const previousUmask = process.umask(0o077);
 		const pin = {
 			type: "mitmproxy" as const,
 			version: "12.2.3-test",
@@ -42,11 +44,17 @@ describe("runtime egress engine maintained fetch", () => {
 			sha256,
 		};
 
-		const first = ensureRuntimeMitmproxy(pin, paths, { allowFileUrls: true });
-		const second = ensureRuntimeMitmproxy(pin, paths, {
-			allowFileUrls: true,
-			downloadCommand: "missing-curl-for-cache-hit",
-		});
+		let first: ReturnType<typeof ensureRuntimeMitmproxy>;
+		let second: ReturnType<typeof ensureRuntimeMitmproxy>;
+		try {
+			first = ensureRuntimeMitmproxy(pin, paths, { allowFileUrls: true });
+			second = ensureRuntimeMitmproxy(pin, paths, {
+				allowFileUrls: true,
+				downloadCommand: "missing-curl-for-cache-hit",
+			});
+		} finally {
+			process.umask(previousUmask);
+		}
 
 		expect(first.status).toBe("ready");
 		if (first.status !== "ready") throw new Error(first.error);
@@ -55,6 +63,8 @@ describe("runtime egress engine maintained fetch", () => {
 		);
 		expect(existsSync(first.binaryPath)).toBe(true);
 		expect(readFileSync(first.binaryPath, "utf-8")).toContain("fake mitmdump");
+		expect(statSync(dirname(paths.egressEngineMaintainedRoot)).mode & 0o777).toBe(0o755);
+		expect(statSync(paths.egressEngineMaintainedRoot).mode & 0o777).toBe(0o755);
 		expect(second.status).toBe("ready");
 		if (second.status !== "ready") throw new Error(second.error);
 		expect(second.binaryPath).toBe(first.binaryPath);

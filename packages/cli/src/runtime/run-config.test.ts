@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import {
 	buildRuntimeRunConfig,
@@ -87,6 +87,16 @@ describe("runtime run config services", () => {
 			"gateway",
 			"run",
 		]);
+		expect(
+			buildRuntimeRunInvocation(
+				runtime,
+				["hermes"],
+				{
+					PATH: `${join(paths.serviceStateRoot, "bin")}:${dirname(paths.cliManagedBin)}:/usr/bin`,
+				},
+				paths,
+			).env.PATH,
+		).toBe("/usr/bin");
 
 		expect(readRuntimeRunConfigForCommand("hermes+dashboard", paths).status).toBe("not-runtime");
 		const service = readRuntimeServiceRunConfig("hermes", "dashboard", paths);

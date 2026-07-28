@@ -77,6 +77,7 @@ const ENV_KEYS = [
 	"CLAWDI_HOST_POLICY_PATH",
 	"CLAWDI_SERVICE_STATE_DIR",
 	"CLAWDI_RUN_DIR",
+	"CLAWDI_IMAGE_SHIM_PATH",
 	"CLAWDI_RUNTIME_HOME",
 	"CLAWDI_AUTH_TOKEN",
 	"CLAWDI_RUNTIME_AUTH_ENV",
@@ -126,6 +127,7 @@ beforeEach(() => {
 	}
 	root = join(tmpdir(), `clawdi-runtime-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(root, { recursive: true });
+	process.env.CLAWDI_IMAGE_SHIM_PATH = join(root, "usr", "local", "bin", "clawdi");
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
 	process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "test-hermes-dashboard-password";
@@ -151,7 +153,7 @@ function seedCurrentCliInstall(
 	version = "0.13.0-test",
 	registry: string | null = null,
 ): void {
-	const active = join(state, "bin", "clawdi");
+	const active = join(state, "managed-cli", "bin", "clawdi");
 	const target = join(state, "npm", "bin", "clawdi");
 	mkdirSync(dirname(active), { recursive: true });
 	mkdirSync(dirname(target), { recursive: true });
@@ -1273,6 +1275,8 @@ describe("runtime paths", () => {
 		expect(paths.workspaceRoot).toBe(home);
 		expect(paths.managedConfig).toBe(join(state, "config", "clawdi.json"));
 		expect(paths.syncState).toBe(join(state, "sync", "runtimes.json"));
+		expect(paths.cliManagedBin).toBe(join(state, "managed-cli", "bin", "clawdi"));
+		expect(paths.cliNpmPrefix).toBe(join(state, "npm"));
 		expect(paths.runtimeSource).toBe("/etc/clawdi/runtime-source.json");
 		expect(paths.egressProfileRoot).toBe(join(state, "config", "egress"));
 		expect(paths.egressProfileBundle).toBe(join(state, "config", "egress", "profiles.json"));
@@ -2780,6 +2784,7 @@ exit 0
 		const userCodexConfig = join(home, ".codex", "config.toml");
 		const userConfigBytes = Buffer.from('# user config\nmodel = "user-model"\n');
 		const previousPath = process.env.PATH;
+		const previousUmask = process.umask(0o077);
 		mkdirSync(binDir, { recursive: true });
 		mkdirSync(dirname(userCodexConfig), { recursive: true });
 		writeFileSync(userCodexConfig, userConfigBytes);
@@ -2866,6 +2871,7 @@ exit 0
 
 			expect(convergence.installErrors).toEqual([]);
 		} finally {
+			process.umask(previousUmask);
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;
 			process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
@@ -2875,8 +2881,12 @@ exit 0
 		expect(npmArgs).toContain("@openai/codex@0.142.4");
 		expect(npmArgs).toContain(`${join(state, "codex", "npm")}\n`);
 		const realBin = join(state, "codex", "npm", "bin", "codex");
+		const packageJson = join(state, "codex", "npm", "lib/node_modules/@openai/codex/package.json");
 		const commandShim = join(state, "bin", "codex");
+		expect(statSync(join(state, "codex")).mode & 0o777).toBe(0o755);
+		expect(statSync(dirname(realBin)).mode & 0o777).toBe(0o755);
 		expect(statSync(realBin).mode & 0o777).toBe(0o755);
+		expect(statSync(packageJson).mode & 0o777).toBe(0o644);
 		expect(statSync(commandShim).mode & 0o777).toBe(0o755);
 		expect(readFileSync(commandShim, "utf8")).not.toContain("--profile");
 		expect(readFileSync(userCodexConfig, "utf8")).toContain('model_provider = "clawdi-managed"');
@@ -5842,7 +5852,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			});
 			const paths = getRuntimePaths();
 			expect(readSystemdSystemUnit(paths, "clawdi-runtime-watch")).toContain(
-				'ExecStart="clawdi" "runtime" "watch"',
+				`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`,
 			);
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
@@ -7008,7 +7018,7 @@ chmod +x "$prefix/bin/clawdi"
 			}
 			expect(process.exitCode ?? 0).toBe(0);
 			expect(captured).toHaveLength(1);
-			const active = join(state, "bin", "clawdi");
+			const active = join(state, "managed-cli", "bin", "clawdi");
 			const sharedPrefixTarget = join(state, "npm", "bin", "clawdi");
 			const activeTarget = readlinkSync(active);
 			expect(readlinkSync(active)).toBe(activeTarget);
@@ -7038,6 +7048,67 @@ chmod +x "$prefix/bin/clawdi"
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;
 		}
+	});
+
+	it("migrates a writable legacy hosted CLI entrypoint into the root-only boundary", () => {
+		const version = "0.13.1-beta.0";
+		const packageSpec = `clawdi@${version}`;
+		const home = join(root, "home-cli-boundary", "clawdi");
+		const state = join(root, "state-cli-boundary");
+		const run = join(root, "run-cli-boundary");
+		const legacyActive = join(state, "bin", "clawdi");
+		const activeTarget = join(state, "npm", "bin", "clawdi");
+		const statusPath = join(state, "status", "cli-bootstrap.json");
+		const legacyImageShim = join(root, "usr", "local", "bin", "clawdi");
+		mkdirSync(dirname(legacyActive), { recursive: true });
+		mkdirSync(dirname(activeTarget), { recursive: true });
+		mkdirSync(dirname(statusPath), { recursive: true });
+		mkdirSync(dirname(legacyImageShim), { recursive: true });
+		writeFileSync(
+			activeTarget,
+			`#!/usr/bin/env bash\nif [ "\${1:-}" = "--version" ]; then echo "${version}"; exit 0; fi\nexit 64\n`,
+		);
+		writeFileSync(legacyImageShim, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(activeTarget, 0o755);
+		chmodSync(legacyImageShim, 0o755);
+		symlinkSync(activeTarget, legacyActive);
+		writeFileSync(
+			statusPath,
+			JSON.stringify({
+				schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
+				status: "installed",
+				source: "npm",
+				packageSpec,
+				registry: "https://registry.npmjs.org",
+				npmPrefix: join(state, "npm"),
+				activePath: legacyActive,
+				activeTarget,
+				version,
+			}),
+			{ mode: 0o644 },
+		);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		delete process.env.CLAWDI_IMAGE_SHIM_PATH;
+		const paths = getRuntimePaths();
+		paths.imageShim = join(root, "usr", "local", "lib", "clawdi", "bootstrap", "clawdi");
+		paths.legacyImageShim = legacyImageShim;
+
+		const desired = normalizeManifestPayload(hostedCliManifestResponse(home, packageSpec));
+		const result = applyRuntimeCliDesiredState(desired.manifest, paths);
+
+		expect(result.status).toBe("current");
+		expect(paths.cliManagedBin).toBe(join(state, "managed-cli", "bin", "clawdi"));
+		expect(readlinkSync(paths.cliManagedBin)).toBe(activeTarget);
+		expect(existsSync(legacyActive)).toBe(false);
+		expect(statSync(join(state, "managed-cli")).mode & 0o777).toBe(0o700);
+		expect(statSync(dirname(paths.cliManagedBin)).mode & 0o777).toBe(0o700);
+		expect(statSync(paths.cliNpmPrefix).mode & 0o777).toBe(0o700);
+		expect(statSync(activeTarget).mode & 0o777).toBe(0o700);
+		expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
+		expect(statSync(legacyImageShim).mode & 0o777).toBe(0o700);
 	});
 
 	it("runtime watch reapplies transparent egress across CLI self-upgrade", async () => {
@@ -7259,7 +7330,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			const transparentEgressEnv = readFileSync(paths.egressTransparentEnv, "utf-8");
 			expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 			expect(sidecarEnv).toContain('CLAWDI_RUNTIME_REV="');
-			expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+			expect(sidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 			expect(transparentEgressEnv).toContain(
 				'CLAWDI_EGRESS_TRANSPORT_VERSION="clawdi-transparent-egress-v1"',
 			);
@@ -7331,11 +7402,23 @@ chmod +x "$prefix/bin/clawdi"
 
 		try {
 			const desired = normalizeManifestPayload(hostedCliManifestResponse(home, desiredSpec));
-			const result = applyRuntimeCliDesiredState(desired.manifest, getRuntimePaths());
+			const paths = getRuntimePaths();
+			const result = applyRuntimeCliDesiredState(desired.manifest, paths);
 
 			expect(result.status).toBe("installed");
 			expect(result.packageSpec).toBe(desiredSpec);
 			expect(result.version).toBe(desiredVersion);
+			expect(result.activePath).toBe(join(state, "managed-cli", "bin", "clawdi"));
+			expect(readlinkSync(result.activePath)).toBe(result.activeTarget);
+			expect(existsSync(join(state, "bin", "clawdi"))).toBe(false);
+			expect(statSync(join(state, "managed-cli")).mode & 0o777).toBe(0o700);
+			expect(statSync(dirname(result.activePath)).mode & 0o777).toBe(0o700);
+			expect(statSync(paths.cliNpmPrefix).mode & 0o777).toBe(0o700);
+			expect(statSync(result.npmPrefix).mode & 0o777).toBe(0o700);
+			if (!result.activeTarget) throw new Error("CLI update did not return an active target");
+			expect(statSync(result.activeTarget).mode & 0o777).toBe(0o700);
+			expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
+			expect(statSync(paths.cliUpgradeState).mode & 0o777).toBe(0o600);
 			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
 			expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
 			expect(npmCalls.some((call) => call.includes(desiredSpec))).toBe(true);
@@ -11227,7 +11310,7 @@ exit 64
 		expect(existsSync(join(state, "supervisor", "supervisord.conf"))).toBe(false);
 		expect(userUnitNames).not.toContain("clawdi-runtime-sidecar.service");
 		expect(systemUnitNames).toContain("clawdi-runtime-sidecar.service");
-		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+		expect(runtimeSidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 		expect(runtimeSidecarUnit).toContain("Before=user@10001.service");
 		expect(runtimeSidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain('CLAWDI_RUNTIME_USER="clawdi"');
@@ -11242,7 +11325,7 @@ exit 64
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_SECRET_FILE="${egressSecretPath}"`);
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_ENGINE_BINARY_PATH="`);
 		expect(transparentEgressEnv).toContain(`CLAWDI_EGRESS_ADDON_PATH="${paths.egressAddon}"`);
-		expect(runtimeSidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+		expect(runtimeSidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 		expect(runtimeSidecarUnit).not.toContain("user=clawdi");
 		expect(openclawUnit).toContain('ExecStart="openclaw" "gateway" "run"');
 		expect(openclawUnit).not.toContain("user=clawdi");
@@ -11379,7 +11462,7 @@ exit 64
 		const openclawEnv = readSystemdEnvFile(paths, "openclaw-gateway");
 		expect(sidecarUnit).toContain("Type=notify");
 		expect(sidecarUnit).toContain("Before=user@10001.service");
-		expect(sidecarUnit).toContain('ExecStart="clawdi" "runtime" "sidecar"');
+		expect(sidecarUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "sidecar"`);
 		expect(sidecarEnv).toContain(`CLAWDI_EGRESS_ENV_FILE="${paths.egressTransparentEnv}"`);
 		expect(transparentEgressEnv).toContain(
 			'CLAWDI_EGRESS_TRANSPORT_VERSION="clawdi-transparent-egress-v1"',
@@ -11991,7 +12074,7 @@ exit 64
 			const watchUnit = readSystemdSystemUnit(paths, "clawdi-runtime-watch");
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
 			const daemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
-			expect(watchUnit).toContain('ExecStart="clawdi" "runtime" "watch"');
+			expect(watchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
 			expect(daemonEnv).toContain('CLAWDI_ENVIRONMENT_ID="env_test"');
 			expect(daemonEnv).toContain('CLAWDI_SERVE_MODE="container"');
 			expect(watchUnit).not.toContain("sk-runtime");
@@ -12268,13 +12351,13 @@ exit 64
 			expect(codexEnv.id).toBe("env-codex");
 			expect(systemUnitNames).toContain("clawdi-runtime-watch.service");
 			expect(systemUnitNames).toContain("clawdi-daemon.service");
-			expect(watchUnit).toContain('ExecStart="clawdi" "runtime" "watch"');
+			expect(watchUnit).toContain(`ExecStart="${paths.cliManagedBin}" "runtime" "watch"`);
 			expect(watchEnv).toContain(
 				'CLAWDI_RUNTIME_MANIFEST_URL="https://runtime-source.test/v1/runtime/manifest"',
 			);
 			expect(watchEnv).not.toContain("runtime-auth-token");
 			expect(daemonUnit).toContain(
-				`ExecStart="clawdi" "daemon" "run" "--auth-token-file" "${join(
+				`ExecStart="${paths.cliManagedBin}" "daemon" "run" "--auth-token-file" "${join(
 					run,
 					"secrets",
 					"auth-token",

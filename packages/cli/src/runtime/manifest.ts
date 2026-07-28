@@ -845,6 +845,21 @@ function makeRootReadableDir(path: string): void {
 	}
 }
 
+function publishRootOwnedToolTree(path: string): void {
+	const node = lstatSync(path);
+	if (node.isSymbolicLink()) {
+		if (runningAsRoot()) lchownSync(path, 0, 0);
+		return;
+	}
+	makeRootOwned(path);
+	if (node.isDirectory()) {
+		chmodSync(path, 0o755);
+		for (const entry of readdirSync(path)) publishRootOwnedToolTree(join(path, entry));
+		return;
+	}
+	chmodSync(path, node.mode & 0o111 ? 0o755 : 0o644);
+}
+
 function makeRuntimeUserPrivateDir(path: string): void {
 	mkdirSync(path, { recursive: true });
 	makeRuntimeUserOwnedAncestors(path);
@@ -2276,6 +2291,8 @@ function ensureHostedCodexCli(paths: RuntimePaths): Record<string, string> | nul
 	if (!executableExists(realBin)) {
 		throw new Error(`Codex npm install did not create ${realBin}`);
 	}
+	makeRootReadableDir(dirname(npmPrefix));
+	publishRootOwnedToolTree(npmPrefix);
 	writeHostedCodexCommandShim(commandPath, realBin);
 	return {
 		commandPath,
@@ -4105,8 +4122,8 @@ function buildRuntimeSystemdUserProgram(input: {
 	if (!input.config.enabled) return null;
 
 	const currentPath = withoutPathEntry(
-		runtimeSystemdPath(input.paths),
-		runtimeManagedBinDir(input.paths),
+		withoutPathEntry(runtimeSystemdPath(input.paths), runtimeManagedBinDir(input.paths)),
+		dirname(input.paths.cliManagedBin),
 	);
 	const pathPrefix = input.config.prependPath.join(":");
 	const env: Record<string, string> = {
@@ -4392,8 +4409,8 @@ function writeSystemdEnvironmentFile(input: {
 	owner: "root" | "runtime-user";
 	env: Record<string, string>;
 }): string {
-	mkdirSync(input.paths.systemdEnvRoot, { recursive: true });
-	makeRootOwned(input.paths.systemdEnvRoot);
+	makeRootReadableDir(dirname(input.paths.systemdEnvRoot));
+	makeRootReadableDir(input.paths.systemdEnvRoot);
 	const path = systemdEnvironmentFilePath(input.paths, input.name);
 	const lines = Object.entries(input.env)
 		.sort(([a], [b]) => a.localeCompare(b))
@@ -4877,7 +4894,7 @@ function writeSystemdUnits(
 				paths,
 				name: "clawdi-runtime-watch",
 				description: "Clawdi hosted runtime desired-state watcher",
-				command: "clawdi",
+				command: paths.cliManagedBin,
 				args: ["runtime", "watch"],
 				cwd: workspaceRoot,
 				env: {
@@ -4896,7 +4913,7 @@ function writeSystemdUnits(
 				paths,
 				name: "clawdi-daemon",
 				description: "Clawdi hosted runtime daemon",
-				command: "clawdi",
+				command: paths.cliManagedBin,
 				args: ["daemon", "run", "--auth-token-file", daemonAuthTokenFile],
 				cwd: workspaceRoot,
 				env: {
@@ -4919,7 +4936,7 @@ function writeSystemdUnits(
 				paths,
 				name: "clawdi-runtime-sidecar",
 				description: "Clawdi hosted runtime sidecar",
-				command: "clawdi",
+				command: paths.cliManagedBin,
 				args: ["runtime", "sidecar"],
 				cwd: workspaceRoot,
 				env: {

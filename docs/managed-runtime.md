@@ -136,10 +136,11 @@ boundary.
 ## Core Architecture
 
 The primary hosted runtime model is a Linux-like runtime host. The host image
-provides the OS envelope, a runtime user, a stable `clawdi` bootstrap path,
+provides the OS envelope, a runtime user, a root-only `clawdi` bootstrap path,
 official Hermes/OpenClaw installs, and a process manager. Runtime behavior
 comes from the manifest and official runtime binaries, not from per-agent
-wrappers.
+wrappers. The managed Clawdi CLI is an administrator capability: the runtime
+user, model tools, and browser terminal cannot resolve, read, or execute it.
 
 ```mermaid
 flowchart TB
@@ -151,7 +152,7 @@ flowchart TB
         RunConfigs[config/run/<runtime>.json]
         Projections[config/projections/<runtime>.json]
         Inventory[install-inventory/<runtime>.json]
-        CliBin[managed bin/clawdi]
+        CliBin[root-only managed-cli/bin/clawdi]
         UserUnits[$HOME/.config/systemd/user/*.service]
     end
 
@@ -177,7 +178,7 @@ flowchart TB
 
     Systemd[systemd PID 1] --> Watch
     Systemd --> Daemon
-    UserSystemd[systemd --user] --> Sidecar
+    Systemd --> Sidecar
     Sidecar --> Egress
     UserSystemd --> HermesGateway
     UserSystemd --> HermesDashboard
@@ -206,9 +207,12 @@ replaces files, the process manager may restart the relevant official program,
 but the update transaction remains owned by the runtime.
 
 The bootstrap boundary is deliberately small: system boot prepares writable
-runtime directories, starts the runtime user's systemd manager, and calls
-`clawdi runtime init --non-interactive`. `runtime init` is the local
-administrator convergence step. It uses official installers/config commands
+runtime directories, starts the runtime user's systemd manager, and calls the
+root-owned image bootstrap entrypoint by absolute path. That entrypoint installs
+the exact managed CLI under the root-only npm prefix, atomically activates
+`/var/lib/clawdi/managed-cli/bin/clawdi`, and runs
+`runtime init --non-interactive`. `runtime init` is the local administrator
+convergence step. It uses official installers/config commands
 first, invokes official non-interactive service installers for runtime gateway
 base units, and writes only transparent hosted drop-ins/env files for those
 official units. When a later manifest removes an official gateway service,
@@ -501,9 +505,37 @@ argument behavior. Unknown generic runtime names require `run.command`;
 otherwise the manifest is rejected so the image does not need to know every
 future agent.
 
+## Managed CLI privilege boundary
+
+The shared `/var/lib/clawdi/bin` directory remains traversable because it also
+contains explicitly intended runtime-user tools such as the Codex shim. It must
+not contain a `clawdi` entry. The active managed CLI instead lives at
+`/var/lib/clawdi/managed-cli/bin/clawdi`; its parent directories, active npm
+package prefix under `/var/lib/clawdi/npm`, and executable target are root-owned
+and mode `0700`. The image bootstrap entrypoint is also root-owned and mode
+`0700`.
+
+Root system services use the absolute managed CLI path for watch, daemon, and
+sidecar commands. OpenClaw and Hermes user services execute their official
+binaries and keep `/var/lib/clawdi/managed-cli/bin` and `/var/lib/clawdi/npm`
+out of `PATH`. The interactive runtime-user shell may retain
+`/var/lib/clawdi/bin` for explicit tools such as Codex without exposing the
+managed CLI.
+
+CLI self-upgrade verifies a new exact package before making its target and npm
+prefix root-only, then atomically switches the active link inside the root-only
+managed directory. Reconciliation also removes the legacy shared-bin link and
+best-effort tightens a writable baked image shim. That last step is migration
+defense, not a rollout guarantee: a container with a read-only root filesystem
+cannot have its baked shim retrofitted in place. Full non-discoverability for an
+existing workload therefore requires the paired hosted image containing the
+root-only shim, the matching exact CLI package, and workload replacement or
+recreation. Manifest reconciliation alone cannot retrofit an old read-only
+container.
+
 ## Commands
 
-Runtime operators can use these commands in controlled environments:
+Root runtime operators can use these commands in controlled environments:
 
 ```bash
 clawdi runtime init --non-interactive
@@ -638,13 +670,15 @@ outputs include:
 | `cache/manifest.etag`, `cache/channels.etag` | Legacy v1 cache validators; not Agent v2 authority |
 | `status/runtime-applied.json` | Agent v2 authority for one ETag, source revision, instance, generation, content identity, source provider IDs, and target-specific projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
+| `managed-cli/bin/clawdi` | Root-only active managed CLI link used by system services |
+| `npm/` | Root-only managed CLI package prefixes and active targets |
 | `config/projections/<runtime>.json` | Runtime projection payload |
 | `config/projections/managed-mcp-servers.json` | Canonical last-applied MCP server map per runtime, written atomically only after the full native-config apply succeeds |
 | `config/run/<runtime>.json`, `config/run/<runtime>+<service>.json` | `clawdi run` launch config for runtime main processes and internal runtime-owned services |
 | `$CLAWDI_RUN_DIR/secrets/*` | Short-lived token and secret files for the current runtime session |
 | `$CLAWDI_RUN_DIR/systemd/env/*.service.env` | Ephemeral env files for local systemd services, including short-lived runtime secrets |
 | `$CLAWDI_RUN_DIR/systemd/system/*.service` or `/run/systemd/system/*.service` | Generated system units for root-owned Clawdi support programs |
-| `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units, plus Clawdi-owned user support units such as the sidecar |
+| `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units and direct runtime-user programs |
 | `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Transparent hosted drop-ins for official runtime units |
 
 Generic MCP reconciliation compares desired servers, the previous managed
@@ -890,6 +924,12 @@ public manifest projection. Cloud fixes `clawdiCli.source` to `npm:clawdi` and
 revalidated on every read and fails closed with `409` when invalid or below the
 floor. There is no default, nullable fallback, floating tag, local path, or
 forward compatibility use of the historical `clawdi_cli` column.
+
+The security boundary is delivered as a paired artifact rollout: the Hosted
+runtime image supplies the root-only bootstrap entrypoint and replaces the
+workload, while the manifest pins the matching exact CLI. Updating only the
+manifest or reconciling an existing container is insufficient when the old
+image root filesystem is read-only.
 
 Runtime-state writes use generation compare-and-swap while locking the
 corresponding `AgentEnvironment` before the optional `HostedRuntimeState`.

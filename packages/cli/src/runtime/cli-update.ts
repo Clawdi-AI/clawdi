@@ -2,8 +2,11 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	accessSync,
+	chmodSync,
+	chownSync,
 	constants,
 	existsSync,
+	lstatSync,
 	mkdirSync,
 	readdirSync,
 	readFileSync,
@@ -12,7 +15,7 @@ import {
 	rmSync,
 	symlinkSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { chmodBestEffort, writePrivateFileAtomic } from "../lib/private-file";
 import {
 	hostedCliPackageSpecSchema,
@@ -113,7 +116,12 @@ export function applyRuntimeCliDesiredState(
 	}
 	validatePackageSpec(packageSpec);
 	const registry = cliRegistry(manifest);
-	const current = readBootstrapStatus(paths.cliBootstrapStatus);
+	const current = migrateAndHardenCurrentCliInstall(
+		paths,
+		readBootstrapStatus(paths.cliBootstrapStatus),
+		packageSpec,
+		registry,
+	);
 	if (isCurrentCliInstall(current, paths, packageSpec, registry)) {
 		return baseResult("current", paths, {
 			packageSpec,
@@ -157,6 +165,7 @@ export function applyRuntimeCliDesiredState(
 		: null;
 	const installed = installCliPackage(paths, packageSpec, registry);
 	swapActiveCli(paths.cliManagedBin, installed.activeTarget);
+	removeLegacyManagedCliLink(paths, installed.activeTarget);
 	writeCliBootstrapStatus(paths, {
 		packageSpec,
 		registry,
@@ -240,6 +249,148 @@ function readBootstrapStatus(path: string): RuntimeCliBootstrapStatus | null {
 	}
 }
 
+function migrateAndHardenCurrentCliInstall(
+	paths: RuntimePaths,
+	status: RuntimeCliBootstrapStatus | null,
+	packageSpec: string,
+	registry: string | null,
+): RuntimeCliBootstrapStatus | null {
+	hardenHostedImageShimBestEffort(paths);
+	hardenExistingManagedCliBoundary(paths, status);
+	if (!status?.activeTarget || !isManagedCliTarget(paths, status.activeTarget)) return status;
+
+	const legacyActivePath = join(paths.serviceStateRoot, "bin", "clawdi");
+	if (status.activePath === paths.cliManagedBin) {
+		if (activeLinkTarget(paths.cliManagedBin) === status.activeTarget) {
+			removeLegacyManagedCliLink(paths, status.activeTarget);
+		}
+		return status;
+	}
+	if (status.activePath !== legacyActivePath) return status;
+	if (status.status !== "installed" || status.source !== "npm") return status;
+	if (status.packageSpec !== packageSpec || (status.registry ?? null) !== registry) return status;
+	if (!isExecutable(status.activeTarget)) return status;
+	const exactVersion = exactNpmPackageVersion(packageSpec);
+	if (exactVersion && status.version !== exactVersion) return status;
+	if (!status.version) return status;
+
+	const npmPrefix = status.npmPrefix ?? prefixForActiveTarget(status.activeTarget);
+	hardenManagedCliInstall(paths, status.activeTarget, npmPrefix);
+	swapActiveCli(paths.cliManagedBin, status.activeTarget);
+	writeCliBootstrapStatus(paths, {
+		packageSpec,
+		registry,
+		npmPrefix,
+		activeTarget: status.activeTarget,
+		version: status.version,
+	});
+	removeLegacyManagedCliLink(paths, status.activeTarget);
+	return {
+		...status,
+		activePath: paths.cliManagedBin,
+		npmPrefix,
+	};
+}
+
+function hardenHostedImageShimBestEffort(paths: RuntimePaths): void {
+	if (paths.mode !== "hosted") return;
+	const imageShim = existsSync(paths.imageShim)
+		? paths.imageShim
+		: paths.legacyImageShim && existsSync(paths.legacyImageShim)
+			? paths.legacyImageShim
+			: null;
+	if (!imageShim) return;
+	if (typeof process.getuid === "function" && process.getuid() === 0) {
+		try {
+			chownSync(imageShim, 0, 0);
+		} catch {
+			// Existing hosted images may expose the baked shim through a read-only rootfs.
+		}
+	}
+	chmodBestEffort(imageShim, 0o700);
+}
+
+function hardenExistingManagedCliBoundary(
+	paths: RuntimePaths,
+	status: RuntimeCliBootstrapStatus | null,
+): void {
+	for (const path of [
+		dirname(dirname(paths.cliManagedBin)),
+		dirname(paths.cliManagedBin),
+		paths.cliNpmPrefix,
+		paths.cliNpmCache,
+	]) {
+		if (existsSync(path)) secureManagedCliPath(path, 0o700);
+	}
+	for (const path of [paths.cliBootstrapStatus, paths.cliUpgradeState]) {
+		if (existsSync(path)) secureManagedCliPath(path, 0o600);
+	}
+	if (
+		status?.activeTarget &&
+		isManagedCliTarget(paths, status.activeTarget) &&
+		existsSync(status.activeTarget)
+	) {
+		hardenManagedCliInstall(
+			paths,
+			status.activeTarget,
+			status.npmPrefix ?? prefixForActiveTarget(status.activeTarget),
+		);
+	}
+}
+
+function hardenManagedCliInstall(
+	paths: RuntimePaths,
+	activeTarget: string,
+	npmPrefix: string,
+): void {
+	if (!isManagedCliTarget(paths, activeTarget) || !isManagedCliPrefix(paths, npmPrefix)) {
+		throw new Error(`managed clawdi CLI target escapes the root-only npm prefix: ${activeTarget}`);
+	}
+	for (const path of [paths.cliNpmPrefix, join(paths.cliNpmPrefix, "packages"), npmPrefix]) {
+		if (existsSync(path)) secureManagedCliPath(path, 0o700);
+	}
+	if (existsSync(dirname(activeTarget))) secureManagedCliPath(dirname(activeTarget), 0o700);
+	secureManagedCliPath(activeTarget, 0o700);
+}
+
+function ensureManagedCliDirectory(path: string): void {
+	mkdirSync(path, { recursive: true, mode: 0o700 });
+	secureManagedCliPath(path, 0o700);
+}
+
+function secureManagedCliPath(path: string, mode: number): void {
+	if (typeof process.getuid === "function" && process.getuid() === 0) chownSync(path, 0, 0);
+	chmodSync(path, mode);
+}
+
+function isManagedCliPrefix(paths: RuntimePaths, path: string): boolean {
+	const root = resolve(paths.cliNpmPrefix);
+	const candidate = resolve(path);
+	return candidate === root || candidate.startsWith(`${root}/`);
+}
+
+function isManagedCliTarget(paths: RuntimePaths, path: string): boolean {
+	return isManagedCliPrefix(paths, path) && path.endsWith("/bin/clawdi");
+}
+
+function removeLegacyManagedCliLink(paths: RuntimePaths, activeTarget: string): void {
+	const legacyActivePath = join(paths.serviceStateRoot, "bin", "clawdi");
+	if (legacyActivePath === paths.cliManagedBin) return;
+	try {
+		if (!lstatSync(legacyActivePath).isSymbolicLink()) {
+			throw new Error(`legacy managed clawdi CLI entrypoint is not a symlink: ${legacyActivePath}`);
+		}
+		const target = readlinkSync(legacyActivePath);
+		if (target !== activeTarget && !isManagedCliTarget(paths, target)) {
+			throw new Error(`legacy managed clawdi CLI entrypoint has an unexpected target: ${target}`);
+		}
+		rmSync(legacyActivePath, { force: true });
+	} catch (error) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") return;
+		throw error;
+	}
+}
+
 function isCurrentCliInstall(
 	status: RuntimeCliBootstrapStatus | null,
 	paths: RuntimePaths,
@@ -251,7 +402,9 @@ function isCurrentCliInstall(
 	if (status.packageSpec !== packageSpec) return false;
 	if ((status.registry ?? null) !== registry) return false;
 	if (status.activePath !== paths.cliManagedBin) return false;
-	if (!status.activeTarget || !isExecutable(status.activeTarget)) return false;
+	if (!status.activeTarget) return false;
+	if (!isManagedCliTarget(paths, status.activeTarget)) return false;
+	if (!isExecutable(status.activeTarget)) return false;
 	const exactVersion = exactNpmPackageVersion(packageSpec);
 	if (exactVersion && status.version !== exactVersion) return false;
 	return isExecutable(paths.cliManagedBin);
@@ -266,6 +419,8 @@ function recoverCurrentCliInstallFromActiveLink(
 	const npmPrefix = cliPackagePrefix(paths, desiredVersion);
 	const activeTarget = activeLinkTarget(paths.cliManagedBin);
 	if (activeTarget !== join(npmPrefix, "bin", "clawdi")) return null;
+	if (!isManagedCliTarget(paths, activeTarget)) return null;
+	hardenManagedCliInstall(paths, activeTarget, npmPrefix);
 	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
 	const version = smokeCliVersion(activeTarget);
 	if (version !== desiredVersion) return null;
@@ -293,13 +448,11 @@ function installCliPackage(
 		);
 	}
 	const npmPrefix = installPlan.npmPrefix;
-	mkdirSync(dirname(paths.cliManagedBin), { recursive: true });
-	mkdirSync(npmPrefix, { recursive: true });
-	mkdirSync(paths.cliNpmCache, { recursive: true });
-	chmodBestEffort(dirname(paths.cliManagedBin), 0o755);
-	chmodBestEffort(paths.cliNpmPrefix, 0o755);
-	chmodBestEffort(npmPrefix, 0o755);
-	chmodBestEffort(paths.cliNpmCache, 0o755);
+	ensureManagedCliDirectory(dirname(dirname(paths.cliManagedBin)));
+	ensureManagedCliDirectory(dirname(paths.cliManagedBin));
+	ensureManagedCliDirectory(paths.cliNpmPrefix);
+	ensureManagedCliDirectory(npmPrefix);
+	ensureManagedCliDirectory(paths.cliNpmCache);
 
 	const args = [
 		"install",
@@ -345,6 +498,7 @@ function installCliPackage(
 	if (!isExecutable(activeTarget)) {
 		throw new Error(`npm install completed but clawdi bin is missing: ${activeTarget}`);
 	}
+	hardenManagedCliInstall(paths, activeTarget, npmPrefix);
 	const version = smokeCliVersion(activeTarget);
 	const exactVersion = exactNpmPackageVersion(packageSpec);
 	if (exactVersion && version !== exactVersion) {
@@ -488,7 +642,8 @@ function verifyCliRuntime(command: string): void {
 
 function swapActiveCli(activePath: string, activeTarget: string): void {
 	const dir = dirname(activePath);
-	mkdirSync(dir, { recursive: true });
+	ensureManagedCliDirectory(dirname(dir));
+	ensureManagedCliDirectory(dir);
 	const tmp = `${dir}/.clawdi.next.${process.pid}.${Date.now()}`;
 	try {
 		rmSync(tmp, { force: true });
@@ -530,7 +685,7 @@ function writeCliBootstrapStatus(
 			null,
 			2,
 		)}\n`,
-		{ mode: 0o644, dirMode: 0o755 },
+		{ mode: 0o600, dirMode: 0o755 },
 	);
 }
 
@@ -700,7 +855,7 @@ function writeCliUpgradeState(paths: RuntimePaths, state: RuntimeCliUpgradeState
 	writePrivateFileAtomic(
 		paths.cliUpgradeState,
 		`${JSON.stringify(normalizeCliUpgradeState(state), null, 2)}\n`,
-		{ mode: 0o644, dirMode: 0o755 },
+		{ mode: 0o600, dirMode: 0o755 },
 	);
 }
 
