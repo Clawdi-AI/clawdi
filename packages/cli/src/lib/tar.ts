@@ -64,9 +64,9 @@ export const SKILL_TAR_EXCLUDE = new Set([
  *
  * Use this instead of `tar.extract({...}).end(bytes)` — `.end()` returns the
  * stream (not a promise), so `await tar.extract(...).end(bytes)` resolves
- * before extraction actually completes, leaving callers in a race with the
- * filesystem. This helper listens for `finish` so the promise resolves only
- * after every entry has been written to disk.
+ * immediately, before extraction completes. tar's public Unpack completion
+ * boundary is `close`, emitted in a finalization microtask after `finish` and
+ * `end`; waiting for `finish` lets the caller resume before that finalization.
  */
 export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 	return new Promise((resolvePromise, reject) => {
@@ -79,7 +79,7 @@ export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 				return type !== "SymbolicLink" && type !== "Link";
 			},
 		});
-		stream.on("finish", () => resolvePromise());
+		stream.on("close", () => resolvePromise());
 		stream.on("error", reject);
 		stream.end(bytes);
 	});
