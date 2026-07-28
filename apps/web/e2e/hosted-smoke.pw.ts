@@ -3493,12 +3493,20 @@ test("pending welcome balance stops polling and offers a bounded refresh", async
 	await expect(page.getByText("Adding your welcome balance…", { exact: true })).toBeVisible();
 });
 
-test("Wallet opens the shared billing portal action", async ({ page }) => {
+test("Wallet formats its balance and opens billing from the balance actions", async ({ page }) => {
 	const portalRequests: string[] = [];
-	await stubHostedApi(page, { portalRequests });
+	await stubHostedApi(page, {
+		portalRequests,
+		walletState: { ...walletState, balance_usd: "29.4825458" },
+	});
 	const settingsDialog = await gotoHostedSettingsDialog(page, "billing-wallet");
+	const balanceCard = settingsDialog
+		.locator('[data-slot="card"]')
+		.filter({ hasText: "Wallet balance" });
+	await expect(balanceCard.getByText("$29.48", { exact: true })).toBeVisible();
+	await expect(balanceCard.getByRole("button", { name: "Top up", exact: true })).toBeVisible();
 
-	await settingsDialog.getByRole("button", { name: "Manage payment methods" }).click();
+	await balanceCard.getByRole("button", { name: "Manage payment methods" }).click();
 
 	await expect.poll(() => portalRequests.length).toBe(1);
 	await expect(page).toHaveURL(/\?portal=opened$/);
