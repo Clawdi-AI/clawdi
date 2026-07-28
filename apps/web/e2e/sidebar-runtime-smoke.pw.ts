@@ -219,6 +219,63 @@ test("dashboard sidebar primitives run without browser errors", async ({ page })
 	await expectNoBrowserErrors(page, browserErrors, "settings select");
 });
 
+test("every agent rail tile navigates on click", async ({ page }) => {
+	await stubDashboardApi(page);
+
+	for (const agent of agents) {
+		await page.goto("/");
+		const tileLink = page
+			.getByTestId("app-sidebar-agent-tile")
+			.filter({ hasText: agent.display_name })
+			.locator("a");
+		await expect(tileLink).toBeVisible({ timeout: 15_000 });
+		await expect(tileLink).toHaveAttribute("href", `/agents/${agent.id}`);
+
+		await tileLink.click();
+		await expect(page).toHaveURL(`/agents/${agent.id}`);
+	}
+});
+
+test("agent rail links support touch taps and keyboard activation", async ({
+	browser,
+	baseURL,
+}) => {
+	if (!baseURL) throw new Error("Playwright baseURL is required for the sidebar smoke test.");
+	const [firstAgent, secondAgent] = agents;
+	if (!firstAgent || !secondAgent) throw new Error("Two sidebar agent fixtures are required.");
+	const context = await browser.newContext({
+		baseURL,
+		hasTouch: true,
+		viewport: { width: 1280, height: 720 },
+	});
+	const page = await context.newPage();
+
+	try {
+		await stubDashboardApi(page);
+		await page.goto("/");
+		const touchTarget = page
+			.getByTestId("app-sidebar-agent-tile")
+			.filter({ hasText: firstAgent.display_name })
+			.locator("a");
+		await expect(touchTarget).toBeVisible({ timeout: 15_000 });
+		await touchTarget.tap();
+		await expect(page).toHaveURL(`/agents/${firstAgent.id}`);
+
+		await page.goto("/");
+		const keyboardTarget = page
+			.getByTestId("app-sidebar-agent-tile")
+			.filter({ hasText: secondAgent.display_name })
+			.locator("a");
+		await expect(keyboardTarget).toBeVisible({ timeout: 15_000 });
+		await keyboardTarget.focus();
+		await expect(keyboardTarget).toBeFocused();
+		await page.keyboard.press("Enter");
+		await expect(page).toHaveURL(`/agents/${secondAgent.id}`);
+	} finally {
+		await context.close();
+	}
+});
+
 test("agent rail supports whole-tile sorting without drag handles", async ({ page }) => {
 	const agentOrderRequests: string[] = [];
 	await stubDashboardApi(page, agentOrderRequests);
@@ -240,9 +297,15 @@ test("agent rail supports whole-tile sorting without drag handles", async ({ pag
 	});
 	await page.mouse.up();
 
+	await expect(page).toHaveURL("/");
 	await expect.poll(() => agentOrderRequests.length).toBe(1);
 	expect(JSON.parse(agentOrderRequests[0] ?? "{}")).toEqual({
 		agent_ids: ["agent-smoke-2", "agent-smoke-1"],
 	});
 	await expect(tiles.nth(0)).toContainText("Smoke Hermes");
+
+	const postDragKeyboardTarget = tiles.filter({ hasText: "Smoke Hermes" }).locator("a");
+	await postDragKeyboardTarget.focus();
+	await page.keyboard.press("Enter");
+	await expect(page).toHaveURL("/agents/agent-smoke-2");
 });
