@@ -259,7 +259,7 @@ describe("hosted agent customer language", () => {
 		expect(sidebarSource).toContain('"Agent details unavailable"');
 	});
 
-	test("keeps one credential handover path and restores the Hermes embedded interface", () => {
+	test("keeps one credential handover path and uses a Hermes credential dialog", () => {
 		const detailSource = readFileSync(
 			new URL("./hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
@@ -271,6 +271,9 @@ describe("hosted agent customer language", () => {
 		expect(detailSource).toContain("<iframe");
 		expect(detailSource).toContain('allow="clipboard-read; clipboard-write"');
 		expect(detailSource).toContain("Show credentials");
+		expect(detailSource).toContain("Hermes sign-in credentials");
+		expect(detailSource).toContain("Copy Username");
+		expect(detailSource).not.toContain("If Hermes returns to sign-in after you submit");
 		expect(detailSource).toContain("OpenClaw protects its interface from embedding");
 	});
 });

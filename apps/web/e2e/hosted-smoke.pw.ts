@@ -2171,6 +2171,73 @@ test("deployment detail stays put, becomes running, and keeps manual Runtime UI 
 	await expect(main.getByRole("button", { name: "Open Hermes Dashboard" })).toBeVisible();
 });
 
+test("Hermes credentials use an accessible dialog without expanding the embedded dashboard", async ({
+	context,
+	page,
+}) => {
+	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+	const runtimeUiRedemptionRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [runningMissingProjectionDeployment],
+		runtimeUiRedemptionRequests,
+	});
+
+	await page.goto(`/agents/${missingProjectionEnvironmentId}/console?source=on-clawdi`);
+	const main = page.locator("main");
+	const dashboard = main.locator('iframe[title="Hermes Dashboard"]');
+	await expect(dashboard).toHaveAttribute("src", "https://runtime.example/hermes");
+	await expect(
+		page.getByText(
+			"If Hermes returns to sign-in after you submit, use Open in new window. Some browser session policies do not work inside an embedded page.",
+			{ exact: true },
+		),
+	).toHaveCount(0);
+	const dashboardBoxBefore = await dashboard.boundingBox();
+	expect(dashboardBoxBefore).not.toBeNull();
+
+	const showCredentials = main.getByRole("button", { name: "Show credentials", exact: true });
+	await expect(showCredentials).toBeVisible();
+	await expect(main.getByRole("button", { name: "Open Hermes Dashboard" })).toBeVisible();
+	await showCredentials.click();
+
+	const dialog = page.getByRole("dialog", { name: "Hermes sign-in credentials" });
+	await expect(dialog).toBeVisible();
+	await expect
+		.poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+		.toBe(true);
+	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
+	await expect(dialog.getByLabel("Username", { exact: true })).toHaveValue("admin");
+	await expect(main.getByLabel("Username", { exact: true })).toHaveCount(0);
+	const passwordValue = dialog.locator("code");
+	await expect(passwordValue).toHaveText("••••••••••••");
+	await expect(passwordValue).not.toContainText("test-password");
+
+	await dialog.getByRole("button", { name: "Copy Username", exact: true }).click();
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("admin");
+	await dialog.getByRole("button", { name: "Copy Password", exact: true }).click();
+	await expect
+		.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+		.toBe("test-password");
+	await dialog.getByRole("button", { name: "Show Password", exact: true }).click();
+	await expect(passwordValue).toHaveText("test-password");
+
+	const dashboardBoxWhileOpen = await dashboard.boundingBox();
+	expect(dashboardBoxWhileOpen).toEqual(dashboardBoxBefore);
+	await page.keyboard.press("Escape");
+	await expect(dialog).toHaveCount(0);
+	await expect(showCredentials).toBeFocused();
+	await expect(page.locator('input[value="admin"]')).toHaveCount(0);
+	await expect(page.getByText("test-password", { exact: true })).toHaveCount(0);
+
+	const popupPromise = page.waitForEvent("popup");
+	await main.getByRole("button", { name: "Open Hermes Dashboard" }).click();
+	const popup = await popupPromise;
+	await expect(dialog).toBeVisible();
+	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
+	expect(popup).toBeDefined();
+	await popup.close();
+});
+
 test("Runtime UI credential failure renders a retryable error instead of a permanent spinner", async ({
 	page,
 }) => {
@@ -2200,17 +2267,22 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 		"https://runtime.example/hermes",
 	);
 	await main.getByRole("button", { name: "Show credentials", exact: true }).click();
+	const dialog = page.getByRole("dialog", { name: "Hermes sign-in credentials" });
+	await expect(dialog).toBeVisible();
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
-	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toBeVisible();
+	await expect(dialog.getByText("Couldn't load Hermes credentials", { exact: true })).toBeVisible();
+	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("credentials temporarily unavailable", { exact: true })).toHaveCount(
 		0,
 	);
-	await main.getByRole("button", { name: "Retry", exact: true }).click();
-	await expect(main.getByText("Couldn't load Hermes credentials", { exact: true })).toHaveCount(0);
-	const passwordValue = main.locator("code");
+	await dialog.getByRole("button", { name: "Retry", exact: true }).click();
+	await expect(dialog.getByText("Couldn't load Hermes credentials", { exact: true })).toHaveCount(
+		0,
+	);
+	const passwordValue = dialog.locator("code");
 	await expect(passwordValue).toHaveText("••••••••••••");
 	await expect(passwordValue).not.toContainText("recovered-password");
-	await main.getByRole("button", { name: "Show Password", exact: true }).click();
+	await dialog.getByRole("button", { name: "Show Password", exact: true }).click();
 	await expect(passwordValue).toHaveText("recovered-password");
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
 });
