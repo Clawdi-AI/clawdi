@@ -276,26 +276,22 @@ test("agent rail links support touch taps and keyboard activation", async ({
 	}
 });
 
-test("agent rail supports whole-tile sorting without drag handles", async ({ page }) => {
+test("agent rail exposes accessible keyboard sorting handles", async ({ page }) => {
 	const agentOrderRequests: string[] = [];
 	await stubDashboardApi(page, agentOrderRequests);
 	await page.goto("/");
 
 	const tiles = page.getByTestId("app-sidebar-agent-tile");
 	await expect(tiles).toHaveCount(2, { timeout: 15_000 });
-	await expect(page.getByRole("button", { name: /^Reorder / })).toHaveCount(0);
-	const source = tiles.filter({ hasText: "Smoke Codex" }).locator("a");
-	const target = tiles.filter({ hasText: "Smoke Hermes" }).locator("a");
-	const sourceBox = await source.boundingBox();
-	const targetBox = await target.boundingBox();
-	if (!sourceBox || !targetBox) throw new Error("Agent rail tiles are not draggable.");
-
-	await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
-	await page.mouse.down();
-	await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
-		steps: 10,
+	const firstHandle = page.getByRole("button", {
+		name: "Reorder Smoke Codex · Codex, position 1 of 2",
+		exact: true,
 	});
-	await page.mouse.up();
+	await expect(firstHandle).toBeVisible();
+	await firstHandle.focus();
+	await page.keyboard.press("Space");
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.press("Space");
 
 	await expect(page).toHaveURL("/");
 	await expect.poll(() => agentOrderRequests.length).toBe(1);
@@ -304,8 +300,7 @@ test("agent rail supports whole-tile sorting without drag handles", async ({ pag
 	});
 	await expect(tiles.nth(0)).toContainText("Smoke Hermes");
 
-	const postDragKeyboardTarget = tiles.filter({ hasText: "Smoke Hermes" }).locator("a");
-	await postDragKeyboardTarget.focus();
-	await page.keyboard.press("Enter");
+	const postDragTarget = tiles.filter({ hasText: "Smoke Hermes" }).locator("a");
+	await postDragTarget.click();
 	await expect(page).toHaveURL("/agents/agent-smoke-2");
 });

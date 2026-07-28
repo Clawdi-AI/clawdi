@@ -6,15 +6,16 @@ import {
 	DndContext,
 	type DragEndEvent,
 	type DragOverEvent,
+	KeyboardSensor,
 	type Modifier,
-	MouseSensor,
-	TouchSensor,
+	PointerSensor,
 	useSensor,
 	useSensors,
 } from "@dnd-kit/core";
 import {
 	arrayMove,
 	SortableContext,
+	sortableKeyboardCoordinates,
 	useSortable,
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
@@ -26,6 +27,7 @@ import {
 	CircleHelp,
 	Cloud,
 	ExternalLink,
+	GripVertical,
 	History,
 	Layers,
 	LayoutDashboard,
@@ -752,8 +754,6 @@ function RailFocusButton({
 	caption,
 	active,
 	onNavigate,
-	onMouseDown,
-	onTouchStart,
 	showTooltip = true,
 	children,
 }: {
@@ -761,25 +761,12 @@ function RailFocusButton({
 	label: string;
 	caption?: string;
 	active: boolean;
-	onNavigate?: React.MouseEventHandler<HTMLAnchorElement>;
-	onMouseDown?: React.MouseEventHandler<HTMLAnchorElement>;
-	onTouchStart?: React.TouchEventHandler<HTMLAnchorElement>;
+	onNavigate?: () => void;
 	showTooltip?: boolean;
 	children: React.ReactNode;
 }) {
 	const hasCaption = Boolean(caption);
-	const focusTarget = href ? (
-		<Link
-			to={href}
-			draggable={false}
-			onClick={onNavigate}
-			onMouseDown={onMouseDown}
-			onTouchStart={onTouchStart}
-			className="cursor-default"
-		/>
-	) : (
-		<div aria-disabled="true" className="cursor-default" />
-	);
+	const focusTarget = href ? <Link to={href} onClick={onNavigate} /> : <div aria-disabled="true" />;
 	const button = (
 		<SidebarMenuButton
 			render={focusTarget}
@@ -810,7 +797,7 @@ function RailFocusButton({
 	return (
 		<div
 			className={cn(
-				"group/rail-focus relative flex items-center justify-center",
+				"group/rail-focus relative flex min-w-0 items-center justify-center",
 				hasCaption ? "h-[4.5rem] w-full" : "size-11",
 			)}
 		>
@@ -841,16 +828,28 @@ function RailFocusButton({
 
 function SortableAgentRailItem({
 	agent,
+	position,
+	itemCount,
 	active,
 	onNavigate,
 	showTooltip,
 }: {
 	agent: AgentTile;
+	position: number;
+	itemCount: number;
 	active: boolean;
-	onNavigate: React.MouseEventHandler<HTMLAnchorElement>;
+	onNavigate?: () => void;
 	showTooltip: boolean;
 }) {
-	const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+	const {
+		attributes,
+		listeners,
+		setActivatorNodeRef,
+		setNodeRef,
+		transform,
+		transition,
+		isDragging,
+	} = useSortable({
 		id: agent.id,
 		disabled: !agent.env,
 	});
@@ -872,10 +871,7 @@ function SortableAgentRailItem({
 		transition: isDragging ? undefined : transition,
 		zIndex: isDragging ? 20 : undefined,
 	};
-	const dragMouseDown: React.MouseEventHandler<HTMLAnchorElement> | undefined =
-		listeners?.onMouseDown ? (event) => listeners.onMouseDown?.(event) : undefined;
-	const dragTouchStart: React.TouchEventHandler<HTMLAnchorElement> | undefined =
-		listeners?.onTouchStart ? (event) => listeners.onTouchStart?.(event) : undefined;
+	const reorderLabel = `Reorder ${baseIdentityLabel}, position ${position} of ${itemCount}`;
 
 	return (
 		<SidebarMenuItem
@@ -883,7 +879,7 @@ function SortableAgentRailItem({
 			data-testid="app-sidebar-agent-tile"
 			style={style}
 			className={cn(
-				"group/agent-rail-item relative w-full touch-pan-y will-change-transform",
+				"group/agent-rail-item flex h-[4.5rem] w-full touch-pan-y items-end will-change-transform",
 				isDragging && "opacity-80",
 			)}
 		>
@@ -893,8 +889,6 @@ function SortableAgentRailItem({
 				caption={caption}
 				active={active}
 				onNavigate={onNavigate}
-				onMouseDown={dragMouseDown}
-				onTouchStart={dragTouchStart}
 				showTooltip={showTooltip}
 			>
 				<span className="relative inline-flex rounded-md">
@@ -916,6 +910,20 @@ function SortableAgentRailItem({
 					) : null}
 				</span>
 			</RailFocusButton>
+			<Button
+				ref={setActivatorNodeRef}
+				type="button"
+				variant="ghost"
+				size="icon-sm"
+				className="size-6 touch-none cursor-grab rounded-sm text-muted-foreground hover:text-sidebar-foreground active:cursor-grabbing"
+				disabled={!agent.env}
+				aria-label={reorderLabel}
+				title={reorderLabel}
+				{...attributes}
+				{...listeners}
+			>
+				<GripVertical aria-hidden="true" className="size-3" />
+			</Button>
 		</SidebarMenuItem>
 	);
 }
@@ -933,7 +941,6 @@ function FocusRailContent({
 }) {
 	const api = useApi();
 	const queryClient = useQueryClient();
-	const draggingRailItem = useRef(false);
 	const [railAgents, setRailAgents] = useState<AgentTile[]>(() =>
 		[...agents].sort(compareAgentTiles),
 	);
@@ -943,15 +950,16 @@ function FocusRailContent({
 		railAgentsRef.current = next;
 		setRailAgents(next);
 	};
-	// Separate mouse and touch activators so a touch pointerdown cannot claim the
-	// gesture before TouchSensor applies its long-press activation constraint.
-	// After activation, dnd-kit captures the post-drag click before it reaches the link.
+	// Drag input belongs exclusively to each tile's explicit activator button. The
+	// adjacent link remains a plain navigation target for clicks, taps, and keyboard use.
 	const sensors = useSensors(
-		useSensor(MouseSensor, { activationConstraint: { distance: RAIL_DRAG_ACTIVATION_DISTANCE } }),
-		useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+		useSensor(PointerSensor, {
+			activationConstraint: { distance: RAIL_DRAG_ACTIVATION_DISTANCE },
+		}),
+		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
 	);
 	useEffect(() => {
-		if (!draggingRailItem.current) {
+		if (!dragStartRailAgents.current) {
 			setRailAgentsOrder([...agents].sort(compareAgentTiles));
 		}
 	}, [agents]);
@@ -985,7 +993,6 @@ function FocusRailContent({
 	});
 	const onDragEnd = (event: DragEndEvent) => {
 		const { active, over } = event;
-		draggingRailItem.current = false;
 		const initialAgents = dragStartRailAgents.current;
 		dragStartRailAgents.current = null;
 		if (!over) {
@@ -1022,10 +1029,8 @@ function FocusRailContent({
 		setRailAgentsOrder(reorderAgentTilesByIndex(current, from, to));
 	};
 	const beginRailDragGesture = () => {
-		draggingRailItem.current = true;
 		dragStartRailAgents.current = railAgentsRef.current;
 	};
-	const onRailAgentNavigate = () => onNavigate?.();
 
 	return (
 		<>
@@ -1079,7 +1084,6 @@ function FocusRailContent({
 						modifiers={RAIL_DND_MODIFIERS}
 						onDragStart={beginRailDragGesture}
 						onDragCancel={() => {
-							draggingRailItem.current = false;
 							if (dragStartRailAgents.current) {
 								setRailAgentsOrder(dragStartRailAgents.current);
 							} else {
@@ -1091,12 +1095,14 @@ function FocusRailContent({
 						onDragEnd={onDragEnd}
 					>
 						<SortableContext items={orderedAgentIds} strategy={verticalListSortingStrategy}>
-							{orderedAgents.map((agent) => (
+							{orderedAgents.map((agent, index) => (
 								<SortableAgentRailItem
 									key={agent.id}
 									agent={agent}
+									position={index + 1}
+									itemCount={orderedAgents.length}
 									active={Boolean(activeAgentId && agentTileMatchesRouteId(agent, activeAgentId))}
-									onNavigate={onRailAgentNavigate}
+									onNavigate={onNavigate}
 									showTooltip={showTooltips}
 								/>
 							))}
