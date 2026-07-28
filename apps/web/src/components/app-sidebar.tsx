@@ -907,7 +907,7 @@ function SortableAgentRailItem({
 				label={label}
 				caption={caption}
 				active={active}
-				className="touch-pan-y cursor-grab active:cursor-grabbing"
+				className="touch-pan-y"
 				showTooltip={showTooltip}
 			>
 				<span className="relative inline-flex rounded-md">

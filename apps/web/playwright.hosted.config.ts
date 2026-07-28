@@ -19,7 +19,7 @@ export default defineConfig({
 	webServer: {
 		command: `bun run dev -- --host 127.0.0.1 --port ${hostedPort}`,
 		url: baseURL,
-		reuseExistingServer: false,
+		reuseExistingServer: Boolean(process.env.E2E_HOSTED_BASE_URL),
 		timeout: 120_000,
 		env: {
 			...process.env,
