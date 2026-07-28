@@ -59,7 +59,7 @@ export function WalletPage() {
 	const runAction = useActionLock();
 	const queryClient = useQueryClient();
 	const router = useRouter();
-	const locationOwnership = useLocationOwnership();
+	const { capture: captureLocation, isCurrent: isLocationCurrent } = useLocationOwnership();
 	const [ledgerLimit, setLedgerLimit] = useState(LEDGER_PAGE_SIZE);
 	const ledger = useWalletLedger(ledgerLimit);
 	const lastLedgerDataRef = useRef(ledger.data);
@@ -68,10 +68,10 @@ export function WalletPage() {
 	const [topUpOpen, setTopUpOpen] = useState(false);
 
 	async function openBillingPortal() {
-		const locationGeneration = locationOwnership.capture();
+		const locationGeneration = captureLocation();
 		try {
 			const res = await portal.execute({});
-			if (!locationOwnership.isCurrent(locationGeneration)) return;
+			if (!isLocationCurrent(locationGeneration)) return;
 			const portalUrl = safeBrowserNavigationUrl(res.url || res.portal_url);
 			if (portalUrl) {
 				window.location.assign(portalUrl);
@@ -81,7 +81,9 @@ export function WalletPage() {
 				description: "Refresh this page and try again in a moment.",
 			});
 		} catch (error) {
-			toast.error("Couldn’t open billing", { description: normalizeBillingError(error) });
+			if (isLocationCurrent(locationGeneration)) {
+				toast.error("Couldn’t open billing", { description: normalizeBillingError(error) });
+			}
 		}
 	}
 
@@ -89,49 +91,53 @@ export function WalletPage() {
 		const topupReturn = readWalletTopupReturn(window.location.search);
 		if (!topupReturn) return;
 		const { clientSecret } = topupReturn;
+		const locationGeneration = captureLocation();
 		let cancelled = false;
+		const ownsReturn = () => !cancelled && isLocationCurrent(locationGeneration);
 
 		async function refreshReturnedTopup() {
 			try {
 				const key = env.VITE_STRIPE_PUBLISHABLE_KEY;
 				if (!key) {
-					toast.error("Couldn't refresh top-up", {
-						description: "Stripe isn't configured in this environment.",
-					});
+					if (ownsReturn())
+						toast.error("Couldn't refresh top-up", {
+							description: "Stripe isn't configured in this environment.",
+						});
 					return;
 				}
 				const stripe = await getStripe(key);
 				if (!stripe) {
-					toast.error("Couldn't refresh top-up", {
-						description: "Reload the page and try again.",
-					});
+					if (ownsReturn())
+						toast.error("Couldn't refresh top-up", {
+							description: "Reload the page and try again.",
+						});
 					return;
 				}
 				const result = await stripe.retrievePaymentIntent(clientSecret);
-				if (cancelled) return;
 				if (result.error) {
-					toast.error("Couldn't refresh top-up", {
-						description: result.error.message ?? "Open Wallet and try again.",
-					});
+					if (ownsReturn())
+						toast.error("Couldn't refresh top-up", {
+							description: result.error.message ?? "Open Wallet and try again.",
+						});
 					return;
 				}
 				const paymentIntent = result.paymentIntent;
 				const status = paymentIntent?.status;
-				showWalletTopupReturnToast(walletTopupReturnToast(status));
+				if (ownsReturn()) showWalletTopupReturnToast(walletTopupReturnToast(status));
 				invalidateWalletActivity(queryClient);
 				if (status === "succeeded") {
-					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null);
+					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null, ownsReturn);
 				} else if (status === "processing" || status === "requires_capture") {
-					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null);
+					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null, ownsReturn);
 				}
 			} catch {
-				if (!cancelled) {
+				if (ownsReturn()) {
 					toast.error("Couldn't refresh top-up", {
 						description: "Check your connection and reload Wallet.",
 					});
 				}
 			} finally {
-				if (!cancelled) {
+				if (ownsReturn()) {
 					void router.navigate({
 						to: ".",
 						search: clearWalletTopupReturnSearch,
@@ -146,7 +152,7 @@ export function WalletPage() {
 		return () => {
 			cancelled = true;
 		};
-	}, [queryClient, router]);
+	}, [captureLocation, isLocationCurrent, queryClient, router]);
 
 	if (wallet.isLoading) {
 		return (

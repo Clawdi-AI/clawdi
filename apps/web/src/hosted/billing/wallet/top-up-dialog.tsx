@@ -54,28 +54,35 @@ type TopUpPresentation = "dialog" | "inline";
 export async function confirmWalletTopup(
 	queryClient: QueryClient,
 	paymentReference: string | null,
+	shouldPresent: () => boolean = () => true,
 ) {
 	if (!paymentReference) {
-		toast.warning("Wallet credit can’t be confirmed automatically", {
-			description:
-				"The payment did not include a link to Wallet Activity. The balance and Activity may take a moment to update.",
-		});
+		if (shouldPresent()) {
+			toast.warning("Wallet credit can’t be confirmed automatically", {
+				description:
+					"The payment did not include a link to Wallet Activity. The balance and Activity may take a moment to update.",
+			});
+		}
 		return;
 	}
 	if (await waitForWalletTopupCredit(queryClient, paymentReference)) {
-		toast.success("Wallet credited", {
-			description: "Your balance and Activity now include the top-up.",
-		});
+		if (shouldPresent()) {
+			toast.success("Wallet credited", {
+				description: "Your balance and Activity now include the top-up.",
+			});
+		}
 		return;
 	}
-	toast.info("Wallet credit not confirmed yet", {
-		description:
-			"The Wallet has not linked this payment to the displayed balance and Activity yet.",
-		action: {
-			label: "Check again",
-			onClick: () => void confirmWalletTopup(queryClient, paymentReference),
-		},
-	});
+	if (shouldPresent()) {
+		toast.info("Wallet credit not confirmed yet", {
+			description:
+				"The Wallet has not linked this payment to the displayed balance and Activity yet.",
+			action: {
+				label: "Check again",
+				onClick: () => void confirmWalletTopup(queryClient, paymentReference),
+			},
+		});
+	}
 }
 
 export function TopUpDialog({

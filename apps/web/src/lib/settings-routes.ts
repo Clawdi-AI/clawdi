@@ -40,6 +40,19 @@ export function validateDashboardSettingsSearch(
 	return validated;
 }
 
+export function settingsDraftOwnerChanges(
+	current: { pathname: string; search: Record<string, unknown> },
+	next: { pathname: string; search: Record<string, unknown> },
+): boolean {
+	const currentSection = normalizeSettingsSection(
+		typeof current.search.settings === "string" ? current.search.settings : null,
+	);
+	const nextSection = normalizeSettingsSection(
+		typeof next.search.settings === "string" ? next.search.settings : null,
+	);
+	return current.pathname !== next.pathname || currentSection !== nextSection;
+}
+
 /** Route-native options for opening Settings without replacing child-route state. */
 export function settingsLink(section: SettingsSectionId = DEFAULT_SETTINGS_SECTION) {
 	return linkOptions({

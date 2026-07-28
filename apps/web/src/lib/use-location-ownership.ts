@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "@tanstack/react-router";
+import { useLocation, useMatch, useRouter } from "@tanstack/react-router";
 import { useCallback, useEffect, useRef } from "react";
 
 /**
@@ -26,4 +26,12 @@ export function useLocationOwnership() {
 	const capture = useCallback(() => generationRef.current, []);
 	const isCurrent = useCallback((generation: number) => generationRef.current === generation, []);
 	return { capture, isCurrent };
+}
+
+/** Whether the rendered leaf match still owns the Router's current pathname. */
+export function useCurrentRouteOwnership(): boolean {
+	const router = useRouter();
+	const renderedRouteId = useMatch({ strict: false, select: (match) => match.routeId });
+	const pathname = useLocation({ select: (location) => location.pathname });
+	return router.getMatchedRoutes(pathname).foundRoute?.id === renderedRouteId;
 }

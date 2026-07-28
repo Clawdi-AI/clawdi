@@ -1,11 +1,43 @@
 diff --git a/dist/cjs/index.cjs b/dist/cjs/index.cjs
-index 8f88a73c..e94026f4 100644
 --- a/dist/cjs/index.cjs
 +++ b/dist/cjs/index.cjs
-@@ -177 +177 @@ function createBrowserHistory(opts) {
+@@ -20,0 +21,8 @@
++		const isPushOrReplace = actionInfo.type === "PUSH" || actionInfo.type === "REPLACE";
++		if (typeof document !== "undefined" && isPushOrReplace) {
++			const pendingNavigation = opts.waitForNavigation?.();
++			if (pendingNavigation && !await pendingNavigation) {
++				opts.onBlocked?.();
++				return;
++			}
++		}
+@@ -26,4 +34,2 @@
+-		const isPushOrReplace = actionInfo.type === "PUSH" || actionInfo.type === "REPLACE";
+-		if (typeof document !== "undefined" && blockers.length && isPushOrReplace) for (const blocker of blockers) {
+-			const nextLocation = parseHref(actionInfo.path, actionInfo.state);
+-			if (await blocker.blockerFn({
++		if (typeof document !== "undefined" && isPushOrReplace) {
++			const blockerArgs = {
+@@ -31 +37 @@
+-				nextLocation,
++				nextLocation: parseHref(actionInfo.path, actionInfo.state),
+@@ -33 +39,12 @@
+-			})) {
++			};
++			if (opts.runBlockers && blockers.length > 0) {
++				if (await opts.runBlockers(blockerArgs)) {
++					opts.onBlocked?.();
++					return;
++				}
++			} else for (const blocker of blockers) if (await blocker.blockerFn(blockerArgs)) {
++				opts.onBlocked?.();
++				return;
++			}
++			const pendingNavigation = opts.waitForNavigation?.();
++			if (pendingNavigation && !await pendingNavigation) {
+@@ -177 +194 @@
 -	let ignoreNextPop = false;
 +	let popTransaction;
-@@ -206,0 +207,7 @@ function createBrowserHistory(opts) {
+@@ -206,0 +224,31 @@
 +	const sameRouterEntry = (a, b) => {
 +		const aIndex = a.state[stateIndexKey];
 +		const bIndex = b.state[stateIndexKey];
@@ -13,7 +45,31 @@ index 8f88a73c..e94026f4 100644
 +		const bKey = b.state.__TSR_key ?? b.state.key;
 +		return Number.isFinite(aIndex) && Number.isFinite(bIndex) && typeof aKey === "string" && a.href === b.href && aIndex === bIndex && aKey === bKey;
 +	};
-@@ -208,2 +215,25 @@ function createBrowserHistory(opts) {
++	let blockerDecisionPending = false;
++	const runBlockers = async (args) => {
++		const currentBlockers = _getBlockers();
++		if (typeof document === "undefined" || currentBlockers.length === 0) return false;
++		if (blockerDecisionPending) return true;
++		blockerDecisionPending = true;
++		try {
++			for (const blocker of currentBlockers) if (await blocker.blockerFn(args)) return true;
++			return false;
++		} finally {
++			blockerDecisionPending = false;
++		}
++	};
++	const finishPopTransaction = (transaction, result) => {
++		if (popTransaction !== transaction) return;
++		popTransaction = void 0;
++		transaction.finish(result);
++	};
++	const waitForNavigation = () => {
++		const transaction = popTransaction;
++		if (!transaction) return;
++		const owner = transaction.origin;
++		return transaction.completion.then((result) => result === "restored" && sameRouterEntry(currentLocation, owner));
++	};
+@@ -208,2 +256,25 @@
 -		if (ignoreNextPop) {
 -			ignoreNextPop = false;
 +		const popWasGo = nextPopIsGo;
@@ -28,11 +84,11 @@ index 8f88a73c..e94026f4 100644
 +			if (transaction.phase === "deciding") return;
 +			if (sameRouterEntry(nextLocation, transaction.origin)) {
 +				currentLocation = nextLocation;
-+				popTransaction = void 0;
++				finishPopTransaction(transaction, "restored");
 +				return;
 +			}
 +			if (transaction.phase === "rolling-back-fallback") {
-+				popTransaction = void 0;
++				finishPopTransaction(transaction, "fallback");
 +				return;
 +			}
 +			const rollbackDelta = transaction.origin.state[stateIndexKey] - nextLocation.state[stateIndexKey];
@@ -41,7 +97,7 @@ index 8f88a73c..e94026f4 100644
 +				transaction.phase = "rolling-back-fallback";
 +				win.history.go(1);
 +			}
-@@ -212,13 +242,27 @@ function createBrowserHistory(opts) {
+@@ -212,23 +283,45 @@
 -		const nextLocation = parseLocation();
 -		const delta = nextLocation.state[stateIndexKey] - currentLocation.state[stateIndexKey];
 -		const isForward = delta === 1;
@@ -55,12 +111,28 @@ index 8f88a73c..e94026f4 100644
 -		} : { type: isBack ? "BACK" : "FORWARD" };
 -		if (skipBlockerNextPop) skipBlockerNextPop = false;
 -		else {
+-			const blockers = _getBlockers();
+-			if (typeof document !== "undefined" && blockers.length) {
+-				for (const blocker of blockers) if (await blocker.blockerFn({
+-					currentLocation,
+-					nextLocation,
+-					action
+-				})) {
+-					ignoreNextPop = true;
+-					win.history.go(1);
+-					history.notify(notify);
 +		const origin = currentLocation;
++		let finish = () => {};
++		const completion = new Promise((resolve) => {
++			finish = resolve;
++		});
 +		const pendingTransaction = {
 +			origin,
 +			target: nextLocation,
 +			phase: "deciding",
-+			sawGo: popWasGo
++			sawGo: popWasGo,
++			completion,
++			finish
 +		};
 +		popTransaction = pendingTransaction;
 +		const navigation = () => {
@@ -82,60 +154,83 @@ index 8f88a73c..e94026f4 100644
 +			};
 +		};
 +		if (!skipBlocker) {
-@@ -227,9 +271,24 @@ function createBrowserHistory(opts) {
--				for (const blocker of blockers) if (await blocker.blockerFn({
--					currentLocation,
--					nextLocation,
--					action
--				})) {
--					ignoreNextPop = true;
--					win.history.go(1);
--					history.notify(notify);
--					return;
-+				for (const blocker of blockers) {
-+					const { action, target } = navigation();
-+					const isBlocked = await blocker.blockerFn({
-+						currentLocation: origin,
-+						nextLocation: target,
-+						action
-+					});
-+					if (popTransaction !== pendingTransaction) return;
-+					if (isBlocked) {
-+						const { delta, notify, target: target$1 } = navigation();
-+						if (sameRouterEntry(target$1, origin)) {
-+							currentLocation = target$1;
-+							popTransaction = void 0;
-+							return;
-+						} else if (Number.isFinite(delta) && delta !== 0) {
-+							pendingTransaction.phase = "rolling-back";
-+							win.history.go(-delta);
-+						} else {
-+							pendingTransaction.phase = "rolling-back-fallback";
-+							win.history.go(1);
-+						}
-+						history.notify(notify);
-+						return;
-+					}
-@@ -239 +298,8 @@ function createBrowserHistory(opts) {
++			const { action, target } = navigation();
++			const isBlocked = await runBlockers({
++				currentLocation: origin,
++				nextLocation: target,
++				action
++			});
++			if (popTransaction !== pendingTransaction) return;
++			if (isBlocked) {
++				const { delta, target: target$1 } = navigation();
++				if (sameRouterEntry(target$1, origin)) {
++					currentLocation = target$1;
++					finishPopTransaction(pendingTransaction, "restored");
+@@ -235,0 +329,6 @@
++				} else if (Number.isFinite(delta) && delta !== 0) {
++					pendingTransaction.phase = "rolling-back";
++					win.history.go(-delta);
++				} else {
++					pendingTransaction.phase = "rolling-back-fallback";
++					win.history.go(1);
+@@ -236,0 +336 @@
++				return;
+@@ -239 +339,7 @@
 -		currentLocation = parseLocation();
 +		const { notify, target } = navigation();
 +		if (sameRouterEntry(target, origin)) {
 +			currentLocation = target;
-+			popTransaction = void 0;
++			finishPopTransaction(pendingTransaction, "restored");
 +			return;
 +		}
 +		currentLocation = target;
-+		popTransaction = void 0;
-@@ -286,0 +353 @@ function createBrowserHistory(opts) {
-+			popTransaction = void 0;
+@@ -240,0 +347 @@
++		finishPopTransaction(pendingTransaction, "committed");
+@@ -286,0 +394 @@
++			if (popTransaction) finishPopTransaction(popTransaction, "fallback");
+@@ -296,0 +405,2 @@
++		runBlockers,
++		waitForNavigation,
 diff --git a/dist/esm/index.js b/dist/esm/index.js
-index f109cf46..a59bff53 100644
 --- a/dist/esm/index.js
 +++ b/dist/esm/index.js
-@@ -176 +176 @@ function createBrowserHistory(opts) {
+@@ -19,0 +20,8 @@
++		const isPushOrReplace = actionInfo.type === "PUSH" || actionInfo.type === "REPLACE";
++		if (typeof document !== "undefined" && isPushOrReplace) {
++			const pendingNavigation = opts.waitForNavigation?.();
++			if (pendingNavigation && !await pendingNavigation) {
++				opts.onBlocked?.();
++				return;
++			}
++		}
+@@ -25,4 +33,2 @@
+-		const isPushOrReplace = actionInfo.type === "PUSH" || actionInfo.type === "REPLACE";
+-		if (typeof document !== "undefined" && blockers.length && isPushOrReplace) for (const blocker of blockers) {
+-			const nextLocation = parseHref(actionInfo.path, actionInfo.state);
+-			if (await blocker.blockerFn({
++		if (typeof document !== "undefined" && isPushOrReplace) {
++			const blockerArgs = {
+@@ -30 +36 @@
+-				nextLocation,
++				nextLocation: parseHref(actionInfo.path, actionInfo.state),
+@@ -32 +38,12 @@
+-			})) {
++			};
++			if (opts.runBlockers && blockers.length > 0) {
++				if (await opts.runBlockers(blockerArgs)) {
++					opts.onBlocked?.();
++					return;
++				}
++			} else for (const blocker of blockers) if (await blocker.blockerFn(blockerArgs)) {
++				opts.onBlocked?.();
++				return;
++			}
++			const pendingNavigation = opts.waitForNavigation?.();
++			if (pendingNavigation && !await pendingNavigation) {
+@@ -176 +193 @@
 -	let ignoreNextPop = false;
 +	let popTransaction;
-@@ -205,0 +206,7 @@ function createBrowserHistory(opts) {
+@@ -205,0 +223,31 @@
 +	const sameRouterEntry = (a, b) => {
 +		const aIndex = a.state[stateIndexKey];
 +		const bIndex = b.state[stateIndexKey];
@@ -143,7 +238,31 @@ index f109cf46..a59bff53 100644
 +		const bKey = b.state.__TSR_key ?? b.state.key;
 +		return Number.isFinite(aIndex) && Number.isFinite(bIndex) && typeof aKey === "string" && a.href === b.href && aIndex === bIndex && aKey === bKey;
 +	};
-@@ -207,2 +214,25 @@ function createBrowserHistory(opts) {
++	let blockerDecisionPending = false;
++	const runBlockers = async (args) => {
++		const currentBlockers = _getBlockers();
++		if (typeof document === "undefined" || currentBlockers.length === 0) return false;
++		if (blockerDecisionPending) return true;
++		blockerDecisionPending = true;
++		try {
++			for (const blocker of currentBlockers) if (await blocker.blockerFn(args)) return true;
++			return false;
++		} finally {
++			blockerDecisionPending = false;
++		}
++	};
++	const finishPopTransaction = (transaction, result) => {
++		if (popTransaction !== transaction) return;
++		popTransaction = void 0;
++		transaction.finish(result);
++	};
++	const waitForNavigation = () => {
++		const transaction = popTransaction;
++		if (!transaction) return;
++		const owner = transaction.origin;
++		return transaction.completion.then((result) => result === "restored" && sameRouterEntry(currentLocation, owner));
++	};
+@@ -207,2 +255,25 @@
 -		if (ignoreNextPop) {
 -			ignoreNextPop = false;
 +		const popWasGo = nextPopIsGo;
@@ -158,11 +277,11 @@ index f109cf46..a59bff53 100644
 +			if (transaction.phase === "deciding") return;
 +			if (sameRouterEntry(nextLocation, transaction.origin)) {
 +				currentLocation = nextLocation;
-+				popTransaction = void 0;
++				finishPopTransaction(transaction, "restored");
 +				return;
 +			}
 +			if (transaction.phase === "rolling-back-fallback") {
-+				popTransaction = void 0;
++				finishPopTransaction(transaction, "fallback");
 +				return;
 +			}
 +			const rollbackDelta = transaction.origin.state[stateIndexKey] - nextLocation.state[stateIndexKey];
@@ -171,7 +290,7 @@ index f109cf46..a59bff53 100644
 +				transaction.phase = "rolling-back-fallback";
 +				win.history.go(1);
 +			}
-@@ -211,13 +241,27 @@ function createBrowserHistory(opts) {
+@@ -211,23 +282,45 @@
 -		const nextLocation = parseLocation();
 -		const delta = nextLocation.state[stateIndexKey] - currentLocation.state[stateIndexKey];
 -		const isForward = delta === 1;
@@ -185,12 +304,28 @@ index f109cf46..a59bff53 100644
 -		} : { type: isBack ? "BACK" : "FORWARD" };
 -		if (skipBlockerNextPop) skipBlockerNextPop = false;
 -		else {
+-			const blockers = _getBlockers();
+-			if (typeof document !== "undefined" && blockers.length) {
+-				for (const blocker of blockers) if (await blocker.blockerFn({
+-					currentLocation,
+-					nextLocation,
+-					action
+-				})) {
+-					ignoreNextPop = true;
+-					win.history.go(1);
+-					history.notify(notify);
 +		const origin = currentLocation;
++		let finish = () => {};
++		const completion = new Promise((resolve) => {
++			finish = resolve;
++		});
 +		const pendingTransaction = {
 +			origin,
 +			target: nextLocation,
 +			phase: "deciding",
-+			sawGo: popWasGo
++			sawGo: popWasGo,
++			completion,
++			finish
 +		};
 +		popTransaction = pendingTransaction;
 +		const navigation = () => {
@@ -212,67 +347,113 @@ index f109cf46..a59bff53 100644
 +			};
 +		};
 +		if (!skipBlocker) {
-@@ -226,9 +270,24 @@ function createBrowserHistory(opts) {
--				for (const blocker of blockers) if (await blocker.blockerFn({
--					currentLocation,
--					nextLocation,
--					action
--				})) {
--					ignoreNextPop = true;
--					win.history.go(1);
--					history.notify(notify);
--					return;
-+				for (const blocker of blockers) {
-+					const { action, target } = navigation();
-+					const isBlocked = await blocker.blockerFn({
-+						currentLocation: origin,
-+						nextLocation: target,
-+						action
-+					});
-+					if (popTransaction !== pendingTransaction) return;
-+					if (isBlocked) {
-+						const { delta, notify, target: target$1 } = navigation();
-+						if (sameRouterEntry(target$1, origin)) {
-+							currentLocation = target$1;
-+							popTransaction = void 0;
-+							return;
-+						} else if (Number.isFinite(delta) && delta !== 0) {
-+							pendingTransaction.phase = "rolling-back";
-+							win.history.go(-delta);
-+						} else {
-+							pendingTransaction.phase = "rolling-back-fallback";
-+							win.history.go(1);
-+						}
-+						history.notify(notify);
-+						return;
-+					}
-@@ -238 +297,8 @@ function createBrowserHistory(opts) {
++			const { action, target } = navigation();
++			const isBlocked = await runBlockers({
++				currentLocation: origin,
++				nextLocation: target,
++				action
++			});
++			if (popTransaction !== pendingTransaction) return;
++			if (isBlocked) {
++				const { delta, target: target$1 } = navigation();
++				if (sameRouterEntry(target$1, origin)) {
++					currentLocation = target$1;
++					finishPopTransaction(pendingTransaction, "restored");
+@@ -234,0 +328,6 @@
++				} else if (Number.isFinite(delta) && delta !== 0) {
++					pendingTransaction.phase = "rolling-back";
++					win.history.go(-delta);
++				} else {
++					pendingTransaction.phase = "rolling-back-fallback";
++					win.history.go(1);
+@@ -235,0 +335 @@
++				return;
+@@ -238 +338,7 @@
 -		currentLocation = parseLocation();
 +		const { notify, target } = navigation();
 +		if (sameRouterEntry(target, origin)) {
 +			currentLocation = target;
-+			popTransaction = void 0;
++			finishPopTransaction(pendingTransaction, "restored");
 +			return;
 +		}
 +		currentLocation = target;
-+		popTransaction = void 0;
-@@ -285,0 +352 @@ function createBrowserHistory(opts) {
-+			popTransaction = void 0;
+@@ -239,0 +346 @@
++		finishPopTransaction(pendingTransaction, "committed");
+@@ -285,0 +393 @@
++			if (popTransaction) finishPopTransaction(popTransaction, "fallback");
+@@ -295,0 +404,2 @@
++		runBlockers,
++		waitForNavigation,
 diff --git a/src/index.ts b/src/index.ts
-index 705dbf01..402c6fc8 100644
 --- a/src/index.ts
 +++ b/src/index.ts
-@@ -324 +324,8 @@ export function createBrowserHistory(opts?: {
+@@ -112,0 +113,2 @@
++  runBlockers?: (args: BlockerFnArgs) => Promise<boolean>
++  waitForNavigation?: () => Promise<boolean> | undefined
+@@ -134,0 +137,11 @@
++    const isPushOrReplace =
++      actionInfo.type === 'PUSH' || actionInfo.type === 'REPLACE'
++
++    if (typeof document !== 'undefined' && isPushOrReplace) {
++      const pendingNavigation = opts.waitForNavigation?.()
++      if (pendingNavigation && !(await pendingNavigation)) {
++        opts.onBlocked?.()
++        return
++      }
++    }
++
+@@ -141,11 +154,8 @@
+-    const isPushOrReplace =
+-      actionInfo.type === 'PUSH' || actionInfo.type === 'REPLACE'
+-    if (typeof document !== 'undefined' && blockers.length && isPushOrReplace) {
+-      for (const blocker of blockers) {
+-        const nextLocation = parseHref(actionInfo.path, actionInfo.state)
+-        const isBlocked = await blocker.blockerFn({
+-          currentLocation: location,
+-          nextLocation,
+-          action: actionInfo.type,
+-        })
+-        if (isBlocked) {
++    if (typeof document !== 'undefined' && isPushOrReplace) {
++      const blockerArgs: BlockerFnArgs = {
++        currentLocation: location,
++        nextLocation: parseHref(actionInfo.path, actionInfo.state),
++        action: actionInfo.type,
++      }
++      if (opts.runBlockers && blockers.length > 0) {
++        if (await opts.runBlockers(blockerArgs)) {
+@@ -154,0 +165,13 @@
++      } else {
++        for (const blocker of blockers) {
++          if (await blocker.blockerFn(blockerArgs)) {
++            opts.onBlocked?.()
++            return
++          }
++        }
++      }
++
++      const pendingNavigation = opts.waitForNavigation?.()
++      if (pendingNavigation && !(await pendingNavigation)) {
++        opts.onBlocked?.()
++        return
+@@ -324 +347,11 @@
 -  let ignoreNextPop = false
++  type PopTransactionResult = 'restored' | 'committed' | 'fallback'
 +  let popTransaction:
 +    | {
 +        origin: HistoryLocation
 +        target: HistoryLocation
 +        phase: 'deciding' | 'rolling-back' | 'rolling-back-fallback'
 +        sawGo: boolean
++        completion: Promise<PopTransactionResult>
++        finish: (result: PopTransactionResult) => void
 +      }
 +    | undefined
-@@ -403,0 +411,15 @@ export function createBrowserHistory(opts?: {
+@@ -404,4 +437,34 @@
+-  const onPushPopEvent = async () => {
+-    if (ignoreNextPop) {
+-      ignoreNextPop = false
+-      return
 +  const sameRouterEntry = (a: HistoryLocation, b: HistoryLocation) => {
 +    const aIndex = a.state[stateIndexKey]
 +    const bIndex = b.state[stateIndexKey]
@@ -288,15 +469,68 @@ index 705dbf01..402c6fc8 100644
 +    )
 +  }
 +
-@@ -405,2 +427,34 @@ export function createBrowserHistory(opts?: {
--    if (ignoreNextPop) {
--      ignoreNextPop = false
++  let blockerDecisionPending = false
++  const runBlockers = async (args: BlockerFnArgs) => {
++    const currentBlockers = _getBlockers()
++    if (
++      typeof document === 'undefined' ||
++      currentBlockers.length === 0
++    ) {
++      return false
++    }
++    if (blockerDecisionPending) return true
++
++    blockerDecisionPending = true
++    try {
++      for (const blocker of currentBlockers) {
++        if (await blocker.blockerFn(args)) return true
++      }
++      return false
++    } finally {
++      blockerDecisionPending = false
+@@ -408,0 +472 @@
++  }
+@@ -410,6 +474,20 @@
+-    const nextLocation = parseLocation()
+-    const delta =
+-      nextLocation.state[stateIndexKey] - currentLocation.state[stateIndexKey]
+-    const isForward = delta === 1
+-    const isBack = delta === -1
+-    const isGo = (!isForward && !isBack) || nextPopIsGo
++  const finishPopTransaction = (
++    transaction: NonNullable<typeof popTransaction>,
++    result: PopTransactionResult,
++  ) => {
++    if (popTransaction !== transaction) return
++    popTransaction = undefined
++    transaction.finish(result)
++  }
++
++  const waitForNavigation = () => {
++    const transaction = popTransaction
++    if (!transaction) return undefined
++    const owner = transaction.origin
++    return transaction.completion.then(
++      (result) => result === 'restored' && sameRouterEntry(currentLocation, owner),
++    )
++  }
++
++  const onPushPopEvent = async () => {
 +    const popWasGo = nextPopIsGo
-+    nextPopIsGo = false
+@@ -416,0 +495,3 @@
 +    const nextLocation = parseLocation()
 +    const skipBlocker = skipBlockerNextPop
 +    skipBlockerNextPop = false
-+
+@@ -418,9 +499,7 @@
+-    const action = isGo ? 'GO' : isBack ? 'BACK' : 'FORWARD'
+-    const notify: SubscriberHistoryAction = isGo
+-      ? {
+-          type: 'GO',
+-          index: delta,
+-        }
+-      : {
+-          type: isBack ? 'BACK' : 'FORWARD',
+-        }
 +    const transaction = popTransaction
 +    if (transaction) {
 +      transaction.target = nextLocation
@@ -304,15 +538,32 @@ index 705dbf01..402c6fc8 100644
 +      if (transaction.phase === 'deciding') {
 +        return
 +      }
-+
+@@ -428,17 +507,72 @@
+-    if (skipBlockerNextPop) {
+-      skipBlockerNextPop = false
+-    } else {
+-      const blockers = _getBlockers()
+-      if (typeof document !== 'undefined' && blockers.length) {
+-        for (const blocker of blockers) {
+-          const isBlocked = await blocker.blockerFn({
+-            currentLocation,
+-            nextLocation,
+-            action,
+-          })
+-          if (isBlocked) {
+-            ignoreNextPop = true
+-            win.history.go(1)
+-            history.notify(notify)
+-            return
+-          }
 +      if (sameRouterEntry(nextLocation, transaction.origin)) {
 +        currentLocation = nextLocation
-+        popTransaction = undefined
++        finishPopTransaction(transaction, 'restored')
 +        return
 +      }
 +
 +      if (transaction.phase === 'rolling-back-fallback') {
-+        popTransaction = undefined
++        finishPopTransaction(transaction, 'fallback')
 +        return
 +      }
 +
@@ -325,30 +576,21 @@ index 705dbf01..402c6fc8 100644
 +        transaction.phase = 'rolling-back-fallback'
 +        win.history.go(1)
 +      }
-@@ -410,17 +464,22 @@ export function createBrowserHistory(opts?: {
--    const nextLocation = parseLocation()
--    const delta =
--      nextLocation.state[stateIndexKey] - currentLocation.state[stateIndexKey]
--    const isForward = delta === 1
--    const isBack = delta === -1
--    const isGo = (!isForward && !isBack) || nextPopIsGo
--    nextPopIsGo = false
--
--    const action = isGo ? 'GO' : isBack ? 'BACK' : 'FORWARD'
--    const notify: SubscriberHistoryAction = isGo
--      ? {
--          type: 'GO',
--          index: delta,
--        }
--      : {
--          type: isBack ? 'BACK' : 'FORWARD',
--        }
++      return
++    }
++
 +    const origin = currentLocation
++    let finish = (_result: PopTransactionResult) => {}
++    const completion = new Promise<PopTransactionResult>((resolve) => {
++      finish = resolve
++    })
 +    const pendingTransaction: NonNullable<typeof popTransaction> = {
 +      origin,
 +      target: nextLocation,
 +      phase: 'deciding',
 +      sawGo: popWasGo,
++      completion,
++      finish,
 +    }
 +    popTransaction = pendingTransaction
 +
@@ -365,44 +607,42 @@ index 705dbf01..402c6fc8 100644
 +        : { type: isBack ? 'BACK' : 'FORWARD' }
 +      return { action, delta, notify, target }
 +    }
-@@ -428,3 +487 @@ export function createBrowserHistory(opts?: {
--    if (skipBlockerNextPop) {
--      skipBlockerNextPop = false
--    } else {
++
 +    if (!skipBlocker) {
-@@ -433,0 +491 @@ export function createBrowserHistory(opts?: {
-+          const { action, target } = navigation()
-@@ -435,2 +493,2 @@ export function createBrowserHistory(opts?: {
--            currentLocation,
--            nextLocation,
-+            currentLocation: origin,
-+            nextLocation: target,
-@@ -438,0 +497 @@ export function createBrowserHistory(opts?: {
-+          if (popTransaction !== pendingTransaction) return
-@@ -440,2 +499,12 @@ export function createBrowserHistory(opts?: {
--            ignoreNextPop = true
--            win.history.go(1)
-+            const { delta, notify, target } = navigation()
-+            if (sameRouterEntry(target, origin)) {
-+              currentLocation = target
-+              popTransaction = undefined
-+              return
-+            } else if (Number.isFinite(delta) && delta !== 0) {
-+              pendingTransaction.phase = 'rolling-back'
-+              win.history.go(-delta)
-+            } else {
-+              pendingTransaction.phase = 'rolling-back-fallback'
-+              win.history.go(1)
-+            }
-@@ -449 +518,8 @@ export function createBrowserHistory(opts?: {
++      const { action, target } = navigation()
++      const isBlocked = await runBlockers({
++        currentLocation: origin,
++        nextLocation: target,
++        action,
++      })
++      if (popTransaction !== pendingTransaction) return
++      if (isBlocked) {
++        const { delta, target } = navigation()
++        if (sameRouterEntry(target, origin)) {
++          currentLocation = target
++          finishPopTransaction(pendingTransaction, 'restored')
++          return
++        } else if (Number.isFinite(delta) && delta !== 0) {
++          pendingTransaction.phase = 'rolling-back'
++          win.history.go(-delta)
++        } else {
++          pendingTransaction.phase = 'rolling-back-fallback'
++          win.history.go(1)
+@@ -445,0 +580 @@
++        return
+@@ -449 +584,7 @@
 -    currentLocation = parseLocation()
 +    const { notify, target } = navigation()
 +    if (sameRouterEntry(target, origin)) {
 +      currentLocation = target
-+      popTransaction = undefined
++      finishPopTransaction(pendingTransaction, 'restored')
 +      return
 +    }
 +    currentLocation = target
-+    popTransaction = undefined
-@@ -509,0 +586 @@ export function createBrowserHistory(opts?: {
-+      popTransaction = undefined
+@@ -450,0 +592 @@
++    finishPopTransaction(pendingTransaction, 'committed')
+@@ -509,0 +652 @@
++      if (popTransaction) finishPopTransaction(popTransaction, 'fallback')
+@@ -525,0 +669,2 @@
++    runBlockers,
++    waitForNavigation,

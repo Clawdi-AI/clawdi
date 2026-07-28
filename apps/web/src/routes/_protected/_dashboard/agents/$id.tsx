@@ -2,6 +2,8 @@ import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
 import {
 	agentRouteIdsEqual,
 	agentSectionLink,
+	agentSessionDetailLink,
+	agentSkillDetailLink,
 	legacyAgentRoute,
 	parseAgentPathname,
 	validateAgentRouteSearch,
@@ -17,6 +19,20 @@ export const Route = createFileRoute("/_protected/_dashboard/agents/$id")({
 				: "overview";
 		const legacy = legacyAgentRoute(fallbackSection, search);
 		if (legacy) {
+			if (currentRoute?.sessionId) {
+				throw redirect({
+					...agentSessionDetailLink(params.id, currentRoute.sessionId, legacy.search),
+					replace: true,
+				});
+			}
+			if (currentRoute?.skillKey) {
+				const projectId =
+					typeof legacy.search?.project === "string" ? legacy.search.project : undefined;
+				throw redirect({
+					...agentSkillDetailLink(params.id, currentRoute.skillKey, projectId, legacy.search),
+					replace: true,
+				});
+			}
 			throw redirect({
 				...agentSectionLink(params.id, legacy.section, legacy.search),
 				replace: true,

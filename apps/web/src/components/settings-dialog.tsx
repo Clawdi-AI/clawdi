@@ -1,6 +1,6 @@
 "use client";
 
-import { useBlocker } from "@tanstack/react-router";
+import { type ShouldBlockFn, useBlocker } from "@tanstack/react-router";
 import {
 	BarChart3,
 	CreditCard,
@@ -42,6 +42,7 @@ import {
 	DEFAULT_SETTINGS_SECTION,
 	SETTINGS_SECTION_IDS,
 	type SettingsSectionId,
+	settingsDraftOwnerChanges,
 } from "@/lib/settings-routes";
 import { cn } from "@/lib/utils";
 
@@ -149,10 +150,14 @@ export function SettingsDialog({
 	const hasPendingSave = [...editStates.values()].some((state) => state.busy);
 	const navigationRiskRef = useRef(false);
 	navigationRiskRef.current = hasUnsavedChanges || hasPendingSave;
-	const shouldBlockNavigation = useCallback(() => navigationRiskRef.current, []);
+	const shouldBlockNavigation: ShouldBlockFn = useCallback(
+		({ current, next }) => navigationRiskRef.current && settingsDraftOwnerChanges(current, next),
+		[],
+	);
+	const shouldBlockDocumentExit = useCallback(() => navigationRiskRef.current, []);
 	const blocker = useBlocker({
 		shouldBlockFn: shouldBlockNavigation,
-		enableBeforeUnload: shouldBlockNavigation,
+		enableBeforeUnload: shouldBlockDocumentExit,
 		withResolver: true,
 	});
 	useEffect(() => {

@@ -20,6 +20,39 @@ function deferred<T>() {
 	return { promise, resolve };
 }
 
+type VisibleBlockerDecision = {
+	args: BlockerFnArgs;
+	proceed: () => void;
+	reset: () => void;
+};
+
+function faithfulResolverBlocker() {
+	const calls: BlockerFnArgs[] = [];
+	let visible: VisibleBlockerDecision | undefined;
+	let disabled = false;
+
+	return {
+		blockerFn(args: BlockerFnArgs) {
+			calls.push(args);
+			if (disabled) return false;
+			return new Promise<boolean>((resolve) => {
+				visible = {
+					args,
+					proceed: () => resolve(false),
+					reset: () => resolve(true),
+				};
+			});
+		},
+		calls,
+		disable() {
+			disabled = true;
+		},
+		get visible() {
+			return visible;
+		},
+	};
+}
+
 function fakeBrowserWindow() {
 	const entries: FakeEntry[] = [{ href: "/", state: null }];
 	const listeners = new Map<string, Set<FakeListener>>();
@@ -142,6 +175,146 @@ const implementations = [
 
 for (const [entrypoint, createBrowserHistory] of implementations) {
 	describe(`patched TanStack browser history POP transaction (${entrypoint})`, () => {
+		test("stages concurrent Router replace until a pending POP restores its origin", async () => {
+			const browser = fakeBrowserWindow();
+			const history = createBrowserHistory({ window: browser.window });
+			for (const href of ["/one", "/two", "/three"]) {
+				history.push(href);
+				history.flush();
+			}
+			const origin = structuredClone(history.location);
+			const entries = browser.entriesSnapshot();
+			const blocker = faithfulResolverBlocker();
+			history.block({ blockerFn: blocker.blockerFn });
+			const notifications: Array<{ href: string; action: string }> = [];
+			history.subscribe(({ location, action }) =>
+				notifications.push({ href: location.href, action: action.type }),
+			);
+
+			history.back();
+			expect(browser.runNextTraversal()).toBeTrue();
+			await settlePop();
+			expect(blocker.visible?.args.action).toBe("BACK");
+
+			history.replace("/three?d=canonical");
+			await settlePop();
+			expect(blocker.calls).toHaveLength(1);
+			expect(blocker.visible?.args.action).toBe("BACK");
+
+			blocker.visible?.reset();
+			await settlePop();
+			expect(browser.pendingTraversals).toEqual([1]);
+			expect(notifications).toEqual([]);
+			expect(browser.runNextTraversal()).toBeTrue();
+			await settlePop();
+
+			expect(browser.href).toBe(origin.href);
+			expect(history.location).toEqual(origin);
+			expect(browser.entriesSnapshot()).toEqual(entries);
+			expect(notifications).toEqual([]);
+			expect(blocker.calls).toHaveLength(2);
+			expect(blocker.visible?.args.action).toBe("REPLACE");
+
+			blocker.visible?.reset();
+			await settlePop();
+			expect(browser.href).toBe(origin.href);
+			expect(history.location).toEqual(origin);
+			expect(browser.entriesSnapshot()).toEqual(entries);
+			expect(notifications).toEqual([]);
+
+			blocker.disable();
+			history.push("/after-stay");
+			await settlePop();
+			history.flush();
+			expect(browser.href).toBe("/after-stay");
+			history.back();
+			expect(browser.runNextTraversal()).toBeTrue();
+			await settlePop();
+			expect(browser.href).toBe(origin.href);
+			history.forward();
+			expect(browser.runNextTraversal()).toBeTrue();
+			await settlePop();
+			expect(browser.href).toBe("/after-stay");
+		});
+
+		test("cancels concurrent Router push when a pending POP proceeds", async () => {
+			const browser = fakeBrowserWindow();
+			const history = createBrowserHistory({ window: browser.window });
+			for (const href of ["/one", "/two", "/three"]) {
+				history.push(href);
+				history.flush();
+			}
+			const blocker = faithfulResolverBlocker();
+			history.block({ blockerFn: blocker.blockerFn });
+			const notifications: Array<{ href: string; action: string }> = [];
+			history.subscribe(({ location, action }) =>
+				notifications.push({ href: location.href, action: action.type }),
+			);
+
+			history.back();
+			expect(browser.runNextTraversal()).toBeTrue();
+			await settlePop();
+			history.push("/stale-canonicalizer");
+			await settlePop();
+			expect(blocker.calls).toHaveLength(1);
+
+			blocker.visible?.proceed();
+			await settlePop();
+			expect(browser.href).toBe("/two");
+			expect(history.location.href).toBe("/two");
+			expect(notifications).toEqual([{ href: "/two", action: "BACK" }]);
+			expect(browser.entriesSnapshot().some((entry) => entry.href === "/stale-canonicalizer")).toBe(
+				false,
+			);
+
+			blocker.disable();
+			history.forward();
+			expect(browser.runNextTraversal()).toBeTrue();
+			await settlePop();
+			expect(browser.href).toBe("/three");
+			history.back();
+			expect(browser.runNextTraversal()).toBeTrue();
+			await settlePop();
+			expect(browser.href).toBe("/two");
+		});
+
+		test("restores a secondary POP before committing the authoritative Router replace", async () => {
+			const browser = fakeBrowserWindow();
+			const history = createBrowserHistory({ window: browser.window });
+			for (const href of ["/one", "/two", "/three"]) {
+				history.push(href);
+				history.flush();
+			}
+			const blocker = faithfulResolverBlocker();
+			history.block({ blockerFn: blocker.blockerFn });
+			const notifications: Array<{ href: string; action: string }> = [];
+			history.subscribe(({ location, action }) =>
+				notifications.push({ href: location.href, action: action.type }),
+			);
+
+			history.replace("/canonical");
+			await settlePop();
+			expect(blocker.visible?.args.action).toBe("REPLACE");
+			history.back();
+			expect(browser.runNextTraversal()).toBeTrue();
+			await settlePop();
+			expect(blocker.calls).toHaveLength(1);
+			expect(browser.pendingTraversals).toEqual([1]);
+
+			blocker.visible?.proceed();
+			await settlePop();
+			expect(browser.href).toBe("/two");
+			expect(history.location.href).toBe("/three");
+			expect(notifications).toEqual([]);
+
+			expect(browser.runNextTraversal()).toBeTrue();
+			await settlePop();
+			history.flush();
+			expect(browser.href).toBe("/canonical");
+			expect(history.location.href).toBe("/canonical");
+			expect(notifications).toEqual([{ href: "/canonical", action: "REPLACE" }]);
+		});
+
 		test("rolls indexed Back, Forward, and multi-step GO in the opposite direction", async () => {
 			const browser = fakeBrowserWindow();
 			const history = createBrowserHistory({ window: browser.window });

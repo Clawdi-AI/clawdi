@@ -897,6 +897,7 @@ type HostedApiStubOptions = {
 	canCreateCloudAgents?: boolean;
 	canUseLegacyHostedDashboard?: boolean;
 	productAccessRequests?: string[];
+	productAccessResponses?: StubResponse[];
 	cancelRequests?: string[];
 	cancelResponses?: StubResponse[];
 	checkoutRequests?: string[];
@@ -946,6 +947,11 @@ type HostedApiStubOptions = {
 	rotateAgentTokenRequests?: string[];
 	rotateAgentTokenResponses?: Array<unknown | StubResponse>;
 	projects?: unknown[];
+	projectCreateRequests?: string[];
+	projectCreateResponse?: StubResponse;
+	sharePreview?: unknown;
+	shareUpgradeRequests?: string[];
+	shareUpgradeResponse?: StubResponse;
 	sessionsPage?: unknown;
 	skillsPage?: unknown;
 	runtimeUiRedemptionRequests?: string[];
@@ -976,8 +982,14 @@ async function fulfillJson(route: Route, body: unknown, status = 200) {
 	await route.fulfill({ status, contentType: "application/json", body: JSON.stringify(body) });
 }
 
-async function stubCompletedStripeCheckout(page: Page) {
-	await page.addInitScript(() => {
+async function stubCompletedStripeCheckout(page: Page, deferPaymentIntent = false) {
+	await page.addInitScript((shouldDeferPaymentIntent) => {
+		let releasePaymentIntent = () => {};
+		const paymentIntentGate = new Promise<void>((resolve) => {
+			releasePaymentIntent = resolve;
+		});
+		Reflect.set(window, "__releaseStripePaymentIntent", releasePaymentIntent);
+		Reflect.set(window, "__stripePaymentIntentPending", false);
 		const mockStripe = Object.assign(
 			() => {
 				const session = { canConfirm: true, status: { type: "open" } };
@@ -993,9 +1005,11 @@ async function stubCompletedStripeCheckout(page: Page) {
 					createToken: async () => ({}),
 					createPaymentMethod: async () => ({}),
 					confirmCardPayment: async () => ({}),
-					retrievePaymentIntent: async () => ({
-						paymentIntent: { id: "pi_history_state", status: "succeeded" },
-					}),
+					retrievePaymentIntent: async () => {
+						Reflect.set(window, "__stripePaymentIntentPending", true);
+						if (shouldDeferPaymentIntent) await paymentIntentGate;
+						return { paymentIntent: { id: "pi_history_state", status: "succeeded" } };
+					},
 					_registerWrapper: () => undefined,
 					initCheckoutElementsSdk: () => ({
 						loadActions: async () => ({ type: "success", actions }),
@@ -1017,7 +1031,7 @@ async function stubCompletedStripeCheckout(page: Page) {
 			{ version: "dahlia" },
 		);
 		Object.defineProperty(window, "Stripe", { configurable: true, value: mockStripe });
-	});
+	}, deferPaymentIntent);
 }
 
 async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
@@ -1032,6 +1046,12 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		const p = new URL(r.request().url()).pathname;
 		if (p === "/me" || p === "/v1/me") {
 			options.productAccessRequests?.push(`DEPLOY ${p}`);
+			const response = options.productAccessResponses?.shift();
+			if (response) {
+				if (response.gate) await response.gate;
+				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+				return fulfillJson(r, response.body, response.status);
+			}
 			return fulfillJson(
 				r,
 				hostedUser(
@@ -1572,7 +1592,30 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p.endsWith("/activity") && r.request().method() === "GET") {
 			return fulfillJson(r, { items: [] });
 		}
+		if (p === "/v1/projects" && r.request().method() === "POST") {
+			options.projectCreateRequests?.push(r.request().postData() ?? "");
+			const response = options.projectCreateResponse;
+			if (response) {
+				if (response.gate) await response.gate;
+				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+				return fulfillJson(r, response.body, response.status);
+			}
+			return fulfillJson(r, {}, 201);
+		}
 		if (p === "/v1/projects") return fulfillJson(r, options.projects ?? []);
+		if (p.match(/^\/v1\/share\/[^/]+\/preview$/)) {
+			return fulfillJson(r, options.sharePreview ?? {});
+		}
+		if (p.match(/^\/v1\/share\/[^/]+\/upgrade$/) && r.request().method() === "POST") {
+			options.shareUpgradeRequests?.push(r.request().postData() ?? "");
+			const response = options.shareUpgradeResponse;
+			if (response) {
+				if (response.gate) await response.gate;
+				if (response.delayMs) await new Promise((resolve) => setTimeout(resolve, response.delayMs));
+				return fulfillJson(r, response.body, response.status);
+			}
+			return fulfillJson(r, {}, 200);
+		}
 		if (p === `/v1/sessions/${routingSession.id}`) return fulfillJson(r, routingSession);
 		if (p === `/v1/sessions/${routingSession.id}/messages`) {
 			return fulfillJson(r, { items: [], total: 0, offset: 0, limit: 100 });
@@ -1617,6 +1660,29 @@ function collectBrowserErrors(page: Page): string[] {
 		errors.push(e.message);
 	});
 	return errors;
+}
+
+async function pushManagedLocation(page: Page, href: string) {
+	await page.evaluate((nextHref) => {
+		const currentState = window.history.state;
+		const currentIndex =
+			typeof currentState === "object" &&
+			currentState !== null &&
+			typeof Reflect.get(currentState, "__TSR_index") === "number"
+				? Reflect.get(currentState, "__TSR_index")
+				: 0;
+		const key = crypto.randomUUID();
+		window.history.pushState(
+			{
+				...(typeof currentState === "object" && currentState !== null ? currentState : {}),
+				key,
+				__TSR_key: key,
+				__TSR_index: currentIndex + 1,
+			},
+			"",
+			nextHref,
+		);
+	}, href);
 }
 
 async function expectNonZeroBox(locator: ReturnType<Page["locator"]>, label: string) {
@@ -2143,6 +2209,18 @@ test("agent URL compatibility, case identity, and malformed components fail safe
 	await expect(page).toHaveURL(`/agents/${railConnectedEnvironmentId}/skills?keep=1`);
 	await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
 
+	const legacyDetails = [
+		`/agents/${railConnectedEnvironmentId}/sessions/${routingSession.id}?tab=sessions&keep=1`,
+		`/agents/${railConnectedEnvironmentId}/skills/${routingSkill.skill_key}?tab=skills&project=${routingSkill.project_id}&keep=1`,
+	] as const;
+	for (const detail of legacyDetails) {
+		await page.goto(detail);
+		const destination = new URL(page.url());
+		expect(destination.pathname).toBe(new URL(detail, "http://clawdi.test").pathname);
+		expect(destination.searchParams.get("tab")).toBeNull();
+		expect(destination.searchParams.get("keep")).toBe("1");
+	}
+
 	await page.goto(`/AGENTS/${railConnectedEnvironmentId.toUpperCase()}/SKILLS`);
 	await expect(page.getByRole("heading", { name: "Skills", exact: true })).toBeVisible();
 	await expect(
@@ -2180,6 +2258,130 @@ test("agent URL compatibility, case identity, and malformed components fail safe
 	expect(await page.evaluate(() => window.location.pathname)).toBe("/vault/%E0%A4");
 	await expect(page.getByRole("heading", { name: "Page not found", exact: true })).toBeVisible();
 	expect(errors, `malformed route errors: ${errors.join(" | ")}`).toEqual([]);
+});
+
+test("a stale hosted access gate cannot replace a newer pending route", async ({ page }) => {
+	const accessGate = deferred();
+	const authGate = deferred();
+	let blockNextAuth = false;
+	const productAccessRequests: string[] = [];
+	const productAccessResponses: StubResponse[] = [
+		{ status: 200, body: hostedUser(true) },
+		{ status: 200, body: hostedUser(false), gate: accessGate.promise },
+	];
+	await page.route("**/_serverFn/**", async (route) => {
+		if (blockNextAuth) await authGate.promise;
+		await route.continue();
+	});
+	await stubHostedApi(page, {
+		productAccessRequests,
+		productAccessResponses,
+		projects: [routingProject],
+	});
+
+	await page.goto("/channels");
+	await expect(page.getByRole("heading", { name: "Channels", exact: true })).toBeVisible();
+	await expect.poll(() => productAccessRequests.length).toBe(1);
+	await page.evaluate(() => {
+		const currentNow = Date.now.bind(Date);
+		Date.now = () => currentNow() + 61_000;
+		window.dispatchEvent(new Event("visibilitychange"));
+	});
+	await expect.poll(() => productAccessRequests.length).toBe(2);
+
+	blockNextAuth = true;
+	await page
+		.getByTestId("app-sidebar")
+		.locator('a[href="/projects"]')
+		.first()
+		.evaluate((link: HTMLAnchorElement) => link.click());
+	await expect.poll(() => page.evaluate(() => window.location.pathname)).toBe("/projects");
+	accessGate.resolve();
+	await expect(page).toHaveURL(/\/projects\/?$/);
+	authGate.resolve();
+	blockNextAuth = false;
+	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+	await expect(page).toHaveURL(/\/projects\/?$/);
+
+	await pushManagedLocation(page, "/channels");
+	await expect(page).toHaveURL(/\/$/);
+});
+
+test("late Project creation keeps global success effects without stealing the destination", async ({
+	page,
+}) => {
+	const createGate = deferred();
+	const projectCreateRequests: string[] = [];
+	const createdProject = {
+		...routingProject,
+		id: "project-late-create",
+		name: "Late Project",
+		kind: "custom",
+		origin_environment_id: null,
+	};
+	await stubHostedApi(page, {
+		projectCreateRequests,
+		projectCreateResponse: { status: 201, body: createdProject, gate: createGate.promise },
+		projects: [],
+	});
+	await page.goto("/projects");
+	await page.getByRole("button", { name: "New project", exact: true }).click();
+	const dialog = page.getByRole("dialog");
+	await dialog.getByLabel("Name").fill(createdProject.name);
+	await dialog.getByRole("button", { name: "Create project", exact: true }).click();
+	await expect.poll(() => projectCreateRequests.length).toBe(1);
+
+	await page
+		.getByTestId("app-sidebar")
+		.locator('a[href="/channels"]')
+		.first()
+		.evaluate((link: HTMLAnchorElement) => link.click());
+	await expect(page).toHaveURL(/\/channels\/?$/);
+	createGate.resolve();
+	await expect(page.getByText("Project created", { exact: true })).toBeVisible();
+	await expect(page).toHaveURL(/\/channels\/?$/);
+	expect(new URL(page.url()).pathname).not.toBe(`/projects/${createdProject.id}`);
+});
+
+test("late share upgrade completion cannot pull the user back to the Project", async ({ page }) => {
+	const upgradeGate = deferred();
+	const shareUpgradeRequests: string[] = [];
+	const token = "late-upgrade-token";
+	await stubHostedApi(page, {
+		projects: [routingProject],
+		sharePreview: {
+			project_id: routingProject.id,
+			project_name: routingProject.name,
+			owner_display: "Share Owner",
+			owner_handle: "share-owner",
+			skill_count: 2,
+			vault_count: 1,
+			vault_locked: true,
+		},
+		shareUpgradeRequests,
+		shareUpgradeResponse: {
+			status: 200,
+			gate: upgradeGate.promise,
+			body: {
+				membership_id: "membership-late-upgrade",
+				project_id: routingProject.id,
+				role: "viewer",
+				joined_via: "share",
+				joined_at: "2026-07-28T12:00:00Z",
+			},
+		},
+	});
+	await page.goto(`/share/${token}`);
+	await expect(page.getByText(routingProject.name, { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Accept Project Access", exact: true }).click();
+	await expect.poll(() => shareUpgradeRequests.length).toBe(1);
+
+	await pushManagedLocation(page, "/projects");
+	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+	upgradeGate.resolve();
+	await expect(page).toHaveURL(/\/projects\/?$/);
+	await expect(page.getByText("You're In", { exact: true })).toHaveCount(0);
+	expect(new URL(page.url()).pathname).not.toBe(`/projects/${routingProject.id}`);
 });
 
 test("a proven deployment cannot be replaced after projection loss in the same mount", async ({
@@ -4926,7 +5128,9 @@ test("dirty Settings serializes rapid POP attempts and preserves indexed history
 	await expect.poll(identity).toEqual(origin);
 });
 
-test("dirty Settings blocks asynchronous Router replace canonicalization", async ({ page }) => {
+test("dirty Settings permits owner-preserving Router replace canonicalization", async ({
+	page,
+}) => {
 	const inventoryGate = deferred();
 	const matched: DeploymentMutationFixture = {
 		...railHostedDeployment,
@@ -4960,11 +5164,114 @@ test("dirty Settings blocks asynchronous Router replace canonicalization", async
 	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
 	inventoryGate.resolve();
 
+	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(matched.id);
+	await expect(page.getByRole("alertdialog")).toHaveCount(0);
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await expect(autoReload.getByLabel("When balance is below (USD)")).toHaveValue("6.00");
+});
+
+test("pending POP serializes safe Wallet cleanup after Stay without losing the draft", async ({
+	page,
+}) => {
+	await stubCompletedStripeCheckout(page, true);
+	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
+	await page.goto("/projects");
+	await page.waitForLoadState("networkidle");
+	await pushManagedLocation(
+		page,
+		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_stay_mixed&payment_intent_client_secret=pi_stay_mixed_secret&redirect_status=succeeded",
+	);
+	const settingsDialog = page.getByTestId("settings-dialog");
+	const autoReload = settingsDialog
+		.locator('[data-slot="card"]')
+		.filter({ hasText: "Auto-reload" });
+	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await expect
+		.poll(() => page.evaluate(() => Reflect.get(window, "__stripePaymentIntentPending")))
+		.toBe(true);
+
+	await page.evaluate(() => window.history.back());
 	const blocker = page.getByRole("alertdialog");
 	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
-	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(stale.id);
+	await expect.poll(() => page.evaluate(() => window.location.pathname)).toBe("/projects");
+	await page.evaluate(() => {
+		const release = Reflect.get(window, "__releaseStripePaymentIntent");
+		if (typeof release === "function") release();
+	});
+	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
+	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
+
+	await expect.poll(() => page.evaluate(() => window.location.pathname)).toBe("/channels");
+	await expect.poll(() => new URL(page.url()).searchParams.get("topup_return")).toBeNull();
+	await expect(page.getByRole("alertdialog")).toHaveCount(0);
+	await expect(autoReload.getByLabel("When balance is below (USD)")).toHaveValue("6.00");
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await expect(page.locator("main h1").filter({ hasText: /^Channels$/ })).toBeVisible();
+	await expect(page.locator("main h1").filter({ hasText: /^Projects$/ })).toHaveCount(0);
+
+	await autoReload.getByLabel("When balance is below (USD)").fill("5.00");
+	await expect(autoReload.getByText("All changes saved", { exact: true })).toBeVisible();
+	await page
+		.getByTestId("app-sidebar")
+		.locator('a[href="/projects"]')
+		.first()
+		.evaluate((link: HTMLAnchorElement) => link.click());
+	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+	await page.evaluate(() => window.history.back());
+	await expect(page.locator("main h1").filter({ hasText: /^Channels$/ })).toBeVisible();
+	await page.evaluate(() => window.history.forward());
+	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+});
+
+test("pending POP discards stale Wallet cleanup after leaving Settings", async ({ page }) => {
+	await stubCompletedStripeCheckout(page, true);
+	await stubHostedApi(page, { plans: [basicPlan, performancePlan] });
+	await page.goto("/projects");
+	await page.waitForLoadState("networkidle");
+	await pushManagedLocation(
+		page,
+		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_leave_mixed&payment_intent_client_secret=pi_leave_mixed_secret&redirect_status=succeeded",
+	);
+	const autoReload = page
+		.getByTestId("settings-dialog")
+		.locator('[data-slot="card"]')
+		.filter({ hasText: "Auto-reload" });
+	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await expect
+		.poll(() => page.evaluate(() => Reflect.get(window, "__stripePaymentIntentPending")))
+		.toBe(true);
+
+	await page.evaluate(() => window.history.back());
+	const blocker = page.getByRole("alertdialog");
+	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
+	const targetIdentity = await page.evaluate(() => ({
+		href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+		index: Reflect.get(window.history.state, "__TSR_index"),
+		key: Reflect.get(window.history.state, "__TSR_key"),
+	}));
+	await page.evaluate(() => {
+		const release = Reflect.get(window, "__releaseStripePaymentIntent");
+		if (typeof release === "function") release();
+	});
+	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
 	await blocker.getByRole("button", { name: "Discard changes", exact: true }).click();
-	await expect.poll(() => new URL(page.url()).searchParams.get("d")).toBe(matched.id);
+	await expect
+		.poll(() =>
+			page.evaluate(() => ({
+				href: `${window.location.pathname}${window.location.search}${window.location.hash}`,
+				index: Reflect.get(window.history.state, "__TSR_index"),
+				key: Reflect.get(window.history.state, "__TSR_key"),
+			})),
+		)
+		.toEqual(targetIdentity);
+	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+	await expect(page.getByTestId("settings-dialog")).toHaveCount(0);
+	await page.evaluate(() => window.history.forward());
+	await expect(page.locator("main h1").filter({ hasText: /^Channels$/ })).toBeVisible();
+	await page.evaluate(() => window.history.back());
+	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
 });
 
 test("pending Settings save keeps navigation blocked until completion", async ({ page }) => {
@@ -5190,6 +5497,89 @@ test("wallet return cleanup keeps TanStack history state valid", async ({ page }
 	expect(historyTransition?.after.key).toBe(historyTransition?.passed.key);
 	expect(historyTransition?.passed.index).toBe(historyTransition?.before.index);
 	expect(historyTransition?.after.index).toBe(historyTransition?.before.index);
+});
+
+test("late Wallet return reconciles caches without cleaning a newer route", async ({ page }) => {
+	const ledgerRequests: string[] = [];
+	const appliedTopup = {
+		operation: "topup",
+		description: "Returned card top-up",
+		amount_usd: "25.00",
+		status: "applied",
+		payment_reference: "pi_history_state",
+		receipt_url: null,
+		created_at: "2026-07-28T12:00:00Z",
+		applied_at: "2026-07-28T12:00:01Z",
+	};
+	await stubCompletedStripeCheckout(page, true);
+	await stubHostedApi(page, {
+		ledgerRequests,
+		ledgerResponseForRequest: () => ({ items: [appliedTopup], has_more: false }),
+		plans: [basicPlan, performancePlan],
+		projects: [routingProject],
+	});
+	await page.goto(
+		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_old&payment_intent_client_secret=pi_old_secret&redirect_status=succeeded",
+	);
+	await expect
+		.poll(() => page.evaluate(() => Reflect.get(window, "__stripePaymentIntentPending")))
+		.toBe(true);
+	const ledgerReadsBeforeCompletion = ledgerRequests.length;
+	const destination =
+		"/projects?settings=billing-wallet&target_owned=1&topup_return=target_keep&payment_intent=target_pi&payment_intent_client_secret=target_secret&redirect_status=target_status";
+	await pushManagedLocation(page, destination);
+	await expect(page.locator("main h1").filter({ hasText: /^Projects$/ })).toBeVisible();
+
+	await page.evaluate(() => {
+		const release = Reflect.get(window, "__releaseStripePaymentIntent");
+		if (typeof release === "function") release();
+	});
+	await expect.poll(() => ledgerRequests.length).toBeGreaterThan(ledgerReadsBeforeCompletion);
+	await expect(page).toHaveURL(destination);
+	const targetUrl = new URL(page.url());
+	expect(targetUrl.searchParams.get("target_owned")).toBe("1");
+	expect(targetUrl.searchParams.get("topup_return")).toBe("target_keep");
+	expect(targetUrl.searchParams.get("payment_intent_client_secret")).toBe("target_secret");
+	await expect(page.getByText("Payment accepted", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Wallet credited", { exact: true })).toHaveCount(0);
+});
+
+test("blocked POP Stay preserves Wallet return ownership until cleanup", async ({ page }) => {
+	await stubCompletedStripeCheckout(page, true);
+	await stubHostedApi(page, {
+		ledgerResponseForRequest: () => ({ items: [], has_more: false }),
+		plans: [basicPlan, performancePlan],
+	});
+	await page.goto("/projects");
+	await expect(page.getByRole("heading", { name: "Projects", exact: true })).toBeVisible();
+	await page.waitForLoadState("networkidle");
+	await pushManagedLocation(
+		page,
+		"/channels?settings=billing-wallet&topup_return=1&payment_intent=pi_stay&payment_intent_client_secret=pi_stay_secret&redirect_status=succeeded",
+	);
+	const settingsDialog = page.getByTestId("settings-dialog");
+	const autoReload = settingsDialog
+		.locator('[data-slot="card"]')
+		.filter({ hasText: "Auto-reload" });
+	await autoReload.getByLabel("When balance is below (USD)").fill("6.00");
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
+	await expect
+		.poll(() => page.evaluate(() => Reflect.get(window, "__stripePaymentIntentPending")))
+		.toBe(true);
+
+	await page.evaluate(() => window.history.back());
+	const blocker = page.getByRole("alertdialog");
+	await expect(blocker.getByText("Discard unsaved changes?", { exact: true })).toBeVisible();
+	await blocker.getByRole("button", { name: "Keep editing", exact: true }).click();
+	await expect(page).toHaveURL(/\/channels\?settings=billing-wallet/);
+	await page.evaluate(() => {
+		const release = Reflect.get(window, "__releaseStripePaymentIntent");
+		if (typeof release === "function") release();
+	});
+
+	await expect(page.getByText("Payment accepted", { exact: true })).toBeVisible();
+	await expect.poll(() => new URL(page.url()).searchParams.get("topup_return")).toBeNull();
+	await expect(autoReload.getByText("Unsaved changes", { exact: true })).toBeVisible();
 });
 
 test("top-up rotates its idempotency key after an explicit reuse conflict", async ({ page }) => {
