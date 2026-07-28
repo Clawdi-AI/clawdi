@@ -25,10 +25,14 @@ describe("bundled Clawdi skill connector contract", () => {
 
 	it("uses Composio meta-tools with schema-driven discovery and execution", () => {
 		for (const connectors of [genericConnectors, hostedConnectors]) {
-			expect(connectors).toContain("Start every external-app task with `COMPOSIO_SEARCH_TOOLS`");
+			expect(connectors).toContain("Start each external-app workflow with `COMPOSIO_SEARCH_TOOLS`");
+			expect(connectors).toContain("`queries` and `session` schema");
+			expect(connectors).toContain("reuse the returned session ID");
+			expect(connectors).toContain("exact toolkit and tool slugs");
 			expect(connectors).toContain("`COMPOSIO_GET_TOOL_SCHEMAS`");
-			expect(connectors).toContain("Never invent tool slugs, field names, or inputs");
+			expect(connectors).toContain("never invent fields or inputs");
 			expect(connectors).toContain("`COMPOSIO_MULTI_EXECUTE_TOOL`");
+			expect(connectors).toContain("Batch only independent calls");
 			expect(connectors).not.toMatch(
 				/dynamically registered|individual tools|already authenticated/i,
 			);
@@ -37,28 +41,38 @@ describe("bundled Clawdi skill connector contract", () => {
 
 	it("documents a schema-driven auth-link handshake", () => {
 		for (const connectors of [genericConnectors, hostedConnectors]) {
-			expect(connectors).toContain("`COMPOSIO_MANAGE_CONNECTIONS`");
-			expect(connectors).toContain("returned `redirect_url` as a clickable Markdown");
-			expect(connectors).toContain("authentication is pending");
-			expect(connectors).toContain("do not claim it is complete");
-			expect(connectors).toContain("connection wait or status operation when");
-			expect(connectors).toContain("otherwise stop");
-			expect(connectors).toContain("`COMPOSIO_SEARCH_TOOLS`");
-			expect(connectors).toMatch(/connection is\s+active, and retry the interrupted workflow/);
-			expect(connectors).toContain("never ask for or copy OAuth credentials, API keys, or tokens");
+			const compact = connectors.replace(/\s+/g, " ");
+			// ComposioHQ/composio@a84d05f exposes active|initiated|failed and nullable redirect_url.
+			expect(compact).toContain("`COMPOSIO_MANAGE_CONNECTIONS`");
+			expect(compact).toContain("returned `redirect_url` as a clickable authentication link");
+			expect(compact).toContain("authorization is pending");
+			expect(compact).toContain("link URL must be exactly that value");
+			expect(compact).toContain("returns no `redirect_url`, report that terminal failure");
+			expect(compact).toContain("only when `tools/list` exposes one");
+			expect(compact).toContain("without inventing polling arguments");
+			expect(compact).toContain("Continue only when it reports an active connection");
+			expect(compact).toContain("non-terminal status its schema defines");
+			expect(compact).toContain("report any terminal failure");
+			expect(compact).toContain("re-run search to");
+			expect(compact).toContain("never construct a substitute or ask for OAuth credentials");
+			expect(connectors).not.toContain("COMPOSIO_WAIT_FOR_CONNECTIONS");
+			expect(connectors).not.toContain("Return only the authorization link");
 			expect(connectors).not.toMatch(/dashboard/i);
 		}
 	});
 
-	it("keeps result handling and confirmation conditional on the exposed contract", () => {
+	it("requires complete targets and keeps result handling conditional", () => {
 		for (const connectors of [genericConnectors, hostedConnectors]) {
-			expect(connectors).toContain("`COMPOSIO_REMOTE_BASH_TOOL`");
-			expect(connectors).toContain("`COMPOSIO_REMOTE_WORKBENCH`");
-			expect(connectors).toContain("signed file URLs");
-			expect(connectors).toContain("pagination fields and termination signals");
-			expect(connectors).toContain("multiple accounts only when");
-			expect(connectors).toContain("user's exact instruction already authorizes that exact action");
-			expect(connectors).toContain("Do not ask for redundant");
+			const compact = connectors.replace(/\s+/g, " ");
+			expect(compact).toContain("`COMPOSIO_REMOTE_BASH_TOOL`");
+			expect(compact).toContain("`COMPOSIO_REMOTE_WORKBENCH`");
+			expect(compact).toContain("`sync_response_to_workbench`");
+			expect(compact).toContain("complete target identity");
+			expect(compact).toContain("never authorizes guessing a missing recipient");
+			expect(compact).toContain("do not request redundant confirmation");
+			expect(compact).toContain("signed-file metadata, pagination fields");
+			expect(compact).toContain("Select an account only when the schema");
+			expect(compact).toContain("additional or future meta-tools");
 		}
 	});
 

@@ -247,6 +247,123 @@ async def test_clawdi_mcp_initializes_and_lists_native_tools(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_clawdi_mcp_preserves_future_composio_tool_contract(monkeypatch):
+    from app.core.auth import AuthContext, get_auth
+    from app.core.database import get_session
+    from app.models.user import User
+    from app.routes import mcp_bridge
+    from app.services.composio import ComposioMcpSession
+
+    expected_tool = {
+        "name": "COMPOSIO_FUTURE_META_TOOL",
+        "description": "A future schema-driven meta-tool",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "target": {
+                    "type": "object",
+                    "properties": {"id": {"type": "string"}},
+                    "required": ["id"],
+                }
+            },
+            "required": ["target"],
+        },
+        "outputSchema": {
+            "type": "object",
+            "properties": {"redirect_url": {"type": ["string", "null"]}},
+        },
+        "annotations": {"openWorldHint": True},
+    }
+    expected_arguments = {"target": {"id": "recipient_123"}, "preserve": [1, {"x": True}]}
+    expected_result = {
+        "content": [
+            {
+                "type": "text",
+                "text": '{"status":"initiated","redirect_url":"https://connect.test/link"}',
+            }
+        ],
+        "structuredContent": {
+            "status": "initiated",
+            "redirect_url": "https://connect.test/link",
+        },
+        "isError": False,
+        "_meta": {"future": {"preserved": True}},
+    }
+    forwarded: list[dict] = []
+
+    async def fake_auth() -> AuthContext:
+        return AuthContext(
+            user=User(
+                email="mcp-passthrough-test@clawdi.local",
+                name="MCP Passthrough Test",
+                clerk_id="clerk_mcp_passthrough",
+            )
+        )
+
+    async def fake_db_session():
+        yield None
+
+    async def fake_composio_session(user_id: str) -> ComposioMcpSession:
+        assert user_id == "clerk_mcp_passthrough"
+        return ComposioMcpSession(
+            url="https://composio.test/mcp",
+            headers={},
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+        )
+
+    async def fake_forward(session: ComposioMcpSession, payload: dict):
+        forwarded.append(payload)
+        if payload["method"] == "tools/list":
+            return {
+                "jsonrpc": "2.0",
+                "id": payload["id"],
+                "result": {"tools": [expected_tool]},
+            }
+        return {"jsonrpc": "2.0", "id": payload["id"], "result": expected_result}
+
+    monkeypatch.setattr(mcp_bridge, "get_tool_router_mcp_session", fake_composio_session)
+    monkeypatch.setattr(mcp_bridge, "_forward_composio_mcp_request", fake_forward)
+    monkeypatch.setattr(mcp_bridge, "_connector_tools_cache", {})
+    app.dependency_overrides[get_auth] = fake_auth
+    app.dependency_overrides[get_session] = fake_db_session
+    try:
+        transport = ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            listed = await ac.post(
+                "/v1/mcp/clawdi",
+                json={"jsonrpc": "2.0", "id": 10, "method": "tools/list", "params": {}},
+            )
+            called = await ac.post(
+                "/v1/mcp/clawdi",
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 11,
+                    "method": "tools/call",
+                    "params": {
+                        "name": "COMPOSIO_FUTURE_META_TOOL",
+                        "arguments": expected_arguments,
+                    },
+                },
+            )
+    finally:
+        app.dependency_overrides.pop(get_session, None)
+        app.dependency_overrides.pop(get_auth, None)
+
+    listed_tools = listed.json()["result"]["tools"]
+    listed_composio_tool = next(
+        tool for tool in listed_tools if tool["name"] == expected_tool["name"]
+    )
+    assert listed_composio_tool == expected_tool
+    assert called.json() == {"jsonrpc": "2.0", "id": 11, "result": expected_result}
+    assert forwarded[1] == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {"name": "COMPOSIO_FUTURE_META_TOOL", "arguments": expected_arguments},
+    }
+
+
+@pytest.mark.asyncio
 async def test_clawdi_mcp_memory_search_respects_env_bound_api_key(
     db_session,
     seed_user,

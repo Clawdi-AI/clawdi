@@ -79,32 +79,36 @@ When the user's request is **conceptual** ("how do I usually do X"), prefer `mem
 
 ## Connectors
 
-Use the Composio Tool Router meta-tools exposed through the `clawdi` MCP server.
+Use the Composio Tool Router meta-tools returned by `tools/list` on the `clawdi` MCP server.
+Treat their live names and schemas as authoritative; never assume a fixed meta-tool set.
 
-1. Start every external-app task with `COMPOSIO_SEARCH_TOOLS`. Describe each intended app
-   action using the tool's exposed input schema, and split cross-app workflows into atomic
-   searches when useful.
-2. Use the tool schemas returned by search. If a complete schema is missing, call
-   `COMPOSIO_GET_TOOL_SCHEMAS`. Never invent tool slugs, field names, or inputs.
-3. If search reports no active connection, call `COMPOSIO_MANAGE_CONNECTIONS` exactly as its
-   exposed schema requires. Present its returned `redirect_url` as a clickable Markdown
-   authentication link. Say that authentication is pending, ask the user to complete it,
-   and do not claim it is complete. Return only the authorization link supplied by the tool;
-   never ask for or copy OAuth credentials, API keys, or tokens into the conversation.
-4. Use a connection wait or status operation when the MCP server exposes one; otherwise stop
-   and wait for the user to report completing authentication. Then re-run
-   `COMPOSIO_SEARCH_TOOLS` or use the exposed status operation, verify that the connection is
-   active, and retry the interrupted workflow.
-5. Execute discovered app tools through `COMPOSIO_MULTI_EXECUTE_TOOL` with schema-compliant
-   inputs. Batch only independent actions; preserve dependencies between steps.
-6. Use `COMPOSIO_REMOTE_BASH_TOOL` or `COMPOSIO_REMOTE_WORKBENCH` only for justified large,
-   bulk, or remote-file results. Process ordinary inline results directly.
-7. Follow returned file metadata when downloading signed file URLs. Follow only exposed
-   pagination fields and termination signals, and select among multiple accounts only when
-   the schema exposes account selection; do not invent fields or assume an account.
-8. Before an externally visible or destructive action, get user confirmation unless the
-   user's exact instruction already authorizes that exact action. Do not ask for redundant
-   confirmation.
+1. Start each external-app workflow with `COMPOSIO_SEARCH_TOOLS`. Follow its exposed
+   `queries` and `session` schema, reuse the returned session ID throughout that workflow,
+   and use only the exact toolkit and tool slugs it returns. If a required schema is absent
+   or incomplete, call `COMPOSIO_GET_TOOL_SCHEMAS`; never invent fields or inputs.
+2. Before a side effect, require a complete target identity and all schema-required inputs.
+   Explicit intent authorizes the exact requested action and target, but never authorizes
+   guessing a missing recipient, account, resource, or other target. Ask only for what is
+   missing, and do not request redundant confirmation once the exact action is authorized.
+3. When search reports no active connection, call `COMPOSIO_MANAGE_CONNECTIONS` with its
+   exposed schema and interpret only the fields it returns. For an initiated connection,
+   present the returned `redirect_url` as a clickable authentication link with a concise
+   explanation that authorization is pending. The link URL must be exactly that value; never
+   construct a substitute or ask for OAuth credentials, API keys, or tokens. If initiation
+   returns no `redirect_url`, report that terminal failure instead of suggesting an
+   out-of-band fallback.
+4. Use a wait or status operation only when `tools/list` exposes one. Follow its actual schema
+   and status values without inventing polling arguments. Continue only when it reports an
+   active connection; keep waiting only for a non-terminal status its schema defines, and
+   report any terminal failure. If none is exposed, stop until the user reports completing
+   authorization, then re-run search to verify the active connection before continuing.
+5. Execute exact returned slugs through `COMPOSIO_MULTI_EXECUTE_TOOL` with schema-compliant
+   arguments. Batch only independent calls. Keep ordinary results inline; set
+   `sync_response_to_workbench` or use `COMPOSIO_REMOTE_WORKBENCH` /
+   `COMPOSIO_REMOTE_BASH_TOOL` only for large, bulk, or remote-file results.
+6. Preserve dependencies and returned semantics. Follow signed-file metadata, pagination
+   fields, and termination signals exactly as exposed. Select an account only when the schema
+   supports it, and use additional or future meta-tools only according to their live schemas.
 
 ## Vault CLI
 
