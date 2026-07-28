@@ -2725,6 +2725,130 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionC);
 		expect(readFileSync(secretFile, "utf-8")).toContain("000003");
 
+		// Legacy applied state can recover A from an exact content-identity
+		// match even when an interrupted write left unrelated live B bytes. A
+		// failed desired-C restart must load only the verified A material.
+		const legacyCommitted = "legacy-committed-a";
+		const legacyInterrupted = "legacy-live-b";
+		const legacyDesired = "legacy-desired-c";
+		cacheRuntimeLastGoodManifest(manifest, paths, secrets(legacyCommitted));
+		writeAuthority(legacyCommitted);
+		overwriteLiveSecret(legacyInterrupted);
+		const legacyAppliedA = readFileSync(paths.appliedState, "utf-8");
+		let legacyFailureCommits = 0;
+		const legacyRollbackSecrets: string[] = [];
+		const legacyRestartFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
+			cacheLastGood: false,
+			commitAuthority: () => {
+				legacyFailureCommits++;
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					expect(readFileSync(secretFile, "utf-8")).toContain(legacyDesired);
+					throw new Error("injected legacy desired restart failure");
+				},
+				rollback: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					legacyRollbackSecrets.push(readFileSync(secretFile, "utf-8"));
+				},
+			},
+		});
+		expect(legacyRestartFailure.installErrors.join("\n")).toContain(
+			"injected legacy desired restart failure",
+		);
+		expect(legacyFailureCommits).toBe(0);
+		expect(legacyRollbackSecrets).toHaveLength(1);
+		expect(legacyRollbackSecrets[0]).toContain(legacyCommitted);
+		expect(legacyRollbackSecrets[0]).not.toContain(legacyInterrupted);
+		expect(readFileSync(secretFile, "utf-8")).toContain(legacyCommitted);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyAppliedA);
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
+		expect(JSON.stringify(legacyRestartFailure)).not.toContain("egressSidecarSecretRevision");
+
+		// A legacy cache without its active egress secret cannot prove A. The
+		// desired restart still runs, but its failure must not restart the
+		// sidecar with the unverified snapshot B or attempt an authority commit.
+		cacheRuntimeLastGoodManifest(manifest, paths, secrets(legacyCommitted));
+		rmSync(paths.managedSecretCacheFile);
+		writeAuthority(legacyCommitted);
+		overwriteLiveSecret(legacyInterrupted);
+		const legacyMissingCacheApplied = readFileSync(paths.appliedState, "utf-8");
+		let legacyMissingCacheRestartCommits = 0;
+		let legacyMissingCacheRestartRollbacks = 0;
+		const legacyMissingCacheRestartFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
+			cacheLastGood: false,
+			commitAuthority: () => {
+				legacyMissingCacheRestartCommits++;
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					expect(readFileSync(secretFile, "utf-8")).toContain(legacyDesired);
+					throw new Error("injected legacy missing-cache restart failure");
+				},
+				rollback: () => {
+					legacyMissingCacheRestartRollbacks++;
+				},
+			},
+		});
+		expect(legacyMissingCacheRestartFailure.installErrors[0]).toBe(
+			"runtime apply failed: injected legacy missing-cache restart failure",
+		);
+		expect(legacyMissingCacheRestartFailure.installErrors.join("\n")).toContain(
+			"injected legacy missing-cache restart failure",
+		);
+		expect(legacyMissingCacheRestartFailure.installErrors.join("\n")).toContain(
+			"runtime systemd rollback skipped because committed egress secret rollback authority could not be verified",
+		);
+		expect(legacyMissingCacheRestartCommits).toBe(0);
+		expect(legacyMissingCacheRestartRollbacks).toBe(0);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyMissingCacheApplied);
+		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
+		expect(readFileSync(secretFile, "utf-8")).toContain(legacyInterrupted);
+
+		// The same unverified legacy state also skips rollback if desired
+		// activation succeeds but the following authority commit fails.
+		let legacyMissingCacheCommits = 0;
+		let legacyMissingCacheRollbacks = 0;
+		const legacyMissingCacheActivationSecrets: string[] = [];
+		const legacyMissingCacheFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
+			cacheLastGood: false,
+			commitAuthority: (_convergence, authority) => {
+				legacyMissingCacheCommits++;
+				commit(legacyDesired, authority.egressSidecarSecretRevision);
+				throw new Error("injected legacy authority commit failure");
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					legacyMissingCacheActivationSecrets.push(readFileSync(secretFile, "utf-8"));
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					legacyMissingCacheRollbacks++;
+				},
+			},
+		});
+		expect(legacyMissingCacheFailure.installErrors[0]).toBe(
+			"runtime apply failed: injected legacy authority commit failure",
+		);
+		expect(legacyMissingCacheFailure.installErrors.join("\n")).toContain(
+			"injected legacy authority commit failure",
+		);
+		expect(legacyMissingCacheFailure.installErrors.join("\n")).toContain(
+			"runtime systemd rollback skipped because committed egress secret rollback authority could not be verified",
+		);
+		expect(legacyMissingCacheCommits).toBe(1);
+		expect(legacyMissingCacheRollbacks).toBe(0);
+		expect(legacyMissingCacheActivationSecrets).toHaveLength(1);
+		expect(legacyMissingCacheActivationSecrets[0]).toContain(legacyDesired);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyMissingCacheApplied);
+		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
+		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
+		expect(readFileSync(secretFile, "utf-8")).toContain(legacyInterrupted);
+		expect(JSON.stringify(legacyMissingCacheFailure)).not.toContain("egressSidecarSecretRevision");
+
 		// Legacy v2 authority has no private revision. An active sidecar restarts
 		// once, commits it, and then an identical apply no longer forces restart.
 		cacheRuntimeLastGoodManifest(manifest, paths, secrets("000001"));

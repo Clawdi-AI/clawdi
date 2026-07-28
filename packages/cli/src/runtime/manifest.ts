@@ -2077,17 +2077,28 @@ function committedEgressSecretMaterial(
 	paths: RuntimePaths,
 	committedRevision: string,
 ): RuntimeEgressSecretMaterial {
-	const committed = loadCommittedRuntimeManifest(paths);
-	if ("errors" in committed) {
+	const material = verifiedCommittedEgressSecretMaterial(paths);
+	if (!material) {
 		throw new Error("could not verify committed egress secret rollback authority");
 	}
-	const material = egressSecretMaterial(
-		resolveEgressSecretValues(committed.manifest, committed.secretValues, paths),
-	);
 	if (material.revision !== committedRevision) {
 		throw new Error("committed egress secret rollback authority does not match applied state");
 	}
 	return material;
+}
+
+function verifiedCommittedEgressSecretMaterial(
+	paths: RuntimePaths,
+): RuntimeEgressSecretMaterial | null {
+	try {
+		const committed = loadCommittedRuntimeManifest(paths);
+		if ("errors" in committed) return null;
+		return egressSecretMaterial(
+			resolveEgressSecretValues(committed.manifest, committed.secretValues, paths),
+		);
+	} catch {
+		return null;
+	}
 }
 
 function egressSecretRefs(manifest: RuntimeManifest): string[] {
@@ -5914,6 +5925,7 @@ export function convergeRuntimeManifest(
 	let desiredEgressSidecarSecretRevision: string | undefined;
 	let rollbackEgressSecretOverride: RuntimeEgressSecretMaterial | undefined;
 	let rollbackEgressSecretRevision: string | undefined;
+	let egressRollbackAuthorityVerified = true;
 	try {
 		const plannedUserUnits = plannedRuntimePrograms.map((program) =>
 			join(paths.systemdUserRoot, systemdUnitFileName(runtimeSystemdProgramName(program))),
@@ -6304,9 +6316,16 @@ export function convergeRuntimeManifest(
 				egressSecretWrite.changed ||
 				committedEgressSidecarSecretRevision === undefined ||
 				committedEgressSidecarSecretRevision !== desiredEgressSidecarSecretRevision;
-			if (
+			if (committedEgressSidecarSecretRevision === undefined) {
+				// Legacy applied state has no private egress revision. An exact
+				// applied content identity can still prove complete last-good material
+				// for rollback, but its absence must not block loading the desired
+				// material. If desired activation later fails, unverified live bytes
+				// must never be loaded by a rollback restart.
+				rollbackEgressSecretOverride = verifiedCommittedEgressSecretMaterial(paths) ?? undefined;
+				egressRollbackAuthorityVerified = rollbackEgressSecretOverride !== undefined;
+			} else if (
 				restartEgressSidecar &&
-				committedEgressSidecarSecretRevision !== undefined &&
 				egressSecretWrite.previousRevision !== committedEgressSidecarSecretRevision
 			) {
 				if (desiredEgressSidecarSecretRevision === committedEgressSidecarSecretRevision) {
@@ -6420,7 +6439,12 @@ export function convergeRuntimeManifest(
 				);
 			}
 		}
-		if (systemdActivationAttempted && opts.systemdApply && filesystemRollbackSucceeded) {
+		if (
+			systemdActivationAttempted &&
+			opts.systemdApply &&
+			filesystemRollbackSucceeded &&
+			egressRollbackAuthorityVerified
+		) {
 			try {
 				opts.systemdApply.rollback({ restartEgressSidecar });
 			} catch (rollbackError) {
@@ -6432,7 +6456,9 @@ export function convergeRuntimeManifest(
 			}
 		} else if (systemdActivationAttempted && opts.systemdApply) {
 			installErrors.push(
-				"runtime systemd rollback skipped because filesystem authority restoration failed",
+				filesystemRollbackSucceeded
+					? "runtime systemd rollback skipped because committed egress secret rollback authority could not be verified"
+					: "runtime systemd rollback skipped because filesystem authority restoration failed",
 			);
 		}
 		installErrors.unshift(`runtime apply failed: ${applyError}`);
