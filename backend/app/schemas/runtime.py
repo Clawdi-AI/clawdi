@@ -606,6 +606,16 @@ class HostedRuntimeMcpSecretHeader(_StrictHostedWireModel):
     prefix: str = Field(default="", max_length=100)
 
 
+def _is_mcp_credential_header(name: str) -> bool:
+    normalized = name.lower()
+    if normalized in {"authorization", "proxy-authorization", "cookie"}:
+        return True
+    return re.search(
+        r"(?:^|[-_])(?:api[-_]?key|apikey|tokens?|secrets?|credentials?)(?:$|[-_])",
+        normalized,
+    ) is not None
+
+
 class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
     url: str = Field(min_length=1, max_length=2000)
     transport: Literal["streamable-http", "sse"]
@@ -638,6 +648,11 @@ class HostedRuntimeRemoteMcpServer(_StrictHostedWireModel):
         normalized = [name.lower() for name in value]
         if len(normalized) != len(set(normalized)):
             raise ValueError("MCP header names must be unique case-insensitively")
+        if any(
+            isinstance(header_value, str) and _is_mcp_credential_header(name)
+            for name, header_value in value.items()
+        ):
+            raise ValueError("credential-bearing MCP headers must use secretRef")
         return value
 
 

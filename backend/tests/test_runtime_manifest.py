@@ -166,6 +166,55 @@ def test_hosted_mcp_and_egress_share_canonical_secret_ref_semantics(
         HostedEgressProfiles.model_validate(egress)
 
 
+@pytest.mark.parametrize(
+    "header_name",
+    [
+        "Authorization",
+        "aUtHoRiZaTiOn",
+        "Proxy-Authorization",
+        "COOKIE",
+        "X-API-Key",
+        "X-Client-Token",
+        "X-Service-Secret",
+        "X-Access-Credential",
+    ],
+)
+def test_hosted_mcp_rejects_literal_credential_headers(header_name: str) -> None:
+    with pytest.raises(ValidationError, match="must use secretRef"):
+        HostedRuntimeMcp.model_validate(
+            {
+                "servers": {
+                    "remote": {
+                        "url": "https://mcp.example.test/server",
+                        "transport": "streamable-http",
+                        "headers": {header_name: "literal-value"},
+                    }
+                }
+            }
+        )
+
+
+def test_hosted_mcp_accepts_public_literals_and_secret_ref_credentials() -> None:
+    HostedRuntimeMcp.model_validate(
+        {
+            "servers": {
+                "remote": {
+                    "url": "https://mcp.example.test/server",
+                    "transport": "streamable-http",
+                    "headers": {
+                        "Accept": "application/json",
+                        "X-Client-Version": "2026-07-28",
+                        "Authorization": {
+                            "secretRef": "secret://mcp.remote.token",
+                            "prefix": "Bearer ",
+                        },
+                    },
+                }
+            }
+        }
+    )
+
+
 async def _create_bundle_runtime(admin_client, db_session, seed_user):
     env = await create_env_with_project(
         db_session,

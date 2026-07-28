@@ -4,6 +4,14 @@ import { secretRefSchema } from "./egress-profiles";
 const managedEntryNameSchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/);
 const mcpHeaderNameSchema = z.string().regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/);
 
+function isMcpCredentialHeader(name: string): boolean {
+	const normalized = name.toLowerCase();
+	if (["authorization", "proxy-authorization", "cookie"].includes(normalized)) return true;
+	return /(?:^|[-_])(?:api[-_]?key|apikey|tokens?|secrets?|credentials?)(?:$|[-_])/.test(
+		normalized,
+	);
+}
+
 const mcpSecretHeaderSchema = z
 	.object({
 		secretRef: secretRefSchema,
@@ -58,6 +66,13 @@ const hostedRemoteMcpServerDesiredStateSchema = z
 				ctx.addIssue({
 					code: "custom",
 					message: `duplicate HTTP header ${header}`,
+					path: ["headers", header],
+				});
+			}
+			if (typeof server.headers[header] === "string" && isMcpCredentialHeader(header)) {
+				ctx.addIssue({
+					code: "custom",
+					message: `credential-bearing HTTP header ${header} must use secretRef`,
 					path: ["headers", header],
 				});
 			}

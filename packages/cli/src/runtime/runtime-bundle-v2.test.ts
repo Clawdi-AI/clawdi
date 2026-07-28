@@ -471,6 +471,67 @@ describe("hosted runtime bundle v2", () => {
 		).toThrow();
 	});
 
+	test.each([
+		"Authorization",
+		"aUtHoRiZaTiOn",
+		"Proxy-Authorization",
+		"COOKIE",
+		"X-API-Key",
+		"X-Client-Token",
+		"X-Service-Secret",
+		"X-Access-Credential",
+	])("rejects literal credential-bearing MCP header %s", (header) => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					mcp: {
+						servers: {
+							remote: {
+								url: "https://mcp.example.test/server",
+								transport: "streamable-http",
+								headers: { [header]: "literal-value" },
+							},
+						},
+					},
+				},
+			}),
+		).toThrow(/must use secretRef/);
+	});
+
+	test("accepts public MCP header literals and secretRef credentials", () => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				manifest: {
+					...manifest,
+					mcp: {
+						servers: {
+							remote: {
+								url: "https://mcp.example.test/server",
+								transport: "streamable-http",
+								headers: {
+									Accept: "application/json",
+									"X-Client-Version": "2026-07-28",
+									Authorization: { secretRef: "secret://mcp.remote.token", prefix: "Bearer " },
+								},
+							},
+						},
+					},
+				},
+			}),
+		).not.toThrow();
+	});
+
 	test("rejects response-carried apply identity and keeps the inner manifest v1-only", () => {
 		const raw = z
 			.record(z.string(), z.unknown())
