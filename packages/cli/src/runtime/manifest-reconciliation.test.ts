@@ -2849,6 +2849,129 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(readFileSync(secretFile, "utf-8")).toContain(legacyInterrupted);
 		expect(JSON.stringify(legacyMissingCacheFailure)).not.toContain("egressSidecarSecretRevision");
 
+		// A legacy content identity deliberately excludes env:// values, so it
+		// cannot prove which env-backed material the sidecar last loaded. Current
+		// env C may be activated, but neither failure path may restart the sidecar
+		// with material reconstructed from C while authority still describes A.
+		const legacyEnvRef = "env://CLAWDI_TEST_LEGACY_EGRESS_SECRET";
+		const legacyEnvManifest = manifestSchema.parse({
+			...manifest,
+			egressProfiles: {
+				profiles: (manifest.egressProfiles?.profiles ?? []).map((profile) => ({
+					...profile,
+					rewrite: {
+						...profile.rewrite,
+						setHeaders: {
+							authorization: {
+								type: "secretRef",
+								secretRef: legacyEnvRef,
+								prefix: "Bearer ",
+							},
+						},
+					},
+				})),
+			},
+		});
+		const legacyEnvLoad = () => manifestLoad(legacyEnvManifest, "inline-legacy-env-egress", {});
+		const writeLegacyEnvAuthority = (egressSidecarSecretRevision?: string) => {
+			writeRuntimeAppliedState(
+				{
+					schemaVersion: "clawdi.runtimeAppliedState.v2",
+					appliedAt: "2026-07-28T00:00:00.000Z",
+					instanceId: legacyEnvManifest.instanceId,
+					etag: '"legacy-env-a"',
+					sourceRevision: "e".repeat(64),
+					generation: legacyEnvManifest.generation,
+					contentIdentity: {
+						sourcePath: "inline-legacy-env-egress",
+						sha256: runtimeContentSha256({
+							manifest: legacyEnvManifest,
+							secretValues: runtimeRecoverableSecretValues(legacyEnvManifest, {}),
+						}),
+					},
+					...(egressSidecarSecretRevision ? { egressSidecarSecretRevision } : {}),
+					providerIds: [],
+					projectedProviderIds: {},
+				},
+				paths,
+			);
+		};
+		process.env.CLAWDI_TEST_LEGACY_EGRESS_SECRET = "legacy-env-a";
+		const legacyEnvBaseline = convergeRuntimeManifest(legacyEnvLoad(), paths, {
+			cacheLastGood: false,
+			systemdApply: {
+				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
+				rollback: () => {},
+			},
+		});
+		expect(legacyEnvBaseline.installErrors).toEqual([]);
+		cacheRuntimeLastGoodManifest(legacyEnvManifest, paths, {});
+		writeLegacyEnvAuthority();
+		const legacyEnvAppliedA = readFileSync(paths.appliedState, "utf-8");
+		expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-a");
+
+		process.env.CLAWDI_TEST_LEGACY_EGRESS_SECRET = "legacy-env-c";
+		let legacyEnvRestartFailureCommits = 0;
+		let legacyEnvRestartFailureRollbacks = 0;
+		const legacyEnvRestartFailure = convergeRuntimeManifest(legacyEnvLoad(), paths, {
+			cacheLastGood: false,
+			commitAuthority: () => {
+				legacyEnvRestartFailureCommits++;
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-c");
+					throw new Error("injected legacy env restart failure");
+				},
+				rollback: () => {
+					legacyEnvRestartFailureRollbacks++;
+				},
+			},
+		});
+		expect(legacyEnvRestartFailure.installErrors.join("\n")).toContain(
+			"injected legacy env restart failure",
+		);
+		expect(legacyEnvRestartFailure.installErrors.join("\n")).toContain(
+			"committed egress secret rollback authority could not be verified",
+		);
+		expect(legacyEnvRestartFailureCommits).toBe(0);
+		expect(legacyEnvRestartFailureRollbacks).toBe(0);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyEnvAppliedA);
+		expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-a");
+
+		let legacyEnvCommitFailureCommits = 0;
+		let legacyEnvCommitFailureRollbacks = 0;
+		const legacyEnvCommitFailure = convergeRuntimeManifest(legacyEnvLoad(), paths, {
+			cacheLastGood: false,
+			commitAuthority: (_convergence, authority) => {
+				legacyEnvCommitFailureCommits++;
+				writeLegacyEnvAuthority(authority.egressSidecarSecretRevision);
+				throw new Error("injected legacy env authority commit failure");
+			},
+			systemdApply: {
+				activate: ({ restartEgressSidecar }) => {
+					expect(restartEgressSidecar).toBe(true);
+					expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-c");
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {
+					legacyEnvCommitFailureRollbacks++;
+				},
+			},
+		});
+		expect(legacyEnvCommitFailure.installErrors.join("\n")).toContain(
+			"injected legacy env authority commit failure",
+		);
+		expect(legacyEnvCommitFailure.installErrors.join("\n")).toContain(
+			"committed egress secret rollback authority could not be verified",
+		);
+		expect(legacyEnvCommitFailureCommits).toBe(1);
+		expect(legacyEnvCommitFailureRollbacks).toBe(0);
+		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyEnvAppliedA);
+		expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-a");
+		expect(JSON.stringify(legacyEnvCommitFailure)).not.toContain("legacy-env-c");
+
 		// Legacy v2 authority has no private revision. An active sidecar restarts
 		// once, commits it, and then an identical apply no longer forces restart.
 		cacheRuntimeLastGoodManifest(manifest, paths, secrets("000001"));

@@ -4975,7 +4975,7 @@ exit 64
 		}
 	});
 
-	it("uses the same canonical file token for initial fetch and persistent watch fetches", async () => {
+	it("reuses private file-backed managed MCP auth across watch generations and offline rebuild", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4990,6 +4990,51 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_AUTH_TOKEN = "runtime-file-token";
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const paths = getRuntimePaths();
+		const egressEngine = seedMitmproxyCache(paths);
+		const payload = (generation: number): HostedRuntimeResponseFixture => ({
+			manifest: {
+				schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
+				runtime: "openclaw",
+				deploymentId: "dep_same_token",
+				environmentId: "env_same_token",
+				...hostedRequiredState(),
+				instanceId: "iid_same_token",
+				generation,
+				issuedAt: `2026-06-06T00:0${generation - 1}:00Z`,
+				locale: TEST_HOSTED_LOCALE,
+				system: hostedSystemFixture(home),
+				controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+				egressEngine,
+				clawdiCli: {
+					source: "npm:clawdi",
+					packageSpec: "clawdi@0.13.0-test",
+					registry: "https://registry.npmjs.org",
+				},
+				runtimes: { openclaw: hostedOpenClawRuntime() },
+				mcp: {
+					servers: {
+						clawdi: {
+							url: "https://cloud-api.test/v1/mcp/clawdi",
+							transport: "streamable-http",
+							headers: {
+								Authorization: {
+									secretRef: "env://CLAWDI_AUTH_TOKEN",
+									prefix: "Bearer ",
+								},
+							},
+						},
+					},
+				},
+				liveSync: {
+					enabled: true,
+					agents: [{ agentType: "openclaw", environmentId: "env_same_token" }],
+				},
+			},
+			secretValues: {},
+		});
 		writeFileSync(
 			wrongSourcePath,
 			JSON.stringify({
@@ -4999,97 +5044,104 @@ exit 64
 				auth: { type: "bearer-env", env: "STALE_RUNTIME_TOKEN_ENV" },
 			}),
 		);
+		let manifestFetches = 0;
 		const { captured, restore } = mockFetch([
 			{
 				method: "GET",
 				path: "/v1/runtime/manifest",
-				response: () =>
-					hostedRuntimeBundleResponse({
-						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
-							runtime: "openclaw",
-							deploymentId: "dep_same_token",
-							environmentId: "env_same_token",
-							...hostedRequiredState(),
-							instanceId: "iid_same_token",
-							generation: 1,
-							issuedAt: "2026-06-06T00:00:00Z",
-							locale: TEST_HOSTED_LOCALE,
-							system: hostedSystemFixture(home),
-							controlPlane: {
-								cloudApiUrl: "https://cloud-api.test",
-							},
-							clawdiCli: {
-								source: "npm:clawdi",
-								packageSpec: "clawdi@0.13.0-test",
-								registry: "https://registry.npmjs.org",
-							},
-							runtimes: { openclaw: hostedOpenClawRuntime() },
-							liveSync: {
-								enabled: true,
-								agents: [{ agentType: "openclaw", environmentId: "env_same_token" }],
-							},
-						},
-						secretValues: {},
-					}),
-			},
-			{
-				method: "GET",
-				path: "/v1/runtime/manifest",
-				response: () =>
-					hostedRuntimeBundleResponse({
-						manifest: {
-							schemaVersion: "clawdi.hosted-runtime.manifest.v1",
-							minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
-							runtime: "openclaw",
-							deploymentId: "dep_same_token",
-							environmentId: "env_same_token",
-							...hostedRequiredState(),
-							instanceId: "iid_same_token",
-							generation: 2,
-							issuedAt: "2026-06-06T00:01:00Z",
-							locale: TEST_HOSTED_LOCALE,
-							system: hostedSystemFixture(home),
-							controlPlane: {
-								cloudApiUrl: "https://cloud-api.test",
-							},
-							clawdiCli: {
-								source: "npm:clawdi",
-								packageSpec: "clawdi@0.13.0-test",
-								registry: "https://registry.npmjs.org",
-							},
-							runtimes: { openclaw: hostedOpenClawRuntime() },
-							liveSync: {
-								enabled: true,
-								agents: [{ agentType: "openclaw", environmentId: "env_same_token" }],
-							},
-						},
-						secretValues: {},
-					}),
+				response: () => {
+					manifestFetches++;
+					if (manifestFetches === 1) return hostedRuntimeBundleResponse(payload(1));
+					if (manifestFetches === 2) return hostedRuntimeBundleResponse(payload(2));
+					throw new Error("control plane unavailable");
+				},
 			},
 		]);
 
 		try {
-			const paths = getRuntimePaths();
 			const initial = await loadRuntimeManifest(paths);
 			if (!("manifest" in initial)) throw new Error("expected initial manifest load success");
+			const apply = (load: RuntimeManifestLoad) =>
+				convergeRuntimeManifest(load, paths, {
+					managedGatewayModelListFetcher: ({ baseUrl }) => ({
+						status: "ok",
+						endpoint: `${baseUrl}/models`,
+						models: [{ id: "gpt-test" }],
+					}),
+					systemdApply: {
+						activate: () => ({
+							applied: true,
+							systemUnitsChanged: [],
+							userUnitsChanged: [],
+						}),
+						rollback: () => {
+							throw new Error("successful MCP auth apply must not roll back");
+						},
+					},
+					commitAuthority: (convergence, authority) => {
+						if (!load.sourceRevision) throw new Error("expected runtime source revision");
+						commitRuntimeAppliedState({
+							load,
+							paths,
+							etag: load.etag ?? `"managed-mcp-${load.manifest.generation}"`,
+							sourceRevision: load.sourceRevision,
+							convergence,
+							applyIdentity: null,
+							egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
+						});
+					},
+				});
+			const convergence = apply(initial);
+			expect(convergence.installErrors).toEqual([]);
 			process.env.CLAWDI_RUNTIME_MANIFEST_URL = "";
-			const convergence = convergeRuntimeManifest(initial, paths);
 			const watchEnv = readSystemdEnvFile(paths, "clawdi-runtime-watch");
-			const watchManifestUrl = watchEnv.match(/^CLAWDI_RUNTIME_MANIFEST_URL="([^"]+)"$/m)?.[1];
-			process.env.CLAWDI_AUTH_TOKEN = "";
-			process.env.CLAWDI_RUNTIME_MANIFEST_URL = watchManifestUrl ?? "";
+			for (const line of watchEnv.split("\n")) {
+				const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(".*")$/);
+				if (!match) continue;
+				const [, name, encodedValue] = match;
+				if (!name || !encodedValue) throw new Error("invalid generated watcher environment");
+				const value = JSON.parse(encodedValue) as unknown;
+				if (typeof value !== "string")
+					throw new Error("invalid generated watcher environment value");
+				process.env[name] = value;
+			}
 			process.env.CLAWDI_RUNTIME_SOURCE_PATH = wrongSourcePath;
 			const watched = await loadRemoteRuntimeManifest(paths);
+			if (!("manifest" in watched) || "notModified" in watched) {
+				throw new Error("expected next watcher generation");
+			}
+			const watchedConvergence = apply(watched);
+			expect(watchedConvergence.installErrors).toEqual([]);
+			const egressSecretFile = watchedConvergence.outputs.egressSecretFile;
+			if (!egressSecretFile) throw new Error("expected managed MCP egress secret file");
+			const onlineEgressSecrets = readFileSync(egressSecretFile, "utf-8");
 
-			expect("manifest" in watched).toBe(true);
-			expect(watchManifestUrl).toBe("https://runtime.test/v1/runtime/manifest");
+			process.env.CLAWDI_AUTH_TOKEN = "";
+			rmSync(egressSecretFile);
+			const offline = await loadRuntimeManifest(paths);
+			if (!("manifest" in offline)) throw new Error(offline.errors.join("\n"));
+			const offlineConvergence = convergeRuntimeManifest(offline, paths, {
+				cacheLastGood: false,
+				managedGatewayModelListFetcher: ({ baseUrl }) => ({
+					status: "ok",
+					endpoint: `${baseUrl}/models`,
+					models: [{ id: "gpt-test" }],
+				}),
+			});
+
+			expect(watched.manifest.generation).toBe(2);
+			expect(offline.source).toBe("last-good-cache");
+			expect(offlineConvergence.mode).toBe("degraded-offline");
+			expect(offlineConvergence.installErrors).toEqual([]);
+			expect(readFileSync(egressSecretFile, "utf-8")).toBe(onlineEgressSecrets);
+			expect(onlineEgressSecrets).toContain("runtime-file-token");
 			expect(captured.map((entry) => entry.url)).toEqual([
+				"https://runtime.test/v1/runtime/manifest",
 				"https://runtime.test/v1/runtime/manifest",
 				"https://runtime.test/v1/runtime/manifest",
 			]);
 			expect(captured.map((entry) => entry.headers.authorization)).toEqual([
+				"Bearer runtime-file-token",
 				"Bearer runtime-file-token",
 				"Bearer runtime-file-token",
 			]);
@@ -5097,10 +5149,46 @@ exit 64
 			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe(
 				"runtime-file-token\n",
 			);
+			expect(statSync(join(run, "secrets", "auth-token")).mode & 0o777).toBe(0o600);
+			expect(statSync(egressSecretFile).mode & 0o777).toBe(0o600);
+			if (typeof process.getuid === "function" && process.getuid() === 0) {
+				expect(statSync(join(run, "secrets", "auth-token")).uid).toBe(0);
+				expect(statSync(join(run, "secrets", "auth-token")).gid).toBe(0);
+			}
 			expect(watchEnv).toContain('CLAWDI_AUTH_TOKEN=""');
+			expect(process.env.CLAWDI_AUTH_TOKEN).toBe("");
 			expect(watchEnv).not.toContain("CLAWDI_HOST_POLICY_PATH");
 			expect(watchEnv).not.toContain("CLAWDI_RUNTIME_SOURCE_PATH");
 			expect(watchEnv).not.toContain("runtime-file-token");
+			for (const unitPath of convergence.outputs.systemdSystemUnits) {
+				expect(readFileSync(unitPath, "utf-8")).not.toContain("runtime-file-token");
+			}
+			for (const entry of readdirSync(paths.systemdEnvRoot)) {
+				expect(readFileSync(join(paths.systemdEnvRoot, entry), "utf-8")).not.toContain(
+					"runtime-file-token",
+				);
+			}
+			expect(readFileSync(paths.appliedState, "utf-8")).not.toContain("runtime-file-token");
+			expectExistingFileNotToContain(paths.providerHealthStatus, "runtime-file-token");
+			expect(JSON.stringify(convergence)).not.toContain("runtime-file-token");
+			expect(JSON.stringify(watchedConvergence)).not.toContain("runtime-file-token");
+
+			writeFileSync(paths.daemonAuthToken, "invalid\nsecond-line\n");
+			process.env.CLAWDI_RUNTIME_MANIFEST_URL = "";
+			const malformedPrivateMaterial = await loadRuntimeManifest(paths);
+			expect("errors" in malformedPrivateMaterial).toBe(true);
+			if (!("errors" in malformedPrivateMaterial)) {
+				throw new Error("expected malformed private MCP auth material to fail closed");
+			}
+			expect(malformedPrivateMaterial.errors.join("\n")).toContain("env://CLAWDI_AUTH_TOKEN");
+
+			rmSync(paths.daemonAuthToken);
+			const missingPrivateMaterial = await loadRuntimeManifest(paths);
+			expect("errors" in missingPrivateMaterial).toBe(true);
+			if (!("errors" in missingPrivateMaterial)) {
+				throw new Error("expected missing private MCP auth material to fail closed");
+			}
+			expect(missingPrivateMaterial.errors.join("\n")).toContain("env://CLAWDI_AUTH_TOKEN");
 		} finally {
 			restore();
 		}
@@ -12521,9 +12609,9 @@ exit 64
 				"sk-runtime",
 			);
 			expectExistingFileNotToContain(join(run, "secrets", "runtime-secrets.json"), "sk-runtime");
-			expect(
-				readFileSync(join(state, "cache", "runtime-secrets.last-good.json"), "utf-8"),
-			).toContain("sk-runtime");
+			// Egress-only material enters the offline cache only with the successful
+			// applied-authority commit, not during pre-commit convergence.
+			expect(existsSync(join(state, "cache", "runtime-secrets.last-good.json"))).toBe(false);
 			expect(convergence.outputs.processManager).toBe("systemd");
 			expect(convergence.outputs.systemdSystemUnits).toEqual([
 				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),

@@ -31,7 +31,8 @@ import {
 } from "./manifest-contract";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
-import { canonicalSecretRefName, normalizeSecretValues, runtimeSecretValue } from "./secret-values";
+import { createRuntimeSecretResolver } from "./runtime-secret-resolver";
+import { canonicalSecretRefName, normalizeSecretValues } from "./secret-values";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
@@ -860,6 +861,7 @@ export async function loadRuntimeManifest(
 	const missingSecretRefs = manifestSecretRefsMissingValues(
 		normalized.manifest,
 		normalized.secretValues,
+		paths,
 	);
 	if (missingSecretRefs.length > 0) {
 		return {
@@ -927,7 +929,11 @@ function loadLastGoodManifest(
 		if ("errors" in cached) return cached;
 		const secretRefs = manifestSecretRefs(manifest);
 		if (secretRefs.length > 0) {
-			const missingSecretRefs = manifestSecretRefsMissingValues(manifest, cached.secretValues);
+			const missingSecretRefs = manifestSecretRefsMissingValues(
+				manifest,
+				cached.secretValues,
+				paths,
+			);
 			if (missingSecretRefs.length > 0) {
 				return {
 					mode: "repair",
@@ -1073,11 +1079,11 @@ export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 function manifestSecretRefsMissingValues(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	paths: RuntimePaths,
 ): string[] {
 	const normalizedValues = normalizeSecretValues(secretValues ?? {});
-	return manifestSecretRefs(manifest).filter(
-		(ref) => runtimeSecretValue(normalizedValues, ref) === null,
-	);
+	const resolver = createRuntimeSecretResolver(manifest, paths, normalizedValues);
+	return manifestSecretRefs(manifest).filter((ref) => resolver.resolve(ref) === null);
 }
 
 function addSecretEnvRefs(secretEnv: Record<string, string> | undefined, refs: Set<string>): void {

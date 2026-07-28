@@ -54,11 +54,7 @@ import {
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
 import { readRuntimeApplyIdentityFromEnv, runtimeApplyIdentityEnvironment } from "./apply-identity";
-import {
-	ensureRuntimeAuthTokenFile,
-	RUNTIME_AUTH_TOKEN_SECRET_REF,
-	readRuntimeAuthToken,
-} from "./auth-token";
+import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import {
 	assertHostedBundledSkillCatalogDigest,
 	hostedBundledSkillIds,
@@ -83,7 +79,6 @@ import {
 	hostedMcpServerDesiredStateSchema,
 } from "./manifest-resources";
 import {
-	envSecretRefName,
 	isEnvSecretRef,
 	normalizeSecretValues,
 	runtimeSecretValue as resolveRuntimeSecretValue,
@@ -130,6 +125,7 @@ import {
 	withoutPathEntry,
 	writeRuntimeRunConfig,
 } from "./run-config";
+import { createRuntimeSecretResolver, type RuntimeSecretResolver } from "./runtime-secret-resolver";
 import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 	isGeneratedRuntimeSystemdFile,
@@ -248,6 +244,7 @@ function writeLastGoodManifest(
 	paths: RuntimePaths,
 	secretValues: Record<string, string> | undefined,
 	secretScopeManifest: RuntimeManifest = manifest,
+	excludedSecretRefs: readonly string[] = egressSidecarOnlySecretRefs(secretScopeManifest),
 ): string | null {
 	if (manifest.recovery.cacheManifest === false) {
 		rmSync(paths.manifestLastGood, { force: true });
@@ -255,7 +252,7 @@ function writeLastGoodManifest(
 		return null;
 	}
 	writeJsonFile(paths.manifestLastGood, manifest);
-	writeLastGoodSecretValues(secretScopeManifest, secretValues, paths);
+	writeLastGoodSecretValues(secretScopeManifest, secretValues, paths, excludedSecretRefs);
 	return paths.manifestLastGood;
 }
 
@@ -264,15 +261,21 @@ export function cacheRuntimeLastGoodManifest(
 	paths: RuntimePaths,
 	secretValues?: Record<string, string>,
 ): string | null {
-	return writeLastGoodManifest(manifest, paths, secretValues);
+	// This runs only with successfully committed authority, so persist the full
+	// active consumer union needed for exact offline reconstruction.
+	return writeLastGoodManifest(manifest, paths, secretValues, manifest, []);
 }
 
 function writeLastGoodSecretValues(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
+	excludedRefs: readonly string[] = [],
 ): void {
-	const recoverable = runtimeRecoverableSecretValues(manifest, secretValues);
+	const recoverable = omitSecretRefs(
+		runtimeRecoverableSecretValues(manifest, secretValues),
+		excludedRefs,
+	);
 	if (Object.keys(recoverable).length === 0) {
 		rmSync(paths.managedSecretCacheFile, { force: true });
 		return;
@@ -694,7 +697,8 @@ function writeResolvedSecretValues(
 
 interface ScopedSecretValuesOptions {
 	resolveEnv?: boolean;
-	explicitValues?: Readonly<Record<string, string>>;
+	resolver?: RuntimeSecretResolver;
+	require?: (ref: string) => boolean;
 }
 
 function scopedSecretValues(
@@ -706,8 +710,13 @@ function scopedSecretValues(
 	const scoped: Record<string, string> = {};
 	for (const ref of refs) {
 		if (isEnvSecretRef(ref) && !options.resolveEnv) continue;
-		const value = options.explicitValues?.[ref] ?? resolveRuntimeSecretValue(normalizedValues, ref);
-		if (!value) continue;
+		const value = options.resolver
+			? options.resolver.resolve(ref)
+			: resolveRuntimeSecretValue(normalizedValues, ref);
+		if (!value) {
+			if (options.require?.(ref)) throw new Error(`Runtime secret ${ref} is unavailable.`);
+			continue;
+		}
 		scoped[ref] = value;
 		const normalized = normalizeSecretRef(ref);
 		if (normalized) scoped[normalized] = value;
@@ -1989,9 +1998,16 @@ function egressSecretMaterialRevision(secretValues: Record<string, string>): str
 }
 
 function egressSecretMaterial(
-	secretValues: Readonly<Record<string, string>>,
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+	paths: RuntimePaths,
 ): RuntimeEgressSecretMaterial {
-	const scoped = { ...secretValues };
+	const resolver = createRuntimeSecretResolver(manifest, paths, secretValues);
+	const scoped = scopedSecretValues(secretValues, egressSecretRefs(manifest), {
+		resolveEnv: true,
+		resolver,
+		require: (ref) => resolver.isPrivateFileBacked(ref),
+	});
 	return {
 		content: Object.keys(scoped).length > 0 ? `${JSON.stringify(scoped, null, 2)}\n` : null,
 		revision: egressSecretMaterialRevision(scoped),
@@ -2035,22 +2051,6 @@ function writeEgressSecretMaterial(
 	return path;
 }
 
-function resolveEgressSecretValues(
-	manifest: RuntimeManifest,
-	secretValues: Record<string, string> | undefined,
-	paths: RuntimePaths,
-): Record<string, string> {
-	const runtimeAuthToken = readRuntimeAuthToken(paths);
-	// The hosted watcher deliberately clears CLAWDI_AUTH_TOKEN and authenticates
-	// through this root-owned file. Resolve only the canonical sidecar ref here.
-	return scopedSecretValues(secretValues, egressSecretRefs(manifest), {
-		resolveEnv: true,
-		explicitValues: runtimeAuthToken
-			? { [RUNTIME_AUTH_TOKEN_SECRET_REF]: runtimeAuthToken }
-			: undefined,
-	});
-}
-
 function writeEgressSecretFile(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
@@ -2063,7 +2063,7 @@ function writeEgressSecretFile(
 } {
 	const secretFilePath = egressSecretFilePath(paths);
 	const previousContent = existsSync(secretFilePath) ? readFileSync(secretFilePath, "utf-8") : null;
-	const material = egressSecretMaterial(resolveEgressSecretValues(manifest, secretValues, paths));
+	const material = egressSecretMaterial(manifest, secretValues, paths);
 	const path = writeEgressSecretMaterial(material, paths);
 	return {
 		path,
@@ -2093,9 +2093,8 @@ function verifiedCommittedEgressSecretMaterial(
 	try {
 		const committed = loadCommittedRuntimeManifest(paths);
 		if ("errors" in committed) return null;
-		return egressSecretMaterial(
-			resolveEgressSecretValues(committed.manifest, committed.secretValues, paths),
-		);
+		if (egressSecretRefs(committed.manifest).some(isEnvSecretRef)) return null;
+		return egressSecretMaterial(committed.manifest, committed.secretValues, paths);
 	} catch {
 		return null;
 	}
