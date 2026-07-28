@@ -3872,7 +3872,7 @@ async def test_runtime_bundle_revision_tracks_projected_and_secret_changes_only(
         "servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}
     }
     assert integrations_enabled.json()["manifest"]["skills"] == {
-        "entries": {"clawdi": {"enabled": True}}
+        "entries": {"clawdi": {"enabled": True, "version": 1}}
     }
     assert identity(projected) != identity(integrations_enabled)
     assert identity(key_rotated) != identity(projected)
