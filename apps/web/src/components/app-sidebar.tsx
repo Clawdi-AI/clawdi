@@ -6,9 +6,11 @@ import {
 	DndContext,
 	type DragEndEvent,
 	type DragOverEvent,
+	KeyboardCode,
 	KeyboardSensor,
 	type Modifier,
-	PointerSensor,
+	MouseSensor,
+	TouchSensor,
 	useSensor,
 	useSensors,
 } from "@dnd-kit/core";
@@ -21,13 +23,12 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation } from "@tanstack/react-router";
+import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import {
 	BookOpen,
 	CircleHelp,
 	Cloud,
 	ExternalLink,
-	GripVertical,
 	History,
 	Layers,
 	LayoutDashboard,
@@ -274,6 +275,11 @@ type AgentSectionDefinition = {
 };
 
 const RAIL_DRAG_ACTIVATION_DISTANCE = 10;
+const RAIL_KEYBOARD_CODES = {
+	start: [KeyboardCode.Space],
+	cancel: [KeyboardCode.Esc],
+	end: [KeyboardCode.Space],
+};
 
 const restrictRailDragToVerticalAxis: Modifier = ({ transform }) => ({
 	...transform,
@@ -749,27 +755,26 @@ function FocusNavigationPane({
 }
 
 function RailFocusButton({
-	href,
+	render,
 	label,
 	caption,
 	active,
-	onNavigate,
+	className,
 	showTooltip = true,
 	children,
 }: {
-	href: string | null;
+	render: React.ReactElement;
 	label: string;
 	caption?: string;
 	active: boolean;
-	onNavigate?: () => void;
+	className?: string;
 	showTooltip?: boolean;
 	children: React.ReactNode;
 }) {
 	const hasCaption = Boolean(caption);
-	const focusTarget = href ? <Link to={href} onClick={onNavigate} /> : <div aria-disabled="true" />;
 	const button = (
 		<SidebarMenuButton
-			render={focusTarget}
+			render={render}
 			size="lg"
 			isActive={active}
 			aria-label={label}
@@ -777,6 +782,7 @@ function RailFocusButton({
 				hasCaption
 					? "h-[4.5rem] w-full flex-col justify-center gap-1 rounded-lg px-1 py-1"
 					: "size-11 justify-center rounded-lg p-0",
+				className,
 			)}
 		>
 			{children}
@@ -828,19 +834,16 @@ function RailFocusButton({
 
 function SortableAgentRailItem({
 	agent,
-	position,
-	itemCount,
 	active,
 	onNavigate,
 	showTooltip,
 }: {
 	agent: AgentTile;
-	position: number;
-	itemCount: number;
 	active: boolean;
 	onNavigate?: () => void;
 	showTooltip: boolean;
 }) {
+	const router = useRouter();
 	const {
 		attributes,
 		listeners,
@@ -871,7 +874,11 @@ function SortableAgentRailItem({
 		transition: isDragging ? undefined : transition,
 		zIndex: isDragging ? 20 : undefined,
 	};
-	const reorderLabel = `Reorder ${baseIdentityLabel}, position ${position} of ${itemCount}`;
+	const activateAgent = () => {
+		if (!agent.href) return;
+		onNavigate?.();
+		void router.navigate({ href: agent.href });
+	};
 
 	return (
 		<SidebarMenuItem
@@ -879,16 +886,28 @@ function SortableAgentRailItem({
 			data-testid="app-sidebar-agent-tile"
 			style={style}
 			className={cn(
-				"group/agent-rail-item flex h-[4.5rem] w-full touch-pan-y items-end will-change-transform",
+				"group/agent-rail-item relative h-[4.5rem] w-full touch-pan-y will-change-transform",
 				isDragging && "opacity-80",
 			)}
 		>
 			<RailFocusButton
-				href={agent.href}
+				render={
+					<button
+						ref={setActivatorNodeRef}
+						type="button"
+						disabled={!agent.href}
+						onClick={activateAgent}
+						{...attributes}
+						aria-disabled={agent.href ? undefined : true}
+						aria-describedby={agent.env ? attributes["aria-describedby"] : undefined}
+						aria-roledescription={agent.env ? attributes["aria-roledescription"] : undefined}
+						{...listeners}
+					/>
+				}
 				label={label}
 				caption={caption}
 				active={active}
-				onNavigate={onNavigate}
+				className="touch-pan-y cursor-grab active:cursor-grabbing"
 				showTooltip={showTooltip}
 			>
 				<span className="relative inline-flex rounded-md">
@@ -910,20 +929,6 @@ function SortableAgentRailItem({
 					) : null}
 				</span>
 			</RailFocusButton>
-			<Button
-				ref={setActivatorNodeRef}
-				type="button"
-				variant="ghost"
-				size="icon-sm"
-				className="size-6 touch-none cursor-grab rounded-sm text-muted-foreground hover:text-sidebar-foreground active:cursor-grabbing"
-				disabled={!agent.env}
-				aria-label={reorderLabel}
-				title={reorderLabel}
-				{...attributes}
-				{...listeners}
-			>
-				<GripVertical aria-hidden="true" className="size-3" />
-			</Button>
 		</SidebarMenuItem>
 	);
 }
@@ -950,13 +955,17 @@ function FocusRailContent({
 		railAgentsRef.current = next;
 		setRailAgents(next);
 	};
-	// Drag input belongs exclusively to each tile's explicit activator button. The
-	// adjacent link remains a plain navigation target for clicks, taps, and keyboard use.
+	// Mouse and touch sensors keep scrolling distinct from drag activation. Enter
+	// remains ordinary button activation; Space follows dnd-kit's screen-reader instructions.
 	const sensors = useSensors(
-		useSensor(PointerSensor, {
+		useSensor(MouseSensor, {
 			activationConstraint: { distance: RAIL_DRAG_ACTIVATION_DISTANCE },
 		}),
-		useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+		useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 8 } }),
+		useSensor(KeyboardSensor, {
+			coordinateGetter: sortableKeyboardCoordinates,
+			keyboardCodes: RAIL_KEYBOARD_CODES,
+		}),
 	);
 	useEffect(() => {
 		if (!dragStartRailAgents.current) {
@@ -1061,11 +1070,10 @@ function FocusRailContent({
 				<SidebarMenu className="items-center">
 					<SidebarMenuItem>
 						<RailFocusButton
-							href="/"
+							render={<Link to="/" onClick={onNavigate} />}
 							label="Console"
 							caption="Console"
 							active={!activeAgentId}
-							onNavigate={onNavigate}
 							showTooltip={showTooltips}
 						>
 							<IconChip size="sm" tint={RESOURCE_TINT_CLASSES.overview}>
@@ -1095,12 +1103,10 @@ function FocusRailContent({
 						onDragEnd={onDragEnd}
 					>
 						<SortableContext items={orderedAgentIds} strategy={verticalListSortingStrategy}>
-							{orderedAgents.map((agent, index) => (
+							{orderedAgents.map((agent) => (
 								<SortableAgentRailItem
 									key={agent.id}
 									agent={agent}
-									position={index + 1}
-									itemCount={orderedAgents.length}
 									active={Boolean(activeAgentId && agentTileMatchesRouteId(agent, activeAgentId))}
 									onNavigate={onNavigate}
 									showTooltip={showTooltips}

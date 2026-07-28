@@ -190,7 +190,7 @@ test("dashboard sidebar primitives run without browser errors", async ({ page })
 	await expect(agentTile).toHaveCount(1, { timeout: 15_000 });
 	await expectNoBrowserErrors(page, browserErrors, "dashboard render");
 
-	await agentTile.locator("a").hover();
+	await agentTile.locator("button").hover();
 	await expect(
 		page.locator('[data-slot="tooltip-content"]').filter({ hasText: "Smoke Codex" }),
 	).toBeVisible();
@@ -219,24 +219,24 @@ test("dashboard sidebar primitives run without browser errors", async ({ page })
 	await expectNoBrowserErrors(page, browserErrors, "settings select");
 });
 
-test("every agent rail tile navigates on click", async ({ page }) => {
+test("every agent rail tile button navigates on click", async ({ page }) => {
 	await stubDashboardApi(page);
 
 	for (const agent of agents) {
 		await page.goto("/");
-		const tileLink = page
+		const tileButton = page
 			.getByTestId("app-sidebar-agent-tile")
 			.filter({ hasText: agent.display_name })
-			.locator("a");
-		await expect(tileLink).toBeVisible({ timeout: 15_000 });
-		await expect(tileLink).toHaveAttribute("href", `/agents/${agent.id}`);
+			.locator("button");
+		await expect(tileButton).toBeVisible({ timeout: 15_000 });
+		await expect(tileButton).toHaveAttribute("type", "button");
 
-		await tileLink.click();
+		await tileButton.click();
 		await expect(page).toHaveURL(`/agents/${agent.id}`);
 	}
 });
 
-test("agent rail links support touch taps and keyboard activation", async ({
+test("agent rail tile buttons support touch taps and Enter activation", async ({
 	browser,
 	baseURL,
 }) => {
@@ -256,7 +256,7 @@ test("agent rail links support touch taps and keyboard activation", async ({
 		const touchTarget = page
 			.getByTestId("app-sidebar-agent-tile")
 			.filter({ hasText: firstAgent.display_name })
-			.locator("a");
+			.locator("button");
 		await expect(touchTarget).toBeVisible({ timeout: 15_000 });
 		await touchTarget.tap();
 		await expect(page).toHaveURL(`/agents/${firstAgent.id}`);
@@ -265,7 +265,7 @@ test("agent rail links support touch taps and keyboard activation", async ({
 		const keyboardTarget = page
 			.getByTestId("app-sidebar-agent-tile")
 			.filter({ hasText: secondAgent.display_name })
-			.locator("a");
+			.locator("button");
 		await expect(keyboardTarget).toBeVisible({ timeout: 15_000 });
 		await keyboardTarget.focus();
 		await expect(keyboardTarget).toBeFocused();
@@ -276,22 +276,45 @@ test("agent rail links support touch taps and keyboard activation", async ({
 	}
 });
 
-test("agent rail exposes accessible keyboard sorting handles", async ({ page }) => {
+test("agent rail uses each whole tile for Space keyboard sorting", async ({ page }) => {
 	const agentOrderRequests: string[] = [];
 	await stubDashboardApi(page, agentOrderRequests);
 	await page.goto("/");
 
 	const tiles = page.getByTestId("app-sidebar-agent-tile");
 	await expect(tiles).toHaveCount(2, { timeout: 15_000 });
-	const firstHandle = page.getByRole("button", {
-		name: "Reorder Smoke Codex · Codex, position 1 of 2",
-		exact: true,
-	});
-	await expect(firstHandle).toBeVisible();
-	await firstHandle.focus();
-	await page.keyboard.press("Space");
+	await expect(page.getByRole("button", { name: /^Reorder / })).toHaveCount(0);
+	const firstTile = tiles.filter({ hasText: "Smoke Codex" });
+	const firstButton = firstTile.locator("button");
+	const firstTileBox = await firstTile.boundingBox();
+	const firstButtonBox = await firstButton.boundingBox();
+	if (!firstTileBox || !firstButtonBox) throw new Error("Agent rail tile should be interactive.");
+	expect(firstTileBox.height).toBeCloseTo(72, 0);
+	expect(firstButtonBox.height).toBeCloseTo(firstTileBox.height, 0);
+	expect(firstButtonBox.width).toBeCloseTo(firstTileBox.width, 0);
+
+	await firstButton.focus();
+	await page.keyboard.down("Space");
+	await expect(firstButton).toHaveAttribute("aria-pressed", "true");
+	await page.keyboard.up("Space");
 	await page.keyboard.press("ArrowDown");
-	await page.keyboard.press("Space");
+	await page.keyboard.press("Escape");
+	await expect(firstButton).not.toHaveAttribute("aria-pressed", "true");
+	await expect(page).toHaveURL("/");
+	expect(agentOrderRequests).toEqual([]);
+	await expect(tiles.nth(0)).toContainText("Smoke Codex");
+
+	await firstButton.focus();
+	await page.keyboard.down("Space");
+	await expect(firstButton).toHaveAttribute("aria-pressed", "true");
+	await expect(page).toHaveURL("/");
+	await page.keyboard.up("Space");
+	await expect(page).toHaveURL("/");
+	await page.keyboard.press("ArrowDown");
+	await page.keyboard.down("Space");
+	await expect(firstButton).not.toHaveAttribute("aria-pressed", "true");
+	await expect(page).toHaveURL("/");
+	await page.keyboard.up("Space");
 
 	await expect(page).toHaveURL("/");
 	await expect.poll(() => agentOrderRequests.length).toBe(1);
@@ -300,7 +323,7 @@ test("agent rail exposes accessible keyboard sorting handles", async ({ page }) 
 	});
 	await expect(tiles.nth(0)).toContainText("Smoke Hermes");
 
-	const postDragTarget = tiles.filter({ hasText: "Smoke Hermes" }).locator("a");
+	const postDragTarget = tiles.filter({ hasText: "Smoke Hermes" }).locator("button");
 	await postDragTarget.click();
 	await expect(page).toHaveURL("/agents/agent-smoke-2");
 });
