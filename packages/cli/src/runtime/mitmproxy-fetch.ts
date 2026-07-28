@@ -54,6 +54,7 @@ export function ensureRuntimeMitmproxy(
 		const cacheDir = join(paths.egressEngineMaintainedRoot, pin.version, normalizedSha);
 		const binaryPath = join(cacheDir, "mitmdump");
 		if (isExecutableFile(binaryPath)) {
+			rootOwnedBestEffort(dirname(paths.egressEngineMaintainedRoot));
 			return ready(pin, cacheDir, binaryPath);
 		}
 
