@@ -1,5 +1,6 @@
 "use client";
 
+import { type ShouldBlockFn, useBlocker } from "@tanstack/react-router";
 import {
 	BarChart3,
 	CreditCard,
@@ -9,15 +10,7 @@ import {
 	User,
 	WalletCards,
 } from "lucide-react";
-import {
-	lazy,
-	type MouseEvent as ReactMouseEvent,
-	Suspense,
-	useCallback,
-	useEffect,
-	useRef,
-	useState,
-} from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 import { IconChip } from "@/components/icon-chip";
@@ -49,6 +42,7 @@ import {
 	DEFAULT_SETTINGS_SECTION,
 	SETTINGS_SECTION_IDS,
 	type SettingsSectionId,
+	settingsDraftOwnerChanges,
 } from "@/lib/settings-routes";
 import { cn } from "@/lib/utils";
 
@@ -84,11 +78,6 @@ type SettingsNavItem = {
 	icon: LucideIcon;
 	cloudOnly?: boolean;
 };
-
-type PendingSettingsIntent =
-	| { kind: "close" }
-	| { kind: "section"; section: SettingsSectionId }
-	| { kind: "navigate"; href: string };
 
 const SETTINGS_NAV: SettingsNavItem[] = [
 	{
@@ -146,11 +135,9 @@ export function SettingsDialog({
 	onOpenChange: (open: boolean) => void;
 }) {
 	const activeButtonRef = useRef<HTMLButtonElement | null>(null);
-	const bypassUnloadRef = useRef(false);
 	const hostedAccess = useHostedProductAccess();
 	const [mounted, setMounted] = useState(false);
 	const [editStates, setEditStates] = useState<Map<symbol, SettingsEditState>>(() => new Map());
-	const [pendingIntent, setPendingIntent] = useState<PendingSettingsIntent | null>(null);
 	const registerEditState = useCallback((token: symbol, state: SettingsEditState | null) => {
 		setEditStates((current) => {
 			const next = new Map(current);
@@ -161,6 +148,18 @@ export function SettingsDialog({
 	}, []);
 	const hasUnsavedChanges = [...editStates.values()].some((state) => state.dirty);
 	const hasPendingSave = [...editStates.values()].some((state) => state.busy);
+	const navigationRiskRef = useRef(false);
+	navigationRiskRef.current = hasUnsavedChanges || hasPendingSave;
+	const shouldBlockNavigation: ShouldBlockFn = useCallback(
+		({ current, next }) => navigationRiskRef.current && settingsDraftOwnerChanges(current, next),
+		[],
+	);
+	const shouldBlockDocumentExit = useCallback(() => navigationRiskRef.current, []);
+	const blocker = useBlocker({
+		shouldBlockFn: shouldBlockNavigation,
+		enableBeforeUnload: shouldBlockDocumentExit,
+		withResolver: true,
+	});
 	useEffect(() => {
 		setMounted(true);
 	}, []);
@@ -194,74 +193,22 @@ export function SettingsDialog({
 	}, [open, activeSection]);
 
 	useEffect(() => {
-		if (!hasUnsavedChanges && !hasPendingSave) return;
-		const warnBeforeUnload = (event: BeforeUnloadEvent) => {
-			if (bypassUnloadRef.current) return;
-			event.preventDefault();
-			event.returnValue = "";
-		};
-		window.addEventListener("beforeunload", warnBeforeUnload);
-		return () => window.removeEventListener("beforeunload", warnBeforeUnload);
-	}, [hasPendingSave, hasUnsavedChanges]);
+		if (blocker.status === "blocked" && !hasUnsavedChanges && !hasPendingSave) {
+			blocker.proceed();
+		}
+	}, [blocker, hasPendingSave, hasUnsavedChanges]);
 
 	function requestClose(nextOpen: boolean) {
-		if (nextOpen) {
-			onOpenChange(true);
-			return;
-		}
-		if (hasPendingSave) return;
-		if (hasUnsavedChanges) {
-			setPendingIntent({ kind: "close" });
-			return;
-		}
-		onOpenChange(false);
+		onOpenChange(nextOpen);
 	}
 
 	function requestSectionChange(nextSection: SettingsSectionId) {
-		if (nextSection === activeSection || hasPendingSave) return;
-		if (hasUnsavedChanges) {
-			setPendingIntent({ kind: "section", section: nextSection });
-			return;
-		}
+		if (nextSection === activeSection) return;
 		onSectionChange(nextSection);
 	}
 
-	function interceptNavigation(event: ReactMouseEvent<HTMLElement>) {
-		if ((!hasUnsavedChanges && !hasPendingSave) || event.defaultPrevented) return;
-		if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
-			return;
-		if (!(event.target instanceof Element)) return;
-		const anchor = event.target.closest("a[href]");
-		if (!(anchor instanceof HTMLAnchorElement)) return;
-		if (anchor.target === "_blank" || anchor.hasAttribute("download")) return;
-		const destination = new URL(anchor.href, window.location.href);
-		const current = new URL(window.location.href);
-		if (
-			destination.origin === current.origin &&
-			destination.pathname === current.pathname &&
-			destination.search === current.search
-		) {
-			return;
-		}
-
-		event.preventDefault();
-		if (!hasPendingSave) setPendingIntent({ kind: "navigate", href: destination.href });
-	}
-
 	function discardChanges() {
-		const intent = pendingIntent;
-		if (!intent) return;
-		setPendingIntent(null);
-		if (intent.kind === "close") {
-			onOpenChange(false);
-			return;
-		}
-		if (intent.kind === "section") {
-			onSectionChange(intent.section);
-			return;
-		}
-		bypassUnloadRef.current = true;
-		window.location.assign(intent.href);
+		if (blocker.status === "blocked") blocker.proceed();
 	}
 
 	return (
@@ -270,7 +217,6 @@ export function SettingsDialog({
 				<DialogContent
 					data-testid="settings-dialog"
 					initialFocus={activeButtonRef}
-					onClickCapture={interceptNavigation}
 					showCloseButton={!hasPendingSave}
 					className="h-[min(820px,calc(100dvh-2rem))] w-[calc(100vw-2rem)] max-w-6xl gap-0 overflow-hidden p-0 sm:max-w-6xl"
 				>
@@ -356,21 +302,29 @@ export function SettingsDialog({
 			</Dialog>
 
 			<AlertDialog
-				open={pendingIntent !== null}
+				open={blocker.status === "blocked"}
 				onOpenChange={(nextOpen) => {
-					if (!nextOpen) setPendingIntent(null);
+					if (!nextOpen && blocker.status === "blocked") blocker.reset();
 				}}
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Discard unsaved changes?</AlertDialogTitle>
+						<AlertDialogTitle>
+							{hasPendingSave ? "Save in progress" : "Discard unsaved changes?"}
+						</AlertDialogTitle>
 						<AlertDialogDescription>
-							Your auto-reload settings will return to the last values saved on the server.
+							{hasPendingSave
+								? "Wait for this save to finish before leaving Settings."
+								: "Your auto-reload settings will return to the last values saved on the server."}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel>Keep editing</AlertDialogCancel>
-						<AlertDialogAction variant="destructive" onClick={discardChanges}>
+						<AlertDialogAction
+							variant="destructive"
+							onClick={discardChanges}
+							disabled={hasPendingSave}
+						>
 							Discard changes
 						</AlertDialogAction>
 					</AlertDialogFooter>

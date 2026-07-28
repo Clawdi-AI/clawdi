@@ -23,7 +23,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useLocation, useRouter } from "@tanstack/react-router";
+import { Link, useLocation, useRouter, useSearch } from "@tanstack/react-router";
 import {
 	BookOpen,
 	CircleHelp,
@@ -45,8 +45,6 @@ import {
 	TerminalSquare,
 	Zap,
 } from "lucide-react";
-import { useQueryState } from "nuqs";
-import { parseAsStringLiteral } from "nuqs/server";
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useCommandPalette } from "@/components/command-palette";
@@ -106,6 +104,7 @@ import {
 import {
 	type AgentSectionId,
 	agentDeploymentRouteQuery,
+	agentDeploymentSelector,
 	agentSectionHref,
 	agentSectionLabel,
 	isAcceptedHostedAgentRoute,
@@ -127,12 +126,7 @@ import {
 	projectResourceScopeLabel,
 } from "@/lib/project-resource-model";
 import { RESOURCE_TINT_CLASSES } from "@/lib/resource-identity";
-import {
-	DEFAULT_SETTINGS_SECTION,
-	SETTINGS_QUERY_KEY,
-	SETTINGS_SECTION_IDS,
-	type SettingsSectionId,
-} from "@/lib/settings-routes";
+import { DEFAULT_SETTINGS_SECTION, type SettingsSectionId } from "@/lib/settings-routes";
 import { useHydrated } from "@/lib/use-hydrated";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 
@@ -907,7 +901,7 @@ function SortableAgentRailItem({
 				label={label}
 				caption={caption}
 				active={active}
-				className="touch-pan-y"
+				className={cn("touch-pan-y", agent.href && "cursor-pointer")}
 				showTooltip={showTooltip}
 			>
 				<span className="relative inline-flex rounded-md">
@@ -936,11 +930,13 @@ function SortableAgentRailItem({
 function FocusRailContent({
 	agents,
 	activeAgentId,
+	activeDeploymentSelector,
 	onNavigate,
 	showTooltips = true,
 }: {
 	agents: AgentTile[];
 	activeAgentId: string | null;
+	activeDeploymentSelector: string | null;
 	onNavigate?: () => void;
 	showTooltips?: boolean;
 }) {
@@ -1107,7 +1103,10 @@ function FocusRailContent({
 								<SortableAgentRailItem
 									key={agent.id}
 									agent={agent}
-									active={Boolean(activeAgentId && agentTileMatchesRouteId(agent, activeAgentId))}
+									active={Boolean(
+										activeAgentId &&
+											agentTileMatchesRouteId(agent, activeAgentId, activeDeploymentSelector),
+									)}
 									onNavigate={onNavigate}
 									showTooltip={showTooltips}
 								/>
@@ -1280,9 +1279,11 @@ function FocusStatusFallback() {
 function RailSidebar({
 	agents,
 	activeAgentId,
+	activeDeploymentSelector,
 }: {
 	agents: AgentTile[];
 	activeAgentId: string | null;
+	activeDeploymentSelector: string | null;
 }) {
 	return (
 		<Sidebar
@@ -1292,7 +1293,11 @@ function RailSidebar({
 			aria-label="Focus rail"
 			data-testid="app-sidebar-agent-rail"
 		>
-			<FocusRailContent agents={agents} activeAgentId={activeAgentId} />
+			<FocusRailContent
+				agents={agents}
+				activeAgentId={activeAgentId}
+				activeDeploymentSelector={activeDeploymentSelector}
+			/>
 		</Sidebar>
 	);
 }
@@ -1565,7 +1570,9 @@ export function AppSidebar({
 	style,
 	...props
 }: React.ComponentProps<typeof Sidebar>) {
+	const router = useRouter();
 	const pathname = useLocation({ select: (location) => location.pathname });
+	const routeSearch = useSearch({ from: "/_protected/_dashboard" });
 	const { user } = useCurrentUser();
 	const { setOpen: setPaletteOpen } = useCommandPalette();
 	const { isMobile, setOpenMobile, state: sidebarState } = useSidebar();
@@ -1585,6 +1592,7 @@ export function AppSidebar({
 		hydrated && IS_HOSTED && (hostedAccess.canCreateCloudAgents || hostedAccess.status === "error");
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
+	const activeDeploymentSelector = agentRoute ? agentDeploymentSelector(routeSearch) : null;
 	const { data: environments } = useQuery({
 		queryKey: ["agents"],
 		queryFn: async () => unwrap(await api.GET("/v1/agents")),
@@ -1601,7 +1609,9 @@ export function AppSidebar({
 		: hydratedEnvironments !== undefined;
 	const agents = unifiedAgentListEnabled ? (hostedAgentTiles ?? []) : selfManagedTiles;
 	const activeAgentTile = activeAgentId
-		? (agents.find((tile) => agentTileMatchesRouteId(tile, activeAgentId)) ?? null)
+		? (agents.find((tile) =>
+				agentTileMatchesRouteId(tile, activeAgentId, activeDeploymentSelector),
+			) ?? null)
 		: null;
 	const activeAgent = activeAgentId
 		? (hydratedEnvironments?.find((env) => env.id === activeAgentId) ?? null)
@@ -1610,12 +1620,17 @@ export function AppSidebar({
 	const activeAgentKind =
 		activeAgentTile || !activeAgentId || agentsLoaded ? classifiedActiveAgentKind : "unresolved";
 	const activeSection = agentRoute?.section ?? "overview";
-	const [settingsSection, setSettingsSection] = useQueryState(
-		SETTINGS_QUERY_KEY,
-		parseAsStringLiteral(SETTINGS_SECTION_IDS).withOptions({ history: "replace" }),
-	);
+	const settingsSection = routeSearch.settings ?? null;
 	const settingsOpen = settingsSection !== null;
 	const activeSettingsSection = settingsSection ?? DEFAULT_SETTINGS_SECTION;
+	const setSettingsSection = (section: SettingsSectionId | null) =>
+		router.navigate({
+			to: ".",
+			search: (current) => ({ ...current, settings: section ?? undefined }),
+			hash: true,
+			replace: true,
+			resetScroll: false,
+		});
 	const openSettings = () => {
 		void setSettingsSection(settingsSection ?? DEFAULT_SETTINGS_SECTION);
 	};
@@ -1651,7 +1666,13 @@ export function AppSidebar({
 					/>
 				</Suspense>
 			) : null}
-			{!isMobile ? <RailSidebar agents={agents} activeAgentId={activeAgentId} /> : null}
+			{!isMobile ? (
+				<RailSidebar
+					agents={agents}
+					activeAgentId={activeAgentId}
+					activeDeploymentSelector={activeDeploymentSelector}
+				/>
+			) : null}
 			<Sidebar
 				collapsible="offcanvas"
 				variant={variant}
@@ -1698,6 +1719,7 @@ export function AppSidebar({
 							<FocusRailContent
 								agents={agents}
 								activeAgentId={activeAgentId}
+								activeDeploymentSelector={activeDeploymentSelector}
 								onNavigate={closeMobileSidebar}
 								showTooltips={false}
 							/>

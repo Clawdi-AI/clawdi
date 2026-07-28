@@ -1,5 +1,4 @@
-import { createFileRoute, redirect } from "@tanstack/react-router";
-import { agentSectionHref, hasAgentTabQuery } from "@/lib/agent-routes";
+import { createFileRoute } from "@tanstack/react-router";
 import { routeHeadTitle } from "@/lib/document-title";
 import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client";
 
@@ -11,17 +10,11 @@ import { AgentDetailClient } from "@/pages/dashboard/agents/agent-detail-client"
 // fired `GET /v1/skills/` and 422'd.
 export const Route = createFileRoute("/_protected/_dashboard/agents/$id/skills/")({
 	head: () => routeHeadTitle("Skills"),
-	beforeLoad: ({ params, search }) => {
-		// Mirror `$section`'s legacy `?tab=` redirect: this URL no longer
-		// reaches `$section`, so old tab-query links normalize here.
-		if (hasAgentTabQuery(search)) {
-			throw redirect({ href: agentSectionHref(params.id, "skills", search), replace: true });
-		}
-	},
 	component: AgentSkillsRoute,
 });
 
 function AgentSkillsRoute() {
 	const { id } = Route.useParams();
-	return <AgentDetailClient environmentId={id} section="skills" />;
+	const search = Route.useSearch();
+	return <AgentDetailClient environmentId={id} section="skills" routeSearch={search} />;
 }

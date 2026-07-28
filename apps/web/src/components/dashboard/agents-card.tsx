@@ -23,7 +23,7 @@ import {
 	EntityCardSkeleton,
 	EntityHeader,
 } from "@/components/entity-card";
-import { agentSectionHref, parseAgentPathname } from "@/lib/agent-routes";
+import { agentRouteIdsEqual, agentSectionHref, parseAgentPathname } from "@/lib/agent-routes";
 import { cn, relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["AgentResponse"];
@@ -91,9 +91,17 @@ export interface AgentTile {
 	env?: Env | null;
 }
 
-export function agentTileMatchesRouteId(tile: AgentTile, routeId: string): boolean {
-	if (tile.id === routeId || tile.env?.id === routeId) return true;
-	return tile.href ? parseAgentPathname(tile.href)?.agentId === routeId : false;
+export function agentTileMatchesRouteId(
+	tile: AgentTile,
+	routeId: string,
+	deploymentSelector?: string | null,
+): boolean {
+	if (deploymentSelector) {
+		return tile.source === "on-clawdi" && agentRouteIdsEqual(tile.id, deploymentSelector);
+	}
+	if (agentRouteIdsEqual(tile.id, routeId) || agentRouteIdsEqual(tile.env?.id, routeId))
+		return true;
+	return tile.href ? agentRouteIdsEqual(parseAgentPathname(tile.href)?.agentId, routeId) : false;
 }
 
 export interface AgentFleetSummary {

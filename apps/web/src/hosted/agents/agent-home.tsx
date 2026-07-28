@@ -27,13 +27,16 @@ import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { deploymentStatusFromResource, deploymentStatusLabel } from "@/hosted/deployment-status";
 import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
 import {
-	AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY,
+	type AgentRouteSearch,
 	type AgentSectionId,
-	agentDeploymentRouteQuery,
 	agentDeploymentSelector,
-	agentSectionHref,
+	agentRouteIdsEqual,
+	agentRouteOwnsSection,
+	agentSectionLink,
+	bindAgentDeploymentSearch,
+	CONNECTED_AGENT_SECTION_IDS,
+	HOSTED_AGENT_SECTION_IDS,
 	isAcceptedHostedAgentRoute,
-	parseAgentPathname,
 } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -51,16 +54,15 @@ const UNRESOLVED_HOSTED_AGENT_MAX_REFETCH_ATTEMPTS = 24;
 export function AgentHome({
 	environmentId,
 	section,
+	routeSearch,
 }: {
 	environmentId: string;
 	section: AgentSectionId;
+	routeSearch: AgentRouteSearch;
 }) {
 	const router = useRouter();
 	const pathname = useLocation({ select: (location) => location.pathname });
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const searchParams = new URLSearchParams(searchStr);
-	const locationAgentId = parseAgentPathname(pathname)?.agentId ?? null;
-	const deploymentSelector = agentDeploymentSelector(searchParams);
+	const deploymentSelector = agentDeploymentSelector(routeSearch);
 	const {
 		deployment,
 		environmentId: resolvedEnvId,
@@ -74,8 +76,8 @@ export function AgentHome({
 		refetch,
 	} = useAgentDeployment(environmentId, deploymentSelector);
 	const isCloudEnvironmentId = isCloudEnvId(environmentId);
-	const requestedFromCloudRedirect = searchParams.get("source") === "on-clawdi";
-	const acceptedSetupRoute = isAcceptedHostedAgentRoute(environmentId, searchParams);
+	const requestedFromCloudRedirect = routeSearch.source === "on-clawdi";
+	const acceptedSetupRoute = isAcceptedHostedAgentRoute(environmentId, routeSearch);
 	const requestedHostedAgent =
 		requestedFromCloudRedirect || Boolean(deploymentSelector) || !isCloudEnvironmentId;
 	const unresolvedHostedAgent =
@@ -84,22 +86,67 @@ export function AgentHome({
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
 	const isFetchingRef = useRef(isFetching);
 	const [acceptedSetupStatusTimedOut, setAcceptedSetupStatusTimedOut] = useState(false);
+	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
+	const hostedSection = HOSTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
+	const connectedSection = CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
 
-	// Canonicalize a resolved hosted route with its deployment selector before
-	// Stop removes the env mapping. The selector is then sufficient to retain
-	// detail ownership while the cloud-agent projection is absent. During a
-	// pending route transition, the old match can briefly render against the new
-	// location. Only that location's owner may canonicalize it.
+	// Hosted membership is asynchronous, so it cannot be resolved in beforeLoad.
+	// Only the exact current section may add deployment identity or redirect an
+	// unsupported section; a stale rendered match cannot rewrite a newer route.
 	useEffect(() => {
-		if (locationAgentId !== environmentId || !deployment || deploymentSelector) return;
-		const query = new URLSearchParams(searchStr);
-		query.set("source", "on-clawdi");
-		query.set(AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY, deployment.resource.id);
-		void router.navigate({
-			href: agentSectionHref(environmentId, section, query),
-			replace: true,
-		});
-	}, [deployment, deploymentSelector, environmentId, locationAgentId, router, searchStr, section]);
+		if (!ownsCurrentSection) return;
+
+		if (deployment) {
+			const deploymentId = deployment.resource.id;
+			const selectorMatches = agentRouteIdsEqual(deploymentSelector, deploymentId);
+			if (!hostedSection) {
+				void router.navigate({
+					to: "/agents/$id",
+					params: { id: environmentId },
+					search: (current) =>
+						selectorMatches ? current : bindAgentDeploymentSearch(current, deploymentId),
+					hash: true,
+					replace: true,
+				});
+				return;
+			}
+			if (!selectorMatches) {
+				void router.navigate({
+					to: ".",
+					search: (current) => bindAgentDeploymentSearch(current, deploymentId),
+					hash: true,
+					replace: true,
+				});
+			}
+			return;
+		}
+
+		if (
+			membershipResolved &&
+			ambiguousMatches.length === 0 &&
+			!requestedHostedAgent &&
+			!connectedSection
+		) {
+			void router.navigate({
+				to: "/agents/$id",
+				params: { id: environmentId },
+				search: (current) => current,
+				hash: true,
+				replace: true,
+			});
+		}
+	}, [
+		ambiguousMatches.length,
+		connectedSection,
+		deployment,
+		deploymentSelector,
+		environmentId,
+		hostedSection,
+		membershipResolved,
+		ownsCurrentSection,
+		requestedHostedAgent,
+		router,
+	]);
 
 	useEffect(() => {
 		isFetchingRef.current = isFetching;
@@ -194,7 +241,7 @@ export function AgentHome({
 			<DeploymentChooser
 				environmentId={environmentId}
 				section={section}
-				searchStr={searchStr}
+				routeSearch={routeSearch}
 				matches={ambiguousMatches}
 				isFetching={isFetching}
 				onRetry={handleCheckAgain}
@@ -209,12 +256,14 @@ export function AgentHome({
 			matchedRuntime && isHostedRuntime(matchedRuntime)
 				? matchedRuntime
 				: defaultDeploymentRuntime(deployment);
+		const deploymentRouteSearch = bindAgentDeploymentSearch(routeSearch, deployment.resource.id);
 		return (
 			<HostedAgentDetail
 				environmentId={resolvedEnvId}
 				deployment={deployment}
 				runtime={runtime}
 				section={section}
+				routeSearch={deploymentRouteSearch}
 				onDeleteAccepted={() => router.navigate({ href: "/agents", replace: true })}
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 				isCheckingDeployment={isFetching}
@@ -252,7 +301,13 @@ export function AgentHome({
 		);
 	}
 
-	return <ConnectedAgentDetail environmentId={environmentId} section={section} />;
+	return (
+		<ConnectedAgentDetail
+			environmentId={environmentId}
+			section={section}
+			routeSearch={routeSearch}
+		/>
+	);
 }
 
 export function AcceptedAgentSetupState({
@@ -300,14 +355,14 @@ export function AcceptedAgentSetupState({
 function DeploymentChooser({
 	environmentId,
 	section,
-	searchStr,
+	routeSearch,
 	matches,
 	isFetching,
 	onRetry,
 }: {
 	environmentId: string;
 	section: AgentSectionId;
-	searchStr: string;
+	routeSearch: AgentRouteSearch;
 	matches: readonly AgentDeploymentMatch[];
 	isFetching: boolean;
 	onRetry: () => void;
@@ -350,14 +405,14 @@ function DeploymentChooser({
 						deployment.resource.spec.name,
 						deployment.resource.spec.runtime,
 					);
-					const query = {
-						...agentDeploymentRouteQuery(searchStr),
-						[AGENT_DEPLOYMENT_SELECTOR_QUERY_KEY]: deployment.resource.id,
-					};
 					return (
 						<Link
 							key={deployment.resource.id}
-							to={agentSectionHref(environmentId, section, query)}
+							{...agentSectionLink(
+								environmentId,
+								section,
+								bindAgentDeploymentSearch(routeSearch, deployment.resource.id),
+							)}
 							aria-label={`Open ${name}`}
 							className={cn(
 								ENTITY_CARD_BASE,

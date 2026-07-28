@@ -39,7 +39,11 @@ import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { agentSectionHref } from "@/lib/agent-routes";
+import {
+	type AgentRouteSearch,
+	agentDeploymentRouteQuery,
+	agentSectionHref,
+} from "@/lib/agent-routes";
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
@@ -77,9 +81,11 @@ function SkillDetailPageInner({ routeKey }: { routeKey: string }) {
 export function SkillDetailContent({
 	skillKey,
 	agentId,
+	routeSearch,
 }: {
 	skillKey: string;
 	agentId?: string | null;
+	routeSearch?: AgentRouteSearch;
 }) {
 	const router = useRouter();
 	const api = useApi();
@@ -97,7 +103,7 @@ export function SkillDetailContent({
 	const [projectIdParam] = useQueryState("project", parseAsString.withDefault(""));
 	const selectedProjectId = projectIdParam;
 	const skillListHref = agentId
-		? agentSectionHref(agentId, "skills")
+		? agentSectionHref(agentId, "skills", agentDeploymentRouteQuery(routeSearch))
 		: projectResourceHref("skills");
 
 	const {
