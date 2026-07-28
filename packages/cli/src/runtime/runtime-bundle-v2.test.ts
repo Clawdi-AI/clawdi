@@ -1,8 +1,12 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
 import {
 	chmodSync,
+	existsSync,
+	lstatSync,
 	mkdirSync,
 	mkdtempSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
@@ -31,6 +35,39 @@ const goldenPath = resolve(
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];
+
+function readFileTree(root: string): string {
+	if (!existsSync(root)) return "";
+	const stat = lstatSync(root);
+	if (stat.isSymbolicLink()) return "";
+	if (stat.isFile()) return readFileSync(root, "utf-8");
+	if (!stat.isDirectory()) return "";
+	return readdirSync(root)
+		.sort()
+		.map((entry) => readFileTree(join(root, entry)))
+		.join("\n");
+}
+
+function validateGeneratedEgressConfig(addonPath: string, envFilePath: string): void {
+	execFileSync(
+		"python3",
+		[
+			"-c",
+			[
+				"import importlib.util",
+				"import sys",
+				"spec = importlib.util.spec_from_file_location('clawdi_egress_addon_test', sys.argv[1])",
+				"module = importlib.util.module_from_spec(spec)",
+				"spec.loader.exec_module(module)",
+				"addon = module.ClawdiEgressAddon()",
+				"addon.reload_from_environment({'CLAWDI_EGRESS_ENV_FILE': sys.argv[2]})",
+			].join("\n"),
+			addonPath,
+			envFilePath,
+		],
+		{ stdio: "pipe" },
+	);
+}
 
 afterEach(() => {
 	process.env = { ...originalEnv };
@@ -262,7 +299,7 @@ describe("hosted runtime bundle v2", () => {
 		).toBe(3);
 	});
 
-	test("keeps live-sync channel bindings applicable from the runtime watch service", () => {
+	test("resolves canonical auth for fresh boot and watcher reconcile without widening secret scope", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-watch-"));
 		roots.push(root);
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
@@ -271,16 +308,33 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		process.env.CLAWDI_HOME = join(root, "clawdi-home");
 		process.env.HOME = process.env.CLAWDI_RUNTIME_HOME;
-		process.env.CLAWDI_AUTH_TOKEN = "test-token";
-		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
+		process.env.CLAWDI_AUTH_TOKEN = "";
+		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_BOOTSTRAP_AUTH_TOKEN";
+		process.env.CLAWDI_BOOTSTRAP_AUTH_TOKEN = "deployment-auth-token";
 		process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
+		const openclawConfigPath = join(paths.userHome, ".openclaw", "openclaw.json");
 		const channelPatchPath = join(root, "openclaw-channel-patch.json");
 		const mcpSecretRef = "secret://mcp/sidecar-only/token";
 		const mcpSecret = "mcp-sidecar-only-secret";
+		const egressEngine = {
+			type: "mitmproxy",
+			version: "12.2.3",
+			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+		} as const;
+		const mitmdump = join(
+			paths.egressEngineMaintainedRoot,
+			egressEngine.version,
+			egressEngine.sha256,
+			"mitmdump",
+		);
+		mkdirSync(dirname(mitmdump), { recursive: true });
+		writeFileSync(mitmdump, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(mitmdump, 0o755);
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -292,11 +346,23 @@ describe("hosted runtime bundle v2", () => {
 				`  if [[ "$payload" == *'"channels"'* && "$payload" == *'"telegram"'* ]]; then`,
 				`    printf '%s\\n' "$payload" > '${channelPatchPath}'`,
 				"  fi",
+				'elif [[ "$1 $2" == "mcp set" ]]; then',
+				`  python3 - "$3" "$4" '${openclawConfigPath}' <<'PY'`,
+				"import json",
+				"import sys",
+				"name, payload, path = sys.argv[1:]",
+				"with open(path, encoding='utf-8') as handle:",
+				"    config = json.load(handle)",
+				"config.setdefault('mcp', {}).setdefault('servers', {})[name] = json.loads(payload)",
+				"with open(path, 'w', encoding='utf-8') as handle:",
+				"    json.dump(config, handle)",
+				"PY",
 				"fi",
 				"",
 			].join("\n"),
 		);
 		chmodSync(openclawBin, 0o700);
+		writeFileSync(openclawConfigPath, '{"mcp":{"servers":{}}}\n');
 
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as {
 			manifest: Record<string, unknown>;
@@ -305,8 +371,19 @@ describe("hosted runtime bundle v2", () => {
 		};
 		raw.manifest = {
 			...raw.manifest,
+			egressEngine,
 			mcp: {
 				servers: {
+					clawdi: {
+						url: "https://cloud-api.test/v1/mcp/clawdi",
+						transport: "streamable-http",
+						headers: {
+							Authorization: {
+								secretRef: "env://CLAWDI_AUTH_TOKEN",
+								prefix: "Bearer ",
+							},
+						},
+					},
 					"sidecar-only": {
 						url: "https://mcp.test/v1/service",
 						transport: "streamable-http",
@@ -345,6 +422,36 @@ describe("hosted runtime bundle v2", () => {
 		});
 
 		expect(result.installErrors).toEqual([]);
+		const egressSecretPath = join(paths.managedSecretRoot, "egress-secrets.json");
+		const profileBundle = JSON.parse(readFileSync(paths.egressProfileBundle, "utf-8")) as {
+			profiles: Array<{
+				id: string;
+				rewrite?: { setHeaders?: Record<string, { secretRef?: string }> };
+			}>;
+		};
+		const managedClawdiProfile = profileBundle.profiles.find(
+			(profile) => profile.id === "managed-mcp-clawdi",
+		);
+		const managedClawdiSecretRef =
+			managedClawdiProfile?.rewrite?.setHeaders?.Authorization?.secretRef;
+		expect(managedClawdiSecretRef).toBe("env://CLAWDI_AUTH_TOKEN");
+		const initialEgressSecrets = JSON.parse(readFileSync(egressSecretPath, "utf-8")) as Record<
+			string,
+			string
+		>;
+		expect(initialEgressSecrets[managedClawdiSecretRef ?? ""]).toBe("deployment-auth-token");
+		validateGeneratedEgressConfig(paths.egressAddon, paths.egressTransparentEnv);
+		const nativeMcpConfig = JSON.parse(readFileSync(openclawConfigPath, "utf-8")) as {
+			mcp: { servers: Record<string, unknown> };
+		};
+		expect(nativeMcpConfig.mcp.servers.clawdi).toEqual({
+			url: "https://cloud-api.test/v1/mcp/clawdi",
+			transport: "streamable-http",
+			headers: {
+				Authorization: `Bearer ${managedMcpHeaderPlaceholder("clawdi", "Authorization")}`,
+			},
+		});
+		expect(JSON.stringify(nativeMcpConfig)).not.toContain("deployment-auth-token");
 		const watchUnit = readFileSync(
 			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
 			"utf-8",
@@ -355,7 +462,12 @@ describe("hosted runtime bundle v2", () => {
 		const watchEnv = readFileSync(watchEnvPath, "utf-8");
 		expect(watchEnv).toContain(gatewayTokenLine);
 		expect(statSync(watchEnvPath).mode & 0o777).toBe(0o600);
-		const sidecarOnlySecrets = ["sk-provider-golden", "123456789:telegram-agent-golden", mcpSecret];
+		const sidecarOnlySecrets = [
+			"deployment-auth-token",
+			"sk-provider-golden",
+			"123456789:telegram-agent-golden",
+			mcpSecret,
+		];
 		for (const secret of sidecarOnlySecrets) expect(watchEnv).not.toContain(secret);
 		expect(watchEnv).toContain("999999999:9ded1453047ec0a48ec3b735075f7448");
 		expect(
@@ -366,6 +478,19 @@ describe("hosted runtime bundle v2", () => {
 			readFileSync(paths.managedSecretCacheFile, "utf-8"),
 		].join("\n");
 		for (const secret of sidecarOnlySecrets) expect(persistentLastGood).not.toContain(secret);
+		for (const secret of sidecarOnlySecrets)
+			expect(readFileTree(paths.userHome)).not.toContain(secret);
+		const authTokenStat = statSync(paths.daemonAuthToken);
+		const egressSecretStat = statSync(egressSecretPath);
+		expect(authTokenStat.mode & 0o777).toBe(0o600);
+		expect(egressSecretStat.mode & 0o777).toBe(0o600);
+		expect(statSync(paths.managedSecretRoot).mode & 0o777).toBe(0o711);
+		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			expect(authTokenStat.uid).toBe(0);
+			expect(authTokenStat.gid).toBe(0);
+			expect(egressSecretStat.uid).toBe(10_002);
+			expect(egressSecretStat.gid).toBe(10_002);
+		}
 		expect(JSON.parse(readFileSync(channelPatchPath, "utf-8"))).toMatchObject({
 			channels: {
 				telegram: {
@@ -382,6 +507,49 @@ describe("hosted runtime bundle v2", () => {
 				},
 			},
 		});
+
+		const initialSidecarEnv = readFileSync(
+			join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
+			"utf-8",
+		);
+		const initialSidecarRevision = initialSidecarEnv.match(/^CLAWDI_RUNTIME_REV="([^"]+)"$/m)?.[1];
+		expect(initialSidecarRevision).toBeTruthy();
+		writeFileSync(paths.daemonAuthToken, "deployment-auth-token-rotated\n", { mode: 0o600 });
+		delete process.env.CLAWDI_BOOTSTRAP_AUTH_TOKEN;
+		const watched = convergeRuntimeManifest(load, paths, {
+			managedGatewayModelListFetcher: ({ baseUrl }) => ({
+				status: "ok",
+				endpoint: `${baseUrl}/models`,
+				models: [{ id: "gpt-test" }],
+			}),
+		});
+		expect(watched.installErrors).toEqual([]);
+		const reconciledEgressSecrets = JSON.parse(readFileSync(egressSecretPath, "utf-8")) as Record<
+			string,
+			string
+		>;
+		expect(reconciledEgressSecrets["env://CLAWDI_AUTH_TOKEN"]).toBe(
+			"deployment-auth-token-rotated",
+		);
+		validateGeneratedEgressConfig(paths.egressAddon, paths.egressTransparentEnv);
+		const reconciledSidecarEnv = readFileSync(
+			join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
+			"utf-8",
+		);
+		const reconciledSidecarRevision = reconciledSidecarEnv.match(
+			/^CLAWDI_RUNTIME_REV="([^"]+)"$/m,
+		)?.[1];
+		expect(reconciledSidecarRevision).toBeTruthy();
+		expect(reconciledSidecarRevision).not.toBe(initialSidecarRevision);
+		expect(reconciledSidecarEnv).not.toContain("deployment-auth-token-rotated");
+		expect(readFileSync(paths.daemonAuthToken, "utf-8")).toBe("deployment-auth-token-rotated\n");
+		const reconciledPersistentState = [
+			readFileSync(paths.manifestLastGood, "utf-8"),
+			readFileSync(paths.managedSecretCacheFile, "utf-8"),
+			readFileTree(paths.userHome),
+		].join("\n");
+		expect(reconciledPersistentState).not.toContain("deployment-auth-token");
+		expect(reconciledPersistentState).not.toContain("deployment-auth-token-rotated");
 	});
 
 	test("rejects unknown fields and dormant providers", () => {

@@ -3,6 +3,7 @@ import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../
 import type { RuntimePaths } from "./paths";
 
 export const RUNTIME_AUTH_TOKEN_ENV = "CLAWDI_AUTH_TOKEN";
+export const RUNTIME_AUTH_TOKEN_SECRET_REF = `env://${RUNTIME_AUTH_TOKEN_ENV}`;
 export const RUNTIME_AUTH_ENV_SELECTOR = "CLAWDI_RUNTIME_AUTH_ENV";
 
 export function runtimeAuthEnvName(): string {
