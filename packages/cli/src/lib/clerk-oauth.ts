@@ -1,8 +1,15 @@
 import { createHash, randomBytes } from "node:crypto";
 import { join } from "node:path";
 import {
+	canonicalApiOrigin,
+	isProductionCloudApiOrigin,
+	normalizeCloudApiBaseUrl,
+	normalizeHostedDeployApiBaseUrl,
+} from "./api-origin";
+import {
 	type ClawdiAuth,
 	type ClerkOAuthAuth,
+	type CredentialEndpointBinding,
 	clearAuth,
 	clearPendingAuth,
 	getAuth,
@@ -48,6 +55,203 @@ export class ClerkOAuthError extends Error {
 		this.name = "ClerkOAuthError";
 		this.code = code;
 	}
+}
+
+const ENV_CREDENTIAL_ORIGIN = "CLAWDI_AUTH_TOKEN_ORIGIN";
+
+function bindingError(code: string, message: string): ClerkOAuthError {
+	return new ClerkOAuthError(code, message);
+}
+
+function canonicalStoredOrigin(raw: string, service: "Cloud" | "Hosted"): string {
+	let origin: string;
+	try {
+		const base =
+			service === "Cloud" ? normalizeCloudApiBaseUrl(raw) : normalizeHostedDeployApiBaseUrl(raw);
+		origin = canonicalApiOrigin(base);
+	} catch {
+		throw bindingError(
+			"invalid_credential_endpoint_binding",
+			"The saved credential endpoint binding is invalid. Log out and sign in again.",
+		);
+	}
+	if (raw !== origin) {
+		throw bindingError(
+			"invalid_credential_endpoint_binding",
+			"The saved credential endpoint binding is not canonical. Log out and sign in again.",
+		);
+	}
+	return origin;
+}
+
+function normalizedBinding(
+	binding: CredentialEndpointBinding | undefined,
+): CredentialEndpointBinding | null {
+	if (binding?.version !== 1 || typeof binding.cloudApiOrigin !== "string") {
+		return null;
+	}
+	const cloudApiOrigin = canonicalStoredOrigin(binding.cloudApiOrigin, "Cloud");
+	const hostedApiOrigin =
+		typeof binding.hostedApiOrigin === "string"
+			? canonicalStoredOrigin(binding.hostedApiOrigin, "Hosted")
+			: undefined;
+	return {
+		version: 1,
+		cloudApiOrigin,
+		...(hostedApiOrigin ? { hostedApiOrigin } : {}),
+	};
+}
+
+export function createCredentialEndpointBinding(
+	cloudApiUrl: string,
+	hostedApiUrl?: string,
+): CredentialEndpointBinding {
+	const cloudApiOrigin = canonicalApiOrigin(normalizeCloudApiBaseUrl(cloudApiUrl));
+	const hostedApiOrigin = hostedApiUrl
+		? canonicalApiOrigin(normalizeHostedDeployApiBaseUrl(hostedApiUrl))
+		: undefined;
+	return {
+		version: 1,
+		cloudApiOrigin,
+		...(hostedApiOrigin ? { hostedApiOrigin } : {}),
+	};
+}
+
+function unboundCredentialError(auth: ClawdiAuth, targetOrigin: string): ClerkOAuthError {
+	if (auth.authType === "clerk_oauth") {
+		return bindingError(
+			"oauth_endpoint_binding_required",
+			"This Clerk OAuth credential predates endpoint binding and cannot be used safely. Run `clawdi auth logout`, then `clawdi auth login` again for the current Cloud and Hosted endpoints.",
+		);
+	}
+	if (process.env.CLAWDI_AUTH_TOKEN) {
+		return bindingError(
+			"environment_endpoint_binding_required",
+			`CLAWDI_AUTH_TOKEN is not bound to ${targetOrigin}. Set ${ENV_CREDENTIAL_ORIGIN} to the intended Cloud origin, or remove the endpoint override.`,
+		);
+	}
+	return bindingError(
+		"legacy_endpoint_binding_required",
+		`This legacy API key is not bound to ${targetOrigin}. Run \`clawdi auth logout\`, then re-import it with \`clawdi auth login --manual\` for this Cloud origin.`,
+	);
+}
+
+function boundCloudOrigin(auth: ClawdiAuth): string | null {
+	if (process.env.CLAWDI_AUTH_TOKEN) {
+		const configured = process.env[ENV_CREDENTIAL_ORIGIN]?.trim();
+		return configured ? createCredentialEndpointBinding(configured).cloudApiOrigin : null;
+	}
+	return normalizedBinding(auth.endpointBinding)?.cloudApiOrigin ?? null;
+}
+
+/** Validate a Cloud bearer against the exact request base before returning it. */
+export function assertCloudCredentialEndpoint(auth: ClawdiAuth, cloudApiUrl: string): string {
+	const targetOrigin = canonicalApiOrigin(normalizeCloudApiBaseUrl(cloudApiUrl));
+	if (auth.authType === "clerk_oauth" && !isClerkOAuthAuth(auth)) {
+		throw bindingError(
+			"invalid_oauth_credential",
+			"The saved Clerk OAuth credential is incomplete. Log out and sign in again.",
+		);
+	}
+	const boundOrigin = boundCloudOrigin(auth);
+	if (!boundOrigin) {
+		if (auth.authType !== "clerk_oauth" && isProductionCloudApiOrigin(targetOrigin)) {
+			return targetOrigin;
+		}
+		throw unboundCredentialError(auth, targetOrigin);
+	}
+	if (boundOrigin !== targetOrigin) {
+		throw bindingError(
+			"credential_endpoint_mismatch",
+			`Credential is bound to Cloud origin ${boundOrigin}, but the request targets ${targetOrigin}. Restore the endpoint configuration or log out and sign in again.`,
+		);
+	}
+	return targetOrigin;
+}
+
+/** Validate the complete Cloud + Hosted profile used by the shared OAuth bearer. */
+export function assertClerkOAuthEndpointProfile(
+	auth: ClerkOAuthAuth,
+	cloudApiUrl: string,
+	hostedApiUrl: string,
+): void {
+	const cloudOrigin = canonicalApiOrigin(normalizeCloudApiBaseUrl(cloudApiUrl));
+	const hostedOrigin = canonicalApiOrigin(normalizeHostedDeployApiBaseUrl(hostedApiUrl));
+	const binding = normalizedBinding(auth.endpointBinding);
+	if (!binding?.hostedApiOrigin) throw unboundCredentialError(auth, cloudOrigin);
+	if (binding.cloudApiOrigin !== cloudOrigin || binding.hostedApiOrigin !== hostedOrigin) {
+		throw bindingError(
+			"credential_endpoint_mismatch",
+			`Credential is bound to Cloud ${binding.cloudApiOrigin} and Hosted ${binding.hostedApiOrigin}, but the request profile is Cloud ${cloudOrigin} and Hosted ${hostedOrigin}. Restore the endpoint configuration or log out and sign in again.`,
+		);
+	}
+}
+
+export type CredentialEndpointBindingMetadata = {
+	state: "bound" | "invalid" | "legacy-production-compatible" | "unbound";
+	cloudApiOrigin?: string;
+	hostedApiOrigin?: string;
+	currentProfileMatches?: boolean;
+};
+
+/** Non-secret endpoint metadata for `auth status`; malformed raw values stay redacted. */
+export function describeCredentialEndpointBinding(
+	auth: ClawdiAuth,
+	cloudApiUrl: string,
+	hostedApiUrl: string,
+): CredentialEndpointBindingMetadata {
+	let binding: CredentialEndpointBinding | null;
+	try {
+		if (process.env.CLAWDI_AUTH_TOKEN) {
+			const configured = process.env[ENV_CREDENTIAL_ORIGIN]?.trim();
+			binding = configured ? createCredentialEndpointBinding(configured) : null;
+		} else {
+			binding = normalizedBinding(auth.endpointBinding);
+			if (auth.endpointBinding && !binding) return { state: "invalid" };
+		}
+	} catch {
+		return { state: "invalid" };
+	}
+
+	let cloudOrigin: string | undefined;
+	let hostedOrigin: string | undefined;
+	try {
+		cloudOrigin = canonicalApiOrigin(normalizeCloudApiBaseUrl(cloudApiUrl));
+		hostedOrigin = canonicalApiOrigin(normalizeHostedDeployApiBaseUrl(hostedApiUrl));
+	} catch {
+		// Current config is reported elsewhere. Do not echo a malformed value
+		// through endpoint-binding metadata because it could contain userinfo.
+	}
+
+	if (binding) {
+		if (auth.authType === "clerk_oauth" && !binding.hostedApiOrigin) {
+			return {
+				state: "unbound",
+				cloudApiOrigin: binding.cloudApiOrigin,
+				currentProfileMatches: false,
+			};
+		}
+		return {
+			state: "bound",
+			cloudApiOrigin: binding.cloudApiOrigin,
+			...(binding.hostedApiOrigin ? { hostedApiOrigin: binding.hostedApiOrigin } : {}),
+			...(cloudOrigin
+				? {
+						currentProfileMatches:
+							binding.cloudApiOrigin === cloudOrigin &&
+							(binding.hostedApiOrigin === undefined || binding.hostedApiOrigin === hostedOrigin),
+					}
+				: {}),
+		};
+	}
+	if (auth.authType !== "clerk_oauth" && cloudOrigin && isProductionCloudApiOrigin(cloudOrigin)) {
+		return {
+			state: "legacy-production-compatible",
+			cloudApiOrigin: cloudOrigin,
+			currentProfileMatches: true,
+		};
+	}
+	return { state: "unbound", ...(cloudOrigin ? { currentProfileMatches: false } : {}) };
 }
 
 type FetchLike = (request: Request) => Promise<Response>;
@@ -369,13 +573,16 @@ export function createClerkOAuthAuthorization({
 	config,
 	discovery,
 	apiUrl,
+	hostedApiUrl,
 	now = Date.now,
 }: {
 	config: ClerkOAuthClientConfig;
 	discovery: ClerkOAuthDiscovery;
 	apiUrl: string;
+	hostedApiUrl: string;
 	now?: () => number;
 }): PendingAuth {
+	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
 	const state = randomBytes(32).toString("base64url");
 	const codeVerifier = randomBytes(48).toString("base64url");
 	const challenge = createHash("sha256").update(codeVerifier).digest("base64url");
@@ -399,7 +606,8 @@ export function createClerkOAuthAuthorization({
 		authorizedParties: config.authorizedParties,
 		tokenEndpoint: discovery.tokenEndpoint,
 		expiresAt: new Date(now() + OAUTH_LOGIN_TTL_MS).toISOString(),
-		apiUrl,
+		apiUrl: endpointBinding.cloudApiOrigin,
+		endpointBinding,
 		scopes: [...REQUIRED_SCOPES],
 	};
 }
@@ -609,6 +817,20 @@ export async function exchangeClerkOAuthCode(
 			"Pending OAuth login expired. Run `clawdi auth login` again.",
 		);
 	}
+	const endpointBinding = normalizedBinding(pending.endpointBinding);
+	if (!endpointBinding?.hostedApiOrigin) {
+		throw new ClerkOAuthError(
+			"oauth_endpoint_binding_required",
+			"Pending OAuth login predates endpoint binding. Run `clawdi auth login` again.",
+		);
+	}
+	const pendingCloudOrigin = canonicalApiOrigin(normalizeCloudApiBaseUrl(pending.apiUrl));
+	if (endpointBinding.cloudApiOrigin !== pendingCloudOrigin) {
+		throw new ClerkOAuthError(
+			"invalid_credential_endpoint_binding",
+			"Pending OAuth endpoint binding does not match its Cloud URL. Run `clawdi auth login` again.",
+		);
+	}
 	const code = parseClerkOAuthCallback(pending, callbackUrl);
 	const form = new URLSearchParams({
 		grant_type: "authorization_code",
@@ -626,7 +848,7 @@ export async function exchangeClerkOAuthCode(
 		tokenEndpoint: pending.tokenEndpoint,
 		now: now(),
 	});
-	return auth;
+	return { ...auth, endpointBinding };
 }
 
 function credentialLockPath(): string {
@@ -765,7 +987,9 @@ async function revokeClerkOAuthGrant(
 	auth: ClerkOAuthAuth,
 	fetcher: FetchLike,
 ): Promise<void> {
-	const endpoint = new URL("/v1/cli/auth/oauth/revoke", `${apiUrl.replace(/\/$/, "")}/`);
+	const cloudApiBaseUrl = normalizeCloudApiBaseUrl(apiUrl);
+	assertCloudCredentialEndpoint(auth, cloudApiBaseUrl);
+	const endpoint = new URL("/v1/cli/auth/oauth/revoke", `${cloudApiBaseUrl}/`);
 	const response = await fetcher(
 		new Request(endpoint, {
 			method: "POST",
@@ -860,7 +1084,13 @@ export async function verifyAndPersistClerkOAuthLogin(
 ): Promise<ClerkOAuthCloudVerification> {
 	const fetcher = options.fetch ?? fetchWithTimeout;
 	const expected = options.expectedCredential ?? { kind: "none" };
-	const endpoint = new URL("/v1/auth/me", `${apiUrl.replace(/\/$/, "")}/`);
+	const binding = normalizedBinding(auth.endpointBinding);
+	if (!binding?.hostedApiOrigin) {
+		throw unboundCredentialError(auth, canonicalApiOrigin(normalizeCloudApiBaseUrl(apiUrl)));
+	}
+	const cloudApiBaseUrl = normalizeCloudApiBaseUrl(apiUrl);
+	assertCloudCredentialEndpoint(auth, cloudApiBaseUrl);
+	const endpoint = new URL("/v1/auth/me", `${cloudApiBaseUrl}/`);
 	let response: Response;
 	try {
 		response = await fetcher(
@@ -989,6 +1219,7 @@ async function refreshClerkOAuthGrant(
 	}
 	refreshed.email = auth.email;
 	refreshed.userId = auth.userId;
+	refreshed.endpointBinding = auth.endpointBinding;
 	return refreshed;
 }
 
@@ -1011,6 +1242,7 @@ function terminalRefreshFailure(error: unknown): boolean {
 }
 
 export async function getClawdiAccessToken(
+	cloudApiUrl: string,
 	options: ClerkOAuthNetworkOptions = {},
 ): Promise<string> {
 	const auth = getAuth();
@@ -1020,6 +1252,7 @@ export async function getClawdiAccessToken(
 			"Not logged in. Run `clawdi auth login` first.",
 		);
 	}
+	assertCloudCredentialEndpoint(auth, cloudApiUrl);
 	if (!isClerkOAuthAuth(auth)) return auth.apiKey;
 	const now = options.now ?? Date.now;
 	const expiresAt = Date.parse(auth.accessTokenExpiresAt);
@@ -1039,6 +1272,7 @@ export async function getClawdiAccessToken(
 						"Not logged in. Run `clawdi auth login` first.",
 					);
 				}
+				assertCloudCredentialEndpoint(latest, cloudApiUrl);
 				if (!isClerkOAuthAuth(latest)) return latest.apiKey;
 				const latestExpiresAt = Date.parse(latest.accessTokenExpiresAt);
 				if (
@@ -1105,6 +1339,7 @@ export async function logoutClawdiCredentials(
 			let remoteRevoked = false;
 			if (isClerkOAuthAuth(current)) {
 				try {
+					assertCloudCredentialEndpoint(current, apiUrl);
 					const expiresAt = Date.parse(current.accessTokenExpiresAt);
 					const now = options.now ?? Date.now;
 					const latest =

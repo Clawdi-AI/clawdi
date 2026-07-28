@@ -68,7 +68,10 @@ describe("Hosted deploy auth boundary", () => {
 	});
 
 	test("requires the single canonical Clerk OAuth login", async () => {
-		const provider = createHostedDeployAuthProvider();
+		const provider = createHostedDeployAuthProvider({
+			cloudApiUrl: "https://cloud.example.test",
+			hostedApiUrl: "https://deploy.example.test",
+		});
 		await expect(provider.getAccessToken()).rejects.toBeInstanceOf(HostedDeployAuthorizationError);
 	});
 
@@ -105,6 +108,11 @@ describe("Hosted deploy auth boundary", () => {
 			scopes: ["openid", "profile", "email"],
 			subject: "user_same_sub",
 			userId: "cloud-local-user",
+			endpointBinding: {
+				version: 1,
+				cloudApiOrigin: "https://cloud.example.test",
+				hostedApiOrigin: "https://deploy.example.test",
+			},
 		});
 
 		const authorizations: string[] = [];

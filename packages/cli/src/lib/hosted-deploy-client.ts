@@ -19,10 +19,16 @@ import {
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient, { type Client, type Middleware } from "openapi-fetch";
+import {
+	canonicalApiOrigin,
+	normalizeCloudApiBaseUrl,
+	normalizeHostedDeployApiBaseUrl,
+} from "./api-origin";
 import { getConfig } from "./config";
 import {
 	assertHostedDeployAccessToken,
 	createHostedDeployAuthProvider,
+	HostedDeployAuthorizationError,
 	type HostedDeployAuthProvider,
 } from "./hosted-deploy-auth";
 import { getCliVersion } from "./version";
@@ -44,32 +50,7 @@ export class HostedDeployApiError extends Error {
 	}
 }
 
-export function normalizeHostedDeployApiBaseUrl(raw: string): string {
-	let url: URL;
-	try {
-		url = new URL(raw);
-	} catch {
-		throw new Error("Hosted deploy API URL must be a valid http:// or https:// URL.");
-	}
-	if (url.protocol !== "http:" && url.protocol !== "https:") {
-		throw new Error("Hosted deploy API URL must use http:// or https://.");
-	}
-	const loopback =
-		url.hostname === "localhost" ||
-		url.hostname === "127.0.0.1" ||
-		url.hostname === "[::1]" ||
-		url.hostname === "::1";
-	if (url.protocol === "http:" && !loopback) {
-		throw new Error("Hosted deploy API URL must use HTTPS except on loopback localhost.");
-	}
-	if (url.username || url.password) {
-		throw new Error("Hosted deploy API URL must not contain credentials.");
-	}
-	url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/v2$/, "");
-	url.search = "";
-	url.hash = "";
-	return url.toString().replace(/\/$/, "");
-}
+export { normalizeHostedDeployApiBaseUrl } from "./api-origin";
 
 async function fetchWithTimeout(request: Request): Promise<Response> {
 	const controller = new AbortController();
@@ -119,21 +100,34 @@ export class HostedDeployClient {
 	private readonly paidCheckoutSupported: boolean;
 
 	constructor(options: HostedDeployClientOptions = {}) {
-		const auth = options.auth ?? createHostedDeployAuthProvider();
+		const config = getConfig();
 		const now = options.now ?? Date.now;
 		this.paidCheckoutSupported = options.paidCheckoutSupported ?? true;
-		this.baseUrl = normalizeHostedDeployApiBaseUrl(options.baseUrl ?? getConfig().deployApiUrl);
+		this.baseUrl = normalizeHostedDeployApiBaseUrl(options.baseUrl ?? config.deployApiUrl);
+		const cloudBaseUrl = normalizeCloudApiBaseUrl(options.apiBaseUrl ?? config.apiUrl);
+		const auth =
+			options.auth ??
+			createHostedDeployAuthProvider({
+				cloudApiUrl: cloudBaseUrl,
+				hostedApiUrl: this.baseUrl,
+			});
 		const requestFetch = options.fetch ?? fetchWithTimeout;
 		this.client = createClient<DeployPaths>({
 			baseUrl: this.baseUrl,
 			fetch: requestFetch,
 		});
 		this.cloudClient = createClient<paths>({
-			baseUrl: options.apiBaseUrl ?? getConfig().apiUrl,
+			baseUrl: cloudBaseUrl,
 			fetch: requestFetch,
 		});
-		const authMiddleware: Middleware = {
+		const authMiddleware = (expectedOrigin: string): Middleware => ({
 			async onRequest({ request }) {
+				if (new URL(request.url).origin !== expectedOrigin) {
+					throw new HostedDeployAuthorizationError(
+						"hosted_request_origin_mismatch",
+						"Hosted request origin changed before authorization. No credential was sent.",
+					);
+				}
 				const credential = await auth.getAccessToken();
 				const token = assertHostedDeployAccessToken(credential, now());
 				request.headers.set("Authorization", `Bearer ${token}`);
@@ -141,9 +135,9 @@ export class HostedDeployClient {
 				request.headers.set("X-Request-ID", randomUUID());
 				return request;
 			},
-		};
-		this.client.use(authMiddleware);
-		this.cloudClient.use(authMiddleware);
+		});
+		this.client.use(authMiddleware(canonicalApiOrigin(this.baseUrl)));
+		this.cloudClient.use(authMiddleware(canonicalApiOrigin(cloudBaseUrl)));
 	}
 
 	/**

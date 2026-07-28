@@ -54,7 +54,7 @@ export async function vaultResolveCommand(
 		process.exitCode = 1;
 		return;
 	}
-	const accessToken = await getClawdiAccessToken();
+	const accessToken = await getClawdiAccessToken(apiUrl);
 	if (opts.project && opts.agent) {
 		console.error(chalk.red("Pass either --project or --agent, not both."));
 		process.exitCode = 1;

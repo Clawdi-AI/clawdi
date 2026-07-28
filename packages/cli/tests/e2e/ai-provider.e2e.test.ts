@@ -221,9 +221,14 @@ function createFixture(): Fixture {
 	const clawdiHome = join(root, "clawdi-state");
 	mkdirSync(home, { recursive: true });
 	mkdirSync(clawdiHome, { recursive: true });
-	writeFileSync(join(clawdiHome, "auth.json"), `${JSON.stringify({ apiKey: "test-key" })}\n`, {
-		mode: 0o600,
-	});
+	writeFileSync(
+		join(clawdiHome, "auth.json"),
+		`${JSON.stringify({
+			apiKey: "test-key",
+			endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+		})}\n`,
+		{ mode: 0o600 },
+	);
 	return { root, home, clawdiHome };
 }
 
@@ -237,7 +242,7 @@ async function runCli(
 		stdout: "pipe",
 		stderr: "pipe",
 		env: {
-			CLAWDI_API_URL: "http://api.test",
+			CLAWDI_API_URL: "https://api.test",
 			CLAWDI_HOME: fixture.clawdiHome,
 			CLAWDI_NO_AUTO_UPDATE: "1",
 			CLAWDI_NO_UPDATE_CHECK: "1",

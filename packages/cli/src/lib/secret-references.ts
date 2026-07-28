@@ -218,7 +218,7 @@ async function requestClawdiReference<T extends VaultReferencePreview>(
 	}
 	const ref = parseClawdiReference(input);
 	const { apiUrl } = getConfig();
-	const accessToken = await getClawdiAccessToken();
+	const accessToken = await getClawdiAccessToken(apiUrl);
 
 	const params = new URLSearchParams({
 		vault_slug: ref.vault,
@@ -353,7 +353,7 @@ async function requestClawdiReferenceBulk<T extends VaultReferencePreview>(
 	}
 
 	const { apiUrl } = getConfig();
-	const accessToken = await getClawdiAccessToken();
+	const accessToken = await getClawdiAccessToken(apiUrl);
 
 	const projectIdCache = new Map<string, string>();
 	const resolveCachedProjectId = async (project: string): Promise<string> => {

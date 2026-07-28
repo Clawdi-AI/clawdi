@@ -220,7 +220,7 @@ const MCP_ENDPOINT_PATH = "/v1/mcp/clawdi";
 
 async function callClawdiMcp(method: string, params?: Record<string, unknown>): Promise<unknown> {
 	const config = getConfig();
-	const accessToken = await getClawdiAccessToken();
+	const accessToken = await getClawdiAccessToken(config.apiUrl);
 	const response = await fetch(`${config.apiUrl}${MCP_ENDPOINT_PATH}`, {
 		method: "POST",
 		headers: {

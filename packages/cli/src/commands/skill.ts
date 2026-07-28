@@ -92,7 +92,11 @@ export async function skillList(opts: { json?: boolean; project?: string } = {})
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
 		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		projectId = await resolveProjectId(cfg.apiUrl, await getClawdiAccessToken(), opts.project);
+		projectId = await resolveProjectId(
+			cfg.apiUrl,
+			await getClawdiAccessToken(cfg.apiUrl),
+			opts.project,
+		);
 	}
 	const skills = await fetchAllSkills(api, projectId);
 
@@ -243,7 +247,11 @@ export async function skillAdd(
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
 		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		projectId = await resolveProjectId(cfg.apiUrl, await getClawdiAccessToken(), opts.project);
+		projectId = await resolveProjectId(
+			cfg.apiUrl,
+			await getClawdiAccessToken(cfg.apiUrl),
+			opts.project,
+		);
 	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {
@@ -344,7 +352,11 @@ export async function skillInstall(
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
 		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		projectId = await resolveProjectId(cfg.apiUrl, await getClawdiAccessToken(), opts.project);
+		projectId = await resolveProjectId(
+			cfg.apiUrl,
+			await getClawdiAccessToken(cfg.apiUrl),
+			opts.project,
+		);
 		targetAgent = "__skip_local__";
 	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
@@ -522,7 +534,11 @@ export async function skillRm(key: string, opts: { agent?: string; project?: str
 		const { resolveProjectId } = await import("../lib/project-resolver.js");
 		const { getConfig } = await import("../lib/config.js");
 		const cfg = getConfig();
-		projectId = await resolveProjectId(cfg.apiUrl, await getClawdiAccessToken(), opts.project);
+		projectId = await resolveProjectId(
+			cfg.apiUrl,
+			await getClawdiAccessToken(cfg.apiUrl),
+			opts.project,
+		);
 	} else if (opts.agent) {
 		const envId = getEnvIdByAgent(opts.agent);
 		if (!envId) {

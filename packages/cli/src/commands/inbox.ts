@@ -205,7 +205,7 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 		);
 		return;
 	}
-	const accessToken = await getClawdiAccessToken();
+	const accessToken = await getClawdiAccessToken(apiUrl);
 
 	const r = await fetch(`${apiUrl}/v1/me/invitations`, {
 		headers: { Authorization: `Bearer ${accessToken}` },
@@ -286,7 +286,7 @@ export async function inboxAcceptCommand(
 		await acceptAnonymousUrl(apiUrl, normalized, opts);
 		return;
 	}
-	const accessToken = await getClawdiAccessToken();
+	const accessToken = await getClawdiAccessToken(apiUrl);
 
 	if (opts.invite) {
 		await acceptInvitation(apiUrl, accessToken, opts.invite, opts);
@@ -341,7 +341,7 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 		process.exitCode = 1;
 		return;
 	}
-	const accessToken = await getClawdiAccessToken();
+	const accessToken = await getClawdiAccessToken(apiUrl);
 	const r = await fetch(`${apiUrl}/v1/me/invitations/${invitationId}/decline`, {
 		method: "POST",
 		headers: { Authorization: `Bearer ${accessToken}` },

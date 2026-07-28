@@ -14,7 +14,12 @@ function fakeLogin(apiUrl: string) {
 	mkdirSync(dir, { recursive: true });
 	writeFileSync(
 		join(dir, "auth.json"),
-		JSON.stringify({ apiKey: "test-key", userId: "u1", email: "e" }),
+		JSON.stringify({
+			apiKey: "test-key",
+			userId: "u1",
+			email: "e",
+			endpointBinding: { version: 1, cloudApiOrigin: apiUrl },
+		}),
 	);
 	writeFileSync(join(dir, "config.json"), JSON.stringify({ apiUrl }));
 }

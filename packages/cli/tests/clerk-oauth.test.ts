@@ -31,6 +31,8 @@ import {
 
 const NOW = Date.parse("2026-07-28T00:00:00Z");
 const AUTHORIZED_PARTY = "https://accounts.clawdi.test";
+const CLOUD_API_URL = "https://cloud.example.test";
+const HOSTED_API_URL = "https://deploy.example.test";
 const CONFIG: ClerkOAuthClientConfig = {
 	issuer: "https://clerk.example.test",
 	clientId: "clawdi-cli",
@@ -74,6 +76,11 @@ function storedOAuth(overrides: Partial<ClerkOAuthAuth> = {}): ClerkOAuthAuth {
 		scopes: ["openid", "profile", "email"],
 		subject: "user_same_sub",
 		userId: "cloud-local-user",
+		endpointBinding: {
+			version: 1,
+			cloudApiOrigin: CLOUD_API_URL,
+			hostedApiOrigin: HOSTED_API_URL,
+		},
 		...overrides,
 	};
 }
@@ -91,7 +98,12 @@ function pending(): PendingAuth {
 		authorizedParties: CONFIG.authorizedParties,
 		tokenEndpoint: DISCOVERY.tokenEndpoint,
 		expiresAt: new Date(NOW + 10 * 60_000).toISOString(),
-		apiUrl: "https://cloud.example.test",
+		apiUrl: CLOUD_API_URL,
+		endpointBinding: {
+			version: 1,
+			cloudApiOrigin: CLOUD_API_URL,
+			hostedApiOrigin: HOSTED_API_URL,
+		},
 		scopes: ["openid", "profile", "email", "offline_access"],
 	};
 }
@@ -281,6 +293,7 @@ describe("Clerk public OAuth PKCE", () => {
 			config: CONFIG,
 			discovery: DISCOVERY,
 			apiUrl: "https://cloud.example.test",
+			hostedApiUrl: HOSTED_API_URL,
 			now: () => NOW,
 		});
 		const url = new URL(transaction.authorizationUrl);
@@ -505,6 +518,11 @@ describe("Clerk public OAuth PKCE", () => {
 			scopes: ["openid", "profile", "email"],
 			subject: "user_same_sub",
 			userId: "cloud-local-user",
+			endpointBinding: {
+				version: 1,
+				cloudApiOrigin: CLOUD_API_URL,
+				hostedApiOrigin: HOSTED_API_URL,
+			},
 		});
 		let refreshes = 0;
 		const fetcher = async (request: Request) => {
@@ -513,8 +531,8 @@ describe("Clerk public OAuth PKCE", () => {
 			return tokenResponse(accessToken(), "refresh-rotated");
 		};
 		const [first, second] = await Promise.all([
-			getClawdiAccessToken({ now: () => NOW, fetch: fetcher }),
-			getClawdiAccessToken({ now: () => NOW, fetch: fetcher }),
+			getClawdiAccessToken(CLOUD_API_URL, { now: () => NOW, fetch: fetcher }),
+			getClawdiAccessToken(CLOUD_API_URL, { now: () => NOW, fetch: fetcher }),
 		]);
 		expect(first).toBe(second);
 		expect(refreshes).toBe(1);
@@ -610,10 +628,15 @@ describe("Clerk public OAuth PKCE", () => {
 			scopes: ["openid", "profile", "email"],
 			subject: "user_same_sub",
 			userId: "cloud-local-user",
+			endpointBinding: {
+				version: 1,
+				cloudApiOrigin: CLOUD_API_URL,
+				hostedApiOrigin: HOSTED_API_URL,
+			},
 		});
 
 		await expect(
-			getClawdiAccessToken({
+			getClawdiAccessToken(CLOUD_API_URL, {
 				now: () => NOW,
 				fetch: async () => tokenResponse(accessToken({ sub: "user_other" })),
 			}),
@@ -627,7 +650,7 @@ describe("Clerk public OAuth PKCE", () => {
 			const authPath = join(stateDir, "auth.json");
 			const before = readFileSync(authPath, "utf8");
 			await expect(
-				getClawdiAccessToken({
+				getClawdiAccessToken(CLOUD_API_URL, {
 					now: () => NOW,
 					fetch: async () => {
 						if (failure === "network") {
@@ -653,7 +676,10 @@ describe("Clerk public OAuth PKCE", () => {
 			setAuth(storedOAuth());
 			let failure: unknown;
 			try {
-				await getClawdiAccessToken({ now: () => NOW, fetch: async () => response() });
+				await getClawdiAccessToken(CLOUD_API_URL, {
+					now: () => NOW,
+					fetch: async () => response(),
+				});
 			} catch (error) {
 				failure = error;
 			}
@@ -667,7 +693,7 @@ describe("Clerk public OAuth PKCE", () => {
 		setAuth(storedOAuth());
 		const replacement = storedOAuth({ refreshToken: "refresh-newer" });
 		await expect(
-			getClawdiAccessToken({
+			getClawdiAccessToken(CLOUD_API_URL, {
 				now: () => NOW,
 				fetch: async () => {
 					setAuth(replacement);
@@ -691,6 +717,11 @@ describe("Clerk public OAuth PKCE", () => {
 			scopes: ["openid", "profile", "email"],
 			subject: "user_same_sub",
 			userId: "cloud-local-user",
+			endpointBinding: {
+				version: 1,
+				cloudApiOrigin: CLOUD_API_URL,
+				hostedApiOrigin: HOSTED_API_URL,
+			},
 		});
 		let body = "";
 		await revokeClerkOAuthSession("https://cloud.example.test", {
@@ -714,7 +745,7 @@ describe("Clerk public OAuth PKCE", () => {
 		const refreshStarted = new Promise<void>((resolve) => {
 			markRefreshStarted = resolve;
 		});
-		const refresh = getClawdiAccessToken({
+		const refresh = getClawdiAccessToken(CLOUD_API_URL, {
 			now: () => NOW,
 			fetch: async () => {
 				markRefreshStarted?.();
@@ -754,7 +785,7 @@ describe("Clerk public OAuth PKCE", () => {
 		const refreshStarted = new Promise<void>((resolve) => {
 			markRefreshStarted = resolve;
 		});
-		const oldRefresh = getClawdiAccessToken({
+		const oldRefresh = getClawdiAccessToken(CLOUD_API_URL, {
 			now: () => NOW,
 			fetch: async () => {
 				markRefreshStarted?.();
@@ -795,7 +826,7 @@ describe("Clerk public OAuth PKCE", () => {
 		});
 		await logoutRefreshStarted;
 		let waiterFetches = 0;
-		const waitingRefresh = getClawdiAccessToken({
+		const waitingRefresh = getClawdiAccessToken(CLOUD_API_URL, {
 			now: () => NOW,
 			fetch: async () => {
 				waiterFetches += 1;
@@ -891,11 +922,16 @@ describe("Clerk public OAuth PKCE", () => {
 						issuer: origin,
 						tokenEndpoint: `${origin}/oauth/token`,
 						refreshToken: `refresh-${status}-secret`,
+						endpointBinding: {
+							version: 1,
+							cloudApiOrigin: origin,
+							hostedApiOrigin: HOSTED_API_URL,
+						},
 					}),
 				);
 				let refreshError: unknown;
 				try {
-					await getClawdiAccessToken({ now: () => NOW });
+					await getClawdiAccessToken(origin, { now: () => NOW });
 				} catch (error) {
 					refreshError = error;
 				}

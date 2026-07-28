@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { type components, extractApiDetail, type paths } from "@clawdi/shared/api";
 import createClient, { type Client } from "openapi-fetch";
-import { getClawdiAccessToken } from "./clerk-oauth";
+import { canonicalApiOrigin, normalizeCloudApiBaseUrl } from "./api-origin";
+import { assertCloudCredentialEndpoint, getClawdiAccessToken } from "./clerk-oauth";
 import { getAuth, getConfig } from "./config";
 import { assertValidSkillKey } from "./skill-key";
 import { getCliVersion } from "./version";
@@ -191,7 +192,8 @@ export class ApiClient {
 				hint: "Not logged in. Run `clawdi auth login` first.",
 			});
 		}
-		this.baseUrl = config.apiUrl;
+		const baseUrl = normalizeCloudApiBaseUrl(config.apiUrl);
+		this.baseUrl = baseUrl;
 		this.requireAuth = requireAuth;
 		this.abortSignal = opts.abortSignal;
 		this.client = createClient<paths>({
@@ -201,7 +203,14 @@ export class ApiClient {
 		this.client.use({
 			async onRequest({ request }) {
 				if (requireAuth) {
-					request.headers.set("Authorization", `Bearer ${await getClawdiAccessToken()}`);
+					if (new URL(request.url).origin !== canonicalApiOrigin(baseUrl)) {
+						throw new ApiError({
+							status: 0,
+							body: "",
+							hint: "Cloud request origin changed before authorization. No credential was sent.",
+						});
+					}
+					request.headers.set("Authorization", `Bearer ${await getClawdiAccessToken(baseUrl)}`);
 				}
 				request.headers.set("User-Agent", USER_AGENT);
 				// Generate a per-request correlation ID. Backend's
@@ -221,11 +230,14 @@ export class ApiClient {
 
 	/** Current bearer snapshot for compatibility helpers; requests refresh it asynchronously. */
 	get apiKey(): string {
-		return getAuth()?.apiKey ?? "";
+		const auth = getAuth();
+		if (!auth) return "";
+		assertCloudCredentialEndpoint(auth, this.baseUrl);
+		return auth.apiKey;
 	}
 
 	async getAccessToken(): Promise<string> {
-		return this.requireAuth ? getClawdiAccessToken() : "";
+		return this.requireAuth ? getClawdiAccessToken(this.baseUrl) : "";
 	}
 
 	get GET(): Client<paths>["GET"] {

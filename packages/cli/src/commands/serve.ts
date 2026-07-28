@@ -32,6 +32,7 @@ import {
 	clearPendingClerkOAuthLogin,
 	commitClawdiCredential,
 	createClerkOAuthAuthorization,
+	createCredentialEndpointBinding,
 	exchangeClerkOAuthCode,
 	fetchClerkOAuthClientConfig,
 	fetchClerkOAuthDiscovery,
@@ -1006,7 +1007,8 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 	if (existing && replace) {
 		requireBooleanConfirmation(record, "confirm_secret_access", "auth.login replace existing auth");
 	}
-	const apiUrl = optionalStringParam(record.api_url, "api_url") ?? getConfig().apiUrl;
+	const endpointConfig = getConfig();
+	const apiUrl = optionalStringParam(record.api_url, "api_url") ?? endpointConfig.apiUrl;
 	const apiKey = optionalStringParam(record.api_key, "api_key");
 	if (existing && replace && !apiKey) {
 		throw new Error("auth.login replace requires api_key, or call auth.logout before OAuth login.");
@@ -1016,7 +1018,7 @@ async function authLoginRpc(params: unknown): Promise<unknown> {
 		const me = await verifyAndSaveRpcAuth(apiUrl, apiKey, expectedCredential);
 		return { status: "logged_in", user: me, api_url: apiUrl };
 	}
-	return startOAuthAuthRpc(apiUrl, expectedCredential);
+	return startOAuthAuthRpc(apiUrl, endpointConfig.deployApiUrl, expectedCredential);
 }
 
 async function authCompleteRpc(params: unknown): Promise<unknown> {
@@ -1151,24 +1153,38 @@ async function verifyAndSaveRpcAuth(
 	apiKey: string,
 	expectedCredential: StoredCredentialIdentity,
 ): Promise<AuthMeResponse> {
-	const response = await fetch(`${apiUrl}/v1/auth/me`, {
+	const endpointBinding = createCredentialEndpointBinding(apiUrl);
+	const response = await fetch(`${endpointBinding.cloudApiOrigin}/v1/auth/me`, {
 		headers: { Authorization: `Bearer ${apiKey}` },
 	});
 	if (!response.ok) {
 		throw new Error(`API key verification failed with HTTP ${response.status}`);
 	}
 	const me = await readJsonObject<AuthMeResponse>(response, isAuthMeResponse, "/v1/auth/me");
-	await commitClawdiCredential({ apiKey, userId: me.id, email: me.email }, expectedCredential);
+	await commitClawdiCredential(
+		{ apiKey, userId: me.id, email: me.email, endpointBinding },
+		expectedCredential,
+	);
 	return me;
 }
 
 async function startOAuthAuthRpc(
 	apiUrl: string,
+	hostedApiUrl: string,
 	expectedCredential: StoredCredentialIdentity,
 ): Promise<unknown> {
-	const config = await fetchClerkOAuthClientConfig(apiUrl);
+	const endpointBinding = createCredentialEndpointBinding(apiUrl, hostedApiUrl);
+	if (!endpointBinding.hostedApiOrigin) {
+		throw new Error("Hosted endpoint binding is required for OAuth login.");
+	}
+	const config = await fetchClerkOAuthClientConfig(endpointBinding.cloudApiOrigin);
 	const discovery = await fetchClerkOAuthDiscovery(config);
-	const pending = createClerkOAuthAuthorization({ config, discovery, apiUrl });
+	const pending = createClerkOAuthAuthorization({
+		config,
+		discovery,
+		apiUrl: endpointBinding.cloudApiOrigin,
+		hostedApiUrl: endpointBinding.hostedApiOrigin,
+	});
 	await persistPendingClerkOAuthLogin(pending, expectedCredential);
 	return {
 		status: "pending",

@@ -156,6 +156,12 @@ clawdi push --dry-run # preview what push would upload
 stores the current short-lived access token and Clerk refresh grant in the
 existing private atomic CLI state file (0700 directory, 0600 file), refreshes
 before expiry, and rotates the persisted refresh value when Clerk returns one.
+The verified login is bound to the canonical Cloud and Hosted API origins that
+were active when the grant was created. The CLI checks the exact request origin
+before adding an Authorization header; changing either endpoint requires a new
+login. Process-injected `CLAWDI_AUTH_TOKEN` credentials retain production Cloud
+compatibility, while custom Cloud endpoints must also set the explicit
+`CLAWDI_AUTH_TOKEN_ORIGIN` binding.
 `clawdi auth logout` asks the Cloud backend to revoke the refresh grant before
 removing local state. The legacy `--manual` API-key path remains Cloud-only.
 The Clerk Public OAuth Application must allow `openid`, `profile`, `email`, and
