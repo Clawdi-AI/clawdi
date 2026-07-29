@@ -204,6 +204,7 @@ interface RuntimeSystemdApplySignal {
 }
 
 interface RuntimeSystemdApplyHooks {
+	activateEgressPrerequisite: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	activate: (signal: RuntimeSystemdApplySignal) => RuntimeSystemdApplyResult;
 	rollback: (signal: RuntimeSystemdApplySignal) => void;
 }
@@ -2881,9 +2882,10 @@ function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, u
 					},
 				}
 			: {}),
-		...(gatewayToken || allowedOrigins.length > 0
-			? {
-					gateway: {
+		gateway: {
+			mode: "local",
+			...(gatewayToken || allowedOrigins.length > 0
+				? {
 						...(nativeAuth ? { port: 18789, bind: "lan" } : {}),
 						...(gatewayToken
 							? {
@@ -2908,9 +2910,9 @@ function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, u
 									},
 								}
 							: {}),
-					},
-				}
-			: {}),
+					}
+				: {}),
+		},
 	};
 }
 
@@ -5169,7 +5171,9 @@ function officialRuntimeSystemdPrograms(
 		const serviceName = officialRuntimeSystemdProgramName(program);
 		if (serviceName) byServiceName.set(serviceName, program);
 	}
-	return [...byServiceName.values()];
+	return [...byServiceName.entries()]
+		.sort(([left], [right]) => left.localeCompare(right))
+		.map(([, program]) => program);
 }
 
 function writeSystemdUnits(
@@ -6203,40 +6207,6 @@ export function convergeRuntimeManifest(
 			);
 		}
 		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(load.sourcePath, paths);
-		if (shouldInstallOfficialRuntimeServices()) {
-			for (const program of officialRuntimeSystemdPrograms(runtimeSystemdUserPrograms)) {
-				writeRuntimeSystemdUserProgram({
-					program,
-					commonEnvironment: commonSystemdEnvironment,
-					manifest,
-					paths,
-					secretValues,
-					providerProjectionRevisions,
-				});
-				const serviceName = runtimeSystemdProgramName(program);
-				const key = systemdUnitFileName(serviceName);
-				const desiredRevision = officialServiceDesiredRevision({
-					program,
-				});
-				const currentRevision = () => officialServiceCurrentRevision(program, paths);
-				const verifiedCurrentRevision = verifiedReceiptCurrentRevision(
-					previousInstallReceipts?.officialServices[key],
-					desiredRevision,
-					currentRevision,
-				);
-				const target: RuntimeInstallReceiptTarget = {
-					desiredRevision,
-					currentRevision,
-					expectedCurrentRevision: verifiedCurrentRevision,
-				};
-				installReceiptTargets.officialServices.set(key, target);
-				if (verifiedCurrentRevision !== null) continue;
-				reloadRuntimeUserManager(paths, paths.userHome);
-				const error = installOfficialRuntimeUserService({ ...program, cwd: paths.userHome }, paths);
-				if (error) throw new Error(error);
-				target.expectedCurrentRevision = currentRevision();
-			}
-		}
 		try {
 			const codexProjection = applyHostedCodexManagedProviderProjection(
 				manifest,
@@ -6482,6 +6452,52 @@ export function convergeRuntimeManifest(
 					rollbackEgressSecretRevision = committedEgressSidecarSecretRevision;
 				}
 			}
+		}
+		const pendingOfficialServiceInstalls: Array<{
+			program: RuntimeSystemdUserProgram;
+			target: RuntimeInstallReceiptTarget;
+		}> = [];
+		if (shouldInstallOfficialRuntimeServices()) {
+			for (const program of officialRuntimeSystemdPrograms(runtimeSystemdUserPrograms)) {
+				const serviceName = runtimeSystemdProgramName(program);
+				const key = systemdUnitFileName(serviceName);
+				const desiredRevision = officialServiceDesiredRevision({ program });
+				const currentRevision = () => officialServiceCurrentRevision(program, paths);
+				const verifiedCurrentRevision = verifiedReceiptCurrentRevision(
+					previousInstallReceipts?.officialServices[key],
+					desiredRevision,
+					currentRevision,
+				);
+				const target: RuntimeInstallReceiptTarget = {
+					desiredRevision,
+					currentRevision,
+					expectedCurrentRevision: verifiedCurrentRevision,
+				};
+				installReceiptTargets.officialServices.set(key, target);
+				if (verifiedCurrentRevision === null) {
+					pendingOfficialServiceInstalls.push({ program, target });
+				}
+			}
+		}
+		if (
+			pendingOfficialServiceInstalls.length > 0 &&
+			systemdUnits.egressSidecarActive &&
+			opts.systemdApply
+		) {
+			systemdActivationAttempted = true;
+			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
+				restartEgressSidecar,
+			});
+			if (!prerequisite.applied) {
+				throw new Error("transparent-egress system prerequisites did not reach readiness");
+			}
+		}
+
+		for (const { program, target } of pendingOfficialServiceInstalls) {
+			reloadRuntimeUserManager(paths, paths.userHome);
+			const error = installOfficialRuntimeUserService({ ...program, cwd: paths.userHome }, paths);
+			if (error) throw new Error(error);
+			target.expectedCurrentRevision = target.currentRevision();
 		}
 
 		const bootFinished = join(instanceRoot, "boot-finished");

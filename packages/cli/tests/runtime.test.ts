@@ -139,6 +139,7 @@ function writeFakeSystemdManager(input: {
 	stateRoot: string;
 	failNextSidecarRestart?: string;
 	failNextSidecarStop?: string;
+	sidecarReadyPath?: string;
 }): void {
 	mkdirSync(input.stateRoot, { recursive: true });
 	mkdirSync(dirname(input.path), { recursive: true });
@@ -178,7 +179,11 @@ case "$command" in
     fi
     ;;
   start)
-    for unit in "$@"; do rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; done
+    for unit in "$@"; do
+      rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"
+      touch "$(state_path "$unit" active)"
+      if [ "$unit" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.sidecarReadyPath ?? ""}' ]; then touch '${input.sidecarReadyPath ?? ""}'; fi
+    done
     ;;
   restart)
     if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarRestart ?? ""}' ] && [ -f '${input.failNextSidecarRestart ?? ""}' ]; then
@@ -186,7 +191,11 @@ case "$command" in
       printf 'injected sidecar restart failure\\n' >&2
       exit 42
     fi
-    for unit in "$@"; do rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; done
+    for unit in "$@"; do
+      rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"
+      touch "$(state_path "$unit" active)"
+      if [ "$unit" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.sidecarReadyPath ?? ""}' ]; then touch '${input.sidecarReadyPath ?? ""}'; fi
+    done
     ;;
   stop)
     if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarStop ?? ""}' ] && [ -f '${input.failNextSidecarStop ?? ""}' ]; then
@@ -697,12 +706,13 @@ function hostedEgressSecretRotationPayload(
 	home: string,
 	egressEngine: typeof TEST_EGRESS_ENGINE_PIN,
 	secret: string,
+	runtime: "openclaw" | "hermes" = "openclaw",
 ): HostedRuntimeResponseFixture {
 	return {
 		manifest: {
 			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
-			runtime: "openclaw",
+			runtime,
 			deploymentId: "dep_watch_egress_secret_rotation",
 			environmentId: "env_watch_egress_secret_rotation",
 			...hostedRequiredState(),
@@ -710,7 +720,7 @@ function hostedEgressSecretRotationPayload(
 			generation: 41,
 			issuedAt: "2026-07-28T00:00:00Z",
 			locale: TEST_HOSTED_LOCALE,
-			system: hostedSystemFixture(home),
+			system: runtime === "openclaw" ? hostedSystemFixture(home) : hostedHermesSystemFixture(home),
 			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
 			egressEngine,
 			clawdiCli: {
@@ -718,7 +728,10 @@ function hostedEgressSecretRotationPayload(
 				packageSpec: "clawdi@0.13.0-test",
 				registry: "https://registry.npmjs.org",
 			},
-			runtimes: { openclaw: hostedOpenClawRuntime() },
+			runtimes:
+				runtime === "openclaw"
+					? { openclaw: hostedOpenClawRuntime() }
+					: { hermes: hostedHermesRuntime() },
 			providers: {
 				default: {
 					kind: "openai-compatible",
@@ -2967,6 +2980,7 @@ chmod +x "$HOME/.local/bin/hermes"
 				},
 			},
 			gateway: {
+				mode: "local",
 				auth: {
 					mode: "token",
 					token: "gateway-token",
@@ -4096,7 +4110,7 @@ exit 0
 		expect(hermesProviders["byok-b"]).toBeDefined();
 	});
 
-	it("applies OpenClaw hosted config after the official gateway installer", () => {
+	it("projects complete OpenClaw gateway config before the official service installer", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -4190,12 +4204,13 @@ exit 0
 
 		expect(convergence.installErrors).toEqual([]);
 		expect(readFileSync(openclawCommand, "utf-8").trim().split("\n")).toEqual([
-			"gateway install --force --json",
 			"config patch --stdin",
 			'config patch --stdin --replace-path models.providers["default"].models',
+			"gateway install --force --json",
 		]);
 		expect(JSON.parse(readFileSync(join(root, "openclaw-patch-1.json"), "utf-8"))).toEqual({
 			gateway: {
+				mode: "local",
 				auth: {
 					mode: "token",
 					token: "gateway-token",
@@ -5360,6 +5375,11 @@ exit 64
 						models: [{ id: "gpt-test" }],
 					}),
 					systemdApply: {
+						activateEgressPrerequisite: () => ({
+							applied: true,
+							systemUnitsChanged: [],
+							userUnitsChanged: [],
+						}),
 						activate: () => ({
 							applied: true,
 							systemUnitsChanged: [],
@@ -6312,7 +6332,6 @@ fi
 			if (process.exitCode !== undefined && process.exitCode !== 0) {
 				throw new Error(logs.join("\n"));
 			}
-			expect(process.exitCode ?? 0).toBe(0);
 			expect(captured).toHaveLength(2);
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
 			expect(captured[0].headers.accept).toBe(HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE);
@@ -7615,6 +7634,139 @@ exit 64
 		expect(statSync(activeTarget).mode & 0o777).toBe(0o700);
 		expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
 		expect(statSync(legacyImageShim).mode & 0o777).toBe(0o700);
+	});
+
+	it.each([
+		{ runtime: "openclaw" as const, publishCa: true },
+		{ runtime: "hermes" as const, publishCa: true },
+		{ runtime: "openclaw" as const, publishCa: false },
+	])("orders the cold $runtime installer after egress (publishCa=$publishCa)", async ({
+		runtime,
+		publishCa,
+	}) => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const systemctlLog = join(root, "systemctl-cold-openclaw.log");
+		const systemctlStateRoot = join(root, "systemctl-cold-openclaw-state");
+		const installerLog = join(root, `${runtime}-installer-order.log`);
+		const runtimeBin =
+			runtime === "openclaw"
+				? join(home, ".openclaw", "bin", "openclaw")
+				: join(home, ".local", "bin", "hermes");
+		const serviceName = `${runtime}-gateway`;
+		const runtimeUnit = join(home, ".config", "systemd", "user", `${serviceName}.service`);
+		const installArgs =
+			runtime === "openclaw" ? "gateway install --force --json" : "gateway install --force";
+		const previousLog = console.log;
+		const previousUmask = process.umask(0o022);
+		const previousExitCode = process.exitCode;
+		let runtimeExitCode: number | undefined;
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(dirname(runtimeBin), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+		process.env.CLAWDI_RUNTIME_USER = String(process.getuid?.() ?? 0);
+		const paths = getRuntimePaths();
+		writeFakeSystemdManager({
+			path: join(bin, "systemctl"),
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+			sidecarReadyPath: publishCa ? paths.egressSystemCaFile : undefined,
+		});
+		writeFileSync(
+			runtimeBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> '${installerLog}'
+if [ "$*" = "${installArgs}" ]; then
+  printf '%s\n' 'official ${runtime} installer' >> '${systemctlLog}'
+  test -r '${paths.egressSystemCaFile}'
+  test -s '${join(paths.systemdEnvRoot, `${serviceName}.service.env`)}'
+  test -s '${join(paths.systemdUserRoot, `${serviceName}.service.d`, "10-clawdi-hosted.conf")}'
+  mkdir -p '${dirname(runtimeUnit)}' '${systemctlStateRoot}'
+  printf '[Service]\\nExecStart=${runtime} gateway run\\n' > '${runtimeUnit}'
+  touch '${fakeSystemdStatePath(systemctlStateRoot, "user", `${serviceName}.service`, "active")}'
+  touch '${fakeSystemdStatePath(systemctlStateRoot, "user", `${serviceName}.service`, "enabled")}'
+fi
+exit 0
+`,
+		);
+		chmodSync(runtimeBin, 0o700);
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		const mitmproxy = seedMitmproxyCache(paths);
+		console.log = (value?: unknown) => logs.push(String(value));
+		const runtimeFetch = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () =>
+					hostedRuntimeBundleResponse(
+						hostedEgressSecretRotationPayload(home, mitmproxy, "cold-home-secret", runtime),
+						{ etag: '"cold-home-egress"' },
+					),
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+			runtimeExitCode = process.exitCode;
+		} finally {
+			runtimeFetch.restore();
+			console.log = previousLog;
+			process.umask(previousUmask);
+			process.exitCode = previousExitCode;
+		}
+
+		if (!publishCa) {
+			const event = JSON.parse(logs.at(-1) ?? "{}");
+			expect(event.status).toBe("error");
+			expect(event.error).toContain("prerequisite activation failed");
+			expect(readRuntimeAppliedState(paths)).toBeNull();
+			expect(readFileSync(installerLog, "utf8")).not.toContain(installArgs);
+			expect(readFileSync(systemctlLog, "utf8")).not.toContain("clawdi-daemon.service");
+			return;
+		}
+		if (runtimeExitCode !== undefined && runtimeExitCode !== 0) {
+			throw new Error(logs.join("\n"));
+		}
+		expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("applied");
+		expect(existsSync(paths.egressSystemCaFile)).toBe(true);
+		const calls = readFileSync(systemctlLog, "utf8").trim().split("\n");
+		const sidecarActivation = calls.findIndex((call) =>
+			/^(start|restart) .*clawdi-runtime-sidecar\.service/.test(call),
+		);
+		const officialInstaller = calls.indexOf(`official ${runtime} installer`);
+		const finalSystemActivation = calls.findIndex(
+			(call) => call.startsWith("start") && call.includes("clawdi-daemon.service"),
+		);
+		expect(sidecarActivation).toBeGreaterThanOrEqual(0);
+		expect(officialInstaller).toBeGreaterThan(sidecarActivation);
+		expect(finalSystemActivation).toBeGreaterThan(officialInstaller);
+		expect(calls).not.toContain(`--user restart ${serviceName}.service`);
+		const installerCalls = readFileSync(installerLog, "utf8").trim().split("\n");
+		const installIndex = installerCalls.indexOf(installArgs);
+		if (runtime === "openclaw") {
+			expect(installIndex).toBeGreaterThan(0);
+			expect(installerCalls.slice(installIndex + 1)).not.toContain("config patch --stdin");
+		} else {
+			expect(installIndex).toBe(0);
+			expect(existsSync(join(home, ".hermes", "config.yaml"))).toBe(true);
+		}
+		expect(readRuntimeAppliedState(paths)).toMatchObject({
+			generation: 41,
+			etag: '"cold-home-egress"',
+		});
 	});
 
 	it("keeps public sidecar artifacts stable while forcing private egress secret restarts", async () => {

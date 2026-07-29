@@ -106,6 +106,7 @@ EOF
 	printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
 	${input.failUninstall ? "exit 42" : `rm -f '${input.unitPath}'`}
 	;;
+  "config patch --stdin") cat >/dev/null ;;
   *)
     printf 'unexpected ${input.runtime} command: %s\\n' "$*" >&2
     exit 64
@@ -1000,6 +1001,8 @@ describe("runtime manifest services", () => {
 			recovery: {},
 		};
 
+		let prerequisiteActivations = 0;
+		let finalActivations = 0;
 		const result = convergeRuntimeManifest(
 			{
 				manifest,
@@ -1008,9 +1011,24 @@ describe("runtime manifest services", () => {
 				offline: false,
 			},
 			paths,
+			{
+				systemdApply: {
+					activateEgressPrerequisite: () => {
+						prerequisiteActivations += 1;
+						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+					},
+					activate: () => {
+						finalActivations += 1;
+						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+					},
+					rollback: () => {},
+				},
+			},
 		);
 
 		expect(result.installErrors).toEqual([]);
+		expect(prerequisiteActivations).toBe(0);
+		expect(finalActivations).toBe(1);
 		expect(readFileSync(logPath, "utf8").trim().split("\n")).toEqual([
 			"systemctl --user daemon-reload",
 			"systemctl --user reset-failed hermes-gateway.service",
@@ -1293,6 +1311,7 @@ cat > '${logPath}'
 		expect(result.installErrors).toEqual([]);
 		expect(JSON.parse(readFileSync(logPath, "utf8"))).toEqual({
 			agents: { defaults: { userTimezone: "UTC" } },
+			gateway: { mode: "local" },
 		});
 	});
 
@@ -1342,13 +1361,33 @@ cat > '${logPath}'
 			unitPath,
 			failInstall: true,
 		});
-		const failedFirstInstall = convergeRuntimeManifest(load("inline-install-failure", 1), paths);
+		let authorityCommits = 0;
+		let finalActivations = 0;
+		const failedFirstInstall = convergeRuntimeManifest(load("inline-install-failure", 1), paths, {
+			commitAuthority: () => {
+				authorityCommits += 1;
+			},
+			systemdApply: {
+				activateEgressPrerequisite: () => ({
+					applied: true,
+					systemUnitsChanged: [],
+					userUnitsChanged: [],
+				}),
+				activate: () => {
+					finalActivations += 1;
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: () => {},
+			},
+		});
 		expect(failedFirstInstall.installErrors.join("\n")).toContain(
 			"official openclaw-gateway service install failed",
 		);
 		expect(existsSync(paths.managedConfig)).toBe(false);
 		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
 		expect(existsSync(dropInPath)).toBe(true);
+		expect(authorityCommits).toBe(0);
+		expect(finalActivations).toBe(0);
 		expect(
 			failedFirstInstall.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
 		).not.toContain("openclaw-gateway.service");

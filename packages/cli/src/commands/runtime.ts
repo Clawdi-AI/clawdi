@@ -1586,14 +1586,38 @@ function applySystemdRuntimeUpdate(
 	opts: {
 		forceRestartSystemUnits?: readonly string[];
 		recoverFailedUnits?: boolean;
+		activationScope?: {
+			systemUnits: readonly string[];
+			userUnits: readonly string[];
+		};
+		skipActivatedSystemUnits?: readonly string[];
 	} = {},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
-	const system = changedSystemdUnits(before.system, after.system);
-	const user = changedSystemdUnits(before.user, after.user);
+	const allSystem = changedSystemdUnits(before.system, after.system);
+	const allUser = changedSystemdUnits(before.user, after.user);
+	const filterChanges = (
+		changes: ReturnType<typeof changedSystemdUnits>,
+		units: readonly string[],
+	): ReturnType<typeof changedSystemdUnits> => {
+		const selected = new Set(units);
+		return {
+			added: changes.added.filter((unit) => selected.has(unit)),
+			changed: changes.changed.filter((unit) => selected.has(unit)),
+			removed: changes.removed.filter((unit) => selected.has(unit)),
+			present: changes.present.filter((unit) => selected.has(unit)),
+		};
+	};
+	const system = opts.activationScope
+		? filterChanges(allSystem, opts.activationScope.systemUnits)
+		: allSystem;
+	const user = opts.activationScope
+		? filterChanges(allUser, opts.activationScope.userUnits)
+		: allUser;
 	const systemUnitsChanged = [...system.added, ...system.changed].sort();
 	const userUnitsChanged = [...user.added, ...user.changed].sort();
-	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter((unit) =>
-		after.system.has(unit),
+	const scopedSystemUnits = opts.activationScope ? new Set(opts.activationScope.systemUnits) : null;
+	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter(
+		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
 	);
 	const recoverFailedUnits = opts.recoverFailedUnits !== false;
 	const activationChanged =
@@ -1629,11 +1653,13 @@ function applySystemdRuntimeUpdate(
 	const addedSystemUnits = new Set(system.added);
 	const changedSystemUnits = new Set(system.changed);
 	const forcedRestartUnits = new Set(forcedSystemRestarts);
+	const skipActivatedSystemUnits = new Set(opts.skipActivatedSystemUnits ?? []);
 	const resetFailedSystemUnits: string[] = [];
 	const startSystemUnits: string[] = [];
 	const restartSystemUnits: string[] = [];
 	for (const unit of system.present) {
 		const state = systemdUnitManagerState(paths, "system", unit);
+		if (skipActivatedSystemUnits.has(unit)) continue;
 		if (state.activeState === "failed" && recoverFailedUnits) {
 			resetFailedSystemUnits.push(unit);
 			startSystemUnits.push(unit);
@@ -1830,6 +1856,27 @@ function runtimeUserSystemctlResult(
 		]);
 	}
 	return runCommandResult(systemctlPath(), ["--user", ...args]);
+}
+
+function assertRuntimeUserCanRead(path: string): void {
+	const runtimeUser = runtimeUserName();
+	const runtimeUid = Number.parseInt(commandOutput("id", ["-u", runtimeUser]).trim(), 10);
+	if (!Number.isSafeInteger(runtimeUid) || runtimeUid < 0) {
+		throw new Error(`could not resolve runtime uid for ${runtimeUser}`);
+	}
+	const proof = buildRuntimeUserReadCommand(process.getuid?.(), runtimeUid, runtimeUser, path);
+	runCommand(proof.command, proof.args);
+}
+
+export function buildRuntimeUserReadCommand(
+	currentUid: number | undefined,
+	runtimeUid: number,
+	runtimeUser: string,
+	path: string,
+): { command: string; args: string[] } {
+	return currentUid === runtimeUid
+		? { command: "test", args: ["-r", path] }
+		: { command: "gosu", args: [runtimeUser, "test", "-r", path] };
 }
 
 function commandOutput(command: string, args: string[]): string {
@@ -2521,6 +2568,7 @@ function applyRuntimeDesiredState(
 		systemUnitsChanged: [] as string[],
 		userUnitsChanged: [] as string[],
 	};
+	let egressPrerequisiteActivated = false;
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
 		commitAuthority: (committedConvergence, authority) => {
@@ -2530,7 +2578,38 @@ function applyRuntimeDesiredState(
 			opts.authorityCommit?.(committedConvergence, authority);
 		},
 		systemdApply: {
+			activateEgressPrerequisite: ({ restartEgressSidecar }) => {
+				failedSystemdUnits = readSystemdUnitSnapshot(paths);
+				try {
+					const prerequisite = applySystemdRuntimeUpdate(
+						paths,
+						previousSystemdUnits,
+						failedSystemdUnits,
+						{
+							activationScope: {
+								systemUnits: [RUNTIME_SIDECAR_SYSTEM_UNIT],
+								userUnits: [],
+							},
+							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+							recoverFailedUnits: opts.recoverFailedSystemdUnits,
+						},
+					);
+					if (prerequisite.applied) {
+						assertRuntimeUserCanRead(paths.egressSystemCaFile);
+						egressPrerequisiteActivated = true;
+					}
+					return prerequisite;
+				} catch (error) {
+					throw new Error(
+						`transparent-egress prerequisite activation failed: ${
+							error instanceof Error ? error.message : String(error)
+						}`,
+					);
+				}
+			},
 			activate: ({ restartEgressSidecar }) => {
+				// Official installers run after the prerequisite phase and add their
+				// base units, so final reconciliation must observe a fresh rendered state.
 				failedSystemdUnits = readSystemdUnitSnapshot(paths);
 				try {
 					systemdApply = applySystemdRuntimeUpdate(
@@ -2540,6 +2619,9 @@ function applyRuntimeDesiredState(
 						{
 							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
 							recoverFailedUnits: opts.recoverFailedSystemdUnits,
+							skipActivatedSystemUnits: egressPrerequisiteActivated
+								? [RUNTIME_SIDECAR_SYSTEM_UNIT]
+								: [],
 						},
 					);
 					return systemdApply;

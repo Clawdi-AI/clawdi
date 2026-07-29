@@ -48,6 +48,12 @@ import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
 import { normalizeSecretValues } from "./secret-values";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
+const successfulPrerequisiteActivation = () => ({
+	applied: true,
+	systemUnitsChanged: [],
+	userUnitsChanged: [],
+});
+
 const originalEnv = { ...process.env };
 const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
@@ -2403,6 +2409,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						);
 					},
 					systemdApply: {
+						activateEgressPrerequisite: successfulPrerequisiteActivation,
 						activate: ({ restartEgressSidecar }) => {
 							signals.push(restartEgressSidecar);
 							return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
@@ -2564,6 +2571,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				revisionA = authority.egressSidecarSecretRevision;
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
 				rollback: () => {},
 			},
@@ -2584,6 +2592,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				commit("000001", revisionB);
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					recoverySignals.push(restartEgressSidecar);
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
@@ -2613,6 +2622,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				throw new Error("restart failure must not commit authority");
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
 					throw new Error("injected sidecar restart failure");
@@ -2641,6 +2651,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				throw new Error("injected authority commit failure");
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
@@ -2671,6 +2682,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				commit("000002", revisionC);
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
 					mixedSnapshotActivations++;
@@ -2701,6 +2713,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				mixedFailureCommits++;
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
 					throw new Error("injected mixed-snapshot restart failure");
@@ -2743,6 +2756,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				legacyFailureCommits++;
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
 					expect(readFileSync(secretFile, "utf-8")).toContain(legacyDesired);
@@ -2782,6 +2796,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				legacyMissingCacheRestartCommits++;
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
 					expect(readFileSync(secretFile, "utf-8")).toContain(legacyDesired);
@@ -2820,6 +2835,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				throw new Error("injected legacy authority commit failure");
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
 					legacyMissingCacheActivationSecrets.push(readFileSync(secretFile, "utf-8"));
@@ -2900,6 +2916,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const legacyEnvBaseline = convergeRuntimeManifest(legacyEnvLoad(), paths, {
 			cacheLastGood: false,
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
 				rollback: () => {},
 			},
@@ -2919,6 +2936,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				legacyEnvRestartFailureCommits++;
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
 					expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-c");
@@ -2950,6 +2968,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				throw new Error("injected legacy env authority commit failure");
 			},
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: ({ restartEgressSidecar }) => {
 					expect(restartEgressSidecar).toBe(true);
 					expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-c");
@@ -2984,6 +3003,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				commitAuthority: (_convergence, authority) =>
 					writeAuthority("000001", authority.egressSidecarSecretRevision),
 				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
 					activate: ({ restartEgressSidecar }) => {
 						legacySignals.push(restartEgressSidecar);
 						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
@@ -3205,6 +3225,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		let rollbackCalls = 0;
 		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-patch-failure"), paths, {
 			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
 				activate: () => {
 					activateCalls += 1;
 					throw new Error("injected systemd activation failure");
