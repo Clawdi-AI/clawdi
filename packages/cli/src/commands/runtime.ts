@@ -2314,7 +2314,12 @@ async function runtimeWatchTickLocked(
 
 async function runtimeWatchTickAfterCliReconciliation(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
+	opts: {
+		forceRefresh: boolean;
+		deferCliInstall?: boolean;
+		deferCliInstallReason?: string;
+		recoverFailedSystemdUnits?: boolean;
+	},
 ): Promise<Record<string, unknown>> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
 	const manifestEtag = opts.forceRefresh ? undefined : (activeAppliedState?.etag ?? undefined);
