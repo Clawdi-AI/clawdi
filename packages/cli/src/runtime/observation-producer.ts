@@ -11,6 +11,8 @@ import {
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 
 const OBSERVATION_INTERVAL_MS = 60_000;
+const CONVERGENCE_OBSERVATION_INTERVAL_MS = 5_000;
+const CONVERGENCE_OBSERVATION_WINDOW_MS = 90_000;
 const IDLE_RETRY_INTERVAL_MS = 1_000;
 
 const runtimeInstanceIdentitySchema = z
@@ -21,6 +23,13 @@ const runtimeInstanceIdentitySchema = z
 	.passthrough();
 
 type ObservationSubmitResult = "accepted" | "terminal-stale";
+type RuntimeObservedStatus = HostedRuntimeObservedEvent["status"];
+
+type ObservationSendResult =
+	| { outcome: "idle" }
+	| { outcome: "sent" }
+	| { outcome: "failed" }
+	| { outcome: "accepted"; status: RuntimeObservedStatus };
 
 interface RuntimeObservationProducerOptions {
 	abort: AbortSignal;
@@ -31,12 +40,18 @@ interface RuntimeObservationProducerOptions {
 	) => Promise<ObservationSubmitResult>;
 	sessionFactory?: (environmentId: string, paths: RuntimePaths) => HostedRuntimeHeartbeatSession;
 	delay?: (ms: number, abort: AbortSignal) => Promise<void>;
+	now?: () => number;
 }
 
 interface AttestedRuntimeObservationContext {
 	environmentId: string;
 	expectedApplyIdentity: RuntimeApplyIdentity;
 	identityKey: string;
+}
+
+interface ObservationSchedule {
+	nextAttemptAt: number;
+	convergenceWindowEnd: number | "closed" | null;
 }
 
 export class HostedRuntimeObservationProducer {
@@ -67,11 +82,11 @@ export class HostedRuntimeObservationProducer {
 		}
 	}
 
-	async sendOnce(): Promise<"idle" | "sent" | "failed"> {
+	async sendOnce(): Promise<ObservationSendResult> {
 		let buffered: ReturnType<HostedRuntimeHeartbeatSession["nextEvent"]> = null;
 		try {
 			const context = this.readAttestedContext();
-			if (!context) return "idle";
+			if (!context) return { outcome: "idle" };
 			const { environmentId, expectedApplyIdentity } = context;
 			if (!this.session || this.environmentId !== environmentId) {
 				this.session = this.sessionFactory(environmentId, this.paths);
@@ -81,13 +96,13 @@ export class HostedRuntimeObservationProducer {
 			}
 
 			buffered = this.session.nextEvent();
-			if (!buffered) return "idle";
+			if (!buffered) return { outcome: "idle" };
 			if (!eventMatchesApplyIdentity(buffered.event, expectedApplyIdentity)) {
-				return "idle";
+				return { outcome: "idle" };
 			}
 			const result = await this.submit(environmentId, buffered.event);
 			if (this.currentAttestedIdentityKey() !== context.identityKey) {
-				return "sent";
+				return { outcome: "sent" };
 			}
 			if (result === "terminal-stale") {
 				if (!this.session.retireTerminallyStale(buffered.event.eventId)) {
@@ -97,18 +112,18 @@ export class HostedRuntimeObservationProducer {
 					event_id: buffered.event.eventId,
 					captured_at: buffered.event.capturedAt,
 				});
-				return "sent";
+				return { outcome: "sent" };
 			}
 			if (!this.session.acknowledge(buffered.event.eventId)) {
 				throw new Error("runtime observation acknowledgement did not match buffered event");
 			}
-			return "sent";
+			return { outcome: "accepted", status: buffered.event.status };
 		} catch (error) {
 			log.info("daemon.runtime_observation_failed", {
 				error: toErrorMessage(error),
 				...(buffered ? { event_id: buffered.event.eventId } : {}),
 			});
-			return "failed";
+			return { outcome: "failed" };
 		}
 	}
 
@@ -147,24 +162,41 @@ export async function runRuntimeObservationProducer(
 	if (paths.mode !== "hosted") return;
 	const producer = new HostedRuntimeObservationProducer({ ...options, paths });
 	const delay = options.delay ?? abortableDelay;
+	const now = options.now ?? Date.now;
 	const activeAttempts = new Map<string, Promise<void>>();
-	const nextAttemptAt = new Map<string, number>();
+	const schedules = new Map<string, ObservationSchedule>();
 	while (!options.abort.aborted) {
 		try {
 			const identityKey = producer.currentAttestedIdentityKey();
-			if (
-				identityKey &&
-				!activeAttempts.has(identityKey) &&
-				Date.now() >= (nextAttemptAt.get(identityKey) ?? 0)
-			) {
-				const attempt = producer.sendOnce().then((result) => {
-					nextAttemptAt.set(
-						identityKey,
-						Date.now() + (result === "idle" ? IDLE_RETRY_INTERVAL_MS : OBSERVATION_INTERVAL_MS),
-					);
-					activeAttempts.delete(identityKey);
-				});
-				activeAttempts.set(identityKey, attempt);
+			if (identityKey && !activeAttempts.has(identityKey)) {
+				const schedule = schedules.get(identityKey) ?? {
+					nextAttemptAt: 0,
+					convergenceWindowEnd: null,
+				};
+				schedules.set(identityKey, schedule);
+				if (now() >= schedule.nextAttemptAt) {
+					const attempt = producer.sendOnce().then((result) => {
+						const completedAt = now();
+						let interval = OBSERVATION_INTERVAL_MS;
+						if (result.outcome === "accepted") {
+							if (result.status === "ok") {
+								schedule.convergenceWindowEnd = "closed";
+							} else if (schedule.convergenceWindowEnd !== "closed") {
+								schedule.convergenceWindowEnd ??= completedAt + CONVERGENCE_OBSERVATION_WINDOW_MS;
+								if (completedAt < schedule.convergenceWindowEnd) {
+									interval = Math.min(
+										CONVERGENCE_OBSERVATION_INTERVAL_MS,
+										schedule.convergenceWindowEnd - completedAt,
+									);
+								}
+							}
+						}
+						schedule.nextAttemptAt =
+							completedAt + (result.outcome === "idle" ? IDLE_RETRY_INTERVAL_MS : interval);
+						activeAttempts.delete(identityKey);
+					});
+					activeAttempts.set(identityKey, attempt);
+				}
 			}
 		} catch (error) {
 			log.info("daemon.runtime_observation_failed", { error: toErrorMessage(error) });

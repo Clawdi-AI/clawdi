@@ -14,6 +14,7 @@ import {
 	readFileSync,
 	readlinkSync,
 	rmSync,
+	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -69,6 +70,13 @@ import {
 	managedMcpHeaderPlaceholder,
 	normalizeSecretRef,
 } from "./hosted-egress-profiles";
+import {
+	emptyRuntimeInstallReceipts,
+	type RuntimeInstallReceiptEntry,
+	type RuntimeInstallReceipts,
+	readRuntimeInstallReceipts,
+	writeRuntimeInstallReceipts,
+} from "./install-receipts";
 import {
 	buildManagedModelsEndpoint,
 	extractManagedLiveModels,
@@ -242,6 +250,57 @@ interface RuntimeInstallObservation {
 	stderrTail: string | null;
 	error: string | null;
 }
+
+interface RuntimeInstallReceiptTarget {
+	desiredRevision: string;
+	currentRevision: () => string | null;
+	verifiedCurrentRevision: string | null;
+}
+
+interface RuntimeInstallReceiptTargets {
+	officialServices: Map<string, RuntimeInstallReceiptTarget>;
+	channelPlugins: Map<string, RuntimeInstallReceiptTarget>;
+}
+
+// Supported by `openclaw plugins inspect <id> --json`. The command returns
+// `{ ...inspect, install }` from the cold registry and persisted install index:
+// https://github.com/openclaw/openclaw/blob/main/src/cli/plugins-inspect-command.ts
+// Keep this as a passthrough boundary because OpenClaw exposes additional
+// diagnostics; the receipt only depends on documented registry/install identity.
+const openClawPluginInspectSchema = z
+	.object({
+		plugin: z
+			.object({
+				id: z.string().min(1),
+				source: z.string().min(1),
+				origin: z.enum(["bundled", "global", "workspace", "config"]),
+				status: z.enum(["loaded", "disabled", "error"]),
+				version: z.string().min(1).optional(),
+				enabled: z.boolean(),
+			})
+			.passthrough(),
+		install: z
+			.object({
+				source: z.enum(["npm", "archive", "path", "clawhub", "git"]),
+				spec: z.string().min(1).optional(),
+				sourcePath: z.string().min(1).optional(),
+				installPath: z.string().min(1).optional(),
+				version: z.string().min(1).optional(),
+				resolvedName: z.string().min(1).optional(),
+				resolvedVersion: z.string().min(1).optional(),
+				resolvedSpec: z.string().min(1).optional(),
+				integrity: z.string().min(1).optional(),
+				shasum: z.string().min(1).optional(),
+				npmIntegrity: z.string().min(1).optional(),
+				npmShasum: z.string().min(1).optional(),
+				clawpackSha256: z.string().min(1).optional(),
+				gitUrl: z.string().min(1).optional(),
+				gitRef: z.string().min(1).optional(),
+				gitCommit: z.string().min(1).optional(),
+			})
+			.passthrough(),
+	})
+	.passthrough();
 
 function writeJsonFile(path: string, payload: unknown): void {
 	writePrivateFileAtomic(path, `${JSON.stringify(payload, null, 2)}\n`);
@@ -2948,6 +3007,8 @@ function installHostedChannelProjectionDependencies(
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	workspaceRoot: string,
+	previousReceipts: RuntimeInstallReceipts | null,
+	receiptTargets: RuntimeInstallReceiptTargets,
 ): void {
 	if (name !== "openclaw") return;
 	if (!observation.enabled || observation.status === "install_failed" || !observation.commandPath) {
@@ -2956,7 +3017,14 @@ function installHostedChannelProjectionDependencies(
 	const channels = hostedChannelProjection(manifest);
 	if (!channels) return;
 	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
-	installOpenClawChannelPlugins(observation.commandPath, channels, home, workspaceRoot);
+	installOpenClawChannelPlugins({
+		commandPath: observation.commandPath,
+		channels,
+		home,
+		workspaceRoot,
+		previousReceipts,
+		receiptTargets,
+	});
 }
 
 function hermesManagedChannelsPatch(
@@ -3110,17 +3178,42 @@ function openClawManagedChannelDeletes(): Record<string, null> {
 	>;
 }
 
-function installOpenClawChannelPlugins(
-	commandPath: string,
-	channels: Record<string, unknown>,
-	home: string,
-	workspaceRoot: string,
-): void {
-	for (const channel of Object.keys(channels).sort()) {
+function installOpenClawChannelPlugins(input: {
+	commandPath: string;
+	channels: Record<string, unknown>;
+	home: string;
+	workspaceRoot: string;
+	previousReceipts: RuntimeInstallReceipts | null;
+	receiptTargets: RuntimeInstallReceiptTargets;
+}): void {
+	for (const channel of Object.keys(input.channels).sort()) {
 		if (channel === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		const specs = OPENCLAW_EXTERNAL_CHANNEL_PLUGIN_SPECS[channel];
 		if (!specs) continue;
-		runPluginInstallWithFallback(commandPath, specs, home, workspaceRoot);
+		const key = `openclaw:${channel}`;
+		const desiredRevision = channelPluginDesiredRevision({
+			channel,
+			specs,
+		});
+		const currentRevision = () =>
+			channelPluginCurrentRevision({
+				channel,
+				commandPath: input.commandPath,
+				home: input.home,
+				workspaceRoot: input.workspaceRoot,
+			});
+		const verifiedCurrentRevision = verifiedReceiptCurrentRevision(
+			input.previousReceipts?.channelPlugins[key],
+			desiredRevision,
+			currentRevision,
+		);
+		input.receiptTargets.channelPlugins.set(key, {
+			desiredRevision,
+			currentRevision,
+			verifiedCurrentRevision,
+		});
+		if (verifiedCurrentRevision !== null) continue;
+		runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
 	}
 }
 
@@ -3762,6 +3855,201 @@ function runRuntimeUserCommand(
 		);
 	}
 	execFileSync(command, args, { input: stdin, env, cwd, stdio: "pipe" });
+}
+
+function runtimeCommandCurrentRevision(command: string, home: string, cwd: string): string | null {
+	if (!isAbsolute(command)) return null;
+	try {
+		const linkStat = lstatSync(command);
+		if (!linkStat.isFile() && !linkStat.isSymbolicLink()) return null;
+		const fileStat = linkStat.isSymbolicLink() ? statSync(command) : linkStat;
+		if (!fileStat.isFile()) return null;
+		const contents = readFileSync(command);
+		const versionResult = spawnRuntimeUserCommand(command, ["--version"], home, cwd);
+		if (versionResult.status !== 0) return null;
+		const stdout = Buffer.isBuffer(versionResult.stdout)
+			? versionResult.stdout.toString("utf8")
+			: versionResult.stdout;
+		const stderr = Buffer.isBuffer(versionResult.stderr)
+			? versionResult.stderr.toString("utf8")
+			: versionResult.stderr;
+		const version = [stdout, stderr].filter(Boolean).join("\n").trim();
+		if (!version) return null;
+		return runtimeContentSha256({
+			command,
+			contentsSha256: createHash("sha256").update(contents).digest("hex"),
+			kind: linkStat.isSymbolicLink() ? "symlink" : "file",
+			linkTarget: linkStat.isSymbolicLink() ? readlinkSync(command) : null,
+			linkUid: linkStat.uid,
+			linkGid: linkStat.gid,
+			fileMode: fileStat.mode & 0o7777,
+			fileUid: fileStat.uid,
+			fileGid: fileStat.gid,
+			version,
+		});
+	} catch {
+		return null;
+	}
+}
+
+function officialServiceCurrentRevision(
+	program: RuntimeSystemdUserProgram,
+	paths: RuntimePaths,
+): string | null {
+	const descriptor = officialRuntimeServiceDescriptorForProgram(program);
+	if (!descriptor) return null;
+	const unitName = systemdUnitFileName(descriptor.programName);
+	const unitPath = join(paths.systemdUserRoot, unitName);
+	try {
+		const contents = readFileSync(unitPath);
+		if (isGeneratedRuntimeSystemdFile(contents.toString("utf8"))) return null;
+		const stat = lstatSync(unitPath);
+		if (!stat.isFile()) return null;
+		const command = officialRuntimeServiceCommand(descriptor, paths);
+		const commandRevision = runtimeCommandCurrentRevision(command, paths.userHome, paths.userHome);
+		if (!commandRevision) return null;
+		return runtimeContentSha256({
+			commandRevision,
+			programName: descriptor.programName,
+			unitName,
+			unitSha256: createHash("sha256").update(contents).digest("hex"),
+			unitMode: stat.mode & 0o7777,
+			unitUid: stat.uid,
+			unitGid: stat.gid,
+		});
+	} catch {
+		return null;
+	}
+}
+
+function officialServiceDesiredRevision(input: { program: RuntimeSystemdUserProgram }): string {
+	const descriptor = officialRuntimeServiceDescriptorForProgram(input.program);
+	if (!descriptor) throw new Error("official service receipt requires an official service program");
+	return runtimeContentSha256({
+		runtime: descriptor.runtime,
+		programName: descriptor.programName,
+		serviceIdentity: descriptor.service,
+		installerCommand: descriptor.command,
+		installArgs: descriptor.installArgs,
+	});
+}
+
+function channelPluginDesiredRevision(input: {
+	channel: string;
+	specs: readonly string[];
+}): string {
+	return runtimeContentSha256({
+		runtime: "openclaw",
+		pluginIdentity: input.channel,
+		installerCommand: ["plugins", "install"],
+		specs: input.specs,
+	});
+}
+
+function channelPluginCurrentRevision(input: {
+	channel: string;
+	commandPath: string;
+	home: string;
+	workspaceRoot: string;
+}): string | null {
+	const commandRevision = runtimeCommandCurrentRevision(
+		input.commandPath,
+		input.home,
+		input.workspaceRoot,
+	);
+	if (!commandRevision) return null;
+	const inspect = spawnRuntimeUserCommand(
+		input.commandPath,
+		["plugins", "inspect", input.channel, "--json"],
+		input.home,
+		input.workspaceRoot,
+	);
+	if (inspect.status !== 0) return null;
+	try {
+		const stdout = Buffer.isBuffer(inspect.stdout)
+			? inspect.stdout.toString("utf8")
+			: inspect.stdout;
+		const parsed = openClawPluginInspectSchema.safeParse(JSON.parse(stdout) as unknown);
+		if (!parsed.success) return null;
+		const { plugin, install } = parsed.data;
+		const version = plugin.version ?? install.resolvedVersion ?? install.version;
+		if (plugin.id !== input.channel || plugin.status !== "loaded" || !plugin.enabled || !version) {
+			return null;
+		}
+		return runtimeContentSha256({
+			commandRevision,
+			plugin: {
+				id: plugin.id,
+				source: plugin.source,
+				origin: plugin.origin,
+				status: plugin.status,
+				version,
+				enabled: plugin.enabled === true,
+			},
+			install: {
+				source: install.source,
+				spec: install.spec,
+				sourcePath: install.sourcePath,
+				installPath: install.installPath,
+				version: install.version,
+				resolvedName: install.resolvedName,
+				resolvedVersion: install.resolvedVersion,
+				resolvedSpec: install.resolvedSpec,
+				integrity: install.integrity,
+				shasum: install.shasum,
+				npmIntegrity: install.npmIntegrity,
+				npmShasum: install.npmShasum,
+				clawpackSha256: install.clawpackSha256,
+				gitUrl: install.gitUrl,
+				gitRef: install.gitRef,
+				gitCommit: install.gitCommit,
+			},
+		});
+	} catch {
+		return null;
+	}
+}
+
+function verifiedReceiptCurrentRevision(
+	receipt: RuntimeInstallReceiptEntry | undefined,
+	desiredRevision: string,
+	currentRevision: () => string | null,
+): string | null {
+	if (!receipt || receipt.desiredRevision !== desiredRevision) return null;
+	const current = currentRevision();
+	return current === receipt.currentRevision ? current : null;
+}
+
+function commitRuntimeInstallReceipts(
+	targets: RuntimeInstallReceiptTargets,
+	paths: RuntimePaths,
+): void {
+	const receipts = emptyRuntimeInstallReceipts();
+	commitRuntimeInstallReceiptGroup(receipts.officialServices, targets.officialServices);
+	commitRuntimeInstallReceiptGroup(receipts.channelPlugins, targets.channelPlugins);
+	try {
+		writeRuntimeInstallReceipts(receipts, paths);
+	} catch {
+		// Receipt persistence is an optimization. Failing closed means the next
+		// convergence executes the unchanged official install commands again.
+	}
+}
+
+function commitRuntimeInstallReceiptGroup(
+	receipts: Record<string, RuntimeInstallReceiptEntry>,
+	targets: Map<string, RuntimeInstallReceiptTarget>,
+): void {
+	for (const [key, target] of [...targets].sort(([left], [right]) => left.localeCompare(right))) {
+		const currentRevision = target.currentRevision();
+		if (!currentRevision) continue;
+		if (
+			target.verifiedCurrentRevision !== null &&
+			currentRevision !== target.verifiedCurrentRevision
+		) {
+			continue;
+		}
+		receipts[key] = { desiredRevision: target.desiredRevision, currentRevision };
+	}
 }
 
 function clearEgressProfileBundle(paths: RuntimePaths): null {
@@ -5643,6 +5931,11 @@ export function convergeRuntimeManifest(
 	const installErrors: string[] = [];
 	const writtenRuntimeSecretIds = new Set<string>();
 	const appliedState = readRuntimeAppliedState(paths);
+	const previousInstallReceipts = readRuntimeInstallReceipts(paths);
+	const installReceiptTargets: RuntimeInstallReceiptTargets = {
+		officialServices: new Map(),
+		channelPlugins: new Map(),
+	};
 	const previousProjectedProviderIds = appliedState?.projectedProviderIds ?? {};
 	const projectedProviderIds: Record<string, string[]> = {};
 	const runtimeEntries = Object.entries(manifest.runtimes).sort(([a], [b]) => a.localeCompare(b));
@@ -5731,7 +6024,14 @@ export function convergeRuntimeManifest(
 		const observation = observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
 		try {
-			installHostedChannelProjectionDependencies(name, observation, manifest, paths.userHome);
+			installHostedChannelProjectionDependencies(
+				name,
+				observation,
+				manifest,
+				paths.userHome,
+				previousInstallReceipts,
+				installReceiptTargets,
+			);
 		} catch (error) {
 			installErrors.push(
 				`runtime ${name} channel plugin install failed: ${
@@ -5944,6 +6244,23 @@ export function convergeRuntimeManifest(
 					secretValues,
 					providerProjectionRevisions,
 				});
+				const serviceName = runtimeSystemdProgramName(program);
+				const key = systemdUnitFileName(serviceName);
+				const desiredRevision = officialServiceDesiredRevision({
+					program,
+				});
+				const currentRevision = () => officialServiceCurrentRevision(program, paths);
+				const verifiedCurrentRevision = verifiedReceiptCurrentRevision(
+					previousInstallReceipts?.officialServices[key],
+					desiredRevision,
+					currentRevision,
+				);
+				installReceiptTargets.officialServices.set(key, {
+					desiredRevision,
+					currentRevision,
+					verifiedCurrentRevision,
+				});
+				if (verifiedCurrentRevision !== null) continue;
 				reloadRuntimeUserManager(paths, paths.userHome);
 				const error = installOfficialRuntimeUserService({ ...program, cwd: paths.userHome }, paths);
 				if (error) throw new Error(error);
@@ -6261,6 +6578,7 @@ export function convergeRuntimeManifest(
 					? { egressSidecarSecretRevision: desiredEgressSidecarSecretRevision }
 					: {}),
 			});
+			commitRuntimeInstallReceipts(installReceiptTargets, paths);
 		}
 		return convergence;
 	} catch (error) {

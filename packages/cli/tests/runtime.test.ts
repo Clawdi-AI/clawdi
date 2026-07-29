@@ -5882,12 +5882,40 @@ exit 64
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
 		const systemctlLog = join(root, "systemctl-hermes-noop.log");
+		const officialInstallLog = join(root, "hermes-official-installs.log");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
-		writeHermesVersionBinary(home, "0.18.0");
+		const hermesBin = join(home, ".local", "bin", "hermes");
+		const hermesUnit = join(home, ".config", "systemd", "user", "hermes-gateway.service");
+		mkdirSync(dirname(hermesBin), { recursive: true });
+		writeFileSync(
+			hermesBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "$*" = "--version" ]; then
+  printf '%s\n' 'Hermes Agent v0.18.0 (2026-07-01)'
+  exit 0
+fi
+if [ "$*" = "gateway install --force" ]; then
+  printf '%s\n' "$*" >> '${officialInstallLog}'
+  mkdir -p '${dirname(hermesUnit)}'
+  cat > '${hermesUnit}' <<'EOF'
+[Unit]
+Description=Official Hermes gateway
+
+[Service]
+ExecStart=hermes gateway run
+EOF
+  chmod 0644 '${hermesUnit}'
+  exit 0
+fi
+exit 0
+`,
+		);
+		chmodSync(hermesBin, 0o700);
 		writeFileSync(
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
@@ -5903,7 +5931,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 		process.env.CLAWDI_RUNTIME_USER = "root";
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => logs.push(String(value));
@@ -5952,6 +5980,9 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				),
 			).toHaveLength(1);
 			expect(firstSystemctlCalls.some((call) => call.includes("restart"))).toBe(false);
+			expect(readFileSync(officialInstallLog, "utf8").trim().split("\n")).toEqual([
+				"gateway install --force",
+			]);
 
 			const firstAppliedState = readRuntimeAppliedState(getRuntimePaths());
 			if (!firstAppliedState) throw new Error("expected initial Hermes applied state");
@@ -5976,6 +6007,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				userUnitsChanged: [],
 			});
 			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
+			expect(readFileSync(officialInstallLog, "utf8").trim().split("\n")).toHaveLength(1);
 			expect(watchFetch.captured[1]?.headers["if-none-match"]).toBe(committedEtag);
 
 			writeFileSync(systemctlLog, "");
@@ -6023,6 +6055,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 					call.includes("restart clawdi-hermes-dashboard.service"),
 				),
 			).toBe(false);
+			expect(readFileSync(officialInstallLog, "utf8").trim().split("\n")).toHaveLength(1);
 			expect(watchFetch.captured[3]?.headers["if-none-match"]).toBe(committedEtag);
 			const changedAppliedState = readRuntimeAppliedState(getRuntimePaths());
 			if (!changedAppliedState) throw new Error("expected changed Hermes applied state");

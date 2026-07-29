@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { type RuntimeAppliedStateV2, writeRuntimeAppliedState } from "./applied-state";
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
@@ -56,6 +56,14 @@ function setApplyIdentityEnvironment(generation: number): void {
 	process.env.CLAWDI_RUNTIME_BOOT_NONCE = `boot-nonce-00000${generation}`;
 }
 
+function writeObservationHealth(paths: RuntimePaths, status: "ok" | "error"): void {
+	for (const path of [paths.runtimeWatchStatus, paths.providerHealthStatus]) {
+		mkdirSync(dirname(path), { recursive: true });
+	}
+	writeFileSync(paths.runtimeWatchStatus, JSON.stringify({ event: { status: "applied" } }));
+	writeFileSync(paths.providerHealthStatus, JSON.stringify({ providers: { default: { status } } }));
+}
+
 describe("hosted runtime observation producer", () => {
 	test("re-reads the applied tuple after rotation and emits a new boot identity", async () => {
 		const paths = tempRuntimePaths();
@@ -94,10 +102,10 @@ describe("hosted runtime observation producer", () => {
 				}),
 		});
 
-		expect(await producer.sendOnce()).toBe("sent");
+		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
 		setApplyIdentityEnvironment(2);
 		writeRuntimeAppliedState(appliedState(2), paths);
-		expect(await producer.sendOnce()).toBe("sent");
+		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
 
 		expect(events).toHaveLength(2);
 		expect(events[0]).toMatchObject({
@@ -130,7 +138,7 @@ describe("hosted runtime observation producer", () => {
 			},
 		});
 
-		expect(await producer.sendOnce()).toBe("idle");
+		expect(await producer.sendOnce()).toEqual({ outcome: "idle" });
 		expect(submits).toBe(0);
 	});
 
@@ -148,7 +156,7 @@ describe("hosted runtime observation producer", () => {
 			},
 		});
 
-		expect(await producer.sendOnce()).toBe("idle");
+		expect(await producer.sendOnce()).toEqual({ outcome: "idle" });
 		expect(submits).toBe(0);
 	});
 
@@ -179,10 +187,10 @@ describe("hosted runtime observation producer", () => {
 				}),
 		});
 
-		expect(await producer.sendOnce()).toBe("failed");
+		expect(await producer.sendOnce()).toEqual({ outcome: "failed" });
 		setApplyIdentityEnvironment(2);
 		writeRuntimeAppliedState(appliedState(2), paths);
-		expect(await producer.sendOnce()).toBe("sent");
+		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
 
 		expect(submitted.map((event) => event.eventId)).toEqual([
 			"old-event-000001",
@@ -233,5 +241,143 @@ describe("hosted runtime observation producer", () => {
 
 		expect(submitted.map((event) => event.applied.generation)).toEqual([1, 2]);
 		expect(submitted[1]).toMatchObject({ sequence: 1, applied: { generation: 2 } });
+	});
+
+	test("reports a non-ok to ok transition within five seconds", async () => {
+		const paths = tempRuntimePaths();
+		setApplyIdentityEnvironment(1);
+		writeRuntimeAppliedState(appliedState(1), paths);
+		writeObservationHealth(paths, "error");
+		const abort = new AbortController();
+		const attempts: Array<{ at: number; status: "ok" | "error" | "unknown" }> = [];
+		let clock = 0;
+
+		await runRuntimeObservationProducer({
+			abort: abort.signal,
+			paths,
+			submit: async (_environmentId, event) => {
+				attempts.push({ at: clock, status: event.status });
+				return "accepted";
+			},
+			now: () => clock,
+			delay: async (ms) => {
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+				clock += ms;
+				if (attempts.length === 1) writeObservationHealth(paths, "ok");
+				if (attempts.length === 2) abort.abort();
+				if (clock > 10_000) throw new Error("ready transition observation did not arrive");
+			},
+		});
+
+		expect(attempts).toEqual([
+			{ at: 0, status: "error" },
+			{ at: 5_000, status: "ok" },
+		]);
+	});
+
+	test("bounds fast non-ok observations to the ninety-second convergence window", async () => {
+		const paths = tempRuntimePaths();
+		setApplyIdentityEnvironment(1);
+		writeRuntimeAppliedState(appliedState(1), paths);
+		writeObservationHealth(paths, "error");
+		const abort = new AbortController();
+		const attemptTimes: number[] = [];
+		let clock = 0;
+
+		await runRuntimeObservationProducer({
+			abort: abort.signal,
+			paths,
+			submit: async (_environmentId, event) => {
+				expect(event.status).toBe("error");
+				attemptTimes.push(clock);
+				return "accepted";
+			},
+			now: () => clock,
+			delay: async (ms) => {
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+				clock += ms;
+				if (clock >= 151_000) abort.abort();
+			},
+		});
+
+		expect(attemptTimes).toEqual([
+			...Array.from({ length: 19 }, (_, index) => index * 5_000),
+			150_000,
+		]);
+	});
+
+	test("keeps a ready steady state on the sixty-second cadence", async () => {
+		const paths = tempRuntimePaths();
+		setApplyIdentityEnvironment(1);
+		writeRuntimeAppliedState(appliedState(1), paths);
+		writeObservationHealth(paths, "ok");
+		const abort = new AbortController();
+		const attemptTimes: number[] = [];
+		let clock = 0;
+
+		await runRuntimeObservationProducer({
+			abort: abort.signal,
+			paths,
+			submit: async (_environmentId, event) => {
+				expect(event.status).toBe("ok");
+				attemptTimes.push(clock);
+				return "accepted";
+			},
+			now: () => clock,
+			delay: async (ms) => {
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+				clock += ms;
+				if (attemptTimes.length === 2) abort.abort();
+			},
+		});
+
+		expect(attemptTimes).toEqual([0, 60_000]);
+	});
+
+	test.each([
+		"failure",
+		"terminal-stale",
+	] as const)("does not busy-retry a %s ready-transition observation", async (outcome) => {
+		const paths = tempRuntimePaths();
+		setApplyIdentityEnvironment(1);
+		writeRuntimeAppliedState(appliedState(1), paths);
+		writeObservationHealth(paths, "error");
+		const abort = new AbortController();
+		const attempts: Array<{ at: number; status: "ok" | "error" | "unknown" }> = [];
+		let clock = 0;
+
+		await runRuntimeObservationProducer({
+			abort: abort.signal,
+			paths,
+			submit: async (_environmentId, event) => {
+				attempts.push({ at: clock, status: event.status });
+				if (attempts.length === 2) {
+					if (outcome === "failure") throw new Error("temporary ready observation failure");
+					return "terminal-stale";
+				}
+				return "accepted";
+			},
+			now: () => clock,
+			delay: async (ms) => {
+				await Promise.resolve();
+				await Promise.resolve();
+				await Promise.resolve();
+				clock += ms;
+				if (attempts.length === 1) writeObservationHealth(paths, "ok");
+				if (attempts.length === 3) abort.abort();
+			},
+		});
+
+		expect(attempts).toEqual([
+			{ at: 0, status: "error" },
+			{ at: 5_000, status: "ok" },
+			{ at: 65_000, status: "ok" },
+		]);
 	});
 });
