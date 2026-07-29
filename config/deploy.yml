@@ -29,9 +29,12 @@ aliases:
 
 ssh:
   user: phala
-  # -F none: skip ssh config files (ownership differs when kamal runs in a
-  # container with the operator's ~/.ssh bind-mounted).
+  <%# Deploys from the box itself (CI runner) connect directly; operator
+      deploys from outside go through the jump host. -F none: skip ssh config
+      files (ownership differs inside the kamal container). %>
+  <% unless ENV["KAMAL_LOCAL_DEPLOY"] %>
   proxy_command: "ssh -F none -o StrictHostKeyChecking=accept-new -i ~/.ssh/id_ed25519 -l phala -W %h:%p jump.phala.systems"
+  <% end %>
   keys:
     - ~/.ssh/clawdi_access_ed25519
 

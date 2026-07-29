@@ -308,3 +308,27 @@ jobs:
           fi
 
           python3 infra/deploy/coolify/audit_stack.py --phase live
+
+  deploy-vps:
+    needs: build
+    if: needs.build.outputs.build_required == 'true' && needs.build.outputs.should_deploy == 'true'
+    runs-on: clawdi-box
+    timeout-minutes: 15
+    concurrency:
+      group: kamal-deploy-clawdi
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.build.outputs.image_tag }}
+
+      - name: Kamal deploy (VPS)
+        run: |
+          install -m 600 /home/phala/.kamal-secrets/clawdi.env .kamal/secrets
+          docker run --rm \
+            -v "$PWD":/workdir \
+            -v /home/phala/.ssh:/root/.ssh \
+            -v /home/phala/.clawdi-ops:/home/phala/.clawdi-ops:ro \
+            -e KAMAL_LOCAL_DEPLOY=1 \
+            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
+            ghcr.io/basecamp/kamal:latest deploy -P --version "${{ needs.build.outputs.image_tag }}"
