@@ -254,7 +254,7 @@ interface RuntimeInstallObservation {
 interface RuntimeInstallReceiptTarget {
 	desiredRevision: string;
 	currentRevision: () => string | null;
-	verifiedCurrentRevision: string | null;
+	expectedCurrentRevision: string | null;
 }
 
 interface RuntimeInstallReceiptTargets {
@@ -3207,13 +3207,15 @@ function installOpenClawChannelPlugins(input: {
 			desiredRevision,
 			currentRevision,
 		);
-		input.receiptTargets.channelPlugins.set(key, {
+		const target: RuntimeInstallReceiptTarget = {
 			desiredRevision,
 			currentRevision,
-			verifiedCurrentRevision,
-		});
+			expectedCurrentRevision: verifiedCurrentRevision,
+		};
+		input.receiptTargets.channelPlugins.set(key, target);
 		if (verifiedCurrentRevision !== null) continue;
 		runPluginInstallWithFallback(input.commandPath, specs, input.home, input.workspaceRoot);
+		target.expectedCurrentRevision = currentRevision();
 	}
 }
 
@@ -4060,14 +4062,9 @@ function commitRuntimeInstallReceiptGroup(
 	targets: Map<string, RuntimeInstallReceiptTarget>,
 ): void {
 	for (const [key, target] of [...targets].sort(([left], [right]) => left.localeCompare(right))) {
+		if (!target.expectedCurrentRevision) continue;
 		const currentRevision = target.currentRevision();
-		if (!currentRevision) continue;
-		if (
-			target.verifiedCurrentRevision !== null &&
-			currentRevision !== target.verifiedCurrentRevision
-		) {
-			continue;
-		}
+		if (currentRevision !== target.expectedCurrentRevision) continue;
 		receipts[key] = { desiredRevision: target.desiredRevision, currentRevision };
 	}
 }
@@ -6275,15 +6272,17 @@ export function convergeRuntimeManifest(
 					desiredRevision,
 					currentRevision,
 				);
-				installReceiptTargets.officialServices.set(key, {
+				const target: RuntimeInstallReceiptTarget = {
 					desiredRevision,
 					currentRevision,
-					verifiedCurrentRevision,
-				});
+					expectedCurrentRevision: verifiedCurrentRevision,
+				};
+				installReceiptTargets.officialServices.set(key, target);
 				if (verifiedCurrentRevision !== null) continue;
 				reloadRuntimeUserManager(paths, paths.userHome);
 				const error = installOfficialRuntimeUserService({ ...program, cwd: paths.userHome }, paths);
 				if (error) throw new Error(error);
+				target.expectedCurrentRevision = currentRevision();
 			}
 		}
 		try {
