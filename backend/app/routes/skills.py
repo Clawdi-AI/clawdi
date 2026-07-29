@@ -2113,11 +2113,10 @@ async def _upsert_skill(
             # the original timestamp too.
             #
             # The `is_active` guard catches re-uploads of byte-identical
-            # content into a soft-deleted row — without it, a user who
-            # deleted a skill from the dashboard, then a daemon push
-            # arrived with the same bytes, would silently keep the row
-            # in deleted state and the listing would still hide the
-            # skill. Treat that as a true reactivation.
+            # content into a soft-deleted row. For Agent projections this
+            # is the local delete-then-recreate lifecycle; Cloud-owned rows
+            # can likewise be explicitly re-uploaded. Treat either as a true
+            # reactivation instead of leaving the listing stale.
             return skill
         skill.name = name
         skill.description = description

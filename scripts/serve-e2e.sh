@@ -130,14 +130,14 @@ ok "daemon engine started"
 
 bold "5) verifying push: edit local skill, expect cloud row"
 # Snapshot the cloud's current hash (set by the daemon's
-# initialSync push at boot) so we can detect the edit's
+# boot inventory projection) so we can detect the edit's
 # distinct hash, not just any non-empty value.
 get_cloud_hash() {
   curl -s -o "$LOG_DIR/skill-detail.json" "http://127.0.0.1:$TEST_PORT/v1/skills/e2e-hello" \
     -H "Authorization: Bearer $RAW_KEY"
   python3 -c 'import json,sys; d=json.load(open("'"$LOG_DIR/skill-detail.json"'")); print(d.get("content_hash",""))' 2>/dev/null
 }
-# Wait until the daemon's initialSync has uploaded the seed
+# Wait until the daemon's boot inventory scan has uploaded the seed
 # `e2e-hello` skill before we touch local files. Without this
 # wait, `PREV_HASH` could be "" (skill not yet on cloud), the
 # subsequent edit happens BEFORE the seed upload, and the
@@ -150,7 +150,7 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 if [ -z "$PREV_HASH" ]; then
-  echo "FAIL: initialSync never uploaded e2e-hello — daemon push path broken" >&2
+  echo "FAIL: boot inventory scan never uploaded e2e-hello — daemon projection path broken" >&2
   exit 1
 fi
 # Bump the local SKILL.md so the watcher fires.
@@ -158,7 +158,7 @@ echo "# Edited at $(date +%s)" >> "$SKILL_DIR/SKILL.md"
 
 # The watcher debounces on a sub-second window, sync engine then
 # computes hash and uploads. Poll up to 45s for the cloud hash
-# to CHANGE — the daemon's initialSync may have already pushed
+# to CHANGE — the daemon's boot inventory scan may have already projected
 # the unedited content at boot, so we want to confirm THIS edit
 # specifically propagated, not just "something is on the cloud".
 # 45s covers the poll-mode fallback path: when fs.watch is
