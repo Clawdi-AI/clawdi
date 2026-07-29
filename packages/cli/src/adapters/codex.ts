@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	assertUserSkillTargetMutable,
+	migrateLegacyLocalSetupSkill,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
@@ -239,6 +241,12 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
@@ -274,6 +282,12 @@ export class CodexAdapter implements AgentAdapter {
 	async listSkillKeys(): Promise<string[]> {
 		// Flat layout. Mirrors `collectSkills` filtering so the
 		// daemon's rescan and the bulk push see the same set.
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 		const out: string[] = [];
 		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {

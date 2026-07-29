@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { teardown } from "../../src/commands/teardown";
 import {
 	managedSkillReservationState,
+	migrateLegacyLocalSetupSkill,
 	reserveManagedSkill,
 } from "../../src/runtime/managed-skill-reservation";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
@@ -59,6 +60,12 @@ function setup(agent: AgentKey): {
 		version: 1,
 		digest: "a".repeat(64),
 		manager: "local-setup",
+	});
+	migrateLegacyLocalSetupSkill({
+		targetDir: dirname(skillPath),
+		id: "clawdi",
+		version: 1,
+		digest: () => "a".repeat(64),
 	});
 
 	return { envPath, skillPath };
@@ -166,6 +173,17 @@ describe("teardown — flag behavior", () => {
 
 		await teardown({ agent: "codex", yes: true, keepMcp: true });
 
+		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
+		mkdirSync(target, { recursive: true });
+		writeFileSync(join(target, "SKILL.md"), "# Future user Skill\n");
+		expect(
+			migrateLegacyLocalSetupSkill({
+				targetDir: target,
+				id: "clawdi",
+				version: 1,
+				digest: () => "b".repeat(64),
+			}),
+		).toBe("already_migrated");
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 	});
 

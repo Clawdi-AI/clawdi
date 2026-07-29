@@ -19,9 +19,15 @@ import {
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
+import {
+	installReservedManagedSkill,
+	managedSkillReservationState,
+} from "./managed-skill-reservation";
 
 const catalogEntry = resolveHostedBundledSkill("clawdi", 1);
 const bundledSourceDir = resolve(import.meta.dir, "../../skills/hosted-versions/1/clawdi");
+const originalRuntimeMode = process.env.CLAWDI_RUNTIME_MODE;
+const originalServiceStateDir = process.env.CLAWDI_SERVICE_STATE_DIR;
 
 describe("hosted bundled skill reconciliation", () => {
 	let root: string;
@@ -34,14 +40,22 @@ describe("hosted bundled skill reconciliation", () => {
 
 	afterEach(() => {
 		rmSync(root, { recursive: true, force: true });
+		if (originalRuntimeMode === undefined) delete process.env.CLAWDI_RUNTIME_MODE;
+		else process.env.CLAWDI_RUNTIME_MODE = originalRuntimeMode;
+		if (originalServiceStateDir === undefined) delete process.env.CLAWDI_SERVICE_STATE_DIR;
+		else process.env.CLAWDI_SERVICE_STATE_DIR = originalServiceStateDir;
 	});
 
-	function reconcile(sourceDir = bundledSourceDir) {
+	function reconcile(
+		sourceDir = bundledSourceDir,
+		activation?: Parameters<typeof reconcileHostedBundledSkill>[0]["activation"],
+	) {
 		return reconcileHostedBundledSkill({
 			skillId: "clawdi",
 			version: 1,
 			sourceDir,
 			targetDir,
+			activation,
 		});
 	}
 
@@ -99,6 +113,39 @@ describe("hosted bundled skill reconciliation", () => {
 			digest: catalogEntry.digest,
 		});
 		expect(readdirSync(join(root, "target"))).toEqual(["clawdi"]);
+	});
+
+	it("treats activation as committed before best-effort previous-target cleanup", () => {
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		const install = (
+			activation?: Parameters<typeof reconcileHostedBundledSkill>[0]["activation"],
+		) =>
+			installReservedManagedSkill(
+				{
+					targetDir,
+					id: "clawdi",
+					version: 1,
+					digest: catalogEntry.digest,
+					manager: "hosted-manifest",
+				},
+				() => reconcile(bundledSourceDir, activation),
+			);
+		expect(install()).toBe("replaced");
+		writeFileSync(join(targetDir, "SKILL.md"), "tampered\n");
+
+		expect(
+			install({
+				beforeCleanup: () => {
+					throw new Error("cleanup failed");
+				},
+			}),
+		).toBe("replaced");
+		expect(readFileSync(join(targetDir, "SKILL.md"))).toEqual(
+			readFileSync(join(bundledSourceDir, "SKILL.md")),
+		);
+		expect(managedSkillReservationState(targetDir, "clawdi")).toBe("reserved");
+		expect(readdirSync(join(root, "target")).some((entry) => entry.includes("-trash-"))).toBe(true);
 	});
 
 	it("adopts an old marker only when catalog identity and live content match exactly", () => {

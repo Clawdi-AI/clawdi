@@ -11,7 +11,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setup } from "../../src/commands/setup";
-import { managedSkillReservationState } from "../../src/runtime/managed-skill-reservation";
+import {
+	managedSkillReservationState,
+	releaseManagedSkill,
+} from "../../src/runtime/managed-skill-reservation";
 import {
 	type AgentHomeOverrideSnapshot,
 	jsonResponse,
@@ -170,7 +173,7 @@ describe("setup daemon install", () => {
 		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
 	});
 
-	it("does not claim or overwrite an unmanaged Skill collision", async () => {
+	it("adopts a pre-ledger clawdi target under the previous exclusion contract", async () => {
 		const target = join(home, ".codex", "skills", "clawdi");
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "# User-owned Clawdi\n");
@@ -178,7 +181,26 @@ describe("setup daemon install", () => {
 
 		await setup({ agent: "codex", yes: true, daemon: false });
 
-		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# User-owned Clawdi\n");
+		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).not.toBe("# User-owned Clawdi\n");
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+	});
+
+	it("does not reclaim a future user clawdi target after migration and release", async () => {
+		installEnvironmentMock("env-codex");
+		await setup({ agent: "codex", yes: true, daemon: false });
+		const target = join(home, ".codex", "skills", "clawdi");
+		releaseManagedSkill({
+			targetDir: target,
+			id: "clawdi",
+			manager: "local-setup",
+			removeTarget: () => rmSync(target, { recursive: true, force: true }),
+		});
+		mkdirSync(target, { recursive: true });
+		writeFileSync(join(target, "SKILL.md"), "# Future user Clawdi\n");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# Future user Clawdi\n");
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 	});
 });

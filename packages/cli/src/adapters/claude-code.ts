@@ -3,8 +3,10 @@ import { basename, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	assertUserSkillTargetMutable,
+	migrateLegacyLocalSetupSkill,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
@@ -257,6 +259,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	async collectSkills(): Promise<RawSkill[]> {
 		const skillsDir = join(claudeDir(), "skills");
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir, "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir)) return [];
 
 		const skills: RawSkill[] = [];
@@ -304,6 +312,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		// rescan returns the same set the bulk push would consider
 		// — otherwise nested or skip-listed dirs would diverge.
 		const skillsDir = join(claudeDir(), "skills");
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir, "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir)) return [];
 		const out: string[] = [];
 		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {

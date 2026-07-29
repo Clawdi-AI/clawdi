@@ -8,7 +8,6 @@ import {
 	mkdtempSync,
 	readdirSync,
 	readFileSync,
-	renameSync,
 	rmSync,
 	writeFileSync,
 } from "node:fs";
@@ -18,6 +17,10 @@ import {
 	computeManagedBundleHash,
 	type ManagedBundleHashEntry,
 } from "./managed-bundle-hash";
+import {
+	activateManagedSkillDirectory,
+	type ManagedSkillDirectoryActivationOptions,
+} from "./managed-skill-reservation";
 
 const HOSTED_BUNDLED_SKILL_MARKER = ".clawdi-managed.json";
 const HOSTED_BUNDLED_SKILL_MARKER_SCHEMA = "clawdi.hostedBundledSkillMarker.v1";
@@ -66,6 +69,8 @@ export interface ReconcileHostedBundledSkillInput {
 	targetDir: string;
 	/** A root-owned reservation for this exact target authorizes replacement. */
 	reserved?: boolean;
+	/** Deterministic failure hooks for the shared activation contract. */
+	activation?: ManagedSkillDirectoryActivationOptions;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -313,14 +318,12 @@ export function reconcileHostedBundledSkill(
 			`${JSON.stringify(marker, null, 2)}\n`,
 			{ mode: 0o600 },
 		);
-		if (targetExists) renameSync(input.targetDir, trash);
-		try {
-			renameSync(stagedTarget, input.targetDir);
-		} catch (error) {
-			if (existsSync(trash)) renameSync(trash, input.targetDir);
-			throw error;
-		}
-		if (existsSync(trash)) rmSync(trash, { recursive: true, force: true });
+		activateManagedSkillDirectory({
+			stagedTarget,
+			targetDir: input.targetDir,
+			previousTarget: trash,
+			options: input.activation,
+		});
 	} finally {
 		rmSync(stagingRoot, { recursive: true, force: true });
 	}

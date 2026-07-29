@@ -1,10 +1,19 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
 	installReservedManagedSkill,
 	managedSkillReservationState,
+	migrateLegacyLocalSetupSkill,
 	releaseManagedSkill,
 	replaceManagedSkillDirectoryAtomic,
 	reserveManagedSkill,
@@ -148,6 +157,46 @@ describe("managed Skill reservations", () => {
 		);
 	});
 
+	it("records legacy migration independently for each canonical target", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.HOME = root;
+		const existing = join(root, "one", "skills", "clawdi");
+		const absent = join(root, "two", "skills", "clawdi");
+		mkdirSync(existing, { recursive: true });
+		writeFileSync(join(existing, "SKILL.md"), "# Old bundled Skill\n");
+		const digest = () => "a".repeat(64);
+
+		expect(
+			migrateLegacyLocalSetupSkill({
+				targetDir: existing,
+				id: "clawdi",
+				version: 1,
+				digest,
+			}),
+		).toBe("adopted");
+		expect(
+			migrateLegacyLocalSetupSkill({
+				targetDir: absent,
+				id: "clawdi",
+				version: 1,
+				digest,
+			}),
+		).toBe("absent");
+		expect(managedSkillReservationState(existing, "clawdi")).toBe("reserved");
+
+		mkdirSync(absent, { recursive: true });
+		writeFileSync(join(absent, "SKILL.md"), "# Future user Skill\n");
+		expect(
+			migrateLegacyLocalSetupSkill({
+				targetDir: absent,
+				id: "clawdi",
+				version: 1,
+				digest,
+			}),
+		).toBe("already_migrated");
+		expect(managedSkillReservationState(absent, "clawdi")).toBe("unreserved");
+	});
+
 	it("atomically replaces stale files under an active reservation", () => {
 		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
 		process.env.HOME = root;
@@ -201,6 +250,78 @@ describe("managed Skill reservations", () => {
 
 		expect(readFileSync(join(path, "SKILL.md"), "utf8")).toBe("# Example\n");
 		expect(managedSkillReservationState(path, "example")).toBe("unreserved");
+	});
+
+	it("preserves the previous target when activation and restore both fail", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.HOME = root;
+		const source = join(root, "source");
+		const path = target();
+		mkdirSync(source, { recursive: true });
+		writeFileSync(join(source, "SKILL.md"), "# Updated\n");
+
+		expect(() =>
+			installReservedManagedSkill(
+				{
+					targetDir: path,
+					id: "example",
+					version: 2,
+					digest: "3".repeat(64),
+					manager: "local-setup",
+				},
+				() =>
+					replaceManagedSkillDirectoryAtomic(source, path, {
+						beforeActivate: () => {
+							throw new Error("activation failed");
+						},
+						beforeRestore: () => {
+							throw new Error("restore failed");
+						},
+					}),
+			),
+		).toThrow(
+			/activation failed.*restore failed.*previous version retained as a recovery artifact/,
+		);
+
+		expect(existsSync(path)).toBe(false);
+		const recovery = readdirSync(dirname(path)).find((entry) =>
+			entry.startsWith(`.${basename(path)}-previous-`),
+		);
+		expect(recovery).toBeDefined();
+		if (!recovery) throw new Error("expected recovery artifact");
+		expect(readFileSync(join(dirname(path), recovery, "SKILL.md"), "utf8")).toBe("# Example\n");
+		expect(managedSkillReservationState(path, "example")).toBe("unreserved");
+	});
+
+	it("keeps committed ownership when previous-target cleanup fails", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.HOME = root;
+		const source = join(root, "source");
+		const path = target();
+		mkdirSync(source, { recursive: true });
+		writeFileSync(join(source, "SKILL.md"), "# Updated\n");
+
+		installReservedManagedSkill(
+			{
+				targetDir: path,
+				id: "example",
+				version: 2,
+				digest: "4".repeat(64),
+				manager: "local-setup",
+			},
+			() =>
+				replaceManagedSkillDirectoryAtomic(source, path, {
+					beforeCleanup: () => {
+						throw new Error("cleanup failed");
+					},
+				}),
+		);
+
+		expect(readFileSync(join(path, "SKILL.md"), "utf8")).toBe("# Updated\n");
+		expect(managedSkillReservationState(path, "example")).toBe("reserved");
+		expect(
+			readdirSync(dirname(path)).some((entry) => entry.startsWith(`.${basename(path)}-previous-`)),
+		).toBe(true);
 	});
 
 	it("serializes local writers so rollback cannot lose a concurrent reservation", async () => {

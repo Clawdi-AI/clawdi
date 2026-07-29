@@ -4,8 +4,10 @@ import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { isValidSkillKey } from "../lib/skill-key";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	assertUserSkillTargetMutable,
+	migrateLegacyLocalSetupSkill,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
@@ -203,6 +205,12 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
@@ -268,6 +276,12 @@ export class HermesAdapter implements AgentAdapter {
 		// place under `getSkillsRootDir()`. Without this method,
 		// the generic flat-walk used to silently drop nested
 		// Hermes skills from sync.
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 		const out: string[] = [];
 		const walk = (dir: string): void => {

@@ -23,6 +23,7 @@ import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	installReservedManagedSkill,
 	managedSkillReservationState,
+	migrateLegacyLocalSetupSkill,
 	replaceManagedSkillDirectoryAtomic,
 } from "../runtime/managed-skill-reservation";
 import {
@@ -262,6 +263,12 @@ async function installBuiltinSkill(agentType: AgentType) {
 
 	try {
 		const sourceDigest = managedSkillDirectoryDigest(sourceDir);
+		migrateLegacyLocalSetupSkill({
+			targetDir,
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		const reservationState = managedSkillReservationState(targetDir);
 		if (
 			existsSync(targetDir) &&

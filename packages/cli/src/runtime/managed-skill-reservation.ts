@@ -32,6 +32,7 @@ interface ManagedSkillReservation {
 interface ManagedSkillReservationLedger {
 	schemaVersion: typeof LEDGER_SCHEMA;
 	reservations: Record<string, ManagedSkillReservation>;
+	localSetupMigrations: Record<string, { target: string; id: string }>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -48,7 +49,7 @@ function ledgerPath(): string {
 }
 
 function emptyLedger(): ManagedSkillReservationLedger {
-	return { schemaVersion: LEDGER_SCHEMA, reservations: {} };
+	return { schemaVersion: LEDGER_SCHEMA, reservations: {}, localSetupMigrations: {} };
 }
 
 function readLedger(path: string): ManagedSkillReservationLedger {
@@ -61,7 +62,12 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 	} catch {
 		throw new Error("managed Skill ownership state is invalid");
 	}
-	if (!isRecord(value) || value.schemaVersion !== LEDGER_SCHEMA || !isRecord(value.reservations)) {
+	if (
+		!isRecord(value) ||
+		value.schemaVersion !== LEDGER_SCHEMA ||
+		!isRecord(value.reservations) ||
+		(value.localSetupMigrations !== undefined && !isRecord(value.localSetupMigrations))
+	) {
 		throw new Error("managed Skill ownership state is invalid");
 	}
 	const reservations: Record<string, ManagedSkillReservation> = {};
@@ -90,7 +96,21 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 			manager: raw.manager,
 		};
 	}
-	return { schemaVersion: LEDGER_SCHEMA, reservations };
+	const localSetupMigrations: Record<string, { target: string; id: string }> = {};
+	for (const [target, raw] of Object.entries(value.localSetupMigrations ?? {})) {
+		if (
+			!isRecord(raw) ||
+			raw.target !== target ||
+			resolve(target) !== target ||
+			typeof raw.id !== "string" ||
+			basename(target) !== raw.id ||
+			!MANAGED_SKILL_ID_PATTERN.test(raw.id)
+		) {
+			throw new Error("managed Skill ownership state is invalid");
+		}
+		localSetupMigrations[target] = { target, id: raw.id };
+	}
+	return { schemaVersion: LEDGER_SCHEMA, reservations, localSetupMigrations };
 }
 
 function writeLedger(path: string, ledger: ManagedSkillReservationLedger): void {
@@ -144,8 +164,51 @@ export function assertUserSkillTargetMutable(
 	skillId = basename(targetDir),
 ): void {
 	if (shouldIgnoreUserSkill(targetDir, skillId)) {
-		throw new Error(`Skill ${skillId} is reserved by the hosted runtime manifest`);
+		throw new Error(`Skill ${skillId} is reserved by a managed Skill owner`);
 	}
+}
+
+export function migrateLegacyLocalSetupSkill(input: {
+	targetDir: string;
+	id: string;
+	version: number;
+	digest: (targetDir: string) => string;
+}): "adopted" | "already_migrated" | "absent" | "hosted" {
+	if (process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted") return "hosted";
+	if (process.env.CLAWDI_SERVICE_STATE_DIR?.trim()) return "hosted";
+	const path = ledgerPath();
+	const target = resolve(input.targetDir);
+	if (
+		basename(target) !== input.id ||
+		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
+		!Number.isSafeInteger(input.version) ||
+		input.version <= 0
+	) {
+		throw new Error("managed Skill migration identity is invalid");
+	}
+	return withLedgerWriteLock("local-setup", () => {
+		const ledger = readLedger(path);
+		if (ledger.localSetupMigrations[target]) return "already_migrated";
+		const existing = ledger.reservations[target];
+		let outcome: "adopted" | "absent" = "absent";
+		if (!existing && existsSync(target)) {
+			const digest = input.digest(target);
+			if (!SHA256_PATTERN.test(digest)) {
+				throw new Error("managed Skill migration digest is invalid");
+			}
+			ledger.reservations[target] = {
+				target,
+				id: input.id,
+				version: input.version,
+				digest,
+				manager: "local-setup",
+			};
+			outcome = "adopted";
+		}
+		ledger.localSetupMigrations[target] = { target, id: input.id };
+		writeLedger(path, ledger);
+		return outcome;
+	});
 }
 
 export function reserveManagedSkill(input: {
@@ -234,7 +297,7 @@ export function installReservedManagedSkill<T>(
 export function replaceManagedSkillDirectoryAtomic(
 	sourceDir: string,
 	targetDir: string,
-	options: { beforeActivate?: () => void } = {},
+	options: ManagedSkillDirectoryActivationOptions = {},
 ): void {
 	const parent = dirname(targetDir);
 	mkdirSync(parent, { recursive: true });
@@ -246,18 +309,56 @@ export function replaceManagedSkillDirectoryAtomic(
 	);
 	try {
 		cpSync(sourceDir, stagedTarget, { recursive: true });
-		const hadPrevious = existsSync(targetDir);
-		if (hadPrevious) renameSync(targetDir, previousTarget);
-		try {
-			options.beforeActivate?.();
-			renameSync(stagedTarget, targetDir);
-		} catch (error) {
-			if (hadPrevious) renameSync(previousTarget, targetDir);
-			throw error;
-		}
-		if (hadPrevious) rmSync(previousTarget, { recursive: true, force: true });
+		activateManagedSkillDirectory({ stagedTarget, targetDir, previousTarget, options });
 	} finally {
 		rmSync(stagingRoot, { recursive: true, force: true });
+	}
+}
+
+export interface ManagedSkillDirectoryActivationOptions {
+	beforeActivate?: () => void;
+	beforeRestore?: () => void;
+	beforeCleanup?: () => void;
+}
+
+export function activateManagedSkillDirectory(input: {
+	stagedTarget: string;
+	targetDir: string;
+	previousTarget: string;
+	options?: ManagedSkillDirectoryActivationOptions;
+}): void {
+	const hadPrevious = existsSync(input.targetDir);
+	if (hadPrevious) renameSync(input.targetDir, input.previousTarget);
+	try {
+		input.options?.beforeActivate?.();
+		renameSync(input.stagedTarget, input.targetDir);
+	} catch (activationError) {
+		if (!hadPrevious) throw activationError;
+		try {
+			input.options?.beforeRestore?.();
+			renameSync(input.previousTarget, input.targetDir);
+		} catch (restoreError) {
+			const activationMessage =
+				activationError instanceof Error ? activationError.message : String(activationError);
+			const restoreMessage =
+				restoreError instanceof Error ? restoreError.message : String(restoreError);
+			throw new Error(
+				`Skill activation failed: ${activationMessage}; restoring the previous version failed: ${restoreMessage}; previous version retained as a recovery artifact`,
+				{ cause: activationError },
+			);
+		}
+		throw activationError;
+	}
+
+	// Renaming the staged target is the commit point. Cleanup is GC only and
+	// must never make callers roll back ownership after the new target is live.
+	if (hadPrevious) {
+		try {
+			input.options?.beforeCleanup?.();
+			rmSync(input.previousTarget, { recursive: true, force: true });
+		} catch {
+			// Best effort. The uniquely named sibling is safe to collect later.
+		}
 	}
 }
 

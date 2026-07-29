@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import { tarSkillDir } from "../../src/lib/tar";
 import {
+	managedSkillReservationState,
 	releaseManagedSkill,
 	reserveManagedSkill,
 } from "../../src/runtime/managed-skill-reservation";
@@ -305,13 +306,35 @@ describe("ClaudeCodeAdapter.collectSkills", () => {
 		expect(demo.filePath).toContain("/.claude/skills/demo/SKILL.md");
 	});
 
-	it("does not reserve the clawdi name without ownership", async () => {
+	it("adopts a pre-ledger bundled clawdi target without uploading it", async () => {
 		const legacy = join(tmpHome, ".claude", "skills", "clawdi");
 		mkdirSync(legacy, { recursive: true });
 		writeFileSync(join(legacy, "SKILL.md"), "# Legacy bundled Skill\n");
 		const adapter = new ClaudeCodeAdapter();
+		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain("clawdi");
+		expect(await adapter.listSkillKeys()).not.toContain("clawdi");
+		expect(managedSkillReservationState(legacy, "clawdi")).toBe("reserved");
+
+		releaseManagedSkill({
+			targetDir: legacy,
+			id: "clawdi",
+			manager: "local-setup",
+			removeTarget: () => undefined,
+		});
 		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).toContain("clawdi");
 		expect(await adapter.listSkillKeys()).toContain("clawdi");
+	});
+
+	it("does not adopt a future clawdi Skill after an absent migration", async () => {
+		const adapter = new ClaudeCodeAdapter();
+		const target = join(tmpHome, ".claude", "skills", "clawdi");
+		expect(await adapter.listSkillKeys()).not.toContain("clawdi");
+		mkdirSync(target, { recursive: true });
+		writeFileSync(join(target, "SKILL.md"), "# User Skill\n");
+
+		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).toContain("clawdi");
+		expect(await adapter.listSkillKeys()).toContain("clawdi");
+		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 	});
 });
 

@@ -3,8 +3,10 @@ import { isAbsolute, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
 	assertUserSkillTargetMutable,
+	migrateLegacyLocalSetupSkill,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
@@ -295,6 +297,12 @@ export class OpenClawAdapter implements AgentAdapter {
 	async collectSkills(): Promise<RawSkill[]> {
 		const skills: RawSkill[] = [];
 		const seen = new Map<string, string>(); // skillKey → first-winning agentDir
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 
 		// Skills can live under any `agents/<id>/skills/` — iterate every
 		// agent the user has on disk so a deployment with multiple
@@ -305,6 +313,12 @@ export class OpenClawAdapter implements AgentAdapter {
 		// user can rename or pick an explicit OPENCLAW_AGENT_ID.
 		for (const agentRoot of listAgentDirs()) {
 			const dir = join(agentRoot, "skills");
+			migrateLegacyLocalSetupSkill({
+				targetDir: join(dir, "clawdi"),
+				id: "clawdi",
+				version: 1,
+				digest: managedSkillDirectoryDigest,
+			});
 			if (!existsSync(dir)) continue;
 
 			for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -364,6 +378,12 @@ export class OpenClawAdapter implements AgentAdapter {
 		// silently dropping those skills. Pre-fix the cross-agent
 		// enumerator silently lost OpenClaw skills under any
 		// agent other than the active one.
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 		const out: string[] = [];
 		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
