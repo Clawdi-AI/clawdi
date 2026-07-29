@@ -344,7 +344,7 @@ jobs:
           chmod 600 .kamal/secrets
 
       - name: Prepare toolcache
-        run: sudo mkdir -p /opt/hostedtoolcache && sudo chown -R "$USER" /opt/hostedtoolcache
+        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/hostedtoolcache
 
       - name: Install Kamal
         uses: ruby/setup-ruby@v1
