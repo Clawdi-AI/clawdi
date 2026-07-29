@@ -343,8 +343,11 @@ jobs:
           printf '%s\n' "$KAMAL_SECRETS" > .kamal/secrets
           chmod 600 .kamal/secrets
 
-      - name: Prepare toolcache
-        run: sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/hostedtoolcache
+      - name: Prepare runner for Ruby
+        run: |
+          sudo install -d -o "$(id -u)" -g "$(id -g)" /opt/hostedtoolcache
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends libyaml-0-2 build-essential
 
       - name: Install Kamal
         uses: ruby/setup-ruby@v1
