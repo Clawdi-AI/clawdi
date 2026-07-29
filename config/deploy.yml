@@ -103,19 +103,20 @@ accessories:
       - socket:/var/run/postgresql # shared with the backup scheduler sidecar
     env:
       clear:
-        STANZA: clawdi
-        PGBACKREST_STANZA: clawdi
-        PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
-        PGBACKREST_PG1_SOCKET_PATH: /var/run/postgresql
-        PGBACKREST_REPO1_TYPE: s3
-        PGBACKREST_REPO1_PATH: /clawdi
-        PGBACKREST_REPO1_S3_BUCKET: clawdi-db-backup
-        PGBACKREST_REPO1_S3_ENDPOINT: 1d694c298092ffa09c793cbca4587812.r2.cloudflarestorage.com
-        PGBACKREST_REPO1_S3_REGION: auto
-        PGBACKREST_REPO1_S3_URI_STYLE: path
-        PGBACKREST_REPO1_RETENTION_FULL: "2"
-        PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
-        PGBACKREST_COMPRESS_TYPE: zst
+        <<: &pgbackrest-env
+          STANZA: clawdi
+          PGBACKREST_STANZA: clawdi
+          PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
+          PGBACKREST_PG1_SOCKET_PATH: /var/run/postgresql
+          PGBACKREST_REPO1_TYPE: s3
+          PGBACKREST_REPO1_PATH: /clawdi
+          PGBACKREST_REPO1_S3_BUCKET: clawdi-db-backup
+          PGBACKREST_REPO1_S3_ENDPOINT: 1d694c298092ffa09c793cbca4587812.r2.cloudflarestorage.com
+          PGBACKREST_REPO1_S3_REGION: auto
+          PGBACKREST_REPO1_S3_URI_STYLE: path
+          PGBACKREST_REPO1_RETENTION_FULL: "2"
+          PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+          PGBACKREST_COMPRESS_TYPE: zst
         POSTGRES_DB: clawdi
         POSTGRES_USER: clawdi
       secret:
@@ -123,25 +124,6 @@ accessories:
         - PGBACKREST_REPO1_S3_KEY
         - PGBACKREST_REPO1_S3_KEY_SECRET
         - PGBACKREST_REPO1_CIPHER_PASS
-
-  pg-backup:
-    # Nightly logical backups, declared here so `kamal accessory boot all`
-    # rebuilds the backup pipeline with the rest of the stack.
-    image: prodrigestivill/postgres-backup-local:18
-    host: 66.220.6.123
-    volumes:
-      - /var/backups/clawdi/clawdi:/backups
-    env:
-      clear:
-        POSTGRES_HOST: clawdi-postgres
-        POSTGRES_DB: clawdi
-        POSTGRES_USER: clawdi
-        SCHEDULE: "@daily"
-        BACKUP_KEEP_DAYS: "14"
-        BACKUP_KEEP_WEEKS: "4"
-        BACKUP_KEEP_MONTHS: "3"
-      secret:
-        - POSTGRES_PASSWORD
 
   postgres-backup:
     # Scheduled pgBackRest runs (Sunday full, daily diff) against the server's
@@ -154,19 +136,7 @@ accessories:
       - /home/phala/clawdi-postgres/socket:/var/run/postgresql
     env:
       clear:
-        STANZA: clawdi
-        PGBACKREST_STANZA: clawdi
-        PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
-        PGBACKREST_PG1_SOCKET_PATH: /var/run/postgresql
-        PGBACKREST_REPO1_TYPE: s3
-        PGBACKREST_REPO1_PATH: /clawdi
-        PGBACKREST_REPO1_S3_BUCKET: clawdi-db-backup
-        PGBACKREST_REPO1_S3_ENDPOINT: 1d694c298092ffa09c793cbca4587812.r2.cloudflarestorage.com
-        PGBACKREST_REPO1_S3_REGION: auto
-        PGBACKREST_REPO1_S3_URI_STYLE: path
-        PGBACKREST_REPO1_RETENTION_FULL: "2"
-        PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
-        PGBACKREST_COMPRESS_TYPE: zst
+        <<: *pgbackrest-env
         PGBACKREST_LOG_LEVEL_CONSOLE: info
       secret:
         - PGBACKREST_REPO1_S3_KEY
