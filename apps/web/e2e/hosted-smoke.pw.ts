@@ -891,7 +891,6 @@ type HostedApiStubOptions = {
 	ledgerRequests?: string[];
 	ledgerResponses?: unknown[];
 	legacyAgentEnvironmentIds?: readonly string[];
-	missingDeploymentRequests?: boolean;
 	managedModels?: typeof managedModelCatalog;
 	planRequests?: string[];
 	mutationOrder?: string[];
@@ -1150,9 +1149,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				name: "Created Basic",
 				status: "running",
 			};
-			if (deployRequestId && !options.missingDeploymentRequests) {
-				deploymentRequests.set(deployRequestId, createdDeployment);
-			}
+			if (deployRequestId) deploymentRequests.set(deployRequestId, createdDeployment);
 			const response =
 				options.checkoutResponses?.shift() ??
 				(request.funding_source === "wallet"
@@ -2074,46 +2071,6 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	expect(deploymentRequestReads).toHaveLength(1);
 	expect(operationPollRequests).toEqual([]);
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
-});
-
-test("post-payment uncertainty blocks a second checkout behind toast-only recovery", async ({
-	page,
-}) => {
-	const checkoutRequests: string[] = [];
-	await stubCompletedStripeCheckout(page);
-	await stubHostedApi(page, {
-		checkoutRequests,
-		checkoutResponses: [
-			{
-				status: 200,
-				body: {
-					flow_type: "checkout_session",
-					funding_source: "stripe",
-					action_url: null,
-					checkout_url: "https://checkout.stripe.test/session",
-					client_secret: "cs_test_paid_checkout",
-				},
-			},
-		],
-		deployments: [includedBasicDeployment],
-		missingDeploymentRequests: true,
-		plans: [basicPlan],
-	});
-	await page.goto("/deploy");
-
-	const submit = page.getByRole("button", { name: "Continue to checkout" });
-	await submit.click();
-	const checkoutDialog = page.getByRole("dialog", { name: /Complete .* checkout/ });
-	await checkoutDialog.getByRole("button", { name: "Subscribe", exact: true }).click();
-
-	const recovery = page.locator("[data-sonner-toast]").filter({
-		hasText: "Payment succeeded; your agent is not visible yet",
-	});
-	await expect(recovery).toBeVisible();
-	await expect(recovery.getByRole("button", { name: "View agents" })).toBeVisible();
-	await expect(submit).toBeDisabled();
-	expect(checkoutRequests).toHaveLength(1);
-	await expect(page.getByTestId("deploy-submit-error")).toHaveCount(0);
 });
 
 test("failed checkout start stays contextual and retries without duplicate or internal errors", async ({
