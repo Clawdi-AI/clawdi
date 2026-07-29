@@ -293,7 +293,7 @@ describe("DeploymentStatus", () => {
 		expect(terminal.trackers.size).toBe(0);
 	});
 
-	test("stops at five minutes and distinguishes timeout from convergence", () => {
+	test("slows at five minutes and distinguishes timeout from convergence", () => {
 		const nowMs = Date.parse("2026-07-25T00:00:00Z");
 		const deployment = hostedDeploymentFixture({
 			id: "hdep_polling",
@@ -308,12 +308,57 @@ describe("DeploymentStatus", () => {
 		);
 
 		expect(pending.transitions.get("hdep_polling")?.kind).toBe("converging");
-		expect(timedOut.refetchInterval).toBe(false);
+		expect(timedOut.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
 		expect(timedOut.transitions.get("hdep_polling")).toEqual({
 			kind: "timed_out",
 			verb: "plan_change",
 			startedAtMs: nowMs,
 		});
+	});
+
+	test("reconciles a slow create that reached Running just after the production fast window", () => {
+		const acceptedAtMs = Date.parse("2026-07-29T03:03:37Z");
+		const lastFastCheckAtMs = Date.parse("2026-07-29T03:08:27Z");
+		const fastWindowEndedAtMs = Date.parse("2026-07-29T03:08:37Z");
+		const runningAtMs = Date.parse("2026-07-29T03:08:48Z");
+		const operation = acceptedOperation("create");
+		operation.metadata.deploymentId = "hdep_slow_create";
+		operation.metadata.createTime = "2026-07-29T03:03:37Z";
+		operation.metadata.updateTime = "2026-07-29T03:03:37Z";
+		const starting = hostedDeploymentFixture({
+			id: "hdep_slow_create",
+			status: "creating",
+			acceptedOperation: operation,
+		});
+		const accepted = deploymentPollingState([starting], new Map(), acceptedAtMs);
+		const lastFastCheck = deploymentPollingState([starting], accepted.trackers, lastFastCheckAtMs);
+		const delayed = deploymentPollingState([starting], lastFastCheck.trackers, fastWindowEndedAtMs);
+
+		expect(accepted.refetchInterval).toBe(DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS);
+		expect(lastFastCheck.refetchInterval).toBe(DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS);
+		expect(delayed.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(delayed.transitions.get("hdep_slow_create")?.kind).toBe("timed_out");
+		if (typeof delayed.refetchInterval !== "number") {
+			throw new Error("Expected delayed deployment reconciliation to remain scheduled");
+		}
+		const nextReconciliationAtMs = fastWindowEndedAtMs + delayed.refetchInterval;
+		expect(nextReconciliationAtMs).toBe(Date.parse("2026-07-29T03:09:37Z"));
+		expect(runningAtMs).toBeLessThan(nextReconciliationAtMs);
+
+		const reconciled = deploymentPollingState(
+			[
+				hostedDeploymentFixture({
+					id: "hdep_slow_create",
+					status: "running",
+					acceptedOperation: operation,
+				}),
+			],
+			delayed.trackers,
+			nextReconciliationAtMs,
+		);
+		expect(reconciled.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(reconciled.transitions.size).toBe(0);
+		expect(reconciled.trackers.size).toBe(0);
 	});
 
 	test("schedules a modest reconciliation interval for steady inventory", () => {

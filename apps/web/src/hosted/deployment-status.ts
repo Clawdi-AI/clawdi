@@ -371,9 +371,10 @@ export function shouldPollDeployments(
 }
 
 /**
- * Poll each accepted lifecycle operation only during its bounded convergence
- * window. Until the existing deployment SSE stream is wired into the client,
- * stable snapshots use a modest foreground-only reconciliation interval.
+ * Fast-poll each accepted lifecycle operation only during its bounded
+ * convergence window. Until the existing deployment SSE stream is wired into
+ * the client, delayed transitions and stable snapshots use a modest
+ * foreground-only reconciliation interval.
  */
 export function deploymentPollingState(
 	deployments: readonly HostedDeployment[] | null | undefined,
@@ -413,7 +414,7 @@ export function deploymentPollingState(
 					: pollState.refetchInterval;
 		}
 	}
-	if (deployments !== null && deployments !== undefined && transitions.size === 0) {
+	if (deployments !== null && deployments !== undefined && typeof refetchInterval !== "number") {
 		refetchInterval = DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS;
 	}
 

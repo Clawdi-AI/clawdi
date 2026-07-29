@@ -144,7 +144,7 @@ describe("deployment transition timeout rendering", () => {
 		);
 	});
 
-	test("replaces the automatic-update promise with an honest timeout and check action", () => {
+	test("keeps delayed startup copy truthful with automatic and manual checks", () => {
 		if (!overviewReadinessPanel) throw new Error("agent detail was not loaded");
 		const deployment = hostedDeploymentFixture({ status: "creating" });
 		const commonProps = {
@@ -174,10 +174,23 @@ describe("deployment transition timeout rendering", () => {
 		expect(converging).not.toContain("Current status");
 		expect(converging).not.toContain("Deployment progress");
 		expect(timedOut).toContain("Your agent is taking longer than expected");
-		expect(timedOut).toContain("did not reach Running within five minutes");
-		expect(timedOut).toContain("Automatic checks have stopped.");
+		expect(timedOut).toContain("latest status still shows your agent starting");
+		expect(timedOut).toContain("Startup may still be continuing");
+		expect(timedOut).toContain("keep checking automatically once a minute");
 		expect(timedOut).toContain("Check again");
+		expect(timedOut).not.toContain("Automatic checks have stopped");
 		expect(timedOut).not.toContain("Startup continues if you leave this page");
+	});
+
+	test("does not claim automatic checks stop on delayed detail surfaces", () => {
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(detailSource).not.toContain("Automatic checks have stopped");
+		expect(detailSource.match(/keep checking automatically once a minute/g)).toHaveLength(2);
+		expect(detailSource.match(/Check again/g)?.length).toBeGreaterThanOrEqual(2);
 	});
 
 	test("makes the authoritative running state unambiguously Running", () => {
