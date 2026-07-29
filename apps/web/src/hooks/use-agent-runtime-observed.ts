@@ -1,10 +1,23 @@
 import { useQuery } from "@tanstack/react-query";
+import {
+	agentRuntimeObservedQueryKey,
+	agentRuntimeObservedRefetchInterval,
+	runtimeHealthIsConverged,
+} from "@/hooks/agent-runtime-observed-query";
 import { unwrap, useApi } from "@/lib/api";
+import type { components } from "@/lib/api-schemas";
 
-export function useAgentRuntimeObserved(agentId: string, enabled = true) {
+type RuntimeObserved = components["schemas"]["AgentRuntimeObservedResponse"];
+
+export function useAgentRuntimeObserved(
+	agentId: string,
+	enabled = true,
+	cacheFence?: string,
+	isConverged: (snapshot: RuntimeObserved) => boolean = runtimeHealthIsConverged,
+) {
 	const api = useApi();
 	return useQuery({
-		queryKey: ["runtime-observed", agentId],
+		queryKey: agentRuntimeObservedQueryKey(agentId, cacheFence, enabled),
 		queryFn: async () =>
 			unwrap(
 				await api.GET("/v1/agents/{agent_id}/runtime-observed", {
@@ -12,13 +25,8 @@ export function useAgentRuntimeObserved(agentId: string, enabled = true) {
 				}),
 			),
 		enabled,
+		refetchInterval: (query) => agentRuntimeObservedRefetchInterval(query.state.data, isConverged),
+		refetchIntervalInBackground: false,
+		refetchOnWindowFocus: true,
 	});
-}
-
-export function deploymentManagedMcpValue(
-	desired: { has_mcp?: boolean } | null | undefined,
-	unavailable: boolean,
-): "Managed" | "Not managed" | "—" {
-	if (unavailable || typeof desired?.has_mcp !== "boolean") return "—";
-	return desired.has_mcp ? "Managed" : "Not managed";
 }

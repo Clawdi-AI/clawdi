@@ -40,6 +40,7 @@ import {
 	MessagesSquare,
 	MonitorPlay,
 	Search,
+	Server,
 	Settings,
 	Sparkles,
 	TerminalSquare,
@@ -167,7 +168,7 @@ const CONNECTED_AGENT_SECTIONS: {
 	{
 		id: "skills",
 		icon: Sparkles,
-		tooltip: "Skills installed in this agent's Agent Project",
+		tooltip: "Manifest configuration and Agent filesystem Skills",
 	},
 	{
 		id: "projects",
@@ -212,6 +213,11 @@ const HOSTED_AGENT_SECTIONS: {
 		tooltip: "Skills installed in this agent's Agent Project",
 	},
 	{
+		id: "mcp",
+		icon: Server,
+		tooltip: "Deployment-managed MCP servers",
+	},
+	{
 		id: "ai",
 		icon: Zap,
 		tooltip: "AI provider and model",
@@ -229,13 +235,14 @@ const HOSTED_AGENT_SECTIONS: {
 ];
 
 const HOSTED_AGENT_FALLBACK_SECTIONS = HOSTED_AGENT_SECTIONS.filter(
-	(section) => section.id === "overview",
+	(section) => section.id === "overview" || section.id === "skills" || section.id === "mcp",
 );
 
 const AGENT_SECTION_TINTS = {
 	overview: RESOURCE_TINT_CLASSES.overview,
 	sessions: RESOURCE_TINT_CLASSES.sessions,
 	skills: RESOURCE_TINT_CLASSES.skills,
+	mcp: "bg-identity-3-bg text-identity-3-fg",
 	projects: RESOURCE_TINT_CLASSES.projects,
 	console: "bg-identity-6-bg text-identity-6-fg",
 	terminal: "bg-identity-7-bg text-identity-7-fg",

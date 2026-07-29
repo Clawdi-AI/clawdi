@@ -645,6 +645,29 @@ export interface components {
             /** Disk Gib */
             disk_gib: number;
         };
+        /**
+         * DeploymentSkillConfiguration
+         * @description Public desired configuration for one manifest-managed Skill.
+         *
+         *     These literals are the current public Hosted catalog, not the CLI's
+         *     internal bundled-asset catalog. Adding another public id or version is an
+         *     explicit API/schema expansion; callers cannot select filesystem paths,
+         *     remote sources, content, or digests through this contract.
+         */
+        DeploymentSkillConfiguration: {
+            /**
+             * Id
+             * @constant
+             */
+            id: "clawdi";
+            /** Enabled */
+            enabled: boolean;
+            /**
+             * Version
+             * @constant
+             */
+            version: 1;
+        };
         /** EmptyResponse */
         EmptyResponse: {
             /**
@@ -759,6 +782,18 @@ export interface components {
              * @default []
              */
             ports: components["schemas"]["PortSpec"][];
+            /**
+             * Skills
+             * @description Complete desired configuration for public manifest-managed Skills. Omission preserves the legacy Clawdi enabled/version-1 default.
+             * @default [
+             *       {
+             *         "id": "clawdi",
+             *         "enabled": true,
+             *         "version": 1
+             *       }
+             *     ]
+             */
+            skills: components["schemas"]["DeploymentSkillConfiguration"][];
             runtime_configuration: components["schemas"]["RuntimeConfiguration"];
             /**
              * Rollout Nonce
@@ -1907,6 +1942,11 @@ export interface components {
             language?: ("en" | "es" | "fr" | "de" | "ja" | "ko" | "pt" | "zh-CN" | "zh-TW") | null;
             /** Timezone */
             timezone?: string | null;
+            /**
+             * Skills
+             * @description Complete replacement desired configuration for public manifest-managed Skills.
+             */
+            skills?: components["schemas"]["DeploymentSkillConfiguration"][];
             primary_model?: components["schemas"]["V2AiProviderPrimaryModelRef"] | null;
             /** Ai Provider Id */
             ai_provider_id?: string | null;

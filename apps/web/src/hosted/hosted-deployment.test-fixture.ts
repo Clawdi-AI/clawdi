@@ -18,6 +18,7 @@ type HostedDeploymentFixtureOptions = {
 	desiredLifecycle?: HostedDeploymentSpec["desired_lifecycle"];
 	runtimeConfiguration?: HostedRuntimeConfiguration;
 	resources?: HostedDeploymentSpec["resources"];
+	skills?: HostedDeploymentSpec["skills"];
 	endpoints?: HostedDeploymentStatus["endpoints"];
 	failure?: HostedDeploymentStatus["failure"];
 	backingInfrastructure?: HostedDeploymentStatus["backing_infrastructure"];
@@ -68,6 +69,7 @@ export function hostedDeploymentFixture(
 				resources: options.resources ?? { vcpu: 1, memory_mib: 1024, disk_gib: 10 },
 				agents: [],
 				ports: [],
+				skills: options.skills ?? [{ id: "clawdi", enabled: true, version: 1 }],
 				runtime_configuration: options.runtimeConfiguration ?? {
 					providers: [],
 					features: [],

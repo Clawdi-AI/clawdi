@@ -13,6 +13,7 @@ import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
+import type { SkillCapabilities } from "@/lib/skill-authority";
 import { relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -31,23 +32,27 @@ type SkillLinkBuilder = (skill: SkillSummary) => SkillLinkOptions;
 export function SkillCard({
 	skill,
 	readOnly = false,
-	cleanupOnly = false,
+	readOnlyLabel = "Shared · Read-only",
+	conflict = false,
 	onUninstall,
 	uninstallPending = false,
 	selectMode = false,
 	selected = false,
 	onToggleSelect,
+	selectable = true,
 	sourceLabel,
 	skillLink,
 }: {
 	skill: SkillSummary;
 	readOnly?: boolean;
-	cleanupOnly?: boolean;
+	readOnlyLabel?: string;
+	conflict?: boolean;
 	onUninstall?: (skillKey: string, projectId: string) => void;
 	uninstallPending?: boolean;
 	selectMode?: boolean;
 	selected?: boolean;
 	onToggleSelect?: (skill: SkillSummary) => void;
+	selectable?: boolean;
 	/** Provenance chip for cross-project views: where this copy lives. */
 	sourceLabel?: { name: string; emoji: string } | null;
 	/** Build the detail link for the current navigation scope. */
@@ -55,6 +60,7 @@ export function SkillCard({
 }) {
 	const id = identityFor(skill.name || skill.skill_key);
 	const canUninstall = !readOnly && !!onUninstall && !!skill.project_id;
+	const canSend = !readOnly && !!skill.project_id;
 	const detailLink = skillLink?.(skill) ?? {
 		to: "/skills/$key",
 		params: { key: skill.skill_key },
@@ -64,7 +70,7 @@ export function SkillCard({
 		<HeroCard
 			className="min-h-28 gap-2"
 			selected={selectMode && selected}
-			interactive={!selectMode && !cleanupOnly}
+			interactive={!selectMode}
 			icon={
 				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
 					{id.emoji}
@@ -78,10 +84,10 @@ export function SkillCard({
 					</Badge>
 					{readOnly ? (
 						<Badge variant="secondary" className="shrink-0">
-							Shared
+							{readOnlyLabel}
 						</Badge>
 					) : null}
-					{cleanupOnly ? <Badge variant="destructive">Conflict</Badge> : null}
+					{conflict ? <Badge variant="destructive">Conflict</Badge> : null}
 				</>
 			}
 			description={skill.description}
@@ -104,15 +110,17 @@ export function SkillCard({
 			]}
 			actions={
 				selectMode ? (
-					<Checkbox
-						checked={selected}
-						tabIndex={-1}
-						aria-hidden
-						className="pointer-events-none shrink-0"
-					/>
+					selectable ? (
+						<Checkbox
+							checked={selected}
+							tabIndex={-1}
+							aria-hidden
+							className="pointer-events-none shrink-0"
+						/>
+					) : null
 				) : (
 					<div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
-						{skill.project_id && !cleanupOnly ? <SendSkillDialog skills={[skill]} /> : null}
+						{canSend ? <SendSkillDialog skills={[skill]} /> : null}
 						{canUninstall ? (
 							<ConfirmAction
 								title={`Uninstall ${skill.name}?`}
@@ -137,10 +145,10 @@ export function SkillCard({
 					</div>
 				)
 			}
-			link={selectMode || cleanupOnly ? undefined : detailLink}
-			ariaLabel={cleanupOnly ? skill.name : `Open ${skill.name}`}
+			link={selectMode ? undefined : detailLink}
+			ariaLabel={`Open ${skill.name}`}
 		>
-			{selectMode ? (
+			{selectMode && selectable ? (
 				<button
 					type="button"
 					onClick={() => onToggleSelect?.(skill)}
@@ -162,7 +170,9 @@ export function SkillCardGrid({
 	emptyMessage,
 	emptyVariant = "page",
 	readOnlySkillCheck,
-	cleanupOnlySkillCheck,
+	capabilitiesFor,
+	conflictSkillCheck,
+	leadingCards,
 	onUninstall,
 	uninstallPending,
 	selectMode = false,
@@ -177,8 +187,12 @@ export function SkillCardGrid({
 	emptyVariant?: EmptyStateVariant;
 	/** Returns true when the current user cannot uninstall this skill. */
 	readOnlySkillCheck?: (skill: SkillSummary) => boolean;
-	/** Conflict copies may only be removed; detail and send actions are disabled. */
-	cleanupOnlySkillCheck?: (skill: SkillSummary) => boolean;
+	/** Trusted capability projection shared by cards and bulk actions. */
+	capabilitiesFor?: (skill: SkillSummary) => SkillCapabilities;
+	/** Marks a reservation conflict without granting a cleanup mutation. */
+	conflictSkillCheck?: (skill: SkillSummary) => boolean;
+	/** Non-persisted inventory rows, such as Hosted manifest Skills. */
+	leadingCards?: React.ReactNode;
 	onUninstall?: (skillKey: string, projectId: string) => void;
 	uninstallPending?: boolean;
 	selectMode?: boolean;
@@ -192,32 +206,42 @@ export function SkillCardGrid({
 	if (isLoading) {
 		return (
 			<div className={HERO_GRID_CLASS}>
+				{leadingCards}
 				{Array.from({ length: 6 }).map((_, i) => (
 					<Skeleton key={i} className="h-28 w-full rounded-xl" />
 				))}
 			</div>
 		);
 	}
-	if (skills.length === 0) {
+	if (skills.length === 0 && leadingCards === undefined) {
 		return <EmptyState variant={emptyVariant} icon={Sparkles} description={emptyMessage} />;
 	}
 	return (
 		<div className={HERO_GRID_CLASS}>
-			{skills.map((skill) => (
-				<SkillCard
-					key={skillSelectionKey(skill)}
-					skill={skill}
-					readOnly={readOnlySkillCheck?.(skill) ?? false}
-					cleanupOnly={cleanupOnlySkillCheck?.(skill) ?? false}
-					onUninstall={onUninstall}
-					uninstallPending={uninstallPending}
-					selectMode={selectMode}
-					selected={selectedKeys?.has(skillSelectionKey(skill)) ?? false}
-					onToggleSelect={onToggleSelect}
-					sourceLabel={sourceLabelFor?.(skill) ?? null}
-					skillLink={skillLink}
-				/>
-			))}
+			{leadingCards}
+			{skills.map((skill) => {
+				const capabilities = capabilitiesFor?.(skill);
+				const readOnly = capabilities
+					? !capabilities.canUpdate
+					: (readOnlySkillCheck?.(skill) ?? false);
+				return (
+					<SkillCard
+						key={skillSelectionKey(skill)}
+						skill={skill}
+						readOnly={readOnly}
+						readOnlyLabel={capabilities?.badgeLabel ?? undefined}
+						conflict={conflictSkillCheck?.(skill) ?? false}
+						onUninstall={onUninstall}
+						uninstallPending={uninstallPending}
+						selectMode={selectMode}
+						selectable={capabilities?.canSelect ?? !readOnly}
+						selected={selectedKeys?.has(skillSelectionKey(skill)) ?? false}
+						onToggleSelect={onToggleSelect}
+						sourceLabel={sourceLabelFor?.(skill) ?? null}
+						skillLink={skillLink}
+					/>
+				);
+			})}
 		</div>
 	);
 }

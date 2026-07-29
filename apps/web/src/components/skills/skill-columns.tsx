@@ -7,9 +7,12 @@ import { Sparkles, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
+import { skillCapabilities } from "@/lib/skill-authority";
 import { relativeTime } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type Project = components["schemas"]["ProjectResponse"];
+type ProjectCapabilityMetadata = Pick<Project, "kind" | "is_owner">;
 
 // Mirrors `session-columns.tsx` and `memory-columns.tsx`: a TanStack
 // `ColumnDef` array shared by the agent detail page's Skills tab and
@@ -21,27 +24,24 @@ type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 // mutation; the column defs only know how to render and which row to
 // pass to the callback.
 //
-// `writableProjectIds` is the ownership boundary. A skill can live
-// outside the currently selected agent project and still be writable
-// when it belongs to the user (for example, preserved skills from a
-// disconnected agent). Viewer memberships render read-only.
+// Persisted authority plus Project kind is the ownership boundary.
+// Agent filesystem projections and every environment-kind Project row
+// remain read-only even when the current user owns the Project.
 export type SkillProjectAccess = "writable" | "read-only" | "unknown";
 
 export interface SkillColumnOptions {
-	currentProjectId?: string | null;
-	writableProjectIds?: ReadonlySet<string> | null;
+	projectsById?: ReadonlyMap<string, ProjectCapabilityMetadata> | null;
 }
 
 export function resolveSkillProjectAccess(
-	skill: Pick<SkillSummary, "project_id">,
+	skill: Pick<SkillSummary, "authority" | "project_id" | "project_kind">,
 	options: SkillColumnOptions = {},
 ): SkillProjectAccess {
 	if (!skill.project_id) return "unknown";
-	if (options.writableProjectIds) {
-		return options.writableProjectIds.has(skill.project_id) ? "writable" : "read-only";
-	}
-	if (options.currentProjectId && skill.project_id === options.currentProjectId) return "writable";
-	return "unknown";
+	if (!options.projectsById) return "unknown";
+	return skillCapabilities(skill, options.projectsById.get(skill.project_id)).canUpdate
+		? "writable"
+		: "read-only";
 }
 
 export function makeSkillColumns(
@@ -82,11 +82,14 @@ export function makeSkillColumns(
 										className="shrink-0"
 										title={
 											sourceProjectName
-												? `Shared from "${sourceProjectName}". Read-only.`
-												: "Shared from another Project. Read-only."
+												? `Read-only Skill in "${sourceProjectName}".`
+												: "Read-only Skill."
 										}
 									>
-										Shared
+										{skillCapabilities(
+											s,
+											s.project_id ? options.projectsById?.get(s.project_id) : undefined,
+										).badgeLabel ?? "Read-only"}
 									</Badge>
 								) : null}
 							</div>
