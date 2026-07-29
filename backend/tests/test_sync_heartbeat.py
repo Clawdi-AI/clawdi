@@ -576,9 +576,9 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         "enabled_runtimes": ["openclaw"],
         "has_mcp": True,
         "has_tools": True,
-        "managed_resources": [],
         "updated_at": payload["desired"]["updated_at"],
     }
+    assert "managed_resources" not in payload["desired"]
     canonical = await client.get(f"/v1/agents/{env_id}/runtime-observed")
     assert canonical.status_code == 200, canonical.text
     assert canonical.json()["desired"]["managed_resources"] == [

@@ -1,18 +1,21 @@
-import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { getClawdiDir } from "../lib/config";
 import { writePrivateFileAtomic } from "../lib/private-file";
 
-export const MANAGED_SKILL_MARKER_FILE = ".clawdi-managed.json";
 const LEDGER_FILE = "managed-skills.json";
 const LEDGER_SCHEMA = "clawdi.managedSkillReservations.v1";
+const MANAGED_SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+
+export type ManagedSkillReservationManager = "hosted-manifest" | "local-setup";
 
 interface ManagedSkillReservation {
 	target: string;
 	id: string;
 	version: number;
 	digest: string;
-	manager: "hosted-manifest" | "local-setup";
+	manager: ManagedSkillReservationManager;
 }
 
 interface ManagedSkillReservationLedger {
@@ -60,11 +63,12 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 			resolve(target) !== target ||
 			typeof raw.id !== "string" ||
 			basename(target) !== raw.id ||
+			!MANAGED_SKILL_ID_PATTERN.test(raw.id) ||
 			typeof raw.version !== "number" ||
 			!Number.isSafeInteger(raw.version) ||
 			raw.version <= 0 ||
 			typeof raw.digest !== "string" ||
-			!/^[a-f0-9]{64}$/.test(raw.digest) ||
+			!SHA256_PATTERN.test(raw.digest) ||
 			(raw.manager !== "hosted-manifest" && raw.manager !== "local-setup")
 		) {
 			throw new Error("managed Skill reservation ledger contains an invalid reservation");
@@ -91,11 +95,18 @@ export function managedSkillReservationState(
 	targetDir: string,
 	skillId = basename(targetDir),
 ): "unreserved" | "reserved" | "indeterminate" {
+	const owner = managedSkillReservationOwner(targetDir, skillId);
+	return owner === "unreserved" || owner === "indeterminate" ? owner : "reserved";
+}
+
+export function managedSkillReservationOwner(
+	targetDir: string,
+	skillId = basename(targetDir),
+): ManagedSkillReservationManager | "unreserved" | "indeterminate" {
 	const path = ledgerPath();
-	if (!path) return "unreserved";
 	try {
 		const reservation = readLedger(path).reservations[resolve(targetDir)];
-		return reservation?.id === skillId ? "reserved" : "unreserved";
+		return reservation?.id === skillId ? reservation.manager : "unreserved";
 	} catch {
 		return "indeterminate";
 	}
@@ -119,11 +130,17 @@ export function reserveManagedSkill(input: {
 	id: string;
 	version: number;
 	digest: string;
-	manager: "hosted-manifest" | "local-setup";
+	manager: ManagedSkillReservationManager;
 }): "created" | "existing" {
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
-	if (basename(target) !== input.id || !Number.isSafeInteger(input.version) || input.version <= 0) {
+	if (
+		basename(target) !== input.id ||
+		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
+		!Number.isSafeInteger(input.version) ||
+		input.version <= 0 ||
+		!SHA256_PATTERN.test(input.digest)
+	) {
 		throw new Error("managed Skill reservation identity is invalid");
 	}
 	const ledger = readLedger(path);
@@ -146,7 +163,7 @@ export function reserveManagedSkill(input: {
 export function releaseManagedSkill(input: {
 	targetDir: string;
 	id: string;
-	manager: "hosted-manifest" | "local-setup";
+	manager: ManagedSkillReservationManager;
 	removeTarget: () => void;
 }): "absent" | "removed" {
 	const path = ledgerPath();
@@ -160,15 +177,6 @@ export function releaseManagedSkill(input: {
 	input.removeTarget();
 	delete ledger.reservations[target];
 	writeLedger(path, ledger);
-	return "removed";
-}
-
-export function removeReservedUserSkillTarget(
-	targetDir: string,
-	skillId = basename(targetDir),
-): "protected" | "removed" {
-	if (shouldIgnoreUserSkill(targetDir, skillId)) return "protected";
-	if (existsSync(targetDir)) rmSync(targetDir, { recursive: true, force: true });
 	return "removed";
 }
 

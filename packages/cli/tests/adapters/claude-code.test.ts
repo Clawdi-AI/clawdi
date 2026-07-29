@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import { tarSkillDir } from "../../src/lib/tar";
+import {
+	releaseManagedSkill,
+	reserveManagedSkill,
+} from "../../src/runtime/managed-skill-reservation";
 import { cleanupTmp, copyFixtureToTmp } from "./helpers";
 
 let tmpHome: string;
@@ -322,6 +326,32 @@ describe("ClaudeCodeAdapter.writeSkillArchive + getSkillPath", () => {
 		const extracted = join(tmpHome, ".claude", "skills", "demo", "SKILL.md");
 		expect(existsSync(extracted)).toBe(true);
 		expect(readFileSync(extracted, "utf-8")).toContain("name: demo");
+	});
+
+	it("blocks Cloud writes while reserved and permits the same write after release", async () => {
+		const target = join(tmpHome, ".claude", "skills", "demo");
+		const bytes = await tarSkillDir(target);
+		reserveManagedSkill({
+			targetDir: target,
+			id: "demo",
+			version: 1,
+			digest: "d".repeat(64),
+			manager: "local-setup",
+		});
+		const adapter = new ClaudeCodeAdapter();
+
+		await expect(adapter.writeSkillArchive("demo", bytes)).rejects.toThrow("reserved");
+		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain("demo");
+
+		releaseManagedSkill({
+			targetDir: target,
+			id: "demo",
+			manager: "local-setup",
+			removeTarget: () => rmSync(target, { recursive: true, force: true }),
+		});
+		await adapter.writeSkillArchive("demo", bytes);
+
+		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toContain("name: demo");
 	});
 
 	it("getSkillPath returns skills/<key>/SKILL.md under Claude home", () => {

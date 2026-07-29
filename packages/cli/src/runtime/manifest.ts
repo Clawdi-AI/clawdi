@@ -73,7 +73,7 @@ import {
 	resolveManagedPrimaryModel,
 } from "./managed-model-resolution";
 import {
-	managedSkillReservationState,
+	managedSkillReservationOwner,
 	releaseManagedSkill,
 	reserveManagedSkill,
 } from "./managed-skill-reservation";
@@ -3295,9 +3295,10 @@ function validateHostedBundledSkillsPlan(
 		if (!targetDir || !runtimeEnabled || desired.enabled !== true) continue;
 		const sourceDir = hostedBundledSkillSourceDir(bundled.assetDirectory);
 		assertHostedBundledSkillCatalogDigest(bundled, sourceDir);
+		const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
 		if (
 			existsSync(targetDir) &&
-			managedSkillReservationState(targetDir, skillName) !== "reserved" &&
+			reservationOwner !== "hosted-manifest" &&
 			!adoptableLegacyHostedBundledSkill(targetDir, skillName)
 		) {
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
@@ -3320,9 +3321,11 @@ function applyHostedBundledSkills(
 		const desired = manifest.projection?.skills?.entries[skillName];
 		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
 		if (!installEnabled || !runtimeEnabled || desired?.enabled !== true) {
-			if (!installEnabled) continue;
+			const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
 			const legacy = adoptableLegacyHostedBundledSkill(targetDir, skillName);
-			if (legacy && managedSkillReservationState(targetDir, skillName) === "unreserved") {
+			if (reservationOwner === "local-setup") continue;
+			if (!installEnabled && reservationOwner === "unreserved" && !legacy) continue;
+			if (legacy && reservationOwner === "unreserved") {
 				reserveManagedSkill({
 					targetDir,
 					id: skillName,
@@ -3341,10 +3344,10 @@ function applyHostedBundledSkills(
 		}
 		if (!observation?.enabled || observation.status === "install_failed") continue;
 		const catalogEntry = resolveHostedBundledSkill(skillName, desired.version);
-		const reservationState = managedSkillReservationState(targetDir, skillName);
+		const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
 		if (
 			existsSync(targetDir) &&
-			reservationState !== "reserved" &&
+			reservationOwner !== "hosted-manifest" &&
 			!adoptableLegacyHostedBundledSkill(targetDir, skillName)
 		) {
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);

@@ -114,4 +114,20 @@ describe("managed Skill reservations", () => {
 		).toThrow("identity mismatch");
 		expect(existsSync(path)).toBe(true);
 	});
+
+	it("rejects an invalid identity before it can poison the ledger", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.HOME = root;
+		const path = target();
+		expect(() =>
+			reserveManagedSkill({
+				targetDir: path,
+				id: "example",
+				manager: "local-setup",
+				version: 1,
+				digest: "not-a-sha256",
+			}),
+		).toThrow("identity is invalid");
+		expect(managedSkillReservationState(path, "example")).toBe("unreserved");
+	});
 });

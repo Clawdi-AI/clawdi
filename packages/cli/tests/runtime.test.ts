@@ -47,6 +47,7 @@ import {
 	hostedManifestEgressProfiles,
 	managedMcpHeaderPlaceholder,
 } from "../src/runtime/hosted-egress-profiles";
+import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
 	convergeRuntimeManifest,
 	loadRuntimeManifest,
@@ -11430,6 +11431,28 @@ exit 64
 		).toThrow("no bundled hosted skill clawdi version 2 is registered");
 		expect(existsSync(ledgerPath)).toBe(false);
 
+		const openclawSkill = join(home, ".openclaw", "agents", "main", "skills", "clawdi");
+		mkdirSync(openclawSkill, { recursive: true });
+		writeFileSync(join(openclawSkill, "SKILL.md"), "local setup skill\n");
+		reserveManagedSkill({
+			targetDir: openclawSkill,
+			id: "clawdi",
+			version: 1,
+			digest: "a".repeat(64),
+			manager: "local-setup",
+		});
+		expect(() =>
+			convergeRuntimeManifest(load(1, "openclaw", initialServers), getRuntimePaths()),
+		).toThrow(`refusing to replace unmanaged clawdi skill at ${openclawSkill}`);
+		expect(readFileSync(join(openclawSkill, "SKILL.md"), "utf-8")).toBe("local setup skill\n");
+		expect(existsSync(ledgerPath)).toBe(false);
+		releaseManagedSkill({
+			targetDir: openclawSkill,
+			id: "clawdi",
+			manager: "local-setup",
+			removeTarget: () => rmSync(openclawSkill, { recursive: true, force: true }),
+		});
+
 		const initial = convergeRuntimeManifest(load(1, "openclaw", initialServers), getRuntimePaths());
 		expect(initial.installErrors).toEqual([]);
 		expect(readOpenClawMcpServers(home).clawdi).toEqual(initialServers.clawdi);
@@ -11441,7 +11464,6 @@ exit 64
 		expect(JSON.parse(readFileSync(ledgerPath, "utf-8")).runtimes).toEqual({
 			openclaw: initialServers,
 		});
-		const openclawSkill = join(home, ".openclaw", "agents", "main", "skills", "clawdi");
 		expect(existsSync(join(openclawSkill, ".clawdi-managed.json"))).toBe(true);
 
 		const updated = convergeRuntimeManifest(load(2, "openclaw", updatedServers), getRuntimePaths());

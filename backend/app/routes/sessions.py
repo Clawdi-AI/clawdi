@@ -810,12 +810,46 @@ async def upload_environment_avatar(
 @router.get(
     "/environments/{environment_id}/runtime-observed",
     response_model=RuntimeObservedResponse,
+    response_model_exclude={"desired": {"managed_resources"}},
     deprecated=True,
 )
 async def get_environment_runtime_observed(
     environment_id: UUID,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedResponse:
+    return await _get_runtime_observed(
+        environment_id,
+        auth,
+        db,
+        include_managed_resources=False,
+    )
+
+
+@router.get(
+    "/agents/{agent_id}/runtime-observed",
+    response_model=RuntimeObservedResponse,
+)
+async def get_agent_runtime_observed(
+    agent_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedResponse:
+    """Canonical Agent-identity route for runtime desired/observed summaries."""
+    return await _get_runtime_observed(
+        agent_id,
+        auth,
+        db,
+        include_managed_resources=True,
+    )
+
+
+async def _get_runtime_observed(
+    environment_id: UUID,
+    auth: AuthContext,
+    db: AsyncSession,
+    *,
+    include_managed_resources: bool,
 ) -> RuntimeObservedResponse:
     bound_env = _bound_env_id(auth)
     if bound_env is not None and environment_id != bound_env:
@@ -864,13 +898,18 @@ async def get_environment_runtime_observed(
             )
         )
     ).scalar_one_or_none()
+    desired = (
+        _runtime_observed_desired(state, source_revision=source_revision)
+        if state is not None
+        else None
+    )
+    if desired is not None and include_managed_resources:
+        desired = desired.model_copy(
+            update={"managed_resources": _runtime_managed_resource_summaries(state)}
+        )
     return RuntimeObservedResponse(
         environment=_env_to_response(env, state),
-        desired=(
-            _runtime_observed_desired(state, source_revision=source_revision)
-            if state is not None
-            else None
-        ),
+        desired=desired,
         observed=_runtime_observed_response(observation),
         health=_runtime_observed_health(
             env,
@@ -881,31 +920,6 @@ async def get_environment_runtime_observed(
             desired_cli_package_spec=desired_cli_package_spec,
         ),
         provider_health=_runtime_observed_provider_health(state, observation),
-    )
-
-
-@router.get(
-    "/agents/{agent_id}/runtime-observed",
-    response_model=RuntimeObservedResponse,
-)
-async def get_agent_runtime_observed(
-    agent_id: UUID,
-    auth: AuthContext = Depends(get_auth),
-    db: AsyncSession = Depends(get_session),
-) -> RuntimeObservedResponse:
-    """Canonical Agent-identity route for runtime desired/observed summaries."""
-    response = await get_environment_runtime_observed(agent_id, auth, db)
-    if response.desired is None:
-        return response
-    state = await db.get(HostedRuntimeState, agent_id)
-    if state is None:
-        return response
-    return response.model_copy(
-        update={
-            "desired": response.desired.model_copy(
-                update={"managed_resources": _runtime_managed_resource_summaries(state)}
-            )
-        }
     )
 
 

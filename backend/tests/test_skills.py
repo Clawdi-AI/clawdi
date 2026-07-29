@@ -14,7 +14,9 @@ import uuid
 
 import httpx
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.hosted_runtime import HostedRuntimeState
 from app.services.skill_installer import SkillPackage
 from app.services.tar_utils import tar_from_content
 
@@ -134,6 +136,69 @@ async def test_dashboard_edit_without_content_hash_is_last_write_wins(
     assert r.status_code == 200, r.text
     after = await client.get(f"/v1/projects/{project_id}/skills/lww")
     assert "# Edited" in after.json().get("content", "")
+
+
+@pytest.mark.asyncio
+async def test_runtime_manifest_skill_reservation_is_cleanup_only_until_disabled(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    environment_project,
+):
+    project_id = str(environment_project.id)
+    content = "---\nname: managed\ndescription: cloud copy\n---\n# Cloud copy\n"
+    tar_bytes, _ = tar_from_content("managed", content)
+
+    seed = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "managed"},
+        files={"file": ("managed.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert seed.status_code == 200, seed.text
+
+    state = HostedRuntimeState(
+        environment_id=environment_project.origin_environment_id,
+        deployment_id="dep-skill-reservation",
+        instance_id="iid-skill-reservation",
+        generation=1,
+        cli_package_spec="clawdi@0.13.10",
+        locale={"language": "en", "timezone": "UTC"},
+        system={},
+        runtimes={},
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        skills={"entries": {"managed": {"enabled": True, "version": 1}}},
+        tools={},
+    )
+    db_session.add(state)
+    await db_session.commit()
+
+    update = await client.put(
+        f"/v1/projects/{project_id}/skills/managed/content",
+        json={"content": f"{content}\nUpdated\n"},
+    )
+    assert update.status_code == 409, update.text
+    assert update.json()["detail"]["code"] == "runtime_manifest_managed_skill"
+
+    cleanup = await client.delete(f"/v1/projects/{project_id}/skills/managed")
+    assert cleanup.status_code == 200, cleanup.text
+
+    recreate_while_reserved = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "managed"},
+        files={"file": ("managed.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert recreate_while_reserved.status_code == 409, recreate_while_reserved.text
+
+    state.skills = {"entries": {"managed": {"enabled": False, "version": 1}}}
+    state.generation = 2
+    await db_session.commit()
+
+    recreate_after_disable = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "managed"},
+        files={"file": ("managed.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert recreate_after_disable.status_code == 200, recreate_after_disable.text
 
 
 @pytest.mark.asyncio

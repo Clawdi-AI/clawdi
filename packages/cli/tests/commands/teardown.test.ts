@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, it } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { teardown } from "../../src/commands/teardown";
-import { reserveManagedSkill } from "../../src/runtime/managed-skill-reservation";
+import {
+	managedSkillReservationState,
+	reserveManagedSkill,
+} from "../../src/runtime/managed-skill-reservation";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
 	type AgentHomeOverrideSnapshot,
@@ -153,6 +156,17 @@ describe("teardown — flag behavior", () => {
 		await teardown({ agent: "claude_code", yes: true, keepMcp: true, keepSkill: true });
 		expect(existsSync(envPath)).toBe(false);
 		expect(existsSync(skillPath)).toBe(true);
+	});
+
+	it("releases a stale reservation even when the managed target is already absent", async () => {
+		const { skillPath } = setup("codex");
+		const target = dirname(skillPath);
+		rmSync(target, { recursive: true, force: true });
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+
+		await teardown({ agent: "codex", yes: true, keepMcp: true });
+
+		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 	});
 
 	it("--all tears down every registered agent", async () => {

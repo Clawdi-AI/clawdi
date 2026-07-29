@@ -83,6 +83,12 @@ describe("reserved Skill reconcile listing", () => {
 		const observed = new Set(["managed"]);
 		expect(shouldForceFullSkillListing(observed, new Map(), () => false)).toBe(true);
 	});
+
+	it("returns to conditional listings after the released Skill is pulled", () => {
+		const observed = new Set(["managed"]);
+		const pulled = new Map([["managed", "current-cloud-hash"]]);
+		expect(shouldForceFullSkillListing(observed, pulled, () => false)).toBe(false);
+	});
 });
 
 describe("daemon SSE routing", () => {
