@@ -371,7 +371,15 @@ onward releases are automatic.
    one artifact, verifies its SHA-256 in both jobs, then publishes that tarball
    from GitHub-hosted `ubuntu-latest` with
    `npm publish <tarball> --access public --provenance --ignore-scripts --tag <resolved-tag>`.
-4. The workflow creates `clawdi-cli-v<version>` with changelog notes.
+   If npm already has the exact version but its GitHub Release is incomplete,
+   a rerun checks out the source commit recorded by npm provenance, rebuilds the
+   tarball, compares it with npm `dist.integrity`, skips the immutable npm
+   version, and completes the release assets. The workflow passes collected npm,
+   provenance, tag, and asset facts to `scripts/release-recovery.mjs`; that
+   tested decision script fails closed before the workflow performs an action.
+4. The workflow creates or completes `clawdi-cli-v<version>` as a draft,
+   uploads the verified binary assets, then finalizes the release with changelog
+   notes.
 5. Watch the Actions tab; on green,
    `npm view clawdi@<exact-version> version` reflects the new number. A
    prerelease updates `beta`; a stable release updates `latest`.
@@ -380,8 +388,8 @@ Stop here for this release workflow. Hosted rollout selects the approved exact
 version through its Cloud manifest. The `beta` tag is publication metadata;
 production and Hosted never resolve an npm dist-tag.
 
-A manual run is available under `workflow_dispatch` if the auto-run
-needs a nudge (e.g. npm was transiently unavailable).
+A manual run is available under `workflow_dispatch` if the auto-run needs a
+nudge (for example, npm succeeded but GitHub Release creation failed).
 
 ### Smoke checks before bumping the version
 

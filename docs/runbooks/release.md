@@ -83,7 +83,12 @@ releases.
    GitHub-hosted `ubuntu-latest`, because npm trusted publishing does not support
    self-hosted or third-party GitHub Actions runners. The CLI workflow does not
    call workflows in the Hosted repository or depend on Hosted repository
-   settings.
+   settings. A rerun after npm succeeds but GitHub Release creation fails
+   checks out the source commit recorded by npm provenance, rebuilds the same
+   artifact, verifies its npm `dist.integrity`, skips republishing the immutable
+   npm version, and completes the draft release before finalization. Recovery
+   decisions come from `packages/cli/scripts/release-recovery.mjs`; the workflow
+   only gathers external facts and executes the validated action.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.
@@ -98,8 +103,9 @@ releases.
      only after the deployed commit should get public app/backend/web release
      notes.
    - `.github/workflows/cli-publish.yml` runs for `packages/cli/**` and the
-     CLI publish workflow file, then publishes only when the local CLI version
-     differs from npm.
+     CLI publish workflow file. It publishes when the exact npm version is
+     absent, or rebuilds and verifies that version to complete an unfinished
+     GitHub Release.
 3. For CLI releases, verify npm after the workflow succeeds:
 
    ```bash
