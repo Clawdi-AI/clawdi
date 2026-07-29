@@ -5535,48 +5535,27 @@ function runtimeConvergenceWithoutApply(input: {
 	};
 }
 
-function addExistingManagedSystemdPaths(paths: RuntimePaths, result: Set<string>): void {
-	for (const root of [paths.systemdSystemRoot, paths.systemdUserRoot]) {
-		if (!existsSync(root)) continue;
-		for (const entry of readdirSync(root)) {
-			const path = join(root, entry);
-			if (
-				entry.endsWith(".service") &&
-				(entry.startsWith("clawdi-") || isGeneratedSystemdFile(path))
-			) {
-				result.add(path);
-			}
-			if (!entry.endsWith(".service.d")) continue;
-			const dropIn = join(path, "10-clawdi-hosted.conf");
-			if (isGeneratedSystemdFile(dropIn)) result.add(dropIn);
+function addExistingManagedSystemdSystemPaths(paths: RuntimePaths, result: Set<string>): void {
+	if (!existsSync(paths.systemdSystemRoot)) return;
+	for (const entry of readdirSync(paths.systemdSystemRoot)) {
+		const path = join(paths.systemdSystemRoot, entry);
+		if (
+			entry.endsWith(".service") &&
+			(entry.startsWith("clawdi-") || isGeneratedSystemdFile(path))
+		) {
+			result.add(path);
 		}
-	}
-	const wantsRoot = join(paths.systemdUserRoot, "default.target.wants");
-	if (existsSync(wantsRoot)) {
-		for (const entry of readdirSync(wantsRoot)) {
-			const path = join(wantsRoot, entry);
-			if (entry.startsWith("clawdi-") || isGeneratedSystemdFile(path)) result.add(path);
-		}
-	}
-}
-
-function addManagedWhatsAppSnapshotPaths(manifest: RuntimeManifest, result: Set<string>): void {
-	for (const credential of hostedWhatsAppAuthCredentials(manifest)) result.add(credential.authDir);
-	for (const root of Object.values(managedWhatsAppAuthRoots(manifest))) {
-		if (!root || !existsSync(root)) continue;
-		for (const entry of readdirSync(root)) {
-			const authDir = join(root, entry);
-			if (readManagedWhatsAppAuthMarker(authDir)) result.add(authDir);
-		}
+		if (!entry.endsWith(".service.d")) continue;
+		const dropIn = join(path, "10-clawdi-hosted.conf");
+		if (isGeneratedSystemdFile(dropIn)) result.add(dropIn);
 	}
 }
 
 export function runtimeLiveSnapshotPaths(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
-	workspaceRoot: string,
+	_workspaceRoot: string,
 ): string[] {
-	const home = projectionSystemHome(manifest) ?? paths.userHome;
 	const result = new Set<string>([
 		paths.managedConfig,
 		paths.syncState,
@@ -5591,48 +5570,18 @@ export function runtimeLiveSnapshotPaths(
 		paths.projectionRoot,
 		join(paths.instanceRoot, manifest.instanceId),
 		paths.managedSecretRoot,
-		paths.egressRoot,
-		paths.egressScratchRoot,
 		paths.systemdEnvRoot,
 		paths.instanceData,
 		paths.sensitiveInstanceData,
+		paths.egressAddon,
+		paths.egressTransparentEnv,
+		paths.egressSystemCaFile,
 		liveSyncEnvironmentIndexPath(paths),
-		join(workspaceRoot, "SOUL.md"),
-		join(home, ".openclaw", "openclaw.json"),
-		join(home, ".hermes", "config.yaml"),
-		join(home, ".hermes", "SOUL.md"),
-		legacyHermesModelProviderPluginDir(home),
-		join(hostedCodexHome(home), CODEX_MANAGED_PROVIDER_CONFIG_FILE),
 	]);
-	for (const agent of MANAGED_LIVE_SYNC_AGENTS) {
-		result.add(join(paths.localEnvironments, `${agent}.json`));
-	}
 	for (const name of ["clawdi-runtime-watch", "clawdi-daemon", "clawdi-runtime-sidecar"]) {
 		result.add(join(paths.systemdSystemRoot, systemdUnitFileName(name)));
 	}
-	for (const runtime of HOSTED_RUNTIME_TARGETS) {
-		for (const skillName of hostedBundledSkillIds()) {
-			const skillTarget = hostedBundledSkillTargetDir(runtime, skillName, home);
-			if (skillTarget) result.add(skillTarget);
-		}
-	}
-	for (const [runtime, settings] of Object.entries(manifest.runtimes)) {
-		const names = [
-			runtimeServiceProgramName(runtime, "gateway"),
-			`clawdi-${systemdUnitNameSegment(runtime)}`,
-			...Object.keys(settings.services ?? {}).map((service) =>
-				runtimeServiceProgramName(runtime, service),
-			),
-		];
-		for (const name of names) {
-			const unit = systemdUnitFileName(name);
-			result.add(join(paths.systemdUserRoot, unit));
-			result.add(join(paths.systemdUserRoot, `${unit}.d`, "10-clawdi-hosted.conf"));
-			result.add(join(paths.systemdUserRoot, "default.target.wants", unit));
-		}
-	}
-	addExistingManagedSystemdPaths(paths, result);
-	addManagedWhatsAppSnapshotPaths(manifest, result);
+	addExistingManagedSystemdSystemPaths(paths, result);
 	return [...result].sort();
 }
 
@@ -5667,9 +5616,16 @@ function captureRuntimeLiveNode(path: string): RuntimeLiveSnapshotNode {
 		};
 	}
 	if (!stat.isDirectory()) throw new Error(`unsupported runtime live-state path: ${path}`);
+	const mode = stat.mode & 0o777;
+	if ((mode & 0o022) !== 0) {
+		throw new Error(`runtime live-state snapshot directory is group/world writable: ${path}`);
+	}
+	if (runningAsRoot() && stat.uid !== 0) {
+		throw new Error(`runtime live-state snapshot directory is not root-owned: ${path}`);
+	}
 	return {
 		kind: "directory",
-		mode: stat.mode & 0o777,
+		mode,
 		uid: stat.uid,
 		gid: stat.gid,
 		entries: new Map(
@@ -6112,9 +6068,10 @@ export function convergeRuntimeManifest(
 		makeRuntimeUserOwned(paths.userHome);
 		makeRuntimeUserPrivateDir(paths.clawdiHome);
 		makeRuntimeUserOwned(workspaceRoot);
-		mkdirSync(paths.installInventory, { recursive: true });
-		mkdirSync(paths.projectionRoot, { recursive: true });
-		mkdirSync(semRoot, { recursive: true });
+		makeRootReadableDir(paths.installInventory);
+		makeRootReadableDir(paths.projectionRoot);
+		makeRootReadableDir(instanceRoot);
+		makeRootReadableDir(semRoot);
 		mkdirSync(paths.managedSecretRoot, { recursive: true });
 		makeManagedSecretRoot(paths.managedSecretRoot);
 		makeRootReadableDir(paths.egressProfileRoot);

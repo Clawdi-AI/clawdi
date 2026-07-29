@@ -3121,12 +3121,16 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(existsSync(installerLog)).toBe(false);
 	});
 
-	test("rolls back every live file when an OpenClaw target patch fails", () => {
+	test("rolls back root managed state and leaves user projections for forward convergence", () => {
 		const paths = tempRuntimePaths();
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const workspaceRoot = join(paths.userHome, "clawdi");
 		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const targetConfig = join(paths.userHome, ".openclaw", "openclaw.json");
+		const forwardConfig = '{"forward-converged":true}\n';
+		const dropInRoot = join(paths.systemdUserRoot, "clawdi-stale.service.d");
+		const managedUserDropIn = join(dropInRoot, "10-clawdi-hosted.conf");
+		const siblingUserDropIn = join(dropInRoot, "50-user.conf");
 		const unmanagedState = join(paths.serviceStateRoot, "unmanaged.txt");
 		const unmanagedRun = join(paths.runRoot, "unmanaged.txt");
 		const unmanagedOpenClaw = join(paths.userHome, ".openclaw", "user-data.txt");
@@ -3138,13 +3142,27 @@ describe("runtime manifest reconciliation invariants", () => {
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.runtimeSecretFileRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
+		chmodSync(paths.runConfigRoot, 0o755);
+		chmodSync(paths.managedSecretRoot, 0o711);
+		chmodSync(paths.runtimeSecretFileRoot, 0o700);
 		writeFileSync(
 			commandPath,
-			["#!/usr/bin/env bash", "set -euo pipefail", "cat >/dev/null || true", "exit 42", ""].join(
-				"\n",
-			),
+			[
+				"#!/usr/bin/env bash",
+				"set -euo pipefail",
+				"cat >/dev/null || true",
+				`printf '%s\\n' '{"forward-converged":true}' > '${targetConfig}'`,
+				"",
+			].join("\n"),
 		);
 		chmodSync(commandPath, 0o700);
+		mkdirSync(dropInRoot, { recursive: true });
+		writeFileSync(
+			managedUserDropIn,
+			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nstale managed drop-in\n`,
+		);
+		writeFileSync(siblingUserDropIn, "user-owned\n");
+		const previousSiblingUserDropIn = readFileSync(siblingUserDropIn);
 		for (const path of [unmanagedState, unmanagedRun, unmanagedOpenClaw, unmanagedHermes]) {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, `unmanaged:${path}\n`);
@@ -3156,20 +3174,19 @@ describe("runtime manifest reconciliation invariants", () => {
 				readFileSync(path),
 			]),
 		);
-		const preservedPaths = [
+		const rootManagedPaths = [
 			paths.managedConfig,
 			join(paths.runConfigRoot, "stale.json"),
 			join(paths.runtimeSecretFileRoot, "stale.json"),
-			join(paths.systemdUserRoot, "clawdi-old.service"),
-			targetConfig,
 		];
-		for (const [index, path] of preservedPaths.entries()) {
+		const staleUserUnit = join(paths.systemdUserRoot, "clawdi-old.service");
+		for (const [index, path] of [...rootManagedPaths, staleUserUnit, targetConfig].entries()) {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, path === targetConfig ? '{"mcp":{"servers":{}}}\n' : `old-${index}\n`);
 		}
 		chmodSync(paths.managedConfig, 0o640);
 		const previousManagedStat = statSync(paths.managedConfig);
-		const previous = new Map(preservedPaths.map((path) => [path, readFileSync(path)]));
+		const previous = new Map(rootManagedPaths.map((path) => [path, readFileSync(path)]));
 		const manifest = baseManifest(
 			paths,
 			{
@@ -3188,21 +3205,23 @@ describe("runtime manifest reconciliation invariants", () => {
 			systemdApply: {
 				activate: () => {
 					activateCalls += 1;
-					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+					throw new Error("injected systemd activation failure");
 				},
 				rollback: () => {
 					rollbackCalls += 1;
 				},
 			},
 		});
-		expect(result.installErrors.join("\n")).toContain(
-			"runtime openclaw provider projection failed",
-		);
-		for (const path of preservedPaths) {
+		expect(result.installErrors.join("\n")).toContain("injected systemd activation failure");
+		for (const path of rootManagedPaths) {
 			const expected = previous.get(path);
 			if (!expected) throw new Error(`missing preserved fixture for ${path}`);
 			expect(readFileSync(path)).toEqual(expected);
 		}
+		expect(readFileSync(targetConfig, "utf-8")).toBe(forwardConfig);
+		expect(existsSync(staleUserUnit)).toBe(false);
+		expect(existsSync(managedUserDropIn)).toBe(false);
+		expect(readFileSync(siblingUserDropIn)).toEqual(previousSiblingUserDropIn);
 		const restoredManagedStat = statSync(paths.managedConfig);
 		expect(restoredManagedStat.mode & 0o777).toBe(previousManagedStat.mode & 0o777);
 		expect(restoredManagedStat.uid).toBe(previousManagedStat.uid);
@@ -3211,47 +3230,8 @@ describe("runtime manifest reconciliation invariants", () => {
 			expect(readFileSync(path)).toEqual(expected);
 		}
 		expect(statSync(unmanagedFifo).isFIFO()).toBe(true);
-		expect(activateCalls).toBe(0);
-		expect(rollbackCalls).toBe(0);
-	});
-
-	test("snapshots only the managed systemd drop-in and leaves siblings untouched", () => {
-		const paths = tempRuntimePaths();
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
-		const workspaceRoot = join(paths.userHome, "clawdi");
-		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
-		const dropInRoot = join(paths.systemdUserRoot, "openclaw-gateway.service.d");
-		const managedDropIn = join(dropInRoot, "10-clawdi-hosted.conf");
-		const siblingDropIn = join(dropInRoot, "50-user.conf");
-		const siblingFifo = join(dropInRoot, "60-user.fifo");
-		mkdirSync(dirname(commandPath), { recursive: true });
-		mkdirSync(workspaceRoot, { recursive: true });
-		mkdirSync(dropInRoot, { recursive: true });
-		writeFileSync(commandPath, "#!/usr/bin/env bash\ncat >/dev/null || true\nexit 42\n");
-		chmodSync(commandPath, 0o700);
-		writeFileSync(managedDropIn, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nold managed\n`);
-		writeFileSync(siblingDropIn, "user-owned\n");
-		execFileSync("mkfifo", [siblingFifo]);
-		const previousManaged = readFileSync(managedDropIn);
-		const previousSibling = readFileSync(siblingDropIn);
-		const manifest = baseManifest(
-			paths,
-			{
-				openclaw: {
-					enabled: true,
-					run: runSettings(commandPath, ["gateway", "run"]),
-					services: {},
-				},
-			},
-			{ locale: { language: "en", timezone: "UTC" } },
-		);
-
-		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-dropin-failure"), paths);
-
-		expect(result.installErrors).not.toEqual([]);
-		expect(readFileSync(managedDropIn)).toEqual(previousManaged);
-		expect(readFileSync(siblingDropIn)).toEqual(previousSibling);
-		expect(statSync(siblingFifo).isFIFO()).toBe(true);
+		expect(activateCalls).toBe(1);
+		expect(rollbackCalls).toBe(1);
 	});
 
 	test("uses an explicit managed snapshot allowlist without broad runtime roots", () => {
@@ -3261,25 +3241,86 @@ describe("runtime manifest reconciliation invariants", () => {
 			openclaw: { enabled: true, run: runSettings("openclaw", []), services: {} },
 			hermes: { enabled: true, run: runSettings("hermes", []), services: {} },
 		});
+		const existingSystemUnit = join(paths.systemdSystemRoot, "clawdi-existing.service");
+		const existingSystemDropIn = join(
+			paths.systemdSystemRoot,
+			"vendor.service.d",
+			"10-clawdi-hosted.conf",
+		);
+		mkdirSync(dirname(existingSystemDropIn), { recursive: true });
+		writeFileSync(existingSystemUnit, "existing managed unit\n");
+		writeFileSync(
+			existingSystemDropIn,
+			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nexisting managed drop-in\n`,
+		);
 		const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths, workspaceRoot);
 
-		expect(snapshotPaths).not.toContain(paths.serviceStateRoot);
-		expect(snapshotPaths).not.toContain(paths.runRoot);
-		expect(snapshotPaths).not.toContain(paths.userHome);
-		expect(snapshotPaths).not.toContain(workspaceRoot);
-		expect(snapshotPaths).not.toContain(join(paths.userHome, ".openclaw"));
-		expect(snapshotPaths).not.toContain(join(paths.userHome, ".hermes"));
-		expect(snapshotPaths).toContain(paths.managedConfig);
-		expect(snapshotPaths).toContain(join(paths.userHome, ".openclaw", "openclaw.json"));
-		expect(snapshotPaths).toContain(join(paths.userHome, ".hermes", "config.yaml"));
-		expect(snapshotPaths).toContain(
-			join(paths.userHome, ".hermes", "plugins", "model-providers", "clawdi"),
+		expect(snapshotPaths).toEqual(
+			[
+				paths.managedConfig,
+				paths.syncState,
+				paths.providerHealthStatus,
+				paths.egressEngineStatus,
+				paths.manifestLastGood,
+				paths.managedSecretCacheFile,
+				paths.appliedState,
+				paths.runConfigRoot,
+				paths.egressProfileRoot,
+				paths.installInventory,
+				paths.projectionRoot,
+				join(paths.instanceRoot, manifest.instanceId),
+				paths.managedSecretRoot,
+				paths.systemdEnvRoot,
+				paths.instanceData,
+				paths.sensitiveInstanceData,
+				paths.egressAddon,
+				paths.egressTransparentEnv,
+				paths.egressSystemCaFile,
+				join(paths.serviceStateRoot, "config", "runtime-live-sync-agents.json"),
+				join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
+				join(paths.systemdSystemRoot, "clawdi-daemon.service"),
+				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
+				existingSystemUnit,
+				existingSystemDropIn,
+			].sort(),
 		);
+		for (const userWritablePath of [
+			paths.serviceStateRoot,
+			paths.runRoot,
+			paths.userHome,
+			workspaceRoot,
+			join(workspaceRoot, "SOUL.md"),
+			join(paths.userHome, ".openclaw", "openclaw.json"),
+			join(paths.userHome, ".hermes", "config.yaml"),
+			join(paths.userHome, ".hermes", "SOUL.md"),
+			join(paths.userHome, ".hermes", "plugins", "model-providers", "clawdi"),
+			join(paths.userHome, ".codex", "config.toml"),
+			join(paths.userHome, ".openclaw", "agents", "main", "skills", "clawdi"),
+			join(paths.userHome, ".hermes", "skills", "clawdi"),
+			join(paths.localEnvironments, "openclaw.json"),
+			join(paths.systemdUserRoot, "clawdi-openclaw.service"),
+			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
+			join(paths.systemdUserRoot, "default.target.wants", "clawdi-openclaw.service"),
+			join(paths.userHome, ".openclaw", "credentials", "whatsapp", "account"),
+			paths.egressRoot,
+			paths.egressScratchRoot,
+			paths.egressCaDir,
+		]) {
+			expect(snapshotPaths).not.toContain(userWritablePath);
+		}
 		for (const [index, path] of snapshotPaths.entries()) {
 			for (const other of snapshotPaths.slice(index + 1)) {
 				expect(other.startsWith(`${path}/`) || path.startsWith(`${other}/`)).toBe(false);
 			}
 		}
+
+		mkdirSync(paths.runConfigRoot, { recursive: true });
+		chmodSync(paths.runConfigRoot, 0o777);
+		expect(() =>
+			convergeRuntimeManifest(manifestLoad(baseManifest(paths, {}), "inline-writable-root"), paths),
+		).toThrow(
+			`runtime live-state snapshot directory is group/world writable: ${paths.runConfigRoot}`,
+		);
 	});
 
 	test("rejects a malformed Hermes MCP patch before Apply", () => {

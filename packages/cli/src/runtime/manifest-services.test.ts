@@ -1296,7 +1296,7 @@ cat > '${logPath}'
 		});
 	});
 
-	test("skips hosted drop-ins when official install fails without a base unit", () => {
+	test("leaves hosted drop-ins for forward convergence when official install fails", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
@@ -1348,7 +1348,7 @@ cat > '${logPath}'
 		);
 		expect(existsSync(paths.managedConfig)).toBe(false);
 		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
-		expect(existsSync(dropInPath)).toBe(false);
+		expect(existsSync(dropInPath)).toBe(true);
 		expect(
 			failedFirstInstall.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
 		).not.toContain("openclaw-gateway.service");
@@ -1364,7 +1364,6 @@ cat > '${logPath}'
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
 		const previousManagedConfig = readFileSync(paths.managedConfig, "utf-8");
-		const previousDropIn = readFileSync(dropInPath, "utf-8");
 
 		writeFakeGatewayCli({
 			path: openclawCommand,
@@ -1380,7 +1379,6 @@ cat > '${logPath}'
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
 		expect(readFileSync(paths.managedConfig, "utf-8")).toBe(previousManagedConfig);
-		expect(readFileSync(dropInPath, "utf-8")).toBe(previousDropIn);
 		expect(failedReinstall.outputs.systemdUserUnits).toEqual([]);
 	});
 
