@@ -1,9 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import * as p from "@clack/prompts";
-
 import { authLogin, browserOpenCommand, finishOAuthLogin } from "../../src/commands/auth";
 import {
 	clearAuth,
@@ -12,7 +10,7 @@ import {
 	type PendingAuth,
 	setPendingAuth,
 } from "../../src/lib/config";
-import { addToken, listTokens } from "../../src/share/tokens";
+import { addToken } from "../../src/share/tokens";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -98,7 +96,7 @@ afterEach(() => {
 	rmSync(tmpHome, { recursive: true, force: true });
 });
 
-describe("authLogin pending share upgrade", () => {
+describe("authLogin authentication boundary", () => {
 	it("uses a real executable for browser opening on every supported platform", () => {
 		expect(browserOpenCommand("https://example.test", "darwin")).toEqual({
 			command: "open",
@@ -166,234 +164,19 @@ describe("authLogin pending share upgrade", () => {
 			"/.well-known/oauth-authorization-server",
 		]);
 	});
-
-	it("upgrades anonymous share tokens and eager-pulls shared skills", async () => {
-		addToken({
-			project_id: "project-shared",
-			project_name: "Team Toolkit",
-			owner_display: "Alice",
-			owner_handle: "alice-example",
-			token: rawToken,
-			redeemed_at: "2026-05-12T10:00:00Z",
-		});
-
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: `/v1/share/${rawToken}/upgrade`,
-				response: () =>
-					jsonResponse({
-						project_id: "project-canonical",
-						resolved_owner_handle: "alice-canonical",
-						membership_id: "membership-1",
-					}),
-			},
-			{
-				method: "GET",
-				path: "/v1/skills",
-				response: () =>
-					jsonResponse({
-						items: [
-							{ project_id: "project-canonical", skill_key: "deploy-helper", is_active: true },
-						],
-					}),
-			},
-			{
-				method: "GET",
-				path: "/v1/projects/project-canonical/skills/deploy-helper/download",
-				response: () => new Response(new Uint8Array([1, 2, 3])),
-			},
-		]);
-
-		try {
-			await authLogin();
-		} finally {
-			restore();
-		}
-
-		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			`POST /v1/share/${rawToken}/upgrade`,
-			"GET /v1/skills?project_id=project-canonical&page=1&page_size=200",
-			"GET /v1/projects/project-canonical/skills/deploy-helper/download",
-		]);
-		expect(captured[0].headers["idempotency-key"]).toMatch(/^upgrade-[a-f0-9]{32}$/);
-
-		const [token] = listTokens();
-		expect(token.project_id).toBe("project-canonical");
-		expect(token.owner_handle).toBe("alice-canonical");
-		expect(token.upgraded_at).toBeString();
-		expect(token.last_seen_skill_keys).toEqual(["deploy-helper"]);
-	});
-
-	it("upgrades a released version:1 scope record and persists its normalized fields", async () => {
-		const legacyToken = "b".repeat(43);
-		const tokenPath = join(tmpHome, ".clawdi", "share-tokens.json");
-		writeFileSync(
-			tokenPath,
-			JSON.stringify({
-				version: 1,
-				tokens: [
-					{
-						scope_id: "legacy-project",
-						scope_name: "Legacy Toolkit",
-						owner_display: "Alice",
-						owner_handle: "alice-legacy",
-						token: legacyToken,
-						redeemed_at: "2026-05-12T10:00:00Z",
-						future_field: "preserved",
-					},
-				],
-			}),
-		);
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: `/v1/share/${legacyToken}/upgrade`,
-				response: () =>
-					jsonResponse({
-						project_id: "legacy-project",
-						resolved_owner_handle: "alice-legacy",
-					}),
-			},
-			{
-				method: "GET",
-				path: "/v1/skills",
-				response: () => jsonResponse({ items: [] }),
-			},
-		]);
-
-		try {
-			await authLogin();
-		} finally {
-			restore();
-		}
-
-		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
-			`POST /v1/share/${legacyToken}/upgrade`,
-			"GET /v1/skills?project_id=legacy-project&page=1&page_size=200",
-		]);
-		const [normalized] = listTokens();
-		expect(normalized.project_id).toBe("legacy-project");
-		expect(normalized.project_name).toBe("Legacy Toolkit");
-		expect(normalized.upgraded_at).toBeString();
-		const persisted = JSON.parse(readFileSync(tokenPath, "utf-8")) as {
-			tokens: Array<Record<string, unknown>>;
-		};
-		expect(persisted.tokens[0].future_field).toBe("preserved");
-		expect(persisted.tokens[0].project_name).toBe("Legacy Toolkit");
-	});
-
-	it("silently drops a 404 legacy claim while preserving a claim bound to another origin", async () => {
-		writeFileSync(
-			join(tmpHome, ".clawdi", "share-tokens.json"),
-			JSON.stringify({
-				version: 1,
-				tokens: [
-					{
-						scope_id: "project-stale",
-						scope_name: "Stale Toolkit",
-						owner_display: "Alice",
-						owner_handle: "alice-example",
-						token: rawToken,
-						redeemed_at: "2026-05-12T10:00:00Z",
-					},
-					{
-						project_id: "project-other-api",
-						project_name: "Other API Toolkit",
-						owner_display: "Bob",
-						owner_handle: "bob-example",
-						token: "b".repeat(43),
-						redeemed_at: "2026-05-12T11:00:00Z",
-						api_origin: "https://other-api.test",
-					},
-				],
-			}),
-		);
-		const warn = spyOn(p.log, "warn").mockImplementation(() => {});
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: `/v1/share/${rawToken}/upgrade`,
-				response: () => jsonResponse({ detail: "share link not found" }, 404),
-			},
-		]);
-		let messages: string[] = [];
-
-		try {
-			await authLogin();
-			await authLogin();
-			messages = warn.mock.calls.map(([message]) => String(message));
-		} finally {
-			restore();
-			warn.mockRestore();
-		}
-
-		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
-			`POST /v1/share/${rawToken}/upgrade`,
-		]);
-		const [retained] = listTokens();
-		expect(retained.project_id).toBe("project-other-api");
-		expect(retained.api_origin).toBe("https://other-api.test");
-		expect(messages.join("\n")).not.toMatch(/Could not upgrade|share link|HTTP 404/);
-	});
-
-	it("skips invalid server skill keys during eager pull", async () => {
-		addToken({
-			project_id: "project-shared",
-			project_name: "Team Toolkit",
-			owner_display: "Alice",
-			owner_handle: "alice-example",
-			token: rawToken,
-			redeemed_at: "2026-05-12T10:00:00Z",
-		});
-
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: `/v1/share/${rawToken}/upgrade`,
-				response: () =>
-					jsonResponse({
-						project_id: "project-shared",
-						resolved_owner_handle: "alice-example",
-						membership_id: "membership-1",
-					}),
-			},
-			{
-				method: "GET",
-				path: "/v1/skills",
-				response: () =>
-					jsonResponse({
-						items: [
-							{ project_id: "project-shared", skill_key: "deploy-helper", is_active: true },
-							{ project_id: "project-shared", skill_key: "../escape", is_active: true },
-						],
-					}),
-			},
-			{
-				method: "GET",
-				path: "/v1/projects/project-shared/skills/deploy-helper/download",
-				response: () => new Response(new Uint8Array([1, 2, 3])),
-			},
-		]);
-
-		try {
-			await authLogin();
-		} finally {
-			restore();
-		}
-
-		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
-			`POST /v1/share/${rawToken}/upgrade`,
-			"GET /v1/skills?project_id=project-shared&page=1&page_size=200",
-			"GET /v1/projects/project-shared/skills/deploy-helper/download",
-		]);
-		const [token] = listTokens();
-		expect(token.last_seen_skill_keys).toEqual(["deploy-helper"]);
-	});
 });
 
 describe("interactive OAuth Cloud verification boundary", () => {
 	it("persists both verified and explicitly cloud-unverified grants without fake profile data", async () => {
+		addToken({
+			project_id: "project-shared",
+			project_name: "Team Toolkit",
+			owner_display: "Alice",
+			owner_handle: "alice-example",
+			token: rawToken,
+			redeemed_at: "2026-05-12T10:00:00Z",
+		});
+		const localShareBefore = readFileSync(join(tmpHome, ".clawdi", "share-tokens.json"), "utf-8");
 		for (const cloudCase of ["verified", "server_error", "network"] as const) {
 			clearAuth();
 			const pending = oauthPending();
@@ -451,6 +234,9 @@ describe("interactive OAuth Cloud verification boundary", () => {
 				"POST /oauth/token",
 				"GET /v1/auth/me",
 			]);
+			expect(readFileSync(join(tmpHome, ".clawdi", "share-tokens.json"), "utf-8")).toBe(
+				localShareBefore,
+			);
 		}
 	});
 

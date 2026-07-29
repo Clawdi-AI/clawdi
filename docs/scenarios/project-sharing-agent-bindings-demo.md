@@ -49,7 +49,8 @@ to the separate web PR. Folder links are CLI-only local preferences:
 | Project owner | Invite/list/cancel invitations | `clawdi project invite`, `invites --cancel` | Share dialog |
 | Project owner | List/remove people | `clawdi project members --remove` | Project detail / Share dialog |
 | Project owner | Stop all sharing | `clawdi project unshare` | Share dialog |
-| Recipient | Preview or accept share link | `/api/share/<token>/preview`, `clawdi inbox accept <url>` | `/share/<token>` landing |
+| Recipient | Preview or stage a share link | `/api/share/<token>/preview`, `clawdi inbox accept <url>` | `/share/<token>` landing |
+| Recipient | Join a locally staged share | `clawdi inbox join <project-id>` | `/share/<token>` landing |
 | Recipient | List/accept/decline invitations | `clawdi inbox`, `accept`, `decline` | Inbox banner |
 | Recipient | List accessible projects | `clawdi project list --shared-with-me` | Projects list |
 | Recipient | Leave shared project | `clawdi project leave @owner/project` | Project detail |
@@ -97,20 +98,29 @@ Expected:
 Web PR follow-up: Projects list/detail and Share dialog should mirror
 the same People / Access, Invites, and Links state.
 
-## Flow 2: Recipient Accepts A Link
+## Flow 2: Recipient Stages, Joins, Then Pulls A Link
 
-Bob accepts through the CLI. The share landing page is covered by the
-separate web PR.
+Bob stages the link while signed out, authenticates, explicitly joins the
+listed Project, and separately chooses whether to download its content. The
+share landing page is covered by the separate web PR.
 
 ```bash
 clawdi inbox accept https://clawdi.ai/share/<token> --json
+clawdi auth login
+clawdi inbox join <project-id> --json
+clawdi pull --project <project-id>
 clawdi project list --shared-with-me
 clawdi project show @alice/engineering
 ```
 
 Expected:
 
-- Project access is accepted as viewer access.
+- Signed-out `inbox accept` stores only a local pending share and reports that
+  no account or Project membership changed.
+- `auth login` performs authentication only.
+- `inbox join` creates viewer access and removes the local raw-token ticket.
+- No content is downloaded until Bob runs the explicit
+  `clawdi pull --project <project-id>` command.
 - The project appears under Shared with me with `@alice/engineering`.
 - Skills and vault key names are readable; writes stay disabled.
 - Vault env values resolve through CLI/API-key runtime paths; web/JWT still cannot read plaintext.
@@ -127,6 +137,7 @@ Bob can accept and attach the project to an agent in one CLI step, or accept fir
 
 ```bash
 clawdi inbox accept https://clawdi.ai/share/<token> --agent <atlas-id> --json
+clawdi pull --project <project-id>
 clawdi agent projects list <atlas-id> --json
 ```
 
@@ -140,6 +151,8 @@ clawdi agent projects list <atlas-id>
 Expected:
 
 - `engineering` appears as an attached Project on `atlas`.
+- Accepting and attaching does not download Project content; pull remains a
+  separate opt-in command.
 - Bob's Agent Project remains fixed to `atlas`.
 - Shared viewer Projects cannot become the Agent Project.
 
@@ -157,6 +170,7 @@ Carol reviews and accepts:
 ```bash
 clawdi inbox --json
 clawdi inbox accept <invitation-id> --json
+clawdi pull --project <project-id>
 ```
 
 Decline branch:
@@ -175,6 +189,7 @@ Expected:
 
 - Invitations show owner display and owner handle.
 - Accept creates the same viewer access as a share link.
+- Accept does not download content; pull is explicit.
 - Decline or cancel removes the pending invitation without affecting existing members.
 
 ## Flow 5: Agent Operator Manages Projects

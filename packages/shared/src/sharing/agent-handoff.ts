@@ -30,17 +30,22 @@ export function buildShareAgentHandoffPrompt(link: ShareAgentHandoffLink): strin
 			{
 				status: "joined",
 				meaning:
-					"Project access accepted. If agent_ids were supplied, the Project was added to those agents' attached Projects.",
+					"Project access accepted. If agent_ids were supplied, the Project was added to those agents' attached Projects. Content is downloaded only if the returned next_command is run.",
 			},
 			{
 				status: "redeemed",
 				action:
-					"Anonymous/local token only. Run clawdi auth login before assuming durable Project access or attached Projects.",
+					"Local staging only; no membership changed. Run the returned next_commands in order to sign in and explicitly join the listed Project.",
 			},
 			{
 				status: "already_redeemed",
 				action:
-					"Anonymous/local token already exists. Run clawdi auth login before assuming durable Project access or attached Projects.",
+					"Local staging already exists; no membership changed. Run the returned next_commands in order to sign in and explicitly join the listed Project.",
+			},
+			{
+				status: "legacy_local_share_record",
+				action:
+					"An older CLI already handled this share; no membership changed now. Review access and use the returned cleanup command explicitly if the local record is no longer needed.",
 			},
 			{
 				status: "already_owner",

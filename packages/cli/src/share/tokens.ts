@@ -46,7 +46,9 @@ export interface ShareToken {
 	owner_handle: string;
 	token: string;
 	redeemed_at: string; // ISO8601
-	upgraded_at?: string; // set after clawdi auth login + upgrade
+	// Legacy marker retained for read compatibility. Explicit join ignores
+	// these previously upgraded records and never acts on them automatically.
+	upgraded_at?: string;
 	// API origin that accepted the anonymous token. New records are bound so
 	// another Cloud endpoint never receives a credential it did not issue.
 	api_origin?: string;

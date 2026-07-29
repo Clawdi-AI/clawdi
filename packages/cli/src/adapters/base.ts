@@ -129,9 +129,8 @@ export interface AgentAdapter {
 	 * shared); implementations extract into a temp dir and rename
 	 * the top entry to `<key>__<ownerHandle>`.
 	 *
-	 * Called by `clawdi inbox accept` after a successful upgrade or
-	 * redeem so the recipient's agent immediately sees the shared
-	 * skill folder without waiting for a daemon reconcile cycle. */
+	 * Called by explicit pull flows so the recipient's agent sees the
+	 * shared skill folder only after content download is requested. */
 	writeSharedSkillArchive(key: string, ownerHandle: string, tarGzBytes: Buffer): Promise<void>;
 	/** Remove a skill from the agent's local skills directory.
 	 * Called by the daemon's reconcile sweep when a previously-
