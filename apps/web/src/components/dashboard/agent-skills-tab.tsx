@@ -7,6 +7,7 @@ import { isProjectOwner } from "@/components/projects/project-metadata";
 import { SkillCardGrid } from "@/components/skills/skill-card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { useAgentRuntimeObserved } from "@/hooks/use-agent-runtime-observed";
 import { type AgentRouteSearch, agentSkillDetailLink } from "@/lib/agent-routes";
 import { toastApiError, unwrap, useApi } from "@/lib/api";
 import { fetchAllPages } from "@/lib/api-pagination";
@@ -64,16 +65,7 @@ export function AgentSkillsTab({
 	hostedManaged?: boolean;
 }) {
 	const api = useApi();
-	const runtimeObserved = useQuery({
-		queryKey: ["runtime-observed", agentId],
-		queryFn: async () =>
-			unwrap(
-				await api.GET("/v1/agents/{agent_id}/runtime-observed", {
-					params: { path: { agent_id: agentId } },
-				}),
-			),
-		enabled: hostedManaged,
-	});
+	const runtimeObserved = useAgentRuntimeObserved(agentId, hostedManaged);
 	const { data: projects } = useQuery({
 		queryKey: ["projects"],
 		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),

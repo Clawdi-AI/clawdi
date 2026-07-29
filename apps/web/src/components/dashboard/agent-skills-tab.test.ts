@@ -9,5 +9,6 @@ describe("agent Skills resource boundary", () => {
 		expect(source).toContain("Deployment-managed Skills");
 		expect(source).toContain("cleanupOnlySkillCheck");
 		expect(source).not.toMatch(/managed_resources|mcp_server|MCP servers/i);
+		expect(source).not.toMatch(/has_mcp|Deployment MCP/i);
 	});
 });
