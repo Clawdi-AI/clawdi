@@ -9,6 +9,7 @@ runtime companion; `/api` never aliases the v2 router.
 
 import httpx
 import pytest
+from fastapi.routing import iter_route_contexts
 from httpx import ASGITransport
 
 from app.main import app
@@ -16,7 +17,7 @@ from app.main import app
 
 def _routes_by_path() -> dict[str, set[str]]:
     routes: dict[str, set[str]] = {}
-    for route in app.routes:
+    for route in iter_route_contexts(app.routes):
         path = getattr(route, "path", "")
         methods = set(getattr(route, "methods", None) or {"WEBSOCKET"})
         routes.setdefault(path, set()).update(methods)
