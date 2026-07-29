@@ -153,7 +153,28 @@ describe("CLI smoke — src entry", () => {
 		}
 	});
 
-	it("runtime init enters repair and writes boot status without datasource", async () => {
+	it("runtime verify treats a missing manifest cache as not checked", async () => {
+		const { tmpdir } = await import("node:os");
+		const { mkdirSync, rmSync } = await import("node:fs");
+		const root = join(tmpdir(), `clawdi-smoke-runtime-verify-${Date.now()}`);
+		mkdirSync(join(root, "home"), { recursive: true });
+
+		try {
+			const { stdout, code } = await runCli(["runtime", "verify", "--json"], {
+				HOME: join(root, "home"),
+				CLAWDI_SERVICE_STATE_DIR: join(root, "state"),
+				CLAWDI_RUN_DIR: join(root, "run"),
+			});
+			expect(code).toBe(0);
+			const parsed = JSON.parse(stdout);
+			expect(parsed.status).toBe("ok");
+			expect(parsed.manifestCache).toMatchObject({ exists: false, valid: null });
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("runtime init writes repair status and runtime status exits non-zero for it", async () => {
 		const { tmpdir } = await import("node:os");
 		const { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-init-${Date.now()}`);
@@ -206,7 +227,7 @@ describe("CLI smoke — src entry", () => {
 			expect(cloudResult.v1.errors).toEqual(parsed.errors);
 
 			const status = await runCli(["runtime", "status", "--json"], env);
-			expect(status.code).toBe(0);
+			expect(status.code).toBe(1);
 			const statusParsed = JSON.parse(status.stdout);
 			expect(statusParsed.exists).toBe(true);
 			expect(statusParsed.status.mode).toBe("repair");

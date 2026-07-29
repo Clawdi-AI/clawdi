@@ -132,6 +132,60 @@ const SKILL_UPLOAD_ECHO_TTL_MS = 2 * 60_000;
 const TRANSIENT_HEARTBEAT_FAILURES = 3;
 
 type FailureClassification = "transient" | "sustained";
+type SyncHealthArea = "transport" | "push" | "pull";
+interface SyncHealthError {
+	message: string;
+	transient: boolean;
+}
+
+/** Unresolved sync failures keyed by their owning source or resource. */
+export class SyncHealth {
+	private readonly errors: Record<SyncHealthArea, Map<string, SyncHealthError>> = {
+		transport: new Map(),
+		push: new Map(),
+		pull: new Map(),
+	};
+
+	set(area: SyncHealthArea, resource: string, message: string, transient = false): void {
+		this.errors[area].set(resource, { message, transient });
+	}
+
+	setIfAbsent(area: SyncHealthArea, resource: string, message: string, transient = false): void {
+		if (!this.errors[area].has(resource)) {
+			this.errors[area].set(resource, { message, transient });
+		}
+	}
+
+	clear(area: SyncHealthArea, resource: string): void {
+		this.errors[area].delete(resource);
+	}
+
+	clearTransient(area: SyncHealthArea, resource: string): void {
+		if (this.errors[area].get(resource)?.transient) {
+			this.errors[area].delete(resource);
+		}
+	}
+
+	clearAbsent(area: SyncHealthArea, prefix: string, presentResources: ReadonlySet<string>): void {
+		for (const resource of this.errors[area].keys()) {
+			if (resource.startsWith(prefix) && !presentResources.has(resource)) {
+				this.errors[area].delete(resource);
+			}
+		}
+	}
+
+	project(): string | null {
+		const auth = this.errors.transport.get("auth");
+		if (auth) return auth.message;
+		for (const area of ["transport", "pull", "push"] as const) {
+			const first = [...this.errors[area]]
+				.filter(([resource]) => area !== "transport" || resource !== "auth")
+				.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))[0];
+			if (first) return first[1].message;
+		}
+		return null;
+	}
+}
 
 export type PendingSkillUploadEcho = {
 	contentHash: string;
@@ -144,6 +198,7 @@ interface StableSessionEnqueueOptions {
 	queue: Pick<RetryQueue, "enqueue">;
 	lastPushedHash: ReadonlyMap<string, string>;
 	inFlightHash: Map<string, string>;
+	onPresentSessions?: (resources: ReadonlySet<string>) => void;
 }
 
 export async function enqueueChangedSessionsAfterStability(
@@ -152,6 +207,7 @@ export async function enqueueChangedSessionsAfterStability(
 	if (opts.abort.aborted) return 0;
 	const { sessions } = await opts.collectSessions();
 	if (opts.abort.aborted) return 0;
+	opts.onPresentSessions?.(new Set(sessions.map((session) => `session:${session.localSessionId}`)));
 	let enqueued = 0;
 	for (const session of sessions) {
 		if (opts.abort.aborted) return enqueued;
@@ -306,7 +362,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// the daemon — it could grow more components and we'd silently
 	// regress to false 304s on every change.
 	let lastListingEtag: string | null = null;
-	let lastSyncError: string | null = null;
+	const syncHealth = new SyncHealth();
 
 	// Last content hash we pushed for each session, keyed by
 	// local_session_id. Lets the sessions watcher dedup: if the
@@ -425,7 +481,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		// best-effort heartbeat (sent on the way down) carries the
 		// reason. Without this the dashboard just shows "paused" / no
 		// error and the user has no idea their key was revoked.
-		lastSyncError = "auth_revoked: api key rejected by server";
+		syncHealth.set("transport", "auth", "auth_revoked: api key rejected by server");
 		// Best-effort final heartbeat. We don't await — the abort
 		// fires on the same tick — but kicking off the POST before
 		// the abort gives the request a fighting chance to land.
@@ -447,7 +503,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 					queue_depth: queue.highWaterMark,
 					dropped_count_delta: 0,
 					last_revision_seen: lastSeenRevision,
-					last_sync_error: lastSyncError,
+					last_sync_error: syncHealth.project(),
 				},
 			})
 			.catch(() => {
@@ -489,6 +545,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			if (abort.aborted) return;
 			try {
 				const fresh = await fetchDefaultProjectId();
+				syncHealth.clear("transport", "project_refresh");
 				if (fresh !== defaultProjectId) {
 					log.info("engine.project_changed", { from: defaultProjectId, to: fresh });
 					defaultProjectId = fresh;
@@ -532,6 +589,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 					stale_project_id: defaultProjectId,
 				};
 				if (consecutiveFailures >= STALE_PROJECT_THRESHOLD) {
+					syncHealth.set("transport", "project_refresh", `project_refresh: ${toErrorMessage(e)}`);
 					log.error("engine.project_filter_stale", fields);
 				} else {
 					log.warn("engine.project_filter_refresh_failed", fields);
@@ -571,6 +629,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			(etag) => {
 				lastListingEtag = etag;
 			},
+			syncHealth,
 		);
 	} catch (e) {
 		if (isAuthFailure(e)) {
@@ -582,8 +641,6 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		}
 		throw e;
 	}
-	lastSyncError = null;
-
 	// Push side: wire watcher → enqueue.
 	const onLocalChange = (skillKey: string) => {
 		if (pullsInFlight.has(skillKey)) {
@@ -593,11 +650,15 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			// rm and extract), not user edits.
 			return;
 		}
-		void enqueueIfChanged(opts, queue, lastPushedHash, skillKey, () => defaultProjectId).catch(
-			(e) => {
+		const scanResource = `skill_scan:${skillKey}`;
+		void enqueueIfChanged(opts, queue, lastPushedHash, skillKey, () => defaultProjectId)
+			.then(() => {
+				syncHealth.clear("push", scanResource);
+			})
+			.catch((e) => {
+				syncHealth.set("push", scanResource, `skill ${skillKey} scan: ${toErrorMessage(e)}`);
 				log.warn("engine.enqueue_failed", { skill_key: skillKey, error: toErrorMessage(e) });
-			},
-		);
+			});
 	};
 
 	// Pull side: SSE event → fetch + writeSkillArchive (or rm).
@@ -658,8 +719,16 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				delete lock.skills[skillCacheKey(opts.adapter.agentType, event.skill_key)];
 				writeSkillsLock(lock);
 				log.info("engine.skill_deleted_local", { skill_key: event.skill_key });
+				syncHealth.clear("pull", `skill:${event.skill_key}`);
+				syncHealth.clear("push", `skill:${event.skill_key}`);
+				syncHealth.clear("push", `skill_scan:${event.skill_key}`);
 				applied = true;
 			} catch (e) {
+				syncHealth.set(
+					"pull",
+					`skill:${event.skill_key}`,
+					`skill ${event.skill_key} delete: ${toErrorMessage(e)}`,
+				);
 				log.warn("engine.skill_delete_failed", {
 					skill_key: event.skill_key,
 					error: toErrorMessage(e),
@@ -686,6 +755,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			event.content_hash &&
 			(lastPushedHash.get(event.skill_key) === event.content_hash || pendingEchoMatched)
 		) {
+			syncHealth.clear("pull", `skill:${event.skill_key}`);
 			log.debug("engine.sse_self_echo_suppressed", {
 				skill_key: event.skill_key,
 				content_hash: event.content_hash,
@@ -706,6 +776,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			// boundary the sweep uses to avoid wiping local-only
 			// skills, so anything we pulled needs to be in it.
 			cloudObservedKeys.add(event.skill_key);
+			syncHealth.clear("pull", `skill:${event.skill_key}`);
 			pulled = true;
 		} catch (e) {
 			// 401/403 here means the key the daemon's been using is
@@ -718,6 +789,11 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				triggerAuthFailureAbort("sse_skill_pull");
 				return;
 			}
+			syncHealth.set(
+				"pull",
+				`skill:${event.skill_key}`,
+				`skill ${event.skill_key} pull: ${toErrorMessage(e)}`,
+			);
 			log.warn("engine.pull_failed", {
 				skill_key: event.skill_key,
 				error: toErrorMessage(e),
@@ -744,13 +820,16 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				queue,
 				lastPushedHash: lastPushedSessionHash,
 				inFlightHash: inFlightSessionHash,
+				onPresentSessions: (resources) => syncHealth.clearAbsent("push", "session:", resources),
 			});
 			if (opts.abort.aborted) return;
+			syncHealth.clear("push", "session_scan");
 			if (enqueued > 0) {
 				log.info("engine.sessions_enqueued", { count: enqueued });
 			}
 		} catch (e) {
 			if (opts.abort.aborted) return;
+			syncHealth.set("push", "session_scan", `session scan: ${toErrorMessage(e)}`);
 			log.warn("engine.sessions_enumerate_failed", { error: toErrorMessage(e) });
 		}
 	};
@@ -805,13 +884,11 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			abort: opts.abort,
 			onEvent: onServerEvent,
 			onConnect: () => {
-				lastSyncError = null;
+				syncHealth.clear("transport", "sse");
 			},
 			onDisconnect: (info) => {
 				const nextError = lastSyncErrorForSseReconnect(info);
-				if (nextError !== null || lastSyncError?.startsWith("sse_disconnect:")) {
-					lastSyncError = nextError;
-				}
+				if (nextError !== null) syncHealth.set("transport", "sse", nextError);
 			},
 			onAuthFailure: () => triggerAuthFailureAbort("sse_channel"),
 		}),
@@ -824,9 +901,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			inFlightSessionHash,
 			pendingSkillUploadEchoes,
 			() => defaultProjectId,
-			(err) => {
-				lastSyncError = err;
-			},
+			syncHealth,
 			triggerAuthFailureAbort,
 		),
 		reconcileLoop(
@@ -844,11 +919,12 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			(etag) => {
 				lastListingEtag = etag;
 			},
+			syncHealth,
 			triggerAuthFailureAbort,
 		),
 		heartbeatLoop(opts, api, queue, opts.abort, () => ({
 			last_revision_seen: lastSeenRevision,
-			last_sync_error: lastSyncError,
+			last_sync_error: syncHealth.project(),
 		})),
 		refreshDefaultProjectIdLoop(opts.abort),
 		// Safety-net periodic sessions rescan. After a 4xx drop we
@@ -877,15 +953,19 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			while (!opts.abort.aborted) {
 				await sleep(5 * 60_000, opts.abort);
 				if (opts.abort.aborted) return;
-				await rescanLocalSkillsForChanges(
-					opts,
-					queue,
-					lastPushedHash,
-					pullsInFlight,
-					() => defaultProjectId,
-				).catch((e) => {
+				try {
+					await rescanLocalSkillsForChanges(
+						opts,
+						queue,
+						lastPushedHash,
+						pullsInFlight,
+						() => defaultProjectId,
+					);
+					syncHealth.clear("push", "skills_scan");
+				} catch (e) {
+					syncHealth.set("push", "skills_scan", `skills scan: ${toErrorMessage(e)}`);
 					log.warn("engine.skills_rescan_failed", { error: toErrorMessage(e) });
-				});
+				}
 			}
 		})(),
 	]);
@@ -913,9 +993,12 @@ async function enqueueIfChanged(
 		// Directory disappeared (skill deleted). v1 doesn't
 		// support push-deletes from daemon; the user does that
 		// from the dashboard. Just stop tracking it.
-		lastPushedHash.delete(skillKey);
-		log.debug("engine.skill_dir_gone", { skill_key: skillKey, error: toErrorMessage(e) });
-		return;
+		if (!existsSync(dir)) {
+			lastPushedHash.delete(skillKey);
+			log.debug("engine.skill_dir_gone", { skill_key: skillKey, error: toErrorMessage(e) });
+			return;
+		}
+		throw e;
 	}
 	if (lastPushedHash.get(skillKey) === hash) {
 		// Echo from a cloud-originated write or a no-op touch.
@@ -1034,9 +1117,11 @@ async function drainQueueLoop(
 	inFlightSessionHash: Map<string, string>,
 	pendingSkillUploadEchoes: Map<string, PendingSkillUploadEcho>,
 	getProjectId: () => string,
-	setLastError: (err: string | null) => void,
+	health: SyncHealth,
 	onAuthFailure: (origin: string) => void,
 ): Promise<void> {
+	const healthResource = (item: QueueItem): string =>
+		item.kind === "skill_push" ? `skill:${item.skill_key}` : `session:${item.local_session_id}`;
 	// Clear the in-flight stamp for a session_push item so the
 	// next watcher tick will re-enqueue if the local content
 	// hasn't already been confirmed shipped. Skill_push items have
@@ -1053,12 +1138,10 @@ async function drainQueueLoop(
 	};
 
 	// Common terminal-drop bookkeeping shared by oversized / permanent /
-	// retry-exhausted branches. `lastSyncError` is intentionally NOT
-	// touched here — each branch encodes its own UX contract (oversized
-	// preserves prior state, permanent stamps `permanent:`, retry-
-	// exhausted stamps `retry_exhausted:`), so folding setLastError in
-	// would re-introduce the C1 bug where oversized clobbered prior
-	// errors.
+	// retry-exhausted branches. Each branch owns its health contract:
+	// oversized clears only a same-resource transient, while permanent
+	// and retry-exhausted failures remain unresolved until that exact
+	// resource is later applied or disappears.
 	const dropItem = (item: QueueItem) => {
 		queue.recordPermanentDrop();
 		clearInFlight(item);
@@ -1071,7 +1154,7 @@ async function drainQueueLoop(
 			continue;
 		}
 		try {
-			await processQueueItem(
+			const outcome = await processQueueItem(
 				opts,
 				api,
 				queue,
@@ -1082,9 +1165,19 @@ async function drainQueueLoop(
 				pendingSkillUploadEchoes,
 				getProjectId(),
 			);
-			setLastError(null);
+			if (outcome === "applied" || outcome === "absent") {
+				health.clear("push", healthResource(item));
+			} else {
+				health.setIfAbsent(
+					"push",
+					healthResource(item),
+					`${item.kind === "skill_push" ? `skill ${item.skill_key}` : `session ${item.local_session_id}`} push was not applied; awaiting rescan`,
+					true,
+				);
+			}
 		} catch (e) {
 			const msg = toErrorMessage(e);
+			const resource = healthResource(item);
 			// Auth dead → daemon abort, not queue drop. Every
 			// upload from this point will fail the same way
 			// because the api key is revoked. Dropping the queue
@@ -1099,7 +1192,7 @@ async function drainQueueLoop(
 				// signal. The unified path takes over on the next
 				// poll, but this prevents the heartbeat from looking
 				// healthy in the gap.
-				setLastError(msg);
+				health.set("push", resource, msg);
 				log.error("engine.queue_auth_failure", {
 					item: redactItem(item),
 					error: msg,
@@ -1135,18 +1228,10 @@ async function drainQueueLoop(
 					item: redactItem(item),
 					error: msg,
 				});
-				// Intentionally do NOT touch `lastSyncError` here.
-				// An earlier `setLastError(null)` was wrong on two
-				// fronts: (a) if a PRIOR item had stamped a real
-				// `permanent:` / `retry_exhausted:` error, clearing
-				// it here would silently dismiss the dashboard alarm
-				// for a problem the daemon hasn't actually resolved;
-				// (b) eagerly stamping the raw 413 first then
-				// clearing also briefly poisoned the heartbeat. The
-				// dropped-events counter (`dropItem` below) is the
-				// right signal for "we skipped some content"; the
-				// heartbeat carries forward whatever real condition
-				// was previously surfaced.
+				// Oversized is terminal for this exact resource. Clear
+				// only its prior transient push failure; the dropped
+				// counter remains the user-visible oversized signal.
+				health.clearTransient("push", resource);
 				dropItem(item);
 			} else if (isPermanentUploadError(e)) {
 				// 4xx that won't change on retry — malformed body,
@@ -1168,7 +1253,7 @@ async function drainQueueLoop(
 				// a too-big skill) and re-push manually. Mirrors
 				// the existing `auth_revoked:` / `sse_disconnect:`
 				// prefix convention.
-				setLastError(`permanent: ${msg}`);
+				health.set("push", resource, `permanent: ${msg}`);
 				// `dropItem` bumps the dropped counter so the
 				// dashboard's "dropped" pill shows non-evict drops
 				// too. Pre-fix only FIFO eviction ticked the counter
@@ -1193,7 +1278,7 @@ async function drainQueueLoop(
 				// gave up retrying for now; the next sync cycle
 				// will pick this up automatically once connectivity
 				// is back."
-				setLastError(`retry_exhausted: ${msg}`);
+				health.set("push", resource, `retry_exhausted: ${msg}`);
 				dropItem(item);
 			} else {
 				log.warn("engine.queue_retry", {
@@ -1206,12 +1291,14 @@ async function drainQueueLoop(
 				// right now" while the daemon keeps retrying.
 				// Cleared on the next successful drain (top of this
 				// try block).
-				setLastError(msg);
+				health.set("push", resource, msg, true);
 				await sleep(QUEUE_RETRY_INTERVAL_MS, opts.abort);
 			}
 		}
 	}
 }
+
+type QueueProcessOutcome = "applied" | "absent" | "not_applied";
 
 async function processQueueItem(
 	opts: EngineOpts,
@@ -1223,7 +1310,7 @@ async function processQueueItem(
 	inFlightSessionHash: Map<string, string>,
 	pendingSkillUploadEchoes: Map<string, PendingSkillUploadEcho>,
 	projectId: string,
-): Promise<void> {
+): Promise<QueueProcessOutcome> {
 	if (item.kind === "skill_push") {
 		// Legacy items (no project_id stamp) inherit the current
 		// project — they were enqueued by an older binary that
@@ -1243,7 +1330,7 @@ async function processQueueItem(
 				current_project_id: projectId,
 			});
 			queue.markDoneIfVersion(item);
-			return;
+			return "not_applied";
 		}
 		await uploadSkillFromQueue(
 			opts,
@@ -1265,7 +1352,7 @@ async function processQueueItem(
 				version: item.version,
 			});
 		}
-		return;
+		return "applied";
 	}
 	if (item.kind === "session_push") {
 		const result = await uploadSessionFromQueue(opts, api, item);
@@ -1282,10 +1369,12 @@ async function processQueueItem(
 		// and drain, the live `session.messages` we just shipped
 		// has a different hash; stamping the stale value would
 		// short-circuit a future re-push on the wrong hash. When
-		// the session vanished mid-flight (`result === null`),
-		// leave the in-memory state untouched so the next watcher
+		// the session vanished or was rejected mid-flight, only an
+		// applied result updates confirmed state; the outcome below
+		// independently decides whether resource health is resolved.
+		// Leave the in-memory state untouched so the next watcher
 		// tick can decide.
-		if (result !== null) {
+		if (result.outcome === "applied") {
 			lastPushedSessionHash.set(item.local_session_id, result.actualHash);
 		}
 		const cur = inFlightSessionHash.get(item.local_session_id);
@@ -1299,10 +1388,11 @@ async function processQueueItem(
 				version: item.version,
 			});
 		}
-		return;
+		return result.outcome;
 	}
 	const _exhaustive: never = item;
 	log.warn("engine.queue_unknown_kind", { item: _exhaustive });
+	return "not_applied";
 }
 
 /** Upload a single session via the same two-step `clawdi push`
@@ -1320,7 +1410,9 @@ async function uploadSessionFromQueue(
 	opts: EngineOpts,
 	api: ApiClient,
 	item: Extract<QueueItem, { kind: "session_push" }>,
-): Promise<{ actualHash: string } | null> {
+): Promise<
+	{ outcome: "applied"; actualHash: string } | { outcome: "absent" } | { outcome: "not_applied" }
+> {
 	// Re-enumerate via the adapter so we always upload current
 	// content. Filter to the single local_session_id we were asked
 	// to push; if the user deleted the session between enqueue and
@@ -1329,7 +1421,7 @@ async function uploadSessionFromQueue(
 	const session = sessions.find((s) => s.localSessionId === item.local_session_id);
 	if (!session) {
 		log.info("engine.session_gone", { local_session_id: item.local_session_id });
-		return null;
+		return { outcome: "absent" };
 	}
 	if (session.messages.length === 0) {
 		// Session file exists but parsed empty — push the metadata
@@ -1379,22 +1471,16 @@ async function uploadSessionFromQueue(
 
 	// Server flagged this id as a cross-env race casualty (see
 	// SessionBatchResponse.rejected). Don't upload content, don't
-	// persist the lock, and crucially DON'T return the actualHash
-	// — the caller treats `{ actualHash }` as success and writes
-	// it to `lastPushedSessionHash`, which would then dedup the
-	// next watcher / rescan tick and stick the daemon at "already
-	// shipped" until restart. Returning `null` shares the same
-	// "leave in-memory state untouched" path used for vanished
-	// sessions: the queue item still gets removed, but
-	// lastPushedSessionHash stays empty for this id, so the 5min
-	// rescan re-enqueues and the next pre-fetch will see the
-	// winner's row and return a clean 409 to retry against.
+	// persist the lock, and crucially return `not_applied` without
+	// the actualHash. The queue item is removed, but confirmed state
+	// and health remain unresolved so the 5-minute rescan re-enqueues
+	// it and a later real success can clear the exact resource.
 	if (result.rejected?.includes(session.localSessionId)) {
 		log.warn("engine.session_push_rejected", {
 			local_session_id: session.localSessionId,
 			reason: "cross_env_race",
 		});
-		return null;
+		return { outcome: "not_applied" };
 	}
 
 	if (result.needs_content.includes(session.localSessionId) && session.messages.length > 0) {
@@ -1425,7 +1511,7 @@ async function uploadSessionFromQueue(
 		message_count: session.messageCount,
 		uploaded_content: result.needs_content.includes(session.localSessionId),
 	});
-	return { actualHash };
+	return { outcome: "applied", actualHash };
 }
 
 async function uploadSkillFromQueue(
@@ -1653,6 +1739,7 @@ async function initialSync(
 	projectId: string,
 	setRevision: (rev: number) => void,
 	setEtag: (etag: string | null) => void,
+	health: SyncHealth,
 ): Promise<void> {
 	const rootDir = opts.adapter.getSkillsRootDir();
 
@@ -1693,6 +1780,12 @@ async function initialSync(
 		etag,
 		complete: cloudComplete,
 	} = await listAllCloudSkills(api, projectId);
+	health.clear("pull", "listing");
+	if (cloudComplete) {
+		health.clear("pull", "reconcile");
+	} else {
+		health.set("pull", "reconcile", "reconcile: cloud skill listing was incomplete");
+	}
 	for (const s of cloudSkills) cloudObservedKeys.add(s.skill_key);
 	const cloudByKey = new Map(cloudSkills.map((s) => [s.skill_key, s]));
 
@@ -1718,8 +1811,10 @@ async function initialSync(
 			addInFlight(pullsInFlight, key);
 			try {
 				await pullSkill(opts, api, key, lastPushedHash, projectId);
+				health.clear("pull", `skill:${key}`);
 			} catch (e) {
 				allApplied = false;
+				health.set("pull", `skill:${key}`, `skill ${key} pull: ${toErrorMessage(e)}`);
 				log.warn("engine.boot_pull_failed", {
 					skill_key: key,
 					error: toErrorMessage(e),
@@ -1776,6 +1871,7 @@ async function initialSync(
 				addInFlight(pullsInFlight, key);
 				try {
 					await pullSkill(opts, api, key, lastPushedHash, projectId);
+					health.clear("pull", `skill:${key}`);
 					log.info("engine.boot_pull_diverged", {
 						skill_key: key,
 						local: localHash,
@@ -1784,6 +1880,7 @@ async function initialSync(
 					});
 				} catch (e) {
 					allApplied = false;
+					health.set("pull", `skill:${key}`, `skill ${key} pull: ${toErrorMessage(e)}`);
 					log.warn("engine.boot_pull_failed", {
 						skill_key: key,
 						error: toErrorMessage(e),
@@ -1793,6 +1890,7 @@ async function initialSync(
 				}
 			}
 		} else {
+			health.clear("pull", `skill:${key}`);
 			// Match — record so subsequent watcher events dedup
 			// AND persist to skills-lock so a daemon restart
 			// before any push/pull writes one preserves the
@@ -1859,8 +1957,12 @@ async function initialSync(
 				delete lock.skills[skillCacheKey(opts.adapter.agentType, key)];
 				writeSkillsLock(lock);
 				log.info("engine.boot_remove_cloud_deleted", { skill_key: key });
+				health.clear("pull", `skill:${key}`);
+				health.clear("push", `skill:${key}`);
+				health.clear("push", `skill_scan:${key}`);
 			} catch (e) {
 				allApplied = false;
+				health.set("pull", `skill:${key}`, `skill ${key} delete: ${toErrorMessage(e)}`);
 				log.warn("engine.boot_remove_failed", {
 					skill_key: key,
 					error: toErrorMessage(e),
@@ -1888,7 +1990,7 @@ async function initialSync(
 	// reconcile listing isn't 304'd, and the failed item is
 	// retried on the next pass instead of silently dropped until
 	// something else changes upstream.
-	if (allApplied) {
+	if (cloudComplete && allApplied) {
 		if (revision !== null) setRevision(revision);
 		setEtag(etag);
 	}
@@ -1927,6 +2029,7 @@ async function reconcileLoop(
 	getKnownEtag: () => string | null,
 	setRevision: (rev: number) => void,
 	setEtag: (etag: string | null) => void,
+	health: SyncHealth,
 	onAuthFailure: (origin: string) => void,
 ): Promise<void> {
 	while (!abort.aborted) {
@@ -1943,6 +2046,7 @@ async function reconcileLoop(
 				getKnownEtag(),
 				setRevision,
 				setEtag,
+				health,
 				onAuthFailure,
 			);
 		} catch (e) {
@@ -1954,6 +2058,7 @@ async function reconcileLoop(
 				onAuthFailure("reconcile_list");
 				return;
 			}
+			health.set("pull", "listing", `reconcile listing: ${toErrorMessage(e)}`);
 			log.warn("engine.reconcile_failed", { error: toErrorMessage(e) });
 		}
 	}
@@ -1979,6 +2084,7 @@ async function reconcileFromCloud(
 	knownEtag: string | null,
 	setRevision: (rev: number) => void,
 	setEtag: (etag: string | null) => void,
+	health: SyncHealth,
 	onAuthFailure: (origin: string) => void,
 ): Promise<void> {
 	const { skills, complete, revision, etag, notModified } = await listAllCloudSkills(
@@ -1986,7 +2092,9 @@ async function reconcileFromCloud(
 		projectId,
 		knownEtag,
 	);
+	health.clear("pull", "listing");
 	if (notModified) {
+		health.clear("pull", "reconcile");
 		// Server confirmed nothing changed since `knownEtag` —
 		// no skills to pull, no sweep work. Save the bandwidth +
 		// pagination work; the local state is already consistent
@@ -2006,11 +2114,19 @@ async function reconcileFromCloud(
 	// failed item permanently stale until some other cloud change
 	// bumps the revision.
 	let allApplied = true;
+	if (complete) {
+		health.clear("pull", "reconcile");
+	} else {
+		health.set("pull", "reconcile", "reconcile: cloud skill listing was incomplete");
+	}
 	const cloudKeys = new Set(skills.map((s) => s.skill_key));
 	for (const skill of skills) {
 		cloudObservedKeys.add(skill.skill_key);
 		const local = lastPushedHash.get(skill.skill_key);
-		if (local === skill.content_hash) continue;
+		if (local === skill.content_hash) {
+			health.clear("pull", `skill:${skill.skill_key}`);
+			continue;
+		}
 		// Skip if a cloud-pull is already mid-flight for this skill
 		// (e.g. boot initialSync still draining). Concurrent rm +
 		// tar extract on the same dir leaves it partially-extracted.
@@ -2032,7 +2148,6 @@ async function reconcileFromCloud(
 				`/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
 			);
 			await opts.adapter.writeSkillArchive(skill.skill_key, tarBytes);
-			lastPushedHash.set(skill.skill_key, skill.content_hash);
 			// Persist the pulled hash to skills-lock too so a daemon
 			// restart treats this as a known-shipped skill. Without
 			// this, a cloud-side delete during a subsequent offline
@@ -2043,6 +2158,8 @@ async function reconcileFromCloud(
 				hash: skill.content_hash,
 			};
 			writeSkillsLock(lock);
+			lastPushedHash.set(skill.skill_key, skill.content_hash);
+			health.clear("pull", `skill:${skill.skill_key}`);
 			log.info("engine.skill_pulled", {
 				skill_key: skill.skill_key,
 				content_hash: skill.content_hash,
@@ -2053,6 +2170,11 @@ async function reconcileFromCloud(
 				return;
 			}
 			allApplied = false;
+			health.set(
+				"pull",
+				`skill:${skill.skill_key}`,
+				`skill ${skill.skill_key} pull: ${toErrorMessage(e)}`,
+			);
 			log.warn("engine.reconcile_pull_failed", {
 				skill_key: skill.skill_key,
 				error: toErrorMessage(e),
@@ -2094,8 +2216,12 @@ async function reconcileFromCloud(
 				delete lock.skills[skillCacheKey(opts.adapter.agentType, knownKey)];
 				writeSkillsLock(lock);
 				log.info("engine.skill_swept", { skill_key: knownKey });
+				health.clear("pull", `skill:${knownKey}`);
+				health.clear("push", `skill:${knownKey}`);
+				health.clear("push", `skill_scan:${knownKey}`);
 			} catch (e) {
 				allApplied = false;
+				health.set("pull", `skill:${knownKey}`, `skill ${knownKey} delete: ${toErrorMessage(e)}`);
 				log.warn("engine.sweep_failed", {
 					skill_key: knownKey,
 					error: toErrorMessage(e),
@@ -2114,7 +2240,7 @@ async function reconcileFromCloud(
 
 	// All-or-nothing revision + etag update. See `allApplied`
 	// comment above.
-	if (allApplied) {
+	if (complete && allApplied) {
 		if (revision !== null) setRevision(revision);
 		setEtag(etag);
 	}
@@ -2234,21 +2360,16 @@ async function pullSkill(
 	// Recompute the on-disk hash so the watcher's next tick
 	// recognizes this as our own write and skips re-uploading.
 	const dir = join(opts.adapter.getSkillsRootDir(), skillKey);
-	try {
-		const hash = await computeSkillFolderHash(dir);
-		lastPushedHash.set(skillKey, hash);
-		// Persist to skills-lock so a future daemon restart treats
-		// this as a known-shipped skill. Without this, a cloud-side
-		// delete that lands while the daemon is offline would
-		// surface at boot as "local-only, no record" → PUSH back,
-		// resurrecting the deletion. Mirrors the push-success path.
-		const lock = readSkillsLock();
-		lock.skills[skillCacheKey(opts.adapter.agentType, skillKey)] = { hash };
-		writeSkillsLock(lock);
-	} catch {
-		// Directory state weird (extraction half-done?); next
-		// reconcile fixes it.
-	}
+	const hash = await computeSkillFolderHash(dir);
+	// Persist to skills-lock so a future daemon restart treats
+	// this as a known-shipped skill. Without this, a cloud-side
+	// delete that lands while the daemon is offline would
+	// surface at boot as "local-only, no record" → PUSH back,
+	// resurrecting the deletion. Mirrors the push-success path.
+	const lock = readSkillsLock();
+	lock.skills[skillCacheKey(opts.adapter.agentType, skillKey)] = { hash };
+	writeSkillsLock(lock);
+	lastPushedHash.set(skillKey, hash);
 	log.info("engine.skill_pulled", { skill_key: skillKey });
 }
 

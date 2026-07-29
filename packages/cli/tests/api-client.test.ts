@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ApiError } from "../src/lib/api-client";
+import { ApiError, retryingFetch } from "../src/lib/api-client";
 
 // ApiClient reads ~/.clawdi/{auth,config}.json at construction via getAuth/getConfig.
 // We redirect HOME to a tmpdir so each test gets a fresh auth/config.
@@ -190,5 +190,80 @@ describe("ApiClient error classification", () => {
 		expect(caught).toBeInstanceOf(ApiError);
 		expect((caught as ApiError).status).toBe(200);
 		expect((caught as ApiError).body).toContain("empty response");
+	});
+
+	it("keeps timeout and caller abort active while consuming non-2xx bodies", async () => {
+		const origFetch = globalThis.fetch;
+		let externalBodyStartedResolve: (() => void) | undefined;
+		const externalBodyStarted = new Promise<void>((resolve) => {
+			externalBodyStartedResolve = resolve;
+		});
+		let fetchCalls = 0;
+		globalThis.fetch = async (_input, init) => {
+			fetchCalls += 1;
+			const fetchCall = fetchCalls;
+			const signal = init?.signal;
+			if (!signal) throw new Error("expected request abort signal");
+			return new Response(
+				new ReadableStream<Uint8Array>({
+					start(controller) {
+						const abort = () => controller.error(new DOMException("Aborted", "AbortError"));
+						if (signal.aborted) abort();
+						else signal.addEventListener("abort", abort, { once: true });
+					},
+					pull() {
+						if (fetchCall === 2) externalBodyStartedResolve?.();
+						return new Promise<void>(() => {});
+					},
+				}),
+				{ status: 422 },
+			);
+		};
+
+		try {
+			await expect(
+				retryingFetch(new Request("http://127.0.0.1:0", { method: "POST" }), 10, undefined),
+			).rejects.toMatchObject({ name: "ApiError", status: 0, isTimeout: true });
+
+			const callerAbort = new AbortController();
+			const pending = retryingFetch(
+				new Request("http://127.0.0.1:0", { method: "POST" }),
+				1_000,
+				callerAbort.signal,
+			);
+			await externalBodyStarted;
+			callerAbort.abort();
+			await expect(pending).rejects.toMatchObject({
+				name: "ApiError",
+				body: "aborted",
+				isTimeout: false,
+			});
+		} finally {
+			globalThis.fetch = origFetch;
+		}
+	});
+
+	it("keeps Retry-After outside the attempt timeout but abortable by the caller", async () => {
+		const origFetch = globalThis.fetch;
+		let fetchCalls = 0;
+		globalThis.fetch = async () => {
+			fetchCalls += 1;
+			return new Response("rate limited", {
+				status: 429,
+				headers: { "retry-after": "60" },
+			});
+		};
+		const callerAbort = new AbortController();
+		const abortTimer = setTimeout(() => callerAbort.abort(), 20);
+
+		try {
+			await expect(
+				retryingFetch(new Request("http://127.0.0.1:0"), 1, callerAbort.signal),
+			).rejects.toMatchObject({ name: "ApiError", body: "aborted", isTimeout: false });
+			expect(fetchCalls).toBe(1);
+		} finally {
+			clearTimeout(abortTimer);
+			globalThis.fetch = origFetch;
+		}
 	});
 });

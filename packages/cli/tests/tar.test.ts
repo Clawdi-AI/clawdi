@@ -6,11 +6,20 @@
  */
 
 import { describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readdirSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as tar from "tar";
-import { extractSharedSkillTarGz, tarSingleFile, tarSkillDir } from "../src/lib/tar";
+import { replaceSkillArchiveTarGz, tarSingleFile, tarSkillDir } from "../src/lib/tar";
 
 function buildSkill(layout: Record<string, string>): { path: string; cleanup: () => void } {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-tar-test-"));
@@ -131,8 +140,9 @@ describe("tarSkillDir filter", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-shared-extract-test-"));
 		try {
 			const bytes = await tarSingleFile("safe-skill", "# safe");
+			const skillsRoot = join(root, "skills");
 			await expect(
-				extractSharedSkillTarGz("../escape", join(root, "target"), bytes),
+				replaceSkillArchiveTarGz("../escape", skillsRoot, join(skillsRoot, "target"), bytes),
 			).rejects.toThrow("Invalid skill_key");
 		} finally {
 			rmSync(root, { recursive: true, force: true });
@@ -152,10 +162,41 @@ describe("tarSkillDir filter", () => {
 				.on("data", (chunk: Buffer) => chunks.push(chunk))
 				.promise();
 
-			const target = join(root, "target");
-			await extractSharedSkillTarGz("safe-skill", target, Buffer.concat(chunks));
+			const skillsRoot = join(root, "skills");
+			const target = join(skillsRoot, "target");
+			await replaceSkillArchiveTarGz("safe-skill", skillsRoot, target, Buffer.concat(chunks));
 			expect(existsSync(join(target, "SKILL.md"))).toBe(true);
 			expect(existsSync(join(target, "leak"))).toBe(false);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("atomically replaces a nested Hermes skill from staging outside the watched root", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-skill-replace-test-"));
+		const skillsRoot = join(root, "skills");
+		const target = join(skillsRoot, "category", "foo");
+		try {
+			mkdirSync(target, { recursive: true });
+			writeFileSync(join(target, "SKILL.md"), "# old");
+
+			const malformedRoot = join(root, "malformed");
+			mkdirSync(join(malformedRoot, "category"), { recursive: true });
+			writeFileSync(join(malformedRoot, "category", "foo"), "not a directory");
+			const chunks: Buffer[] = [];
+			await tar
+				.create({ gzip: true, cwd: malformedRoot }, ["category/foo"])
+				.on("data", (chunk: Buffer) => chunks.push(chunk))
+				.promise();
+			await expect(
+				replaceSkillArchiveTarGz("category/foo", skillsRoot, target, Buffer.concat(chunks)),
+			).rejects.toThrow("expected 'category/foo/' root entry");
+			expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# old");
+
+			const replacement = await tarSingleFile("category/foo", "# new");
+			await replaceSkillArchiveTarGz("category/foo", skillsRoot, target, replacement);
+			expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# new");
+			expect(readdirSync(root).filter((entry) => entry.startsWith(".skills-stage-"))).toEqual([]);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}

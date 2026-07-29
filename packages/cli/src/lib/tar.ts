@@ -1,6 +1,14 @@
-import { randomUUID } from "node:crypto";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	realpathSync,
+	renameSync,
+	rmSync,
+} from "node:fs";
 import { lstat, readdir, realpath } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import * as tar from "tar";
 import { assertValidSkillKey } from "./skill-key";
 
@@ -86,49 +94,67 @@ export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 }
 
 /**
- * Extract a skill tarball into a shared-project target dir.
+ * Atomically replace a skill directory from a downloaded archive.
  *
- * Skill tarballs have `<skillKey>/...` at the top level (upload side
- * doesn't know the content will be re-served as shared). For a
- * shared skill we want the result at `<targetDir>` whose basename
- * is `<skillKey>__<ownerHandle>`, not `<skillKey>`. Extract into a
- * sibling temp dir then rename the resulting `<skillKey>` folder
- * into place. Atomic from the caller's perspective: targetDir
- * either has the prior version (on failure mid-extract) or the
- * new version (on success).
+ * Staging is a sibling of `skillsRoot`, never a child of it. This keeps
+ * temporary `<skillKey>/SKILL.md` trees and old-version trash outside the
+ * watched skills root. The explicit root also preserves nested Hermes keys:
+ * extracting `category/foo` is validated at `join(stageRoot, skillKey)`
+ * instead of inferring an extraction root from `dirname(targetDir)`.
  */
-export async function extractSharedSkillTarGz(
+export async function replaceSkillArchiveTarGz(
 	skillKey: string,
+	skillsRoot: string,
 	targetDir: string,
 	bytes: Buffer,
 ): Promise<void> {
 	assertValidSkillKey(skillKey);
-	const { dirname, basename } = await import("node:path");
-	const { existsSync, mkdirSync, mkdtempSync, renameSync, rmSync } = await import("node:fs");
-	const parent = dirname(targetDir);
-	mkdirSync(parent, { recursive: true });
-	const tmp = mkdtempSync(`${parent}/.share-extract-${basename(targetDir)}-`);
+	const targetFromRoot = relative(skillsRoot, targetDir);
+	if (!targetFromRoot || targetFromRoot.startsWith("..") || isAbsolute(targetFromRoot)) {
+		throw new Error(`Skill target must be inside skills root: ${targetDir}`);
+	}
+	mkdirSync(skillsRoot, { recursive: true });
+	const realSkillsRoot = realpathSync(skillsRoot);
+	const skillsParent = dirname(realSkillsRoot);
+	const stageRoot = mkdtempSync(join(skillsParent, `.${basename(skillsRoot)}-stage-`));
+	const stagedSkill = join(stageRoot, skillKey);
+	const trash = join(stageRoot, ".previous");
+	let preserveStageForRecovery = false;
 	try {
-		await extractTarGz(tmp, bytes);
-		const extracted = `${tmp}/${skillKey}`;
-		if (!existsSync(extracted)) {
-			throw new Error(`Shared skill tarball did not contain expected '${skillKey}/' root entry`);
+		await extractTarGz(stageRoot, bytes);
+		if (!existsSync(stagedSkill) || !lstatSync(stagedSkill).isDirectory()) {
+			throw new Error(`Skill tarball did not contain expected '${skillKey}/' root entry`);
 		}
-		// Wipe any prior version atomically: rename old → trash, then
-		// rename new → place, then nuke trash. Two renames so an
-		// interrupted reconcile leaves either the old or the new
-		// content in place, never a partial.
-		const trash = `${parent}/.share-trash-${basename(targetDir)}-${process.pid}-${randomUUID()}`;
-		if (existsSync(targetDir)) renameSync(targetDir, trash);
+		mkdirSync(dirname(targetDir), { recursive: true });
+		let previousMoved = false;
+		if (existsSync(targetDir)) {
+			renameSync(targetDir, trash);
+			previousMoved = true;
+		}
 		try {
-			renameSync(extracted, targetDir);
-		} catch (e) {
-			if (existsSync(trash)) renameSync(trash, targetDir);
-			throw e;
+			renameSync(stagedSkill, targetDir);
+		} catch (installError) {
+			if (!previousMoved) throw installError;
+			try {
+				renameSync(trash, targetDir);
+			} catch (restoreError) {
+				preserveStageForRecovery = true;
+				const installMessage =
+					installError instanceof Error ? installError.message : String(installError);
+				const restoreMessage =
+					restoreError instanceof Error ? restoreError.message : String(restoreError);
+				throw new Error(
+					`Skill install failed: ${installMessage}; restoring the previous version failed: ${restoreMessage}; previous version retained at ${trash}`,
+					{ cause: installError },
+				);
+			}
+			throw installError;
 		}
 		if (existsSync(trash)) rmSync(trash, { recursive: true, force: true });
 	} finally {
-		if (existsSync(tmp)) rmSync(tmp, { recursive: true, force: true });
+		if (!preserveStageForRecovery) {
+			rmSync(stageRoot, { recursive: true, force: true });
+		}
 	}
 }
 
