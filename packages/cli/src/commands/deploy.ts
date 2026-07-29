@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as p from "@clack/prompts";
+import { projectUserSelectableAiProviders } from "@clawdi/shared";
 import {
 	buildHostedAiBindingFields,
 	buildHostedDeployCheckoutRequest,
@@ -629,12 +630,13 @@ export async function runDeployFlow(
 				return [];
 			})
 		: Promise.resolve([]);
-	const [plans, deployments, managedModels, savedProviders] = await Promise.all([
+	const [plans, deployments, managedModels, savedProviderInventory] = await Promise.all([
 		dependencies.client.getPlans(),
 		dependencies.client.listDeployments(),
 		needsManagedModels ? dependencies.client.getManagedModels() : Promise.resolve([]),
 		savedProvidersPromise,
 	]);
+	const savedProviders = projectUserSelectableAiProviders(savedProviderInventory);
 
 	let runtime = parsed.runtime ?? DEFAULT_HOSTED_DEPLOY_RUNTIME;
 	if (interactive && !parsed.runtime) {

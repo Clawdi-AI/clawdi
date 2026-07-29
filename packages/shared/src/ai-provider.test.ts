@@ -14,6 +14,7 @@ import {
 	isClawdiManagedV2ProviderId,
 	isFirstPartyManagedAiProvider,
 	isProviderAuthProfileId,
+	projectUserSelectableAiProviders,
 	validateAiProviderCatalog,
 } from "./ai-provider";
 import type { components } from "./api/api.generated";
@@ -422,6 +423,22 @@ describe("isFirstPartyManagedAiProvider", () => {
 		expect(isFirstPartyManagedAiProvider({ provider_id: "openai-prod", managed_by: "user" })).toBe(
 			false,
 		);
+	});
+
+	test("projects only user-selectable providers without changing the inventory", () => {
+		const userProvider = { provider_id: "openai-prod", managed_by: "user" };
+		const providers = [
+			userProvider,
+			{ provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID },
+			{ provider_id: CLAWDI_MANAGED_PROVIDER_ID },
+			{ provider_id: CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID },
+			{ provider_id: CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID },
+			{ provider_id: `${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42` },
+			{ provider_id: "managed-with-custom-id", managed_by: "clawdi" },
+		];
+
+		expect(projectUserSelectableAiProviders(providers)).toEqual([userProvider]);
+		expect(providers).toHaveLength(7);
 	});
 });
 

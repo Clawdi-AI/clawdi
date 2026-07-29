@@ -1,6 +1,7 @@
 import {
 	type AiProviderCatalog,
 	CLAWDI_MANAGED_PROVIDER_ID,
+	isFirstPartyManagedAiProvider,
 	type AiProvider as RuntimeAiProvider,
 	type AiProviderAuth as RuntimeAiProviderAuth,
 	type AiProviderModel as RuntimeAiProviderModel,
@@ -38,6 +39,7 @@ export type HostedAiBindingOperationMode = "create" | "update";
 export class HostedAiBindingError extends Error {
 	readonly code:
 		| "invalid_provider_metadata"
+		| "first_party_managed_provider"
 		| "managed_model_unavailable"
 		| "model_required"
 		| "provider_missing"
@@ -165,7 +167,10 @@ export function buildHostedAiBindingFields({
 			selection.providerIds ?? [CLAWDI_MANAGED_PROVIDER_ID],
 			CLAWDI_MANAGED_PROVIDER_ID,
 		);
-		const customProviders = savedProvidersForIds(providerIds, providers);
+		const customProviders = savedProvidersForIds(
+			providerIds.filter((providerId) => providerId !== CLAWDI_MANAGED_PROVIDER_ID),
+			providers,
+		);
 		const fields: ReturnType<typeof buildHostedAiBindingFields> = {
 			ai_provider_auth_kind: "managed",
 			ai_provider_id: null,
@@ -190,7 +195,13 @@ export function buildHostedAiBindingFields({
 	}
 
 	const providerIds = selectedProviderIds(selection.providerIds, selection.primaryProviderId);
-	const selectedProviders = savedProvidersForIds(providerIds, providers);
+	if (selection.primaryProviderId === CLAWDI_MANAGED_PROVIDER_ID) {
+		throw firstPartyManagedProviderError(selection.primaryProviderId);
+	}
+	const selectedProviders = savedProvidersForIds(
+		providerIds.filter((providerId) => providerId !== CLAWDI_MANAGED_PROVIDER_ID),
+		providers,
+	);
 	const primaryProvider = selectedProviders.find(
 		(provider) => provider.provider_id === selection.primaryProviderId,
 	);
@@ -221,24 +232,37 @@ function savedProvidersForIds(
 	providerIds: readonly string[],
 	providers: readonly HostedSavedAiProvider[],
 ): HostedSavedAiProvider[] {
-	return providerIds
-		.filter((providerId) => providerId !== CLAWDI_MANAGED_PROVIDER_ID)
-		.map((providerId) => {
-			const provider = providers.find((candidate) => candidate.provider_id === providerId);
-			if (!provider) {
-				throw new HostedAiBindingError(
-					"provider_missing",
-					`Saved AI provider ${providerId} is unavailable. Refresh providers or choose another provider.`,
-				);
-			}
-			if (!provider.usable) {
-				throw new HostedAiBindingError(
-					"provider_unusable",
-					`${provider.label?.trim() || provider.provider_id} has no usable credential. Finish its setup or choose another provider.`,
-				);
-			}
-			return provider;
-		});
+	const selectedProviders: HostedSavedAiProvider[] = [];
+	for (const providerId of providerIds) {
+		if (isFirstPartyManagedAiProvider({ provider_id: providerId })) {
+			throw firstPartyManagedProviderError(providerId);
+		}
+		const provider = providers.find((candidate) => candidate.provider_id === providerId);
+		if (!provider) {
+			throw new HostedAiBindingError(
+				"provider_missing",
+				`Saved AI provider ${providerId} is unavailable. Refresh providers or choose another provider.`,
+			);
+		}
+		if (isFirstPartyManagedAiProvider(provider)) {
+			throw firstPartyManagedProviderError(providerId);
+		}
+		if (!provider.usable) {
+			throw new HostedAiBindingError(
+				"provider_unusable",
+				`${provider.label?.trim() || provider.provider_id} has no usable credential. Finish its setup or choose another provider.`,
+			);
+		}
+		selectedProviders.push(provider);
+	}
+	return selectedProviders;
+}
+
+function firstPartyManagedProviderError(providerId: string): HostedAiBindingError {
+	return new HostedAiBindingError(
+		"first_party_managed_provider",
+		`AI provider ${providerId} is managed by Clawdi and cannot be used as a saved provider. Choose managed AI instead.`,
+	);
 }
 
 function dedupeProviderIds(providerIds: readonly string[]): string[] {

@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { CLAWDI_MANAGED_PROVIDER_ID } from "../ai-provider";
+import {
+	CLAWDI_MANAGED_PROVIDER_ID,
+	CLAWDI_MANAGED_V1_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX,
+	CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+	CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
+} from "../ai-provider";
 import {
 	buildHostedAiBindingFields,
 	buildHostedAiProviderPoolBootstrap,
@@ -44,6 +50,31 @@ const secondaryProvider = {
 	label: "OpenAI Secondary",
 	models: [{ id: "gpt-secondary" }],
 } satisfies HostedSavedAiProvider;
+
+const noncanonicalManagedProviders: HostedSavedAiProvider[] = [
+	{ ...apiKeyProvider, id: "row-v1", provider_id: CLAWDI_MANAGED_V1_PROVIDER_ID },
+	{
+		...apiKeyProvider,
+		id: "row-legacy-public",
+		provider_id: CLAWDI_MANAGED_V2_LEGACY_PUBLIC_PROVIDER_ID,
+	},
+	{
+		...apiKeyProvider,
+		id: "row-legacy",
+		provider_id: CLAWDI_MANAGED_V2_LEGACY_PROVIDER_ID,
+	},
+	{
+		...apiKeyProvider,
+		id: "row-deployment",
+		provider_id: `${CLAWDI_MANAGED_V2_DEPLOYMENT_PROVIDER_PREFIX}42`,
+	},
+	{
+		...apiKeyProvider,
+		id: "row-managed-by",
+		provider_id: "custom-managed-id",
+		managed_by: "clawdi",
+	},
+];
 
 describe("shared Hosted AI provider binding", () => {
 	test("builds the same managed and unmanaged deployment fields for every adapter", () => {
@@ -172,37 +203,132 @@ describe("shared Hosted AI provider binding", () => {
 		}
 	});
 
-	test("preserves a saved primary with managed and saved secondary providers", () => {
-		for (const mode of ["create", "update"] as const) {
-			const fields = buildHostedAiBindingFields({
-				managedModels,
-				mode,
-				providers: [apiKeyProvider, codexProvider, secondaryProvider],
-				selection: {
-					mode: "saved",
-					model: "gpt-codex",
-					primaryProviderId: codexProvider.provider_id,
-					providerIds: [
-						codexProvider.provider_id,
-						CLAWDI_MANAGED_PROVIDER_ID,
-						secondaryProvider.provider_id,
-					],
-				},
-			});
+	test("rejects noncanonical first-party managed secondaries in a managed pool", () => {
+		for (const provider of noncanonicalManagedProviders) {
+			expect(() =>
+				buildHostedAiBindingFields({
+					managedModels,
+					mode: "create",
+					providers: [apiKeyProvider, provider],
+					selection: {
+						mode: "managed",
+						model: "gpt-managed",
+						providerIds: [
+							CLAWDI_MANAGED_PROVIDER_ID,
+							apiKeyProvider.provider_id,
+							provider.provider_id,
+						],
+					},
+				}),
+			).toThrow("cannot be used as a saved provider");
+		}
+	});
 
-			expect(fields.provider_ids).toEqual([
-				"codex-main",
-				CLAWDI_MANAGED_PROVIDER_ID,
-				"openai-secondary",
-			]);
-			expect(fields.primary_model).toEqual({ provider_id: "codex-main", model: "gpt-codex" });
-			expect(fields.ai_provider_id).toBe("codex-main");
-			expect(fields.ai_provider_auth_kind).toBe("codex_oauth");
-			expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe("codex-main");
-			expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
-			expect(
-				fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
-			).toEqual(["codex-main", "openai-secondary"]);
+	test("preserves a canonical managed secondary without materializing it in saved bootstrap", () => {
+		const canonicalManagedProvider = {
+			...apiKeyProvider,
+			id: "row-managed-v2",
+			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+			managed_by: "clawdi",
+		} satisfies HostedSavedAiProvider;
+
+		for (const includeCanonicalRow of [false, true]) {
+			for (const mode of ["create", "update"] as const) {
+				const fields = buildHostedAiBindingFields({
+					managedModels,
+					mode,
+					providers: [
+						apiKeyProvider,
+						codexProvider,
+						...(includeCanonicalRow ? [canonicalManagedProvider] : []),
+						secondaryProvider,
+					],
+					selection: {
+						mode: "saved",
+						model: "gpt-codex",
+						primaryProviderId: codexProvider.provider_id,
+						providerIds: [
+							codexProvider.provider_id,
+							CLAWDI_MANAGED_PROVIDER_ID,
+							secondaryProvider.provider_id,
+						],
+					},
+				});
+
+				expect(fields.provider_ids).toEqual([
+					"codex-main",
+					CLAWDI_MANAGED_PROVIDER_ID,
+					"openai-secondary",
+				]);
+				expect(fields.primary_model).toEqual({
+					provider_id: "codex-main",
+					model: "gpt-codex",
+				});
+				expect(fields.ai_provider_id).toBe("codex-main");
+				expect(fields.ai_provider_auth_kind).toBe("codex_oauth");
+				expect(fields.ai_provider_bootstrap?.selected_provider_id).toBe("codex-main");
+				expect(fields.ai_provider_bootstrap?.auth_kind).toBe("codex_oauth");
+				expect(
+					fields.ai_provider_bootstrap?.catalog.providers.map((provider) => provider.id),
+				).toEqual(["codex-main", "openai-secondary"]);
+			}
+		}
+	});
+
+	test("rejects canonical managed provider as a saved primary with or without its row", () => {
+		const canonicalManagedProvider = {
+			...apiKeyProvider,
+			id: "row-managed-v2",
+			provider_id: CLAWDI_MANAGED_PROVIDER_ID,
+			managed_by: "clawdi",
+		} satisfies HostedSavedAiProvider;
+
+		for (const providers of [[], [canonicalManagedProvider]]) {
+			try {
+				buildHostedAiBindingFields({
+					managedModels,
+					mode: "create",
+					providers,
+					selection: {
+						mode: "saved",
+						providerIds: [CLAWDI_MANAGED_PROVIDER_ID],
+						primaryProviderId: CLAWDI_MANAGED_PROVIDER_ID,
+						model: "gpt-catalog",
+					},
+				});
+				throw new Error("Expected canonical managed provider primary to be rejected.");
+			} catch (error) {
+				expect(error).toBeInstanceOf(HostedAiBindingError);
+				if (!(error instanceof HostedAiBindingError)) throw error;
+				expect(error.code).toBe("first_party_managed_provider");
+			}
+		}
+	});
+
+	test("rejects noncanonical first-party managed providers anywhere in a saved pool", () => {
+		for (const provider of noncanonicalManagedProviders) {
+			for (const asPrimary of [false, true]) {
+				try {
+					buildHostedAiBindingFields({
+						managedModels,
+						mode: "create",
+						providers: [apiKeyProvider, provider],
+						selection: {
+							mode: "saved",
+							providerIds: asPrimary
+								? [provider.provider_id]
+								: [apiKeyProvider.provider_id, provider.provider_id],
+							primaryProviderId: asPrimary ? provider.provider_id : apiKeyProvider.provider_id,
+							model: "gpt-catalog",
+						},
+					});
+					throw new Error(`Expected ${provider.provider_id} to be rejected.`);
+				} catch (error) {
+					expect(error).toBeInstanceOf(HostedAiBindingError);
+					if (!(error instanceof HostedAiBindingError)) throw error;
+					expect(error.code).toBe("first_party_managed_provider");
+				}
+			}
 		}
 	});
 
