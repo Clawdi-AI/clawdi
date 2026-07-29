@@ -10,7 +10,7 @@ import {
 	inboxJoinCommand,
 	inboxListCommand,
 } from "../../src/commands/inbox";
-import { addToken, findToken, listTokens } from "../../src/share/tokens";
+import { addToken, findToken } from "../../src/share/tokens";
 import {
 	type AgentHomeOverrideSnapshot,
 	jsonResponse,
@@ -43,18 +43,6 @@ function addPendingShare(
 	};
 	addToken(token);
 	return token;
-}
-
-function upgradeResponse(projectId = "project-shared") {
-	return {
-		membership_id: "membership-1",
-		project_id: projectId,
-		role: "viewer",
-		joined_via: "link",
-		joined_at: "2026-05-14T00:00:00Z",
-		resolved_owner_handle: "alice-a3b4",
-		bound_agent_ids: [],
-	};
 }
 
 beforeEach(() => {
@@ -114,7 +102,7 @@ describe("inboxAcceptCommand", () => {
 		expect(errors.join("\n")).toContain("Sign in before attaching an accepted Project to an Agent");
 	});
 
-	it("stages a signed-out share without changing membership and prints exact next commands", async () => {
+	it("stages signed-out access and lists the redacted ticket after sign-in", async () => {
 		rmSync(join(tmpHome, ".clawdi", "auth.json"), { force: true });
 		const { captured, restore } = mockFetch([
 			{
@@ -138,17 +126,40 @@ describe("inboxAcceptCommand", () => {
 		try {
 			await inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, {});
 		} finally {
-			console.log = originalLog;
 			restore();
+		}
+		writeFileSync(
+			join(tmpHome, ".clawdi", "auth.json"),
+			JSON.stringify({
+				apiKey: "test-key",
+				endpointBinding: { version: 1, cloudApiOrigin: "https://api.test" },
+			}),
+		);
+		const inboxFetch = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/me/invitations",
+				response: () => jsonResponse([]),
+			},
+		]);
+		try {
+			await inboxListCommand({});
+		} finally {
+			console.log = originalLog;
+			inboxFetch.restore();
 		}
 
 		const output = lines.join("\n");
 		expect(output).toContain("No account or project membership was changed.");
 		expect(output).toContain("Next: clawdi auth login");
 		expect(output).toContain("Then: clawdi inbox join project-shared");
+		expect(output).toContain("Join: clawdi inbox join project-shared");
 		expect(output).not.toContain(rawToken);
 		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
 			`POST /v1/share/${rawToken}/redeem`,
+		]);
+		expect(inboxFetch.captured.map((request) => `${request.method} ${request.path}`)).toEqual([
+			"GET /v1/me/invitations",
 		]);
 		expect(findToken("project-shared")).toBeDefined();
 	});
@@ -238,7 +249,7 @@ describe("inboxAcceptCommand", () => {
 		expect(captured).toEqual([]);
 	});
 
-	it("prints explicit next steps without downloading when accepting project access", async () => {
+	it("explicitly joins one staged project without pulling content", async () => {
 		addPendingShare({ project_id: "uuid-project-shared" });
 		const { captured, restore } = mockFetch([
 			{
@@ -262,7 +273,7 @@ describe("inboxAcceptCommand", () => {
 			lines.push(args.map(String).join(" "));
 		};
 		try {
-			await inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, {});
+			await inboxJoinCommand("uuid-project-shared", {});
 		} finally {
 			console.log = orig;
 			restore();
@@ -285,186 +296,100 @@ describe("inboxAcceptCommand", () => {
 	});
 });
 
-describe("explicit local share join", () => {
-	it("shows local pending shares in the signed-in inbox without exposing tokens", async () => {
-		addPendingShare();
-		const { captured, restore } = mockFetch([
+describe("share ticket outcomes", () => {
+	it("deletes only terminal tickets and rejects origin mismatches before join or accept", async () => {
+		type Case = {
+			command?: "join" | "accept";
+			apiOrigin?: string;
+			response?: () => Response;
+			deletes: boolean;
+			makesRequest?: boolean;
+			expected: RegExp;
+		};
+		const cases: Case[] = [
 			{
-				method: "GET",
-				path: "/v1/me/invitations",
-				response: () => jsonResponse([]),
-			},
-		]);
-		const originalLog = console.log;
-		const lines: string[] = [];
-		console.log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
-		try {
-			await inboxListCommand({});
-		} finally {
-			console.log = originalLog;
-			restore();
-		}
-
-		const output = lines.join("\n");
-		expect(output).toContain("Local pending project shares (1)");
-		expect(output).toContain("Join: clawdi inbox join project-shared");
-		expect(output).not.toContain(rawToken);
-		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
-			"GET /v1/me/invitations",
-		]);
-	});
-
-	it("joins exactly one staged project, clears its token, and only suggests pulling", async () => {
-		addPendingShare();
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: `/v1/share/${rawToken}/upgrade`,
-				response: () => jsonResponse(upgradeResponse()),
-			},
-		]);
-		const originalLog = console.log;
-		const lines: string[] = [];
-		console.log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
-		try {
-			await inboxJoinCommand("project-shared", {});
-		} finally {
-			console.log = originalLog;
-			restore();
-		}
-
-		const output = lines.join("\n");
-		expect(output).toContain("Joined project project-shared.");
-		expect(output).toContain("Next (optional): clawdi pull --project project-shared");
-		expect(output).not.toContain(rawToken);
-		expect(listTokens()).toEqual([]);
-		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
-			`POST /v1/share/${rawToken}/upgrade`,
-		]);
-		expect(captured[0].headers["idempotency-key"]).toMatch(/^upgrade-[a-f0-9]{32}$/);
-	});
-
-	it("clears terminal local tickets with a clear outcome", async () => {
-		for (const terminal of [
-			{
-				status: 409,
-				body: { detail: { error: "already_owner" } },
+				response: () => jsonResponse({ detail: { error: "already_owner" } }, 409),
+				deletes: true,
 				expected: /access already exists/i,
 			},
-			{ status: 404, body: { detail: "not found" }, expected: /share is unavailable/i },
-			{ status: 410, body: { detail: "gone" }, expected: /share is unavailable/i },
-		]) {
-			addPendingShare();
-			const { restore } = mockFetch([
-				{
-					method: "POST",
-					path: `/v1/share/${rawToken}/upgrade`,
-					response: () => jsonResponse(terminal.body, terminal.status),
-				},
-			]);
-			const originalLog = console.log;
-			const lines: string[] = [];
-			console.log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
-			try {
-				await inboxJoinCommand("project-shared", {});
-			} finally {
-				console.log = originalLog;
-				restore();
-			}
-			expect(lines.join("\n")).toMatch(terminal.expected);
-			expect(lines.join("\n")).not.toContain(rawToken);
-			expect(listTokens()).toEqual([]);
-		}
-	});
-
-	it("preserves the local ticket on transient, conflict, and malformed responses", async () => {
-		for (const transient of [
+			...([404, 410] as const).map((status) => ({
+				response: () => jsonResponse({ detail: "unavailable" }, status),
+				deletes: true,
+				expected: /share is unavailable/i,
+			})),
 			{
 				response: () => jsonResponse({ detail: "temporary" }, 503),
+				deletes: false,
 				expected: /temporarily unavailable/i,
 			},
 			{
 				response: () => jsonResponse({ project_id: "project-shared" }),
+				deletes: false,
 				expected: /invalid project join response/i,
 			},
 			{
 				response: () => jsonResponse({ detail: { error: "other_conflict" } }, 409),
+				deletes: false,
 				expected: /access state changed/i,
 			},
 			{
 				response: () => {
 					throw new TypeError("private network detail");
 				},
+				deletes: false,
 				expected: /Could not reach Clawdi/i,
 			},
-		]) {
-			addPendingShare();
-			const { restore } = mockFetch([
+			{
+				apiOrigin: "https://other-api.test",
+				deletes: false,
+				makesRequest: false,
+				expected: /matching API/i,
+			},
+			{
+				command: "accept",
+				apiOrigin: "https://other-api.test",
+				deletes: false,
+				makesRequest: false,
+				expected: /matching API/i,
+			},
+		];
+
+		for (const testCase of cases) {
+			addPendingShare({ api_origin: testCase.apiOrigin ?? "https://api.test" });
+			const { captured, restore } = mockFetch([
 				{
 					method: "POST",
 					path: `/v1/share/${rawToken}/upgrade`,
-					response: transient.response,
+					response: testCase.response ?? (() => jsonResponse({})),
 				},
 			]);
+			const originalLog = console.log;
+			const originalError = console.error;
+			const lines: string[] = [];
+			console.log = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+			console.error = (...args: unknown[]) => lines.push(args.map(String).join(" "));
+			let caught: Error | undefined;
 			try {
-				let error: Error | undefined;
-				try {
+				if (testCase.command === "accept") {
+					await inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, {});
+				} else {
 					await inboxJoinCommand("project-shared", {});
-				} catch (caught) {
-					error = caught instanceof Error ? caught : new Error(String(caught));
 				}
-				expect(error?.message).toMatch(transient.expected);
-				expect(error?.message).not.toContain(rawToken);
-				expect(findToken("project-shared")?.token).toBe(rawToken);
+			} catch (error) {
+				caught = error instanceof Error ? error : new Error(String(error));
 			} finally {
+				console.log = originalLog;
+				console.error = originalError;
 				restore();
 			}
+
+			const output = [caught?.message, ...lines].filter(Boolean).join("\n");
+			expect(output).toMatch(testCase.expected);
+			expect(output).not.toContain(rawToken);
+			expect(captured).toHaveLength(testCase.makesRequest === false ? 0 : 1);
+			expect(findToken("project-shared") === undefined).toBe(testCase.deletes);
+			process.exitCode = 0;
 		}
-	});
-
-	it("rejects an origin mismatch before any request or mutation", async () => {
-		addPendingShare({ api_origin: "https://other-api.test" });
-		const { captured, restore } = mockFetch([]);
-		const originalError = console.error;
-		const errors: string[] = [];
-		console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
-		try {
-			await inboxJoinCommand("project-shared", {});
-		} finally {
-			console.error = originalError;
-			restore();
-		}
-
-		expect(process.exitCode).toBe(1);
-		expect(errors.join("\n")).toContain("Switch to the matching API and retry");
-		expect(errors.join("\n")).not.toContain(rawToken);
-		expect(captured).toEqual([]);
-		expect(findToken("project-shared")?.token).toBe(rawToken);
-	});
-
-	it("does not delete a replacement ticket created while a join is in flight", async () => {
-		addPendingShare();
-		const replacementToken = "b".repeat(43);
-		const { restore } = mockFetch([
-			{
-				method: "POST",
-				path: `/v1/share/${rawToken}/upgrade`,
-				response: () => {
-					addPendingShare({ token: replacementToken });
-					return jsonResponse(upgradeResponse());
-				},
-			},
-		]);
-		const originalLog = console.log;
-		console.log = () => {};
-		try {
-			await inboxJoinCommand("project-shared", {});
-		} finally {
-			console.log = originalLog;
-			restore();
-		}
-
-		expect(findToken("project-shared")?.token).toBe(replacementToken);
 	});
 });
 

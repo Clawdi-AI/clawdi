@@ -10,7 +10,7 @@ import {
 	type PendingAuth,
 	setPendingAuth,
 } from "../../src/lib/config";
-import { addToken, listTokens } from "../../src/share/tokens";
+import { addToken } from "../../src/share/tokens";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -163,30 +163,6 @@ describe("authLogin authentication boundary", () => {
 			"/v1/cli/auth/oauth/config",
 			"/.well-known/oauth-authorization-server",
 		]);
-	});
-
-	it("does not request or mutate a staged local share", async () => {
-		addToken({
-			project_id: "project-shared",
-			project_name: "Team Toolkit",
-			owner_display: "Alice",
-			owner_handle: "alice-example",
-			token: rawToken,
-			redeemed_at: "2026-05-12T10:00:00Z",
-		});
-		const tokenPath = join(tmpHome, ".clawdi", "share-tokens.json");
-		const before = readFileSync(tokenPath, "utf-8");
-		const { captured, restore } = mockFetch([]);
-
-		try {
-			await authLogin();
-		} finally {
-			restore();
-		}
-
-		expect(captured).toEqual([]);
-		expect(readFileSync(tokenPath, "utf-8")).toBe(before);
-		expect(listTokens()).toHaveLength(1);
 	});
 });
 

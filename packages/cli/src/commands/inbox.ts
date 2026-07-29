@@ -5,7 +5,7 @@
  *   inbox accept <id-or-url> ...   # accept invitation OR redeem URL
  *   inbox join <project-id> ...    # join one staged local share
  *   inbox decline <id>             # decline pending invitation
- *   inbox forget <id-or-alias>     # local-only: drop redeemed token
+ *   inbox forget <project-id>      # local-only: drop redeemed token
  *
  * User-facing flow: docs/scenarios/project-sharing-agent-bindings-demo.md
  */
@@ -535,10 +535,10 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 // inbox forget — local-only cleanup
 // ────────────────────────────────────────────────────────────────
 
-export function inboxForgetCommand(projectIdOrAlias: string): void {
-	const token = findToken(projectIdOrAlias);
+export function inboxForgetCommand(projectId: string): void {
+	const token = findToken(projectId);
 	if (!token) {
-		console.error(chalk.red(`No local share-token entry found for '${projectIdOrAlias}'.`));
+		console.error(chalk.red(`No local share-token entry found for project '${projectId}'.`));
 		console.error(chalk.gray("Run `clawdi inbox` to list local share-tokens on this device."));
 		process.exitCode = 1;
 		return;
@@ -700,9 +700,15 @@ async function acceptUrl(
 ): Promise<void> {
 	const token = extractTokenFromUrl(urlOrToken);
 	const localTicket = localPendingShares().find((entry) => entry.token === token);
+	const apiOrigin = normalizeCloudApiBaseUrl(apiUrl);
+	if (localTicket?.api_origin && localTicket.api_origin !== apiOrigin) {
+		throw new Error(
+			`This local share belongs to ${localTicket.api_origin}, but the current API is ${apiOrigin}. Switch to the matching API and retry; the local share was left unchanged.`,
+		);
+	}
 	const reqBody = await buildAcceptRequestBody(opts);
 
-	const r = await fetch(`${apiUrl}/v1/share/${token}/upgrade`, {
+	const r = await fetch(`${apiOrigin}/v1/share/${token}/upgrade`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${bearer}`,
