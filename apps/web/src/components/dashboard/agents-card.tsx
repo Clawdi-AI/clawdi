@@ -259,18 +259,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	) : legacyHosted ? (
 		<LegacyAgentBadge iconOnly />
 	) : null;
-	const identity = agentIdentity({
-		name: tile.name,
-		machine_name: tile.name,
-		agent_type: tile.agentType,
-	});
-	const activityLabel = agentTileActivityLabel(tile);
-	const meta = onClawdi
-		? []
-		: [identity.secondaryLabel, activityLabel].filter((value): value is string => Boolean(value));
-	const statusVisual = onClawdi
-		? null
-		: daemonStatusVisual(tile.env, legacyHosted ? "on-clawdi" : "self-managed");
+	const { meta, statusVisual } = agentTileCardProjection(tile);
 	const linkLabel = statusVisual
 		? `Open ${tile.name}. Status: ${statusVisual.label}`
 		: `Open ${tile.name}`;
@@ -279,12 +268,11 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 		<div
 			className={cn(
 				ENTITY_CARD_BASE,
-				"group relative z-0 h-full transition-colors hover:bg-muted/50",
+				"group relative z-0 h-full p-3 transition-colors hover:bg-muted/50",
 			)}
 			title={tile.href ? undefined : tile.name}
 		>
 			<EntityHeader
-				align="start"
 				icon={<AgentIcon agent={tile.agentType} size="lg" avatarUrl={tile.avatarUrl} />}
 				title={
 					<span className="flex min-w-0 items-center gap-1.5">
@@ -328,11 +316,40 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 
 function AgentStatusDot({ visual }: { visual: DaemonStatusVisual }) {
 	return (
-		<span title={visual.label} className="inline-flex shrink-0 items-center">
+		<span
+			title={`Status: ${visual.label}. ${visual.tooltip}`}
+			className="inline-flex shrink-0 items-center"
+		>
 			<span aria-hidden className={cn("size-1.5 rounded-full", visual.dotClass)} />
 			<span className="sr-only">{visual.label}</span>
 		</span>
 	);
+}
+
+/**
+ * The compact card projects sync only from a real Cloud API environment.
+ * A v2 deployment can exist before that projection arrives; rendering the
+ * daemon's null-env "pending" state there would turn missing data into a
+ * reassuring status. Self-managed and legacy tiles retain their established
+ * setup status because their environment record is their source of truth.
+ */
+export function agentTileCardProjection(tile: AgentTile): {
+	meta: string[];
+	statusVisual: DaemonStatusVisual | null;
+} {
+	const identity = agentIdentity({
+		name: tile.name,
+		machine_name: tile.name,
+		agent_type: tile.agentType,
+	});
+	const meta = [identity.secondaryLabel, agentTileActivityLabel(tile)].filter(
+		(value): value is string => Boolean(value),
+	);
+	const statusVisual =
+		tile.source === "on-clawdi" && !tile.env
+			? null
+			: daemonStatusVisual(tile.env, tile.source === "self-managed" ? "self-managed" : "on-clawdi");
+	return { meta, statusVisual };
 }
 
 function agentTileActivityLabel(tile: AgentTile): string | null {

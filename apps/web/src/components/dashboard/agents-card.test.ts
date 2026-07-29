@@ -1,13 +1,25 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import type { components } from "@clawdi/shared/api";
 import {
 	type AgentTile,
+	agentTileCardProjection,
 	agentTileMatchesRouteId,
 	fleetSummaryFromTiles,
 	selfManagedAgentTiles,
 } from "@/components/dashboard/agents-card";
 
+type FocusHeaderSyncSource = typeof import("@/components/app-sidebar").focusHeaderSyncSource;
+
 type Env = components["schemas"]["AgentResponse"];
+
+let getFocusHeaderSyncSource: FocusHeaderSyncSource | null = null;
+
+beforeAll(async () => {
+	process.env.VITE_CLAWDI_API_URL = "http://localhost:8000";
+	process.env.VITE_CLERK_PUBLISHABLE_KEY = "pk_test_dummy";
+	const sidebar = await import("@/components/app-sidebar");
+	getFocusHeaderSyncSource = sidebar.focusHeaderSyncSource;
+});
 
 function env(overrides: Partial<Env> = {}): Env {
 	return {
@@ -62,6 +74,91 @@ describe("selfManagedAgentTiles", () => {
 		});
 		expect("statusLabel" in tile).toBe(false);
 		expect("runtimeLabel" in tile).toBe(false);
+	});
+});
+
+describe("agentTileCardProjection", () => {
+	it("shows real v2 hosted live sync and retains useful card metadata", () => {
+		const projected = env({
+			last_seen_at: new Date(Date.now() - 30_000).toISOString(),
+			last_sync_at: new Date().toISOString(),
+			sync_enabled: true,
+		});
+		const tile: AgentTile = {
+			id: "hdep_live",
+			source: "on-clawdi",
+			name: "Research agent",
+			agentType: "openclaw",
+			lastSeenAt: projected.last_seen_at,
+			href: `/agents/${projected.id}`,
+			active: true,
+			env: projected,
+		};
+
+		const projection = agentTileCardProjection(tile);
+
+		expect(projection.statusVisual).toMatchObject({
+			kind: "live",
+			label: "Live",
+			tooltip: "Sync is live.",
+		});
+		expect(projection.meta[0]).toBe("OpenClaw");
+		expect(projection.meta).toHaveLength(2);
+	});
+
+	it("does not manufacture hosted sync status without an environment projection", () => {
+		const tile: AgentTile = {
+			id: "hdep_pending_projection",
+			source: "on-clawdi",
+			name: "Research agent",
+			agentType: "openclaw",
+			lastSeenAt: null,
+			href: "/agents/env_pending",
+			active: true,
+			env: null,
+		};
+
+		expect(agentTileCardProjection(tile)).toEqual({
+			meta: ["OpenClaw"],
+			statusVisual: null,
+		});
+	});
+
+	it("keeps self-managed setup and legacy live-sync semantics", () => {
+		const selfManaged: AgentTile = {
+			id: "self",
+			source: "self-managed",
+			name: "Workstation",
+			agentType: "codex",
+			href: "/agents/self",
+			active: false,
+			env: env(),
+		};
+		const legacy: AgentTile = {
+			...selfManaged,
+			id: "legacy",
+			source: "legacy-hosted",
+			env: env({ last_sync_at: new Date().toISOString(), sync_enabled: true }),
+		};
+
+		expect(agentTileCardProjection(selfManaged).statusVisual?.kind).toBe("set-up");
+		expect(agentTileCardProjection(legacy).statusVisual?.kind).toBe("live");
+	});
+});
+
+describe("focused sidebar sync projection", () => {
+	it("shows Cloud sync only after the environment projection exists", () => {
+		if (!getFocusHeaderSyncSource) throw new Error("focusHeaderSyncSource was not loaded");
+
+		expect(getFocusHeaderSyncSource("cloud", true)).toBe("on-clawdi");
+		expect(getFocusHeaderSyncSource("cloud", false)).toBeNull();
+	});
+
+	it("preserves connected and legacy status copy", () => {
+		if (!getFocusHeaderSyncSource) throw new Error("focusHeaderSyncSource was not loaded");
+
+		expect(getFocusHeaderSyncSource("connected", true)).toBe("self-managed");
+		expect(getFocusHeaderSyncSource("legacy", true)).toBe("on-clawdi");
 	});
 });
 
