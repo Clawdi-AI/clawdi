@@ -123,12 +123,12 @@ describe("hosted inventory resolution matrix", () => {
 });
 
 describe("hosted detail projection resolution", () => {
-	test("dismisses an accepted delete without releasing its hosted ownership claim", () => {
+	test("suppresses stale detail as soon as delete is accepted without releasing ownership", () => {
 		const environmentId = "55555555-5555-4555-8555-555555555555";
 		const deploymentId = "hdep_user_deleted";
 		const deleting = hostedDeploymentFixture({
 			id: deploymentId,
-			status: "deleting",
+			status: "running",
 			cloudEnvironments: { openclaw: environmentId },
 			acceptedOperation: acceptedDelete(deploymentId),
 		});

@@ -280,6 +280,7 @@ export function usesHostedDeployIncludedBasicSlot(
 	let occupancyUnavailable = false;
 	for (const deployment of deployments ?? []) {
 		if (!hasIncludedBasicSubscription(deployment)) continue;
+		if (deployment.accepted_operation?.metadata.verb === "delete") continue;
 		const occupancy = deployment.compute_slot_occupancy;
 		if (occupancy === null) {
 			occupancyUnavailable = true;

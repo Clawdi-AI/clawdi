@@ -1541,7 +1541,7 @@ export interface components {
              * Reason
              * @enum {string}
              */
-            reason: "backing_infra_present" | "backing_infra_unknown" | "observed_stopped" | "observed_deleted" | "authoritative_absence";
+            reason: "backing_infra_present" | "backing_infra_unknown" | "observed_stopped" | "observed_deleted" | "authoritative_absence" | "delete_accepted";
         };
         /** V2HostedComputeSubscriptionInfo */
         V2HostedComputeSubscriptionInfo: {

@@ -100,6 +100,23 @@ function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeploymen
 	};
 }
 
+function acceptedDeleteOperation(): NonNullable<HostedDeployDeployment["accepted_operation"]> {
+	return {
+		name: "operations/delete-hdep_test",
+		metadata: {
+			"@type": "type.googleapis.com/clawdi.v2.DeploymentOperationMetadata",
+			deploymentId: "hdep_test",
+			verb: "delete",
+			targetGeneration: 2,
+			manifestETag: "manifest-delete",
+			createTime: "2026-07-28T00:01:00Z",
+			updateTime: "2026-07-28T00:01:00Z",
+		},
+		done: false,
+		response: null,
+	};
+}
+
 describe("hosted deploy request contract", () => {
 	test("keeps the browser-compatible persona mirror and managed provider reference", () => {
 		const result = validateAndBuildHostedDeployRequest(
@@ -197,6 +214,26 @@ describe("hosted deploy compute and payment contract", () => {
 		expect(usesHostedDeployIncludedBasicSlot([includedDeployment(true)])).toBe(true);
 		expect(usesHostedDeployIncludedBasicSlot([includedDeployment(false)])).toBe(false);
 		expect(usesHostedDeployIncludedBasicSlot([includedDeployment(null)])).toBeNull();
+	});
+
+	test("honors delete_accepted occupancy while backing infrastructure remains", () => {
+		const deleting = includedDeployment(false);
+		deleting.accepted_operation = acceptedDeleteOperation();
+		deleting.compute_slot_occupancy = {
+			occupies_slot: false,
+			backing_infra: "present",
+			reason: "delete_accepted",
+		};
+
+		expect(usesHostedDeployIncludedBasicSlot([deleting])).toBe(false);
+	});
+
+	test("optimistically releases the included Basic slot as soon as delete is accepted", () => {
+		const deleting = includedDeployment(true);
+		deleting.accepted_operation = acceptedDeleteOperation();
+
+		expect(usesHostedDeployIncludedBasicSlot([deleting])).toBe(false);
+		expect(usesHostedDeployIncludedBasicSlot([deleting, includedDeployment(true)])).toBe(true);
 	});
 
 	test("requires an explicit Basic offer once the free slot is occupied", () => {

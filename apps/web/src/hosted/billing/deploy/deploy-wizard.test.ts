@@ -301,8 +301,12 @@ describe("deploy acceptance", () => {
 		expect(wizardSource).toContain('"Creating agent…"');
 		expect(wizardSource).toContain('<Spinner data-icon="inline-start" />');
 		expect(wizardSource).toContain("{submitting ? submitBusyLabel : deployLabel}");
-		expect(wizardSource).toContain('role="alert"');
-		expect(wizardSource).toContain("Your choices are unchanged; review them and try again.");
+		expect(wizardSource).toContain('data-testid="deploy-submit-error"');
+		expect(wizardSource).toContain('className="max-w-md border-destructive/25 bg-card');
+		expect(wizardSource).toContain('submitError.blocksRetry ? "View agents" : "Retry"');
+		expect(wizardSource).toContain("deploySubmissionErrorPresentation(");
+		expect(wizardSource).not.toContain('toast.error("Couldn’t deploy"');
+		expect(wizardSource).not.toContain('toast.error("Couldn’t create agent"');
 		expect(wizardSource).not.toContain('submitting ? "Working…"');
 	});
 

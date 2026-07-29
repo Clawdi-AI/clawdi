@@ -568,6 +568,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function checkoutDeployRequestId(requestBody: string): string | null {
+	const request: unknown = JSON.parse(requestBody);
+	if (!isRecord(request) || !isRecord(request.deploy_config)) return null;
+	return typeof request.deploy_config.deploy_request_id === "string"
+		? request.deploy_config.deploy_request_id
+		: null;
+}
+
 function isDeploymentMutationFixture(value: unknown): value is DeploymentMutationFixture {
 	return (
 		isRecord(value) &&
@@ -806,6 +814,20 @@ function failedDeletionReadFixture(
 					observedGeneration: 2,
 				},
 			},
+		},
+	};
+}
+
+function acceptedDeletionReadFixture(deployment: DeploymentMutationFixture): DeploymentRead {
+	const read = mutationDeploymentReadFixture({ ...deployment, status: "deleting" });
+	const operation = completedDeploymentOperation(deployment, "delete");
+	return {
+		...read,
+		accepted_operation: { ...operation, done: false, response: null },
+		compute_slot_occupancy: {
+			occupies_slot: false,
+			backing_infra: "present",
+			reason: "delete_accepted",
 		},
 	};
 }
@@ -1051,7 +1073,7 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 										deployment,
 										options.failedDeleteRetryability.get(deployment.id) ?? false,
 									)
-								: readDeploymentFixture({ ...deployment, status: "deleting" })
+								: acceptedDeletionReadFixture(deployment)
 							: readDeploymentFixture(deployment),
 					),
 			);
@@ -1407,7 +1429,8 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			);
 			if (!deployment) return fulfillJson(r, { detail: "Deployment not found" }, 404);
 			acceptedDeleteIds.add(deployment.id);
-			return fulfillJson(r, completedDeploymentOperation(deployment, "delete"), 202);
+			const operation = completedDeploymentOperation(deployment, "delete");
+			return fulfillJson(r, { ...operation, done: false, response: null }, 202);
 		}
 		return fulfillJson(r, {});
 	});
@@ -2050,6 +2073,62 @@ test("paid checkout navigates on deployment acceptance without LRO convergence",
 	await expect(page.getByText("Couldn’t deploy", { exact: true })).toHaveCount(0);
 });
 
+test("failed checkout start stays contextual and retries without duplicate or internal errors", async ({
+	page,
+}) => {
+	const checkoutRequests: string[] = [];
+	await page.setViewportSize({ width: 390, height: 844 });
+	await stubCompletedStripeCheckout(page);
+	await stubHostedApi(page, {
+		checkoutRequests,
+		checkoutResponses: [
+			{
+				status: 503,
+				body: { detail: "stripe_proxy_internal tenant=usr_secret upstream=acct_live" },
+			},
+			{
+				status: 200,
+				body: {
+					flow_type: "checkout_session",
+					funding_source: "stripe",
+					action_url: null,
+					checkout_url: "https://checkout.stripe.test/retry",
+					client_secret: "cs_test_checkout_retry",
+				},
+			},
+		],
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan],
+	});
+	await page.goto("/deploy");
+
+	await page.getByRole("button", { name: "Continue to checkout" }).click();
+	const error = page.getByTestId("deploy-submit-error");
+	await expect(error.getByText("Checkout didn’t open", { exact: true })).toBeVisible();
+	await expect(error).toContainText("Secure checkout is temporarily unavailable.");
+	await expect(error).toContainText("No payment was submitted.");
+	await expect(error).not.toContainText("stripe_proxy_internal");
+	await expect(error).not.toContainText("usr_secret");
+	await expect(error).toBeInViewport();
+	const errorBounds = await error.boundingBox();
+	if (!errorBounds) throw new Error("Expected the compact checkout alert to have layout bounds");
+	expect(errorBounds.x).toBeGreaterThanOrEqual(0);
+	expect(errorBounds.x + errorBounds.width).toBeLessThanOrEqual(390);
+	await expect(
+		page.getByText("The billing service is having trouble", { exact: false }),
+	).toHaveCount(0);
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+	await expect(checkoutRequests).toHaveLength(1);
+
+	await error.getByRole("button", { name: "Retry", exact: true }).click();
+	await expect(checkoutRequests).toHaveLength(2);
+	await expect(page.getByRole("dialog", { name: /Complete .* checkout/ })).toBeVisible();
+	const initialDeployRequestId = checkoutDeployRequestId(checkoutRequests[0] ?? "{}");
+	const retryDeployRequestId = checkoutDeployRequestId(checkoutRequests[1] ?? "{}");
+	expect(initialDeployRequestId).not.toBeNull();
+	expect(retryDeployRequestId).toBe(initialDeployRequestId);
+});
+
 test("accepted detail delete dismisses immediately while teardown finishes in the background", async ({
 	page,
 }) => {
@@ -2064,6 +2143,7 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 		deploymentListRequests,
 	});
 	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+	const historyLengthBeforeDelete = await page.evaluate(() => window.history.length);
 
 	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
 	await page
@@ -2072,20 +2152,58 @@ test("accepted detail delete dismisses immediately while teardown finishes in th
 		.click();
 
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
-	await expect(page).toHaveURL(/\/agents\/?$/);
+	await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+	await expect
+		.poll(() => page.evaluate(() => window.history.length))
+		.toBe(historyLengthBeforeDelete);
 	await expect(page.getByText("Agent removed", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("Cleanup continues in the background.", { exact: true }),
+	).toBeVisible();
 	await expect(page.getByRole("link", { name: "Open Basic", exact: true })).toHaveCount(0);
 	await expect(page.getByTestId("app-sidebar-agent-tiles").getByLabel("Basic")).toHaveCount(0);
 	// The deployment is still in the stubbed inventory as `deleting`; dismissal
 	// therefore precedes teardown rather than waiting for a completed list read.
 	expect(completedDeleteIds.has("hdep_included")).toBe(false);
+	await page.goto("/deploy");
+	await expect(page.getByRole("button", { name: "Deploy agent", exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Continue to checkout" })).toHaveCount(0);
+	expect(completedDeleteIds.has("hdep_included")).toBe(false);
 
 	const readsBeforeCompletion = deploymentListRequests.length;
 	completedDeleteIds.add("hdep_included");
-	await expect
-		.poll(() => deploymentListRequests.length, { timeout: 10_000 })
-		.toBeGreaterThan(readsBeforeCompletion);
+	await page.reload();
+	await expect.poll(() => deploymentListRequests.length).toBeGreaterThan(readsBeforeCompletion);
 	await expect(page.getByRole("link", { name: "Open Basic", exact: true })).toHaveCount(0);
+});
+
+test("rejected detail delete stays on the current agent without accepted cleanup feedback", async ({
+	page,
+}) => {
+	const deleteRequests: string[] = [];
+	await stubHostedApi(page, {
+		deployments: [includedBasicDeployment],
+		plans: [basicPlan, performancePlan],
+		deleteRequests,
+		deleteResponses: [
+			{ status: 422, body: { detail: "internal delete coordinator rejected tenant usr_secret" } },
+		],
+	});
+	await gotoHostedAgentSettings(page, "hdep_included", "Basic");
+
+	await page.locator("main").getByRole("button", { name: "Delete", exact: true }).click();
+	const dialog = page.getByRole("alertdialog");
+	await dialog.getByRole("button", { name: "Delete agent", exact: true }).click();
+
+	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_included"]);
+	await expect(page).toHaveURL(/\/agents\/hdep_included\/settings/);
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByRole("button", { name: "Delete agent", exact: true })).toBeEnabled();
+	await expect(page.getByText("Agent removed", { exact: true })).toHaveCount(0);
+	await expect(page.getByText("Cleanup continues in the background.", { exact: true })).toHaveCount(
+		0,
+	);
+	await expect(page.getByText("internal delete coordinator", { exact: false })).toHaveCount(0);
 });
 
 test("managed model picker lists the curated catalog without Custom or image models", async ({
@@ -2804,6 +2922,7 @@ test("identity-less interrupted deployment tile exposes delete", async ({ page }
 	});
 
 	await page.goto("/agents");
+	const historyLengthBeforeDelete = await page.evaluate(() => window.history.length);
 	const deleteAction = page.getByRole("button", { name: "Delete Interrupted deployment" });
 	await expect(deleteAction).toBeVisible();
 	await deleteAction.click();
@@ -2812,6 +2931,10 @@ test("identity-less interrupted deployment tile exposes delete", async ({ page }
 		.getByRole("button", { name: "Delete agent", exact: true })
 		.click();
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_creation_interrupted"]);
+	await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+	await expect
+		.poll(() => page.evaluate(() => window.history.length))
+		.toBe(historyLengthBeforeDelete);
 	await expect(deleteAction).toHaveCount(0);
 
 	failedDeleteRetryability.set("hdep_creation_interrupted", false);

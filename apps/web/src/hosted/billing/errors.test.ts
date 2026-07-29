@@ -3,6 +3,7 @@ import {
 	BillingApiError,
 	BillingNetworkError,
 	billingQueryRetry,
+	deploySubmissionErrorPresentation,
 	isAuthError,
 	isForbiddenError,
 	isInsufficientBalanceError,
@@ -102,7 +103,7 @@ describe("normalizeBillingError", () => {
 
 	test("5xx → transient service message, not the raw detail", () => {
 		const msg = normalizeBillingError(new BillingApiError(503, "upstream connect error"));
-		expect(msg).toMatch(/having trouble/i);
+		expect(msg).toMatch(/couldn’t be completed/i);
 		expect(msg).not.toMatch(/upstream connect error/);
 	});
 
@@ -139,5 +140,61 @@ describe("normalizeBillingError", () => {
 
 	test("unknown shapes get a safe message", () => {
 		expect(normalizeBillingError(null)).toMatch(/something went wrong/i);
+	});
+});
+
+describe("deploySubmissionErrorPresentation", () => {
+	test("makes a failed card checkout start explicit, charge-safe, and retryable", () => {
+		const presentation = deploySubmissionErrorPresentation(
+			new BillingApiError(503, "stripe_proxy_internal tenant=usr_secret"),
+			"card_checkout",
+		);
+
+		expect(presentation.title).toBe("Checkout didn’t open");
+		expect(presentation.description).toContain("No payment was submitted");
+		expect(presentation.description).toContain("Retry");
+		expect(presentation.description).not.toContain("stripe_proxy_internal");
+		expect(presentation.description).not.toContain("usr_secret");
+		expect(presentation.description).not.toContain("billing service is having trouble");
+	});
+
+	test("handles card network failures without pretending checkout opened", () => {
+		const presentation = deploySubmissionErrorPresentation(
+			new BillingNetworkError("offline"),
+			"card_checkout",
+		);
+
+		expect(presentation.title).toBe("Checkout didn’t open");
+		expect(presentation.description).toContain("connection dropped");
+		expect(presentation.description).toContain("No payment was submitted");
+	});
+
+	test("keeps ambiguous wallet and create failures on the idempotent retry path", () => {
+		const wallet = deploySubmissionErrorPresentation(
+			new BillingNetworkError("timeout"),
+			"wallet_creation",
+		);
+		const included = deploySubmissionErrorPresentation(
+			new BillingApiError(502, "raw deployment driver failure"),
+			"included_creation",
+		);
+
+		expect(wallet.title).toBe("We couldn’t confirm this attempt");
+		expect(wallet.description).toContain("safely resume the same attempt");
+		expect(wallet.description).not.toContain("No Wallet payment was made");
+		expect(included.title).toBe("We couldn’t confirm agent creation");
+		expect(included.description).toContain("safely resume the same attempt");
+		expect(included.description).not.toContain("raw deployment driver failure");
+	});
+
+	test("states when an explicit wallet rejection did not start payment", () => {
+		const presentation = deploySubmissionErrorPresentation(
+			new BillingApiError(422, "internal validation trace"),
+			"wallet_creation",
+		);
+
+		expect(presentation.title).toBe("Payment and creation didn’t start");
+		expect(presentation.description).toContain("No Wallet payment was made");
+		expect(presentation.description).not.toContain("internal validation trace");
 	});
 });

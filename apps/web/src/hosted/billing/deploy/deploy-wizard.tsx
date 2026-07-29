@@ -89,8 +89,8 @@ import {
 import {
 	billingErrorNormalizer,
 	DeploymentRequestTerminalError,
+	deploySubmissionErrorPresentation,
 	isIdempotencyKeyReusedError,
-	isNetworkError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 import {
@@ -704,7 +704,6 @@ export function DeployWizard() {
 							title: "Payment succeeded, but the agent could not be started",
 							description: `${normalized} Don’t submit another payment; check Agents for the latest state.`,
 						});
-						toast.error("Couldn’t create agent", { description: normalized });
 						return;
 					}
 					// Stripe may complete before its deployment request is visible. Fall back
@@ -900,23 +899,20 @@ export function DeployWizard() {
 			includedCreateAttemptRef.current = null;
 			acceptDeployment(created.deploymentId);
 		} catch (e) {
-			const normalized = normalizeBillingError(e);
-			setSubmitError(
-				isNetworkError(e)
-					? {
-							title: "We couldn’t confirm this attempt",
-							description: `${normalized} Your choices are unchanged; retry to safely check the same payment attempt.`,
-						}
-					: {
-							title: "Your agent wasn’t created",
-							description: `${normalized} Your choices are unchanged; review them and try again.`,
-						},
-			);
 			if (paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
 				if (walletTopUp.handleFundingError(e)) return;
 			}
-			toast.error("Couldn’t deploy", { description: normalized });
+			setSubmitError(
+				deploySubmissionErrorPresentation(
+					e,
+					paidSelection
+						? paymentMethod === "wallet"
+							? "wallet_creation"
+							: "card_checkout"
+						: "included_creation",
+				),
+			);
 		} finally {
 			setSubmitting(false);
 			setSubmitTakingLong(false);
@@ -1468,41 +1464,55 @@ export function DeployWizard() {
 						<p className="min-w-0 max-w-full truncate text-xs text-muted-foreground sm:text-sm">
 							{summaryLine}
 						</p>
-						<div className="flex flex-col gap-1 sm:items-end">
-							<Button
-								type="submit"
-								size="lg"
-								disabled={!canSubmit}
-								aria-describedby={submitBlockingReason ? "deploy-blocking-reason" : undefined}
-								className="w-full sm:w-auto"
-							>
-								{submitting ? (
-									<Spinner data-icon="inline-start" />
-								) : (
-									<Rocket data-icon="inline-start" />
-								)}
-								{submitting ? submitBusyLabel : deployLabel}
-							</Button>
-							{submitError ? (
-								<div className="max-w-sm text-xs text-destructive sm:text-right" role="alert">
-									<p className="font-medium">{submitError.title}</p>
-									<p>{submitError.description}</p>
-									{submitError.blocksRetry ? (
-										<Button
-											type="button"
-											variant="link"
-											className="h-auto px-0 text-destructive"
-											onClick={() => void router.navigate({ href: "/agents" })}
-										>
-											View agents
-										</Button>
-									) : null}
-								</div>
-							) : submitTakingLong ? (
+						<div className="flex min-w-0 flex-col gap-1 sm:items-end">
+							<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+								{submitError ? (
+									<Alert
+										data-testid="deploy-submit-error"
+										className="max-w-md border-destructive/25 bg-card px-3 py-2 shadow-xs"
+									>
+										<TriangleAlert className="text-destructive" />
+										<AlertTitle>{submitError.title}</AlertTitle>
+										<AlertDescription className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
+											<span className="min-w-0 flex-1">{submitError.description}</span>
+											<Button
+												type="button"
+												size="sm"
+												variant="outline"
+												onClick={() => {
+													if (submitError.blocksRetry) {
+														void router.navigate({ href: "/agents" });
+														return;
+													}
+													if (canSubmit) void runAction(onDeploy);
+												}}
+											>
+												{submitError.blocksRetry ? null : <RefreshCw data-icon="inline-start" />}
+												{submitError.blocksRetry ? "View agents" : "Retry"}
+											</Button>
+										</AlertDescription>
+									</Alert>
+								) : null}
+								<Button
+									type="submit"
+									size="lg"
+									disabled={!canSubmit}
+									aria-describedby={submitBlockingReason ? "deploy-blocking-reason" : undefined}
+									className="w-full shrink-0 sm:w-auto"
+								>
+									{submitting ? (
+										<Spinner data-icon="inline-start" />
+									) : (
+										<Rocket data-icon="inline-start" />
+									)}
+									{submitting ? submitBusyLabel : deployLabel}
+								</Button>
+							</div>
+							{!submitError && submitTakingLong ? (
 								<p className="max-w-sm text-xs text-muted-foreground sm:text-right" role="status">
 									{submitTakingLongCopy}
 								</p>
-							) : submitBlockingReason ? (
+							) : !submitError && submitBlockingReason ? (
 								<p
 									id="deploy-blocking-reason"
 									className={cn(
