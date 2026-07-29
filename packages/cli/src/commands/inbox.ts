@@ -16,6 +16,7 @@ import chalk from "chalk";
 
 import { allAdapterEntries } from "../adapters/registry";
 import { ApiError, readJson } from "../lib/api-client";
+import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
 import { listProjects } from "../lib/project-resolver";
@@ -411,6 +412,7 @@ async function acceptAnonymousUrl(
 	opts: AcceptOpts,
 ): Promise<void> {
 	const token = extractTokenFromUrl(urlOrToken);
+	const apiOrigin = normalizeCloudApiBaseUrl(apiUrl);
 
 	const existing = listTokens().find((t) => t.token === token);
 	if (existing) {
@@ -428,7 +430,7 @@ async function acceptAnonymousUrl(
 		return;
 	}
 
-	const r = await fetch(`${apiUrl}/v1/share/${token}/redeem`, {
+	const r = await fetch(`${apiOrigin}/v1/share/${token}/redeem`, {
 		method: "POST",
 		headers: { "Idempotency-Key": redeemIdempotencyKey(token) },
 	});
@@ -448,6 +450,7 @@ async function acceptAnonymousUrl(
 		owner_handle: body.owner_handle,
 		token,
 		redeemed_at: new Date().toISOString(),
+		api_origin: apiOrigin,
 	};
 	addToken(record);
 	if (opts.json) {
