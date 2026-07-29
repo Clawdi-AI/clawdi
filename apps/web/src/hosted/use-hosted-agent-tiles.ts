@@ -183,6 +183,7 @@ export function useHostedAgentTiles({
 		tiles,
 		claimedEnvIds,
 		deletionFailures,
+		isFetching: inventory.isFetching,
 		isLoading: inventory.status === "loading" && !inventory.hasSnapshot,
 		error: inventory.error,
 		refetch: inventory.refetch,

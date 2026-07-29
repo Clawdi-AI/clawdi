@@ -52,14 +52,22 @@ export function useCheckoutReturnHandler({
 		const marker = checkoutReturnMarker(searchStr);
 		if (!marker || handledMarkerRef.current === marker) return;
 		handledMarkerRef.current = marker;
+		const canceled = checkoutReturnWasCanceled(searchStr);
+		const deploymentId = canceled ? null : checkoutReturnDeploymentId(searchStr);
+		if (deploymentId && onNavigate(deploymentId) !== false) {
+			void refreshCheckoutReturn().catch(() => {
+				toast.error("Couldn’t refresh checkout status", {
+					description: "Refresh the page to check your agents, subscription, and wallet.",
+				});
+			});
+			return;
+		}
 		void refreshCheckoutReturn()
 			.then(() => {
-				if (checkoutReturnWasCanceled(searchStr)) {
+				if (canceled) {
 					toast.message("Checkout canceled", { description: onCancelCopy });
 					return;
 				}
-				const deploymentId = checkoutReturnDeploymentId(searchStr);
-				if (deploymentId && onNavigate(deploymentId) !== false) return;
 				toast.message("Checkout status refreshed", {
 					description: "We checked your agents, subscription, and wallet.",
 				});

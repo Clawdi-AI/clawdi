@@ -852,6 +852,7 @@ type HostedApiStubOptions = {
 	deleteResponses?: StubResponse[];
 	deploymentListRequests?: string[];
 	deploymentListResponses?: unknown[][];
+	deploymentListResponseDelayMs?: number;
 	deploymentRequestReads?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
@@ -1011,6 +1012,11 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 			options.deploymentListRequests?.push(p);
 			const deploymentListResponse = options.deploymentListResponses?.shift();
 			if (deploymentListResponse) {
+				if (options.deploymentListResponseDelayMs) {
+					await new Promise((resolve) =>
+						setTimeout(resolve, options.deploymentListResponseDelayMs),
+					);
+				}
 				return fulfillJson(
 					r,
 					deploymentListResponse.map((deployment) =>
@@ -1940,10 +1946,13 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 		name: "Created included Basic",
 		status: "creating",
 	};
+	const deploymentListRequests: string[] = [];
 	await stubHostedApi(page, {
 		plans: [basicPlan],
 		deployments: [startingDeployment],
 		deploymentListResponses: [[], [startingDeployment]],
+		deploymentListResponseDelayMs: 750,
+		deploymentListRequests,
 		createDeploymentResponse: {
 			status: 202,
 			body: { ...acceptedCreate, done: false, response: null },
@@ -1953,10 +1962,12 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 	await page.goto("/deploy");
 
 	await page.getByRole("button", { name: "Deploy agent" }).click();
-	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
+	await expect(page).toHaveURL(/\/agents\/hdep_included_created/, { timeout: 500 });
+	await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
 	expect(new URL(page.url()).searchParams.has("setup")).toBe(false);
 	await expect(page.getByText("Agent not found", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
+	await expect(page.getByLabel("Agent ownership loading")).toBeVisible();
 	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
 	await expect(page.getByText("Agent actions", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);

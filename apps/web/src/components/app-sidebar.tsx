@@ -96,7 +96,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
-import { useUnresolvedHostedRouteGrace } from "@/hosted/agents/unresolved-hosted-route";
 import {
 	type AgentOwnershipKind,
 	agentOwnershipKindFromId,
@@ -1174,15 +1173,6 @@ function FocusHeader({
 	activeAgentKind: AgentChromeKind;
 	activeAgentId: string | null;
 }) {
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const awaitingAcceptedDeployment = useUnresolvedHostedRouteGrace(
-		activeAgentId &&
-			!activeAgent &&
-			!activeAgentTile &&
-			new URLSearchParams(searchStr).get("source") === "on-clawdi"
-			? activeAgentId
-			: null,
-	);
 	if (!activeAgent && !activeAgentId) {
 		return (
 			<div className="min-w-0">
@@ -1194,7 +1184,7 @@ function FocusHeader({
 		);
 	}
 
-	if (activeAgentKind === "unresolved" || awaitingAcceptedDeployment) {
+	if (activeAgentKind === "unresolved") {
 		return (
 			<div className="min-w-0 space-y-2" role="status" aria-label="Agent ownership loading">
 				<Skeleton className="h-4 w-32" />
@@ -1587,10 +1577,12 @@ export function AppSidebar({
 	const hydrated = useHydrated();
 	const [hostedAgentTiles, setHostedAgentTiles] = useState<AgentTile[] | null>(null);
 	const [hostedMembershipResolved, setHostedMembershipResolved] = useState(false);
+	const [hostedInventoryFetching, setHostedInventoryFetching] = useState(false);
 	const updateHostedAgentList = useCallback(
-		(tiles: AgentTile[] | null, membershipResolved: boolean) => {
+		(tiles: AgentTile[] | null, membershipResolved: boolean, inventoryFetching: boolean) => {
 			setHostedAgentTiles(tiles);
 			setHostedMembershipResolved(membershipResolved);
+			setHostedInventoryFetching(inventoryFetching);
 		},
 		[],
 	);
@@ -1624,7 +1616,9 @@ export function AppSidebar({
 		: null;
 	const classifiedActiveAgentKind = useAgentChromeKind(activeAgent, activeAgentTile);
 	const activeAgentKind =
-		activeAgentTile || !activeAgentId || agentsLoaded ? classifiedActiveAgentKind : "unresolved";
+		activeAgentTile || !activeAgentId || (agentsLoaded && !hostedInventoryFetching)
+			? classifiedActiveAgentKind
+			: "unresolved";
 	const activeSection = agentRoute?.section ?? "overview";
 	const settingsSection = routeSearch.settings ?? null;
 	const settingsOpen = settingsSection !== null;

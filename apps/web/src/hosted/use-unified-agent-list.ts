@@ -124,6 +124,7 @@ export function useUnifiedAgentList({
 		hasExistingDeployments: hosted.hasExistingDeployments,
 		deletionFailures: hosted.deletionFailures,
 		inventoryStatus: hosted.inventoryStatus,
+		isFetching: hosted.isFetching,
 		isLoading:
 			(showCloudDeployments && hosted.isLoading) ||
 			(showLegacyAgents && resolvedLegacyEnvIds === null),
@@ -141,7 +142,11 @@ export function HostedUnifiedAgentListSensor({
 	cloudEnvs: Env[];
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
-	onChange: (tiles: AgentTile[] | null, membershipResolved: boolean) => void;
+	onChange: (
+		tiles: AgentTile[] | null,
+		membershipResolved: boolean,
+		inventoryFetching: boolean,
+	) => void;
 }) {
 	const unified = useUnifiedAgentList({
 		cloudEnvs,
@@ -150,9 +155,9 @@ export function HostedUnifiedAgentListSensor({
 	});
 
 	useEffect(() => {
-		onChange(unified.tiles, unified.membershipResolved);
-	}, [onChange, unified.membershipResolved, unified.tiles]);
-	useEffect(() => () => onChange(null, false), [onChange]);
+		onChange(unified.tiles, unified.membershipResolved, unified.isFetching);
+	}, [onChange, unified.isFetching, unified.membershipResolved, unified.tiles]);
+	useEffect(() => () => onChange(null, false, false), [onChange]);
 
 	return null;
 }
