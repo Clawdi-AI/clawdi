@@ -73,6 +73,7 @@ import {
 	resolveManagedPrimaryModel,
 } from "./managed-model-resolution";
 import {
+	installReservedManagedSkill,
 	managedSkillReservationOwner,
 	releaseManagedSkill,
 	reserveManagedSkill,
@@ -3353,20 +3354,23 @@ function applyHostedBundledSkills(
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
 		}
 		const bundled = catalogEntry;
-		reserveManagedSkill({
-			targetDir,
-			id: skillName,
-			manager: "hosted-manifest",
-			version: desired.version,
-			digest: bundled.digest,
-		});
-		const result = reconcileHostedBundledSkill({
-			skillId: skillName,
-			version: desired.version,
-			sourceDir: hostedBundledSkillSourceDir(bundled.assetDirectory),
-			targetDir,
-			reserved: true,
-		});
+		const result = installReservedManagedSkill(
+			{
+				targetDir,
+				id: skillName,
+				manager: "hosted-manifest",
+				version: desired.version,
+				digest: bundled.digest,
+			},
+			() =>
+				reconcileHostedBundledSkill({
+					skillId: skillName,
+					version: desired.version,
+					sourceDir: hostedBundledSkillSourceDir(bundled.assetDirectory),
+					targetDir,
+					reserved: true,
+				}),
+		);
 		if (result === "unchanged") continue;
 		makeRuntimeUserOwnedAncestors(targetDir);
 		makeRuntimeUserOwned(targetDir);

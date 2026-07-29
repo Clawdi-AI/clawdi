@@ -36,11 +36,7 @@ from app.models.session_permission import (
     SessionPermission,
 )
 from app.schemas.common import Paginated
-from app.schemas.runtime import (
-    HostedRuntimeMcp,
-    PersistedHostedRuntimeSkills,
-    validate_hosted_runtime_desired_state,
-)
+from app.schemas.runtime import PersistedHostedRuntimeSkills, validate_hosted_runtime_desired_state
 from app.schemas.runtime_observed import (
     HostedRuntimeObserved,
     HostedRuntimeObservedProviderPayload,
@@ -56,8 +52,6 @@ from app.schemas.session import (
     EnvironmentReorderRequest,
     EnvironmentResponse,
     EnvironmentUpdate,
-    RuntimeManagedMcpServerSummary,
-    RuntimeManagedResourceSummary,
     RuntimeManagedSkillSummary,
     RuntimeObservedDesiredResponse,
     RuntimeObservedHealthResponse,
@@ -894,29 +888,7 @@ async def get_agent_runtime_observed(
     db: AsyncSession = Depends(get_session),
 ) -> RuntimeObservedResponse:
     """Canonical Agent-identity route for runtime desired/observed summaries."""
-    response = await get_environment_runtime_observed(agent_id, auth, db)
-    state = await db.get(HostedRuntimeState, agent_id)
-    desired = response.desired
-    if desired is None and state is None:
-        return response
-    if (
-        desired is None
-        or state is None
-        or desired.deployment_id != state.deployment_id
-        or desired.instance_id != state.instance_id
-        or desired.desired_config_generation != state.generation
-    ):
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "Runtime desired state changed while it was being read; retry the request.",
-        )
-    return response.model_copy(
-        update={
-            "desired": desired.model_copy(
-                update={"managed_resources": _runtime_managed_resource_summaries(state)}
-            )
-        }
-    )
+    return await get_environment_runtime_observed(agent_id, auth, db)
 
 
 @router.get("/assets/{asset_key:path}", include_in_schema=False)
@@ -1056,38 +1028,30 @@ def _runtime_observed_desired(
         enabled_runtimes=_enabled_runtime_names(state.runtimes),
         has_mcp=state.mcp is not None,
         has_tools=state.tools is not None,
+        managed_skills=_runtime_managed_skill_summaries(state),
         updated_at=state.updated_at,
     )
 
 
-def _runtime_managed_resource_summaries(
+def _runtime_managed_skill_summaries(
     state: HostedRuntimeState,
-) -> list[RuntimeManagedResourceSummary]:
-    resources: list[RuntimeManagedResourceSummary] = []
+) -> list[RuntimeManagedSkillSummary]:
+    managed_skills: list[RuntimeManagedSkillSummary] = []
     if state.skills is not None:
         try:
             skills = PersistedHostedRuntimeSkills.model_validate(state.skills)
         except ValueError:
             skills = None
         if skills is not None:
-            resources.extend(
+            managed_skills.extend(
                 RuntimeManagedSkillSummary(
                     id=skill_id,
-                    enabled=entry.enabled,
                     version=entry.version or 1,
                 )
                 for skill_id, entry in sorted(skills.entries.items())
+                if entry.enabled
             )
-    if state.mcp is not None:
-        try:
-            mcp = HostedRuntimeMcp.model_validate(state.mcp)
-        except ValueError:
-            mcp = None
-        if mcp is not None:
-            resources.extend(
-                RuntimeManagedMcpServerSummary(id=server_id) for server_id in sorted(mcp.servers)
-            )
-    return resources
+    return managed_skills
 
 
 def _runtime_observed_health(

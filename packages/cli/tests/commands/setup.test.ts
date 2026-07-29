@@ -158,6 +158,18 @@ describe("setup daemon install", () => {
 		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
 	});
 
+	it("reconciles the bundled Skill as an exact directory replacement", async () => {
+		installEnvironmentMock("env-codex");
+		await setup({ agent: "codex", yes: true, daemon: false });
+		const target = join(home, ".codex", "skills", "clawdi");
+		writeFileSync(join(target, "removed-by-upgrade.txt"), "stale\n");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(existsSync(join(target, "removed-by-upgrade.txt"))).toBe(false);
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+	});
+
 	it("does not claim or overwrite an unmanaged Skill collision", async () => {
 		const target = join(home, ".codex", "skills", "clawdi");
 		mkdirSync(target, { recursive: true });

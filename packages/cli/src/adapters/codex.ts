@@ -247,8 +247,6 @@ export class CodexAdapter implements AgentAdapter {
 			// Skip dot-dirs (e.g. `.system/` holds Codex's built-in skills, not user-authored ones).
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			// Upgrade bridge for local setup installs created before the ownership ledger.
-			if (entry.name === "clawdi") continue;
 			const dirPath = join(skillsDir(), entry.name);
 			if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
 			const skillMd = join(dirPath, "SKILL.md");
@@ -282,7 +280,6 @@ export class CodexAdapter implements AgentAdapter {
 			if (!entry.isDirectory()) continue;
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			if (entry.name === "clawdi") continue;
 			if (shouldIgnoreUserSkill(join(skillsDir(), entry.name), entry.name)) continue;
 			const skillMd = join(skillsDir(), entry.name, "SKILL.md");
 			if (!existsSync(skillMd)) continue;

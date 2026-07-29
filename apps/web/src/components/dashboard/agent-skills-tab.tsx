@@ -94,22 +94,9 @@ export function AgentSkillsTab({
 		refetch: refetchSkills,
 	} = useAgentProjectSkills(agentProjectId);
 	const uninstallSkill = useUninstallAgentSkill();
-	const managedResources = runtimeObserved.data?.desired?.managed_resources ?? [];
-	const managedSkills = managedResources.filter((resource) => resource.kind === "skill");
-	const managedMcpServers = managedResources.filter((resource) => resource.kind === "mcp_server");
-	const reservedSkillIds = new Set(
-		managedSkills.filter((skill) => skill.enabled).map((skill) => skill.id),
-	);
+	const managedSkills = runtimeObserved.data?.desired?.managed_skills ?? [];
+	const reservedSkillIds = new Set(managedSkills.map((skill) => skill.id));
 	const conflictingSkills = (skills ?? []).filter((skill) => reservedSkillIds.has(skill.skill_key));
-	const desiredGeneration = runtimeObserved.data?.desired?.desired_config_generation ?? null;
-	const observedGeneration = runtimeObserved.data?.observed?.observed_config_generation ?? null;
-	const desiredSource = runtimeObserved.data?.desired?.desired_source_revision ?? null;
-	const observedSource = runtimeObserved.data?.observed?.observed_source_revision ?? null;
-	const isApplied =
-		runtimeObserved.data?.health.status === "ok" &&
-		desiredGeneration !== null &&
-		desiredGeneration === observedGeneration &&
-		(desiredSource === null || desiredSource === observedSource);
 
 	if (skillsError) {
 		return (
@@ -126,58 +113,26 @@ export function AgentSkillsTab({
 	return (
 		<div className="flex flex-col gap-6">
 			{hostedManaged && runtimeObserved.isLoading ? (
-				<p className="text-sm text-muted-foreground">Loading deployment-managed capabilities…</p>
+				<p className="text-sm text-muted-foreground">Loading deployment-managed Skills…</p>
 			) : null}
 			{hostedManaged && runtimeObserved.error ? (
 				<Alert>
-					<AlertTitle>Managed capability status is unavailable</AlertTitle>
+					<AlertTitle>Deployment-managed Skills are unavailable</AlertTitle>
 					<AlertDescription>Your Cloud Skills remain available below.</AlertDescription>
 				</Alert>
 			) : null}
-			{runtimeObserved.data ? (
-				<section className="rounded-xl border p-4" aria-label="Deployment-managed capabilities">
-					<div className="flex flex-wrap items-center justify-between gap-2">
-						<h2 className="font-medium">Deployment-managed capabilities</h2>
-						<Badge variant={isApplied ? "secondary" : "outline"}>
-							{isApplied ? "Applied" : "Not applied"}
-						</Badge>
-					</div>
+			{managedSkills.length > 0 ? (
+				<section className="rounded-xl border p-4" aria-label="Deployment-managed Skills">
+					<h2 className="font-medium">Deployment-managed Skills</h2>
 					<p className="mt-1 text-sm text-muted-foreground">
-						Desired generation {runtimeObserved.data.desired?.desired_config_generation ?? "—"} ·
-						Observed generation {runtimeObserved.data.observed?.observed_config_generation ?? "—"}
+						These Skills are read-only and follow the deployment manifest.
 					</p>
-					<p className="mt-1 text-xs text-muted-foreground">
-						Health {runtimeObserved.data.health.status} · Source{" "}
-						{(observedSource ?? desiredSource ?? "Not reported").slice(0, 12)}
-						{runtimeObserved.data.observed?.observed_manifest_etag ? " · Manifest observed" : ""}
-					</p>
-					<div className="mt-4 grid gap-4 md:grid-cols-2">
-						<div>
-							<h3 className="text-sm font-medium">Skills</h3>
-							<div className="mt-2 flex flex-wrap gap-2">
-								{managedSkills.map((skill) => (
-									<Badge key={skill.id} variant="secondary">
-										{skill.id} · v{skill.version} · {skill.enabled ? "enabled" : "disabled"}
-									</Badge>
-								))}
-								{managedSkills.length === 0 ? (
-									<span className="text-sm text-muted-foreground">None</span>
-								) : null}
-							</div>
-						</div>
-						<div>
-							<h3 className="text-sm font-medium">MCP servers</h3>
-							<div className="mt-2 flex flex-wrap gap-2">
-								{managedMcpServers.map((server) => (
-									<Badge key={server.id} variant="secondary">
-										{server.id}
-									</Badge>
-								))}
-								{managedMcpServers.length === 0 ? (
-									<span className="text-sm text-muted-foreground">None</span>
-								) : null}
-							</div>
-						</div>
+					<div className="mt-3 flex flex-wrap gap-2">
+						{managedSkills.map((skill) => (
+							<Badge key={skill.id} variant="secondary">
+								{skill.id} · v{skill.version}
+							</Badge>
+						))}
 					</div>
 				</section>
 			) : null}

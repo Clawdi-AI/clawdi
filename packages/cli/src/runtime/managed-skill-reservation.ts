@@ -1,6 +1,17 @@
-import { existsSync, lstatSync, readFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
+import {
+	cpSync,
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+} from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { getClawdiDir } from "../lib/config";
+import { withPrivateDirectoryLockSync } from "../lib/private-directory-lock";
 import { writePrivateFileAtomic } from "../lib/private-file";
 
 const LEDGER_FILE = "managed-skills.json";
@@ -47,13 +58,11 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 		const stat = lstatSync(path);
 		if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("not a regular file");
 		value = JSON.parse(readFileSync(path, "utf8"));
-	} catch (error) {
-		throw new Error(
-			`managed Skill reservation ledger is invalid: ${error instanceof Error ? error.message : String(error)}`,
-		);
+	} catch {
+		throw new Error("managed Skill ownership state is invalid");
 	}
 	if (!isRecord(value) || value.schemaVersion !== LEDGER_SCHEMA || !isRecord(value.reservations)) {
-		throw new Error("managed Skill reservation ledger has an unsupported schema");
+		throw new Error("managed Skill ownership state is invalid");
 	}
 	const reservations: Record<string, ManagedSkillReservation> = {};
 	for (const [target, raw] of Object.entries(value.reservations)) {
@@ -71,7 +80,7 @@ function readLedger(path: string): ManagedSkillReservationLedger {
 			!SHA256_PATTERN.test(raw.digest) ||
 			(raw.manager !== "hosted-manifest" && raw.manager !== "local-setup")
 		) {
-			throw new Error("managed Skill reservation ledger contains an invalid reservation");
+			throw new Error("managed Skill ownership state is invalid");
 		}
 		reservations[target] = {
 			target,
@@ -89,6 +98,16 @@ function writeLedger(path: string, ledger: ManagedSkillReservationLedger): void 
 		mode: 0o644,
 		dirMode: 0o755,
 	});
+}
+
+function withLedgerWriteLock<T>(manager: ManagedSkillReservationManager, write: () => T): T {
+	// Hosted writers already run under the global runtime converge lock. Local
+	// setup and teardown use a private user-state lock so concurrent commands
+	// cannot lose reservations without chmod'ing the hosted projection parent.
+	if (manager === "hosted-manifest") return write();
+	return withPrivateDirectoryLockSync(join(getClawdiDir(), "locks", "managed-skills.lock"), () =>
+		write(),
+	);
 }
 
 export function managedSkillReservationState(
@@ -113,7 +132,11 @@ export function managedSkillReservationOwner(
 }
 
 export function shouldIgnoreUserSkill(targetDir: string, skillId = basename(targetDir)): boolean {
-	return managedSkillReservationState(targetDir, skillId) !== "unreserved";
+	const state = managedSkillReservationState(targetDir, skillId);
+	if (state === "indeterminate") {
+		throw new Error("managed Skill ownership state is invalid");
+	}
+	return state === "reserved";
 }
 
 export function assertUserSkillTargetMutable(
@@ -143,21 +166,99 @@ export function reserveManagedSkill(input: {
 	) {
 		throw new Error("managed Skill reservation identity is invalid");
 	}
-	const ledger = readLedger(path);
-	const previous = ledger.reservations[target];
-	const manager = input.manager;
-	if (previous && previous.manager !== manager) {
-		throw new Error(`managed Skill ${input.id} is owned by a different manager`);
+	return withLedgerWriteLock(input.manager, () => {
+		const ledger = readLedger(path);
+		const previous = ledger.reservations[target];
+		const manager = input.manager;
+		if (previous && previous.manager !== manager) {
+			throw new Error(`managed Skill ${input.id} is owned by a different manager`);
+		}
+		ledger.reservations[target] = {
+			target,
+			id: input.id,
+			version: input.version,
+			digest: input.digest,
+			manager,
+		};
+		writeLedger(path, ledger);
+		return previous ? "existing" : "created";
+	});
+}
+
+export function installReservedManagedSkill<T>(
+	input: {
+		targetDir: string;
+		id: string;
+		version: number;
+		digest: string;
+		manager: ManagedSkillReservationManager;
+	},
+	install: () => T,
+): T {
+	const path = ledgerPath();
+	const target = resolve(input.targetDir);
+	if (
+		basename(target) !== input.id ||
+		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
+		!Number.isSafeInteger(input.version) ||
+		input.version <= 0 ||
+		!SHA256_PATTERN.test(input.digest)
+	) {
+		throw new Error("managed Skill reservation identity is invalid");
 	}
-	ledger.reservations[target] = {
-		target,
-		id: input.id,
-		version: input.version,
-		digest: input.digest,
-		manager,
-	};
-	writeLedger(path, ledger);
-	return previous ? "existing" : "created";
+	return withLedgerWriteLock(input.manager, () => {
+		const ledger = readLedger(path);
+		const previous = ledger.reservations[target];
+		if (previous && previous.manager !== input.manager) {
+			throw new Error(`managed Skill ${input.id} is owned by a different manager`);
+		}
+		ledger.reservations[target] = {
+			target,
+			id: input.id,
+			version: input.version,
+			digest: input.digest,
+			manager: input.manager,
+		};
+		writeLedger(path, ledger);
+		try {
+			return install();
+		} catch (error) {
+			if (previous) ledger.reservations[target] = previous;
+			else delete ledger.reservations[target];
+			writeLedger(path, ledger);
+			throw error;
+		}
+	});
+}
+
+export function replaceManagedSkillDirectoryAtomic(
+	sourceDir: string,
+	targetDir: string,
+	options: { beforeActivate?: () => void } = {},
+): void {
+	const parent = dirname(targetDir);
+	mkdirSync(parent, { recursive: true });
+	const stagingRoot = mkdtempSync(join(parent, `.${basename(targetDir)}-stage-`));
+	const stagedTarget = join(stagingRoot, basename(targetDir));
+	const previousTarget = join(
+		parent,
+		`.${basename(targetDir)}-previous-${process.pid}-${randomUUID()}`,
+	);
+	try {
+		cpSync(sourceDir, stagedTarget, { recursive: true });
+		const hadPrevious = existsSync(targetDir);
+		if (hadPrevious) renameSync(targetDir, previousTarget);
+		try {
+			options.beforeActivate?.();
+			renameSync(stagedTarget, targetDir);
+		} catch (error) {
+			if (hadPrevious) renameSync(previousTarget, targetDir);
+			throw error;
+		}
+		if (hadPrevious) rmSync(previousTarget, { recursive: true, force: true });
+	} finally {
+		rmSync(stagingRoot, { recursive: true, force: true });
+	}
 }
 
 export function releaseManagedSkill(input: {
@@ -168,16 +269,18 @@ export function releaseManagedSkill(input: {
 }): "absent" | "removed" {
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
-	const ledger = readLedger(path);
-	const reservation = ledger.reservations[target];
-	if (!reservation) return "absent";
-	if (reservation.id !== input.id || reservation.manager !== input.manager) {
-		throw new Error("managed Skill reservation identity mismatch");
-	}
-	input.removeTarget();
-	delete ledger.reservations[target];
-	writeLedger(path, ledger);
-	return "removed";
+	return withLedgerWriteLock(input.manager, () => {
+		const ledger = readLedger(path);
+		const reservation = ledger.reservations[target];
+		if (!reservation) return "absent";
+		if (reservation.id !== input.id || reservation.manager !== input.manager) {
+			throw new Error("managed Skill reservation identity mismatch");
+		}
+		input.removeTarget();
+		delete ledger.reservations[target];
+		writeLedger(path, ledger);
+		return "removed";
+	});
 }
 
 export function isReservedSkillArchivePath(path: string): boolean {

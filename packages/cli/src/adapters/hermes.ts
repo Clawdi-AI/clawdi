@@ -218,8 +218,6 @@ export class HermesAdapter implements AgentAdapter {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (shouldSkipHermesSkillDir(entry.name)) continue;
-			// Upgrade bridge for local setup installs created before the ownership ledger.
-			if (dir === skillsDir() && entry.name === "clawdi") continue;
 			const fullPath = join(dir, entry.name);
 			const skillMd = join(fullPath, "SKILL.md");
 
@@ -276,7 +274,6 @@ export class HermesAdapter implements AgentAdapter {
 			for (const entry of readdirSync(dir, { withFileTypes: true })) {
 				if (!entry.isDirectory()) continue;
 				if (shouldSkipHermesSkillDir(entry.name)) continue;
-				if (dir === skillsDir() && entry.name === "clawdi") continue;
 				const fullPath = join(dir, entry.name);
 				if (existsSync(join(fullPath, "SKILL.md"))) {
 					const skillKey = hermesSkillKeyFromPath(fullPath);

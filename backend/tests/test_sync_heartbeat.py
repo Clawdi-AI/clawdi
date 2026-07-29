@@ -540,7 +540,12 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         recovery={"cacheManifest": True, "allowOfflineBoot": True},
         runtimes=_test_runtimes(),
         mcp={"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
-        skills={"entries": {"clawdi": {"enabled": True, "version": 1}}},
+        skills={
+            "entries": {
+                "clawdi": {"enabled": True, "version": 1},
+                "removed": {"enabled": False, "version": 2},
+            }
+        },
         tools={**CANONICAL_CODEX_TOOLS, "catalog": "clawdi-default"},
     )
     db_session.add(state)
@@ -576,15 +581,12 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         "enabled_runtimes": ["openclaw"],
         "has_mcp": True,
         "has_tools": True,
-        "managed_resources": [],
+        "managed_skills": [{"id": "clawdi", "version": 1}],
         "updated_at": payload["desired"]["updated_at"],
     }
     canonical = await client.get(f"/v1/agents/{env_id}/runtime-observed")
     assert canonical.status_code == 200, canonical.text
-    assert canonical.json()["desired"]["managed_resources"] == [
-        {"kind": "skill", "id": "clawdi", "enabled": True, "version": 1},
-        {"kind": "mcp_server", "id": "clawdi"},
-    ]
+    assert canonical.json() == payload
     serialized = canonical.text.lower()
     assert "secretref" not in serialized
     assert '"headers"' not in serialized

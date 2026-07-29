@@ -5676,27 +5676,10 @@ export interface components {
             /** Finalsessionhighwatermarks */
             finalSessionHighWaterMarks: components["schemas"]["RuntimeSessionHighWaterMark"][];
         };
-        /** RuntimeManagedMcpServerSummary */
-        RuntimeManagedMcpServerSummary: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "mcp_server";
-            /** Id */
-            id: string;
-        };
         /** RuntimeManagedSkillSummary */
         RuntimeManagedSkillSummary: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "skill";
             /** Id */
             id: string;
-            /** Enabled */
-            enabled: boolean;
             /** Version */
             version: number;
         };
@@ -5983,8 +5966,8 @@ export interface components {
              * @default false
              */
             has_tools: boolean;
-            /** Managed Resources */
-            managed_resources?: (components["schemas"]["RuntimeManagedSkillSummary"] | components["schemas"]["RuntimeManagedMcpServerSummary"])[];
+            /** Managed Skills */
+            managed_skills?: components["schemas"]["RuntimeManagedSkillSummary"][];
             /** Updated At */
             updated_at?: string | null;
         };
