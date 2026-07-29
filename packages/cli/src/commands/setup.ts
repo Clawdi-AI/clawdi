@@ -192,6 +192,7 @@ function installDaemonForAllRegisteredAgents() {
 	} catch (e) {
 		console.log(chalk.yellow(`⚠ Could not install daemon: ${errMessage(e)}`));
 		console.log(chalk.gray("  Run manually: clawdi daemon install"));
+		process.exitCode = 1;
 	}
 }
 

@@ -28,13 +28,16 @@ import {
 	existsSync,
 	mkdirSync,
 	readFileSync,
-	realpathSync,
 	statSync,
 	unlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { homedir, platform } from "node:os";
-import { isAbsolute, join } from "node:path";
+import { join } from "node:path";
+import {
+	type CurrentCliInvocation,
+	resolveCurrentCliInvocation,
+} from "../lib/current-cli-invocation";
 
 interface InstallOpts {
 	/** Internal migration hook for removing pre-singleton per-agent units. */
@@ -164,40 +167,16 @@ function upsertCapturedEnv(
 	out.push({ key, value });
 }
 
-/** Path to the currently-running clawdi entry point. Both paths
- * are resolved via `realpathSync.native` so a malicious shim or
- * unstable symlink earlier in $PATH doesn't end up baked into
- * the launchd plist / systemd unit — the supervisor would happily
- * exec that shim on every boot for as long as the unit lives.
- *
- * We bake the absolute realpath into the unit because referencing
- * `clawdi` from $PATH would silently change what's actually
- * running on `npm i -g <other-version>`. */
-function currentClawdiCommand(): string[] {
-	// `process.argv[0]` is the node binary; `process.argv[1]`
-	// is the bundled CLI entry. If the user invoked us via a
-	// shell wrapper (`clawdi`), argv[1] resolves to the linked
-	// JS file inside the npm install — exactly what we want.
-	const rawNode = process.execPath;
-	const rawEntry = process.argv[1] ?? "";
-	if (!rawEntry) {
-		throw new Error("could not resolve clawdi entry point from process.argv[1]");
-	}
-	let node: string;
-	let entry: string;
+/** Resolve this exact CLI installation for a supervisor-owned daemon. */
+function currentDaemonInvocation(opts: InstallOpts): CurrentCliInvocation {
+	let invocation: CurrentCliInvocation;
 	try {
-		node = realpathSync.native(rawNode);
-		entry = realpathSync.native(rawEntry);
-	} catch (e) {
+		invocation = resolveCurrentCliInvocation(daemonProgramArgs(opts));
+	} catch (error) {
 		throw new Error(
-			`could not resolve absolute path for daemon binary: ${(e as Error).message}. ` +
-				"Reinstall the CLI (npm i -g clawdi) and try again.",
-		);
-	}
-	if (!isAbsolute(node) || !isAbsolute(entry)) {
-		throw new Error(
-			`refusing to install a daemon unit with a relative path ` +
-				`(node=${node}, entry=${entry}). Reinstall the CLI from a clean shell.`,
+			`could not resolve the current CLI for daemon installation: ${
+				error instanceof Error ? error.message : String(error)
+			}. Reinstall the CLI and try again.`,
 		);
 	}
 	// Reject TypeScript source paths. A common dev-mode footgun:
@@ -208,15 +187,15 @@ function currentClawdiCommand(): string[] {
 	// TypeScript — daemon crashes silently in a respawn loop and
 	// the user has no idea what's wrong because `launchctl load`
 	// itself succeeded. Fail loudly at install time instead.
-	if (/\.tsx?$/.test(entry)) {
+	if (invocation.entryPath && /\.tsx?$/.test(invocation.entryPath)) {
 		throw new Error(
 			"refusing to install a daemon unit with a TypeScript source path " +
-				`(entry=${entry}). The OS supervisor can't run .ts files. ` +
+				`(entry=${invocation.entryPath}). The OS supervisor can't run .ts files. ` +
 				"Build a JS bundle first (npm i -g clawdi or bun run build) " +
 				"and re-run install from the installed binary.",
 		);
 	}
-	return [node, entry];
+	return invocation;
 }
 
 export function install(opts: InstallOpts = {}): {
@@ -324,7 +303,7 @@ function installLaunchd(opts: InstallOpts): {
 	replaced: boolean;
 } {
 	const label = opts.agent ? legacyUnitName(opts.agent) : unitName();
-	const [node, entry] = currentClawdiCommand();
+	const invocation = currentDaemonInvocation(opts);
 	const logDir = join(clawdiRoot(), "serve", "logs");
 	if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
 
@@ -334,8 +313,7 @@ function installLaunchd(opts: InstallOpts): {
 	// stderr (where we emit JSON logs) lands in a rotating
 	// file the user can `tail`.
 	//
-	const args = daemonProgramArgs(opts);
-	const programArgs = [node, entry, ...args]
+	const programArgs = [invocation.command, ...invocation.args]
 		.map((arg) => `    <string>${escapeXml(arg)}</string>`)
 		.join("\n");
 	const plist = `<?xml version="1.0" encoding="UTF-8"?>
@@ -399,10 +377,14 @@ ${programArgs}
 	// reload to pick up edits.
 	tryRun(["launchctl", "unload", path]);
 	const loaded = tryRun(["launchctl", "load", "-w", path]);
+	if (!loaded) {
+		throw new Error(
+			`Wrote daemon unit to ${path}, but launchctl activation failed. ` +
+				`The unit was preserved. Try: launchctl load -w "${path}"`,
+		);
+	}
 
-	const instructions = loaded
-		? `Loaded ${label}. Tail logs with: tail -f ${join(logDir, `${opts.agent ?? "daemon"}.stderr.log`)}`
-		: `Wrote plist to ${path}, but launchctl load failed (try: launchctl load -w "${path}").`;
+	const instructions = `Loaded ${label}. Tail logs with: tail -f ${join(logDir, `${opts.agent ?? "daemon"}.stderr.log`)}`;
 	return { unit: path, instructions, replaced };
 }
 
@@ -485,10 +467,9 @@ function installSystemd(opts: InstallOpts): {
 	instructions: string;
 	replaced: boolean;
 } {
-	const [node, entry] = currentClawdiCommand();
+	const invocation = currentDaemonInvocation(opts);
 	const path = unitPath(opts.agent);
 	const replaced = existsSync(path);
-	const args = daemonProgramArgs(opts);
 
 	// systemd `Environment="KEY=VALUE"` parses backslash + double-
 	// quote inside the value. A $HOME containing `"` could close
@@ -545,7 +526,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=${[node, entry, ...args].map(shellEscape).join(" ")}
+ExecStart=${[invocation.command, ...invocation.args].map(shellEscape).join(" ")}
 Restart=always
 RestartSec=10
 RestartPreventExitStatus=2
@@ -568,12 +549,18 @@ WantedBy=default.target
 	} catch {
 		/* best effort */
 	}
-	tryRun(["systemctl", "--user", "daemon-reload"]);
-	const enabled = tryRun(["systemctl", "--user", "enable", "--now", unitFileName(opts.agent)]);
+	const activated =
+		tryRun(["systemctl", "--user", "daemon-reload"]) &&
+		tryRun(["systemctl", "--user", "enable", "--now", unitFileName(opts.agent)]);
+	if (!activated) {
+		throw new Error(
+			`Wrote daemon unit to ${path}, but systemctl activation failed. ` +
+				"The unit was preserved. Try: " +
+				`systemctl --user daemon-reload && systemctl --user enable --now ${unitFileName(opts.agent)}`,
+		);
+	}
 
-	const instructions = enabled
-		? `Enabled and started ${unitFileName(opts.agent)}. Tail logs with: journalctl --user -u ${unitFileName(opts.agent)} -f`
-		: `Wrote ${path} but systemctl enable failed. Try: systemctl --user enable --now ${unitFileName(opts.agent)}`;
+	const instructions = `Enabled and started ${unitFileName(opts.agent)}. Tail logs with: journalctl --user -u ${unitFileName(opts.agent)} -f`;
 	return { unit: path, instructions, replaced };
 }
 
@@ -614,7 +601,7 @@ function statusSystemd(opts: InstallOpts): string[] {
 
 function tryRun(argv: string[]): boolean {
 	try {
-		execFileSync(argv[0], argv.slice(1), { stdio: "ignore" });
+		execFileSync(argv[0], argv.slice(1), { env: process.env, stdio: "ignore" });
 		return true;
 	} catch {
 		return false;
@@ -629,6 +616,7 @@ function tryRunCapture(argv: string[]): string | null {
 		// `daemon restart`'s liveness probe.
 		return execFileSync(argv[0], argv.slice(1), {
 			encoding: "utf-8",
+			env: process.env,
 			stdio: ["ignore", "pipe", "ignore"],
 		});
 	} catch {

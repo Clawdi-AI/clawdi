@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import {
+	type ClientRequest,
 	createServer,
 	type IncomingMessage,
 	request,
@@ -12,6 +13,7 @@ import { dirname, join } from "node:path";
 import { getDaemonControlDir, getDaemonControlTokenPath } from "./paths";
 
 const MAX_RPC_BODY_BYTES = 1024 * 1024;
+export const DEFAULT_CONTROL_RPC_TIMEOUT_MS = 10_000;
 export const DEFAULT_CONTROL_RPC_HOST = "127.0.0.1";
 export const DEFAULT_CONTROL_RPC_PORT = 17654;
 
@@ -30,6 +32,8 @@ export interface ControlRpcClientConfig {
 	host?: string;
 	port?: number;
 	token?: string;
+	timeoutMs?: number;
+	signal?: AbortSignal;
 }
 
 interface JsonRpcRequest {
@@ -80,11 +84,10 @@ export async function startControlRpcServer(
 		host,
 		port: typeof address === "object" && address ? address.port : port,
 	};
-	let closed = false;
+	let closePromise: Promise<void> | null = null;
 	const close = () => {
-		if (closed) return Promise.resolve();
-		closed = true;
-		return closeServer(httpServer);
+		closePromise ??= closeServer(httpServer);
+		return closePromise;
 	};
 	abort.addEventListener(
 		"abort",
@@ -113,8 +116,39 @@ export async function callControlRpc(
 		method,
 		params: params ?? {},
 	});
+	const timeoutMs = config.timeoutMs ?? DEFAULT_CONTROL_RPC_TIMEOUT_MS;
+	if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+		throw new Error("Control RPC timeout must be a positive number.");
+	}
 	const response = await new Promise<string>((resolve, reject) => {
-		const req = createServerlessRequest(body, token, config, resolve, reject);
+		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const finish = (result: { value: string } | { error: unknown }) => {
+			if (settled) return;
+			settled = true;
+			if (timer) clearTimeout(timer);
+			config.signal?.removeEventListener("abort", onAbort);
+			if ("error" in result) reject(result.error);
+			else resolve(result.value);
+		};
+		const resolveResponse = (value: string) => finish({ value });
+		const rejectResponse = (error: unknown) => finish({ error });
+		const req = createServerlessRequest(body, token, config, resolveResponse, rejectResponse);
+		const onAbort = () => {
+			const error = controlRpcAbortError(config.signal);
+			rejectResponse(error);
+			req.destroy(error);
+		};
+		if (config.signal?.aborted) {
+			onAbort();
+			return;
+		}
+		config.signal?.addEventListener("abort", onAbort, { once: true });
+		timer = setTimeout(() => {
+			const error = new Error(`Control RPC timed out after ${timeoutMs}ms.`);
+			rejectResponse(error);
+			req.destroy(error);
+		}, timeoutMs);
 		req.write(body);
 		req.end();
 	});
@@ -134,7 +168,7 @@ function createServerlessRequest(
 	config: ControlRpcClientConfig,
 	resolve: (value: string) => void,
 	reject: (reason?: unknown) => void,
-) {
+): ClientRequest {
 	const req = request(
 		{
 			hostname: config.host ?? DEFAULT_CONTROL_RPC_HOST,
@@ -160,10 +194,19 @@ function createServerlessRequest(
 				}
 				resolve(chunks);
 			});
+			res.on("aborted", () => reject(new Error("Control RPC response was aborted.")));
+			res.on("error", reject);
 		},
 	);
 	req.on("error", reject);
 	return req;
+}
+
+function controlRpcAbortError(signal: AbortSignal | undefined): Error {
+	if (signal?.reason instanceof Error) return signal.reason;
+	const error = new Error("Control RPC call aborted.");
+	error.name = "AbortError";
+	return error;
 }
 
 function resolveControlTokenPaths(config: ControlRpcListenConfig): ControlRpcTokenPaths {

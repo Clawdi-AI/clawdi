@@ -28,6 +28,7 @@ import { rejectUnsupportedOpts, runDaemonWorkers } from "./serve";
  */
 
 const captured = {
+	stdout: [] as string[],
 	stderr: [] as string[],
 	exitCode: null as number | null,
 };
@@ -76,19 +77,25 @@ function rpcPendingAuth(): PendingAuth {
 let restoreExit: (() => void) | null = null;
 
 beforeEach(() => {
+	captured.stdout = [];
 	captured.stderr = [];
 	captured.exitCode = null;
 	const origExit = process.exit;
+	const origLog = console.log;
 	const origErr = console.error;
 	process.exit = ((code?: number) => {
 		captured.exitCode = code ?? 0;
 		throw new ExitCalled(code ?? 0);
 	}) as typeof process.exit;
+	console.log = (...args: unknown[]) => {
+		captured.stdout.push(args.map(String).join(" "));
+	};
 	console.error = (...args: unknown[]) => {
 		captured.stderr.push(args.map(String).join(" "));
 	};
 	restoreExit = () => {
 		process.exit = origExit;
+		console.log = origLog;
 		console.error = origErr;
 	};
 });
@@ -228,6 +235,56 @@ describe("subcommand handler rejects parent-leaked options", () => {
 			ExitCalled,
 		);
 		expect(captured.stderr.join("\n")).toMatch(/daemon doctor.*--agent/);
+	});
+});
+
+describe("daemon install activation failure", () => {
+	it("preserves the unit, prints no success, and exits non-zero", async () => {
+		if (process.platform !== "linux") return;
+		const originalHome = process.env.HOME;
+		const originalClawdiHome = process.env.CLAWDI_HOME;
+		const originalPath = process.env.PATH;
+		const originalToken = process.env.CLAWDI_AUTH_TOKEN;
+		const originalArgv1 = process.argv[1];
+		const tmpHome = mkdtempSync(join(tmpdir(), "clawdi-daemon-install-failure-"));
+		const stubBin = join(tmpHome, "bin");
+		const fakeEntry = join(tmpHome, "clawdi-bin");
+		const unit = join(tmpHome, ".config", "systemd", "user", "clawdi-serve.service");
+		try {
+			process.env.HOME = tmpHome;
+			delete process.env.CLAWDI_HOME;
+			process.env.CLAWDI_AUTH_TOKEN = "clawdi_test_token";
+			mkdirSync(join(tmpHome, ".clawdi", "environments"), { recursive: true });
+			writeFileSync(
+				join(tmpHome, ".clawdi", "environments", "codex.json"),
+				`${JSON.stringify({ id: "env-codex", agentType: "codex" })}\n`,
+			);
+			mkdirSync(stubBin, { recursive: true });
+			writeExecutable(join(stubBin, "systemctl"), "#!/bin/sh\nexit 1\n");
+			process.env.PATH = `${stubBin}:${originalPath ?? ""}`;
+			writeExecutable(fakeEntry, "#!/bin/sh\nexit 0\n");
+			process.argv[1] = fakeEntry;
+
+			const { serveInstall } = await import("./serve");
+			await expect(serveInstall({})).rejects.toThrow(ExitCalled);
+
+			expect(captured.exitCode).toBe(1);
+			expect(existsSync(unit)).toBe(true);
+			expect(captured.stderr.join("\n")).toContain("systemctl activation failed");
+			expect(captured.stderr.join("\n")).toContain("systemctl --user daemon-reload");
+			expect(captured.stdout.join("\n")).not.toContain("singleton daemon unit");
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			if (originalClawdiHome === undefined) delete process.env.CLAWDI_HOME;
+			else process.env.CLAWDI_HOME = originalClawdiHome;
+			if (originalPath === undefined) delete process.env.PATH;
+			else process.env.PATH = originalPath;
+			if (originalToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = originalToken;
+			process.argv[1] = originalArgv1 ?? "";
+			rmSync(tmpHome, { recursive: true, force: true });
+		}
 	});
 });
 
