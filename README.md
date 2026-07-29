@@ -47,7 +47,7 @@ On Windows, or when you prefer a package-manager-owned installation, use npm
 with Node.js ≥ 22.5:
 
 ```bash
-npm i -g clawdi@0.13.11
+npm i -g clawdi
 ```
 
 That gets you:
@@ -227,7 +227,7 @@ Clawdi has two intended paths.
 Best for trying it in minutes.
 
 ```bash
-npm i -g clawdi
+curl -fsSL https://raw.githubusercontent.com/Clawdi-AI/clawdi/main/install.sh | sh
 clawdi auth login
 clawdi setup
 ```

@@ -21,10 +21,12 @@ host target with:
 
 ```bash
 bun run --cwd packages/cli build:native
-bun run --cwd packages/cli test:native-lifecycle
+bun run --cwd packages/cli test:native-linux-lifecycle
 ```
 
-The macOS Bun executables are linker ad-hoc signed. This repository does not
+The lifecycle command exercises the Linux x64 release layout. `build:native`
+itself builds the current host target. The macOS Bun executables are linker
+ad-hoc signed. This repository does not
 claim Developer ID signing, notarization, or browser-download Gatekeeper
 compatibility.
 

@@ -16,9 +16,9 @@ Package: `clawdi@0.13.11`
 
 ### Added
 
-- Added the recommended native curl installer for supported Linux x64 and
-  arm64 systems, including glibc and musl builds with bundled skills and egress
-  resources.
+- Added the recommended native curl installer for macOS x64/arm64 and Linux
+  x64/arm64 systems, including glibc and musl builds with bundled skills and
+  egress resources.
 
 ### Changed
 

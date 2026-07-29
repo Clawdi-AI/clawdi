@@ -24,7 +24,7 @@ clawdi doctor
 Windows and package-manager installations require Node.js ≥ 22.5:
 
 ```bash
-npm i -g clawdi@0.13.11
+npm i -g clawdi
 ```
 
 Updates follow the current owner: native installs use checksum-verified exact
