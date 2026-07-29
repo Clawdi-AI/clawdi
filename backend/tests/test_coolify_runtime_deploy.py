@@ -139,6 +139,12 @@ def test_production_stack_assigns_runtime_roles():
         assert app_env == {"CLAWDI_PROCESS_ROLE": role}, app_name
 
 
+def test_coolify_env_manifest_declares_optional_clerk_secret():
+    module = _load_audit_module()
+
+    assert "CLERK_SECRET_KEY" in module.parse_env_manifest(COOLIFY_DIR / ".env.example")
+
+
 def test_audit_env_accepts_shared_manifest_and_application_env(monkeypatch):
     module = _load_audit_module()
 
