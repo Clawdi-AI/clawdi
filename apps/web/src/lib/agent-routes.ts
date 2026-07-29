@@ -4,7 +4,6 @@ export type AgentSectionId =
 	| "overview"
 	| "sessions"
 	| "skills"
-	| "mcp"
 	| "projects"
 	| "console"
 	| "terminal"
@@ -43,7 +42,6 @@ export const HOSTED_AGENT_SECTION_IDS = [
 	"terminal",
 	"sessions",
 	"skills",
-	"mcp",
 	"ai",
 	"channels",
 	"settings",
@@ -53,7 +51,6 @@ const AGENT_SECTION_SEGMENTS = {
 	overview: "",
 	sessions: "sessions",
 	skills: "skills",
-	mcp: "mcp",
 	projects: "project-access",
 	console: "console",
 	terminal: "terminal",
@@ -66,7 +63,6 @@ const AGENT_SECTION_LABELS = {
 	overview: "Overview",
 	sessions: "Sessions",
 	skills: "Skills",
-	mcp: "MCP",
 	projects: "Project Access",
 	console: "Agent Interface",
 	terminal: "Terminal",
@@ -212,7 +208,6 @@ const LEGACY_AGENT_TAB_SECTIONS: Readonly<Record<string, AgentSectionId>> = {
 	overview: "overview",
 	sessions: "sessions",
 	skills: "skills",
-	mcp: "mcp",
 	projects: "projects",
 	"project-access": "projects",
 	console: "console",

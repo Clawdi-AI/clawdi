@@ -40,7 +40,6 @@ import {
 	MessagesSquare,
 	MonitorPlay,
 	Search,
-	Server,
 	Settings,
 	Sparkles,
 	TerminalSquare,
@@ -213,11 +212,6 @@ const HOSTED_AGENT_SECTIONS: {
 		tooltip: "Skills synced from this Agent filesystem",
 	},
 	{
-		id: "mcp",
-		icon: Server,
-		tooltip: "User-declared MCP resources",
-	},
-	{
 		id: "ai",
 		icon: Zap,
 		tooltip: "AI provider and model",
@@ -235,14 +229,13 @@ const HOSTED_AGENT_SECTIONS: {
 ];
 
 const HOSTED_AGENT_FALLBACK_SECTIONS = HOSTED_AGENT_SECTIONS.filter(
-	(section) => section.id === "overview" || section.id === "skills" || section.id === "mcp",
+	(section) => section.id === "overview" || section.id === "skills",
 );
 
 const AGENT_SECTION_TINTS = {
 	overview: RESOURCE_TINT_CLASSES.overview,
 	sessions: RESOURCE_TINT_CLASSES.sessions,
 	skills: RESOURCE_TINT_CLASSES.skills,
-	mcp: "bg-identity-3-bg text-identity-3-fg",
 	projects: RESOURCE_TINT_CLASSES.projects,
 	console: "bg-identity-6-bg text-identity-6-fg",
 	terminal: "bg-identity-7-bg text-identity-7-fg",

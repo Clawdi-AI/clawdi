@@ -26,7 +26,6 @@ describe("agent routes", () => {
 		expect(agentSectionHref("agent 1")).toBe("/agents/agent%201");
 		expect(agentSectionHref("agent 1", "sessions")).toBe("/agents/agent%201/sessions");
 		expect(agentSectionHref("agent 1", "projects")).toBe("/agents/agent%201/project-access");
-		expect(agentSectionHref("agent 1", "mcp")).toBe("/agents/agent%201/mcp");
 		expect(agentSectionHref("agent 1", "ai")).toBe("/agents/agent%201/model-provider");
 		expect(agentSectionHref("agent 1", "channels")).toBe("/agents/agent%201/channel-links");
 		expect(agentSectionHref("agent 1", "settings")).toBe("/agents/agent%201/settings");
@@ -164,7 +163,7 @@ describe("agent routes", () => {
 		expect(CONNECTED_AGENT_SECTION_IDS).toContain("skills");
 		expect(HOSTED_AGENT_SECTION_IDS).toContain("skills");
 		expect(CONNECTED_AGENT_SECTION_IDS).not.toContain("mcp");
-		expect(HOSTED_AGENT_SECTION_IDS).toContain("mcp");
+		expect(HOSTED_AGENT_SECTION_IDS).not.toContain("mcp");
 	});
 
 	it("detects and removes tab params without changing the canonical section", () => {
@@ -200,12 +199,6 @@ describe("agent routes", () => {
 		expect(parseAgentPathname("/agents/agent%201/project-access")).toEqual({
 			agentId: "agent 1",
 			section: "projects",
-			sessionId: undefined,
-			skillKey: undefined,
-		});
-		expect(parseAgentPathname("/agents/agent%201/mcp")).toEqual({
-			agentId: "agent 1",
-			section: "mcp",
 			sessionId: undefined,
 			skillKey: undefined,
 		});

@@ -13,16 +13,18 @@ import {
 	RUNTIME_OBSERVED_SETTLED_REFETCH_INTERVAL_MS,
 } from "@/hooks/agent-runtime-observed-query";
 
-describe("deployment-managed MCP inventory", () => {
-	test("removes the coarse Overview boolean in favor of the independent MCP page", () => {
+describe("runtime observed polling", () => {
+	test("does not expose platform MCP state on the Hosted Overview", () => {
 		const overview = readFileSync(
 			new URL("../hosted/agents/hosted-agent-detail.tsx", import.meta.url),
 			"utf8",
 		);
+		const sidebar = readFileSync(new URL("../components/app-sidebar.tsx", import.meta.url), "utf8");
 		expect(overview).not.toContain('label="Deployment MCP"');
-		expect(overview).toContain("HostedAgentMcpTab");
-		expect(overview).toContain('activeTab === "mcp"');
+		expect(overview).not.toContain("HostedAgentMcpTab");
+		expect(overview).not.toContain('activeTab === "mcp"');
 		expect(overview).not.toMatch(/mcp_server|managed_resources/);
+		expect(sidebar).not.toContain('id: "mcp"');
 	});
 
 	test("refreshes stale runtime health and desired Skills under the same deployment fence", async () => {

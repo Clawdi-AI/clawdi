@@ -1822,7 +1822,7 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(touchOrderRequests).toEqual([]);
 });
 
-test("hosted Skills and MCP hide private platform resources", async ({ page }) => {
+test("hosted Skills hide private platform resources", async ({ page }) => {
 	await stubHostedApi(page, {
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
@@ -1875,15 +1875,6 @@ test("hosted Skills and MCP hide private platform resources", async ({ page }) =
 			provider_health: [],
 		}),
 	);
-	await page.route(`${CLOUD_API}/v1/agents/${railHostedEnvironmentId}/mcp`, (route) =>
-		fulfillJson(route, {
-			agent_id: railHostedEnvironmentId,
-			deployment_id: railHostedDeployment.id,
-			availability: "available",
-			servers: [],
-		}),
-	);
-
 	const detailQuery = `?source=on-clawdi&d=${railHostedDeployment.id}`;
 	await page.goto(`/agents/${railHostedEnvironmentId}/skills${detailQuery}`);
 	const main = page.locator("main");
@@ -1892,11 +1883,7 @@ test("hosted Skills and MCP hide private platform resources", async ({ page }) =
 	await expect(main.getByText("Filesystem docs", { exact: true })).toBeVisible();
 	await expect(main.getByText("Agent synced · Read-only", { exact: true })).toBeVisible();
 	await expect(main.getByRole("button", { name: /Send Filesystem docs/ })).toHaveCount(0);
-
-	await page.getByRole("link", { name: "MCP", exact: true }).click();
-	await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/mcp${detailQuery}`);
-	await expect(main.getByText("clawdi", { exact: true })).toHaveCount(0);
-	await expect(main.getByText("Filesystem docs", { exact: true })).toHaveCount(0);
+	await expect(page.getByRole("link", { name: "MCP", exact: true })).toHaveCount(0);
 });
 
 test("transient inventory withholds connected tiles until membership resolves", async ({

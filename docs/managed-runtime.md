@@ -547,12 +547,12 @@ projection. No reservation or managed target is projected into user Skill
 inventory.
 
 MCP remains independent of Skills and has no user declaration or mutation
-contract in this release. The Agent page therefore cannot truthfully expose
-runtime MCP servers as user inventory. A valid empty or platform-only runtime
-state projects as an available empty inventory; a missing projection is
-unavailable, and unknown server entries without explicit user provenance fail
-closed. The preinstalled `clawdi` aggregate is private infrastructure, and
-Composio is a dynamic tool source behind `POST /v1/mcp/clawdi`; neither appears
+contract in this release. The dashboard therefore exposes no MCP page. The safe
+inventory API treats a valid empty or platform-only runtime state as an
+available empty inventory; a missing projection is unavailable, and unknown
+server entries without explicit user provenance fail closed. The preinstalled
+`clawdi` aggregate is private infrastructure, and Composio is a dynamic tool
+source behind `POST /v1/mcp/clawdi`; neither appears
 as a separate MCP row. No URL, header, secret reference, command, argument, or
 environment value is projected to the browser.
 

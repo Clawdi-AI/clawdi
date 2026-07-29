@@ -22,7 +22,6 @@ import {
 	Plus,
 	QrCode,
 	RefreshCw,
-	Server,
 	Settings,
 	Sparkles,
 	TerminalSquare,
@@ -85,7 +84,6 @@ import {
 	useResetRuntimeUiAccess,
 	useUpdateDeployment,
 } from "@/hosted/agents/deployment-hooks";
-import { HostedAgentMcpTab } from "@/hosted/agents/hosted-agent-mcp-tab";
 import {
 	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
 	shouldBlockHostedSessionsError,
@@ -265,7 +263,6 @@ type HostedAgentTab =
 	| "terminal"
 	| "sessions"
 	| "skills"
-	| "mcp"
 	| "ai"
 	| "channels"
 	| "settings";
@@ -275,7 +272,6 @@ const HOSTED_AGENT_TABS = new Set<HostedAgentTab>([
 	"terminal",
 	"sessions",
 	"skills",
-	"mcp",
 	"ai",
 	"channels",
 	"settings",
@@ -300,10 +296,6 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 	skills: {
 		description: "Read-only projections from this Agent's filesystem.",
 		icon: Sparkles,
-	},
-	mcp: {
-		description: "User-declared MCP resources for this deployment.",
-		icon: Server,
 	},
 	ai: {
 		description: "AI provider and model used by this agent.",
@@ -648,16 +640,6 @@ export function HostedAgentDetail({
 						) : (
 							<ProjectionDependentUnavailable label="Skills" />
 						)
-					) : null}
-					{activeTab === "mcp" ? (
-						<HostedAgentMcpTab
-							environmentId={environmentId}
-							deploymentId={deployment.resource.id}
-							runtimeEvidenceFence={deployment.resource.metadata.resourceVersion}
-							convergenceEvidenceAvailable={
-								deploymentProjectionQueryable && projection.status === "resolved"
-							}
-						/>
 					) : null}
 					{deploymentStatus.known && activeTab === "ai" ? (
 						<AiProviderTab deployment={deployment} runtime={runtime} />

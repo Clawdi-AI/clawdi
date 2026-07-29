@@ -235,9 +235,9 @@ For agents that only support stdio MCP, `clawdi mcp` registers local tool
 schemas and forwards calls to the backend. The backend keeps connector OAuth
 tokens and bridge credentials out of the agent process.
 
-Hosted Agent pages keep MCP separate from Skills. Their inventory may contain
-only explicit user declarations whose provenance is supported by a user
-management contract. This release has no such contract, so a valid private
+The safe MCP inventory API may contain only explicit user declarations whose
+provenance is supported by a user management contract. This release has no such
+contract, so the dashboard does not expose an MCP page. A valid private
 platform-only state is projected as empty and unknown server declarations fail
 closed. The preinstalled `clawdi` aggregate and its dynamic Composio tools stay
 behind `POST /v1/mcp/clawdi`; neither is a user-manageable MCP inventory row.
