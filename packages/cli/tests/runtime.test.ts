@@ -14,7 +14,7 @@ import {
 	utimesSync,
 	writeFileSync,
 } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
@@ -7675,7 +7675,7 @@ exit 64
 		process.env.CLAWDI_SYSTEMD_APPLY = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
-		process.env.CLAWDI_RUNTIME_USER = userInfo().username;
+		process.env.CLAWDI_RUNTIME_USER = String(process.getuid?.() ?? 0);
 		const paths = getRuntimePaths();
 		writeFakeSystemdManager({
 			path: join(bin, "systemctl"),
