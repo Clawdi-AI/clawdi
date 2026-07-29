@@ -1,7 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, spyOn } from "bun:test";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as p from "@clack/prompts";
 
 import { authLogin, browserOpenCommand, finishOAuthLogin } from "../../src/commands/auth";
 import {
@@ -218,6 +219,178 @@ describe("authLogin pending share upgrade", () => {
 		const [token] = listTokens();
 		expect(token.upgraded_at).toBeString();
 		expect(token.last_seen_skill_keys).toEqual(["deploy-helper"]);
+	});
+
+	it("upgrades a released version:1 scope record and persists its normalized fields", async () => {
+		const legacyToken = "b".repeat(43);
+		const tokenPath = join(tmpHome, ".clawdi", "share-tokens.json");
+		writeFileSync(
+			tokenPath,
+			JSON.stringify({
+				version: 1,
+				tokens: [
+					{
+						scope_id: "legacy-project",
+						scope_name: "Legacy Toolkit",
+						owner_display: "Alice",
+						owner_handle: "alice-legacy",
+						token: legacyToken,
+						redeemed_at: "2026-05-12T10:00:00Z",
+						future_field: "preserved",
+					},
+				],
+			}),
+		);
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: `/v1/share/${legacyToken}/upgrade`,
+				response: () =>
+					jsonResponse({
+						project_id: "legacy-project",
+						resolved_owner_handle: "alice-legacy",
+					}),
+			},
+			{
+				method: "GET",
+				path: "/v1/skills",
+				response: () => jsonResponse({ items: [] }),
+			},
+		]);
+
+		try {
+			await authLogin();
+		} finally {
+			restore();
+		}
+
+		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
+			`POST /v1/share/${legacyToken}/upgrade`,
+			"GET /v1/skills?project_id=legacy-project&page=1&page_size=200",
+		]);
+		const [normalized] = listTokens();
+		expect(normalized.project_id).toBe("legacy-project");
+		expect(normalized.project_name).toBe("Legacy Toolkit");
+		expect(normalized.upgraded_at).toBeString();
+		const persisted = JSON.parse(readFileSync(tokenPath, "utf-8")) as {
+			tokens: Array<Record<string, unknown>>;
+		};
+		expect(persisted.tokens[0].future_field).toBe("preserved");
+		expect(persisted.tokens[0].project_name).toBe("Legacy Toolkit");
+	});
+
+	it("keeps a valid legacy token after 404 and names the failure without undefined", async () => {
+		writeFileSync(
+			join(tmpHome, ".clawdi", "share-tokens.json"),
+			JSON.stringify({
+				version: 1,
+				tokens: [
+					{
+						scope_id: "project-stale",
+						scope_name: "Stale Toolkit",
+						owner_display: "Alice",
+						owner_handle: "alice-example",
+						token: rawToken,
+						redeemed_at: "2026-05-12T10:00:00Z",
+					},
+				],
+			}),
+		);
+		const warn = spyOn(p.log, "warn").mockImplementation(() => {});
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: `/v1/share/${rawToken}/upgrade`,
+				response: () => jsonResponse({ detail: "share link not found" }, 404),
+			},
+		]);
+		let messages: string[] = [];
+
+		try {
+			await authLogin();
+			messages = warn.mock.calls.map(([message]) => String(message));
+		} finally {
+			restore();
+			warn.mockRestore();
+		}
+
+		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
+			`POST /v1/share/${rawToken}/upgrade`,
+		]);
+		const [retained] = listTokens();
+		expect(retained.project_id).toBe("project-stale");
+		expect(retained.upgraded_at).toBeUndefined();
+		expect(messages).toContain(
+			'Could not upgrade "Stale Toolkit": share link not found on this API (local token kept)',
+		);
+		expect(messages.join("\n")).not.toContain("undefined");
+	});
+
+	it("leaves a pending token untouched when a successful response is malformed", async () => {
+		addToken({
+			project_id: "project-shared",
+			project_name: "Team Toolkit",
+			owner_display: "Alice",
+			owner_handle: "alice-example",
+			token: rawToken,
+			redeemed_at: "2026-05-12T10:00:00Z",
+		});
+		const warn = spyOn(p.log, "warn").mockImplementation(() => {});
+		const { captured, restore } = mockFetch([
+			{
+				method: "POST",
+				path: `/v1/share/${rawToken}/upgrade`,
+				response: () => jsonResponse({ project_id: "project-shared" }),
+			},
+		]);
+		let messages: string[] = [];
+
+		try {
+			await authLogin();
+			messages = warn.mock.calls.map(([message]) => String(message));
+		} finally {
+			restore();
+			warn.mockRestore();
+		}
+
+		expect(captured).toHaveLength(1);
+		expect(listTokens()[0].upgraded_at).toBeUndefined();
+		expect(messages).toContain(
+			'Could not upgrade "Team Toolkit": share upgrade returned an invalid response',
+		);
+		expect(messages.join("\n")).not.toContain("undefined");
+	});
+
+	it("uses a defined diagnostic for a conflict response without an error code", async () => {
+		addToken({
+			project_id: "project-shared",
+			project_name: "Team Toolkit",
+			owner_display: "Alice",
+			owner_handle: "alice-example",
+			token: rawToken,
+			redeemed_at: "2026-05-12T10:00:00Z",
+		});
+		const warn = spyOn(p.log, "warn").mockImplementation(() => {});
+		const { restore } = mockFetch([
+			{
+				method: "POST",
+				path: `/v1/share/${rawToken}/upgrade`,
+				response: () => jsonResponse({}, 409),
+			},
+		]);
+		let messages: string[] = [];
+
+		try {
+			await authLogin();
+			messages = warn.mock.calls.map(([message]) => String(message));
+		} finally {
+			restore();
+			warn.mockRestore();
+		}
+
+		expect(listTokens()[0].upgraded_at).toBeUndefined();
+		expect(messages).toContain('Could not upgrade "Team Toolkit": HTTP 409 conflict');
+		expect(messages.join("\n")).not.toContain("undefined");
 	});
 
 	it("skips invalid server skill keys during eager pull", async () => {

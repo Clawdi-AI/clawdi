@@ -3,7 +3,14 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { addToken, findToken, listTokens, removeToken, type ShareToken } from "./tokens";
+import {
+	addToken,
+	findToken,
+	listTokens,
+	readTokenStore,
+	removeToken,
+	type ShareToken,
+} from "./tokens";
 
 const ORIG_HOME = process.env.HOME;
 let tempHome: string;
@@ -83,6 +90,71 @@ describe("share-tokens.json", () => {
 		const [restored] = listTokens();
 		expect(restored.upgraded_at).toBe("2026-05-12T10:00:00Z");
 		expect(restored.last_seen_skill_keys).toEqual(["git-tools", "k8s-helpers"]);
+	});
+
+	it("normalizes released version:1 scope fields without dropping unknown fields", () => {
+		const path = join(tempHome, ".clawdi", "share-tokens.json");
+		writeFileSync(
+			path,
+			JSON.stringify({
+				version: 1,
+				tokens: [
+					{
+						scope_id: "legacy-project",
+						scope_name: "Legacy Toolkit",
+						owner_display: "Alice",
+						owner_handle: "alice-a3b4",
+						token: "l".repeat(43),
+						redeemed_at: "2026-05-12T10:00:00Z",
+						future_field: { enabled: true },
+					},
+				],
+			}),
+			"utf-8",
+		);
+
+		const [restored] = listTokens();
+		expect(restored.project_id).toBe("legacy-project");
+		expect(restored.project_name).toBe("Legacy Toolkit");
+		addToken({ ...restored, upgraded_at: "2026-05-12T11:00:00Z" });
+
+		const raw = JSON.parse(readFileSync(path, "utf-8")) as {
+			tokens: Array<Record<string, unknown>>;
+		};
+		expect(raw.tokens[0].project_id).toBe("legacy-project");
+		expect(raw.tokens[0].project_name).toBe("Legacy Toolkit");
+		expect(raw.tokens[0].future_field).toEqual({ enabled: true });
+	});
+
+	it("skips malformed records at runtime but preserves them during unrelated writes", () => {
+		const path = join(tempHome, ".clawdi", "share-tokens.json");
+		const malformed = {
+			project_id: "broken-project",
+			project_name: "Broken Toolkit",
+			owner_display: "Alice",
+			owner_handle: "alice-a3b4",
+			token: "undefined",
+			redeemed_at: "2026-05-12T10:00:00Z",
+			future_field: "keep-me",
+		};
+		writeFileSync(path, JSON.stringify({ version: 1, tokens: [malformed, sample] }), "utf-8");
+
+		const store = readTokenStore();
+		expect(store.tokens).toEqual([sample]);
+		expect(store.issues).toEqual([
+			{
+				label: "Broken Toolkit",
+				reason: "invalid 43-character share token",
+			},
+		]);
+
+		addToken({ ...sample, owner_handle: "alice-updated" });
+		const raw = JSON.parse(readFileSync(path, "utf-8")) as {
+			tokens: Array<Record<string, unknown>>;
+		};
+		expect(raw.tokens).toHaveLength(2);
+		expect(raw.tokens[0]).toEqual(malformed);
+		expect(raw.tokens[1].owner_handle).toBe("alice-updated");
 	});
 
 	it("preserves unknown future fields across read+write", () => {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
+import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
@@ -47,6 +48,15 @@ interface MeResponse {
 	name: string;
 }
 
+type ShareUpgradeResponse = components["schemas"]["ShareUpgradeResponse"];
+
+function shareDisplayName(token: ShareToken): string {
+	const name = typeof token.project_name === "string" ? token.project_name.trim() : "";
+	if (name) return name;
+	const projectId = typeof token.project_id === "string" ? token.project_id.trim() : "";
+	return projectId ? `Project ${projectId}` : "local share";
+}
+
 /**
  * Open a URL in the default browser. Best-effort: on headless machines or
  * when no opener is installed, the spawn silently no-ops and the user just
@@ -84,12 +94,20 @@ function postLoginHint() {
  * until done so a subsequent `clawdi project list` shows the new
  * project memberships deterministically.
  *
- * Per-token failures don't abort the loop; they print a reason and
- * the token stays in share-tokens.json for manual cleanup.
+ * Per-token failures don't abort the loop. Local entries stay available
+ * for retry or explicit `clawdi inbox forget` cleanup because the file
+ * does not record which API origin issued a token, so even a 404 from the
+ * current API cannot prove that the credential is globally stale.
  */
 async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise<void> {
-	const { listTokens, addToken } = await import("../share/tokens");
-	const tokens = listTokens().filter((t) => !t.upgraded_at);
+	const { readTokenStore, addToken } = await import("../share/tokens");
+	const store = readTokenStore();
+	for (const issue of store.issues) {
+		p.log.warn(
+			`Skipped malformed local share "${issue.label}": ${issue.reason} (entry kept for recovery)`,
+		);
+	}
+	const tokens = store.tokens.filter((t) => !t.upgraded_at);
 	if (tokens.length === 0) return;
 
 	// Parallel network round-trips, sequential disk writes. addToken
@@ -104,8 +122,9 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 
 	const outcomes = await Promise.all(
 		tokens.map(async (t): Promise<Outcome> => {
+			const name = shareDisplayName(t);
 			try {
-				const r = await fetch(`${apiUrl}/v1/share/${t.token}/upgrade`, {
+				const r = await fetch(`${apiUrl}/v1/share/${encodeURIComponent(t.token)}/upgrade`, {
 					method: "POST",
 					headers: {
 						Authorization: `Bearer ${apiKey}`,
@@ -114,8 +133,19 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					},
 					body: "{}",
 				});
+				if (r.status === 404) {
+					return {
+						kind: "fail",
+						name,
+						reason: "share link not found on this API (local token kept)",
+					};
+				}
 				if (r.status === 410) {
-					return { kind: "fail", name: t.project_name, reason: "revoked by owner" };
+					return {
+						kind: "fail",
+						name,
+						reason: "share link was revoked, expired, or removed (local token kept)",
+					};
 				}
 				if (r.status === 409) {
 					const body = (await r.json().catch(() => ({}))) as {
@@ -124,7 +154,7 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					if (body?.detail?.error === "mount_target_ambiguous") {
 						return {
 							kind: "fail",
-							name: t.project_name,
+							name,
 							reason: "needs manual project review",
 						};
 					}
@@ -133,27 +163,32 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					}
 					return {
 						kind: "fail",
-						name: t.project_name,
-						reason: `409 ${body.detail?.error}`,
+						name,
+						reason: body.detail?.error ? `conflict: ${body.detail.error}` : "HTTP 409 conflict",
 					};
 				}
 				if (!r.ok) {
-					return { kind: "fail", name: t.project_name, reason: `HTTP ${r.status}` };
+					return { kind: "fail", name, reason: `HTTP ${r.status}` };
 				}
-				const body = await readJson<{
-					project_id?: string;
-					resolved_owner_handle?: string;
-				}>(r, "share upgrade");
+				const body = await readJson<ShareUpgradeResponse>(r, "share upgrade");
+				if (
+					typeof body.project_id !== "string" ||
+					!body.project_id.trim() ||
+					typeof body.resolved_owner_handle !== "string" ||
+					!body.resolved_owner_handle.trim()
+				) {
+					throw new Error("share upgrade returned an invalid response");
+				}
 				return {
 					kind: "ok",
 					token: t,
-					projectId: body.project_id ?? t.project_id,
-					ownerHandle: body.resolved_owner_handle ?? t.owner_handle,
+					projectId: body.project_id,
+					ownerHandle: body.resolved_owner_handle,
 				};
 			} catch (e) {
 				return {
 					kind: "fail",
-					name: t.project_name,
+					name,
 					reason: e instanceof Error ? e.message : "network error",
 				};
 			}
@@ -164,11 +199,16 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 	const results: Array<{ name: string; alias?: string; pulled?: number; reason?: string }> = [];
 	for (const o of outcomes) {
 		if (o.kind === "ok") {
-			addToken({ ...o.token, upgraded_at: new Date().toISOString() });
+			addToken({
+				...o.token,
+				project_id: o.projectId,
+				owner_handle: o.ownerHandle,
+				upgraded_at: new Date().toISOString(),
+			});
 			const pulled = await pullSharedSkills(apiUrl, apiKey, o.projectId, o.ownerHandle).catch(
 				() => 0,
 			);
-			results.push({ name: o.token.project_name, alias: o.alias, pulled });
+			results.push({ name: shareDisplayName(o.token), alias: o.alias, pulled });
 		} else if (o.kind === "already_owner") {
 			addToken({ ...o.token, upgraded_at: new Date().toISOString() });
 		} else {
