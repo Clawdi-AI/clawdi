@@ -62,7 +62,7 @@ jobs:
       infra: ${{ steps.filter.outputs.infra }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: filter
         uses: dorny/paths-filter@v4
         with:
@@ -116,7 +116,7 @@ jobs:
       VITE_CLAWDI_API_URL: http://localhost:8000
       CLERK_SECRET_KEY: sk_test_dummy
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -151,7 +151,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
@@ -166,7 +166,7 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-bun-ci
         with:
           bun-version: ${{ env.BUN_VERSION }}
