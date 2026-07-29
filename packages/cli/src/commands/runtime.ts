@@ -1235,6 +1235,7 @@ interface RuntimeApplyOptions {
 	deferCliInstall?: boolean;
 	deferCliInstallReason?: string;
 	manifestIdentity?: RuntimeManifestIdentity;
+	recoverFailedSystemdUnits?: boolean;
 	requireSystemdApplied?: boolean;
 }
 
@@ -1519,23 +1520,15 @@ interface CommandResult {
 
 const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
-const MANAGED_RUNTIME_SYSTEM_UNITS = new Set([
-	RUNTIME_WATCH_SYSTEM_UNIT,
-	"clawdi-daemon.service",
-	RUNTIME_SIDECAR_SYSTEM_UNIT,
-]);
 
 function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
 	return {
-		system: readManagedSystemdUnits(paths.systemdSystemRoot, MANAGED_RUNTIME_SYSTEM_UNITS),
+		system: readManagedSystemdUnits(paths.systemdSystemRoot),
 		user: readManagedSystemdUnits(paths.systemdUserRoot),
 	};
 }
 
-function readManagedSystemdUnits(
-	root: string,
-	knownUnitNames: ReadonlySet<string> = new Set(),
-): Map<string, string> {
+function readManagedSystemdUnits(root: string): Map<string, string> {
 	const units = new Map<string, string>();
 	if (!existsSync(root)) return units;
 	for (const entry of readdirSync(root)) {
@@ -1544,7 +1537,7 @@ function readManagedSystemdUnits(
 			const contents = readFileIfExists(path);
 			if (
 				contents === null ||
-				(!knownUnitNames.has(entry) && !isGeneratedRuntimeSystemdFile(contents))
+				(!entry.startsWith("clawdi-") && !isGeneratedRuntimeSystemdFile(contents))
 			) {
 				continue;
 			}
@@ -1590,7 +1583,10 @@ function applySystemdRuntimeUpdate(
 	paths: ReturnType<typeof getRuntimePaths>,
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
-	opts: { forceRestartSystemUnits?: readonly string[] } = {},
+	opts: {
+		forceRestartSystemUnits?: readonly string[];
+		recoverFailedUnits?: boolean;
+	} = {},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
 	const system = changedSystemdUnits(before.system, after.system);
 	const user = changedSystemdUnits(before.user, after.user);
@@ -1599,10 +1595,17 @@ function applySystemdRuntimeUpdate(
 	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter((unit) =>
 		after.system.has(unit),
 	);
+	const recoverFailedUnits = opts.recoverFailedUnits !== false;
+	const activationChanged =
+		system.added.length > 0 ||
+		system.changed.length > 0 ||
+		system.removed.length > 0 ||
+		user.added.length > 0 ||
+		user.changed.length > 0 ||
+		user.removed.length > 0 ||
+		forcedSystemRestarts.length > 0;
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
-		// This environment does not own a live systemd manager, so even stable
-		// unit bytes cannot prove the desired live state.
-		return { applied: false, systemUnitsChanged, userUnitsChanged };
+		return { applied: !activationChanged, systemUnitsChanged, userUnitsChanged };
 	}
 
 	for (const unit of system.removed) {
@@ -1626,12 +1629,16 @@ function applySystemdRuntimeUpdate(
 	const addedSystemUnits = new Set(system.added);
 	const changedSystemUnits = new Set(system.changed);
 	const forcedRestartUnits = new Set(forcedSystemRestarts);
+	const resetFailedSystemUnits: string[] = [];
 	const startSystemUnits: string[] = [];
 	const restartSystemUnits: string[] = [];
 	for (const unit of system.present) {
 		const state = systemdUnitManagerState(paths, "system", unit);
-		// Transitional and failed units remain untouched and fail final proof.
-		// In particular, do not turn a periodic full fetch into a StartLimit loop.
+		if (state.activeState === "failed" && recoverFailedUnits) {
+			resetFailedSystemUnits.push(unit);
+			startSystemUnits.push(unit);
+			continue;
+		}
 		if (state.activeState === "inactive") {
 			startSystemUnits.push(unit);
 			continue;
@@ -1646,10 +1653,14 @@ function applySystemdRuntimeUpdate(
 			restartSystemUnits.push(unit);
 		}
 	}
+	// Each reconciliation makes at most one recovery attempt per failed unit.
+	// Transitional units remain untouched and fail final proof below.
+	if (resetFailedSystemUnits.length > 0) systemctl(["reset-failed", ...resetFailedSystemUnits]);
 	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
 	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 
 	const changedUserUnits = new Set(user.changed);
+	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
 	const enableUserUnits: string[] = [];
 	const enableAndStartUserUnits: string[] = [];
@@ -1657,9 +1668,13 @@ function applySystemdRuntimeUpdate(
 	for (const unit of user.present) {
 		const state = systemdUnitManagerState(paths, "user", unit);
 		const enabled = systemdUnitEnabled(state);
-		// An inactive unit starts once with current bytes. Activating and failed
-		// units are observed only; final proof keeps authority uncommitted.
-		if (state.activeState === "inactive") {
+		if (state.activeState === "failed" && recoverFailedUnits) {
+			resetFailedUserUnits.push(unit);
+		}
+		if (
+			state.activeState === "inactive" ||
+			(state.activeState === "failed" && recoverFailedUnits)
+		) {
 			if (enabled) startUserUnits.push(unit);
 			else enableAndStartUserUnits.push(unit);
 			continue;
@@ -1667,6 +1682,9 @@ function applySystemdRuntimeUpdate(
 		if (state.activeState !== "active") continue;
 		if (!enabled) enableUserUnits.push(unit);
 		if (changedUserUnits.has(unit)) restartUserUnits.push(unit);
+	}
+	if (resetFailedUserUnits.length > 0) {
+		runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]);
 	}
 	if (enableAndStartUserUnits.length > 0) {
 		runtimeUserSystemctl(paths, ["enable", "--now", ...enableAndStartUserUnits]);
@@ -2252,14 +2270,24 @@ async function runtimeInitLocked(
 
 async function runtimeWatchTick(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
+	opts: {
+		forceRefresh: boolean;
+		deferCliInstall?: boolean;
+		deferCliInstallReason?: string;
+		recoverFailedSystemdUnits?: boolean;
+	},
 ): Promise<Record<string, unknown>> {
 	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
 }
 
 async function runtimeWatchTickLocked(
 	paths: ReturnType<typeof getRuntimePaths>,
-	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
+	opts: {
+		forceRefresh: boolean;
+		deferCliInstall?: boolean;
+		deferCliInstallReason?: string;
+		recoverFailedSystemdUnits?: boolean;
+	},
 ): Promise<Record<string, unknown>> {
 	let reconciliation: RuntimeCliReconciliationResult;
 	try {
@@ -2350,6 +2378,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			deferCliInstall: opts.deferCliInstall,
 			deferCliInstallReason: opts.deferCliInstallReason,
 			manifestIdentity,
+			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
 			requireSystemdApplied: applyIdentity !== null,
 		});
 		if (applyResult.kind === "cli_update_failed") {
@@ -2503,6 +2532,7 @@ function applyRuntimeDesiredState(
 						failedSystemdUnits,
 						{
 							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+							recoverFailedUnits: opts.recoverFailedSystemdUnits,
 						},
 					);
 					return systemdApply;
@@ -2516,6 +2546,7 @@ function applyRuntimeDesiredState(
 				if (!failedSystemdUnits) return;
 				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths), {
 					forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+					recoverFailedUnits: false,
 				});
 			},
 		},
@@ -2674,6 +2705,9 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			const event = await runtimeWatchTick(paths, {
 				forceRefresh,
 				deferCliInstall,
+				// Conditional retries run every 15 seconds. Recover failed units
+				// only on the five-minute full refresh, or once in one-shot mode.
+				recoverFailedSystemdUnits: forceRefresh || opts.once === true,
 				deferCliInstallReason: deferCliInstall
 					? `CLI install retry is in backoff until ${new Date(nextCliInstallRetryAt).toISOString()}`
 					: undefined,

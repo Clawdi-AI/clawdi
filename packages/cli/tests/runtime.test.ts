@@ -128,7 +128,7 @@ function fakeSystemdStatePath(
 	stateRoot: string,
 	scope: "system" | "user",
 	unit: string,
-	state: "active" | "enabled",
+	state: "active" | "enabled" | "failed",
 ): string {
 	return join(stateRoot, `${scope}-${unit}.${state}`);
 }
@@ -161,24 +161,22 @@ state_path() {
 case "$command" in
   show)
     unit="\${1:-}"
-    if [ -f "$(state_path "$unit" active)" ]; then
-      active_state=active
-    else
-      active_state=inactive
-    fi
+    active_state=inactive
+    [ ! -f "$(state_path "$unit" active)" ] || active_state=active
+    [ ! -f "$(state_path "$unit" failed)" ] || active_state=failed
     printf 'LoadState=loaded\\nActiveState=%s\\n' "$active_state"
     ;;
   is-enabled)
     unit="\${1:-}"
     if [ -f "$(state_path "$unit" enabled)" ]; then
       printf 'enabled\\n'
-      exit 0
+    else
+      printf 'disabled\\n'
+      exit 1
     fi
-    printf 'disabled\\n'
-    exit 1
     ;;
   start)
-    for unit in "$@"; do touch "$(state_path "$unit" active)"; done
+    for unit in "$@"; do rm -f "$(state_path "$unit" failed)"; touch "$(state_path "$unit" active)"; done
     ;;
   restart)
     if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarRestart ?? ""}' ] && [ -f '${input.failNextSidecarRestart ?? ""}' ]; then
@@ -186,7 +184,7 @@ case "$command" in
       printf 'injected sidecar restart failure\\n' >&2
       exit 42
     fi
-    for unit in "$@"; do touch "$(state_path "$unit" active)"; done
+    for unit in "$@"; do rm -f "$(state_path "$unit" failed)"; touch "$(state_path "$unit" active)"; done
     ;;
   stop)
     if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarStop ?? ""}' ] && [ -f '${input.failNextSidecarStop ?? ""}' ]; then
@@ -194,7 +192,7 @@ case "$command" in
       printf 'injected sidecar stop failure\\n' >&2
       exit 43
     fi
-    for unit in "$@"; do rm -f "$(state_path "$unit" active)"; done
+    for unit in "$@"; do rm -f "$(state_path "$unit" active)" "$(state_path "$unit" failed)"; done
     ;;
   enable)
     start_now=0
@@ -204,11 +202,9 @@ case "$command" in
       if [ "$start_now" = "1" ]; then touch "$(state_path "$unit" active)"; fi
     done
     ;;
-  disable)
-    for unit in "$@"; do rm -f "$(state_path "$unit" enabled)"; done
-    ;;
-  daemon-reload)
-    ;;
+  disable) for unit in "$@"; do rm -f "$(state_path "$unit" enabled)"; done ;;
+  reset-failed) for unit in "$@"; do rm -f "$(state_path "$unit" failed)"; done ;;
+  daemon-reload) ;;
   *)
     printf 'unexpected systemctl command: %s\\n' "$raw" >&2
     exit 64
@@ -217,19 +213,6 @@ esac
 `,
 	);
 	chmodSync(input.path, 0o700);
-}
-
-function useFakeSystemdManager(testRoot: string): void {
-	const managerRoot = join(testRoot, "fake-systemd-manager");
-	const systemctl = join(managerRoot, "bin", "systemctl");
-	writeFakeSystemdManager({
-		path: systemctl,
-		logPath: join(managerRoot, "systemctl.log"),
-		stateRoot: join(managerRoot, "state"),
-	});
-	process.env.CLAWDI_SYSTEMD_APPLY = "1";
-	process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
-	process.env.CLAWDI_RUNTIME_USER = "root";
 }
 
 beforeEach(() => {
@@ -884,7 +867,6 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 	process.env.CLAWDI_SERVICE_STATE_DIR = state;
 	process.env.CLAWDI_RUN_DIR = run;
 	process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-	if (!process.env.CLAWDI_SYSTEMCTL_PATH) useFakeSystemdManager(dirname(home));
 	seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
 	writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 	const paths = getRuntimePaths();
@@ -6318,7 +6300,7 @@ fi
 			expect(readRuntimeAppliedState(getRuntimePaths())).toBeNull();
 			const rejected = JSON.parse(logs.at(-1) ?? "{}");
 			expect(rejected.status).toBe("error");
-			expect(rejected.error).toContain("systemd manager state did not converge");
+			expect(rejected.error).toContain("systemd apply did not activate");
 
 			process.env.CLAWDI_SYSTEMD_APPLY = "1";
 			process.exitCode = undefined;
@@ -6415,7 +6397,6 @@ fi
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-		useFakeSystemdManager(root);
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
 		};
@@ -6853,7 +6834,6 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-		useFakeSystemdManager(root);
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -7480,7 +7460,6 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-		useFakeSystemdManager(root);
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -7558,7 +7537,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.cliUpdate.packageSpec).toBe("clawdi@0.13.1-beta.0");
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
-				applied: true,
+				applied: false,
 				systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-watch.service"],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
@@ -7746,6 +7725,10 @@ exit 64
 				fakeSystemdStatePath(systemctlStateRoot, "system", "clawdi-daemon.service", "active"),
 				{ force: true },
 			);
+			writeFileSync(
+				fakeSystemdStatePath(systemctlStateRoot, "system", "clawdi-daemon.service", "failed"),
+				"failed\n",
+			);
 			for (const state of ["active", "enabled"] as const) {
 				rmSync(
 					fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", state),
@@ -7773,8 +7756,13 @@ exit 64
 			expect(process.exitCode ?? 0).toBe(0);
 			expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("applied");
 			const managerRepairCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-			expect(managerRepairCalls).toContain("start clawdi-daemon.service");
-			expect(managerRepairCalls).toContain("--user enable --now openclaw-gateway.service");
+			for (const call of [
+				"reset-failed clawdi-daemon.service",
+				"start clawdi-daemon.service",
+				"--user enable --now openclaw-gateway.service",
+			]) {
+				expect(managerRepairCalls.filter((candidate) => candidate === call)).toHaveLength(1);
+			}
 			expect(managerRepairCalls.some((call) => call.includes("restart"))).toBe(false);
 			expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(
 				initialPrivateRevision,
@@ -7945,42 +7933,19 @@ exit 64
 			]);
 			try {
 				await runtimeWatch({ once: true, json: true });
-			} finally {
-				missingSidecarFetch.restore();
-			}
-			expect(process.exitCode).toBe(1);
-			const removalRejectedEvent = JSON.parse(logs.at(-1) ?? "{}");
-			expect(removalRejectedEvent.status).toBe("error");
-			expect(removalRejectedEvent.error).toContain("injected sidecar stop failure");
-			expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(
-				true,
-			);
-
-			writeFileSync(systemctlLog, "");
-			logs.length = 0;
-			process.exitCode = undefined;
-			const removalRetryFetch = mockFetch([
-				{
-					method: "GET",
-					path: "/v1/runtime/manifest",
-					response: () =>
-						hostedRuntimeBundleResponse(
-							hostedEgressSecretRotationPayload(
-								home,
-								{
-									...mitmproxy,
-									url: "https://invalid.example.test/mitmproxy.tar.gz",
-								},
-								missingSidecarSecret,
-							),
-							{ etag: '"egress-secret-revision-d"' },
-						),
-				},
-			]);
-			try {
+				expect(process.exitCode).toBe(1);
+				const removalRejectedEvent = JSON.parse(logs.at(-1) ?? "{}");
+				expect(removalRejectedEvent.status).toBe("error");
+				expect(removalRejectedEvent.error).toContain("injected sidecar stop failure");
+				expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(
+					true,
+				);
+				writeFileSync(systemctlLog, "");
+				logs.length = 0;
+				process.exitCode = undefined;
 				await runtimeWatch({ once: true, json: true });
 			} finally {
-				removalRetryFetch.restore();
+				missingSidecarFetch.restore();
 			}
 			expect(process.exitCode ?? 0).toBe(0);
 			const missingSidecarEvent = JSON.parse(logs.at(-1) ?? "{}");
@@ -8999,7 +8964,6 @@ chmod +x "$prefix/bin/clawdi"
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-		useFakeSystemdManager(root);
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
@@ -10242,7 +10206,6 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_HOST_POLICY_PATH = policyPath;
-		useFakeSystemdManager(root);
 		process.exitCode = undefined;
 		console.log = (value?: unknown) => {
 			logs.push(String(value));
