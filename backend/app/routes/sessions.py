@@ -904,6 +904,7 @@ async def get_agent_runtime_observed(
     """Canonical Agent-identity route for runtime desired/observed summaries."""
     response = await get_environment_runtime_observed(agent_id, auth, db)
     state = await db.get(HostedRuntimeState, agent_id)
+    observation = await db.get(HostedRuntimeConfigObservation, agent_id)
     desired = response.desired
     if desired is None and state is None:
         return AgentRuntimeObservedResponse(
@@ -931,7 +932,7 @@ async def get_agent_runtime_observed(
             update={"managed_skills": _runtime_managed_skill_summaries(state)}
         ),
         observed=response.observed,
-        health=response.health,
+        health=_agent_runtime_observed_health(response.health, state, observation),
         provider_health=response.provider_health,
     )
 
@@ -1163,6 +1164,31 @@ def _runtime_managed_skill_summaries(
     return managed_skills
 
 
+def _agent_runtime_observed_health(
+    health: RuntimeObservedHealthResponse,
+    state: HostedRuntimeState,
+    observation: HostedRuntimeConfigObservation | None,
+) -> RuntimeObservedHealthResponse:
+    """Add v2 identity evidence without changing the frozen v1 health contract."""
+    diagnostics = _validated_runtime_observed_diagnostics(observation)
+    if diagnostics is None:
+        return health
+
+    reasons = list(health.reasons)
+    if diagnostics.applied is None:
+        reasons.append("runtime_applied_missing")
+    elif diagnostics.applied.instance_id != state.instance_id:
+        reasons.append("applied_instance_id_mismatch")
+    if reasons == health.reasons:
+        return health
+    return health.model_copy(
+        update={
+            "status": "unknown" if health.status == "ok" else health.status,
+            "reasons": reasons,
+        }
+    )
+
+
 def _runtime_observed_health(
     env: AgentEnvironment,
     state: HostedRuntimeState | None,
@@ -1221,11 +1247,6 @@ def _runtime_observed_health(
             reasons.append("source_revision_mismatch")
 
     if diagnostics is not None and not desired_source_error:
-        if diagnostics.applied is None:
-            reasons.append("runtime_applied_missing")
-        elif diagnostics.applied.instance_id != state.instance_id:
-            reasons.append("applied_instance_id_mismatch")
-
         if desired_source_revision is not None and observation is not None:
             expected_etag = expected_runtime_bundle_v2_etag(desired_source_revision)
             if (

@@ -15,10 +15,18 @@ import uuid
 import httpx
 import pytest
 
+from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    SKILL_SYNC_PROTOCOL_HEADER,
+)
 from app.services.skill_installer import SkillPackage
 from app.services.tar_utils import tar_from_content
 
 pytestmark = pytest.mark.committed_db
+
+AGENT_SKILL_SYNC_HEADERS = {
+    SKILL_SYNC_PROTOCOL_HEADER: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+}
 
 
 @pytest.mark.asyncio
@@ -758,7 +766,10 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
 
     app.dependency_overrides[get_auth_short_session] = _override_get_auth
 
-    first = await client.get(f"/v1/skills?project_id={project_id}")
+    first = await client.get(
+        f"/v1/skills?project_id={project_id}",
+        headers=AGENT_SKILL_SYNC_HEADERS,
+    )
     assert first.status_code == 200, first.text
     etag = first.headers.get("ETag")
     assert etag
@@ -770,7 +781,7 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
 
     cached = await client.get(
         f"/v1/skills?project_id={project_id}",
-        headers={"If-None-Match": etag},
+        headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
     )
     assert cached.status_code == 304, cached.text
     assert cached.headers.get("ETag") == etag
