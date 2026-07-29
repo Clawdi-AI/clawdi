@@ -12006,6 +12006,92 @@ exit 64
 		expect(existsSync(join(home, ".hermes", "skills", "clawdi"))).toBe(false);
 	});
 
+	it("installs OpenClaw before applying hosted MCP projections and fails closed without it", () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const workspace = join(home, "workspace");
+		const installer = join(root, "openclaw-installer.sh");
+		const installerLog = join(root, "openclaw-installer.log");
+		const { commandPath } = writeFakeOpenClawMcpBinary(home);
+		const fixtureBinary = join(root, "openclaw-fixture");
+		writeFileSync(fixtureBinary, readFileSync(commandPath));
+		chmodSync(fixtureBinary, 0o700);
+		rmSync(commandPath);
+		writeFileSync(
+			installer,
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf 'installed\n' > '${installerLog}'
+install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
+`,
+		);
+		chmodSync(installer, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = installer;
+
+		const load = (
+			generation: number,
+			command: string,
+			install: RuntimeManifest["runtimes"][string]["install"],
+		): RuntimeManifestLoad => ({
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_cold_mcp",
+				environmentId: "env_cold_mcp",
+				instanceId: "iid_cold_mcp",
+				generation,
+				issuedAt: "2026-07-29T00:00:00Z",
+				workspaceRoot: workspace,
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: true, install } },
+				projection: {
+					system: { home, workspace },
+					mcp: { servers: { clawdi: { command, args: ["mcp"] } } },
+				},
+				recovery: {},
+			},
+			source: "fixture-file",
+			sourcePath: `test://cold-mcp-${generation}`,
+			offline: false,
+			secretValues: {},
+		});
+		const officialInstall = {
+			authority: "official" as const,
+			method: "official-installer" as const,
+			url: "https://openclaw.ai/install-cli.sh",
+			home,
+			args: [],
+		};
+
+		const installed = convergeRuntimeManifest(
+			load(1, "clawdi", officialInstall),
+			getRuntimePaths(),
+		);
+
+		expect(installed.installErrors).toEqual([]);
+		expect(readFileSync(installerLog, "utf-8")).toBe("installed\n");
+		expect(readOpenClawMcpServers(home).clawdi).toEqual({
+			command: "clawdi",
+			args: ["mcp"],
+		});
+
+		rmSync(commandPath);
+		const unavailable = convergeRuntimeManifest(load(2, "missing", undefined), getRuntimePaths());
+
+		expect(unavailable.installErrors.join("\n")).toContain(
+			"could not mutate managed OpenClaw MCP servers: runtime is unavailable",
+		);
+		expect(readOpenClawMcpServers(home).clawdi).toEqual({
+			command: "clawdi",
+			args: ["mcp"],
+		});
+	});
+
 	it("reconciles generic MCP maps and cleans the previously managed runtime on switch", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
