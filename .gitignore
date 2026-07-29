@@ -51,3 +51,4 @@ data/
 # memory content; keep them out of the repo.
 backend/scripts/seed_demo.py
 backend/pdm.lock
+.kamal/secrets
