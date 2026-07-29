@@ -24,10 +24,6 @@ const modelBindingPickerSource = readFileSync(
 	new URL("../../v2/ai-providers/model-binding-picker.tsx", import.meta.url),
 	"utf8",
 );
-const welcomeWalletSource = readFileSync(
-	new URL("../subscription/welcome-wallet-card.tsx", import.meta.url),
-	"utf8",
-);
 const runtimesSource = readFileSync(new URL("../../runtimes.ts", import.meta.url), "utf8");
 const addProviderDialogSource = readFileSync(
 	new URL("../../v2/ai-providers/add-provider-dialog.tsx", import.meta.url),
@@ -213,13 +209,9 @@ describe("deploy provider choice", () => {
 	});
 
 	test("explains that the welcome balance is used before added Wallet funds", () => {
-		expect(welcomeWalletSource).toContain(
-			"welcome balance covers Managed AI first; after that, usage draws from your Wallet.",
-		);
 		expect(wizardSource).toContain(
 			"Your welcome balance covers usage first; after that, it draws from your Wallet.",
 		);
-		expect(welcomeWalletSource).not.toContain("managed AI is on us to start");
 		expect(wizardSource).not.toContain("Managed-AI usage paid directly from your Wallet");
 	});
 

@@ -13,6 +13,7 @@ import {
 	selfManagedAgentTiles,
 } from "@/components/dashboard/agents-card";
 import { ContributionGraph } from "@/components/dashboard/contribution-graph";
+import { type AgentGreetingState, agentGreetingSummary } from "@/components/dashboard/greeting";
 import { OnboardingCard } from "@/components/dashboard/onboarding-card";
 import { type ProjectTypeCounts, ResourcesCard } from "@/components/dashboard/resources-card";
 import { ThisWeekCard } from "@/components/dashboard/this-week-card";
@@ -140,11 +141,6 @@ export default function DashboardPage() {
 	const sessions = sessionsPage?.items.slice(0, RECENT_SESSIONS_LIMIT);
 	const contribution = stats?.contribution;
 
-	const streakLine =
-		stats && stats.current_streak > 0
-			? `Current streak: ${stats.current_streak} day${stats.current_streak === 1 ? "" : "s"}`
-			: null;
-
 	const selfManagedTiles = useMemo(() => selfManagedAgentTiles(environments), [environments]);
 	const selfManagedFleetSummary = useMemo(
 		() => fleetSummaryFromTiles(selfManagedTiles),
@@ -170,16 +166,21 @@ export default function DashboardPage() {
 		HostedAgentsSection && hostedAccess.canUseLegacyHostedDashboard,
 	);
 	const hostedSectionEnabled = cloudDeploymentManagementEnabled || legacyHostedAgentsEnabled;
-	const greeting = renderGreeting(selfManagedFleetSummary, {
-		agentStatusUnavailable: Boolean(envsError),
-	});
+	const greetingState: AgentGreetingState =
+		hostedAccessLoading || envsLoading
+			? "loading"
+			: envsError || hostedAccess.isError
+				? "error"
+				: "resolved";
+	const greeting = renderGreeting(selfManagedFleetSummary, { state: greetingState });
+	const loadingGreeting = renderGreeting(selfManagedFleetSummary, { state: "loading" });
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
 			{hostedAccessLoading ? (
-				greeting
+				loadingGreeting
 			) : hostedSectionEnabled && HostedFleetSummary ? (
-				<Suspense fallback={greeting}>
+				<Suspense fallback={loadingGreeting}>
 					<HostedFleetSummary
 						cloudEnvs={environments ?? []}
 						showCloudDeployments={cloudDeploymentManagementEnabled}
@@ -187,8 +188,12 @@ export default function DashboardPage() {
 					>
 						{(summary, state) =>
 							renderGreeting(summary, {
-								agentStatusUnavailable:
-									Boolean(envsError) || !state.membershipResolved || Boolean(state.error),
+								state:
+									envsError || hostedAccess.isError || state.error
+										? "error"
+										: envsLoading || state.isLoading || !state.membershipResolved
+											? "loading"
+											: "resolved",
 							})
 						}
 					</HostedFleetSummary>
@@ -238,10 +243,7 @@ export default function DashboardPage() {
 					<Card>
 						<CardHeader>
 							<CardTitle>Activity</CardTitle>
-							<CardDescription>
-								Sessions per day in the last 12 months
-								{streakLine ? ` · ${streakLine}` : ""}
-							</CardDescription>
+							<CardDescription>Sessions per day in the last 12 months</CardDescription>
 						</CardHeader>
 						<CardContent>
 							{statsError ? (
@@ -262,14 +264,9 @@ export default function DashboardPage() {
 
 					<section className="space-y-2">
 						<div className="flex items-end justify-between">
-							<div>
-								<h2 className="text-base font-semibold">Recent sessions</h2>
-								<p className="text-sm text-muted-foreground">
-									Your latest work — automated runs live under View all.
-								</p>
-							</div>
+							<h2 className="text-base font-semibold">Recent sessions</h2>
 							<Button
-								render={<Link to="/sessions" search={{ automated: false }} />}
+								render={<Link to="/sessions" />}
 								nativeButton={false}
 								variant="ghost"
 								size="sm"
@@ -292,7 +289,7 @@ export default function DashboardPage() {
 								sessions={sessions ?? []}
 								isLoading={sessionsLoading}
 								grouped={false}
-								emptyMessage="No sessions yet. Once your agent starts a conversation, it'll show up here."
+								emptyMessage="No manual sessions yet. Once you start a conversation, it'll show up here."
 								emptyVariant="inset"
 							/>
 						)}
@@ -332,15 +329,9 @@ export default function DashboardPage() {
 						onRetryProjectCount={() => {
 							void refetchProjects();
 						}}
-						hasConnectedAgent={
-							hostedAccessLoading || hostedSectionEnabled || envsLoading || envsError
-								? undefined
-								: hasAgents
-						}
 					/>
 					<ThisWeekCard
 						stats={stats}
-						contribution={contribution}
 						error={statsError}
 						onRetry={() => {
 							void refetchStats();
@@ -352,11 +343,8 @@ export default function DashboardPage() {
 	);
 }
 
-function renderGreeting(
-	summary: AgentFleetSummary,
-	options: { agentStatusUnavailable?: boolean } = {},
-) {
-	return <Greeting total={summary.total} agentStatusUnavailable={options.agentStatusUnavailable} />;
+function renderGreeting(summary: AgentFleetSummary, options: { state?: AgentGreetingState } = {}) {
+	return <Greeting total={summary.total} state={options.state} />;
 }
 
 function ActivityGraphSkeleton() {
@@ -412,10 +400,7 @@ function ConnectAnotherCard() {
 	return (
 		<Card className="py-4">
 			<CardContent className="flex items-center justify-between gap-3 px-4">
-				<div className="min-w-0">
-					<div className="text-sm font-medium">Connect another machine</div>
-					<p className="mt-0.5 text-xs text-muted-foreground">Follow the Clawdi CLI steps.</p>
-				</div>
+				<div className="min-w-0 text-sm font-medium">Connect another machine</div>
 				<Button size="sm" variant="outline" onClick={() => setOpen(true)}>
 					Add agent
 				</Button>
@@ -431,24 +416,14 @@ function currentDaypart(): "morning" | "afternoon" | "evening" {
 	return hour < 5 ? "evening" : hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
 }
 
-function Greeting({
-	total,
-	agentStatusUnavailable = false,
-}: {
-	total: number;
-	agentStatusUnavailable?: boolean;
-}) {
+function Greeting({ total, state = "resolved" }: { total: number; state?: AgentGreetingState }) {
 	const { user } = useCurrentUser();
 	const [daypart, setDaypart] = useState<ReturnType<typeof currentDaypart> | null>(null);
 	useEffect(() => {
 		setDaypart(currentDaypart());
 	}, []);
 	const firstName = user?.fullName?.split(" ")[0];
-	const summary = agentStatusUnavailable
-		? "Agent status is unavailable right now."
-		: total === 0
-			? "Connect your first agent to start syncing."
-			: `${total} agent${total === 1 ? "" : "s"}`;
+	const summary = agentGreetingSummary(total, state);
 	return (
 		<div>
 			<h1 className="text-2xl font-semibold tracking-tight">

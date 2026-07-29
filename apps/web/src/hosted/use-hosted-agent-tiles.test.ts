@@ -53,11 +53,13 @@ function hostedDeploymentToTiles(deployment: HostedDeployment, envs: Env[] = [])
 	);
 }
 
-function expectHostedTileHasNoStatus(tile: ReturnType<DeploymentToTiles>[number] | undefined) {
+function expectHostedTileStatus(
+	tile: ReturnType<DeploymentToTiles>[number] | undefined,
+	label: string,
+) {
 	expect(tile).toBeDefined();
-	for (const field of ["statusLabel", "statusDot", "secondaryStatus", "contextLabel"] as const) {
-		expect(field in (tile ?? {})).toBe(false);
-	}
+	expect(tile?.cardStatus?.visual.label).toBe(label);
+	expect(tile?.cardStatus?.labels[0]).toBe(label);
 }
 
 function resolveAgentDeployment(
@@ -173,7 +175,7 @@ describe("deploymentToTiles", () => {
 		expect(tiles.map((tile) => tile.name)).toEqual(["hosted-test"]);
 		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi&d=dep_123`);
 		expect(tiles[0]?.env).toBe(openclawEnv);
-		expectHostedTileHasNoStatus(tiles[0]);
+		expectHostedTileStatus(tiles[0], "Running");
 	});
 
 	test("keeps dunning state off the hosted tile", () => {
@@ -198,7 +200,7 @@ describe("deploymentToTiles", () => {
 			}),
 		);
 
-		expectHostedTileHasNoStatus(tile);
+		expectHostedTileStatus(tile, "Running");
 	});
 
 	test("keeps backend failure detail off the hosted tile", () => {
@@ -224,7 +226,7 @@ describe("deploymentToTiles", () => {
 			}),
 		);
 
-		expectHostedTileHasNoStatus(tile);
+		expectHostedTileStatus(tile, "Failed");
 	});
 
 	test("links by deployment env identity when the cloud-api projection is missing", () => {
@@ -241,7 +243,7 @@ describe("deploymentToTiles", () => {
 			env: null,
 		});
 		expect(tile?.env).toBeNull();
-		expectHostedTileHasNoStatus(tile);
+		expectHostedTileStatus(tile, "Failed");
 		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
@@ -258,7 +260,7 @@ describe("deploymentToTiles", () => {
 			}),
 		);
 
-		expectHostedTileHasNoStatus(tile);
+		expectHostedTileStatus(tile, "Failed");
 		expect(
 			isValidElement<{ remediationHref?: string }>(tile?.action) &&
 				tile.action.props.remediationHref,
@@ -279,8 +281,28 @@ describe("deploymentToTiles", () => {
 			name: "OpenClaw",
 			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
 		});
-		expectHostedTileHasNoStatus(tile);
+		expectHostedTileStatus(tile, "Stopped");
 		expect(tile?.action).toBeDefined();
+	});
+
+	test("keeps non-running compute primary when the joined environment has fresh sync", () => {
+		for (const [status, label] of [
+			["stopped", "Stopped"],
+			["failed", "Failed"],
+			[null, "Status unavailable"],
+		] as const) {
+			const environmentId = `env-${status ?? "unknown"}-with-fresh-sync`;
+			const joinedEnv = env({
+				id: environmentId,
+				last_seen_at: new Date().toISOString(),
+				last_sync_at: new Date().toISOString(),
+			});
+			const [tile] = hostedDeploymentToTiles(deployment({ status, environmentId }), [joinedEnv]);
+
+			expectHostedTileStatus(tile, label);
+			expect(tile?.cardStatus?.labels).not.toContain("Live");
+			expect(tile?.cardStatus?.visual.dotClass).not.toContain("bg-success");
+		}
 	});
 
 	test("removes deleted deployments from tiles and detail membership", () => {
@@ -313,7 +335,7 @@ describe("deploymentToTiles", () => {
 			href: null,
 			env: null,
 		});
-		expectHostedTileHasNoStatus(tile);
+		expectHostedTileStatus(tile, "Failed");
 		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});

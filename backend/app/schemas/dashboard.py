@@ -24,4 +24,7 @@ class DashboardStatsResponse(BaseModel):
     vault_keys_count: int
     connectors_count: int
     manual_sessions_last_7_days: int
+    automated_sessions_last_7_days: int
+    top_model_last_7_days: str | None
+    sessions_today: int
     contribution: list[ContributionDayResponse]

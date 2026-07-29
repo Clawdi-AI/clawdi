@@ -2,9 +2,9 @@
 
 import type { components } from "@clawdi/shared/api";
 import { createElement, useMemo } from "react";
-import type { AgentTile } from "@/components/dashboard/agents-card";
+import type { AgentCardStatusProjection, AgentTile } from "@/components/dashboard/agents-card";
 import { type DaemonStatusVisual, daemonStatusVisual } from "@/components/dashboard/daemon-status";
-import { statusTextVariants } from "@/components/ui/status-badge";
+import { statusDotVariants, statusTextVariants } from "@/components/ui/status-badge";
 import { deploymentDisplayName } from "@/hosted/agent-identity";
 import type { HostedDeployment, HostedDeploymentStatus } from "@/hosted/billing/contracts";
 import { hasExistingCloudDeployments } from "@/hosted/cloud-deployment-management";
@@ -215,6 +215,18 @@ export function deploymentToTiles(
 	const providerSettingsHref = envId ? agentSectionHref(envId, "ai", routeQuery) : undefined;
 	const deploymentStatus = deploymentStatusFromResource(d.resource.status);
 	const failure = deploymentFailurePresentation(d);
+	const runtimeStatus = hostedRuntimeStatusView(d.resource.status, matchedEnv ?? null, failure);
+	const cardStatus: AgentCardStatusProjection = {
+		visual: {
+			label: runtimeStatus.primary.label,
+			tooltip: `Compute status: ${runtimeStatus.primary.label}.`,
+			dotClass: statusDotVariants({ status: runtimeStatus.primary.tone }),
+		},
+		labels: [
+			runtimeStatus.primary.label,
+			...(runtimeStatus.secondary ? [runtimeStatus.secondary.label] : []),
+		],
+	};
 	const showTileActions =
 		Boolean(failure) ||
 		deploymentStatus.kind === "stopped" ||
@@ -229,7 +241,6 @@ export function deploymentToTiles(
 			avatarUrl: matchedEnv?.avatar_url ?? null,
 			sortOrder: matchedEnv?.sort_order ?? null,
 			agentType: runtime,
-			lastSeenAt: matchedEnv?.last_seen_at ?? null,
 			href: detailHref,
 			external: false,
 			action: showTileActions
@@ -245,7 +256,7 @@ export function deploymentToTiles(
 						onRetry: statusRetry?.onRetry,
 					})
 				: undefined,
-			active: isRunningStatus(deploymentStatus),
+			cardStatus,
 			env: matchedEnv ?? null,
 		},
 	];

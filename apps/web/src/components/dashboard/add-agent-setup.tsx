@@ -6,6 +6,7 @@ import { Bot, Check, Copy, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
+import { agentRegistrationDescription } from "@/components/dashboard/agent-registration-status";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { unwrap, useApi } from "@/lib/api";
@@ -157,7 +158,7 @@ export function AddAgentSetup() {
 						</span>
 					) : null}
 					<span className="text-sm font-medium">
-						{newAgents.length > 0 ? "Agent connected" : "Watch for your agent"}
+						{newAgents.length > 0 ? "Agent registered" : "Watch for your agent"}
 					</span>
 				</div>
 				{newAgents.length > 0 ? (
@@ -185,7 +186,7 @@ export function AddAgentSetup() {
 							</div>
 						))}
 						<p className="text-xs text-success-muted-foreground">
-							Sessions from this machine sync automatically from now on.
+							{agentRegistrationDescription(newAgents)}
 						</p>
 					</div>
 				) : (

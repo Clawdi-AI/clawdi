@@ -4311,6 +4311,12 @@ export interface components {
             connectors_count: number;
             /** Manual Sessions Last 7 Days */
             manual_sessions_last_7_days: number;
+            /** Automated Sessions Last 7 Days */
+            automated_sessions_last_7_days: number;
+            /** Top Model Last 7 Days */
+            top_model_last_7_days: string | null;
+            /** Sessions Today */
+            sessions_today: number;
             /** Contribution */
             contribution: components["schemas"]["ContributionDayResponse"][];
         };
