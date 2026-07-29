@@ -3857,14 +3857,34 @@ function runRuntimeUserCommand(
 	execFileSync(command, args, { input: stdin, env, cwd, stdio: "pipe" });
 }
 
-function runtimeCommandCurrentRevision(command: string, home: string, cwd: string): string | null {
-	if (!isAbsolute(command)) return null;
+function runtimeFileCurrentRevision(path: string): string | null {
+	if (!isAbsolute(path)) return null;
 	try {
-		const linkStat = lstatSync(command);
+		const linkStat = lstatSync(path);
 		if (!linkStat.isFile() && !linkStat.isSymbolicLink()) return null;
-		const fileStat = linkStat.isSymbolicLink() ? statSync(command) : linkStat;
+		const fileStat = linkStat.isSymbolicLink() ? statSync(path) : linkStat;
 		if (!fileStat.isFile()) return null;
-		const contents = readFileSync(command);
+		const contents = readFileSync(path);
+		return runtimeContentSha256({
+			path,
+			contentsSha256: createHash("sha256").update(contents).digest("hex"),
+			kind: linkStat.isSymbolicLink() ? "symlink" : "file",
+			linkTarget: linkStat.isSymbolicLink() ? readlinkSync(path) : null,
+			linkUid: linkStat.uid,
+			linkGid: linkStat.gid,
+			fileMode: fileStat.mode & 0o7777,
+			fileUid: fileStat.uid,
+			fileGid: fileStat.gid,
+		});
+	} catch {
+		return null;
+	}
+}
+
+function runtimeCommandCurrentRevision(command: string, home: string, cwd: string): string | null {
+	const executableRevision = runtimeFileCurrentRevision(command);
+	if (!executableRevision) return null;
+	try {
 		const versionResult = spawnRuntimeUserCommand(command, ["--version"], home, cwd);
 		if (versionResult.status !== 0) return null;
 		const stdout = Buffer.isBuffer(versionResult.stdout)
@@ -3876,15 +3896,7 @@ function runtimeCommandCurrentRevision(command: string, home: string, cwd: strin
 		const version = [stdout, stderr].filter(Boolean).join("\n").trim();
 		if (!version) return null;
 		return runtimeContentSha256({
-			command,
-			contentsSha256: createHash("sha256").update(contents).digest("hex"),
-			kind: linkStat.isSymbolicLink() ? "symlink" : "file",
-			linkTarget: linkStat.isSymbolicLink() ? readlinkSync(command) : null,
-			linkUid: linkStat.uid,
-			linkGid: linkStat.gid,
-			fileMode: fileStat.mode & 0o7777,
-			fileUid: fileStat.uid,
-			fileGid: fileStat.gid,
+			executableRevision,
 			version,
 		});
 	} catch {
@@ -3973,7 +3985,14 @@ function channelPluginCurrentRevision(input: {
 		if (!parsed.success) return null;
 		const { plugin, install } = parsed.data;
 		const version = plugin.version ?? install.resolvedVersion ?? install.version;
-		if (plugin.id !== input.channel || plugin.status !== "loaded" || !plugin.enabled || !version) {
+		const sourceRevision = runtimeFileCurrentRevision(plugin.source);
+		if (
+			plugin.id !== input.channel ||
+			plugin.status !== "loaded" ||
+			!plugin.enabled ||
+			!version ||
+			!sourceRevision
+		) {
 			return null;
 		}
 		return runtimeContentSha256({
@@ -3981,6 +4000,7 @@ function channelPluginCurrentRevision(input: {
 			plugin: {
 				id: plugin.id,
 				source: plugin.source,
+				sourceRevision,
 				origin: plugin.origin,
 				status: plugin.status,
 				version,

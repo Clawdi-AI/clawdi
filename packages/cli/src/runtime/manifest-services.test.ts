@@ -116,12 +116,15 @@ esac
 	chmodSync(input.path, 0o700);
 }
 
-function openClawPluginInspectFixture(version = "1.2.3"): Record<string, unknown> {
+function openClawPluginInspectFixture(
+	pluginSourcePath: string,
+	version = "1.2.3",
+): Record<string, unknown> {
 	return {
 		plugin: {
 			id: "discord",
 			name: "Discord",
-			source: "/opt/openclaw/extensions/discord/index.js",
+			source: pluginSourcePath,
 			origin: "global",
 			status: "loaded",
 			version,
@@ -130,7 +133,7 @@ function openClawPluginInspectFixture(version = "1.2.3"): Record<string, unknown
 		install: {
 			source: "npm",
 			spec: "@openclaw/discord",
-			installPath: "/opt/openclaw/extensions/discord",
+			installPath: dirname(pluginSourcePath),
 			resolvedName: "@openclaw/discord",
 			resolvedVersion: version,
 			resolvedSpec: `@openclaw/discord@${version}`,
@@ -143,6 +146,7 @@ function writeFakeOpenClawPluginCli(input: {
 	path: string;
 	installLogPath: string;
 	inspectStatePath: string;
+	pluginSourcePath: string;
 	failInstallMarker: string;
 	runtimeVersion: string;
 	pluginVersion?: string;
@@ -165,8 +169,11 @@ case "$*" in
 		exit 73
 	fi
 	mkdir -p '${dirname(input.inspectStatePath)}'
+	mkdir -p '${dirname(input.pluginSourcePath)}'
+	printf '%s\\n' 'export const discordPlugin = true;' > '${input.pluginSourcePath}'
+	chmod 0644 '${input.pluginSourcePath}'
 	cat > '${input.inspectStatePath}' <<'EOF'
-${JSON.stringify(openClawPluginInspectFixture(input.pluginVersion))}
+${JSON.stringify(openClawPluginInspectFixture(input.pluginSourcePath, input.pluginVersion))}
 EOF
 	;;
   "config patch --stdin")
@@ -1144,12 +1151,14 @@ describe("runtime manifest services", () => {
 		const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const installLogPath = join(paths.runRoot, "plugin-installs.log");
 		const inspectStatePath = join(paths.runRoot, "plugin-inspect.json");
+		const pluginSourcePath = join(paths.userHome, ".openclaw", "extensions", "discord", "index.js");
 		const failInstallMarker = join(paths.runRoot, "fail-plugin-install");
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
 		writeFakeOpenClawPluginCli({
 			path: command,
 			installLogPath,
 			inspectStatePath,
+			pluginSourcePath,
 			failInstallMarker,
 			runtimeVersion: "OpenClaw 2026.7.29",
 		});
@@ -1185,11 +1194,18 @@ describe("runtime manifest services", () => {
 		expect(converge(accountChanged).installErrors).toEqual([]);
 		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(1);
 
-		writeFileSync(inspectStatePath, JSON.stringify(openClawPluginInspectFixture("9.9.9")));
+		writeFileSync(pluginSourcePath, "export const discordPlugin = false;\n");
 		expect(converge(accountChanged).installErrors).toEqual([]);
 		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(2);
 
-		const installRecordDrift = openClawPluginInspectFixture();
+		writeFileSync(
+			inspectStatePath,
+			JSON.stringify(openClawPluginInspectFixture(pluginSourcePath, "9.9.9")),
+		);
+		expect(converge(accountChanged).installErrors).toEqual([]);
+		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(3);
+
+		const installRecordDrift = openClawPluginInspectFixture(pluginSourcePath);
 		const installRecord = installRecordDrift.install;
 		if (typeof installRecord !== "object" || installRecord === null) {
 			throw new Error("expected plugin install fixture");
@@ -1197,7 +1213,7 @@ describe("runtime manifest services", () => {
 		installRecordDrift.install = { ...installRecord, spec: "@openclaw/other" };
 		writeFileSync(inspectStatePath, JSON.stringify(installRecordDrift));
 		expect(converge(accountChanged).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(3);
+		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(4);
 
 		const receipts = readRuntimeInstallReceipts(paths);
 		if (!receipts) throw new Error("expected channel plugin install receipt");
@@ -1207,17 +1223,18 @@ describe("runtime manifest services", () => {
 		};
 		writeRuntimeInstallReceipts(receipts, paths);
 		expect(converge(accountChanged).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(4);
+		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(5);
 
 		writeFakeOpenClawPluginCli({
 			path: command,
 			installLogPath,
 			inspectStatePath,
+			pluginSourcePath,
 			failInstallMarker,
 			runtimeVersion: "OpenClaw 2026.7.30",
 		});
 		expect(converge(accountChanged).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(5);
+		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(6);
 	});
 
 	test("fails closed on unsupported plugin inspection without blessing a failed install", () => {
@@ -1225,12 +1242,14 @@ describe("runtime manifest services", () => {
 		const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const installLogPath = join(paths.runRoot, "plugin-installs.log");
 		const inspectStatePath = join(paths.runRoot, "plugin-inspect.json");
+		const pluginSourcePath = join(paths.userHome, ".openclaw", "extensions", "discord", "index.js");
 		const failInstallMarker = join(paths.runRoot, "fail-plugin-install");
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
 		writeFakeOpenClawPluginCli({
 			path: command,
 			installLogPath,
 			inspectStatePath,
+			pluginSourcePath,
 			failInstallMarker,
 			runtimeVersion: "OpenClaw 2026.7.29",
 		});
@@ -1259,7 +1278,7 @@ describe("runtime manifest services", () => {
 			JSON.stringify({
 				plugin: {
 					id: "discord",
-					source: "/opt/openclaw/extensions/discord/index.js",
+					source: pluginSourcePath,
 					origin: "global",
 					status: "loaded",
 					version: "1.2.3",
