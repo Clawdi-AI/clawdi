@@ -6,9 +6,13 @@ import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
 	Bot,
+	Check,
 	CircleCheck,
+	Copy,
 	Cpu,
 	ExternalLink,
+	Eye,
+	EyeOff,
 	Info,
 	LifeBuoy,
 	Link2,
@@ -59,9 +63,11 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
 import {
@@ -80,6 +86,7 @@ import {
 import {
 	openSecureRuntimeWindow,
 	resolveRuntimeUiCredentials,
+	runtimeUiLaunchTarget,
 } from "@/hosted/agents/runtime-ui-credentials";
 import { trackRuntimeWindow } from "@/hosted/agents/runtime-window-lifecycle";
 import { useBillingClient } from "@/hosted/billing/billing-client";
@@ -1372,7 +1379,7 @@ function ConsoleTab({
 	const iframeUrl =
 		runtime === "openclaw"
 			? credentials?.runtime === "openclaw"
-				? credentials.handoff_url
+				? runtimeUiLaunchTarget(credentials)
 				: "about:blank"
 			: url;
 
@@ -1398,6 +1405,60 @@ function ConsoleTab({
 				allow="clipboard-read; clipboard-write"
 			/>
 		</LiveToolFrame>
+	);
+}
+
+const MASKED_RUNTIME_UI_CREDENTIAL = "••••••••••••";
+
+function RuntimeUiCredentialRow({
+	label,
+	value,
+	secret = false,
+}: {
+	label: string;
+	value: string;
+	secret?: boolean;
+}) {
+	const [revealed, setRevealed] = useState(!secret);
+	const { copied, copy } = useCopyToClipboard({
+		success: `${label} copied`,
+		error: `Couldn't copy ${label.toLowerCase()}`,
+	});
+	const visibleValue = secret && !revealed ? MASKED_RUNTIME_UI_CREDENTIAL : value;
+
+	return (
+		<div className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)_auto] items-center gap-2 px-3 py-2.5">
+			<span className="text-xs font-medium text-muted-foreground">{label}</span>
+			<code
+				className="block min-w-0 truncate font-mono text-sm font-medium"
+				title={secret && !revealed ? undefined : value}
+			>
+				{visibleValue}
+			</code>
+			<div className="flex items-center gap-0.5">
+				{secret ? (
+					<Button
+						type="button"
+						variant="ghost"
+						size="icon-xs"
+						onClick={() => setRevealed((visible) => !visible)}
+						aria-label={`${revealed ? "Hide" : "Show"} ${label}`}
+						aria-pressed={revealed}
+					>
+						{revealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+					</Button>
+				) : null}
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-xs"
+					onClick={() => copy(value)}
+					aria-label={`Copy ${label}`}
+				>
+					{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
+				</Button>
+			</div>
+		</div>
 	);
 }
 
@@ -1432,20 +1493,23 @@ function RuntimeUiAccessDialog({
 		setIsLoading(false);
 	}, [onCredentialsChange]);
 
-	const loadCredentials = useCallback(async () => {
+	const loadCredentials = useCallback(async (): Promise<RuntimeUiCredentials | null> => {
 		const requestVersion = requestVersionRef.current + 1;
 		requestVersionRef.current = requestVersion;
 		setIsLoading(true);
 		setCredentialError(null);
 		try {
 			const resolved = await requestCredentials();
-			if (requestVersionRef.current === requestVersion) onCredentialsChange(resolved);
+			if (requestVersionRef.current !== requestVersion) return null;
+			onCredentialsChange(resolved);
+			return resolved;
 		} catch (error) {
 			if (requestVersionRef.current === requestVersion) {
 				setCredentialError(
 					error instanceof Error ? error : new Error("Runtime UI credential request failed"),
 				);
 			}
+			return null;
 		} finally {
 			if (requestVersionRef.current === requestVersion) setIsLoading(false);
 		}
@@ -1467,8 +1531,7 @@ function RuntimeUiAccessDialog({
 		[credentials, isLoading, loadCredentials],
 	);
 
-	const openRuntime = useCallback(() => {
-		if (!credentials) return;
+	const openRuntime = useCallback(async () => {
 		const popup = openSecureRuntimeWindow(window.open.bind(window));
 		if (!popup) {
 			toast.error(`Couldn't open ${label}`, {
@@ -1478,11 +1541,36 @@ function RuntimeUiAccessDialog({
 			});
 			return;
 		}
-		popup.location.replace(
-			credentials.runtime === "openclaw" ? credentials.handoff_url : credentials.url,
-		);
-		trackRuntimeWindow(deployment.resource.id, popup);
-	}, [credentials, deployment.resource.id, label]);
+
+		const launchCredentials = credentials ?? (await loadCredentials());
+		if (!launchCredentials) {
+			try {
+				popup.close();
+			} catch {
+				// Browser isolation may have severed the WindowProxy.
+			}
+			toast.error(`Couldn't open ${label}`, {
+				id: RUNTIME_UI_LAUNCH_TOAST_ID,
+				description: "Runtime UI access couldn't be loaded. Open Access to retry.",
+			});
+			return;
+		}
+
+		try {
+			popup.location.replace(runtimeUiLaunchTarget(launchCredentials));
+			trackRuntimeWindow(deployment.resource.id, popup);
+		} catch {
+			try {
+				popup.close();
+			} catch {
+				// Browser isolation may have severed the WindowProxy.
+			}
+			toast.error(`Couldn't open ${label}`, {
+				id: RUNTIME_UI_LAUNCH_TOAST_ID,
+				description: "The new window couldn't be connected. Try again.",
+			});
+		}
+	}, [credentials, deployment.resource.id, label, loadCredentials]);
 
 	const acceptReset = useCallback(async () => {
 		await reset.mutateAsync({ id: deployment.resource.id });
@@ -1492,16 +1580,34 @@ function RuntimeUiAccessDialog({
 
 	return (
 		<Dialog open={open} onOpenChange={handleOpenChange}>
-			<Button
-				ref={triggerRef}
-				type="button"
-				variant="outline"
-				size="sm"
-				onClick={() => handleOpenChange(true)}
-				aria-label={`Access ${label}`}
-			>
-				Access
-			</Button>
+			<div className="flex items-center gap-1.5">
+				<Button
+					ref={triggerRef}
+					type="button"
+					variant="outline"
+					size="sm"
+					onClick={() => handleOpenChange(true)}
+					aria-label={`Access ${label}`}
+				>
+					Access
+				</Button>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					disabled={isLoading}
+					onClick={() => void openRuntime()}
+					aria-label={`Open ${label} in new window`}
+				>
+					{isLoading && !credentials ? (
+						<Spinner className="size-3.5" />
+					) : (
+						<ExternalLink className="size-3.5" />
+					)}
+					<span className="hidden sm:inline">Open in new window</span>
+					<span className="sm:hidden">Open</span>
+				</Button>
+			</div>
 			<DialogContent
 				data-hosted="true"
 				data-v2="true"
@@ -1511,8 +1617,8 @@ function RuntimeUiAccessDialog({
 				<DialogHeader>
 					<DialogTitle>Runtime UI access</DialogTitle>
 					<DialogDescription>
-						Reveal or copy the current {label} sign-in details. Reset rotates the same access
-						material through the normal agent rollout.
+						View or copy the current {label} access details. Reset rotates the same access material
+						through the normal agent rollout.
 					</DialogDescription>
 				</DialogHeader>
 
@@ -1536,14 +1642,17 @@ function RuntimeUiAccessDialog({
 				) : null}
 
 				{credentials?.runtime === "hermes" ? (
-					<div className="space-y-3">
-						<TokenReveal label="Username" value={credentials.username} />
-						<TokenReveal label="Password" value={credentials.password} />
+					<div className="overflow-hidden rounded-lg border bg-card/60">
+						<RuntimeUiCredentialRow label="Username" value={credentials.username} />
+						<Separator />
+						<RuntimeUiCredentialRow label="Password" value={credentials.password} secret />
 					</div>
 				) : null}
 
 				{credentials?.runtime === "openclaw" ? (
-					<TokenReveal label="Token" value={credentials.token} />
+					<div className="overflow-hidden rounded-lg border bg-card/60">
+						<RuntimeUiCredentialRow label="Token" value={credentials.token} secret />
+					</div>
 				) : null}
 
 				<div className="flex flex-wrap justify-end gap-2">
@@ -1564,7 +1673,11 @@ function RuntimeUiAccessDialog({
 							Reset access
 						</Button>
 					</ConfirmAction>
-					<Button type="button" disabled={!credentials || isLoading} onClick={openRuntime}>
+					<Button
+						type="button"
+						disabled={!credentials || isLoading}
+						onClick={() => void openRuntime()}
+					>
 						Open in new window
 						<ExternalLink className="size-3.5" />
 					</Button>

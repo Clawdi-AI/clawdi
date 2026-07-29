@@ -268,14 +268,17 @@ describe("hosted agent customer language", () => {
 		expect(detailSource.match(/getRuntimeUiCredentials/g)).toHaveLength(1);
 		expect(detailSource).toContain("openSecureRuntimeWindow");
 		expect(detailSource).toContain("resolveRuntimeUiCredentials");
+		expect(detailSource).toContain("runtimeUiLaunchTarget");
 		expect(detailSource).toContain("RuntimeUiAccessDialog");
 		expect(detailSource).toContain("Runtime UI access");
 		expect(detailSource).toContain("<iframe");
 		expect(detailSource).toContain('allow="clipboard-read; clipboard-write"');
-		expect(detailSource).toContain("credentials.handoff_url");
-		expect(detailSource).toContain('<TokenReveal label="Username"');
-		expect(detailSource).toContain('<TokenReveal label="Password"');
-		expect(detailSource).toContain('<TokenReveal label="Token"');
+		expect(detailSource).toContain("Open in new window");
+		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Username"');
+		expect(detailSource).toContain('<RuntimeUiCredentialRow label="Password"');
+		expect(detailSource).toContain(
+			'<RuntimeUiCredentialRow label="Token" value={credentials.token} secret />',
+		);
 		expect(detailSource).not.toContain("reconciliationRequired");
 	});
 });
