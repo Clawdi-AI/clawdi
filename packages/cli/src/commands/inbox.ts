@@ -1,8 +1,9 @@
 /**
  * `clawdi inbox ...` — incoming project shares awaiting my action.
  *
- *   inbox                          # list pending invitations
+ *   inbox                          # list pending invitations and local shares
  *   inbox accept <id-or-url> ...   # accept invitation OR redeem URL
+ *   inbox join <project-id> ...    # join one staged local share
  *   inbox decline <id>             # decline pending invitation
  *   inbox forget <id-or-alias>     # local-only: drop redeemed token
  *
@@ -12,6 +13,7 @@
 import { createHash } from "node:crypto";
 import { rmSync } from "node:fs";
 
+import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 
 import { allAdapterEntries } from "../adapters/registry";
@@ -19,8 +21,6 @@ import { ApiError, readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getAuth, getConfig } from "../lib/config";
-import { listProjects } from "../lib/project-resolver";
-import { pullSharedSkills } from "../share/eager-pull";
 import { addToken, findToken, listTokens, removeToken, type ShareToken } from "../share/tokens";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -55,11 +55,11 @@ function extractTokenFromUrl(input: string): string {
 	try {
 		url = new URL(input);
 	} catch {
-		throw new Error(`Not a valid share link or raw token: ${input.slice(0, 60)}…`);
+		throw new Error("Not a valid share link or 43-character token.");
 	}
 	const match = url.pathname.match(/\/share\/([A-Za-z0-9_-]+)\/?$/);
 	if (!match) {
-		throw new Error(`URL is not a clawdi share link: ${input}`);
+		throw new Error("URL is not a Clawdi share link.");
 	}
 	return match[1];
 }
@@ -80,48 +80,55 @@ interface AcceptOpts {
 	json?: boolean;
 }
 
-interface ShareUpgradeResponse {
-	membership_id: string;
-	project_id: string;
-	role: string;
-	joined_via: string;
-	joined_at: string;
-	resolved_owner_handle: string;
-	bound_agent_ids?: string[];
+type JoinOpts = Pick<AcceptOpts, "agent" | "useAs" | "json">;
+
+type ShareUpgradeResponse = components["schemas"]["ShareUpgradeResponse"];
+type SharePreview = components["schemas"]["ShareRedeemResponse"];
+type InvitationItem = components["schemas"]["InvitationResponse"];
+type InvitationAcceptResponse = components["schemas"]["InvitationAcceptResponse"];
+type JoinedProject = Pick<
+	ShareUpgradeResponse,
+	"project_id" | "resolved_owner_handle" | "bound_agent_ids"
+>;
+
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.trim().length > 0;
 }
 
-interface SharePreview {
-	project_id: string;
-	project_name: string;
-	owner_display: string;
-	owner_handle: string;
-	skill_count: number;
-	vault_count: number;
+function parseShareUpgradeResponse(value: unknown): ShareUpgradeResponse | null {
+	if (typeof value !== "object" || value === null) return null;
+	const body = value as Record<string, unknown>;
+	if (
+		!isNonEmptyString(body.membership_id) ||
+		!isNonEmptyString(body.project_id) ||
+		!isNonEmptyString(body.role) ||
+		!isNonEmptyString(body.joined_via) ||
+		!isNonEmptyString(body.joined_at) ||
+		!Number.isFinite(Date.parse(body.joined_at)) ||
+		!isNonEmptyString(body.resolved_owner_handle) ||
+		!Array.isArray(body.bound_agent_ids) ||
+		!body.bound_agent_ids.every(isNonEmptyString)
+	) {
+		return null;
+	}
+	return {
+		membership_id: body.membership_id,
+		project_id: body.project_id,
+		role: body.role,
+		joined_via: body.joined_via,
+		joined_at: body.joined_at,
+		resolved_owner_handle: body.resolved_owner_handle,
+		bound_agent_ids: body.bound_agent_ids,
+	};
 }
 
-interface InvitationItem {
-	id: string;
-	project_id: string;
-	project_name: string;
-	owner_display: string;
-	owner_handle: string;
-	created_at: string;
+function localPendingShares(): ShareToken[] {
+	return listTokens().filter((token) => !token.upgraded_at);
 }
 
-interface InvitationAcceptResponse {
-	id: string;
-	project_id: string;
-	role: string;
-	joined_via: string;
-	joined_at: string;
-	resolved_owner_handle: string;
-	bound_agent_ids?: string[];
-}
-
-interface JoinedProject {
-	project_id: string;
-	resolved_owner_handle: string;
-	bound_agent_ids?: string[];
+function safeLocalShare(token: ShareToken): Omit<ShareToken, "token"> & { join_command: string } {
+	const { token: _rawToken, ...safe } = token;
+	return { ...safe, join_command: `clawdi inbox join ${token.project_id}` };
 }
 
 function normalizeAgentIds(values?: string[]): string[] {
@@ -170,40 +177,41 @@ function normalizeAcceptMode(opts: AcceptOpts): "attached" {
 export async function inboxListCommand(opts: { json?: boolean }): Promise<void> {
 	const { apiUrl } = getConfig();
 	const auth = getAuth();
+	const localShares = localPendingShares();
 
-	// Anonymous mode: server invitations require auth, but locally
-	// redeemed share-tokens live in ~/.clawdi/share-tokens.json.
+	// Server invitations require auth. Staged local shares are always listed,
+	// but never joined as a side effect of opening the inbox.
 	if (!auth?.apiKey) {
-		const tokens = listTokens().filter((t) => !t.upgraded_at);
 		if (opts.json) {
-			// Redact the raw token because it is a bearer credential.
-			const redacted = tokens.map(({ token: _omit, ...rest }) => rest);
-			console.log(JSON.stringify({ invitations: [], local_share_tokens: redacted }, null, 2));
-			return;
-		}
-		if (tokens.length === 0) {
-			console.log("Nothing in your inbox.");
 			console.log(
-				chalk.gray(
-					"Sign in with `clawdi auth login` to see invitations and convert any " +
-						"anonymous share-tokens to permanent memberships.",
+				JSON.stringify(
+					{
+						invitations: [],
+						local_share_tokens: localShares.map(safeLocalShare),
+						next_command: "clawdi auth login",
+					},
+					null,
+					2,
 				),
 			);
 			return;
 		}
-		console.log(chalk.bold(`Anonymous share-tokens on this device (${tokens.length}):`));
-		for (const t of tokens) {
+		if (localShares.length === 0) {
+			console.log("Nothing in your inbox.");
+			console.log(chalk.gray("Sign in with `clawdi auth login` to see server invitations."));
+			return;
+		}
+		console.log(chalk.bold(`Local pending project shares (${localShares.length}):`));
+		for (const t of localShares) {
 			console.log(
 				`  ${chalk.bold(t.project_name)}  ${chalk.gray(`— from ${t.owner_display} (@${t.owner_handle})`)}`,
 			);
 			console.log(chalk.gray(`    project_id: ${t.project_id}`));
+			console.log(chalk.gray(`    Join after sign-in: clawdi inbox join ${t.project_id}`));
 		}
 		console.log();
-		console.log(
-			chalk.gray("Run ") +
-				chalk.cyan("clawdi auth login") +
-				chalk.gray(" — pending tokens upgrade to permanent memberships automatically."),
-		);
+		console.log(chalk.gray("First sign in: ") + chalk.cyan("clawdi auth login"));
+		console.log(chalk.gray("Then run the exact join command shown for the project you want."));
 		return;
 	}
 	const accessToken = await getClawdiAccessToken(apiUrl);
@@ -217,28 +225,42 @@ export async function inboxListCommand(opts: { json?: boolean }): Promise<void> 
 	const items = await readJson<InvitationItem[]>(r, "/v1/me/invitations");
 
 	if (opts.json) {
-		console.log(JSON.stringify({ invitations: items }, null, 2));
+		console.log(
+			JSON.stringify(
+				{ invitations: items, local_share_tokens: localShares.map(safeLocalShare) },
+				null,
+				2,
+			),
+		);
 		return;
 	}
 
-	if (items.length === 0) {
-		console.log("No pending invitations.");
+	if (items.length === 0 && localShares.length === 0) {
+		console.log("Nothing in your inbox.");
 		return;
 	}
-	console.log(chalk.bold(`Pending invitations (${items.length}):`));
-	for (const inv of items) {
-		console.log(
-			`  ${chalk.bold(inv.project_name)}  ${chalk.gray(`(${inv.id.slice(0, 8)}…)`)}` +
-				`\n    from ${inv.owner_display} ${chalk.gray(`@${inv.owner_handle}`)}` +
-				chalk.gray(` · ${new Date(inv.created_at).toLocaleDateString()}`),
-		);
+	if (items.length > 0) {
+		console.log(chalk.bold(`Pending invitations (${items.length}):`));
+		for (const inv of items) {
+			console.log(
+				`  ${chalk.bold(inv.project_name)}` +
+					`\n    from ${inv.owner_display} ${chalk.gray(`@${inv.owner_handle}`)}` +
+					chalk.gray(` · ${new Date(inv.created_at).toLocaleDateString()}`),
+			);
+			console.log(chalk.gray(`    Accept: clawdi inbox accept ${inv.id}`));
+		}
 	}
-	console.log();
-	console.log(
-		chalk.gray("Accept: ") +
-			chalk.cyan("clawdi inbox accept <id>") +
-			chalk.gray("  (a share URL also works)"),
-	);
+	if (items.length > 0 && localShares.length > 0) console.log();
+	if (localShares.length > 0) {
+		console.log(chalk.bold(`Local pending project shares (${localShares.length}):`));
+		for (const share of localShares) {
+			console.log(
+				`  ${chalk.bold(share.project_name)}  ${chalk.gray(`— from ${share.owner_display} (@${share.owner_handle})`)}`,
+			);
+			console.log(chalk.gray(`    project_id: ${share.project_id}`));
+			console.log(chalk.gray(`    Join: clawdi inbox join ${share.project_id}`));
+		}
+	}
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -331,6 +353,164 @@ export async function inboxAcceptCommand(
 }
 
 // ────────────────────────────────────────────────────────────────
+// inbox join — explicitly upgrade one staged local share
+// ────────────────────────────────────────────────────────────────
+
+export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promise<void> {
+	const { apiUrl } = getConfig();
+	const auth = getAuth();
+	if (!auth?.apiKey) {
+		console.error(
+			chalk.red("Not signed in. Run `clawdi auth login`, then run this join command again."),
+		);
+		process.exitCode = 1;
+		return;
+	}
+
+	const ticket = localPendingShares().find((entry) => entry.project_id === projectId);
+	if (!ticket) {
+		console.error(chalk.red(`No pending local share found for project '${projectId}'.`));
+		console.error(chalk.gray("Run `clawdi inbox` to see exact pending project ids."));
+		process.exitCode = 1;
+		return;
+	}
+
+	const apiOrigin = normalizeCloudApiBaseUrl(apiUrl);
+	if (ticket.api_origin && ticket.api_origin !== apiOrigin) {
+		console.error(
+			chalk.red(
+				`This local share belongs to ${ticket.api_origin}, but the current API is ${apiOrigin}.`,
+			),
+		);
+		console.error(
+			chalk.gray("Switch to the matching API and retry. The local share was left unchanged."),
+		);
+		process.exitCode = 1;
+		return;
+	}
+
+	const reqBody = await buildAcceptRequestBody(opts);
+	let bearer: string;
+	try {
+		bearer = await getClawdiAccessToken(apiOrigin);
+	} catch {
+		throw new Error(
+			"Could not authenticate to join this project. The local share was kept; sign in and retry.",
+		);
+	}
+
+	let response: Response;
+	try {
+		response = await fetch(`${apiOrigin}/v1/share/${encodeURIComponent(ticket.token)}/upgrade`, {
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${bearer}`,
+				"Content-Type": "application/json",
+				"Idempotency-Key": upgradeIdempotencyKey(ticket.token),
+			},
+			body: JSON.stringify(reqBody),
+		});
+	} catch {
+		throw new Error(
+			"Could not reach Clawdi to join this project. The local share was kept; check your connection and retry.",
+		);
+	}
+
+	if (response.status === 404 || response.status === 410) {
+		removeToken(ticket.project_id, ticket.token);
+		if (opts.json) {
+			console.log(
+				JSON.stringify(
+					{
+						status: "unavailable",
+						project_id: ticket.project_id,
+						local_ticket_removed: true,
+					},
+					null,
+					2,
+				),
+			);
+			return;
+		}
+		console.log(
+			`${chalk.yellow("!")} This share is unavailable; removed its local ticket from this device.`,
+		);
+		return;
+	}
+
+	if (response.status === 409) {
+		const conflict = (await response.json().catch(() => null)) as {
+			detail?: { error?: unknown };
+		} | null;
+		if (conflict?.detail?.error === "already_owner") {
+			removeToken(ticket.project_id, ticket.token);
+			if (opts.json) {
+				console.log(
+					JSON.stringify(
+						{
+							status: "already_owner",
+							project_id: ticket.project_id,
+							local_ticket_removed: true,
+						},
+						null,
+						2,
+					),
+				);
+				return;
+			}
+			console.log(
+				`${chalk.green("✓")} Project access already exists; cleared the local share ticket.`,
+			);
+			return;
+		}
+		throw new Error(
+			"Could not join this project because its access state changed. The local share was kept; refresh your inbox and retry.",
+		);
+	}
+
+	if (!response.ok) {
+		if (response.status >= 500) {
+			throw new Error(
+				"Project joining is temporarily unavailable. The local share was kept; try again later.",
+			);
+		}
+		throw new Error(
+			"Clawdi could not join this project. The local share was kept; check your access and retry.",
+		);
+	}
+
+	let body: ShareUpgradeResponse | null = null;
+	try {
+		body = parseShareUpgradeResponse(await readJson<unknown>(response, "join shared project"));
+	} catch {
+		// The server may already have created membership, but without a canonical
+		// response the CLI cannot safely decide which exact local ticket to remove.
+	}
+	if (!body || body.project_id !== ticket.project_id) {
+		throw new Error(
+			"Clawdi returned an invalid project join response. The local share was kept; retry or contact support.",
+		);
+	}
+
+	removeToken(ticket.project_id, ticket.token);
+	if (opts.json) {
+		console.log(
+			JSON.stringify(
+				{
+					status: "joined",
+					...body,
+					next_command: `clawdi pull --project ${body.project_id}`,
+				},
+				null,
+				2,
+			),
+		);
+		return;
+	}
+	renderJoinedSuccess(body, opts, body.project_id);
+}
+
+// ────────────────────────────────────────────────────────────────
 // inbox decline
 // ────────────────────────────────────────────────────────────────
 
@@ -359,9 +539,7 @@ export function inboxForgetCommand(projectIdOrAlias: string): void {
 	const token = findToken(projectIdOrAlias);
 	if (!token) {
 		console.error(chalk.red(`No local share-token entry found for '${projectIdOrAlias}'.`));
-		console.error(
-			chalk.gray("Run `clawdi inbox` (signed-out) to list local share-tokens on this device."),
-		);
+		console.error(chalk.gray("Run `clawdi inbox` to list local share-tokens on this device."));
 		process.exitCode = 1;
 		return;
 	}
@@ -417,16 +595,26 @@ async function acceptAnonymousUrl(
 	const existing = listTokens().find((t) => t.token === token);
 	if (existing) {
 		if (opts.json) {
-			const { token: _raw, ...safe } = existing;
-			console.log(JSON.stringify({ status: "already_redeemed", local_share_token: safe }, null, 2));
+			console.log(
+				JSON.stringify(
+					{
+						status: "already_redeemed",
+						membership_changed: false,
+						local_share_token: safeLocalShare(existing),
+						next_commands: ["clawdi auth login", `clawdi inbox join ${existing.project_id}`],
+					},
+					null,
+					2,
+				),
+			);
 			return;
 		}
 		console.log(
-			chalk.gray(
-				`Already accepted: ${existing.project_name} (@${existing.owner_handle}). ` +
-					`Run \`clawdi auth login\` to convert to permanent membership.`,
-			),
+			chalk.gray(`Already staged: ${existing.project_name} (@${existing.owner_handle}).`),
 		);
+		console.log(chalk.gray("No account or project membership was changed."));
+		console.log(`Next: ${chalk.cyan("clawdi auth login")}`);
+		console.log(`Then: ${chalk.cyan(`clawdi inbox join ${existing.project_id}`)}`);
 		return;
 	}
 
@@ -454,12 +642,23 @@ async function acceptAnonymousUrl(
 	};
 	addToken(record);
 	if (opts.json) {
-		console.log(JSON.stringify({ status: "redeemed", share: body }, null, 2));
+		console.log(
+			JSON.stringify(
+				{
+					status: "redeemed",
+					membership_changed: false,
+					share: body,
+					next_commands: ["clawdi auth login", `clawdi inbox join ${body.project_id}`],
+				},
+				null,
+				2,
+			),
+		);
 		return;
 	}
 	console.log(
 		chalk.green("✓") +
-			` Accepted "${chalk.bold(body.project_name)}" from ${body.owner_display} (@${body.owner_handle}).`,
+			` Staged "${chalk.bold(body.project_name)}" from ${body.owner_display} (@${body.owner_handle}) on this device.`,
 	);
 	console.log(
 		chalk.gray(
@@ -468,32 +667,17 @@ async function acceptAnonymousUrl(
 		),
 	);
 	console.log();
-	console.log(
-		chalk.gray(
-			"Token saved to ~/.clawdi/share-tokens.json (0600). " +
-				"Run `clawdi auth login` to convert to a permanent project membership.",
-		),
-	);
+	console.log(chalk.gray("No account or project membership was changed."));
+	console.log(`Next: ${chalk.cyan("clawdi auth login")}`);
+	console.log(`Then: ${chalk.cyan(`clawdi inbox join ${body.project_id}`)}`);
 }
 
-async function acceptedProjectAlias(
-	apiUrl: string,
-	bearer: string,
+function renderJoinedSuccess(
 	body: JoinedProject,
-): Promise<string> {
-	const projects = await listProjects(apiUrl, bearer).catch(() => []);
-	const project = projects.find((item) => item.id === body.project_id);
-	if (project) {
-		if (project.is_owner === false && project.owner_handle) {
-			return `@${project.owner_handle}/${project.slug}`;
-		}
-		return project.slug;
-	}
-	return `@${body.resolved_owner_handle}/${body.project_id}`;
-}
-
-function renderJoinedSuccess(body: JoinedProject, _opts: AcceptOpts, projectAlias: string): void {
-	console.log(`${chalk.green("✓")} Accepted project access for ${projectAlias}.`);
+	_opts: Pick<AcceptOpts, "agent" | "useAs" | "json">,
+	projectRef: string,
+): void {
+	console.log(`${chalk.green("✓")} Joined project ${projectRef}.`);
 	console.log(chalk.gray("  Role: viewer (read access)."));
 	const bound = body.bound_agent_ids ?? [];
 	if (bound.length > 0) {
@@ -501,37 +685,11 @@ function renderJoinedSuccess(body: JoinedProject, _opts: AcceptOpts, projectAlia
 	} else {
 		console.log(
 			chalk.gray(
-				`  Attach to Agent: clawdi agent projects attach <agent-id> --project ${projectAlias}`,
+				`  Attach to Agent: clawdi agent projects attach <agent-id> --project ${projectRef}`,
 			),
 		);
 	}
-}
-
-async function eagerPullAndReport(
-	apiUrl: string,
-	bearer: string,
-	projectId: string,
-	ownerHandle: string,
-	verboseError: boolean,
-	report = true,
-): Promise<number> {
-	const written = await pullSharedSkills(apiUrl, bearer, projectId, ownerHandle).catch((e) => {
-		if (verboseError && report) {
-			console.log(
-				chalk.yellow(
-					`  (Couldn't pull shared skills yet: ${e instanceof Error ? e.message : String(e)}. ` +
-						"Run `clawdi pull` later to retry.)",
-				),
-			);
-		}
-		return 0;
-	});
-	if (written > 0 && report) {
-		console.log(
-			chalk.gray(`  Pulled ${written} skill${written === 1 ? "" : "s"} into your local agents.`),
-		);
-	}
-	return written;
+	console.log(chalk.gray(`  Next (optional): clawdi pull --project ${projectRef}`));
 }
 
 async function acceptUrl(
@@ -541,6 +699,7 @@ async function acceptUrl(
 	opts: AcceptOpts,
 ): Promise<void> {
 	const token = extractTokenFromUrl(urlOrToken);
+	const localTicket = localPendingShares().find((entry) => entry.token === token);
 	const reqBody = await buildAcceptRequestBody(opts);
 
 	const r = await fetch(`${apiUrl}/v1/share/${token}/upgrade`, {
@@ -556,34 +715,61 @@ async function acceptUrl(
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
 		if (detail.error === "already_owner") {
+			if (localTicket) removeToken(localTicket.project_id, localTicket.token);
 			if (opts.json) {
-				console.log(JSON.stringify({ status: "already_owner" }, null, 2));
+				console.log(
+					JSON.stringify(
+						{
+							status: "already_owner",
+							local_ticket_removed: Boolean(localTicket),
+						},
+						null,
+						2,
+					),
+				);
 				return;
 			}
-			console.log(chalk.yellow("This is your own project — nothing to accept."));
+			console.log(
+				chalk.yellow(
+					localTicket
+						? "Project access already exists; cleared the local share ticket."
+						: "This is your own project — nothing to accept.",
+				),
+			);
 			return;
 		}
 		throw new ApiError({ status: r.status, body: JSON.stringify(detail), hint: "" });
 	}
-	if (r.status === 404) throw new Error("Share link not found.");
-	if (r.status === 410) throw new Error("Share link revoked or expired.");
+	if (r.status === 404 || r.status === 410) {
+		if (localTicket) removeToken(localTicket.project_id, localTicket.token);
+		throw new Error(
+			r.status === 404
+				? "Share link not found. Any matching local ticket was removed."
+				: "Share link revoked or expired. Any matching local ticket was removed.",
+		);
+	}
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
-	const body = await readJson<ShareUpgradeResponse>(r, "upgrade share link");
-	const pulled = await eagerPullAndReport(
-		apiUrl,
-		bearer,
-		body.project_id,
-		body.resolved_owner_handle,
-		true,
-		!opts.json,
-	);
+	const body = parseShareUpgradeResponse(await readJson<unknown>(r, "upgrade share link"));
+	if (!body || (localTicket && localTicket.project_id !== body.project_id)) {
+		throw new Error("Clawdi returned an invalid project join response.");
+	}
+	if (localTicket) removeToken(localTicket.project_id, localTicket.token);
 	if (opts.json) {
-		console.log(JSON.stringify({ status: "joined", pulled_skills: pulled, ...body }, null, 2));
+		console.log(
+			JSON.stringify(
+				{
+					status: "joined",
+					...body,
+					next_command: `clawdi pull --project ${body.project_id}`,
+				},
+				null,
+				2,
+			),
+		);
 		return;
 	}
-	const alias = await acceptedProjectAlias(apiUrl, bearer, body);
-	renderJoinedSuccess(body, opts, alias);
+	renderJoinedSuccess(body, opts, body.project_id);
 }
 
 async function acceptInvitation(
@@ -608,18 +794,19 @@ async function acceptInvitation(
 	if (!r.ok) throw new ApiError({ status: r.status, body: await r.text(), hint: "" });
 
 	const body = await readJson<InvitationAcceptResponse>(r, "accept project invitation");
-	const pulled = await eagerPullAndReport(
-		apiUrl,
-		bearer,
-		body.project_id,
-		body.resolved_owner_handle,
-		false,
-		!opts.json,
-	);
 	if (opts.json) {
-		console.log(JSON.stringify({ status: "joined", pulled_skills: pulled, ...body }, null, 2));
+		console.log(
+			JSON.stringify(
+				{
+					status: "joined",
+					...body,
+					next_command: `clawdi pull --project ${body.project_id}`,
+				},
+				null,
+				2,
+			),
+		);
 		return;
 	}
-	const alias = await acceptedProjectAlias(apiUrl, bearer, body);
-	renderJoinedSuccess(body, opts, alias);
+	renderJoinedSuccess(body, opts, body.project_id);
 }

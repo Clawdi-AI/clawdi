@@ -1654,7 +1654,7 @@ const inboxCmd = program
 
 inboxCmd
 	.command("accept [id-or-url]")
-	.description("Accept viewer project access from an invite or share link")
+	.description("Accept an invitation, or stage/join a share link based on auth state")
 	.option("--invite <id>", "Explicit invitation UUID (bypass shape detection)")
 	.option("--url <link>", "Explicit share URL (bypass shape detection)")
 	.option(
@@ -1680,6 +1680,30 @@ Examples:
 	.action(async (idOrUrl, opts) => {
 		const { inboxAcceptCommand } = await import("./commands/inbox.js");
 		await inboxAcceptCommand(idOrUrl, opts);
+	});
+
+inboxCmd
+	.command("join <project-id>")
+	.description("Explicitly join one locally staged project share")
+	.option(
+		"-a, --agent <agent-id>",
+		"Attach the joined project to one or more agents (repeat or comma-separate)",
+		collectCsvValues,
+		[] as string[],
+	)
+	.option("--use-as <attached>", "Attach to --agent (default: attached)")
+	.option("--json", "Emit machine-readable JSON (agent contract)")
+	.addHelpText(
+		"after",
+		`
+Example:
+  $ clawdi auth login
+  $ clawdi inbox join <project-id>
+  $ clawdi pull --project <project-id>`,
+	)
+	.action(async (projectId, opts) => {
+		const { inboxJoinCommand } = await import("./commands/inbox.js");
+		await inboxJoinCommand(projectId, opts);
 	});
 
 inboxCmd

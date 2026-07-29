@@ -1,7 +1,5 @@
-import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import * as p from "@clack/prompts";
-import type { components } from "@clawdi/shared/api";
 import chalk from "chalk";
 import { readJson } from "../lib/api-client";
 import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
@@ -17,7 +15,6 @@ import {
 	exchangeClerkOAuthCode,
 	fetchClerkOAuthClientConfig,
 	fetchClerkOAuthDiscovery,
-	getClawdiAccessToken,
 	isClerkOAuthAuth,
 	logoutClawdiCredentials,
 	persistPendingClerkOAuthLogin,
@@ -34,27 +31,13 @@ import {
 	type PendingAuth,
 } from "../lib/config";
 import { detectRuntimeMode, getRuntimePaths } from "../runtime/paths";
-import type { ShareToken } from "../share/tokens";
 
 export { browserOpenCommand } from "../lib/browser";
-
-function upgradeIdempotencyKey(token: string): string {
-	return `upgrade-${createHash("sha256").update(token).digest("hex").slice(0, 32)}`;
-}
 
 interface MeResponse {
 	id: string;
 	email: string;
 	name: string;
-}
-
-type ShareUpgradeResponse = components["schemas"]["ShareUpgradeResponse"];
-
-function shareDisplayName(token: ShareToken): string {
-	const name = typeof token.project_name === "string" ? token.project_name.trim() : "";
-	if (name) return name;
-	const projectId = typeof token.project_id === "string" ? token.project_id.trim() : "";
-	return projectId ? `Project ${projectId}` : "local share";
 }
 
 /**
@@ -86,118 +69,6 @@ function postLoginHint() {
 		chalk.gray("Next: ") + chalk.bold("clawdi setup") + chalk.gray(" to register this machine."),
 	);
 	p.outro(chalk.gray("Credentials saved to ~/.clawdi/auth.json"));
-}
-
-/**
- * Scan ~/.clawdi/share-tokens.json for eligible un-upgraded entries and POST
- * /upgrade for each. Synchronous best-effort: blocks `auth login`
- * until done so a subsequent `clawdi project list` shows the new
- * project memberships deterministically.
- *
- * Per-token failures never abort or add warnings to a successful login.
- * Transient failures leave the anonymous claim available for retry. A 404 or
- * 410 means the current API cannot claim it, so the exact stale local entry is
- * removed. Origin-bound claims are never sent to a different API.
- */
-async function claimPendingAnonymousShares(apiUrl: string, apiKey: string): Promise<void> {
-	const { readTokenStore, addToken, removeToken } = await import("../share/tokens");
-	const store = readTokenStore();
-	const apiOrigin = normalizeCloudApiBaseUrl(apiUrl);
-	const tokens = store.tokens.filter(
-		(t) => !t.upgraded_at && (!t.api_origin || t.api_origin === apiOrigin),
-	);
-	if (tokens.length === 0) return;
-
-	// Parallel network round-trips, sequential disk writes. addToken
-	// is load-modify-save unlocked, so two concurrent calls can race
-	// and silently drop one upsert; keeping the disk writes inside
-	// a serial loop avoids that without holding 5 round-trips in
-	// series for a user with 5 pending shares.
-	type Outcome =
-		| { kind: "ok"; token: ShareToken; alias?: string; projectId: string; ownerHandle: string }
-		| { kind: "already_owner"; token: ShareToken }
-		| { kind: "unavailable"; token: ShareToken }
-		| { kind: "fail" };
-
-	const outcomes = await Promise.all(
-		tokens.map(async (t): Promise<Outcome> => {
-			try {
-				const r = await fetch(`${apiOrigin}/v1/share/${encodeURIComponent(t.token)}/upgrade`, {
-					method: "POST",
-					headers: {
-						Authorization: `Bearer ${apiKey}`,
-						"Content-Type": "application/json",
-						"Idempotency-Key": upgradeIdempotencyKey(t.token),
-					},
-					body: "{}",
-				});
-				if (r.status === 404 || r.status === 410) return { kind: "unavailable", token: t };
-				if (r.status === 409) {
-					const body = (await r.json().catch(() => ({}))) as {
-						detail?: { error?: string };
-					};
-					if (body?.detail?.error === "already_owner") {
-						return { kind: "already_owner", token: t };
-					}
-					return { kind: "fail" };
-				}
-				if (!r.ok) return { kind: "fail" };
-				const body = await readJson<ShareUpgradeResponse>(r, "share upgrade");
-				if (
-					typeof body.project_id !== "string" ||
-					!body.project_id.trim() ||
-					typeof body.resolved_owner_handle !== "string" ||
-					!body.resolved_owner_handle.trim()
-				) {
-					throw new Error("share upgrade returned an invalid response");
-				}
-				return {
-					kind: "ok",
-					token: t,
-					projectId: body.project_id,
-					ownerHandle: body.resolved_owner_handle,
-				};
-			} catch {
-				return { kind: "fail" };
-			}
-		}),
-	);
-
-	const { pullSharedSkills } = await import("../share/eager-pull");
-	const results: Array<{ name: string; alias?: string; pulled?: number }> = [];
-	for (const o of outcomes) {
-		if (o.kind === "ok") {
-			addToken({
-				...o.token,
-				project_id: o.projectId,
-				owner_handle: o.ownerHandle,
-				upgraded_at: new Date().toISOString(),
-			});
-			const pulled = await pullSharedSkills(apiOrigin, apiKey, o.projectId, o.ownerHandle).catch(
-				() => 0,
-			);
-			results.push({ name: shareDisplayName(o.token), alias: o.alias, pulled });
-		} else if (o.kind === "already_owner") {
-			addToken({ ...o.token, upgraded_at: new Date().toISOString() });
-		} else if (o.kind === "unavailable") {
-			removeToken(o.token.project_id, o.token.token);
-		}
-	}
-
-	if (results.length > 0) {
-		p.log.success(
-			results.length === 1 ? "Shared project ready:" : `${results.length} shared projects ready:`,
-		);
-		for (const o of results) {
-			const pulled =
-				o.pulled && o.pulled > 0
-					? chalk.gray(` · pulled ${o.pulled} skill${o.pulled === 1 ? "" : "s"}`)
-					: "";
-			p.log.message(
-				chalk.gray(`  → `) + chalk.bold(o.alias ?? o.name) + chalk.gray(` ready`) + pulled,
-			);
-		}
-	}
 }
 
 async function authLoginManual(apiUrl: string, expectedCredential: StoredCredentialIdentity) {
@@ -244,7 +115,6 @@ async function authLoginManual(apiUrl: string, expectedCredential: StoredCredent
 	}
 
 	verifySpinner.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
-	await claimPendingAnonymousShares(apiUrl, apiKey);
 	postLoginHint();
 }
 
@@ -349,7 +219,6 @@ export async function finishOAuthLogin(
 
 	const me = verification.user;
 	spinner.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
-	await claimPendingAnonymousShares(pending.apiUrl, auth.apiKey);
 	postLoginHint();
 	return true;
 }
@@ -399,12 +268,6 @@ export async function authLogin(opts: { manual?: boolean; open?: boolean } = {})
 	if (existing) {
 		p.log.warn(`Already logged in as ${existing.email || existing.userId || "unknown"}`);
 		p.log.info("Run `clawdi auth logout` first to switch accounts.");
-		const { apiUrl } = getConfig();
-		try {
-			await claimPendingAnonymousShares(apiUrl, await getClawdiAccessToken(apiUrl));
-		} catch (error) {
-			reportOAuthError(error);
-		}
 		return;
 	}
 
