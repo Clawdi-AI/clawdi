@@ -3,6 +3,7 @@ import type { RuntimeUiCredentials } from "@clawdi/shared/api";
 import {
 	openSecureRuntimeWindow,
 	resolveRuntimeUiCredentials,
+	runtimeUiLaunchTarget,
 } from "@/hosted/agents/runtime-ui-credentials";
 
 describe("runtime UI credential targeting", () => {
@@ -34,6 +35,7 @@ describe("runtime UI credential targeting", () => {
 			resolveRuntimeUiCredentials(credentials, "https://runtime.example/hermes", "rv-current"),
 		).toEqual(credentials);
 		expect(credentials.url).not.toContain(credentials.password ?? "");
+		expect(runtimeUiLaunchTarget(credentials)).toBe(credentials.url);
 	});
 
 	test("rejects credentials targeting a different published endpoint", () => {
@@ -73,6 +75,8 @@ describe("runtime UI credential targeting", () => {
 		expect(
 			resolveRuntimeUiCredentials(credentials, "https://runtime.example/openclaw/", "rv-current"),
 		).toEqual(credentials);
+		expect(runtimeUiLaunchTarget(credentials)).toBe(credentials.handoff_url);
+		expect(runtimeUiLaunchTarget(credentials)).not.toBe(credentials.url);
 	});
 
 	test("rejects a stale rollout or a handoff without the exact token fragment", () => {

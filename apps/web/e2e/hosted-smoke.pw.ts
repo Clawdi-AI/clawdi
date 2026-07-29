@@ -2502,12 +2502,16 @@ test("deployment detail stays put, becomes running, and keeps manual Runtime UI 
 		"https://runtime.example/hermes",
 	);
 	await expect(main.getByRole("button", { name: "Access Hermes Dashboard" })).toBeVisible();
+	await expect(
+		main.getByRole("button", { name: "Open Hermes Dashboard in new window" }),
+	).toBeVisible();
 });
 
-test("Runtime UI Access masks both Hermes fields and submits one declarative reset", async ({
+test("Runtime UI Access shows Hermes username, masks password, and submits one declarative reset", async ({
 	context,
 	page,
 }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
 	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 	const runtimeUiRedemptionRequests: string[] = [];
 	const runtimeUiResetRequests: Array<{ idempotencyKey: string | null; ifMatch: string | null }> =
@@ -2526,9 +2530,11 @@ test("Runtime UI Access masks both Hermes fields and submits one declarative res
 	const dialog = page.getByRole("dialog", { name: "Runtime UI access" });
 	await expect(dialog).toBeVisible();
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
-	await expect(dialog.locator("code")).toHaveText(["••••••••••••", "••••••••••••"]);
-	await dialog.getByRole("button", { name: "Show Username" }).click();
+	await expect(dialog.locator("code")).toHaveText(["admin", "••••••••••••"]);
 	await expect(dialog.getByText("admin", { exact: true })).toBeVisible();
+	await expect(dialog.getByRole("button", { name: "Show Username" })).toHaveCount(0);
+	await dialog.getByRole("button", { name: "Copy Username" }).click();
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("admin");
 	await dialog.getByRole("button", { name: "Copy Password" }).click();
 	await expect
 		.poll(() => page.evaluate(() => navigator.clipboard.readText()))
@@ -2586,7 +2592,7 @@ test("Runtime UI credential failure renders a retryable error instead of a perma
 	await expect(
 		dialog.getByText("Couldn't load Hermes Dashboard access", { exact: true }),
 	).toHaveCount(0);
-	await expect(dialog.locator("code")).toHaveText(["••••••••••••", "••••••••••••"]);
+	await expect(dialog.locator("code")).toHaveText(["admin", "••••••••••••"]);
 	await dialog.getByRole("button", { name: "Show Password", exact: true }).click();
 	await expect(dialog.getByText("recovered-password", { exact: true })).toBeVisible();
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(2);
@@ -2621,6 +2627,14 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 		"https://runtime.example/openclaw/#token=gateway-token",
 	);
 	await expect(main.getByText("gateway-token", { exact: false })).toHaveCount(0);
+	await expect(
+		main.getByRole("button", { name: "Open OpenClaw Control UI in new window" }),
+	).toBeVisible();
+	const toolbarPopupPromise = page.waitForEvent("popup");
+	await main.getByRole("button", { name: "Open OpenClaw Control UI in new window" }).click();
+	const toolbarPopup = await toolbarPopupPromise;
+	expect(toolbarPopup).toBeDefined();
+	await toolbarPopup.close();
 	await main.getByRole("button", { name: "Access OpenClaw Control UI" }).click();
 	const dialog = page.getByRole("dialog", { name: "Runtime UI access" });
 	expect(runtimeUiRedemptionRequests).toHaveLength(1);
@@ -2630,8 +2644,11 @@ test("OpenClaw Console opens through the direct gateway token handoff", async ({
 		"https://runtime.example/openclaw/#token=gateway-token",
 	);
 	await expect(dialog.locator("code")).toHaveText("••••••••••••");
+	await dialog.getByRole("button", { name: "Copy Token" }).click();
 	await dialog.getByRole("button", { name: "Show Token" }).click();
 	await expect(dialog.getByText("gateway-token", { exact: true })).toBeVisible();
+	await dialog.getByRole("button", { name: "Hide Token" }).click();
+	await expect(dialog.getByText("gateway-token", { exact: true })).toHaveCount(0);
 	const popupPromise = page.waitForEvent("popup");
 	await dialog.getByRole("button", { name: "Open in new window", exact: true }).click();
 	const popup = await popupPromise;

@@ -58,3 +58,7 @@ export function resolveRuntimeUiCredentials(
 	}
 	return credentials;
 }
+
+export function runtimeUiLaunchTarget(credentials: RuntimeUiCredentials): string {
+	return credentials.runtime === "openclaw" ? credentials.handoff_url : credentials.url;
+}
