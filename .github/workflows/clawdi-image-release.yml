@@ -313,7 +313,7 @@ jobs:
   deploy-vps:
     needs: build
     if: needs.build.outputs.build_required == 'true' && needs.build.outputs.should_deploy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     concurrency:
       group: kamal-deploy-clawdi
@@ -342,6 +342,9 @@ jobs:
           mkdir -p .kamal
           printf '%s\n' "$KAMAL_SECRETS" > .kamal/secrets
           chmod 600 .kamal/secrets
+
+      - name: Prepare toolcache
+        run: sudo mkdir -p /opt/hostedtoolcache && sudo chown -R "$USER" /opt/hostedtoolcache
 
       - name: Install Kamal
         uses: ruby/setup-ruby@v1
