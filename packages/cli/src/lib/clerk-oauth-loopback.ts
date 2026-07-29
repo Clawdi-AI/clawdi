@@ -1,16 +1,53 @@
 import { createServer, type Server } from "node:http";
 
-const CALLBACK_RESPONSE = `<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><title>Clawdi login complete</title></head>
-<body><main><h1>Clawdi login complete</h1><p>You can close this window and return to your terminal.</p></main></body>
-</html>`;
+function callbackResponse(status: "accepted" | "rejected"): string {
+	const accepted = status === "accepted";
+	const title = accepted ? "Login complete" : "Login not completed";
+	const description = accepted
+		? "You’re signed in. Close this window and return to your terminal."
+		: "Return to your terminal and run the login command again.";
+	const icon = accepted ? '<path d="m7.5 12.5 3 3 6-7"/>' : '<path d="m8.5 8.5 7 7m0-7-7 7"/>';
 
-const CALLBACK_REJECTED_RESPONSE = `<!doctype html>
+	return `<!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>Clawdi login rejected</title></head>
-<body><main><h1>Clawdi login rejected</h1><p>Return to your terminal and try again.</p></main></body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Clawdi · ${title}</title>
+<style>
+:root{color-scheme:light dark;--bg:oklch(0.985 0.0025 95);--card:oklch(0.998 0.001 95);--text:oklch(0.235 0.008 95);--muted:oklch(0.51 0.008 95);--border:oklch(0.91 0.005 95);--status:${accepted ? "oklch(0.56 0.105 150)" : "oklch(0.55 0.19 27)"};--status-bg:${accepted ? "oklch(0.96 0.022 150)" : "oklch(0.96 0.02 27)"}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;min-height:100svh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
+main{width:min(100%,420px)}
+.brand{margin:0 0 16px;text-align:center;font-size:15px;font-weight:650;letter-spacing:-.01em}
+.card{border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 2px 4px -1px oklch(0.25 0.01 95/.05)}
+.content{padding:40px;text-align:center}
+.icon{display:grid;place-items:center;width:44px;height:44px;margin:0 auto 22px;border-radius:10px;background:var(--status-bg);color:var(--status)}
+.icon svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+h1{margin:0;font-size:27px;line-height:1.2;letter-spacing:-.03em}
+.description{margin:13px auto 0;max-width:320px;color:var(--muted);font-size:15px;line-height:1.6}
+@media(max-width:480px){body{padding:16px}.content{padding:34px 24px}h1{font-size:25px}}
+@media(prefers-color-scheme:dark){:root{--bg:oklch(0.175 0.004 95);--card:oklch(0.205 0.004 95);--text:oklch(0.92 0.004 95);--muted:oklch(0.63 0.006 95);--border:oklch(0.275 0.005 95);--status:${accepted ? "oklch(0.66 0.11 150)" : "oklch(0.62 0.19 27)"};--status-bg:${accepted ? "oklch(0.24 0.035 150)" : "oklch(0.245 0.045 27)"}}}
+</style>
+</head>
+<body>
+<main>
+<div class="brand">Clawdi</div>
+<section class="card" aria-labelledby="result-title">
+<div class="content">
+<div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24">${icon}</svg></div>
+<h1 id="result-title">${title}</h1>
+<p class="description">${description}</p>
+</div>
+</section>
+</main>
+</body>
 </html>`;
+}
+
+const CALLBACK_RESPONSE = callbackResponse("accepted");
+const CALLBACK_REJECTED_RESPONSE = callbackResponse("rejected");
 
 export type ClerkOAuthLoopback = {
 	callbackUrl: Promise<string>;
