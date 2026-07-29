@@ -456,7 +456,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 	}
 
 	if (response.status === 404 || response.status === 410) {
-		removeToken(ticket.project_id, ticket.token);
+		await removeToken(ticket.project_id, ticket.token);
 		if (opts.json) {
 			console.log(
 				JSON.stringify(
@@ -482,7 +482,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 			detail?: { error?: unknown };
 		} | null;
 		if (conflict?.detail?.error === "already_owner") {
-			removeToken(ticket.project_id, ticket.token);
+			await removeToken(ticket.project_id, ticket.token);
 			if (opts.json) {
 				console.log(
 					JSON.stringify(
@@ -531,7 +531,7 @@ export async function inboxJoinCommand(projectId: string, opts: JoinOpts): Promi
 		);
 	}
 
-	removeToken(ticket.project_id, ticket.token);
+	await removeToken(ticket.project_id, ticket.token);
 	if (opts.json) {
 		console.log(
 			JSON.stringify(
@@ -575,7 +575,7 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 // inbox forget — local-only cleanup
 // ────────────────────────────────────────────────────────────────
 
-export function inboxForgetCommand(projectId: string): void {
+export async function inboxForgetCommand(projectId: string): Promise<void> {
 	const token = findToken(projectId);
 	if (!token) {
 		console.error(chalk.red(`No local share record found for project '${projectId}'.`));
@@ -606,7 +606,10 @@ export function inboxForgetCommand(projectId: string): void {
 			}
 		}
 	}
-	removeToken(token.project_id);
+	const tokenRemoved = await removeToken(token.project_id, token.token);
+	if (!tokenRemoved) {
+		throw new Error("local share changed while it was being forgotten; retry the command");
+	}
 
 	console.log(`${chalk.green("✓")} Forgot local share for "${chalk.bold(token.project_name)}".`);
 	if (removed > 0) {
@@ -714,7 +717,7 @@ async function acceptAnonymousUrl(
 		redeemed_at: new Date().toISOString(),
 		api_origin: apiOrigin,
 	};
-	addToken(record);
+	await addToken(record);
 	if (opts.json) {
 		console.log(
 			JSON.stringify(
@@ -796,7 +799,7 @@ async function acceptUrl(
 	if (r.status === 409) {
 		const detail = (await r.json().catch(() => ({})))?.detail ?? {};
 		if (detail.error === "already_owner") {
-			if (localTicket) removeToken(localTicket.project_id, localTicket.token);
+			if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 			if (opts.json) {
 				console.log(
 					JSON.stringify(
@@ -822,7 +825,7 @@ async function acceptUrl(
 		throw new ApiError({ status: r.status, body: JSON.stringify(detail), hint: "" });
 	}
 	if (r.status === 404 || r.status === 410) {
-		if (localTicket) removeToken(localTicket.project_id, localTicket.token);
+		if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 		throw new Error(
 			r.status === 404
 				? "Share link not found. Any matching local ticket was removed."
@@ -835,7 +838,7 @@ async function acceptUrl(
 	if (!body || (localTicket && localTicket.project_id !== body.project_id)) {
 		throw new Error("Clawdi returned an invalid project join response.");
 	}
-	if (localTicket) removeToken(localTicket.project_id, localTicket.token);
+	if (localTicket) await removeToken(localTicket.project_id, localTicket.token);
 	if (opts.json) {
 		console.log(
 			JSON.stringify(

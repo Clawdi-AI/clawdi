@@ -38,7 +38,7 @@ describe("getConfig env override", () => {
 
 	it("CLAWDI_DEPLOY_API_URL env overrides stored Hosted config", async () => {
 		const { getConfig, setConfigKey } = await import("../src/lib/config");
-		setConfigKey("deployApiUrl", "http://deploy-from-disk");
+		setConfigKey("deployApiUrl", "https://deploy-from-disk.test");
 		process.env.CLAWDI_DEPLOY_API_URL = "http://deploy-from-env";
 		expect(getConfig().deployApiUrl).toBe("http://deploy-from-env");
 	});
@@ -46,20 +46,59 @@ describe("getConfig env override", () => {
 	it("preserves the stored auto-update preference", async () => {
 		const { getConfig, setConfigKey } = await import("../src/lib/config");
 		setConfigKey("autoUpdate", "false");
-		expect(getConfig().autoUpdate).toBe("false");
+		expect(getConfig().autoUpdate).toBe(false);
+	});
+
+	it("normalizes released string booleans at the config read boundary", async () => {
+		const { getConfig, getStoredConfig, setConfigKey } = await import("../src/lib/config");
+		const path = join(fakeHome, ".clawdi", "config.json");
+		mkdirSync(join(fakeHome, ".clawdi"), { recursive: true });
+		const legacy = '{"autoUpdate":"false","futureSetting":{"enabled":true}}\n';
+		writeFileSync(path, legacy);
+
+		expect(getConfig().autoUpdate).toBe(false);
+		expect(getStoredConfig()).toEqual({
+			autoUpdate: false,
+			futureSetting: { enabled: true },
+		});
+		expect(readFileSync(path, "utf8")).toBe(legacy);
+
+		setConfigKey("apiUrl", "https://cloud.example.test");
+		expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+			autoUpdate: false,
+			futureSetting: { enabled: true },
+			apiUrl: "https://cloud.example.test",
+		});
+
+		writeFileSync(path, '{"autoUpdate":"true"}\n');
+		expect(getConfig().autoUpdate).toBe(true);
+	});
+
+	it("does not coerce invalid config shapes into canonical values", async () => {
+		const { getStoredConfig } = await import("../src/lib/config");
+		const path = join(fakeHome, ".clawdi", "config.json");
+		mkdirSync(join(fakeHome, ".clawdi"), { recursive: true });
+		for (const autoUpdate of ["FALSE", 1, null, [], {}]) {
+			writeFileSync(path, JSON.stringify({ autoUpdate, futureSetting: "preserved" }));
+			expect(getStoredConfig()).toEqual({ futureSetting: "preserved" });
+		}
+		for (const invalid of [null, [], "false", 1]) {
+			writeFileSync(path, JSON.stringify(invalid));
+			expect(getStoredConfig()).toEqual({});
+		}
 	});
 
 	it("CLAWDI_API_URL env overrides stored config", async () => {
 		const { getConfig, setConfig } = await import("../src/lib/config");
-		setConfig({ apiUrl: "http://from-disk" });
+		setConfig({ apiUrl: "https://from-disk.test" });
 		process.env.CLAWDI_API_URL = "http://from-env";
 		expect(getConfig().apiUrl).toBe("http://from-env");
 	});
 
 	it("stored config used when env not set", async () => {
 		const { getConfig, setConfig } = await import("../src/lib/config");
-		setConfig({ apiUrl: "http://from-disk" });
-		expect(getConfig().apiUrl).toBe("http://from-disk");
+		setConfig({ apiUrl: "https://from-disk.test" });
+		expect(getConfig().apiUrl).toBe("https://from-disk.test");
 	});
 });
 
@@ -133,11 +172,46 @@ describe("auth persistence", () => {
 describe("config keys", () => {
 	it("setConfigKey / unsetConfigKey round-trip", async () => {
 		const { getStoredConfig, setConfigKey, unsetConfigKey } = await import("../src/lib/config");
-		setConfigKey("apiUrl", "http://x");
-		expect(getStoredConfig().apiUrl).toBe("http://x");
+		setConfigKey("apiUrl", "https://cloud.example.test");
+		expect(getStoredConfig().apiUrl).toBe("https://cloud.example.test");
 		unsetConfigKey("apiUrl");
 		expect(getStoredConfig().apiUrl).toBeUndefined();
-		setConfigKey("deployApiUrl", "http://deploy-x");
-		expect(getStoredConfig().deployApiUrl).toBe("http://deploy-x");
+		setConfigKey("deployApiUrl", "https://deploy.example.test/v2");
+		expect(getStoredConfig().deployApiUrl).toBe("https://deploy.example.test");
+	});
+
+	it("rejects invalid values before replacing the existing config", async () => {
+		const { getStoredConfig, setConfigKey } = await import("../src/lib/config");
+		setConfigKey("apiUrl", "https://cloud.example.test");
+		setConfigKey("autoUpdate", "false");
+		const path = join(fakeHome, ".clawdi", "config.json");
+		const before = readFileSync(path, "utf8");
+
+		expect(() => setConfigKey("autoUpdate", "FALSE")).toThrow("must be true or false");
+		expect(() => setConfigKey("apiUrl", "cloud.example.test")).toThrow("absolute http");
+		expect(() => setConfigKey("deployApiUrl", "ftp://deploy.example.test")).toThrow(
+			"must use http:// or https://",
+		);
+		expect(readFileSync(path, "utf8")).toBe(before);
+		expect(getStoredConfig()).toEqual({
+			apiUrl: "https://cloud.example.test",
+			autoUpdate: false,
+		});
+	});
+
+	it("exits nonzero for invalid config set input without touching the old value", () => {
+		const configPath = join(fakeHome, ".clawdi", "config.json");
+		mkdirSync(join(fakeHome, ".clawdi"), { recursive: true });
+		writeFileSync(configPath, '{"autoUpdate":false}\n');
+		const result = Bun.spawnSync(
+			["bun", join(import.meta.dir, "../src/index.ts"), "config", "set", "autoUpdate", "yes"],
+			{
+				env: { ...process.env, HOME: fakeHome, CLAWDI_HOME: join(fakeHome, ".clawdi") },
+				stdout: "pipe",
+				stderr: "pipe",
+			},
+		);
+		expect(result.exitCode).not.toBe(0);
+		expect(readFileSync(configPath, "utf8")).toBe('{"autoUpdate":false}\n');
 	});
 });

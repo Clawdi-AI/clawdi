@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, rmSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { normalizeCloudApiBaseUrl, normalizeHostedDeployApiBaseUrl } from "./api-origin";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "./private-file";
 
 // NOTE: these paths are computed lazily so tests can override HOME per-run
@@ -30,9 +31,9 @@ function pendingAuthFile() {
 export interface ClawdiConfig {
 	apiUrl: string;
 	deployApiUrl: string;
-	// Default-on. Set to "false" to opt out of background auto-updates.
+	// Default-on. Set to false to opt out of background auto-updates.
 	// `CLAWDI_NO_AUTO_UPDATE=1` env var has the same effect for ad-hoc opt-out.
-	autoUpdate?: "true" | "false";
+	autoUpdate?: boolean;
 }
 
 // Keys accepted by `clawdi config set/get/unset`. Add a new entry here
@@ -105,6 +106,22 @@ function readJson<T>(path: string): T | null {
 	return JSON.parse(readFileSync(path, "utf-8"));
 }
 
+type StoredConfigRecord = Partial<ClawdiConfig> & Record<string, unknown>;
+
+function readStoredConfig(): StoredConfigRecord {
+	const value = readJson<unknown>(configFile());
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return {};
+	const normalized: Record<string, unknown> = { ...value };
+	// Released CLIs persisted these two spellings; collapse them once here so
+	// every consumer sees the canonical boolean shape.
+	if (normalized.autoUpdate === "true") normalized.autoUpdate = true;
+	else if (normalized.autoUpdate === "false") normalized.autoUpdate = false;
+	else if (typeof normalized.autoUpdate !== "boolean") delete normalized.autoUpdate;
+	if (typeof normalized.apiUrl !== "string") delete normalized.apiUrl;
+	if (typeof normalized.deployApiUrl !== "string") delete normalized.deployApiUrl;
+	return normalized;
+}
+
 function writeJson(path: string, data: unknown) {
 	writePrivateFileAtomic(path, `${JSON.stringify(data, null, 2)}\n`, {
 		mode: PRIVATE_FILE_MODE,
@@ -121,7 +138,7 @@ const DEFAULT_DEPLOY_API_URL =
 export function getConfig(): ClawdiConfig {
 	// Precedence: CLAWDI_API_URL env var > ~/.clawdi/config.json > default.
 	// Env var wins so CI / scripted runs can override without writing to disk.
-	const stored = readJson<Partial<ClawdiConfig>>(configFile()) ?? {};
+	const stored = readStoredConfig();
 	return {
 		apiUrl: process.env.CLAWDI_API_URL || stored.apiUrl || DEFAULT_API_URL,
 		deployApiUrl:
@@ -132,16 +149,42 @@ export function getConfig(): ClawdiConfig {
 
 /** Raw config on disk, without env overrides. Used by `config list / get`. */
 export function getStoredConfig(): Partial<ClawdiConfig> {
-	return readJson<Partial<ClawdiConfig>>(configFile()) ?? {};
+	return readStoredConfig();
 }
 
 export function setConfig(config: Pick<ClawdiConfig, "apiUrl"> & Partial<ClawdiConfig>) {
-	writeJson(configFile(), config);
+	const normalized: Partial<ClawdiConfig> = {
+		...config,
+		apiUrl: normalizeConfigUrl("apiUrl", config.apiUrl),
+	};
+	if (config.deployApiUrl !== undefined) {
+		normalized.deployApiUrl = normalizeConfigUrl("deployApiUrl", config.deployApiUrl);
+	}
+	if (config.autoUpdate !== undefined && typeof config.autoUpdate !== "boolean") {
+		throw new Error("autoUpdate must be true or false.");
+	}
+	writeJson(configFile(), normalized);
 }
 
 export function setConfigKey(key: ConfigKey, value: string) {
+	const normalized = normalizeConfigValue(key, value);
 	const current = getStoredConfig();
-	writeJson(configFile(), { ...current, [key]: value });
+	writeJson(configFile(), { ...current, [key]: normalized });
+}
+
+function normalizeConfigValue(key: ConfigKey, value: string): string | boolean {
+	if (key === "autoUpdate") {
+		if (value === "true") return true;
+		if (value === "false") return false;
+		throw new Error("autoUpdate must be true or false.");
+	}
+	return normalizeConfigUrl(key, value);
+}
+
+function normalizeConfigUrl(key: "apiUrl" | "deployApiUrl", value: string): string {
+	return key === "apiUrl"
+		? normalizeCloudApiBaseUrl(value)
+		: normalizeHostedDeployApiBaseUrl(value);
 }
 
 export function unsetConfigKey(key: ConfigKey) {
