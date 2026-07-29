@@ -107,7 +107,6 @@ import {
 	agentDeploymentSelector,
 	agentSectionHref,
 	agentSectionLabel,
-	isAcceptedHostedAgentRoute,
 	parseAgentPathname,
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
@@ -1174,10 +1173,6 @@ function FocusHeader({
 	activeAgentKind: AgentChromeKind;
 	activeAgentId: string | null;
 }) {
-	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const acceptedSetupRoute = Boolean(
-		activeAgentId && isAcceptedHostedAgentRoute(activeAgentId, searchStr),
-	);
 	if (!activeAgent && !activeAgentId) {
 		return (
 			<div className="min-w-0">
@@ -1202,11 +1197,9 @@ function FocusHeader({
 	if (!activeAgent && !activeAgentTile) {
 		return (
 			<div className="min-w-0">
-				<div className="truncate text-sm font-semibold leading-5">
-					{acceptedSetupRoute ? "Starting your agent" : "Agent not found"}
-				</div>
+				<div className="truncate text-sm font-semibold leading-5">Agent not found</div>
 				<div className="truncate text-xs leading-4 text-muted-foreground">
-					{acceptedSetupRoute ? "This usually takes a few minutes" : "No details are available"}
+					No details are available
 				</div>
 			</div>
 		);

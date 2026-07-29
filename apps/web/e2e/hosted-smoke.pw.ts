@@ -1924,7 +1924,14 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 	);
 	await stubHostedApi(page, {
 		plans: [basicPlan],
-		deployments: [],
+		deployments: [
+			{
+				...includedBasicDeployment,
+				id: "hdep_included_created",
+				name: "Created included Basic",
+				status: "creating",
+			},
+		],
 		createDeploymentResponse: {
 			status: 202,
 			body: { ...acceptedCreate, done: false, response: null },
@@ -1935,9 +1942,10 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 
 	await page.getByRole("button", { name: "Deploy agent" }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
-	await expect.poll(() => new URL(page.url()).searchParams.get("setup")).toBe("accepted");
-	await expect(page.getByTestId("accepted-agent-setup")).toBeVisible();
-	await expect(page.getByText("Starting your agent", { exact: true })).toHaveCount(2);
+	expect(new URL(page.url()).searchParams.has("setup")).toBe(false);
+	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
+	await expect(page.getByText("Agent actions", { exact: true })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);
 	await expect(page.getByText("Agent unavailable", { exact: true })).toHaveCount(0);
 	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
 	await expect(page.locator("body")).not.toContainText("hdep_included_created");
