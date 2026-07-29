@@ -139,6 +139,8 @@ function writeFakeSystemdManager(input: {
 	stateRoot: string;
 	failNextSidecarRestart?: string;
 	failNextSidecarStop?: string;
+	sidecarReadyPath?: string;
+	staleEarlyProcessPath?: string;
 }): void {
 	mkdirSync(input.stateRoot, { recursive: true });
 	mkdirSync(dirname(input.path), { recursive: true });
@@ -178,7 +180,11 @@ case "$command" in
     fi
     ;;
   start)
-    for unit in "$@"; do rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; done
+    for unit in "$@"; do
+      rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"
+      touch "$(state_path "$unit" active)"
+      if [ "$unit" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.sidecarReadyPath ?? ""}' ]; then touch '${input.sidecarReadyPath ?? ""}'; fi
+    done
     ;;
   restart)
     if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarRestart ?? ""}' ] && [ -f '${input.failNextSidecarRestart ?? ""}' ]; then
@@ -186,7 +192,15 @@ case "$command" in
       printf 'injected sidecar restart failure\\n' >&2
       exit 42
     fi
-    for unit in "$@"; do rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; done
+    for unit in "$@"; do
+      if [ "$scope" = "user" ] && [ "$unit" = "openclaw-gateway.service" ] && [ -n '${input.staleEarlyProcessPath ?? ""}' ]; then
+        test -r '${input.sidecarReadyPath ?? ""}'
+        rm -f '${input.staleEarlyProcessPath ?? ""}'
+      fi
+      rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"
+      touch "$(state_path "$unit" active)"
+      if [ "$unit" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.sidecarReadyPath ?? ""}' ]; then touch '${input.sidecarReadyPath ?? ""}'; fi
+    done
     ;;
   stop)
     if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarStop ?? ""}' ] && [ -f '${input.failNextSidecarStop ?? ""}' ]; then
@@ -7615,6 +7629,97 @@ exit 64
 		expect(statSync(activeTarget).mode & 0o777).toBe(0o700);
 		expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
 		expect(statSync(legacyImageShim).mode & 0o777).toBe(0o700);
+	});
+
+	it("restarts an OpenClaw service started by the official installer after egress CA readiness", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const systemctlLog = join(root, "systemctl-cold-openclaw.log");
+		const systemctlStateRoot = join(root, "systemctl-cold-openclaw-state");
+		const staleEarlyProcess = join(root, "openclaw-started-before-ca");
+		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
+		const openclawUnit = join(home, ".config", "systemd", "user", "openclaw-gateway.service");
+		const previousLog = console.log;
+		const previousUmask = process.umask(0o022);
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(dirname(openclawBin), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+		process.env.CLAWDI_RUNTIME_USER = "root";
+		const paths = getRuntimePaths();
+		writeFakeSystemdManager({
+			path: join(bin, "systemctl"),
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+			sidecarReadyPath: paths.egressSystemCaFile,
+			staleEarlyProcessPath: staleEarlyProcess,
+		});
+		writeFileSync(
+			openclawBin,
+			`#!/usr/bin/env bash
+set -euo pipefail
+if [ "$*" = "gateway install --force --json" ]; then
+  mkdir -p '${dirname(openclawUnit)}' '${systemctlStateRoot}'
+  printf '[Service]\\nExecStart=openclaw gateway run\\n' > '${openclawUnit}'
+  touch '${fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "active")}'
+  touch '${fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", "enabled")}'
+  touch '${staleEarlyProcess}'
+fi
+exit 0
+`,
+		);
+		chmodSync(openclawBin, 0o700);
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		const mitmproxy = seedMitmproxyCache(paths);
+		console.log = (value?: unknown) => logs.push(String(value));
+		const runtimeFetch = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () =>
+					hostedRuntimeBundleResponse(
+						hostedEgressSecretRotationPayload(home, mitmproxy, "cold-home-secret"),
+						{ etag: '"cold-home-egress"' },
+					),
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+		} finally {
+			runtimeFetch.restore();
+			console.log = previousLog;
+			process.umask(previousUmask);
+		}
+
+		if (process.exitCode !== undefined && process.exitCode !== 0) {
+			throw new Error(logs.join("\n"));
+		}
+		expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("applied");
+		expect(existsSync(staleEarlyProcess)).toBe(false);
+		expect(existsSync(paths.egressSystemCaFile)).toBe(true);
+		const calls = readFileSync(systemctlLog, "utf8").trim().split("\n");
+		const sidecarActivation = calls.findIndex((call) =>
+			/^(start|restart) .*clawdi-runtime-sidecar\.service/.test(call),
+		);
+		const openclawRestart = calls.indexOf("--user restart openclaw-gateway.service");
+		expect(sidecarActivation).toBeGreaterThanOrEqual(0);
+		expect(openclawRestart).toBeGreaterThan(sidecarActivation);
+		expect(readRuntimeAppliedState(paths)).toMatchObject({
+			generation: 41,
+			etag: '"cold-home-egress"',
+		});
 	});
 
 	it("keeps public sidecar artifacts stable while forcing private egress secret restarts", async () => {

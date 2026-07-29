@@ -1660,6 +1660,7 @@ function applySystemdRuntimeUpdate(
 	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 
 	const changedUserUnits = new Set(user.changed);
+	const addedUserUnits = new Set(user.added);
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
 	const enableUserUnits: string[] = [];
@@ -1681,7 +1682,11 @@ function applySystemdRuntimeUpdate(
 		}
 		if (state.activeState !== "active") continue;
 		if (!enabled) enableUserUnits.push(unit);
-		if (changedUserUnits.has(unit)) restartUserUnits.push(unit);
+		// Official runtime installers may create and start their user unit after
+		// the pre-convergence snapshot. Treat that already-running added unit like
+		// a changed unit so it is restarted after system services (including the
+		// Type=notify transparent-egress sidecar) have reached readiness.
+		if (addedUserUnits.has(unit) || changedUserUnits.has(unit)) restartUserUnits.push(unit);
 	}
 	if (resetFailedUserUnits.length > 0) {
 		runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]);
