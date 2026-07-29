@@ -289,6 +289,10 @@ describe("hosted agent customer language", () => {
 		expect(detailSource).toContain(
 			'<RuntimeUiCredentialRow label="Token" value={credentials.token} secret />',
 		);
+		expect(detailSource).toContain("Sign in to Hermes");
+		expect(detailSource).toContain("Get your Hermes username and password from Access.");
+		expect(detailSource).toContain("clawdi.hermes-access-hint.dismissed");
+		expect(detailSource).toContain('runtime === "hermes" && accessHintOpen');
 		expect(detailSource).not.toContain("reconciliationRequired");
 	});
 });
