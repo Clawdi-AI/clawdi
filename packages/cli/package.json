@@ -1,6 +1,6 @@
 {
 	"name": "clawdi",
-	"version": "0.13.10",
+	"version": "0.13.11",
 	"description": "iCloud for AI Agents — cross-agent sessions, skills, memory, and vault.",
 	"license": "MIT",
 	"type": "module",
@@ -12,6 +12,7 @@
 		"bin",
 		"dist",
 		"egress-addon",
+		"skills",
 		"LICENSE",
 		"README.md"
 	],
@@ -23,14 +24,17 @@
 	},
 	"scripts": {
 		"dev": "bun run src/index.ts",
-		"build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --minify --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' --define 'process.env.CLAWDI_DEFAULT_DEPLOY_API_URL=\"https://api.clawdi.ai\"' && cp -r skills dist/skills",
-		"build:binary": "bun run scripts/build-binary.mjs",
-		"package:binary-release": "bun run scripts/package-binary-release.mjs",
-		"build:dev": "rm -rf dist && bun build src/index.ts --outdir dist --target node && cp -r skills dist/skills",
+		"build": "rm -rf dist && bun build src/index.ts --outdir dist --target node --minify --define 'process.env.CLAWDI_DEFAULT_API_URL=\"https://cloud-api.clawdi.ai\"' --define 'process.env.CLAWDI_DEFAULT_DEPLOY_API_URL=\"https://api.clawdi.ai\"'",
+		"build:native": "bun run scripts/build-native.mjs",
+		"build:native-release": "bun run scripts/build-native-release.mjs",
+		"package:native-release": "bun run scripts/package-native-release.mjs",
+		"build:dev": "rm -rf dist && bun build src/index.ts --outdir dist --target node",
 		"check:publish-manifest": "node scripts/check-publish-manifest.mjs",
+		"check:native-release": "bun run scripts/check-native-release.mjs",
 		"typecheck": "tsc --noEmit",
 		"test": "bun test --isolate --max-concurrency=1",
 		"test:e2e": "bun test --isolate --max-concurrency=1 tests/e2e",
+		"test:native-linux-lifecycle": "CLAWDI_NATIVE_TARGET=linux-x64 bun run build:native && CLAWDI_NATIVE_BINARY=dist-native/linux-x64/clawdi bun test tests/e2e/native-installer.e2e.test.ts tests/e2e/native-daemon.e2e.test.ts",
 		"test:watch": "bun test --watch",
 		"prepublishOnly": "bun run check:publish-manifest && bun run build"
 	},

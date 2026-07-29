@@ -1,11 +1,11 @@
 /**
- * Watches the loaded CLI entry by mtime and asks the service supervisor for a
+ * Watches the loaded CLI entry identity and asks the service supervisor for a
  * clean restart when it changes. A daemon-owned global install holds the small
  * coordination barrier below through installer close and version validation;
  * watcher events observed inside that interval are deferred while the updater
  * validates the new bytes, while entry changes outside it restart immediately.
  */
-import { stat } from "node:fs/promises";
+import { lstat, readlink, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { resolveCurrentCliInvocation } from "../lib/current-cli-invocation";
 import { log } from "./log";
@@ -43,16 +43,17 @@ interface AutoRestartOpts {
 }
 
 /**
- * Resolve the file the daemon is actually executing. Script installs prefer
- * the bundled JS behind the stable bin wrapper. Returns null when resolution
- * fails because the daemon is otherwise functional without auto-restart.
+ * Resolve the file the daemon is actually executing. Native distributions
+ * watch their stable activation link; script installs prefer the bundled JS
+ * behind the stable bin wrapper. Returns null when resolution fails because
+ * the daemon is otherwise functional without auto-restart.
  *
  * Resolution order:
  *   1. `<entry_dir>/../dist/index.js` — the bun/npm install
  *      layout where `bin/clawdi.mjs` is a thin wrapper that
  *      imports the bundled file. The wrapper rarely changes,
  *      but the bundled file gets rewritten on every update.
- *   2. The current script entry.
+ *   2. The current script entry or native activation link.
  */
 async function resolveEntryFile(): Promise<string | null> {
 	let invocation: ReturnType<typeof resolveCurrentCliInvocation>;
@@ -66,10 +67,9 @@ async function resolveEntryFile(): Promise<string | null> {
 	// installed CLI. The bundled JS sits at `.../dist/index.js`.
 	// We prefer the bundled file because that's what gets rewritten
 	// on `npm i -g`; the .mjs wrapper is stable across versions.
-	const candidates = [
-		join(dirname(dirname(invocation.entryPath)), "dist", "index.js"),
-		invocation.entryPath,
-	];
+	const candidates = invocation.entryPath
+		? [join(dirname(dirname(invocation.entryPath)), "dist", "index.js"), invocation.entryPath]
+		: [invocation.command];
 	for (const c of candidates) {
 		try {
 			const s = await stat(c);
@@ -96,9 +96,9 @@ export async function startAutoRestart(opts: AutoRestartOpts): Promise<string | 
 	const entry = opts.entryPath ?? (await resolveEntryFile());
 	if (!entry) return null;
 
-	let previous: number;
+	let previous: string;
 	try {
-		previous = (await stat(entry)).mtimeMs;
+		previous = await entryIdentity(entry);
 	} catch {
 		// Entry vanished between resolveEntryFile and stat — bail
 		// silently rather than throwing; the daemon is fine without
@@ -112,12 +112,12 @@ export async function startAutoRestart(opts: AutoRestartOpts): Promise<string | 
 			await sleep(pollMs, opts.abort.signal);
 			if (opts.abort.signal.aborted) return;
 			try {
-				const now = (await stat(entry)).mtimeMs;
+				const now = await entryIdentity(entry);
 				if (now !== previous) {
 					log.info("serve.binary_updated", {
 						entry,
-						initial_mtime: previous,
-						current_mtime: now,
+						initial_identity: previous,
+						current_identity: now,
 					});
 					previous = now;
 					if (opts.restart.requestRestart()) return;
@@ -134,6 +134,13 @@ export async function startAutoRestart(opts: AutoRestartOpts): Promise<string | 
 		}
 	})();
 	return entry;
+}
+
+async function entryIdentity(path: string): Promise<string> {
+	const link = await lstat(path);
+	if (link.isSymbolicLink()) return `link:${await readlink(path)}`;
+	const file = await stat(path);
+	return `file:${file.dev}:${file.ino}:${file.size}:${file.mtimeMs}`;
 }
 
 /**

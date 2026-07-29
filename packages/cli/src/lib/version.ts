@@ -7,8 +7,8 @@ declare const CLAWDI_CLI_VERSION: string | undefined;
 /**
  * Resolve the CLI version.
  *
- * Packaged Node/Bun installs can read package.json from disk. Single-file
- * binaries cannot, so release builds inject CLAWDI_CLI_VERSION at build time.
+ * Packaged Node/Bun installs can read package.json from disk. Native
+ * executables cannot, so release builds inject CLAWDI_CLI_VERSION at build time.
  */
 export function getCliVersion(): string {
 	const compiledVersion = typeof CLAWDI_CLI_VERSION === "string" ? CLAWDI_CLI_VERSION.trim() : "";

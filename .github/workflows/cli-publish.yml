@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - "packages/cli/**"
+      - "install.sh"
       - ".github/workflows/cli-publish.yml"
 
 concurrency:
@@ -100,7 +101,13 @@ jobs:
             currentCommit: process.env.GITHUB_SHA,
             requiredAssets: [
               "clawdi-cli-linux-x64.tar.gz",
-              "clawdi-cli-linux-x64.tar.gz.sha256",
+              "clawdi-cli-linux-arm64.tar.gz",
+              "clawdi-cli-linux-x64-musl.tar.gz",
+              "clawdi-cli-linux-arm64-musl.tar.gz",
+              "clawdi-cli-darwin-x64.tar.gz",
+              "clawdi-cli-darwin-arm64.tar.gz",
+              "clawdi-cli-manifest.txt",
+              "install.sh",
             ],
             npm,
             github: {
@@ -145,14 +152,19 @@ jobs:
         working-directory: packages/cli
         run: bun run typecheck
 
-      - name: Build package and standalone binary
+      - name: Build package and native release matrix
+        id: build_native_release
         if: steps.check.outputs.should_release == 'true'
         working-directory: packages/cli
         run: |
           bun run build
-          bun run build:binary
-          ./dist-bin/clawdi --version
-          bun run package:binary-release
+          bun run build:native-release
+          ./dist-native/linux-x64/clawdi --version
+          bun run check:native-release
+          CLAWDI_NATIVE_BINARY=dist-native/linux-x64/clawdi \
+            bun test \
+              tests/e2e/native-installer.e2e.test.ts \
+              tests/e2e/native-daemon.e2e.test.ts
 
       - name: Test
         if: steps.check.outputs.should_release == 'true'
@@ -160,9 +172,11 @@ jobs:
         run: bun test --isolate --max-concurrency=1
 
       - name: Pack and verify immutable release artifact
+        id: pack_release
         if: steps.check.outputs.should_release == 'true'
         working-directory: packages/cli
         run: |
+          sh -n ../../install.sh
           node scripts/check-publish-manifest.mjs
           release_dir="$RUNNER_TEMP/clawdi-cli-release"
           install_dir="$RUNNER_TEMP/clawdi-cli-install"
@@ -172,14 +186,18 @@ jobs:
           tarball_path="$release_dir/$tarball"
           tarball_sha=$(sha256sum "$tarball_path" | cut -d' ' -f1)
           printf '%s  %s\n' "$tarball_sha" "$tarball" > "$release_dir/$tarball.sha256"
-          cp dist-release/clawdi-cli-linux-x64.tar.gz "$release_dir/"
-          cp dist-release/clawdi-cli-linux-x64.tar.gz.sha256 "$release_dir/"
+          cp dist-release/clawdi-cli-*.tar.gz "$release_dir/"
+          cp dist-release/clawdi-cli-manifest.txt "$release_dir/"
+          cp ../../install.sh "$release_dir/"
           (cd "$release_dir" && sha256sum --check "$tarball.sha256")
-          (cd "$release_dir" && sha256sum --check clawdi-cli-linux-x64.tar.gz.sha256)
+          bun run scripts/check-native-release.mjs "$release_dir" "$(node -p "require('./package.json').version")"
           cd "$install_dir"
           npm init -y >/dev/null
           npm install "$tarball_path" --ignore-scripts --no-audit --no-fund
           "$install_dir/node_modules/.bin/clawdi" --version
+          test -f "$install_dir/node_modules/clawdi/skills/clawdi/SKILL.md"
+          test -f "$install_dir/node_modules/clawdi/skills/hosted-versions/1/clawdi/SKILL.md"
+          test -f "$install_dir/node_modules/clawdi/egress-addon/clawdi_egress_addon.py"
 
       - name: Upload immutable CLI release artifact
         if: steps.check.outputs.should_release == 'true'
@@ -209,6 +227,22 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Checkout immutable CLI source for verification
+        env:
+          SOURCE_COMMIT: ${{ needs['build-immutable-artifact'].outputs.source_commit }}
+          VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
+        run: |
+          git cat-file -e "$SOURCE_COMMIT^{commit}"
+          git checkout --detach "$SOURCE_COMMIT"
+          test "$(node -p "require('./packages/cli/package.json').version")" = "$VERSION"
+
+      - name: Install immutable verification dependencies
+        run: bun install --frozen-lockfile
+
       - name: Verify trusted publishing toolchain
         run: |
           npm install --global npm@11.5.1
@@ -222,6 +256,7 @@ jobs:
           path: release
 
       - name: Verify release artifact
+        id: verify_release
         env:
           VERSION: ${{ needs['build-immutable-artifact'].outputs.version }}
           CLI_TARBALL_FILENAME: ${{ needs['build-immutable-artifact'].outputs.cli_tarball_filename }}
@@ -230,10 +265,13 @@ jobs:
           tarball="$CLI_TARBALL_FILENAME"
           test -s "$tarball"
           test -s "$tarball.sha256"
-          test -s clawdi-cli-linux-x64.tar.gz
-          test -s clawdi-cli-linux-x64.tar.gz.sha256
+          test -s clawdi-cli-manifest.txt
+          test -s install.sh
+          for target in linux-x64 linux-arm64 linux-x64-musl linux-arm64-musl darwin-x64 darwin-arm64; do
+            test -s "clawdi-cli-$target.tar.gz"
+          done
           sha256sum --check "$tarball.sha256"
-          sha256sum --check clawdi-cli-linux-x64.tar.gz.sha256
+          bun run ../packages/cli/scripts/check-native-release.mjs . "$VERSION"
           manifest=$(tar -xOf "$tarball" package/package.json)
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).name)" <<< "$manifest")" = "clawdi"
           test "$(node -e "const fs=require('node:fs'); console.log(JSON.parse(fs.readFileSync(0,'utf8')).version)" <<< "$manifest")" = "$VERSION"
@@ -294,7 +332,13 @@ jobs:
             expectedSourceCommit: process.env.SOURCE_COMMIT,
             requiredAssets: [
               "clawdi-cli-linux-x64.tar.gz",
-              "clawdi-cli-linux-x64.tar.gz.sha256",
+              "clawdi-cli-linux-arm64.tar.gz",
+              "clawdi-cli-linux-x64-musl.tar.gz",
+              "clawdi-cli-linux-arm64-musl.tar.gz",
+              "clawdi-cli-darwin-x64.tar.gz",
+              "clawdi-cli-darwin-arm64.tar.gz",
+              "clawdi-cli-manifest.txt",
+              "install.sh",
             ],
             localArtifact: {
               integrity: process.env.LOCAL_INTEGRITY,
@@ -341,6 +385,8 @@ jobs:
           notes=$(cat <<EOF
           ## Package
 
+          \`curl -fsSL https://raw.githubusercontent.com/Clawdi-AI/clawdi/main/install.sh | sh\`
+
           \`npm install -g clawdi@$VERSION\`
 
           Published with npm tag \`$NPM_TAG\` for exact version
@@ -354,8 +400,9 @@ jobs:
           )
           if [ "$RELEASE_ACTION" = "resume-draft" ]; then
             gh release upload "$tag" \
-              release/clawdi-cli-linux-x64.tar.gz \
-              release/clawdi-cli-linux-x64.tar.gz.sha256 \
+              release/clawdi-cli-*.tar.gz \
+              release/clawdi-cli-manifest.txt \
+              release/install.sh \
               --clobber
             if [ "$FINALIZE_RELEASE" = true ]; then
               gh release edit "$tag" --draft=false
@@ -371,8 +418,9 @@ jobs:
           fi
           args=(
             release create "$tag"
-            release/clawdi-cli-linux-x64.tar.gz
-            release/clawdi-cli-linux-x64.tar.gz.sha256
+            release/clawdi-cli-*.tar.gz
+            release/clawdi-cli-manifest.txt
+            release/install.sh
             --target "$RELEASE_TARGET"
             --title "Clawdi CLI v$VERSION"
             --notes "$notes"

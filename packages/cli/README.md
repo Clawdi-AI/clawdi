@@ -12,12 +12,24 @@ backend + dashboard + CLI stack, use the canonical runbook in
 
 ## Quickstart
 
+Recommended on macOS and Linux (no Node.js required):
+
 ```bash
-npm i -g clawdi
+curl -fsSL https://raw.githubusercontent.com/Clawdi-AI/clawdi/main/install.sh | sh
 clawdi auth login
 clawdi setup
 clawdi doctor
 ```
+
+Windows and package-manager installations require Node.js ≥ 22.5:
+
+```bash
+npm i -g clawdi
+```
+
+Updates follow the current owner: native installs use checksum-verified exact
+GitHub Release assets, while npm/Bun installs use exact npm versions. Hosted
+version transactions are separate and never invoke native self-update.
 
 ## Development
 

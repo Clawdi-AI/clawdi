@@ -38,6 +38,7 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { z } from "zod";
 import { agentSkillTargetDir } from "../adapters/registry";
 import { type AgentPrimaryModel, buildAgentTargetProjection } from "../lib/ai-provider-projection";
+import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import {
 	mergeHermesChannelConfig,
 	mergeHermesConfig,
@@ -3270,8 +3271,7 @@ function hostedBundledSkillsEnabled(): boolean {
 }
 
 function hostedBundledSkillSourceDir(assetDirectory: string): string {
-	let sourceDir = resolve(import.meta.dirname, "../../skills", assetDirectory);
-	if (!existsSync(sourceDir)) sourceDir = resolve(import.meta.dirname, "skills", assetDirectory);
+	const sourceDir = resolve(resolveCurrentCliResourceRoot(), "skills", assetDirectory);
 	if (!existsSync(join(sourceDir, "SKILL.md"))) {
 		throw new Error(`bundled hosted skill asset ${assetDirectory} is unavailable`);
 	}
@@ -3798,15 +3798,12 @@ function clearEgressAddon(paths: RuntimePaths): null {
 }
 
 function resolvePackagedEgressAddon(): string {
-	const here = dirname(fileURLToPath(import.meta.url));
-	const candidates = [
-		resolve(here, "../../egress-addon/clawdi_egress_addon.py"),
-		resolve(here, "../egress-addon/clawdi_egress_addon.py"),
-		resolve(here, "egress-addon/clawdi_egress_addon.py"),
-	];
-	for (const candidate of candidates) {
-		if (existsSync(candidate)) return candidate;
-	}
+	const candidate = resolve(
+		resolveCurrentCliResourceRoot(),
+		"egress-addon",
+		"clawdi_egress_addon.py",
+	);
+	if (existsSync(candidate)) return candidate;
 	throw new Error("packaged egress addon is missing");
 }
 
