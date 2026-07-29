@@ -6339,7 +6339,7 @@ fi
 			expect(event.systemdApply).toEqual({
 				applied: true,
 				systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-watch.service"],
-				userUnitsChanged: ["openclaw-gateway.service"],
+				userUnitsChanged: [],
 			});
 			const watchStatus = JSON.parse(
 				readFileSync(join(state, "status", "runtime-watch.json"), "utf-8"),
@@ -6487,13 +6487,11 @@ exit 42
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		const targetConfig = join(home, ".openclaw", "openclaw.json");
-		const rollbackFixtures = [
-			paths.managedConfig,
-			join(paths.runConfigRoot, "openclaw.json"),
-			join(paths.systemdUserRoot, "clawdi-previous.service"),
-			targetConfig,
-		];
-		for (const [index, path] of rollbackFixtures.entries()) {
+		const rollbackFixtures = [paths.managedConfig, join(paths.runConfigRoot, "openclaw.json")];
+		const previousUserUnit = join(paths.systemdUserRoot, "clawdi-previous.service");
+		const forwardOnlyFixtures = [previousUserUnit, targetConfig];
+		const seededFixtures = [...rollbackFixtures, ...forwardOnlyFixtures];
+		for (const [index, path] of seededFixtures.entries()) {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(
 				path,
@@ -6590,6 +6588,7 @@ exit 42
 				if (!expected) throw new Error(`missing rollback fixture for ${path}`);
 				expect(readFileSync(path)).toEqual(expected);
 			}
+			expect(existsSync(previousUserUnit)).toBe(false);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -12405,7 +12404,7 @@ exit 64
 		rmSync(failUnset);
 	});
 
-	it("rolls back native MCP config and last-applied ownership after a partial map failure", () => {
+	it("keeps authority unchanged after a partial native MCP projection", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12474,11 +12473,14 @@ exit 64
 
 		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(readFileSync(calls, "utf-8")).toBe("set first\nset second\n");
-		expect(readFileSync(openclawConfig, "utf-8")).toBe(originalConfig);
+		expect(readOpenClawMcpServers(home)).toEqual({
+			"user-entry": { command: "user-owned", args: ["keep"] },
+			first: { command: "first", args: [] },
+		});
 		expect(existsSync(ledgerPath)).toBe(false);
 	});
 
-	it("rolls back existing managed OpenClaw and Hermes MCP state as one runtime apply", () => {
+	it("keeps prior MCP authority when a forward projection is partial", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12548,8 +12550,6 @@ exit 64
 			getRuntimePaths(),
 		);
 		expect(initial.installErrors).toEqual([]);
-		const previousOpenClaw = readFileSync(openclawConfig);
-		const previousHermes = readFileSync(hermesConfig);
 		const previousLedger = readFileSync(ledgerPath);
 		const previousOpenClawStat = statSync(openclawConfig);
 		const previousHermesStat = statSync(hermesConfig);
@@ -12564,8 +12564,13 @@ exit 64
 
 		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(readFileSync(calls, "utf-8")).toContain("set owned\nset owned\nset second\n");
-		expect(readFileSync(openclawConfig)).toEqual(previousOpenClaw);
-		expect(readFileSync(hermesConfig)).toEqual(previousHermes);
+		expect(readOpenClawMcpServers(home)).toEqual({
+			owned: { command: "owned", args: ["v2"] },
+		});
+		expect(readHermesConfigYaml(home).mcp_servers).toEqual({
+			owned: { command: "owned", args: ["v2"] },
+			second: { command: "second", args: [] },
+		});
 		expect(readFileSync(ledgerPath)).toEqual(previousLedger);
 		expect(statSync(openclawConfig).mode).toBe(previousOpenClawStat.mode);
 		expect(statSync(openclawConfig).uid).toBe(previousOpenClawStat.uid);
