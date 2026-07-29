@@ -281,7 +281,16 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 		});
 	} catch (e) {
 		log.error("serve.fatal", { error: toErrorMessage(e) });
-		process.exit(1);
+		process.exitCode = 1;
+	} finally {
+		abort.abort();
+		const cleanup = await Promise.allSettled([operationManager.shutdownAll(), rpc.close()]);
+		activeControlRpcHttp = null;
+		for (const result of cleanup) {
+			if (result.status === "fulfilled") continue;
+			log.error("serve.shutdown_failed", { error: toErrorMessage(result.reason) });
+			process.exitCode = 1;
+		}
 	}
 
 	// Preserve any non-zero exitCode the engine set (e.g. auth

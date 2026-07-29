@@ -7,6 +7,7 @@
  */
 import { stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { resolveCurrentCliInvocation } from "../lib/current-cli-invocation";
 import { log } from "./log";
 
 export interface RestartCoordination {
@@ -42,28 +43,33 @@ interface AutoRestartOpts {
 }
 
 /**
- * Resolve the JS file the daemon is actually executing. Returns
- * null when we can't figure it out (e.g. running tests with no
- * argv[1]) — the caller treats that as "skip this feature" rather
- * than throwing, since the daemon is otherwise functional without
- * auto-restart.
+ * Resolve the file the daemon is actually executing. Script installs prefer
+ * the bundled JS behind the stable bin wrapper. Returns null when resolution
+ * fails because the daemon is otherwise functional without auto-restart.
  *
  * Resolution order:
- *   1. `argv[1]` if it ends in `.js`/`.mjs` and is a real file.
- *   2. `<argv[1]_dir>/../dist/index.js` — the bun/npm install
+ *   1. `<entry_dir>/../dist/index.js` — the bun/npm install
  *      layout where `bin/clawdi.mjs` is a thin wrapper that
  *      imports the bundled file. The wrapper rarely changes,
  *      but the bundled file gets rewritten on every update.
+ *   2. The current script entry.
  */
 async function resolveEntryFile(): Promise<string | null> {
-	const arg = process.argv[1];
-	if (!arg) return null;
+	let invocation: ReturnType<typeof resolveCurrentCliInvocation>;
+	try {
+		invocation = resolveCurrentCliInvocation();
+	} catch {
+		return null;
+	}
 
-	// `argv[1]` = `.../node_modules/clawdi/bin/clawdi.mjs` for an
+	// The script entry is `.../node_modules/clawdi/bin/clawdi.mjs` for an
 	// installed CLI. The bundled JS sits at `.../dist/index.js`.
 	// We prefer the bundled file because that's what gets rewritten
 	// on `npm i -g`; the .mjs wrapper is stable across versions.
-	const candidates = [join(dirname(dirname(arg)), "dist", "index.js"), arg];
+	const candidates = [
+		join(dirname(dirname(invocation.entryPath)), "dist", "index.js"),
+		invocation.entryPath,
+	];
 	for (const c of candidates) {
 		try {
 			const s = await stat(c);

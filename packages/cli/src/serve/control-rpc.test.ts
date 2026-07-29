@@ -9,6 +9,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { request } from "node:http";
+import { createServer as createTcpServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -55,6 +56,43 @@ if (process.platform !== "win32") {
 				const result = await callControlRpc("echo", { via: "http" }, rpcClient(server));
 
 				expect(result).toEqual({ params: { via: "http" } });
+			});
+		});
+
+		it("returns the in-flight server close promise to every shutdown caller", async () => {
+			await withRpcFixture(async ({ start }) => {
+				const server = await start({});
+
+				const firstClose = server.close();
+				expect(server.close()).toBe(firstClose);
+				await firstClose;
+			});
+		});
+
+		it("times out when a socket accepts the request but never finishes a response", async () => {
+			await withHangingTcpServer(async (port) => {
+				await expect(
+					callControlRpc("ping", {}, { port, token: "test-token", timeoutMs: 50 }),
+				).rejects.toThrow("Control RPC timed out after 50ms");
+			});
+		});
+
+		it("aborts an in-flight request with the caller's AbortSignal reason", async () => {
+			await withHangingTcpServer(async (port) => {
+				const abort = new AbortController();
+				const call = callControlRpc(
+					"ping",
+					{},
+					{
+						port,
+						token: "test-token",
+						timeoutMs: 5_000,
+						signal: abort.signal,
+					},
+				);
+				setTimeout(() => abort.abort(new Error("caller cancelled RPC")), 25);
+
+				await expect(call).rejects.toThrow("caller cancelled RPC");
 			});
 		});
 
@@ -226,6 +264,26 @@ function rpcClient(server: RpcServer): { host: string; port: number; token: stri
 
 function readServerToken(server: RpcServer): string {
 	return readFileSync(server.tokenPath, "utf-8").trim();
+}
+
+async function withHangingTcpServer<T>(run: (port: number) => Promise<T>): Promise<T> {
+	const sockets = new Set<Socket>();
+	const server = createTcpServer((socket) => {
+		sockets.add(socket);
+		socket.on("close", () => sockets.delete(socket));
+	});
+	await new Promise<void>((resolve, reject) => {
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => resolve());
+	});
+	const address = server.address();
+	if (!address || typeof address === "string") throw new Error("expected TCP test port");
+	try {
+		return await run(address.port);
+	} finally {
+		for (const socket of sockets) socket.destroy();
+		await new Promise<void>((resolve) => server.close(() => resolve()));
+	}
 }
 
 function postWithoutToken(

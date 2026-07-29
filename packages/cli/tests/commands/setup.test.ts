@@ -46,6 +46,7 @@ let restoreFetch: (() => void) | null = null;
 let restoreConsole: (() => void) | null = null;
 let originalArgv1: string | undefined;
 let home = "";
+let consoleOutput: string[] = [];
 
 afterAll(() => {
 	rmSync(tmpRoot, { recursive: true, force: true });
@@ -84,8 +85,13 @@ beforeEach(() => {
 	seedAuth();
 	const originalLog = console.log;
 	const originalError = console.error;
-	console.log = () => {};
-	console.error = () => {};
+	consoleOutput = [];
+	console.log = (...args: unknown[]) => {
+		consoleOutput.push(args.map(String).join(" "));
+	};
+	console.error = (...args: unknown[]) => {
+		consoleOutput.push(args.map(String).join(" "));
+	};
 	restoreConsole = () => {
 		console.log = originalLog;
 		console.error = originalError;
@@ -213,6 +219,22 @@ describe("setup daemon install", () => {
 
 		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# Future user Clawdi\n");
 		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
+	});
+
+	it("sets a failing exit code without printing install success when service activation fails", async () => {
+		if (process.platform !== "linux") return;
+		installEnvironmentMock("env-codex");
+		writeExecutable(join(home, "bin", "systemctl"), "#!/bin/sh\nexit 1\n");
+
+		await setup({ agent: "codex", yes: true });
+
+		expect(process.exitCode).toBe(1);
+		process.exitCode = 0;
+		expect(daemonUnitExists("daemon")).toBe(true);
+		const output = consoleOutput.join("\n");
+		expect(output).toContain("systemctl activation failed");
+		expect(output).toContain("systemctl --user daemon-reload");
+		expect(output).not.toContain("Singleton daemon installed");
 	});
 });
 
