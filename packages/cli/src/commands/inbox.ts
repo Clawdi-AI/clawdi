@@ -158,7 +158,7 @@ function renderLocalPendingShares(shares: ShareToken[], signedIn: boolean): void
 }
 
 function renderLegacyLocalShares(shares: ShareToken[]): void {
-	console.log(chalk.bold(`Local legacy share records — cleanup only (${shares.length}):`));
+	console.log(chalk.bold(`Old local share records — cleanup only (${shares.length}):`));
 	for (const share of shares) {
 		console.log(`  ${chalk.bold(share.project_name)}  ${chalk.gray(`(@${share.owner_handle})`)}`);
 		console.log(chalk.gray(`    project_id: ${share.project_id}`));
@@ -578,8 +578,8 @@ export async function inboxDeclineCommand(invitationId: string): Promise<void> {
 export function inboxForgetCommand(projectId: string): void {
 	const token = findToken(projectId);
 	if (!token) {
-		console.error(chalk.red(`No local share-token entry found for project '${projectId}'.`));
-		console.error(chalk.gray("Run `clawdi inbox` to list local share-tokens on this device."));
+		console.error(chalk.red(`No local share record found for project '${projectId}'.`));
+		console.error(chalk.gray("Run `clawdi inbox` to list local share records on this device."));
 		process.exitCode = 1;
 		return;
 	}

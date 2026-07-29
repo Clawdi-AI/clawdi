@@ -182,7 +182,7 @@ describe("inboxAcceptCommand", () => {
 		expect(legacyOutput).toContain("was handled by an older Clawdi CLI");
 		expect(legacyOutput).toContain("No account or project membership was changed now.");
 		expect(legacyOutput).toContain("clawdi project list --shared-with-me");
-		expect(legacyOutput).toContain("Local legacy share records — cleanup only (1)");
+		expect(legacyOutput).toContain("Old local share records — cleanup only (1)");
 		expect(legacyOutput).toContain("No automatic action occurs for these records.");
 		expect(legacyOutput).toContain('"status": "legacy_local_share_record"');
 		expect(legacyOutput).toContain('"legacy_local_share_records": [');

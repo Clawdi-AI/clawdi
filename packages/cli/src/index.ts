@@ -1716,7 +1716,7 @@ inboxCmd
 
 inboxCmd
 	.command("forget <project-id>")
-	.description("Local-only: drop a redeemed share-token entry + cached files")
+	.description("Local-only: remove a share record and its cached files")
 	.action(async (projectId) => {
 		const { inboxForgetCommand } = await import("./commands/inbox.js");
 		inboxForgetCommand(projectId);
