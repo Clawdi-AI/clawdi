@@ -481,21 +481,80 @@ maps `(id, version)` to an immutable directory and SHA-256 digest;
 `clawdiCli.packageSpec` may locate installed CLI assets but never selects a
 Skill version. The current `clawdi` entry is version `1` at
 `skills/hosted-versions/1/clawdi/SKILL.md`, so the Skill file's direct parent
-still matches its frontmatter name. Public entries contain exactly `enabled`
-and `version`; source paths, variants, content, digests, and package specs are
-not manifest fields. Unknown ids or versions, unmanaged targets, source digest
-mismatches, and unsupported source file types fail closed. An exact managed
-marker plus an actual target-content digest match is a filesystem no-op;
-version changes, drift, and legacy ownership markers use staged replacement.
+still matches its frontmatter name. This entry is private platform desired
+state, not a public deployment field or a user Skill. Source paths, variants,
+content, digests, and package specs never cross the runtime wire. Unknown ids
+or versions, unmanaged targets, source digest mismatches, and unsupported
+source file types fail closed. An exact managed marker plus an actual
+target-content digest match is a filesystem no-op; version changes, drift, and
+legacy ownership markers use staged replacement.
 
 Managed-bundle integrity does not reuse `computeSkillFolderHash`. That function
-is an established client/server sync protocol with upload exclusions, ignores
-symlinks during its scan, and retains its historical unframed `path + content`
-hash. The managed catalog instead uses a private, framed full-file scan over
+is an established client/server sync protocol over the safe dereferenced
+regular-file archive projection, with upload exclusions and its historical
+unframed `path + content` hash. It does not encode regular-file permission
+modes, so chmod-only projection fidelity is not guaranteed. The managed catalog
+instead uses a private, framed full-file scan over
 relative path, regular-file permission bits, and bytes. It does not hash
 ownership or timestamps, rejects source symlinks, and treats target symlinks as
 drift without following them. The public sync hash remains unchanged for old
 and new clients.
+
+### Skill And MCP Authority Boundaries
+
+The bundled `clawdi` Skill is platform infrastructure. Hosted constructs its
+private `skills.entries` runtime state internally, and capable CLIs reconcile
+enabled and disabled lifecycle state from that wire. The public deployment
+spec and update request deliberately have no `skills` field, and the dashboard
+does not render, edit, or delete the bundle. Existing runtime-observed summary
+fields remain compatibility/convergence evidence only; they are not user Skill
+inventory or mutation intent.
+
+Agent filesystem Skills have a separate one-way lifecycle. The guarded adapter
+target is authoritative and Cloud stores an `agent_sync` projection. A
+versioned local ledger records the exact Agent and Agent Project that
+successfully claimed each projection. Local absence may delete only that exact
+claim; remote listing failures never infer deletion. A Project reassignment
+first deletes the Agent-owned projection under the old Project fence and then
+projects current local state to the new Project. Legacy hash-only state may be
+an upload baseline but cannot authorize deletion. The current CLI uses only
+the dedicated Agent sync boundary. A 404 from that boundary is ambiguous
+between a backend without the route and an identity the caller cannot prove,
+so both cases fail closed: the durable operation and exact claim remain, and
+no generic Project mutation is attempted. Dashboard writes, old clients
+without the explicit capability, and orphan projects also fail closed.
+
+The CLI declares `X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` on
+Agent-Project listing, SSE, and writes. Every Clawdi backend worker plus
+drainage of old SSE connections precedes CLI 0.13.13, then Web. Old CLIs
+receive 426 from a current backend; a current CLI receives a dedicated 404
+from an old backend and leaves its filesystem and durable projection state
+intact. Additive
+`agent_skill_changed`/`agent_skill_deleted` events protect only mutations
+created by current backend workers from released parsers on older connections;
+they do not make an old mutation worker safe. Current daemons treat both event
+families only as local-rescan hints. Workspace and personal Project events keep
+their released Cloud-owned behavior.
+
+An enabled private bundled-Skill entry reserves its key ahead of managed target
+installation. Conforming CLI/daemon uploads fail closed at that reservation
+boundary. If reservation wins after a user-authored Skill was deleted or
+renamed, the durable exact claim still queues removal of the old Cloud
+projection while the managed target is never uploaded or removed by live sync.
+Failed managed installation rolls back the reservation transaction; private
+disable releases its ownership without importing or resurrecting a stale
+projection. No reservation or managed target is projected into user Skill
+inventory.
+
+MCP remains independent of Skills and has no user declaration or mutation
+contract in this release. The dashboard therefore exposes no MCP page. The safe
+inventory API treats a valid empty or platform-only runtime state as an
+available empty inventory; a missing projection is unavailable, and unknown
+server entries without explicit user provenance fail closed. The preinstalled
+`clawdi` aggregate is private infrastructure, and Composio is a dynamic tool
+source behind `POST /v1/mcp/clawdi`; neither appears
+as a separate MCP row. No URL, header, secret reference, command, argument, or
+environment value is projected to the browser.
 
 Manifest `generation` is part of the remote manifest ETag. The CLI applies any
 non-304 manifest without monotonic generation gating, while treating generation

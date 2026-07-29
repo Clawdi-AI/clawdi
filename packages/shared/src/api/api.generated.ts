@@ -922,6 +922,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/mcp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Mcp Inventory
+         * @description Return only MCP inventory with proven user-declaration provenance.
+         */
+        get: operations["get_agent_mcp_inventory_v1_agents__agent_id__mcp_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent_id}/sync-heartbeat": {
         parameters: {
             query?: never;
@@ -1559,13 +1579,11 @@ export interface paths {
          * Upload Skill Project
          * @description Project-explicit tar.gz skill upload.
          *
-         *     The URL carries the target Project; one Agent writes to one Agent Project,
-         *     so daemon writes always land in the expected Project. The
-         *     dashboard's content editor uses `PUT /skills/{key}/content`
-         *     instead (raw markdown, server-side tar). Both converge on
-         *     `_do_upload_skill`, which serializes via a Postgres advisory
-         *     lock keyed on (user, project, skill_key); concurrent writes are
-         *     last-write-wins. SSE then fans out to subscribed daemons.
+         *     The URL carries the target Project. Workspace and Personal Projects remain
+         *     Cloud-owned; a released CLI targeting a live Agent Project is treated as a
+         *     compatibility alias for the authenticated filesystem projection. Both use
+         *     `_do_upload_skill`, which serializes mutations with a per-Skill advisory
+         *     lock. SSE is an invalidation hint only for Agent projections.
          */
         post: operations["upload_skill_project_v1_projects__project_id__skills_upload_post"];
         delete?: never;
@@ -1587,10 +1605,9 @@ export interface paths {
          * @description Edit a skill's SKILL.md from the dashboard.
          *
          *     Body is JSON `{content, content_hash?}`. The server wraps the
-         *     text into a one-file tar.gz and dispatches through the same
-         *     `_do_upload_skill` path as `POST /skills/upload`, so daemons
-         *     receiving the resulting SSE event can't distinguish dashboard
-         *     edits from CLI pushes.
+         *     text into a one-file tar.gz and dispatches through the shared
+         *     `_do_upload_skill` integrity path. This endpoint is limited to Cloud-owned
+         *     Personal and Workspace Projects; Agent Project rows are read-only here.
          *
          *     `content_hash` is interpreted as an If-Match precondition (the
          *     hash the editor saw when it loaded the skill, NOT the hash of
@@ -1693,6 +1710,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/skills/sync/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Agent Synced Skill */
+        post: operations["upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/agents/{agent_id}/skills/sync/{skill_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Agent Synced Skill */
+        delete: operations["delete_agent_synced_skill_v1_agents__agent_id__skills_sync__skill_key__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/sync/events": {
         parameters: {
             query?: never;
@@ -1702,9 +1753,9 @@ export interface paths {
         };
         /**
          * Events
-         * @description SSE event channel. Daemons subscribe here and pull any
-         *     skill referenced in incoming `skill_changed` events. Server-
-         *     side project filter applied at broker level: subscribers only
+         * @description SSE event channel. Daemons subscribe here and treat Skill events as
+         *     invalidations that trigger an Agent-filesystem rescan and Cloud projection.
+         *     Server-side project filtering is applied at broker level: subscribers only
          *     receive events for projects they have read access to.
          *
          *     No request-scoped DB session: SSE streams live for hours,
@@ -2799,6 +2850,43 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentMcpInventoryResponse */
+        AgentMcpInventoryResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Deployment Id */
+            deployment_id?: string | null;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable";
+            /** Servers */
+            servers?: components["schemas"]["AgentMcpServerInventoryItem"][];
+        };
+        /**
+         * AgentMcpServerInventoryItem
+         * @description A safe row whose user-declaration provenance was proven upstream.
+         */
+        AgentMcpServerInventoryItem: {
+            /** Id */
+            id: string;
+            /**
+             * Transport
+             * @enum {string}
+             */
+            transport: "stdio" | "streamable-http" | "sse";
+            /**
+             * Enabled
+             * @default true
+             */
+            enabled: boolean;
+            /**
+             * Source
+             * @constant
+             */
+            source: "explicit_user_declaration";
+        };
         /** AgentProjectBindingResponse */
         AgentProjectBindingResponse: {
             /** Id */
@@ -3472,6 +3560,15 @@ export interface components {
         Body_upload_agent_avatar_v1_agents__agent_id__avatar_post: {
             /** File */
             file: string;
+        };
+        /** Body_upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post */
+        Body_upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post: {
+            /** Skill Key */
+            skill_key: string;
+            /** File */
+            file: string;
+            /** Content Hash */
+            content_hash?: string | null;
         };
         /** Body_upload_environment_avatar_v1_environments__environment_id__avatar_post */
         Body_upload_environment_avatar_v1_environments__environment_id__avatar_post: {
@@ -5721,6 +5818,8 @@ export interface components {
         RuntimeManagedSkillSummary: {
             /** Id */
             id: string;
+            /** Enabled */
+            enabled: boolean;
             /** Version */
             version: number;
         };
@@ -6643,6 +6742,12 @@ export interface components {
             version: number;
             /** Source */
             source: string;
+            /**
+             * Authority
+             * @default cloud
+             * @enum {string}
+             */
+            authority: "agent_sync" | "cloud";
             /** Source Repo */
             source_repo: string | null;
             /** File Count */
@@ -6667,6 +6772,8 @@ export interface components {
             project_id?: string | null;
             /** Project Name */
             project_name?: string | null;
+            /** Project Kind */
+            project_kind?: ("environment" | "personal" | "workspace") | null;
             /** Machine Name */
             machine_name?: string | null;
             /** Environment Id */
@@ -6708,6 +6815,12 @@ export interface components {
             version: number;
             /** Source */
             source: string;
+            /**
+             * Authority
+             * @default cloud
+             * @enum {string}
+             */
+            authority: "agent_sync" | "cloud";
             /** Source Repo */
             source_repo: string | null;
             /** Agent Types */
@@ -6734,6 +6847,8 @@ export interface components {
             project_id?: string | null;
             /** Project Name */
             project_name?: string | null;
+            /** Project Kind */
+            project_kind?: ("environment" | "personal" | "workspace") | null;
             /** Machine Name */
             machine_name?: string | null;
             /** Environment Id */
@@ -9241,6 +9356,37 @@ export interface operations {
             };
         };
     };
+    get_agent_mcp_inventory_v1_agents__agent_id__mcp_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentMcpInventoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     sync_heartbeat_v1_agents__agent_id__sync_heartbeat_post: {
         parameters: {
             query?: never;
@@ -9987,11 +10133,12 @@ export interface operations {
                 page?: number;
                 page_size?: number;
                 include_content?: boolean;
-                /** @description Optional explicit project to list. Without it, results span every project the caller can read (Agent API keys see only their Agent Project, everyone else sees all projects). The serve daemon passes its Agent Project id when it boots with an unbound CLI key + an explicit --environment-id, so reconcile pulls the right Project instead of the most-recently-active one. */
+                /** @description Optional explicit project to list. Without it, results span every project the caller can read (Agent API keys see only their Agent Project, everyone else sees all projects). The serve daemon passes its Agent Project id when it boots with an unbound CLI key + an explicit --environment-id, so projection catch-up lists the right Project instead of the most-recently-active one. */
                 project_id?: string | null;
             };
             header?: {
                 "If-None-Match"?: string | null;
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -10021,7 +10168,9 @@ export interface operations {
     upload_skill_legacy_v1_skills_upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -10180,7 +10329,9 @@ export interface operations {
     upload_skill_project_v1_projects__project_id__skills_upload_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 project_id: string;
             };
@@ -10315,7 +10466,9 @@ export interface operations {
     delete_skill_project_v1_projects__project_id__skills__skill_key__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 project_id: string;
                 skill_key: string;
@@ -10379,10 +10532,80 @@ export interface operations {
             };
         };
     };
-    events_v1_sync_events_get: {
+    upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post: {
         parameters: {
             query?: never;
             header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_agent_synced_skill_v1_agents__agent_id__skills_sync_upload_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SkillUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_agent_synced_skill_v1_agents__agent_id__skills_sync__skill_key__delete: {
+        parameters: {
+            query?: {
+                /** @description Project fence recorded when the Agent projection was claimed. Omit only for legacy clients deleting from the current Agent Project. */
+                project_id?: string | null;
+            };
+            header?: never;
+            path: {
+                agent_id: string;
+                skill_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    events_v1_sync_events_get: {
+        parameters: {
+            query?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path?: never;
             cookie?: never;
         };
@@ -10395,6 +10618,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

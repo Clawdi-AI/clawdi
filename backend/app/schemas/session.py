@@ -301,7 +301,28 @@ class RuntimeManagedSkillSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
+    enabled: bool
     version: int = Field(ge=1)
+
+
+class AgentMcpServerInventoryItem(BaseModel):
+    """A safe row whose user-declaration provenance was proven upstream."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    transport: Literal["stdio", "streamable-http", "sse"]
+    enabled: bool = True
+    source: Literal["explicit_user_declaration"]
+
+
+class AgentMcpInventoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent_id: str
+    deployment_id: str | None = None
+    availability: Literal["available", "unavailable"]
+    servers: list[AgentMcpServerInventoryItem] = Field(default_factory=list)
 
 
 class RuntimeObservedDesiredResponse(BaseModel):

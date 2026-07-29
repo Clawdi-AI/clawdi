@@ -3,9 +3,10 @@
 Daemon opens a long-lived `GET /v1/sync/events` connection authed
 with the same Bearer token it uses for any other API call. The server pushes
 skill revision events and signal-only
-`{"type":"runtime_manifest_changed","environment_id":"…"}` events. The
-daemon immediately pulls the affected resource instead of waiting for normal
-reconcile and ETag polling.
+`{"type":"runtime_manifest_changed","environment_id":"…"}` events. Skill
+events wake a local inventory scan; they never download, write, or remove Agent
+filesystem content. Periodic revision-fenced complete Agent-Project listings
+catch up missed events and only reconcile Cloud projections.
 
 Outbound-only: daemon doesn't open an inbound HTTP server. Auth
 is the Bearer token at handshake; `401` mid-stream (key revoked)
@@ -39,12 +40,16 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from fastapi.responses import StreamingResponse
 
 from app.core.auth import AuthContext, require_scope_short_session
 from app.core.database import async_session_factory
 from app.core.project import project_ids_visible_to
+from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_HEADER,
+    require_agent_authoritative_skill_sync,
+)
 from app.services import sync_events
 
 router = APIRouter(prefix="/sync", tags=["sync"])
@@ -143,10 +148,10 @@ async def _stream(
         # set `revoked` while `wait_for` is parked on `queue.get()`;
         # an event landing in the queue right after revocation
         # would otherwise be emitted (one final `skill_changed`
-        # / `skill_deleted` slipping past). The daemon turns
-        # `skill_deleted` into a local file rm, so this is not
-        # cosmetic — without the re-check, a freshly-revoked
-        # token could still trigger a write on the client.
+        # / `skill_deleted` slipping past). Skill events wake an
+        # Agent-authoritative local rescan, so this is
+        # not cosmetic — without the re-check, a freshly-revoked token could
+        # still trigger client work after its authorization was revoked.
         if revoked.is_set():
             return
         # Real event: write SSE record.
@@ -175,10 +180,11 @@ async def events(
     # exhaust the connection pool. The refresh loop below opens
     # short-lived sessions on its own cadence.
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
 ):
-    """SSE event channel. Daemons subscribe here and pull any
-    skill referenced in incoming `skill_changed` events. Server-
-    side project filter applied at broker level: subscribers only
+    """SSE event channel. Daemons subscribe here and treat Skill events as
+    invalidations that trigger an Agent-filesystem rescan and Cloud projection.
+    Server-side project filtering is applied at broker level: subscribers only
     receive events for projects they have read access to.
 
     No request-scoped DB session: SSE streams live for hours,
@@ -189,6 +195,7 @@ async def events(
     query returns. With many connected daemons this keeps the
     pool free for normal request traffic.
     """
+    require_agent_authoritative_skill_sync(skill_sync_protocol)
     user_id = auth.user_id
     if _oauth_cli_access_expired(auth):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OAuth access token has expired")
@@ -231,8 +238,8 @@ async def events(
     # Set when the periodic refresher notices the caller's api_key
     # was revoked. Closes the auth-after-handshake window where a
     # subscriber kept receiving `skill_changed` / `skill_deleted`
-    # events — which the daemon turns into local file mutations —
-    # for as long as the TCP stream happened to stay alive.
+    # invalidations, which wake an Agent-authoritative local rescan and Cloud
+    # projection, for as long as the TCP stream happened to stay alive.
     revoked = asyncio.Event()
 
     async def refresh_visibility() -> None:

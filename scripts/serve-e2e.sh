@@ -130,14 +130,14 @@ ok "daemon engine started"
 
 bold "5) verifying push: edit local skill, expect cloud row"
 # Snapshot the cloud's current hash (set by the daemon's
-# initialSync push at boot) so we can detect the edit's
+# boot inventory projection) so we can detect the edit's
 # distinct hash, not just any non-empty value.
 get_cloud_hash() {
   curl -s -o "$LOG_DIR/skill-detail.json" "http://127.0.0.1:$TEST_PORT/v1/skills/e2e-hello" \
     -H "Authorization: Bearer $RAW_KEY"
   python3 -c 'import json,sys; d=json.load(open("'"$LOG_DIR/skill-detail.json"'")); print(d.get("content_hash",""))' 2>/dev/null
 }
-# Wait until the daemon's initialSync has uploaded the seed
+# Wait until the daemon's boot inventory scan has uploaded the seed
 # `e2e-hello` skill before we touch local files. Without this
 # wait, `PREV_HASH` could be "" (skill not yet on cloud), the
 # subsequent edit happens BEFORE the seed upload, and the
@@ -150,7 +150,7 @@ for _ in $(seq 1 30); do
   sleep 1
 done
 if [ -z "$PREV_HASH" ]; then
-  echo "FAIL: initialSync never uploaded e2e-hello — daemon push path broken" >&2
+  echo "FAIL: boot inventory scan never uploaded e2e-hello — daemon projection path broken" >&2
   exit 1
 fi
 # Bump the local SKILL.md so the watcher fires.
@@ -158,7 +158,7 @@ echo "# Edited at $(date +%s)" >> "$SKILL_DIR/SKILL.md"
 
 # The watcher debounces on a sub-second window, sync engine then
 # computes hash and uploads. Poll up to 45s for the cloud hash
-# to CHANGE — the daemon's initialSync may have already pushed
+# to CHANGE — the daemon's boot inventory scan may have already projected
 # the unedited content at boot, so we want to confirm THIS edit
 # specifically propagated, not just "something is on the cloud".
 # 45s covers the poll-mode fallback path: when fs.watch is
@@ -179,12 +179,12 @@ $(cat "$LOG_DIR/serve.stderr.log")
 $(tail -30 "$LOG_DIR/backend.log")"
 ok "cloud has skill content_hash=${CLOUD_HASH:0:12}..."
 
-bold "6) verifying pull: cloud-side change → local file"
-# Upload a new version via the project-explicit route — this
-# simulates a dashboard install / marketplace push while our
-# daemon is alive. The DB write fires SSE through the broker
-# and our daemon receives `skill_changed` on its long-lived
-# stream within ~2s.
+bold "6) verifying projection correction: Cloud hint → local bytes win"
+# Exercise the backend's explicitly protocol-gated generic Agent-Project alias
+# directly. Current CLIs use only the dedicated Agent sync boundary. The
+# backend stamps this test write as agent_sync and emits SSE; the daemon must
+# treat the event only as a rescan hint. The Agent filesystem stays unchanged,
+# and its bytes are projected back over the transient compatibility write.
 # Read default_project_id via the public API so the test isn't
 # coupled to whichever DB name / port the operator's local
 # postgres uses (the dev DB might be `clawdi_cloud`, `clawdi`,
@@ -200,10 +200,11 @@ PROJECT_ID=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get
 
 NEW_BODY="---
 name: e2e-hello
-description: cloud-edited
+description: compatibility-write
 ---
-# Edited from the server side at $(date +%s)
+# Bytes that must never land in the Agent filesystem at $(date +%s)
 "
+cp "$SKILL_DIR/SKILL.md" "$LOG_DIR/local-before-cloud-hint.md"
 TAR=$(mktemp)
 # COPYFILE_DISABLE=1 suppresses macOS BSD tar's AppleDouble
 # `._*` resource-fork members. Without it, the server's
@@ -215,49 +216,45 @@ UPLOAD_RESP="$LOG_DIR/project-upload.json"
 UPLOAD_HTTP=$(curl -s -o "$UPLOAD_RESP" -w '%{http_code}' \
   -X POST "http://127.0.0.1:$TEST_PORT/v1/projects/$PROJECT_ID/skills/upload" \
   -H "Authorization: Bearer $RAW_KEY" \
+  -H "X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1" \
   -F "skill_key=e2e-hello" \
   -F "file=@$TAR")
 rm -f "$TAR"
 [ "$UPLOAD_HTTP" = "200" ] || fail "project-explicit upload returned $UPLOAD_HTTP — body: $(head -c 400 "$UPLOAD_RESP")"
+COMPAT_HASH=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("content_hash",""))' "$UPLOAD_RESP" 2>/dev/null)
+[ -n "$COMPAT_HASH" ] && [ "$COMPAT_HASH" != "$CLOUD_HASH" ] \
+  || fail "compatibility upload did not create the expected transient projection hash"
 
-# Daemon should pick up the SSE event within ~2s and rewrite the
-# local SKILL.md. Poll for the new content marker.
-LOCAL_OK=0
+# The daemon should wake, hash the local authoritative directory, and restore
+# the Cloud projection. It must never download the compatibility bytes.
+PROJECTED_OK=0
 for _ in $(seq 1 15); do
-  if grep -q "Edited from the server side" "$SKILL_DIR/SKILL.md" 2>/dev/null; then
-    LOCAL_OK=1
+  CURRENT_HASH=$(get_cloud_hash)
+  if [ "$CURRENT_HASH" = "$CLOUD_HASH" ]; then
+    PROJECTED_OK=1
     break
   fi
   sleep 1
 done
-[ "$LOCAL_OK" = 1 ] || fail "cloud→local pull did not propagate (last serve log: $(tail -20 "$LOG_DIR/serve.stderr.log"))"
-ok "local SKILL.md picked up cloud edit"
+[ "$PROJECTED_OK" = 1 ] || fail "local bytes were not re-projected after Cloud hint (last serve log: $(tail -20 "$LOG_DIR/serve.stderr.log"))"
+cmp -s "$LOG_DIR/local-before-cloud-hint.md" "$SKILL_DIR/SKILL.md" \
+  || fail "Cloud event mutated the authoritative local SKILL.md"
+ok "local file stayed unchanged and its bytes won projection convergence"
 
-bold "7) verifying delete propagation: server DELETE → local skill removed"
-# Sanity check: the local dir exists right now.
-[ -d "$SKILL_DIR" ] || fail "skill dir vanished before delete test (unexpected)"
-
-# Hit the project-explicit DELETE. The deploy key has skills:write,
-# so this works.
-HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' \
-  -X DELETE "http://127.0.0.1:$TEST_PORT/v1/projects/$PROJECT_ID/skills/e2e-hello" \
-  -H "Authorization: Bearer $RAW_KEY")
-[ "$HTTP_CODE" = "200" ] || fail "delete returned $HTTP_CODE, expected 200"
-
-# Daemon should receive a `skill_deleted` SSE event and rmtree
-# the local dir within ~2s. Reconcile loop is the safety net at
-# 60s — give it 15s to be patient about SSE timing.
+bold "7) verifying local absence → Cloud projection delete"
+rm -rf "$SKILL_DIR"
 DELETE_OK=0
-for _ in $(seq 1 15); do
-  if [ ! -d "$SKILL_DIR" ]; then
+for _ in $(seq 1 45); do
+  if [ -z "$(get_cloud_hash)" ]; then
     DELETE_OK=1
     break
   fi
   sleep 1
 done
 [ "$DELETE_OK" = 1 ] \
-  || fail "local skill dir still exists after server delete (last serve log: $(tail -20 "$LOG_DIR/serve.stderr.log"))"
-ok "local skill dir removed"
+  || fail "Cloud projection survived authoritative local deletion (last serve log: $(tail -20 "$LOG_DIR/serve.stderr.log"))"
+[ ! -d "$SKILL_DIR" ] || fail "projection cleanup recreated the deleted local Skill"
+ok "local deletion removed the Cloud projection without local resurrection"
 
 bold "8) verifying heartbeat observability fields"
 # Read last_sync_at via GET /v1/environments/{id}; same DB-name

@@ -132,11 +132,10 @@ export interface AgentAdapter {
 	 * Called by explicit pull flows so the recipient's agent sees the
 	 * shared skill folder only after content download is requested. */
 	writeSharedSkillArchive(key: string, ownerHandle: string, tarGzBytes: Buffer): Promise<void>;
-	/** Remove a skill from the agent's local skills directory.
-	 * Called by the daemon's reconcile sweep when a previously-
-	 * observed cloud skill is no longer in the listing (dashboard
-	 * uninstall, or a CLI delete on another machine). Idempotent
-	 * — silently ignores a skill that's already gone. */
+	/** Remove a skill from the agent's local skills directory as an explicit
+	 * local-authority mutation. Managed reservations are fail-closed and an
+	 * already absent user-authored skill is handled idempotently. Cloud events
+	 * and projection reconciliation never call this method. */
 	removeLocalSkill(key: string): Promise<void>;
 
 	buildRunCommand(args: string[], env: Record<string, string>): string[];

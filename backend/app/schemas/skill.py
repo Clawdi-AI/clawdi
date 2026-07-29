@@ -3,6 +3,9 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+PersistedSkillAuthority = Literal["agent_sync", "cloud"]
+PersistedProjectKind = Literal["environment", "personal", "workspace"]
+
 
 class SkillInstallRequest(BaseModel):
     # `repo` and `path` flow into `fetch_skill_from_github` and the
@@ -36,6 +39,7 @@ class SkillSummaryResponse(BaseModel):
     description: str | None
     version: int
     source: str
+    authority: PersistedSkillAuthority = "cloud"
     source_repo: str | None
     agent_types: list[str] | None
     file_count: int | None
@@ -51,6 +55,7 @@ class SkillSummaryResponse(BaseModel):
     # skills in the user's Personal project (no Agent environment origin).
     project_id: str | None = None
     project_name: str | None = None
+    project_kind: PersistedProjectKind | None = None
     machine_name: str | None = None
     environment_id: str | None = None
 
@@ -62,6 +67,7 @@ class SkillDetailResponse(BaseModel):
     description: str | None
     version: int
     source: str
+    authority: PersistedSkillAuthority = "cloud"
     source_repo: str | None
     file_count: int | None
     content: str | None
@@ -79,6 +85,7 @@ class SkillDetailResponse(BaseModel):
     # they're looking at.
     project_id: str | None = None
     project_name: str | None = None
+    project_kind: PersistedProjectKind | None = None
     machine_name: str | None = None
     environment_id: str | None = None
 
@@ -96,10 +103,10 @@ class SkillUploadResponse(BaseModel):
 
 
 class SkillContentUpdateRequest(BaseModel):
-    # Raw SKILL.md text (frontmatter + body). The server tars it
-    # into a single-file archive and runs the same upload pipeline
-    # as a daemon push, so dashboard edits and CLI pushes converge
-    # on the same row + storage object.
+    # Raw SKILL.md text (frontmatter + body) for Cloud-owned Personal and
+    # Workspace Projects. The server tars it into a single-file archive and
+    # runs the shared integrity pipeline. Agent Project rows never enter this
+    # editor because their filesystem is authoritative.
     content: str = Field(min_length=1, max_length=200 * 1024)
     # Optional last-known hash. Phase-1 dashboard editor leaves this
     # blank (last-write-wins). Phase-2 can pass the hash captured

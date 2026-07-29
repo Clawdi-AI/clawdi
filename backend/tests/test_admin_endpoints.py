@@ -2254,6 +2254,7 @@ async def test_admin_delete_env_removes_environment_and_orphans_sessions(
 
     from app.models.audit import ControlPlaneAuditEvent
     from app.models.session import AgentEnvironment, Session
+    from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 
     created = await admin_client.post(
         "/api/admin/environments",
@@ -2276,8 +2277,36 @@ async def test_admin_delete_env_removes_environment_and_orphans_sessions(
         started_at=datetime.now(UTC),
         last_activity_at=datetime.now(UTC),
     )
-    db_session.add(session_row)
+    environment = await db_session.get(AgentEnvironment, env_id)
+    assert environment is not None
+    db_session.add_all(
+        [
+            session_row,
+            Skill(
+                user_id=seed_user.id,
+                project_id=environment.default_project_id,
+                skill_key="admin-delete-legacy",
+                name="Admin delete legacy",
+                description="Legacy Cloud row",
+                content_hash="7" * 64,
+                authority=SKILL_AUTHORITY_CLOUD,
+            ),
+            Skill(
+                user_id=seed_user.id,
+                project_id=environment.default_project_id,
+                skill_key="admin-delete-claimed",
+                name="Admin delete claimed",
+                description="Agent projection",
+                content_hash="8" * 64,
+                source=SKILL_AUTHORITY_AGENT_SYNC,
+                authority=SKILL_AUTHORITY_AGENT_SYNC,
+                authority_agent_id=env_id,
+            ),
+        ]
+    )
     await db_session.commit()
+    await db_session.refresh(seed_user)
+    revision_before = seed_user.skills_revision
 
     deleted = await admin_client.delete(f"/api/admin/environments/{env_id}", headers=_AUTH)
     assert deleted.status_code == 204, deleted.text
@@ -2286,6 +2315,13 @@ async def test_admin_delete_env_removes_environment_and_orphans_sessions(
         await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == env_id))
     ).scalar_one_or_none()
     assert env is None
+    assert (
+        await db_session.execute(
+            select(Skill).where(Skill.project_id == environment.default_project_id)
+        )
+    ).scalars().all() == []
+    await db_session.refresh(seed_user)
+    assert seed_user.skills_revision == revision_before + 2
     await db_session.refresh(session_row)
     assert session_row.environment_id is None
     event = (

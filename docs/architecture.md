@@ -91,9 +91,15 @@ interface than `packages/cli/src/adapters/base.ts`.
 
 ## Sync Engine
 
-`clawdi push` uploads sessions and skills. `clawdi pull` downloads skills.
-`clawdi daemon run` keeps skill state live through local watchers, SSE, and
-heartbeat updates.
+`clawdi push` uploads sessions and projects Agent filesystem Skills into their
+Cloud rows. Agent Project Skill sync is one-way: the adapter's guarded local
+Skills root is authoritative, and Cloud stores a read-only projection. Boot,
+watcher, and periodic scans compare local inventory with an identity-fenced
+claim ledger and durably queue the latest push or delete for each Skill key.
+Cloud list failures and truncated results never authorize deletion. SSE only
+wakes a local rescan; Cloud changes and deletes never write or remove local
+Agent Skill files. `clawdi pull` remains for explicitly Cloud-owned
+workspace/personal Project workflows, not Agent Projects.
 
 Target selection:
 
@@ -102,9 +108,23 @@ Target selection:
 3. Adapter detection.
 4. Prompt when more than one candidate remains.
 
-Sync state is client-side under `~/.clawdi/`, including session/skill lock
-files. The backend stores metadata and file bodies, but it does not own each
-machine's upload watermark.
+Sync state is client-side under `~/.clawdi/`, including session state and a
+versioned Skill projection ledger fenced by stable Agent and resolved Agent
+Project identity. Only an exact successful Agent claim authorizes a later
+projection delete. After Project reassignment, the durable queue deletes that
+Agent's claimed row from the old Project before projecting current local state
+to the new Project. Legacy hash-only entries may suppress redundant upload
+work, but never prove delete authority.
+
+The released Agent Skill projection hash is a compatibility protocol over the
+safe dereferenced regular-file paths and bytes carried by the upload archive.
+It intentionally does not include permission modes, and its historical
+`path + content` stream has no length or domain framing. A chmod-only change is
+therefore not guaranteed to reproject, and the hash must not be described as a
+collision-unambiguous tree encoding. Fixing either limitation requires an
+explicitly versioned wire, ledger, and persisted-hash migration in a later
+protocol release; this change does not silently reinterpret old hashes or
+claims.
 
 ## Sessions
 
@@ -132,10 +152,46 @@ membership, attach Projects, or mutate cloud Project relationships.
 
 ## Skills
 
-Skills are project-scoped metadata rows plus tar.gz bodies in the object store.
-Active skills are unique by `(user_id, project_id, skill_key)`. The CLI uploads
-local skills with `clawdi push`, downloads cloud skills with `clawdi pull`, and
-can add or install skills through `clawdi skill ...`.
+Persisted Skills are project-scoped metadata rows plus tar.gz bodies in the
+object store. Active rows are unique by `(user_id, project_id, skill_key)` and
+carry durable `authority` provenance:
+
+| Inventory authority | Source of truth | Allowed mutation |
+| --- | --- | --- |
+| `cloud` | Cloud-owned workspace/personal Project | Normal authenticated Cloud UI/API and `--project` CLI operations |
+| `agent_sync` | One Agent's guarded filesystem target | Agent-authenticated claim/upload and absence/delete only; dashboard is read-only |
+
+Historical rows are backfilled as `cloud`; Project kind, source strings, and
+old environment metadata are not ownership evidence. A live authenticated
+Agent upload may atomically claim the matching row as `agent_sync`, including
+when its bytes are unchanged. Current CLIs use only the dedicated Agent sync
+boundary; a missing dedicated route or an unproven Agent identity fails closed
+without issuing a generic Project mutation. Browser writes, old clients without
+the explicit capability, and orphan Agent Projects also fail closed.
+
+Mixed-version safety uses the explicit
+`X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` capability, never a
+User-Agent guess. Every Clawdi backend worker must serve the gate and dedicated
+endpoints and old SSE connections must be drained before CLI 0.13.13 is rolled
+out; Web follows the CLI. An old CLI reaching a current backend receives 426
+on Agent-Project sync surfaces. A current CLI reaching an old backend receives
+a dedicated-route 404, retains its local operation, and does not create a Cloud
+mutation. Projection may pause during that window, but the Agent filesystem
+remains unchanged. Additive
+`agent_skill_changed`/`agent_skill_deleted` invalidations protect mutations
+created by current backend workers from already-connected released parsers;
+they do not make an old mutation worker safe. Current daemons treat both event
+families as rescan hints. Cloud-owned Project events retain their released
+names.
+
+The bundled `clawdi` Skill is private platform infrastructure, not a third
+inventory authority and not a user Skill. Its private runtime entry reserves
+the local key before managed installation, so the daemon never uploads the
+managed target as an `agent_sync` row. A previously claimed user file may yield
+that key by deleting only its old Cloud projection; reconciliation never uses
+Cloud state to delete the managed target. Internal enable/disable still
+reconciles the bundle lifecycle, but neither state appears in the Skills UI or
+a public deployment mutation contract.
 
 ## Vault
 
@@ -178,6 +234,13 @@ through the connector bridge.
 For agents that only support stdio MCP, `clawdi mcp` registers local tool
 schemas and forwards calls to the backend. The backend keeps connector OAuth
 tokens and bridge credentials out of the agent process.
+
+The safe MCP inventory API may contain only explicit user declarations whose
+provenance is supported by a user management contract. This release has no such
+contract, so the dashboard does not expose an MCP page. A valid private
+platform-only state is projected as empty and unknown server declarations fail
+closed. The preinstalled `clawdi` aggregate and its dynamic Composio tools stay
+behind `POST /v1/mcp/clawdi`; neither is a user-manageable MCP inventory row.
 
 ## Channels
 

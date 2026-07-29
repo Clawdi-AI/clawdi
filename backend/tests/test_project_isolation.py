@@ -32,6 +32,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import AuthContext, get_auth, get_auth_short_session
 from app.core.database import get_session
+from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    SKILL_SYNC_PROTOCOL_HEADER,
+)
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.memory import Memory
@@ -42,6 +46,10 @@ from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 from app.services.agent_environments import local_machine_registration_key
 
 pytestmark = pytest.mark.committed_db
+
+AGENT_SKILL_SYNC_HEADERS = {
+    SKILL_SYNC_PROTOCOL_HEADER: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+}
 
 
 async def _override_factory(db_session: AsyncSession, user: User, api_key: ApiKey | None = None):
@@ -435,6 +443,7 @@ async def test_unbound_cli_key_can_pin_any_project(
         resp_a = await client.get(
             "/v1/skills",
             params={"project_id": str(env_a.default_project_id)},
+            headers=AGENT_SKILL_SYNC_HEADERS,
         )
         assert resp_a.status_code == 200, resp_a.text
         keys_a = {s["skill_key"] for s in resp_a.json()["items"]}
@@ -444,13 +453,15 @@ async def test_unbound_cli_key_can_pin_any_project(
         resp_b = await client.get(
             "/v1/skills",
             params={"project_id": str(env_b.default_project_id)},
+            headers=AGENT_SKILL_SYNC_HEADERS,
         )
         keys_b = {s["skill_key"] for s in resp_b.json()["items"]}
         assert keys_b == {"beta-skill"}, keys_b
 
         # No pin → both visible (unbound key sees the user's full
         # inventory, same as the dashboard JWT).
-        resp_all = await client.get("/v1/skills")
+        resp_all = await client.get("/v1/skills", headers=AGENT_SKILL_SYNC_HEADERS)
+        assert resp_all.status_code == 200, resp_all.text
         keys_all = {s["skill_key"] for s in resp_all.json()["items"]}
         assert keys_all == {"alpha-skill", "beta-skill"}, keys_all
     finally:
@@ -515,7 +526,11 @@ async def test_bound_deploy_key_still_pinned_to_its_env(
     try:
         # Even when explicitly pinning env-B's project, the deploy
         # key must see nothing (env binding wins).
-        resp = await client.get("/v1/skills", params={"project_id": str(env_b.default_project_id)})
+        resp = await client.get(
+            "/v1/skills",
+            params={"project_id": str(env_b.default_project_id)},
+            headers=AGENT_SKILL_SYNC_HEADERS,
+        )
         assert resp.status_code == 200
         assert resp.json()["items"] == [], resp.json()
     finally:

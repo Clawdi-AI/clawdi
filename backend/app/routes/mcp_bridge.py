@@ -20,7 +20,6 @@ from app.core.auth import (
     get_auth,
     is_runtime_deployment_principal,
 )
-from app.core.config import settings
 from app.core.database import get_session
 from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
@@ -628,7 +627,7 @@ async def _tool_connector_call(
     if isinstance(response, dict) and response.get("error"):
         return _tool_text(json.dumps(response["error"]), is_error=True)
     result = response.get("result") if isinstance(response, dict) else response
-    if isinstance(result, dict) and isinstance(result.get("content"), list):
+    if isinstance(result, dict):
         return result
     text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, indent=2)
     return _tool_text(text)
@@ -658,20 +657,11 @@ async def _forward_composio_mcp_request(session: ComposioMcpSession, body) -> di
 
 
 def _composio_mcp_headers(session: ComposioMcpSession) -> dict[str, str]:
-    headers = {
+    return {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
         **session.headers,
     }
-    lowered = {k.lower() for k in headers}
-    if (
-        settings.composio_api_key
-        and "x-api-key" not in lowered
-        and "x-user-api-key" not in lowered
-        and "authorization" not in lowered
-    ):
-        headers["x-api-key"] = settings.composio_api_key
-    return headers
 
 
 def _parse_composio_mcp_response(resp: httpx.Response):

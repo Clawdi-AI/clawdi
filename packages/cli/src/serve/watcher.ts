@@ -72,6 +72,13 @@ interface Opts {
 	 * the daemon uploads the wrong key. fs.watch mode separately
 	 * uses `resolveSkillKey` for the same purpose. */
 	listSkillKeys?: () => Promise<string[]>;
+	/**
+	 * Signals that the set of Skill keys may have changed. Path-to-key
+	 * resolution cannot identify a directory after it has been removed (and
+	 * Hermes keys may be nested), so the sync engine uses this callback to
+	 * diff the adapter inventory against its durable projection claims.
+	 */
+	onInventoryChanged?: () => void;
 }
 
 export async function watchSkills(opts: Opts): Promise<void> {
@@ -204,6 +211,7 @@ async function watchEvents(opts: Opts): Promise<void> {
 				const pathFromRoot = filename ? join(key, filename.toString()) : key;
 				const resolved = opts.resolveSkillKey ? opts.resolveSkillKey(pathFromRoot) : key;
 				if (resolved) on(resolved);
+				opts.onInventoryChanged?.();
 			});
 			attachErrorHandler(w);
 			skillWatchers.set(key, w);
@@ -239,8 +247,8 @@ async function watchEvents(opts: Opts): Promise<void> {
 			attachSubWatcher(topKey);
 		} catch (e) {
 			// If recursive watch becomes unsupported mid-session
-			// (extremely rare — typically caught at boot via the
-			// initialSync attach loop), surface the failure as a
+			// (extremely rare — typically caught by the boot attachment
+			// pass), surface the failure as a
 			// log; the next reconcile + watcher restart fall to
 			// pollLoop. Don't propagate out of the fs.watch
 			// callback (Node terminates the process on unhandled
@@ -258,6 +266,7 @@ async function watchEvents(opts: Opts): Promise<void> {
 		// to fire as the user adds the actual skill content.
 		const resolved = opts.resolveSkillKey ? opts.resolveSkillKey(filename.toString()) : topKey;
 		if (resolved) on(resolved);
+		opts.onInventoryChanged?.();
 	});
 
 	const initial = await listSkillDirs(opts.rootDir);
@@ -332,6 +341,7 @@ async function pollLoop(opts: Opts): Promise<void> {
 		for (const key of changed) {
 			opts.onSkillChanged(key);
 		}
+		if (changed.length > 0) opts.onInventoryChanged?.();
 		prev = next;
 	}
 }

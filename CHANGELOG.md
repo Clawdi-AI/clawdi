@@ -10,6 +10,25 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.13
+
+Package: `clawdi@0.13.13`
+
+### Changed
+
+- Agent filesystem Skills are now the authoritative local copies and appear in
+  Cloud as read-only projections. Cloud-owned workspace and personal Project
+  Skills remain explicitly importable.
+- The local MCP process now forwards complete tool definitions and results
+  without rebuilding dynamic schemas.
+
+### Fixed
+
+- Bundled platform Skills and MCP resources no longer appear as user-managed
+  inventory.
+- Mixed-version Skill sync now pauses safely instead of overwriting or deleting
+  Agent-owned files.
+
 ## Clawdi CLI v0.13.12
 
 Package: `clawdi@0.13.12`

@@ -18,6 +18,7 @@ from app.models.audit import ControlPlaneAuditEvent
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.platform_idempotency import PlatformMutationIdempotency
 from app.models.session import AgentEnvironment
+from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
 from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES
 from app.services.user_provisioning import lazy_create_partner_user_with_personal_project
@@ -784,6 +785,36 @@ async def test_platform_idempotency_replays_every_mutation_without_second_side_e
     )
     assert created_once.status_code == created_twice.status_code == 200
     assert created_once.json() == created_twice.json()
+    agent = await db_session.get(AgentEnvironment, agent_id)
+    assert agent is not None
+    db_session.add_all(
+        [
+            Skill(
+                user_id=seed_user.id,
+                project_id=agent.default_project_id,
+                skill_key="platform-delete-legacy",
+                name="Platform delete legacy",
+                description="Legacy Cloud row",
+                content_hash="9" * 64,
+                authority=SKILL_AUTHORITY_CLOUD,
+            ),
+            Skill(
+                user_id=seed_user.id,
+                project_id=agent.default_project_id,
+                skill_key="platform-delete-claimed",
+                name="Platform delete claimed",
+                description="Agent projection",
+                content_hash="a" * 64,
+                source=SKILL_AUTHORITY_AGENT_SYNC,
+                authority=SKILL_AUTHORITY_AGENT_SYNC,
+                authority_agent_id=agent_id,
+            ),
+        ]
+    )
+    await db_session.commit()
+    await db_session.refresh(seed_user)
+    revision_before_agent_delete = seed_user.skills_revision
+    agent_project_id = agent.default_project_id
 
     runtime_body = _runtime_body(owner, agent_id)
     runtime_headers = _headers("idem-runtime-upsert")
@@ -866,6 +897,14 @@ async def test_platform_idempotency_replays_every_mutation_without_second_side_e
         json={"owner": owner},
     )
     assert deleted_agent_once.status_code == deleted_agent_twice.status_code == 204
+    assert (
+        await db_session.scalar(
+            select(func.count()).select_from(Skill).where(Skill.project_id == agent_project_id)
+        )
+        == 0
+    )
+    await db_session.refresh(seed_user)
+    assert seed_user.skills_revision == revision_before_agent_delete + 2
 
     assert (
         await db_session.scalar(

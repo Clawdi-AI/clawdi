@@ -35,6 +35,11 @@ from app.services.agent_environments import (
     AgentEnvironmentIdConflict,
     register_agent_environment,
 )
+from app.services.agent_skill_projection import (
+    AgentSkillProjectionBoundaryError,
+    delete_agent_project_skill_rows,
+    delete_agent_skill_files_best_effort,
+)
 from app.services.api_key import mint_api_key
 from app.services.audit import record_control_plane_audit
 from app.services.platform_contract import (
@@ -636,6 +641,18 @@ async def platform_delete_agent(
         "machine_id": agent.machine_id,
         "explicit_identity": agent.registration_key is None,
     }
+    try:
+        skill_file_keys = await delete_agent_project_skill_rows(db, agent=agent)
+    except AgentSkillProjectionBoundaryError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "agent_project_ownership_unproven",
+                "message": (
+                    "Agent Project ownership could not be proven; no resources were deleted."
+                ),
+            },
+        ) from None
     await queue_environment_runtime_manifest_changed(db, owner.id, agent_id)
     await db.delete(agent)
     await _complete_mutation(
@@ -654,6 +671,7 @@ async def platform_delete_agent(
         environment_id=agent_id,
         audit_details=audit_details,
     )
+    await delete_agent_skill_files_best_effort(skill_file_keys, agent_id=agent_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

@@ -1,32 +1,46 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import type { CollectSessionsResult } from "../adapters/base";
-import { ApiError } from "../lib/api-client";
-import { readSkillsLock, skillCacheKey, writeSkillsLock } from "../lib/skills-lock";
-import { releaseManagedSkill, reserveManagedSkill } from "../runtime/managed-skill-reservation";
-import type { PendingSkillUploadEcho } from "./sync-engine";
 import {
-	addInFlight,
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	readFileSync,
+	rmSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import type { CollectSessionsResult } from "../adapters/base";
+import { adapterRegistry } from "../adapters/registry";
+import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
+import {
+	computeSkillFolderHash,
+	readSkillProjectionClaimsForAgent,
+	recordSkillProjectionClaim,
+} from "../lib/skills-lock";
+import { computeSkillArchiveHash } from "../lib/tar";
+import { releaseManagedSkill, reserveManagedSkill } from "../runtime/managed-skill-reservation";
+import { RetryQueue } from "./queue";
+import {
 	classifyHeartbeatFailure,
-	clearReservedSkillHashes,
-	consumePendingSkillUploadEcho,
 	enqueueChangedSessionsAfterStability,
 	filterValidSkillKeysForSync,
 	heartbeatDelayMs,
 	isAuthFailure,
 	isOversizedUploadError,
+	isPermanentUploadError,
 	isSafelyTerminalRuntimeObservationFailure,
 	isSkillSyncServerEvent,
 	lastSyncErrorForSseReconnect,
+	processQueueItem,
 	projectRefreshDelayMs,
+	reconcileAgentSkillProjection,
+	reconcileAgentSkillProjectionListing,
 	reconcileDelayMs,
-	releaseInFlight,
-	rememberPendingSkillUploadEcho,
 	resolveOwningSkillKey,
 	SyncHealth,
-	shouldForceFullSkillListing,
+	skillInvalidationKey,
+	staleSkillProjectionProjectIds,
 } from "./sync-engine";
 
 describe("stable session enqueue abort fence", () => {
@@ -75,91 +89,675 @@ describe("stable session enqueue abort fence", () => {
 	});
 });
 
-describe("reserved Skill reconcile listing", () => {
-	it("forces a full listing despite a pre-reservation pushed hash", () => {
-		const observed = new Set(["managed"]);
-		const pushed = new Map([["managed", "old-cloud-hash"]]);
-		expect(shouldForceFullSkillListing(observed, pushed, (key) => key === "managed")).toBe(true);
-	});
-
-	it("keeps one full pass after release when the deferred hash was cleared", () => {
-		const observed = new Set(["managed"]);
-		expect(shouldForceFullSkillListing(observed, new Map(), () => false)).toBe(true);
-	});
-
-	it("returns to conditional listings after the released Skill is pulled", () => {
-		const observed = new Set(["managed"]);
-		const pulled = new Map([["managed", "current-cloud-hash"]]);
-		expect(shouldForceFullSkillListing(observed, pulled, () => false)).toBe(false);
-	});
-});
-
-describe("reserved Skill boot cache cleanup", () => {
-	it("clears only reserved hashes even when Cloud has no matching key", () => {
-		const root = mkdtempSync(join(tmpdir(), "reserved-skill-cache-"));
+describe("Agent filesystem projection reconcile", () => {
+	async function withProjectionCase(
+		run: (fixture: {
+			root: string;
+			queue: RetryQueue;
+			keys: Set<string>;
+			reconcile: (claims: Map<string, string>, legacy?: ReadonlySet<string>) => Promise<void>;
+		}) => Promise<void>,
+	): Promise<void> {
+		const root = mkdtempSync(join(tmpdir(), "agent-skill-projection-"));
 		const originalHome = process.env.HOME;
-		const originalMode = process.env.CLAWDI_RUNTIME_MODE;
-		const originalStateDir = process.env.CLAWDI_SERVICE_STATE_DIR;
+		const originalState = process.env.CLAWDI_STATE_DIR;
 		try {
 			process.env.HOME = root;
-			delete process.env.CLAWDI_RUNTIME_MODE;
-			delete process.env.CLAWDI_SERVICE_STATE_DIR;
-			const skillsRoot = join(root, ".claude", "skills");
-			const managed = join(skillsRoot, "managed");
-			mkdirSync(managed, { recursive: true });
-			writeFileSync(join(managed, "SKILL.md"), "# Managed\n");
+			process.env.CLAWDI_STATE_DIR = join(root, "serve");
+			const skillsRoot = join(root, "skills");
+			mkdirSync(skillsRoot, { recursive: true });
+			const keys = new Set<string>();
+			const queue = new RetryQueue({ agentType: "hermes" });
+			await run({
+				root: skillsRoot,
+				queue,
+				keys,
+				reconcile: (claims, trustedLegacyRemoteKeys) =>
+					reconcileAgentSkillProjection({
+						opts: {
+							environmentId: "agent-1",
+							adapter: {
+								agentType: "hermes",
+								getSkillsRootDir: () => skillsRoot,
+								listSkillKeys: async () => [...keys],
+							},
+						},
+						queue,
+						claims,
+						projectId: "project-1",
+						trustedLegacyRemoteKeys,
+					}),
+			});
+			await queue.flushPersist();
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			if (originalState === undefined) delete process.env.CLAWDI_STATE_DIR;
+			else process.env.CLAWDI_STATE_DIR = originalState;
+			rmSync(root, { recursive: true, force: true });
+		}
+	}
+
+	it("durably deletes a claimed nested key missing after directory removal", async () => {
+		await withProjectionCase(async ({ queue, reconcile }) => {
+			await reconcile(new Map([["category/demo", "claimed-hash"]]));
+			const item = queue.peek();
+			expect(item?.kind).toBe("skill_delete");
+			expect(item && "skill_key" in item ? item.skill_key : undefined).toBe("category/demo");
+			expect(item && "agent_id" in item ? item.agent_id : undefined).toBe("agent-1");
+			expect(item && "project_id" in item ? item.project_id : undefined).toBe("project-1");
+		});
+	});
+
+	it("retains the delete queue item and claim on a dedicated 404, then releases both on 204", async () => {
+		await withProjectionCase(async ({ queue }) => {
+			recordSkillProjectionClaim({
+				agentType: "hermes",
+				agentId: "agent-1",
+				projectId: "project-1",
+				skillKey: "claimed",
+				hash: "claimed-hash",
+			});
+			queue.enqueue({
+				kind: "skill_delete",
+				agent_id: "agent-1",
+				project_id: "project-1",
+				skill_key: "claimed",
+				enqueued_at: new Date().toISOString(),
+				attempts: 0,
+			});
+			const item = queue.peek();
+			if (item?.kind !== "skill_delete") throw new Error("expected queued delete");
+
+			const originalFetch = globalThis.fetch;
+			const requests: Request[] = [];
+			let responseStatus = 404;
+			try {
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					requests.push(input instanceof Request ? input : new Request(input, init));
+					return responseStatus === 204
+						? new Response(null, { status: 204 })
+						: new Response('{"detail":"Agent not found"}', { status: 404 });
+				}) as typeof fetch;
+				const adapter = adapterRegistry.hermes.create();
+				const abortController = new AbortController();
+				const opts = {
+					environmentId: "agent-1",
+					adapter,
+					abort: abortController.signal,
+					abortController,
+				};
+				const api = new ApiClient({ requireAuth: false });
+
+				await expect(
+					processQueueItem(opts, api, queue, item, new Map(), new Map(), new Map(), "project-1"),
+				).rejects.toBeInstanceOf(AgentSkillSyncNotFoundError);
+				expect(isPermanentUploadError(new AgentSkillSyncNotFoundError("missing"))).toBe(false);
+				expect(queue.peek()?.version).toBe(item.version);
+				expect(
+					readSkillProjectionClaimsForAgent("hermes", "agent-1").map((claim) => claim.project_id),
+				).toEqual(["project-1"]);
+				expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+					"/v1/agents/agent-1/skills/sync/claimed",
+				]);
+
+				responseStatus = 204;
+				await processQueueItem(
+					opts,
+					api,
+					queue,
+					item,
+					new Map(),
+					new Map(),
+					new Map(),
+					"project-1",
+				);
+				expect(queue.depth).toBe(0);
+				expect(readSkillProjectionClaimsForAgent("hermes", "agent-1")).toEqual([]);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+	});
+
+	it("uses only a complete-listing key as migration evidence for an unclaimed legacy row", async () => {
+		await withProjectionCase(async ({ queue, reconcile }) => {
+			await reconcile(new Map());
+			expect(queue.depth).toBe(0);
+			await reconcile(new Map(), new Set(["legacy"]));
+			expect(queue.peek()?.kind).toBe("skill_delete");
+		});
+	});
+
+	it("treats a current Agent-Project SSE key as an absence or local reproject hint", async () => {
+		await withProjectionCase(async ({ root, queue, keys, reconcile }) => {
+			await reconcile(new Map(), new Set(["legacy-absent"]));
+			expect(queue.peek()?.kind).toBe("skill_delete");
+
+			const local = join(root, "legacy-present");
+			mkdirSync(local, { recursive: true });
+			writeFileSync(join(local, "SKILL.md"), "# Local remains authoritative\n");
+			keys.add("legacy-present");
+			await reconcile(new Map(), new Set(["legacy-present"]));
+			expect(
+				queue.all().find((item) => "skill_key" in item && item.skill_key === "legacy-present")
+					?.kind,
+			).toBe("skill_push");
+			expect(existsSync(join(local, "SKILL.md"))).toBe(true);
+		});
+	});
+
+	it("reserved handoff deletes the old projection without touching the managed target", async () => {
+		await withProjectionCase(async ({ root, queue, keys, reconcile }) => {
+			const target = join(root, "managed");
+			mkdirSync(target, { recursive: true });
+			writeFileSync(join(target, "SKILL.md"), "# Managed\n");
+			keys.add("managed");
 			reserveManagedSkill({
-				targetDir: managed,
+				targetDir: target,
 				id: "managed",
 				version: 1,
 				digest: "a".repeat(64),
 				manager: "local-setup",
 			});
-			const managedCacheKey = skillCacheKey("claude_code", "managed");
-			const unrelatedCacheKey = skillCacheKey("claude_code", "unrelated");
-			writeSkillsLock({
-				version: 2,
-				skills: {
-					[managedCacheKey]: { hash: "same-content-hash" },
-					[unrelatedCacheKey]: { hash: "unrelated-hash" },
-					[skillCacheKey("codex", "managed")]: { hash: "other-agent-hash" },
-				},
+			recordSkillProjectionClaim({
+				agentType: "hermes",
+				agentId: "agent-1",
+				projectId: "project-old",
+				skillKey: "managed",
+				hash: "user-hash",
 			});
-			const pushed = new Map([
-				["managed", "same-content-hash"],
-				["unrelated", "unrelated-hash"],
-			]);
+			await reconcile(new Map());
+			expect(queue.peek()?.kind).toBe("skill_delete");
+			expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+		});
+	});
 
-			clearReservedSkillHashes(
-				{ agentType: "claude_code", getSkillsRootDir: () => skillsRoot },
-				pushed,
-				false,
-			);
-
-			expect(pushed.has("managed")).toBe(false);
-			expect(pushed.get("unrelated")).toBe("unrelated-hash");
-			const persisted = readSkillsLock().skills;
-			expect(persisted[managedCacheKey]).toBeUndefined();
-			expect(persisted[unrelatedCacheKey]?.hash).toBe("unrelated-hash");
-			expect(persisted[skillCacheKey("codex", "managed")]?.hash).toBe("other-agent-hash");
-
+	it("reservation rollback replaces its pending delete with the unchanged user push", async () => {
+		await withProjectionCase(async ({ root, queue, keys, reconcile }) => {
+			const target = join(root, "demo");
+			mkdirSync(target, { recursive: true });
+			writeFileSync(join(target, "SKILL.md"), "# User\n");
+			keys.add("demo");
+			const hash = await computeSkillFolderHash(target);
+			reserveManagedSkill({
+				targetDir: target,
+				id: "demo",
+				version: 1,
+				digest: "a".repeat(64),
+				manager: "local-setup",
+			});
+			await reconcile(new Map([["demo", hash]]));
+			expect(queue.peek()?.kind).toBe("skill_delete");
 			releaseManagedSkill({
-				targetDir: managed,
-				id: "managed",
+				targetDir: target,
+				id: "demo",
 				manager: "local-setup",
 				removeTarget: () => undefined,
 			});
-			// A future user Skill with identical bytes is no longer suppressed by the old hash.
-			expect(pushed.get("managed")).toBeUndefined();
-		} finally {
-			if (originalHome === undefined) delete process.env.HOME;
-			else process.env.HOME = originalHome;
-			if (originalMode === undefined) delete process.env.CLAWDI_RUNTIME_MODE;
-			else process.env.CLAWDI_RUNTIME_MODE = originalMode;
-			if (originalStateDir === undefined) delete process.env.CLAWDI_SERVICE_STATE_DIR;
-			else process.env.CLAWDI_SERVICE_STATE_DIR = originalStateDir;
-			rmSync(root, { recursive: true, force: true });
-		}
+			await reconcile(new Map([["demo", hash]]));
+			expect(queue.peek()?.kind).toBe("skill_push");
+		});
+	});
+
+	it("retains old-Project cleanup identity across reassignment", async () => {
+		await withProjectionCase(async () => {
+			recordSkillProjectionClaim({
+				agentType: "hermes",
+				agentId: "agent-1",
+				projectId: "project-old",
+				skillKey: "demo",
+				hash: "old-hash",
+			});
+			expect(staleSkillProjectionProjectIds("hermes", "agent-1", "demo", "project-new")).toEqual([
+				"project-old",
+			]);
+			expect(
+				staleSkillProjectionProjectIds("hermes", "different-agent", "demo", "project-new"),
+			).toEqual([]);
+		});
+	});
+
+	it("enqueues old-Project exact claims after restart when local content is absent", async () => {
+		await withProjectionCase(async ({ queue, reconcile }) => {
+			recordSkillProjectionClaim({
+				agentType: "hermes",
+				agentId: "agent-1",
+				projectId: "project-old",
+				skillKey: "gone",
+				hash: "old-hash",
+			});
+			await reconcile(new Map());
+			expect(queue.peek()?.kind).toBe("skill_delete");
+			await queue.flushPersist();
+			const restarted = new RetryQueue({ agentType: "hermes" });
+			restarted.load();
+			const pending = restarted.peek();
+			expect(pending?.kind).toBe("skill_delete");
+			expect(pending && "project_id" in pending ? pending.project_id : undefined).toBe("project-1");
+		});
+	});
+
+	it("cleans every stale Project before projecting current bytes and retries partial cleanup", async () => {
+		await withProjectionCase(async ({ root, queue, keys, reconcile }) => {
+			const originalHermesHome = process.env.HERMES_HOME;
+			const originalFetch = globalThis.fetch;
+			try {
+				process.env.HERMES_HOME = dirname(root);
+				const local = join(root, "demo");
+				mkdirSync(local, { recursive: true });
+				writeFileSync(join(local, "SKILL.md"), "# Current\n");
+				keys.add("demo");
+				for (const projectId of ["project-old-a", "project-old-b"]) {
+					recordSkillProjectionClaim({
+						agentType: "hermes",
+						agentId: "agent-1",
+						projectId,
+						skillKey: "demo",
+						hash: `hash-${projectId}`,
+					});
+				}
+				await reconcile(new Map());
+				const item = queue.peek();
+				if (!item) throw new Error("expected queued Skill projection");
+
+				let failSecondOldProject = true;
+				const calls: string[] = [];
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					const request = input instanceof Request ? input : new Request(input, init);
+					const url = new URL(request.url);
+					if (request.method === "DELETE") {
+						const projectId = url.searchParams.get("project_id") ?? "missing";
+						calls.push(`delete:${projectId}`);
+						if (projectId === "project-old-b" && failSecondOldProject) {
+							return new Response("offline", { status: 503 });
+						}
+						return new Response(null, { status: 204 });
+					}
+					if (request.method === "POST") {
+						calls.push("upload:project-1");
+						return new Response(JSON.stringify({ version: 1 }), {
+							headers: { "content-type": "application/json" },
+						});
+					}
+					return new Response("unexpected", { status: 404 });
+				}) as typeof fetch;
+
+				const adapter = adapterRegistry.hermes.create();
+				const abortController = new AbortController();
+				const opts = {
+					environmentId: "agent-1",
+					adapter,
+					abort: abortController.signal,
+					abortController,
+				};
+				const api = new ApiClient({ requireAuth: false });
+				await expect(
+					processQueueItem(opts, api, queue, item, new Map(), new Map(), new Map(), "project-1"),
+				).rejects.toThrow(/503/);
+				expect(calls).not.toContain("upload:project-1");
+				expect(
+					readSkillProjectionClaimsForAgent("hermes", "agent-1").map((claim) => claim.project_id),
+				).toEqual(["project-old-b"]);
+
+				failSecondOldProject = false;
+				const retryItem = queue.peek();
+				if (!retryItem) throw new Error("expected retained queue item");
+				await processQueueItem(
+					opts,
+					api,
+					queue,
+					retryItem,
+					new Map(),
+					new Map(),
+					new Map(),
+					"project-1",
+				);
+				expect(calls.at(-2)).toBe("delete:project-old-b");
+				expect(calls.at(-1)).toBe("upload:project-1");
+				expect(
+					readSkillProjectionClaimsForAgent("hermes", "agent-1").map((claim) => claim.project_id),
+				).toEqual(["project-1"]);
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalHermesHome === undefined) delete process.env.HERMES_HOME;
+				else process.env.HERMES_HOME = originalHermesHome;
+			}
+		});
+	});
+
+	it("uploads a symlink projection with the hash of the exact dereferenced archive", async () => {
+		await withProjectionCase(async ({ root, queue, keys, reconcile }) => {
+			const originalHermesHome = process.env.HERMES_HOME;
+			const originalFetch = globalThis.fetch;
+			try {
+				process.env.HERMES_HOME = dirname(root);
+				const shared = join(root, "shared");
+				mkdirSync(shared, { recursive: true });
+				writeFileSync(join(shared, "body.md"), "shared body\n");
+				const local = join(root, "demo");
+				mkdirSync(local, { recursive: true });
+				writeFileSync(join(local, "SKILL.md"), "# Demo\n");
+				symlinkSync(join(shared, "body.md"), join(local, "body.md"));
+				keys.add("demo");
+				await reconcile(new Map());
+				const item = queue.peek();
+				if (!item) throw new Error("expected queued projection");
+
+				let verifiedHash: string | null = null;
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					const request = input instanceof Request ? input : new Request(input, init);
+					const form = await request.formData();
+					const archive = form.get("file");
+					const suppliedHash = form.get("content_hash");
+					if (!(archive instanceof Blob) || typeof suppliedHash !== "string") {
+						return new Response("invalid multipart", { status: 400 });
+					}
+					verifiedHash = await computeSkillArchiveHash(
+						Buffer.from(await archive.arrayBuffer()),
+						"demo",
+					);
+					expect(suppliedHash).toBe(verifiedHash);
+					return new Response(JSON.stringify({ version: 1 }), {
+						headers: { "content-type": "application/json" },
+					});
+				}) as typeof fetch;
+
+				const adapter = adapterRegistry.hermes.create();
+				const abortController = new AbortController();
+				await processQueueItem(
+					{
+						environmentId: "agent-1",
+						adapter,
+						abort: abortController.signal,
+						abortController,
+					},
+					new ApiClient({ requireAuth: false }),
+					queue,
+					item,
+					new Map(),
+					new Map(),
+					new Map(),
+					"project-1",
+				);
+				expect(verifiedHash).not.toBeNull();
+			} finally {
+				globalThis.fetch = originalFetch;
+				if (originalHermesHome === undefined) delete process.env.HERMES_HOME;
+				else process.env.HERMES_HOME = originalHermesHome;
+			}
+		});
+	});
+
+	it("re-derives missed alias absence after eviction and restart at the same revision", async () => {
+		await withProjectionCase(async ({ root, keys }) => {
+			const originalFetch = globalThis.fetch;
+			let queue = new RetryQueue({ agentType: "hermes", maxItems: 1 });
+			let revision = 7;
+			let includeRevision = true;
+			let remoteKeys = ["legacy-absent"];
+			try {
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					const request = input instanceof Request ? input : new Request(input, init);
+					const etag = `"${revision}:project-1"`;
+					if (includeRevision && request.headers.get("if-none-match") === etag) {
+						return new Response(null, { status: 304, headers: { etag } });
+					}
+					return new Response(
+						JSON.stringify({
+							items: remoteKeys.map((skillKey) => ({ skill_key: skillKey, name: skillKey })),
+							total: remoteKeys.length,
+						}),
+						{
+							headers: {
+								"content-type": "application/json",
+								...(includeRevision ? { etag } : {}),
+							},
+						},
+					);
+				}) as typeof fetch;
+				const api = new ApiClient({ requireAuth: false });
+				const opts = {
+					environmentId: "agent-1",
+					adapter: {
+						agentType: "hermes" as const,
+						getSkillsRootDir: () => root,
+						listSkillKeys: async () => [...keys],
+					},
+				};
+
+				const same = await reconcileAgentSkillProjectionListing({
+					api,
+					opts,
+					queue,
+					claims: new Map(),
+					projectId: "project-1",
+					previousEtag: '"7:project-1"',
+				});
+				expect(same).toEqual({
+					complete: true,
+					changed: false,
+					revision: 7,
+					etag: '"7:project-1"',
+				});
+				expect(queue.depth).toBe(0);
+
+				revision = 8;
+				const missedAbsent = await reconcileAgentSkillProjectionListing({
+					api,
+					opts,
+					queue,
+					claims: new Map(),
+					projectId: "project-1",
+					previousEtag: '"7:project-1"',
+				});
+				expect(missedAbsent.changed).toBe(true);
+				const absenceDelete = queue.peek();
+				expect(absenceDelete?.kind).toBe("skill_delete");
+				await reconcileAgentSkillProjectionListing({
+					api,
+					opts,
+					queue,
+					claims: new Map(),
+					projectId: "project-1",
+					previousEtag: '"8:project-1"',
+					forceComplete: true,
+				});
+				expect(queue.peek()?.version).toBe(absenceDelete?.version);
+
+				// A full offline queue may evict the Skill operation. Once the
+				// unrelated session completes and the daemon restarts, the durable
+				// queue is empty while the remote revision remains unchanged.
+				const sessionVersion = queue.enqueue({
+					kind: "session_push",
+					local_session_id: "session-1",
+					content_hash: "session-hash",
+					enqueued_at: new Date().toISOString(),
+					attempts: 0,
+				});
+				expect(queue.peek()?.kind).toBe("session_push");
+				const sessionItem = queue.peek();
+				if (!sessionItem || sessionItem.version !== sessionVersion) {
+					throw new Error("expected retained session queue item");
+				}
+				queue.markDoneIfVersion(sessionItem);
+				await queue.flushPersist();
+				const restarted = new RetryQueue({ agentType: "hermes", maxItems: 1 });
+				restarted.load();
+				expect(restarted.depth).toBe(0);
+				queue = restarted;
+				const replayed = await reconcileAgentSkillProjectionListing({
+					api,
+					opts,
+					queue,
+					claims: new Map(),
+					projectId: "project-1",
+					previousEtag: '"8:project-1"',
+					forceComplete: true,
+				});
+				expect(replayed).toEqual({
+					complete: true,
+					changed: false,
+					revision: 8,
+					etag: '"8:project-1"',
+				});
+				expect(queue.peek()?.kind).toBe("skill_delete");
+
+				const local = join(root, "legacy-present");
+				mkdirSync(local, { recursive: true });
+				writeFileSync(join(local, "SKILL.md"), "# Never overwritten by listing bytes\n");
+				keys.add("legacy-present");
+				remoteKeys = ["legacy-present"];
+				revision = 9;
+				await reconcileAgentSkillProjectionListing({
+					api,
+					opts,
+					queue,
+					claims: new Map(),
+					projectId: "project-1",
+					previousEtag: '"8:project-1"',
+				});
+				expect(
+					queue.all().find((item) => "skill_key" in item && item.skill_key === "legacy-present")
+						?.kind,
+				).toBe("skill_push");
+				expect(readFileSync(join(local, "SKILL.md"), "utf-8")).toContain("Never overwritten");
+
+				includeRevision = false;
+				remoteKeys = ["unfenced"];
+				const unfenced = await reconcileAgentSkillProjectionListing({
+					api,
+					opts,
+					queue,
+					claims: new Map(),
+					projectId: "project-1",
+					previousEtag: '"9:project-1"',
+				});
+				expect(unfenced.complete).toBe(false);
+				expect(
+					queue.all().some((item) => "skill_key" in item && item.skill_key === "unfenced"),
+				).toBe(false);
+				await queue.flushPersist();
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+	});
+
+	it("rejects mixed-ETag pagination as legacy deletion evidence", async () => {
+		await withProjectionCase(async ({ queue }) => {
+			const originalFetch = globalThis.fetch;
+			try {
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					const request = input instanceof Request ? input : new Request(input, init);
+					const page = Number.parseInt(new URL(request.url).searchParams.get("page") ?? "1", 10);
+					const itemCount = page === 1 ? 200 : 1;
+					const items = Array.from({ length: itemCount }, (_, index) => {
+						const skillKey = page === 1 ? `legacy-${index}` : "legacy-final";
+						return { skill_key: skillKey, name: skillKey };
+					});
+					return new Response(JSON.stringify({ items, total: 201 }), {
+						headers: {
+							"content-type": "application/json",
+							etag: page === 1 ? '"11:project-1:a"' : '"11:project-1:b"',
+						},
+					});
+				}) as typeof fetch;
+
+				const result = await reconcileAgentSkillProjectionListing({
+					api: new ApiClient({ requireAuth: false }),
+					opts: {
+						environmentId: "agent-1",
+						adapter: {
+							agentType: "hermes",
+							getSkillsRootDir: () => "/unused",
+							listSkillKeys: async () => [],
+						},
+					},
+					queue,
+					claims: new Map(),
+					projectId: "project-1",
+					previousEtag: null,
+				});
+				expect(result.complete).toBe(false);
+				expect(queue.depth).toBe(0);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
+	});
+
+	it.each([
+		{
+			name: "an empty page before the advertised total",
+			pages: [{ items: [], total: 1 }],
+		},
+		{
+			name: "a short page before the advertised total",
+			pages: [{ items: [{ skill_key: "legacy-short", name: "legacy-short" }], total: 2 }],
+		},
+		{
+			name: "duplicate Skill keys",
+			pages: [
+				{
+					items: [
+						{ skill_key: "legacy-duplicate", name: "legacy-duplicate" },
+						{ skill_key: "legacy-duplicate", name: "legacy-duplicate" },
+					],
+					total: 2,
+				},
+			],
+		},
+		{
+			name: "a total that changes between pages",
+			pages: [
+				{
+					items: Array.from({ length: 200 }, (_, index) => ({
+						skill_key: `legacy-total-${index}`,
+						name: `legacy-total-${index}`,
+					})),
+					total: 201,
+				},
+				{
+					items: [{ skill_key: "legacy-total-final", name: "legacy-total-final" }],
+					total: 202,
+				},
+			],
+		},
+	])("rejects $name as complete legacy deletion evidence", async ({ pages }) => {
+		await withProjectionCase(async ({ queue }) => {
+			const originalFetch = globalThis.fetch;
+			try {
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					const request = input instanceof Request ? input : new Request(input, init);
+					const page = Number.parseInt(new URL(request.url).searchParams.get("page") ?? "1", 10);
+					const payload = pages[page - 1] ?? { items: [], total: pages[0]?.total ?? 0 };
+					return new Response(JSON.stringify(payload), {
+						headers: { "content-type": "application/json", etag: '"12:project-1"' },
+					});
+				}) as typeof fetch;
+
+				const result = await reconcileAgentSkillProjectionListing({
+					api: new ApiClient({ requireAuth: false }),
+					opts: {
+						environmentId: "agent-1",
+						adapter: {
+							agentType: "hermes",
+							getSkillsRootDir: () => "/unused",
+							listSkillKeys: async () => [],
+						},
+					},
+					queue,
+					claims: new Map(),
+					projectId: "project-1",
+					previousEtag: null,
+				});
+				expect(result.complete).toBe(false);
+				expect(queue.depth).toBe(0);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+		});
 	});
 });
 
@@ -172,10 +770,43 @@ describe("daemon SSE routing", () => {
 			}),
 		).toBe(false);
 	});
+
+	it("turns legacy and Agent projection events into local re-scan keys only", () => {
+		for (const type of [
+			"skill_changed",
+			"skill_deleted",
+			"agent_skill_changed",
+			"agent_skill_deleted",
+		] as const) {
+			expect(
+				skillInvalidationKey(
+					{
+						type,
+						project_id: "project-1",
+						skill_key: "demo",
+						skills_revision: 2,
+						...(type.endsWith("changed") ? { content_hash: "projection-hash" } : {}),
+					},
+					"project-1",
+				),
+			).toBe("demo");
+		}
+		expect(
+			skillInvalidationKey(
+				{
+					type: "skill_deleted",
+					project_id: "other-project",
+					skill_key: "demo",
+					skills_revision: 3,
+				},
+				"project-1",
+			),
+		).toBeNull();
+	});
 });
 
 describe("isAuthFailure", () => {
-	// Pull-side and push-side both rely on this classifier to decide
+	// Listing and projection paths both rely on this classifier to decide
 	// whether to abort the daemon vs. log-and-retry. A wrong answer in
 	// either direction is bad: missing a 401 means a revoked key
 	// silently loops forever (the bug Codex flagged), and false-
@@ -215,7 +846,7 @@ describe("isAuthFailure", () => {
 describe("live-sync transient failure classification", () => {
 	it("keeps unrelated unresolved errors after transport and resource successes", () => {
 		const health = new SyncHealth();
-		health.set("pull", "skill:broken", "skill broken pull: disk busy");
+		health.set("projection", "skill:broken", "skill projection evidence: disk busy");
 		health.set("transport", "sse", "sse_disconnect:http_502");
 		health.set("push", "session:healthy", "session upload failed");
 		health.set("transport", "auth", "auth_revoked: rejected");
@@ -224,12 +855,12 @@ describe("live-sync transient failure classification", () => {
 		health.clear("transport", "auth");
 
 		health.clear("transport", "sse");
-		expect(health.project()).toBe("skill broken pull: disk busy");
+		expect(health.project()).toBe("skill projection evidence: disk busy");
 
 		health.clear("push", "session:healthy");
-		expect(health.project()).toBe("skill broken pull: disk busy");
+		expect(health.project()).toBe("skill projection evidence: disk busy");
 
-		health.clear("pull", "skill:broken");
+		health.clear("projection", "skill:broken");
 		health.set("push", "skill:foo", "permanent: upload rejected");
 		health.setIfAbsent("push", "skill:foo", "skill foo push was not applied", true);
 		expect(health.project()).toBe("permanent: upload rejected");
@@ -320,83 +951,6 @@ describe("daemon control-plane cadences", () => {
 		expect(projectRefreshDelayMs(() => 0)).toBe(240_000);
 		expect(projectRefreshDelayMs(() => 0.5)).toBe(300_000);
 		expect(projectRefreshDelayMs(() => 1)).toBe(360_000);
-	});
-});
-
-describe("addInFlight / releaseInFlight refcount", () => {
-	// Round-r5 P1: the watcher guard at sync-engine.ts:521 reads
-	// `pullsInFlight.has(skillKey)` to short-circuit watcher
-	// events fired while writeSkillArchive is rm+extracting (a
-	// few-ms window where the dir is empty). Same Map is bumped
-	// at the start of `writeSkillArchive` and released in a
-	// `finally` — multiple concurrent pulls of the same skill
-	// would otherwise have the second `releaseInFlight` clear
-	// the entry while the first pull is still extracting,
-	// re-opening the watcher echo window. Lock the contract.
-	it("has(key) is true between addInFlight and matching releaseInFlight", () => {
-		const m = new Map<string, number>();
-		addInFlight(m, "foo");
-		expect(m.has("foo")).toBe(true);
-		releaseInFlight(m, "foo");
-		expect(m.has("foo")).toBe(false);
-	});
-
-	it("nested addInFlight: has() stays true until the LAST release", () => {
-		const m = new Map<string, number>();
-		addInFlight(m, "foo");
-		addInFlight(m, "foo");
-		expect(m.has("foo")).toBe(true);
-		releaseInFlight(m, "foo");
-		// First release: still in flight (count = 1).
-		expect(m.has("foo")).toBe(true);
-		releaseInFlight(m, "foo");
-		expect(m.has("foo")).toBe(false);
-	});
-
-	it("releaseInFlight on missing key is a no-op (does not insert -1 entry)", () => {
-		// Defense against an accidental `releaseInFlight` outside
-		// a `finally` paired with addInFlight — must not leave a
-		// negative-count entry that blocks future watcher events.
-		const m = new Map<string, number>();
-		releaseInFlight(m, "ghost");
-		expect(m.has("ghost")).toBe(false);
-	});
-
-	it("entries are independent across keys", () => {
-		const m = new Map<string, number>();
-		addInFlight(m, "a");
-		addInFlight(m, "b");
-		expect(m.has("a")).toBe(true);
-		expect(m.has("b")).toBe(true);
-		releaseInFlight(m, "a");
-		expect(m.has("a")).toBe(false);
-		expect(m.has("b")).toBe(true);
-	});
-});
-
-describe("pending skill upload echo suppression", () => {
-	it("suppresses the exact skill_changed echo that can arrive before upload returns", () => {
-		const pending = new Map<string, PendingSkillUploadEcho>();
-		rememberPendingSkillUploadEcho(pending, "foo", "hash-1", 1_000);
-
-		expect(consumePendingSkillUploadEcho(pending, "foo", "hash-1", 1_500)).toBe(true);
-		expect(pending.has("foo")).toBe(false);
-	});
-
-	it("does not suppress a different hash for the same skill", () => {
-		const pending = new Map<string, PendingSkillUploadEcho>();
-		rememberPendingSkillUploadEcho(pending, "foo", "hash-1", 1_000);
-
-		expect(consumePendingSkillUploadEcho(pending, "foo", "hash-2", 1_500)).toBe(false);
-		expect(pending.has("foo")).toBe(true);
-	});
-
-	it("expires stale pending echoes", () => {
-		const pending = new Map<string, PendingSkillUploadEcho>();
-		rememberPendingSkillUploadEcho(pending, "foo", "hash-1", 1_000);
-
-		expect(consumePendingSkillUploadEcho(pending, "foo", "hash-1", 200_000)).toBe(false);
-		expect(pending.has("foo")).toBe(false);
 	});
 });
 

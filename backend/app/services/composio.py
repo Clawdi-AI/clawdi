@@ -26,16 +26,16 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
 from app.core.config import settings
 
 if TYPE_CHECKING:
+    from composio import Composio
     from composio_client import AsyncComposio
 
 logger = logging.getLogger(__name__)
 
 _client: Any = None
+_sdk_client: Any = None
 _tool_router_session_cache: dict[str, ComposioMcpSession] = {}
 
 _REDIRECT_AUTH_TYPES = {"oauth", "oauth1", "oauth2", "dcr_oauth", "composio_link"}
@@ -70,7 +70,7 @@ class ComposioMcpSession:
 
 
 def get_composio_client() -> AsyncComposio:
-    """Return the shared Composio SDK client."""
+    """Return the shared generated async Composio client."""
     global _client
     if _client is None:
         if not settings.composio_api_key:
@@ -84,14 +84,35 @@ def get_composio_client() -> AsyncComposio:
     return _client
 
 
+def get_composio_sdk() -> Composio:
+    """Return the shared high-level Composio SDK client."""
+    global _sdk_client
+    if _sdk_client is None:
+        if not settings.composio_api_key:
+            raise RuntimeError("COMPOSIO_API_KEY not configured")
+        from composio import Composio
+
+        kwargs: dict[str, Any] = {"api_key": settings.composio_api_key}
+        if settings.composio_api_base_url:
+            kwargs["base_url"] = settings.composio_api_base_url.rstrip("/")
+        _sdk_client = Composio(**kwargs)
+    return _sdk_client
+
+
 async def close_composio_client() -> None:
-    """Close the shared Composio HTTP client on ASGI shutdown."""
-    global _client
+    """Close the shared Composio HTTP clients on ASGI shutdown."""
+    global _client, _sdk_client
     if _client is not None:
         close = getattr(_client, "close", None)
         if callable(close):
             await close()
         _client = None
+    if _sdk_client is not None:
+        sdk_http_client = getattr(_sdk_client, "client", None)
+        close = getattr(sdk_http_client, "close", None)
+        if callable(close):
+            await asyncio.to_thread(close)
+        _sdk_client = None
 
 
 async def get_tool_router_mcp_session(user_id: str) -> ComposioMcpSession:
@@ -119,30 +140,28 @@ def invalidate_tool_router_mcp_session(user_id: str) -> None:
 async def _create_tool_router_mcp_session(
     user_id: str, *, now: datetime | None = None
 ) -> ComposioMcpSession:
-    if not settings.composio_api_key:
-        raise RuntimeError("COMPOSIO_API_KEY not configured")
+    sdk = get_composio_sdk()
+    session = await asyncio.to_thread(sdk.sessions.create, user_id=user_id, mcp=True)
+    mcp = getattr(session, "mcp", None)
+    url = getattr(mcp, "url", None)
+    raw_headers = getattr(mcp, "headers", None)
+    if not isinstance(url, str) or not url.strip():
+        raise RuntimeError("Composio session did not include mcp.url")
+    if not isinstance(raw_headers, dict) or not raw_headers:
+        raise RuntimeError("Composio session did not include mcp.headers")
+    if not all(
+        isinstance(key, str)
+        and bool(key.strip())
+        and isinstance(value, str)
+        and bool(value.strip())
+        for key, value in raw_headers.items()
+    ):
+        raise RuntimeError("Composio session returned invalid mcp.headers")
 
-    base_url = settings.composio_api_base_url.rstrip("/")
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(
-            f"{base_url}/api/v3.1/tool_router/session",
-            headers={"x-api-key": settings.composio_api_key},
-            json={"user_id": user_id},
-        )
-    resp.raise_for_status()
-    data = resp.json()
-    mcp = data.get("mcp") if isinstance(data, dict) else None
-    if not isinstance(mcp, dict) or not isinstance(mcp.get("url"), str):
-        raise RuntimeError("Composio tool router session response did not include mcp.url")
-
-    raw_headers = mcp.get("headers")
-    headers = (
-        {str(k): str(v) for k, v in raw_headers.items()} if isinstance(raw_headers, dict) else {}
-    )
     issued_at = now or datetime.now(UTC)
     return ComposioMcpSession(
-        url=mcp["url"],
-        headers=headers,
+        url=url,
+        headers=dict(raw_headers),
         expires_at=issued_at + timedelta(minutes=30),
     )
 

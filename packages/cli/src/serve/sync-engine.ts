@@ -4,46 +4,32 @@
  * Wires the background tasks that make up a sync daemon:
  *
  *   - watcher          — local skill-dir change events (fs.watch / poll)
- *   - sse              — server-pushed `skill_changed` / `skill_deleted`
- *                        events for instant cloud→machine propagation
- *   - drainQueue       — flush queued skill_push items to the cloud
- *   - reconcile        — 60s sweep: catches anything SSE missed
- *                        (replica restart, transient disconnect)
+ *   - sse              — Cloud events wake a local re-scan; they never write
+ *                        or remove Agent filesystem content
+ *   - drainQueue       — flush durable skill_push/skill_delete projections
+ *   - reconcile        — periodic local inventory vs exact-claim diff
  *   - project-refresh    — periodic re-fetch of the env's default_project_id
  *                        so a runtime project reassignment converges
  *   - heartbeat        — periodic POST to /v1/agents/{agent_id}/sync-heartbeat
  *
- * Single-writer model: the daemon (and any CLI command run on
- * the same machine) is the only content writer for its env's
- * project. Dashboard is read-only for skill *content* but can
- * install new skills (marketplace) and delete existing ones —
- * both originate as cloud writes that propagate to the machine
- * via SSE within ~2s, with the 60s reconcile loop as the safety
- * net for missed events. No If-Match, no conflict resolution UI:
- * with one content writer per project there is nothing to merge.
+ * Authority model: the Agent filesystem is the sole Skill-content source.
+ * Cloud rows are projections. Only an exact, durable Agent+Project claim can
+ * authorize deletion after local absence; legacy hash caches cannot. Managed
+ * reservations are skipped as content and cause any prior user projection to
+ * be deleted without touching the managed target.
  *
  * Push side:
  *   1. Watcher fires for skill_key X
  *   2. Hash X's local content; if same as last-pushed, skip
- *   3. Enqueue skill_push{key=X, project_id, new=hash}
- *   4. drainQueue picks it up, tars + uploads to project-explicit URL
+ *   3. Enqueue an identity/project-fenced push or delete
+ *   4. drainQueue uses the Agent-authoritative sync boundary
  *   5. 200: mark done, update last-pushed cache
  *   6. 4xx: drop with a warn. 5xx / network: bump attempts and
  *      leave in queue with backoff.
  *
- * Pull side (SSE primary, reconcile fallback):
- *   1. SSE event arrives for skill_key X (project filter applied
- *      server-side; daemon-side filter is defense-in-depth).
- *      `skill_changed` → download + writeSkillArchive.
- *      `skill_deleted` → removeLocalSkill.
- *   2. Every 60s, reconcile lists /api/skills with If-None-Match;
- *      pulls anything cloud-side that disagrees with local;
- *      sweeps previously-observed keys now missing from cloud.
- *
- * Echo suppression: after writing a cloud-originated tar, we
- * recompute the local hash and stash it as last_pushed. The
- * watcher's next tick sees `current_hash == last_pushed_hash`
- * and dedups.
+ * A complete, project-scoped Cloud list is consulted only during migration to
+ * report absence for unclaimed legacy Agent-Project rows. Failed/truncated
+ * listings never authorize destructive inference.
  */
 
 import { createHash } from "node:crypto";
@@ -52,18 +38,18 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { AgentAdapter, CollectSessionsResult } from "../adapters/base";
-import { ApiClient, ApiError, unwrap } from "../lib/api-client";
-import { listRegisteredAgentTypes } from "../lib/select-adapter";
+import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { computeLastActivityIso } from "../lib/session-activity";
 import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
 import { isValidSkillKey, SkillKeyValidationError } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
-	readSkillsLock,
-	skillCacheKey,
-	writeSkillsLock,
+	readSkillProjectionClaimsForAgent,
+	readSkillProjectionState,
+	recordSkillProjectionClaim,
+	removeSkillProjectionClaim,
 } from "../lib/skills-lock";
-import { tarSkillDir } from "../lib/tar";
+import { snapshotSkillArchive } from "../lib/tar";
 import { getCliVersion } from "../lib/version";
 import { shouldIgnoreUserSkill } from "../runtime/managed-skill-reservation";
 import { readHostedRuntimeObserved } from "../runtime/observed";
@@ -83,18 +69,37 @@ import {
 import { watchSkills } from "./watcher";
 
 export function isSkillSyncServerEvent(event: ServerEvent): event is SkillServerEvent {
-	return event.type === "skill_changed" || event.type === "skill_deleted";
+	return (
+		event.type === "skill_changed" ||
+		event.type === "skill_deleted" ||
+		event.type === "agent_skill_changed" ||
+		event.type === "agent_skill_deleted"
+	);
+}
+
+export function skillInvalidationKey(event: ServerEvent, projectId: string): string | null {
+	if (!isSkillSyncServerEvent(event) || event.project_id !== projectId) return null;
+	return event.skill_key;
+}
+
+export function staleSkillProjectionProjectIds(
+	agentType: string,
+	agentId: string,
+	skillKey: string,
+	currentProjectId: string,
+): string[] {
+	return readSkillProjectionClaimsForAgent(agentType, agentId)
+		.filter((claim) => claim.skill_key === skillKey && claim.project_id !== currentProjectId)
+		.map((claim) => claim.project_id)
+		.sort();
 }
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 
 const HEARTBEAT_INTERVAL_MS = 60_000;
 const HEARTBEAT_JITTER_MS = 15_000;
-// Reconcile cadence. SSE is the primary path for cloud-side changes
-// (dashboard install / delete); this loop is a safety net for missed
-// events, stale local state, or a daemon that reconnects after a quiet
-// period. Keep it off the minute-level hot path so large fleets don't
-// turn no-op 304 checks into background load.
+// Local projection reconcile cadence. Watch events are primary; this sweep
+// catches offline deletes, queue eviction, and filesystems that lose events.
 const RECONCILE_INTERVAL_MS = 5 * 60_000;
 const RECONCILE_JITTER_MS = 60_000;
 // Project reassignment is an administrative control-plane change,
@@ -129,11 +134,20 @@ const QUEUE_RETRY_INTERVAL_MS = 15_000;
 // is missed.
 const QUEUE_IDLE_WAKEUP_MS = 30_000;
 const MAX_QUEUE_ATTEMPTS = 30;
-const SKILL_UPLOAD_ECHO_TTL_MS = 2 * 60_000;
 const TRANSIENT_HEARTBEAT_FAILURES = 3;
 
+export function reconcileDelayMs(random: () => number = Math.random): number {
+	const offset = (random() - 0.5) * 2 * RECONCILE_JITTER_MS;
+	return Math.round(RECONCILE_INTERVAL_MS + offset);
+}
+
+export function projectRefreshDelayMs(random: () => number = Math.random): number {
+	const offset = (random() - 0.5) * 2 * PROJECT_REFRESH_JITTER_MS;
+	return Math.round(PROJECT_REFRESH_INTERVAL_MS + offset);
+}
+
 type FailureClassification = "transient" | "sustained";
-type SyncHealthArea = "transport" | "push" | "pull";
+type SyncHealthArea = "transport" | "push" | "projection";
 interface SyncHealthError {
 	message: string;
 	transient: boolean;
@@ -144,7 +158,7 @@ export class SyncHealth {
 	private readonly errors: Record<SyncHealthArea, Map<string, SyncHealthError>> = {
 		transport: new Map(),
 		push: new Map(),
-		pull: new Map(),
+		projection: new Map(),
 	};
 
 	set(area: SyncHealthArea, resource: string, message: string, transient = false): void {
@@ -178,7 +192,7 @@ export class SyncHealth {
 	project(): string | null {
 		const auth = this.errors.transport.get("auth");
 		if (auth) return auth.message;
-		for (const area of ["transport", "pull", "push"] as const) {
+		for (const area of ["transport", "projection", "push"] as const) {
 			const first = [...this.errors[area]]
 				.filter(([resource]) => area !== "transport" || resource !== "auth")
 				.sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))[0];
@@ -187,11 +201,6 @@ export class SyncHealth {
 		return null;
 	}
 }
-
-export type PendingSkillUploadEcho = {
-	contentHash: string;
-	expiresAtMs: number;
-};
 
 interface StableSessionEnqueueOptions {
 	abort: AbortSignal;
@@ -245,7 +254,7 @@ interface EngineOpts {
 
 export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// Pass the engine's abort signal so any in-flight HTTP call
-	// (heartbeat, project refresh, skill download, etc.) unwinds
+	// (heartbeat, project refresh, Skill projection, etc.) unwinds
 	// immediately when SSE auth fails or shutdown is requested,
 	// instead of running its own per-request timeout to
 	// completion.
@@ -281,89 +290,12 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	});
 	queue.load();
 
-	// last_pushed_hash per skill_key — the hash this daemon last
-	// successfully shipped to the cloud (either as a push from
-	// local edit, or as a pull confirming "what's on disk now").
-	// Hydrated at boot from `~/.clawdi/skills-lock.json` so the
-	// initial reconcile can disambiguate "cloud edited while we
-	// were offline" (cloud != lastShipped, local == lastShipped →
-	// PULL) from "local edited while we were offline" (local !=
-	// lastShipped, cloud == lastShipped → PUSH). Without this
-	// reference, boot-time divergence defaulted to PUSH and any
-	// dashboard edit made while the daemon was off was silently
-	// overwritten on next start.
+	// Exact, identity-fenced projection claims. Unlike the legacy hash cache,
+	// these entries prove that this Agent successfully projected a local key
+	// into its current Project and therefore authorize an absence report.
 	const lastPushedHash = new Map<string, string>();
-	{
-		const lock = readSkillsLock();
-		const prefix = `${opts.adapter.agentType}:`;
-		// Two passes so v2 partitioned entries always win over a
-		// v1 flat fallback. The v1 entry might belong to a
-		// different agent for multi-agent users (v1 didn't track
-		// which agent shipped what); only fall back when no v2
-		// entry exists for the same skill_key.
-		for (const [k, v] of Object.entries(lock.skills)) {
-			if (k.startsWith(prefix) && v?.hash) {
-				lastPushedHash.set(k.slice(prefix.length), v.hash);
-			}
-		}
-		// v1 fallback: keys without `${agent}:` prefix are pre-
-		// version-bump entries. Hydrate them ONLY when this is
-		// a single-agent install — for a multi-agent user, the
-		// v1 entry belongs to whichever daemon shipped it, NOT
-		// necessarily the daemon currently booting. Pre-fix the
-		// fallback applied the v1 hash to every agent that
-		// lacked a v2 record, so daemon B's first boot after
-		// upgrade saw a phantom `lastShipped` for skills that A
-		// had shipped — and `initialSync`'s local-only-with-
-		// lastShipped branch then DELETED B's local copy on the
-		// premise that "we shipped this before, cloud now
-		// missing → remove local". The destructive-remove
-		// branch is what makes this hazardous; reading v2-only
-		// for multi-agent installs costs a one-time re-push of
-		// shared skills (bounded, non-destructive) but
-		// guarantees no agent loses state to a sibling's lock.
-		const registeredAgents = listRegisteredAgentTypes();
-		if (registeredAgents.length <= 1) {
-			for (const [k, v] of Object.entries(lock.skills)) {
-				if (!k.includes(":") && v?.hash && !lastPushedHash.has(k)) {
-					lastPushedHash.set(k, v.hash);
-				}
-			}
-		}
-		clearReservedSkillHashes(opts.adapter, lastPushedHash, registeredAgents.length <= 1);
-		log.info("engine.skills_lock_loaded", { skill_count: lastPushedHash.size });
-	}
-	// Skills currently being written by a pull (boot initialSync,
-	// reconcile, or sweep). The adapter's writeSkillArchive does
-	// `rm -rf <dir> + extract` — for a few ms the dir is empty,
-	// the watcher fires on the rm and mkdir events,
-	// computeSkillFolderHash returns the empty hash, and
-	// enqueueIfChanged would happily push that empty content
-	// back to the server.
-	//
-	// Reference-counted because boot pulls and the reconcile loop
-	// can both target the same skill_key in narrow windows; the
-	// count tracks how many writes are in flight, and the gate
-	// stays closed until ALL of them drain.
-	const pullsInFlight = new Map<string, number>();
-	// Set of skill_keys we've observed in a cloud listing during
-	// this daemon's lifetime. Sweeping (delete-local-when-cloud-
-	// gone) only ever considers keys in this set, so a daemon
-	// that's never seen the cloud has no authority to delete
-	// anything local — and a cloud listing limited to page 1
-	// can't trigger a delete of skills that live on page 2+.
-	const cloudObservedKeys = new Set<string>();
 	let lastSeenRevision: number | null = null;
-	const pendingSkillUploadEchoes = new Map<string, PendingSkillUploadEcho>();
-	// Full ETag string from the last successful /api/skills
-	// response. Includes the project_id (e.g. `"42:abc-uuid"`) so a
-	// project reassignment forces the next listing to round-trip
-	// rather than collide on revision alone. We replay the raw
-	// string in `If-None-Match` instead of constructing it from
-	// `lastSeenRevision`, since the server's format is opaque to
-	// the daemon — it could grow more components and we'd silently
-	// regress to false 304s on every change.
-	let lastListingEtag: string | null = null;
+	let lastReconciledListingEtag: string | null = null;
 	const syncHealth = new SyncHealth();
 
 	// Last content hash we pushed for each session, keyed by
@@ -418,9 +350,9 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		state_dir: stateDir,
 	});
 
-	// Fetch this env's default_project_id at boot. The daemon writes
-	// to `/v1/projects/{project_id}/skills/upload`, so we need the
-	// project_id before any upload can run. Throw on missing so the
+	// Fetch this Agent's default_project_id at boot. Projection requests are
+	// Agent-scoped, while the durable claim and absence report are additionally
+	// fenced to this Project. Throw on missing so the
 	// supervisor restarts — without a project_id we can't tell which
 	// SSE events belong to us.
 	const fetchDefaultProjectId = async (): Promise<string> => {
@@ -466,14 +398,17 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		throw e;
 	}
 	log.info("engine.project_resolved", { default_project_id: defaultProjectId });
+	for (const [skillKey, hash] of readSkillProjectionState(
+		opts.adapter.agentType,
+		opts.environmentId,
+		defaultProjectId,
+	).claims) {
+		lastPushedHash.set(skillKey, hash);
+	}
+	log.info("engine.skill_projection_claims_loaded", { skill_count: lastPushedHash.size });
 
-	// Single auth-failure exit path. SSE consumer wires this directly
-	// via `onAuthFailure`; pull-side catches (SSE skill_changed handler
-	// and reconcile loop) detect 401/403 via `isAuthFailure` and call
-	// this on their own — without it, a daemon doing only pulls (no
-	// pending pushes) would loop indefinitely on a revoked key,
-	// surfacing nothing to the user. The flag prevents redundant
-	// heartbeats / log spam if multiple callsites trip at once.
+	// Single auth-failure exit path shared by SSE, listing, heartbeat, and
+	// projection drains. The flag prevents redundant heartbeats/log spam.
 	let authFailureFired = false;
 	const triggerAuthFailureAbort = (origin: string): void => {
 		if (authFailureFired) return;
@@ -551,32 +486,46 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				if (fresh !== defaultProjectId) {
 					log.info("engine.project_changed", { from: defaultProjectId, to: fresh });
 					defaultProjectId = fresh;
-					// Cached ETag was bound to the OLD project; sending it
-					// after the project flip would always miss anyway
-					// (server now bakes project_id into the tag), but
-					// clearing here saves the wasted round-trip and
-					// makes the intent explicit. lastSeenRevision can
-					// stay — the server's revision counter is account-
-					// wide, and the next listing will refresh both.
-					lastListingEtag = null;
-					// Re-scan local skills against `lastPushedHash` so
-					// any pending divergence (including queue items the
-					// drain dropped after a project change) gets re-
-					// enqueued under the new project. Without this, an
-					// edit captured under project A that was dropped
-					// during a brief A→B→A reassignment would sit
-					// unsynced until the user touched the file again.
-					await rescanLocalSkillsForChanges(
+					lastReconciledListingEtag = null;
+					lastPushedHash.clear();
+					for (const [skillKey, hash] of readSkillProjectionState(
+						opts.adapter.agentType,
+						opts.environmentId,
+						fresh,
+					).claims) {
+						lastPushedHash.set(skillKey, hash);
+					}
+					// Re-scan under the new identity fence. A current push
+					// first removes exact old-Project claims, then projects
+					// the latest local bytes; it never redirects a stale item.
+					await reconcileAgentSkillProjection({
 						opts,
 						queue,
-						lastPushedHash,
-						pullsInFlight,
-						() => fresh,
-					).catch((e) => {
+						claims: lastPushedHash,
+						projectId: fresh,
+					}).catch((e) => {
 						log.warn("engine.project_change_rescan_failed", {
 							error: toErrorMessage(e),
 						});
 					});
+					try {
+						const catchUp = await reconcileAgentSkillProjectionListing({
+							api,
+							opts,
+							queue,
+							claims: lastPushedHash,
+							projectId: fresh,
+							previousEtag: null,
+						});
+						if (catchUp.complete) {
+							lastReconciledListingEtag = catchUp.etag;
+							lastSeenRevision = catchUp.revision;
+						}
+					} catch (error) {
+						log.warn("engine.project_change_listing_failed", {
+							error: toErrorMessage(error),
+						});
+					}
 				}
 				consecutiveFailures = 0;
 			} catch (e) {
@@ -600,14 +549,12 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		}
 	};
 
-	// Initial sync: enumerate local AND fetch cloud, then resolve
-	// per skill_key (push, pull, no-op). Done inline before any
-	// loops so the first tick's watcher events don't trip
-	// echo-suppression on stale cache. If the cloud listing fails,
-	// fail closed — without a baseline we can't tell user edits
-	// from new pulls and could blind-overwrite the cloud.
+	// Initial sync derives projection work from local inventory and exact
+	// claims. A complete, strong-ETag project listing supplies only per-key
+	// migration evidence for unclaimed legacy rows; it never supplies local
+	// bytes. The same fenced comparison runs periodically for missed SSE.
 	//
-	// Auth failures during initialSync (token revoked between the
+	// Auth failures during initial projection sync (token revoked between the
 	// env lookup and /api/skills, or a deploy key with
 	// `skills:read` removed) MUST route through
 	// `triggerAuthFailureAbort` so the daemon exits with code 2
@@ -617,19 +564,15 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	// bubbled out as a generic Error, serve() exited with code 1,
 	// and launchd / systemd kept respawning indefinitely.
 	try {
-		await initialSync(
+		await initialAgentProjectionSync(
 			opts,
 			api,
 			queue,
 			lastPushedHash,
-			cloudObservedKeys,
-			pullsInFlight,
 			defaultProjectId,
-			(rev) => {
+			(rev, etag) => {
 				lastSeenRevision = rev;
-			},
-			(etag) => {
-				lastListingEtag = etag;
+				lastReconciledListingEtag = etag;
 			},
 			syncHealth,
 		);
@@ -645,13 +588,6 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 	}
 	// Push side: wire watcher → enqueue.
 	const onLocalChange = (skillKey: string) => {
-		if (pullsInFlight.has(skillKey)) {
-			// Our own writeSkillArchive is in progress for this
-			// skill. Watcher events fired during that window
-			// reflect intermediate states (empty dir between
-			// rm and extract), not user edits.
-			return;
-		}
 		const scanResource = `skill_scan:${skillKey}`;
 		void enqueueIfChanged(opts, queue, lastPushedHash, skillKey, () => defaultProjectId)
 			.then(() => {
@@ -662,13 +598,38 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				log.warn("engine.enqueue_failed", { skill_key: skillKey, error: toErrorMessage(e) });
 			});
 	};
+	let inventoryScanRunning = false;
+	let inventoryScanRequested = false;
+	const onSkillInventoryChanged = () => {
+		inventoryScanRequested = true;
+		if (inventoryScanRunning) return;
+		inventoryScanRunning = true;
+		void (async () => {
+			try {
+				while (inventoryScanRequested && !opts.abort.aborted) {
+					inventoryScanRequested = false;
+					await reconcileAgentSkillProjection({
+						opts,
+						queue,
+						claims: lastPushedHash,
+						projectId: defaultProjectId,
+					});
+				}
+				syncHealth.clear("push", "skills_scan");
+			} catch (error) {
+				syncHealth.set("push", "skills_scan", `skills scan: ${toErrorMessage(error)}`);
+				log.warn("engine.skills_rescan_failed", { error: toErrorMessage(error) });
+			} finally {
+				inventoryScanRunning = false;
+			}
+		})();
+	};
 
-	// Pull side: SSE event → fetch + writeSkillArchive (or rm).
-	// Server-side broker already filters events to projects the
-	// caller has visibility into; the per-event project check below
-	// is defense-in-depth in case a future broker bug fans out
-	// without filtering.
+	// Cloud events are invalidation hints only. Agent Skill content is authored
+	// in this filesystem, so an SSE change/delete must never write or remove a
+	// local target. Re-scan the key and project the latest local state instead.
 	const onServerEvent = async (event: ServerEvent) => {
+		const invalidatedSkillKey = skillInvalidationKey(event, defaultProjectId);
 		if (!isSkillSyncServerEvent(event)) {
 			log.debug("engine.sse_event_ignored", {
 				type: event.type,
@@ -676,145 +637,45 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			});
 			return;
 		}
-		if (event.project_id !== defaultProjectId) {
+		if (invalidatedSkillKey === null) {
 			log.debug("engine.sse_event_other_project", {
 				type: event.type,
 				skill_key: event.skill_key,
 				event_project_id: event.project_id,
 				my_project_id: defaultProjectId,
 			});
-			// Do NOT advance `lastSeenRevision` here. For unbound
-			// multi-agent CLI keys the SSE stream interleaves events
-			// across sibling projects; advancing on a sibling event
-			// would let the next reconcile send `If-None-Match:
-			// <sibling-rev>` and get 304 even if WE missed an
-			// earlier event for our own project (e.g. brief SSE
-			// disconnect). The reconcile would then never pull the
-			// missed change, and the safety-net poll silently
-			// misses it. `lastSeenRevision` represents
-			// "highest revision we've fully reconciled FOR OUR
-			// PROJECT"; sibling events don't grant that.
 			return;
 		}
-		log.info("engine.sse_event", { type: event.type, skill_key: event.skill_key });
-		// `lastSeenRevision` is the conditional-GET ETag the
-		// reconcile uses. Advance it ONLY after local state has
-		// converged to the event's revision; if the pull/delete
-		// fails transiently, leave it stale so the next reconcile
-		// re-fetches the listing (won't 304) and the safety-net
-		// sweep / pull retries the failed item. Pre-fix this line
-		// advanced unconditionally, so a transient
-		// download/extract/remove failure was silently dropped
-		// until some unrelated cloud change next bumped the
-		// revision.
-		if (event.type === "skill_deleted") {
-			if (isReservedSkill(opts, event.skill_key)) {
-				deferReservedSkill(opts, event.skill_key, lastPushedHash);
-				syncHealth.clear("pull", `skill:${event.skill_key}`);
-				lastSeenRevision = event.skills_revision;
-				return;
-			}
-			addInFlight(pullsInFlight, event.skill_key);
-			let applied = false;
-			try {
-				await opts.adapter.removeLocalSkill(event.skill_key);
-				lastPushedHash.delete(event.skill_key);
-				// Drop the on-disk lock entry too; otherwise a future
-				// daemon restart would see "shipped before, cloud
-				// missing" and re-enter the boot remove-or-push
-				// branch on a key that's already been deleted.
-				const lock = readSkillsLock();
-				delete lock.skills[skillCacheKey(opts.adapter.agentType, event.skill_key)];
-				writeSkillsLock(lock);
-				log.info("engine.skill_deleted_local", { skill_key: event.skill_key });
-				syncHealth.clear("pull", `skill:${event.skill_key}`);
-				syncHealth.clear("push", `skill:${event.skill_key}`);
-				syncHealth.clear("push", `skill_scan:${event.skill_key}`);
-				applied = true;
-			} catch (e) {
-				syncHealth.set(
-					"pull",
-					`skill:${event.skill_key}`,
-					`skill ${event.skill_key} delete: ${toErrorMessage(e)}`,
-				);
-				log.warn("engine.skill_delete_failed", {
-					skill_key: event.skill_key,
-					error: toErrorMessage(e),
-				});
-			} finally {
-				releaseInFlight(pullsInFlight, event.skill_key);
-			}
-			if (applied) lastSeenRevision = event.skills_revision;
-			return;
-		}
-		// skill_changed: echo suppression. If the event's
-		// content_hash matches what we last successfully pushed for
-		// this key, the cloud is just bouncing our own upload back
-		// at us via SSE — pulling would clobber a fresher local
-		// edit (the user might have already typed past the bytes
-		// we sent) with the bytes we just shipped. The reconcile
-		// loop catches anything we suppress here in error.
-		// Local state is already at this revision (we wrote it),
-		// so it IS safe to advance lastSeenRevision here.
-		const pendingEchoMatched = event.content_hash
-			? consumePendingSkillUploadEcho(pendingSkillUploadEchoes, event.skill_key, event.content_hash)
-			: false;
-		if (
-			event.content_hash &&
-			(lastPushedHash.get(event.skill_key) === event.content_hash || pendingEchoMatched)
-		) {
-			syncHealth.clear("pull", `skill:${event.skill_key}`);
-			log.debug("engine.sse_self_echo_suppressed", {
-				skill_key: event.skill_key,
-				content_hash: event.content_hash,
-				reason: pendingEchoMatched ? "pending_upload" : "last_pushed",
-			});
-			lastSeenRevision = event.skills_revision;
-			return;
-		}
-		addInFlight(pullsInFlight, event.skill_key);
-		let pulled = false;
+		lastSeenRevision = event.skills_revision;
+		log.debug("engine.sse_skill_invalidation", {
+			type: event.type,
+			skill_key: event.skill_key,
+		});
+		const scanResource = `skill_scan:${invalidatedSkillKey}`;
 		try {
-			const outcome = await pullSkill(opts, api, event.skill_key, lastPushedHash, defaultProjectId);
-			if (outcome === "deferred") {
-				cloudObservedKeys.add(event.skill_key);
-				syncHealth.clear("pull", `skill:${event.skill_key}`);
-				return;
-			}
-			// Track the SSE-pulled skill in cloudObservedKeys so the
-			// reconcile sweep can later remove it if its delete event
-			// is missed. Without this, an SSE-installed skill that
-			// later gets a missed `skill_deleted` would never be
-			// swept locally — `cloudObservedKeys` is the safety-net
-			// boundary the sweep uses to avoid wiping local-only
-			// skills, so anything we pulled needs to be in it.
-			cloudObservedKeys.add(event.skill_key);
-			syncHealth.clear("pull", `skill:${event.skill_key}`);
-			pulled = true;
-		} catch (e) {
-			// 401/403 here means the key the daemon's been using is
-			// now rejected. Without an explicit abort the catch just
-			// log-warns and the daemon keeps trying — a pull-only
-			// daemon (push queue empty) would never trip the queue
-			// drain's auth-abort path. Trigger the same exit the SSE
-			// channel uses so the user actually sees "paused".
-			if (isAuthFailure(e)) {
-				triggerAuthFailureAbort("sse_skill_pull");
-				return;
-			}
-			syncHealth.set(
-				"pull",
-				`skill:${event.skill_key}`,
-				`skill ${event.skill_key} pull: ${toErrorMessage(e)}`,
-			);
-			log.warn("engine.pull_failed", {
-				skill_key: event.skill_key,
-				error: toErrorMessage(e),
+			// A current Agent-Project event is authenticated migration evidence
+			// for this exact key. The current CLI can fall back to the generic
+			// compatibility route: project current local bytes when present, or
+			// report authoritative local absence. Never consume Cloud bytes.
+			await reconcileAgentSkillProjection({
+				opts,
+				queue,
+				claims: lastPushedHash,
+				projectId: defaultProjectId,
+				trustedLegacyRemoteKeys: new Set([invalidatedSkillKey]),
 			});
-		} finally {
-			releaseInFlight(pullsInFlight, event.skill_key);
+			syncHealth.clear("push", scanResource);
+		} catch (error) {
+			syncHealth.set(
+				"push",
+				scanResource,
+				`skill ${invalidatedSkillKey} scan: ${toErrorMessage(error)}`,
+			);
+			log.warn("engine.enqueue_failed", {
+				skill_key: invalidatedSkillKey,
+				error: toErrorMessage(error),
+			});
 		}
-		if (pulled) lastSeenRevision = event.skills_revision;
 	};
 
 	// Triggered by the sessions watcher after a path has been
@@ -876,6 +737,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			// either reports the wrong key OR is missed entirely
 			// because the dir's own mtime didn't change.
 			listSkillKeys: () => opts.adapter.listSkillKeys(),
+			onInventoryChanged: onSkillInventoryChanged,
 		}),
 		watchSessions({
 			paths: opts.adapter.getSessionsWatchPaths(),
@@ -912,26 +774,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 			lastPushedHash,
 			lastPushedSessionHash,
 			inFlightSessionHash,
-			pendingSkillUploadEchoes,
 			() => defaultProjectId,
-			syncHealth,
-			triggerAuthFailureAbort,
-		),
-		reconcileLoop(
-			opts,
-			api,
-			lastPushedHash,
-			cloudObservedKeys,
-			pullsInFlight,
-			opts.abort,
-			() => defaultProjectId,
-			() => lastListingEtag,
-			(rev) => {
-				lastSeenRevision = rev;
-			},
-			(etag) => {
-				lastListingEtag = etag;
-			},
 			syncHealth,
 			triggerAuthFailureAbort,
 		),
@@ -953,27 +796,43 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				await onSessionsStable();
 			}
 		})(),
-		// Symmetric safety-net for SKILLS. The queue evicts
-		// `skill_push` items first when offline buffers fill, but
-		// the watcher only emits on fs changes; an evicted edit
-		// would never be re-enqueued until the user touched the
-		// skill again. `rescanLocalSkillsForChanges` walks every
-		// skill dir, hashes it, compares against `lastPushedHash`,
-		// and enqueues whatever's drifted. Same 5min cadence as
-		// the sessions rescan; same cheap (stat+hash) shape with
-		// the same dedup short-circuit.
+		// Safety-net for Skills. The local scan recovers evicted watcher work;
+		// the strong-ETag Agent-Project listing catches mixed-version generic
+		// alias writes whose live-only SSE event was missed during disconnect.
+		// A 304 supplies no new per-key migration evidence. Periodic cycles force
+		// a complete 200 so evicted or lost work can be derived again at the same
+		// revision. Cloud bytes are never read or applied locally.
 		(async () => {
 			while (!opts.abort.aborted) {
 				await sleep(5 * 60_000, opts.abort);
 				if (opts.abort.aborted) return;
 				try {
-					await rescanLocalSkillsForChanges(
+					await reconcileAgentSkillProjection({
 						opts,
 						queue,
-						lastPushedHash,
-						pullsInFlight,
-						() => defaultProjectId,
-					);
+						claims: lastPushedHash,
+						projectId: defaultProjectId,
+					});
+					const catchUp = await reconcileAgentSkillProjectionListing({
+						api,
+						opts,
+						queue,
+						claims: lastPushedHash,
+						projectId: defaultProjectId,
+						previousEtag: lastReconciledListingEtag,
+						forceComplete: true,
+					});
+					if (catchUp.complete) {
+						lastReconciledListingEtag = catchUp.etag;
+						lastSeenRevision = catchUp.revision;
+						syncHealth.clear("projection", "listing");
+					} else {
+						syncHealth.set(
+							"projection",
+							"listing",
+							"reconcile: cloud skill listing was incomplete or unfenced",
+						);
+					}
 					syncHealth.clear("push", "skills_scan");
 				} catch (e) {
 					syncHealth.set("push", "skills_scan", `skills scan: ${toErrorMessage(e)}`);
@@ -993,29 +852,52 @@ async function enqueueIfChanged(
 	skillKey: string,
 	getProjectId: () => string,
 ): Promise<void> {
-	if (isReservedSkill(opts, skillKey)) return;
 	if (!isValidSkillKey(skillKey)) {
-		lastPushedHash.delete(skillKey);
 		log.warn("engine.invalid_skill_key_skipped", { skill_key: skillKey });
 		return;
 	}
 	const dir = join(opts.adapter.getSkillsRootDir(), skillKey);
+	const projectId = getProjectId();
+	if (isReservedSkill(opts, skillKey) || !existsSync(join(dir, "SKILL.md"))) {
+		if (!lastPushedHash.has(skillKey)) return;
+		const version = queue.enqueue({
+			kind: "skill_delete",
+			skill_key: skillKey,
+			agent_id: opts.environmentId,
+			project_id: projectId,
+			enqueued_at: new Date().toISOString(),
+			attempts: 0,
+		});
+		log.info("engine.enqueue_skill_delete", {
+			skill_key: skillKey,
+			version,
+			queue_depth: queue.depth,
+		});
+		return;
+	}
 	let hash: string;
 	try {
-		hash = await computeSkillFolderHash(dir);
+		hash = await computeSkillFolderHash(dir, undefined, skillKey);
 	} catch (e) {
-		// Directory disappeared (skill deleted). v1 doesn't
-		// support push-deletes from daemon; the user does that
-		// from the dashboard. Just stop tracking it.
+		// The path can disappear between the existence check and hash walk.
+		// Preserve the exact claim and enqueue its durable absence report.
 		if (!existsSync(dir)) {
-			lastPushedHash.delete(skillKey);
-			log.debug("engine.skill_dir_gone", { skill_key: skillKey, error: toErrorMessage(e) });
+			if (lastPushedHash.has(skillKey)) {
+				queue.enqueue({
+					kind: "skill_delete",
+					skill_key: skillKey,
+					agent_id: opts.environmentId,
+					project_id: projectId,
+					enqueued_at: new Date().toISOString(),
+					attempts: 0,
+				});
+			}
 			return;
 		}
 		throw e;
 	}
 	if (lastPushedHash.get(skillKey) === hash) {
-		// Echo from a cloud-originated write or a no-op touch.
+		// No-op local touch; the exact projection claim already matches.
 		log.debug("engine.skill_unchanged", { skill_key: skillKey });
 		return;
 	}
@@ -1029,7 +911,8 @@ async function enqueueIfChanged(
 	const version = queue.enqueue({
 		kind: "skill_push",
 		skill_key: skillKey,
-		project_id: getProjectId(),
+		agent_id: opts.environmentId,
+		project_id: projectId,
 		new_hash: hash,
 		enqueued_at: new Date().toISOString(),
 		attempts: 0,
@@ -1042,11 +925,10 @@ async function enqueueIfChanged(
 	});
 }
 
-/** Auth failure on upload OR pull: not "permanent for this item"
+/** Auth failure on projection/listing: not "permanent for this item"
  * — the api key is dead and EVERY request will fail the same way.
- * Pull-side callers (SSE skill_changed handler, reconcile loop)
- * use this to short-circuit log-and-continue retry storms; push-
- * side uses it to skip the queue-drop classifier.
+ * Callers use this to short-circuit log-and-continue retry storms; the
+ * queue also uses it to skip the permanent-drop classifier.
  * Exported only for unit testing. */
 export function isAuthFailure(e: unknown): boolean {
 	if (e instanceof ApiError && (e.status === 401 || e.status === 403)) return true;
@@ -1080,8 +962,13 @@ export function classifyHeartbeatFailure(consecutiveFailures: number): FailureCl
  * 5xx, network errors, timeouts → NOT permanent. Those are the
  * retry queue's whole reason to exist.
  */
-function isPermanentUploadError(e: unknown): boolean {
+export function isPermanentUploadError(e: unknown): boolean {
 	if (e instanceof SkillKeyValidationError) return true;
+	// A dedicated Agent sync 404 is deliberately ambiguous between an older
+	// backend without the route and a current backend hiding an unproven Agent
+	// identity. Never redirect it to a generic Project write, release a claim,
+	// or drop the durable operation as a terminal content error.
+	if (e instanceof AgentSkillSyncNotFoundError) return false;
 	if (e instanceof ApiError) {
 		if (e.status >= 400 && e.status < 500) {
 			// 408 = server-side request timeout; the daemon should
@@ -1129,13 +1016,12 @@ async function drainQueueLoop(
 	lastPushedHash: Map<string, string>,
 	lastPushedSessionHash: Map<string, string>,
 	inFlightSessionHash: Map<string, string>,
-	pendingSkillUploadEchoes: Map<string, PendingSkillUploadEcho>,
 	getProjectId: () => string,
 	health: SyncHealth,
 	onAuthFailure: (origin: string) => void,
 ): Promise<void> {
 	const healthResource = (item: QueueItem): string =>
-		item.kind === "skill_push" ? `skill:${item.skill_key}` : `session:${item.local_session_id}`;
+		item.kind === "session_push" ? `session:${item.local_session_id}` : `skill:${item.skill_key}`;
 	// Clear the in-flight stamp for a session_push item so the
 	// next watcher tick will re-enqueue if the local content
 	// hasn't already been confirmed shipped. Skill_push items have
@@ -1176,7 +1062,6 @@ async function drainQueueLoop(
 				lastPushedHash,
 				lastPushedSessionHash,
 				inFlightSessionHash,
-				pendingSkillUploadEchoes,
 				getProjectId(),
 			);
 			if (outcome === "applied" || outcome === "absent") {
@@ -1185,7 +1070,7 @@ async function drainQueueLoop(
 				health.setIfAbsent(
 					"push",
 					healthResource(item),
-					`${item.kind === "skill_push" ? `skill ${item.skill_key}` : `session ${item.local_session_id}`} push was not applied; awaiting rescan`,
+					`${item.kind === "session_push" ? `session ${item.local_session_id}` : `skill ${item.skill_key}`} projection was not applied; awaiting rescan`,
 					true,
 				);
 			}
@@ -1201,7 +1086,7 @@ async function drainQueueLoop(
 			// dialog shows "log in again with `clawdi auth login`").
 			if (isAuthFailure(e)) {
 				// Surface the raw failure on the heartbeat so the
-				// next dashboard pull (before triggerAuthFailureAbort
+				// next dashboard poll (before triggerAuthFailureAbort
 				// overwrites with "auth_revoked: ...") still carries
 				// signal. The unified path takes over on the next
 				// poll, but this prevents the heartbeat from looking
@@ -1314,7 +1199,7 @@ async function drainQueueLoop(
 
 type QueueProcessOutcome = "applied" | "absent" | "not_applied";
 
-async function processQueueItem(
+export async function processQueueItem(
 	opts: EngineOpts,
 	api: ApiClient,
 	queue: RetryQueue,
@@ -1322,38 +1207,100 @@ async function processQueueItem(
 	lastPushedHash: Map<string, string>,
 	lastPushedSessionHash: Map<string, string>,
 	inFlightSessionHash: Map<string, string>,
-	pendingSkillUploadEchoes: Map<string, PendingSkillUploadEcho>,
 	projectId: string,
 ): Promise<QueueProcessOutcome> {
-	if (item.kind === "skill_push") {
-		// Legacy items (no project_id stamp) inherit the current
-		// project — they were enqueued by an older binary that
-		// didn't track project. Items with a stamped project that
-		// no longer matches the daemon's current project are
-		// dropped: uploading to the old project would land bytes
-		// nobody is looking at, and uploading to the new project
-		// is wrong because the local content corresponds to
-		// whatever the user edited under the OLD project's view.
-		// `rescanLocalSkillsForChanges` (called from
-		// refreshDefaultProjectIdLoop on project change) re-enqueues
-		// any pending divergence under the new project.
-		if (item.project_id !== undefined && item.project_id !== projectId) {
-			log.warn("engine.queue_project_mismatch_dropped", {
+	if (item.kind === "skill_push" || item.kind === "skill_delete") {
+		if (item.agent_id === undefined || item.project_id === undefined) {
+			log.warn("engine.queue_identity_mismatch_dropped", {
+				kind: item.kind,
 				skill_key: item.skill_key,
+				stamped_agent_id: item.agent_id,
+				current_agent_id: opts.environmentId,
 				stamped_project_id: item.project_id,
 				current_project_id: projectId,
 			});
 			queue.markDoneIfVersion(item);
 			return "not_applied";
 		}
-		await uploadSkillFromQueue(
-			opts,
-			api,
-			item,
-			lastPushedHash,
-			pendingSkillUploadEchoes,
+		if (item.agent_id !== opts.environmentId) {
+			// A reused adapter home must never apply the previous Agent's work.
+			// Drop only the queue item; its fenced claim remains durable and is
+			// never reinterpreted as authority for the current Agent.
+			log.warn("engine.queue_agent_mismatch_deferred", {
+				kind: item.kind,
+				skill_key: item.skill_key,
+				stamped_agent_id: item.agent_id,
+				current_agent_id: opts.environmentId,
+			});
+			queue.markDoneIfVersion(item);
+			return "not_applied";
+		}
+		for (const staleProjectId of staleSkillProjectionProjectIds(
+			opts.adapter.agentType,
+			opts.environmentId,
+			item.skill_key,
 			projectId,
-		);
+		)) {
+			await api.deleteAgentSkill(opts.environmentId, item.skill_key, staleProjectId);
+			removeSkillProjectionClaim({
+				agentType: opts.adapter.agentType,
+				agentId: opts.environmentId,
+				projectId: staleProjectId,
+				skillKey: item.skill_key,
+			});
+		}
+		if (item.project_id !== projectId && item.kind === "skill_push") {
+			// Project reassignment is a two-step handoff: remove any projection
+			// fenced to the stamped old Project, then re-scan so the latest local
+			// state is enqueued for the current Project. Never redirect old bytes.
+			await api.deleteAgentSkill(opts.environmentId, item.skill_key, item.project_id);
+			removeSkillProjectionClaim({
+				agentType: opts.adapter.agentType,
+				agentId: opts.environmentId,
+				projectId: item.project_id,
+				skillKey: item.skill_key,
+			});
+			queue.markDoneIfVersion(item);
+			await enqueueIfChanged(opts, queue, lastPushedHash, item.skill_key, () => projectId);
+			return "applied";
+		}
+		if (item.kind === "skill_delete") {
+			await api.deleteAgentSkill(opts.environmentId, item.skill_key, item.project_id);
+			removeSkillProjectionClaim({
+				agentType: opts.adapter.agentType,
+				agentId: opts.environmentId,
+				projectId: item.project_id,
+				skillKey: item.skill_key,
+			});
+			if (item.project_id === projectId) lastPushedHash.delete(item.skill_key);
+			const removed = queue.markDoneIfVersion(item);
+			if (!removed) {
+				log.info("engine.queue_superseded", {
+					skill_key: item.skill_key,
+					version: item.version,
+				});
+			}
+			log.info("engine.skill_projection_deleted", { skill_key: item.skill_key });
+			if (item.project_id !== projectId) {
+				await enqueueIfChanged(opts, queue, lastPushedHash, item.skill_key, () => projectId);
+			}
+			return "applied";
+		}
+		if (isReservedSkill(opts, item.skill_key)) {
+			await api.deleteAgentSkill(opts.environmentId, item.skill_key, item.project_id);
+			removeSkillProjectionClaim({
+				agentType: opts.adapter.agentType,
+				agentId: opts.environmentId,
+				projectId: item.project_id,
+				skillKey: item.skill_key,
+			});
+			lastPushedHash.delete(item.skill_key);
+			queue.markDoneIfVersion(item);
+			return "applied";
+		}
+		// Every accepted Skill item is Agent+Project fenced above. The current
+		// item can now safely project the latest local bytes.
+		await uploadSkillFromQueue(opts, api, item, lastPushedHash, projectId);
 		// markDoneIfVersion — if a newer version of the same
 		// skill_key was enqueued while we were uploading, leave
 		// it in the queue so the next drain picks it up. The
@@ -1533,13 +1480,8 @@ async function uploadSkillFromQueue(
 	api: ApiClient,
 	item: Extract<QueueItem, { kind: "skill_push" }>,
 	lastPushedHash: Map<string, string>,
-	pendingSkillUploadEchoes: Map<string, PendingSkillUploadEcho>,
 	projectId: string,
 ): Promise<void> {
-	if (isReservedSkill(opts, item.skill_key)) {
-		lastPushedHash.delete(item.skill_key);
-		return;
-	}
 	const dir = join(opts.adapter.getSkillsRootDir(), item.skill_key);
 	// Recompute the hash from the live directory at upload time
 	// rather than trusting `item.new_hash`. The watcher's hash
@@ -1549,24 +1491,16 @@ async function uploadSkillFromQueue(
 	// stale hash makes the server store bytes whose tree-hash
 	// disagrees with the DB's `content_hash` column.
 	//
-	// hashFirst → tar → hashAfter. If the disk shifted between
-	// the two file walks, abort this upload — the watcher's next
-	// tick re-enqueues with whatever the disk says now. Without
-	// this check, the tar reflects post-edit content while the
-	// hash we send reflects pre-edit, and the server's content_hash
-	// column ends up out of sync with the bytes it stored.
-	const hashFirst = await computeSkillFolderHash(dir);
-	// Pass the full skill_key so a Hermes-nested key like
-	// `category/foo` archives entries under `category/foo/...`
-	// (matching the cloud row), not just `foo/...` which would
-	// extract to the wrong path on other machines.
-	const tarBytes = await tarSkillDir(dir, undefined, item.skill_key);
-	const hashAfter = await computeSkillFolderHash(dir);
-	if (hashFirst !== hashAfter) {
+	// Take at most two complete snapshots. If the published path+bytes tree
+	// shifted between them, retry; otherwise upload the second snapshot whose
+	// hash was derived from that exact validated archive.
+	const firstSnapshot = await snapshotSkillArchive(dir, undefined, item.skill_key);
+	const uploadSnapshot = await snapshotSkillArchive(dir, undefined, item.skill_key);
+	if (firstSnapshot.hash !== uploadSnapshot.hash) {
 		log.warn("engine.skill_push_disk_shifted", {
 			skill_key: item.skill_key,
-			hash_first: hashFirst,
-			hash_after: hashAfter,
+			hash_first: firstSnapshot.hash,
+			hash_after: uploadSnapshot.hash,
 		});
 		// Surface as a non-permanent error so drainQueueLoop bumps
 		// attempts + sleeps, then retries. The watcher will also
@@ -1575,52 +1509,24 @@ async function uploadSkillFromQueue(
 			`skill_push: ${item.skill_key} disk shifted mid-tar; will retry with latest content`,
 		);
 	}
-	const actualHash = hashAfter;
+	const actualHash = uploadSnapshot.hash;
 
-	// Snapshot before the long-running upload await. If a
-	// concurrent reconcile pull lands cloudHash into lastPushedHash
-	// while we're uploading, the snapshot won't match on resume
-	// and we skip the post-upload write — the pull's value is
-	// the truth on disk now. CAS-style: only write if nothing
-	// else moved it.
-	const hashBeforeUpload = lastPushedHash.get(item.skill_key);
-	// Server broadcasts `skill_changed` after commit, which can
-	// reach our SSE consumer before this HTTP request resumes and
-	// writes `lastPushedHash`. Remember the exact bytes we are
-	// sending so that self-echo is suppressed even in that window.
-	// Otherwise the daemon can pull its own just-uploaded archive
-	// back onto disk and clobber a local edit made immediately
-	// after the upload lands.
-	rememberPendingSkillUploadEcho(pendingSkillUploadEchoes, item.skill_key, actualHash);
-	const result = await api.uploadSkill(
+	const result = await api.uploadAgentSkill(
+		opts.environmentId,
 		projectId,
 		item.skill_key,
-		tarBytes,
+		uploadSnapshot.archive,
 		`${item.skill_key}.tar.gz`,
 		actualHash,
 	);
-	const hashAfterUpload = lastPushedHash.get(item.skill_key);
-	if (hashAfterUpload === hashBeforeUpload) {
-		lastPushedHash.set(item.skill_key, actualHash);
-		// Persist the last-shipped hash so a daemon restart can
-		// disambiguate "cloud edited" vs "local edited" in
-		// initialSync. Without this, divergence at boot defaulted
-		// to push and clobbered offline dashboard edits.
-		const lock = readSkillsLock();
-		lock.skills[skillCacheKey(opts.adapter.agentType, item.skill_key)] = {
-			hash: actualHash,
-		};
-		writeSkillsLock(lock);
-	} else {
-		// A pull completed for this skill while we were
-		// uploading. The pull's content is what's on disk;
-		// don't clobber its hash with our pre-upload value.
-		log.info("engine.skill_pushed_pull_won", {
-			skill_key: item.skill_key,
-			upload_hash: actualHash,
-			current_hash: hashAfterUpload,
-		});
-	}
+	lastPushedHash.set(item.skill_key, actualHash);
+	recordSkillProjectionClaim({
+		agentType: opts.adapter.agentType,
+		agentId: opts.environmentId,
+		projectId,
+		skillKey: item.skill_key,
+		hash: actualHash,
+	});
 	log.info("engine.skill_pushed", {
 		skill_key: item.skill_key,
 		content_hash: actualHash,
@@ -1628,393 +1534,334 @@ async function uploadSkillFromQueue(
 	});
 }
 
-/** Walk every page of /api/skills. The endpoint caps page_size
- * at 200; without pagination, a user with >200 skills would
- * have skills past page 1 silently treated as "not in cloud"
- * by the sweep step. Returns the full SkillSummary list AND a
- * boolean indicating whether the listing was complete (false
- * if we hit a fetch error mid-walk; sweep must not run on a
- * partial listing). */
+/** List the exact Agent Project for boot migration and periodic SSE catch-up.
+ * Only a complete, single-ETag result may be used as per-key migration
+ * evidence; the list is never a source of local content. */
 async function listAllCloudSkills(
 	api: ApiClient,
 	projectId: string,
-	knownEtag?: string | null,
+	ifNoneMatch: string | null,
 ): Promise<{
 	skills: SkillSummary[];
 	complete: boolean;
-	total: number;
+	notModified: boolean;
 	revision: number | null;
 	etag: string | null;
-	notModified: boolean;
 }> {
-	const PAGE_SIZE = 200;
 	const out: SkillSummary[] = [];
+	const seenSkillKeys = new Set<string>();
+	const pageSize = 200;
 	let page = 1;
-	let total = 0;
+	let total: number | null = null;
 	let revision: number | null = null;
-	let etag: string | null = null;
 	while (true) {
-		// Pin reads to the env's project so a daemon booted with an
-		// unbound CLI key + an explicit `--environment-id` doesn't
-		// pull skills from whichever env the backend defaults to
-		// (most-recently-active for unbound keys). Without the
-		// project_id pin, reconcile would fan out to every project the
-		// caller can read and write them under the wrong env.
-		//
-		// Conditional GET: replay the previous response's full
-		// ETag (server's format is `"<rev>:<project>"`) so a project
-		// reassignment naturally invalidates the tag — pre-fix the
-		// client constructed `"<rev>"` itself, which would 304 on
-		// a different project at the same revision and silently skip
-		// pulling the new project's skills.
-		const headerInit: Record<string, string> = {};
-		if (page === 1 && knownEtag) {
-			headerInit["If-None-Match"] = knownEtag;
-		}
 		const res = await api.GET("/v1/skills", {
-			params: { query: { page, page_size: PAGE_SIZE, project_id: projectId } },
-			headers: headerInit,
+			params: {
+				query: { page, page_size: pageSize, project_id: projectId },
+				...(page === 1 && ifNoneMatch ? { header: { "If-None-Match": ifNoneMatch } } : {}),
+			},
 		});
-		// ETag header carries the user's `skills_revision` counter
-		// followed by the requested project tag, e.g. `"42:abc-uuid"`.
-		// We track:
-		//   - `revision` (numeric prefix, for heartbeat
-		//     `last_revision_seen`)
-		//   - `etag` (full string, for the next If-None-Match
-		//     short-circuit; the format is opaque to the daemon)
-		// Pulled from every response so the value follows the
-		// latest page; the body's `total` is just the count of
-		// skills, NOT the revision counter. The backend always
-		// emits this header — its absence on a 200 is a server
-		// regression worth noticing. Logged once per occurrence
-		// rather than once per page so a chronic miss doesn't
-		// flood the journal.
-		const headerEtag = res.response.headers.get("ETag");
-		if (headerEtag) {
-			etag = headerEtag;
-			const numericPrefix = headerEtag.replace(/"/g, "").split(":", 1)[0] ?? "";
-			const parsed = Number.parseInt(numericPrefix, 10);
-			if (Number.isFinite(parsed)) revision = parsed;
-		} else if (res.response.status !== 304) {
-			log.warn("engine.list_skills_etag_missing", {
-				page,
-				status: res.response.status,
-			});
-		}
+		const etag = res.response.headers.get("ETag");
 		if (res.response.status === 304) {
-			// Treat 304 as "no change since `knownEtag`" — caller
-			// short-circuits sweep / pull. Without the explicit
-			// flag, callers couldn't distinguish "empty cloud
-			// listing" from "unchanged since last poll", and sweep
-			// would treat the empty `skills` as the cloud's current
-			// state and rm every locally-known key. We echo back
-			// the caller's `knownEtag` so reconcile bookkeeping
-			// stays in sync with the server's view.
+			return {
+				skills: [],
+				complete: etag !== null,
+				notModified: true,
+				revision: parseSkillsRevisionFromEtag(etag),
+				etag,
+			};
+		}
+		let pageRevision: number | null = null;
+		pageRevision = parseSkillsRevisionFromEtag(etag);
+		if (pageRevision === null || (revision !== null && pageRevision !== revision)) {
+			log.warn("engine.list_skills_revision_unfenced", {
+				page,
+				first_revision: revision,
+				page_revision: pageRevision,
+			});
 			return {
 				skills: out,
-				complete: true,
-				total,
-				revision,
-				etag: knownEtag ?? null,
-				notModified: true,
+				complete: false,
+				notModified: false,
+				revision: null,
+				etag: null,
 			};
 		}
+		if (page > 1 && etag !== ifNoneMatch && ifNoneMatch !== null) {
+			// All pages of one complete inventory must share the first page's
+			// strong representation fence.
+			return {
+				skills: out,
+				complete: false,
+				notModified: false,
+				revision: null,
+				etag: null,
+			};
+		}
+		if (page === 1) ifNoneMatch = etag;
+		revision = pageRevision;
 		const data = unwrap(res);
+		if (!Number.isSafeInteger(data.total) || data.total < 0) {
+			log.warn("engine.list_skills_invalid_total", { page, total: data.total });
+			return incompleteSkillListing(out);
+		}
+		if (total !== null && data.total !== total) {
+			log.warn("engine.list_skills_total_changed", {
+				page,
+				first_total: total,
+				page_total: data.total,
+			});
+			return incompleteSkillListing(out);
+		}
+		total = data.total;
+		for (const skill of data.items) {
+			if (seenSkillKeys.has(skill.skill_key)) {
+				log.warn("engine.list_skills_duplicate_key", { page, skill_key: skill.skill_key });
+				return incompleteSkillListing(out);
+			}
+			seenSkillKeys.add(skill.skill_key);
+		}
 		out.push(...data.items);
-		total = data.total ?? out.length;
-		if (out.length >= total || data.items.length === 0) break;
+		if (out.length > total) {
+			log.warn("engine.list_skills_exceeds_total", { page, listed: out.length, total });
+			return incompleteSkillListing(out);
+		}
+		if (out.length === total) break;
+		if (data.items.length < pageSize) {
+			log.warn("engine.list_skills_ended_early", {
+				page,
+				page_count: data.items.length,
+				listed: out.length,
+				total,
+			});
+			return incompleteSkillListing(out);
+		}
 		page += 1;
-		// Hard cap so a buggy server doesn't loop us forever.
 		if (page > 50) {
 			log.warn("engine.list_skills_page_cap", { page, total });
-			return { skills: out, complete: false, total, revision, etag, notModified: false };
+			return {
+				skills: out,
+				complete: false,
+				notModified: false,
+				revision,
+				etag: null,
+			};
 		}
 	}
-	return { skills: out, complete: true, total, revision, etag, notModified: false };
+	return {
+		skills: out,
+		complete: true,
+		notModified: false,
+		revision,
+		etag: ifNoneMatch,
+	};
 }
 
-/** Boot-time merge: enumerate local skills, fetch cloud, and
- * resolve per skill_key. The four cases:
- *
- *   - both present, hashes match → no-op, prime lastPushedHash
- *   - both present, hashes differ → enqueue push (single-writer
- *     model: the daemon's local copy is the truth, push wins)
- *   - only local → enqueue push as new
- *   - only cloud → pull
- *
- * Crucially does NOT sweep local-only skills: a daemon booting
- * fresh has no authority to call them "stale". The user might
- * have authored a skill while the daemon was off; we want to
- * push it up, not delete it.
- */
-async function initialSync(
-	opts: EngineOpts,
-	api: ApiClient,
-	queue: RetryQueue,
-	lastPushedHash: Map<string, string>,
-	cloudObservedKeys: Set<string>,
-	pullsInFlight: Map<string, number>,
-	projectId: string,
-	setRevision: (rev: number) => void,
-	setEtag: (etag: string | null) => void,
-	health: SyncHealth,
-): Promise<void> {
+function incompleteSkillListing(skills: SkillSummary[]): {
+	skills: SkillSummary[];
+	complete: false;
+	notModified: false;
+	revision: null;
+	etag: null;
+} {
+	return {
+		skills,
+		complete: false,
+		notModified: false,
+		revision: null,
+		etag: null,
+	};
+}
+
+function parseSkillsRevisionFromEtag(etag: string | null): number | null {
+	if (!etag) return null;
+	const parsed = Number.parseInt(etag.replace(/"/g, "").split(":", 1)[0] ?? "", 10);
+	return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+export async function reconcileAgentSkillProjectionListing(input: {
+	api: ApiClient;
+	opts: {
+		environmentId: string;
+		adapter: Pick<AgentAdapter, "agentType" | "getSkillsRootDir" | "listSkillKeys">;
+	};
+	queue: RetryQueue;
+	claims: Map<string, string>;
+	projectId: string;
+	previousEtag: string | null;
+	/** Periodic safety cycles force a 200 so lost/evicted migration evidence
+	 * can be re-derived even when the remote collection revision is unchanged. */
+	forceComplete?: boolean;
+}): Promise<{
+	complete: boolean;
+	changed: boolean;
+	revision: number | null;
+	etag: string | null;
+}> {
+	const listing = await listAllCloudSkills(
+		input.api,
+		input.projectId,
+		input.forceComplete ? null : input.previousEtag,
+	);
+	if (!listing.complete || listing.revision === null || listing.etag === null) {
+		return { complete: false, changed: false, revision: null, etag: null };
+	}
+	if (listing.notModified) {
+		return {
+			complete: true,
+			changed: false,
+			revision: listing.revision,
+			etag: listing.etag,
+		};
+	}
+	await reconcileAgentSkillProjection({
+		opts: input.opts,
+		queue: input.queue,
+		claims: input.claims,
+		projectId: input.projectId,
+		trustedLegacyRemoteKeys: new Set(listing.skills.map((skill) => skill.skill_key)),
+	});
+	return {
+		complete: true,
+		changed: listing.etag !== input.previousEtag,
+		revision: listing.revision,
+		etag: listing.etag,
+	};
+}
+
+export async function reconcileAgentSkillProjection(input: {
+	opts: {
+		environmentId: string;
+		adapter: Pick<AgentAdapter, "agentType" | "getSkillsRootDir" | "listSkillKeys">;
+	};
+	queue: RetryQueue;
+	claims: Map<string, string>;
+	projectId: string;
+	/** Only pass keys from a complete, project-scoped remote listing. This is
+	 * migration evidence for removing unclaimed legacy Agent-Project rows. */
+	trustedLegacyRemoteKeys?: ReadonlySet<string>;
+}): Promise<void> {
+	const { opts, queue, claims, projectId } = input;
 	const rootDir = opts.adapter.getSkillsRootDir();
+	const localKeys = new Set(filterValidSkillKeysForSync(await opts.adapter.listSkillKeys()));
+	const exactAgentClaims = readSkillProjectionClaimsForAgent(
+		opts.adapter.agentType,
+		opts.environmentId,
+	);
+	const exactClaimKeys = new Set(exactAgentClaims.map((claim) => claim.skill_key));
+	const staleExactClaimKeys = new Set(
+		exactAgentClaims
+			.filter((claim) => claim.project_id !== projectId)
+			.map((claim) => claim.skill_key),
+	);
+	const allKeys = new Set([
+		...localKeys,
+		...claims.keys(),
+		...exactClaimKeys,
+		...(input.trustedLegacyRemoteKeys ?? []),
+	]);
 
-	// Local side. Delegate enumeration to the adapter — Hermes
-	// nests skills under category dirs (`category/foo/SKILL.md`)
-	// so a flat top-level walk would return `category` (not a
-	// real skill, no SKILL.md) and miss the actual nested skills.
-	// `listSkillKeys` returns the same shape the adapter's
-	// `collectSkills` would emit `skillKey` (relative paths,
-	// flat or nested). The sync engine still validates the result
-	// against the backend `skill_key` contract before queueing.
-	const localKeys = filterValidSkillKeysForSync(await opts.adapter.listSkillKeys());
-	const localHashes = new Map<string, string>();
-	for (const key of localKeys) {
-		try {
-			const hash = await computeSkillFolderHash(join(rootDir, key));
-			localHashes.set(key, hash);
-		} catch {
-			// Skill dir present but unreadable (no SKILL.md, etc.).
-			// Skip — the watcher will treat it as a non-skill.
-		}
-	}
-
-	// Cloud side. `complete=false` means the listing was
-	// truncated (per-page cap × max-pages, or a fetch error
-	// mid-walk). We MUST NOT base local-delete decisions on a
-	// truncated map: a previously-shipped skill that just
-	// happens to be on a page we never fetched looks
-	// indistinguishable from a cloud-deleted skill, so the
-	// local-only branch below would rm valid skills from disk.
-	// The pull / divergence branches stay safe (we only ever
-	// add cloudObservedKeys + reconcile against keys we DID
-	// see). Reconcile loop already gates its sweep on
-	// `complete`; initialSync needs the same gate.
-	const {
-		skills: cloudSkills,
-		revision,
-		etag,
-		complete: cloudComplete,
-	} = await listAllCloudSkills(api, projectId);
-	health.clear("pull", "listing");
-	if (cloudComplete) {
-		health.clear("pull", "reconcile");
-	} else {
-		health.set("pull", "reconcile", "reconcile: cloud skill listing was incomplete");
-	}
-	for (const s of cloudSkills) cloudObservedKeys.add(s.skill_key);
-	const cloudByKey = new Map(cloudSkills.map((s) => [s.skill_key, s]));
-
-	// `allApplied` flips to false on the first per-skill pull /
-	// remove failure. We only persist `revision` as
-	// `lastSeenRevision` if EVERY operation succeeded — otherwise
-	// the next reconcile would send `If-None-Match: <revision>`
-	// and the server's 304 would skip the safety-net listing,
-	// leaving the failed pull / undeleted skill stuck until some
-	// unrelated cloud change bumps the revision. Leaving the
-	// revision stale forces the next reconcile to fetch the full
-	// listing and retry whatever this boot pass missed.
-	let allApplied = true;
-
-	// Resolve each cloud skill against local.
-	for (const [key, cloud] of cloudByKey) {
-		const localHash = localHashes.get(key);
-		if (localHash === undefined) {
-			// Only cloud — pull. The watcher hasn't started yet
-			// at boot, but we still mark in-flight so a future
-			// refactor that interleaves boot with the watcher
-			// can't regress.
-			addInFlight(pullsInFlight, key);
-			try {
-				await pullSkill(opts, api, key, lastPushedHash, projectId);
-				health.clear("pull", `skill:${key}`);
-			} catch (e) {
-				allApplied = false;
-				health.set("pull", `skill:${key}`, `skill ${key} pull: ${toErrorMessage(e)}`);
-				log.warn("engine.boot_pull_failed", {
-					skill_key: key,
-					error: toErrorMessage(e),
-				});
-			} finally {
-				releaseInFlight(pullsInFlight, key);
-			}
-		} else if (localHash !== cloud.content_hash) {
-			// Diverged. The single-writer model (one env = one
-			// daemon writing this project) is broken in two ways
-			// the dashboard introduced:
-			//   - Dashboard editor writes via /api/projects/.../content
-			//   - CLI commands (`clawdi skill add`, `clawdi push`)
-			//     write while the daemon is offline
-			// So divergence at boot can mean LOCAL is newer
-			// (push) or CLOUD is newer (pull). Use the persisted
-			// `lastShipped` (skills-lock) as the reference:
-			//
-			//   local == lastShipped, cloud != lastShipped → cloud changed → PULL
-			//   cloud == lastShipped, local != lastShipped → local changed → PUSH
-			//   both differ from lastShipped → conflict → PULL
-			//     (cloud edits matter more; user can re-apply
-			//     local. Pre-fix this case silently clobbered the
-			//     dashboard edit.)
-			//   no lastShipped record → unknown → PULL
-			//     (safer default than overwriting an edit we
-			//     can't prove we made.)
-			const lastShipped = lastPushedHash.get(key);
-			const localUnchanged = lastShipped !== undefined && lastShipped === localHash;
-			const cloudUnchanged = lastShipped !== undefined && lastShipped === cloud.content_hash;
-			const localChangedOnly = !localUnchanged && cloudUnchanged;
-
-			if (localChangedOnly) {
-				lastPushedHash.set(key, cloud.content_hash);
-				const version = queue.enqueue({
-					kind: "skill_push",
-					skill_key: key,
-					project_id: projectId,
-					new_hash: localHash,
-					enqueued_at: new Date().toISOString(),
-					attempts: 0,
-				});
-				log.info("engine.boot_enqueue_diverged_push", {
-					skill_key: key,
-					local: localHash,
-					cloud: cloud.content_hash,
-					version,
-				});
-			} else {
-				// Cloud-newer or both-changed or no record — pull
-				// to safety. Mark in-flight so the watcher's
-				// rm/extract storm doesn't trigger a re-push of
-				// intermediate empty state.
-				addInFlight(pullsInFlight, key);
-				try {
-					await pullSkill(opts, api, key, lastPushedHash, projectId);
-					health.clear("pull", `skill:${key}`);
-					log.info("engine.boot_pull_diverged", {
-						skill_key: key,
-						local: localHash,
-						cloud: cloud.content_hash,
-						reason: lastShipped === undefined ? "no_record" : "cloud_or_both_changed",
+	for (const skillKey of [...allKeys].sort()) {
+		const reserved = isReservedSkill(opts, skillKey);
+		if (reserved || !localKeys.has(skillKey)) {
+			if (
+				claims.has(skillKey) ||
+				exactClaimKeys.has(skillKey) ||
+				input.trustedLegacyRemoteKeys?.has(skillKey)
+			) {
+				const pendingDelete = queue
+					.all()
+					.some(
+						(item) =>
+							item.kind === "skill_delete" &&
+							item.skill_key === skillKey &&
+							item.agent_id === opts.environmentId &&
+							item.project_id === projectId,
+					);
+				if (!pendingDelete) {
+					queue.enqueue({
+						kind: "skill_delete",
+						skill_key: skillKey,
+						agent_id: opts.environmentId,
+						project_id: projectId,
+						enqueued_at: new Date().toISOString(),
+						attempts: 0,
 					});
-				} catch (e) {
-					allApplied = false;
-					health.set("pull", `skill:${key}`, `skill ${key} pull: ${toErrorMessage(e)}`);
-					log.warn("engine.boot_pull_failed", {
-						skill_key: key,
-						error: toErrorMessage(e),
-					});
-				} finally {
-					releaseInFlight(pullsInFlight, key);
 				}
 			}
-		} else {
-			health.clear("pull", `skill:${key}`);
-			// Match — record so subsequent watcher events dedup
-			// AND persist to skills-lock so a daemon restart
-			// before any push/pull writes one preserves the
-			// `lastShipped` reference. Without the lock write,
-			// the next boot's local-only branch would treat the
-			// skill as "never shipped, push it" — which silently
-			// resurrects a cloud-side delete that happened in
-			// between (the dashboard's Uninstall button or a CLI
-			// `clawdi skill rm` on another machine while this
-			// daemon was offline).
-			lastPushedHash.set(key, cloud.content_hash);
-			const lock = readSkillsLock();
-			lock.skills[skillCacheKey(opts.adapter.agentType, key)] = {
-				hash: cloud.content_hash,
-			};
-			writeSkillsLock(lock);
+			continue;
 		}
-	}
 
-	// Local-only skills: either fresh local content (PUSH) or
-	// cloud-deleted-while-offline (REMOVE LOCAL). Use the same
-	// `lastShipped` reference the divergence branch above uses:
-	//   no record         → never shipped → fresh local → PUSH
-	//   has record        → we shipped this before; cloud now
-	//                       missing means dashboard / sibling
-	//                       daemon deleted it while we were
-	//                       offline → REMOVE LOCAL (the user
-	//                       said "uninstall this", don't undo
-	//                       their action by pushing it back)
-	// Pre-fix this branch always pushed, resurrecting dashboard
-	// uninstalls on the next daemon start.
-	for (const [key, localHash] of localHashes) {
-		if (cloudByKey.has(key)) continue;
-		const lastShipped = lastPushedHash.get(key);
-		if (lastShipped !== undefined && !cloudComplete) {
-			// Cloud listing was truncated. We can't tell whether
-			// this previously-shipped local skill was deleted on
-			// the cloud or just sits on a page we never fetched.
-			// Skip the destructive branch — the next reconcile
-			// (or a later boot with a complete listing) will
-			// classify correctly. Force `allApplied=false` so
-			// the cloud's `revision` / `etag` aren't acked
-			// either; otherwise the next reconcile would 304 and
-			// the safety net would never get a chance to retry.
-			allApplied = false;
-			log.info("engine.boot_skip_remove_truncated_listing", { skill_key: key });
+		const hash = await computeSkillFolderHash(join(rootDir, skillKey), undefined, skillKey);
+		const pendingOperation = queue
+			.all()
+			.find(
+				(item) =>
+					(item.kind === "skill_push" || item.kind === "skill_delete") &&
+					item.skill_key === skillKey,
+			);
+		const matchingPendingPush =
+			pendingOperation?.kind === "skill_push" &&
+			pendingOperation.agent_id === opts.environmentId &&
+			pendingOperation.project_id === projectId &&
+			pendingOperation.new_hash === hash;
+		if (
+			matchingPendingPush ||
+			(claims.get(skillKey) === hash &&
+				pendingOperation?.kind !== "skill_delete" &&
+				!staleExactClaimKeys.has(skillKey))
+		) {
 			continue;
 		}
-		if (lastShipped !== undefined) {
-			if (isReservedSkill(opts, key)) {
-				health.clear("pull", `skill:${key}`);
-				continue;
-			}
-			// We shipped this before, cloud doesn't have it now.
-			// Treat as cloud-side delete + remove the local copy.
-			// (Fine to delete: the user's intent — when they
-			// triggered the uninstall in the dashboard — was
-			// "remove from this env's home". A push would undo
-			// that.)
-			addInFlight(pullsInFlight, key);
-			try {
-				await opts.adapter.removeLocalSkill(key);
-				lastPushedHash.delete(key);
-				// Drop the stale lock entry too so the next boot
-				// doesn't re-trigger this branch on a key that's
-				// already gone.
-				const lock = readSkillsLock();
-				delete lock.skills[skillCacheKey(opts.adapter.agentType, key)];
-				writeSkillsLock(lock);
-				log.info("engine.boot_remove_cloud_deleted", { skill_key: key });
-				health.clear("pull", `skill:${key}`);
-				health.clear("push", `skill:${key}`);
-				health.clear("push", `skill_scan:${key}`);
-			} catch (e) {
-				allApplied = false;
-				health.set("pull", `skill:${key}`, `skill ${key} delete: ${toErrorMessage(e)}`);
-				log.warn("engine.boot_remove_failed", {
-					skill_key: key,
-					error: toErrorMessage(e),
-				});
-			} finally {
-				releaseInFlight(pullsInFlight, key);
-			}
-			continue;
-		}
-		// No record — brand-new local skill. Push as new.
-		const version = queue.enqueue({
+		queue.enqueue({
 			kind: "skill_push",
-			skill_key: key,
+			skill_key: skillKey,
+			agent_id: opts.environmentId,
 			project_id: projectId,
-			new_hash: localHash,
+			new_hash: hash,
 			enqueued_at: new Date().toISOString(),
 			attempts: 0,
 		});
-		log.info("engine.boot_enqueue_local_only", { skill_key: key, version });
 	}
+}
 
-	// Only acknowledge the cloud's revision (and cache the
-	// project-bound ETag) if every per-skill pull / remove above
-	// succeeded. Partial failure leaves both stale so the next
-	// reconcile listing isn't 304'd, and the failed item is
-	// retried on the next pass instead of silently dropped until
-	// something else changes upstream.
-	if (cloudComplete && allApplied) {
-		if (revision !== null) setRevision(revision);
-		setEtag(etag);
+async function initialAgentProjectionSync(
+	opts: EngineOpts,
+	api: ApiClient,
+	queue: RetryQueue,
+	claims: Map<string, string>,
+	projectId: string,
+	setRevision: (rev: number, etag: string) => void,
+	health: SyncHealth,
+): Promise<void> {
+	await reconcileAgentSkillProjection({ opts, queue, claims, projectId });
+	try {
+		const catchUp = await reconcileAgentSkillProjectionListing({
+			api,
+			opts,
+			queue,
+			claims,
+			projectId,
+			previousEtag: null,
+		});
+		if (!catchUp.complete || catchUp.revision === null || catchUp.etag === null) {
+			health.set(
+				"projection",
+				"listing",
+				"reconcile: cloud skill listing was incomplete or unfenced",
+			);
+			return;
+		}
+		health.clear("projection", "listing");
+		health.clear("projection", "reconcile");
+		setRevision(catchUp.revision, catchUp.etag);
+	} catch (error) {
+		if (isAuthFailure(error)) throw error;
+		// Local operations remain durable while offline. A failed or truncated
+		// listing is never used to infer absence; legacy cleanup retries after a
+		// later complete listing or an SSE invalidation.
+		health.set("projection", "listing", `legacy listing: ${toErrorMessage(error)}`, true);
+		log.warn("engine.legacy_skill_listing_failed", { error: toErrorMessage(error) });
 	}
 }
 
@@ -2032,287 +1879,6 @@ export function filterValidSkillKeysForSync(
 		}
 	}
 	return validKeys;
-}
-
-/** Periodic full reconciliation. Different from initialSync —
- * this runs after the daemon has already established what's in
- * the cloud, so it CAN sweep local skills the cloud has since
- * dropped. Sweep is bounded to keys observed in a prior cloud
- * listing (cloudObservedKeys) so a partial listing here can't
- * wipe out skills the daemon hasn't visited yet. */
-async function reconcileLoop(
-	opts: EngineOpts,
-	api: ApiClient,
-	lastPushedHash: Map<string, string>,
-	cloudObservedKeys: Set<string>,
-	pullsInFlight: Map<string, number>,
-	abort: AbortSignal,
-	getProjectId: () => string,
-	getKnownEtag: () => string | null,
-	setRevision: (rev: number) => void,
-	setEtag: (etag: string | null) => void,
-	health: SyncHealth,
-	onAuthFailure: (origin: string) => void,
-): Promise<void> {
-	while (!abort.aborted) {
-		await sleep(reconcileDelayMs(), abort);
-		if (abort.aborted) return;
-		try {
-			await reconcileFromCloud(
-				opts,
-				api,
-				lastPushedHash,
-				cloudObservedKeys,
-				pullsInFlight,
-				getProjectId(),
-				getKnownEtag(),
-				setRevision,
-				setEtag,
-				health,
-				onAuthFailure,
-			);
-		} catch (e) {
-			// listAllCloudSkills throws on 401/403 just like any other
-			// non-2xx — if we don't escalate here the reconcile loop
-			// just logs and sleeps, repeating forever on a revoked
-			// key. Pull-only daemons depend on this to ever exit.
-			if (isAuthFailure(e)) {
-				onAuthFailure("reconcile_list");
-				return;
-			}
-			health.set("pull", "listing", `reconcile listing: ${toErrorMessage(e)}`);
-			log.warn("engine.reconcile_failed", { error: toErrorMessage(e) });
-		}
-	}
-}
-
-export function reconcileDelayMs(random: () => number = Math.random): number {
-	const offset = (random() - 0.5) * 2 * RECONCILE_JITTER_MS;
-	return Math.round(RECONCILE_INTERVAL_MS + offset);
-}
-
-export function projectRefreshDelayMs(random: () => number = Math.random): number {
-	const offset = (random() - 0.5) * 2 * PROJECT_REFRESH_JITTER_MS;
-	return Math.round(PROJECT_REFRESH_INTERVAL_MS + offset);
-}
-
-async function reconcileFromCloud(
-	opts: EngineOpts,
-	api: ApiClient,
-	lastPushedHash: Map<string, string>,
-	cloudObservedKeys: Set<string>,
-	pullsInFlight: Map<string, number>,
-	projectId: string,
-	knownEtag: string | null,
-	setRevision: (rev: number) => void,
-	setEtag: (etag: string | null) => void,
-	health: SyncHealth,
-	onAuthFailure: (origin: string) => void,
-): Promise<void> {
-	const forceFullListing = shouldForceFullSkillListing(cloudObservedKeys, lastPushedHash, (key) =>
-		isReservedSkill(opts, key),
-	);
-	const { skills, complete, revision, etag, notModified } = await listAllCloudSkills(
-		api,
-		projectId,
-		forceFullListing ? null : knownEtag,
-	);
-	health.clear("pull", "listing");
-	if (notModified) {
-		health.clear("pull", "reconcile");
-		// Server confirmed nothing changed since `knownEtag` —
-		// no skills to pull, no sweep work. Save the bandwidth +
-		// pagination work; the local state is already consistent
-		// with cloud. Without this short-circuit, every connected
-		// daemon downloaded the full skill list once a minute on
-		// quiet accounts. The etag stays cached as-is — server
-		// confirmed it's still valid.
-		if (revision !== null) setRevision(revision);
-		return;
-	}
-	// Same all-or-nothing revision rule as initialSync: only
-	// acknowledge the cloud's revision after every per-skill pull
-	// and sweep succeeds in this pass. A pull that 5xx's or a
-	// sweep that EBUSY's would otherwise be silently abandoned —
-	// the next reconcile would send `If-None-Match: <revision>`
-	// and the server's 304 would skip the listing, leaving the
-	// failed item permanently stale until some other cloud change
-	// bumps the revision.
-	let allApplied = true;
-	if (complete) {
-		health.clear("pull", "reconcile");
-	} else {
-		health.set("pull", "reconcile", "reconcile: cloud skill listing was incomplete");
-	}
-	const cloudKeys = new Set(skills.map((s) => s.skill_key));
-	for (const skill of skills) {
-		cloudObservedKeys.add(skill.skill_key);
-		if (isReservedSkill(opts, skill.skill_key)) {
-			deferReservedSkill(opts, skill.skill_key, lastPushedHash);
-			health.clear("pull", `skill:${skill.skill_key}`);
-			continue;
-		}
-		const local = lastPushedHash.get(skill.skill_key);
-		if (local === skill.content_hash) {
-			health.clear("pull", `skill:${skill.skill_key}`);
-			continue;
-		}
-		// Skip if a cloud-pull is already mid-flight for this skill
-		// (e.g. boot initialSync still draining). Concurrent rm +
-		// tar extract on the same dir leaves it partially-extracted.
-		// The in-flight pull will plant the right hash; on the next
-		// reconcile cycle the equality check above short-circuits
-		// this branch. We DON'T set allApplied=false here — the
-		// in-flight pull will land its own revision update; this
-		// reconcile pass deferring to it is intentional.
-		if (pullsInFlight.has(skill.skill_key)) {
-			allApplied = false;
-			continue;
-		}
-		addInFlight(pullsInFlight, skill.skill_key);
-		try {
-			// Project-explicit so the daemon doesn't pull a sibling
-			// project's bytes on a multi-agent unbound key. See
-			// `pullSkill()` doc for the duplicate-skill_key case.
-			const tarBytes = await api.getBytes(
-				`/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
-			);
-			await opts.adapter.writeSkillArchive(skill.skill_key, tarBytes);
-			// Persist the pulled hash to skills-lock too so a daemon
-			// restart treats this as a known-shipped skill. Without
-			// this, a cloud-side delete during a subsequent offline
-			// window would surface at boot as "local-only, no record"
-			// → PUSH back, undoing the deletion.
-			const lock = readSkillsLock();
-			lock.skills[skillCacheKey(opts.adapter.agentType, skill.skill_key)] = {
-				hash: skill.content_hash,
-			};
-			writeSkillsLock(lock);
-			lastPushedHash.set(skill.skill_key, skill.content_hash);
-			health.clear("pull", `skill:${skill.skill_key}`);
-			log.info("engine.skill_pulled", {
-				skill_key: skill.skill_key,
-				content_hash: skill.content_hash,
-			});
-		} catch (e) {
-			if (isAuthFailure(e)) {
-				onAuthFailure("reconcile_pull");
-				return;
-			}
-			allApplied = false;
-			health.set(
-				"pull",
-				`skill:${skill.skill_key}`,
-				`skill ${skill.skill_key} pull: ${toErrorMessage(e)}`,
-			);
-			log.warn("engine.reconcile_pull_failed", {
-				skill_key: skill.skill_key,
-				error: toErrorMessage(e),
-			});
-		} finally {
-			releaseInFlight(pullsInFlight, skill.skill_key);
-		}
-	}
-
-	// Sweep handles cloud-side deletes (the dashboard's Uninstall
-	// button or a CLI delete on another machine). The reconcile
-	// loop is the only sync-from-cloud mechanism in the
-	// single-writer model. Only fires on a complete listing, and
-	// only for skill_keys we previously observed coming from the
-	// cloud — never for local-only skills that haven't yet shipped.
-	if (complete) {
-		for (const knownKey of [...cloudObservedKeys]) {
-			if (cloudKeys.has(knownKey)) continue;
-			if (isReservedSkill(opts, knownKey)) {
-				cloudObservedKeys.delete(knownKey);
-				health.clear("pull", `skill:${knownKey}`);
-				continue;
-			}
-			// Skip if a pull for this key is in flight. Without this,
-			// the sweep can rm the directory while the pull is mid-
-			// extract, and the pull's writeSkillArchive resurrects
-			// what we just deleted. Same guard the pull loop uses
-			// above (line 660); just hadn't propagated to sweep.
-			// Mark the pass incomplete so the in-flight pull's
-			// revision lands on a later pass after it converges.
-			if (pullsInFlight.has(knownKey)) {
-				allApplied = false;
-				continue;
-			}
-			addInFlight(pullsInFlight, knownKey);
-			try {
-				await opts.adapter.removeLocalSkill(knownKey);
-				lastPushedHash.delete(knownKey);
-				cloudObservedKeys.delete(knownKey);
-				// Drop the on-disk lock entry too — otherwise a
-				// daemon restart would see the stale entry and
-				// hit the boot "remove or push" branch again.
-				const lock = readSkillsLock();
-				delete lock.skills[skillCacheKey(opts.adapter.agentType, knownKey)];
-				writeSkillsLock(lock);
-				log.info("engine.skill_swept", { skill_key: knownKey });
-				health.clear("pull", `skill:${knownKey}`);
-				health.clear("push", `skill:${knownKey}`);
-				health.clear("push", `skill_scan:${knownKey}`);
-			} catch (e) {
-				allApplied = false;
-				health.set("pull", `skill:${knownKey}`, `skill ${knownKey} delete: ${toErrorMessage(e)}`);
-				log.warn("engine.sweep_failed", {
-					skill_key: knownKey,
-					error: toErrorMessage(e),
-				});
-			} finally {
-				releaseInFlight(pullsInFlight, knownKey);
-			}
-		}
-	} else {
-		// Listing was paginated/truncated. Some cloud-side deletes
-		// could be hidden behind unfetched pages, so the sweep above
-		// is a no-op — explicitly defer revision acknowledge so the
-		// next reconcile re-fetches and the sweep can run.
-		allApplied = false;
-	}
-
-	// All-or-nothing revision + etag update. See `allApplied`
-	// comment above.
-	if (complete && allApplied) {
-		if (revision !== null) setRevision(revision);
-		setEtag(etag);
-	}
-}
-
-/** Re-scan every local skill directory and re-enqueue any whose
- * current content hash disagrees with `lastPushedHash`. Called
- * when the daemon's project changes — the previous queue's
- * project-stamped items got dropped at drain time, so the user's
- * pending edits need to ride a fresh enqueue under the new project.
- * Idempotent: skills already in sync produce no enqueue.
- *
- * `pullsInFlight` is the SAME guard the watcher uses. While a
- * cloud pull is mid-`writeSkillArchive` (rm + extract), the
- * directory is empty for a few ms — hashing it would yield the
- * empty hash, the rescan would enqueue an empty-content push,
- * and the queue could echo that transient state back to the
- * server before the pull finishes. Skip keys with a pull in
- * flight; the next reconcile picks them up after the pull
- * completes and lastPushedHash converges. */
-async function rescanLocalSkillsForChanges(
-	opts: EngineOpts,
-	queue: RetryQueue,
-	lastPushedHash: Map<string, string>,
-	pullsInFlight: Map<string, number>,
-	getProjectId: () => string,
-): Promise<void> {
-	const localKeys = filterValidSkillKeysForSync(await opts.adapter.listSkillKeys());
-	for (const key of localKeys) {
-		if (pullsInFlight.has(key)) {
-			log.debug("engine.rescan_skipped_in_flight", { skill_key: key });
-			continue;
-		}
-		await enqueueIfChanged(opts, queue, lastPushedHash, key, getProjectId).catch((e) => {
-			log.warn("engine.rescan_enqueue_failed", { skill_key: key, error: toErrorMessage(e) });
-		});
-	}
 }
 
 /** Walk up from `pathFromRoot` until we find a directory
@@ -2372,93 +1938,11 @@ export function resolveOwningSkillKey(rootDir: string, pathFromRoot: string): st
 // bundled-`clawdi` filtering inline. See base.ts AgentAdapter
 // docstring for the contract.
 
-/** Pull a single skill. Used by both boot initialSync, runtime
- * SSE `skill_changed` handler, and reconcile fallback.
- *
- * Project-explicit by design: an unbound CLI key on a multi-agent
- * account can have the same `skill_key` in two different projects,
- * and the legacy account-wide download endpoint resolves "most-
- * recently-updated across visible projects" — that can plant
- * agent A's bytes on agent B's local disk. Always pin to the
- * env's resolved `projectId`. */
-async function pullSkill(
-	opts: EngineOpts,
-	api: ApiClient,
+function isReservedSkill(
+	opts: { adapter: Pick<AgentAdapter, "getSkillsRootDir"> },
 	skillKey: string,
-	lastPushedHash: Map<string, string>,
-	projectId: string,
-): Promise<"applied" | "deferred"> {
-	if (isReservedSkill(opts, skillKey)) {
-		deferReservedSkill(opts, skillKey, lastPushedHash);
-		return "deferred";
-	}
-	const tarBytes = await api.getBytes(
-		`/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillKey)}/download`,
-	);
-	await opts.adapter.writeSkillArchive(skillKey, tarBytes);
-	// Recompute the on-disk hash so the watcher's next tick
-	// recognizes this as our own write and skips re-uploading.
-	const dir = join(opts.adapter.getSkillsRootDir(), skillKey);
-	const hash = await computeSkillFolderHash(dir);
-	// Persist to skills-lock so a future daemon restart treats
-	// this as a known-shipped skill. Without this, a cloud-side
-	// delete that lands while the daemon is offline would
-	// surface at boot as "local-only, no record" → PUSH back,
-	// resurrecting the deletion. Mirrors the push-success path.
-	const lock = readSkillsLock();
-	lock.skills[skillCacheKey(opts.adapter.agentType, skillKey)] = { hash };
-	writeSkillsLock(lock);
-	lastPushedHash.set(skillKey, hash);
-	log.info("engine.skill_pulled", { skill_key: skillKey });
-	return "applied";
-}
-
-function isReservedSkill(opts: EngineOpts, skillKey: string): boolean {
-	return shouldIgnoreUserSkill(join(opts.adapter.getSkillsRootDir(), skillKey), skillKey);
-}
-
-function deferReservedSkill(
-	opts: EngineOpts,
-	skillKey: string,
-	lastPushedHash: Map<string, string>,
-): void {
-	const hadMemoryHash = lastPushedHash.delete(skillKey);
-	const lock = readSkillsLock();
-	const key = skillCacheKey(opts.adapter.agentType, skillKey);
-	const hadPersistentHash = key in lock.skills;
-	if (hadPersistentHash) delete lock.skills[key];
-	if (hadMemoryHash || hadPersistentHash) writeSkillsLock(lock);
-}
-
-export function clearReservedSkillHashes(
-	adapter: Pick<AgentAdapter, "agentType" | "getSkillsRootDir">,
-	lastPushedHash: Map<string, string>,
-	clearLegacyFlatKeys = listRegisteredAgentTypes().length <= 1,
-): void {
-	const lock = readSkillsLock();
-	let changed = false;
-	for (const skillKey of [...lastPushedHash.keys()]) {
-		if (!shouldIgnoreUserSkill(join(adapter.getSkillsRootDir(), skillKey), skillKey)) continue;
-		lastPushedHash.delete(skillKey);
-		const partitioned = skillCacheKey(adapter.agentType, skillKey);
-		if (partitioned in lock.skills) {
-			delete lock.skills[partitioned];
-			changed = true;
-		}
-		if (clearLegacyFlatKeys && skillKey in lock.skills) {
-			delete lock.skills[skillKey];
-			changed = true;
-		}
-	}
-	if (changed) writeSkillsLock(lock);
-}
-
-export function shouldForceFullSkillListing(
-	cloudObservedKeys: ReadonlySet<string>,
-	lastPushedHash: ReadonlyMap<string, string>,
-	isReserved: (skillKey: string) => boolean,
 ): boolean {
-	return [...cloudObservedKeys].some((key) => isReserved(key) || !lastPushedHash.has(key));
+	return shouldIgnoreUserSkill(join(opts.adapter.getSkillsRootDir(), skillKey), skillKey);
 }
 
 /** Heartbeat sender. Fires immediately on boot then every
@@ -2559,53 +2043,10 @@ async function touchHealthFile(agentType: string): Promise<void> {
 
 function redactItem(item: QueueItem): Record<string, unknown> {
 	// Strip hash details to keep log lines small.
-	if (item.kind === "skill_push") {
+	if (item.kind === "skill_push" || item.kind === "skill_delete") {
 		return { kind: item.kind, skill_key: item.skill_key, attempts: item.attempts };
 	}
 	return { kind: item.kind, attempts: item.attempts };
-}
-
-export function rememberPendingSkillUploadEcho(
-	m: Map<string, PendingSkillUploadEcho>,
-	key: string,
-	contentHash: string,
-	nowMs = Date.now(),
-): void {
-	m.set(key, {
-		contentHash,
-		expiresAtMs: nowMs + SKILL_UPLOAD_ECHO_TTL_MS,
-	});
-}
-
-export function consumePendingSkillUploadEcho(
-	m: Map<string, PendingSkillUploadEcho>,
-	key: string,
-	contentHash: string,
-	nowMs = Date.now(),
-): boolean {
-	const pending = m.get(key);
-	if (!pending) return false;
-	if (pending.expiresAtMs <= nowMs) {
-		m.delete(key);
-		return false;
-	}
-	if (pending.contentHash !== contentHash) return false;
-	m.delete(key);
-	return true;
-}
-
-/** Bump the in-flight refcount for a skill_key. Pair with
- * releaseInFlight in a finally block. */
-export function addInFlight(m: Map<string, number>, key: string): void {
-	m.set(key, (m.get(key) ?? 0) + 1);
-}
-
-/** Release one in-flight reference. Removes the entry once the
- * count hits zero so `m.has(key)` reports false again. */
-export function releaseInFlight(m: Map<string, number>, key: string): void {
-	const n = (m.get(key) ?? 0) - 1;
-	if (n <= 0) m.delete(key);
-	else m.set(key, n);
 }
 
 function sleep(ms: number, abort: AbortSignal): Promise<void> {

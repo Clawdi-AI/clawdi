@@ -675,6 +675,15 @@ class HostedRuntimeMcp(_StrictHostedWireModel):
         return value
 
 
+class PersistedHostedRuntimeMcp(HostedRuntimeMcp):
+    """Strict reader for the canonical MCP document stored in runtime state.
+
+    Dashboard projections must parse this model and deliberately copy only
+    non-sensitive inventory fields. Returning the persisted document itself
+    would expose remote URLs, headers, secret references, or stdio commands.
+    """
+
+
 def validate_hosted_runtime_mcp_desired_state(
     value: dict[str, object] | None,
 ) -> dict[str, object] | None:

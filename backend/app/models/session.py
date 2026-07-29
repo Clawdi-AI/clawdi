@@ -57,13 +57,13 @@ class AgentEnvironment(Base, TimestampMixin):
 
     # `clawdi daemon` observability. last_seen_at is the
     # legacy "anything happened on this env" timestamp; sync_*
-    # fields are specifically about the daemon's push/pull cycle.
+    # fields are specifically about the daemon's projection cycle.
     # Dashboard renders "Last synced: X ago" + "Daemon offline" red
     # badge by reading these.
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_sync_error: Mapped[str | None] = mapped_column(Text)
-    # Last `users.skills_revision` the daemon pulled successfully —
-    # lets server detect "missed events" if SSE drops mid-flight.
+    # Last `users.skills_revision` the daemon reconciled successfully —
+    # lets the server detect missed invalidations if SSE drops mid-flight.
     last_revision_seen: Mapped[int | None] = mapped_column(Integer)
     # Peak retry-queue depth since the daemon last booted. Resets
     # on `clawdi daemon` start. NOT a 24h rolling window — that

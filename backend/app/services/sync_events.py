@@ -7,18 +7,18 @@ Single owner of three intertwined concerns:
    would see — skill insert, content update, soft-delete — bumps
    it. We centralize the bump in one helper so adding new skill
    mutation paths can't accidentally skip the increment. The
-   daemon's 60s reconcile loop uses this as its `If-None-Match`
-   short-circuit and as the safety-net catchup mechanism when
-   SSE events are missed.
+   daemon uses this as an `If-None-Match` fence for periodic complete
+   Agent-Project inventory catch-up when live SSE events are missed.
 
 2. Each running `clawdi daemon` process has an open SSE connection
    to `GET /v1/sync/events` and is parked in a per-user queue.
    When `bump_skills_revision()` runs, it pushes a
-   `{type:"skill_changed"|"skill_deleted", skill_key, project_id,
-   skills_revision}` event to every connection of that user, and
+   a Cloud-owned `skill_changed`/`skill_deleted` event or an
+   Agent-projection `agent_skill_changed`/`agent_skill_deleted` event to every
+   connection of that user, and
    every accepted project member, that has visibility into the
-   event's `project_id`. SSE is the primary path for instant
-   propagation; 60s reconcile is the safety net.
+   event's `project_id`. SSE is the low-latency invalidation path;
+   revision-fenced complete inventory reconciliation is the catch-up path.
 
 3. Runtime desired-state changes emit a signal-only
    `{type:"runtime_manifest_changed", environment_id}` event. Bound deploy
@@ -44,7 +44,7 @@ event for delivery, the hook fires only when the surrounding
 transaction successfully commits, and rollback drops the queued
 event silently. Without this, a route that bumped the counter
 then rolled back would have already fanned out a phantom event,
-making every daemon do a redundant pull.
+making every daemon do a redundant local rescan.
 
 Cross-process delivery uses PostgreSQL LISTEN/NOTIFY. The notification is
 enqueued inside the same database transaction as the desired-state mutation,
@@ -90,6 +90,15 @@ log = logging.getLogger(__name__)
 _POSTGRES_CHANNEL = "clawdi_sync_events"
 _PROCESS_TOKEN = uuid4().hex
 _POSTGRES_PAYLOAD_LIMIT_BYTES = 7900
+
+# Additive Agent-authoritative event names are a rolling-upgrade safety fence.
+# Released daemons ignore unknown event types, so an already-established SSE
+# connection on an old worker cannot turn a new worker's Agent projection
+# mutation into a Cloud-to-filesystem write/delete. Current daemons accept both
+# families as invalidation hints. Cloud-owned Project events keep their released
+# names and semantics.
+AGENT_SKILL_CHANGED_EVENT = "agent_skill_changed"
+AGENT_SKILL_DELETED_EVENT = "agent_skill_deleted"
 
 
 @dataclass
@@ -251,8 +260,9 @@ def _broadcast(user_id: UUID, event_payload: dict[str, Any]) -> None:
         try:
             sub.queue.put_nowait(event_payload)
         except asyncio.QueueFull:
-            # Subscriber is too slow / stalled; the 60s reconcile
-            # safety net will catch the change anyway. Logging at
+            # Subscriber is too slow or stalled. The daemon's periodic,
+            # revision-fenced complete inventory catch-up handles missed
+            # events without treating a failed/truncated list as absence.
             # warning level so a chronically-overloaded daemon
             # shows up in metrics.
             log.warning("sync_events queue full for user %s; event dropped", user_id)
@@ -383,13 +393,10 @@ async def bump_skills_revision(
     metadata leakage — even if the daemon's client-side filter
     refused to act on them.
 
-    `content_hash` is the post-write tree hash. The daemon uses
-    it for echo suppression: an event whose hash matches the
-    daemon's `lastPushedHash[skill_key]` is the daemon's own
-    upload bouncing back through SSE — pulling it would clobber
-    a fresher local edit with the bytes we just sent. Optional
-    so future event types (deletes) can omit it; daemons treat
-    a missing hash as "always pull, can't be sure it's our own".
+    `content_hash` is the post-write tree hash retained for released-client
+    diagnostics. Agent-authoritative daemons treat Skill events only as
+    local-rescan hints and never download, write, or delete filesystem content
+    from SSE. Optional so delete events can omit it.
 
     The SSE event is NOT broadcast immediately. We queue it on the
     session via SQLAlchemy's `after_commit` hook; rollback discards
