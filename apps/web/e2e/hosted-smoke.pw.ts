@@ -2103,7 +2103,7 @@ test("failed checkout start stays contextual and retries without duplicate or in
 	await page.goto("/deploy");
 
 	await page.getByRole("button", { name: "Continue to checkout" }).click();
-	const error = page.getByTestId("deploy-submit-error");
+	const error = page.locator("[data-sonner-toast]").filter({ hasText: "Checkout didn’t open" });
 	await expect(error.getByText("Checkout didn’t open", { exact: true })).toBeVisible();
 	await expect(error).toContainText("Secure checkout is temporarily unavailable.");
 	await expect(error).toContainText("No payment was submitted.");
@@ -2111,13 +2111,13 @@ test("failed checkout start stays contextual and retries without duplicate or in
 	await expect(error).not.toContainText("usr_secret");
 	await expect(error).toBeInViewport();
 	const errorBounds = await error.boundingBox();
-	if (!errorBounds) throw new Error("Expected the compact checkout alert to have layout bounds");
+	if (!errorBounds) throw new Error("Expected the checkout error toast to have layout bounds");
 	expect(errorBounds.x).toBeGreaterThanOrEqual(0);
 	expect(errorBounds.x + errorBounds.width).toBeLessThanOrEqual(390);
 	await expect(
 		page.getByText("The billing service is having trouble", { exact: false }),
 	).toHaveCount(0);
-	await expect(page.locator("[data-sonner-toast]")).toHaveCount(0);
+	await expect(page.locator("[data-sonner-toast]")).toHaveCount(1);
 	await expect(checkoutRequests).toHaveLength(1);
 
 	await error.getByRole("button", { name: "Retry", exact: true }).click();
