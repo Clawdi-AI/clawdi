@@ -981,9 +981,20 @@ describe("Clerk OAuth loopback", () => {
 		const loopback = await startClerkOAuthLoopback(redirectUri, "state-value");
 		const rejected = await fetch(`${redirectUri}?code=wrong-code&state=wrong-state`);
 		expect(rejected.status).toBe(400);
-		expect(await rejected.text()).not.toContain("wrong-code");
+		expect(rejected.headers.get("content-security-policy")).toBe(
+			"default-src 'none'; style-src 'unsafe-inline'",
+		);
+		const rejectedHtml = await rejected.text();
+		expect(rejectedHtml).not.toContain("wrong-code");
+		expect(rejectedHtml).toContain("Login not completed");
+		expect(rejectedHtml).toContain('class="brand"');
 		const response = await fetch(`${redirectUri}?code=secret-code&state=state-value`);
-		expect(await response.text()).not.toContain("secret-code");
+		expect(response.status).toBe(200);
+		const acceptedHtml = await response.text();
+		expect(acceptedHtml).not.toContain("secret-code");
+		expect(acceptedHtml).toContain("Login complete");
+		expect(acceptedHtml).toContain('class="brand"');
+		expect(acceptedHtml).not.toContain("<script");
 		expect(await loopback.callbackUrl).toBe(`${redirectUri}?code=secret-code&state=state-value`);
 		await loopback.close();
 	});
