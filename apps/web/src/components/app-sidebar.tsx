@@ -168,7 +168,7 @@ const CONNECTED_AGENT_SECTIONS: {
 	{
 		id: "skills",
 		icon: Sparkles,
-		tooltip: "Manifest configuration and Agent filesystem Skills",
+		tooltip: "Skills synced from this Agent filesystem",
 	},
 	{
 		id: "projects",
@@ -210,7 +210,7 @@ const HOSTED_AGENT_SECTIONS: {
 	{
 		id: "skills",
 		icon: Sparkles,
-		tooltip: "Skills installed in this agent's Agent Project",
+		tooltip: "Manifest configuration and Agent filesystem Skills",
 	},
 	{
 		id: "mcp",

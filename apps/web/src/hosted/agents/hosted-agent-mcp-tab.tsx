@@ -16,6 +16,7 @@ import {
 	agentMcpInventoryQueryKey,
 	agentMcpInventoryRefetchInterval,
 	mcpRuntimeHealthForDeployment,
+	mcpRuntimeIsConvergedForDeployment,
 } from "@/hosted/agents/hosted-agent-mcp";
 import { unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
@@ -46,7 +47,7 @@ export function HostedAgentMcpTab({
 				}),
 			),
 		enabled: addressable,
-		refetchInterval: (query) => agentMcpInventoryRefetchInterval(query.state.data),
+		refetchInterval: (query) => agentMcpInventoryRefetchInterval(query.state.data, deploymentId),
 		refetchIntervalInBackground: false,
 		refetchOnWindowFocus: true,
 	});
@@ -54,6 +55,7 @@ export function HostedAgentMcpTab({
 		environmentId,
 		addressable && convergenceEvidenceAvailable,
 		runtimeEvidenceFence,
+		(snapshot) => mcpRuntimeIsConvergedForDeployment(snapshot, deploymentId),
 	);
 
 	if (!addressable) {

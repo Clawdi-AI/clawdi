@@ -42,9 +42,20 @@ export function mcpRuntimeHealthForDeployment(
 		: undefined;
 }
 
+/** Settle polling only when the canonical overall health belongs to this deployment. */
+export function mcpRuntimeIsConvergedForDeployment(
+	runtime: AgentRuntimeObserved,
+	deploymentId: string,
+): boolean {
+	return mcpRuntimeHealthForDeployment(runtime, deploymentId)?.status === "ok";
+}
+
 /** Keep an active MCP page fresh while downstream desired state is projected. */
-export function agentMcpInventoryRefetchInterval(inventory: AgentMcpInventory | undefined): number {
-	return inventory?.availability === "unavailable"
-		? MCP_INVENTORY_UNAVAILABLE_REFRESH_MS
-		: MCP_INVENTORY_REFRESH_MS;
+export function agentMcpInventoryRefetchInterval(
+	inventory: AgentMcpInventory | undefined,
+	deploymentId: string,
+): number {
+	return agentMcpInventoryMatchesDeployment(inventory, deploymentId)
+		? MCP_INVENTORY_REFRESH_MS
+		: MCP_INVENTORY_UNAVAILABLE_REFRESH_MS;
 }

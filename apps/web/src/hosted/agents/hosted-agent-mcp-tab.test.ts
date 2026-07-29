@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { QueryClient } from "@tanstack/react-query";
+import {
+	agentRuntimeObservedRefetchInterval,
+	RUNTIME_OBSERVED_PENDING_REFETCH_INTERVAL_MS,
+	RUNTIME_OBSERVED_SETTLED_REFETCH_INTERVAL_MS,
+} from "@/hooks/agent-runtime-observed-query";
 import type { AgentMcpInventory } from "./hosted-agent-mcp";
 import {
 	agentMcpInventoryMatchesDeployment,
@@ -8,6 +13,7 @@ import {
 	agentMcpInventoryQueryKey,
 	agentMcpInventoryRefetchInterval,
 	mcpRuntimeHealthForDeployment,
+	mcpRuntimeIsConvergedForDeployment,
 } from "./hosted-agent-mcp";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
@@ -18,6 +24,41 @@ function inventory(
 	deploymentId: string | null = "deployment-1",
 ): AgentMcpInventory {
 	return { agent_id: AGENT_ID, deployment_id: deploymentId, availability, servers };
+}
+
+type RuntimeObserved = NonNullable<Parameters<typeof mcpRuntimeHealthForDeployment>[0]>;
+
+function runtime(deploymentId: string): RuntimeObserved {
+	return {
+		environment: {
+			id: AGENT_ID,
+			name: "Agent",
+			machine_name: "Agent",
+			sort_order: 0,
+			agent_type: "openclaw",
+			agent_version: null,
+			os: "linux",
+			last_seen_at: null,
+			queue_depth_high_water: 0,
+			dropped_count: 0,
+			sync_enabled: false,
+			explicit_identity: true,
+			hosted_managed: true,
+			default_project_id: "project-1",
+		},
+		desired: {
+			deployment_id: deploymentId,
+			instance_id: `instance-${deploymentId}`,
+			desired_config_generation: 1,
+			enabled_runtimes: ["openclaw"],
+			has_mcp: true,
+			has_tools: false,
+			managed_skills: [],
+		},
+		observed: { observed_config_generation: 1 },
+		health: { status: "ok", reasons: [] },
+		provider_health: [],
+	};
 }
 
 describe("Hosted MCP page boundary", () => {
@@ -32,6 +73,7 @@ describe("Hosted MCP page boundary", () => {
 		const schema = generated.slice(schemaStart, schemaEnd);
 		expect(source).toContain('api.GET("/v1/agents/{agent_id}/mcp"');
 		expect(source).toContain("mcpRuntimeHealthForDeployment(runtimeObserved.data, deploymentId)");
+		expect(source).toContain("mcpRuntimeIsConvergedForDeployment(snapshot, deploymentId)");
 		expect(source).toContain("runtimeEvidenceFence");
 		expect(source).toContain("refetchIntervalInBackground: false");
 		expect(source).not.toMatch(/observed_config_generation|desired_config_generation/);
@@ -52,39 +94,20 @@ describe("Hosted MCP page boundary", () => {
 		expect(schema).not.toMatch(/\b(url|headers|secretRef|command|args|env)\b/i);
 	});
 
-	test("rejects overall runtime health from a replaced deployment", () => {
-		const runtime: NonNullable<Parameters<typeof mcpRuntimeHealthForDeployment>[0]> = {
-			environment: {
-				id: AGENT_ID,
-				name: "Agent",
-				machine_name: "Agent",
-				sort_order: 0,
-				agent_type: "openclaw",
-				agent_version: null,
-				os: "linux",
-				last_seen_at: null,
-				queue_depth_high_water: 0,
-				dropped_count: 0,
-				sync_enabled: false,
-				explicit_identity: true,
-				hosted_managed: true,
-				default_project_id: "project-1",
-			},
-			desired: {
-				deployment_id: "deployment-old",
-				instance_id: "instance-old",
-				desired_config_generation: 1,
-				enabled_runtimes: ["openclaw"],
-				has_mcp: true,
-				has_tools: false,
-				managed_skills: [],
-			},
-			observed: { observed_config_generation: 1 },
-			health: { status: "ok", reasons: [] },
-			provider_health: [],
-		};
-		expect(mcpRuntimeHealthForDeployment(runtime, "deployment-current")).toBeUndefined();
-		expect(mcpRuntimeHealthForDeployment(runtime, "deployment-old")?.status).toBe("ok");
+	test("keeps replaced deployment health on the pending polling interval", () => {
+		const oldRuntime = runtime("deployment-old");
+		const currentRuntime = runtime("deployment-current");
+		const isCurrentDeploymentConverged = (snapshot: RuntimeObserved) =>
+			mcpRuntimeIsConvergedForDeployment(snapshot, "deployment-current");
+
+		expect(mcpRuntimeHealthForDeployment(oldRuntime, "deployment-current")).toBeUndefined();
+		expect(mcpRuntimeHealthForDeployment(oldRuntime, "deployment-old")?.status).toBe("ok");
+		expect(agentRuntimeObservedRefetchInterval(oldRuntime, isCurrentDeploymentConverged)).toBe(
+			RUNTIME_OBSERVED_PENDING_REFETCH_INTERVAL_MS,
+		);
+		expect(agentRuntimeObservedRefetchInterval(currentRuntime, isCurrentDeploymentConverged)).toBe(
+			RUNTIME_OBSERVED_SETTLED_REFETCH_INTERVAL_MS,
+		);
 	});
 
 	test("distinguishes unavailable desired state from a configured empty inventory", () => {
@@ -149,13 +172,15 @@ describe("Hosted MCP page boundary", () => {
 	});
 
 	test("polls unavailable, empty, and non-empty desired inventory without claiming convergence", () => {
-		expect(agentMcpInventoryRefetchInterval(inventory("unavailable"))).toBe(2_000);
-		expect(agentMcpInventoryRefetchInterval(inventory("available"))).toBe(10_000);
+		expect(agentMcpInventoryRefetchInterval(inventory("unavailable"), "deployment-1")).toBe(2_000);
+		expect(agentMcpInventoryRefetchInterval(inventory("available"), "deployment-1")).toBe(10_000);
+		expect(agentMcpInventoryRefetchInterval(inventory("available"), "deployment-2")).toBe(2_000);
 		expect(
 			agentMcpInventoryRefetchInterval(
 				inventory("available", [
 					{ id: "local", transport: "stdio", enabled: true, source: "deployment_manifest" },
 				]),
+				"deployment-1",
 			),
 		).toBe(10_000);
 	});
