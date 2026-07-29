@@ -43,20 +43,6 @@ const CLI_STEPS = [
 	},
 ];
 
-const AFTER_SETUP_STEPS = [
-	{
-		title: "Check live sync",
-		code: "clawdi daemon status",
-		description:
-			"Shows the daemon state for every registered agent. If you opted out during setup, run `clawdi daemon install`.",
-	},
-	{
-		title: "One-time history backup (optional)",
-		code: "clawdi push --modules sessions --all-agents --all",
-		description: "Uploads conversation history that existed before sync was on.",
-	},
-];
-
 function useCopy(duration = 2000) {
 	const [copied, setCopied] = useState(false);
 	const copy = (text: string) => {
@@ -141,15 +127,6 @@ export function AddAgentSetup() {
 						</p>
 					</div>
 					<CommandSteps steps={CLI_STEPS} numbered />
-					<div className="space-y-3 border-t pt-4">
-						<div>
-							<p className="text-sm font-medium">After setup</p>
-							<p className="mt-1 text-xs text-muted-foreground">
-								These checks are optional and can be run after the agent connects.
-							</p>
-						</div>
-						<CommandSteps steps={AFTER_SETUP_STEPS} />
-					</div>
 				</TabsContent>
 				<TabsContent value="prompt" className="mt-2 space-y-3">
 					<div>
