@@ -152,6 +152,10 @@ jobs:
         working-directory: packages/cli
         run: bun run typecheck
 
+      - name: Test
+        if: steps.check.outputs.should_release == 'true'
+        run: bun test --isolate --max-concurrency=1 packages/cli
+
       - name: Build package and native release matrix
         id: build_native_release
         if: steps.check.outputs.should_release == 'true'
@@ -165,10 +169,6 @@ jobs:
             bun test \
               tests/e2e/native-installer.e2e.test.ts \
               tests/e2e/native-daemon.e2e.test.ts
-
-      - name: Test
-        if: steps.check.outputs.should_release == 'true'
-        run: bun test --isolate --max-concurrency=1 packages/cli
 
       - name: Pack and verify immutable release artifact
         id: pack_release
