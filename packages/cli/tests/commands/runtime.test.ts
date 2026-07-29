@@ -14,6 +14,7 @@ import { join } from "node:path";
 import {
 	assertCurrentEgressIdentity,
 	buildEgressEngineSpawnCommand,
+	buildRuntimeUserReadCommand,
 	publishEgressSystemCaBundle,
 	runtimeApplyCommand,
 	runtimePlanCommand,
@@ -26,6 +27,13 @@ let origHome: string | undefined;
 let origApiUrl: string | undefined;
 
 describe("runtime sidecar egress privilege drop", () => {
+	it("checks the CA as the runtime user when convergence runs as root", () => {
+		expect(buildRuntimeUserReadCommand(0, 10001, "clawdi", "/run/clawdi/egress/ca.pem")).toEqual({
+			command: "gosu",
+			args: ["clawdi", "test", "-r", "/run/clawdi/egress/ca.pem"],
+		});
+	});
+
 	it("prefers setpriv with an explicit non-root numeric identity", () => {
 		expect(
 			buildEgressEngineSpawnCommand(

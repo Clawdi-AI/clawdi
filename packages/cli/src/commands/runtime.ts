@@ -1615,8 +1615,9 @@ function applySystemdRuntimeUpdate(
 		: allUser;
 	const systemUnitsChanged = [...system.added, ...system.changed].sort();
 	const userUnitsChanged = [...user.added, ...user.changed].sort();
-	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter((unit) =>
-		after.system.has(unit),
+	const scopedSystemUnits = opts.activationScope ? new Set(opts.activationScope.systemUnits) : null;
+	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter(
+		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
 	);
 	const recoverFailedUnits = opts.recoverFailedUnits !== false;
 	const activationChanged =
@@ -1855,6 +1856,27 @@ function runtimeUserSystemctlResult(
 		]);
 	}
 	return runCommandResult(systemctlPath(), ["--user", ...args]);
+}
+
+function assertRuntimeUserCanRead(path: string): void {
+	const runtimeUser = runtimeUserName();
+	const runtimeUid = Number.parseInt(commandOutput("id", ["-u", runtimeUser]).trim(), 10);
+	if (!Number.isSafeInteger(runtimeUid) || runtimeUid < 0) {
+		throw new Error(`could not resolve runtime uid for ${runtimeUser}`);
+	}
+	const proof = buildRuntimeUserReadCommand(process.getuid?.(), runtimeUid, runtimeUser, path);
+	runCommand(proof.command, proof.args);
+}
+
+export function buildRuntimeUserReadCommand(
+	currentUid: number | undefined,
+	runtimeUid: number,
+	runtimeUser: string,
+	path: string,
+): { command: string; args: string[] } {
+	return currentUid === runtimeUid
+		? { command: "test", args: ["-r", path] }
+		: { command: "gosu", args: [runtimeUser, "test", "-r", path] };
 }
 
 function commandOutput(command: string, args: string[]): string {
@@ -2573,7 +2595,7 @@ function applyRuntimeDesiredState(
 						},
 					);
 					if (prerequisite.applied) {
-						accessSync(paths.egressSystemCaFile, constants.R_OK);
+						assertRuntimeUserCanRead(paths.egressSystemCaFile);
 						egressPrerequisiteActivated = true;
 					}
 					return prerequisite;
