@@ -320,6 +320,65 @@ describe("reconcileDeploymentSnapshots", () => {
 
 		expect(reconciled?.resource.status?.summary_state).toBe("running");
 		expect(reconciled?.accepted_operation).toEqual(accepted);
+
+		const [reconciledWithoutOperation] = reconcileDeploymentSnapshots(
+			[optimistic],
+			[
+				hostedDeploymentFixture({
+					id: "hdep_delete",
+					status: "running",
+					acceptedOperation: null,
+				}),
+			],
+		);
+		expect(reconciledWithoutOperation?.accepted_operation).toEqual(accepted);
+	});
+
+	test("converges a delete when the same operation becomes terminal and cancelled", () => {
+		const accepted = acceptedOperation("delete");
+		const optimistic = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "deleting",
+			acceptedOperation: accepted,
+		});
+		const cancelledOperation: DeploymentOperation = {
+			...accepted,
+			done: true,
+			error: {
+				code: 1,
+				message: "Delete was cancelled before teardown.",
+				details: [],
+			},
+			response: null,
+		};
+		const restoredServerSnapshot = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "running",
+			acceptedOperation: cancelledOperation,
+			computeSlotOccupancy: {
+				occupies_slot: true,
+				backing_infra: "present",
+				reason: "backing_infra_present",
+			},
+		});
+
+		const [reconciled] = reconcileDeploymentSnapshots([optimistic], [restoredServerSnapshot]);
+
+		expect(reconciled).toEqual(restoredServerSnapshot);
+		expect(reconciled?.accepted_operation?.done).toBe(true);
+		expect(reconciled?.accepted_operation?.error?.code).toBe(1);
+
+		const laterStartOperation = acceptedOperation("start");
+		const laterServerSnapshot = hostedDeploymentFixture({
+			id: "hdep_delete",
+			status: "starting",
+			acceptedOperation: laterStartOperation,
+		});
+		const [afterCancellation] = reconcileDeploymentSnapshots(
+			[restoredServerSnapshot],
+			[laterServerSnapshot],
+		);
+		expect(afterCancellation?.accepted_operation).toEqual(laterStartOperation);
 	});
 
 	test("lets a failed server snapshot override optimistic pending state and retain its verb", () => {

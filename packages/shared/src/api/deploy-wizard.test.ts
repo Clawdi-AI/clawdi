@@ -218,7 +218,6 @@ describe("hosted deploy compute and payment contract", () => {
 
 	test("honors delete_accepted occupancy while backing infrastructure remains", () => {
 		const deleting = includedDeployment(false);
-		deleting.accepted_operation = acceptedDeleteOperation();
 		deleting.compute_slot_occupancy = {
 			occupies_slot: false,
 			backing_infra: "present",
@@ -234,6 +233,23 @@ describe("hosted deploy compute and payment contract", () => {
 
 		expect(usesHostedDeployIncludedBasicSlot([deleting])).toBe(false);
 		expect(usesHostedDeployIncludedBasicSlot([deleting, includedDeployment(true)])).toBe(true);
+	});
+
+	test("restores included Basic occupancy when an accepted delete is cancelled", () => {
+		const restored = includedDeployment(true);
+		const acceptedDelete = acceptedDeleteOperation();
+		restored.accepted_operation = {
+			...acceptedDelete,
+			done: true,
+			error: {
+				code: 1,
+				message: "Delete was cancelled before teardown.",
+				details: [],
+			},
+			response: null,
+		};
+
+		expect(usesHostedDeployIncludedBasicSlot([restored])).toBe(true);
 	});
 
 	test("requires an explicit Basic offer once the free slot is occupied", () => {
