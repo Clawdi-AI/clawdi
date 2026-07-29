@@ -172,7 +172,7 @@ the explicit capability, and orphan Agent Projects also fail closed.
 Mixed-version safety uses the explicit
 `X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` capability, never a
 User-Agent guess. Every Clawdi backend worker must serve the gate and dedicated
-endpoints and old SSE connections must be drained before CLI 0.13.11 is rolled
+endpoints and old SSE connections must be drained before CLI 0.13.12 is rolled
 out; Web follows the CLI. An old CLI reaching a current backend receives 426
 on Agent-Project sync surfaces. A current CLI reaching an old backend receives
 a dedicated-route 404, retains its local operation, and does not create a Cloud
