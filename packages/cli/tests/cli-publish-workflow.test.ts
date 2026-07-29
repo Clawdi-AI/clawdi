@@ -123,7 +123,7 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain('tarball="$CLI_TARBALL_FILENAME"');
 		expect(workflow).toContain(`name: \${{ env.CLI_ARTIFACT_NAME }}`);
 		expect(workflow).toContain("run: bun run typecheck");
-		expect(workflow).toContain("run: bun test --isolate --max-concurrency=1");
+		expect(workflow).toContain("run: bun test --isolate --max-concurrency=1 packages/cli");
 		expect(workflow).toContain('npm install "$tarball_path" --ignore-scripts --no-audit --no-fund');
 		expect(workflow).toContain('sha256sum --check "$tarball.sha256"');
 		expect(workflow.match(/npm pack /g) ?? []).toHaveLength(1);

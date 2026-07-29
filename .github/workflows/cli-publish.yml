@@ -168,8 +168,7 @@ jobs:
 
       - name: Test
         if: steps.check.outputs.should_release == 'true'
-        working-directory: packages/cli
-        run: bun test --isolate --max-concurrency=1
+        run: bun test --isolate --max-concurrency=1 packages/cli
 
       - name: Pack and verify immutable release artifact
         id: pack_release
