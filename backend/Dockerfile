@@ -32,6 +32,9 @@ RUN mkdir -p /data/files /home/app/.cache/fastembed \
 
 USER app
 
+# Kamal requires images to carry the service identity label.
+LABEL service="clawdi"
+
 EXPOSE 8000
 
 CMD ["python", "-m", "app.runtime_entrypoint"]
