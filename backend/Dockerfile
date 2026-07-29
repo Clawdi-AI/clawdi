@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.12-slim AS runtime
+FROM python:3.13-slim AS runtime
 
 ARG APP_UID=1000
 ARG APP_GID=1000
