@@ -323,6 +323,7 @@ export class OpenClawAdapter implements AgentAdapter {
 
 			for (const entry of readdirSync(dir, { withFileTypes: true })) {
 				if (!entry.isDirectory()) continue;
+				if (entry.name.startsWith(".")) continue;
 				if (SKIP_DIRS.has(entry.name)) continue;
 				const dirPath = join(dir, entry.name);
 				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
@@ -388,6 +389,7 @@ export class OpenClawAdapter implements AgentAdapter {
 		const out: string[] = [];
 		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
+			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
 			if (shouldIgnoreUserSkill(join(skillsDir(), entry.name), entry.name)) continue;
 			const skillMd = join(skillsDir(), entry.name, "SKILL.md");

@@ -235,6 +235,25 @@ describe("OpenClawAdapter.collectSkills", () => {
 		expect(skills.map((s) => s.skillKey)).toEqual(["demo"]);
 	});
 
+	it("does not scan a hidden managed Skill recovery directory", async () => {
+		const recovery = join(
+			tmpHome,
+			".openclaw",
+			"agents",
+			"main",
+			"skills",
+			".clawdi-previous-test",
+		);
+		mkdirSync(recovery, { recursive: true });
+		writeFileSync(join(recovery, "SKILL.md"), "# Managed recovery artifact\n");
+
+		const adapter = new OpenClawAdapter();
+		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain(
+			".clawdi-previous-test",
+		);
+		expect(await adapter.listSkillKeys()).not.toContain(".clawdi-previous-test");
+	});
+
 	it("unions skills across agents/<id>/skills/ dirs (issue #28)", async () => {
 		addFinancialAgent(join(tmpHome, ".openclaw"));
 		const a = new OpenClawAdapter();

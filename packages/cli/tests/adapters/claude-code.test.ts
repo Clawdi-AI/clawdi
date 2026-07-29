@@ -306,6 +306,18 @@ describe("ClaudeCodeAdapter.collectSkills", () => {
 		expect(demo.filePath).toContain("/.claude/skills/demo/SKILL.md");
 	});
 
+	it("does not scan a hidden managed Skill recovery directory", async () => {
+		const recovery = join(tmpHome, ".claude", "skills", ".clawdi-previous-test");
+		mkdirSync(recovery, { recursive: true });
+		writeFileSync(join(recovery, "SKILL.md"), "# Managed recovery artifact\n");
+
+		const adapter = new ClaudeCodeAdapter();
+		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain(
+			".clawdi-previous-test",
+		);
+		expect(await adapter.listSkillKeys()).not.toContain(".clawdi-previous-test");
+	});
+
 	it("adopts a pre-ledger bundled clawdi target without uploading it", async () => {
 		const legacy = join(tmpHome, ".claude", "skills", "clawdi");
 		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), legacy, { recursive: true });
