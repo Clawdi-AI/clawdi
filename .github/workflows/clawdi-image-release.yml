@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: "Git ref to build. Defaults to the workflow SHA."
+        description: "Git ref to publish. Production deploys must resolve to the current main workflow SHA."
         required: false
       deploy:
         description: "Update and deploy the Coolify Applications after publishing."
@@ -47,10 +47,9 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 concurrency:
-  group: clawdi-image-release-production
+  group: clawdi-image-release
   cancel-in-progress: false
 
 env:
@@ -58,13 +57,21 @@ env:
   WEB_IMAGE_NAME: ghcr.io/clawdi-ai/clawdi-web
 
 jobs:
-  build:
+  publish:
+    name: Publish immutable images
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main')
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.repository.full_name == github.repository)
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
     outputs:
       image_tag: ${{ steps.rev.outputs.sha }}
       build_required: ${{ steps.runtime-changes.outputs.build }}
@@ -73,40 +80,87 @@ jobs:
     steps:
       - name: Resolve source ref
         id: source-ref
+        env:
+          DISPATCH_REF: ${{ inputs.ref }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
-            ref="${{ github.event.workflow_run.head_sha }}"
-          else
-            ref="${{ inputs.ref }}"
-            if [ -z "$ref" ]; then
-              ref="${GITHUB_SHA}"
-            fi
-          fi
+          case "$GITHUB_EVENT_NAME" in
+            workflow_run)
+              ref="$WORKFLOW_RUN_HEAD_SHA"
+              if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+                echo "workflow_run head_sha must be a full git SHA." >&2
+                exit 1
+              fi
+              ;;
+            workflow_dispatch)
+              ref="${DISPATCH_REF:-$GITHUB_SHA}"
+              if ! git check-ref-format --allow-onelevel "$ref" >/dev/null 2>&1; then
+                echo "ref must be a full git SHA or valid git ref." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported image release event: $GITHUB_EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
           echo "ref=${ref}" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v6
         with:
           ref: ${{ steps.source-ref.outputs.ref }}
           fetch-depth: 2
+          persist-credentials: false
 
       - id: rev
-        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+        run: |
+          sha="$(git rev-parse --verify HEAD^{commit})"
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Resolved source must be a full git commit SHA." >&2
+            exit 1
+          fi
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve deploy mode
         id: deploy-mode
         env:
           AUTO_DEPLOY: ${{ vars.CLAWDI_COOLIFY_AUTO_DEPLOY }}
+          DISPATCH_DEPLOY: ${{ inputs.deploy }}
+          DISPATCH_DEPLOY_SCOPE: ${{ inputs.deploy_scope }}
+          SOURCE_SHA: ${{ steps.rev.outputs.sha }}
+          WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           should_deploy=false
-          deploy_scope="${{ inputs.deploy_scope }}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
-            deploy_scope=all
-            if [ "${AUTO_DEPLOY}" = "true" ]; then
-              should_deploy=true
-            fi
-          elif [ "${{ inputs.deploy }}" = "true" ]; then
-            should_deploy=true
-          fi
+          deploy_scope="$DISPATCH_DEPLOY_SCOPE"
+          case "$GITHUB_EVENT_NAME" in
+            workflow_run)
+              if [ "$SOURCE_SHA" != "$WORKFLOW_RUN_HEAD_SHA" ]; then
+                echo "Resolved source does not match the trusted workflow_run commit." >&2
+                exit 1
+              fi
+              deploy_scope=all
+              if [ "$AUTO_DEPLOY" = "true" ]; then
+                should_deploy=true
+              fi
+              ;;
+            workflow_dispatch)
+              if [ "$DISPATCH_DEPLOY" = "true" ]; then
+                if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+                  echo "Production deploys may only be dispatched from main." >&2
+                  exit 1
+                fi
+                if [ "$SOURCE_SHA" != "$GITHUB_SHA" ]; then
+                  echo "Production deploy ref must resolve to the current main workflow SHA." >&2
+                  exit 1
+                fi
+                should_deploy=true
+              fi
+              ;;
+            *)
+              echo "Unsupported image release event: $GITHUB_EVENT_NAME" >&2
+              exit 1
+              ;;
+          esac
           if [ -z "$deploy_scope" ]; then
             deploy_scope=api-only
           fi
@@ -115,6 +169,8 @@ jobs:
 
       - name: Detect backend image changes
         id: runtime-changes
+        env:
+          SOURCE_SHA: ${{ steps.rev.outputs.sha }}
         run: |
           if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             echo "build=true" >> "$GITHUB_OUTPUT"
@@ -122,7 +178,7 @@ jobs:
             exit 0
           fi
 
-          changed_files="$(git diff-tree --no-commit-id --name-only -r -m --first-parent "${{ steps.rev.outputs.sha }}")"
+          changed_files="$(git diff-tree --no-commit-id --name-only -r -m --first-parent "$SOURCE_SHA")"
           printf '%s\n' "$changed_files"
 
           build=false
@@ -218,42 +274,55 @@ jobs:
 
       - name: Print image summary
         if: steps.runtime-changes.outputs.build == 'true'
+        env:
+          BACKEND_IMAGE: ${{ env.BACKEND_IMAGE_NAME }}
+          BUILD_WEB: ${{ inputs.build_web }}
+          SOURCE_SHA: ${{ steps.rev.outputs.sha }}
+          WEB_IMAGE: ${{ env.WEB_IMAGE_NAME }}
         run: |
           echo "### Clawdi Images" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Backend: \`${{ env.BACKEND_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
-          if [ "${{ inputs.build_web }}" = "true" ]; then
-            echo "- Web: \`${{ env.WEB_IMAGE_NAME }}:${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backend: \`${BACKEND_IMAGE}:${SOURCE_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$BUILD_WEB" = "true" ]; then
+            echo "- Web: \`${WEB_IMAGE}:${SOURCE_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
           else
             echo "- Web: skipped" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Print skipped image summary
         if: steps.runtime-changes.outputs.build != 'true'
+        env:
+          BUILD_REASON: ${{ steps.runtime-changes.outputs.reason }}
+          SOURCE_SHA: ${{ steps.rev.outputs.sha }}
         run: |
           echo "### Clawdi Images" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           echo "- Backend image build: skipped" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Reason: \`${{ steps.runtime-changes.outputs.reason }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Ref: \`${{ steps.rev.outputs.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Reason: \`${BUILD_REASON}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Ref: \`${SOURCE_SHA}\`" >> "$GITHUB_STEP_SUMMARY"
 
-  deploy:
-    needs: build
-    if: needs.build.outputs.build_required == 'true' && needs.build.outputs.should_deploy == 'true'
+  deploy-production:
+    name: Deploy production
+    needs: publish
+    if: needs.publish.outputs.build_required == 'true' && needs.publish.outputs.should_deploy == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 30
+    environment: production
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.build.outputs.image_tag }}
+          ref: ${{ needs.publish.outputs.image_tag }}
+          persist-credentials: false
 
       - name: Deploy Coolify Applications
         env:
           COOLIFY_API_URL: ${{ secrets.COOLIFY_API_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
           CLAWDI_BACKEND_RUNTIME_IMAGE: ${{ env.BACKEND_IMAGE_NAME }}
-          CLAWDI_BACKEND_RUNTIME_TAG: ${{ needs.build.outputs.image_tag }}
-          CLAWDI_DEPLOY_SCOPE: ${{ needs.build.outputs.deploy_scope }}
+          CLAWDI_BACKEND_RUNTIME_TAG: ${{ needs.publish.outputs.image_tag }}
+          CLAWDI_DEPLOY_SCOPE: ${{ needs.publish.outputs.deploy_scope }}
           CLAWDI_WAIT_FOR_DEPLOY: ${{ inputs.wait }}
         run: |
           if [ -z "$COOLIFY_API_URL" ] || [ -z "$COOLIFY_TOKEN" ]; then
@@ -272,8 +341,8 @@ jobs:
         env:
           COOLIFY_API_URL: ${{ secrets.COOLIFY_API_URL }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-          CLAWDI_BACKEND_RUNTIME_TAG: ${{ needs.build.outputs.image_tag }}
-          CLAWDI_DEPLOY_SCOPE: ${{ needs.build.outputs.deploy_scope }}
+          CLAWDI_BACKEND_RUNTIME_TAG: ${{ needs.publish.outputs.image_tag }}
+          CLAWDI_DEPLOY_SCOPE: ${{ needs.publish.outputs.deploy_scope }}
           CLAWDI_EXPECT_FILE_STORE_TYPE: ${{ vars.CLAWDI_COOLIFY_FILE_STORE_TYPE }}
         run: |
           if [ "$CLAWDI_DEPLOY_SCOPE" = "api-only" ]; then
@@ -286,15 +355,20 @@ jobs:
             --phase "$phase" \
             --expect-commit "$CLAWDI_BACKEND_RUNTIME_TAG"
 
-  audit:
-    needs: build
-    if: needs.build.outputs.build_required != 'true' && needs.build.outputs.should_deploy == 'true'
+  audit-production:
+    name: Audit production
+    needs: publish
+    if: needs.publish.outputs.build_required != 'true' && needs.publish.outputs.should_deploy == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 10
+    environment: production
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ needs.build.outputs.image_tag }}
+          ref: ${{ needs.publish.outputs.image_tag }}
+          persist-credentials: false
 
       - name: Audit Coolify Applications
         env:
