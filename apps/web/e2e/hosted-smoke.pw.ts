@@ -704,6 +704,7 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 				},
 				agents: [],
 				ports: [],
+				skills: [{ id: "clawdi", enabled: true, version: 1 }],
 				runtime_configuration: { providers: [], features: [] },
 				rollout_nonce: 0,
 				secret_references: [],
