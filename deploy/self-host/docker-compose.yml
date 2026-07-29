@@ -79,7 +79,7 @@ services:
       - "${API_HOST:-127.0.0.1}:${API_PORT:-8000}:8000"
     volumes:
       - files:/data/files
-      - fastembed_cache:/home/app/.cache/fastembed
+      - fastembed_cache:/tmp/fastembed_cache
     healthcheck:
       test:
         [
@@ -100,7 +100,7 @@ services:
     environment: *backend-env
     volumes:
       - files:/data/files
-      - fastembed_cache:/home/app/.cache/fastembed
+      - fastembed_cache:/tmp/fastembed_cache
     command: ["python", "-m", "app.workers.channels"]
     healthcheck:
       test:
