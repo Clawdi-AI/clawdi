@@ -7,6 +7,7 @@ import {
 	readdirSync,
 	readFileSync,
 	rmSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -204,6 +205,33 @@ describe("managed Skill reservations", () => {
 		const custom = join(root, "one", "skills", "clawdi");
 		mkdirSync(custom, { recursive: true });
 		writeFileSync(join(custom, "SKILL.md"), "---\nname: clawdi\ndescription: User Skill\n---\n");
+
+		expect(
+			migrateLegacyLocalSetupSkill({
+				targetDir: custom,
+				id: "clawdi",
+				version: 1,
+				digest: managedSkillDirectoryDigest,
+			}),
+		).toBe("unmanaged");
+		expect(managedSkillReservationState(custom, "clawdi")).toBe("unreserved");
+		expect(
+			migrateLegacyLocalSetupSkill({
+				targetDir: custom,
+				id: "clawdi",
+				version: 1,
+				digest: managedSkillDirectoryDigest,
+			}),
+		).toBe("already_migrated");
+	});
+
+	it("completes legacy migration when custom same-name content cannot be digested", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.HOME = root;
+		const custom = join(root, "one", "skills", "clawdi");
+		mkdirSync(custom, { recursive: true });
+		writeFileSync(join(custom, "SKILL.md"), "# User Skill\n");
+		symlinkSync("SKILL.md", join(custom, "unsupported-link"));
 
 		expect(
 			migrateLegacyLocalSetupSkill({

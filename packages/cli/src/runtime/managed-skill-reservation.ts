@@ -221,11 +221,18 @@ export function migrateLegacyLocalSetupSkill(input: {
 		const existing = ledger.reservations[target];
 		let outcome: "adopted" | "absent" | "unmanaged" = "absent";
 		if (!existing && existsSync(target)) {
-			const digest = input.digest(target);
-			if (!SHA256_PATTERN.test(digest)) {
+			let digest: string | undefined;
+			try {
+				digest = input.digest(target);
+			} catch {
+				// Unsupported entries cannot prove legacy bundled identity. Complete
+				// migration without claiming user-owned content so scans can proceed.
+				outcome = "unmanaged";
+			}
+			if (digest !== undefined && !SHA256_PATTERN.test(digest)) {
 				throw new Error("managed Skill migration digest is invalid");
 			}
-			if (LEGACY_LOCAL_SETUP_SKILL_DIGESTS.has(digest)) {
+			if (digest !== undefined && LEGACY_LOCAL_SETUP_SKILL_DIGESTS.has(digest)) {
 				ledger.reservations[target] = {
 					target,
 					id: input.id,
@@ -234,7 +241,7 @@ export function migrateLegacyLocalSetupSkill(input: {
 					manager: "local-setup",
 				};
 				outcome = "adopted";
-			} else {
+			} else if (digest !== undefined) {
 				outcome = "unmanaged";
 			}
 		}
