@@ -31,6 +31,7 @@ type SkillLinkBuilder = (skill: SkillSummary) => SkillLinkOptions;
 export function SkillCard({
 	skill,
 	readOnly = false,
+	cleanupOnly = false,
 	onUninstall,
 	uninstallPending = false,
 	selectMode = false,
@@ -41,6 +42,7 @@ export function SkillCard({
 }: {
 	skill: SkillSummary;
 	readOnly?: boolean;
+	cleanupOnly?: boolean;
 	onUninstall?: (skillKey: string, projectId: string) => void;
 	uninstallPending?: boolean;
 	selectMode?: boolean;
@@ -62,7 +64,7 @@ export function SkillCard({
 		<HeroCard
 			className="min-h-28 gap-2"
 			selected={selectMode && selected}
-			interactive={!selectMode}
+			interactive={!selectMode && !cleanupOnly}
 			icon={
 				<IconChip size="sm" tint={id.colorClasses} className="rounded-lg text-base">
 					{id.emoji}
@@ -79,6 +81,7 @@ export function SkillCard({
 							Shared
 						</Badge>
 					) : null}
+					{cleanupOnly ? <Badge variant="destructive">Conflict</Badge> : null}
 				</>
 			}
 			description={skill.description}
@@ -109,7 +112,7 @@ export function SkillCard({
 					/>
 				) : (
 					<div className="flex items-center gap-0.5 opacity-0 transition-opacity duration-150 group-focus-within:opacity-100 group-hover:opacity-100">
-						{skill.project_id ? <SendSkillDialog skills={[skill]} /> : null}
+						{skill.project_id && !cleanupOnly ? <SendSkillDialog skills={[skill]} /> : null}
 						{canUninstall ? (
 							<ConfirmAction
 								title={`Uninstall ${skill.name}?`}
@@ -134,8 +137,8 @@ export function SkillCard({
 					</div>
 				)
 			}
-			link={selectMode ? undefined : detailLink}
-			ariaLabel={`Open ${skill.name}`}
+			link={selectMode || cleanupOnly ? undefined : detailLink}
+			ariaLabel={cleanupOnly ? skill.name : `Open ${skill.name}`}
 		>
 			{selectMode ? (
 				<button
@@ -159,6 +162,7 @@ export function SkillCardGrid({
 	emptyMessage,
 	emptyVariant = "page",
 	readOnlySkillCheck,
+	cleanupOnlySkillCheck,
 	onUninstall,
 	uninstallPending,
 	selectMode = false,
@@ -173,6 +177,8 @@ export function SkillCardGrid({
 	emptyVariant?: EmptyStateVariant;
 	/** Returns true when the current user cannot uninstall this skill. */
 	readOnlySkillCheck?: (skill: SkillSummary) => boolean;
+	/** Conflict copies may only be removed; detail and send actions are disabled. */
+	cleanupOnlySkillCheck?: (skill: SkillSummary) => boolean;
 	onUninstall?: (skillKey: string, projectId: string) => void;
 	uninstallPending?: boolean;
 	selectMode?: boolean;
@@ -202,6 +208,7 @@ export function SkillCardGrid({
 					key={skillSelectionKey(skill)}
 					skill={skill}
 					readOnly={readOnlySkillCheck?.(skill) ?? false}
+					cleanupOnly={cleanupOnlySkillCheck?.(skill) ?? false}
 					onUninstall={onUninstall}
 					uninstallPending={uninstallPending}
 					selectMode={selectMode}

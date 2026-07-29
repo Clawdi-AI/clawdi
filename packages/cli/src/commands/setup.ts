@@ -19,6 +19,11 @@ import { getClawdiDir, isLoggedIn } from "../lib/config";
 import { errMessage } from "../lib/errors";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
+import {
+	managedSkillReservationState,
+	reserveManagedSkill,
+} from "../runtime/managed-skill-reservation";
 import {
 	install as installDaemonService,
 	listInstalledAgents,
@@ -255,6 +260,22 @@ async function installBuiltinSkill(agentType: AgentType) {
 	const alreadyInstalled = existsSync(join(targetDir, "SKILL.md"));
 
 	try {
+		const sourceDigest = managedSkillDirectoryDigest(sourceDir);
+		const reservationState = managedSkillReservationState(targetDir);
+		if (
+			existsSync(targetDir) &&
+			reservationState !== "reserved" &&
+			managedSkillDirectoryDigest(targetDir) !== sourceDigest
+		) {
+			throw new Error(`refusing to replace unmanaged Skill at ${targetDir}`);
+		}
+		reserveManagedSkill({
+			targetDir,
+			id: "clawdi",
+			version: 1,
+			digest: sourceDigest,
+			manager: "local-setup",
+		});
 		mkdirSync(targetDir, { recursive: true });
 		// Always overwrite — the bundled skill content evolves with each CLI
 		// release (better trigger language, new tool descriptions), and users

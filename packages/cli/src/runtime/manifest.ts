@@ -56,9 +56,9 @@ import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
 import { readRuntimeApplyIdentityFromEnv, runtimeApplyIdentityEnvironment } from "./apply-identity";
 import { ensureRuntimeAuthTokenFile } from "./auth-token";
 import {
+	adoptableLegacyHostedBundledSkill,
 	assertHostedBundledSkillCatalogDigest,
 	hostedBundledSkillIds,
-	isManagedHostedBundledSkill,
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
@@ -72,6 +72,11 @@ import {
 	extractManagedLiveModels,
 	resolveManagedPrimaryModel,
 } from "./managed-model-resolution";
+import {
+	managedSkillReservationOwner,
+	releaseManagedSkill,
+	reserveManagedSkill,
+} from "./managed-skill-reservation";
 import type { LiveSyncAgent, RuntimeInstall, RuntimeManifest } from "./manifest-contract";
 import {
 	type HostedMcpServerDesiredState,
@@ -3290,7 +3295,12 @@ function validateHostedBundledSkillsPlan(
 		if (!targetDir || !runtimeEnabled || desired.enabled !== true) continue;
 		const sourceDir = hostedBundledSkillSourceDir(bundled.assetDirectory);
 		assertHostedBundledSkillCatalogDigest(bundled, sourceDir);
-		if (existsSync(targetDir) && !isManagedHostedBundledSkill(targetDir, skillName)) {
+		const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
+		if (
+			existsSync(targetDir) &&
+			reservationOwner !== "hosted-manifest" &&
+			!adoptableLegacyHostedBundledSkill(targetDir, skillName)
+		) {
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
 		}
 	}
@@ -3311,21 +3321,51 @@ function applyHostedBundledSkills(
 		const desired = manifest.projection?.skills?.entries[skillName];
 		const runtimeEnabled = manifest.runtimes[name]?.enabled === true;
 		if (!installEnabled || !runtimeEnabled || desired?.enabled !== true) {
-			if (isManagedHostedBundledSkill(targetDir, skillName)) {
-				rmSync(targetDir, { recursive: true, force: true });
+			const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
+			const legacy = adoptableLegacyHostedBundledSkill(targetDir, skillName);
+			if (reservationOwner === "local-setup") continue;
+			if (!installEnabled && reservationOwner === "unreserved" && !legacy) continue;
+			if (legacy && reservationOwner === "unreserved") {
+				reserveManagedSkill({
+					targetDir,
+					id: skillName,
+					manager: "hosted-manifest",
+					version: legacy.version,
+					digest: legacy.digest,
+				});
 			}
+			releaseManagedSkill({
+				targetDir,
+				id: skillName,
+				manager: "hosted-manifest",
+				removeTarget: () => rmSync(targetDir, { recursive: true, force: true }),
+			});
 			continue;
 		}
 		if (!observation?.enabled || observation.status === "install_failed") continue;
-		if (existsSync(targetDir) && !isManagedHostedBundledSkill(targetDir, skillName)) {
+		const catalogEntry = resolveHostedBundledSkill(skillName, desired.version);
+		const reservationOwner = managedSkillReservationOwner(targetDir, skillName);
+		if (
+			existsSync(targetDir) &&
+			reservationOwner !== "hosted-manifest" &&
+			!adoptableLegacyHostedBundledSkill(targetDir, skillName)
+		) {
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
 		}
-		const bundled = resolveHostedBundledSkill(skillName, desired.version);
+		const bundled = catalogEntry;
+		reserveManagedSkill({
+			targetDir,
+			id: skillName,
+			manager: "hosted-manifest",
+			version: desired.version,
+			digest: bundled.digest,
+		});
 		const result = reconcileHostedBundledSkill({
 			skillId: skillName,
 			version: desired.version,
 			sourceDir: hostedBundledSkillSourceDir(bundled.assetDirectory),
 			targetDir,
+			reserved: true,
 		});
 		if (result === "unchanged") continue;
 		makeRuntimeUserOwnedAncestors(targetDir);

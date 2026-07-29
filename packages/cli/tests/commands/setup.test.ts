@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { setup } from "../../src/commands/setup";
+import { managedSkillReservationState } from "../../src/runtime/managed-skill-reservation";
 import {
 	type AgentHomeOverrideSnapshot,
 	jsonResponse,
@@ -29,6 +30,8 @@ const ENV_KEYS = [
 	"CLAWDI_AUTH_TOKEN",
 	"CLAWDI_ENVIRONMENT_ID",
 	"CLAWDI_STATE_DIR",
+	"CLAWDI_SERVICE_STATE_DIR",
+	"CLAWDI_RUNTIME_MODE",
 	"CLAWDI_SERVE_MODE",
 	"CLAWDI_SERVE_DEBUG",
 ] as const;
@@ -143,6 +146,28 @@ describe("setup daemon install", () => {
 		expect(existsSync(join(home, ".clawdi", "environments", "codex.json"))).toBe(false);
 		expect(daemonUnitExists("daemon")).toBe(false);
 		expect(daemonUnitExists("codex")).toBe(false);
+	});
+
+	it("installs the bundled Skill with explicit local-setup ownership", async () => {
+		installEnvironmentMock("env-codex");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		const target = join(home, ".codex", "skills", "clawdi");
+		expect(existsSync(join(target, "SKILL.md"))).toBe(true);
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+	});
+
+	it("does not claim or overwrite an unmanaged Skill collision", async () => {
+		const target = join(home, ".codex", "skills", "clawdi");
+		mkdirSync(target, { recursive: true });
+		writeFileSync(join(target, "SKILL.md"), "# User-owned Clawdi\n");
+		installEnvironmentMock("env-codex");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# User-owned Clawdi\n");
+		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 	});
 });
 

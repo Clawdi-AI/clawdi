@@ -64,6 +64,8 @@ export interface ReconcileHostedBundledSkillInput {
 	version: number;
 	sourceDir: string;
 	targetDir: string;
+	/** A root-owned reservation for this exact target authorizes replacement. */
+	reserved?: boolean;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -170,6 +172,36 @@ function hostedBundledSkillDigest(
 	return computeManagedBundleHash(files);
 }
 
+export function managedSkillDirectoryDigest(directory: string): string {
+	return hostedBundledSkillDigest(directory, false);
+}
+
+export function adoptableLegacyHostedBundledSkill(
+	targetDir: string,
+	skillId: string,
+): HostedBundledSkillCatalogEntry | null {
+	const marker = readHostedBundledSkillMarker(targetDir);
+	if (!marker) return null;
+	const current = isCurrentManagedMarker(marker, skillId);
+	const legacy = isLegacyManagedMarker(marker, skillId);
+	if (!current && !legacy) return null;
+	const version = current ? (marker.version as number) : 1;
+	let catalogEntry: HostedBundledSkillCatalogEntry;
+	try {
+		catalogEntry = resolveHostedBundledSkill(skillId, version);
+	} catch {
+		return null;
+	}
+	if (current && marker.digest !== catalogEntry.digest) return null;
+	try {
+		return hostedBundledSkillDigest(targetDir, true, true) === catalogEntry.digest
+			? catalogEntry
+			: null;
+	} catch {
+		return null;
+	}
+}
+
 function normalizeHostedBundledSkillModes(currentDir: string): void {
 	chmodSync(currentDir, HOSTED_BUNDLED_SKILL_DIRECTORY_MODE);
 	for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
@@ -247,7 +279,11 @@ export function reconcileHostedBundledSkill(
 		digest: catalogEntry.digest,
 	};
 	const targetExists = existsSync(input.targetDir);
-	if (targetExists && !isManagedHostedBundledSkill(input.targetDir, catalogEntry.id)) {
+	if (
+		targetExists &&
+		!input.reserved &&
+		!isManagedHostedBundledSkill(input.targetDir, catalogEntry.id)
+	) {
 		throw new Error(`refusing to replace unmanaged ${catalogEntry.id} skill at ${input.targetDir}`);
 	}
 	if (targetExists && markerMatches(readHostedBundledSkillMarker(input.targetDir), marker)) {

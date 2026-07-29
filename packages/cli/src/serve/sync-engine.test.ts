@@ -23,6 +23,7 @@ import {
 	rememberPendingSkillUploadEcho,
 	resolveOwningSkillKey,
 	SyncHealth,
+	shouldForceFullSkillListing,
 } from "./sync-engine";
 
 describe("stable session enqueue abort fence", () => {
@@ -68,6 +69,25 @@ describe("stable session enqueue abort fence", () => {
 		expect(await running).toBe(0);
 		expect(queued).toEqual([]);
 		expect(inFlight.size).toBe(0);
+	});
+});
+
+describe("reserved Skill reconcile listing", () => {
+	it("forces a full listing despite a pre-reservation pushed hash", () => {
+		const observed = new Set(["managed"]);
+		const pushed = new Map([["managed", "old-cloud-hash"]]);
+		expect(shouldForceFullSkillListing(observed, pushed, (key) => key === "managed")).toBe(true);
+	});
+
+	it("keeps one full pass after release when the deferred hash was cleared", () => {
+		const observed = new Set(["managed"]);
+		expect(shouldForceFullSkillListing(observed, new Map(), () => false)).toBe(true);
+	});
+
+	it("returns to conditional listings after the released Skill is pulled", () => {
+		const observed = new Set(["managed"]);
+		const pulled = new Map([["managed", "current-cloud-hash"]]);
+		expect(shouldForceFullSkillListing(observed, pulled, () => false)).toBe(false);
 	});
 });
 

@@ -635,6 +635,7 @@ export function HostedAgentDetail({
 								agentProjectId={agent?.default_project_id}
 								routeSearch={routeSearch}
 								isResolvingAgentProject={false}
+								hostedManaged
 							/>
 						) : (
 							<ProjectionDependentUnavailable label="Skills" />

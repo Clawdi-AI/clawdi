@@ -14,7 +14,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { reconcileHostedBundledSkill, resolveHostedBundledSkill } from "./hosted-bundled-skill";
+import {
+	adoptableLegacyHostedBundledSkill,
+	reconcileHostedBundledSkill,
+	resolveHostedBundledSkill,
+} from "./hosted-bundled-skill";
 
 const catalogEntry = resolveHostedBundledSkill("clawdi", 1);
 const bundledSourceDir = resolve(import.meta.dir, "../../skills/hosted-versions/1/clawdi");
@@ -95,6 +99,17 @@ describe("hosted bundled skill reconciliation", () => {
 			digest: catalogEntry.digest,
 		});
 		expect(readdirSync(join(root, "target"))).toEqual(["clawdi"]);
+	});
+
+	it("adopts an old marker only when catalog identity and live content match exactly", () => {
+		expect(reconcile()).toBe("replaced");
+		writeFileSync(
+			join(targetDir, ".clawdi-managed.json"),
+			`${JSON.stringify({ managedBy: "clawdi runtime init", skillName: "clawdi" })}\n`,
+		);
+		expect(adoptableLegacyHostedBundledSkill(targetDir, "clawdi")).toEqual(catalogEntry);
+		writeFileSync(join(targetDir, "SKILL.md"), "tampered\n");
+		expect(adoptableLegacyHostedBundledSkill(targetDir, "clawdi")).toBeNull();
 	});
 
 	it("detects target symlink tampering without following or modifying its destination", () => {

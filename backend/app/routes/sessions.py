@@ -36,7 +36,11 @@ from app.models.session_permission import (
     SessionPermission,
 )
 from app.schemas.common import Paginated
-from app.schemas.runtime import validate_hosted_runtime_desired_state
+from app.schemas.runtime import (
+    HostedRuntimeMcp,
+    PersistedHostedRuntimeSkills,
+    validate_hosted_runtime_desired_state,
+)
 from app.schemas.runtime_observed import (
     HostedRuntimeObserved,
     HostedRuntimeObservedProviderPayload,
@@ -52,6 +56,9 @@ from app.schemas.session import (
     EnvironmentReorderRequest,
     EnvironmentResponse,
     EnvironmentUpdate,
+    RuntimeManagedMcpServerSummary,
+    RuntimeManagedResourceSummary,
+    RuntimeManagedSkillSummary,
     RuntimeObservedDesiredResponse,
     RuntimeObservedHealthResponse,
     RuntimeObservedProviderHealthResponse,
@@ -877,6 +884,41 @@ async def get_environment_runtime_observed(
     )
 
 
+@router.get(
+    "/agents/{agent_id}/runtime-observed",
+    response_model=RuntimeObservedResponse,
+)
+async def get_agent_runtime_observed(
+    agent_id: UUID,
+    auth: AuthContext = Depends(get_auth),
+    db: AsyncSession = Depends(get_session),
+) -> RuntimeObservedResponse:
+    """Canonical Agent-identity route for runtime desired/observed summaries."""
+    response = await get_environment_runtime_observed(agent_id, auth, db)
+    state = await db.get(HostedRuntimeState, agent_id)
+    desired = response.desired
+    if desired is None and state is None:
+        return response
+    if (
+        desired is None
+        or state is None
+        or desired.deployment_id != state.deployment_id
+        or desired.instance_id != state.instance_id
+        or desired.desired_config_generation != state.generation
+    ):
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Runtime desired state changed while it was being read; retry the request.",
+        )
+    return response.model_copy(
+        update={
+            "desired": desired.model_copy(
+                update={"managed_resources": _runtime_managed_resource_summaries(state)}
+            )
+        }
+    )
+
+
 @router.get("/assets/{asset_key:path}", include_in_schema=False)
 async def get_public_asset(asset_key: str) -> Response:
     if not _AGENT_AVATAR_KEY_RE.match(asset_key):
@@ -1016,6 +1058,36 @@ def _runtime_observed_desired(
         has_tools=state.tools is not None,
         updated_at=state.updated_at,
     )
+
+
+def _runtime_managed_resource_summaries(
+    state: HostedRuntimeState,
+) -> list[RuntimeManagedResourceSummary]:
+    resources: list[RuntimeManagedResourceSummary] = []
+    if state.skills is not None:
+        try:
+            skills = PersistedHostedRuntimeSkills.model_validate(state.skills)
+        except ValueError:
+            skills = None
+        if skills is not None:
+            resources.extend(
+                RuntimeManagedSkillSummary(
+                    id=skill_id,
+                    enabled=entry.enabled,
+                    version=entry.version or 1,
+                )
+                for skill_id, entry in sorted(skills.entries.items())
+            )
+    if state.mcp is not None:
+        try:
+            mcp = HostedRuntimeMcp.model_validate(state.mcp)
+        except ValueError:
+            mcp = None
+        if mcp is not None:
+            resources.extend(
+                RuntimeManagedMcpServerSummary(id=server_id) for server_id in sorted(mcp.servers)
+            )
+    return resources
 
 
 def _runtime_observed_health(

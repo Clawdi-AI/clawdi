@@ -30,12 +30,12 @@ from app.schemas.runtime import (
     HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
+    HostedRuntimeMcp,
     HostedRuntimeRecovery,
     HostedRuntimeSkills,
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
-    validate_hosted_runtime_mcp_desired_state,
 )
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
@@ -144,7 +144,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     live_sync: HostedRuntimeLiveSync
     recovery: HostedRuntimeRecovery
     egress_profiles: HostedEgressProfiles | None = None
-    mcp: dict[str, Any] | None = None
+    mcp: HostedRuntimeMcp | None = None
     skills: HostedRuntimeSkills | None = None
     tools: HostedRuntimeTools
 
@@ -169,11 +169,6 @@ class AdminRuntimeStateUpsert(BaseModel):
         if len(value) != 1:
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
-
-    @field_validator("mcp")
-    @classmethod
-    def _validate_mcp(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        return validate_hosted_runtime_mcp_desired_state(value)
 
 
 class AdminRuntimeStateResponse(BaseModel):

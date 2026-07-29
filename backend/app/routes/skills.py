@@ -49,6 +49,10 @@ from app.schemas.skill import (
     SkillUploadResponse,
 )
 from app.services.file_store import get_file_store
+from app.services.runtime_manifest_resources import (
+    assert_project_skill_not_runtime_managed,
+    project_skill_advisory_lock_key,
+)
 from app.services.sync_events import bump_skills_revision
 from app.services.tar_utils import (
     TarValidationError,
@@ -142,26 +146,6 @@ _SKILL_HASH_EXCLUDE = {
     ".claude",
     ".codex",
 }
-
-
-def _advisory_lock_key(user_id, project_id, skill_key: str) -> int:
-    """Stable 64-bit signed int derived from (user_id, project_id,
-    skill_key) for `pg_advisory_xact_lock`. Postgres takes a
-    bigint (signed int64) so we mask the SHA digest into that
-    range.
-
-    Lock identity matches the partial unique constraint
-    (`uq_skills_active_user_project_skill_key`) so the lock
-    serializes exactly the same logical resource the constraint
-    enforces.
-    """
-    h = hashlib.sha256(f"skill:{user_id}:{project_id}:{skill_key}".encode()).digest()
-    n = int.from_bytes(h[:8], "big", signed=False)
-    # Map to signed int64 via two's-complement wrap. PG accepts
-    # any int64; this keeps the cast deterministic.
-    if n >= 1 << 63:
-        n -= 1 << 64
-    return n
 
 
 def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> str:
@@ -1046,8 +1030,11 @@ async def _do_upload_skill(
     # the partial unique index. Two projects can hold the same
     # skill_key in parallel; the lock is per-(user,project,key) so
     # they don't block each other.
-    lock_key = _advisory_lock_key(auth.user_id, project_id, skill_key)
+    lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+    await assert_project_skill_not_runtime_managed(
+        db, user_id=auth.user_id, project_id=project_id, skill_key=skill_key
+    )
 
     # Pre-fetch existing row so we can skip both file_store.put AND the
     # upsert when the bytes are identical to what's already stored. Saves
@@ -1408,7 +1395,7 @@ async def _do_delete_skill(
     # Advisory lock matches the partial unique index identity, so
     # this delete serializes with any concurrent write to the
     # same (user, project, skill_key).
-    lock_key = _advisory_lock_key(auth.user_id, project_id, skill_key)
+    lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
 
     # `is_active` filter + ORDER BY + LIMIT 1: third call site of
@@ -1516,6 +1503,17 @@ async def _do_install_skill(
         )
         raise HTTPException(status.HTTP_404_NOT_FOUND, "skill not found in repository") from None
 
+    try:
+        validate_tar(fetched.tar_bytes)
+    except TarValidationError as e:
+        log.warning(
+            "skill_install_validation_failed repo=%s path=%s error=%s",
+            _sanitize_log(body.repo),
+            _sanitize_log(body.path),
+            _sanitize_log(e),
+        )
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "archive validation failed") from None
+
     content_hash = _compute_file_tree_hash(fetched.tar_bytes)
     # The `name` comes from the marketplace SKILL.md frontmatter
     # which the user controls. A malicious `name: "../etc/passwd"`
@@ -1531,8 +1529,11 @@ async def _do_install_skill(
     # (user, project, key) matches the partial unique index, so the
     # serialization is precisely scoped — different projects don't
     # block each other.
-    lock_key = _advisory_lock_key(auth.user_id, project_id, skill_key)
+    lock_key = project_skill_advisory_lock_key(auth.user_id, project_id, skill_key)
     await db.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock_key})
+    await assert_project_skill_not_runtime_managed(
+        db, user_id=auth.user_id, project_id=project_id, skill_key=skill_key
+    )
 
     await file_store.put(fk, fetched.tar_bytes)
 

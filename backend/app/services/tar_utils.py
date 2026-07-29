@@ -75,6 +75,10 @@ def validate_tar(data: bytes) -> int:
                 parts = PurePosixPath(member.name).parts
                 if ".." in parts:
                     raise TarValidationError(f"Path traversal not allowed: {member.name}")
+                if any(part.lower().startswith(".clawdi-managed") for part in parts):
+                    raise TarValidationError(
+                        f"Reserved management metadata not allowed: {member.name}"
+                    )
 
                 if member.isfile():
                     file_count += 1

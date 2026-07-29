@@ -10,6 +10,7 @@ import {
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import * as tar from "tar";
+import { isReservedSkillArchivePath } from "../runtime/managed-skill-reservation";
 import { assertValidSkillKey } from "./skill-key";
 
 /**
@@ -83,6 +84,9 @@ export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
 			gzip: true,
 			filter: (path, entry) => {
 				if (path.includes("..") || path.startsWith("/")) return false;
+				if (isReservedSkillArchivePath(path)) {
+					throw new Error("Skill archive contains reserved management metadata");
+				}
 				const type = "type" in entry ? entry.type : undefined;
 				return type !== "SymbolicLink" && type !== "Link";
 			},
@@ -107,6 +111,7 @@ export async function replaceSkillArchiveTarGz(
 	skillsRoot: string,
 	targetDir: string,
 	bytes: Buffer,
+	beforeActivate?: () => void,
 ): Promise<void> {
 	assertValidSkillKey(skillKey);
 	const targetFromRoot = relative(skillsRoot, targetDir);
@@ -132,6 +137,7 @@ export async function replaceSkillArchiveTarGz(
 			previousMoved = true;
 		}
 		try {
+			beforeActivate?.();
 			renameSync(stagedSkill, targetDir);
 		} catch (installError) {
 			if (!previousMoved) throw installError;
@@ -342,6 +348,9 @@ export async function tarSkillDir(
 				// legitimately named `dist`/`build`/`out` (or whose category dir
 				// is) doesn't get packaged as an empty tarball.
 				filter: (path) => {
+					if (isReservedSkillArchivePath(path)) {
+						throw new Error("Skill contains reserved management metadata");
+					}
 					const segments = path.split("/").slice(components.length);
 					return !segments.some((seg) => SKILL_TAR_EXCLUDE.has(seg));
 				},
