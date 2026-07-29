@@ -549,6 +549,13 @@ async def test_platform_runtime_state_enforces_generation_contract(
     )
     assert initial.status_code == 200, initial.text
 
+    same_generation = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("generation-same-mcp-model"),
+        json=initial_body,
+    )
+    assert same_generation.status_code == 200, same_generation.text
+
     stale = await platform_client.put(
         f"/v1/platform/agents/{agent_id}/runtime-state",
         headers=_headers("generation-stale"),

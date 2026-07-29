@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { teardown } from "../../src/commands/teardown";
+import { reserveManagedSkill } from "../../src/runtime/managed-skill-reservation";
 import { cleanupTmp, copyFixtureToTmp } from "../adapters/helpers";
 import {
 	type AgentHomeOverrideSnapshot,
@@ -49,6 +50,13 @@ function setup(agent: AgentKey): {
 	}
 	mkdirSync(join(skillPath, ".."), { recursive: true });
 	writeFileSync(skillPath, "---\nname: clawdi\ndescription: bundled\n---\n");
+	reserveManagedSkill({
+		targetDir: dirname(skillPath),
+		id: "clawdi",
+		version: 1,
+		digest: "a".repeat(64),
+		manager: "local-setup",
+	});
 
 	return { envPath, skillPath };
 }

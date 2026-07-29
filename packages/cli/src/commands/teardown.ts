@@ -15,6 +15,7 @@ import { errMessage } from "../lib/errors";
 import { askMulti, askYesNo } from "../lib/prompts";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
+import { releaseManagedSkill } from "../runtime/managed-skill-reservation";
 
 export async function teardown(opts: {
 	agent?: string;
@@ -133,9 +134,15 @@ async function teardownOne(agentType: AgentType, opts: { keepSkill: boolean; kee
 	// 3. Bundled skill
 	if (!opts.keepSkill) {
 		const skillDir = builtinSkillTargetDir(agentType);
-		if (skillDir && existsSync(skillDir)) {
+		if (skillDir) {
 			try {
-				rmSync(skillDir, { recursive: true, force: true });
+				const result = releaseManagedSkill({
+					targetDir: skillDir,
+					id: "clawdi",
+					manager: "local-setup",
+					removeTarget: () => rmSync(skillDir, { recursive: true, force: true }),
+				});
+				if (result === "absent") throw new Error("Skill is not owned by local setup");
 				p.log.success(`${label}: removed bundled skill (${skillDir})`);
 			} catch (e) {
 				p.log.warn(`${label}: could not remove skill (${errMessage(e)})`);

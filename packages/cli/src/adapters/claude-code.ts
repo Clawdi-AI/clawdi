@@ -3,6 +3,10 @@ import { basename, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import {
+	assertUserSkillTargetMutable,
+	shouldIgnoreUserSkill,
+} from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -260,13 +264,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			// Bundled by `clawdi setup` — not user-authored content. Without
-			// this filter every user's `clawdi push --modules skills` would
-			// upload the bundled skill to their cloud account, and pulling
-			// on another machine would re-download it on top of what
-			// `clawdi setup` already installs there.
+			// Upgrade bridge for local setup installs created before the ownership ledger.
 			if (entry.name === "clawdi") continue;
 			const dirPath = join(skillsDir, entry.name);
+			if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
 			const skillMd = join(dirPath, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 
@@ -311,6 +312,7 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 			if (!entry.isDirectory()) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
 			if (entry.name === "clawdi") continue;
+			if (shouldIgnoreUserSkill(join(skillsDir, entry.name), entry.name)) continue;
 			const skillMd = join(skillsDir, entry.name, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 			out.push(entry.name);
@@ -328,12 +330,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(claudeDir(), "skills", key);
+		assertUserSkillTargetMutable(dir, key);
 		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const skillsDir = join(claudeDir(), "skills");
-		await replaceSkillArchiveTarGz(key, skillsDir, join(skillsDir, key), tarGzBytes);
+		assertUserSkillTargetMutable(join(skillsDir, key), key);
+		await replaceSkillArchiveTarGz(key, skillsDir, join(skillsDir, key), tarGzBytes, () =>
+			assertUserSkillTargetMutable(join(skillsDir, key), key),
+		);
 	}
 
 	async writeSharedSkillArchive(

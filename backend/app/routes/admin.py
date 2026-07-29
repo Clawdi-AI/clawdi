@@ -117,6 +117,10 @@ from app.services.managed_ai_provider import (
     lock_deployment_managed_provider_mutation,
     upsert_clawdi_managed_provider,
 )
+from app.services.runtime_manifest_resources import (
+    enabled_runtime_manifest_skill_ids,
+    lock_runtime_manifest_skill_reservations,
+)
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_provider_runtime_manifest_changed,
@@ -1414,6 +1418,16 @@ async def _admin_upsert_runtime_state(
         )
     ).scalar_one_or_none()
     existing_state = state
+    old_skill_ids = enabled_runtime_manifest_skill_ids(state.skills if state is not None else None)
+    new_skill_ids = enabled_runtime_manifest_skill_ids(
+        body.skills.model_dump(mode="json") if body.skills is not None else None
+    )
+    await lock_runtime_manifest_skill_reservations(
+        db,
+        user_id=target_user_id,
+        project_id=env.default_project_id,
+        skill_ids=old_skill_ids | new_skill_ids,
+    )
     previous_generation = state.generation if state is not None else None
     desired_state = _runtime_state_values(body)
     changed_fields = _runtime_state_changed_fields(existing_state, desired_state)
@@ -1674,7 +1688,7 @@ def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
         "live_sync": body.live_sync.model_dump(mode="json"),
         "recovery": body.recovery.model_dump(mode="json"),
         "egress_profiles": optional_wire_value("egress_profiles"),
-        "mcp": body.mcp,
+        "mcp": optional_wire_value("mcp"),
         "skills": optional_wire_value("skills"),
         "tools": (
             body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")

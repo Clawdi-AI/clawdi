@@ -576,8 +576,19 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         "enabled_runtimes": ["openclaw"],
         "has_mcp": True,
         "has_tools": True,
+        "managed_resources": [],
         "updated_at": payload["desired"]["updated_at"],
     }
+    canonical = await client.get(f"/v1/agents/{env_id}/runtime-observed")
+    assert canonical.status_code == 200, canonical.text
+    assert canonical.json()["desired"]["managed_resources"] == [
+        {"kind": "skill", "id": "clawdi", "enabled": True, "version": 1},
+        {"kind": "mcp_server", "id": "clawdi"},
+    ]
+    serialized = canonical.text.lower()
+    assert "secretref" not in serialized
+    assert '"headers"' not in serialized
+    assert '"url"' not in serialized
     observed_at = datetime.fromisoformat(payload["observed"]["observed_at"].replace("Z", "+00:00"))
     assert received_at_lower_bound <= observed_at <= received_at_upper_bound
     assert datetime.fromisoformat(

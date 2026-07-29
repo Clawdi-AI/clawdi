@@ -323,4 +323,23 @@ describe("tarSkillDir filter", () => {
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
+
+	it("rechecks ownership at the activation boundary and restores the previous target", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-tar-test-"));
+		try {
+			const skillsRoot = join(root, "skills");
+			const target = join(skillsRoot, "example");
+			mkdirSync(target, { recursive: true });
+			writeFileSync(join(target, "SKILL.md"), "old\n");
+			const archive = await tarSingleFile("example", "new\n");
+			await expect(
+				replaceSkillArchiveTarGz("example", skillsRoot, target, archive, () => {
+					throw new Error("reservation appeared");
+				}),
+			).rejects.toThrow("reservation appeared");
+			expect(readFileSync(join(target, "SKILL.md"), "utf8")).toBe("old\n");
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
 });

@@ -3,6 +3,10 @@ import { isAbsolute, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import {
+	assertUserSkillTargetMutable,
+	shouldIgnoreUserSkill,
+} from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -306,10 +310,10 @@ export class OpenClawAdapter implements AgentAdapter {
 			for (const entry of readdirSync(dir, { withFileTypes: true })) {
 				if (!entry.isDirectory()) continue;
 				if (SKIP_DIRS.has(entry.name)) continue;
-				// Bundled by `clawdi setup`, not user-authored. See claude-code.ts
-				// for the full reasoning.
+				// Upgrade bridge for local setup installs created before the ownership ledger.
 				if (entry.name === "clawdi") continue;
 				const dirPath = join(dir, entry.name);
+				if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
 				const skillMd = join(dirPath, "SKILL.md");
 				if (!existsSync(skillMd)) continue;
 
@@ -368,6 +372,7 @@ export class OpenClawAdapter implements AgentAdapter {
 			if (!entry.isDirectory()) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
 			if (entry.name === "clawdi") continue;
+			if (shouldIgnoreUserSkill(join(skillsDir(), entry.name), entry.name)) continue;
 			const skillMd = join(skillsDir(), entry.name, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
 			out.push(entry.name);
@@ -385,12 +390,16 @@ export class OpenClawAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(skillsDir(), key);
+		assertUserSkillTargetMutable(dir, key);
 		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const root = skillsDir();
-		await replaceSkillArchiveTarGz(key, root, join(root, key), tarGzBytes);
+		assertUserSkillTargetMutable(join(root, key), key);
+		await replaceSkillArchiveTarGz(key, root, join(root, key), tarGzBytes, () =>
+			assertUserSkillTargetMutable(join(root, key), key),
+		);
 	}
 
 	async writeSharedSkillArchive(

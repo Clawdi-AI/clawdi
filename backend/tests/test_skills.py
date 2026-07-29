@@ -15,6 +15,7 @@ import uuid
 import httpx
 import pytest
 
+from app.services.skill_installer import SkillPackage
 from app.services.tar_utils import tar_from_content
 
 pytestmark = pytest.mark.committed_db
@@ -264,6 +265,62 @@ async def test_skill_upload_rejects_path_traversal(client: httpx.AsyncClient, pr
     # Negative contract: body must NOT echo the attacker-supplied
     # member name — that would be an uncontrolled reflection vector.
     assert "../evil" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_skill_upload_rejects_reserved_management_metadata(
+    client: httpx.AsyncClient, project_id: str
+):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, payload in (
+            ("example/SKILL.md", b"# Example\n"),
+            ("example/.clawdi-managed.json", b"{}\n"),
+        ):
+            info = tarfile.TarInfo(name=name)
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "example"},
+        files={"file": ("example.tar.gz", buf.getvalue(), "application/gzip")},
+    )
+    assert response.status_code == 400, response.text
+    assert "archive validation failed" in response.text.lower()
+    assert ".clawdi-managed" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_marketplace_install_rejects_reserved_management_metadata(
+    client: httpx.AsyncClient, project_id: str, monkeypatch: pytest.MonkeyPatch
+):
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+        for name, payload in (
+            ("example/SKILL.md", b"# Example\n"),
+            ("example/.clawdi-managed.json", b"{}\n"),
+        ):
+            info = tarfile.TarInfo(name=name)
+            info.size = len(payload)
+            tf.addfile(info, io.BytesIO(payload))
+
+    async def fake_fetch(_repo: str, _path: str | None = None) -> SkillPackage:
+        return SkillPackage(
+            name="example",
+            description="example",
+            tar_bytes=buf.getvalue(),
+            file_count=2,
+            repo="owner/repo",
+        )
+
+    monkeypatch.setattr("app.services.skill_installer.fetch_skill_from_github", fake_fetch)
+    response = await client.post(
+        f"/v1/projects/{project_id}/skills/install",
+        json={"repo": "owner/repo", "path": "example"},
+    )
+    assert response.status_code == 400, response.text
+    assert "archive validation failed" in response.text.lower()
+    assert ".clawdi-managed" not in response.text
 
 
 @pytest.mark.asyncio

@@ -4,6 +4,10 @@ import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { isValidSkillKey } from "../lib/skill-key";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import {
+	assertUserSkillTargetMutable,
+	shouldIgnoreUserSkill,
+} from "../runtime/managed-skill-reservation";
 import type {
 	AgentAdapter,
 	CollectSessionsOptions,
@@ -214,10 +218,7 @@ export class HermesAdapter implements AgentAdapter {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (shouldSkipHermesSkillDir(entry.name)) continue;
-			// Bundled by `clawdi setup`, not user-authored. See claude-code.ts
-			// for the full reasoning. Hermes only filters at the top level
-			// — nested skills with the literal name "clawdi" deeper in the
-			// tree are an unlikely edge case not worth handling.
+			// Upgrade bridge for local setup installs created before the ownership ledger.
 			if (dir === skillsDir() && entry.name === "clawdi") continue;
 			const fullPath = join(dir, entry.name);
 			const skillMd = join(fullPath, "SKILL.md");
@@ -226,6 +227,7 @@ export class HermesAdapter implements AgentAdapter {
 				const content = readFileSync(skillMd, "utf-8");
 				const skillKey = hermesSkillKeyFromPath(fullPath);
 				if (!skillKey) continue;
+				if (shouldIgnoreUserSkill(fullPath, skillKey)) continue;
 				const fileCount = readdirSync(fullPath, { recursive: true }).length;
 
 				results.push({
@@ -278,7 +280,7 @@ export class HermesAdapter implements AgentAdapter {
 				const fullPath = join(dir, entry.name);
 				if (existsSync(join(fullPath, "SKILL.md"))) {
 					const skillKey = hermesSkillKeyFromPath(fullPath);
-					if (skillKey) out.push(skillKey);
+					if (skillKey && !shouldIgnoreUserSkill(fullPath, skillKey)) out.push(skillKey);
 				} else {
 					walk(fullPath);
 				}
@@ -299,12 +301,16 @@ export class HermesAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(skillsDir(), key);
+		assertUserSkillTargetMutable(dir, key);
 		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const root = skillsDir();
-		await replaceSkillArchiveTarGz(key, root, join(root, key), tarGzBytes);
+		assertUserSkillTargetMutable(join(root, key), key);
+		await replaceSkillArchiveTarGz(key, root, join(root, key), tarGzBytes, () =>
+			assertUserSkillTargetMutable(join(root, key), key),
+		);
 	}
 
 	async writeSharedSkillArchive(

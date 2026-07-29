@@ -300,6 +300,15 @@ describe("ClaudeCodeAdapter.collectSkills", () => {
 		expect(demo.content).toContain("description: A demo skill");
 		expect(demo.filePath).toContain("/.claude/skills/demo/SKILL.md");
 	});
+
+	it("does not upload a pre-ledger local setup Skill after upgrade", async () => {
+		const legacy = join(tmpHome, ".claude", "skills", "clawdi");
+		mkdirSync(legacy, { recursive: true });
+		writeFileSync(join(legacy, "SKILL.md"), "# Legacy bundled Skill\n");
+		const adapter = new ClaudeCodeAdapter();
+		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain("clawdi");
+		expect(await adapter.listSkillKeys()).not.toContain("clawdi");
+	});
 });
 
 describe("ClaudeCodeAdapter.writeSkillArchive + getSkillPath", () => {

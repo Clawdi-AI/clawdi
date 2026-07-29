@@ -902,6 +902,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agents/{agent_id}/runtime-observed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Agent Runtime Observed
+         * @description Canonical Agent-identity route for runtime desired/observed summaries.
+         */
+        get: operations["get_agent_runtime_observed_v1_agents__agent_id__runtime_observed_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agents/{agent_id}/sync-heartbeat": {
         parameters: {
             query?: never;
@@ -4802,6 +4822,23 @@ export interface components {
             /** Timezone */
             timezone: string;
         };
+        /** HostedRuntimeMcp */
+        HostedRuntimeMcp: {
+            /** Servers */
+            servers: {
+                [key: string]: components["schemas"]["HostedRuntimeStdioMcpServer"] | components["schemas"]["HostedRuntimeRemoteMcpServer"];
+            };
+        };
+        /** HostedRuntimeMcpSecretHeader */
+        HostedRuntimeMcpSecretHeader: {
+            /** Secretref */
+            secretRef: string;
+            /**
+             * Prefix
+             * @default
+             */
+            prefix: string;
+        };
         /** HostedRuntimeObservedAppliedV2 */
         HostedRuntimeObservedAppliedV2: {
             /** Etag */
@@ -4969,6 +5006,20 @@ export interface components {
             /** Allowofflineboot */
             allowOfflineBoot: boolean;
         };
+        /** HostedRuntimeRemoteMcpServer */
+        HostedRuntimeRemoteMcpServer: {
+            /** Url */
+            url: string;
+            /**
+             * Transport
+             * @enum {string}
+             */
+            transport: "streamable-http" | "sse";
+            /** Headers */
+            headers?: {
+                [key: string]: string | components["schemas"]["HostedRuntimeMcpSecretHeader"];
+            };
+        };
         /** HostedRuntimeRunSettings */
         HostedRuntimeRunSettings: {
             /** Command */
@@ -5001,6 +5052,13 @@ export interface components {
             entries: {
                 [key: string]: components["schemas"]["HostedRuntimeSkillEntry"];
             };
+        };
+        /** HostedRuntimeStdioMcpServer */
+        HostedRuntimeStdioMcpServer: {
+            /** Command */
+            command: string;
+            /** Args */
+            args: string[];
         };
         /** HostedRuntimeSystem */
         HostedRuntimeSystem: {
@@ -5395,10 +5453,7 @@ export interface components {
             live_sync: components["schemas"]["HostedRuntimeLiveSync"];
             recovery: components["schemas"]["HostedRuntimeRecovery"];
             egress_profiles?: components["schemas"]["HostedEgressProfiles"] | null;
-            /** Mcp */
-            mcp?: {
-                [key: string]: unknown;
-            } | null;
+            mcp?: components["schemas"]["HostedRuntimeMcp"] | null;
             skills?: components["schemas"]["HostedRuntimeSkills"] | null;
             tools: components["schemas"]["HostedRuntimeTools"];
         };
@@ -5614,6 +5669,30 @@ export interface components {
             finalCursor: string;
             /** Finalsessionhighwatermarks */
             finalSessionHighWaterMarks: components["schemas"]["RuntimeSessionHighWaterMark"][];
+        };
+        /** RuntimeManagedMcpServerSummary */
+        RuntimeManagedMcpServerSummary: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "mcp_server";
+            /** Id */
+            id: string;
+        };
+        /** RuntimeManagedSkillSummary */
+        RuntimeManagedSkillSummary: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "skill";
+            /** Id */
+            id: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Version */
+            version: number;
         };
         /** RuntimeObservationApplyIdentityResponse */
         RuntimeObservationApplyIdentityResponse: {
@@ -5898,6 +5977,8 @@ export interface components {
              * @default false
              */
             has_tools: boolean;
+            /** Managed Resources */
+            managed_resources?: (components["schemas"]["RuntimeManagedSkillSummary"] | components["schemas"]["RuntimeManagedMcpServerSummary"])[];
             /** Updated At */
             updated_at?: string | null;
         };
@@ -9076,6 +9157,37 @@ export interface operations {
             header?: never;
             path: {
                 environment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeObservedResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_runtime_observed_v1_agents__agent_id__runtime_observed_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
             };
             cookie?: never;
         };

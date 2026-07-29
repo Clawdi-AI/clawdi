@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Literal
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -12,12 +12,12 @@ from app.schemas.runtime import (
     HostedRuntimeDesiredState,
     HostedRuntimeLiveSync,
     HostedRuntimeLocale,
+    HostedRuntimeMcp,
     HostedRuntimeRecovery,
     HostedRuntimeSkills,
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
-    validate_hosted_runtime_mcp_desired_state,
 )
 
 PlatformOwnerKind = Literal["clerk", "partner_tenant"]
@@ -93,7 +93,7 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
     live_sync: HostedRuntimeLiveSync
     recovery: HostedRuntimeRecovery
     egress_profiles: HostedEgressProfiles | None = None
-    mcp: dict[str, Any] | None = None
+    mcp: HostedRuntimeMcp | None = None
     skills: HostedRuntimeSkills | None = None
     tools: HostedRuntimeTools
 
@@ -118,11 +118,6 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
         if len(value) != 1:
             raise ValueError("runtimes must contain exactly one enabled runtime")
         return value
-
-    @field_validator("mcp")
-    @classmethod
-    def _validate_mcp(cls, value: dict[str, Any] | None) -> dict[str, Any] | None:
-        return validate_hosted_runtime_mcp_desired_state(value)
 
 
 class PlatformRuntimeStateResponse(BaseModel):

@@ -52,6 +52,10 @@ from app.services.platform_workload_auth import (
     issue_platform_workload_token,
     require_platform_mutation_auth,
 )
+from app.services.runtime_manifest_resources import (
+    enabled_runtime_manifest_skill_ids,
+    lock_runtime_manifest_skill_reservations,
+)
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
     queue_runtime_manifest_changed,
@@ -714,6 +718,18 @@ async def platform_upsert_runtime_state(
             .with_for_update()
         )
     ).scalar_one_or_none()
+    old_skill_ids = enabled_runtime_manifest_skill_ids(
+        runtime_state.skills if runtime_state is not None else None
+    )
+    new_skill_ids = enabled_runtime_manifest_skill_ids(
+        body.skills.model_dump(mode="json") if body.skills is not None else None
+    )
+    await lock_runtime_manifest_skill_reservations(
+        db,
+        user_id=owner.id,
+        project_id=agent.default_project_id,
+        skill_ids=old_skill_ids | new_skill_ids,
+    )
     previous_generation = runtime_state.generation if runtime_state is not None else None
     changed_fields = _runtime_state_changed_fields(runtime_state, body)
     if runtime_state is not None and body.generation <= runtime_state.generation:
@@ -1047,7 +1063,7 @@ def _assign_runtime_state(
     state.live_sync = body.live_sync.model_dump(mode="json")
     state.recovery = body.recovery.model_dump(mode="json")
     state.egress_profiles = _optional_runtime_model(body.egress_profiles)
-    state.mcp = body.mcp
+    state.mcp = _optional_runtime_model(body.mcp)
     state.skills = _optional_runtime_model(body.skills)
     state.tools = body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")
 
@@ -1091,7 +1107,7 @@ def _runtime_state_changed_fields(
                 name: runtime.model_dump(exclude_none=True, mode="json")
                 for name, runtime in body.runtimes.items()
             }
-        elif field in {"egress_engine", "egress_profiles", "skills"}:
+        elif field in {"egress_engine", "egress_profiles", "mcp", "skills"}:
             body_value = _optional_runtime_model(getattr(body, field))
         elif field in {"live_sync", "recovery"}:
             body_value = getattr(body, field).model_dump(mode="json")

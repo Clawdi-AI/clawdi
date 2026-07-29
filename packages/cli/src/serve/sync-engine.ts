@@ -65,6 +65,7 @@ import {
 } from "../lib/skills-lock";
 import { tarSkillDir } from "../lib/tar";
 import { getCliVersion } from "../lib/version";
+import { shouldIgnoreUserSkill } from "../runtime/managed-skill-reservation";
 import { readHostedRuntimeObserved } from "../runtime/observed";
 
 export { isSafelyTerminalRuntimeObservationFailure } from "../runtime/observation-producer";
@@ -706,6 +707,12 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		// until some unrelated cloud change next bumped the
 		// revision.
 		if (event.type === "skill_deleted") {
+			if (isReservedSkill(opts, event.skill_key)) {
+				deferReservedSkill(opts, event.skill_key, lastPushedHash);
+				syncHealth.clear("pull", `skill:${event.skill_key}`);
+				lastSeenRevision = event.skills_revision;
+				return;
+			}
 			addInFlight(pullsInFlight, event.skill_key);
 			let applied = false;
 			try {
@@ -767,7 +774,12 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 		addInFlight(pullsInFlight, event.skill_key);
 		let pulled = false;
 		try {
-			await pullSkill(opts, api, event.skill_key, lastPushedHash, defaultProjectId);
+			const outcome = await pullSkill(opts, api, event.skill_key, lastPushedHash, defaultProjectId);
+			if (outcome === "deferred") {
+				cloudObservedKeys.add(event.skill_key);
+				syncHealth.clear("pull", `skill:${event.skill_key}`);
+				return;
+			}
 			// Track the SSE-pulled skill in cloudObservedKeys so the
 			// reconcile sweep can later remove it if its delete event
 			// is missed. Without this, an SSE-installed skill that
@@ -980,6 +992,7 @@ async function enqueueIfChanged(
 	skillKey: string,
 	getProjectId: () => string,
 ): Promise<void> {
+	if (isReservedSkill(opts, skillKey)) return;
 	if (!isValidSkillKey(skillKey)) {
 		lastPushedHash.delete(skillKey);
 		log.warn("engine.invalid_skill_key_skipped", { skill_key: skillKey });
@@ -1522,6 +1535,10 @@ async function uploadSkillFromQueue(
 	pendingSkillUploadEchoes: Map<string, PendingSkillUploadEcho>,
 	projectId: string,
 ): Promise<void> {
+	if (isReservedSkill(opts, item.skill_key)) {
+		lastPushedHash.delete(item.skill_key);
+		return;
+	}
 	const dir = join(opts.adapter.getSkillsRootDir(), item.skill_key);
 	// Recompute the hash from the live directory at upload time
 	// rather than trusting `item.new_hash`. The watcher's hash
@@ -1940,6 +1957,10 @@ async function initialSync(
 			continue;
 		}
 		if (lastShipped !== undefined) {
+			if (isReservedSkill(opts, key)) {
+				health.clear("pull", `skill:${key}`);
+				continue;
+			}
 			// We shipped this before, cloud doesn't have it now.
 			// Treat as cloud-side delete + remove the local copy.
 			// (Fine to delete: the user's intent — when they
@@ -2087,10 +2108,13 @@ async function reconcileFromCloud(
 	health: SyncHealth,
 	onAuthFailure: (origin: string) => void,
 ): Promise<void> {
+	const forceFullListing = shouldForceFullSkillListing(cloudObservedKeys, lastPushedHash, (key) =>
+		isReservedSkill(opts, key),
+	);
 	const { skills, complete, revision, etag, notModified } = await listAllCloudSkills(
 		api,
 		projectId,
-		knownEtag,
+		forceFullListing ? null : knownEtag,
 	);
 	health.clear("pull", "listing");
 	if (notModified) {
@@ -2122,6 +2146,11 @@ async function reconcileFromCloud(
 	const cloudKeys = new Set(skills.map((s) => s.skill_key));
 	for (const skill of skills) {
 		cloudObservedKeys.add(skill.skill_key);
+		if (isReservedSkill(opts, skill.skill_key)) {
+			deferReservedSkill(opts, skill.skill_key, lastPushedHash);
+			health.clear("pull", `skill:${skill.skill_key}`);
+			continue;
+		}
 		const local = lastPushedHash.get(skill.skill_key);
 		if (local === skill.content_hash) {
 			health.clear("pull", `skill:${skill.skill_key}`);
@@ -2193,6 +2222,11 @@ async function reconcileFromCloud(
 	if (complete) {
 		for (const knownKey of [...cloudObservedKeys]) {
 			if (cloudKeys.has(knownKey)) continue;
+			if (isReservedSkill(opts, knownKey)) {
+				cloudObservedKeys.delete(knownKey);
+				health.clear("pull", `skill:${knownKey}`);
+				continue;
+			}
 			// Skip if a pull for this key is in flight. Without this,
 			// the sweep can rm the directory while the pull is mid-
 			// extract, and the pull's writeSkillArchive resurrects
@@ -2352,7 +2386,11 @@ async function pullSkill(
 	skillKey: string,
 	lastPushedHash: Map<string, string>,
 	projectId: string,
-): Promise<void> {
+): Promise<"applied" | "deferred"> {
+	if (isReservedSkill(opts, skillKey)) {
+		deferReservedSkill(opts, skillKey, lastPushedHash);
+		return "deferred";
+	}
 	const tarBytes = await api.getBytes(
 		`/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillKey)}/download`,
 	);
@@ -2371,6 +2409,32 @@ async function pullSkill(
 	writeSkillsLock(lock);
 	lastPushedHash.set(skillKey, hash);
 	log.info("engine.skill_pulled", { skill_key: skillKey });
+	return "applied";
+}
+
+function isReservedSkill(opts: EngineOpts, skillKey: string): boolean {
+	return shouldIgnoreUserSkill(join(opts.adapter.getSkillsRootDir(), skillKey), skillKey);
+}
+
+function deferReservedSkill(
+	opts: EngineOpts,
+	skillKey: string,
+	lastPushedHash: Map<string, string>,
+): void {
+	const hadMemoryHash = lastPushedHash.delete(skillKey);
+	const lock = readSkillsLock();
+	const key = skillCacheKey(opts.adapter.agentType, skillKey);
+	const hadPersistentHash = key in lock.skills;
+	if (hadPersistentHash) delete lock.skills[key];
+	if (hadMemoryHash || hadPersistentHash) writeSkillsLock(lock);
+}
+
+export function shouldForceFullSkillListing(
+	cloudObservedKeys: ReadonlySet<string>,
+	lastPushedHash: ReadonlyMap<string, string>,
+	isReserved: (skillKey: string) => boolean,
+): boolean {
+	return [...cloudObservedKeys].some((key) => isReserved(key) || !lastPushedHash.has(key));
 }
 
 /** Heartbeat sender. Fires immediately on boot then every
