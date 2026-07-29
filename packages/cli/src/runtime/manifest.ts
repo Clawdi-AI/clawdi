@@ -3499,8 +3499,8 @@ function applyHostedMcpProjections(
 			outputs.add(runtime.native.path);
 			continue;
 		}
-		if (!runtime.commandPath) {
-			throw new Error("OpenClaw MCP reconciliation command is unavailable");
+		if (!runtime.commandPath || !executableExists(runtime.commandPath)) {
+			throw new Error("could not mutate managed OpenClaw MCP servers: runtime is unavailable");
 		}
 		for (const mutation of runtime.mutations) {
 			const args =
@@ -3595,13 +3595,6 @@ function buildHostedMcpReconciliationPlan(
 		}
 		const commandPath =
 			name === "openclaw" ? (observation?.commandPath ?? runtimeCommandPath(name, home)) : null;
-		if (
-			name === "openclaw" &&
-			mutations.length > 0 &&
-			(!commandPath || !executableExists(commandPath))
-		) {
-			throw new Error("could not mutate managed OpenClaw MCP servers: runtime is unavailable");
-		}
 		let nextHermesContent: string | null = null;
 		if (name === "hermes" && mutations.length > 0) {
 			nextHermesContent = native.content ?? "";
