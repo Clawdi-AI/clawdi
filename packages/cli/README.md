@@ -15,7 +15,7 @@ backend + dashboard + CLI stack, use the canonical runbook in
 Recommended on macOS and Linux (no Node.js required):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Clawdi-AI/clawdi/main/install.sh | sh
+curl -fsSL https://clawdi.ai/install.sh | sh
 clawdi auth login
 clawdi setup
 clawdi doctor

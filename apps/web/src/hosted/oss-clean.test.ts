@@ -446,14 +446,20 @@ describe("Vite hosted flag boundary", () => {
 	});
 });
 
-describe("PostHog proxy route boundaries", () => {
-	test("vercel.json keeps PostHog first-party proxy rewrites explicit", () => {
+describe("Vercel route boundaries", () => {
+	test("keeps public redirects and PostHog proxy rewrites explicit", () => {
 		const vercelConfig = join(SRC_DIR, "..", "vercel.json");
 		expect(existsSync(vercelConfig)).toBe(true);
 
 		const config = JSON.parse(readFileSync(vercelConfig, "utf8")) as {
 			rewrites?: Array<{ source: string; destination: string }>;
+			redirects?: Array<{ source: string; destination: string; permanent: boolean }>;
 		};
+		expect(config.redirects).toContainEqual({
+			source: "/install.sh",
+			destination: "https://github.com/Clawdi-AI/clawdi/releases/latest/download/install.sh",
+			permanent: false,
+		});
 		expect(config.rewrites).toContainEqual({
 			source: "/_cdi/px/static/:path*",
 			destination: "https://us-assets.i.posthog.com/static/:path*",

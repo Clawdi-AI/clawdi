@@ -12,6 +12,11 @@
 		}
 	],
 	"redirects": [
+		{
+			"source": "/install.sh",
+			"destination": "https://github.com/Clawdi-AI/clawdi/releases/latest/download/install.sh",
+			"permanent": false
+		},
 		{ "source": "/wallet", "destination": "/?settings=billing-wallet", "permanent": false },
 		{ "source": "/subscription", "destination": "/?settings=billing-plan", "permanent": false },
 		{ "source": "/pricing", "destination": "/?settings=billing-plan", "permanent": false },
