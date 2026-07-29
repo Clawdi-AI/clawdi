@@ -1546,16 +1546,19 @@ function readManagedSystemdUnits(root: string): Map<string, string> {
 function changedSystemdUnits(
 	before: Map<string, string>,
 	after: Map<string, string>,
-): { changed: string[]; removed: string[]; present: string[] } {
+): { added: string[]; changed: string[]; removed: string[]; present: string[] } {
+	const added: string[] = [];
 	const changed: string[] = [];
 	const removed: string[] = [];
 	for (const [name, contents] of after) {
-		if (before.get(name) !== contents) changed.push(name);
+		if (!before.has(name)) added.push(name);
+		else if (before.get(name) !== contents) changed.push(name);
 	}
 	for (const name of before.keys()) {
 		if (!after.has(name)) removed.push(name);
 	}
 	return {
+		added: added.sort(),
 		changed: changed.sort(),
 		removed: removed.sort(),
 		present: [...after.keys()].sort(),
@@ -1570,14 +1573,19 @@ function applySystemdRuntimeUpdate(
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
 	const system = changedSystemdUnits(before.system, after.system);
 	const user = changedSystemdUnits(before.user, after.user);
-	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter((unit) =>
-		after.system.has(unit),
+	const systemUnitsChanged = [...system.added, ...system.changed].sort();
+	const userUnitsChanged = [...user.added, ...user.changed].sort();
+	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter(
+		(unit) => before.system.has(unit) && after.system.has(unit),
 	);
 	// Forced restarts are private apply effects, not public unit-byte changes.
-	// Keep them out of systemUnitsChanged while still making activation mandatory.
+	// Keep them out of systemUnitsChanged while still making activation mandatory
+	// for an existing unit. A newly added unit loads current state when started.
 	if (
+		system.added.length === 0 &&
 		system.changed.length === 0 &&
 		system.removed.length === 0 &&
+		user.added.length === 0 &&
 		user.changed.length === 0 &&
 		user.removed.length === 0 &&
 		forcedSystemRestarts.length === 0
@@ -1587,7 +1595,7 @@ function applySystemdRuntimeUpdate(
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
 		// Unit files changed on disk but this environment does not own a live
 		// systemd (non-root/dev); report the divergence instead of hiding it.
-		return { applied: false, systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
+		return { applied: false, systemUnitsChanged, userUnitsChanged };
 	}
 
 	const removableSystemUnits = system.removed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
@@ -1620,7 +1628,7 @@ function applySystemdRuntimeUpdate(
 		runtimeUserSystemctl(paths, ["disable", ...user.removed], { allowNonZero: true });
 	}
 	if (user.changed.length > 0) runtimeUserSystemctl(paths, ["restart", ...user.changed]);
-	return { applied: true, systemUnitsChanged: system.changed, userUnitsChanged: user.changed };
+	return { applied: true, systemUnitsChanged, userUnitsChanged };
 }
 
 function shouldApplySystemdRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): boolean {

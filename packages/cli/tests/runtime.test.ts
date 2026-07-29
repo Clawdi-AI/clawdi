@@ -600,6 +600,43 @@ function hostedRuntimeWatchLocalePayload(
 	};
 }
 
+function hostedRuntimeWatchHermesPayload(
+	home: string,
+	contentRevision: string,
+): HostedRuntimeResponseFixture {
+	return {
+		manifest: {
+			schemaVersion: "clawdi.hosted-runtime.manifest.v1",
+			minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
+			runtime: "hermes",
+			deploymentId: "dep_watch_hermes_noop",
+			environmentId: "env_watch_hermes_noop",
+			...hostedRequiredState(),
+			instanceId: "iid_watch_hermes_noop",
+			generation: 17,
+			issuedAt: "2026-07-29T00:00:00Z",
+			locale: TEST_HOSTED_LOCALE,
+			system: hostedHermesSystemFixture(home),
+			controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+			clawdiCli: {
+				source: "npm:clawdi",
+				packageSpec: "clawdi@0.13.0-test",
+				registry: "https://registry.npmjs.org",
+			},
+			runtimes: {
+				hermes: hostedHermesRuntime({
+					run: {
+						args: ["gateway", "run", "--replace"],
+						env: { HERMES_TEST_CONTENT_REVISION: contentRevision },
+						prependPath: [],
+					},
+				}),
+			},
+		},
+		secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
+	};
+}
+
 function hostedEgressSecretRotationPayload(
 	home: string,
 	egressEngine: typeof TEST_EGRESS_ENGINE_PIN,
@@ -5839,6 +5876,165 @@ exit 64
 		]);
 	});
 
+	it("starts added units once, keeps valid no-ops restart-free, and restarts changed Hermes content", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const systemctlLog = join(root, "systemctl-hermes-noop.log");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		writeHermesVersionBinary(home, "0.18.0");
+		writeFileSync(
+			join(bin, "systemctl"),
+			`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${systemctlLog}'
+printf 'ActiveState=active\\nSubState=running\\n'
+`,
+		);
+		chmodSync(join(bin, "systemctl"), 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		process.env.CLAWDI_RUNTIME_USER = "root";
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => logs.push(String(value));
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		let responseMode: "initial" | "same" | "not-modified" | "changed" = "initial";
+		let committedEtag = "";
+		const watchFetch = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () => {
+					if (responseMode === "not-modified") {
+						return new Response(null, { status: 304, headers: { etag: committedEtag } });
+					}
+					return hostedRuntimeBundleResponse(
+						hostedRuntimeWatchHermesPayload(
+							home,
+							responseMode === "changed" ? "content-b" : "content-a",
+						),
+					);
+				},
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+			expect(process.exitCode ?? 0).toBe(0);
+			const firstEvent = JSON.parse(logs.at(-1) ?? "{}");
+			expect(firstEvent.status).toBe("applied");
+			expect(firstEvent.systemdApply).toEqual({
+				applied: true,
+				systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-watch.service"],
+				userUnitsChanged: ["clawdi-hermes-dashboard.service", "hermes-gateway.service"],
+			});
+			const firstSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(
+				firstSystemctlCalls.filter(
+					(call) => call === "start clawdi-daemon.service clawdi-runtime-watch.service",
+				),
+			).toHaveLength(1);
+			expect(
+				firstSystemctlCalls.filter(
+					(call) =>
+						call === "--user enable --now clawdi-hermes-dashboard.service hermes-gateway.service",
+				),
+			).toHaveLength(1);
+			expect(firstSystemctlCalls.some((call) => call.includes("restart"))).toBe(false);
+
+			const firstAppliedState = readRuntimeAppliedState(getRuntimePaths());
+			if (!firstAppliedState) throw new Error("expected initial Hermes applied state");
+			expect(firstAppliedState.etag).toBe(`"sha256:${firstAppliedState.sourceRevision}"`);
+			committedEtag = firstAppliedState.etag;
+			writeFileSync(systemctlLog, "");
+			logs.length = 0;
+			process.exitCode = undefined;
+			responseMode = "same";
+
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode ?? 0).toBe(0);
+			const sameContentEvent = JSON.parse(logs.at(-1) ?? "{}");
+			expect(sameContentEvent.status).toBe("applied");
+			expect(sameContentEvent.generation).toBe(17);
+			expect(sameContentEvent.etag).toBe(committedEtag);
+			expect(sameContentEvent.systemdUnitsChanged).toBe(false);
+			expect(sameContentEvent.systemdApply).toEqual({
+				applied: true,
+				systemUnitsChanged: [],
+				userUnitsChanged: [],
+			});
+			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
+			expect(watchFetch.captured[1]?.headers["if-none-match"]).toBe(committedEtag);
+
+			writeFileSync(systemctlLog, "");
+			logs.length = 0;
+			process.exitCode = undefined;
+			responseMode = "not-modified";
+
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode ?? 0).toBe(0);
+			const noopEvent = JSON.parse(logs.at(-1) ?? "{}");
+			expect(noopEvent.status).toBe("not_modified");
+			expect(noopEvent.generation).toBe(17);
+			expect(noopEvent.etag).toBe(committedEtag);
+			expect(noopEvent.systemdUnitsChanged).toBeUndefined();
+			expect(noopEvent.systemdApply).toBeUndefined();
+			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
+			expect(watchFetch.captured[2]?.headers["if-none-match"]).toBe(committedEtag);
+			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
+				etag: committedEtag,
+				sourceRevision: firstAppliedState.sourceRevision,
+				generation: 17,
+			});
+
+			writeFileSync(systemctlLog, "");
+			logs.length = 0;
+			process.exitCode = undefined;
+			responseMode = "changed";
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode ?? 0).toBe(0);
+			const changedEvent = JSON.parse(logs.at(-1) ?? "{}");
+			expect(changedEvent.status).toBe("applied");
+			expect(changedEvent.generation).toBe(17);
+			expect(changedEvent.etag).not.toBe(committedEtag);
+			expect(changedEvent.systemdApply).toEqual({
+				applied: true,
+				systemUnitsChanged: [],
+				userUnitsChanged: ["hermes-gateway.service"],
+			});
+			const changedSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(changedSystemctlCalls).toContain("--user restart hermes-gateway.service");
+			expect(
+				changedSystemctlCalls.some((call) =>
+					call.includes("restart clawdi-hermes-dashboard.service"),
+				),
+			).toBe(false);
+			expect(watchFetch.captured[3]?.headers["if-none-match"]).toBe(committedEtag);
+			const changedAppliedState = readRuntimeAppliedState(getRuntimePaths());
+			if (!changedAppliedState) throw new Error("expected changed Hermes applied state");
+			expect(changedAppliedState.sourceRevision).not.toBe(firstAppliedState.sourceRevision);
+			expect(changedAppliedState.etag).toBe(`"sha256:${changedAppliedState.sourceRevision}"`);
+		} finally {
+			watchFetch.restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
+	});
+
 	it("runtime watch wakes on its own manifest SSE signal and restarts only the runtime unit", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -5937,6 +6133,7 @@ exit 0
 			expect(resetFailedIndex).toBeGreaterThanOrEqual(0);
 			expect(enableIndex).toBeGreaterThan(resetFailedIndex);
 			expect(restartIndex).toBeGreaterThan(enableIndex);
+			expect(systemctlCalls).toContain("restart clawdi-daemon.service");
 			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
 				false,
 			);
@@ -7515,6 +7712,91 @@ exit 64
 		expect(statSync(activeTarget).mode & 0o777).toBe(0o700);
 		expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
 		expect(statSync(legacyImageShim).mode & 0o777).toBe(0o700);
+	});
+
+	it("starts a newly added sidecar once during its first secret authority commit", async () => {
+		const home = join(root, "home", "clawdi");
+		const state = join(root, "var", "lib", "clawdi");
+		const run = join(root, "run", "clawdi");
+		const bin = join(root, "bin");
+		const systemctlLog = join(root, "systemctl-egress-first-commit.log");
+		const previousExitCode = process.exitCode;
+		const previousLog = console.log;
+		const logs: string[] = [];
+		mkdirSync(join(run, "secrets"), { recursive: true });
+		mkdirSync(bin, { recursive: true });
+		seedOpenClawBinary(home);
+		writeFileSync(
+			join(bin, "systemctl"),
+			`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${systemctlLog}'
+printf 'ActiveState=active\\nSubState=running\\n'
+`,
+		);
+		chmodSync(join(bin, "systemctl"), 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_SYSTEMD_APPLY = "1";
+		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		process.env.CLAWDI_RUNTIME_USER = "root";
+		process.exitCode = undefined;
+		console.log = (value?: unknown) => logs.push(String(value));
+		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
+		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
+		const paths = getRuntimePaths();
+		const mitmproxy = seedMitmproxyCache(paths);
+		const initialSecret = "000000";
+		const initialFetch = mockFetch([
+			{
+				method: "GET",
+				path: "/v1/runtime/manifest",
+				response: () =>
+					hostedRuntimeBundleResponse(
+						hostedEgressSecretRotationPayload(home, mitmproxy, initialSecret),
+					),
+			},
+		]);
+
+		try {
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode ?? 0).toBe(0);
+			const event = JSON.parse(logs.at(-1) ?? "{}");
+			expect(event.status).toBe("applied");
+			expect(event.systemdApply).toEqual({
+				applied: true,
+				systemUnitsChanged: [
+					"clawdi-daemon.service",
+					"clawdi-runtime-sidecar.service",
+					"clawdi-runtime-watch.service",
+				],
+				userUnitsChanged: ["openclaw-gateway.service"],
+			});
+			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(
+				systemctlCalls.filter(
+					(call) =>
+						call ===
+						"start clawdi-daemon.service clawdi-runtime-sidecar.service clawdi-runtime-watch.service",
+				),
+			).toHaveLength(1);
+			expect(
+				systemctlCalls.filter((call) => call === "--user enable --now openclaw-gateway.service"),
+			).toHaveLength(1);
+			expect(systemctlCalls.some((call) => call.includes("restart"))).toBe(false);
+			expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toMatch(/^[a-f0-9]{64}$/);
+			expect(
+				JSON.parse(readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8")),
+			).toMatchObject({ "secret://provider.default.apiKey": initialSecret });
+		} finally {
+			initialFetch.restore();
+			console.log = previousLog;
+			process.exitCode = previousExitCode;
+		}
 	});
 
 	it("keeps public sidecar artifacts stable while forcing private egress secret restarts", async () => {
