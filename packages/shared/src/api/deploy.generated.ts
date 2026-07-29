@@ -126,6 +126,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v2/deployments/{deployment_id}/runtime-ui/access/reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reset V2 Runtime Ui Access */
+        post: operations["reset_v2_runtime_ui_access_v2_deployments__deployment_id__runtime_ui_access_reset_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v2/deployments/{deployment_id}/runtime-ui/credentials": {
         parameters: {
             query?: never;
@@ -591,7 +608,7 @@ export interface components {
              * Verb
              * @enum {string}
              */
-            verb: "create" | "plan_change" | "start" | "stop" | "restart" | "update" | "rename" | "delete";
+            verb: "create" | "plan_change" | "start" | "stop" | "restart" | "update" | "rename" | "delete" | "reset_runtime_ui_access";
             /** Targetgeneration */
             targetGeneration: number;
             /** Manifestetag */
@@ -1427,6 +1444,56 @@ export interface components {
              */
             expires_at: string;
         };
+        /** V2HermesRuntimeUiCredentials */
+        V2HermesRuntimeUiCredentials: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            runtime: "hermes";
+            /** Url */
+            url: string;
+            /** Deployment Resource Version */
+            deployment_resource_version: string;
+            /**
+             * Auth Mode
+             * @default password
+             * @constant
+             */
+            auth_mode: "password";
+            /** Username */
+            username: string;
+            /** Password */
+            password: string;
+        };
+        /** V2HermesRuntimeUiEndpointInfo */
+        V2HermesRuntimeUiEndpointInfo: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            runtime: "hermes";
+            /**
+             * Role
+             * @default control_ui
+             * @constant
+             */
+            role: "control_ui";
+            /** Url */
+            url: string;
+            /**
+             * Auth Mode
+             * @default password
+             * @constant
+             */
+            auth_mode: "password";
+            /**
+             * Browser Mode
+             * @default embedded_and_top_level
+             * @constant
+             */
+            browser_mode: "embedded_and_top_level";
+        };
         /** V2HostedCommercialFundingFactInfo */
         V2HostedCommercialFundingFactInfo: {
             /**
@@ -1664,7 +1731,8 @@ export interface components {
             ai_provider_auth_kinds: {
                 [key: string]: "unmanaged" | "managed" | "api_key" | "codex_oauth";
             };
-            runtime_ui_endpoint?: components["schemas"]["V2HostedRuntimeUiEndpointInfo"] | null;
+            /** Runtime Ui Endpoint */
+            runtime_ui_endpoint?: (components["schemas"]["V2HermesRuntimeUiEndpointInfo"] | components["schemas"]["V2OpenClawRuntimeUiEndpointInfo"]) | null;
             accepted_operation?: components["schemas"]["LongRunningOperation"] | null;
             commercial_display?: components["schemas"]["V2HostedDeploymentCommercialDisplay"];
             /**
@@ -1679,52 +1747,6 @@ export interface components {
             upgrade_available: boolean;
             upgrade_eligibility: components["schemas"]["V2HostedComputeUpgradeEligibility"];
             compute_slot_occupancy: components["schemas"]["V2HostedComputeSlotOccupancy"] | null;
-        };
-        /** V2HostedRuntimeUiCredentials */
-        V2HostedRuntimeUiCredentials: {
-            /**
-             * Runtime
-             * @enum {string}
-             */
-            runtime: "openclaw" | "hermes";
-            /** Url */
-            url: string;
-            /**
-             * Auth Mode
-             * @enum {string}
-             */
-            auth_mode: "openclaw_device" | "password";
-            /** Username */
-            username?: string | null;
-            /** Password */
-            password?: string | null;
-        };
-        /** V2HostedRuntimeUiEndpointInfo */
-        V2HostedRuntimeUiEndpointInfo: {
-            /**
-             * Runtime
-             * @enum {string}
-             */
-            runtime: "openclaw" | "hermes";
-            /**
-             * Role
-             * @default control_ui
-             * @constant
-             */
-            role: "control_ui";
-            /** Url */
-            url: string;
-            /**
-             * Auth Mode
-             * @enum {string}
-             */
-            auth_mode: "openclaw_device" | "password";
-            /**
-             * Browser Mode
-             * @default top_level
-             * @constant
-             */
-            browser_mode: "top_level";
         };
         /** V2HostedUsageDay */
         V2HostedUsageDay: {
@@ -1779,6 +1801,56 @@ export interface components {
         V2ManagedModelCatalogResponse: {
             /** Models */
             models: components["schemas"]["V2ManagedModelCatalogItem"][];
+        };
+        /** V2OpenClawRuntimeUiCredentials */
+        V2OpenClawRuntimeUiCredentials: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            runtime: "openclaw";
+            /** Url */
+            url: string;
+            /** Deployment Resource Version */
+            deployment_resource_version: string;
+            /**
+             * Auth Mode
+             * @default openclaw_token
+             * @constant
+             */
+            auth_mode: "openclaw_token";
+            /** Token */
+            token: string;
+            /** Handoff Url */
+            handoff_url: string;
+        };
+        /** V2OpenClawRuntimeUiEndpointInfo */
+        V2OpenClawRuntimeUiEndpointInfo: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            runtime: "openclaw";
+            /**
+             * Role
+             * @default control_ui
+             * @constant
+             */
+            role: "control_ui";
+            /** Url */
+            url: string;
+            /**
+             * Auth Mode
+             * @default openclaw_token
+             * @constant
+             */
+            auth_mode: "openclaw_token";
+            /**
+             * Browser Mode
+             * @default embedded_and_top_level
+             * @constant
+             */
+            browser_mode: "embedded_and_top_level";
         };
         /** V2PlanResponse */
         V2PlanResponse: {
@@ -2357,10 +2429,86 @@ export interface operations {
             };
         };
     };
+    reset_v2_runtime_ui_access_v2_deployments__deployment_id__runtime_ui_access_reset_post: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": string;
+                "If-Match": string;
+            };
+            path: {
+                deployment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The declarative spec change was accepted. */
+            202: {
+                headers: {
+                    /** @description Canonical URL of the accepted operation. */
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LongRunningOperation"];
+                };
+            };
+            /** @description A mutation header or request field is invalid. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description The mutation conflicts with current accepted state. */
+            409: {
+                headers: {
+                    /** @description Seconds before retrying a transient conflict. */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description If-Match does not match the deployment resource ETag. */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+            /** @description A strong If-Match header is required. */
+            428: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LifecycleProblemDetails"];
+                };
+            };
+        };
+    };
     create_v2_runtime_ui_credentials_v2_deployments__deployment_id__runtime_ui_credentials_post: {
         parameters: {
             query?: never;
-            header?: never;
+            header: {
+                "If-Match": string;
+            };
             path: {
                 deployment_id: string;
             };
@@ -2374,7 +2522,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["V2HostedRuntimeUiCredentials"];
+                    "application/json": components["schemas"]["V2HermesRuntimeUiCredentials"] | components["schemas"]["V2OpenClawRuntimeUiCredentials"];
                 };
             };
             /** @description Validation Error */

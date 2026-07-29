@@ -1,19 +1,4 @@
-import type { RuntimeUiCredentials } from "@clawdi/shared/api";
-
-export interface HermesUiCredentials {
-	url: string;
-	username: string;
-	password: string;
-}
-
-export interface OpenClawUiCredentials {
-	url: string;
-	token: string;
-}
-
-export type ResolvedRuntimeUiCredentials =
-	| { runtime: "hermes"; value: HermesUiCredentials }
-	| { runtime: "openclaw"; value: OpenClawUiCredentials };
+import { isRuntimeUiCredentials, type RuntimeUiCredentials } from "@clawdi/shared/api";
 
 type RuntimeWindow = {
 	close(): void;
@@ -35,72 +20,41 @@ export function openSecureRuntimeWindow(openWindow: OpenRuntimeWindow): RuntimeW
 	return popup;
 }
 
-function targetsPublishedEndpoint(credentialUrl: string, endpointUrl: string): boolean {
+function targetsCleanPublishedEndpoint(credentialUrl: string, endpointUrl: string): boolean {
 	try {
 		const credentialTarget = new URL(credentialUrl);
-		credentialTarget.hash = "";
-		return credentialTarget.href === new URL(endpointUrl).href;
+		const publishedTarget = new URL(endpointUrl);
+		return (
+			credentialTarget.protocol === "https:" &&
+			credentialTarget.search === "" &&
+			credentialTarget.hash === "" &&
+			publishedTarget.search === "" &&
+			publishedTarget.hash === "" &&
+			credentialTarget.href === publishedTarget.href
+		);
 	} catch {
 		return false;
 	}
 }
 
-function hermesUiCredentials(
+function hasCurrentDeploymentResourceVersion(
 	credentials: RuntimeUiCredentials,
-	endpointUrl: string,
-): HermesUiCredentials | null {
-	if (
-		credentials.runtime !== "hermes" ||
-		credentials.auth_mode !== "password" ||
-		!credentials.username ||
-		!credentials.password ||
-		!targetsPublishedEndpoint(credentials.url, endpointUrl)
-	) {
-		return null;
-	}
-	return {
-		url: credentials.url,
-		username: credentials.username,
-		password: credentials.password,
-	};
-}
-
-function openClawUiCredentials(
-	credentials: RuntimeUiCredentials,
-	endpointUrl: string,
-): OpenClawUiCredentials | null {
-	if (
-		credentials.runtime !== "openclaw" ||
-		credentials.auth_mode !== "openclaw_device" ||
-		!targetsPublishedEndpoint(credentials.url, endpointUrl)
-	) {
-		return null;
-	}
-	try {
-		const url = new URL(credentials.url);
-		const fragment = new URLSearchParams(url.hash.slice(1));
-		const token = fragment.get("token")?.trim();
-		if (
-			!token ||
-			fragment.getAll("token").length !== 1 ||
-			![...fragment.keys()].every((key) => key === "token")
-		) {
-			return null;
-		}
-		return { url: credentials.url, token };
-	} catch {
-		return null;
-	}
+	deploymentResourceVersion: string,
+): boolean {
+	return credentials.deployment_resource_version === deploymentResourceVersion;
 }
 
 export function resolveRuntimeUiCredentials(
 	credentials: RuntimeUiCredentials,
 	endpointUrl: string,
-): ResolvedRuntimeUiCredentials | null {
-	if (credentials.runtime === "hermes") {
-		const value = hermesUiCredentials(credentials, endpointUrl);
-		return value ? { runtime: "hermes", value } : null;
+	deploymentResourceVersion: string,
+): RuntimeUiCredentials | null {
+	if (
+		!isRuntimeUiCredentials(credentials) ||
+		!hasCurrentDeploymentResourceVersion(credentials, deploymentResourceVersion) ||
+		!targetsCleanPublishedEndpoint(credentials.url, endpointUrl)
+	) {
+		return null;
 	}
-	const value = openClawUiCredentials(credentials, endpointUrl);
-	return value ? { runtime: "openclaw", value } : null;
+	return credentials;
 }

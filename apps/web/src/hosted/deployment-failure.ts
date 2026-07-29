@@ -105,6 +105,8 @@ export function deploymentOperationLabel(verb: DeploymentOperationVerb | null): 
 			return "Agent stop";
 		case "restart":
 			return "Agent restart";
+		case "reset_runtime_ui_access":
+			return "Runtime UI access reset";
 		case "update":
 			return "Agent update";
 		case "runtime_switch":
@@ -202,6 +204,7 @@ export function deploymentFailurePresentation(
 			};
 		case "stop":
 		case "update":
+		case "reset_runtime_ui_access":
 		case "runtime_switch":
 		case "rename":
 		case null:
