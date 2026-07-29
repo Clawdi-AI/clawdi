@@ -2,10 +2,8 @@
 
 import { Link } from "@tanstack/react-router";
 import type { LucideIcon } from "lucide-react";
-import { CheckCircle2 } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
-import { ProjectResourcePath } from "@/components/project-resource-path";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -279,22 +277,6 @@ function ResourceRow({
 			</span>
 			<div className="min-w-0 flex-1">
 				<div className="text-sm font-medium">{definition.label}</div>
-				<div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-					<ProjectResourcePath resource={definition} />
-					{isProjectRow && projectTypeCounts ? (
-						<ProjectTypeBreakdown counts={projectTypeCounts} />
-					) : null}
-					{empty ? (
-						<span className="shrink-0 rounded-sm bg-muted px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
-							{isProjectRow ? "Start here" : `Start: ${definition.emptyCta}`}
-						</span>
-					) : (
-						<span className="inline-flex shrink-0 items-center gap-1 rounded-sm bg-muted/60 px-1.5 py-0.5 text-2xs font-medium text-muted-foreground">
-							<CheckCircle2 className="size-3" />
-							Active
-						</span>
-					)}
-				</div>
 			</div>
 			{isProjectRow && projectTypeCounts ? (
 				<Tooltip>
@@ -305,28 +287,5 @@ function ResourceRow({
 				countCluster
 			)}
 		</Link>
-	);
-}
-
-function ProjectTypeBreakdown({ counts }: { counts: ProjectTypeCounts }) {
-	const items = [
-		{ label: "Custom", count: counts.custom },
-		{ label: "Global", count: counts.global },
-		{ label: "Agent", count: counts.agent },
-	];
-	return (
-		<span
-			className="inline-flex min-w-0 flex-wrap items-center gap-1"
-			title={`Project types: ${formatProjectTypeCounts(counts)}`}
-		>
-			{items.map((item) => (
-				<span
-					key={item.label}
-					className="rounded-sm border bg-background px-1.5 py-0.5 text-2xs font-medium text-muted-foreground"
-				>
-					<span className="tabular-nums">{formatNumber(item.count)}</span> {item.label}
-				</span>
-			))}
-		</span>
 	);
 }
