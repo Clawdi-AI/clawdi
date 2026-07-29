@@ -25,7 +25,7 @@ import { unwrap, useApi } from "@/lib/api";
 import { useCurrentUser } from "@/lib/auth-client";
 import { useHostedProductAccess } from "@/lib/hosted-product-access";
 import { sessionListQueryOptions } from "@/lib/session-queries";
-import { cn, relativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const RECENT_SESSIONS_LIMIT = 15;
 const RECENT_SESSIONS_CACHE_PAGE_SIZE = 25;
@@ -356,14 +356,7 @@ function renderGreeting(
 	summary: AgentFleetSummary,
 	options: { agentStatusUnavailable?: boolean } = {},
 ) {
-	return (
-		<Greeting
-			activeCount={summary.activeCount}
-			total={summary.total}
-			lastActive={summary.lastActive}
-			agentStatusUnavailable={options.agentStatusUnavailable}
-		/>
-	);
+	return <Greeting total={summary.total} agentStatusUnavailable={options.agentStatusUnavailable} />;
 }
 
 function ActivityGraphSkeleton() {
@@ -439,16 +432,10 @@ function currentDaypart(): "morning" | "afternoon" | "evening" {
 }
 
 function Greeting({
-	activeCount,
 	total,
-	lastActive,
 	agentStatusUnavailable = false,
 }: {
-	activeCount: number;
 	total: number;
-	/** Most recent last-seen timestamp across the fleet — the one fact the
-	 * old AgentsCard header carried that the greeting didn't. */
-	lastActive?: string | null;
 	agentStatusUnavailable?: boolean;
 }) {
 	const { user } = useCurrentUser();
@@ -461,9 +448,7 @@ function Greeting({
 		? "Agent status is unavailable right now."
 		: total === 0
 			? "Connect your first agent to start syncing."
-			: activeCount > 0
-				? `${activeCount} of ${total} agents active right now.`
-				: `${total} agents connected${lastActive ? ` · last active ${relativeTime(lastActive)}` : ""}.`;
+			: `${total} agent${total === 1 ? "" : "s"}`;
 	return (
 		<div>
 			<h1 className="text-2xl font-semibold tracking-tight">
