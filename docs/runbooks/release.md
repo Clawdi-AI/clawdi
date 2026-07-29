@@ -74,9 +74,12 @@ releases.
    `packages/cli/package.json` using semver. If no npm publish is intended,
    leave the version unchanged.
    For the managed agent-v2 release line, this repository's release workflow must
-   build, typecheck, run the full CLI suite, and pack one immutable tarball. It
-   installs that tarball, records and verifies its SHA-256, transfers the same
-   artifact to the protected npm job, verifies it again, and publishes it once
+   build, typecheck, run the full CLI suite, pack one immutable npm tarball, and
+   build the native matrix once. It installs the npm tarball and exercises the
+   compiled Linux artifact through the native installer/daemon lifecycle. The
+   exact-version release manifest is the sole checksum contract for native
+   archives. The workflow transfers the same artifacts to the protected npm
+   job, verifies them again, and publishes the npm package once
    to `beta` for a prerelease or `latest` for a stable version with
    trusted-publisher OIDC. Package-level tag overrides are rejected. The build
    job may use the configured fast runner; the protected publish job must use
@@ -89,6 +92,12 @@ releases.
    npm version, and completes the draft release before finalization. Recovery
    decisions come from `packages/cli/scripts/release-recovery.mjs`; the workflow
    only gathers external facts and executes the validated action.
+   Native ownership is separate: installed native executables update only from
+   the exact `clawdi-cli-v<version>` manifest and assets. npm/Bun installs use
+   exact npm versions. Hosted remains a separate exact-version npm authority and
+   never invokes native self-update. Bun's macOS artifacts are linker ad-hoc
+   signed; this release line does not claim Developer ID signing, notarization,
+   or browser-download Gatekeeper behavior.
 7. Decide whether `CHANGELOG.md` needs a curated entry. Add one for notable
    user-facing releases, especially when GitHub generated notes would be too
    noisy or too terse.

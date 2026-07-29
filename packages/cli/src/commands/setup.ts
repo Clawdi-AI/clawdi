@@ -2,7 +2,7 @@ import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
 import * as p from "@clack/prompts";
 import chalk from "chalk";
 import type { AgentAdapter } from "../adapters/base";
@@ -16,6 +16,7 @@ import {
 } from "../adapters/registry";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { getClawdiDir, isLoggedIn } from "../lib/config";
+import { resolveCurrentCliResourceRoot } from "../lib/current-cli-invocation";
 import { errMessage } from "../lib/errors";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
@@ -250,11 +251,7 @@ async function installBuiltinSkill(agentType: AgentType) {
 	if (!targetDir) return;
 	const label = adapterRegistry[agentType].displayName;
 
-	// Support both dev (src/commands/) and build (dist/) paths
-	let sourceDir = resolve(import.meta.dirname, "../../skills/clawdi");
-	if (!existsSync(sourceDir)) {
-		sourceDir = resolve(import.meta.dirname, "skills/clawdi");
-	}
+	const sourceDir = join(resolveCurrentCliResourceRoot(), "skills", "clawdi");
 	if (!existsSync(sourceDir)) {
 		console.log(chalk.yellow("⚠ Built-in skill not found, skipping."));
 		return;

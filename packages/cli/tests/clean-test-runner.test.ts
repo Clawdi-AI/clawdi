@@ -73,8 +73,6 @@ describe("client workflow contract", () => {
 	test("retains the existing client build and test commands", () => {
 		for (const command of [
 			"bun run check",
-			"bun run --cwd packages/cli build:binary",
-			"packages/cli/dist-bin/clawdi --version",
 			"bun run --cwd packages/cli check:publish-manifest",
 			"bun test --isolate --max-concurrency=1 packages/cli",
 		]) {

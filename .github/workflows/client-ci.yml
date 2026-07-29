@@ -6,6 +6,7 @@ on:
       - "apps/web/**"
       - "packages/shared/**"
       - "packages/cli/**"
+      - "install.sh"
       - "scripts/filter-deploy-openapi.py"
       - "scripts/openapi-typescript.sh"
       - "scripts/generate-deploy-api.sh"
@@ -23,6 +24,7 @@ on:
       - "apps/web/**"
       - "packages/shared/**"
       - "packages/cli/**"
+      - "install.sh"
       - "scripts/filter-deploy-openapi.py"
       - "scripts/openapi-typescript.sh"
       - "scripts/generate-deploy-api.sh"
@@ -69,6 +71,7 @@ jobs:
               - "apps/web/**"
             cli:
               - "packages/cli/**"
+              - "install.sh"
             shared:
               - "packages/shared/**"
             infra:
@@ -125,10 +128,16 @@ jobs:
           --filter=web --filter=clawdi --filter=@clawdi/shared
           --output-logs=errors-only
       # Smoke tests exercise the compiled bin wrapper, built above by Turbo.
-      - name: Build standalone CLI binary
-        run: bun run --cwd packages/cli build:binary
-      - name: Smoke standalone CLI binary
-        run: packages/cli/dist-bin/clawdi --version
+      - name: Build native CLI
+        run: bun run --cwd packages/cli build:native
+      - name: Smoke native CLI
+        run: |
+          sh -n install.sh
+          packages/cli/dist-native/linux-x64/clawdi --version
+          CLAWDI_NATIVE_BINARY=packages/cli/dist-native/linux-x64/clawdi \
+            bun test \
+              packages/cli/tests/e2e/native-installer.e2e.test.ts \
+              packages/cli/tests/e2e/native-daemon.e2e.test.ts
       - name: Validate CLI publish payload
         run: bun run --cwd packages/cli check:publish-manifest
       - name: Test CLI

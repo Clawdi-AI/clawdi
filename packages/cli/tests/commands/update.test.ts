@@ -1,18 +1,33 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { chmodSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+	chmodSync,
+	mkdirSync,
+	readFileSync,
+	renameSync,
+	rmSync,
+	symlinkSync,
+	utimesSync,
+	writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	daemonAutoUpdateOnce,
-	detectGlobalInstall,
-	detectInstallerFromPaths,
-	detectUpdateOwnershipFromPaths,
+	detectCurrentUpdateOwnership,
+	detectPackageManagerUpdateOwnershipFromPaths,
 	installCommand,
 	maybeAutoUpdate,
 	runBackgroundUpdateWorker,
 	runInstallerProcess,
 	update,
 } from "../../src/commands/update";
+import {
+	NATIVE_TARGETS,
+	type NativeTarget,
+	nativeAssetName,
+} from "../../src/lib/native-release-manifest";
 import {
 	createRestartCoordination,
 	type RestartCoordination,
@@ -30,6 +45,7 @@ let origArgv: string[];
 let origExitCode: number | undefined;
 
 const npmOwnership = {
+	kind: "package" as const,
 	installer: "npm" as const,
 	installerExecutable: "/owned/npm/bin/npm",
 	executable: "/owned/npm/bin/clawdi",
@@ -81,23 +97,31 @@ afterEach(() => {
 	rmSync(tmpHome, { recursive: true, force: true });
 });
 
-describe("detectInstaller", () => {
+describe("package manager update ownership", () => {
 	it("uses npm when the resolved entry is inside npm's global package root", () => {
 		expect(
-			detectInstallerFromPaths("/home/user/.local/lib/node_modules/clawdi/bin/clawdi.mjs", {
-				npmBin: "/home/user/.local/bin",
-				npmRoot: "/home/user/.local/lib/node_modules",
-				npmExecutable: "/home/user/.local/bin/npm",
-				bunBin: "/home/user/.bun/bin",
-				bunRoot: "/home/user/.bun/install/global/node_modules",
-				bunExecutable: "/home/user/.bun/bin/bun",
-			}),
-		).toBe("npm");
+			detectPackageManagerUpdateOwnershipFromPaths(
+				"/home/user/.local/lib/node_modules/clawdi/bin/clawdi.mjs",
+				{
+					npmBin: "/home/user/.local/bin",
+					npmRoot: "/home/user/.local/lib/node_modules",
+					npmExecutable: "/home/user/.local/bin/npm",
+					bunBin: "/home/user/.bun/bin",
+					bunRoot: "/home/user/.bun/install/global/node_modules",
+					bunExecutable: "/home/user/.bun/bin/bun",
+				},
+			),
+		).toEqual({
+			kind: "package",
+			installer: "npm",
+			installerExecutable: "/home/user/.local/bin/npm",
+			executable: "/home/user/.local/bin/clawdi",
+		});
 	});
 
 	it("uses bun when the resolved entry is inside Bun's global package root", () => {
 		expect(
-			detectInstallerFromPaths(
+			detectPackageManagerUpdateOwnershipFromPaths(
 				"/home/user/.bun/install/global/node_modules/clawdi/bin/clawdi.mjs",
 				{
 					npmBin: "/home/user/.local/bin",
@@ -108,12 +132,17 @@ describe("detectInstaller", () => {
 					bunExecutable: "/home/user/.bun/bin/bun",
 				},
 			),
-		).toBe("bun");
+		).toEqual({
+			kind: "package",
+			installer: "bun",
+			installerExecutable: "/home/user/.bun/bin/bun",
+			executable: "/home/user/.bun/bin/clawdi",
+		});
 	});
 
 	it("binds a Bun-owned install to its positively identified absolute Bun executable", () => {
 		expect(
-			detectUpdateOwnershipFromPaths(
+			detectPackageManagerUpdateOwnershipFromPaths(
 				"/home/user/.bun/install/global/node_modules/clawdi/bin/clawdi.mjs",
 				{
 					bunBin: "/home/user/.bun/bin",
@@ -122,12 +151,13 @@ describe("detectInstaller", () => {
 				},
 			),
 		).toEqual({
+			kind: "package",
 			installer: "bun",
 			installerExecutable: "/home/user/.bun/bin/bun",
 			executable: "/home/user/.bun/bin/clawdi",
 		});
 		expect(
-			detectUpdateOwnershipFromPaths(
+			detectPackageManagerUpdateOwnershipFromPaths(
 				"/home/user/.bun/install/global/node_modules/clawdi/bin/clawdi.mjs",
 				{
 					bunBin: "/home/user/.bun/bin",
@@ -170,7 +200,8 @@ describe("detectInstaller", () => {
 		process.env.PATH = "/usr/bin:/bin";
 		process.argv[1] = invokedPath;
 		try {
-			expect(detectGlobalInstall()).toEqual({
+			expect(detectCurrentUpdateOwnership()).toEqual({
+				kind: "package",
 				installer: "bun",
 				installerExecutable: bunExecutable,
 				executable: join(tmpHome, ".bun", "bin", "clawdi"),
@@ -183,7 +214,7 @@ describe("detectInstaller", () => {
 
 	it("does not infer ownership from an executable merely being in a global bin", () => {
 		expect(
-			detectInstallerFromPaths("/home/user/.local/bin/clawdi", {
+			detectPackageManagerUpdateOwnershipFromPaths("/home/user/.local/bin/clawdi", {
 				npmBin: "/home/user/.local/bin",
 				npmRoot: "/home/user/.local/lib/node_modules",
 				npmExecutable: "/home/user/.local/bin/npm",
@@ -196,14 +227,17 @@ describe("detectInstaller", () => {
 
 	it("rejects Bun 1.3.14 bunx and npm npx cache ownership", () => {
 		expect(
-			detectInstallerFromPaths("/tmp/bunx-1000-clawdi@latest/node_modules/clawdi/bin/clawdi.mjs", {
-				bunBin: "/home/user/.bun/bin",
-				bunRoot: "/tmp/bunx-1000-clawdi@latest/node_modules",
-				bunExecutable: "/home/user/.bun/bin/bun",
-			}),
+			detectPackageManagerUpdateOwnershipFromPaths(
+				"/tmp/bunx-1000-clawdi@latest/node_modules/clawdi/bin/clawdi.mjs",
+				{
+					bunBin: "/home/user/.bun/bin",
+					bunRoot: "/tmp/bunx-1000-clawdi@latest/node_modules",
+					bunExecutable: "/home/user/.bun/bin/bun",
+				},
+			),
 		).toBeNull();
 		expect(
-			detectInstallerFromPaths(
+			detectPackageManagerUpdateOwnershipFromPaths(
 				"C:\\Users\\test\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules\\clawdi\\bin\\clawdi.mjs",
 				{
 					npmBin: "C:\\Users\\test\\AppData\\Roaming\\npm",
@@ -361,10 +395,142 @@ describe("update --json", () => {
 });
 
 describe("update install", () => {
+	it.each([
+		{
+			name: "manifest 404",
+			expected: "Native release manifest download failed (404).",
+			fetcher: testFetcher(async () => new Response("missing", { status: 404 })),
+		},
+		{
+			name: "checksum mismatch",
+			expected: "Native release checksum verification failed.",
+			fetcher: testFetcher(async (input) =>
+				String(input).endsWith("clawdi-cli-manifest.txt")
+					? new Response(nativeManifest("99.0.0", "0".repeat(64)))
+					: new Response("not the approved archive"),
+			),
+		},
+		{
+			name: "cancellation",
+			expected: "Native update was cancelled.",
+			fetcher: testFetcher(async () => {
+				throw new DOMException("cancelled", "AbortError");
+			}),
+		},
+	])("reports a sanitized native $name", async ({ expected, fetcher }) => {
+		const captured = await runNativeForegroundFailure(fetcher);
+		expect(captured).toContain(`${expected} Try manually:`);
+		expect(captured).toContain("CLAWDI_VERSION=99.0.0 sh");
+	});
+
+	it("reports a native download deadline without exposing an internal path", async () => {
+		const fetcher = testFetcher(
+			async (_input, init) =>
+				await new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener("abort", () => reject(init.signal?.reason), {
+						once: true,
+					});
+				}),
+		);
+		const captured = await runNativeForegroundFailure(fetcher, 5);
+		expect(captured).toContain("Native release download timed out. Try manually:");
+		expect(captured).not.toContain(tmpHome);
+	});
+
+	it("downloads an exact native archive and executes its staged activation child", async () => {
+		const prefix = join(tmpHome, "native-prefix");
+		const payload = join(tmpHome, "native-payload");
+		const archivePath = join(tmpHome, "native.tar.gz");
+		const probeLog = join(tmpHome, "native-probe.log");
+		mkdirSync(join(payload, "egress-addon"), { recursive: true });
+		mkdirSync(join(payload, "skills", "clawdi"), { recursive: true });
+		mkdirSync(join(payload, "skills", "hosted-versions", "1", "clawdi"), {
+			recursive: true,
+		});
+		writeFileSync(
+			join(payload, "clawdi"),
+			'#!/bin/sh\nprintf "%s\\n" "$0" "$@" > "$CLAWDI_NATIVE_PROBE_LOG"\nexit 0\n',
+			{ mode: 0o755 },
+		);
+		writeFileSync(join(payload, "egress-addon", "clawdi_egress_addon.py"), "addon\n");
+		writeFileSync(join(payload, "skills", "clawdi", "SKILL.md"), "# skill\n");
+		writeFileSync(
+			join(payload, "skills", "hosted-versions", "1", "clawdi", "SKILL.md"),
+			"# hosted\n",
+		);
+		const tarResult = spawnSync("tar", [
+			"-czf",
+			archivePath,
+			"-C",
+			payload,
+			"clawdi",
+			"egress-addon",
+			"skills",
+		]);
+		expect(tarResult.status).toBe(0);
+		const archive = readFileSync(archivePath);
+		const checksum = createHash("sha256").update(archive).digest("hex");
+		const manifest = nativeManifest("99.0.0", checksum);
+		const nativeFetcher = testFetcher(async (input) =>
+			String(input).endsWith("clawdi-cli-manifest.txt")
+				? new Response(manifest)
+				: new Response(archive),
+		);
+		const ownership = {
+			kind: "native" as const,
+			prefix,
+			versionsRoot: join(prefix, "share", "clawdi", "versions"),
+			versionDir: join(prefix, "share", "clawdi", "versions", "0.13.11-linux-x64"),
+			version: "0.13.11",
+			target: "linux-x64" as const,
+			executable: join(prefix, "share", "clawdi", "versions", "0.13.11-linux-x64", "clawdi"),
+			launcher: join(prefix, "bin", "clawdi"),
+		};
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/clawdi",
+				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+			},
+		]);
+		process.env.CLAWDI_NATIVE_PROBE_LOG = probeLog;
+		try {
+			await withStdoutTty(() =>
+				update(
+					{},
+					{
+						detectOwnership: () => ownership,
+						nativeReleaseBaseUrl: "https://example.invalid/clawdi-cli-v99.0.0",
+						nativeFetcher,
+					},
+				),
+			);
+		} finally {
+			delete process.env.CLAWDI_NATIVE_PROBE_LOG;
+			restore();
+		}
+		const [commandPath, ...args] = readFileSync(probeLog, "utf8").trim().split("\n");
+		expect(commandPath).toMatch(/\/share\/clawdi\/\.stage-[^/]+\/clawdi$/);
+		const stageIndex = args.indexOf("--native-stage");
+		expect(stageIndex).toBeGreaterThan(-1);
+		expect(args[stageIndex + 1]).toBe(dirname(commandPath ?? ""));
+		expect(args).toContain("--native-activate");
+		expect(
+			args.slice(args.indexOf("--native-prefix"), args.indexOf("--native-prefix") + 2),
+		).toEqual(["--native-prefix", prefix]);
+		expect(
+			args.slice(args.indexOf("--native-version"), args.indexOf("--native-version") + 2),
+		).toEqual(["--native-version", "99.0.0"]);
+		expect(
+			args.slice(args.indexOf("--native-target"), args.indexOf("--native-target") + 2),
+		).toEqual(["--native-target", "linux-x64"]);
+	});
+
 	it("uses safe Windows command vectors for exact npm install and owned executable smoke", async () => {
 		const installs: { command: string; args: string[] }[] = [];
 		const smokes: { command: string; args: string[] }[] = [];
 		const ownership = {
+			kind: "package" as const,
 			installer: "npm" as const,
 			installerExecutable: "C:\\Program Files\\npm\\npm.cmd",
 			executable: "C:\\Program Files\\npm\\clawdi.cmd",
@@ -470,7 +636,9 @@ describe("update install", () => {
 			restore();
 		}
 		expect(captured).toContain("Automatic update is unsupported");
-		expect(captured).toContain("npm i -g clawdi@99.0.0");
+		expect(captured).toContain(
+			"curl -fsSL https://github.com/Clawdi-AI/clawdi/releases/download/clawdi-cli-v99.0.0/install.sh | CLAWDI_VERSION=99.0.0 sh",
+		);
 	});
 
 	it("uses the shared fenced update lease and never reclaims an old live owner", async () => {
@@ -824,6 +992,27 @@ describe("daemonAutoUpdateOnce", () => {
 		await restarted;
 		expect(abort.signal.aborted).toBe(true);
 	});
+
+	it("restarts when an external native activation swaps the stable launcher target", async () => {
+		const binDir = join(tmpHome, "prefix", "bin");
+		const versionsDir = join(tmpHome, "prefix", "share", "clawdi", "versions");
+		mkdirSync(binDir, { recursive: true });
+		mkdirSync(join(versionsDir, "1.2.3-linux-x64"), { recursive: true });
+		mkdirSync(join(versionsDir, "1.2.4-linux-x64"), { recursive: true });
+		const launcher = join(binDir, "clawdi");
+		symlinkSync("../share/clawdi/versions/1.2.3-linux-x64/clawdi", launcher);
+		const abort = new AbortController();
+		const restart = createRestartCoordination(abort);
+		await startAutoRestart({ abort, restart, entryPath: launcher, pollMs: 5 });
+		const restarted = new Promise<void>((resolve) => {
+			abort.signal.addEventListener("abort", () => resolve(), { once: true });
+		});
+		const replacement = join(binDir, ".clawdi-new");
+		symlinkSync("../share/clawdi/versions/1.2.4-linux-x64/clawdi", replacement);
+		renameSync(replacement, launcher);
+		await restarted;
+		expect(abort.signal.aborted).toBe(true);
+	});
 });
 
 describe("maybeAutoUpdate", () => {
@@ -1153,6 +1342,70 @@ function writeInstalledDaemon(agent: string): void {
 			: join(tmpHome, ".config", "systemd", "user", `clawdi-serve-${agent}.service`);
 	mkdirSync(dirname(path), { recursive: true });
 	writeFileSync(path, "test daemon unit\n");
+}
+
+async function runNativeForegroundFailure(
+	fetcher: typeof fetch,
+	timeoutMs?: number,
+): Promise<string> {
+	let captured = "";
+	const original = console.log;
+	console.log = (...args: unknown[]) => {
+		captured += `${args.map(String).join(" ")}\n`;
+	};
+	const prefix = join(tmpHome, "prefix");
+	const ownership = {
+		kind: "native" as const,
+		prefix,
+		versionsRoot: join(prefix, "share", "clawdi", "versions"),
+		versionDir: join(prefix, "share", "clawdi", "versions", "0.13.11-linux-x64"),
+		version: "0.13.11",
+		target: "linux-x64" as const,
+		executable: join(prefix, "share", "clawdi", "versions", "0.13.11-linux-x64", "clawdi"),
+		launcher: join(prefix, "bin", "clawdi"),
+	};
+	const { restore } = mockFetch([
+		{
+			method: "GET",
+			path: "/clawdi",
+			response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+		},
+	]);
+	try {
+		await withStdoutTty(() =>
+			update(
+				{},
+				{
+					detectOwnership: () => ownership,
+					nativeReleaseBaseUrl: "https://example.invalid/clawdi-cli-v99.0.0",
+					nativeFetcher: fetcher,
+					nativeDownloadTimeoutMs: timeoutMs,
+				},
+			),
+		);
+	} finally {
+		console.log = original;
+		restore();
+	}
+	return captured;
+}
+
+function nativeManifest(version: string, linuxX64Sha: string): string {
+	return [
+		"clawdi.nativeRelease.v1",
+		`version\t${version}`,
+		...NATIVE_TARGETS.map((target: NativeTarget, index) => {
+			const sha = target === "linux-x64" ? linuxX64Sha : String(index).repeat(64);
+			return `artifact\t${target}\t${nativeAssetName(target)}\t${sha}`;
+		}),
+		"",
+	].join("\n");
+}
+
+function testFetcher(
+	implementation: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>,
+): typeof fetch {
+	return Object.assign(implementation, { preconnect: fetch.preconnect });
 }
 
 function writeDaemonHealth(agent: string, version: string): void {

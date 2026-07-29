@@ -37,6 +37,7 @@ import { join } from "node:path";
 import {
 	type CurrentCliInvocation,
 	resolveCurrentCliInvocation,
+	resolveCurrentCliLayout,
 } from "../lib/current-cli-invocation";
 
 interface InstallOpts {
@@ -171,6 +172,12 @@ function upsertCapturedEnv(
 function currentDaemonInvocation(opts: InstallOpts): CurrentCliInvocation {
 	let invocation: CurrentCliInvocation;
 	try {
+		const layout = resolveCurrentCliLayout();
+		if (layout.kind === "native" && !layout.nativeOwnership) {
+			throw new Error(
+				"an unowned native executable cannot install a daemon; install the native distribution with install.sh first",
+			);
+		}
 		invocation = resolveCurrentCliInvocation(daemonProgramArgs(opts));
 	} catch (error) {
 		throw new Error(

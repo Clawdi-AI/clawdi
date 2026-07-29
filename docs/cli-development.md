@@ -14,6 +14,20 @@ closest-to-end-user:
 | Exercise a globally-installed CLI from source | `bun link` (see below) |
 | Simulate an `npm publish` | `bun pm pack` (see below) |
 
+Native release builds use one catalog-backed layout:
+`dist-native/<target>/{clawdi,skills/,egress-addon/}`. The supported targets are
+Linux x64/arm64 for glibc and musl, plus macOS x64/arm64. Build and exercise the
+host target with:
+
+```bash
+bun run --cwd packages/cli build:native
+bun run --cwd packages/cli test:native-lifecycle
+```
+
+The macOS Bun executables are linker ad-hoc signed. This repository does not
+claim Developer ID signing, notarization, or browser-download Gatekeeper
+compatibility.
+
 Read-only local commands (`skill init`, `config *`, `status --json` while
 unauthenticated) work without a backend. Anything that hits the API
 (`auth login`, `setup`, `push`, `pull`, `doctor`, `skill install/list/rm`,
@@ -286,9 +300,12 @@ diffs `packages/cli/package.json` against `npm view clawdi version` and
 exits early on a match.
 
 Managed agent-v2 releases are repository-autonomous. The CLI workflow builds,
-typechecks, runs the full CLI suite, and packs one immutable tarball. It installs
-the tarball, records and checks its SHA-256, transfers the same artifact to the
-protected npm job, checks it again, and publishes it exactly once to the
+typechecks, runs the full CLI suite, packs one immutable npm tarball, and builds
+the native target matrix once. It verifies the npm package after installation
+and runs the compiled Linux artifact through the installer/daemon lifecycle.
+The exact-version native manifest is the checksum contract for all native
+assets. The workflow transfers the same artifacts to the protected npm job and
+publishes the npm tarball exactly once to the
 standard npm channel derived from the package version: prereleases use `beta`
 and stable releases use `latest`. Package-level tag overrides are rejected.
 The build/test job may use the configured fast runner, but the protected
@@ -318,9 +335,10 @@ enabling v2. Do not add legacy fields or aliases.
 
 The monorepo has two GitHub Release lines:
 
-- `clawdi-cli-vX.Y.Z` for the published npm package. The CLI publish
-  workflow creates this release after npm publish succeeds and prepends
-  package/install notes to the generated changelog.
+- `clawdi-cli-vX.Y.Z` for the published npm package and native distribution.
+  The CLI publish workflow creates this release after npm publish succeeds and
+  attaches `install.sh`, the exact native manifest, and its checksum-bound
+  target archives.
 - `clawdi-YYYY-MM-DD` for Clawdi app/backend/web changes. Additional releases
   on the same UTC day append `-2`, `-3`, and so on. The suffix is a same-day
   release sequence, not a semver patch number.

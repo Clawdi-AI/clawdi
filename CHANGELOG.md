@@ -10,6 +10,27 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.11
+
+Package: `clawdi@0.13.11`
+
+### Added
+
+- Added the recommended native curl installer for supported Linux x64 and
+  arm64 systems, including glibc and musl builds with bundled skills and egress
+  resources.
+
+### Changed
+
+- CLI updates now follow the current installation owner: native installs use
+  checksum-verified exact release assets, npm/Bun installs use exact npm
+  versions, and Hosted remains a separate exact-version npm authority.
+
+### Fixed
+
+- Improved local update transaction fencing, daemon restart lifecycle,
+  share-token handling, and immutable release recovery.
+
 ## Clawdi CLI v0.12.10-beta.57
 
 Package: `clawdi@0.12.10-beta.57`

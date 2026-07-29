@@ -8,11 +8,18 @@ import {
 	openSync,
 	readFileSync,
 	realpathSync,
+	rmSync,
 } from "node:fs";
 import { delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
-import { resolveCurrentCliInvocation } from "../lib/current-cli-invocation";
+import {
+	resolveCurrentCliInvocation,
+	resolveCurrentCliLayout,
+} from "../lib/current-cli-invocation";
+import { downloadAndStageNativeRelease } from "../lib/native-activation";
+import type { NativeInstallOwnership } from "../lib/native-distribution";
+import { nativeReleaseBaseUrl } from "../lib/native-release-manifest";
 import {
 	type PrivateDirectoryLockOptions,
 	PrivateDirectoryLockTimeoutError,
@@ -44,11 +51,14 @@ const INSTALL_TERM_GRACE_MS = 2_000;
 const INSTALL_KILL_GRACE_MS = 1_000;
 export type Installer = "bun" | "npm";
 
-export interface GlobalInstallOwnership {
+export interface PackageManagerUpdateOwnership {
+	kind: "package";
 	installer: Installer;
 	installerExecutable: string;
 	executable: string;
 }
+
+export type UpdateOwnership = PackageManagerUpdateOwnership | NativeInstallOwnership;
 
 interface UpdateCache {
 	checkedAt: string;
@@ -63,16 +73,19 @@ type BackgroundWorkerRequest = {
 };
 
 type AutoUpdateRuntime = {
-	detectOwnership?: () => GlobalInstallOwnership | null;
+	detectOwnership?: () => UpdateOwnership | null;
 	spawnBackgroundWorker?: (request: BackgroundWorkerRequest) => void;
 };
 
 type ForegroundUpdateRuntime = {
-	detectOwnership?: () => GlobalInstallOwnership | null;
+	detectOwnership?: () => UpdateOwnership | null;
 	installRunner?: (command: string, args: string[]) => number | null;
 	platform?: NodeJS.Platform;
 	versionReader?: (command: string, args: string[]) => string | null;
 	lockOptions?: PrivateDirectoryLockOptions;
+	nativeReleaseBaseUrl?: string;
+	nativeFetcher?: typeof fetch;
+	nativeDownloadTimeoutMs?: number;
 };
 
 interface CommandVector {
@@ -187,7 +200,11 @@ export async function update(
 			console.log(
 				chalk.cyan("A newer version is available. Install with:") +
 					"\n  " +
-					chalk.white(installCommand(ownership.installer, latest)),
+					chalk.white(
+						ownership.kind === "native"
+							? nativeInstallCommand(latest)
+							: installCommand(ownership.installer, latest),
+					),
 			);
 		} else {
 			printUnsupportedInstall(latest);
@@ -202,9 +219,9 @@ export async function update(
 		return;
 	}
 
-	const { installer } = ownership;
+	const owner = ownership.kind === "native" ? "native distribution" : ownership.installer;
 	console.log();
-	console.log(chalk.cyan(`Installing v${latest} via ${installer}…`));
+	console.log(chalk.cyan(`Installing v${latest} via ${owner}…`));
 	const result = await runUpdateInstallWorker({
 		current,
 		latest,
@@ -216,6 +233,9 @@ export async function update(
 			? async (command, args) => runtime.installRunner?.(command, args) ?? null
 			: undefined,
 		versionReader: runtime.versionReader,
+		nativeReleaseBaseUrl: runtime.nativeReleaseBaseUrl,
+		nativeFetcher: runtime.nativeFetcher,
+		nativeDownloadTimeoutMs: runtime.nativeDownloadTimeoutMs,
 	});
 	if (result.status === "locked") {
 		console.log();
@@ -233,12 +253,19 @@ export async function update(
 		console.log();
 		console.log(
 			chalk.red(
-				result.installedVersion === undefined
-					? `Install failed (${installer} exited ${result.exitCode}). Try manually:`
-					: `Install verification failed: expected ${latest}, got ${result.installedVersion ?? "no version"}.`,
+				`${
+					result.reason ??
+					(result.installedVersion === undefined
+						? `Install failed (${owner} exited ${result.exitCode}).`
+						: `Install verification failed: expected ${latest}, got ${result.installedVersion ?? "no version"}.`)
+				} Try manually:`,
 			) +
 				"\n  " +
-				chalk.white(installCommand(installer, latest)),
+				chalk.white(
+					ownership.kind === "native"
+						? nativeInstallCommand(latest)
+						: installCommand(ownership.installer, latest),
+				),
 		);
 		process.exitCode = result.exitCode ?? 1;
 		return;
@@ -253,7 +280,7 @@ function printUnsupportedInstall(version: string): void {
 			"\n" +
 			chalk.gray("Update the installation that launched clawdi, or install the exact release:") +
 			"\n  " +
-			chalk.white(installCommand(null, version)),
+			chalk.white(nativeInstallCommand(version)),
 	);
 }
 
@@ -274,21 +301,20 @@ function writeLastVersion(version: string): void {
 	}
 }
 
-export function detectInstaller(): Installer | null {
-	return detectGlobalInstall()?.installer ?? null;
+function detectUpdateOwnership(runtime: ForegroundUpdateRuntime): UpdateOwnership | null {
+	return runtime.detectOwnership?.() ?? detectCurrentUpdateOwnership();
 }
 
-function detectUpdateOwnership(runtime: ForegroundUpdateRuntime): GlobalInstallOwnership | null {
-	return runtime.detectOwnership?.() ?? detectGlobalInstall();
-}
-
-export function detectGlobalInstall(): GlobalInstallOwnership | null {
-	let invokedPath: string | undefined;
+export function detectCurrentUpdateOwnership(): UpdateOwnership | null {
+	let layout: ReturnType<typeof resolveCurrentCliLayout>;
 	try {
-		invokedPath = resolveCurrentCliInvocation().entryPath ?? undefined;
+		layout = resolveCurrentCliLayout();
 	} catch {
 		return null;
 	}
+	if (layout.kind === "native" && layout.nativeOwnership) return layout.nativeOwnership;
+	let invokedPath: string | undefined;
+	invokedPath = layout.kind === "script" ? layout.entryPath : undefined;
 	for (const npmExecutable of absoluteExecutableCandidates("npm")) {
 		const prefix = commandOutput(executableCommandVector(npmExecutable, ["prefix", "-g"]));
 		const npmRoot = commandOutput(executableCommandVector(npmExecutable, ["root", "-g"]));
@@ -297,7 +323,7 @@ export function detectGlobalInstall(): GlobalInstallOwnership | null {
 				? normalizePath(prefix)
 				: normalizePath(join(prefix, "bin"))
 			: null;
-		const ownership = detectUpdateOwnershipFromPaths(invokedPath, {
+		const ownership = detectPackageManagerUpdateOwnershipFromPaths(invokedPath, {
 			npmBin,
 			npmRoot,
 			npmExecutable,
@@ -307,7 +333,7 @@ export function detectGlobalInstall(): GlobalInstallOwnership | null {
 
 	for (const bunExecutable of bunExecutableCandidates()) {
 		const bunBin = commandOutput(executableCommandVector(bunExecutable, ["pm", "bin", "-g"]));
-		const ownership = detectUpdateOwnershipFromPaths(invokedPath, {
+		const ownership = detectPackageManagerUpdateOwnershipFromPaths(invokedPath, {
 			bunBin,
 			bunRoot: bunBin ? bunGlobalRootDir(bunBin) : null,
 			bunExecutable,
@@ -317,14 +343,7 @@ export function detectGlobalInstall(): GlobalInstallOwnership | null {
 	return null;
 }
 
-export function detectInstallerFromPaths(
-	invokedPath: string | undefined,
-	paths: GlobalInstallPaths,
-): Installer | null {
-	return detectUpdateOwnershipFromPaths(invokedPath, paths)?.installer ?? null;
-}
-
-type GlobalInstallPaths = {
+export type PackageManagerInstallPaths = {
 	bunBin?: string | null;
 	bunRoot?: string | null;
 	bunExecutable?: string | null;
@@ -333,10 +352,10 @@ type GlobalInstallPaths = {
 	npmExecutable?: string | null;
 };
 
-export function detectUpdateOwnershipFromPaths(
+export function detectPackageManagerUpdateOwnershipFromPaths(
 	invokedPath: string | undefined,
-	paths: GlobalInstallPaths,
-): GlobalInstallOwnership | null {
+	paths: PackageManagerInstallPaths,
+): PackageManagerUpdateOwnership | null {
 	if (!invokedPath) return null;
 
 	const candidates = normalizedPathCandidates(invokedPath);
@@ -354,6 +373,7 @@ export function detectUpdateOwnershipFromPaths(
 		candidates.some((candidate) => pathStartsWith(candidate, join(npmRoot, "clawdi")))
 	) {
 		return {
+			kind: "package",
 			installer: "npm",
 			installerExecutable: npmExecutable,
 			executable: globalExecutable("npm", npmBin),
@@ -366,6 +386,7 @@ export function detectUpdateOwnershipFromPaths(
 		candidates.some((candidate) => pathStartsWith(candidate, join(bunRoot, "clawdi")))
 	) {
 		return {
+			kind: "package",
 			installer: "bun",
 			installerExecutable: bunExecutable,
 			executable: globalExecutable("bun", bunBin),
@@ -477,8 +498,8 @@ function packageSpecForVersion(version: string): string {
 	return `clawdi@${version}`;
 }
 
-function detectAutoUpdateOwnership(runtime: AutoUpdateRuntime): GlobalInstallOwnership | null {
-	return runtime.detectOwnership?.() ?? detectGlobalInstall();
+function detectAutoUpdateOwnership(runtime: AutoUpdateRuntime): UpdateOwnership | null {
+	return runtime.detectOwnership?.() ?? detectCurrentUpdateOwnership();
 }
 
 function installArgs(installer: Installer, version: string): string[] {
@@ -489,6 +510,11 @@ function installArgs(installer: Installer, version: string): string[] {
 export function installCommand(installer: Installer | null, version: string): string {
 	const spec = packageSpecForVersion(version);
 	return installer === "bun" ? `bun add -g ${spec}` : `npm i -g ${spec}`;
+}
+
+function nativeInstallCommand(version: string): string {
+	if (!isValidSemver(version)) throw new Error(`invalid clawdi update version: ${version}`);
+	return `curl -fsSL https://github.com/Clawdi-AI/clawdi/releases/download/clawdi-cli-v${version}/install.sh | CLAWDI_VERSION=${version} sh`;
 }
 
 function isTransientInvocation(): boolean {
@@ -705,24 +731,30 @@ export async function runInstallerProcess(
 
 type UpdateInstallWorkerResult =
 	| { status: "installed"; installedVersion: string }
-	| { status: "failed"; exitCode: number | null; installedVersion?: undefined }
-	| { status: "failed"; exitCode?: undefined; installedVersion: string | null }
+	| { status: "failed"; exitCode: number | null; installedVersion?: undefined; reason?: string }
+	| { status: "failed"; exitCode?: undefined; installedVersion: string | null; reason?: string }
 	| { status: "locked" }
 	| { status: "disabled" };
 
 async function runUpdateInstallWorker(input: {
 	current: string;
 	latest: string;
-	ownership: GlobalInstallOwnership;
+	ownership: UpdateOwnership;
 	output: InstallerOutput;
 	signal?: AbortSignal;
 	platform?: NodeJS.Platform;
 	lockOptions?: PrivateDirectoryLockOptions;
 	installRunner?: ProcessInstallRunner;
 	versionReader?: (command: string, args: string[]) => string | null;
+	nativeReleaseBaseUrl?: string;
+	nativeFetcher?: typeof fetch;
+	nativeDownloadTimeoutMs?: number;
 }): Promise<UpdateInstallWorkerResult> {
 	if (!evaluateHostPolicyForCommand("update").allowed) return { status: "disabled" };
 	if (input.signal?.aborted) return { status: "failed", exitCode: null };
+	if (input.ownership.kind === "native") {
+		return await runNativeUpdateInstall({ ...input, ownership: input.ownership });
+	}
 	const install = executableCommandVector(
 		input.ownership.installerExecutable,
 		installArgs(input.ownership.installer, input.latest),
@@ -760,6 +792,93 @@ async function runUpdateInstallWorker(input: {
 	}
 }
 
+async function runNativeUpdateInstall(input: {
+	current: string;
+	latest: string;
+	ownership: NativeInstallOwnership;
+	output: InstallerOutput;
+	signal?: AbortSignal;
+	lockOptions?: PrivateDirectoryLockOptions;
+	nativeReleaseBaseUrl?: string;
+	nativeFetcher?: typeof fetch;
+	nativeDownloadTimeoutMs?: number;
+}): Promise<UpdateInstallWorkerResult> {
+	let stageDir: string | null = null;
+	try {
+		let staged: Awaited<ReturnType<typeof downloadAndStageNativeRelease>>;
+		try {
+			staged = await downloadAndStageNativeRelease({
+				prefix: input.ownership.prefix,
+				version: input.latest,
+				target: input.ownership.target,
+				releaseBaseUrl: input.nativeReleaseBaseUrl ?? nativeReleaseBaseUrl(input.latest),
+				signal: input.signal,
+				fetcher: input.nativeFetcher,
+				timeoutMs: input.nativeDownloadTimeoutMs,
+			});
+		} catch (error) {
+			return { status: "failed", exitCode: null, reason: nativeStagingFailureReason(error) };
+		}
+		stageDir = staged.stageDir;
+		const activationArgs = [
+			"update",
+			"--native-activate",
+			"--native-stage",
+			staged.stageDir,
+			"--native-prefix",
+			input.ownership.prefix,
+			"--native-version",
+			input.latest,
+			"--native-target",
+			input.ownership.target,
+			...(input.lockOptions?.timeoutMs !== undefined
+				? ["--native-lock-timeout-ms", String(input.lockOptions.timeoutMs)]
+				: []),
+		];
+		const exitCode = await runInstallerProcess(join(staged.stageDir, "clawdi"), activationArgs, {
+			signal: input.signal,
+			output: input.output,
+		});
+		if (exitCode === 75) return { status: "locked" };
+		if (exitCode !== 0) {
+			return {
+				status: "failed",
+				exitCode,
+				reason: "Native activation did not complete; inspect the stable launcher and retry.",
+			};
+		}
+		stageDir = null;
+		writeLastVersion(input.current);
+		return { status: "installed", installedVersion: input.latest };
+	} catch (error) {
+		return { status: "failed", exitCode: null, reason: nativeStagingFailureReason(error) };
+	} finally {
+		if (stageDir) rmSync(stageDir, { recursive: true, force: true });
+	}
+}
+
+function nativeStagingFailureReason(error: unknown): string {
+	const message = error instanceof Error ? error.message : "";
+	if (/timed out/i.test(message)) return "Native release download timed out.";
+	if (error instanceof DOMException && error.name === "AbortError")
+		return "Native update was cancelled.";
+	if (/abort|cancel/i.test(message)) return "Native update was cancelled.";
+	const downloadFailure = /^native (manifest|artifact) download failed \(([0-9]{3})\)$/.exec(
+		message,
+	);
+	if (downloadFailure) {
+		return `Native release ${downloadFailure[1]} download failed (${downloadFailure[2]}).`;
+	}
+	if (/checksum mismatch/.test(message)) return "Native release checksum verification failed.";
+	if (
+		/maximum allowed size|size limit|too many entries|unsafe entry|duplicate entry/.test(message)
+	) {
+		return "Native release archive failed safety validation.";
+	}
+	if (/manifest/.test(message)) return "Native release manifest validation failed.";
+	return "Native release staging failed.";
+}
+
 export type DaemonAutoUpdateResult =
 	| "disabled"
 	| "no_update"
@@ -777,7 +896,7 @@ type DaemonInstallRunner = (
 export async function daemonAutoUpdateOnce(
 	opts: {
 		currentVersion?: string;
-		ownership?: GlobalInstallOwnership | null;
+		ownership?: UpdateOwnership | null;
 		installRunner?: DaemonInstallRunner;
 		versionReader?: (executable: string) => string | null;
 		ignoreDisabled?: boolean;
@@ -794,13 +913,13 @@ export async function daemonAutoUpdateOnce(
 	const latest = await latestFromCacheOrRegistry(channel);
 	if (!latest || !isNewer(latest, current)) return "no_update";
 
-	const ownership = opts.ownership === undefined ? detectGlobalInstall() : opts.ownership;
+	const ownership = opts.ownership === undefined ? detectCurrentUpdateOwnership() : opts.ownership;
 	if (!ownership) {
 		log.warn("daemon.auto_update_unsupported", { current, latest, channel });
 		return "unsupported";
 	}
-	const { installer } = ownership;
-	log.info("daemon.auto_update_installing", { current, latest, channel, installer });
+	const owner = ownership.kind === "native" ? "native" : ownership.installer;
+	log.info("daemon.auto_update_installing", { current, latest, channel, owner });
 	const installAndValidate = async (): Promise<DaemonAutoUpdateResult> => {
 		const result = await runUpdateInstallWorker({
 			current,
@@ -809,23 +928,41 @@ export async function daemonAutoUpdateOnce(
 			output: "log",
 			signal: opts.signal,
 			lockOptions: { timeoutMs: 0 },
-			installRunner: opts.installRunner
-				? async (_command, _args, options) =>
-						opts.installRunner?.(installer, installArgs(installer, latest), options.signal) ?? null
-				: undefined,
+			installRunner:
+				ownership.kind === "package" && opts.installRunner
+					? async (_command, _args, options) =>
+							opts.installRunner?.(
+								ownership.installer,
+								installArgs(ownership.installer, latest),
+								options.signal,
+							) ?? null
+					: undefined,
 			versionReader: opts.versionReader
-				? () => opts.versionReader?.(ownership.executable) ?? null
+				? () =>
+						opts.versionReader?.(
+							ownership.kind === "native" ? ownership.launcher : ownership.executable,
+						) ?? null
 				: undefined,
 		});
 		if (result.status === "locked") return "locked";
 		if (result.status === "disabled") return "disabled";
 		if (result.status === "failed") {
+			if (result.reason) {
+				log.warn("daemon.auto_update_failed", {
+					current,
+					latest,
+					channel,
+					owner,
+					reason: result.reason,
+				});
+				return "failed";
+			}
 			if (result.installedVersion !== undefined) {
 				log.warn("daemon.auto_update_validation_failed", {
 					current,
 					latest,
 					channel,
-					installer,
+					owner,
 					installed_version: result.installedVersion,
 				});
 			} else {
@@ -833,13 +970,13 @@ export async function daemonAutoUpdateOnce(
 					current,
 					latest,
 					channel,
-					installer,
+					owner,
 					status: result.exitCode,
 				});
 			}
 			return "failed";
 		}
-		log.info("daemon.auto_update_installed", { from: current, to: latest, channel, installer });
+		log.info("daemon.auto_update_installed", { from: current, to: latest, channel, owner });
 		return "installed";
 	};
 	return opts.restartCoordination
@@ -1005,7 +1142,7 @@ export async function runBackgroundUpdateWorker(
 		latest?: string;
 	},
 	runtime: {
-		ownership?: GlobalInstallOwnership | null;
+		ownership?: UpdateOwnership | null;
 		installRunner?: DaemonInstallRunner;
 		versionReader?: (executable: string) => string | null;
 		lockOptions?: PrivateDirectoryLockOptions;
@@ -1020,7 +1157,8 @@ export async function runBackgroundUpdateWorker(
 		return "no_update";
 	}
 	writeCache(latest, opts.channel);
-	const ownership = runtime.ownership === undefined ? detectGlobalInstall() : runtime.ownership;
+	const ownership =
+		runtime.ownership === undefined ? detectCurrentUpdateOwnership() : runtime.ownership;
 	if (!ownership) return "unsupported";
 	const result = await runUpdateInstallWorker({
 		current: opts.currentVersion,
@@ -1028,16 +1166,20 @@ export async function runBackgroundUpdateWorker(
 		ownership,
 		output: "log",
 		lockOptions: runtime.lockOptions ?? { timeoutMs: 0 },
-		installRunner: runtime.installRunner
-			? async (_command, _args, options) =>
-					runtime.installRunner?.(
-						ownership.installer,
-						installArgs(ownership.installer, latest),
-						options.signal,
-					) ?? null
-			: undefined,
+		installRunner:
+			ownership.kind === "package" && runtime.installRunner
+				? async (_command, _args, options) =>
+						runtime.installRunner?.(
+							ownership.installer,
+							installArgs(ownership.installer, latest),
+							options.signal,
+						) ?? null
+				: undefined,
 		versionReader: runtime.versionReader
-			? () => runtime.versionReader?.(ownership.executable) ?? null
+			? () =>
+					runtime.versionReader?.(
+						ownership.kind === "native" ? ownership.launcher : ownership.executable,
+					) ?? null
 			: undefined,
 	});
 	return result.status === "installed"

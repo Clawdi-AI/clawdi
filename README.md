@@ -33,12 +33,21 @@ The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: 
 
 ## Quickstart
 
+Recommended on macOS and Linux (no Node.js required):
+
 ```bash
-npm i -g clawdi
+curl -fsSL https://raw.githubusercontent.com/Clawdi-AI/clawdi/main/install.sh | sh
 
 clawdi auth login
 clawdi setup
 clawdi doctor
+```
+
+On Windows, or when you prefer a package-manager-owned installation, use npm
+with Node.js ≥ 22.5:
+
+```bash
+npm i -g clawdi@0.13.11
 ```
 
 That gets you:
@@ -52,9 +61,11 @@ That gets you:
 
 By default the CLI talks to hosted Clawdi Cloud. Want to run your own backend? See [Own the Stack](#own-the-stack).
 
-Requires Node ≥ 22.5 (the CLI uses the built-in `node:sqlite` module).
+Native installations update from checksum-verified exact GitHub Release assets.
+npm/Bun installations update through their current package manager. Hosted CLI
+transactions remain separate and select an exact npm version.
 
-You can also try without installing:
+With Node.js ≥ 22.5, you can also try without installing:
 
 ```bash
 npx clawdi --help

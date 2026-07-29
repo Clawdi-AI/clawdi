@@ -53,7 +53,21 @@ describe("CLI publish workflow contract", () => {
 		expect(build.steps?.find((step) => step.id === "check")?.["working-directory"]).toBe(
 			"packages/cli",
 		);
-		expect(publish.steps?.map((step) => step.id).filter(Boolean)).toEqual(["publish", "release"]);
+		expect(build.steps?.map((step) => step.id).filter(Boolean)).toEqual([
+			"check",
+			"build_native_release",
+			"pack_release",
+		]);
+		for (const stepId of ["build_native_release", "pack_release"]) {
+			expect(build.steps?.find((step) => step.id === stepId)?.["working-directory"]).toBe(
+				"packages/cli",
+			);
+		}
+		expect(publish.steps?.map((step) => step.id).filter(Boolean)).toEqual([
+			"verify_release",
+			"publish",
+			"release",
+		]);
 	});
 
 	test("keeps the protected OIDC publish fully repository-local", () => {
@@ -112,7 +126,6 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain("run: bun test --isolate --max-concurrency=1");
 		expect(workflow).toContain('npm install "$tarball_path" --ignore-scripts --no-audit --no-fund');
 		expect(workflow).toContain('sha256sum --check "$tarball.sha256"');
-		expect(workflow).toContain("sha256sum --check clawdi-cli-linux-x64.tar.gz.sha256");
 		expect(workflow.match(/npm pack /g) ?? []).toHaveLength(1);
 		expect(workflow.indexOf("npm pack ")).toBeLessThan(workflow.indexOf("npm publish "));
 		expect(workflow).not.toMatch(/npm dist-tag (?:add|rm)/);

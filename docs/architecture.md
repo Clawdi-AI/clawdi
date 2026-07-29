@@ -255,13 +255,24 @@ Core tables verified under `backend/app/models/`:
 - `ENCRYPTION_KEY` derives channel credentials and acts as the runtime cursor
   encryption fallback; it must remain separate.
 
+## CLI Distribution Ownership
+
+- The native macOS/Linux distribution uses immutable version directories and a
+  stable launcher symlink; its checksum-verified executable owns native updates.
+  Bun's macOS executables are linker ad-hoc signed, not Developer ID signed or
+  notarized; the curl installer does not claim browser-download Gatekeeper
+  behavior.
+- npm/Bun global installs remain package-manager-owned and update by exact npm
+  version.
+- Hosted transactions remain a separate exact-version npm authority and never
+  invoke native self-update.
+
 ## Known Absences
 
 - No Redis dependency.
 - No Celery or async job table.
 - No automatic session-to-memory extraction pipeline.
 - No Cognee provider; memory providers are built-in PostgreSQL search and Mem0.
-- No single-file Bun compiled CLI distribution.
 
 Add an ADR or focused design note before turning a known absence into a new
 module.
