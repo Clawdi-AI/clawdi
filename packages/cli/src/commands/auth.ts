@@ -89,25 +89,23 @@ function postLoginHint() {
 }
 
 /**
- * Scan ~/.clawdi/share-tokens.json for un-upgraded entries and POST
- * /upgrade for each. Synchronous + reported: blocks `auth login`
+ * Scan ~/.clawdi/share-tokens.json for eligible un-upgraded entries and POST
+ * /upgrade for each. Synchronous best-effort: blocks `auth login`
  * until done so a subsequent `clawdi project list` shows the new
  * project memberships deterministically.
  *
- * Per-token failures don't abort the loop. Local entries stay available
- * for retry or explicit `clawdi inbox forget` cleanup because the file
- * does not record which API origin issued a token, so even a 404 from the
- * current API cannot prove that the credential is globally stale.
+ * Per-token failures never abort or add warnings to a successful login.
+ * Transient failures leave the anonymous claim available for retry. A 404 or
+ * 410 means the current API cannot claim it, so the exact stale local entry is
+ * removed. Origin-bound claims are never sent to a different API.
  */
-async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise<void> {
-	const { readTokenStore, addToken } = await import("../share/tokens");
+async function claimPendingAnonymousShares(apiUrl: string, apiKey: string): Promise<void> {
+	const { readTokenStore, addToken, removeToken } = await import("../share/tokens");
 	const store = readTokenStore();
-	for (const issue of store.issues) {
-		p.log.warn(
-			`Skipped malformed local share "${issue.label}": ${issue.reason} (entry kept for recovery)`,
-		);
-	}
-	const tokens = store.tokens.filter((t) => !t.upgraded_at);
+	const apiOrigin = normalizeCloudApiBaseUrl(apiUrl);
+	const tokens = store.tokens.filter(
+		(t) => !t.upgraded_at && (!t.api_origin || t.api_origin === apiOrigin),
+	);
 	if (tokens.length === 0) return;
 
 	// Parallel network round-trips, sequential disk writes. addToken
@@ -118,13 +116,13 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 	type Outcome =
 		| { kind: "ok"; token: ShareToken; alias?: string; projectId: string; ownerHandle: string }
 		| { kind: "already_owner"; token: ShareToken }
-		| { kind: "fail"; name: string; reason: string };
+		| { kind: "unavailable"; token: ShareToken }
+		| { kind: "fail" };
 
 	const outcomes = await Promise.all(
 		tokens.map(async (t): Promise<Outcome> => {
-			const name = shareDisplayName(t);
 			try {
-				const r = await fetch(`${apiUrl}/v1/share/${encodeURIComponent(t.token)}/upgrade`, {
+				const r = await fetch(`${apiOrigin}/v1/share/${encodeURIComponent(t.token)}/upgrade`, {
 					method: "POST",
 					headers: {
 						Authorization: `Bearer ${apiKey}`,
@@ -133,43 +131,17 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					},
 					body: "{}",
 				});
-				if (r.status === 404) {
-					return {
-						kind: "fail",
-						name,
-						reason: "share link not found on this API (local token kept)",
-					};
-				}
-				if (r.status === 410) {
-					return {
-						kind: "fail",
-						name,
-						reason: "share link was revoked, expired, or removed (local token kept)",
-					};
-				}
+				if (r.status === 404 || r.status === 410) return { kind: "unavailable", token: t };
 				if (r.status === 409) {
 					const body = (await r.json().catch(() => ({}))) as {
 						detail?: { error?: string };
 					};
-					if (body?.detail?.error === "mount_target_ambiguous") {
-						return {
-							kind: "fail",
-							name,
-							reason: "needs manual project review",
-						};
-					}
 					if (body?.detail?.error === "already_owner") {
 						return { kind: "already_owner", token: t };
 					}
-					return {
-						kind: "fail",
-						name,
-						reason: body.detail?.error ? `conflict: ${body.detail.error}` : "HTTP 409 conflict",
-					};
+					return { kind: "fail" };
 				}
-				if (!r.ok) {
-					return { kind: "fail", name, reason: `HTTP ${r.status}` };
-				}
+				if (!r.ok) return { kind: "fail" };
 				const body = await readJson<ShareUpgradeResponse>(r, "share upgrade");
 				if (
 					typeof body.project_id !== "string" ||
@@ -185,18 +157,14 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 					projectId: body.project_id,
 					ownerHandle: body.resolved_owner_handle,
 				};
-			} catch (e) {
-				return {
-					kind: "fail",
-					name,
-					reason: e instanceof Error ? e.message : "network error",
-				};
+			} catch {
+				return { kind: "fail" };
 			}
 		}),
 	);
 
 	const { pullSharedSkills } = await import("../share/eager-pull");
-	const results: Array<{ name: string; alias?: string; pulled?: number; reason?: string }> = [];
+	const results: Array<{ name: string; alias?: string; pulled?: number }> = [];
 	for (const o of outcomes) {
 		if (o.kind === "ok") {
 			addToken({
@@ -205,22 +173,22 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 				owner_handle: o.ownerHandle,
 				upgraded_at: new Date().toISOString(),
 			});
-			const pulled = await pullSharedSkills(apiUrl, apiKey, o.projectId, o.ownerHandle).catch(
+			const pulled = await pullSharedSkills(apiOrigin, apiKey, o.projectId, o.ownerHandle).catch(
 				() => 0,
 			);
 			results.push({ name: shareDisplayName(o.token), alias: o.alias, pulled });
 		} else if (o.kind === "already_owner") {
 			addToken({ ...o.token, upgraded_at: new Date().toISOString() });
-		} else {
-			results.push({ name: o.name, reason: o.reason });
+		} else if (o.kind === "unavailable") {
+			removeToken(o.token.project_id, o.token.token);
 		}
 	}
 
-	const ok = results.filter((r) => !r.reason);
-	const fail = results.filter((r) => r.reason);
-	if (ok.length > 0) {
-		p.log.success(`Auto-upgraded ${ok.length} pending share${ok.length === 1 ? "" : "s"}:`);
-		for (const o of ok) {
+	if (results.length > 0) {
+		p.log.success(
+			results.length === 1 ? "Shared project ready:" : `${results.length} shared projects ready:`,
+		);
+		for (const o of results) {
 			const pulled =
 				o.pulled && o.pulled > 0
 					? chalk.gray(` · pulled ${o.pulled} skill${o.pulled === 1 ? "" : "s"}`)
@@ -229,9 +197,6 @@ async function autoUpgradePendingShares(apiUrl: string, apiKey: string): Promise
 				chalk.gray(`  → `) + chalk.bold(o.alias ?? o.name) + chalk.gray(` ready`) + pulled,
 			);
 		}
-	}
-	for (const f of fail) {
-		p.log.warn(`Could not upgrade "${f.name}": ${f.reason}`);
 	}
 }
 
@@ -279,7 +244,7 @@ async function authLoginManual(apiUrl: string, expectedCredential: StoredCredent
 	}
 
 	verifySpinner.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
-	await autoUpgradePendingShares(apiUrl, apiKey);
+	await claimPendingAnonymousShares(apiUrl, apiKey);
 	postLoginHint();
 }
 
@@ -384,7 +349,7 @@ export async function finishOAuthLogin(
 
 	const me = verification.user;
 	spinner.stop(chalk.green(`Logged in as ${me.email || me.name || me.id}`));
-	await autoUpgradePendingShares(pending.apiUrl, auth.apiKey);
+	await claimPendingAnonymousShares(pending.apiUrl, auth.apiKey);
 	postLoginHint();
 	return true;
 }
@@ -436,7 +401,7 @@ export async function authLogin(opts: { manual?: boolean; open?: boolean } = {})
 		p.log.info("Run `clawdi auth logout` first to switch accounts.");
 		const { apiUrl } = getConfig();
 		try {
-			await autoUpgradePendingShares(apiUrl, await getClawdiAccessToken(apiUrl));
+			await claimPendingAnonymousShares(apiUrl, await getClawdiAccessToken(apiUrl));
 		} catch (error) {
 			reportOAuthError(error);
 		}

@@ -5,8 +5,9 @@ function callbackResponse(status: "accepted" | "rejected"): string {
 	const title = accepted ? "Login complete" : "Login not completed";
 	const description = accepted
 		? "You’re signed in. Close this window and return to your terminal."
-		: "Return to your terminal and run the login command again.";
+		: "Sign-in wasn’t completed. Return to your terminal and run the login command again.";
 	const icon = accepted ? '<path d="m7.5 12.5 3 3 6-7"/>' : '<path d="m8.5 8.5 7 7m0-7-7 7"/>';
+	const role = accepted ? "status" : "alert";
 
 	return `<!doctype html>
 <html lang="en">
@@ -16,29 +17,27 @@ function callbackResponse(status: "accepted" | "rejected"): string {
 <meta name="color-scheme" content="light dark">
 <title>Clawdi · ${title}</title>
 <style>
-:root{color-scheme:light dark;--bg:oklch(0.985 0.0025 95);--card:oklch(0.998 0.001 95);--text:oklch(0.235 0.008 95);--muted:oklch(0.51 0.008 95);--border:oklch(0.91 0.005 95);--status:${accepted ? "oklch(0.56 0.105 150)" : "oklch(0.55 0.19 27)"};--status-bg:${accepted ? "oklch(0.96 0.022 150)" : "oklch(0.96 0.02 27)"}}
+:root{color-scheme:light dark;--bg:oklch(0.975 0.004 85);--card:oklch(0.998 0.002 85);--text:oklch(0.22 0.008 70);--muted:oklch(0.49 0.012 70);--border:oklch(0.895 0.009 75);--status:${accepted ? "oklch(0.52 0.12 150)" : "oklch(0.54 0.19 27)"};--status-bg:${accepted ? "oklch(0.955 0.03 150)" : "oklch(0.955 0.027 27)"};--status-ring:${accepted ? "oklch(0.86 0.06 150)" : "oklch(0.86 0.065 27)"}}
 *{box-sizing:border-box}
-body{margin:0;min-height:100vh;min-height:100svh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--text);font-family:Inter,ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased}
-main{width:min(100%,420px)}
-.brand{margin:0 0 16px;text-align:center;font-size:15px;font-weight:650;letter-spacing:-.01em}
-.card{border:1px solid var(--border);border-radius:12px;background:var(--card);box-shadow:0 2px 4px -1px oklch(0.25 0.01 95/.05)}
-.content{padding:40px;text-align:center}
-.icon{display:grid;place-items:center;width:44px;height:44px;margin:0 auto 22px;border-radius:10px;background:var(--status-bg);color:var(--status)}
-.icon svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-h1{margin:0;font-size:27px;line-height:1.2;letter-spacing:-.03em}
-.description{margin:13px auto 0;max-width:320px;color:var(--muted);font-size:15px;line-height:1.6}
-@media(max-width:480px){body{padding:16px}.content{padding:34px 24px}h1{font-size:25px}}
-@media(prefers-color-scheme:dark){:root{--bg:oklch(0.175 0.004 95);--card:oklch(0.205 0.004 95);--text:oklch(0.92 0.004 95);--muted:oklch(0.63 0.006 95);--border:oklch(0.275 0.005 95);--status:${accepted ? "oklch(0.66 0.11 150)" : "oklch(0.62 0.19 27)"};--status-bg:${accepted ? "oklch(0.24 0.035 150)" : "oklch(0.245 0.045 27)"}}}
+body{margin:0;min-height:100vh;min-height:100svh;display:grid;place-items:center;padding:24px;background:var(--bg);color:var(--text);font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+main{width:min(100%,392px)}
+.card{overflow:hidden;border:1px solid var(--border);border-radius:16px;background:var(--card);box-shadow:0 18px 50px -30px oklch(0.2 0.02 70/.42),0 2px 8px -4px oklch(0.2 0.02 70/.12)}
+.content{padding:36px 34px 35px;text-align:center}
+.icon{display:grid;place-items:center;width:46px;height:46px;margin:0 auto 20px;border:1px solid var(--status-ring);border-radius:50%;background:var(--status-bg);color:var(--status)}
+.icon svg{width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:2.15;stroke-linecap:round;stroke-linejoin:round}
+h1{margin:0;font-size:25px;font-weight:680;line-height:1.22;letter-spacing:-.025em}
+.description{margin:11px auto 0;max-width:300px;color:var(--muted);font-size:14.5px;line-height:1.55}
+@media(max-width:440px){body{place-items:start center;padding:16px;padding-top:max(16px,12svh)}.content{padding:31px 23px 30px}.card{border-radius:14px}h1{font-size:23px}}
+@media(prefers-color-scheme:dark){:root{--bg:oklch(0.16 0.006 70);--card:oklch(0.205 0.007 70);--text:oklch(0.93 0.006 75);--muted:oklch(0.67 0.01 75);--border:oklch(0.285 0.01 70);--status:${accepted ? "oklch(0.7 0.12 150)" : "oklch(0.7 0.17 27)"};--status-bg:${accepted ? "oklch(0.245 0.04 150)" : "oklch(0.25 0.045 27)"};--status-ring:${accepted ? "oklch(0.36 0.065 150)" : "oklch(0.37 0.075 27)"}}.card{box-shadow:0 20px 55px -32px oklch(0 0 0/.8),0 2px 8px -4px oklch(0 0 0/.5)}}
 </style>
 </head>
 <body>
 <main>
-<div class="brand">Clawdi</div>
-<section class="card" aria-labelledby="result-title">
+<section class="card" data-status="${status}" role="${role}" aria-labelledby="result-title" aria-describedby="result-description">
 <div class="content">
 <div class="icon" aria-hidden="true"><svg viewBox="0 0 24 24">${icon}</svg></div>
 <h1 id="result-title">${title}</h1>
-<p class="description">${description}</p>
+<p class="description" id="result-description">${description}</p>
 </div>
 </section>
 </main>

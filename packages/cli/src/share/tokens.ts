@@ -19,6 +19,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { normalizeCloudApiBaseUrl } from "../lib/api-origin";
 
 // Use `process.env.HOME` first so test fixtures that overwrite the
 // env var pick up the new value immediately. `os.homedir()` caches
@@ -46,6 +47,9 @@ export interface ShareToken {
 	token: string;
 	redeemed_at: string; // ISO8601
 	upgraded_at?: string; // set after clawdi auth login + upgrade
+	// API origin that accepted the anonymous token. New records are bound so
+	// another Cloud endpoint never receives a credential it did not issue.
+	api_origin?: string;
 	// Last set of skill_keys this token's project reported on the
 	// most recent /api/share/{token}/project index call. Used at
 	// cleanup time to avoid erasing folders that belong to OTHER
@@ -107,6 +111,16 @@ function nonEmptyString(value: unknown): string | undefined {
 	if (typeof value !== "string") return undefined;
 	const trimmed = value.trim();
 	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizedApiOrigin(value: unknown): string | undefined {
+	const origin = nonEmptyString(value);
+	if (!origin) return undefined;
+	try {
+		return normalizeCloudApiBaseUrl(origin);
+	} catch {
+		return undefined;
+	}
 }
 
 function normalizeToken(
@@ -174,6 +188,11 @@ function normalizeToken(
 	if ("upgraded_at" in value && typeof value.upgraded_at !== "string") {
 		delete normalized.upgraded_at;
 	}
+	if ("api_origin" in value) {
+		const apiOrigin = normalizedApiOrigin(value.api_origin);
+		if (apiOrigin) normalized.api_origin = apiOrigin;
+		else delete normalized.api_origin;
+	}
 	if (
 		"last_seen_skill_keys" in value &&
 		(!Array.isArray(value.last_seen_skill_keys) ||
@@ -204,9 +223,13 @@ export function listTokens(): ShareToken[] {
 
 export function addToken(token: ShareToken): void {
 	const state = loadRaw();
-	const idx = state.tokens.findIndex(
-		(value, index) => normalizeToken(value, index).projectId === token.project_id,
-	);
+	const idx = state.tokens.findIndex((value, index) => {
+		const normalized = normalizeToken(value, index);
+		return (
+			normalized.projectId === token.project_id ||
+			(normalized.kind === "token" && normalized.token.token === token.token)
+		);
+	});
 	if (idx === -1) {
 		state.tokens.push(token);
 	} else {
@@ -219,11 +242,14 @@ export function addToken(token: ShareToken): void {
 	save(state);
 }
 
-export function removeToken(projectId: string): void {
+export function removeToken(projectId: string, expectedToken?: string): void {
 	const state = loadRaw();
-	state.tokens = state.tokens.filter(
-		(value, index) => normalizeToken(value, index).projectId !== projectId,
-	);
+	state.tokens = state.tokens.filter((value, index) => {
+		const normalized = normalizeToken(value, index);
+		if (normalized.projectId !== projectId) return true;
+		if (expectedToken === undefined) return false;
+		return normalized.kind !== "token" || normalized.token.token !== expectedToken;
+	});
 	save(state);
 }
 

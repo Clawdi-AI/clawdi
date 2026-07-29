@@ -183,8 +183,8 @@ describe("authLogin pending share upgrade", () => {
 				path: `/v1/share/${rawToken}/upgrade`,
 				response: () =>
 					jsonResponse({
-						project_id: "project-shared",
-						resolved_owner_handle: "alice-example",
+						project_id: "project-canonical",
+						resolved_owner_handle: "alice-canonical",
 						membership_id: "membership-1",
 					}),
 			},
@@ -193,12 +193,14 @@ describe("authLogin pending share upgrade", () => {
 				path: "/v1/skills",
 				response: () =>
 					jsonResponse({
-						items: [{ project_id: "project-shared", skill_key: "deploy-helper", is_active: true }],
+						items: [
+							{ project_id: "project-canonical", skill_key: "deploy-helper", is_active: true },
+						],
 					}),
 			},
 			{
 				method: "GET",
-				path: "/v1/projects/project-shared/skills/deploy-helper/download",
+				path: "/v1/projects/project-canonical/skills/deploy-helper/download",
 				response: () => new Response(new Uint8Array([1, 2, 3])),
 			},
 		]);
@@ -211,12 +213,14 @@ describe("authLogin pending share upgrade", () => {
 
 		expect(captured.map((r) => `${r.method} ${r.path}`)).toEqual([
 			`POST /v1/share/${rawToken}/upgrade`,
-			"GET /v1/skills?project_id=project-shared&page=1&page_size=200",
-			"GET /v1/projects/project-shared/skills/deploy-helper/download",
+			"GET /v1/skills?project_id=project-canonical&page=1&page_size=200",
+			"GET /v1/projects/project-canonical/skills/deploy-helper/download",
 		]);
 		expect(captured[0].headers["idempotency-key"]).toMatch(/^upgrade-[a-f0-9]{32}$/);
 
 		const [token] = listTokens();
+		expect(token.project_id).toBe("project-canonical");
+		expect(token.owner_handle).toBe("alice-canonical");
 		expect(token.upgraded_at).toBeString();
 		expect(token.last_seen_skill_keys).toEqual(["deploy-helper"]);
 	});
@@ -279,7 +283,7 @@ describe("authLogin pending share upgrade", () => {
 		expect(persisted.tokens[0].project_name).toBe("Legacy Toolkit");
 	});
 
-	it("keeps a valid legacy token after 404 and names the failure without undefined", async () => {
+	it("silently drops a 404 legacy claim while preserving a claim bound to another origin", async () => {
 		writeFileSync(
 			join(tmpHome, ".clawdi", "share-tokens.json"),
 			JSON.stringify({
@@ -292,6 +296,15 @@ describe("authLogin pending share upgrade", () => {
 						owner_handle: "alice-example",
 						token: rawToken,
 						redeemed_at: "2026-05-12T10:00:00Z",
+					},
+					{
+						project_id: "project-other-api",
+						project_name: "Other API Toolkit",
+						owner_display: "Bob",
+						owner_handle: "bob-example",
+						token: "b".repeat(43),
+						redeemed_at: "2026-05-12T11:00:00Z",
+						api_origin: "https://other-api.test",
 					},
 				],
 			}),
@@ -308,6 +321,7 @@ describe("authLogin pending share upgrade", () => {
 
 		try {
 			await authLogin();
+			await authLogin();
 			messages = warn.mock.calls.map(([message]) => String(message));
 		} finally {
 			restore();
@@ -318,79 +332,9 @@ describe("authLogin pending share upgrade", () => {
 			`POST /v1/share/${rawToken}/upgrade`,
 		]);
 		const [retained] = listTokens();
-		expect(retained.project_id).toBe("project-stale");
-		expect(retained.upgraded_at).toBeUndefined();
-		expect(messages).toContain(
-			'Could not upgrade "Stale Toolkit": share link not found on this API (local token kept)',
-		);
-		expect(messages.join("\n")).not.toContain("undefined");
-	});
-
-	it("leaves a pending token untouched when a successful response is malformed", async () => {
-		addToken({
-			project_id: "project-shared",
-			project_name: "Team Toolkit",
-			owner_display: "Alice",
-			owner_handle: "alice-example",
-			token: rawToken,
-			redeemed_at: "2026-05-12T10:00:00Z",
-		});
-		const warn = spyOn(p.log, "warn").mockImplementation(() => {});
-		const { captured, restore } = mockFetch([
-			{
-				method: "POST",
-				path: `/v1/share/${rawToken}/upgrade`,
-				response: () => jsonResponse({ project_id: "project-shared" }),
-			},
-		]);
-		let messages: string[] = [];
-
-		try {
-			await authLogin();
-			messages = warn.mock.calls.map(([message]) => String(message));
-		} finally {
-			restore();
-			warn.mockRestore();
-		}
-
-		expect(captured).toHaveLength(1);
-		expect(listTokens()[0].upgraded_at).toBeUndefined();
-		expect(messages).toContain(
-			'Could not upgrade "Team Toolkit": share upgrade returned an invalid response',
-		);
-		expect(messages.join("\n")).not.toContain("undefined");
-	});
-
-	it("uses a defined diagnostic for a conflict response without an error code", async () => {
-		addToken({
-			project_id: "project-shared",
-			project_name: "Team Toolkit",
-			owner_display: "Alice",
-			owner_handle: "alice-example",
-			token: rawToken,
-			redeemed_at: "2026-05-12T10:00:00Z",
-		});
-		const warn = spyOn(p.log, "warn").mockImplementation(() => {});
-		const { restore } = mockFetch([
-			{
-				method: "POST",
-				path: `/v1/share/${rawToken}/upgrade`,
-				response: () => jsonResponse({}, 409),
-			},
-		]);
-		let messages: string[] = [];
-
-		try {
-			await authLogin();
-			messages = warn.mock.calls.map(([message]) => String(message));
-		} finally {
-			restore();
-			warn.mockRestore();
-		}
-
-		expect(listTokens()[0].upgraded_at).toBeUndefined();
-		expect(messages).toContain('Could not upgrade "Team Toolkit": HTTP 409 conflict');
-		expect(messages.join("\n")).not.toContain("undefined");
+		expect(retained.project_id).toBe("project-other-api");
+		expect(retained.api_origin).toBe("https://other-api.test");
+		expect(messages.join("\n")).not.toMatch(/Could not upgrade|share link|HTTP 404/);
 	});
 
 	it("skips invalid server skill keys during eager pull", async () => {
