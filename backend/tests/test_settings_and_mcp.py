@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
+from fastapi.routing import iter_route_contexts
 from httpx import ASGITransport
 
 from app.core.config import settings
@@ -87,7 +88,7 @@ async def test_project_migration_banner_dismiss_persists(client: httpx.AsyncClie
 def test_clawdi_is_the_only_public_mcp_contract():
     route_methods = {
         (route.path, method)
-        for route in app.routes
+        for route in iter_route_contexts(app.routes)
         for method in (getattr(route, "methods", None) or set())
     }
 
