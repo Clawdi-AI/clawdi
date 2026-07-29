@@ -85,6 +85,8 @@ describe("CLI smoke — src entry", () => {
 			const parsed = JSON.parse(stdout);
 			expect(parsed.schemaVersion).toBe("clawdi.capabilities.v1");
 			expect(parsed.commands).toContain("runtime");
+			expect(parsed.commands).toContain("deploy");
+			expect(parsed.commands).toContain("channel");
 			expect(parsed.updateMode).toBe("local-self-update");
 		} finally {
 			rmSync(fakeHome, { recursive: true, force: true });
@@ -305,7 +307,14 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 `,
 		);
 		chmodSync(installer, 0o700);
-		writeFileSync(managedCliTarget, "#!/usr/bin/env sh\nexit 0\n");
+		writeFileSync(
+			managedCliTarget,
+			`#!/usr/bin/env sh
+if [ "\${1:-}" = "--version" ]; then echo '0.12.10-beta.57'; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then echo '{"status":"ok"}'; exit 0; fi
+exit 64
+`,
+		);
 		chmodSync(managedCliTarget, 0o700);
 		symlinkSync(managedCliTarget, managedCli);
 		writeFileSync(

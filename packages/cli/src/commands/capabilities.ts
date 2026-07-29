@@ -23,35 +23,7 @@ interface Capabilities {
 	providerApply: { available: true; command: "clawdi ai-provider apply" };
 }
 
-const COMMANDS = [
-	"auth",
-	"status",
-	"config",
-	"setup",
-	"teardown",
-	"push",
-	"pull",
-	"daemon",
-	"serve",
-	"ai-provider",
-	"vault",
-	"read",
-	"inject",
-	"skill",
-	"session",
-	"memory",
-	"doctor",
-	"update",
-	"mcp",
-	"run",
-	"project",
-	"agent",
-	"inbox",
-	"runtime",
-	"capabilities",
-];
-
-function buildCapabilities(): Capabilities {
+function buildCapabilities(commands: string[]): Capabilities {
 	const runtimeMode = detectRuntimeMode();
 	const hostPolicy = readHostPolicy();
 	const cliUpdateMode = hostPolicy.policy?.cliUpdateMode;
@@ -66,7 +38,7 @@ function buildCapabilities(): Capabilities {
 		fullCliSurface: true,
 		runtimeMode,
 		updateMode,
-		commands: COMMANDS,
+		commands,
 		restrictedByHostedPolicy: normalizeDeniedCommands(hostPolicy.policy),
 		hostPolicy: {
 			source: hostPolicy.source,
@@ -81,8 +53,8 @@ function buildCapabilities(): Capabilities {
 	};
 }
 
-export async function capabilitiesCommand(opts: { json?: boolean } = {}) {
-	const capabilities = buildCapabilities();
+export async function capabilitiesCommand(opts: { json?: boolean }, commands: string[]) {
+	const capabilities = buildCapabilities(commands);
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(capabilities, null, 2));
 		return;
