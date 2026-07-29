@@ -4,6 +4,10 @@ import { validateHostedDeployPersona } from "@clawdi/shared/api";
 import { DEPLOY_ASSISTANT_NAME_MAX_LENGTH } from "@/hosted/billing/deploy/deploy-request";
 
 const wizardSource = readFileSync(new URL("./deploy-wizard.tsx", import.meta.url), "utf8");
+const acceptedNavigationSource = readFileSync(
+	new URL("./accepted-deployment-navigation.ts", import.meta.url),
+	"utf8",
+);
 const planComparisonSource = readFileSync(
 	new URL("../subscription/plan-comparison.tsx", import.meta.url),
 	"utf8",
@@ -149,13 +153,13 @@ describe("first Basic agent copy", () => {
 		expect(planComparisonSource).toContain("The first active Basic agent is free.");
 		expect(planComparisonSource).toContain("Your first active Basic agent is free.");
 		expect(planComparisonSource).not.toContain("agent is included");
-		expect(wizardSource).toContain("acceptedDeploymentNavigation(created.deploymentId)");
-		expect(wizardSource).toContain("acceptedDeploymentNavigation(outcome.deploymentId)");
+		expect(wizardSource).toContain("acceptDeployment(created.deploymentId)");
+		expect(wizardSource).toContain("acceptDeployment(outcome.deploymentId)");
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
 	});
 
 	test("routes accepted creates directly by canonical deployment selector", () => {
-		expect(wizardSource).toContain(
+		expect(acceptedNavigationSource).toContain(
 			'agentSectionHref(deploymentId, "overview", "source=on-clawdi")',
 		);
 		expect(wizardSource).not.toContain("setup=accepted");
@@ -274,9 +278,7 @@ describe("deploy acceptance", () => {
 		);
 		expect(walletBranch).not.toContain("refreshCheckoutReturn");
 		expect(walletBranch).not.toContain("recheckCanCreateCloudAgents");
-		expect(wizardSource).toContain(
-			"router.navigate(acceptedDeploymentNavigation(outcome.deploymentId))",
-		);
+		expect(wizardSource).toContain("acceptDeployment(outcome.deploymentId)");
 	});
 
 	test("funnels every accepted create and activation through the same immediate navigation", () => {
@@ -286,8 +288,9 @@ describe("deploy acceptance", () => {
 			"outcome.deploymentId",
 			"created.deploymentId",
 		]) {
-			expect(wizardSource).toContain(`acceptedDeploymentNavigation(${acceptedId}`);
+			expect(wizardSource).toContain(`acceptDeployment(${acceptedId}`);
 		}
+		expect(wizardSource).toContain("navigateToAcceptedDeployment({");
 		expect(wizardSource).not.toContain("setup=accepted");
 	});
 

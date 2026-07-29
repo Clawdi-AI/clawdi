@@ -23,6 +23,14 @@ const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 const CLOUD_API = "http://127.0.0.1:8000";
 const DEPLOY_API = "http://127.0.0.1:8001";
 
+function deferred() {
+	let resolve = () => {};
+	const promise = new Promise<void>((nextResolve) => {
+		resolve = nextResolve;
+	});
+	return { promise, resolve };
+}
+
 const managedModelCatalog = {
 	models: [
 		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
@@ -852,6 +860,7 @@ type HostedApiStubOptions = {
 	deleteResponses?: StubResponse[];
 	deploymentListRequests?: string[];
 	deploymentListResponses?: unknown[][];
+	deploymentListResponseGates?: Array<Promise<void> | undefined>;
 	deploymentRequestReads?: string[];
 	deployments?: readonly unknown[];
 	deploymentsResponse?: StubResponse;
@@ -1010,7 +1019,9 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 		if (p === "/v2/deployments" && r.request().method() === "GET") {
 			options.deploymentListRequests?.push(p);
 			const deploymentListResponse = options.deploymentListResponses?.shift();
+			const deploymentListResponseGate = options.deploymentListResponseGates?.shift();
 			if (deploymentListResponse) {
+				await deploymentListResponseGate;
 				return fulfillJson(
 					r,
 					deploymentListResponse.map((deployment) =>
@@ -1940,10 +1951,14 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 		name: "Created included Basic",
 		status: "creating",
 	};
+	const deploymentListRequests: string[] = [];
+	const acceptedInventoryGate = deferred();
 	await stubHostedApi(page, {
 		plans: [basicPlan],
 		deployments: [startingDeployment],
 		deploymentListResponses: [[], [startingDeployment]],
+		deploymentListResponseGates: [undefined, acceptedInventoryGate.promise],
+		deploymentListRequests,
 		createDeploymentResponse: {
 			status: 202,
 			body: { ...acceptedCreate, done: false, response: null },
@@ -1954,9 +1969,16 @@ test("free Basic Deploy submits the declarative create contract", async ({ page 
 
 	await page.getByRole("button", { name: "Deploy agent" }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
+	await expect.poll(() => deploymentListRequests.length).toBeGreaterThanOrEqual(2);
 	expect(new URL(page.url()).searchParams.has("setup")).toBe(false);
-	await expect(page.getByText("Agent not found", { exact: true })).toHaveCount(0);
-	await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
+	try {
+		await expect(page.getByText("Agent not found", { exact: true })).toHaveCount(0);
+		await expect(page.getByText("Clawdi Cloud agent not found", { exact: true })).toHaveCount(0);
+		await expect(page.getByLabel("Agent ownership loading")).toBeVisible();
+		await expect(page.locator('[data-hosted="true"] [data-slot="skeleton"]').first()).toBeVisible();
+	} finally {
+		acceptedInventoryGate.resolve();
+	}
 	await expect(page.getByText("Starting your agent…", { exact: true })).toBeVisible();
 	await expect(page.getByText("Agent actions", { exact: true })).toHaveCount(0);
 	await expect(page.getByRole("button", { name: "Delete", exact: true })).toHaveCount(0);

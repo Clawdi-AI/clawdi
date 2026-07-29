@@ -1,6 +1,7 @@
 "use client";
 
 import { validateHostedDeployPersona } from "@clawdi/shared/api";
+import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import {
 	Cpu,
@@ -59,6 +60,7 @@ import type {
 	DeployRequest,
 	Plan,
 } from "@/hosted/billing/contracts";
+import { navigateToAcceptedDeployment } from "@/hosted/billing/deploy/accepted-deployment-navigation";
 import {
 	DEFAULT_DEPLOY_AI_ACCESS_MODE,
 	DEFAULT_DEPLOY_AI_PROVIDER_CHOICES,
@@ -155,7 +157,6 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
-import { agentSectionHref } from "@/lib/agent-routes";
 import { isApiAuthError, normalizeApiError } from "@/lib/api-errors";
 import { cn } from "@/lib/utils";
 
@@ -181,13 +182,6 @@ const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
 const DEPLOY_MANAGED_AI_LABEL = "Managed AI";
-
-function acceptedDeploymentNavigation(deploymentId: string, replace = false) {
-	return {
-		href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
-		replace,
-	};
-}
 
 const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";
 const WALLET_PAYMENT_TOAST_DURATION_MS = 8_000;
@@ -369,11 +363,23 @@ function computeStatusLine({
 
 export function DeployWizard() {
 	const router = useRouter();
+	const queryClient = useQueryClient();
+	const acceptDeployment = useCallback(
+		(deploymentId: string, replace = false): void => {
+			navigateToAcceptedDeployment({
+				deploymentId,
+				navigate: (options) => void router.navigate(options),
+				queryClient,
+				replace,
+			});
+		},
+		[queryClient, router],
+	);
 	const navigateCheckoutReturn = useCallback(
 		(deploymentId: string): undefined => {
-			void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
+			acceptDeployment(deploymentId, true);
 		},
-		[router],
+		[acceptDeployment],
 	);
 	useCheckoutReturnHandler({
 		onCancelCopy: "You were not charged. Your agent was not deployed.",
@@ -661,7 +667,7 @@ export function DeployWizard() {
 
 	function navigateToReusedSubscription({ deploymentId }: { deploymentId: string }) {
 		setCheckoutSession(null);
-		void router.navigate(acceptedDeploymentNavigation(deploymentId));
+		acceptDeployment(deploymentId);
 	}
 	async function handleCheckoutComplete(
 		previousDeploymentIds: readonly string[],
@@ -686,7 +692,7 @@ export function DeployWizard() {
 					const resolved = await resolveDeploymentRequest.mutateAsync(request.idempotencyKey);
 					forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 					checkoutAttemptRef.current = null;
-					void router.navigate(acceptedDeploymentNavigation(resolved.deploymentId, true));
+					acceptDeployment(resolved.deploymentId, true);
 					return;
 				} catch (error) {
 					if (error instanceof DeploymentRequestTerminalError) {
@@ -731,7 +737,7 @@ export function DeployWizard() {
 				forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 				checkoutAttemptRef.current = null;
 			}
-			void router.navigate(acceptedDeploymentNavigation(deploymentId, true));
+			acceptDeployment(deploymentId, true);
 		} finally {
 			setSubmitting(false);
 			setSubmitTakingLong(false);
@@ -811,7 +817,7 @@ export function DeployWizard() {
 							? formatUsdExact(walletDebit.debitAmountUsd)
 							: formatCents(paidSelection.offer.price_cents),
 					);
-					void router.navigate(acceptedDeploymentNavigation(outcome.deploymentId));
+					acceptDeployment(outcome.deploymentId);
 					return;
 				}
 				const checkoutFingerprint = idempotencyFingerprint({ selection, target });
@@ -892,7 +898,7 @@ export function DeployWizard() {
 				});
 			forgetIdempotencyAttempt("deployment-create", fingerprint);
 			includedCreateAttemptRef.current = null;
-			void router.navigate(acceptedDeploymentNavigation(created.deploymentId));
+			acceptDeployment(created.deploymentId);
 		} catch (e) {
 			const normalized = normalizeBillingError(e);
 			setSubmitError(
