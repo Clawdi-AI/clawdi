@@ -116,6 +116,8 @@ describe("share-tokens.json", () => {
 		const [restored] = listTokens();
 		expect(restored.project_id).toBe("legacy-project");
 		expect(restored.project_name).toBe("Legacy Toolkit");
+		expect(restored).not.toHaveProperty("scope_id");
+		expect(restored).not.toHaveProperty("scope_name");
 		addToken({ ...restored, upgraded_at: "2026-05-12T11:00:00Z" });
 
 		const raw = JSON.parse(readFileSync(path, "utf-8")) as {
@@ -123,6 +125,8 @@ describe("share-tokens.json", () => {
 		};
 		expect(raw.tokens[0].project_id).toBe("legacy-project");
 		expect(raw.tokens[0].project_name).toBe("Legacy Toolkit");
+		expect(raw.tokens[0]).not.toHaveProperty("scope_id");
+		expect(raw.tokens[0]).not.toHaveProperty("scope_name");
 		expect(raw.tokens[0].future_field).toEqual({ enabled: true });
 	});
 

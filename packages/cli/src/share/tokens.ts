@@ -109,41 +109,36 @@ function nonEmptyString(value: unknown): string | undefined {
 	return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function persistedProjectId(value: unknown): string | undefined {
-	if (typeof value !== "object" || value === null) return undefined;
-	return (
-		("project_id" in value ? nonEmptyString(value.project_id) : undefined) ??
-		("scope_id" in value ? nonEmptyString(value.scope_id) : undefined)
-	);
-}
-
-function issueLabel(value: unknown, index: number): string {
-	if (typeof value !== "object" || value === null) return `local share entry ${index + 1}`;
-	const name =
-		("project_name" in value ? nonEmptyString(value.project_name) : undefined) ??
-		("scope_name" in value ? nonEmptyString(value.scope_name) : undefined);
-	if (name) return name;
-	const projectId = persistedProjectId(value);
-	return projectId ? `Project ${projectId}` : `local share entry ${index + 1}`;
-}
-
 function normalizeToken(
 	value: unknown,
 	index: number,
-): { kind: "token"; token: ShareToken } | { kind: "issue"; issue: ShareTokenStoreIssue } {
-	const label = issueLabel(value, index);
+):
+	| { kind: "token"; token: ShareToken; projectId: string }
+	| { kind: "issue"; issue: ShareTokenStoreIssue; projectId?: string } {
 	if (typeof value !== "object" || value === null) {
-		return { kind: "issue", issue: { label, reason: "entry is not an object" } };
+		return {
+			kind: "issue",
+			issue: { label: `local share entry ${index + 1}`, reason: "entry is not an object" },
+		};
 	}
 
-	const projectId = persistedProjectId(value);
+	// `scope_id`/`scope_name` were the released version:1 names before
+	// 911c955b renamed them without bumping the persisted-file version. This is
+	// the only compatibility boundary: recognized legacy fields are read here,
+	// removed from the output, and never enter normal runtime data or writes.
+	const canonicalFields: Record<string, unknown> = { ...value };
+	const projectId =
+		nonEmptyString(canonicalFields.project_id) ?? nonEmptyString(canonicalFields.scope_id);
 	const projectName =
-		("project_name" in value ? nonEmptyString(value.project_name) : undefined) ??
-		("scope_name" in value ? nonEmptyString(value.scope_name) : undefined);
-	const ownerDisplay = "owner_display" in value ? nonEmptyString(value.owner_display) : undefined;
-	const ownerHandle = "owner_handle" in value ? nonEmptyString(value.owner_handle) : undefined;
-	const token = "token" in value ? nonEmptyString(value.token) : undefined;
-	const redeemedAt = "redeemed_at" in value ? nonEmptyString(value.redeemed_at) : undefined;
+		nonEmptyString(canonicalFields.project_name) ?? nonEmptyString(canonicalFields.scope_name);
+	delete canonicalFields.scope_id;
+	delete canonicalFields.scope_name;
+	const ownerDisplay = nonEmptyString(canonicalFields.owner_display);
+	const ownerHandle = nonEmptyString(canonicalFields.owner_handle);
+	const token = nonEmptyString(canonicalFields.token);
+	const redeemedAt = nonEmptyString(canonicalFields.redeemed_at);
+	const label =
+		projectName ?? (projectId ? `Project ${projectId}` : `local share entry ${index + 1}`);
 
 	const missing: string[] = [];
 	if (!projectId) missing.push("project id");
@@ -156,18 +151,19 @@ function normalizeToken(
 		return {
 			kind: "issue",
 			issue: { label, reason: "invalid 43-character share token" },
+			projectId,
 		};
 	}
 	if (!projectId || !projectName || !ownerDisplay || !ownerHandle || !redeemedAt || !token) {
-		return { kind: "issue", issue: { label, reason: `missing ${missing.join(", ")}` } };
+		return {
+			kind: "issue",
+			issue: { label, reason: `missing ${missing.join(", ")}` },
+			projectId,
+		};
 	}
 
-	// `scope_id`/`scope_name` were the released version:1 names before
-	// 911c955b renamed them without bumping the persisted-file version.
-	// Canonical fields are overlaid at read time while all other fields,
-	// including future fields, remain available to subsequent upserts.
 	const normalized: ShareToken & Record<string, unknown> = {
-		...value,
+		...canonicalFields,
 		project_id: projectId,
 		project_name: projectName,
 		owner_display: ownerDisplay,
@@ -185,7 +181,7 @@ function normalizeToken(
 	) {
 		delete normalized.last_seen_skill_keys;
 	}
-	return { kind: "token", token: normalized };
+	return { kind: "token", token: normalized, projectId };
 }
 
 export function readTokenStore(): {
@@ -208,7 +204,9 @@ export function listTokens(): ShareToken[] {
 
 export function addToken(token: ShareToken): void {
 	const state = loadRaw();
-	const idx = state.tokens.findIndex((value) => persistedProjectId(value) === token.project_id);
+	const idx = state.tokens.findIndex(
+		(value, index) => normalizeToken(value, index).projectId === token.project_id,
+	);
 	if (idx === -1) {
 		state.tokens.push(token);
 	} else {
@@ -223,7 +221,9 @@ export function addToken(token: ShareToken): void {
 
 export function removeToken(projectId: string): void {
 	const state = loadRaw();
-	state.tokens = state.tokens.filter((value) => persistedProjectId(value) !== projectId);
+	state.tokens = state.tokens.filter(
+		(value, index) => normalizeToken(value, index).projectId !== projectId,
+	);
 	save(state);
 }
 
