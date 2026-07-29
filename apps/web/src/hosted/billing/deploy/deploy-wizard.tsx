@@ -409,6 +409,7 @@ export function DeployWizard() {
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
+	const [postPaymentBlocked, setPostPaymentBlocked] = useState(false);
 	const [submitTakingLong, setSubmitTakingLong] = useState(false);
 	const [submitBusyLabel, setSubmitBusyLabel] = useState("Creating agent…");
 	const [submitTakingLongCopy, setSubmitTakingLongCopy] = useState(
@@ -584,7 +585,7 @@ export function DeployWizard() {
 		}
 		return null;
 	})();
-	const canSubmit = !submitting && submitBlockingReason === null;
+	const canSubmit = !submitting && !postPaymentBlocked && submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
 		selectCreatedAiProvider(providerId, aiProviders.dataUpdatedAt);
@@ -637,6 +638,7 @@ export function DeployWizard() {
 	}
 
 	function showPostPaymentError(title: string, description: string) {
+		setPostPaymentBlocked(true);
 		toast.error(title, {
 			id: "deploy-post-payment-error",
 			description,
