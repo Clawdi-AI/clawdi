@@ -1,0 +1,208 @@
+# Kamal deployment for the clawdi backend (cloud-api.clawdi.ai).
+#
+# Images are built and pushed to GHCR by CI; Kamal never builds.
+# Deploy a released image with:
+#
+#   kamal deploy -P --version=<full-git-sha>
+#
+# Secrets live in .kamal/secrets (gitignored, operator-local). Non-secret
+# runtime shape lives here. The image entrypoint (app.runtime_entrypoint)
+# selects the process via CLAWDI_PROCESS_ROLE, runs migrations for the api
+# role, and drains on SIGTERM — no command overrides needed.
+
+service: clawdi
+image: clawdi-ai/clawdi-backend
+
+minimum_version: 2.12.0
+
+# Rotate container logs on the host (kamal default is 10m x 1 file).
+logging:
+  options:
+    max-size: 100m
+    max-file: "3"
+
+# Operator shorthands: `kamal console`, `kamal watch`, `kamal psql`.
+aliases:
+  console: app exec -i --reuse "bash"
+  watch: app logs -f
+  psql: accessory exec postgres -i "psql -U clawdi clawdi"
+
+ssh:
+  user: phala
+  # -F none: skip ssh config files (ownership differs when kamal runs in a
+  # container with the operator's ~/.ssh bind-mounted).
+  proxy_command: "ssh -F none -o StrictHostKeyChecking=accept-new -i ~/.ssh/id_ed25519 -l phala -W %h:%p jump.phala.systems"
+  keys:
+    - ~/.ssh/clawdi_access_ed25519
+
+registry:
+  server: ghcr.io
+  username:
+    - KAMAL_REGISTRY_USERNAME
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64
+
+servers:
+  web:
+    hosts:
+      - 66.220.6.123
+    options:
+      ulimit: nofile=65536:65536 # long-lived SSE/WebSocket connections
+  channels-worker:
+    hosts:
+      - 66.220.6.123
+    proxy: false
+    options:
+      ulimit: nofile=65536:65536 # per-account gateway sockets
+    env:
+      clear:
+        CLAWDI_PROCESS_ROLE: channels-worker
+
+proxy:
+  hosts:
+    - cloud-api.clawdi.ai
+    - cloud-api-next.clawdi.ai # temporary smoke-test host; remove after cutover
+  app_port: 8000
+  # All traffic stays behind Cloudflare (orange cloud). TLS between Cloudflare
+  # and this origin uses a Cloudflare Origin CA wildcard cert — no ACME.
+  ssl:
+    certificate_pem: CLOUDFLARE_ORIGIN_CERT
+    private_key_pem: CLOUDFLARE_ORIGIN_KEY
+  forward_headers: true # preserve Cloudflare's X-Forwarded-* chain
+  # SSE surfaces (sync, channel streams, MCP bridge): response buffering
+  # delays or breaks event streams through kamal-proxy.
+  buffering:
+    responses: false
+  healthcheck:
+    path: /health
+    interval: 5
+    timeout: 5
+
+deploy_timeout: 120 # api entrypoint runs alembic before listening
+
+volumes:
+  - clawdi-fastembed:/tmp/fastembed_cache # fastembed default cache; persists the ~1.1GB ONNX model across deploys
+
+accessories:
+  postgres:
+    image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18 # pgvector pg18 + pgBackRest (WAL archiving to R2)
+    host: 66.220.6.123
+    # 512MB buffers (default 128MB is tiny for 16G host); idle-in-transaction
+    # timeout guards against the connection-pile-up-behind-locks failure mode.
+    cmd: >-
+      postgres -c shared_buffers=512MB -c idle_in_transaction_session_timeout=300s
+      -c archive_mode=on
+      -c 'archive_command=pgbackrest --stanza=$STANZA archive-push %p'
+      -c archive_timeout=60
+    directories:
+      - data:/var/lib/postgresql # pg18 image layout: PGDATA lives under a version subdir
+      - socket:/var/run/postgresql # shared with the backup scheduler sidecar
+    env:
+      clear:
+        STANZA: clawdi
+        PGBACKREST_STANZA: clawdi
+        PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
+        PGBACKREST_PG1_SOCKET_PATH: /var/run/postgresql
+        PGBACKREST_REPO1_TYPE: s3
+        PGBACKREST_REPO1_PATH: /clawdi
+        PGBACKREST_REPO1_S3_BUCKET: clawdi-db-backup
+        PGBACKREST_REPO1_S3_ENDPOINT: 1d694c298092ffa09c793cbca4587812.r2.cloudflarestorage.com
+        PGBACKREST_REPO1_S3_REGION: auto
+        PGBACKREST_REPO1_S3_URI_STYLE: path
+        PGBACKREST_REPO1_RETENTION_FULL: "2"
+        PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+        PGBACKREST_COMPRESS_TYPE: zst
+        POSTGRES_DB: clawdi
+        POSTGRES_USER: clawdi
+      secret:
+        - POSTGRES_PASSWORD
+        - PGBACKREST_REPO1_S3_KEY
+        - PGBACKREST_REPO1_S3_KEY_SECRET
+        - PGBACKREST_REPO1_CIPHER_PASS
+
+  pg-backup:
+    # Nightly logical backups, declared here so `kamal accessory boot all`
+    # rebuilds the backup pipeline with the rest of the stack.
+    image: prodrigestivill/postgres-backup-local:18
+    host: 66.220.6.123
+    volumes:
+      - /var/backups/clawdi/clawdi:/backups
+    env:
+      clear:
+        POSTGRES_HOST: clawdi-postgres
+        POSTGRES_DB: clawdi
+        POSTGRES_USER: clawdi
+        SCHEDULE: "@daily"
+        BACKUP_KEEP_DAYS: "14"
+        BACKUP_KEEP_WEEKS: "4"
+        BACKUP_KEEP_MONTHS: "3"
+      secret:
+        - POSTGRES_PASSWORD
+
+  postgres-backup:
+    # Scheduled pgBackRest runs (Sunday full, daily diff) against the server's
+    # shared data and socket volumes. See docs/ops/postgres-backup-restore.md.
+    image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18
+    host: 66.220.6.123
+    cmd: gosu postgres supercronic /etc/pgbackrest/backup-cron
+    volumes:
+      - /home/phala/clawdi-postgres/data:/var/lib/postgresql
+      - /home/phala/clawdi-postgres/socket:/var/run/postgresql
+    env:
+      clear:
+        STANZA: clawdi
+        PGBACKREST_STANZA: clawdi
+        PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
+        PGBACKREST_PG1_SOCKET_PATH: /var/run/postgresql
+        PGBACKREST_REPO1_TYPE: s3
+        PGBACKREST_REPO1_PATH: /clawdi
+        PGBACKREST_REPO1_S3_BUCKET: clawdi-db-backup
+        PGBACKREST_REPO1_S3_ENDPOINT: 1d694c298092ffa09c793cbca4587812.r2.cloudflarestorage.com
+        PGBACKREST_REPO1_S3_REGION: auto
+        PGBACKREST_REPO1_S3_URI_STYLE: path
+        PGBACKREST_REPO1_RETENTION_FULL: "2"
+        PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+        PGBACKREST_COMPRESS_TYPE: zst
+        PGBACKREST_LOG_LEVEL_CONSOLE: info
+      secret:
+        - PGBACKREST_REPO1_S3_KEY
+        - PGBACKREST_REPO1_S3_KEY_SECRET
+        - PGBACKREST_REPO1_CIPHER_PASS
+
+env:
+  clear:
+    ENVIRONMENT: production
+    DEBUG: "false"
+    PUBLIC_API_URL: https://cloud-api.clawdi.ai
+    WEB_ORIGIN: https://cloud.clawdi.ai
+    CORS_ORIGINS: '["https://www.clawdi.ai","https://clawdi.ai","https://api.clawdi.ai","https://cloud.clawdi.ai"]'
+    TRUST_FORWARDED_FOR: "true"
+    FILE_STORE_TYPE: s3
+    MEMORY_EMBEDDING_MODE: local
+  secret:
+    - ADMIN_API_KEY
+    - CLERK_PEM_PUBLIC_KEY
+    - COMPOSIO_API_KEY
+    - DATABASE_URL
+    - DB_MAX_OVERFLOW
+    - DB_POOL_SIZE
+    - DB_POOL_TIMEOUT
+    - ENCRYPTION_KEY
+    - FILE_STORE_S3_ACCESS_KEY_ID
+    - FILE_STORE_S3_BUCKET
+    - FILE_STORE_S3_ENDPOINT_URL
+    - FILE_STORE_S3_FORCE_PATH_STYLE
+    - FILE_STORE_S3_REGION
+    - FILE_STORE_S3_SECRET_ACCESS_KEY
+    - LLM_API_KEY
+    - LLM_BASE_URL
+    - LLM_MODEL
+    - MEMORY_EMBEDDING_API_KEY
+    - MEMORY_EMBEDDING_BASE_URL
+    - MEMORY_EMBEDDING_MODEL
+    - UV_LINK_MODE
+    - UV_PROJECT_ENVIRONMENT
+    - VAULT_ENCRYPTION_KEY
