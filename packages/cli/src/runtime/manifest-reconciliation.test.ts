@@ -3174,13 +3174,15 @@ describe("runtime manifest reconciliation invariants", () => {
 				readFileSync(path),
 			]),
 		);
-		const rootManagedPaths = [
-			paths.managedConfig,
-			join(paths.runConfigRoot, "stale.json"),
-			join(paths.runtimeSecretFileRoot, "stale.json"),
-		];
+		const rootManagedPaths = [paths.managedConfig, join(paths.runConfigRoot, "stale.json")];
+		const forwardRuntimeSecret = join(paths.runtimeSecretFileRoot, "stale.json");
 		const staleUserUnit = join(paths.systemdUserRoot, "clawdi-old.service");
-		for (const [index, path] of [...rootManagedPaths, staleUserUnit, targetConfig].entries()) {
+		for (const [index, path] of [
+			...rootManagedPaths,
+			forwardRuntimeSecret,
+			staleUserUnit,
+			targetConfig,
+		].entries()) {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, path === targetConfig ? '{"mcp":{"servers":{}}}\n' : `old-${index}\n`);
 		}
@@ -3218,6 +3220,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			if (!expected) throw new Error(`missing preserved fixture for ${path}`);
 			expect(readFileSync(path)).toEqual(expected);
 		}
+		expect(existsSync(forwardRuntimeSecret)).toBe(false);
 		expect(readFileSync(targetConfig, "utf-8")).toBe(forwardConfig);
 		expect(existsSync(staleUserUnit)).toBe(false);
 		expect(existsSync(managedUserDropIn)).toBe(false);
@@ -3269,7 +3272,9 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths.installInventory,
 				paths.projectionRoot,
 				join(paths.instanceRoot, manifest.instanceId),
-				paths.managedSecretRoot,
+				paths.managedSecretFile,
+				paths.daemonAuthToken,
+				join(paths.managedSecretRoot, "egress-secrets.json"),
 				paths.systemdEnvRoot,
 				paths.instanceData,
 				paths.sensitiveInstanceData,
@@ -3305,6 +3310,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			paths.egressRoot,
 			paths.egressScratchRoot,
 			paths.egressCaDir,
+			paths.runtimeSecretFileRoot,
 		]) {
 			expect(snapshotPaths).not.toContain(userWritablePath);
 		}
