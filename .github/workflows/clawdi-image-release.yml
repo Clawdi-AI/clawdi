@@ -313,7 +313,7 @@ jobs:
   deploy-vps:
     needs: build
     if: needs.build.outputs.build_required == 'true' && needs.build.outputs.should_deploy == 'true'
-    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
       group: kamal-deploy-clawdi
