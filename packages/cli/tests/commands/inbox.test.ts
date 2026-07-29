@@ -161,7 +161,35 @@ describe("inboxAcceptCommand", () => {
 		expect(inboxFetch.captured.map((request) => `${request.method} ${request.path}`)).toEqual([
 			"GET /v1/me/invitations",
 		]);
-		expect(findToken("project-shared")).toBeDefined();
+		const staged = findToken("project-shared");
+		expect(staged).toBeDefined();
+		if (!staged) throw new Error("Expected staged share fixture");
+		addToken({ ...staged, upgraded_at: "2026-05-19T00:00:00.000Z" });
+		rmSync(join(tmpHome, ".clawdi", "auth.json"), { force: true });
+		const legacyFetch = mockFetch([]);
+		const legacyLines: string[] = [];
+		console.log = (...args: unknown[]) => legacyLines.push(args.map(String).join(" "));
+		try {
+			await inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, {});
+			await inboxListCommand({});
+			await inboxAcceptCommand(`https://clawdi.ai/share/${rawToken}`, { json: true });
+			await inboxListCommand({ json: true });
+		} finally {
+			console.log = originalLog;
+			legacyFetch.restore();
+		}
+		const legacyOutput = legacyLines.join("\n");
+		expect(legacyOutput).toContain("was handled by an older Clawdi CLI");
+		expect(legacyOutput).toContain("No account or project membership was changed now.");
+		expect(legacyOutput).toContain("clawdi project list --shared-with-me");
+		expect(legacyOutput).toContain("Local legacy share records — cleanup only (1)");
+		expect(legacyOutput).toContain("No automatic action occurs for these records.");
+		expect(legacyOutput).toContain('"status": "legacy_local_share_record"');
+		expect(legacyOutput).toContain('"legacy_local_share_records": [');
+		expect(legacyOutput).toContain('"cleanup_command": "clawdi inbox forget project-shared"');
+		expect(legacyOutput).not.toContain("clawdi inbox join");
+		expect(legacyOutput).not.toContain(rawToken);
+		expect(legacyFetch.captured).toEqual([]);
 	});
 
 	it("rejects attachment mode without --agent before posting", async () => {
@@ -249,24 +277,34 @@ describe("inboxAcceptCommand", () => {
 		expect(captured).toEqual([]);
 	});
 
-	it("explicitly joins one staged project without pulling content", async () => {
+	it("joins staged projects without pulling content and discloses ticket removal", async () => {
 		addPendingShare({ project_id: "uuid-project-shared" });
-		const { captured, restore } = mockFetch([
-			{
+		const jsonJoinToken = "b".repeat(43);
+		const acceptToken = "c".repeat(43);
+		addPendingShare({ project_id: "uuid-project-json", token: jsonJoinToken });
+		addPendingShare({ project_id: "uuid-project-accept", token: acceptToken });
+		const joinedResponse = (projectId: string) =>
+			jsonResponse({
+				membership_id: `membership-${projectId}`,
+				project_id: projectId,
+				role: "viewer",
+				joined_via: "link",
+				joined_at: "2026-05-14T00:00:00Z",
+				resolved_owner_handle: "alice-a3b4",
+				bound_agent_ids: [],
+			});
+		const shareProjects = [
+			[rawToken, "uuid-project-shared"],
+			[jsonJoinToken, "uuid-project-json"],
+			[acceptToken, "uuid-project-accept"],
+		] as const;
+		const { captured, restore } = mockFetch(
+			shareProjects.map(([token, projectId]) => ({
 				method: "POST",
-				path: `/v1/share/${rawToken}/upgrade`,
-				response: () =>
-					jsonResponse({
-						membership_id: "membership-1",
-						project_id: "uuid-project-shared",
-						role: "viewer",
-						joined_via: "link",
-						joined_at: "2026-05-14T00:00:00Z",
-						resolved_owner_handle: "alice-a3b4",
-						bound_agent_ids: [],
-					}),
-			},
-		]);
+				path: `/v1/share/${token}/upgrade`,
+				response: () => joinedResponse(projectId),
+			})),
+		);
 		const orig = console.log;
 		const lines: string[] = [];
 		console.log = (...args: unknown[]) => {
@@ -274,6 +312,8 @@ describe("inboxAcceptCommand", () => {
 		};
 		try {
 			await inboxJoinCommand("uuid-project-shared", {});
+			await inboxJoinCommand("uuid-project-json", { json: true });
+			await inboxAcceptCommand(`https://clawdi.ai/share/${acceptToken}`, { json: true });
 		} finally {
 			console.log = orig;
 			restore();
@@ -281,18 +321,22 @@ describe("inboxAcceptCommand", () => {
 
 		const out = lines.join("\n");
 		expect(out).toContain("Joined project uuid-project-shared.");
+		expect(out).toContain("Local share ticket removed from this device.");
 		expect(out).toContain("Role: viewer (read access).");
 		expect(out).toContain(
 			"Attach to Agent: clawdi agent projects attach <agent-id> --project uuid-project-shared",
 		);
 		expect(out).toContain("Next (optional): clawdi pull --project uuid-project-shared");
 		expect(out).not.toContain(rawToken);
-		expect(out).not.toMatch(/\bbind(ing|s)?\b/i);
 		expect(captured[0].headers["idempotency-key"]).toMatch(/^upgrade-[a-f0-9]{32}$/);
-		expect(captured.map((request) => `${request.method} ${request.path}`)).toEqual([
-			`POST /v1/share/${rawToken}/upgrade`,
-		]);
+		const jsonOutput: Array<Record<string, unknown>> = lines
+			.filter((line) => line.startsWith("{"))
+			.map((line) => JSON.parse(line));
+		expect(jsonOutput.map((payload) => payload.local_ticket_removed)).toEqual([true, true]);
+		expect(captured).toHaveLength(3);
 		expect(findToken("uuid-project-shared")).toBeUndefined();
+		expect(findToken("uuid-project-json")).toBeUndefined();
+		expect(findToken("uuid-project-accept")).toBeUndefined();
 	});
 });
 

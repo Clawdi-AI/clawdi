@@ -43,6 +43,11 @@ export function buildShareAgentHandoffPrompt(link: ShareAgentHandoffLink): strin
 					"Local staging already exists; no membership changed. Run the returned next_commands in order to sign in and explicitly join the listed Project.",
 			},
 			{
+				status: "legacy_local_share_record",
+				action:
+					"An older CLI already handled this share; no membership changed now. Review access and use the returned cleanup command explicitly if the local record is no longer needed.",
+			},
+			{
 				status: "already_owner",
 				action: "No accept needed; the current user owns this project.",
 			},
