@@ -1586,10 +1586,33 @@ function applySystemdRuntimeUpdate(
 	opts: {
 		forceRestartSystemUnits?: readonly string[];
 		recoverFailedUnits?: boolean;
+		activationScope?: {
+			systemUnits: readonly string[];
+			userUnits: readonly string[];
+		};
+		skipActivatedSystemUnits?: readonly string[];
 	} = {},
 ): { applied: boolean; systemUnitsChanged: string[]; userUnitsChanged: string[] } {
-	const system = changedSystemdUnits(before.system, after.system);
-	const user = changedSystemdUnits(before.user, after.user);
+	const allSystem = changedSystemdUnits(before.system, after.system);
+	const allUser = changedSystemdUnits(before.user, after.user);
+	const filterChanges = (
+		changes: ReturnType<typeof changedSystemdUnits>,
+		units: readonly string[],
+	): ReturnType<typeof changedSystemdUnits> => {
+		const selected = new Set(units);
+		return {
+			added: changes.added.filter((unit) => selected.has(unit)),
+			changed: changes.changed.filter((unit) => selected.has(unit)),
+			removed: changes.removed.filter((unit) => selected.has(unit)),
+			present: changes.present.filter((unit) => selected.has(unit)),
+		};
+	};
+	const system = opts.activationScope
+		? filterChanges(allSystem, opts.activationScope.systemUnits)
+		: allSystem;
+	const user = opts.activationScope
+		? filterChanges(allUser, opts.activationScope.userUnits)
+		: allUser;
 	const systemUnitsChanged = [...system.added, ...system.changed].sort();
 	const userUnitsChanged = [...user.added, ...user.changed].sort();
 	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter((unit) =>
@@ -1629,11 +1652,13 @@ function applySystemdRuntimeUpdate(
 	const addedSystemUnits = new Set(system.added);
 	const changedSystemUnits = new Set(system.changed);
 	const forcedRestartUnits = new Set(forcedSystemRestarts);
+	const skipActivatedSystemUnits = new Set(opts.skipActivatedSystemUnits ?? []);
 	const resetFailedSystemUnits: string[] = [];
 	const startSystemUnits: string[] = [];
 	const restartSystemUnits: string[] = [];
 	for (const unit of system.present) {
 		const state = systemdUnitManagerState(paths, "system", unit);
+		if (skipActivatedSystemUnits.has(unit)) continue;
 		if (state.activeState === "failed" && recoverFailedUnits) {
 			resetFailedSystemUnits.push(unit);
 			startSystemUnits.push(unit);
@@ -1660,7 +1685,6 @@ function applySystemdRuntimeUpdate(
 	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 
 	const changedUserUnits = new Set(user.changed);
-	const addedUserUnits = new Set(user.added);
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
 	const enableUserUnits: string[] = [];
@@ -1682,11 +1706,7 @@ function applySystemdRuntimeUpdate(
 		}
 		if (state.activeState !== "active") continue;
 		if (!enabled) enableUserUnits.push(unit);
-		// Official runtime installers may create and start their user unit after
-		// the pre-convergence snapshot. Treat that already-running added unit like
-		// a changed unit so it is restarted after system services (including the
-		// Type=notify transparent-egress sidecar) have reached readiness.
-		if (addedUserUnits.has(unit) || changedUserUnits.has(unit)) restartUserUnits.push(unit);
+		if (changedUserUnits.has(unit)) restartUserUnits.push(unit);
 	}
 	if (resetFailedUserUnits.length > 0) {
 		runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]);
@@ -2526,6 +2546,7 @@ function applyRuntimeDesiredState(
 		systemUnitsChanged: [] as string[],
 		userUnitsChanged: [] as string[],
 	};
+	let egressPrerequisiteActivated = false;
 	const convergence = convergeRuntimeManifest(load, paths, {
 		cacheLastGood: false,
 		commitAuthority: (committedConvergence, authority) => {
@@ -2535,7 +2556,38 @@ function applyRuntimeDesiredState(
 			opts.authorityCommit?.(committedConvergence, authority);
 		},
 		systemdApply: {
+			activateEgressPrerequisite: ({ restartEgressSidecar }) => {
+				failedSystemdUnits = readSystemdUnitSnapshot(paths);
+				try {
+					const prerequisite = applySystemdRuntimeUpdate(
+						paths,
+						previousSystemdUnits,
+						failedSystemdUnits,
+						{
+							activationScope: {
+								systemUnits: [RUNTIME_SIDECAR_SYSTEM_UNIT],
+								userUnits: [],
+							},
+							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+							recoverFailedUnits: opts.recoverFailedSystemdUnits,
+						},
+					);
+					if (prerequisite.applied) {
+						accessSync(paths.egressSystemCaFile, constants.R_OK);
+						egressPrerequisiteActivated = true;
+					}
+					return prerequisite;
+				} catch (error) {
+					throw new Error(
+						`transparent-egress prerequisite activation failed: ${
+							error instanceof Error ? error.message : String(error)
+						}`,
+					);
+				}
+			},
 			activate: ({ restartEgressSidecar }) => {
+				// Official installers run after the prerequisite phase and add their
+				// base units, so final reconciliation must observe a fresh rendered state.
 				failedSystemdUnits = readSystemdUnitSnapshot(paths);
 				try {
 					systemdApply = applySystemdRuntimeUpdate(
@@ -2545,6 +2597,9 @@ function applyRuntimeDesiredState(
 						{
 							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
 							recoverFailedUnits: opts.recoverFailedSystemdUnits,
+							skipActivatedSystemUnits: egressPrerequisiteActivated
+								? [RUNTIME_SIDECAR_SYSTEM_UNIT]
+								: [],
 						},
 					);
 					return systemdApply;
