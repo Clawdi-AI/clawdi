@@ -489,13 +489,70 @@ marker plus an actual target-content digest match is a filesystem no-op;
 version changes, drift, and legacy ownership markers use staged replacement.
 
 Managed-bundle integrity does not reuse `computeSkillFolderHash`. That function
-is an established client/server sync protocol with upload exclusions, ignores
-symlinks during its scan, and retains its historical unframed `path + content`
-hash. The managed catalog instead uses a private, framed full-file scan over
+is an established client/server sync protocol over the safe dereferenced
+regular-file archive projection, with upload exclusions and its historical
+unframed `path + content` hash. It does not encode regular-file permission
+modes, so chmod-only projection fidelity is not guaranteed. The managed catalog
+instead uses a private, framed full-file scan over
 relative path, regular-file permission bits, and bytes. It does not hash
 ownership or timestamps, rejects source symlinks, and treats target symlinks as
 drift without following them. The public sync hash remains unchanged for old
 and new clients.
+
+### Skill And MCP Authority Boundaries
+
+The public deployment `resource.spec.skills` array is the source of truth for
+manifest-managed Skill intent. The current public contract supports the single
+entry `{id: "clawdi", enabled: <boolean>, version: 1}`. Dashboard changes use
+the existing deployment update operation with its strong resource-version
+precondition and idempotency key, replacing the complete array. The contract
+does not expose Skill content, paths, sources, or digests. Runtime desired state
+under `skills.entries` and runtime-observed summaries are downstream
+convergence evidence only; they never supply the next deployment mutation.
+Disabled entries remain in the safe summary so a propagated disable can be
+distinguished from unavailable or legacy runtime state, and convergence uses
+the canonical instance, generation, source-revision, and freshness health
+fence.
+
+Agent filesystem Skills have a separate one-way lifecycle. The guarded adapter
+target is authoritative and Cloud stores an `agent_sync` projection. A
+versioned local ledger records the exact Agent and Agent Project that
+successfully claimed each projection. Local absence may delete only that exact
+claim; remote listing failures never infer deletion. A Project reassignment
+first deletes the Agent-owned projection under the old Project fence and then
+projects current local state to the new Project. Legacy hash-only state may be
+an upload baseline but cannot authorize deletion. During rollout, the current
+one-way CLI's fallback through the generic Project route is treated as this
+same Agent-authoritative boundary; dashboard writes, old clients without the
+explicit capability, and orphan projects fail closed.
+The CLI declares `X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` on
+Agent-Project listing, SSE, and writes. New clients can fall back to the old
+Project route against an older backend without adopting Cloud bytes; a newer
+backend denies old clients those Agent-Project surfaces. Additive
+`agent_skill_changed`/`agent_skill_deleted` events close the rolling-worker
+case: a released daemon's already-open stream ignores them, while current
+daemons treat both event families only as local-rescan hints. Workspace and
+personal Project events keep their released Cloud-owned behavior.
+
+An enabled manifest entry reserves its Skill key ahead of managed target
+installation. Conforming CLI/daemon uploads fail closed at that reservation
+boundary. If reservation wins after a user-authored Skill was deleted or
+renamed, the durable exact claim still queues removal of the old Cloud
+projection while the managed target is never uploaded or removed by live sync.
+Failed managed installation rolls back the reservation transaction; manifest
+disable releases its ownership without importing or resurrecting a stale
+projection. The dashboard cannot inspect the local claim ledger, so it presents
+both possible conflict states conservatively and does not offer cleanup
+deletion.
+
+MCP remains independent of Skill enablement and has no deployment mutation in
+this release. Its Agent page uses the Cloud API's safe desired inventory, which
+exposes only server id, transport, desired enabled state, source, and explicit
+availability. Missing Agent/runtime projection and a legacy null MCP document
+are `unavailable`; only an explicit canonical `{servers: {}}` proves a
+configured-empty inventory. URLs, headers, secret references, commands, args,
+and env are never projected. Overall MCP convergence comes from the canonical
+runtime-observed health fence rather than per-server generation guesses.
 
 Manifest `generation` is part of the remote manifest ETag. The CLI applies any
 non-304 manifest without monotonic generation gating, while treating generation

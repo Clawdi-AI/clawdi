@@ -91,9 +91,15 @@ interface than `packages/cli/src/adapters/base.ts`.
 
 ## Sync Engine
 
-`clawdi push` uploads sessions and skills. `clawdi pull` downloads skills.
-`clawdi daemon run` keeps skill state live through local watchers, SSE, and
-heartbeat updates.
+`clawdi push` uploads sessions and projects Agent filesystem Skills into their
+Cloud rows. Agent Project Skill sync is one-way: the adapter's guarded local
+Skills root is authoritative, and Cloud stores a read-only projection. Boot,
+watcher, and periodic scans compare local inventory with an identity-fenced
+claim ledger and durably queue the latest push or delete for each Skill key.
+Cloud list failures and truncated results never authorize deletion. SSE only
+wakes a local rescan; Cloud changes and deletes never write or remove local
+Agent Skill files. `clawdi pull` remains for explicitly Cloud-owned
+workspace/personal Project workflows, not Agent Projects.
 
 Target selection:
 
@@ -102,9 +108,23 @@ Target selection:
 3. Adapter detection.
 4. Prompt when more than one candidate remains.
 
-Sync state is client-side under `~/.clawdi/`, including session/skill lock
-files. The backend stores metadata and file bodies, but it does not own each
-machine's upload watermark.
+Sync state is client-side under `~/.clawdi/`, including session state and a
+versioned Skill projection ledger fenced by stable Agent and resolved Agent
+Project identity. Only an exact successful Agent claim authorizes a later
+projection delete. After Project reassignment, the durable queue deletes that
+Agent's claimed row from the old Project before projecting current local state
+to the new Project. Legacy hash-only entries may suppress redundant upload
+work, but never prove delete authority.
+
+The released Agent Skill projection hash is a compatibility protocol over the
+safe dereferenced regular-file paths and bytes carried by the upload archive.
+It intentionally does not include permission modes, and its historical
+`path + content` stream has no length or domain framing. A chmod-only change is
+therefore not guaranteed to reproject, and the hash must not be described as a
+collision-unambiguous tree encoding. Fixing either limitation requires an
+explicitly versioned wire, ledger, and persisted-hash migration in a later
+protocol release; this change does not silently reinterpret old hashes or
+claims.
 
 ## Sessions
 
@@ -132,10 +152,45 @@ membership, attach Projects, or mutate cloud Project relationships.
 
 ## Skills
 
-Skills are project-scoped metadata rows plus tar.gz bodies in the object store.
-Active skills are unique by `(user_id, project_id, skill_key)`. The CLI uploads
-local skills with `clawdi push`, downloads cloud skills with `clawdi pull`, and
-can add or install skills through `clawdi skill ...`.
+Persisted Skills are project-scoped metadata rows plus tar.gz bodies in the
+object store. Active rows are unique by `(user_id, project_id, skill_key)` and
+carry durable `authority` provenance:
+
+| Inventory authority | Source of truth | Allowed mutation |
+| --- | --- | --- |
+| `cloud` | Cloud-owned workspace/personal Project | Normal authenticated Cloud UI/API and `--project` CLI operations |
+| `agent_sync` | One Agent's guarded filesystem target | Agent-authenticated claim/upload and absence/delete only; dashboard is read-only |
+| `manifest` | Public Hosted deployment `resource.spec.skills` | Dashboard may replace the complete supported `enabled`/`version` array through the deployment update contract; no mutable Skill row or body edit |
+
+Historical rows are backfilled as `cloud`; Project kind, source strings, and
+old environment metadata are not ownership evidence. A live authenticated
+Agent upload may atomically claim the matching row as `agent_sync`, including
+when its bytes are unchanged. During mixed-version rollout, the current
+one-way CLI's fallback through the generic Project route is a compatibility
+alias for the same Agent-authoritative claim boundary. Browser writes, old
+clients without the explicit capability, and orphan Agent Projects fail closed.
+
+Mixed-version safety uses the explicit
+`X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` capability, never a
+User-Agent guess. A new CLI can run first: if its dedicated sync route is not
+present, it falls back to the legacy Project route while retaining one-way
+local authority. A new backend can run first: an old daemon without the
+capability is denied Agent-Project listing, SSE, download, and mutation, so it
+pauses instead of changing local files. Agent-authoritative mutations also use
+additive `agent_skill_changed`/`agent_skill_deleted` invalidations. Released
+daemons ignore those names even on an SSE connection already established to an
+old rolling worker; current daemons treat both old and new event families as
+rescan hints. Cloud-owned Project events retain their released names.
+
+An enabled manifest entry reserves its local key before managed installation.
+Conforming CLI/daemon uploads fail closed at that reservation boundary. If a
+previously claimed local Skill yields the key to the manifest, the local claim
+ledger still deletes the old Cloud projection without touching the managed
+target. Because the dashboard cannot see local ledger state, its conflict copy
+conservatively distinguishes a still-user-owned local target from automatic
+cleanup after manifest takeover; it offers no Cloud delete. Disabling the
+manifest entry releases and tears down only manifest ownership and does not
+resurrect an old projection.
 
 ## Vault
 
@@ -178,6 +233,14 @@ through the connector bridge.
 For agents that only support stdio MCP, `clawdi mcp` registers local tool
 schemas and forwards calls to the backend. The backend keeps connector OAuth
 tokens and bridge credentials out of the agent process.
+
+Hosted Agent pages expose MCP as a separate read-only inventory, not as a Skill
+or an Overview boolean. The safe inventory contains only desired server id,
+transport, enabled state, and source. It never returns URL, headers, secret
+references, command, args, or env. Availability distinguishes a missing Agent
+projection from a proven configured-empty state. Overall convergence reuses
+the canonical runtime-observed identity, generation, source-revision, and
+freshness health fence; the inventory does not invent per-server convergence.
 
 ## Channels
 

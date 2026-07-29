@@ -154,11 +154,14 @@ For non-loopback HTTP RPC, use a private network, SSH tunnel, or TLS proxy and p
 What the user gets:
 
 - Edit a SKILL.md locally → uploaded to the cloud within ~1s
-- Install a skill from the dashboard → dropped into the local agent's skills directory within ~2s
-- Two machines edit the same skill at once → the second editor's save shows a "Skill changed elsewhere" toast and the dashboard reloads the latest version; user re-applies their edit on top.
+- Agent Skills appear as read-only filesystem projections in the dashboard
+- Cloud events never write or delete the Agent's local Skill files
 - Daemon offline status visible in the dashboard's agent detail page
 
-Skip this step only if the user explicitly says they want manual sync. The CLI fallback (`clawdi push` / `clawdi pull`) still works alongside the daemon.
+Skip this step only if the user explicitly says they want manual sync. `clawdi
+push` remains a manual projection fallback; `clawdi pull --modules skills`
+requires an explicit Cloud-owned workspace/personal `--project` and acts as an
+intentional local import.
 
 If install fails (no launchd / systemd, e.g. inside a minimal container), fall back to running the daemon in the foreground and ask the user to wire their own supervisor:
 
@@ -176,15 +179,19 @@ clawdi push --modules skills --all-agents
 
 Most users have zero or a handful of authored skills — no preview needed (unlike sessions, skills are deliberately created and don't have privacy concerns). The bundled `clawdi` skill that `clawdi setup` installs is automatically excluded. Re-running this is a no-op for unchanged skills.
 
-If the user is on a new machine and already has skills in their Clawdi Cloud account, pull them down:
+To intentionally import Skills from a Cloud-owned workspace/personal Project,
+name that Project explicitly:
 
 ```bash
-clawdi pull --modules skills --all-agents
+clawdi pull --modules skills --project <project> --agent <agent-type>
 ```
 
-This installs cloud skills into every registered agent's home directory. Like push, it's idempotent — running again is a no-op when nothing's new.
+Agent Project rows are read-only projections, not a restore source, and are
+rejected by this command. The explicit import commits guarded local bytes;
+normal Agent sync then projects them to the target Agent Project.
 
-If the user has zero authored skills, both commands are no-ops. Run them anyway to confirm; the output makes it obvious.
+If the user has zero authored skills, `push` is a no-op. Do not run a Skill
+import unless the user selected a Cloud-owned source Project.
 
 ## Extract memories from sessions (optional)
 
@@ -245,7 +252,7 @@ After this their account has:
 - **Memory** — `memory_search` and `memory_add` MCP tools for long-term cross-agent recall. Seeded with extractions from the sessions just pushed (if memory extraction was configured).
 - **Connectors** — Gmail, GitHub, Notion, etc. They enable services in the dashboard; tools appear automatically in any registered agent.
 - **Session sync** — pushed today; future sessions sync via `clawdi push`.
-- **Skill sync** — authored skills backed up to the cloud and available across registered agents via `clawdi pull --modules skills`.
+- **Skill sync** — Agent filesystem Skills projected read-only to Cloud; explicit workspace/personal Project imports remain user-directed.
 - **Vault** — encrypted secrets injected into commands via `clawdi run`.
 
 ## Troubleshooting

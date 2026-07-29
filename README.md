@@ -27,7 +27,7 @@
   <img src="docs/images/dashboard-preview.png" alt="Clawdi dashboard" width="900">
 </p>
 
-> Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share the same memory, secrets, skills, sessions, and app connections. Switch frameworks or machines; nothing gets lost.
+> Think of Clawdi as iCloud for AI agents — install once on any device, and your Claude Code, Codex, Hermes, and OpenClaw agents share memory, secrets, Skill inventory, sessions, and app connections. Agent Skill files remain authoritative on their own filesystems.
 
 The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: MIT-licensed CLI, FastAPI backend, TanStack Start dashboard, database schema, migrations, and docs. Use the hosted service, self-host it, fork it, or build your own agent sync layer from the pieces.
 
@@ -92,7 +92,7 @@ AI agents are still treated like isolated apps. Claude Code has one set of sessi
 Clawdi is the shared layer underneath:
 
 - **Cross-agent memory** — Store durable preferences, decisions, facts, and project context once. Search them from any connected agent.
-- **Portable skills** — Upload or install agent instructions once, then sync them into every registered agent.
+- **Portable skills** — Author instructions in each Agent's guarded filesystem and project a read-only Cloud inventory; explicitly import Cloud-owned Project Skills when needed.
 - **Project sharing** — Share read-only Project access from the dashboard or CLI, accept it from a share page or CLI inbox, and explicitly attach accepted Projects to Agents when they should be used at runtime.
 - **Session sync** — Push local session history to the dashboard for review and recall.
 - **Vault secrets** — Store secrets server-side, commit only `clawdi://` references, and resolve them at runtime.
@@ -191,10 +191,10 @@ Use `clawdi ai-provider connect ... --callback manual` in headless environments.
 
 Current vault storage is server-managed encryption. Clawdi avoids plaintext secrets in repo files and local templates, but the backend can decrypt stored vault values and credential profiles today. Do not treat this release as zero-knowledge.
 
-Install a shared skill into every registered agent at once:
+Install a public Skill into one Agent's authoritative local root:
 
 ```bash
-clawdi skill install anthropics/skills/artifacts-builder
+clawdi skill install anthropics/skills/artifacts-builder --agent claude_code
 ```
 
 ## Roadmap
@@ -304,7 +304,7 @@ Each agent has a dedicated adapter in [`packages/cli/src/adapters`](packages/cli
 | `clawdi teardown [--agent <type>]` | Remove Clawdi's local agent wiring |
 | `clawdi daemon run/install/status/logs/doctor/restart/uninstall/ping/rotate-token` | Run, inspect, and control the singleton background sync daemon (`serve` remains a legacy alias) |
 | `clawdi push` | Upload sessions and skills |
-| `clawdi pull` | Download cloud skills into registered agents and mirror cloud sessions to `~/.clawdi/sessions/` |
+| `clawdi pull` | Mirror cloud sessions, or explicitly import Skills from a workspace/personal Project with `--project` |
 | `clawdi session list/extract` | Inspect local agent sessions |
 | `clawdi memory list/search/add/rm` | Manage cross-agent long-term memory |
 | `clawdi skill list/add/install/rm/init` | Manage portable skills |
