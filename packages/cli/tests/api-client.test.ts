@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ApiError, retryingFetch } from "../src/lib/api-client";
+import { AgentSkillSyncNotFoundError, ApiError, retryingFetch } from "../src/lib/api-client";
 import {
 	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 	SKILL_SYNC_PROTOCOL_HEADER,
@@ -273,74 +273,112 @@ describe("ApiClient error classification", () => {
 });
 
 describe("Agent-authoritative Skill sync rollout", () => {
-	it("falls back to the legacy Project upload only when the dedicated route is absent", async () => {
-		fakeLogin("http://127.0.0.1:0");
-		const originalFetch = globalThis.fetch;
-		const requests: Request[] = [];
-		globalThis.fetch = async (input, init) => {
-			const request = new Request(input, init);
-			requests.push(request);
-			if (requests.length === 1) return new Response("missing", { status: 404 });
-			return Response.json({ skill_key: "demo", version: 1, status: "uploaded" });
-		};
-		try {
-			const { ApiClient } = await import("../src/lib/api-client");
-			await new ApiClient().uploadAgentSkill(
-				"agent-1",
-				"project-1",
-				"demo",
-				Buffer.from("archive"),
-				"demo.tar.gz",
-				"a".repeat(64),
-			);
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
+	const notFoundCases = [
+		{
+			name: "route-not-found from an older backend",
+			agentId: "agent-1",
+			projectId: "project-1",
+			body: '{"detail":"Not Found"}',
+		},
+		{
+			name: "semantic Agent not found",
+			agentId: "missing-agent",
+			projectId: "project-1",
+			body: '{"detail":"Agent not found"}',
+		},
+		{
+			name: "wrong Agent id paired with a valid Project id",
+			agentId: "wrong-agent",
+			projectId: "valid-project",
+			body: '{"detail":"Agent not found"}',
+		},
+		{
+			name: "environment-bound Agent mismatch",
+			agentId: "other-agent",
+			projectId: "bound-agent-project",
+			body: '{"detail":"Agent not found"}',
+		},
+	] as const;
 
-		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
-			"/v1/agents/agent-1/skills/sync/upload",
-			"/v1/projects/project-1/skills/upload",
-		]);
-		for (const request of requests) {
-			expect(request.headers.get(SKILL_SYNC_PROTOCOL_HEADER)).toBe(
+	for (const scenario of notFoundCases) {
+		it(`fails closed on upload ${scenario.name}`, async () => {
+			fakeLogin("http://127.0.0.1:0");
+			const originalFetch = globalThis.fetch;
+			const requests: Request[] = [];
+			globalThis.fetch = async (input, init) => {
+				requests.push(input instanceof Request ? input : new Request(input, init));
+				return new Response(scenario.body, {
+					status: 404,
+					headers: { "content-type": "application/json" },
+				});
+			};
+			try {
+				const { ApiClient } = await import("../src/lib/api-client");
+				await expect(
+					new ApiClient().uploadAgentSkill(
+						scenario.agentId,
+						scenario.projectId,
+						"demo",
+						Buffer.from("archive"),
+						"demo.tar.gz",
+					),
+				).rejects.toMatchObject({
+					name: "AgentSkillSyncNotFoundError",
+					status: 404,
+					body: scenario.body,
+				});
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
+
+			expect(requests).toHaveLength(1);
+			expect(new URL(requests[0].url).pathname).toBe(
+				`/v1/agents/${scenario.agentId}/skills/sync/upload`,
+			);
+			expect(new URL(requests[0].url).pathname).not.toContain("/v1/projects/");
+			expect(requests[0].headers.get(SKILL_SYNC_PROTOCOL_HEADER)).toBe(
 				SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 			);
-		}
-	});
+		});
 
-	it("does not hide a dedicated upload rejection behind the compatibility alias", async () => {
-		fakeLogin("http://127.0.0.1:0");
-		const originalFetch = globalThis.fetch;
-		let requests = 0;
-		globalThis.fetch = async () => {
-			requests += 1;
-			return new Response("forbidden", { status: 403 });
-		};
-		try {
-			const { ApiClient } = await import("../src/lib/api-client");
-			await expect(
-				new ApiClient().uploadAgentSkill(
-					"agent-1",
-					"project-1",
-					"demo",
-					Buffer.from("archive"),
-					"demo.tar.gz",
-				),
-			).rejects.toMatchObject({ status: 403 });
-		} finally {
-			globalThis.fetch = originalFetch;
-		}
-		expect(requests).toBe(1);
-	});
+		it(`fails closed on delete ${scenario.name}`, async () => {
+			fakeLogin("http://127.0.0.1:0");
+			const originalFetch = globalThis.fetch;
+			const requests: Request[] = [];
+			globalThis.fetch = async (input, init) => {
+				requests.push(input instanceof Request ? input : new Request(input, init));
+				return new Response(scenario.body, {
+					status: 404,
+					headers: { "content-type": "application/json" },
+				});
+			};
+			try {
+				const { ApiClient } = await import("../src/lib/api-client");
+				await expect(
+					new ApiClient().deleteAgentSkill(scenario.agentId, "demo", scenario.projectId),
+				).rejects.toBeInstanceOf(AgentSkillSyncNotFoundError);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
 
-	it("falls back to the exact Project delete with the explicit protocol fence", async () => {
+			expect(requests).toHaveLength(1);
+			const requestUrl = new URL(requests[0].url);
+			expect(requestUrl.pathname).toBe(`/v1/agents/${scenario.agentId}/skills/sync/demo`);
+			expect(requestUrl.searchParams.get("project_id")).toBe(scenario.projectId);
+			expect(requestUrl.pathname).not.toContain("/v1/projects/");
+			expect(requests[0].headers.get(SKILL_SYNC_PROTOCOL_HEADER)).toBe(
+				SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+			);
+		});
+	}
+
+	it("accepts a bodyless dedicated delete replay response", async () => {
 		fakeLogin("http://127.0.0.1:0");
 		const originalFetch = globalThis.fetch;
 		const requests: Request[] = [];
 		globalThis.fetch = async (input, init) => {
-			const request = input instanceof Request ? input : new Request(input, init);
-			requests.push(request);
-			return new Response(null, { status: requests.length === 1 ? 404 : 200 });
+			requests.push(input instanceof Request ? input : new Request(input, init));
+			return new Response(null, { status: 204 });
 		};
 		try {
 			const { ApiClient } = await import("../src/lib/api-client");
@@ -348,16 +386,43 @@ describe("Agent-authoritative Skill sync rollout", () => {
 		} finally {
 			globalThis.fetch = originalFetch;
 		}
-
 		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
 			"/v1/agents/agent-1/skills/sync/demo",
-			"/v1/projects/project-1/skills/demo",
 		]);
-		expect(new URL(requests[0].url).searchParams.get("project_id")).toBe("project-1");
-		for (const request of requests) {
-			expect(request.headers.get(SKILL_SYNC_PROTOCOL_HEADER)).toBe(
-				SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	});
+
+	it("keeps workspace and personal Project mutations on the generic Cloud boundary", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const originalFetch = globalThis.fetch;
+		const requests: Request[] = [];
+		globalThis.fetch = async (input, init) => {
+			const request = input instanceof Request ? input : new Request(input, init);
+			requests.push(request);
+			if (request.method === "POST") {
+				return Response.json({ skill_key: "demo", version: 1, file_count: 1 });
+			}
+			return Response.json({ status: "deleted" });
+		};
+		try {
+			const { ApiClient, unwrap } = await import("../src/lib/api-client");
+			const api = new ApiClient();
+			await api.uploadSkill("workspace-project", "demo", Buffer.from("archive"), "demo.tar.gz");
+			unwrap(
+				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
+					params: {
+						path: { project_id: "personal-project", skill_key: "demo" },
+					},
+				}),
 			);
+		} finally {
+			globalThis.fetch = originalFetch;
 		}
+
+		expect(requests.map((request) => `${request.method} ${new URL(request.url).pathname}`)).toEqual(
+			[
+				"POST /v1/projects/workspace-project/skills/upload",
+				"DELETE /v1/projects/personal-project/skills/demo",
+			],
+		);
 	});
 });

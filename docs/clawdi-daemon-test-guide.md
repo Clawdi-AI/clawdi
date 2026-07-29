@@ -153,10 +153,10 @@ reflects the new content_hash on refresh.
 
 ### Verify a Cloud event cannot overwrite local state
 
-During mixed-version rollout, a current one-way CLI can fall back through the
-generic Agent-Project upload route. The backend treats that route as an `agent_sync`
-compatibility alias. A current daemon uses its SSE event only to rescan the
-local filesystem and project the local bytes back; it never downloads the
+The backend's protocol-gated generic Agent-Project route remains a direct
+compatibility-boundary test surface, but the current CLI uses only the
+dedicated Agent sync route. A current daemon uses its SSE event only to rescan
+the local filesystem and project the local bytes back; it never downloads the
 uploaded bytes. `PROJECT_ID` is the Agent's `default_project_id`:
 
 ```sh

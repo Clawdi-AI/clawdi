@@ -39,6 +39,13 @@ _AGENT_SYNC_HEADERS = {
 }
 
 
+def test_agent_sync_delete_openapi_uses_bodyless_204() -> None:
+    operation = app.openapi()["paths"]["/v1/agents/{agent_id}/skills/sync/{skill_key}"]["delete"]
+
+    assert "200" not in operation["responses"]
+    assert operation["responses"]["204"] == {"description": "Successful Response"}
+
+
 def _api_key_auth(
     user: User,
     *,
@@ -215,9 +222,20 @@ async def test_agent_sync_mutations_emit_additive_rolling_safe_events(
             f"/v1/agents/{agent_id}/skills/sync/rolling-safe",
             params={"project_id": str(environment_project.id)},
         )
-        assert deleted.status_code == 200, deleted.text
+        assert deleted.status_code == 204, deleted.text
+        assert deleted.content == b""
         removed = await asyncio.wait_for(events.get(), timeout=1)
         assert removed["type"] == "agent_skill_deleted"
+
+        # A lost success response leaves the durable delete queued. Replaying
+        # the exact Agent+Project+key absence is the same bodyless success,
+        # not a semantic 404 that the CLI could confuse with an old backend.
+        replay = await client.delete(
+            f"/v1/agents/{agent_id}/skills/sync/rolling-safe",
+            params={"project_id": str(environment_project.id)},
+        )
+        assert replay.status_code == 204, replay.text
+        assert replay.content == b""
     finally:
         unsubscribe(seed_user.id, events)
 
@@ -468,7 +486,7 @@ async def test_agent_absence_can_remove_legacy_projection_while_manifest_reserve
         f"/v1/agents/{agent_id}/skills/sync/reserved-handoff",
         params={"project_id": str(environment_project.id)},
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code == 204, response.text
     await db_session.refresh(legacy)
     assert legacy.is_active is False
 
@@ -633,12 +651,12 @@ async def test_agent_project_reassignment_deletes_old_claim_before_reprojecting(
         f"/v1/agents/{agent_id}/skills/sync/reassigned",
         params={"project_id": str(environment_project.id)},
     )
-    assert cleanup.status_code == 200, cleanup.text
+    assert cleanup.status_code == 204, cleanup.text
     replay = await client.delete(
         f"/v1/agents/{agent_id}/skills/sync/reassigned",
         params={"project_id": str(environment_project.id)},
     )
-    assert replay.status_code == 200, replay.text
+    assert replay.status_code == 204, replay.text
 
     data, files = _skill_upload("reassigned")
     reprojection = await client.post(

@@ -1659,7 +1659,11 @@ async def _build_skill_download(
 # ---------------------------------------------------------------------------
 
 
-@agent_router.delete("/sync/{skill_key:path}")
+@agent_router.delete(
+    "/sync/{skill_key:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
 async def delete_agent_synced_skill(
     agent_id: UUID,
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
@@ -1672,14 +1676,18 @@ async def delete_agent_synced_skill(
     ),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
-) -> SkillDeleteResponse:
-    return await _do_delete_agent_synced_skill(
+) -> Response:
+    await _do_delete_agent_synced_skill(
         db=db,
         auth=auth,
         agent_id=agent_id,
         project_id=project_id,
         skill_key=skill_key,
     )
+    # The desired projection is absence. Both the first successful delete and
+    # a replay after a lost response use the same bodyless success contract;
+    # identity failures remain fail-closed 404/409 responses above.
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 async def _do_delete_agent_synced_skill(

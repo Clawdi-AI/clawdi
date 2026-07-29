@@ -521,18 +521,24 @@ successfully claimed each projection. Local absence may delete only that exact
 claim; remote listing failures never infer deletion. A Project reassignment
 first deletes the Agent-owned projection under the old Project fence and then
 projects current local state to the new Project. Legacy hash-only state may be
-an upload baseline but cannot authorize deletion. During rollout, the current
-one-way CLI's fallback through the generic Project route is treated as this
-same Agent-authoritative boundary; dashboard writes, old clients without the
-explicit capability, and orphan projects fail closed.
+an upload baseline but cannot authorize deletion. The current CLI uses only
+the dedicated Agent sync boundary. A 404 from that boundary is ambiguous
+between a backend without the route and an identity the caller cannot prove,
+so both cases fail closed: the durable operation and exact claim remain, and
+no generic Project mutation is attempted. Dashboard writes, old clients
+without the explicit capability, and orphan projects also fail closed.
+
 The CLI declares `X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` on
-Agent-Project listing, SSE, and writes. New clients can fall back to the old
-Project route against an older backend without adopting Cloud bytes; a newer
-backend denies old clients those Agent-Project surfaces. Additive
-`agent_skill_changed`/`agent_skill_deleted` events close the rolling-worker
-case: a released daemon's already-open stream ignores them, while current
-daemons treat both event families only as local-rescan hints. Workspace and
-personal Project events keep their released Cloud-owned behavior.
+Agent-Project listing, SSE, and writes. Rollout order is the public Hosted
+deployment contract, every Clawdi backend worker plus drainage of old SSE
+connections, CLI 0.13.11, then Web. Old CLIs receive 426 from a current
+backend; a current CLI receives a dedicated 404 from an old backend and leaves
+its filesystem and durable projection state intact. Additive
+`agent_skill_changed`/`agent_skill_deleted` events protect only mutations
+created by current backend workers from released parsers on older connections;
+they do not make an old mutation worker safe. Current daemons treat both event
+families only as local-rescan hints. Workspace and personal Project events keep
+their released Cloud-owned behavior.
 
 An enabled manifest entry reserves its Skill key ahead of managed target
 installation. Conforming CLI/daemon uploads fail closed at that reservation

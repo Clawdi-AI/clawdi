@@ -180,11 +180,11 @@ $(tail -30 "$LOG_DIR/backend.log")"
 ok "cloud has skill content_hash=${CLOUD_HASH:0:12}..."
 
 bold "6) verifying projection correction: Cloud hint → local bytes win"
-# A current one-way CLI can fall back to the generic Agent-Project upload route
-# while paired endpoints roll out. The backend stamps that write as agent_sync
-# and emits SSE. The daemon must treat the event only as a rescan hint: the Agent
-# filesystem is unchanged, and its bytes are projected back over the transient
-# compatibility write.
+# Exercise the backend's explicitly protocol-gated generic Agent-Project alias
+# directly. Current CLIs use only the dedicated Agent sync boundary. The
+# backend stamps this test write as agent_sync and emits SSE; the daemon must
+# treat the event only as a rescan hint. The Agent filesystem stays unchanged,
+# and its bytes are projected back over the transient compatibility write.
 # Read default_project_id via the public API so the test isn't
 # coupled to whichever DB name / port the operator's local
 # postgres uses (the dev DB might be `clawdi_cloud`, `clawdi`,

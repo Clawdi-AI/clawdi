@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { CollectSessionsResult } from "../adapters/base";
 import { adapterRegistry } from "../adapters/registry";
-import { ApiClient, ApiError } from "../lib/api-client";
+import { AgentSkillSyncNotFoundError, ApiClient, ApiError } from "../lib/api-client";
 import {
 	computeSkillFolderHash,
 	readSkillProjectionClaimsForAgent,
@@ -28,6 +28,7 @@ import {
 	heartbeatDelayMs,
 	isAuthFailure,
 	isOversizedUploadError,
+	isPermanentUploadError,
 	isSafelyTerminalRuntimeObservationFailure,
 	isSkillSyncServerEvent,
 	lastSyncErrorForSseReconnect,
@@ -145,6 +146,77 @@ describe("Agent filesystem projection reconcile", () => {
 			expect(item && "skill_key" in item ? item.skill_key : undefined).toBe("category/demo");
 			expect(item && "agent_id" in item ? item.agent_id : undefined).toBe("agent-1");
 			expect(item && "project_id" in item ? item.project_id : undefined).toBe("project-1");
+		});
+	});
+
+	it("retains the delete queue item and claim on a dedicated 404, then releases both on 204", async () => {
+		await withProjectionCase(async ({ queue }) => {
+			recordSkillProjectionClaim({
+				agentType: "hermes",
+				agentId: "agent-1",
+				projectId: "project-1",
+				skillKey: "claimed",
+				hash: "claimed-hash",
+			});
+			queue.enqueue({
+				kind: "skill_delete",
+				agent_id: "agent-1",
+				project_id: "project-1",
+				skill_key: "claimed",
+				enqueued_at: new Date().toISOString(),
+				attempts: 0,
+			});
+			const item = queue.peek();
+			if (item?.kind !== "skill_delete") throw new Error("expected queued delete");
+
+			const originalFetch = globalThis.fetch;
+			const requests: Request[] = [];
+			let responseStatus = 404;
+			try {
+				globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+					requests.push(input instanceof Request ? input : new Request(input, init));
+					return responseStatus === 204
+						? new Response(null, { status: 204 })
+						: new Response('{"detail":"Agent not found"}', { status: 404 });
+				}) as typeof fetch;
+				const adapter = adapterRegistry.hermes.create();
+				const abortController = new AbortController();
+				const opts = {
+					environmentId: "agent-1",
+					adapter,
+					abort: abortController.signal,
+					abortController,
+				};
+				const api = new ApiClient({ requireAuth: false });
+
+				await expect(
+					processQueueItem(opts, api, queue, item, new Map(), new Map(), new Map(), "project-1"),
+				).rejects.toBeInstanceOf(AgentSkillSyncNotFoundError);
+				expect(isPermanentUploadError(new AgentSkillSyncNotFoundError("missing"))).toBe(false);
+				expect(queue.peek()?.version).toBe(item.version);
+				expect(
+					readSkillProjectionClaimsForAgent("hermes", "agent-1").map((claim) => claim.project_id),
+				).toEqual(["project-1"]);
+				expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+					"/v1/agents/agent-1/skills/sync/claimed",
+				]);
+
+				responseStatus = 204;
+				await processQueueItem(
+					opts,
+					api,
+					queue,
+					item,
+					new Map(),
+					new Map(),
+					new Map(),
+					"project-1",
+				);
+				expect(queue.depth).toBe(0);
+				expect(readSkillProjectionClaimsForAgent("hermes", "agent-1")).toEqual([]);
+			} finally {
+				globalThis.fetch = originalFetch;
+			}
 		});
 	});
 

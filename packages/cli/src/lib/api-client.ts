@@ -44,6 +44,20 @@ export class ApiError extends Error {
 	}
 }
 
+/** A dedicated Agent Skill sync request returned 404.
+ *
+ * The response is deliberately ambiguous: a pre-authority backend may not
+ * expose the route, while a current backend uses the same status to hide an
+ * Agent identity the caller cannot prove. Callers must fail closed in both
+ * cases. Durable projection queues keep this unresolved rather than issuing a
+ * generic Project mutation or treating absence as success. */
+export class AgentSkillSyncNotFoundError extends ApiError {
+	constructor(body: string) {
+		super({ status: 404, body, hint: hintFor(404) });
+		this.name = "AgentSkillSyncNotFoundError";
+	}
+}
+
 function hintFor(status: number): string {
 	if (status === 401) return "Run `clawdi auth login` to authenticate.";
 	if (status === 403) return "Your API key does not have permission for this action.";
@@ -348,10 +362,12 @@ export class ApiClient {
 	 * authority boundary; the server derives and fences the owning Project.
 	 * Keep this separate from uploadSkill(): the project route remains the
 	 * compatibility/cloud boundary and must never be used by new daemon code.
+	 * The Project id remains in the call contract as the caller's durable queue
+	 * fence, but is intentionally not sent as upload authority.
 	 */
 	async uploadAgentSkill(
 		agentId: string,
-		projectId: string,
+		_projectId: string,
 		skillKey: string,
 		file: Buffer,
 		filename: string,
@@ -368,11 +384,10 @@ export class ApiClient {
 				filename,
 			);
 		} catch (error) {
-			if (!(error instanceof ApiError) || error.status !== 404) throw error;
-			// Consumer-first rollout: older backends do not expose the
-			// Agent-authoritative route. Their generic Project upload is safe for
-			// this one-way client because SSE/listing never mutates local files.
-			return this.uploadSkill(projectId, skillKey, file, filename, contentHash);
+			if (error instanceof ApiError && error.status === 404) {
+				throw new AgentSkillSyncNotFoundError(error.body);
+			}
+			throw error;
 		}
 	}
 
@@ -394,30 +409,9 @@ export class ApiClient {
 			},
 		});
 		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
-		if (res.status === 404) {
-			const fallback = new Request(
-				`${this.baseUrl}/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillKey)}`,
-				{
-					method: "DELETE",
-					headers: {
-						Authorization: `Bearer ${accessToken}`,
-						"User-Agent": USER_AGENT,
-						"X-Request-ID": randomUUID(),
-						[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
-					},
-				},
-			);
-			const fallbackResponse = await retryingFetch(fallback, DEFAULT_TIMEOUT_MS, this.abortSignal);
-			if (fallbackResponse.ok) return;
-			const fallbackBody = await fallbackResponse.text();
-			throw new ApiError({
-				status: fallbackResponse.status,
-				body: fallbackBody,
-				hint: hintFor(fallbackResponse.status),
-			});
-		}
 		if (!res.ok) {
 			const body = await res.text();
+			if (res.status === 404) throw new AgentSkillSyncNotFoundError(body);
 			throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
 		}
 	}

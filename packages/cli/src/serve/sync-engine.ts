@@ -38,7 +38,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import type { AgentAdapter, CollectSessionsResult } from "../adapters/base";
-import { ApiClient, ApiError, unwrap } from "../lib/api-client";
+import { AgentSkillSyncNotFoundError, ApiClient, ApiError, unwrap } from "../lib/api-client";
 import { computeLastActivityIso } from "../lib/session-activity";
 import { cacheKey, readSessionsLock, writeSessionsLock } from "../lib/sessions-lock";
 import { isValidSkillKey, SkillKeyValidationError } from "../lib/skill-key";
@@ -962,8 +962,13 @@ export function classifyHeartbeatFailure(consecutiveFailures: number): FailureCl
  * 5xx, network errors, timeouts → NOT permanent. Those are the
  * retry queue's whole reason to exist.
  */
-function isPermanentUploadError(e: unknown): boolean {
+export function isPermanentUploadError(e: unknown): boolean {
 	if (e instanceof SkillKeyValidationError) return true;
+	// A dedicated Agent sync 404 is deliberately ambiguous between an older
+	// backend without the route and a current backend hiding an unproven Agent
+	// identity. Never redirect it to a generic Project write, release a claim,
+	// or drop the durable operation as a terminal content error.
+	if (e instanceof AgentSkillSyncNotFoundError) return false;
 	if (e instanceof ApiError) {
 		if (e.status >= 400 && e.status < 500) {
 			// 408 = server-side request timeout; the daemon should

@@ -165,22 +165,26 @@ carry durable `authority` provenance:
 Historical rows are backfilled as `cloud`; Project kind, source strings, and
 old environment metadata are not ownership evidence. A live authenticated
 Agent upload may atomically claim the matching row as `agent_sync`, including
-when its bytes are unchanged. During mixed-version rollout, the current
-one-way CLI's fallback through the generic Project route is a compatibility
-alias for the same Agent-authoritative claim boundary. Browser writes, old
-clients without the explicit capability, and orphan Agent Projects fail closed.
+when its bytes are unchanged. Current CLIs use only the dedicated Agent sync
+boundary; a missing dedicated route or an unproven Agent identity fails closed
+without issuing a generic Project mutation. Browser writes, old clients without
+the explicit capability, and orphan Agent Projects also fail closed.
 
 Mixed-version safety uses the explicit
 `X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` capability, never a
-User-Agent guess. A new CLI can run first: if its dedicated sync route is not
-present, it falls back to the legacy Project route while retaining one-way
-local authority. A new backend can run first: an old daemon without the
-capability is denied Agent-Project listing, SSE, download, and mutation, so it
-pauses instead of changing local files. Agent-authoritative mutations also use
-additive `agent_skill_changed`/`agent_skill_deleted` invalidations. Released
-daemons ignore those names even on an SSE connection already established to an
-old rolling worker; current daemons treat both old and new event families as
-rescan hints. Cloud-owned Project events retain their released names.
+User-Agent guess. Rollout is control-plane first: the public Hosted deployment
+contract must be available, then every Clawdi backend worker must serve the
+gate and dedicated endpoints and old SSE connections must be drained before
+CLI 0.13.11 is rolled out; Web follows the CLI. An old CLI reaching a current
+backend receives 426 on Agent-Project sync surfaces. A current CLI reaching an
+old backend receives a dedicated-route 404, retains its local operation, and
+does not create a Cloud mutation. Projection may pause during that window, but
+the Agent filesystem remains unchanged. Additive
+`agent_skill_changed`/`agent_skill_deleted` invalidations protect mutations
+created by current backend workers from already-connected released parsers;
+they do not make an old mutation worker safe. Current daemons treat both event
+families as rescan hints. Cloud-owned Project events retain their released
+names.
 
 An enabled manifest entry reserves its local key before managed installation.
 Conforming CLI/daemon uploads fail closed at that reservation boundary. If a
