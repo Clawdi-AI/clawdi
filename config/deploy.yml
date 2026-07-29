@@ -51,12 +51,14 @@ servers:
     hosts:
       - 66.220.6.123
     options:
+      memory: 3g # local embedding model (~1.6G resident) plus headroom
       ulimit: nofile=65536:65536 # long-lived SSE/WebSocket connections
   channels-worker:
     hosts:
       - 66.220.6.123
     proxy: false
     options:
+      memory: 1g
       ulimit: nofile=65536:65536 # per-account gateway sockets
     env:
       clear:
