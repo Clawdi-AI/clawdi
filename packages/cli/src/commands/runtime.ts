@@ -1754,7 +1754,7 @@ export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
 		manifestCache: {
 			path: paths.manifestLastGood,
 			exists: manifestCacheExists,
-			valid: errors.length === 0,
+			valid: manifestCacheExists ? errors.length === 0 : null,
 		},
 		errors,
 	};
@@ -2875,6 +2875,7 @@ export async function runtimeStatus(opts: { json?: boolean } = {}) {
 		},
 		...read,
 	};
+	if (read.error || read.status?.status === "error") process.exitCode = 1;
 
 	if (opts.json || !process.stdout.isTTY) {
 		console.log(JSON.stringify(payload, null, 2));
@@ -2889,7 +2890,6 @@ export async function runtimeStatus(opts: { json?: boolean } = {}) {
 	}
 	if (read.error) {
 		console.log(chalk.red(`  Could not read ${read.source}: ${read.error}`));
-		process.exitCode = 1;
 		return;
 	}
 	if (!read.status) {

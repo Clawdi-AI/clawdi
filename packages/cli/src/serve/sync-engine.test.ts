@@ -22,6 +22,7 @@ import {
 	releaseInFlight,
 	rememberPendingSkillUploadEcho,
 	resolveOwningSkillKey,
+	SyncHealth,
 } from "./sync-engine";
 
 describe("stable session enqueue abort fence", () => {
@@ -120,6 +121,45 @@ describe("isAuthFailure", () => {
 });
 
 describe("live-sync transient failure classification", () => {
+	it("keeps unrelated unresolved errors after transport and resource successes", () => {
+		const health = new SyncHealth();
+		health.set("pull", "skill:broken", "skill broken pull: disk busy");
+		health.set("transport", "sse", "sse_disconnect:http_502");
+		health.set("push", "session:healthy", "session upload failed");
+		health.set("transport", "auth", "auth_revoked: rejected");
+
+		expect(health.project()).toBe("auth_revoked: rejected");
+		health.clear("transport", "auth");
+
+		health.clear("transport", "sse");
+		expect(health.project()).toBe("skill broken pull: disk busy");
+
+		health.clear("push", "session:healthy");
+		expect(health.project()).toBe("skill broken pull: disk busy");
+
+		health.clear("pull", "skill:broken");
+		health.set("push", "skill:foo", "permanent: upload rejected");
+		health.setIfAbsent("push", "skill:foo", "skill foo push was not applied", true);
+		expect(health.project()).toBe("permanent: upload rejected");
+		health.set("push", "skill_scan:foo", "skill foo scan failed");
+		health.clear("push", "skill_scan:foo");
+		expect(health.project()).toBe("permanent: upload rejected");
+		health.set("push", "skills_scan", "periodic skills scan failed");
+		health.clear("push", "skills_scan");
+		expect(health.project()).toBe("permanent: upload rejected");
+		health.clear("push", "skill:foo");
+		health.setIfAbsent("push", "skill:foo", "skill foo push was not applied", true);
+		expect(health.project()).toBe("skill foo push was not applied");
+		health.clearTransient("push", "skill:foo");
+		health.set("push", "session:deleted", "deleted session failed permanently");
+		health.set("push", "session:present", "present session still failing");
+		health.clearAbsent("push", "session:", new Set(["session:present"]));
+		expect(health.project()).toBe("present session still failing");
+
+		health.clear("push", "session:present");
+		expect(health.project()).toBeNull();
+	});
+
 	it("does not surface transient SSE reconnects as last_sync_error", () => {
 		expect(
 			lastSyncErrorForSseReconnect({

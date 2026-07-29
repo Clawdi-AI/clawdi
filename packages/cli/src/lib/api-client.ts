@@ -50,15 +50,29 @@ function hintFor(status: number): string {
 	return "";
 }
 
-function sleep(ms: number): Promise<void> {
-	return new Promise((r) => setTimeout(r, ms));
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(new DOMException("Aborted", "AbortError"));
+			return;
+		}
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(new DOMException("Aborted", "AbortError"));
+		};
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
 }
 
 // GET/HEAD/PUT/DELETE are safe to retry on 5xx + network errors; POST/PATCH
 // skip retry because they may have side effects.
 const IDEMPOTENT_METHODS = new Set(["GET", "HEAD", "PUT", "DELETE"]);
 
-async function retryingFetch(
+export async function retryingFetch(
 	req: Request,
 	timeoutMs: number,
 	externalSignal: AbortSignal | undefined,
@@ -89,7 +103,19 @@ async function retryingFetch(
 
 	for (let attempt = 0; attempt < maxAttempts; attempt++) {
 		if (attempt > 0) {
-			await sleep(RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)]);
+			try {
+				await sleep(
+					RETRY_DELAYS_MS[Math.min(attempt - 1, RETRY_DELAYS_MS.length - 1)],
+					externalSignal,
+				);
+			} catch {
+				throw new ApiError({
+					status: 0,
+					body: "aborted",
+					hint: "Request aborted between retries.",
+					isNetwork: true,
+				});
+			}
 			if (externalSignal?.aborted) {
 				throw new ApiError({
 					status: 0,
@@ -108,14 +134,29 @@ async function retryingFetch(
 			if (externalSignal.aborted) controller.abort();
 			else externalSignal.addEventListener("abort", onExternalAbort, { once: true });
 		}
-		const timer = setTimeout(() => controller.abort(), timeoutMs);
+		let timedOut = false;
+		const timer = setTimeout(() => {
+			timedOut = true;
+			controller.abort();
+		}, timeoutMs);
 
-		let res: Response;
+		let buffered: Response;
 		try {
-			res = await fetch(base.clone(), { signal: controller.signal });
+			const res = await fetch(base.clone(), { signal: controller.signal });
+			// Own the complete REST response lifecycle here. Returning the
+			// network-backed Response would detach the timeout and caller abort
+			// before openapi-fetch (or a hand-written caller) consumes the body.
+			// Buffering keeps cancellation effective through JSON, text, and
+			// binary bodies, including error responses that are retried below.
+			const body = await res.arrayBuffer();
+			const hasNullBody =
+				base.method === "HEAD" || res.status === 204 || res.status === 205 || res.status === 304;
+			buffered = new Response(hasNullBody ? null : body, {
+				status: res.status,
+				statusText: res.statusText,
+				headers: res.headers,
+			});
 		} catch (e: unknown) {
-			clearTimeout(timer);
-			if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
 			if (externalSignal?.aborted) {
 				throw new ApiError({
 					status: 0,
@@ -125,7 +166,7 @@ async function retryingFetch(
 				});
 			}
 			const err = e as { name?: string; message?: string };
-			const isTimeout = err?.name === "AbortError";
+			const isTimeout = timedOut;
 			lastErr = new ApiError({
 				status: 0,
 				body: err?.message ?? String(e),
@@ -135,21 +176,33 @@ async function retryingFetch(
 			});
 			if (retry) continue;
 			throw lastErr;
+		} finally {
+			clearTimeout(timer);
+			if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
 		}
-		clearTimeout(timer);
-		if (externalSignal) externalSignal.removeEventListener("abort", onExternalAbort);
 
-		if (res.ok) return res;
+		if (buffered.ok) return buffered;
 
-		if (res.status === 429 && retry && attempt < maxAttempts - 1) {
-			const retryAfter = Number(res.headers.get("retry-after"));
-			if (Number.isFinite(retryAfter) && retryAfter > 0) await sleep(retryAfter * 1000);
+		if (buffered.status === 429 && retry && attempt < maxAttempts - 1) {
+			const retryAfter = Number(buffered.headers.get("retry-after"));
+			if (Number.isFinite(retryAfter) && retryAfter > 0) {
+				try {
+					await sleep(retryAfter * 1000, externalSignal);
+				} catch {
+					throw new ApiError({
+						status: 0,
+						body: "aborted",
+						hint: "Request aborted by caller.",
+						isNetwork: true,
+					});
+				}
+			}
 			continue;
 		}
 
-		if (res.status >= 500 && retry && attempt < maxAttempts - 1) continue;
+		if (buffered.status >= 500 && retry && attempt < maxAttempts - 1) continue;
 
-		return res;
+		return buffered;
 	}
 
 	throw (
