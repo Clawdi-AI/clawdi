@@ -7,14 +7,15 @@ endpoint must remain the only public MCP surface.
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
 import httpx
 import pytest
 from fastapi.routing import iter_route_contexts
 from httpx import ASGITransport
 
-from app.core.config import settings
 from app.main import app
 
 
@@ -202,6 +203,7 @@ async def test_clawdi_mcp_preserves_future_composio_tool_contract(monkeypatch):
             "status": "initiated",
             "redirect_url": "https://connect.test/link",
         },
+        "redirect_url": "https://connect.test/link",
         "isError": False,
         "_meta": {"future": {"preserved": True}},
     }
@@ -496,12 +498,11 @@ async def test_mcp_composio_bridge_sends_api_key_accept_and_parses_sse(monkeypat
             seen["headers"] = headers
             return FakeResponse()
 
-    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
     monkeypatch.setattr(mcp_bridge.httpx, "AsyncClient", FakeAsyncClient)
 
     session = ComposioMcpSession(
         url="https://backend.composio.dev/tool_router/trs_test/mcp",
-        headers={},
+        headers={"x-api-key": "session_scoped_key", "x-session": "trs_test"},
         expires_at=datetime.now(UTC) + timedelta(minutes=30),
     )
     result = await mcp_bridge._forward_composio_mcp_request(
@@ -510,65 +511,82 @@ async def test_mcp_composio_bridge_sends_api_key_accept_and_parses_sse(monkeypat
     )
 
     assert seen["headers"]["Accept"] == "application/json, text/event-stream"
-    assert seen["headers"]["x-api-key"] == "composio_test_key"
+    assert seen["headers"]["x-api-key"] == "session_scoped_key"
+    assert seen["headers"]["x-session"] == "trs_test"
     assert result["result"]["tools"][0]["name"] == "COMPOSIO_SEARCH_TOOLS"
     assert result["result"]["tools"][0]["inputSchema"]["properties"]["query"]["type"] == "string"
 
 
 @pytest.mark.asyncio
-async def test_create_tool_router_mcp_session_uses_composio_v31_api(monkeypatch):
+async def test_create_tool_router_mcp_session_uses_canonical_sdk_off_event_loop(monkeypatch):
     from app.services import composio
 
-    requests: list[dict] = []
+    calls: list[dict] = []
+    event_loop_thread = threading.get_ident()
 
-    class FakeResponse:
-        status_code = 201
-        is_success = True
+    class FakeSessions:
+        def create(self, **kwargs):
+            calls.append({"kwargs": kwargs, "thread": threading.get_ident()})
+            return SimpleNamespace(
+                mcp=SimpleNamespace(
+                    url="https://app.composio.dev/tool_router/v3/trs_test/mcp",
+                    headers={"x-api-key": "session_scoped_key", "x-session": "trs_test"},
+                )
+            )
 
-        def raise_for_status(self):
-            return None
-
-        def json(self):
-            return {
-                "session_id": "trs_test",
-                "mcp": {
-                    "type": "http",
-                    "url": "https://app.composio.dev/tool_router/v3/trs_test/mcp",
-                    "headers": {"x-session": "trs_test"},
-                },
-            }
-
-    class FakeAsyncClient:
-        def __init__(self, *, timeout: float):
-            self.timeout = timeout
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
-
-        async def post(self, url: str, *, headers: dict, json: dict):
-            requests.append({"url": url, "headers": headers, "json": json})
-            return FakeResponse()
-
-    monkeypatch.setattr(settings, "composio_api_key", "composio_test_key")
-    monkeypatch.setattr(settings, "composio_api_base_url", "https://backend.composio.dev/")
-    monkeypatch.setattr(composio.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(
+        composio,
+        "get_composio_sdk",
+        lambda: SimpleNamespace(sessions=FakeSessions()),
+    )
 
     now = datetime(2026, 5, 24, tzinfo=UTC)
     session = await composio._create_tool_router_mcp_session("clerk_user_123", now=now)
 
-    assert requests == [
-        {
-            "url": "https://backend.composio.dev/api/v3.1/tool_router/session",
-            "headers": {"x-api-key": "composio_test_key"},
-            "json": {"user_id": "clerk_user_123"},
-        }
-    ]
+    assert calls[0]["kwargs"] == {"user_id": "clerk_user_123", "mcp": True}
+    assert calls[0]["thread"] != event_loop_thread
     assert session.url == "https://app.composio.dev/tool_router/v3/trs_test/mcp"
-    assert session.headers == {"x-session": "trs_test"}
+    assert session.headers == {
+        "x-api-key": "session_scoped_key",
+        "x-session": "trs_test",
+    }
     assert session.expires_at == now + timedelta(minutes=30)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mcp", "error"),
+    [
+        (SimpleNamespace(url="", headers={"x-api-key": "key"}), "mcp.url"),
+        (SimpleNamespace(url="https://composio.test/mcp", headers={}), "mcp.headers"),
+        (
+            SimpleNamespace(
+                url="https://composio.test/mcp",
+                headers={"x-api-key": None},
+            ),
+            "invalid mcp.headers",
+        ),
+    ],
+)
+async def test_create_tool_router_mcp_session_fails_closed_on_invalid_sdk_contract(
+    monkeypatch,
+    mcp,
+    error,
+):
+    from app.services import composio
+
+    class FakeSessions:
+        def create(self, **kwargs):
+            return SimpleNamespace(mcp=mcp)
+
+    monkeypatch.setattr(
+        composio,
+        "get_composio_sdk",
+        lambda: SimpleNamespace(sessions=FakeSessions()),
+    )
+
+    with pytest.raises(RuntimeError, match=error):
+        await composio._create_tool_router_mcp_session("clerk_user_123")
 
 
 @pytest.mark.asyncio

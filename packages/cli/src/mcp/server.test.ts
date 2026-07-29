@@ -2,14 +2,16 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
 	callClawdiMcp,
 	createClawdiMcpServer,
-	createConnectorToolDefinition,
-	type McpTool,
+	createTransparentMcpHandlers,
+	createTransparentMcpServer,
 } from "./server";
 
-describe("MCP connector helpers", () => {
+describe("MCP stdio proxy", () => {
 	it("throws instead of exiting when there is no CLI auth", async () => {
 		const previousClawdiHome = process.env.CLAWDI_HOME;
 		const previousAuthToken = process.env.CLAWDI_AUTH_TOKEN;
@@ -67,103 +69,139 @@ describe("MCP connector helpers", () => {
 		}
 	});
 
-	it("preserves upstream tool names and builds typed fields from inputSchema", async () => {
-		const tool: McpTool = {
-			name: "COMPOSIO_SEARCH_TOOLS",
-			description: "Search tools",
-			inputSchema: {
-				properties: {
-					query: { type: "string", description: "Search query" },
-					limit: { type: "integer", description: "Maximum results" },
-				},
-				required: ["query"],
-			},
-		};
-
-		const definition = createConnectorToolDefinition(tool);
-		expect(definition.name).toBe("COMPOSIO_SEARCH_TOOLS");
-
-		expect(definition.inputSchema.safeParse({ query: "github issues", limit: 5 }).success).toBe(
-			true,
-		);
-		expect(definition.inputSchema.safeParse({ limit: 5 }).success).toBe(false);
-
-		let forwardedName = "";
-		let forwardedArgs: Record<string, unknown> = {};
-		const result = await definition.execute(
-			{ query: "github issues", limit: 5 },
-			async (name, args) => {
-				forwardedName = name;
-				forwardedArgs = args;
-				return { ok: true };
-			},
-		);
-
-		expect(result).toEqual({ ok: true });
-		expect(forwardedName).toBe("COMPOSIO_SEARCH_TOOLS");
-		expect(forwardedArgs).toEqual({ query: "github issues", limit: 5 });
-	});
-
-	it("falls back to parameters and forwards parsed JSON arguments when schema is absent", async () => {
-		const parameterBacked = createConnectorToolDefinition({
-			name: "GITHUB_CREATE_ISSUE",
-			parameters: {
-				properties: {
-					title: { type: "string" },
-				},
-				required: ["title"],
-			},
-		});
-		expect(parameterBacked.inputSchema.safeParse({ title: "Bug" }).success).toBe(true);
-
-		const generic = createConnectorToolDefinition({ name: "COMPOSIO_MULTI_EXECUTE_TOOL" });
-		let forwardedArgs: Record<string, unknown> = {};
-		await generic.execute(
-			{ arguments: '{"tasks":[{"slug":"GITHUB_GET_ISSUE"}]}' },
-			async (_name, args) => {
-				forwardedArgs = args;
-				return null;
-			},
-		);
-
-		expect(forwardedArgs).toEqual({ tasks: [{ slug: "GITHUB_GET_ISSUE" }] });
-	});
-
-	it("preserves nested inputSchema structure for Composio meta tools", () => {
-		const definition = createConnectorToolDefinition({
-			name: "COMPOSIO_SEARCH_TOOLS",
-			inputSchema: {
-				type: "object",
-				additionalProperties: false,
-				properties: {
-					queries: {
-						type: "array",
-						items: {
-							type: "object",
-							additionalProperties: false,
-							properties: {
-								use_case: { type: "string", description: "Tool use case" },
-								known_fields: { type: ["string", "null"] },
+	it("preserves complete runtime tool definitions without a hardcoded catalog", async () => {
+		const upstream = {
+			tools: [
+				{
+					name: "COMPOSIO_SEARCH_TOOLS",
+					description: "Search current tools",
+					inputSchema: {
+						type: "object",
+						properties: {
+							queries: {
+								type: "array",
+								items: {
+									type: "object",
+									properties: { known_fields: { type: ["string", "null"] } },
+								},
 							},
-							required: ["use_case"],
 						},
 					},
+					outputSchema: {
+						type: "object",
+						properties: { redirect_url: { type: ["string", "null"] } },
+					},
+					_meta: { composio: { future_contract: true } },
+					futureDefinitionField: { preserved: true },
 				},
-				required: ["queries"],
-			},
+			],
+			nextCursor: "next-page",
+			_meta: { router: { session: "opaque" } },
+		};
+		const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
+		const handlers = createTransparentMcpHandlers(async (method, params) => {
+			calls.push({ method, params });
+			return upstream;
 		});
+		const params = { cursor: "page-1", _meta: { trace: "opaque" } };
 
-		expect(
-			definition.inputSchema.safeParse({
-				queries: [{ use_case: "find GitHub tools for listing repository issues" }],
-			}).success,
-		).toBe(true);
-		expect(definition.inputSchema.safeParse({ queries: [{}] }).success).toBe(false);
-		expect(definition.inputSchema.safeParse({ queries: "github issues" }).success).toBe(false);
-		expect(
-			definition.inputSchema.safeParse({
-				queries: [{ use_case: "search", extra: "not allowed" }],
-			}).success,
-		).toBe(false);
+		const result = await handlers.listTools(params);
+
+		expect(result).toBe(upstream);
+		expect(calls).toEqual([{ method: "tools/list", params }]);
+	});
+
+	it("preserves nested arguments and complete structured tool results", async () => {
+		const upstream = {
+			content: [
+				{
+					type: "text",
+					text: '{"status":"initiated"}',
+					_meta: { composio: { tool: "COMPOSIO_MANAGE_CONNECTIONS" } },
+				},
+			],
+			structuredContent: {
+				status: "initiated",
+				redirect_url: "https://connect.test/link",
+			},
+			redirect_url: "https://connect.test/link",
+			_meta: { future: { preserved: true } },
+			futureResultField: { preserved: true },
+		};
+		const calls: Array<{ method: string; params?: Record<string, unknown> }> = [];
+		const handlers = createTransparentMcpHandlers(async (method, params) => {
+			calls.push({ method, params });
+			return upstream;
+		});
+		const params = {
+			name: "COMPOSIO_MULTI_EXECUTE_TOOL",
+			arguments: {
+				tasks: [
+					{
+						slug: "GITHUB_CREATE_ISSUE",
+						arguments: { title: "Bug", labels: ["runtime", "mcp"] },
+					},
+				],
+			},
+			_meta: { progressToken: "progress-1" },
+		};
+
+		const result = await handlers.callTool(params);
+
+		expect(result).toBe(upstream);
+		expect(calls).toEqual([{ method: "tools/call", params }]);
+	});
+
+	it("keeps runtime schemas and result extensions across the stdio server protocol", async () => {
+		const toolDefinition = {
+			name: "COMPOSIO_MANAGE_CONNECTIONS",
+			inputSchema: { type: "object" as const, properties: { toolkit: { type: "string" } } },
+			outputSchema: {
+				type: "object" as const,
+				properties: { redirect_url: { type: ["string", "null"] } },
+			},
+			_meta: { composio: { version: "future" } },
+			futureDefinitionField: { preserved: true },
+		};
+		const toolResult = {
+			content: [{ type: "text", text: "connection initiated" }],
+			structuredContent: { redirect_url: "https://connect.test/link" },
+			redirect_url: "https://connect.test/link",
+			_meta: { composio: { version: "future" } },
+			futureResultField: { preserved: true },
+		};
+		const server = createTransparentMcpServer(async (method) =>
+			method === "tools/list" ? { tools: [toolDefinition] } : toolResult,
+		);
+		const client = new Client({ name: "clawdi-proxy-test", version: "1.0.0" });
+		const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+		await server.connect(serverTransport);
+		await client.connect(clientTransport);
+		try {
+			const listResult = await client.listTools();
+			const callResult = await client.callTool({
+				name: toolDefinition.name,
+				arguments: { toolkit: "github" },
+			});
+
+			expect(listResult.tools).toHaveLength(1);
+			expect(listResult.tools[0]?.outputSchema).toEqual(toolDefinition.outputSchema);
+			expect(listResult.tools[0]?._meta).toEqual(toolDefinition._meta);
+			expect(callResult.structuredContent).toEqual(toolResult.structuredContent);
+			expect(callResult.redirect_url).toBe(toolResult.redirect_url);
+			expect(callResult._meta).toEqual(toolResult._meta);
+			expect(callResult.futureResultField).toEqual(toolResult.futureResultField);
+		} finally {
+			await client.close();
+			await server.close();
+		}
+	});
+
+	it("fails closed when the aggregate returns a non-object result", async () => {
+		const handlers = createTransparentMcpHandlers(async () => ["not", "an", "mcp", "result"]);
+
+		await expect(handlers.listTools()).rejects.toThrow(
+			"Clawdi MCP tools/list returned an invalid result",
+		);
 	});
 });
