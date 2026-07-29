@@ -585,7 +585,11 @@ export function HostedAgentDetail({
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							isPerformance={isPerformance}
-							showDeploymentActions={projection.status !== "resolved" || !deploymentRunning}
+							showDeploymentActions={
+								projection.status === "resolved" &&
+								!deploymentRunning &&
+								!isStartingStatus(deploymentStatus)
+							}
 							onDeleteAccepted={onDeleteAccepted}
 							projectionAvailable={projection.status === "resolved"}
 							sessions={sessions.data?.items ?? []}

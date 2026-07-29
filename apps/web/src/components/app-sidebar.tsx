@@ -96,6 +96,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
+import { useUnresolvedHostedRouteGrace } from "@/hosted/agents/unresolved-hosted-route";
 import {
 	type AgentOwnershipKind,
 	agentOwnershipKindFromId,
@@ -107,7 +108,6 @@ import {
 	agentDeploymentSelector,
 	agentSectionHref,
 	agentSectionLabel,
-	isAcceptedHostedAgentRoute,
 	parseAgentPathname,
 } from "@/lib/agent-routes";
 import { unwrap, useApi } from "@/lib/api";
@@ -1175,8 +1175,13 @@ function FocusHeader({
 	activeAgentId: string | null;
 }) {
 	const searchStr = useLocation({ select: (location) => location.searchStr });
-	const acceptedSetupRoute = Boolean(
-		activeAgentId && isAcceptedHostedAgentRoute(activeAgentId, searchStr),
+	const awaitingAcceptedDeployment = useUnresolvedHostedRouteGrace(
+		activeAgentId &&
+			!activeAgent &&
+			!activeAgentTile &&
+			new URLSearchParams(searchStr).get("source") === "on-clawdi"
+			? activeAgentId
+			: null,
 	);
 	if (!activeAgent && !activeAgentId) {
 		return (
@@ -1189,7 +1194,7 @@ function FocusHeader({
 		);
 	}
 
-	if (activeAgentKind === "unresolved") {
+	if (activeAgentKind === "unresolved" || awaitingAcceptedDeployment) {
 		return (
 			<div className="min-w-0 space-y-2" role="status" aria-label="Agent ownership loading">
 				<Skeleton className="h-4 w-32" />
@@ -1202,11 +1207,9 @@ function FocusHeader({
 	if (!activeAgent && !activeAgentTile) {
 		return (
 			<div className="min-w-0">
-				<div className="truncate text-sm font-semibold leading-5">
-					{acceptedSetupRoute ? "Starting your agent" : "Agent not found"}
-				</div>
+				<div className="truncate text-sm font-semibold leading-5">Agent not found</div>
 				<div className="truncate text-xs leading-4 text-muted-foreground">
-					{acceptedSetupRoute ? "This usually takes a few minutes" : "No details are available"}
+					No details are available
 				</div>
 			</div>
 		);

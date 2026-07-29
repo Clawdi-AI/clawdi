@@ -132,6 +132,18 @@ describe("deployment failure remediation rendering", () => {
 });
 
 describe("deployment transition timeout rendering", () => {
+	test("keeps startup overview actions hidden until startup and projection resolve", () => {
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+		expect(detailSource).toContain('projection.status === "resolved" &&');
+		expect(detailSource).toContain("!isStartingStatus(deploymentStatus)");
+		expect(detailSource).not.toContain(
+			'showDeploymentActions={projection.status !== "resolved" || !deploymentRunning}',
+		);
+	});
+
 	test("replaces the automatic-update promise with an honest timeout and check action", () => {
 		if (!overviewReadinessPanel) throw new Error("agent detail was not loaded");
 		const deployment = hostedDeploymentFixture({ status: "creating" });
@@ -225,8 +237,6 @@ describe("hosted agent customer language", () => {
 		}
 		expect(detailSource).toContain("Starting your agent…");
 		expect(detailSource).toContain("Your agent is running");
-		expect(agentHomeSource).toContain('"Starting your agent"');
-		expect(sidebarSource).toContain('"Starting your agent"');
 		expect(wizardSource).toContain("After your agent is running");
 	});
 

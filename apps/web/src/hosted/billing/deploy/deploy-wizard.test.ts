@@ -154,7 +154,13 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
 	});
 
-	test("keeps setup progress on the destination and bounds the payment-only notice", () => {
+	test("routes accepted creates directly by canonical deployment selector", () => {
+		expect(wizardSource).toContain(
+			'agentSectionHref(deploymentId, "overview", "source=on-clawdi")',
+		);
+		expect(wizardSource).not.toContain("setup=accepted");
+		expect(wizardSource).not.toContain("waitForRuntime");
+		expect(wizardSource).not.toContain("getDeployment(created.deploymentId)");
 		expect(wizardSource).not.toContain("Agent deployment started");
 		expect(wizardSource).not.toContain("agent is getting ready now");
 		expect(wizardSource).toContain('toast.success("Wallet payment confirmed"');
@@ -271,6 +277,18 @@ describe("deploy acceptance", () => {
 		expect(wizardSource).toContain(
 			"router.navigate(acceptedDeploymentNavigation(outcome.deploymentId))",
 		);
+	});
+
+	test("funnels every accepted create and activation through the same immediate navigation", () => {
+		for (const acceptedId of [
+			"resolved.deploymentId",
+			"deploymentId",
+			"outcome.deploymentId",
+			"created.deploymentId",
+		]) {
+			expect(wizardSource).toContain(`acceptedDeploymentNavigation(${acceptedId}`);
+		}
+		expect(wizardSource).not.toContain("setup=accepted");
 	});
 
 	test("shows a scoped honest busy state and keeps a persistent actionable failure", () => {

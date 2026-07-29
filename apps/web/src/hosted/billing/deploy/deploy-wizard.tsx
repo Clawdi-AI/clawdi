@@ -184,7 +184,7 @@ const DEPLOY_MANAGED_AI_LABEL = "Managed AI";
 
 function acceptedDeploymentNavigation(deploymentId: string, replace = false) {
 	return {
-		href: agentSectionHref(deploymentId, "overview", "source=on-clawdi&setup=accepted"),
+		href: agentSectionHref(deploymentId, "overview", "source=on-clawdi"),
 		replace,
 	};
 }

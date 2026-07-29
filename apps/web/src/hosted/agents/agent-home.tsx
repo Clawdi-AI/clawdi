@@ -2,7 +2,7 @@
 
 import { Link, useLocation, useRouter } from "@tanstack/react-router";
 import { AlertCircle, ChevronRight, RefreshCw } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { AgentIcon } from "@/components/dashboard/agent-icon";
 import {
@@ -23,6 +23,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
+import { useUnresolvedHostedRouteGrace } from "@/hosted/agents/unresolved-hosted-route";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { deploymentStatusFromResource, deploymentStatusLabel } from "@/hosted/deployment-status";
 import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
@@ -36,7 +37,6 @@ import {
 	bindAgentDeploymentSearch,
 	CONNECTED_AGENT_SECTION_IDS,
 	HOSTED_AGENT_SECTION_IDS,
-	isAcceptedHostedAgentRoute,
 } from "@/lib/agent-routes";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -77,15 +77,16 @@ export function AgentHome({
 	} = useAgentDeployment(environmentId, deploymentSelector);
 	const isCloudEnvironmentId = isCloudEnvId(environmentId);
 	const requestedFromCloudRedirect = routeSearch.source === "on-clawdi";
-	const acceptedSetupRoute = isAcceptedHostedAgentRoute(environmentId, routeSearch);
 	const requestedHostedAgent =
 		requestedFromCloudRedirect || Boolean(deploymentSelector) || !isCloudEnvironmentId;
 	const unresolvedHostedAgent =
 		requestedHostedAgent && !deployment && ambiguousMatches.length === 0 && !error && !isLoading;
 	const shouldAutoRefetchUnresolvedHostedAgent =
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
+	const awaitingAcceptedDeployment = useUnresolvedHostedRouteGrace(
+		unresolvedHostedAgent && requestedFromCloudRedirect ? environmentId : null,
+	);
 	const isFetchingRef = useRef(isFetching);
-	const [acceptedSetupStatusTimedOut, setAcceptedSetupStatusTimedOut] = useState(false);
 	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
 	const hostedSection = HOSTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
 	const connectedSection = CONNECTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
@@ -153,10 +154,6 @@ export function AgentHome({
 	}, [isFetching]);
 
 	useEffect(() => {
-		setAcceptedSetupStatusTimedOut(false);
-	}, [environmentId, deploymentSelector]);
-
-	useEffect(() => {
 		if (!shouldAutoRefetchUnresolvedHostedAgent || typeof window === "undefined") return;
 
 		let attempts = 0;
@@ -168,14 +165,13 @@ export function AgentHome({
 
 			if (attempts >= UNRESOLVED_HOSTED_AGENT_MAX_REFETCH_ATTEMPTS) {
 				window.clearInterval(intervalId);
-				if (acceptedSetupRoute) setAcceptedSetupStatusTimedOut(true);
 			}
 		}, UNRESOLVED_HOSTED_AGENT_REFETCH_INTERVAL_MS);
 
 		return () => {
 			window.clearInterval(intervalId);
 		};
-	}, [acceptedSetupRoute, refetch, shouldAutoRefetchUnresolvedHostedAgent]);
+	}, [refetch, shouldAutoRefetchUnresolvedHostedAgent]);
 
 	const handleCheckAgain = () => {
 		if (isFetchingRef.current) return;
@@ -203,18 +199,12 @@ export function AgentHome({
 				</div>
 			);
 		}
-		if (acceptedSetupRoute) {
-			return <AcceptedAgentSetupState />;
-		}
 		return <ConnectedAgentDetailSkeleton hosted />;
 	}
 
 	// Hold a skeleton until the deployment lookup settles, so a hosted agent
 	// doesn't flash the connected detail (and fire its queries) first.
 	if (isLoading || (requestedHostedAgent && !deployment && isFetching)) {
-		if (acceptedSetupRoute) {
-			return <AcceptedAgentSetupState />;
-		}
 		return <ConnectedAgentDetailSkeleton hosted />;
 	}
 
@@ -249,6 +239,10 @@ export function AgentHome({
 		);
 	}
 
+	if (awaitingAcceptedDeployment) {
+		return <ConnectedAgentDetailSkeleton hosted />;
+	}
+
 	if (deployment) {
 		// Scope the detail to a single runtime. Prefer the env's matched runtime;
 		// fall back to the deployment default when the route used a deployment id.
@@ -268,16 +262,6 @@ export function AgentHome({
 				deploymentTransitionTimedOut={deploymentTransitionTimedOut}
 				isCheckingDeployment={isFetching}
 				onCheckDeploymentAgain={handleCheckAgain}
-			/>
-		);
-	}
-
-	if (acceptedSetupRoute) {
-		return (
-			<AcceptedAgentSetupState
-				isChecking={isFetching}
-				onCheckAgain={handleCheckAgain}
-				statusTimedOut={acceptedSetupStatusTimedOut}
 			/>
 		);
 	}
@@ -307,48 +291,6 @@ export function AgentHome({
 			section={section}
 			routeSearch={routeSearch}
 		/>
-	);
-}
-
-export function AcceptedAgentSetupState({
-	statusTimedOut = false,
-	isChecking = false,
-	onCheckAgain,
-}: {
-	statusTimedOut?: boolean;
-	isChecking?: boolean;
-	onCheckAgain?: () => void;
-}) {
-	return (
-		<div
-			data-hosted="true"
-			data-testid="accepted-agent-setup"
-			className={`${CENTERED_PAGE_WIDTH_CLASS.page} space-y-4 px-4 py-2 lg:px-6`}
-		>
-			<EmptyState
-				icon={statusTimedOut ? AlertCircle : <Spinner className="size-5" />}
-				title={statusTimedOut ? "Agent status is unavailable" : "Starting your agent"}
-				description={
-					statusTimedOut
-						? "Clawdi accepted your request, but couldn’t load a progress update within two minutes. Startup may still be continuing."
-						: "Your request was accepted. Clawdi is preparing your agent now. This usually takes a few minutes."
-				}
-				action={
-					statusTimedOut && onCheckAgain ? (
-						<Button
-							type="button"
-							variant="outline"
-							size="sm"
-							disabled={isChecking}
-							onClick={onCheckAgain}
-						>
-							{isChecking ? <Spinner className="size-3.5" /> : <RefreshCw />}
-							Check again
-						</Button>
-					) : null
-				}
-			/>
-		</div>
 	);
 }
 
