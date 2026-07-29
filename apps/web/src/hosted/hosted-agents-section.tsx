@@ -23,10 +23,10 @@ import { useUnifiedAgentList } from "@/hosted/use-unified-agent-list";
 
 type Env = components["schemas"]["AgentResponse"];
 
-function HostedEmptyAccountHero() {
+function HostedEmptyAccountHero({ canDeployOnClawdi }: { canDeployOnClawdi: boolean }) {
 	return (
 		<div className="space-y-4">
-			<OnboardingCard variant="first-agent" hosted />
+			<OnboardingCard variant="first-agent" canDeployOnClawdi={canDeployOnClawdi} />
 			<WelcomeWalletCard showDeployAction={false} />
 		</div>
 	);
@@ -104,6 +104,7 @@ export function HostedAgentsSection({
 	onRetrySelfManaged,
 	selfManagedCount,
 	cloudEnvs,
+	canDeployOnClawdi,
 	showCloudDeployments = true,
 	showLegacyAgents = false,
 }: {
@@ -119,6 +120,8 @@ export function HostedAgentsSection({
 	 * renders from the deployment identity.
 	 */
 	cloudEnvs: Env[];
+	/** Whether this account may create another Cloud agent. */
+	canDeployOnClawdi: boolean;
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
 }) {
@@ -145,7 +148,7 @@ export function HostedAgentsSection({
 		<div data-hosted="true" className="space-y-4">
 			<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
 			{isEmptyState ? (
-				<HostedEmptyAccountHero />
+				<HostedEmptyAccountHero canDeployOnClawdi={canDeployOnClawdi} />
 			) : (
 				<AgentsCard
 					agents={agentTiles}
@@ -178,11 +181,13 @@ export function HostedAgentsSection({
 export function HostedSecondaryCTA({
 	envsLoading,
 	cloudEnvs,
+	canDeployOnClawdi,
 	showCloudDeployments = true,
 	showLegacyAgents = false,
 }: {
 	envsLoading: boolean;
 	cloudEnvs: Env[];
+	canDeployOnClawdi: boolean;
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
 }) {
@@ -195,7 +200,9 @@ export function HostedSecondaryCTA({
 		showLegacyAgents,
 	});
 	const hasAnyAgent = unified.tiles.length > 0;
-	if (hasAnyAgent) return <OnboardingCard variant="additional-agent" />;
+	if (hasAnyAgent) {
+		return <OnboardingCard variant="additional-agent" canDeployOnClawdi={canDeployOnClawdi} />;
+	}
 	// Loading: don't flash an empty slot then pop in. Wait for pending
 	// sources only when none has already proven there is an agent.
 	if (envsLoading || unified.isLoading) return null;
@@ -212,6 +219,7 @@ export function HostedAgentsByCompute({
 	onRetrySelfManaged,
 	selfManagedCount,
 	cloudEnvs,
+	canDeployOnClawdi,
 	showCloudDeployments = true,
 	showLegacyAgents = false,
 }: {
@@ -220,6 +228,7 @@ export function HostedAgentsByCompute({
 	onRetrySelfManaged?: () => void;
 	selfManagedCount: number;
 	cloudEnvs: Env[];
+	canDeployOnClawdi: boolean;
 	showCloudDeployments?: boolean;
 	showLegacyAgents?: boolean;
 }) {
@@ -243,7 +252,7 @@ export function HostedAgentsByCompute({
 		return (
 			<div data-hosted="true" className="space-y-6">
 				<HostedDeletionFailureNotices deployments={unified.deletionFailures} />
-				<HostedEmptyAccountHero />
+				<HostedEmptyAccountHero canDeployOnClawdi={canDeployOnClawdi} />
 			</div>
 		);
 	}

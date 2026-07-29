@@ -37,13 +37,13 @@ export function NewAgentButton({
 	const hydrated = useHydrated();
 	const [chooserOpen, setChooserOpen] = useState(false);
 	const [connectOpen, setConnectOpen] = useState(false);
-	const canDeployManagedAgent = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
+	const canDeployOnClawdi = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const checkingDeployAccess = hydrated && IS_HOSTED && hostedAccess.isLoading;
 	const deployAccessError = hydrated && IS_HOSTED && hostedAccess.isError;
 
 	function handleClick() {
 		if (checkingDeployAccess) return;
-		if (canDeployManagedAgent || deployAccessError) {
+		if (canDeployOnClawdi || deployAccessError) {
 			setChooserOpen(true);
 			return;
 		}
@@ -56,7 +56,7 @@ export function NewAgentButton({
 	}
 
 	function chooseDeploy() {
-		if (!canDeployManagedAgent) return;
+		if (!canDeployOnClawdi) return;
 		setChooserOpen(false);
 		onNavigate?.();
 		void router.navigate({ href: "/deploy" });
@@ -97,7 +97,9 @@ export function NewAgentButton({
 					<DialogHeader>
 						<DialogTitle>New agent</DialogTitle>
 						<DialogDescription>
-							Deploy a managed agent on Clawdi, or connect an agent you already run.
+							{canDeployOnClawdi
+								? "Deploy on Clawdi, or connect an agent on your machine."
+								: "Connect an agent on your machine."}
 						</DialogDescription>
 					</DialogHeader>
 					{deployAccessError ? (
@@ -109,17 +111,18 @@ export function NewAgentButton({
 							title="Couldn't verify deploy access"
 						/>
 					) : null}
-					<div className="grid gap-3 sm:grid-cols-2">
-						<ChoiceCard
-							icon={checkingDeployAccess ? <Loader2 className="animate-spin" /> : <Rocket />}
-							title={checkingDeployAccess ? "Checking deploy access" : "Deploy managed agent"}
-							description="Clawdi-managed runtime — pick a framework and go live in minutes."
-							onClick={chooseDeploy}
-							disabled={!canDeployManagedAgent}
-						/>
+					<div className={cn("grid gap-3", canDeployOnClawdi && "sm:grid-cols-2")}>
+						{canDeployOnClawdi ? (
+							<ChoiceCard
+								icon={checkingDeployAccess ? <Loader2 className="animate-spin" /> : <Rocket />}
+								title={checkingDeployAccess ? "Checking deploy access" : "Deploy on Clawdi"}
+								description="Clawdi runs and manages it — pick a framework and go live in minutes."
+								onClick={chooseDeploy}
+							/>
+						) : null}
 						<ChoiceCard
 							icon={<TerminalSquare />}
-							title="Connect your own agent"
+							title="Connect an agent on your machine"
 							description="Claude Code, Codex, Hermes, or OpenClaw via the CLI."
 							onClick={chooseConnect}
 						/>
@@ -137,25 +140,19 @@ function ChoiceCard({
 	title,
 	description,
 	onClick,
-	disabled = false,
 }: {
 	icon: React.ReactNode;
 	title: string;
 	description: string;
 	onClick: () => void;
-	disabled?: boolean;
 }) {
 	return (
 		<Button
 			type="button"
 			data-slot="new-agent-choice"
 			onClick={onClick}
-			disabled={disabled}
 			variant="outline"
-			className={cn(
-				"h-auto min-h-32 w-full flex-col items-start justify-start gap-2 whitespace-normal p-4 text-left",
-				!disabled && "hover:border-primary/40 hover:bg-muted/50",
-			)}
+			className="h-auto min-h-32 w-full flex-col items-start justify-start gap-2 whitespace-normal p-4 text-left hover:border-primary/40 hover:bg-muted/50"
 		>
 			<IconChip size="sm" tint="bg-primary/10 text-primary" className="size-9 transition-colors">
 				{icon}

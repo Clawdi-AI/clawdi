@@ -1578,7 +1578,10 @@ async function gotoHostedSettingsDialog(page: Page, section: string) {
 	throw new Error("Settings dialog did not open.");
 }
 
-test("empty account offers two working first-agent paths", async ({ page }) => {
+test("empty account offers two working first-agent paths with npm setup by default", async ({
+	page,
+	context,
+}) => {
 	await stubHostedApi(page, { deployments: [], cloudAgents: [] });
 	await page.goto("/");
 
@@ -1586,15 +1589,78 @@ test("empty account offers two working first-agent paths", async ({ page }) => {
 		exact: true,
 	});
 	await expect(firstAgent).toBeVisible();
-	await expect(
-		page.getByRole("button", { name: "Deploy a hosted agent", exact: true }),
-	).toHaveAttribute("href", "/deploy");
+	await expect(page.getByRole("button", { name: "Deploy on Clawdi", exact: true })).toHaveAttribute(
+		"href",
+		"/deploy",
+	);
 
-	await page.getByRole("button", { name: "Connect via CLI", exact: true }).click();
-	await expect(page.getByText("Connect an agent you already run", { exact: true })).toBeVisible();
+	await page.getByRole("button", { name: "Connect an agent on your machine", exact: true }).click();
+	await expect(
+		page.getByRole("heading", { name: "Connect an agent on your machine", exact: true }),
+	).toBeVisible();
 	await expect(
 		page.getByText("Run the setup command on the machine where your agent lives."),
 	).toBeVisible();
+	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toBeVisible();
+	const command = "npm install -g clawdi@latest && clawdi auth login && clawdi setup";
+	await expect(page.getByText(command, { exact: true })).toBeVisible();
+	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+	await page.getByRole("button", { name: "Copy", exact: true }).click();
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(command);
+});
+
+test("returning users can deploy on Clawdi or connect another machine", async ({ page }) => {
+	await stubHostedApi(page, { deployments: [includedBasicDeployment], cloudAgents: [] });
+	await page.goto("/");
+
+	await expect(page.getByText("Included Basic", { exact: true }).first()).toBeVisible();
+	await expect(page.getByText("Add another agent", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Deploy on Clawdi", exact: true })).toHaveAttribute(
+		"href",
+		"/deploy",
+	);
+	await expect(
+		page.getByRole("button", { name: "Connect an agent on your machine", exact: true }),
+	).toBeVisible();
+});
+
+test("empty accounts without deploy access only get the connected-agent path", async ({ page }) => {
+	await stubHostedApi(page, {
+		canCreateCloudAgents: false,
+		deployments: [],
+		cloudAgents: [],
+	});
+	await page.goto("/");
+
+	await expect(page.getByText("Let's connect your first agent", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Deploy on Clawdi", exact: true })).toHaveCount(0);
+	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("npm install -g clawdi@latest && clawdi auth login && clawdi setup", {
+			exact: true,
+		}),
+	).toBeVisible();
+});
+
+test("returning accounts keep hosted management but hide new deploys when denied", async ({
+	page,
+}) => {
+	await stubHostedApi(page, {
+		canCreateCloudAgents: false,
+		deployments: [includedBasicDeployment],
+		cloudAgents: [],
+	});
+	await page.goto("/");
+
+	await expect(page.getByText("Included Basic", { exact: true }).first()).toBeVisible();
+	await expect(page.getByText("Add another agent", { exact: true })).toBeVisible();
+	await expect(page.getByRole("button", { name: "Deploy on Clawdi", exact: true })).toHaveCount(0);
+	await expect(
+		page.getByText("Connect another agent on your machine and manage it from this dashboard.", {
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toBeVisible();
 });
 
 test("hosted mixed agent rail uses whole semantic buttons for context switching", async ({

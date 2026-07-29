@@ -185,9 +185,9 @@ describe("unified list consumers", () => {
 		expect(homepage).toContain("useUnifiedAgentList({");
 		expect(homepage).not.toContain("connectedAgentTilesForHostedView");
 		expect(homepage).not.toContain("useHostedAgentTiles({");
-		expect(homepage).toContain("<HostedEmptyAccountHero />");
+		expect(homepage).toContain("<HostedEmptyAccountHero canDeployOnClawdi={canDeployOnClawdi} />");
 		expect(homepage).toContain("<WelcomeWalletCard showDeployAction={false} />");
-		expect(onboarding).toContain("Deploy a hosted agent");
-		expect(onboarding).toContain("Connect via CLI");
+		expect(onboarding).toContain("Deploy on Clawdi");
+		expect(onboarding).toContain("Connect an agent on your machine");
 	});
 });

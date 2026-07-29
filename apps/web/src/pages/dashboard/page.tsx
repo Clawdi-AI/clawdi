@@ -217,6 +217,7 @@ export default function DashboardPage() {
 								}}
 								selfManagedCount={selfManagedCount}
 								cloudEnvs={environments ?? []}
+								canDeployOnClawdi={hostedAccess.canCreateCloudAgents}
 								showCloudDeployments={cloudDeploymentManagementEnabled}
 								showLegacyAgents={legacyHostedAgentsEnabled}
 							/>
@@ -310,6 +311,7 @@ export default function DashboardPage() {
 							<HostedSecondaryCTA
 								envsLoading={envsLoading}
 								cloudEnvs={environments ?? []}
+								canDeployOnClawdi={hostedAccess.canCreateCloudAgents}
 								showCloudDeployments={cloudDeploymentManagementEnabled}
 								showLegacyAgents={legacyHostedAgentsEnabled}
 							/>

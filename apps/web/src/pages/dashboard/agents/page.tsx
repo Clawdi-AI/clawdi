@@ -67,6 +67,7 @@ export default function AgentsIndexPage() {
 						}}
 						selfManagedCount={selfManagedCount}
 						cloudEnvs={environments ?? []}
+						canDeployOnClawdi={hostedAccess.canCreateCloudAgents}
 						showCloudDeployments={cloudDeploymentManagementEnabled}
 						showLegacyAgents={legacyHostedAgentsEnabled}
 					/>
