@@ -65,7 +65,7 @@ import {
 	compareAgentTiles,
 	selfManagedAgentTiles,
 } from "@/components/dashboard/agents-card";
-import { DaemonStatusBadge } from "@/components/dashboard/daemon-status";
+import { DaemonStatusBadge, type DaemonStatusSource } from "@/components/dashboard/daemon-status";
 import { NewAgentButton } from "@/components/dashboard/new-agent-button";
 import { IconChip } from "@/components/icon-chip";
 import { PROJECT_RESOURCE_ICONS } from "@/components/project-resource-icons";
@@ -1155,6 +1155,14 @@ function agentHeaderMeta(
 	return { visibleLabel: visible.join(" · "), detailLabel: detail.join(" · "), activityLabel };
 }
 
+export function focusHeaderSyncSource(
+	kind: AgentChromeKind,
+	hasEnvironment: boolean,
+): DaemonStatusSource | null {
+	if (!hasEnvironment || kind === "unresolved") return null;
+	return kind === "connected" ? "self-managed" : "on-clawdi";
+}
+
 function FocusHeader({
 	activeAgent,
 	activeAgentTile,
@@ -1207,19 +1215,14 @@ function FocusHeader({
 	const name =
 		activeAgentTile?.name ?? (activeAgent ? agentDisplayName(activeAgent) : "Clawdi Cloud agent");
 	const displayName = displayMachineName(name);
-	const meta =
-		activeAgentKind !== "cloud" && activeAgent
-			? agentHeaderMeta(activeAgent, activeAgentKind)
-			: null;
+	const meta = activeAgent ? agentHeaderMeta(activeAgent, activeAgentKind) : null;
 	const activityLabel = meta?.activityLabel ?? "Agent details unavailable";
 	const visibleLabel = meta?.visibleLabel;
 	const detailLabel = meta?.detailLabel;
-	const title =
-		activeAgentKind === "cloud"
-			? name
-			: [name, detailLabel, activityLabel].filter(Boolean).join(" · ");
+	const title = [name, detailLabel, activityLabel].filter(Boolean).join(" · ");
 	const manageHref =
 		activeAgentKind === "legacy" ? (legacyHostedDashboardUrl() ?? undefined) : undefined;
+	const syncSource = focusHeaderSyncSource(activeAgentKind, Boolean(activeAgent));
 	return (
 		<div className="min-w-0 text-left">
 			<div className="flex min-w-0 items-center gap-2" title={title}>
@@ -1243,24 +1246,24 @@ function FocusHeader({
 					{visibleLabel}
 				</div>
 			) : null}
-			{activeAgentKind !== "cloud" ? (
+			{activeAgent && syncSource ? (
 				<div className="mt-2 flex min-w-0 items-center justify-between gap-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
-					{/* Legacy agents use hosted daemon copy and keep remediation in
-					 * the legacy v1 dashboard when that URL is configured. */}
-					{activeAgent ? (
-						<DaemonStatusBadge
-							env={activeAgent}
-							source={activeAgentKind === "legacy" ? "on-clawdi" : "self-managed"}
-							manageHref={manageHref}
-							compact
-							tooltipDetail={detailLabel}
-						/>
-					) : (
-						<FocusStatusFallback />
-					)}
+					{/* Cloud and legacy agents use supervised-runtime copy. Legacy
+					 * remediation stays in v1 when that dashboard is configured. */}
+					<DaemonStatusBadge
+						env={activeAgent}
+						source={syncSource}
+						manageHref={manageHref}
+						compact
+						tooltipDetail={detailLabel}
+					/>
 					<span className="min-w-0 truncate text-muted-foreground" title={activityLabel}>
 						{activityLabel}
 					</span>
+				</div>
+			) : activeAgentKind !== "cloud" ? (
+				<div className="mt-2 rounded-md border border-sidebar-border bg-sidebar-accent/45 px-2 py-1 text-xs leading-4">
+					<FocusStatusFallback />
 				</div>
 			) : null}
 		</div>

@@ -172,6 +172,7 @@ describe("deploymentToTiles", () => {
 		expect(tiles.map((tile) => tile.id)).toEqual(["dep_123"]);
 		expect(tiles.map((tile) => tile.name)).toEqual(["hosted-test"]);
 		expect(tiles[0]?.href).toBe(`/agents/${openclawEnv.id}?source=on-clawdi&d=dep_123`);
+		expect(tiles[0]?.env).toBe(openclawEnv);
 		expectHostedTileHasNoStatus(tiles[0]);
 	});
 
@@ -239,6 +240,7 @@ describe("deploymentToTiles", () => {
 			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
 			env: null,
 		});
+		expect(tile?.env).toBeNull();
 		expectHostedTileHasNoStatus(tile);
 		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
