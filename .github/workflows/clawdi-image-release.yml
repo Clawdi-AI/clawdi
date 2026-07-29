@@ -309,10 +309,11 @@ jobs:
 
           python3 infra/deploy/coolify/audit_stack.py --phase live
 
+
   deploy-vps:
     needs: build
     if: needs.build.outputs.build_required == 'true' && needs.build.outputs.should_deploy == 'true'
-    runs-on: clawdi-box
+    runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 15
     concurrency:
       group: kamal-deploy-clawdi
@@ -322,13 +323,35 @@ jobs:
         with:
           ref: ${{ needs.build.outputs.image_tag }}
 
-      - name: Kamal deploy (VPS)
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+
+      - name: Pin server host keys
         run: |
-          install -D -m 600 /home/phala/.kamal-secrets/clawdi.env .kamal/secrets
+          mkdir -p ~/.ssh
+          {
+            echo "|1|6VsutRLikG/F8Efp7xl84gwcmwo=|7R6A3maqxFauB/u3pxnpiN4DFyE= ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEydrRjB+jX9/F0RAGK1E6y3VJmw6pnA4vUhFYmuWC9v"
+            echo "jump.phala.systems ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHYb1XDF9By6XWbQG++HWkIElz9+8f8hYafMokBGjdKY"
+          } >> ~/.ssh/known_hosts
+
+      - name: Write Kamal secrets
+        env:
+          KAMAL_SECRETS: ${{ secrets.KAMAL_SECRETS }}
+        run: |
+          mkdir -p .kamal
+          printf '%s\n' "$KAMAL_SECRETS" > .kamal/secrets
+          chmod 600 .kamal/secrets
+
+      - name: Kamal deploy
+        env:
+          CLOUDFLARE_ORIGIN_CERT: ${{ secrets.CLOUDFLARE_ORIGIN_CERT }}
+          CLOUDFLARE_ORIGIN_KEY: ${{ secrets.CLOUDFLARE_ORIGIN_KEY }}
+        run: |
           docker run --rm \
             -v "$PWD":/workdir \
-            -v /home/phala/.ssh:/root/.ssh \
-            -v /home/phala/.clawdi-ops:/home/phala/.clawdi-ops:ro \
-            -e KAMAL_LOCAL_DEPLOY=1 \
+            -v "$SSH_AUTH_SOCK":/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent \
+            -v "$HOME/.ssh/known_hosts":/root/.ssh/known_hosts:ro \
+            -e CLOUDFLARE_ORIGIN_CERT -e CLOUDFLARE_ORIGIN_KEY \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
             ghcr.io/basecamp/kamal:latest deploy -P --version "${{ needs.build.outputs.image_tag }}"
