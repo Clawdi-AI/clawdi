@@ -83,6 +83,11 @@ from app.services.agent_environments import (
     local_machine_registration_key,
     register_agent_environment,
 )
+from app.services.agent_skill_projection import (
+    AgentSkillProjectionBoundaryError,
+    delete_agent_project_skill_rows,
+    delete_agent_skill_files_best_effort,
+)
 from app.services.api_key import mint_api_key
 from app.services.app_setting_registry import (
     APP_SETTING_SPEC_BY_KEY,
@@ -1339,9 +1344,17 @@ async def _admin_delete_environment(
             "explicit_identity": env.registration_key is None,
         },
     )
+    try:
+        skill_file_keys = await delete_agent_project_skill_rows(db, agent=env)
+    except AgentSkillProjectionBoundaryError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Agent Project ownership could not be proven; no resources were deleted.",
+        ) from None
     await queue_environment_runtime_manifest_changed(db, env.user_id, environment_id)
     await db.delete(env)
     await db.commit()
+    await delete_agent_skill_files_best_effort(skill_file_keys, agent_id=environment_id)
     logger.info(
         "admin_environment_deleted target_clerk_id=%s env_id=%s",
         target_clerk_id,

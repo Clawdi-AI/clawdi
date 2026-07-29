@@ -36,7 +36,12 @@ from app.models.session_permission import (
     SessionPermission,
 )
 from app.schemas.common import Paginated
-from app.schemas.runtime import PersistedHostedRuntimeSkills, validate_hosted_runtime_desired_state
+from app.schemas.runtime import (
+    HostedRuntimeRemoteMcpServer,
+    PersistedHostedRuntimeMcp,
+    PersistedHostedRuntimeSkills,
+    validate_hosted_runtime_desired_state,
+)
 from app.schemas.runtime_observed import (
     HostedRuntimeObserved,
     HostedRuntimeObservedProviderPayload,
@@ -45,6 +50,8 @@ from app.schemas.runtime_observed import (
     RuntimeObservedConfigSummaryResponse,
 )
 from app.schemas.session import (
+    AgentMcpInventoryResponse,
+    AgentMcpServerInventoryItem,
     AgentReorderRequest,
     AgentResponse,
     AgentRuntimeObservedDesiredResponse,
@@ -77,6 +84,11 @@ from app.schemas.session import (
 from app.services.agent_environments import (
     local_machine_registration_key,
     register_agent_environment,
+)
+from app.services.agent_skill_projection import (
+    AgentSkillProjectionBoundaryError,
+    delete_agent_project_skill_rows,
+    delete_agent_skill_files_best_effort,
 )
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
@@ -924,6 +936,69 @@ async def get_agent_runtime_observed(
     )
 
 
+@router.get(
+    "/agents/{agent_id}/mcp",
+    response_model=AgentMcpInventoryResponse,
+)
+async def get_agent_mcp_inventory(
+    agent_id: UUID,
+    auth: AuthContext = Depends(require_web_auth),
+    db: AsyncSession = Depends(get_session),
+) -> AgentMcpInventoryResponse:
+    """Return a deliberately non-sensitive deployment MCP inventory."""
+    state = (
+        await db.execute(
+            select(HostedRuntimeState)
+            .join(
+                AgentEnvironment,
+                AgentEnvironment.id == HostedRuntimeState.environment_id,
+            )
+            .where(
+                HostedRuntimeState.environment_id == agent_id,
+                AgentEnvironment.user_id == auth.user_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if state is None:
+        return AgentMcpInventoryResponse(
+            agent_id=str(agent_id),
+            availability="unavailable",
+        )
+
+    if state.mcp is None:
+        # Legacy producers can persist a canonical null before they support
+        # MCP desired-state projection. Only an explicit {"servers": {}}
+        # proves that the configured inventory is empty.
+        return AgentMcpInventoryResponse(
+            agent_id=str(agent_id),
+            deployment_id=state.deployment_id,
+            availability="unavailable",
+        )
+    try:
+        persisted = PersistedHostedRuntimeMcp.model_validate(state.mcp)
+    except ValueError:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Managed MCP inventory is temporarily unavailable.",
+        ) from None
+
+    servers = [
+        AgentMcpServerInventoryItem(
+            id=server_id,
+            transport=server.transport
+            if isinstance(server, HostedRuntimeRemoteMcpServer)
+            else "stdio",
+        )
+        for server_id, server in sorted(persisted.servers.items())
+    ]
+    return AgentMcpInventoryResponse(
+        agent_id=str(agent_id),
+        deployment_id=state.deployment_id,
+        availability="available",
+        servers=servers,
+    )
+
+
 @router.get("/assets/{asset_key:path}", include_in_schema=False)
 async def get_public_asset(asset_key: str) -> Response:
     if not _AGENT_AVATAR_KEY_RE.match(asset_key):
@@ -1080,10 +1155,10 @@ def _runtime_managed_skill_summaries(
         managed_skills.extend(
             RuntimeManagedSkillSummary(
                 id=skill_id,
+                enabled=entry.enabled,
                 version=entry.version or 1,
             )
             for skill_id, entry in sorted(skills.entries.items())
-            if entry.enabled
         )
     return managed_skills
 
@@ -1146,6 +1221,11 @@ def _runtime_observed_health(
             reasons.append("source_revision_mismatch")
 
     if diagnostics is not None and not desired_source_error:
+        if diagnostics.applied is None:
+            reasons.append("runtime_applied_missing")
+        elif diagnostics.applied.instance_id != state.instance_id:
+            reasons.append("applied_instance_id_mismatch")
+
         if desired_source_revision is not None and observation is not None:
             expected_etag = expected_runtime_bundle_v2_etag(desired_source_revision)
             if (
@@ -1397,9 +1477,17 @@ async def _delete_agent_identity(
             status.HTTP_409_CONFLICT,
             "This agent uses an explicit identity and cannot be disconnected here",
         )
+    try:
+        skill_file_keys = await delete_agent_project_skill_rows(db, agent=env)
+    except AgentSkillProjectionBoundaryError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "Agent Project ownership could not be proven; no resources were deleted.",
+        ) from None
     await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.delete(env)
     await db.commit()
+    await delete_agent_skill_files_best_effort(skill_file_keys, agent_id=agent_id)
 
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)

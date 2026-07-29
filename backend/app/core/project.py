@@ -164,7 +164,7 @@ async def validate_project_for_caller(
     # Plain ownership check, no row lock. The earlier `.with_for_update()`
     # locked the entire project row for the whole request, including
     # for read-only paths (GET /skills/{key}, download). A slow file-store
-    # download or batch of daemon pulls would block every other operation
+    # download or batch of daemon reads would block every other operation
     # touching the same project (uploads, deletes, etc.) — defeating the
     # per-skill advisory lock that's supposed to be the contention
     # boundary. Validation only needs to check ownership; the actual

@@ -14,9 +14,7 @@ import uuid
 
 import httpx
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.hosted_runtime import HostedRuntimeState
 from app.services.skill_installer import SkillPackage
 from app.services.tar_utils import tar_from_content
 
@@ -139,69 +137,6 @@ async def test_dashboard_edit_without_content_hash_is_last_write_wins(
 
 
 @pytest.mark.asyncio
-async def test_runtime_manifest_skill_reservation_is_cleanup_only_until_disabled(
-    client: httpx.AsyncClient,
-    db_session: AsyncSession,
-    environment_project,
-):
-    project_id = str(environment_project.id)
-    content = "---\nname: managed\ndescription: cloud copy\n---\n# Cloud copy\n"
-    tar_bytes, _ = tar_from_content("managed", content)
-
-    seed = await client.post(
-        f"/v1/projects/{project_id}/skills/upload",
-        data={"skill_key": "managed"},
-        files={"file": ("managed.tar.gz", tar_bytes, "application/gzip")},
-    )
-    assert seed.status_code == 200, seed.text
-
-    state = HostedRuntimeState(
-        environment_id=environment_project.origin_environment_id,
-        deployment_id="dep-skill-reservation",
-        instance_id="iid-skill-reservation",
-        generation=1,
-        cli_package_spec="clawdi@0.13.10",
-        locale={"language": "en", "timezone": "UTC"},
-        system={},
-        runtimes={},
-        live_sync={"enabled": False, "agents": []},
-        recovery={"cacheManifest": True, "allowOfflineBoot": True},
-        skills={"entries": {"managed": {"enabled": True, "version": 1}}},
-        tools={},
-    )
-    db_session.add(state)
-    await db_session.commit()
-
-    update = await client.put(
-        f"/v1/projects/{project_id}/skills/managed/content",
-        json={"content": f"{content}\nUpdated\n"},
-    )
-    assert update.status_code == 409, update.text
-    assert update.json()["detail"]["code"] == "runtime_manifest_managed_skill"
-
-    cleanup = await client.delete(f"/v1/projects/{project_id}/skills/managed")
-    assert cleanup.status_code == 200, cleanup.text
-
-    recreate_while_reserved = await client.post(
-        f"/v1/projects/{project_id}/skills/upload",
-        data={"skill_key": "managed"},
-        files={"file": ("managed.tar.gz", tar_bytes, "application/gzip")},
-    )
-    assert recreate_while_reserved.status_code == 409, recreate_while_reserved.text
-
-    state.skills = {"entries": {"managed": {"enabled": False, "version": 1}}}
-    state.generation = 2
-    await db_session.commit()
-
-    recreate_after_disable = await client.post(
-        f"/v1/projects/{project_id}/skills/upload",
-        data={"skill_key": "managed"},
-        files={"file": ("managed.tar.gz", tar_bytes, "application/gzip")},
-    )
-    assert recreate_after_disable.status_code == 200, recreate_after_disable.text
-
-
-@pytest.mark.asyncio
 async def test_skill_upload_unchanged_does_not_bump_version(
     client: httpx.AsyncClient, project_id: str
 ):
@@ -270,36 +205,37 @@ async def test_skill_upload_changed_content_bumps_version(
 
 
 @pytest.mark.asyncio
-async def test_skill_upload_accepts_client_supplied_hash(
+async def test_skill_upload_verifies_client_supplied_hash(
     client: httpx.AsyncClient, project_id: str
 ):
-    """New CLIs (>= 0.3.4) compute a file-tree hash and send it as a form
-    field. Server should trust it and skip its own hashing.
-
-    Backwards-compat is exercised by `test_skill_upload_happy_path` which
-    intentionally omits the field.
-    """
+    """The server verifies rather than trusting a caller-supplied tree hash."""
     import hashlib
 
     content = "---\nname: hashed\ndescription: hashed skill\n---\n# Hashed\n"
     tar_bytes, _ = tar_from_content("hashed", content)
     files = {"file": ("hashed.tar.gz", tar_bytes, "application/gzip")}
 
-    # Send a phony hash. Server should trust it (sync optimization, not
-    # security boundary). The test verifies that two pushes with the
-    # SAME phony hash skip the bump — proving the field actually got used.
     fake_hash = hashlib.sha256(b"client-says-this").hexdigest()
     data = {"skill_key": "hashed", "content_hash": fake_hash}
 
-    first = await client.post(f"/v1/projects/{project_id}/skills/upload", data=data, files=files)
-    assert first.status_code == 200, first.text
-    assert first.json()["version"] == 1
+    mismatch = await client.post(f"/v1/projects/{project_id}/skills/upload", data=data, files=files)
+    assert mismatch.status_code == 400, mismatch.text
+    assert mismatch.json()["detail"]["code"] == "skill_content_hash_mismatch"
 
-    second = await client.post(f"/v1/projects/{project_id}/skills/upload", data=data, files=files)
-    assert second.status_code == 200, second.text
-    assert second.json()["version"] == 1, (
-        "second push with same client-supplied hash must skip the bump"
+    first = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "hashed"},
+        files=files,
     )
+    assert first.status_code == 200, first.text
+    computed_hash = first.json()["content_hash"]
+    second = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "hashed", "content_hash": computed_hash},
+        files=files,
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["version"] == 1
 
 
 @pytest.mark.asyncio
@@ -538,8 +474,7 @@ def test_compute_file_tree_hash_strips_nested_skill_key():
     segment ("category"), so the relative path was
     `foo/SKILL.md`. The CLI hashes paths inside the skill dir
     so its computed path is `SKILL.md`. Hashes never matched →
-    every reconcile re-pulled the same bytes and SSE echo
-    suppression failed.
+    every reconcile re-uploaded the same local bytes instead of converging.
 
     This unit test pins the algorithm: same payload, different
     skill_key (flat vs nested), different number of stripped
@@ -716,7 +651,7 @@ async def test_skill_upload_requires_skill_md(client: httpx.AsyncClient, project
 
 @pytest.mark.asyncio
 async def test_list_skills_etag_binds_revision_and_project(
-    client: httpx.AsyncClient, db_session, seed_user, project_id: str
+    client: httpx.AsyncClient, workspace_project, project_id: str
 ):
     """Round-32 P2 regression: the conditional GET ETag on
     `/api/skills` must bind both `skills_revision` AND `project_id`.
@@ -726,8 +661,6 @@ async def test_list_skills_etag_binds_revision_and_project(
     (counter is account-wide, listing is project-filtered). Pre-fix
     the daemon would silently miss the new project's existing skills
     until some unrelated cloud change bumped the revision."""
-    from tests.conftest import create_env_with_project
-
     # Land a skill in project A so the list isn't empty.
     content = "---\nname: alpha\ndescription: in project A\n---\n# Hello\n"
     tar_bytes, _ = tar_from_content("alpha", content)
@@ -761,14 +694,7 @@ async def test_list_skills_etag_binds_revision_and_project(
     # We test the stronger property anyway: the daemon's cached
     # ETag from project A must NOT cause a 304 against project B even
     # if B happened to be at the same revision.
-    env_b = await create_env_with_project(
-        db_session,
-        user_id=seed_user.id,
-        machine_id="machine-b",
-        machine_name="Mac B",
-        agent_type="codex",
-    )
-    project_b = str(env_b.default_project_id)
+    project_b = str(workspace_project.id)
     content_b = "---\nname: beta\ndescription: in project B\n---\n# Beta\n"
     tar_bytes_b, _ = tar_from_content("beta", content_b)
     files_b = {"file": ("beta.tar.gz", tar_bytes_b, "application/gzip")}
@@ -897,38 +823,44 @@ async def test_project_explicit_upload_targets_named_project(
     """Phase-2 route: POST /api/projects/{project_id}/skills/upload
     lands the upload in the URL-named project, not the caller-
     resolved default. Verifies the route shim works AND that
-    cross-project writes don't bleed (a skill uploaded to env A's
-    project must not appear in env B's project's list)."""
-    from tests.conftest import create_env_with_project
+    cross-project writes don't bleed between Cloud-owned workspaces."""
+    from app.models.project import PROJECT_KIND_WORKSPACE, Project
 
-    env_a = await create_env_with_project(
-        db_session, user_id=seed_user.id, machine_id="a", machine_name="MachineA"
+    project_a = Project(
+        user_id=seed_user.id,
+        name="Workspace A",
+        slug=f"workspace-a-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
     )
-    env_b = await create_env_with_project(
-        db_session, user_id=seed_user.id, machine_id="b", machine_name="MachineB"
+    project_b = Project(
+        user_id=seed_user.id,
+        name="Workspace B",
+        slug=f"workspace-b-{uuid.uuid4().hex[:8]}",
+        kind=PROJECT_KIND_WORKSPACE,
     )
+    db_session.add_all([project_a, project_b])
+    await db_session.commit()
 
     content = "---\nname: projected\ndescription: x\n---\n# Projected\n"
     tar_bytes, _ = tar_from_content("projected", content)
     files = {"file": ("projected.tar.gz", tar_bytes, "application/gzip")}
 
-    # Upload to env_a's project explicitly via phase-2 route.
+    # Upload to workspace A explicitly via the project-scoped route.
     r = await client.post(
-        f"/v1/projects/{env_a.default_project_id}/skills/upload",
+        f"/v1/projects/{project_a.id}/skills/upload",
         data={"skill_key": "projected"},
         files=files,
     )
     assert r.status_code == 200, r.text
 
-    # Phase-2 read on env_a's project: skill is there.
-    detail_a = await client.get(f"/v1/projects/{env_a.default_project_id}/skills/projected")
+    detail_a = await client.get(f"/v1/projects/{project_a.id}/skills/projected")
     assert detail_a.status_code == 200, detail_a.text
     assert detail_a.json()["skill_key"] == "projected"
 
-    # Phase-2 read on env_b's project: NOT there. This is the
+    # Workspace B must not see workspace A's row. This is the
     # isolation invariant — same skill_key in different projects
     # don't see each other.
-    detail_b = await client.get(f"/v1/projects/{env_b.default_project_id}/skills/projected")
+    detail_b = await client.get(f"/v1/projects/{project_b.id}/skills/projected")
     assert detail_b.status_code == 404, detail_b.text
 
 

@@ -48,6 +48,7 @@ from app.routes.sessions import router as sessions_router
 from app.routes.settings import router as settings_router
 from app.routes.share_redeem import router as share_redeem_router
 from app.routes.sharing import router as sharing_router
+from app.routes.skills import agent_router as skills_agent_router
 from app.routes.skills import project_router as skills_project_router
 from app.routes.skills import router as skills_router
 from app.routes.skills import scope_router as skills_scope_router
@@ -269,6 +270,7 @@ _VERSIONED_ROUTERS = (
     runtime_router,
     skills_router,
     skills_project_router,
+    skills_agent_router,
     sync_router,
     memories_router,
     settings_router,

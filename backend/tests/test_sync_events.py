@@ -24,9 +24,14 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    require_agent_authoritative_skill_sync,
+)
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
 from app.models.user import User
@@ -39,6 +44,23 @@ from app.services.managed_ai_provider import (
 )
 
 pytestmark = pytest.mark.committed_db
+
+
+@pytest.mark.parametrize(
+    ("protocol", "expected_status"),
+    [(None, 426), ("agent-authoritative-v0", 426), ("Agent authoritative", 400)],
+)
+def test_sse_protocol_gate_pauses_old_or_malformed_daemons(
+    protocol: str | None,
+    expected_status: int,
+) -> None:
+    with pytest.raises(HTTPException) as rejected:
+        require_agent_authoritative_skill_sync(protocol)
+    assert rejected.value.status_code == expected_status
+
+
+def test_sse_protocol_gate_accepts_current_one_way_daemon() -> None:
+    require_agent_authoritative_skill_sync(SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1)
 
 
 def test_oauth_cli_sse_handshake_uses_verified_utc_expiry_only():
@@ -171,7 +193,11 @@ async def test_oauth_cli_events_route_subscribes_then_closes_at_verified_expiry(
         oauth_access_expires_at=datetime.now(UTC) - timedelta(seconds=1),
     )
     with pytest.raises(HTTPException) as rejected:
-        await sync_route.events(request, expired)
+        await sync_route.events(
+            request,
+            expired,
+            SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+        )
     assert rejected.value.status_code == 401
     assert sync_events.connection_count(user.id) == 0
 
@@ -180,7 +206,11 @@ async def test_oauth_cli_events_route_subscribes_then_closes_at_verified_expiry(
         oauth_cli=True,
         oauth_access_expires_at=datetime.now(UTC) + timedelta(milliseconds=100),
     )
-    response = await sync_route.events(request, oauth)
+    response = await sync_route.events(
+        request,
+        oauth,
+        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    )
     assert response.media_type == "text/event-stream"
     assert response.headers["x-accel-buffering"] == "no"
     assert sync_events.connection_count(user.id) == 1
@@ -231,10 +261,10 @@ async def test_stream_drops_event_queued_before_revoke():
     25s `wait_for(queue.get())`. The refresher fires `revoked`
     while wait_for is parked. wait_for resolves the event without
     re-checking the flag — pre-fix the daemon got one extra
-    `skill_changed` / `skill_deleted` past revocation, and
-    `skill_deleted` triggers a local file rm. Verify the second
-    `__anext__` returns (closes the generator) instead of
-    yielding the event."""
+    `skill_changed` / `skill_deleted` past revocation. Skill events now wake
+    an Agent-authoritative local rescan rather than mutating local files, but
+    work must still stop at revocation. Verify the second `__anext__` returns
+    (closes the generator) instead of yielding the event."""
     from unittest.mock import Mock
 
     from app.routes.sync import _stream
@@ -551,6 +581,43 @@ async def test_bump_skills_revision_after_commit_broadcasts(
         assert event["skill_key"] == "hello"
         assert event["project_id"] == str(personal.id)
         assert event["skills_revision"] == new_rev
+    finally:
+        sync_events.unsubscribe(seed_user.id, queue)
+
+
+@pytest.mark.asyncio
+async def test_agent_projection_event_names_are_additive_while_cloud_default_stays_legacy(
+    db_session: AsyncSession,
+    seed_user: User,
+):
+    from app.models.project import PROJECT_KIND_PERSONAL, Project
+
+    personal = (
+        await db_session.execute(
+            select(Project).where(
+                Project.user_id == seed_user.id,
+                Project.kind == PROJECT_KIND_PERSONAL,
+            )
+        )
+    ).scalar_one()
+    queue = sync_events.subscribe(seed_user.id, frozenset({personal.id}))
+    try:
+        await sync_events.bump_skills_revision(
+            db_session,
+            seed_user.id,
+            skill_key="cloud-owned",
+            project_id=personal.id,
+        )
+        await sync_events.bump_skills_revision(
+            db_session,
+            seed_user.id,
+            skill_key="agent-projection",
+            project_id=personal.id,
+            event_type=sync_events.AGENT_SKILL_CHANGED_EVENT,
+        )
+        await db_session.commit()
+        assert queue.get_nowait()["type"] == "skill_changed"
+        assert queue.get_nowait()["type"] == "agent_skill_changed"
     finally:
         sync_events.unsubscribe(seed_user.id, queue)
 

@@ -25,6 +25,9 @@ from app.core.skill_key import (
 _PROJECT_SKILL_UPLOAD_RE = re.compile(
     r"^/(api|v1)/projects/[0-9a-fA-F-]{36}/skills/upload$",
 )
+_AGENT_SKILL_SYNC_UPLOAD_RE = re.compile(
+    r"^/(api|v1)/agents/[0-9a-fA-F-]{36}/skills/sync/upload$",
+)
 _MAX_PREFLIGHT_BYTES = 64 * 1024
 
 
@@ -73,8 +76,10 @@ def _should_preflight(scope: Scope) -> bool:
         return False
 
     path = str(scope.get("path", ""))
-    if path not in ("/api/skills/upload", "/v1/skills/upload") and not (
-        _PROJECT_SKILL_UPLOAD_RE.match(path)
+    if (
+        path not in ("/api/skills/upload", "/v1/skills/upload")
+        and _PROJECT_SKILL_UPLOAD_RE.match(path) is None
+        and _AGENT_SKILL_SYNC_UPLOAD_RE.match(path) is None
     ):
         return False
 

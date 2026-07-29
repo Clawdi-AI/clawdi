@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlparse
 
 import httpx
@@ -31,9 +31,12 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation
+from app.models.session import AgentEnvironment
+from app.models.user import User
 from app.routes import sessions as session_routes
 from app.schemas.session import RuntimeObservedResponse
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
+from tests.conftest import create_env_with_project
 from tests.hosted_runtime_fixtures import (
     CANONICAL_CODEX_TOOLS,
     canonical_hosted_runtime_state,
@@ -587,7 +590,10 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     }
     canonical = await client.get(f"/v1/agents/{env_id}/runtime-observed")
     assert canonical.status_code == 200, canonical.text
-    assert canonical.json()["desired"]["managed_skills"] == [{"id": "clawdi", "version": 1}]
+    assert canonical.json()["desired"]["managed_skills"] == [
+        {"id": "clawdi", "enabled": True, "version": 1},
+        {"id": "removed", "enabled": False, "version": 2},
+    ]
     serialized = canonical.text.lower()
     assert "secretref" not in serialized
     assert '"headers"' not in serialized
@@ -609,6 +615,230 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     assert payload["health"]["status"] == "ok"
     assert payload["health"]["reasons"] == []
     assert payload["health"]["observed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_mcp_inventory_distinguishes_unavailable_empty_and_safe_desired_fields(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+
+    unavailable = await client.get(f"/v1/agents/{env_id}/mcp")
+    assert unavailable.status_code == 200, unavailable.text
+    assert unavailable.json() == {
+        "agent_id": env_id,
+        "deployment_id": None,
+        "availability": "unavailable",
+        "servers": [],
+    }
+    missing_agent_id = uuid.uuid4()
+    missing_agent = await client.get(f"/v1/agents/{missing_agent_id}/mcp")
+    assert missing_agent.status_code == 200, missing_agent.text
+    assert missing_agent.json() == {
+        "agent_id": str(missing_agent_id),
+        "deployment_id": None,
+        "availability": "unavailable",
+        "servers": [],
+    }
+
+    foreign_user = User(
+        clerk_id=f"foreign_mcp_{uuid.uuid4().hex[:8]}",
+        email=f"foreign-mcp-{uuid.uuid4().hex[:8]}@example.test",
+        name="Foreign MCP owner",
+    )
+    db_session.add(foreign_user)
+    await db_session.flush()
+    foreign_agent = await create_env_with_project(
+        db_session,
+        user_id=foreign_user.id,
+        machine_id=f"foreign-mcp-{uuid.uuid4().hex[:8]}",
+        machine_name="Foreign MCP Agent",
+    )
+    db_session.add(
+        canonical_hosted_runtime_state(
+            environment_id=foreign_agent.id,
+            deployment_id="dep-foreign-mcp",
+            instance_id="iid-foreign-mcp",
+            generation=1,
+            cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
+            locale=_TEST_LOCALE,
+            system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            runtimes=_test_runtimes(),
+            mcp={"servers": {"private": {"command": "private", "args": []}}},
+        )
+    )
+    await db_session.commit()
+    foreign = await client.get(f"/v1/agents/{foreign_agent.id}/mcp")
+    assert foreign.status_code == 200, foreign.text
+    assert foreign.json() == {
+        "agent_id": str(foreign_agent.id),
+        "deployment_id": None,
+        "availability": "unavailable",
+        "servers": [],
+    }
+
+    state = canonical_hosted_runtime_state(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-mcp-inventory",
+        instance_id="iid-mcp-inventory",
+        generation=1,
+        cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
+        locale=_TEST_LOCALE,
+        system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        runtimes=_test_runtimes(),
+        mcp=None,
+    )
+    db_session.add(state)
+    await db_session.commit()
+
+    missing_desired_projection = await client.get(f"/v1/agents/{env_id}/mcp")
+    assert missing_desired_projection.status_code == 200, missing_desired_projection.text
+    assert missing_desired_projection.json() == {
+        "agent_id": env_id,
+        "deployment_id": "dep-mcp-inventory",
+        "availability": "unavailable",
+        "servers": [],
+    }
+
+    state.mcp = {"servers": {}}
+    await db_session.commit()
+    configured_empty = await client.get(f"/v1/agents/{env_id}/mcp")
+    assert configured_empty.status_code == 200, configured_empty.text
+    assert configured_empty.json() == {
+        "agent_id": env_id,
+        "deployment_id": "dep-mcp-inventory",
+        "availability": "available",
+        "servers": [],
+    }
+
+    state.mcp = {
+        "servers": {
+            "local": {"command": "secret-command", "args": ["--secret-arg"]},
+            "remote": {
+                "url": "https://mcp.example.test/private",
+                "transport": "streamable-http",
+                "headers": {
+                    "Authorization": {
+                        "secretRef": "secret://mcp.remote.token",
+                        "prefix": "Bearer ",
+                    }
+                },
+            },
+        }
+    }
+    await db_session.commit()
+    inventory = await client.get(f"/v1/agents/{env_id}/mcp")
+    assert inventory.status_code == 200, inventory.text
+    assert inventory.json() == {
+        "agent_id": env_id,
+        "deployment_id": "dep-mcp-inventory",
+        "availability": "available",
+        "servers": [
+            {
+                "id": "local",
+                "transport": "stdio",
+                "enabled": True,
+                "source": "deployment_manifest",
+            },
+            {
+                "id": "remote",
+                "transport": "streamable-http",
+                "enabled": True,
+                "source": "deployment_manifest",
+            },
+        ],
+    }
+    serialized = inventory.text.lower()
+    for forbidden in (
+        "url",
+        "header",
+        "secretref",
+        "command",
+        "args",
+        "env",
+        "convergence",
+    ):
+        assert forbidden not in serialized
+
+    openapi = (await client.get("/openapi.json")).json()
+    response_schema = openapi["components"]["schemas"]["AgentMcpInventoryResponse"]
+    item_schema = openapi["components"]["schemas"]["AgentMcpServerInventoryItem"]
+    assert set(response_schema["properties"]) == {
+        "agent_id",
+        "deployment_id",
+        "availability",
+        "servers",
+    }
+    assert set(item_schema["properties"]) == {"id", "transport", "enabled", "source"}
+
+    state.mcp = {"servers": {"malformed": {"url": "https://mcp.example.test"}}}
+    await db_session.commit()
+    malformed = await client.get(f"/v1/agents/{env_id}/mcp")
+    assert malformed.status_code == 503, malformed.text
+    assert malformed.json() == {"detail": "Managed MCP inventory is temporarily unavailable."}
+
+
+@pytest.mark.asyncio
+async def test_runtime_health_fences_stale_instance_source_and_freshness(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+    state = canonical_hosted_runtime_state(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-health-fences",
+        instance_id="iid-current",
+        generation=4,
+        cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
+        locale=_TEST_LOCALE,
+        system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        runtimes=_test_runtimes(),
+    )
+    db_session.add(state)
+    await db_session.commit()
+    desired_source_revision = (await client.get(f"/v1/agents/{env_id}/runtime-observed")).json()[
+        "desired"
+    ]["desired_source_revision"]
+    stale_source_revision = "b" * 64 if desired_source_revision != "b" * 64 else "c" * 64
+    heartbeat = await client.post(
+        f"/v1/agents/{env_id}/sync-heartbeat",
+        json={
+            "runtime_observed": _runtime_observed(
+                source_revision=stale_source_revision,
+                applied_generation=4,
+                applied_instance_id="iid-replaced",
+            )
+        },
+    )
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    stale_at = datetime.now(UTC) - timedelta(minutes=5)
+    observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
+    agent = await db_session.get(AgentEnvironment, uuid.UUID(env_id))
+    assert observation is not None
+    assert agent is not None
+    observation.observed_at = stale_at
+    agent.last_sync_at = stale_at
+    await db_session.commit()
+
+    response = await client.get(f"/v1/agents/{env_id}/runtime-observed")
+    assert response.status_code == 200, response.text
+    health = response.json()["health"]
+    assert health["status"] == "stale"
+    assert {
+        "applied_instance_id_mismatch",
+        "source_revision_mismatch",
+        "observed_manifest_etag_mismatch",
+        "daemon_stale",
+        "runtime_observed_stale",
+    }.issubset(health["reasons"])
 
 
 @pytest.mark.asyncio
@@ -727,7 +957,12 @@ async def test_v2_applied_authority_persists_and_drives_health(
 
     heartbeat = await client.post(
         f"/v1/agents/{env_id}/sync-heartbeat",
-        json={"runtime_observed": _runtime_observed(source_revision=source_revision)},
+        json={
+            "runtime_observed": _runtime_observed(
+                source_revision=source_revision,
+                applied_instance_id="iid-observed-v2",
+            )
+        },
     )
     assert heartbeat.status_code == 204, heartbeat.text
     observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
@@ -746,6 +981,7 @@ async def test_v2_applied_authority_persists_and_drives_health(
     mismatch = _runtime_observed(
         source_revision=source_revision,
         active_cli_version="0.12.10-beta.50",
+        applied_instance_id="iid-observed-v2",
         providers={},
     )
     response = await client.post(

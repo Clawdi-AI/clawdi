@@ -13,6 +13,7 @@ MAX_FILES = 5000
 # of empty directory entries — every member still costs CPU + memory
 # during the validation walk and the eventual extract.
 MAX_MEMBERS = 20_000
+MAX_REGULAR_FILE_BYTES = 16 * 1024 * 1024  # 16 MB
 MAX_DECOMPRESSED_BYTES = 200 * 1024 * 1024  # 200 MB
 # Cap that mirrors the per-route skill upload limit in
 # routes/skills.py:_MAX_SKILL_TAR_BYTES. The marketplace
@@ -81,6 +82,11 @@ def validate_tar(data: bytes) -> int:
                     )
 
                 if member.isfile():
+                    if member.size > MAX_REGULAR_FILE_BYTES:
+                        raise TarValidationError(
+                            "Regular file size exceeds "
+                            f"{MAX_REGULAR_FILE_BYTES // (1024 * 1024)}MB: {member.name}"
+                        )
                     file_count += 1
                     total_size += member.size
 
