@@ -1504,17 +1504,38 @@ interface SystemdUnitSnapshot {
 	user: Map<string, string>;
 }
 
+interface SystemdUnitManagerState {
+	loadState: string;
+	activeState: string;
+	enabledState?: string;
+}
+
+interface CommandResult {
+	status: number | null;
+	stdout: string;
+	stderr: string;
+	error?: Error;
+}
+
 const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
+const MANAGED_RUNTIME_SYSTEM_UNITS = new Set([
+	RUNTIME_WATCH_SYSTEM_UNIT,
+	"clawdi-daemon.service",
+	RUNTIME_SIDECAR_SYSTEM_UNIT,
+]);
 
 function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
 	return {
-		system: readManagedSystemdUnits(paths.systemdSystemRoot),
+		system: readManagedSystemdUnits(paths.systemdSystemRoot, MANAGED_RUNTIME_SYSTEM_UNITS),
 		user: readManagedSystemdUnits(paths.systemdUserRoot),
 	};
 }
 
-function readManagedSystemdUnits(root: string): Map<string, string> {
+function readManagedSystemdUnits(
+	root: string,
+	knownUnitNames: ReadonlySet<string> = new Set(),
+): Map<string, string> {
 	const units = new Map<string, string>();
 	if (!existsSync(root)) return units;
 	for (const entry of readdirSync(root)) {
@@ -1523,7 +1544,7 @@ function readManagedSystemdUnits(root: string): Map<string, string> {
 			const contents = readFileIfExists(path);
 			if (
 				contents === null ||
-				(!entry.startsWith("clawdi-") && !isGeneratedRuntimeSystemdFile(contents))
+				(!knownUnitNames.has(entry) && !isGeneratedRuntimeSystemdFile(contents))
 			) {
 				continue;
 			}
@@ -1575,60 +1596,176 @@ function applySystemdRuntimeUpdate(
 	const user = changedSystemdUnits(before.user, after.user);
 	const systemUnitsChanged = [...system.added, ...system.changed].sort();
 	const userUnitsChanged = [...user.added, ...user.changed].sort();
-	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter(
-		(unit) => before.system.has(unit) && after.system.has(unit),
+	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter((unit) =>
+		after.system.has(unit),
 	);
-	// Forced restarts are private apply effects, not public unit-byte changes.
-	// Keep them out of systemUnitsChanged while still making activation mandatory
-	// for an existing unit. A newly added unit loads current state when started.
-	if (
-		system.added.length === 0 &&
-		system.changed.length === 0 &&
-		system.removed.length === 0 &&
-		user.added.length === 0 &&
-		user.changed.length === 0 &&
-		user.removed.length === 0 &&
-		forcedSystemRestarts.length === 0
-	) {
-		return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-	}
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
-		// Unit files changed on disk but this environment does not own a live
-		// systemd (non-root/dev); report the divergence instead of hiding it.
+		// This environment does not own a live systemd manager, so even stable
+		// unit bytes cannot prove the desired live state.
 		return { applied: false, systemUnitsChanged, userUnitsChanged };
 	}
 
-	const removableSystemUnits = system.removed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT);
-	if (removableSystemUnits.length > 0) {
-		systemctl(["stop", ...removableSystemUnits], { allowNonZero: true });
+	for (const unit of system.removed) {
+		const state = systemdUnitManagerState(paths, "system", unit);
+		if (unit === RUNTIME_WATCH_SYSTEM_UNIT && !systemdUnitAbsentOrInactive(state)) continue;
+		if (!systemdUnitAbsentOrInactive(state)) systemctl(["stop", unit]);
 	}
-	systemctl(["daemon-reload"]);
-	if (system.present.length > 0) systemctl(["start", ...system.present]);
-	const restartSystemUnits = [
-		...new Set([
-			...system.changed.filter((unit) => unit !== RUNTIME_WATCH_SYSTEM_UNIT),
-			...forcedSystemRestarts,
-		]),
-	].sort();
-	if (restartSystemUnits.length > 0) {
-		systemctl(["restart", ...restartSystemUnits]);
+	for (const unit of user.removed) {
+		const state = systemdUnitManagerState(paths, "user", unit);
+		if (!systemdUnitAbsentOrInactive(state)) runtimeUserSystemctl(paths, ["stop", unit]);
+		if (!systemdUnitAbsentOrDisabled(state)) runtimeUserSystemctl(paths, ["disable", unit]);
 	}
 
-	if (user.removed.length > 0) {
-		runtimeUserSystemctl(paths, ["stop", ...user.removed], {
-			allowNonZero: true,
-		});
+	if (system.added.length > 0 || system.changed.length > 0 || system.removed.length > 0) {
+		systemctl(["daemon-reload"]);
 	}
-	runtimeUserSystemctl(paths, ["daemon-reload"]);
-	if (user.present.length > 0) {
-		runtimeUserSystemctl(paths, ["reset-failed", ...user.present], { allowNonZero: true });
-		runtimeUserSystemctl(paths, ["enable", "--now", ...user.present]);
+	if (user.added.length > 0 || user.changed.length > 0 || user.removed.length > 0) {
+		runtimeUserSystemctl(paths, ["daemon-reload"]);
 	}
-	if (user.removed.length > 0) {
-		runtimeUserSystemctl(paths, ["disable", ...user.removed], { allowNonZero: true });
+
+	const addedSystemUnits = new Set(system.added);
+	const changedSystemUnits = new Set(system.changed);
+	const forcedRestartUnits = new Set(forcedSystemRestarts);
+	const startSystemUnits: string[] = [];
+	const restartSystemUnits: string[] = [];
+	for (const unit of system.present) {
+		const state = systemdUnitManagerState(paths, "system", unit);
+		// Transitional and failed units remain untouched and fail final proof.
+		// In particular, do not turn a periodic full fetch into a StartLimit loop.
+		if (state.activeState === "inactive") {
+			startSystemUnits.push(unit);
+			continue;
+		}
+		if (
+			state.activeState === "active" &&
+			unit !== RUNTIME_WATCH_SYSTEM_UNIT &&
+			(changedSystemUnits.has(unit) ||
+				(forcedRestartUnits.has(unit) &&
+					(!addedSystemUnits.has(unit) || unit === RUNTIME_SIDECAR_SYSTEM_UNIT)))
+		) {
+			restartSystemUnits.push(unit);
+		}
 	}
-	if (user.changed.length > 0) runtimeUserSystemctl(paths, ["restart", ...user.changed]);
-	return { applied: true, systemUnitsChanged, userUnitsChanged };
+	if (startSystemUnits.length > 0) systemctl(["start", ...startSystemUnits]);
+	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
+
+	const changedUserUnits = new Set(user.changed);
+	const startUserUnits: string[] = [];
+	const enableUserUnits: string[] = [];
+	const enableAndStartUserUnits: string[] = [];
+	const restartUserUnits: string[] = [];
+	for (const unit of user.present) {
+		const state = systemdUnitManagerState(paths, "user", unit);
+		const enabled = systemdUnitEnabled(state);
+		// An inactive unit starts once with current bytes. Activating and failed
+		// units are observed only; final proof keeps authority uncommitted.
+		if (state.activeState === "inactive") {
+			if (enabled) startUserUnits.push(unit);
+			else enableAndStartUserUnits.push(unit);
+			continue;
+		}
+		if (state.activeState !== "active") continue;
+		if (!enabled) enableUserUnits.push(unit);
+		if (changedUserUnits.has(unit)) restartUserUnits.push(unit);
+	}
+	if (enableAndStartUserUnits.length > 0) {
+		runtimeUserSystemctl(paths, ["enable", "--now", ...enableAndStartUserUnits]);
+	}
+	if (enableUserUnits.length > 0) runtimeUserSystemctl(paths, ["enable", ...enableUserUnits]);
+	if (startUserUnits.length > 0) runtimeUserSystemctl(paths, ["start", ...startUserUnits]);
+	if (restartUserUnits.length > 0) runtimeUserSystemctl(paths, ["restart", ...restartUserUnits]);
+
+	const systemConverged = system.present.every((unit) => {
+		const state = systemdUnitManagerState(paths, "system", unit);
+		return state.loadState !== "not-found" && state.activeState === "active";
+	});
+	const userConverged = user.present.every((unit) => {
+		const state = systemdUnitManagerState(paths, "user", unit);
+		return (
+			state.loadState !== "not-found" && state.activeState === "active" && systemdUnitEnabled(state)
+		);
+	});
+	const removedSystemConverged = system.removed.every((unit) =>
+		systemdUnitAbsentOrInactive(systemdUnitManagerState(paths, "system", unit)),
+	);
+	const removedUserConverged = user.removed.every((unit) => {
+		const state = systemdUnitManagerState(paths, "user", unit);
+		return systemdUnitAbsentOrInactive(state) && systemdUnitAbsentOrDisabled(state);
+	});
+	return {
+		applied: systemConverged && userConverged && removedSystemConverged && removedUserConverged,
+		systemUnitsChanged,
+		userUnitsChanged,
+	};
+}
+
+function systemdUnitManagerState(
+	paths: ReturnType<typeof getRuntimePaths>,
+	scope: "system" | "user",
+	unit: string,
+): SystemdUnitManagerState {
+	const showArgs = ["show", unit, "--property=LoadState", "--property=ActiveState"];
+	const show =
+		scope === "system" ? systemctlResult(showArgs) : runtimeUserSystemctlResult(paths, showArgs);
+	assertCommandSucceeded(scope === "system" ? systemctlPath() : "systemctl --user", showArgs, show);
+	const properties = Object.fromEntries(
+		show.stdout
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.map((line) => {
+				const separator = line.indexOf("=");
+				return separator < 0 ? [line, ""] : [line.slice(0, separator), line.slice(separator + 1)];
+			}),
+	);
+	const loadState = properties.LoadState;
+	const activeState = properties.ActiveState;
+	if (!loadState || !activeState) {
+		throw new Error(`systemd ${scope} unit ${unit} returned incomplete manager state`);
+	}
+	if (scope === "system") return { loadState, activeState };
+
+	const enabledArgs = ["is-enabled", unit];
+	const enabled = runtimeUserSystemctlResult(paths, enabledArgs);
+	const enabledState = enabled.stdout.trim().split(/\s+/)[0] ?? "";
+	if (!SYSTEMD_ENABLED_STATES.has(enabledState) && !SYSTEMD_DISABLED_STATES.has(enabledState)) {
+		assertCommandSucceeded("systemctl --user", enabledArgs, enabled);
+		throw new Error(`systemd user unit ${unit} returned unknown enabled state: ${enabledState}`);
+	}
+	return { loadState, activeState, enabledState };
+}
+
+const SYSTEMD_ENABLED_STATES = new Set([
+	"enabled",
+	"enabled-runtime",
+	"linked",
+	"linked-runtime",
+	"alias",
+]);
+const SYSTEMD_DISABLED_STATES = new Set([
+	"disabled",
+	"not-found",
+	"static",
+	"indirect",
+	"masked",
+	"generated",
+	"transient",
+]);
+
+function systemdUnitEnabled(state: SystemdUnitManagerState): boolean {
+	return state.enabledState !== undefined && SYSTEMD_ENABLED_STATES.has(state.enabledState);
+}
+
+function systemdUnitAbsentOrInactive(state: SystemdUnitManagerState): boolean {
+	return state.loadState === "not-found" || state.activeState === "inactive";
+}
+
+function systemdUnitAbsentOrDisabled(state: SystemdUnitManagerState): boolean {
+	return (
+		state.loadState === "not-found" ||
+		state.enabledState === "not-found" ||
+		state.enabledState === "disabled"
+	);
 }
 
 function shouldApplySystemdRuntimeUpdate(paths: ReturnType<typeof getRuntimePaths>): boolean {
@@ -1638,50 +1775,66 @@ function shouldApplySystemdRuntimeUpdate(paths: ReturnType<typeof getRuntimePath
 	return paths.systemdSystemRoot === "/run/systemd/system";
 }
 
-function systemctl(args: string[], opts: { allowNonZero?: boolean } = {}): string {
-	return runCommand(systemctlPath(), args, opts);
+function systemctl(args: string[]): string {
+	return runCommand(systemctlPath(), args);
+}
+
+function systemctlResult(args: string[]): CommandResult {
+	return runCommandResult(systemctlPath(), args);
 }
 
 function systemctlPath(): string {
 	return process.env.CLAWDI_SYSTEMCTL_PATH?.trim() || "systemctl";
 }
 
-function runtimeUserSystemctl(
+function runtimeUserSystemctl(paths: ReturnType<typeof getRuntimePaths>, args: string[]): string {
+	const result = runtimeUserSystemctlResult(paths, args);
+	assertCommandSucceeded("systemctl --user", args, result);
+	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+}
+
+function runtimeUserSystemctlResult(
 	paths: ReturnType<typeof getRuntimePaths>,
 	args: string[],
-	opts: { allowNonZero?: boolean } = {},
-): string {
+): CommandResult {
 	const runtimeUser = runtimeUserName();
 	if (process.getuid?.() === 0 && runtimeUser !== "root") {
 		const uid = commandOutput("id", ["-u", runtimeUser]).trim();
-		return runCommand(
-			"gosu",
-			[
-				runtimeUser,
-				"env",
-				...runtimeUserSystemdEnvArgs(paths, runtimeUser, uid),
-				"systemctl",
-				"--user",
-				...args,
-			],
-			opts,
-		);
+		return runCommandResult("gosu", [
+			runtimeUser,
+			"env",
+			...runtimeUserSystemdEnvArgs(paths, runtimeUser, uid),
+			"systemctl",
+			"--user",
+			...args,
+		]);
 	}
-	return runCommand(systemctlPath(), ["--user", ...args], opts);
+	return runCommandResult(systemctlPath(), ["--user", ...args]);
 }
 
 function commandOutput(command: string, args: string[]): string {
 	return runCommand(command, args);
 }
 
-function runCommand(
-	command: string,
-	args: string[],
-	opts: { allowNonZero?: boolean } = {},
-): string {
+function runCommand(command: string, args: string[]): string {
+	const result = runCommandResult(command, args);
+	assertCommandSucceeded(command, args, result);
+	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+}
+
+function runCommandResult(command: string, args: string[]): CommandResult {
 	const result = spawnSync(command, args, { encoding: "utf8" });
+	return {
+		status: result.status,
+		stdout: result.stdout ?? "",
+		stderr: result.stderr ?? "",
+		...(result.error ? { error: result.error } : {}),
+	};
+}
+
+function assertCommandSucceeded(command: string, args: string[], result: CommandResult): void {
+	if (result.status === 0) return;
 	const output = [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
-	if (result.status === 0 || opts.allowNonZero) return output;
 	throw new Error(
 		`${command} ${args.join(" ")} failed${result.status === null ? "" : ` (${result.status})`}${
 			result.error ? `: ${result.error.message}` : ""

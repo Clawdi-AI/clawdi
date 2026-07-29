@@ -6540,6 +6540,9 @@ export function convergeRuntimeManifest(
 			systemdActivationAttempted = true;
 			const activation = opts.systemdApply.activate({ restartEgressSidecar });
 			systemdActivationApplied = activation.applied;
+			if (!activation.applied) {
+				throw new Error("systemd manager state did not converge to the rendered runtime manifest");
+			}
 		}
 		if (installErrors.length === 0 && opts.cacheLastGood !== false) {
 			manifestLastGood = writeLastGoodManifest(
