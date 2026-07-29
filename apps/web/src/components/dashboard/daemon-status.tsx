@@ -527,9 +527,8 @@ function SyncHelpDialog({
 }
 
 /** Install-tutorial body for the help dialog. Two modes mirroring
- * `<AddAgentSetup>` on the onboarding card so the user reads the
- * same Tabs (Send to agent / Manual setup) pattern everywhere a
- * Clawdi setup is offered. */
+ * `<AddAgentSetup>` in the Add-agent dialog so the user sees the
+ * same prompt / manual setup pattern everywhere setup is offered. */
 function SyncSetupSnippet({ env }: { env: Env }) {
 	return (
 		<Tabs defaultValue="agent">

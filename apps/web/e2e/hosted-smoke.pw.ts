@@ -1578,10 +1578,13 @@ async function gotoHostedSettingsDialog(page: Page, section: string) {
 	throw new Error("Settings dialog did not open.");
 }
 
-test("empty account offers two working first-agent paths with npm setup by default", async ({
+test("empty account opens the shared Add agent dialog with peer setup tabs", async ({
 	page,
 	context,
+	baseURL,
 }) => {
+	if (!baseURL) throw new Error("Playwright baseURL is required for the onboarding test.");
+	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
 	await stubHostedApi(page, { deployments: [], cloudAgents: [] });
 	await page.goto("/");
 
@@ -1593,20 +1596,41 @@ test("empty account offers two working first-agent paths with npm setup by defau
 		"href",
 		"/deploy",
 	);
+	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toHaveCount(0);
 
 	await page.getByRole("button", { name: "Connect an agent on your machine", exact: true }).click();
+	const dialog = page.getByRole("dialog", { name: "Add agent" });
+	await expect(dialog).toBeVisible();
+	const commandTab = dialog.getByRole("tab", { name: "Run commands", exact: true });
+	const promptTab = dialog.getByRole("tab", { name: "Ask your agent", exact: true });
+	await expect(commandTab).toHaveAttribute("aria-selected", "true");
+	await expect(promptTab).toHaveAttribute("aria-selected", "false");
+	await expect(dialog.getByText("Node.js 22.5+ is required.", { exact: true })).toBeVisible();
 	await expect(
-		page.getByRole("heading", { name: "Connect an agent on your machine", exact: true }),
-	).toBeVisible();
-	await expect(
-		page.getByText("Run the setup command on the machine where your agent lives."),
-	).toBeVisible();
-	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toBeVisible();
-	const command = "npm install -g clawdi@latest && clawdi auth login && clawdi setup";
-	await expect(page.getByText(command, { exact: true })).toBeVisible();
-	await context.grantPermissions(["clipboard-read", "clipboard-write"]);
-	await page.getByRole("button", { name: "Copy", exact: true }).click();
-	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(command);
+		dialog.getByText("npm install -g clawdi@latest && clawdi auth login && clawdi setup", {
+			exact: true,
+		}),
+	).toHaveCount(0);
+
+	const commands = [
+		{ label: "Copy Install the CLI command", value: "npm install -g clawdi@latest" },
+		{ label: "Copy Log in command", value: "clawdi auth login" },
+		{ label: "Copy Connect and enable sync command", value: "clawdi setup" },
+	];
+	for (const command of commands) {
+		await expect(dialog.getByText(command.value, { exact: true })).toBeVisible();
+		await dialog.getByRole("button", { name: command.label, exact: true }).click();
+		await expect
+			.poll(() => page.evaluate(() => navigator.clipboard.readText()))
+			.toBe(command.value);
+	}
+
+	await promptTab.click();
+	await expect(promptTab).toHaveAttribute("aria-selected", "true");
+	const prompt = `Set up Clawdi on this machine. Fetch ${new URL(baseURL).origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;
+	await expect(dialog.getByText(prompt, { exact: true })).toBeVisible();
+	await dialog.getByRole("button", { name: "Copy prompt", exact: true }).click();
+	await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(prompt);
 });
 
 test("returning users can deploy on Clawdi or connect another machine", async ({ page }) => {
@@ -1622,6 +1646,8 @@ test("returning users can deploy on Clawdi or connect another machine", async ({
 	await expect(
 		page.getByRole("button", { name: "Connect an agent on your machine", exact: true }),
 	).toBeVisible();
+	await page.getByRole("button", { name: "Connect an agent on your machine", exact: true }).click();
+	await expect(page.getByRole("dialog", { name: "Add agent" })).toBeVisible();
 });
 
 test("empty accounts without deploy access only get the connected-agent path", async ({ page }) => {
@@ -1634,12 +1660,14 @@ test("empty accounts without deploy access only get the connected-agent path", a
 
 	await expect(page.getByText("Let's connect your first agent", { exact: true })).toBeVisible();
 	await expect(page.getByRole("button", { name: "Deploy on Clawdi", exact: true })).toHaveCount(0);
-	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toBeVisible();
-	await expect(
-		page.getByText("npm install -g clawdi@latest && clawdi auth login && clawdi setup", {
-			exact: true,
-		}),
-	).toBeVisible();
+	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toHaveCount(0);
+	await page.getByRole("button", { name: "Connect an agent on your machine", exact: true }).click();
+	const dialog = page.getByRole("dialog", { name: "Add agent" });
+	await expect(dialog).toBeVisible();
+	await expect(dialog.getByRole("tab", { name: "Run commands", exact: true })).toHaveAttribute(
+		"aria-selected",
+		"true",
+	);
 });
 
 test("returning accounts keep hosted management but hide new deploys when denied", async ({
@@ -1660,7 +1688,9 @@ test("returning accounts keep hosted management but hide new deploys when denied
 			exact: true,
 		}),
 	).toBeVisible();
-	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toBeVisible();
+	await expect(page.getByText("Node.js 22.5+ is required.", { exact: true })).toHaveCount(0);
+	await page.getByRole("button", { name: "Connect an agent on your machine", exact: true }).click();
+	await expect(page.getByRole("dialog", { name: "Add agent" })).toBeVisible();
 });
 
 test("hosted mixed agent rail uses whole semantic buttons for context switching", async ({

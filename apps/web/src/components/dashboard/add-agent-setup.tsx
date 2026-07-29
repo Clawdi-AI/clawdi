@@ -2,11 +2,12 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Check, ChevronDown, Copy } from "lucide-react";
+import { Bot, Check, Copy, Terminal } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AgentLabel, AgentSourceBadgeForEnvironment } from "@/components/dashboard/agent-label";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { unwrap, useApi } from "@/lib/api";
 import { cn, errorMessage } from "@/lib/utils";
 
@@ -23,20 +24,16 @@ function useOrigin() {
 	return origin;
 }
 
-// One paste connects the machine: install, authorize (opens the browser),
-// then auto-detect every local agent and start the sync daemons.
-const ONE_COMMAND = "npm install -g clawdi@latest && clawdi auth login && clawdi setup";
-
 const CLI_STEPS = [
 	{
 		title: "Install the CLI",
 		code: "npm install -g clawdi@latest",
-		description: "Requires Node.js 22.5+. Prefer Bun? Use: bun add -g clawdi@latest",
+		description: "Install the latest Clawdi CLI globally.",
 	},
 	{
 		title: "Log in",
 		code: "clawdi auth login",
-		description: "Opens your browser to authorize this machine.",
+		description: "Complete browser authorization before continuing to the next step.",
 	},
 	{
 		title: "Connect and enable sync",
@@ -44,6 +41,9 @@ const CLI_STEPS = [
 		description:
 			"Detects Claude Code / Codex / Hermes / OpenClaw, registers each one with your account, and installs the background daemon by default.",
 	},
+];
+
+const AFTER_SETUP_STEPS = [
 	{
 		title: "Check live sync",
 		code: "clawdi daemon status",
@@ -71,7 +71,15 @@ function useCopy(duration = 2000) {
 	return { copied, copy };
 }
 
-function CopyButton({ text, className }: { text: string; className?: string }) {
+function CopyButton({
+	text,
+	label,
+	className,
+}: {
+	text: string;
+	label: string;
+	className?: string;
+}) {
 	const { copied, copy } = useCopy();
 	return (
 		<Button
@@ -79,7 +87,7 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 			size="icon-xs"
 			onClick={() => copy(text)}
 			className={cn("text-muted-foreground hover:text-foreground", className)}
-			aria-label="Copy"
+			aria-label={label}
 		>
 			{copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
 		</Button>
@@ -87,19 +95,13 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
 }
 
 /**
- * Connect-an-agent wizard (journey J7). One primary path — copy one
- * command — plus two quieter alternatives (send a prompt to the agent
- * itself, or step-by-step commands). While open it watches for newly
- * registered environments and flips into an explicit success card the
- * moment the agent checks in, so the win is designed rather than implied.
- *
- * Shared between `OnboardingCard` (Overview hero when no agents exist)
- * and `AddAgentDialog` (sidebar Quick Create).
+ * Shared setup body for every `AddAgentDialog`. Commands and the agent
+ * hand-off prompt are peer paths; while the dialog is open, the setup also
+ * watches for newly registered agents and surfaces an explicit success state.
  */
 export function AddAgentSetup() {
 	const api = useApi();
 	const origin = useOrigin();
-	const { copied, copy } = useCopy();
 	const prompt = `Set up Clawdi on this machine. Fetch ${origin}/skill.md, and follow the skills to set it up. Finally, confirm the installation with \`clawdi doctor\`.`;
 
 	// Live success detection: snapshot the env ids on first load, then poll
@@ -121,53 +123,64 @@ export function AddAgentSetup() {
 
 	return (
 		<div className="space-y-4">
-			{/* Step 1 — the one command */}
-			<div>
-				<div className="flex items-center gap-2">
-					<StepNumber n={1} />
-					<span className="text-sm font-medium">Run this in a terminal on the machine</span>
-				</div>
-				<p className="mt-1.5 text-xs text-muted-foreground">Node.js 22.5+ is required.</p>
-				<div className="mt-2 rounded-lg border bg-muted/30">
-					<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-						<span className="text-2xs uppercase tracking-wider text-muted-foreground">
-							One command
-						</span>
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={() => copy(ONE_COMMAND)}
-							className="h-7 gap-1.5 px-2 text-xs"
-						>
-							{copied ? (
-								<>
-									<Check className="size-3.5" />
-									Copied
-								</>
-							) : (
-								<>
-									<Copy className="size-3.5" />
-									Copy
-								</>
-							)}
-						</Button>
+			<Tabs defaultValue="commands">
+				<TabsList className="w-full sm:w-auto">
+					<TabsTrigger value="commands">
+						<Terminal data-icon="inline-start" /> Run commands
+					</TabsTrigger>
+					<TabsTrigger value="prompt">
+						<Bot data-icon="inline-start" /> Ask your agent
+					</TabsTrigger>
+				</TabsList>
+				<TabsContent value="commands" className="mt-2 space-y-4">
+					<div>
+						<p className="text-sm font-medium">Run these commands in order on the machine</p>
+						<p className="mt-1 text-xs text-muted-foreground">Node.js 22.5+ is required.</p>
+						<p className="mt-0.5 text-xs text-muted-foreground">
+							Prefer Bun? Use: bun add -g clawdi@latest
+						</p>
 					</div>
-					<pre className="overflow-x-auto whitespace-pre-wrap p-3 font-mono text-sm leading-relaxed">
-						{ONE_COMMAND}
-					</pre>
-				</div>
-				<p className="mt-1.5 text-xs text-muted-foreground">
-					Installs the CLI, opens your browser to authorize, then finds Claude Code / Codex / Hermes
-					/ OpenClaw on the machine and turns on live sync.
-				</p>
-			</div>
+					<CommandSteps steps={CLI_STEPS} numbered />
+					<div className="space-y-3 border-t pt-4">
+						<div>
+							<p className="text-sm font-medium">After setup</p>
+							<p className="mt-1 text-xs text-muted-foreground">
+								These checks are optional and can be run after the agent connects.
+							</p>
+						</div>
+						<CommandSteps steps={AFTER_SETUP_STEPS} />
+					</div>
+				</TabsContent>
+				<TabsContent value="prompt" className="mt-2 space-y-3">
+					<div>
+						<p className="text-sm font-medium">Ask your agent to set up Clawdi</p>
+						<p className="mt-1 text-xs text-muted-foreground">
+							Paste this prompt into Claude Code, Codex, Hermes, or OpenClaw on the machine.
+						</p>
+					</div>
+					<div className="rounded-lg border bg-muted/30">
+						<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
+							<span className="text-2xs uppercase tracking-wider text-muted-foreground">
+								Setup prompt
+							</span>
+							<CopyButton text={prompt} label="Copy prompt" />
+						</div>
+						<pre className="whitespace-pre-wrap p-3 font-mono text-xs leading-relaxed">
+							{prompt}
+						</pre>
+					</div>
+				</TabsContent>
+			</Tabs>
 
-			{/* Step 2 — designed win moment */}
-			<div>
+			<div className="border-t pt-4">
 				<div className="flex items-center gap-2">
-					<StepNumber n={2} done={newAgents.length > 0} />
+					{newAgents.length > 0 ? (
+						<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-success text-success-foreground">
+							<Check className="size-3.5" />
+						</span>
+					) : null}
 					<span className="text-sm font-medium">
-						{newAgents.length > 0 ? "Agent connected" : "Watch it appear here"}
+						{newAgents.length > 0 ? "Agent connected" : "Watch for your agent"}
 					</span>
 				</div>
 				{newAgents.length > 0 ? (
@@ -208,70 +221,40 @@ export function AddAgentSetup() {
 					</div>
 				)}
 			</div>
+		</div>
+	);
+}
 
-			{/* Quieter alternatives */}
-			<Disclosure summary="Prefer to let the AI set itself up? Send it this prompt">
-				<div className="rounded-lg border bg-muted/30">
-					<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-						<span className="text-2xs uppercase tracking-wider text-muted-foreground">Prompt</span>
-						<CopyButton text={prompt} />
-					</div>
-					<pre className="whitespace-pre-wrap p-3 font-mono text-xs leading-relaxed">{prompt}</pre>
-				</div>
-			</Disclosure>
-
-			<Disclosure summary="Step-by-step commands">
-				<div className="space-y-3">
-					{CLI_STEPS.map((step, i) => (
-						<div key={step.title} className="flex gap-3">
-							<StepNumber n={i + 1} />
-							<div className="min-w-0 flex-1">
-								<div className="text-sm font-medium">{step.title}</div>
-								<div className="mt-1 flex items-center gap-1.5 rounded-md border bg-muted/30 px-3 py-1.5">
-									<code className="flex-1 font-mono text-xs">{step.code}</code>
-									<CopyButton text={step.code} />
-								</div>
-								{step.description ? (
-									<p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
-								) : null}
-							</div>
+function CommandSteps({
+	steps,
+	numbered = false,
+}: {
+	steps: ReadonlyArray<{ title: string; code: string; description: string }>;
+	numbered?: boolean;
+}) {
+	return (
+		<div className="space-y-3">
+			{steps.map((step, index) => (
+				<div key={step.title} className="flex gap-3">
+					{numbered ? <StepNumber n={index + 1} /> : null}
+					<div className="min-w-0 flex-1">
+						<div className="text-sm font-medium">{step.title}</div>
+						<div className="mt-1 flex items-center gap-1.5 rounded-md border bg-muted/30 px-3 py-1.5">
+							<code className="min-w-0 flex-1 overflow-x-auto font-mono text-xs">{step.code}</code>
+							<CopyButton text={step.code} label={`Copy ${step.title} command`} />
 						</div>
-					))}
+						<p className="mt-1 text-xs text-muted-foreground">{step.description}</p>
+					</div>
 				</div>
-			</Disclosure>
+			))}
 		</div>
 	);
 }
 
-function StepNumber({ n, done = false }: { n: number; done?: boolean }) {
+function StepNumber({ n }: { n: number }) {
 	return (
-		<span
-			className={cn(
-				"flex size-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold",
-				done ? "bg-success text-success-foreground" : "bg-primary/10 text-primary",
-			)}
-		>
-			{done ? <Check className="size-3.5" /> : n}
+		<span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+			{n}
 		</span>
-	);
-}
-
-function Disclosure({ summary, children }: { summary: string; children: React.ReactNode }) {
-	const [open, setOpen] = useState(false);
-	return (
-		<div>
-			<button
-				type="button"
-				onClick={() => setOpen((v) => !v)}
-				aria-expanded={open}
-				className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-			>
-				<ChevronDown
-					className={cn("size-3.5 transition-transform duration-150", !open && "-rotate-90")}
-				/>
-				{summary}
-			</button>
-			{open ? <div className="mt-2">{children}</div> : null}
-		</div>
 	);
 }

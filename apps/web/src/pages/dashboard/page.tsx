@@ -421,7 +421,7 @@ function ConnectAnotherCard() {
 			<CardContent className="flex items-center justify-between gap-3 px-4">
 				<div className="min-w-0">
 					<div className="text-sm font-medium">Connect another machine</div>
-					<p className="mt-0.5 text-xs text-muted-foreground">One command in a terminal.</p>
+					<p className="mt-0.5 text-xs text-muted-foreground">Follow the Clawdi CLI steps.</p>
 				</div>
 				<Button size="sm" variant="outline" onClick={() => setOpen(true)}>
 					Add agent

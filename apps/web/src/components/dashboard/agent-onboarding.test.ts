@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 
 const onboardingSource = readFileSync(new URL("./onboarding-card.tsx", import.meta.url), "utf8");
 const setupSource = readFileSync(new URL("./add-agent-setup.tsx", import.meta.url), "utf8");
+const dialogSource = readFileSync(new URL("./add-agent-dialog.tsx", import.meta.url), "utf8");
 const newAgentSource = readFileSync(new URL("./new-agent-button.tsx", import.meta.url), "utf8");
 const hostedSectionSource = readFileSync(
 	new URL("../../hosted/hosted-agents-section.tsx", import.meta.url),
@@ -41,6 +42,12 @@ describe("dashboard agent onboarding", () => {
 		expect(onboardingSource).toContain("{canDeployOnClawdi ? (");
 		expect(onboardingSource).toContain("Deploy on Clawdi");
 		expect(onboardingSource).toContain("Connect an agent on your machine");
+		expect(onboardingSource).toContain("<AddAgentDialog");
+		expect(onboardingSource).toContain("onClick={() => setConnectOpen(true)}");
+		expect(onboardingSource).not.toContain("AddAgentSetup");
+		expect(dialogSource).toContain("<AddAgentSetup />");
+		expect(newAgentSource).toContain("<AddAgentDialog");
+		expect(dashboardSource).toContain("<AddAgentDialog");
 		expect(onboardingSource).not.toContain("showHostedFirstAgentChoice");
 		expect(onboardingSource).not.toContain("Deploy a hosted agent");
 	});
@@ -59,13 +66,30 @@ describe("dashboard agent onboarding", () => {
 	});
 });
 
-describe("connected-agent setup command", () => {
-	test("defaults the displayed and copied command to npm", () => {
-		const command = "npm install -g clawdi@latest && clawdi auth login && clawdi setup";
-		expect(setupSource).toContain(`const ONE_COMMAND = "${command}";`);
-		expect(setupSource).toContain("onClick={() => copy(ONE_COMMAND)}");
-		expect(setupSource).toContain("{ONE_COMMAND}");
+describe("connected-agent setup paths", () => {
+	test("defaults to sequential npm commands with per-step copy controls", () => {
+		expect(setupSource).toContain('<Tabs defaultValue="commands">');
+		expect(setupSource).toContain('<TabsTrigger value="commands">');
+		expect(setupSource).toContain("Run commands");
+		for (const command of ["npm install -g clawdi@latest", "clawdi auth login", "clawdi setup"]) {
+			expect(setupSource).toContain(`code: "${command}"`);
+		}
+		expect(setupSource).toContain("<CopyButton text={step.code} label={`Copy ");
+		expect(setupSource).toContain("command`} />");
+		expect(setupSource).not.toContain("ONE_COMMAND");
+		expect(setupSource).not.toContain(
+			"npm install -g clawdi@latest && clawdi auth login && clawdi setup",
+		);
+		expect(setupSource).not.toContain("One command");
 		expect(setupSource).not.toContain("npx ");
+	});
+
+	test("keeps the agent prompt as a peer tab with its own copy action", () => {
+		expect(setupSource).toContain('<TabsTrigger value="prompt">');
+		expect(setupSource).toContain("Ask your agent");
+		expect(setupSource).toContain('<TabsContent value="prompt"');
+		expect(setupSource).toContain('label="Copy prompt"');
+		expect(setupSource).not.toContain("<Disclosure");
 	});
 
 	test("states the Node requirement and keeps Bun as a secondary alternative", () => {

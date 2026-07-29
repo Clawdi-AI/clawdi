@@ -10,18 +10,16 @@ import {
 } from "@/components/ui/dialog";
 
 /**
- * Modal variant of the "Add an agent" flow. Opened from the sidebar's
- * Quick Create button. Same Tabs body as the Overview `OnboardingCard`
- * so users see one consistent UI for connecting a new agent.
+ * The shared "Add an agent" flow opened from the sidebar and homepage.
  */
 export function AddAgentDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
 	return (
 		<Dialog open={open} onOpenChange={(next) => !next && onClose()}>
-			<DialogContent className="max-w-2xl sm:max-w-2xl">
+			<DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
 				<DialogHeader>
 					<DialogTitle>Add agent</DialogTitle>
 					<DialogDescription>
-						Connect another machine or agent — Claude Code, Codex, Hermes, or OpenClaw.
+						Connect an agent on your machine — Claude Code, Codex, Hermes, or OpenClaw.
 					</DialogDescription>
 				</DialogHeader>
 				<AddAgentSetup />
