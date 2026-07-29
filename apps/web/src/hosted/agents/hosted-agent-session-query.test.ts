@@ -126,7 +126,7 @@ describe("hosted agent sessions refresh", () => {
 			'{deploymentStatus.known && activeTab === "sessions" ? (',
 		);
 		const sessionsBranchEnd = detailSource.indexOf(
-			'{deploymentStatus.known && activeTab === "skills" ? (',
+			'{activeTab === "skills" ? (',
 			sessionsBranchStart,
 		);
 		const sessionsBranch = detailSource.slice(sessionsBranchStart, sessionsBranchEnd);

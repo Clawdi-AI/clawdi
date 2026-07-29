@@ -76,10 +76,6 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { StatusDot, type StatusTone } from "@/components/ui/status-badge";
-import {
-	deploymentManagedMcpValue,
-	useAgentRuntimeObserved,
-} from "@/hooks/use-agent-runtime-observed";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { HostedDeploymentDeleteAction } from "@/hosted/agents/deployment-delete-action";
@@ -298,7 +294,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: RefreshCw,
 	},
 	skills: {
-		description: "Installed in this agent's Agent Project.",
+		description: "Read-only projections from this Agent's filesystem.",
 		icon: Sparkles,
 	},
 	ai: {
@@ -531,19 +527,9 @@ export function HostedAgentDetail({
 	const ActiveTabIcon = activeNavItem.icon;
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
 	const headerActions =
-		activeTab === "skills" && projection.status === "resolved" ? (
-			<Button
-				render={<Link to="/skills" search={{ target: environmentId }} />}
-				nativeButton={false}
-				variant="outline"
-				size="sm"
-			>
-				<Plus />
-				Install skills
-			</Button>
-		) : activeTab !== "console" &&
-			consoleUrl &&
-			canOpenHostedRuntimeUi(deploymentStatus, consoleUrl) ? (
+		activeTab !== "console" &&
+		consoleUrl &&
+		canOpenHostedRuntimeUi(deploymentStatus, consoleUrl) ? (
 			<Button
 				render={<Link to={agentSectionHref(environmentId, "console", routeSearch)} />}
 				nativeButton={false}
@@ -595,7 +581,6 @@ export function HostedAgentDetail({
 				<div className={isLiveToolTab ? "flex min-h-0 flex-1 flex-col" : "w-full"}>
 					{deploymentStatus.known && activeTab === "overview" ? (
 						<OverviewTab
-							environmentId={environmentId}
 							deployment={deployment}
 							agent={isCloudEnvId(environmentId) ? agent : null}
 							isPerformance={isPerformance}
@@ -644,16 +629,13 @@ export function HostedAgentDetail({
 							<ProjectionDependentUnavailable label="Sessions" />
 						)
 					) : null}
-					{deploymentStatus.known && activeTab === "skills" ? (
-						!deploymentProjectionQueryable ? (
-							<StoppedAgentState deployment={deployment} />
-						) : projection.status === "resolved" ? (
+					{activeTab === "skills" ? (
+						projection.status === "resolved" ? (
 							<AgentSkillsTab
 								agentId={environmentId}
 								agentProjectId={agent?.default_project_id}
 								routeSearch={routeSearch}
-								isResolvingAgentProject={false}
-								hostedManaged
+								projectionFence={deployment.resource.metadata.resourceVersion}
 							/>
 						) : (
 							<ProjectionDependentUnavailable label="Skills" />
@@ -1103,7 +1085,6 @@ export function OverviewFailedPanel({
 }
 
 function OverviewTab({
-	environmentId,
 	deployment,
 	agent,
 	isPerformance,
@@ -1121,7 +1102,6 @@ function OverviewTab({
 	isCheckingDeployment,
 	onCheckDeploymentAgain,
 }: {
-	environmentId: string;
 	deployment: HostedDeployment;
 	agent: components["schemas"]["AgentResponse"] | null | undefined;
 	isPerformance: boolean;
@@ -1142,7 +1122,6 @@ function OverviewTab({
 	isCheckingDeployment: boolean;
 	onCheckDeploymentAgain: () => void;
 }) {
-	const runtimeObserved = useAgentRuntimeObserved(environmentId, projectionAvailable);
 	const spec = deployment.resource.spec;
 	const providers = useUserAiProviders();
 	const managedModelCatalog = useManagedModelCatalog();
@@ -1171,10 +1150,6 @@ function OverviewTab({
 	const sessionsEmptyMessage = deploymentRunning
 		? "No sessions from this agent yet."
 		: "Sessions appear once your agent is running.";
-	const managedMcpValue = deploymentManagedMcpValue(
-		runtimeObserved.data?.desired,
-		!projectionAvailable || runtimeObserved.isLoading || runtimeObserved.isError,
-	);
 	return (
 		<div className="flex flex-col gap-5">
 			{showReadinessPanel ? (
@@ -1210,7 +1185,6 @@ function OverviewTab({
 				)}
 				<StatCard label="Compute" value={isPerformance ? "Performance" : "Basic"} />
 				<StatCard label="Model" value={model} />
-				<StatCard label="Deployment MCP" value={managedMcpValue} />
 				<StatCard
 					label="Resources"
 					value={`${spec.resources.vcpu} vCPU · ${formatMemoryMib(spec.resources.memory_mib)}`}

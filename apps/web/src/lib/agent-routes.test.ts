@@ -162,6 +162,8 @@ describe("agent routes", () => {
 	it("keeps Skills available for connected and hosted agent detail", () => {
 		expect(CONNECTED_AGENT_SECTION_IDS).toContain("skills");
 		expect(HOSTED_AGENT_SECTION_IDS).toContain("skills");
+		expect(CONNECTED_AGENT_SECTION_IDS).not.toContain("mcp");
+		expect(HOSTED_AGENT_SECTION_IDS).not.toContain("mcp");
 	});
 
 	it("detects and removes tab params without changing the canonical section", () => {
