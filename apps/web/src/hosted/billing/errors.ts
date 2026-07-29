@@ -131,7 +131,7 @@ export function isServerError(error: unknown): boolean {
 }
 
 /** True when the request never reached the server (offline / DNS / timeout). */
-export function isNetworkError(error: unknown): boolean {
+export function isNetworkError(error: unknown): error is BillingNetworkError {
 	return error instanceof BillingNetworkError;
 }
 
@@ -142,6 +142,105 @@ export function isNetworkError(error: unknown): boolean {
  */
 export function isRetryableError(error: unknown): boolean {
 	return isNetworkError(error) || isServerError(error);
+}
+
+export type DeploySubmissionContext = "card_checkout" | "included_creation" | "wallet_creation";
+
+export type DeploySubmissionErrorPresentation = {
+	description: string;
+	title: string;
+};
+
+function isDefinitiveBillingRejection(error: unknown): boolean {
+	return (
+		error instanceof BillingApiError &&
+		error.status >= 400 &&
+		error.status < 500 &&
+		error.status !== 429
+	);
+}
+
+/** Only return copy backed by a known public billing condition. */
+function knownBillingRecovery(error: unknown): string | null {
+	if (error instanceof DeploymentConflictError) return DEPLOYMENT_CONFLICT_MESSAGE;
+	if (isInsufficientBalanceError(error)) return normalizeBillingError(error);
+	if (isAuthError(error)) return "Your session expired before this request could start.";
+	if (!(error instanceof BillingApiError)) return null;
+
+	const code = billingErrorDetail(error)?.code;
+	if (code === "open_refund_debt") {
+		return "Top up your Wallet before trying again.";
+	}
+	if (code === "deploy_request_funding_conflict") {
+		return "This agent request is already linked to a different payment flow.";
+	}
+	if (code === "idempotency_key_reused") {
+		return "This attempt could not be matched to the earlier request.";
+	}
+	if (error.detail === "payment_method_required") {
+		return "Add a payment method before trying again.";
+	}
+	return null;
+}
+
+/**
+ * Contextual, non-sensitive copy for the Deploy CTA. Card checkout has not
+ * collected payment until its checkout UI opens, while wallet and create
+ * transport failures can be ambiguous and must resume the same idempotent
+ * attempt instead of claiming that nothing happened.
+ */
+export function deploySubmissionErrorPresentation(
+	error: unknown,
+	context: DeploySubmissionContext,
+): DeploySubmissionErrorPresentation {
+	const knownRecovery = knownBillingRecovery(error);
+	if (context === "card_checkout") {
+		const reason = isNetworkError(error)
+			? error.kind === "timeout"
+				? "The request timed out while opening secure checkout."
+				: "The connection dropped while opening secure checkout."
+			: isServerError(error)
+				? "Secure checkout is temporarily unavailable."
+				: (knownRecovery ?? "We couldn’t open secure checkout.");
+		return {
+			title: "Checkout didn’t open",
+			description: `${reason} No payment was submitted. Retry when you’re ready.`,
+		};
+	}
+
+	if (context === "wallet_creation") {
+		if (isDefinitiveBillingRejection(error)) {
+			return {
+				title: "Payment and creation didn’t start",
+				description: `${knownRecovery ?? "The request was rejected before it was accepted."} No Wallet payment was made. Review your choices and retry.`,
+			};
+		}
+		const reason = isNetworkError(error)
+			? error.kind === "timeout"
+				? "The request timed out before payment and creation were confirmed."
+				: "The connection dropped before payment and creation were confirmed."
+			: "The service didn’t confirm payment and creation.";
+		return {
+			title: "We couldn’t confirm this attempt",
+			description: `${reason} Retry to safely resume the same attempt.`,
+		};
+	}
+
+	if (isDefinitiveBillingRejection(error)) {
+		return {
+			title: "Agent creation didn’t start",
+			description: `${knownRecovery ?? "The request was rejected before it was accepted."} Your choices are unchanged; review them and retry.`,
+		};
+	}
+	const reason = isNetworkError(error)
+		? error.kind === "timeout"
+			? "The request timed out before agent creation was confirmed."
+			: "The connection dropped before agent creation was confirmed."
+		: "The service didn’t confirm agent creation.";
+	return {
+		title: "We couldn’t confirm agent creation",
+		description: `${reason} Retry to safely resume the same attempt.`,
+	};
 }
 
 /**
@@ -196,7 +295,7 @@ export function normalizeBillingError(error: unknown): string {
 		return "Your session has expired. Please sign in again to continue.";
 	}
 	if (isServerError(error)) {
-		return "The billing service is having trouble right now. Please try again in a moment.";
+		return "The billing request couldn’t be completed right now. Try again in a moment.";
 	}
 	if (error instanceof BillingApiError) {
 		const code = billingErrorDetail(error)?.code;

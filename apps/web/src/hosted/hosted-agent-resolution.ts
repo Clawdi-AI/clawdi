@@ -42,13 +42,15 @@ export function isHostedDeploymentMember(deployment: HostedDeployment): boolean 
 	return deploymentStatusFromResource(deployment.resource.status).kind !== "deleted";
 }
 
-/** Accepted deletion dismisses the agent while its deployment remains observable for cleanup. */
+/** Pending or authoritatively accepted deletion dismisses the agent during cleanup. */
 export function isHostedDeploymentVisible(deployment: HostedDeployment): boolean {
 	const status = deploymentStatusFromResource(deployment.resource.status);
+	const acceptedOperation = deployment.accepted_operation;
 	return (
 		status.kind !== "deleting" &&
 		status.kind !== "deleted" &&
-		deployment.accepted_operation?.metadata.verb !== "delete"
+		!(acceptedOperation?.metadata.verb === "delete" && !acceptedOperation.done) &&
+		deployment.compute_slot_occupancy?.reason !== "delete_accepted"
 	);
 }
 

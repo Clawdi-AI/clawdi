@@ -45,6 +45,19 @@ function acceptedDelete(deploymentId: string): DeploymentOperation {
 	};
 }
 
+function cancelledDelete(deploymentId: string): DeploymentOperation {
+	return {
+		...acceptedDelete(deploymentId),
+		done: true,
+		error: {
+			code: 1,
+			message: "Delete was cancelled before teardown.",
+			details: [],
+		},
+		response: null,
+	};
+}
+
 describe("hosted inventory resolution matrix", () => {
 	test("distinguishes a successful empty snapshot from loading", () => {
 		expect(
@@ -123,12 +136,12 @@ describe("hosted inventory resolution matrix", () => {
 });
 
 describe("hosted detail projection resolution", () => {
-	test("dismisses an accepted delete without releasing its hosted ownership claim", () => {
+	test("suppresses stale detail as soon as delete is accepted without releasing ownership", () => {
 		const environmentId = "55555555-5555-4555-8555-555555555555";
 		const deploymentId = "hdep_user_deleted";
 		const deleting = hostedDeploymentFixture({
 			id: deploymentId,
-			status: "deleting",
+			status: "running",
 			cloudEnvironments: { openclaw: environmentId },
 			acceptedOperation: acceptedDelete(deploymentId),
 		});
@@ -139,7 +152,7 @@ describe("hosted detail projection resolution", () => {
 		expect(resolveAgentDeployment([deleting], environmentId, deploymentId).match).toBeNull();
 	});
 
-	test("does not resurrect a dismissed agent when background deletion fails", () => {
+	test("keeps a dismissed agent hidden across a failed snapshot while delete remains pending", () => {
 		const deploymentId = "hdep_delete_failed";
 		const failed = hostedDeploymentFixture({
 			id: deploymentId,
@@ -149,6 +162,40 @@ describe("hosted detail projection resolution", () => {
 
 		expect(isHostedDeploymentVisible(failed)).toBe(false);
 		expect(resolveAgentDeployment([failed], deploymentId).match).toBeNull();
+	});
+
+	test("restores a running agent when its accepted delete is cancelled", () => {
+		const deploymentId = "hdep_delete_cancelled";
+		const restored = hostedDeploymentFixture({
+			id: deploymentId,
+			status: "running",
+			acceptedOperation: cancelledDelete(deploymentId),
+			computeSlotOccupancy: {
+				occupies_slot: true,
+				backing_infra: "present",
+				reason: "backing_infra_present",
+			},
+		});
+
+		expect(isHostedDeploymentVisible(restored)).toBe(true);
+		expect(resolveAgentDeployment([restored], deploymentId).match?.deployment).toBe(restored);
+	});
+
+	test("keeps an agent hidden while occupancy authoritatively reports delete accepted", () => {
+		const deploymentId = "hdep_delete_accepted";
+		const deleting = hostedDeploymentFixture({
+			id: deploymentId,
+			status: "running",
+			acceptedOperation: null,
+			computeSlotOccupancy: {
+				occupies_slot: false,
+				backing_infra: "present",
+				reason: "delete_accepted",
+			},
+		});
+
+		expect(isHostedDeploymentVisible(deleting)).toBe(false);
+		expect(resolveAgentDeployment([deleting], deploymentId).match).toBeNull();
 	});
 
 	test("keeps a selected stopped deployment addressable after its projection is removed", () => {

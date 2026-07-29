@@ -96,7 +96,8 @@ describe("deploy wizard product copy and flow", () => {
 	});
 
 	test("links unresolved post-payment recovery to the agents list", () => {
-		expect(wizardSource).toContain("submitError.blocksRetry");
+		expect(wizardSource).toContain('id: "deploy-post-payment-error"');
+		expect(wizardSource).toContain("duration: Number.POSITIVE_INFINITY");
 		expect(wizardSource).toContain("View agents");
 		expect(wizardSource).toContain('router.navigate({ href: "/agents" })');
 	});
@@ -294,15 +295,20 @@ describe("deploy acceptance", () => {
 		expect(wizardSource).not.toContain("setup=accepted");
 	});
 
-	test("shows a scoped honest busy state and keeps a persistent actionable failure", () => {
+	test("shows a scoped honest busy state and reports failures only through actionable toasts", () => {
 		expect(wizardSource).toContain("setSubmitBusyLabel(");
 		expect(wizardSource).toContain('"Confirming payment & creating agent…"');
 		expect(wizardSource).toContain('"Opening secure checkout…"');
 		expect(wizardSource).toContain('"Creating agent…"');
 		expect(wizardSource).toContain('<Spinner data-icon="inline-start" />');
 		expect(wizardSource).toContain("{submitting ? submitBusyLabel : deployLabel}");
-		expect(wizardSource).toContain('role="alert"');
-		expect(wizardSource).toContain("Your choices are unchanged; review them and try again.");
+		expect(wizardSource).toContain('id: "deploy-submit-error"');
+		expect(wizardSource).toContain('label: "Retry"');
+		expect(wizardSource).toContain("deploySubmissionErrorPresentation(");
+		expect(wizardSource).not.toContain('data-testid="deploy-submit-error"');
+		expect(wizardSource).not.toContain("submitError");
+		expect(wizardSource).not.toContain('toast.error("Couldn’t deploy"');
+		expect(wizardSource).not.toContain('toast.error("Couldn’t create agent"');
 		expect(wizardSource).not.toContain('submitting ? "Working…"');
 	});
 

@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "@tanstack/react-router";
 import { type ReactElement, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -34,6 +35,7 @@ export function HostedDeploymentDeleteAction({
 	deployment: HostedDeployment;
 	onAccepted?: () => Promise<void> | void;
 }) {
+	const router = useRouter();
 	const deleteDeployment = useDeleteDeployment();
 	const [open, setOpen] = useState(false);
 	const [choice, setChoice] =
@@ -51,19 +53,26 @@ export function HostedDeploymentDeleteAction({
 		if (locked.current) return;
 		locked.current = true;
 		setPending(true);
-		let deletionAccepted = false;
 		try {
-			await deleteDeployment.mutateAsync({
-				id: deployment.resource.id,
-				request: {
-					subscription_choice: offerChoice ? choice : "keep_subscription",
-				},
-			});
-			deletionAccepted = true;
+			try {
+				await deleteDeployment.mutateAsync({
+					id: deployment.resource.id,
+					request: {
+						subscription_choice: offerChoice ? choice : "keep_subscription",
+					},
+				});
+			} catch {
+				// The mutation owns failure feedback. Keep this detail page in place.
+				return;
+			}
 			setOpen(false);
-			await onAccepted?.();
-		} catch {
-			if (deletionAccepted) {
+			try {
+				if (onAccepted) {
+					await onAccepted();
+				} else {
+					await router.navigate({ href: "/", replace: true });
+				}
+			} catch {
 				toast.error("Agent removed, but navigation failed", {
 					description: "Use Agents in the sidebar to check its status.",
 				});

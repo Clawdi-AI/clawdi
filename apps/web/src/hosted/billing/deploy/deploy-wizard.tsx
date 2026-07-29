@@ -89,8 +89,8 @@ import {
 import {
 	billingErrorNormalizer,
 	DeploymentRequestTerminalError,
+	deploySubmissionErrorPresentation,
 	isIdempotencyKeyReusedError,
-	isNetworkError,
 	normalizeBillingError,
 } from "@/hosted/billing/errors";
 import {
@@ -409,12 +409,8 @@ export function DeployWizard() {
 	const [checkoutSession, setCheckoutSession] = useState<NativeDeployCheckout | null>(null);
 	const [term, setTerm] = useState(1);
 	const [submitting, setSubmitting] = useState(false);
+	const [postPaymentBlocked, setPostPaymentBlocked] = useState(false);
 	const [submitTakingLong, setSubmitTakingLong] = useState(false);
-	const [submitError, setSubmitError] = useState<{
-		blocksRetry?: boolean;
-		description: string;
-		title: string;
-	} | null>(null);
 	const [submitBusyLabel, setSubmitBusyLabel] = useState("Creating agent…");
 	const [submitTakingLongCopy, setSubmitTakingLongCopy] = useState(
 		"Agent creation is still starting. Keep this page open; we’ll take you to your agent as soon as its page is available.",
@@ -589,7 +585,7 @@ export function DeployWizard() {
 		}
 		return null;
 	})();
-	const canSubmit = !submitting && !submitError?.blocksRetry && submitBlockingReason === null;
+	const canSubmit = !submitting && !postPaymentBlocked && submitBlockingReason === null;
 
 	function selectCreatedProvider(providerId: string) {
 		selectCreatedAiProvider(providerId, aiProviders.dataUpdatedAt);
@@ -641,6 +637,40 @@ export function DeployWizard() {
 		}
 	}
 
+	function showPostPaymentError(title: string, description: string) {
+		setPostPaymentBlocked(true);
+		toast.error(title, {
+			id: "deploy-post-payment-error",
+			description,
+			duration: Number.POSITIVE_INFINITY,
+			action: {
+				label: "View agents",
+				onClick: () => void router.navigate({ href: "/agents" }),
+			},
+		});
+	}
+
+	function showDeploySubmissionError(error: unknown) {
+		const presentation = deploySubmissionErrorPresentation(
+			error,
+			paidSelection
+				? paymentMethod === "wallet"
+					? "wallet_creation"
+					: "card_checkout"
+				: "included_creation",
+		);
+		toast.error(presentation.title, {
+			id: "deploy-submit-error",
+			description: presentation.description,
+			action: {
+				label: "Retry",
+				onClick: () => {
+					if (canSubmit) void runAction(onDeploy);
+				},
+			},
+		});
+	}
+
 	function buildDeployRequest(
 		aiFields: DeployAiFields,
 		computePlanSlug: ComputePlanSlug,
@@ -674,7 +704,6 @@ export function DeployWizard() {
 		request: SubscriptionCreateRequestView | null,
 	) {
 		setCheckoutSession(null);
-		setSubmitError(null);
 		setSubmitTakingLong(false);
 		setSubmitBusyLabel("Creating agent…");
 		setSubmitTakingLongCopy(
@@ -699,12 +728,10 @@ export function DeployWizard() {
 						forgetIdempotencyAttempt("subscription-checkout", requestFingerprint);
 						checkoutAttemptRef.current = null;
 						const normalized = normalizeBillingError(error);
-						setSubmitError({
-							blocksRetry: true,
-							title: "Payment succeeded, but the agent could not be started",
-							description: `${normalized} Don’t submit another payment; check Agents for the latest state.`,
-						});
-						toast.error("Couldn’t create agent", { description: normalized });
+						showPostPaymentError(
+							"Payment succeeded, but the agent could not be started",
+							`${normalized} Don’t submit another payment; check Agents for the latest state.`,
+						);
 						return;
 					}
 					// Stripe may complete before its deployment request is visible. Fall back
@@ -715,22 +742,18 @@ export function DeployWizard() {
 			try {
 				refreshedDeployments = await refreshCheckoutReturn();
 			} catch {
-				setSubmitError({
-					blocksRetry: true,
-					title: "Payment succeeded; agent status is unavailable",
-					description:
-						"We couldn’t refresh your agent list. Don’t submit another payment; open Agents and check again in a moment.",
-				});
+				showPostPaymentError(
+					"Payment succeeded; agent status is unavailable",
+					"We couldn’t refresh your agent list. Don’t submit another payment; open Agents and check again in a moment.",
+				);
 				return;
 			}
 			const deploymentId = findNewDeploymentId(previousDeploymentIds, refreshedDeployments);
 			if (!deploymentId) {
-				setSubmitError({
-					blocksRetry: true,
-					title: "Payment succeeded; your agent is not visible yet",
-					description:
-						"Don’t submit another payment. Open Agents and check again in a moment while the accepted request appears.",
-				});
+				showPostPaymentError(
+					"Payment succeeded; your agent is not visible yet",
+					"Don’t submit another payment. Open Agents and check again in a moment while the accepted request appears.",
+				);
 				return;
 			}
 			if (requestFingerprint) {
@@ -746,7 +769,6 @@ export function DeployWizard() {
 
 	async function onDeploy() {
 		if (!canSubmit) return;
-		setSubmitError(null);
 		setSubmitTakingLong(false);
 		setSubmitBusyLabel(
 			paidSelection
@@ -900,23 +922,11 @@ export function DeployWizard() {
 			includedCreateAttemptRef.current = null;
 			acceptDeployment(created.deploymentId);
 		} catch (e) {
-			const normalized = normalizeBillingError(e);
-			setSubmitError(
-				isNetworkError(e)
-					? {
-							title: "We couldn’t confirm this attempt",
-							description: `${normalized} Your choices are unchanged; retry to safely check the same payment attempt.`,
-						}
-					: {
-							title: "Your agent wasn’t created",
-							description: `${normalized} Your choices are unchanged; review them and try again.`,
-						},
-			);
 			if (paymentMethod === "wallet") {
 				void subscriptionCreateQuote.refetch();
 				if (walletTopUp.handleFundingError(e)) return;
 			}
-			toast.error("Couldn’t deploy", { description: normalized });
+			showDeploySubmissionError(e);
 		} finally {
 			setSubmitting(false);
 			setSubmitTakingLong(false);
@@ -1468,37 +1478,24 @@ export function DeployWizard() {
 						<p className="min-w-0 max-w-full truncate text-xs text-muted-foreground sm:text-sm">
 							{summaryLine}
 						</p>
-						<div className="flex flex-col gap-1 sm:items-end">
-							<Button
-								type="submit"
-								size="lg"
-								disabled={!canSubmit}
-								aria-describedby={submitBlockingReason ? "deploy-blocking-reason" : undefined}
-								className="w-full sm:w-auto"
-							>
-								{submitting ? (
-									<Spinner data-icon="inline-start" />
-								) : (
-									<Rocket data-icon="inline-start" />
-								)}
-								{submitting ? submitBusyLabel : deployLabel}
-							</Button>
-							{submitError ? (
-								<div className="max-w-sm text-xs text-destructive sm:text-right" role="alert">
-									<p className="font-medium">{submitError.title}</p>
-									<p>{submitError.description}</p>
-									{submitError.blocksRetry ? (
-										<Button
-											type="button"
-											variant="link"
-											className="h-auto px-0 text-destructive"
-											onClick={() => void router.navigate({ href: "/agents" })}
-										>
-											View agents
-										</Button>
-									) : null}
-								</div>
-							) : submitTakingLong ? (
+						<div className="flex min-w-0 flex-col gap-1 sm:items-end">
+							<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+								<Button
+									type="submit"
+									size="lg"
+									disabled={!canSubmit}
+									aria-describedby={submitBlockingReason ? "deploy-blocking-reason" : undefined}
+									className="w-full shrink-0 sm:w-auto"
+								>
+									{submitting ? (
+										<Spinner data-icon="inline-start" />
+									) : (
+										<Rocket data-icon="inline-start" />
+									)}
+									{submitting ? submitBusyLabel : deployLabel}
+								</Button>
+							</div>
+							{submitTakingLong ? (
 								<p className="max-w-sm text-xs text-muted-foreground sm:text-right" role="status">
 									{submitTakingLongCopy}
 								</p>

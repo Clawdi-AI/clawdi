@@ -365,7 +365,13 @@ export function reconcileDeploymentSnapshots(
 	);
 	const reconciled = incoming.map((deployment) => {
 		const acceptedOperation = previousById.get(deployment.resource.id)?.accepted_operation;
-		if (acceptedOperation?.metadata.verb === "delete") {
+		if (acceptedOperation?.metadata.verb === "delete" && !acceptedOperation.done) {
+			if (
+				deployment.accepted_operation?.name === acceptedOperation.name ||
+				deployment.resource.metadata.generation > acceptedOperation.metadata.targetGeneration
+			) {
+				return deployment;
+			}
 			return { ...deployment, accepted_operation: acceptedOperation };
 		}
 		if (deployment.accepted_operation) return deployment;

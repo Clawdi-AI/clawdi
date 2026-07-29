@@ -334,6 +334,22 @@ describe("deployment mutation settlement", () => {
 		expect(settlementInvalidations).toHaveLength(4);
 	});
 
+	test("describes accepted deletion as background cleanup and replace-navigates detail", () => {
+		const hooksSource = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
+		const homeSource = readFileSync(new URL("./agent-home.tsx", import.meta.url), "utf8");
+		const actionSource = readFileSync(
+			new URL("./deployment-delete-action.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(hooksSource).toContain('toast.message("Agent removed", {');
+		expect(hooksSource).toContain('description: "Cleanup continues in the background."');
+		expect(homeSource).toContain(
+			'onDeleteAccepted={() => router.navigate({ href: "/", replace: true })}',
+		);
+		expect(actionSource).toContain('await router.navigate({ href: "/", replace: true });');
+	});
+
 	test("retires old runtime windows only after restart, access reset, or delete is accepted", () => {
 		const source = readFileSync(new URL("./deployment-hooks.ts", import.meta.url), "utf8");
 
