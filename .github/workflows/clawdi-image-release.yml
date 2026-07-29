@@ -343,15 +343,15 @@ jobs:
           printf '%s\n' "$KAMAL_SECRETS" > .kamal/secrets
           chmod 600 .kamal/secrets
 
+      - name: Install Kamal
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+
       - name: Kamal deploy
         env:
           CLOUDFLARE_ORIGIN_CERT: ${{ secrets.CLOUDFLARE_ORIGIN_CERT }}
           CLOUDFLARE_ORIGIN_KEY: ${{ secrets.CLOUDFLARE_ORIGIN_KEY }}
         run: |
-          docker run --rm \
-            -v "$PWD":/workdir \
-            -v "$SSH_AUTH_SOCK":/ssh-agent -e SSH_AUTH_SOCK=/ssh-agent \
-            -v "$HOME/.ssh/known_hosts":/root/.ssh/known_hosts:ro \
-            -e CLOUDFLARE_ORIGIN_CERT -e CLOUDFLARE_ORIGIN_KEY \
-            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0='*' \
-            ghcr.io/basecamp/kamal:latest deploy -P --version "${{ needs.build.outputs.image_tag }}"
+          gem install kamal -v '~> 2.12' --no-document
+          kamal deploy -P --version "${{ needs.build.outputs.image_tag }}"
