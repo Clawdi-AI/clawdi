@@ -1823,6 +1823,109 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(touchOrderRequests).toEqual([]);
 });
 
+test("hosted Skills unify manifest and read-only Agent projections while MCP stays separate", async ({
+	page,
+}) => {
+	const updateDeploymentRequests: Array<{
+		body: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}> = [];
+	await stubHostedApi(page, {
+		deployments: [railHostedDeployment],
+		cloudAgents: [railHostedCloudAgent],
+		updateDeploymentRequests,
+	});
+	await page.route(`${CLOUD_API}/v1/skills**`, (route) =>
+		fulfillJson(route, {
+			items: [
+				{
+					id: "skill-filesystem-docs",
+					skill_key: "filesystem-docs",
+					name: "Filesystem docs",
+					description: "Projected from the Agent filesystem",
+					version: 3,
+					source: "agent_sync",
+					authority: "agent_sync",
+					source_repo: null,
+					agent_types: ["hermes"],
+					file_count: 2,
+					content_hash: "a".repeat(64),
+					is_active: true,
+					created_at: "2026-07-15T00:00:00Z",
+					updated_at: "2026-07-15T00:00:00Z",
+					project_id: "project-hosted",
+					project_name: "Rail Cloud Agent Project",
+					project_kind: "environment",
+					machine_name: "rail-cloud.local",
+					environment_id: railHostedEnvironmentId,
+				},
+			],
+			total: 1,
+			page: 1,
+			page_size: 200,
+		}),
+	);
+	await page.route(`${CLOUD_API}/v1/agents/${railHostedEnvironmentId}/runtime-observed`, (route) =>
+		fulfillJson(route, {
+			environment: { ...railHostedCloudAgent, hosted_managed: true },
+			desired: {
+				deployment_id: railHostedDeployment.id,
+				instance_id: "instance-rail-cloud",
+				desired_config_generation: 1,
+				desired_source_revision: "b".repeat(64),
+				enabled_runtimes: ["hermes"],
+				has_mcp: true,
+				has_tools: false,
+				managed_skills: [{ id: "clawdi", enabled: true, version: 1 }],
+			},
+			observed: null,
+			health: { status: "ok", reasons: [] },
+			provider_health: [],
+		}),
+	);
+	await page.route(`${CLOUD_API}/v1/agents/${railHostedEnvironmentId}/mcp`, (route) =>
+		fulfillJson(route, {
+			agent_id: railHostedEnvironmentId,
+			deployment_id: railHostedDeployment.id,
+			availability: "available",
+			servers: [
+				{
+					id: "safe-docs",
+					transport: "streamable-http",
+					enabled: true,
+					source: "deployment_manifest",
+				},
+			],
+		}),
+	);
+
+	const detailQuery = `?source=on-clawdi&d=${railHostedDeployment.id}`;
+	await page.goto(`/agents/${railHostedEnvironmentId}/skills${detailQuery}`);
+	const main = page.locator("main");
+	await expect(main.getByText("Clawdi", { exact: true })).toBeVisible();
+	await expect(main.getByText("Manifest", { exact: true })).toBeVisible();
+	await expect(main.getByText("Filesystem docs", { exact: true })).toBeVisible();
+	await expect(main.getByText("Agent synced · Read-only", { exact: true })).toBeVisible();
+	await expect(main.getByText("safe-docs", { exact: true })).toHaveCount(0);
+	await expect(main.getByRole("button", { name: /Send Filesystem docs/ })).toHaveCount(0);
+
+	await main.getByRole("switch", { name: "Enable Clawdi manifest Skill" }).click();
+	await expect.poll(() => updateDeploymentRequests).toHaveLength(1);
+	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toEqual({
+		skills: [{ id: "clawdi", enabled: false, version: 1 }],
+	});
+	expect(updateDeploymentRequests[0]?.idempotencyKey).toBeTruthy();
+	expect(updateDeploymentRequests[0]?.ifMatch).toBe(`"rv_${railHostedDeployment.id}"`);
+
+	await page.getByRole("link", { name: "MCP", exact: true }).click();
+	await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/mcp${detailQuery}`);
+	await expect(main.getByText("safe-docs", { exact: true })).toBeVisible();
+	await expect(main.getByText("Streamable HTTP", { exact: true })).toBeVisible();
+	await expect(main.getByText("Filesystem docs", { exact: true })).toHaveCount(0);
+	await expect(main.getByText(/mcp\.example|secretRef|Authorization/)).toHaveCount(0);
+});
+
 test("transient inventory withholds connected tiles until membership resolves", async ({
 	page,
 }) => {

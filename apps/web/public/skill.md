@@ -125,7 +125,7 @@ Note the "X new, Y updated, Z unchanged" total from the push output — you'll c
 
 ## Verify live sync (recommended)
 
-`clawdi setup` installs the sync daemon by default so changes flow automatically in both directions — local edits show up on the dashboard within a second, dashboard installs land on the laptop within two. Verify it is running:
+`clawdi setup` installs the sync daemon by default. Agent Skill changes flow from the Agent filesystem to their read-only Cloud projection; the dashboard never installs, edits, or removes Agent Skill files. Verify the daemon is running:
 
 ```bash
 clawdi daemon status
