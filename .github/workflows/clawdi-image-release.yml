@@ -324,7 +324,7 @@ jobs:
 
       - name: Kamal deploy (VPS)
         run: |
-          install -m 600 /home/phala/.kamal-secrets/clawdi.env .kamal/secrets
+          install -D -m 600 /home/phala/.kamal-secrets/clawdi.env .kamal/secrets
           docker run --rm \
             -v "$PWD":/workdir \
             -v /home/phala/.ssh:/root/.ssh \
