@@ -36,7 +36,7 @@ The fastest way to try it is hosted Clawdi Cloud. The whole stack is also here: 
 Recommended on macOS and Linux (no Node.js required):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Clawdi-AI/clawdi/main/install.sh | sh
+curl -fsSL https://clawdi.ai/install.sh | sh
 
 clawdi auth login
 clawdi setup
@@ -227,7 +227,7 @@ Clawdi has two intended paths.
 Best for trying it in minutes.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Clawdi-AI/clawdi/main/install.sh | sh
+curl -fsSL https://clawdi.ai/install.sh | sh
 clawdi auth login
 clawdi setup
 ```
