@@ -7518,91 +7518,6 @@ exit 64
 		expect(statSync(legacyImageShim).mode & 0o777).toBe(0o700);
 	});
 
-	it("starts a newly added sidecar once during its first secret authority commit", async () => {
-		const home = join(root, "home", "clawdi");
-		const state = join(root, "var", "lib", "clawdi");
-		const run = join(root, "run", "clawdi");
-		const bin = join(root, "bin");
-		const systemctlLog = join(root, "systemctl-egress-first-commit.log");
-		const previousExitCode = process.exitCode;
-		const previousLog = console.log;
-		const logs: string[] = [];
-		mkdirSync(join(run, "secrets"), { recursive: true });
-		mkdirSync(bin, { recursive: true });
-		seedOpenClawBinary(home);
-		writeFileSync(
-			join(bin, "systemctl"),
-			`#!/usr/bin/env bash
-printf '%s\\n' "$*" >> '${systemctlLog}'
-printf 'ActiveState=active\\nSubState=running\\n'
-`,
-		);
-		chmodSync(join(bin, "systemctl"), 0o700);
-		process.env.HOME = home;
-		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_SERVICE_STATE_DIR = state;
-		process.env.CLAWDI_RUN_DIR = run;
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-		process.env.CLAWDI_SYSTEMD_APPLY = "1";
-		process.env.CLAWDI_SYSTEMCTL_PATH = join(bin, "systemctl");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
-		process.env.CLAWDI_RUNTIME_USER = "root";
-		process.exitCode = undefined;
-		console.log = (value?: unknown) => logs.push(String(value));
-		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
-		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
-		const paths = getRuntimePaths();
-		const mitmproxy = seedMitmproxyCache(paths);
-		const initialSecret = "000000";
-		const initialFetch = mockFetch([
-			{
-				method: "GET",
-				path: "/v1/runtime/manifest",
-				response: () =>
-					hostedRuntimeBundleResponse(
-						hostedEgressSecretRotationPayload(home, mitmproxy, initialSecret),
-					),
-			},
-		]);
-
-		try {
-			await runtimeWatch({ once: true, json: true });
-
-			expect(process.exitCode ?? 0).toBe(0);
-			const event = JSON.parse(logs.at(-1) ?? "{}");
-			expect(event.status).toBe("applied");
-			expect(event.systemdApply).toEqual({
-				applied: true,
-				systemUnitsChanged: [
-					"clawdi-daemon.service",
-					"clawdi-runtime-sidecar.service",
-					"clawdi-runtime-watch.service",
-				],
-				userUnitsChanged: ["openclaw-gateway.service"],
-			});
-			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-			expect(
-				systemctlCalls.filter(
-					(call) =>
-						call ===
-						"start clawdi-daemon.service clawdi-runtime-sidecar.service clawdi-runtime-watch.service",
-				),
-			).toHaveLength(1);
-			expect(
-				systemctlCalls.filter((call) => call === "--user enable --now openclaw-gateway.service"),
-			).toHaveLength(1);
-			expect(systemctlCalls.some((call) => call.includes("restart"))).toBe(false);
-			expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toMatch(/^[a-f0-9]{64}$/);
-			expect(
-				JSON.parse(readFileSync(join(run, "secrets", "egress-secrets.json"), "utf-8")),
-			).toMatchObject({ "secret://provider.default.apiKey": initialSecret });
-		} finally {
-			initialFetch.restore();
-			console.log = previousLog;
-			process.exitCode = previousExitCode;
-		}
-	});
-
 	it("keeps public sidecar artifacts stable while forcing private egress secret restarts", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
@@ -7669,42 +7584,26 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				},
 			]);
 			try {
-				const initialLoad = await loadRemoteRuntimeManifest(paths);
-				if (!("manifest" in initialLoad) || "notModified" in initialLoad) {
-					throw new Error("expected initial egress rotation manifest load");
-				}
-				const appliedLoad = applyRuntimeBundleChannelsToManifestLoad(initialLoad);
-				let committedRevision: string | undefined;
-				const initialConvergence = convergeRuntimeManifest(appliedLoad, paths, {
-					commitAuthority: (_convergence, authority) => {
-						committedRevision = authority.egressSidecarSecretRevision;
-					},
-					systemdApply: {
-						activate: () => ({
-							applied: true,
-							systemUnitsChanged: [],
-							userUnitsChanged: [],
-						}),
-						rollback: () => {},
-					},
-				});
-				expect(initialConvergence.installErrors).toEqual([]);
-				expect(committedRevision).toMatch(/^[a-f0-9]{64}$/);
-				if (!appliedLoad.sourceRevision) {
-					throw new Error("expected initial egress source revision");
-				}
-				commitRuntimeAppliedState({
-					load: appliedLoad,
-					paths,
-					etag: initialLoad.etag ?? '"egress-secret-revision-a"',
-					sourceRevision: appliedLoad.sourceRevision,
-					convergence: initialConvergence,
-					applyIdentity: null,
-					egressSidecarSecretRevision: committedRevision,
-				});
+				await runtimeWatch({ once: true, json: true });
 			} finally {
 				initialFetch.restore();
 			}
+			expect(process.exitCode ?? 0).toBe(0);
+			expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("applied");
+			const initialSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(
+				initialSystemctlCalls.filter(
+					(call) =>
+						call ===
+						"start clawdi-daemon.service clawdi-runtime-sidecar.service clawdi-runtime-watch.service",
+				),
+			).toHaveLength(1);
+			expect(
+				initialSystemctlCalls.filter(
+					(call) => call === "--user enable --now openclaw-gateway.service",
+				),
+			).toHaveLength(1);
+			expect(initialSystemctlCalls.some((call) => call.includes("restart"))).toBe(false);
 
 			const egressSecretFile = join(run, "secrets", "egress-secrets.json");
 			const initialSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
