@@ -457,7 +457,7 @@ describe("Vercel route boundaries", () => {
 		};
 		expect(config.redirects).toContainEqual({
 			source: "/install.sh",
-			destination: "https://github.com/Clawdi-AI/clawdi/releases/latest/download/install.sh",
+			destination: "https://raw.githubusercontent.com/Clawdi-AI/clawdi/main/install.sh",
 			permanent: false,
 		});
 		expect(config.rewrites).toContainEqual({
