@@ -234,3 +234,34 @@ ignored local overlay with the real destination and storage values.
 The API role runs `alembic upgrade head` before Uvicorn starts. Keep migrations
 backward-compatible and short enough for the API health-check startup budget, or
 run long data migrations manually before deploying the image.
+
+### GitHub production boundary
+
+Image publication and production deployment are separate jobs. The publish job
+has GHCR write access but no production environment or Coolify secrets. A manual
+production deploy fails unless the workflow was dispatched from `main` and the
+published ref resolves to that run's current `main` commit. The automatic path
+accepts only a successful same-repository `push` run of `Backend CI` on `main`.
+Production deploy and audit jobs reference the dedicated `production`
+environment and can call only the repository's Coolify deploy/audit helpers.
+Administrators must configure that environment as the protected boundary; the
+workflow reference alone does not prove that protection rules exist. These jobs
+must not carry tenant, admin, or other business-control-plane credentials.
+
+Repository administrators must complete these GitHub-side controls separately
+from the code change:
+
+1. Create or update the `production` environment. Restrict deployment branches
+   to `main`, require reviewers, and prevent self-review when the repository plan
+   supports it.
+2. Rotate the Coolify API token, store the replacement as the environment secret
+   `COOLIFY_TOKEN`, and store `COOLIFY_API_URL` in the same environment. Remove
+   repository-level copies after an environment-protected run succeeds, and
+   revoke the replaced token at its issuer.
+3. Inventory repository and environment secrets, then delete every obsolete
+   production deploy or admin API secret that this workflow no longer
+   references. Revoke or rotate the underlying credentials; deleting only the
+   GitHub secret is not sufficient.
+4. Keep `CLAWDI_COOLIFY_AUTO_DEPLOY` disabled until environment protection and
+   secret migration are complete. It may then be enabled as a repository
+   variable for same-repository successful `main` pushes only.

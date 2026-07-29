@@ -116,10 +116,12 @@ jobs:
         run: uv run deptry app
       - name: Generated OpenAPI client is current
         run: uv run python scripts/check_generated_api.py
-      - name: Coolify deploy contract sanity
+      - name: Coolify deploy and release contract sanity
         run: |
           python3 -m py_compile ../infra/deploy/coolify/*.py
           python3 -m json.tool ../infra/deploy/coolify/production-stack.json >/dev/null
+          uv run pytest -q --confcutdir=tests/workflow_contracts \
+            tests/workflow_contracts/test_image_release_workflow_contract.py
 
   test:
     needs: changes
