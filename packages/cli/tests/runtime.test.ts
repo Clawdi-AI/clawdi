@@ -34,7 +34,10 @@ import {
 	applyRuntimeBundleChannelsToManifestLoad,
 	applyRuntimeChannelsToManifestLoad,
 } from "../src/runtime/channels";
-import { applyRuntimeCliDesiredState } from "../src/runtime/cli-update";
+import {
+	applyRuntimeCliDesiredState,
+	rollbackPendingRuntimeCliUpgrade,
+} from "../src/runtime/cli-update";
 import {
 	deniedCommandReason,
 	evaluateHostPolicyForCommand,
@@ -8675,7 +8678,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.cliUpdate.status).toBe("installed");
 			expect(event.cliRollback.status).toBe("rolled_back");
 			expect(event.cliRollback.version).toBe("0.13.5-beta.0");
-			expect(event.selfReexec).toBe(false);
+			expect(event.selfReexec).toBe(true);
 			expect(readlinkSync(paths.cliManagedBin)).toBe(oldTarget);
 			const upgradeState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
 			expect(upgradeState.pendingUpgrade).toBeNull();
@@ -9228,6 +9231,132 @@ chmod +x "$prefix/bin/clawdi"
 			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
 			expect(status.packageSpec).toBe("clawdi@0.13.6-beta.0");
 			expect(status.activeTarget).toBe(readlinkSync(paths.cliManagedBin));
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("preserves the real last-good CLI across a status-missing rollback and later upgrade", () => {
+		const home = join(root, "home-cli-rollback-lifecycle", "clawdi");
+		const state = join(root, "state-cli-rollback-lifecycle");
+		const run = join(root, "run-cli-rollback-lifecycle");
+		const bin = join(root, "bin-cli-rollback-lifecycle");
+		const previousPath = process.env.PATH;
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(
+			join(bin, "npm"),
+			`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+package=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  case "$1" in clawdi@*) package="$1" ;; esac
+  shift
+done
+version="\${package#clawdi@}"
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<SH
+#!/usr/bin/env bash
+if [ "\\\${1:-}" = "--version" ]; then
+  echo "$version"
+  exit 0
+fi
+if [ "\\\${1:-} \\\${2:-} \\\${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+exit 64
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+		);
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		const paths = getRuntimePaths();
+		const manifestIdentity = {
+			generation: 1,
+			etag: '"etag-cli-rollback-lifecycle"',
+			previouslyApplied: true,
+		};
+		const manifestFor = (version: string): RuntimeManifest => ({
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_cli_rollback_lifecycle",
+			environmentId: "env_cli_rollback_lifecycle",
+			instanceId: "iid_cli_rollback_lifecycle",
+			generation: 1,
+			issuedAt: "2026-07-29T00:00:00Z",
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			clawdiCli: { source: "npm:clawdi", packageSpec: `clawdi@${version}` },
+			runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+			recovery: {},
+		});
+
+		try {
+			const first = applyRuntimeCliDesiredState(manifestFor("0.13.20-beta.0"), paths, {
+				manifestIdentity,
+			});
+			if (!first.activeTarget) throw new Error("first CLI install has no active target");
+			const lastGoodTarget = first.activeTarget;
+			const lastGoodPrefix = first.npmPrefix;
+			const firstState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+			expect(firstState.pendingUpgrade.rollbackEligible).toBe(false);
+
+			rmSync(paths.cliBootstrapStatus, { force: true });
+			const failed = applyRuntimeCliDesiredState(manifestFor("0.13.20-beta.1"), paths, {
+				manifestIdentity,
+			});
+			if (!failed.activeTarget) throw new Error("failed CLI install has no active target");
+			const failedTarget = failed.activeTarget;
+			const failedState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+			expect(failedState.pendingUpgrade).toMatchObject({
+				rollbackEligible: true,
+				previousActiveTarget: lastGoodTarget,
+				previousNpmPrefix: lastGoodPrefix,
+				previousVersion: "0.13.20-beta.0",
+			});
+
+			const firstRollback = rollbackPendingRuntimeCliUpgrade(
+				paths,
+				"injected first converge failure",
+				manifestIdentity,
+			);
+			expect(firstRollback.status).toBe("rolled_back");
+			expect(readlinkSync(paths.cliManagedBin)).toBe(lastGoodTarget);
+			expect(existsSync(lastGoodPrefix)).toBe(true);
+			expect(existsSync(dirname(dirname(failedTarget)))).toBe(false);
+			expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"))).toMatchObject({
+				packageSpec: "clawdi@0.13.20-beta.0",
+				npmPrefix: lastGoodPrefix,
+				activeTarget: lastGoodTarget,
+				version: "0.13.20-beta.0",
+			});
+
+			applyRuntimeCliDesiredState(manifestFor("0.13.20-beta.2"), paths, {
+				manifestIdentity,
+			});
+			const secondState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+			expect(secondState.pendingUpgrade.previousActiveTarget).toBe(lastGoodTarget);
+			expect(secondState.pendingUpgrade.previousActiveTarget).not.toBe(failedTarget);
+			expect(existsSync(lastGoodPrefix)).toBe(true);
+
+			const secondRollback = rollbackPendingRuntimeCliUpgrade(
+				paths,
+				"injected second converge failure",
+				manifestIdentity,
+			);
+			expect(secondRollback.status).toBe("rolled_back");
+			expect(readlinkSync(paths.cliManagedBin)).toBe(lastGoodTarget);
+			expect(existsSync(lastGoodPrefix)).toBe(true);
 		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;

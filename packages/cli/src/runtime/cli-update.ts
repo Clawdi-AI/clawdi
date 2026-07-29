@@ -47,6 +47,13 @@ interface RuntimeCliBootstrapStatus {
 	version?: string;
 }
 
+type RuntimeCliInstallIdentity = Required<
+	Pick<
+		RuntimeCliBootstrapStatus,
+		"packageSpec" | "registry" | "npmPrefix" | "activeTarget" | "version"
+	>
+>;
+
 interface RuntimeCliBadVersion {
 	packageSpec: string;
 	registry: string | null;
@@ -159,10 +166,20 @@ export function applyRuntimeCliDesiredState(
 		});
 	}
 
-	const previousActiveTarget = current?.activeTarget ?? activeLinkTarget(paths.cliManagedBin);
-	const previousActivePrefix = previousActiveTarget
-		? prefixForActiveTarget(previousActiveTarget)
-		: null;
+	const previousIdentity = verifiedActiveCliIdentity(paths, current);
+	if (
+		previousIdentity &&
+		(current?.status !== "installed" ||
+			current.source !== "npm" ||
+			current.packageSpec !== previousIdentity.packageSpec ||
+			(current.registry ?? null) !== previousIdentity.registry ||
+			current.npmPrefix !== previousIdentity.npmPrefix ||
+			current.activePath !== paths.cliManagedBin ||
+			current.activeTarget !== previousIdentity.activeTarget ||
+			current.version !== previousIdentity.version)
+	) {
+		writeCliBootstrapStatus(paths, previousIdentity);
+	}
 	const installed = installCliPackage(paths, packageSpec, registry);
 	swapActiveCli(paths.cliManagedBin, installed.activeTarget);
 	removeLegacyManagedCliLink(paths, installed.activeTarget);
@@ -177,11 +194,10 @@ export function applyRuntimeCliDesiredState(
 		packageSpec,
 		registry,
 		installed,
-		previousStatus: current,
-		previousActiveTarget,
+		previousIdentity,
 		manifestIdentity: opts.manifestIdentity,
 	});
-	pruneCliPackagePrefixes(paths, [installed.npmPrefix, previousActivePrefix]);
+	pruneCliPackagePrefixes(paths, [installed.npmPrefix, previousIdentity?.npmPrefix ?? null]);
 	return baseResult("installed", paths, {
 		packageSpec,
 		registry,
@@ -404,10 +420,60 @@ function isCurrentCliInstall(
 	if (status.activePath !== paths.cliManagedBin) return false;
 	if (!status.activeTarget) return false;
 	if (!isManagedCliTarget(paths, status.activeTarget)) return false;
+	if (activeLinkTarget(paths.cliManagedBin) !== status.activeTarget) return false;
+	if (
+		!status.npmPrefix ||
+		resolve(status.npmPrefix) !== resolve(prefixForActiveTarget(status.activeTarget))
+	) {
+		return false;
+	}
 	if (!isExecutable(status.activeTarget)) return false;
+	if (!status.version) return false;
 	const exactVersion = exactNpmPackageVersion(packageSpec);
 	if (exactVersion && status.version !== exactVersion) return false;
 	return isExecutable(paths.cliManagedBin);
+}
+
+function verifiedActiveCliIdentity(
+	paths: RuntimePaths,
+	status: RuntimeCliBootstrapStatus | null,
+): RuntimeCliInstallIdentity | null {
+	const activeTarget = activeLinkTarget(paths.cliManagedBin);
+	if (!activeTarget || !isManagedCliTarget(paths, activeTarget)) return null;
+	const npmPrefix = prefixForActiveTarget(activeTarget);
+	if (!isManagedCliPrefix(paths, npmPrefix)) return null;
+	if (!isExecutable(activeTarget) || !isExecutable(paths.cliManagedBin)) return null;
+
+	try {
+		hardenManagedCliInstall(paths, activeTarget, npmPrefix);
+		const version = smokeCliVersion(activeTarget);
+		const inferredPackageSpec = `clawdi@${version}`;
+		if (!hostedCliPackageSpecSchema.safeParse(inferredPackageSpec).success) return null;
+		const statusPackageSpec = status?.packageSpec;
+		const statusRegistry = status?.registry ?? null;
+		const exactStatusVersion = statusPackageSpec ? exactNpmPackageVersion(statusPackageSpec) : null;
+		const statusMatches =
+			status?.status === "installed" &&
+			status.source === "npm" &&
+			status.activePath === paths.cliManagedBin &&
+			status.activeTarget === activeTarget &&
+			status.npmPrefix !== undefined &&
+			resolve(status.npmPrefix) === resolve(npmPrefix) &&
+			status.version === version &&
+			statusPackageSpec !== undefined &&
+			hostedFixtureCliPackageSpecSchema.safeParse(statusPackageSpec).success &&
+			(exactStatusVersion === null || exactStatusVersion === version) &&
+			(statusRegistry === null || statusRegistry === "https://registry.npmjs.org");
+		return {
+			packageSpec: statusMatches && statusPackageSpec ? statusPackageSpec : inferredPackageSpec,
+			registry: statusMatches ? statusRegistry : null,
+			npmPrefix,
+			activeTarget,
+			version,
+		};
+	} catch {
+		return null;
+	}
 }
 
 function recoverCurrentCliInstallFromActiveLink(
@@ -547,7 +613,7 @@ function prefixForActiveTarget(activeTarget: string): string {
 
 function activeLinkTarget(activePath: string): string | null {
 	try {
-		return readlinkSync(activePath);
+		return resolve(dirname(activePath), readlinkSync(activePath));
 	} catch {
 		return null;
 	}
@@ -723,28 +789,33 @@ export function rollbackPendingRuntimeCliUpgrade(
 			previousActiveTarget: pending.previousActiveTarget,
 		};
 	}
-	if (!pending.previousActiveTarget || !isExecutable(pending.previousActiveTarget)) {
+	const previousIdentity = verifiedPendingRollbackIdentity(paths, pending);
+	if (!previousIdentity) {
 		return {
 			status: "error",
 			version: pending.version,
 			previousVersion: pending.previousVersion,
 			activeTarget: pending.activeTarget,
 			previousActiveTarget: pending.previousActiveTarget,
-			error: "previous clawdi CLI target is missing or not executable",
+			error: "previous clawdi CLI identity is missing, inconsistent, or not executable",
+		};
+	}
+	if (activeLinkTarget(paths.cliManagedBin) !== pending.activeTarget) {
+		return {
+			status: "error",
+			version: pending.version,
+			previousVersion: pending.previousVersion,
+			activeTarget: pending.activeTarget,
+			previousActiveTarget: pending.previousActiveTarget,
+			error: "pending clawdi CLI target is no longer active",
 		};
 	}
 	try {
-		swapActiveCli(paths.cliManagedBin, pending.previousActiveTarget);
-		if (pending.previousStatus?.packageSpec && pending.previousStatus.activeTarget) {
-			writeCliBootstrapStatus(paths, {
-				packageSpec: pending.previousStatus.packageSpec,
-				registry: pending.previousStatus.registry ?? null,
-				npmPrefix:
-					pending.previousStatus.npmPrefix ?? prefixForActiveTarget(pending.previousActiveTarget),
-				activeTarget: pending.previousActiveTarget,
-				version: pending.previousStatus.version ?? pending.previousVersion ?? "unknown",
-			});
+		swapActiveCli(paths.cliManagedBin, previousIdentity.activeTarget);
+		if (activeLinkTarget(paths.cliManagedBin) !== previousIdentity.activeTarget) {
+			throw new Error("restored clawdi CLI link does not match the verified previous target");
 		}
+		writeCliBootstrapStatus(paths, previousIdentity);
 		const nextState = normalizeCliUpgradeState(state);
 		nextState.pendingUpgrade = null;
 		nextState.badVersions = upsertBadVersion(nextState.badVersions ?? [], {
@@ -755,7 +826,7 @@ export function rollbackPendingRuntimeCliUpgrade(
 			markedAt: new Date().toISOString(),
 		});
 		writeCliUpgradeState(paths, nextState);
-		pruneCliPackagePrefixes(paths, [pending.previousNpmPrefix]);
+		pruneCliPackagePrefixes(paths, [previousIdentity.npmPrefix]);
 		return {
 			status: "rolled_back",
 			version: pending.version,
@@ -797,30 +868,81 @@ function markPendingCliUpgrade(
 		packageSpec: string;
 		registry: string | null;
 		installed: { npmPrefix: string; activeTarget: string; version: string };
-		previousStatus: RuntimeCliBootstrapStatus | null;
-		previousActiveTarget: string | null;
+		previousIdentity: RuntimeCliInstallIdentity | null;
 		manifestIdentity?: RuntimeCliManifestIdentity;
 	},
 ): void {
 	const state = normalizeCliUpgradeState(readCliUpgradeState(paths));
+	const previousStatus = input.previousIdentity
+		? {
+				status: "installed",
+				source: "npm",
+				...input.previousIdentity,
+				activePath: paths.cliManagedBin,
+			}
+		: null;
 	state.pendingUpgrade = {
 		packageSpec: input.packageSpec,
 		registry: input.registry,
 		version: input.installed.version,
 		npmPrefix: input.installed.npmPrefix,
 		activeTarget: input.installed.activeTarget,
-		previousStatus: input.previousStatus,
-		previousActiveTarget: input.previousActiveTarget,
-		previousNpmPrefix: input.previousActiveTarget
-			? prefixForActiveTarget(input.previousActiveTarget)
-			: null,
-		previousVersion: input.previousStatus?.version ?? null,
+		previousStatus,
+		previousActiveTarget: input.previousIdentity?.activeTarget ?? null,
+		previousNpmPrefix: input.previousIdentity?.npmPrefix ?? null,
+		previousVersion: input.previousIdentity?.version ?? null,
 		manifestGeneration: input.manifestIdentity?.generation ?? null,
 		manifestEtag: input.manifestIdentity?.etag ?? null,
-		rollbackEligible: input.manifestIdentity?.previouslyApplied === true,
+		rollbackEligible:
+			input.manifestIdentity?.previouslyApplied === true && input.previousIdentity !== null,
 		installedAt: new Date().toISOString(),
 	};
 	writeCliUpgradeState(paths, state);
+}
+
+function verifiedPendingRollbackIdentity(
+	paths: RuntimePaths,
+	pending: RuntimeCliPendingUpgrade,
+): RuntimeCliInstallIdentity | null {
+	const status = pending.previousStatus;
+	const activeTarget = pending.previousActiveTarget;
+	const npmPrefix = pending.previousNpmPrefix;
+	const version = pending.previousVersion;
+	if (
+		!status ||
+		!activeTarget ||
+		!npmPrefix ||
+		!version ||
+		status.status !== "installed" ||
+		status.source !== "npm" ||
+		status.activePath !== paths.cliManagedBin ||
+		status.activeTarget !== activeTarget ||
+		status.npmPrefix !== npmPrefix ||
+		status.version !== version ||
+		!status.packageSpec ||
+		!hostedFixtureCliPackageSpecSchema.safeParse(status.packageSpec).success ||
+		(status.registry != null && status.registry !== "https://registry.npmjs.org") ||
+		!isManagedCliTarget(paths, activeTarget) ||
+		!isManagedCliPrefix(paths, npmPrefix) ||
+		resolve(prefixForActiveTarget(activeTarget)) !== resolve(npmPrefix) ||
+		!isExecutable(activeTarget)
+	) {
+		return null;
+	}
+	const exactVersion = exactNpmPackageVersion(status.packageSpec);
+	if (exactVersion && exactVersion !== version) return null;
+	try {
+		if (smokeCliVersion(activeTarget) !== version) return null;
+		return {
+			packageSpec: status.packageSpec,
+			registry: status.registry ?? null,
+			npmPrefix,
+			activeTarget,
+			version,
+		};
+	} catch {
+		return null;
+	}
 }
 
 function isBadCliVersion(

@@ -244,8 +244,27 @@ describe("full control RPC handler surface", () => {
 		expect(methodsResult?.methods).toContain("sync.pull");
 		expect(methodsResult?.methods).toContain("vault.resolve");
 		expect(methodsResult?.methods).toContain("auth.login");
+		expect(methodsResult?.methods).toContain("update.check");
 		expect(methodsResult?.methods).toContain("update.install");
 		expect(methodsResult?.methods).toContain("operation.status");
+	});
+
+	it("removes local CLI update RPCs when hosted policy owns updates", async () => {
+		const previousRuntimeMode = process.env.CLAWDI_RUNTIME_MODE;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		try {
+			const { createControlRpcHandlers } = await import("./serve");
+			const handlers = createControlRpcHandlers();
+			const methodsResult = (await handlers.methods?.({})) as { methods?: string[] } | undefined;
+
+			expect(methodsResult?.methods).not.toContain("update.check");
+			expect(methodsResult?.methods).not.toContain("update.install");
+			expect(handlers["update.check"]).toBeUndefined();
+			expect(handlers["update.install"]).toBeUndefined();
+		} finally {
+			if (previousRuntimeMode === undefined) delete process.env.CLAWDI_RUNTIME_MODE;
+			else process.env.CLAWDI_RUNTIME_MODE = previousRuntimeMode;
+		}
 	});
 
 	it("requires an explicit cwd, project, or all=true for sync.push", async () => {
