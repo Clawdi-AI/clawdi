@@ -22,10 +22,6 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbSegmentTitle, useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { agentDisplayName, cleanMachineName } from "@/components/dashboard/agent-label";
 import {
-	AGENT_PROJECT_SKILLS_REFRESH_POLICY,
-	agentSkillForegroundRefetchInterval,
-} from "@/components/dashboard/agent-skills-query";
-import {
 	DetailMeta,
 	DetailNotFound,
 	DetailPanel,
@@ -36,7 +32,7 @@ import { EmptyState } from "@/components/empty-state";
 import { Markdown } from "@/components/markdown";
 import { Stat } from "@/components/meta/stat";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
-import { ProjectIdentity } from "@/components/projects/project-metadata";
+import { isProjectOwner, ProjectIdentity } from "@/components/projects/project-metadata";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,13 +47,11 @@ import {
 import { ApiError, unwrap, useApi } from "@/lib/api";
 import { isApiNotFoundError } from "@/lib/api-errors";
 import { decodeResourceRouteParam, projectResourceHref } from "@/lib/project-resource-model";
-import { skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage, relativeTime } from "@/lib/utils";
 import {
 	removeDeletedSkillQueries,
 	skillDetailQueryKey,
 	skillDetailQueryPrefix,
-	skillDetailViewState,
 } from "@/pages/dashboard/skills/skill-query-cache";
 
 // Strip the leading `---\n...\n---` YAML frontmatter so the markdown
@@ -118,11 +112,7 @@ export function SkillDetailContent({
 		error,
 		refetch,
 	} = useQuery({
-		queryKey: skillDetailQueryKey(
-			skillKey,
-			selectedProjectId,
-			agentId ? `agent:${agentId}` : "cloud",
-		),
+		queryKey: skillDetailQueryKey(skillKey, selectedProjectId),
 		// An empty key would interpolate to `GET /v1/skills/`, which the
 		// backend's `{skill_key:path}` catch-all rejects with a 422.
 		// Nothing useful can load without a key, so don't fire at all.
@@ -139,12 +129,6 @@ export function SkillDetailContent({
 				await api.GET("/v1/skills/{skill_key}", { params: { path: { skill_key: skillKey } } }),
 			);
 		},
-		refetchInterval: (query) =>
-			agentSkillForegroundRefetchInterval(
-				Boolean(agentId) && !isApiNotFoundError(query.state.error),
-			),
-		refetchIntervalInBackground: AGENT_PROJECT_SKILLS_REFRESH_POLICY.refetchIntervalInBackground,
-		refetchOnWindowFocus: AGENT_PROJECT_SKILLS_REFRESH_POLICY.refetchOnWindowFocus,
 	});
 
 	const agentEnvironmentId = agentId ?? skill?.environment_id ?? null;
@@ -179,29 +163,26 @@ export function SkillDetailContent({
 	const targetProjectId = skill?.project_id ?? defaultProject?.project_id ?? null;
 	const isProjectReady = !!targetProjectId;
 
-	// Persisted authority and durable Project kind jointly control every
-	// browser mutation. In particular, environment-kind Projects stay
-	// read-only even after Agent deletion clears origin_environment_id.
-	const { data: projects } = useQuery({
+	// Shared-project skills are read-only from this viewer's perspective:
+	// hide Edit/Uninstall (would 403 from the backend), surface a
+	// "shared" badge with the owner's project as the source. Re-uses the
+	// same is_owner cross-reference pattern as /vault and /skills.
+	const { data: ownedProjects } = useQuery({
 		queryKey: ["projects"],
 		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 	});
-	const skillProject = useMemo(
+	const ownedProjectIds = useMemo(
 		() =>
-			skill?.project_id
-				? (projects?.find((project) => project.id === skill.project_id) ?? null)
-				: null,
-		[projects, skill?.project_id],
+			new Set(
+				(ownedProjects ?? [])
+					.filter((project) => isProjectOwner(project))
+					.map((project) => project.id),
+			),
+		[ownedProjects],
 	);
-	const capabilities = skill
-		? skillCapabilities(skill, projects === undefined ? undefined : skillProject)
-		: null;
-	const accessKnown =
-		!skill?.project_id ||
-		skill.authority === "agent_sync" ||
-		skill.project_kind === "environment" ||
-		projects !== undefined;
-	const isReadOnly = capabilities ? !capabilities.canUpdate : true;
+	const ownershipKnown = !skill?.project_id || ownedProjects !== undefined;
+	const isReadOnly =
+		ownershipKnown && !!skill?.project_id && !ownedProjectIds.has(skill.project_id);
 
 	const [isEditing, setIsEditing] = useState(false);
 	const [draft, setDraft] = useState("");
@@ -216,10 +197,6 @@ export function SkillDetailContent({
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 
 	const startEdit = () => {
-		if (!capabilities?.canUpdate) {
-			toast.error("This Skill is read-only in Cloud");
-			return;
-		}
 		if (!skill?.content) {
 			toast.error("No Skill Content Yet");
 			return;
@@ -244,13 +221,12 @@ export function SkillDetailContent({
 	const saveEdit = useMutation({
 		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("No project available for this skill");
-			if (!capabilities?.canUpdate) throw new Error("This Skill is read-only in Cloud");
 			// `content_hash` here is an If-Match PRECONDITION — the
 			// hash the editor saw when this page loaded, NOT the
 			// new content's hash. The backend route accepts it as
 			// `expected_content_hash` and 412s if the row's current
-			// hash differs (a sibling tab or Cloud upload landed in
-			// the meantime). Without this, two
+			// hash differs (a sibling tab / daemon / dashboard
+			// edit landed in the meantime). Without this, two
 			// concurrent edits last-write-win and one user's
 			// change gets silently overwritten. The new tar's
 			// hash is still computed server-side from the bytes,
@@ -265,7 +241,9 @@ export function SkillDetailContent({
 		},
 		onSuccess: () => {
 			toast.success("Skill Saved", {
-				description: "The Cloud-owned Skill content was updated.",
+				description: skillAgentLabel
+					? `${skillAgentLabel} picks up the new version within a couple seconds via sync.`
+					: "The change applies on this agent within a couple seconds via sync.",
 			});
 			setIsEditing(false);
 			setDraft("");
@@ -295,7 +273,6 @@ export function SkillDetailContent({
 	const uninstall = useMutation({
 		mutationFn: async () => {
 			if (!targetProjectId) throw new Error("Project not loaded yet");
-			if (!capabilities?.canDelete) throw new Error("This Skill is read-only in Cloud");
 			return unwrap(
 				await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 					params: { path: { project_id: targetProjectId, skill_key: skillKey } },
@@ -315,12 +292,12 @@ export function SkillDetailContent({
 	});
 
 	const onUninstall = () => {
-		if (!isProjectReady || !accessKnown) {
+		if (!isProjectReady || !ownershipKnown) {
 			toast.error("Project Access Unavailable", { description: "Try again in a moment." });
 			return;
 		}
-		if (!capabilities?.canDelete) {
-			toast.error("This Skill is read-only in Cloud");
+		if (isReadOnly) {
+			toast.error("Shared Skills Are Read-only");
 			return;
 		}
 		uninstall.mutate();
@@ -334,20 +311,21 @@ export function SkillDetailContent({
 			? `in ${sourceProjectName}`
 			: null;
 	const skillBody = useMemo(() => stripFrontmatter(skill?.content ?? "").trim(), [skill?.content]);
-	const viewState = skillDetailViewState({
-		skillKey,
-		error,
-		hasSkill: Boolean(skill),
-		isLoading,
-	});
+	const skillProject = useMemo(
+		() =>
+			skill?.project_id
+				? (ownedProjects?.find((project) => project.id === skill.project_id) ?? null)
+				: null,
+		[ownedProjects, skill?.project_id],
+	);
 
 	return (
 		<div className={cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-5 px-4 lg:px-6")}>
-			{viewState === "missing-key" ? (
+			{!skillKey ? (
 				<DetailNotFound title="Skill not found" message="The URL is missing a skill key." />
-			) : viewState === "not-found" ? (
+			) : error && isApiNotFoundError(error) ? (
 				<DetailNotFound title="Skill not found" message={errorMessage(error)} />
-			) : viewState === "error" ? (
+			) : error ? (
 				<ApiErrorPanel
 					error={error}
 					onRetry={() => {
@@ -355,12 +333,12 @@ export function SkillDetailContent({
 					}}
 					title="Couldn't load skill"
 				/>
-			) : viewState === "loading" ? (
+			) : isLoading ? (
 				<div className="space-y-3 py-2">
 					<Skeleton className="h-6 w-48" />
 					<Skeleton className="h-4 w-64" />
 				</div>
-			) : viewState === "detail" && skill ? (
+			) : skill ? (
 				<>
 					<div className="space-y-2">
 						<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -372,12 +350,16 @@ export function SkillDetailContent({
 								<DetailTitle className="truncate">{skill.name}</DetailTitle>
 							</div>
 							<div className="flex w-full shrink-0 flex-wrap gap-2 sm:w-auto sm:justify-end">
-								{!accessKnown ? null : isReadOnly ? (
+								{!ownershipKnown ? null : isReadOnly ? (
 									<Badge
 										variant="secondary"
-										title="Cloud mutations are disabled for this Skill's authority or Project."
+										title={
+											sourceProjectName
+												? `Shared from "${sourceProjectName}". Viewer access is read-only.`
+												: "Shared from another Project. Viewer access is read-only."
+										}
 									>
-										{capabilities?.badgeLabel ?? "Read-only"}
+										Shared · Read-only
 									</Badge>
 								) : !isEditing ? (
 									<>

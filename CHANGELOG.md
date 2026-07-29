@@ -10,9 +10,9 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
-## Clawdi CLI v0.13.12
+## Clawdi CLI v0.13.13
 
-Package: `clawdi@0.13.12`
+Package: `clawdi@0.13.13`
 
 ### Changed
 
@@ -28,6 +28,13 @@ Package: `clawdi@0.13.12`
   inventory.
 - Mixed-version Skill sync now pauses safely instead of overwriting or deleting
   Agent-owned files.
+
+## Clawdi CLI v0.13.12
+
+Package: `clawdi@0.13.12`
+
+### Fixed
+
 - Made Hosted runtime reconciliation recover live systemd drift without
   redundant restarts, reject stale generations, verify managed installer state,
   and keep rollback snapshots within root-controlled paths.

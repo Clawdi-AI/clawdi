@@ -22,6 +22,7 @@ import { Suspense, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { BulkActionBar } from "@/components/bulk-action-bar";
+import { agentIdentity } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { FilterChip, filterChipClass } from "@/components/filter-chip";
 import { ListToolbar } from "@/components/list-toolbar";
@@ -37,6 +38,7 @@ import { SectionLabel } from "@/components/section-label";
 import { ShareProjectDialog } from "@/components/sharing/share-project-dialog";
 import { SendSkillDialog } from "@/components/skills/send-skill-dialog";
 import { SkillCardGrid, skillSelectionKey } from "@/components/skills/skill-card";
+import { resolveSkillProjectAccess } from "@/components/skills/skill-columns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -56,7 +58,6 @@ import { fetchAllPages } from "@/lib/api-pagination";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
 import { getProjectResourceDefinition } from "@/lib/project-resource-model";
-import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -66,6 +67,7 @@ type SkillSummary = components["schemas"]["SkillSummaryResponse"];
 // bar + featured tiles to add new ones. Agent pages deep-link here
 // through their Agent Project.
 
+const FALLBACK_TARGET_LABEL = "Active agent";
 const SKILLS_RESOURCE = getProjectResourceDefinition("skills");
 
 // Wrap the URL-state body in Suspense so the shell remains stable while the
@@ -111,12 +113,15 @@ function SkillsPageInner() {
 		() => [...(projects ?? [])].filter((project) => project.id).sort(compareProjectsForUse),
 		[projects],
 	);
-	const projectsById = useMemo(
-		() => new Map((projects ?? []).map((project) => [project.id, project])),
+	const writableProjectIds = useMemo(
+		() =>
+			projects
+				? new Set(
+						projects.filter((project) => isProjectOwner(project)).map((project) => project.id),
+					)
+				: null,
 		[projects],
 	);
-	const capabilitiesForSkill = (skill: SkillSummary) =>
-		skillCapabilities(skill, skill.project_id ? projectsById.get(skill.project_id) : undefined);
 
 	const { data: envs } = useQuery({
 		queryKey: ["agents"],
@@ -211,9 +216,23 @@ function SkillsPageInner() {
 	);
 
 	const isProjectReady = !!targetProjectId && !!targetProject && !isStaleProject && !isStaleTarget;
-	const canWriteTargetProject = isProjectReady && isBrowserWritableSkillProject(targetProject);
+	const canWriteTargetProject = !!targetProject && isProjectReady && isProjectOwner(targetProject);
 	const targetProjectLabel = targetProject ? displayProjectName(targetProject) : "Project";
 	const overflowActive = !!targetProject && overflowProjects.some((p) => p.id === targetProject.id);
+	const targetEnv = envs?.find((e) => e.default_project_id === targetProjectId);
+
+	const targetAgentLabel = useMemo(() => {
+		if (!envs || envs.length === 0 || !targetEnv) return FALLBACK_TARGET_LABEL;
+		const identity = agentIdentity(targetEnv);
+		const baseName = identity.primaryLabel || FALLBACK_TARGET_LABEL;
+		const collidesWithSibling = envs.some(
+			(e) => e.id !== targetEnv.id && agentIdentity(e).primaryLabel === baseName,
+		);
+		if (collidesWithSibling && identity.secondaryLabel) {
+			return `${baseName} · ${identity.secondaryLabel}`;
+		}
+		return baseName;
+	}, [envs, targetEnv]);
 
 	// Curation toolkit: search across every copy of every skill, then
 	// batch-select and send them somewhere better. This is how content
@@ -223,7 +242,6 @@ function SkillsPageInner() {
 	const [selectedSkillKeys, setSelectedSkillKeys] = useState<Set<string>>(new Set());
 	const clearSelection = () => setSelectedSkillKeys(new Set());
 	const toggleSkill = (skill: SkillSummary) => {
-		if (!capabilitiesForSkill(skill).canSelect) return;
 		setSelectedSkillKeys((prev) => {
 			const next = new Set(prev);
 			const key = skillSelectionKey(skill);
@@ -307,11 +325,8 @@ function SkillsPageInner() {
 	}, [isAllScope, skillsForTarget, orderedProjects]);
 
 	const selectedSkills = useMemo(
-		() =>
-			(skillsData?.items ?? []).filter(
-				(s) => selectedSkillKeys.has(skillSelectionKey(s)) && capabilitiesForSkill(s).canSelect,
-			),
-		[skillsData, selectedSkillKeys, projectsById],
+		() => (skillsData?.items ?? []).filter((s) => selectedSkillKeys.has(skillSelectionKey(s))),
+		[skillsData, selectedSkillKeys],
 	);
 
 	const installedKeysOnTarget = useMemo(() => {
@@ -339,9 +354,6 @@ function SkillsPageInner() {
 	const syncGroup = useMutation({
 		mutationFn: async (group: { newest: SkillSummary; copies: SkillSummary[] }) => {
 			const { newest, copies } = group;
-			if (!copies.every((copy) => capabilitiesForSkill(copy).canSync)) {
-				throw new Error("Agent-synced and Agent Project Skills cannot be overwritten from Cloud");
-			}
 			const stale = copies.filter(
 				(c) =>
 					c.project_id &&
@@ -403,7 +415,7 @@ function SkillsPageInner() {
 		mutationFn: async (skills: SkillSummary[]) => {
 			let removed = 0;
 			for (const s of skills) {
-				if (!s.project_id || !capabilitiesForSkill(s).canDelete) continue;
+				if (!s.project_id || !(writableProjectIds?.has(s.project_id) ?? false)) continue;
 				unwrap(
 					await api.DELETE("/v1/projects/{project_id}/skills/{skill_key}", {
 						params: { path: { project_id: s.project_id, skill_key: s.skill_key } },
@@ -435,10 +447,22 @@ function SkillsPageInner() {
 				}),
 			);
 			queryClient.invalidateQueries({ queryKey: ["skills"] });
+			const daemonHealthy =
+				targetEnv?.sync_enabled && targetEnv?.last_sync_at
+					? Date.now() - new Date(targetEnv.last_sync_at).getTime() < 90_000
+					: false;
 			const projectName = displayProjectName(targetProject);
-			toast.success(`Installed in ${projectName}`, {
-				description: "Add this Project to an agent when you want it available during a run.",
-			});
+			if (targetEnv) {
+				toast.success(
+					daemonHealthy
+						? `Installed. Will appear on ${targetAgentLabel} within a couple seconds.`
+						: `Installed. Will apply on ${targetAgentLabel} when its daemon reconnects.`,
+				);
+			} else {
+				toast.success(`Installed in ${projectName}`, {
+					description: "Add this Project to an agent when you want it available during a run.",
+				});
+			}
 			return true;
 		} catch (e: unknown) {
 			setInstallError(errorMessage(e));
@@ -637,15 +661,10 @@ function SkillsPageInner() {
 			{!canWriteTargetProject && targetProject ? (
 				<Alert>
 					<AlertCircle />
-					<AlertTitle>
-						{targetProject.kind === "environment"
-							? "Agent Project is read-only"
-							: "Read-only Project"}
-					</AlertTitle>
+					<AlertTitle>Read-only Project</AlertTitle>
 					<AlertDescription>
-						{targetProject.kind === "environment"
-							? "Agent Skills are authored on the Agent filesystem and sync here automatically. Rename, edit, or remove them on the Agent."
-							: `You can view skills in ${displayProjectName(targetProject)}, but only the owner can install or remove them.`}
+						You can view skills in {displayProjectName(targetProject)}, but only the owner can
+						install or remove them.
 					</AlertDescription>
 				</Alert>
 			) : null}
@@ -685,9 +704,6 @@ function SkillsPageInner() {
 								const staleCount = group.copies.filter(
 									(c) => c.content_hash !== group.newest.content_hash,
 								).length;
-								const canSyncGroup = group.copies.every(
-									(copy) => capabilitiesForSkill(copy).canSync,
-								);
 								return (
 									<div key={group.key} className="space-y-2">
 										<div className="flex flex-wrap items-center gap-2">
@@ -711,7 +727,7 @@ function SkillsPageInner() {
 											) : (
 												<Badge variant="secondary">identical copies · v{versions[0]}</Badge>
 											)}
-											{group.drift && canSyncGroup ? (
+											{group.drift ? (
 												<ConfirmAction
 													title={`Sync ${group.newest.name} everywhere?`}
 													description={
@@ -741,7 +757,9 @@ function SkillsPageInner() {
 											skills={group.copies}
 											isLoading={false}
 											emptyMessage={null}
-											capabilitiesFor={capabilitiesForSkill}
+											readOnlySkillCheck={(sk) =>
+												resolveSkillProjectAccess(sk, { writableProjectIds }) !== "writable"
+											}
 											onUninstall={(skillKey, projectId) =>
 												uninstallSkill.mutate({ skillKey, projectId })
 											}
@@ -773,9 +791,7 @@ function SkillsPageInner() {
 					) : (
 						<div className="space-y-6">
 							{allGroups.map((group) => {
-								const groupKeys = group.skills
-									.filter((skill) => capabilitiesForSkill(skill).canSelect)
-									.map(skillSelectionKey);
+								const groupKeys = group.skills.map(skillSelectionKey);
 								const allSelected =
 									groupKeys.length > 0 && groupKeys.every((k) => selectedSkillKeys.has(k));
 								return (
@@ -801,7 +817,7 @@ function SkillsPageInner() {
 													group.label
 												)}
 											</SectionLabel>
-											{selectMode && groupKeys.length > 0 ? (
+											{selectMode ? (
 												<Button
 													variant="ghost"
 													size="sm"
@@ -825,7 +841,9 @@ function SkillsPageInner() {
 											skills={group.skills}
 											isLoading={false}
 											emptyMessage={null}
-											capabilitiesFor={capabilitiesForSkill}
+											readOnlySkillCheck={(s) =>
+												resolveSkillProjectAccess(s, { writableProjectIds }) !== "writable"
+											}
 											onUninstall={(skillKey, projectId) =>
 												uninstallSkill.mutate({ skillKey, projectId })
 											}
@@ -844,7 +862,12 @@ function SkillsPageInner() {
 						skills={skillsForTarget ?? []}
 						isLoading={skillsLoading || isResolvingTarget}
 						emptyMessage={installedSkillsEmptyMessage}
-						capabilitiesFor={capabilitiesForSkill}
+						readOnlySkillCheck={(s) =>
+							resolveSkillProjectAccess(s, {
+								currentProjectId: targetProjectId,
+								writableProjectIds,
+							}) !== "writable"
+						}
 						onUninstall={(skillKey, projectId) => uninstallSkill.mutate({ skillKey, projectId })}
 						uninstallPending={uninstallSkill.isPending}
 						selectMode={selectMode}
@@ -854,7 +877,7 @@ function SkillsPageInner() {
 				)}
 			</section>
 
-			<BulkActionBar count={selectedSkills.length} noun="skill" onClear={clearSelection}>
+			<BulkActionBar count={selectedSkillKeys.size} noun="skill" onClear={clearSelection}>
 				<SendSkillDialog skills={selectedSkills} onDone={clearSelection}>
 					<Button size="sm">
 						<SendIcon className="size-3.5" />
@@ -862,7 +885,7 @@ function SkillsPageInner() {
 					</Button>
 				</SendSkillDialog>
 				<ConfirmAction
-					title={`Uninstall ${selectedSkills.length} ${selectedSkills.length === 1 ? "skill" : "skills"}?`}
+					title={`Uninstall ${selectedSkillKeys.size} ${selectedSkillKeys.size === 1 ? "skill" : "skills"}?`}
 					description={
 						<p>Each selected copy is removed from its Project. Read-only copies are skipped.</p>
 					}
@@ -886,7 +909,7 @@ function SkillsPageInner() {
 				<p className="text-xs text-muted-foreground">
 					Pick a Project tab above to install new skills into it.
 				</p>
-			) : canWriteTargetProject ? (
+			) : (
 				<section className="space-y-3">
 					<div className="flex items-center justify-between gap-2">
 						<h2 className="text-sm font-semibold">Add a skill</h2>
@@ -995,7 +1018,7 @@ function SkillsPageInner() {
 						})}
 					</div>
 				</section>
-			) : null}
+			)}
 		</div>
 	);
 }

@@ -5,6 +5,12 @@ import { ArrowRight, Send } from "lucide-react";
 import { type ReactElement, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import {
+	AgentLabel,
+	AgentSourceBadgeForEnvironment,
+	agentTextLabel,
+	compareAgentEnvironments,
+} from "@/components/dashboard/agent-label";
 import { displayProjectName } from "@/components/projects/project-metadata";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -20,23 +26,28 @@ import { Label } from "@/components/ui/label";
 import {
 	Select,
 	SelectContent,
+	SelectGroup,
 	SelectItem,
+	SelectLabel,
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { agentOwnershipKindFromId, useAgentOwnership } from "@/lib/agent-ownership";
 import { ensureBlob, unwrap, useApi, useSkillArchiveUploader } from "@/lib/api";
 import type { components } from "@/lib/api-schemas";
 import { identityFor } from "@/lib/identity";
-import { skillCapabilities } from "@/lib/skill-authority";
 import { errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
+type Environment = components["schemas"]["AgentResponse"];
 
-/* Move Cloud-owned Skills between Cloud-owned Projects, one at a time from
- * the card hover or as a batch from select mode. Agent Projects are filesystem
- * projections and are excluded at both the source capability and destination
- * boundary. */
+/* The #1 job of this dashboard: move skills from one agent/project to
+ * another — one at a time from the card hover, or a whole batch from
+ * select mode. Pure frontend composition — download each tar from its
+ * source project, upload it to the target's project. Agent targets
+ * resolve to the agent's own project, so users can think "send to my
+ * MacBook agent" without learning the project layer. */
 
 export function SendSkillDialog({
 	skills,
@@ -51,6 +62,7 @@ export function SendSkillDialog({
 	const api = useApi();
 	const uploadSkillArchive = useSkillArchiveUploader();
 	const qc = useQueryClient();
+	const ownership = useAgentOwnership();
 	const [open, setOpen] = useState(false);
 	const [target, setTarget] = useState("");
 	const [removeFromSource, setRemoveFromSource] = useState(false);
@@ -63,14 +75,37 @@ export function SendSkillDialog({
 		queryFn: async () => unwrap(await api.GET("/v1/projects")),
 		enabled: open,
 	});
+	const envsQuery = useQuery({
+		queryKey: ["agents"],
+		queryFn: async () => unwrap(await api.GET("/v1/agents")),
+		enabled: open,
+	});
 	const projects = projectsQuery.data;
-	const destinationLoadError = projectsQuery.error;
+	const envs = envsQuery.data;
+	const destinationLoadError = projectsQuery.error ?? envsQuery.error;
 
-	// Target value encodes a Cloud-owned destination Project id. Environment
-	// Projects are filesystem projections and are deliberately excluded.
+	// Target value encodes the destination project id. Agents are listed
+	// first (that's how users think) and resolve to their own project.
 	// A destination only disappears when EVERY selected skill already
 	// lives there — mixed-source batches keep it (already-there copies
 	// are skipped at send time).
+	const agentTargets = useMemo(
+		() =>
+			[...(envs ?? [])]
+				.sort(compareAgentEnvironments)
+				.filter(
+					(e) =>
+						e.default_project_id && !skills.every((s) => s.project_id === e.default_project_id),
+				)
+				.map((e) => ({
+					value: e.default_project_id as string,
+					label: agentTextLabel(e, {
+						ownershipKind: agentOwnershipKindFromId(e.id, ownership),
+					}),
+					env: e,
+				})),
+		[envs, ownership, skills],
+	);
 	const projectTargets = useMemo(
 		() =>
 			(projects ?? [])
@@ -89,28 +124,16 @@ export function SendSkillDialog({
 	);
 	const targetItems = useMemo(
 		() =>
-			projectTargets.map((target) => ({
+			[...agentTargets, ...projectTargets].map((target) => ({
 				value: target.value,
 				label: target.label,
 			})),
-		[projectTargets],
+		[agentTargets, projectTargets],
 	);
 
 	const send = useMutation({
 		mutationFn: async () => {
 			if (!target) throw new Error("Choose a destination first");
-			const projectsById = new Map((projects ?? []).map((project) => [project.id, project]));
-			if (
-				skills.some(
-					(skill) =>
-						!skillCapabilities(
-							skill,
-							skill.project_id ? projectsById.get(skill.project_id) : undefined,
-						).canSend,
-				)
-			) {
-				throw new Error("Agent-synced and Agent Project Skills cannot be sent from Cloud");
-			}
 			// Per-skill try/catch: in a batch, one unreadable skill must
 			// not abort the rest — report partial success instead.
 			let copied = 0;
@@ -159,7 +182,8 @@ export function SendSkillDialog({
 		onSuccess: ({ copied, failed, sourceRemoveFailed }) => {
 			qc.invalidateQueries({ queryKey: ["skills"] });
 			const targetLabel =
-				projectTargets.find((candidate) => candidate.value === target)?.label ?? "the destination";
+				[...agentTargets, ...projectTargets].find((t) => t.value === target)?.label ??
+				"the destination";
 			const what = copied === 1 ? (single?.name ?? "1 skill") : `${copied} skills`;
 			const sourceCleanupFailed = sourceRemoveFailed.length > 0;
 			toast.success(
@@ -218,17 +242,32 @@ export function SendSkillDialog({
 							}}
 						>
 							<SelectTrigger id="send-skill-target" className="w-full">
-								<SelectValue placeholder="Choose a Project…" />
+								<SelectValue placeholder="Choose an agent or Project…" />
 							</SelectTrigger>
 							<SelectContent className="max-h-80">
-								{projectTargets.map((t) => (
-									<SelectItem key={`p-${t.value}`} value={t.value} label={t.label}>
-										<span aria-hidden className="select-none">
-											{t.emoji}
-										</span>
-										{t.label}
-									</SelectItem>
-								))}
+								{agentTargets.length > 0 ? (
+									<SelectGroup>
+										<SelectLabel>Agents</SelectLabel>
+										{agentTargets.map((t) => (
+											<SelectItem key={`a-${t.value}`} value={t.value} label={t.label}>
+												<AgentTargetOption env={t.env} />
+											</SelectItem>
+										))}
+									</SelectGroup>
+								) : null}
+								{projectTargets.length > 0 ? (
+									<SelectGroup>
+										<SelectLabel>Projects</SelectLabel>
+										{projectTargets.map((t) => (
+											<SelectItem key={`p-${t.value}`} value={t.value} label={t.label}>
+												<span aria-hidden className="select-none">
+													{t.emoji}
+												</span>
+												{t.label}
+											</SelectItem>
+										))}
+									</SelectGroup>
+								) : null}
 							</SelectContent>
 						</Select>
 					</div>
@@ -237,6 +276,7 @@ export function SendSkillDialog({
 							error={destinationLoadError}
 							onRetry={() => {
 								if (projectsQuery.error) void projectsQuery.refetch();
+								if (envsQuery.error) void envsQuery.refetch();
 							}}
 							title="Couldn't load destinations"
 						/>
@@ -262,5 +302,23 @@ export function SendSkillDialog({
 				</div>
 			</DialogContent>
 		</Dialog>
+	);
+}
+
+function AgentTargetOption({ env }: { env: Environment }) {
+	const ownership = useAgentOwnership();
+	const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
+	return (
+		<AgentLabel
+			machineName={env.machine_name}
+			displayName={env.display_name}
+			defaultName={env.default_name}
+			type={env.agent_type}
+			avatarUrl={env.avatar_url}
+			size="sm"
+			titleAdornment={
+				<AgentSourceBadgeForEnvironment env={env} ownershipKind={ownershipKind} compact />
+			}
+		/>
 	);
 }

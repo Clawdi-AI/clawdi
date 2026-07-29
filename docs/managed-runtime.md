@@ -526,7 +526,7 @@ without the explicit capability, and orphan projects also fail closed.
 
 The CLI declares `X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` on
 Agent-Project listing, SSE, and writes. Every Clawdi backend worker plus
-drainage of old SSE connections precedes CLI 0.13.12, then Web. Old CLIs
+drainage of old SSE connections precedes CLI 0.13.13, then Web. Old CLIs
 receive 426 from a current backend; a current CLI receives a dedicated 404
 from an old backend and leaves its filesystem and durable projection state
 intact. Additive

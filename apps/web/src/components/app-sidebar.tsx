@@ -167,7 +167,7 @@ const CONNECTED_AGENT_SECTIONS: {
 	{
 		id: "skills",
 		icon: Sparkles,
-		tooltip: "Skills synced from this Agent filesystem",
+		tooltip: "Skills installed in this agent's Agent Project",
 	},
 	{
 		id: "projects",
@@ -209,7 +209,7 @@ const HOSTED_AGENT_SECTIONS: {
 	{
 		id: "skills",
 		icon: Sparkles,
-		tooltip: "Skills synced from this Agent filesystem",
+		tooltip: "Skills installed in this agent's Agent Project",
 	},
 	{
 		id: "ai",
@@ -229,7 +229,7 @@ const HOSTED_AGENT_SECTIONS: {
 ];
 
 const HOSTED_AGENT_FALLBACK_SECTIONS = HOSTED_AGENT_SECTIONS.filter(
-	(section) => section.id === "overview" || section.id === "skills",
+	(section) => section.id === "overview",
 );
 
 const AGENT_SECTION_TINTS = {
