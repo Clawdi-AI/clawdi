@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { hostname } from "node:os";
 import { join, resolve } from "node:path";
 import * as p from "@clack/prompts";
@@ -21,8 +21,10 @@ import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { isInteractive } from "../lib/tty";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
+	installReservedManagedSkill,
 	managedSkillReservationState,
-	reserveManagedSkill,
+	migrateLegacyLocalSetupSkill,
+	replaceManagedSkillDirectoryAtomic,
 } from "../runtime/managed-skill-reservation";
 import {
 	install as installDaemonService,
@@ -261,6 +263,12 @@ async function installBuiltinSkill(agentType: AgentType) {
 
 	try {
 		const sourceDigest = managedSkillDirectoryDigest(sourceDir);
+		migrateLegacyLocalSetupSkill({
+			targetDir,
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		const reservationState = managedSkillReservationState(targetDir);
 		if (
 			existsSync(targetDir) &&
@@ -269,24 +277,21 @@ async function installBuiltinSkill(agentType: AgentType) {
 		) {
 			throw new Error(`refusing to replace unmanaged Skill at ${targetDir}`);
 		}
-		reserveManagedSkill({
-			targetDir,
-			id: "clawdi",
-			version: 1,
-			digest: sourceDigest,
-			manager: "local-setup",
-		});
-		mkdirSync(targetDir, { recursive: true });
-		// Always overwrite — the bundled skill content evolves with each CLI
-		// release (better trigger language, new tool descriptions), and users
-		// who ran setup once should get those improvements on re-run without
-		// having to manually delete the old copy.
-		cpSync(sourceDir, targetDir, { recursive: true, force: true });
+		installReservedManagedSkill(
+			{
+				targetDir,
+				id: "clawdi",
+				version: 1,
+				digest: sourceDigest,
+				manager: "local-setup",
+			},
+			() => replaceManagedSkillDirectoryAtomic(sourceDir, targetDir),
+		);
 		console.log(
 			chalk.green(`✓ Clawdi skill ${alreadyInstalled ? "updated" : "installed"} in ${label}`),
 		);
-	} catch {
-		console.log(chalk.yellow("⚠ Could not install Clawdi skill."));
+	} catch (error) {
+		console.log(chalk.yellow(`⚠ Could not install Clawdi skill (${errMessage(error)}).`));
 	}
 }
 

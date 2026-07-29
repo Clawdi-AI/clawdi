@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
-	assertUserSkillTargetMutable,
+	migrateLegacyLocalSetupSkill,
+	mutateUserSkillTarget,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
@@ -239,6 +241,12 @@ export class CodexAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
@@ -247,8 +255,6 @@ export class CodexAdapter implements AgentAdapter {
 			// Skip dot-dirs (e.g. `.system/` holds Codex's built-in skills, not user-authored ones).
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			// Upgrade bridge for local setup installs created before the ownership ledger.
-			if (entry.name === "clawdi") continue;
 			const dirPath = join(skillsDir(), entry.name);
 			if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
 			const skillMd = join(dirPath, "SKILL.md");
@@ -276,13 +282,18 @@ export class CodexAdapter implements AgentAdapter {
 	async listSkillKeys(): Promise<string[]> {
 		// Flat layout. Mirrors `collectSkills` filtering so the
 		// daemon's rescan and the bulk push see the same set.
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 		const out: string[] = [];
 		for (const entry of readdirSync(skillsDir(), { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			if (entry.name === "clawdi") continue;
 			if (shouldIgnoreUserSkill(join(skillsDir(), entry.name), entry.name)) continue;
 			const skillMd = join(skillsDir(), entry.name, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
@@ -308,15 +319,16 @@ export class CodexAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(skillsDir(), key);
-		assertUserSkillTargetMutable(dir, key);
-		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		mutateUserSkillTarget(dir, key, () => {
+			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		});
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const root = skillsDir();
-		assertUserSkillTargetMutable(join(root, key), key);
-		await replaceSkillArchiveTarGz(key, root, join(root, key), tarGzBytes, () =>
-			assertUserSkillTargetMutable(join(root, key), key),
+		const targetDir = join(root, key);
+		await replaceSkillArchiveTarGz(key, root, targetDir, tarGzBytes, undefined, (mutation) =>
+			mutateUserSkillTarget(targetDir, key, mutation),
 		);
 	}
 

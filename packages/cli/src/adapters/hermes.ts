@@ -4,8 +4,10 @@ import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { isValidSkillKey } from "../lib/skill-key";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
-	assertUserSkillTargetMutable,
+	migrateLegacyLocalSetupSkill,
+	mutateUserSkillTarget,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
@@ -203,6 +205,12 @@ export class HermesAdapter implements AgentAdapter {
 	}
 
 	async collectSkills(): Promise<RawSkill[]> {
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 
 		const skills: RawSkill[] = [];
@@ -218,8 +226,6 @@ export class HermesAdapter implements AgentAdapter {
 		for (const entry of readdirSync(dir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
 			if (shouldSkipHermesSkillDir(entry.name)) continue;
-			// Upgrade bridge for local setup installs created before the ownership ledger.
-			if (dir === skillsDir() && entry.name === "clawdi") continue;
 			const fullPath = join(dir, entry.name);
 			const skillMd = join(fullPath, "SKILL.md");
 
@@ -270,13 +276,18 @@ export class HermesAdapter implements AgentAdapter {
 		// place under `getSkillsRootDir()`. Without this method,
 		// the generic flat-walk used to silently drop nested
 		// Hermes skills from sync.
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir(), "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir())) return [];
 		const out: string[] = [];
 		const walk = (dir: string): void => {
 			for (const entry of readdirSync(dir, { withFileTypes: true })) {
 				if (!entry.isDirectory()) continue;
 				if (shouldSkipHermesSkillDir(entry.name)) continue;
-				if (dir === skillsDir() && entry.name === "clawdi") continue;
 				const fullPath = join(dir, entry.name);
 				if (existsSync(join(fullPath, "SKILL.md"))) {
 					const skillKey = hermesSkillKeyFromPath(fullPath);
@@ -301,15 +312,16 @@ export class HermesAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(skillsDir(), key);
-		assertUserSkillTargetMutable(dir, key);
-		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		mutateUserSkillTarget(dir, key, () => {
+			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		});
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const root = skillsDir();
-		assertUserSkillTargetMutable(join(root, key), key);
-		await replaceSkillArchiveTarGz(key, root, join(root, key), tarGzBytes, () =>
-			assertUserSkillTargetMutable(join(root, key), key),
+		const targetDir = join(root, key);
+		await replaceSkillArchiveTarGz(key, root, targetDir, tarGzBytes, undefined, (mutation) =>
+			mutateUserSkillTarget(targetDir, key, mutation),
 		);
 	}
 

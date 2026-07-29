@@ -36,11 +36,7 @@ from app.models.session_permission import (
     SessionPermission,
 )
 from app.schemas.common import Paginated
-from app.schemas.runtime import (
-    HostedRuntimeMcp,
-    PersistedHostedRuntimeSkills,
-    validate_hosted_runtime_desired_state,
-)
+from app.schemas.runtime import PersistedHostedRuntimeSkills, validate_hosted_runtime_desired_state
 from app.schemas.runtime_observed import (
     HostedRuntimeObserved,
     HostedRuntimeObservedProviderPayload,
@@ -51,13 +47,13 @@ from app.schemas.runtime_observed import (
 from app.schemas.session import (
     AgentReorderRequest,
     AgentResponse,
+    AgentRuntimeObservedDesiredResponse,
+    AgentRuntimeObservedResponse,
     EnvironmentCreate,
     EnvironmentCreatedResponse,
     EnvironmentReorderRequest,
     EnvironmentResponse,
     EnvironmentUpdate,
-    RuntimeManagedMcpServerSummary,
-    RuntimeManagedResourceSummary,
     RuntimeManagedSkillSummary,
     RuntimeObservedDesiredResponse,
     RuntimeObservedHealthResponse,
@@ -886,19 +882,25 @@ async def get_environment_runtime_observed(
 
 @router.get(
     "/agents/{agent_id}/runtime-observed",
-    response_model=RuntimeObservedResponse,
+    response_model=AgentRuntimeObservedResponse,
 )
 async def get_agent_runtime_observed(
     agent_id: UUID,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-) -> RuntimeObservedResponse:
+) -> AgentRuntimeObservedResponse:
     """Canonical Agent-identity route for runtime desired/observed summaries."""
     response = await get_environment_runtime_observed(agent_id, auth, db)
     state = await db.get(HostedRuntimeState, agent_id)
     desired = response.desired
     if desired is None and state is None:
-        return response
+        return AgentRuntimeObservedResponse(
+            environment=response.environment,
+            desired=None,
+            observed=response.observed,
+            health=response.health,
+            provider_health=response.provider_health,
+        )
     if (
         desired is None
         or state is None
@@ -910,12 +912,15 @@ async def get_agent_runtime_observed(
             status.HTTP_503_SERVICE_UNAVAILABLE,
             "Runtime desired state changed while it was being read; retry the request.",
         )
-    return response.model_copy(
-        update={
-            "desired": desired.model_copy(
-                update={"managed_resources": _runtime_managed_resource_summaries(state)}
-            )
-        }
+    agent_desired = AgentRuntimeObservedDesiredResponse.model_validate(desired.model_dump())
+    return AgentRuntimeObservedResponse(
+        environment=response.environment,
+        desired=agent_desired.model_copy(
+            update={"managed_skills": _runtime_managed_skill_summaries(state)}
+        ),
+        observed=response.observed,
+        health=response.health,
+        provider_health=response.provider_health,
     )
 
 
@@ -1060,34 +1065,27 @@ def _runtime_observed_desired(
     )
 
 
-def _runtime_managed_resource_summaries(
+def _runtime_managed_skill_summaries(
     state: HostedRuntimeState,
-) -> list[RuntimeManagedResourceSummary]:
-    resources: list[RuntimeManagedResourceSummary] = []
+) -> list[RuntimeManagedSkillSummary]:
+    managed_skills: list[RuntimeManagedSkillSummary] = []
     if state.skills is not None:
         try:
             skills = PersistedHostedRuntimeSkills.model_validate(state.skills)
         except ValueError:
-            skills = None
-        if skills is not None:
-            resources.extend(
-                RuntimeManagedSkillSummary(
-                    id=skill_id,
-                    enabled=entry.enabled,
-                    version=entry.version or 1,
-                )
-                for skill_id, entry in sorted(skills.entries.items())
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Managed Skill inventory is temporarily unavailable.",
+            ) from None
+        managed_skills.extend(
+            RuntimeManagedSkillSummary(
+                id=skill_id,
+                version=entry.version or 1,
             )
-    if state.mcp is not None:
-        try:
-            mcp = HostedRuntimeMcp.model_validate(state.mcp)
-        except ValueError:
-            mcp = None
-        if mcp is not None:
-            resources.extend(
-                RuntimeManagedMcpServerSummary(id=server_id) for server_id in sorted(mcp.servers)
-            )
-    return resources
+            for skill_id, entry in sorted(skills.entries.items())
+            if entry.enabled
+        )
+    return managed_skills
 
 
 def _runtime_observed_health(

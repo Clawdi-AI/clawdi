@@ -300,23 +300,8 @@ class EnvironmentResponse(AgentResponse):
 class RuntimeManagedSkillSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    kind: Literal["skill"] = "skill"
     id: str
-    enabled: bool
     version: int = Field(ge=1)
-
-
-class RuntimeManagedMcpServerSummary(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    kind: Literal["mcp_server"] = "mcp_server"
-    id: str
-
-
-RuntimeManagedResourceSummary = Annotated[
-    RuntimeManagedSkillSummary | RuntimeManagedMcpServerSummary,
-    Field(discriminator="kind"),
-]
 
 
 class RuntimeObservedDesiredResponse(BaseModel):
@@ -328,8 +313,11 @@ class RuntimeObservedDesiredResponse(BaseModel):
     enabled_runtimes: list[str]
     has_mcp: bool = False
     has_tools: bool = False
-    managed_resources: list[RuntimeManagedResourceSummary] = Field(default_factory=list)
     updated_at: datetime | None = None
+
+
+class AgentRuntimeObservedDesiredResponse(RuntimeObservedDesiredResponse):
+    managed_skills: list[RuntimeManagedSkillSummary] = Field(default_factory=list)
 
 
 class RuntimeObservedHealthResponse(BaseModel):
@@ -352,6 +340,10 @@ class RuntimeObservedResponse(BaseModel):
     observed: RuntimeObservedConfigResponse | None = None
     health: RuntimeObservedHealthResponse
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
+
+
+class AgentRuntimeObservedResponse(RuntimeObservedResponse):
+    desired: AgentRuntimeObservedDesiredResponse | None = None
 
 
 class RuntimeObservedSummaryCountsResponse(BaseModel):

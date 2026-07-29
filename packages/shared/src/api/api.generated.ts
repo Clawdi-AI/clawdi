@@ -2880,6 +2880,47 @@ export interface components {
             /** Default Project Id */
             default_project_id: string;
         };
+        /** AgentRuntimeObservedDesiredResponse */
+        AgentRuntimeObservedDesiredResponse: {
+            /** Deployment Id */
+            deployment_id: string;
+            /** Instance Id */
+            instance_id: string;
+            /** Desired Config Generation */
+            desired_config_generation: number;
+            /** Desired Source Revision */
+            desired_source_revision?: string | null;
+            /** Provider Id */
+            provider_id?: string | null;
+            /** Enabled Runtimes */
+            enabled_runtimes: string[];
+            /**
+             * Has Mcp
+             * @default false
+             */
+            has_mcp: boolean;
+            /**
+             * Has Tools
+             * @default false
+             */
+            has_tools: boolean;
+            /** Updated At */
+            updated_at?: string | null;
+            /** Managed Skills */
+            managed_skills?: components["schemas"]["RuntimeManagedSkillSummary"][];
+        };
+        /** AgentRuntimeObservedResponse */
+        AgentRuntimeObservedResponse: {
+            environment: components["schemas"]["EnvironmentResponse"];
+            desired?: components["schemas"]["AgentRuntimeObservedDesiredResponse"] | null;
+            observed?: components["schemas"]["RuntimeObservedConfigResponse"] | null;
+            health: components["schemas"]["RuntimeObservedHealthResponse"];
+            /**
+             * Provider Health
+             * @default []
+             */
+            provider_health: components["schemas"]["RuntimeObservedProviderHealthResponse"][];
+        };
         /** AiProviderAcceptRequest */
         AiProviderAcceptRequest: {
             provider: components["schemas"]["AiProviderUpsert"];
@@ -5676,27 +5717,10 @@ export interface components {
             /** Finalsessionhighwatermarks */
             finalSessionHighWaterMarks: components["schemas"]["RuntimeSessionHighWaterMark"][];
         };
-        /** RuntimeManagedMcpServerSummary */
-        RuntimeManagedMcpServerSummary: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "mcp_server";
-            /** Id */
-            id: string;
-        };
         /** RuntimeManagedSkillSummary */
         RuntimeManagedSkillSummary: {
-            /**
-             * @description discriminator enum property added by openapi-typescript
-             * @enum {string}
-             */
-            kind: "skill";
             /** Id */
             id: string;
-            /** Enabled */
-            enabled: boolean;
             /** Version */
             version: number;
         };
@@ -5983,8 +6007,6 @@ export interface components {
              * @default false
              */
             has_tools: boolean;
-            /** Managed Resources */
-            managed_resources?: (components["schemas"]["RuntimeManagedSkillSummary"] | components["schemas"]["RuntimeManagedMcpServerSummary"])[];
             /** Updated At */
             updated_at?: string | null;
         };
@@ -9205,7 +9227,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RuntimeObservedResponse"];
+                    "application/json": components["schemas"]["AgentRuntimeObservedResponse"];
                 };
             };
             /** @description Validation Error */

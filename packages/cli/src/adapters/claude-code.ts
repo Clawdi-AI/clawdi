@@ -3,8 +3,10 @@ import { basename, join } from "node:path";
 import { safeTruncate } from "../lib/sanitize";
 import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
+import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
-	assertUserSkillTargetMutable,
+	migrateLegacyLocalSetupSkill,
+	mutateUserSkillTarget,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
@@ -257,15 +259,20 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	async collectSkills(): Promise<RawSkill[]> {
 		const skillsDir = join(claudeDir(), "skills");
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir, "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir)) return [];
 
 		const skills: RawSkill[] = [];
 
 		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
+			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			// Upgrade bridge for local setup installs created before the ownership ledger.
-			if (entry.name === "clawdi") continue;
 			const dirPath = join(skillsDir, entry.name);
 			if (shouldIgnoreUserSkill(dirPath, entry.name)) continue;
 			const skillMd = join(dirPath, "SKILL.md");
@@ -306,12 +313,18 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 		// rescan returns the same set the bulk push would consider
 		// — otherwise nested or skip-listed dirs would diverge.
 		const skillsDir = join(claudeDir(), "skills");
+		migrateLegacyLocalSetupSkill({
+			targetDir: join(skillsDir, "clawdi"),
+			id: "clawdi",
+			version: 1,
+			digest: managedSkillDirectoryDigest,
+		});
 		if (!existsSync(skillsDir)) return [];
 		const out: string[] = [];
 		for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
 			if (!entry.isDirectory()) continue;
+			if (entry.name.startsWith(".")) continue;
 			if (SKIP_DIRS.has(entry.name)) continue;
-			if (entry.name === "clawdi") continue;
 			if (shouldIgnoreUserSkill(join(skillsDir, entry.name), entry.name)) continue;
 			const skillMd = join(skillsDir, entry.name, "SKILL.md");
 			if (!existsSync(skillMd)) continue;
@@ -330,15 +343,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(claudeDir(), "skills", key);
-		assertUserSkillTargetMutable(dir, key);
-		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		mutateUserSkillTarget(dir, key, () => {
+			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		});
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const skillsDir = join(claudeDir(), "skills");
-		assertUserSkillTargetMutable(join(skillsDir, key), key);
-		await replaceSkillArchiveTarGz(key, skillsDir, join(skillsDir, key), tarGzBytes, () =>
-			assertUserSkillTargetMutable(join(skillsDir, key), key),
+		const targetDir = join(skillsDir, key);
+		await replaceSkillArchiveTarGz(key, skillsDir, targetDir, tarGzBytes, undefined, (mutation) =>
+			mutateUserSkillTarget(targetDir, key, mutation),
 		);
 	}
 

@@ -112,6 +112,7 @@ export async function replaceSkillArchiveTarGz(
 	targetDir: string,
 	bytes: Buffer,
 	beforeActivate?: () => void,
+	commitMutation: (mutation: () => void) => void = (mutation) => mutation(),
 ): Promise<void> {
 	assertValidSkillKey(skillKey);
 	const targetFromRoot = relative(skillsRoot, targetDir);
@@ -131,32 +132,34 @@ export async function replaceSkillArchiveTarGz(
 			throw new Error(`Skill tarball did not contain expected '${skillKey}/' root entry`);
 		}
 		mkdirSync(dirname(targetDir), { recursive: true });
-		let previousMoved = false;
-		if (existsSync(targetDir)) {
-			renameSync(targetDir, trash);
-			previousMoved = true;
-		}
-		try {
-			beforeActivate?.();
-			renameSync(stagedSkill, targetDir);
-		} catch (installError) {
-			if (!previousMoved) throw installError;
-			try {
-				renameSync(trash, targetDir);
-			} catch (restoreError) {
-				preserveStageForRecovery = true;
-				const installMessage =
-					installError instanceof Error ? installError.message : String(installError);
-				const restoreMessage =
-					restoreError instanceof Error ? restoreError.message : String(restoreError);
-				throw new Error(
-					`Skill install failed: ${installMessage}; restoring the previous version failed: ${restoreMessage}; previous version retained at ${trash}`,
-					{ cause: installError },
-				);
+		commitMutation(() => {
+			let previousMoved = false;
+			if (existsSync(targetDir)) {
+				renameSync(targetDir, trash);
+				previousMoved = true;
 			}
-			throw installError;
-		}
-		if (existsSync(trash)) rmSync(trash, { recursive: true, force: true });
+			try {
+				beforeActivate?.();
+				renameSync(stagedSkill, targetDir);
+			} catch (installError) {
+				if (!previousMoved) throw installError;
+				try {
+					renameSync(trash, targetDir);
+				} catch (restoreError) {
+					preserveStageForRecovery = true;
+					const installMessage =
+						installError instanceof Error ? installError.message : String(installError);
+					const restoreMessage =
+						restoreError instanceof Error ? restoreError.message : String(restoreError);
+					throw new Error(
+						`Skill install failed: ${installMessage}; restoring the previous version failed: ${restoreMessage}; previous version retained at ${trash}`,
+						{ cause: installError },
+					);
+				}
+				throw installError;
+			}
+			if (existsSync(trash)) rmSync(trash, { recursive: true, force: true });
+		});
 	} finally {
 		if (!preserveStageForRecovery) {
 			rmSync(stageRoot, { recursive: true, force: true });

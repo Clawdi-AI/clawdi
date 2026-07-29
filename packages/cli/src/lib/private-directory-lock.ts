@@ -152,6 +152,84 @@ function releaseOwnedLock(lockDir: string, token: string): void {
 	rmSync(lockDir, { recursive: true, force: true });
 }
 
+function sleepSync(milliseconds: number): void {
+	Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+export function withPrivateDirectoryLockSync<T>(
+	lockDir: string,
+	fn: (lease: PrivateDirectoryLockLease) => T,
+	options: PrivateDirectoryLockOptions = {},
+): T {
+	const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+	const staleMs = options.staleMs ?? DEFAULT_STALE_MS;
+	const retryMs = options.retryMs ?? DEFAULT_RETRY_MS;
+	const now = options.now ?? Date.now;
+	const alive = options.isProcessAlive ?? processIsAlive;
+	const parent = dirname(lockDir);
+	mkdirSync(parent, { recursive: true, mode: PRIVATE_DIR_MODE });
+	try {
+		chmodSync(parent, PRIVATE_DIR_MODE);
+	} catch {
+		// Best effort on platforms that do not implement POSIX permissions.
+	}
+
+	const startedAt = now();
+	const token = randomUUID();
+	for (;;) {
+		try {
+			mkdirSync(lockDir, { mode: PRIVATE_DIR_MODE });
+			try {
+				writePrivateFileAtomic(
+					ownerPath(lockDir),
+					`${JSON.stringify({
+						schemaVersion: "clawdi.privateDirectoryLockOwner.v1",
+						pid: process.pid,
+						acquiredAt: new Date(now()).toISOString(),
+						token,
+					})}\n`,
+					{ mode: PRIVATE_FILE_MODE, dirMode: PRIVATE_DIR_MODE },
+				);
+			} catch (error) {
+				rmSync(lockDir, { recursive: true, force: true });
+				throw error;
+			}
+			break;
+		} catch (error) {
+			if (!errno(error, "EEXIST")) throw error;
+			if (
+				reclaimStaleLock(lockDir, {
+					staleMs,
+					now,
+					isProcessAlive: alive,
+					beforeReclaimRename: options.beforeReclaimRename,
+				})
+			) {
+				continue;
+			}
+			if (now() - startedAt >= timeoutMs) {
+				throw new Error(`timed out waiting for private lock at ${lockDir}`);
+			}
+			sleepSync(retryMs);
+		}
+	}
+
+	const lease: PrivateDirectoryLockLease = {
+		token,
+		assertOwned() {
+			if (readOwner(lockDir)?.token !== token) {
+				throw new Error(`lost ownership of private lock at ${lockDir}`);
+			}
+		},
+	};
+	try {
+		lease.assertOwned();
+		return fn(lease);
+	} finally {
+		releaseOwnedLock(lockDir, token);
+	}
+}
+
 export async function withPrivateDirectoryLock<T>(
 	lockDir: string,
 	fn: (lease: PrivateDirectoryLockLease) => Promise<T>,
