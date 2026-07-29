@@ -23,6 +23,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { deploymentDisplayName, isCloudEnvId } from "@/hosted/agent-identity";
 import { type AgentDeploymentMatch, useAgentDeployment } from "@/hosted/agents/deployment-hooks";
 import { HostedAgentDetail } from "@/hosted/agents/hosted-agent-detail";
+import { useUnresolvedHostedRouteGrace } from "@/hosted/agents/unresolved-hosted-route";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { deploymentStatusFromResource, deploymentStatusLabel } from "@/hosted/deployment-status";
 import { defaultDeploymentRuntime, isHostedRuntime } from "@/hosted/runtimes";
@@ -82,6 +83,9 @@ export function AgentHome({
 		requestedHostedAgent && !deployment && ambiguousMatches.length === 0 && !error && !isLoading;
 	const shouldAutoRefetchUnresolvedHostedAgent =
 		unresolvedHostedAgent && (requestedFromCloudRedirect || isCloudEnvironmentId);
+	const awaitingAcceptedDeployment = useUnresolvedHostedRouteGrace(
+		unresolvedHostedAgent && requestedFromCloudRedirect ? environmentId : null,
+	);
 	const isFetchingRef = useRef(isFetching);
 	const ownsCurrentSection = agentRouteOwnsSection(pathname, environmentId, section);
 	const hostedSection = HOSTED_AGENT_SECTION_IDS.some((candidate) => candidate === section);
@@ -233,6 +237,10 @@ export function AgentHome({
 				onRetry={handleCheckAgain}
 			/>
 		);
+	}
+
+	if (awaitingAcceptedDeployment) {
+		return <ConnectedAgentDetailSkeleton hosted />;
 	}
 
 	if (deployment) {

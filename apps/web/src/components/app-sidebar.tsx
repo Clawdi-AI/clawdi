@@ -96,6 +96,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { StatusDot } from "@/components/ui/status-badge";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { UserMenuItems } from "@/components/user-menu";
+import { useUnresolvedHostedRouteGrace } from "@/hosted/agents/unresolved-hosted-route";
 import {
 	type AgentOwnershipKind,
 	agentOwnershipKindFromId,
@@ -1173,6 +1174,15 @@ function FocusHeader({
 	activeAgentKind: AgentChromeKind;
 	activeAgentId: string | null;
 }) {
+	const searchStr = useLocation({ select: (location) => location.searchStr });
+	const awaitingAcceptedDeployment = useUnresolvedHostedRouteGrace(
+		activeAgentId &&
+			!activeAgent &&
+			!activeAgentTile &&
+			new URLSearchParams(searchStr).get("source") === "on-clawdi"
+			? activeAgentId
+			: null,
+	);
 	if (!activeAgent && !activeAgentId) {
 		return (
 			<div className="min-w-0">
@@ -1184,7 +1194,7 @@ function FocusHeader({
 		);
 	}
 
-	if (activeAgentKind === "unresolved") {
+	if (activeAgentKind === "unresolved" || awaitingAcceptedDeployment) {
 		return (
 			<div className="min-w-0 space-y-2" role="status" aria-label="Agent ownership loading">
 				<Skeleton className="h-4 w-32" />
