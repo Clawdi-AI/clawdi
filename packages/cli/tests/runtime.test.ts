@@ -36,6 +36,8 @@ import {
 } from "../src/runtime/channels";
 import {
 	applyRuntimeCliDesiredState,
+	completePendingRuntimeCliUpgrade,
+	reconcilePendingRuntimeCliUpgrade,
 	rollbackPendingRuntimeCliUpgrade,
 } from "../src/runtime/cli-update";
 import {
@@ -170,6 +172,10 @@ if [ "\${1:-}" = "--version" ]; then
   echo "${version}"
   exit 0
 fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
 echo "seeded clawdi"
 `,
 	);
@@ -193,6 +199,194 @@ echo "seeded clawdi"
 			error: null,
 		}),
 	);
+}
+
+interface RuntimeCliFixtureIdentity {
+	packageSpec: string;
+	registry: string | null;
+	npmPrefix: string;
+	activeTarget: string;
+	version: string;
+}
+
+function currentCliFixtureIdentity(
+	paths: RuntimePaths,
+	version: string,
+): RuntimeCliFixtureIdentity {
+	return {
+		packageSpec: `clawdi@${version}`,
+		registry: null,
+		npmPrefix: paths.cliNpmPrefix,
+		activeTarget: join(paths.cliNpmPrefix, "bin", "clawdi"),
+		version,
+	};
+}
+
+function createVersionedCliFixture(
+	paths: RuntimePaths,
+	version: string,
+): RuntimeCliFixtureIdentity {
+	const npmPrefix = join(paths.cliNpmPrefix, "packages", version);
+	const activeTarget = join(npmPrefix, "bin", "clawdi");
+	mkdirSync(dirname(activeTarget), { recursive: true });
+	writeFileSync(
+		activeTarget,
+		`#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  echo "${version}"
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+exit 64
+`,
+		{ mode: 0o700 },
+	);
+	chmodSync(activeTarget, 0o700);
+	return {
+		packageSpec: `clawdi@${version}`,
+		registry: null,
+		npmPrefix,
+		activeTarget,
+		version,
+	};
+}
+
+function pointManagedCliAt(paths: RuntimePaths, identity: RuntimeCliFixtureIdentity): void {
+	mkdirSync(dirname(paths.cliManagedBin), { recursive: true });
+	rmSync(paths.cliManagedBin, { force: true });
+	symlinkSync(identity.activeTarget, paths.cliManagedBin);
+}
+
+function writeCliBootstrapFixture(paths: RuntimePaths, identity: RuntimeCliFixtureIdentity): void {
+	mkdirSync(dirname(paths.cliBootstrapStatus), { recursive: true });
+	writeFileSync(
+		paths.cliBootstrapStatus,
+		`${JSON.stringify({
+			schemaVersion: "clawdi.cliNpmBootstrapStatus.v1",
+			generatedAt: "2026-07-29T00:00:00.000Z",
+			status: "installed",
+			source: "npm",
+			packageSpec: identity.packageSpec,
+			registry: identity.registry,
+			npmPrefix: identity.npmPrefix,
+			npmCache: paths.cliNpmCache,
+			activePath: paths.cliManagedBin,
+			activeTarget: identity.activeTarget,
+			version: identity.version,
+			error: null,
+		})}\n`,
+		{ mode: 0o600 },
+	);
+}
+
+function writeCliTransactionFixture(
+	paths: RuntimePaths,
+	input: {
+		phase: "prepared" | "activated";
+		previousIdentity: RuntimeCliFixtureIdentity;
+		newIdentity: RuntimeCliFixtureIdentity;
+		rollbackReason?: string;
+		badVersions?: Array<{ version: string; reason: string }>;
+	},
+): void {
+	mkdirSync(dirname(paths.cliUpgradeState), { recursive: true });
+	writeFileSync(
+		paths.cliUpgradeState,
+		`${JSON.stringify({
+			schemaVersion: "clawdi.cliUpgradeState.v2",
+			transaction: {
+				phase: input.phase,
+				previousIdentity: input.previousIdentity,
+				newIdentity: input.newIdentity,
+				rollbackEligible: true,
+				installedAt: "2026-07-29T00:00:00.000Z",
+				rollback: input.rollbackReason
+					? {
+							reason: input.rollbackReason,
+							markedAt: "2026-07-29T00:01:00.000Z",
+						}
+					: null,
+			},
+			badVersions: (input.badVersions ?? []).map((entry) => ({
+				packageSpec: input.newIdentity.packageSpec,
+				registry: input.newIdentity.registry,
+				version: entry.version,
+				reason: entry.reason,
+				markedAt: "2026-07-29T00:02:00.000Z",
+			})),
+		})}\n`,
+		{ mode: 0o600 },
+	);
+}
+
+function seedCliRecoveryFixture(state: string, run: string) {
+	process.env.CLAWDI_RUNTIME_MODE = "hosted";
+	process.env.CLAWDI_SERVICE_STATE_DIR = state;
+	process.env.CLAWDI_RUN_DIR = run;
+	seedCurrentCliInstall(state, "clawdi@0.13.30", "0.13.30");
+	const paths = getRuntimePaths();
+	return {
+		paths,
+		previousIdentity: currentCliFixtureIdentity(paths, "0.13.30"),
+		newIdentity: createVersionedCliFixture(paths, "0.13.31"),
+	};
+}
+
+function installVersionedCliNpmStub(bin: string): void {
+	mkdirSync(bin, { recursive: true });
+	writeFileSync(
+		join(bin, "npm"),
+		`#!/usr/bin/env bash
+set -euo pipefail
+prefix=""
+package=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--prefix" ]; then
+    prefix="$2"
+    shift 2
+    continue
+  fi
+  case "$1" in clawdi@*) package="$1" ;; esac
+  shift
+done
+version="\${package#clawdi@}"
+test -n "$prefix"
+test -n "$version"
+install -d "$prefix/bin"
+cat > "$prefix/bin/clawdi" <<SH
+#!/usr/bin/env bash
+if [ "\\\${1:-}" = "--version" ]; then
+  echo "$version"
+  exit 0
+fi
+if [ "\\\${1:-} \\\${2:-} \\\${3:-}" = "runtime verify --json" ]; then
+  echo '{"status":"ok"}'
+  exit 0
+fi
+exit 64
+SH
+chmod +x "$prefix/bin/clawdi"
+`,
+	);
+	chmodSync(join(bin, "npm"), 0o700);
+}
+
+function cliManifest(version: string): RuntimeManifest {
+	return {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: "dep_cli_transaction",
+		environmentId: "env_cli_transaction",
+		instanceId: "iid_cli_transaction",
+		generation: 1,
+		issuedAt: "2026-07-29T00:00:00Z",
+		controlPlane: { apiUrl: "https://cloud-api.test" },
+		clawdiCli: { source: "npm:clawdi", packageSpec: `clawdi@${version}` },
+		runtimes: { openclaw: { enabled: false }, hermes: { enabled: false } },
+		recovery: {},
+	};
 }
 
 const TEST_EGRESS_ENGINE_PIN = {
@@ -7274,7 +7468,11 @@ chmod +x "$prefix/bin/clawdi"
 		mkdirSync(dirname(legacyImageShim), { recursive: true });
 		writeFileSync(
 			activeTarget,
-			`#!/usr/bin/env bash\nif [ "\${1:-}" = "--version" ]; then echo "${version}"; exit 0; fi\nexit 64\n`,
+			`#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo "${version}"; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then echo '{"status":"ok"}'; exit 0; fi
+exit 64
+`,
 		);
 		writeFileSync(legacyImageShim, "#!/usr/bin/env bash\nexit 0\n");
 		chmodSync(activeTarget, 0o755);
@@ -7937,6 +8135,365 @@ chmod +x "$prefix/bin/clawdi"
 			const npmCalls = readFileSync(npmLog, "utf-8").trim().split("\n");
 			expect(npmCalls.some((call) => call.startsWith("view "))).toBe(false);
 			expect(npmCalls.some((call) => call.includes(desiredSpec))).toBe(true);
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("cancels a prepared CLI transaction while the previous target is still active", () => {
+		const { paths, previousIdentity, newIdentity } = seedCliRecoveryFixture(
+			join(root, "state-cli-prepared-previous"),
+			join(root, "run-cli-prepared-previous"),
+		);
+		pointManagedCliAt(paths, previousIdentity);
+		writeCliBootstrapFixture(paths, previousIdentity);
+		writeCliTransactionFixture(paths, {
+			phase: "prepared",
+			previousIdentity,
+			newIdentity,
+		});
+
+		const recovered = reconcilePendingRuntimeCliUpgrade(paths, previousIdentity.version);
+
+		expect(recovered).toEqual({ status: "unchanged", selfReexec: false });
+		expect(readlinkSync(paths.cliManagedBin)).toBe(previousIdentity.activeTarget);
+		expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8")).transaction).toBeNull();
+		expect(existsSync(newIdentity.npmPrefix)).toBe(false);
+	});
+
+	it("activates a prepared CLI transaction whose valid new target is already active", () => {
+		const { paths, previousIdentity, newIdentity } = seedCliRecoveryFixture(
+			join(root, "state-cli-prepared-new"),
+			join(root, "run-cli-prepared-new"),
+		);
+		pointManagedCliAt(paths, newIdentity);
+		writeCliBootstrapFixture(paths, previousIdentity);
+		writeCliTransactionFixture(paths, {
+			phase: "prepared",
+			previousIdentity,
+			newIdentity,
+		});
+
+		const recovered = reconcilePendingRuntimeCliUpgrade(paths, previousIdentity.version);
+		const transactionState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+		const bootstrap = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+
+		expect(recovered).toEqual({ status: "activated", selfReexec: true });
+		expect(transactionState.transaction).toMatchObject({
+			phase: "activated",
+			newIdentity,
+		});
+		expect(bootstrap).toMatchObject({
+			activeTarget: newIdentity.activeTarget,
+			version: newIdentity.version,
+		});
+		expect(readlinkSync(paths.cliManagedBin)).toBe(newIdentity.activeTarget);
+	});
+
+	it("rolls back an activated CLI transaction whose new target is invalid", () => {
+		const { paths, previousIdentity, newIdentity } = seedCliRecoveryFixture(
+			join(root, "state-cli-activated-invalid"),
+			join(root, "run-cli-activated-invalid"),
+		);
+		pointManagedCliAt(paths, newIdentity);
+		writeCliBootstrapFixture(paths, newIdentity);
+		writeCliTransactionFixture(paths, {
+			phase: "activated",
+			previousIdentity,
+			newIdentity,
+		});
+		writeFileSync(newIdentity.activeTarget, "#!/usr/bin/env bash\nexit 1\n", { mode: 0o700 });
+
+		const recovered = reconcilePendingRuntimeCliUpgrade(paths, newIdentity.version);
+		const transactionState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+
+		expect(recovered).toEqual({ status: "rolled_back", selfReexec: true });
+		expect(readlinkSync(paths.cliManagedBin)).toBe(previousIdentity.activeTarget);
+		expect(transactionState.transaction).toBeNull();
+		expect(transactionState.badVersions).toContainEqual(
+			expect.objectContaining({ version: newIdentity.version }),
+		);
+	});
+
+	it("finishes a durable rollback intent while the new target is still active", () => {
+		const { paths, previousIdentity, newIdentity } = seedCliRecoveryFixture(
+			join(root, "state-cli-rollback-new"),
+			join(root, "run-cli-rollback-new"),
+		);
+		pointManagedCliAt(paths, newIdentity);
+		writeCliBootstrapFixture(paths, newIdentity);
+		writeCliTransactionFixture(paths, {
+			phase: "activated",
+			previousIdentity,
+			newIdentity,
+			rollbackReason: "fixture convergence failure",
+		});
+
+		const recovered = reconcilePendingRuntimeCliUpgrade(paths, newIdentity.version);
+		const transactionState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+
+		expect(recovered).toEqual({ status: "rolled_back", selfReexec: true });
+		expect(readlinkSync(paths.cliManagedBin)).toBe(previousIdentity.activeTarget);
+		expect(transactionState.transaction).toBeNull();
+		expect(transactionState.badVersions).toContainEqual(
+			expect.objectContaining({
+				version: newIdentity.version,
+				reason: "fixture convergence failure",
+			}),
+		);
+		expect(existsSync(newIdentity.npmPrefix)).toBe(false);
+	});
+
+	it("finishes rollback journal, status, and pruning when the previous target is active", () => {
+		const { paths, previousIdentity, newIdentity } = seedCliRecoveryFixture(
+			join(root, "state-cli-rollback-previous"),
+			join(root, "run-cli-rollback-previous"),
+		);
+		pointManagedCliAt(paths, previousIdentity);
+		writeCliBootstrapFixture(paths, newIdentity);
+		writeCliTransactionFixture(paths, {
+			phase: "activated",
+			previousIdentity,
+			newIdentity,
+			rollbackReason: "fixture convergence failure",
+		});
+
+		const recovered = reconcilePendingRuntimeCliUpgrade(paths, newIdentity.version);
+		const transactionState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+		const bootstrap = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+
+		expect(recovered).toEqual({ status: "rolled_back", selfReexec: true });
+		expect(transactionState.transaction).toBeNull();
+		expect(bootstrap).toMatchObject({
+			activeTarget: previousIdentity.activeTarget,
+			version: previousIdentity.version,
+		});
+		expect(existsSync(newIdentity.npmPrefix)).toBe(false);
+	});
+
+	it("re-verifies a current CLI periodically and whenever its file identity drifts", () => {
+		const state = join(root, "state-cli-verification-cache");
+		const run = join(root, "run-cli-verification-cache");
+		const commandLog = join(root, "cli-verification-cache.log");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, "clawdi@0.13.30", "0.13.30");
+		const paths = getRuntimePaths();
+		const activeTarget = readlinkSync(paths.cliManagedBin);
+		writeFileSync(
+			activeTarget,
+			`#!/usr/bin/env bash
+printf '%s\\n' "$*" >> '${commandLog}'
+if [ "\${1:-}" = "--version" ]; then echo '0.13.30'; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then echo '{"status":"ok"}'; exit 0; fi
+exit 64
+`,
+		);
+		chmodSync(activeTarget, 0o700);
+		const manifest = cliManifest("0.13.30");
+
+		applyRuntimeCliDesiredState(manifest, paths);
+		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toHaveLength(2);
+		applyRuntimeCliDesiredState(manifest, paths);
+		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toHaveLength(2);
+
+		const driftedAt = new Date(Date.now() + 1_000);
+		utimesSync(activeTarget, driftedAt, driftedAt);
+		applyRuntimeCliDesiredState(manifest, paths);
+		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toHaveLength(4);
+
+		const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		status.verification.verifiedAt = "2020-01-01T00:00:00.000Z";
+		writeFileSync(paths.cliBootstrapStatus, JSON.stringify(status));
+		applyRuntimeCliDesiredState(manifest, paths);
+		expect(readFileSync(commandLog, "utf-8").trim().split("\n")).toHaveLength(6);
+	});
+
+	it("does not cache a changed target as the verified desired CLI", () => {
+		const state = join(root, "state-cli-verification-race");
+		const run = join(root, "run-cli-verification-race");
+		const bin = join(root, "bin-cli-verification-race");
+		const previousPath = process.env.PATH;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, "clawdi@0.13.30", "0.13.30");
+		const paths = getRuntimePaths();
+		const activeTarget = readlinkSync(paths.cliManagedBin);
+		mkdirSync(bin, { recursive: true });
+		writeFileSync(join(bin, "npm"), "#!/usr/bin/env bash\nexit 97\n");
+		chmodSync(join(bin, "npm"), 0o700);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		writeFileSync(
+			activeTarget,
+			`#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then
+  cat > "$0" <<'SH'
+#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo '0.13.29'; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then echo '{"status":"ok"}'; exit 0; fi
+exit 64
+SH
+  chmod +x "$0"
+  echo '0.13.30'
+  exit 0
+fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then echo '{"status":"ok"}'; exit 0; fi
+exit 64
+`,
+		);
+		chmodSync(activeTarget, 0o700);
+
+		try {
+			expect(() => applyRuntimeCliDesiredState(cliManifest("0.13.30"), paths)).toThrow(
+				/npm install/,
+			);
+			const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+			expect(status.packageSpec).toBe("clawdi@0.13.29");
+			expect(status.version).toBe("0.13.29");
+			expect(status.verification).toBeDefined();
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("fails closed on a corrupt CLI transaction journal before install or prune", () => {
+		const state = join(root, "state-cli-corrupt-journal");
+		const run = join(root, "run-cli-corrupt-journal");
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, "clawdi@0.13.30", "0.13.30");
+		const paths = getRuntimePaths();
+		const activeTarget = readlinkSync(paths.cliManagedBin);
+		const lastGood = join(paths.cliNpmPrefix, "packages", "0.13.29", "bin", "clawdi");
+		mkdirSync(dirname(lastGood), { recursive: true });
+		writeFileSync(lastGood, "#!/usr/bin/env bash\nexit 0\n");
+		chmodSync(lastGood, 0o700);
+		writeFileSync(paths.cliUpgradeState, "{broken journal");
+
+		expect(() => applyRuntimeCliDesiredState(cliManifest("0.13.31"), paths)).toThrow(
+			/invalid clawdi CLI upgrade transaction JSON/,
+		);
+		expect(readlinkSync(paths.cliManagedBin)).toBe(activeTarget);
+		expect(existsSync(lastGood)).toBe(true);
+		expect(readFileSync(paths.cliUpgradeState, "utf-8")).toBe("{broken journal");
+	});
+
+	it("migrates v1 pending state and confirms by CLI identity across manifest changes", () => {
+		const state = join(root, "state-cli-v1-migration");
+		const run = join(root, "run-cli-v1-migration");
+		const bin = join(root, "bin-cli-v1-migration");
+		const previousPath = process.env.PATH;
+		installVersionedCliNpmStub(bin);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, "clawdi@0.13.30", "0.13.30");
+		const paths = getRuntimePaths();
+
+		try {
+			applyRuntimeCliDesiredState(cliManifest("0.13.31"), paths, { rollbackEligible: true });
+			const v2 = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+			const transaction = v2.transaction;
+			writeFileSync(
+				paths.cliUpgradeState,
+				JSON.stringify({
+					schemaVersion: "clawdi.cliUpgradeState.v1",
+					pendingUpgrade: {
+						...transaction.newIdentity,
+						previousStatus: {
+							status: "installed",
+							source: "npm",
+							activePath: paths.cliManagedBin,
+							...transaction.previousIdentity,
+						},
+						previousActiveTarget: transaction.previousIdentity.activeTarget,
+						previousNpmPrefix: transaction.previousIdentity.npmPrefix,
+						previousVersion: transaction.previousIdentity.version,
+						manifestGeneration: 1,
+						manifestEtag: '"obsolete-etag"',
+						rollbackEligible: true,
+						installedAt: transaction.installedAt,
+					},
+					badVersions: [],
+				}),
+			);
+
+			completePendingRuntimeCliUpgrade(paths, "0.13.30");
+			const migrated = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+			expect(migrated.schemaVersion).toBe("clawdi.cliUpgradeState.v2");
+			expect(migrated.transaction.newIdentity.version).toBe("0.13.31");
+
+			completePendingRuntimeCliUpgrade(paths, "0.13.31");
+			expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8")).transaction).toBeNull();
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
+	});
+
+	it("fails closed when a v1 rollback identity does not verify", () => {
+		const state = join(root, "state-cli-v1-invalid-identity");
+		const run = join(root, "run-cli-v1-invalid-identity");
+		const bin = join(root, "bin-cli-v1-invalid-identity");
+		const previousPath = process.env.PATH;
+		installVersionedCliNpmStub(bin);
+		process.env.PATH = `${bin}:${previousPath ?? ""}`;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, "clawdi@0.13.30", "0.13.30");
+		const paths = getRuntimePaths();
+
+		try {
+			applyRuntimeCliDesiredState(cliManifest("0.13.31"), paths, { rollbackEligible: true });
+			const v2 = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
+			const transaction = v2.transaction;
+			writeFileSync(
+				transaction.previousIdentity.activeTarget,
+				`#!/usr/bin/env bash
+if [ "\${1:-}" = "--version" ]; then echo '0.13.29'; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then echo '{"status":"ok"}'; exit 0; fi
+exit 64
+`,
+			);
+			chmodSync(transaction.previousIdentity.activeTarget, 0o700);
+			writeFileSync(
+				paths.cliUpgradeState,
+				JSON.stringify({
+					schemaVersion: "clawdi.cliUpgradeState.v1",
+					pendingUpgrade: {
+						...transaction.newIdentity,
+						previousStatus: {
+							status: "installed",
+							source: "npm",
+							activePath: paths.cliManagedBin,
+							...transaction.previousIdentity,
+						},
+						previousActiveTarget: transaction.previousIdentity.activeTarget,
+						previousNpmPrefix: transaction.previousIdentity.npmPrefix,
+						previousVersion: transaction.previousIdentity.version,
+						manifestGeneration: 1,
+						manifestEtag: '"obsolete-etag"',
+						rollbackEligible: true,
+						installedAt: transaction.installedAt,
+					},
+					badVersions: [],
+				}),
+			);
+
+			expect(() => completePendingRuntimeCliUpgrade(paths, "0.13.31")).toThrow(
+				/unverified previous identity/,
+			);
+			expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8")).schemaVersion).toBe(
+				"clawdi.cliUpgradeState.v1",
+			);
+			expect(readlinkSync(paths.cliManagedBin)).toBe(transaction.newIdentity.activeTarget);
 		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
 			else process.env.PATH = previousPath;
@@ -8682,7 +9239,7 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.selfReexec).toBe(true);
 			expect(readlinkSync(paths.cliManagedBin)).toBe(oldTarget);
 			const upgradeState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
-			expect(upgradeState.pendingUpgrade).toBeNull();
+			expect(upgradeState.transaction).toBeNull();
 			expect(upgradeState.badVersions).toContainEqual(
 				expect.objectContaining({
 					packageSpec: "clawdi@0.13.5-beta.0",
@@ -9304,32 +9861,33 @@ chmod +x "$prefix/bin/clawdi"
 
 		try {
 			const first = applyRuntimeCliDesiredState(manifestFor("0.13.20-beta.0"), paths, {
-				manifestIdentity,
+				rollbackEligible: manifestIdentity.previouslyApplied,
 			});
 			if (!first.activeTarget) throw new Error("first CLI install has no active target");
 			const lastGoodTarget = first.activeTarget;
 			const lastGoodPrefix = first.npmPrefix;
 			const firstState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
-			expect(firstState.pendingUpgrade.rollbackEligible).toBe(false);
+			expect(firstState.transaction.rollbackEligible).toBe(false);
 
 			rmSync(paths.cliBootstrapStatus, { force: true });
 			const failed = applyRuntimeCliDesiredState(manifestFor("0.13.20-beta.1"), paths, {
-				manifestIdentity,
+				rollbackEligible: manifestIdentity.previouslyApplied,
 			});
 			if (!failed.activeTarget) throw new Error("failed CLI install has no active target");
 			const failedTarget = failed.activeTarget;
 			const failedState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
-			expect(failedState.pendingUpgrade).toMatchObject({
+			expect(failedState.transaction).toMatchObject({
 				rollbackEligible: true,
-				previousActiveTarget: lastGoodTarget,
-				previousNpmPrefix: lastGoodPrefix,
-				previousVersion: "0.13.20-beta.0",
+				previousIdentity: {
+					activeTarget: lastGoodTarget,
+					npmPrefix: lastGoodPrefix,
+					version: "0.13.20-beta.0",
+				},
 			});
 
 			const firstRollback = rollbackPendingRuntimeCliUpgrade(
 				paths,
 				"injected first converge failure",
-				manifestIdentity,
 			);
 			expect(firstRollback.status).toBe("rolled_back");
 			expect(readlinkSync(paths.cliManagedBin)).toBe(lastGoodTarget);
@@ -9343,17 +9901,16 @@ chmod +x "$prefix/bin/clawdi"
 			});
 
 			applyRuntimeCliDesiredState(manifestFor("0.13.20-beta.2"), paths, {
-				manifestIdentity,
+				rollbackEligible: manifestIdentity.previouslyApplied,
 			});
 			const secondState = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"));
-			expect(secondState.pendingUpgrade.previousActiveTarget).toBe(lastGoodTarget);
-			expect(secondState.pendingUpgrade.previousActiveTarget).not.toBe(failedTarget);
+			expect(secondState.transaction.previousIdentity.activeTarget).toBe(lastGoodTarget);
+			expect(secondState.transaction.previousIdentity.activeTarget).not.toBe(failedTarget);
 			expect(existsSync(lastGoodPrefix)).toBe(true);
 
 			const secondRollback = rollbackPendingRuntimeCliUpgrade(
 				paths,
 				"injected second converge failure",
-				manifestIdentity,
 			);
 			expect(secondRollback.status).toBe("rolled_back");
 			expect(readlinkSync(paths.cliManagedBin)).toBe(lastGoodTarget);

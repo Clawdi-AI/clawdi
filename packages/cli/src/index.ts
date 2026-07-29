@@ -1265,7 +1265,10 @@ program
 	.option("--json", "Output as JSON")
 	.action(async (opts: { json?: boolean }) => {
 		const { capabilitiesCommand } = await import("./commands/capabilities.js");
-		await capabilitiesCommand(opts);
+		await capabilitiesCommand(
+			opts,
+			program.commands.map((command) => command.name()),
+		);
 	});
 
 program

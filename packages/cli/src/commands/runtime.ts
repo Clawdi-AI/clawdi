@@ -38,8 +38,10 @@ import { applyRuntimeBundleChannelsToManifestLoad } from "../runtime/channels";
 import {
 	applyRuntimeCliDesiredState,
 	completePendingRuntimeCliUpgrade,
+	type RuntimeCliReconciliationResult,
 	type RuntimeCliRollbackResult,
 	type RuntimeCliUpdateResult,
+	reconcilePendingRuntimeCliUpgrade,
 	rollbackPendingRuntimeCliUpgrade,
 } from "../runtime/cli-update";
 import { buildEgressEngineEnv, SYSTEM_CA_BUNDLE } from "../runtime/egress-env";
@@ -2098,6 +2100,31 @@ async function runtimeWatchTickLocked(
 	paths: ReturnType<typeof getRuntimePaths>,
 	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
 ): Promise<Record<string, unknown>> {
+	let reconciliation: RuntimeCliReconciliationResult;
+	try {
+		reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion());
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "error",
+			stage: "cli-update",
+			errors: [message],
+			error: message,
+			selfReexec: false,
+		};
+	}
+	const event = await runtimeWatchTickAfterCliReconciliation(paths, opts);
+	return {
+		...event,
+		selfReexec: reconciliation.selfReexec || event.selfReexec === true,
+	};
+}
+
+async function runtimeWatchTickAfterCliReconciliation(
+	paths: ReturnType<typeof getRuntimePaths>,
+	opts: { forceRefresh: boolean; deferCliInstall?: boolean; deferCliInstallReason?: string },
+): Promise<Record<string, unknown>> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
 	const manifestEtag = opts.forceRefresh ? undefined : (activeAppliedState?.etag ?? undefined);
 	const manifestLoad = await loadRemoteRuntimeManifest(paths, { ifNoneMatch: manifestEtag });
@@ -2119,6 +2146,7 @@ async function runtimeWatchTickLocked(
 		activeAppliedState !== null &&
 		activeAppliedState.etag === responseManifestEtag
 	) {
+		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "not_modified",
@@ -2127,6 +2155,7 @@ async function runtimeWatchTickLocked(
 			sourceRevision: activeAppliedState.sourceRevision,
 			generation: activeAppliedState.generation,
 			instanceId: activeAppliedState.instanceId,
+			selfReexec: completion.selfReexec,
 		};
 	}
 
@@ -2175,7 +2204,7 @@ async function runtimeWatchTickLocked(
 				rejectedGeneration: loaded.manifest.generation,
 				instanceId: activeAppliedState?.instanceId ?? null,
 				cliUpdate: applyResult.cliUpdate,
-				selfReexec: false,
+				selfReexec: shouldSelfReexecForCliUpdate(applyResult.cliUpdate),
 				systemdUnitsChanged: false,
 				systemdApply: {
 					applied: false,
@@ -2213,7 +2242,7 @@ async function runtimeWatchTickLocked(
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
 			systemdApplyResult.userUnitsChanged.length > 0;
 		if (errors.length > 0) {
-			const cliRollback = maybeRollbackFailedCliUpgrade(paths, manifestIdentity, errors);
+			const cliRollback = maybeRollbackFailedCliUpgrade(paths, errors);
 			if (cliRollback.status === "rolled_back") selfReexec = true;
 			const activeAppliedState = readRuntimeAppliedState(paths);
 			return {
@@ -2233,7 +2262,8 @@ async function runtimeWatchTickLocked(
 				convergence: convergence.outputs,
 			};
 		}
-		completePendingRuntimeCliUpgrade(paths, getCliVersion(), manifestIdentity);
+		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
+		selfReexec = selfReexec || completion.selfReexec;
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
 			status: "applied",
@@ -2270,7 +2300,8 @@ function applyRuntimeDesiredState(
 		cliUpdate = applyRuntimeCliDesiredState(load.manifest, paths, {
 			deferInstall: opts.deferCliInstall,
 			deferReason: opts.deferCliInstallReason,
-			manifestIdentity: opts.manifestIdentity,
+			rollbackEligible: opts.manifestIdentity?.previouslyApplied,
+			runningVersion: getCliVersion(),
 		});
 	} catch (error) {
 		if (!opts.continueOnCliUpdateError) throw error;
@@ -2278,6 +2309,9 @@ function applyRuntimeDesiredState(
 			kind: "cli_update_failed",
 			cliUpdate: runtimeCliUpdateError(load.manifest, paths, error),
 		};
+	}
+	if (cliUpdate.selfReexec) {
+		return { kind: "cli_update_failed", cliUpdate };
 	}
 	const gate = minimumCliVersionGate(load.manifest, paths);
 	if (gate) {
@@ -2360,11 +2394,13 @@ function runtimeCliUpdateError(
 		activePath: paths.cliManagedBin,
 		activeTarget: null,
 		version: null,
+		selfReexec: false,
 		error: error instanceof Error ? error.message : String(error),
 	};
 }
 
 function shouldSelfReexecForCliUpdate(cliUpdate: RuntimeCliUpdateResult): boolean {
+	if (cliUpdate.selfReexec) return true;
 	if (cliUpdate.status === "installed") return true;
 	if (!cliUpdate.version || !cliUpdate.activeTarget) return false;
 	return cliUpdate.version !== getCliVersion();
@@ -2385,13 +2421,11 @@ function runtimeManifestIdentityForWatch(
 
 function maybeRollbackFailedCliUpgrade(
 	paths: RuntimePaths,
-	manifestIdentity: RuntimeManifestIdentity,
 	errors: string[],
 ): RuntimeCliRollbackResult {
 	const rollback = rollbackPendingRuntimeCliUpgrade(
 		paths,
 		`first converge after CLI upgrade failed: ${errors[0] ?? "unknown error"}`,
-		manifestIdentity,
 	);
 	if (rollback.status === "rolled_back") {
 		errors.push(
