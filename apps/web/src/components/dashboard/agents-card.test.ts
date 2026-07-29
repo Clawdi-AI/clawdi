@@ -89,9 +89,7 @@ describe("agentTileCardProjection", () => {
 			source: "on-clawdi",
 			name: "Research agent",
 			agentType: "openclaw",
-			lastSeenAt: projected.last_seen_at,
 			href: `/agents/${projected.id}`,
-			active: true,
 			env: projected,
 		};
 
@@ -103,7 +101,7 @@ describe("agentTileCardProjection", () => {
 			tooltip: "Sync is live.",
 		});
 		expect(projection.meta[0]).toBe("OpenClaw");
-		expect(projection.meta).toHaveLength(2);
+		expect(projection.meta[1]).toStartWith("Synced ");
 	});
 
 	it("does not manufacture hosted sync status without an environment projection", () => {
@@ -112,9 +110,7 @@ describe("agentTileCardProjection", () => {
 			source: "on-clawdi",
 			name: "Research agent",
 			agentType: "openclaw",
-			lastSeenAt: null,
 			href: "/agents/env_pending",
-			active: true,
 			env: null,
 		};
 
@@ -131,7 +127,6 @@ describe("agentTileCardProjection", () => {
 			name: "Workstation",
 			agentType: "codex",
 			href: "/agents/self",
-			active: false,
 			env: env(),
 		};
 		const legacy: AgentTile = {
@@ -141,8 +136,16 @@ describe("agentTileCardProjection", () => {
 			env: env({ last_sync_at: new Date().toISOString(), sync_enabled: true }),
 		};
 
-		expect(agentTileCardProjection(selfManaged).statusVisual?.kind).toBe("set-up");
-		expect(agentTileCardProjection(legacy).statusVisual?.kind).toBe("live");
+		expect(agentTileCardProjection(selfManaged).statusVisual?.label).toBe("Setup");
+		expect(agentTileCardProjection(legacy).statusVisual?.label).toBe("Live");
+	});
+
+	it("labels last-seen fallback explicitly when no sync timestamp exists", () => {
+		const [tile] = selfManagedAgentTiles([
+			env({ last_seen_at: new Date().toISOString(), last_sync_at: null }),
+		]);
+
+		expect(agentTileCardProjection(tile).meta[1]).toStartWith("Seen ");
 	});
 });
 
@@ -171,7 +174,6 @@ describe("agentTileMatchesRouteId", () => {
 			name: "Hosted agent",
 			agentType: "openclaw",
 			href: `/agents/${projected.id}?source=on-clawdi&d=hdep_paid`,
-			active: true,
 			env: projected,
 		};
 
@@ -189,14 +191,12 @@ describe("agentTileMatchesRouteId", () => {
 			name: "Selected deployment",
 			agentType: "openclaw",
 			href: `/agents/${projected.id}?source=on-clawdi&d=hdep_selected`,
-			active: false,
 			env: null,
 		};
 		const replacement: AgentTile = {
 			...selected,
 			id: "hdep_replacement",
 			name: "Replacement deployment",
-			active: true,
 			env: projected,
 		};
 
@@ -207,12 +207,10 @@ describe("agentTileMatchesRouteId", () => {
 });
 
 describe("fleetSummaryFromTiles", () => {
-	it("counts active tiles instead of requiring a fresh cloud-api last-seen timestamp", () => {
-		const freshSeenAt = new Date().toISOString();
-		const newestSeenAt = new Date(Date.now() + 1000).toISOString();
+	it("summarizes inventory without inventing an activity clock", () => {
 		const selfManaged = selfManagedAgentTiles([
 			env({
-				last_seen_at: freshSeenAt,
+				last_seen_at: new Date().toISOString(),
 			}),
 		]);
 		const hostedRunningWithoutEnv: AgentTile = {
@@ -220,9 +218,7 @@ describe("fleetSummaryFromTiles", () => {
 			source: "on-clawdi",
 			name: "Codex",
 			agentType: "codex",
-			lastSeenAt: null,
 			href: "/agents/dep_123",
-			active: true,
 			env: null,
 		};
 		const hostedStoppedWithFreshEnv: AgentTile = {
@@ -230,18 +226,12 @@ describe("fleetSummaryFromTiles", () => {
 			source: "on-clawdi",
 			name: "Stopped Codex",
 			agentType: "codex",
-			lastSeenAt: newestSeenAt,
 			href: "/agents/dep_456",
-			active: true,
-			env: null,
+			env: env({ last_seen_at: new Date().toISOString() }),
 		};
 
 		expect(
 			fleetSummaryFromTiles([...selfManaged, hostedRunningWithoutEnv, hostedStoppedWithFreshEnv]),
-		).toEqual({
-			activeCount: 3,
-			total: 3,
-			lastActive: newestSeenAt,
-		});
+		).toEqual({ total: 3 });
 	});
 });

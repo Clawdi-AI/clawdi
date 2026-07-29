@@ -14,11 +14,11 @@ from app.models.project_membership import ProjectMembership
 from app.models.session import Session
 from app.models.skill import Skill
 from app.models.user import User
-from app.models.vault import Vault, VaultItem
+from app.models.vault import Vault, VaultItem, VaultProjectAttachment
 
 
-async def _seed_dashboard_sessions(db_session: AsyncSession, user_id) -> None:
-    now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
+async def _seed_dashboard_sessions(db_session: AsyncSession, user_id) -> datetime:
+    now = datetime.now(UTC).replace(microsecond=0)
     day_offsets = [0, 1, 2, 5, 6, 7, 8]
     sessions = [
         Session(
@@ -35,6 +35,7 @@ async def _seed_dashboard_sessions(db_session: AsyncSession, user_id) -> None:
     ]
     db_session.add_all(sessions)
     await db_session.commit()
+    return now
 
 
 @pytest.mark.asyncio
@@ -47,7 +48,7 @@ async def test_dashboard_stats_uses_bounded_database_round_trips(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(settings, "composio_api_key", "")
-    await _seed_dashboard_sessions(db_session, seed_user.id)
+    seeded_now = await _seed_dashboard_sessions(db_session, seed_user.id)
     skill = Skill(
         user_id=seed_user.id,
         project_id=seed_project.id,
@@ -95,7 +96,7 @@ async def test_dashboard_stats_uses_bounded_database_round_trips(
     assert data["total_sessions"] == 7
     assert data["active_days"] == 7
     assert data["favorite_model"] == "gpt-4o-mini"
-    assert data["peak_hour"] == 12
+    assert data["peak_hour"] == seeded_now.hour
     assert data["current_streak"] == 3
     assert data["longest_streak"] == 4
     assert data["skills_count"] == 1
@@ -103,10 +104,140 @@ async def test_dashboard_stats_uses_bounded_database_round_trips(
     assert data["vault_count"] == 1
     assert data["vault_keys_count"] == 1
     assert data["manual_sessions_last_7_days"] >= 1
+    assert data["automated_sessions_last_7_days"] == 0
+    assert data["top_model_last_7_days"] == "claude-sonnet"
     contribution_by_date = {entry["date"]: entry["count"] for entry in data["contribution"]}
     assert contribution_by_date[str(datetime.now(UTC).date())] == 1
     assert len(data["contribution"]) >= 365
     assert len(statements) <= 1
+
+
+@pytest.mark.asyncio
+async def test_dashboard_stats_matches_visible_inventory_and_one_week_started_at_window(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    seed_project,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "composio_api_key", "")
+    now = datetime.now(UTC).replace(microsecond=0)
+    owner = User(
+        clerk_id=f"dashboard-owner-{seed_user.id}",
+        email=f"dashboard-owner-{seed_user.id}@clawdi.local",
+        name="Dashboard Owner",
+    )
+    db_session.add(owner)
+    await db_session.flush()
+    shared_project = Project(
+        user_id=owner.id,
+        name="Shared Dashboard Project",
+        slug="shared-dashboard-project",
+        kind=PROJECT_KIND_WORKSPACE,
+    )
+    db_session.add(shared_project)
+    await db_session.flush()
+    db_session.add(
+        ProjectMembership(
+            project_id=shared_project.id,
+            member_user_id=seed_user.id,
+            role="viewer",
+            joined_via="invite",
+            joined_at=now,
+            resolved_owner_handle="dashboard-owner",
+        )
+    )
+    db_session.add_all(
+        [
+            Skill(
+                user_id=seed_user.id,
+                project_id=seed_project.id,
+                skill_key="owned-active",
+                name="Owned Active",
+                content_hash="owned-active",
+                is_active=True,
+            ),
+            Skill(
+                user_id=owner.id,
+                project_id=shared_project.id,
+                skill_key="shared-active",
+                name="Shared Active",
+                content_hash="shared-active",
+                is_active=True,
+            ),
+            Skill(
+                user_id=owner.id,
+                project_id=shared_project.id,
+                skill_key="shared-archived",
+                name="Shared Archived",
+                content_hash="shared-archived",
+                is_active=False,
+            ),
+        ]
+    )
+    owned_vault = Vault(user_id=seed_user.id, slug="owned", name="Owned")
+    shared_vault = Vault(user_id=owner.id, slug="shared", name="Shared")
+    hidden_vault = Vault(user_id=owner.id, slug="hidden", name="Hidden")
+    db_session.add_all([owned_vault, shared_vault, hidden_vault])
+    await db_session.flush()
+    db_session.add(VaultProjectAttachment(vault_id=shared_vault.id, project_id=shared_project.id))
+    db_session.add_all(
+        [
+            Session(
+                user_id=seed_user.id,
+                local_session_id="weekly-manual-1",
+                started_at=now - timedelta(days=6, hours=20),
+                last_activity_at=now - timedelta(days=30),
+                summary="Manual work",
+                model="weekly-model",
+            ),
+            Session(
+                user_id=seed_user.id,
+                local_session_id="weekly-manual-2",
+                started_at=now - timedelta(days=1),
+                last_activity_at=now - timedelta(days=30),
+                summary=None,
+                model="weekly-model",
+            ),
+            Session(
+                user_id=seed_user.id,
+                local_session_id="weekly-automated",
+                started_at=now - timedelta(minutes=1),
+                last_activity_at=now - timedelta(days=30),
+                summary="Cron: health check",
+                model="automation-model",
+            ),
+            Session(
+                user_id=seed_user.id,
+                local_session_id="stale-but-recently-active",
+                started_at=now - timedelta(days=8),
+                last_activity_at=now,
+                summary="Old manual work",
+                model="stale-model",
+            ),
+            Session(
+                user_id=seed_user.id,
+                local_session_id="historical-inventory-session",
+                started_at=now - timedelta(days=400),
+                last_activity_at=now - timedelta(days=400),
+                summary="Historical work",
+                model="historical-model",
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    response = await client.get("/v1/dashboard/stats")
+
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["total_sessions"] == 5
+    assert data["manual_sessions_last_7_days"] == 2
+    assert data["automated_sessions_last_7_days"] == 1
+    assert data["top_model_last_7_days"] == "weekly-model"
+    assert data["sessions_today"] == 1
+    assert data["skills_count"] == 2
+    assert data["vault_count"] == 2
 
 
 @pytest.mark.asyncio

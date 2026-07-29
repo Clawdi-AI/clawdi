@@ -82,8 +82,8 @@ const PROJECT_RESOURCE_DEFINITIONS = [
 		projectScope: "project-managed",
 		pathSegments: ["Projects", "Selected Project", "Vaults"],
 		projectQueryParam: "project",
-		statsKey: "vault_keys_count",
-		countLabel: "keys",
+		statsKey: "vault_count",
+		countLabel: "vaults",
 	},
 	{
 		id: "sessions",

@@ -12,6 +12,7 @@ import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatUsdExact } from "@/hosted/billing/format";
 import { useHostedDeployments, usePlans, useWalletLedger } from "@/hosted/billing/hooks";
 import { largestSignupGrantUsd } from "@/hosted/billing/subscription/subscription-utils";
+import { welcomeWalletDescription } from "@/hosted/billing/subscription/welcome-wallet-card.logic";
 import { useWalletSnapshot } from "@/hosted/billing/wallet/wallet-query";
 
 const WELCOME_GRANT_RECHECK_INTERVAL_MS = 5_000;
@@ -138,6 +139,13 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 		: configuredSignupGrantUsd
 			? formatUsdExact(configuredSignupGrantUsd)
 			: null;
+	const description = welcomeWalletDescription({
+		grantApplied,
+		grantPending,
+		grantCheckTimedOut,
+		grantAmount,
+		showDeployAction,
+	});
 
 	return (
 		<Card data-hosted="true" className="border-primary/30 bg-primary/5">
@@ -156,17 +164,7 @@ export function WelcomeWalletCard({ showDeployAction = true }: { showDeployActio
 										: "Adding your welcome balance…"
 									: "Welcome to Clawdi"}
 						</p>
-						<p className="text-sm text-muted-foreground">
-							{grantApplied
-								? `Your free Basic compute is ready. Your ${grantAmount} welcome balance covers Managed AI first; after that, usage draws from your Wallet.`
-								: grantPending
-									? grantCheckTimedOut
-										? "It hasn’t appeared yet. Refresh to check again."
-										: grantAmount
-											? `Your ${grantAmount} welcome balance is on the way. You can deploy now; it’ll be ready in a moment.`
-											: "Your welcome balance is on the way. You can deploy now; it’ll be ready in a moment."
-									: "Your free Basic compute slot is ready. Deploy your first agent to get going."}
-						</p>
+						<p className="text-sm text-muted-foreground">{description}</p>
 					</div>
 				</div>
 				{grantPending || showDeployAction ? (

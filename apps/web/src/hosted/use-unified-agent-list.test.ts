@@ -56,7 +56,6 @@ describe("selectUnifiedAgentList", () => {
 			name: "OpenClaw",
 			agentType: "openclaw",
 			href: null,
-			active: false,
 			env: null,
 		};
 
@@ -86,7 +85,6 @@ describe("selectUnifiedAgentList", () => {
 			name: "OpenClaw",
 			agentType: "openclaw",
 			href: null,
-			active: false,
 			env: null,
 		};
 
@@ -132,7 +130,6 @@ describe("selectUnifiedAgentList", () => {
 			name: "OpenClaw",
 			agentType: "openclaw",
 			href: `/agents/${claimed.id}?source=on-clawdi&d=dep_running`,
-			active: true,
 			env: claimed,
 		};
 		const selection = selectUnifiedAgentList({

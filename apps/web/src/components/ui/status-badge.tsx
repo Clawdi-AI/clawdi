@@ -96,4 +96,10 @@ function StatusDot({
 }
 
 export type { StatusTone };
-export { StatusBadge, StatusDot, statusBadgeVariants, statusTextVariants };
+export {
+	dotVariants as statusDotVariants,
+	StatusBadge,
+	StatusDot,
+	statusBadgeVariants,
+	statusTextVariants,
+};

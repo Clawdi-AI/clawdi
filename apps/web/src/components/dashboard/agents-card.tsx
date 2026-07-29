@@ -28,14 +28,6 @@ import { cn, relativeTime } from "@/lib/utils";
 
 type Env = components["schemas"]["AgentResponse"];
 
-// Freshness threshold — "active" means the agent pinged us in the last 5 minutes.
-const ACTIVE_WINDOW_MS = 5 * 60 * 1000;
-
-export function isAgentActive(lastSeenAt: string | null | undefined): boolean {
-	if (!lastSeenAt) return false;
-	return Date.now() - new Date(lastSeenAt).getTime() < ACTIVE_WINDOW_MS;
-}
-
 /**
  * Build self-managed AgentTiles from cloud-api environments. Shared by the
  * Overview grid and the `/agents` index so the tile shape stays identical
@@ -49,11 +41,17 @@ export function selfManagedAgentTiles(environments: Env[] | undefined): AgentTil
 		avatarUrl: env.avatar_url,
 		sortOrder: env.sort_order,
 		agentType: env.agent_type,
-		lastSeenAt: env.last_seen_at,
 		href: agentSectionHref(env.id),
-		active: isAgentActive(env.last_seen_at),
 		env,
 	}));
+}
+
+export type AgentCardStatusVisual = Pick<DaemonStatusVisual, "label" | "tooltip" | "dotClass">;
+
+export interface AgentCardStatusProjection {
+	visual: AgentCardStatusVisual;
+	/** Explicit status labels rendered in the compact card metadata. */
+	labels: string[];
 }
 
 /**
@@ -69,8 +67,6 @@ export interface AgentTile {
 	avatarUrl?: string | null;
 	sortOrder?: number | null;
 	agentType: string | null;
-	/** Used to compute the "N active now" count in the card description. */
-	lastSeenAt?: string | null;
 	/** Primary click target. Points at the in-app env detail page
 	 * (`/agents/{env_id}`). Hosted tiles derive this identity from deployment
 	 * config even while the cloud-api projection is absent. A hosted deployment
@@ -81,8 +77,9 @@ export interface AgentTile {
 	action?: ReactNode;
 	/** Optional remediation target for legacy status dialogs. */
 	manageHref?: string;
-	/** Counted in the "N active now" header line. */
-	active: boolean;
+	/** Hosted integrations can project compute-first status without making the
+	 * generic card import hosted lifecycle types. */
+	cardStatus?: AgentCardStatusProjection;
 	/** Self-managed envs carry the full EnvironmentResponse so the
 	 * tile can render a sync indicator. Hosted tiles join their
 	 * cloud-api env via `clawdi_cloud_environments` and end up with
@@ -105,21 +102,11 @@ export function agentTileMatchesRouteId(
 }
 
 export interface AgentFleetSummary {
-	activeCount: number;
 	total: number;
-	lastActive: string | null;
 }
 
 export function fleetSummaryFromTiles(agents: readonly AgentTile[]): AgentFleetSummary {
-	return {
-		activeCount: agents.filter((agent) => agent.active).length,
-		total: agents.length,
-		lastActive:
-			agents
-				.map((agent) => agent.lastSeenAt)
-				.filter((value): value is string => Boolean(value))
-				.sort((a, b) => b.localeCompare(a))[0] ?? null,
-	};
+	return { total: agents.length };
 }
 
 export function AgentsCard({
@@ -152,7 +139,7 @@ export function AgentsCard({
 	const hiddenCount = ordered.length - visible.length;
 
 	// No section header: the greeting directly above already carries the
-	// fleet summary ("N agents connected · last active …"), and a bare
+	// fleet summary ("N agents"), and a bare
 	// text header here pushed the tile wall below the right rail's card
 	// top — the two columns read as misaligned (Marvin's screenshot).
 	// Tiles start flush with the column, level with the cards on the right.
@@ -314,7 +301,7 @@ function AgentTileView({ tile }: { tile: AgentTile }) {
 	);
 }
 
-function AgentStatusDot({ visual }: { visual: DaemonStatusVisual }) {
+function AgentStatusDot({ visual }: { visual: AgentCardStatusVisual }) {
 	return (
 		<span
 			title={`Status: ${visual.label}. ${visual.tooltip}`}
@@ -335,25 +322,29 @@ function AgentStatusDot({ visual }: { visual: DaemonStatusVisual }) {
  */
 export function agentTileCardProjection(tile: AgentTile): {
 	meta: string[];
-	statusVisual: DaemonStatusVisual | null;
+	statusVisual: AgentCardStatusVisual | null;
 } {
 	const identity = agentIdentity({
 		name: tile.name,
 		machine_name: tile.name,
 		agent_type: tile.agentType,
 	});
-	const meta = [identity.secondaryLabel, agentTileActivityLabel(tile)].filter(
-		(value): value is string => Boolean(value),
-	);
-	const statusVisual =
-		tile.source === "on-clawdi" && !tile.env
+	const meta = [
+		identity.secondaryLabel,
+		...(tile.cardStatus?.labels ?? []),
+		agentTileActivityLabel(tile),
+	].filter((value): value is string => Boolean(value));
+	const statusVisual = tile.cardStatus
+		? tile.cardStatus.visual
+		: tile.source === "on-clawdi" && !tile.env
 			? null
 			: daemonStatusVisual(tile.env, tile.source === "self-managed" ? "self-managed" : "on-clawdi");
 	return { meta, statusVisual };
 }
 
 function agentTileActivityLabel(tile: AgentTile): string | null {
-	if (tile.lastSeenAt) return relativeTime(tile.lastSeenAt);
+	if (tile.env?.last_sync_at) return `Synced ${relativeTime(tile.env.last_sync_at)}`;
+	if (tile.env?.last_seen_at) return `Seen ${relativeTime(tile.env.last_seen_at)}`;
 	return null;
 }
 
