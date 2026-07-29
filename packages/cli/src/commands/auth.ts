@@ -186,7 +186,7 @@ async function claimPendingAnonymousShares(apiUrl: string, apiKey: string): Prom
 
 	if (results.length > 0) {
 		p.log.success(
-			`Auto-upgraded ${results.length} pending share${results.length === 1 ? "" : "s"}:`,
+			results.length === 1 ? "Shared project ready:" : `${results.length} shared projects ready:`,
 		);
 		for (const o of results) {
 			const pulled =
