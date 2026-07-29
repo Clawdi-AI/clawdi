@@ -1,43 +1,43 @@
 /**
- * Self-restart on binary update.
- *
- * Problem: when `npm i -g clawdi` (or `bun add -g`, or a local
- * `bun run build:dev`) rewrites the daemon's own JS file, the
- * already-running process stays on the old in-memory code forever.
- * Users had no way to pick up a fix short of `launchctl kickstart`
- * or rebooting.
- *
- * Solution: snapshot the entry JS file's mtime at boot, poll
- * periodically, and exit cleanly when the file changes. The OS
- * supervisor (launchd `KeepAlive=true` on macOS, systemd
- * `Restart=always` on Linux) respawns the daemon, which loads the
- * new code at process start. Net effect: any update path
- * propagates to a running daemon within `pollMs` of the file
- * being rewritten.
- *
- * Why mtime + poll instead of `fs.watch`: npm and bun both replace
- * files atomically (write to temp + rename), and `fs.watch`
- * semantics across platforms differ on rename events (macOS sends
- * `rename`, Linux sends `change`, Windows behavior varies). Polling
- * mtime is dumb but works the same everywhere and the daemon's
- * baseline cost is trivial — one stat() per poll interval.
+ * Watches the loaded CLI entry by mtime and asks the service supervisor for a
+ * clean restart when it changes. A daemon-owned global install holds the small
+ * coordination barrier below through installer close and version validation;
+ * watcher events observed inside that interval are deferred while the updater
+ * validates the new bytes, while entry changes outside it restart immediately.
  */
-
 import { stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { log } from "./log";
 
+export interface RestartCoordination {
+	duringUpdateInstall<T>(work: () => Promise<T>): Promise<T>;
+	requestRestart(): boolean;
+}
+
+export function createRestartCoordination(abort: AbortController): RestartCoordination {
+	let installsInFlight = 0;
+
+	return {
+		async duringUpdateInstall<T>(work: () => Promise<T>): Promise<T> {
+			installsInFlight += 1;
+			try {
+				return await work();
+			} finally {
+				installsInFlight -= 1;
+			}
+		},
+		requestRestart(): boolean {
+			if (installsInFlight > 0) return false;
+			abort.abort();
+			return true;
+		},
+	};
+}
+
 interface AutoRestartOpts {
-	/** Caller's abort controller. We call `.abort()` when the entry
-	 * file changes so the engine's main loop drains and exits. */
 	abort: AbortController;
-	/** Polling cadence. Defaults to 60s — fast enough that a user
-	 * who just ran `clawdi update` sees behavior change inside one
-	 * coffee break, slow enough to not be visible in `top`. */
+	restart: RestartCoordination;
 	pollMs?: number;
-	/** Override the entry-file resolver. Tests pass an explicit
-	 * path; production callers omit it and we derive from
-	 * `process.argv[1]`. */
 	entryPath?: string;
 }
 
@@ -90,9 +90,9 @@ export async function startAutoRestart(opts: AutoRestartOpts): Promise<string | 
 	const entry = opts.entryPath ?? (await resolveEntryFile());
 	if (!entry) return null;
 
-	let initial: number;
+	let previous: number;
 	try {
-		initial = (await stat(entry)).mtimeMs;
+		previous = (await stat(entry)).mtimeMs;
 	} catch {
 		// Entry vanished between resolveEntryFile and stat — bail
 		// silently rather than throwing; the daemon is fine without
@@ -107,17 +107,14 @@ export async function startAutoRestart(opts: AutoRestartOpts): Promise<string | 
 			if (opts.abort.signal.aborted) return;
 			try {
 				const now = (await stat(entry)).mtimeMs;
-				if (now !== initial) {
+				if (now !== previous) {
 					log.info("serve.binary_updated", {
 						entry,
-						initial_mtime: initial,
+						initial_mtime: previous,
 						current_mtime: now,
 					});
-					// Graceful shutdown — the engine's drain loop
-					// notices the abort and exits, then launchd /
-					// systemd respawns us with the new code.
-					opts.abort.abort();
-					return;
+					previous = now;
+					if (opts.restart.requestRestart()) return;
 				}
 			} catch (e) {
 				// Atomic replace momentarily makes the path miss; one
