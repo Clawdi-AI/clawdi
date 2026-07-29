@@ -1,7 +1,6 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import {
 	ArrowDown,
 	ArrowUp,
@@ -30,7 +29,6 @@ import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import {
 	isCustomProject,
-	isProjectOwner,
 	ProjectIdentity,
 	ProjectScopePicker,
 } from "@/components/projects/project-metadata";
@@ -123,16 +121,6 @@ export function ConnectedAgentDetail({
 		queryFn: async (): Promise<ProjectRow[]> => unwrap(await api.GET("/v1/projects")),
 		enabled: !!agent,
 	});
-	const writableProjectIds = useMemo(
-		() =>
-			projects
-				? new Set(
-						projects.filter((project) => isProjectOwner(project)).map((project) => project.id),
-					)
-				: null,
-		[projects],
-	);
-
 	const {
 		data: projectBindings,
 		isLoading: projectBindingsLoading,
@@ -164,7 +152,7 @@ export function ConnectedAgentDetail({
 		skills: skillsForThisEnv,
 		error: skillsError,
 		refetch: refetchSkills,
-	} = useAgentProjectSkills(agentProjectId);
+	} = useAgentProjectSkills(id, agentProjectId, id, false);
 
 	const sessionTotal = sessionsError ? "—" : (sessionsPage?.total ?? 0);
 	const activeTabMeta = AGENT_DETAIL_NAV_META[activeTab];
@@ -177,18 +165,7 @@ export function ConnectedAgentDetail({
 		agent && showSourceBadge ? (
 			<AgentSourceBadgeForEnvironment env={agent} ownershipKind={ownershipKind} compact />
 		) : null;
-	const headerActions =
-		activeTab === "skills" ? (
-			<Button
-				render={<Link to="/skills" search={{ target: id }} />}
-				nativeButton={false}
-				variant="outline"
-				size="sm"
-			>
-				<Plus />
-				Install skills
-			</Button>
-		) : null;
+	const headerActions = null;
 	const scopedSessionLink = (sessionId: string) => ({
 		...agentSessionDetailLink(id, sessionId, routeSearch),
 	});
@@ -295,7 +272,7 @@ export function ConnectedAgentDetail({
 							agentId={id}
 							agentProjectId={agentProjectId}
 							routeSearch={routeSearch}
-							writableProjectIds={writableProjectIds}
+							isResolvingAgentProject={isLoading}
 						/>
 					) : null}
 

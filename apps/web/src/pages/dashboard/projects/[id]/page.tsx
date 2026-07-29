@@ -80,6 +80,7 @@ import type { components } from "@/lib/api-schemas";
 import { formatShortDate } from "@/lib/format";
 import { identityFor } from "@/lib/identity";
 import { projectDetailHref, projectResourceHref } from "@/lib/project-resource-model";
+import { isBrowserWritableSkillProject, skillCapabilities } from "@/lib/skill-authority";
 import { cn, errorMessage } from "@/lib/utils";
 
 type SkillSummary = components["schemas"]["SkillSummaryResponse"];
@@ -114,6 +115,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 	const rows = projects.data ?? [];
 	const project = rows.find((row) => row.id === projectId) ?? null;
 	const isOwner = project?.is_owner !== false;
+	const canManageSkills = isBrowserWritableSkillProject(project);
 	const isShareableProject = project ? isCustomProject(project) : false;
 	const isManaged = project ? isManagedProject(project) : false;
 
@@ -427,12 +429,14 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 				title="Skills"
 				count={skillCount}
 				description={
-					isOwner
-						? "Reusable instructions stored in this Project."
-						: "Readable instructions shared by the owner."
+					project.kind === "environment"
+						? "Read-only projections authored on this Agent's filesystem."
+						: isOwner
+							? "Reusable instructions stored in this Project."
+							: "Readable instructions shared by the owner."
 				}
 				action={
-					isOwner ? (
+					canManageSkills ? (
 						<Button
 							variant="outline"
 							size="sm"
@@ -445,7 +449,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 					) : null
 				}
 			>
-				{isOwner && showInstallSkill ? (
+				{canManageSkills && showInstallSkill ? (
 					<InstallSkillInProjectForm projectId={project.id} onChanged={refresh} />
 				) : null}
 				{skills.error ? (
@@ -462,6 +466,7 @@ export default function ProjectDetailPage({ projectId }: { projectId: string }) 
 						isLoading={skills.isLoading}
 						emptyMessage="No skills are visible in this Project yet."
 						emptyVariant="inset"
+						capabilitiesFor={(skill) => skillCapabilities(skill, project)}
 					/>
 				)}
 			</HubSection>
