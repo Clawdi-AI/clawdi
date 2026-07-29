@@ -27,6 +27,7 @@ import {
 	TerminalSquare,
 	Trash2,
 	WalletCards,
+	X,
 	Zap,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -56,6 +57,14 @@ import {
 	DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import {
+	Popover,
+	PopoverContent,
+	PopoverDescription,
+	PopoverHeader,
+	PopoverTitle,
+	PopoverTrigger,
+} from "@/components/ui/popover";
 import {
 	Select,
 	SelectContent,
@@ -1269,6 +1278,11 @@ function OverviewDeploymentActions({
 // ── Runtime UI ───────────────────────────────────────────────────────────────
 
 const RUNTIME_UI_LAUNCH_TOAST_ID = "runtime-ui-launch";
+const HERMES_ACCESS_HINT_STORAGE_PREFIX = "clawdi.hermes-access-hint.dismissed";
+
+function hermesAccessHintStorageKey(deploymentId: string): string {
+	return `${HERMES_ACCESS_HINT_STORAGE_PREFIX}.${deploymentId}`;
+}
 
 function useRuntimeUiCredentialRequest(
 	deployment: HostedDeployment,
@@ -1502,7 +1516,18 @@ function RuntimeUiAccessDialog({
 	const requestVersionRef = useRef(0);
 	const loadedIdentityRef = useRef<string | null>(null);
 	const triggerRef = useRef<HTMLButtonElement>(null);
+	const [accessHintOpen, setAccessHintOpen] = useState(false);
 	const identity = `${deployment.resource.id}\0${deployment.resource.metadata.resourceVersion}\0${runtime}\0${endpointUrl}`;
+	const accessHintStorageKey = hermesAccessHintStorageKey(deployment.resource.id);
+
+	const dismissAccessHint = useCallback(() => {
+		setAccessHintOpen(false);
+		try {
+			window.localStorage.setItem(accessHintStorageKey, "1");
+		} catch {
+			// The hint still stays dismissed for this mount when storage is unavailable.
+		}
+	}, [accessHintStorageKey]);
 
 	const clearSensitiveState = useCallback(() => {
 		requestVersionRef.current += 1;
@@ -1541,12 +1566,25 @@ function RuntimeUiAccessDialog({
 		if (runtime === "openclaw") void loadCredentials();
 	}, [clearSensitiveState, identity, loadCredentials, runtime]);
 
+	useEffect(() => {
+		if (runtime !== "hermes") {
+			setAccessHintOpen(false);
+			return;
+		}
+		try {
+			setAccessHintOpen(window.localStorage.getItem(accessHintStorageKey) !== "1");
+		} catch {
+			setAccessHintOpen(true);
+		}
+	}, [accessHintStorageKey, runtime]);
+
 	const handleOpenChange = useCallback(
 		(nextOpen: boolean) => {
 			setOpen(nextOpen);
+			if (nextOpen && runtime === "hermes") dismissAccessHint();
 			if (nextOpen && !credentials && !isLoading) void loadCredentials();
 		},
-		[credentials, isLoading, loadCredentials],
+		[credentials, dismissAccessHint, isLoading, loadCredentials, runtime],
 	);
 
 	const openRuntime = useCallback(async () => {
@@ -1599,16 +1637,46 @@ function RuntimeUiAccessDialog({
 	return (
 		<Dialog open={open} onOpenChange={handleOpenChange}>
 			<div className="flex items-center gap-1.5">
-				<Button
-					ref={triggerRef}
-					type="button"
-					variant="outline"
-					size="sm"
-					onClick={() => handleOpenChange(true)}
-					aria-label={`Access ${label}`}
+				<Popover
+					open={runtime === "hermes" && accessHintOpen}
+					onOpenChange={(nextOpen) => {
+						if (!nextOpen) dismissAccessHint();
+					}}
 				>
-					Access
-				</Button>
+					<PopoverTrigger
+						render={
+							<Button
+								ref={triggerRef}
+								type="button"
+								variant="outline"
+								size="sm"
+								onClick={() => handleOpenChange(true)}
+								aria-label={`Access ${label}`}
+							/>
+						}
+					>
+						Access
+					</PopoverTrigger>
+					<PopoverContent side="bottom" align="end" className="w-72 gap-2">
+						<div className="flex items-start justify-between gap-3">
+							<PopoverHeader>
+								<PopoverTitle>Sign in to Hermes</PopoverTitle>
+								<PopoverDescription>
+									Get your Hermes username and password from Access.
+								</PopoverDescription>
+							</PopoverHeader>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-xs"
+								onClick={dismissAccessHint}
+								aria-label="Dismiss Hermes sign-in hint"
+							>
+								<X />
+							</Button>
+						</div>
+					</PopoverContent>
+				</Popover>
 				<Button
 					type="button"
 					variant="outline"

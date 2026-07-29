@@ -2688,9 +2688,20 @@ test("Runtime UI Access shows Hermes username, masks password, and submits one d
 	const main = page.locator("main");
 	const iframe = main.locator('iframe[title="Hermes Dashboard"]');
 	await expect(iframe).toHaveAttribute("src", "https://runtime.example/hermes");
+	await expect(page.getByText("Sign in to Hermes", { exact: true })).toBeVisible();
 	await main.getByRole("button", { name: "Access Hermes Dashboard" }).click();
 	const dialog = page.getByRole("dialog", { name: "Runtime UI access" });
 	await expect(dialog).toBeVisible();
+	await expect(page.getByText("Sign in to Hermes", { exact: true })).toHaveCount(0);
+	await expect
+		.poll(() =>
+			page.evaluate(
+				(deploymentId) =>
+					localStorage.getItem(`clawdi.hermes-access-hint.dismissed.${deploymentId}`),
+				runningMissingProjectionDeployment.id,
+			),
+		)
+		.toBe("1");
 	await expect.poll(() => runtimeUiRedemptionRequests.length).toBe(1);
 	await expect(dialog.locator("code")).toHaveText(["admin", "••••••••••••"]);
 	await expect(dialog.getByText("admin", { exact: true })).toBeVisible();
