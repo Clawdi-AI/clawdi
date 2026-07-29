@@ -306,12 +306,14 @@ class RuntimeManagedSkillSummary(BaseModel):
 
 
 class AgentMcpServerInventoryItem(BaseModel):
+    """A safe row whose user-declaration provenance was proven upstream."""
+
     model_config = ConfigDict(extra="forbid")
 
     id: str
     transport: Literal["stdio", "streamable-http", "sse"]
     enabled: bool = True
-    source: Literal["deployment_manifest"] = "deployment_manifest"
+    source: Literal["explicit_user_declaration"]
 
 
 class AgentMcpInventoryResponse(BaseModel):

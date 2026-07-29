@@ -160,7 +160,6 @@ carry durable `authority` provenance:
 | --- | --- | --- |
 | `cloud` | Cloud-owned workspace/personal Project | Normal authenticated Cloud UI/API and `--project` CLI operations |
 | `agent_sync` | One Agent's guarded filesystem target | Agent-authenticated claim/upload and absence/delete only; dashboard is read-only |
-| `manifest` | Public Hosted deployment `resource.spec.skills` | Dashboard may replace the complete supported `enabled`/`version` array through the deployment update contract; no mutable Skill row or body edit |
 
 Historical rows are backfilled as `cloud`; Project kind, source strings, and
 old environment metadata are not ownership evidence. A live authenticated
@@ -172,29 +171,27 @@ the explicit capability, and orphan Agent Projects also fail closed.
 
 Mixed-version safety uses the explicit
 `X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` capability, never a
-User-Agent guess. Rollout is control-plane first: the public Hosted deployment
-contract must be available, then every Clawdi backend worker must serve the
-gate and dedicated endpoints and old SSE connections must be drained before
-CLI 0.13.11 is rolled out; Web follows the CLI. An old CLI reaching a current
-backend receives 426 on Agent-Project sync surfaces. A current CLI reaching an
-old backend receives a dedicated-route 404, retains its local operation, and
-does not create a Cloud mutation. Projection may pause during that window, but
-the Agent filesystem remains unchanged. Additive
+User-Agent guess. Every Clawdi backend worker must serve the gate and dedicated
+endpoints and old SSE connections must be drained before CLI 0.13.11 is rolled
+out; Web follows the CLI. An old CLI reaching a current backend receives 426
+on Agent-Project sync surfaces. A current CLI reaching an old backend receives
+a dedicated-route 404, retains its local operation, and does not create a Cloud
+mutation. Projection may pause during that window, but the Agent filesystem
+remains unchanged. Additive
 `agent_skill_changed`/`agent_skill_deleted` invalidations protect mutations
 created by current backend workers from already-connected released parsers;
 they do not make an old mutation worker safe. Current daemons treat both event
 families as rescan hints. Cloud-owned Project events retain their released
 names.
 
-An enabled manifest entry reserves its local key before managed installation.
-Conforming CLI/daemon uploads fail closed at that reservation boundary. If a
-previously claimed local Skill yields the key to the manifest, the local claim
-ledger still deletes the old Cloud projection without touching the managed
-target. Because the dashboard cannot see local ledger state, its conflict copy
-conservatively distinguishes a still-user-owned local target from automatic
-cleanup after manifest takeover; it offers no Cloud delete. Disabling the
-manifest entry releases and tears down only manifest ownership and does not
-resurrect an old projection.
+The bundled `clawdi` Skill is private platform infrastructure, not a third
+inventory authority and not a user Skill. Its private runtime entry reserves
+the local key before managed installation, so the daemon never uploads the
+managed target as an `agent_sync` row. A previously claimed user file may yield
+that key by deleting only its old Cloud projection; reconciliation never uses
+Cloud state to delete the managed target. Internal enable/disable still
+reconciles the bundle lifecycle, but neither state appears in the Skills UI or
+a public deployment mutation contract.
 
 ## Vault
 
@@ -238,13 +235,12 @@ For agents that only support stdio MCP, `clawdi mcp` registers local tool
 schemas and forwards calls to the backend. The backend keeps connector OAuth
 tokens and bridge credentials out of the agent process.
 
-Hosted Agent pages expose MCP as a separate read-only inventory, not as a Skill
-or an Overview boolean. The safe inventory contains only desired server id,
-transport, enabled state, and source. It never returns URL, headers, secret
-references, command, args, or env. Availability distinguishes a missing Agent
-projection from a proven configured-empty state. Overall convergence reuses
-the canonical runtime-observed identity, generation, source-revision, and
-freshness health fence; the inventory does not invent per-server convergence.
+Hosted Agent pages keep MCP separate from Skills. Their inventory may contain
+only explicit user declarations whose provenance is supported by a user
+management contract. This release has no such contract, so a valid private
+platform-only state is projected as empty and unknown server declarations fail
+closed. The preinstalled `clawdi` aggregate and its dynamic Composio tools stay
+behind `POST /v1/mcp/clawdi`; neither is a user-manageable MCP inventory row.
 
 ## Channels
 

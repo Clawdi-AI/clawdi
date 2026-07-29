@@ -330,37 +330,6 @@ describe("declarative deployment mutations", () => {
 		]);
 	});
 
-	it("sends the complete manifest Skill array through the strong deployment PATCH", async () => {
-		const mutations: Request[] = [];
-		const client = testClient(async (request) => {
-			const path = new URL(request.url).pathname;
-			if (path === "/v2/deployments/hdep_skills" && request.method === "GET") {
-				return jsonResponse(
-					hostedDeploymentFixture({ id: "hdep_skills", resourceVersion: "rv-skills" }),
-				);
-			}
-			if (path === "/v2/deployments/hdep_skills" && request.method === "PATCH") {
-				mutations.push(request.clone());
-				return jsonResponse(operation({ done: false, id: "skills-update", verb: "update" }), 202);
-			}
-			throw new Error(`Unexpected request: ${request.method} ${path}`);
-		});
-
-		const accepted = await client.updateDeployment(
-			"hdep_skills",
-			{ skills: [{ id: "clawdi", enabled: false, version: 1 }] },
-			"intent-skills",
-		);
-
-		expect(accepted.operation.done).toBe(false);
-		expect(mutations).toHaveLength(1);
-		expect(mutations[0]?.headers.get("Idempotency-Key")).toBe("intent-skills");
-		expect(mutations[0]?.headers.get("If-Match")).toBe('"rv-skills"');
-		expect(await mutations[0]?.json()).toEqual({
-			skills: [{ id: "clawdi", enabled: false, version: 1 }],
-		});
-	});
-
 	it("surfaces a friendly conflict after the one allowed retry", async () => {
 		const client = testClient(async (request) => {
 			const path = new URL(request.url).pathname;

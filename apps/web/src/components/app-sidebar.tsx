@@ -210,12 +210,12 @@ const HOSTED_AGENT_SECTIONS: {
 	{
 		id: "skills",
 		icon: Sparkles,
-		tooltip: "Manifest configuration and Agent filesystem Skills",
+		tooltip: "Skills synced from this Agent filesystem",
 	},
 	{
 		id: "mcp",
 		icon: Server,
-		tooltip: "Deployment-managed MCP servers",
+		tooltip: "User-declared MCP resources",
 	},
 	{
 		id: "ai",

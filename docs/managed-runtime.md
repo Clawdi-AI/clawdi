@@ -481,12 +481,13 @@ maps `(id, version)` to an immutable directory and SHA-256 digest;
 `clawdiCli.packageSpec` may locate installed CLI assets but never selects a
 Skill version. The current `clawdi` entry is version `1` at
 `skills/hosted-versions/1/clawdi/SKILL.md`, so the Skill file's direct parent
-still matches its frontmatter name. Public entries contain exactly `enabled`
-and `version`; source paths, variants, content, digests, and package specs are
-not manifest fields. Unknown ids or versions, unmanaged targets, source digest
-mismatches, and unsupported source file types fail closed. An exact managed
-marker plus an actual target-content digest match is a filesystem no-op;
-version changes, drift, and legacy ownership markers use staged replacement.
+still matches its frontmatter name. This entry is private platform desired
+state, not a public deployment field or a user Skill. Source paths, variants,
+content, digests, and package specs never cross the runtime wire. Unknown ids
+or versions, unmanaged targets, source digest mismatches, and unsupported
+source file types fail closed. An exact managed marker plus an actual
+target-content digest match is a filesystem no-op; version changes, drift, and
+legacy ownership markers use staged replacement.
 
 Managed-bundle integrity does not reuse `computeSkillFolderHash`. That function
 is an established client/server sync protocol over the safe dereferenced
@@ -501,18 +502,13 @@ and new clients.
 
 ### Skill And MCP Authority Boundaries
 
-The public deployment `resource.spec.skills` array is the source of truth for
-manifest-managed Skill intent. The current public contract supports the single
-entry `{id: "clawdi", enabled: <boolean>, version: 1}`. Dashboard changes use
-the existing deployment update operation with its strong resource-version
-precondition and idempotency key, replacing the complete array. The contract
-does not expose Skill content, paths, sources, or digests. Runtime desired state
-under `skills.entries` and runtime-observed summaries are downstream
-convergence evidence only; they never supply the next deployment mutation.
-Disabled entries remain in the safe summary so a propagated disable can be
-distinguished from unavailable or legacy runtime state, and convergence uses
-the canonical instance, generation, source-revision, and freshness health
-fence.
+The bundled `clawdi` Skill is platform infrastructure. Hosted constructs its
+private `skills.entries` runtime state internally, and capable CLIs reconcile
+enabled and disabled lifecycle state from that wire. The public deployment
+spec and update request deliberately have no `skills` field, and the dashboard
+does not render, edit, or delete the bundle. Existing runtime-observed summary
+fields remain compatibility/convergence evidence only; they are not user Skill
+inventory or mutation intent.
 
 Agent filesystem Skills have a separate one-way lifecycle. The guarded adapter
 target is authoritative and Cloud stores an `agent_sync` projection. A
@@ -529,36 +525,36 @@ no generic Project mutation is attempted. Dashboard writes, old clients
 without the explicit capability, and orphan projects also fail closed.
 
 The CLI declares `X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` on
-Agent-Project listing, SSE, and writes. Rollout order is the public Hosted
-deployment contract, every Clawdi backend worker plus drainage of old SSE
-connections, CLI 0.13.11, then Web. Old CLIs receive 426 from a current
-backend; a current CLI receives a dedicated 404 from an old backend and leaves
-its filesystem and durable projection state intact. Additive
+Agent-Project listing, SSE, and writes. Every Clawdi backend worker plus
+drainage of old SSE connections precedes CLI 0.13.11, then Web. Old CLIs
+receive 426 from a current backend; a current CLI receives a dedicated 404
+from an old backend and leaves its filesystem and durable projection state
+intact. Additive
 `agent_skill_changed`/`agent_skill_deleted` events protect only mutations
 created by current backend workers from released parsers on older connections;
 they do not make an old mutation worker safe. Current daemons treat both event
 families only as local-rescan hints. Workspace and personal Project events keep
 their released Cloud-owned behavior.
 
-An enabled manifest entry reserves its Skill key ahead of managed target
+An enabled private bundled-Skill entry reserves its key ahead of managed target
 installation. Conforming CLI/daemon uploads fail closed at that reservation
 boundary. If reservation wins after a user-authored Skill was deleted or
 renamed, the durable exact claim still queues removal of the old Cloud
 projection while the managed target is never uploaded or removed by live sync.
-Failed managed installation rolls back the reservation transaction; manifest
+Failed managed installation rolls back the reservation transaction; private
 disable releases its ownership without importing or resurrecting a stale
-projection. The dashboard cannot inspect the local claim ledger, so it presents
-both possible conflict states conservatively and does not offer cleanup
-deletion.
+projection. No reservation or managed target is projected into user Skill
+inventory.
 
-MCP remains independent of Skill enablement and has no deployment mutation in
-this release. Its Agent page uses the Cloud API's safe desired inventory, which
-exposes only server id, transport, desired enabled state, source, and explicit
-availability. Missing Agent/runtime projection and a legacy null MCP document
-are `unavailable`; only an explicit canonical `{servers: {}}` proves a
-configured-empty inventory. URLs, headers, secret references, commands, args,
-and env are never projected. Overall MCP convergence comes from the canonical
-runtime-observed health fence rather than per-server generation guesses.
+MCP remains independent of Skills and has no user declaration or mutation
+contract in this release. The Agent page therefore cannot truthfully expose
+runtime MCP servers as user inventory. A valid empty or platform-only runtime
+state projects as an available empty inventory; a missing projection is
+unavailable, and unknown server entries without explicit user provenance fail
+closed. The preinstalled `clawdi` aggregate is private infrastructure, and
+Composio is a dynamic tool source behind `POST /v1/mcp/clawdi`; neither appears
+as a separate MCP row. No URL, header, secret reference, command, argument, or
+environment value is projected to the browser.
 
 Manifest `generation` is part of the remote manifest ETag. The CLI applies any
 non-304 manifest without monotonic generation gating, while treating generation

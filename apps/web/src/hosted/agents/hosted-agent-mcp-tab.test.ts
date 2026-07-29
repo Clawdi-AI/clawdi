@@ -62,7 +62,7 @@ function runtime(deploymentId: string): RuntimeObserved {
 }
 
 describe("Hosted MCP page boundary", () => {
-	test("renders only the generated safe inventory and one overall health fence", () => {
+	test("renders only generated user-declared inventory and one overall health fence", () => {
 		const source = readFileSync(new URL("./hosted-agent-mcp-tab.tsx", import.meta.url), "utf8");
 		const generated = readFileSync(
 			new URL("../../../../../packages/shared/src/api/api.generated.ts", import.meta.url),
@@ -78,7 +78,9 @@ describe("Hosted MCP page boundary", () => {
 		expect(source).toContain("refetchIntervalInBackground: false");
 		expect(source).not.toMatch(/observed_config_generation|desired_config_generation/);
 		expect(source).not.toMatch(/server\.convergence/);
-		expect(source).toContain("sourceLabel(server.source)");
+		expect(source).toContain("Explicit user declaration · Read-only");
+		expect(source).toContain("servers.length > 0 ? <OverallMcpConvergence");
+		expect(source).not.toMatch(/server\.id\s*(?:===|!==)/);
 		expect(source).not.toMatch(/deployment\.resource\.spec\.skills|manifestSkill/);
 		for (const sensitive of [
 			"server.url",
@@ -91,6 +93,8 @@ describe("Hosted MCP page boundary", () => {
 			expect(source).not.toContain(sensitive);
 		}
 		expect(schema).toMatch(/id: string[\s\S]*transport:[\s\S]*enabled: boolean[\s\S]*source:/);
+		expect(schema).toContain('source: "explicit_user_declaration"');
+		expect(schema).not.toContain('source: "deployment_manifest"');
 		expect(schema).not.toMatch(/\b(url|headers|secretRef|command|args|env)\b/i);
 	});
 
@@ -116,7 +120,8 @@ describe("Hosted MCP page boundary", () => {
 			false,
 		);
 		expect(agentMcpInventoryMatchesDeployment(inventory("available"), "deployment-1")).toBe(true);
-		expect(source).toContain("No deployment-managed MCP servers");
+		expect(source).toContain("No user-declared MCP servers");
+		expect(source).toContain("built-in MCP endpoint and connector tools");
 		expect(source).toContain("Runtime convergence unavailable");
 	});
 
@@ -163,7 +168,7 @@ describe("Hosted MCP page boundary", () => {
 						id: "docs",
 						transport: "streamable-http",
 						enabled: true,
-						source: "deployment_manifest",
+						source: "explicit_user_declaration",
 					},
 				]),
 			),
@@ -178,7 +183,12 @@ describe("Hosted MCP page boundary", () => {
 		expect(
 			agentMcpInventoryRefetchInterval(
 				inventory("available", [
-					{ id: "local", transport: "stdio", enabled: true, source: "deployment_manifest" },
+					{
+						id: "local",
+						transport: "stdio",
+						enabled: true,
+						source: "explicit_user_declaration",
+					},
 				]),
 				"deployment-1",
 			),

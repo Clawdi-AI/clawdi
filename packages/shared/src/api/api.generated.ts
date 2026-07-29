@@ -931,7 +931,7 @@ export interface paths {
         };
         /**
          * Get Agent Mcp Inventory
-         * @description Return a deliberately non-sensitive deployment MCP inventory.
+         * @description Return only MCP inventory with proven user-declaration provenance.
          */
         get: operations["get_agent_mcp_inventory_v1_agents__agent_id__mcp_get"];
         put?: never;
@@ -2864,7 +2864,10 @@ export interface components {
             /** Servers */
             servers?: components["schemas"]["AgentMcpServerInventoryItem"][];
         };
-        /** AgentMcpServerInventoryItem */
+        /**
+         * AgentMcpServerInventoryItem
+         * @description A safe row whose user-declaration provenance was proven upstream.
+         */
         AgentMcpServerInventoryItem: {
             /** Id */
             id: string;
@@ -2880,10 +2883,9 @@ export interface components {
             enabled: boolean;
             /**
              * Source
-             * @default deployment_manifest
              * @constant
              */
-            source: "deployment_manifest";
+            source: "explicit_user_declaration";
         };
         /** AgentProjectBindingResponse */
         AgentProjectBindingResponse: {

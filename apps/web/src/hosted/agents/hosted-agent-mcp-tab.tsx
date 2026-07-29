@@ -63,8 +63,8 @@ export function HostedAgentMcpTab({
 			<div data-hosted="true">
 				<EmptyState
 					icon={Server}
-					title="MCP inventory is not ready"
-					description="The deployment does not have an addressable Agent projection yet. This page remains available while setup continues."
+					title="MCP inventory is unavailable"
+					description="The deployment does not have an addressable Agent projection yet, so Clawdi cannot verify any user-declared MCP resources."
 				/>
 			</div>
 		);
@@ -75,8 +75,8 @@ export function HostedAgentMcpTab({
 				<div data-hosted="true">
 					<EmptyState
 						icon={Server}
-						title="MCP desired state is unavailable"
-						description="The Agent projection is not present. This page will show the desired inventory when it becomes available."
+						title="MCP inventory is unavailable"
+						description="The Agent projection is not present. User-declared MCP resources will appear only after Clawdi can verify their provenance."
 					/>
 				</div>
 			);
@@ -105,8 +105,8 @@ export function HostedAgentMcpTab({
 			<div data-hosted="true">
 				<EmptyState
 					icon={Server}
-					title="MCP desired state is unavailable"
-					description="Clawdi does not have a safe desired inventory for this deployment yet. No empty configuration is being inferred."
+					title="MCP inventory is unavailable"
+					description="Clawdi cannot prove that this deployment's MCP declarations are user-managed, so no inventory rows are shown."
 				/>
 			</div>
 		);
@@ -119,12 +119,12 @@ export function HostedAgentMcpTab({
 			: undefined;
 	return (
 		<div data-hosted="true" className="space-y-4">
-			<OverallMcpConvergence health={health} />
+			{servers.length > 0 ? <OverallMcpConvergence health={health} /> : null}
 			{servers.length === 0 ? (
 				<EmptyState
 					icon={Server}
-					title="No deployment-managed MCP servers"
-					description="The desired inventory is available and currently empty. MCP configuration is read-only in this release."
+					title="No user-declared MCP servers"
+					description="No MCP resources with proven user-declaration provenance are available. Clawdi's built-in MCP endpoint and connector tools are platform capabilities, so they are not inventory rows."
 				/>
 			) : (
 				<div className={HERO_GRID_CLASS}>
@@ -143,8 +143,8 @@ function OverallMcpConvergence({ health }: { health: RuntimeHealth | undefined }
 			<Alert>
 				<AlertTitle>Runtime convergence unavailable</AlertTitle>
 				<AlertDescription>
-					Desired MCP servers are shown below. Runtime observation is unavailable while the Agent is
-					stopped, creating, or not yet projected.
+					User-declared MCP servers are shown below. Runtime observation is unavailable while the
+					Agent is stopped, creating, or not yet projected.
 				</AlertDescription>
 			</Alert>
 		);
@@ -159,7 +159,7 @@ function OverallMcpConvergence({ health }: { health: RuntimeHealth | undefined }
 					: "Convergence unknown";
 	return (
 		<Alert>
-			<AlertTitle>MCP runtime status: {label}</AlertTitle>
+			<AlertTitle>User MCP runtime status: {label}</AlertTitle>
 			<AlertDescription>
 				This overall status uses the Agent runtime health fence. Individual servers do not claim
 				convergence.
@@ -186,14 +186,10 @@ function McpServerCard({ server }: { server: McpServer }) {
 					</Badge>
 				</>
 			}
-			description="Deployment-managed MCP server"
-			footer={[<span key="source">{sourceLabel(server.source)} · Read-only</span>]}
+			description="User-declared MCP server"
+			footer={[<span key="source">Explicit user declaration · Read-only</span>]}
 		/>
 	);
-}
-
-function sourceLabel(source: McpServer["source"]): string {
-	return source === "deployment_manifest" ? "Deployment manifest" : "Deployment";
 }
 
 function transportLabel(transport: McpServer["transport"]): string {

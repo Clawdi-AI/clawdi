@@ -704,7 +704,6 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 				},
 				agents: [],
 				ports: [],
-				skills: [{ id: "clawdi", enabled: true, version: 1 }],
 				runtime_configuration: { providers: [], features: [] },
 				rollout_nonce: 0,
 				secret_references: [],
@@ -1823,18 +1822,10 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(touchOrderRequests).toEqual([]);
 });
 
-test("hosted Skills unify manifest and read-only Agent projections while MCP stays separate", async ({
-	page,
-}) => {
-	const updateDeploymentRequests: Array<{
-		body: string;
-		idempotencyKey: string | null;
-		ifMatch: string | null;
-	}> = [];
+test("hosted Skills and MCP hide private platform resources", async ({ page }) => {
 	await stubHostedApi(page, {
 		deployments: [railHostedDeployment],
 		cloudAgents: [railHostedCloudAgent],
-		updateDeploymentRequests,
 	});
 	await page.route(`${CLOUD_API}/v1/skills**`, (route) =>
 		fulfillJson(route, {
@@ -1889,41 +1880,23 @@ test("hosted Skills unify manifest and read-only Agent projections while MCP sta
 			agent_id: railHostedEnvironmentId,
 			deployment_id: railHostedDeployment.id,
 			availability: "available",
-			servers: [
-				{
-					id: "safe-docs",
-					transport: "streamable-http",
-					enabled: true,
-					source: "deployment_manifest",
-				},
-			],
+			servers: [],
 		}),
 	);
 
 	const detailQuery = `?source=on-clawdi&d=${railHostedDeployment.id}`;
 	await page.goto(`/agents/${railHostedEnvironmentId}/skills${detailQuery}`);
 	const main = page.locator("main");
-	await expect(main.getByText("Clawdi", { exact: true })).toBeVisible();
-	await expect(main.getByText("Manifest", { exact: true })).toBeVisible();
+	await expect(main.getByText("Clawdi", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("Manifest", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("Filesystem docs", { exact: true })).toBeVisible();
 	await expect(main.getByText("Agent synced · Read-only", { exact: true })).toBeVisible();
-	await expect(main.getByText("safe-docs", { exact: true })).toHaveCount(0);
 	await expect(main.getByRole("button", { name: /Send Filesystem docs/ })).toHaveCount(0);
-
-	await main.getByRole("switch", { name: "Enable Clawdi manifest Skill" }).click();
-	await expect.poll(() => updateDeploymentRequests).toHaveLength(1);
-	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toEqual({
-		skills: [{ id: "clawdi", enabled: false, version: 1 }],
-	});
-	expect(updateDeploymentRequests[0]?.idempotencyKey).toBeTruthy();
-	expect(updateDeploymentRequests[0]?.ifMatch).toBe(`"rv_${railHostedDeployment.id}"`);
 
 	await page.getByRole("link", { name: "MCP", exact: true }).click();
 	await expect(page).toHaveURL(`/agents/${railHostedEnvironmentId}/mcp${detailQuery}`);
-	await expect(main.getByText("safe-docs", { exact: true })).toBeVisible();
-	await expect(main.getByText("Streamable HTTP", { exact: true })).toBeVisible();
+	await expect(main.getByText("clawdi", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("Filesystem docs", { exact: true })).toHaveCount(0);
-	await expect(main.getByText(/mcp\.example|secretRef|Authorization/)).toHaveCount(0);
 });
 
 test("transient inventory withholds connected tiles until membership resolves", async ({

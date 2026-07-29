@@ -37,6 +37,7 @@ import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetAgentBreadcrumbTitle } from "@/components/breadcrumb-title";
 import { agentDisplayName } from "@/components/dashboard/agent-label";
 import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel";
+import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
 import { EntityCardSkeleton } from "@/components/entity-card";
@@ -89,7 +90,6 @@ import {
 	HOSTED_AGENT_SESSIONS_REFRESH_POLICY,
 	shouldBlockHostedSessionsError,
 } from "@/hosted/agents/hosted-agent-session-query";
-import { HostedAgentSkillsTab } from "@/hosted/agents/hosted-agent-skills-tab";
 import {
 	HostedTerminalPanel,
 	type HostedTerminalStatus,
@@ -298,11 +298,11 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: RefreshCw,
 	},
 	skills: {
-		description: "Manifest configuration and Agent filesystem projections.",
+		description: "Read-only projections from this Agent's filesystem.",
 		icon: Sparkles,
 	},
 	mcp: {
-		description: "Safe read-only deployment MCP server inventory.",
+		description: "User-declared MCP resources for this deployment.",
 		icon: Server,
 	},
 	ai: {
@@ -638,17 +638,16 @@ export function HostedAgentDetail({
 						)
 					) : null}
 					{activeTab === "skills" ? (
-						<HostedAgentSkillsTab
-							environmentId={environmentId}
-							agentProjectId={agent?.default_project_id}
-							deployment={deployment}
-							routeSearch={routeSearch}
-							projectionAvailable={
-								deploymentProjectionQueryable &&
-								projection.status === "resolved" &&
-								Boolean(agent?.default_project_id)
-							}
-						/>
+						projection.status === "resolved" ? (
+							<AgentSkillsTab
+								agentId={environmentId}
+								agentProjectId={agent?.default_project_id}
+								routeSearch={routeSearch}
+								projectionFence={deployment.resource.metadata.resourceVersion}
+							/>
+						) : (
+							<ProjectionDependentUnavailable label="Skills" />
+						)
 					) : null}
 					{activeTab === "mcp" ? (
 						<HostedAgentMcpTab

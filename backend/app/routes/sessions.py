@@ -37,7 +37,7 @@ from app.models.session_permission import (
 )
 from app.schemas.common import Paginated
 from app.schemas.runtime import (
-    HostedRuntimeRemoteMcpServer,
+    HostedRuntimeStdioMcpServer,
     PersistedHostedRuntimeMcp,
     PersistedHostedRuntimeSkills,
     validate_hosted_runtime_desired_state,
@@ -51,7 +51,6 @@ from app.schemas.runtime_observed import (
 )
 from app.schemas.session import (
     AgentMcpInventoryResponse,
-    AgentMcpServerInventoryItem,
     AgentReorderRequest,
     AgentResponse,
     AgentRuntimeObservedDesiredResponse,
@@ -946,7 +945,7 @@ async def get_agent_mcp_inventory(
     auth: AuthContext = Depends(require_web_auth),
     db: AsyncSession = Depends(get_session),
 ) -> AgentMcpInventoryResponse:
-    """Return a deliberately non-sensitive deployment MCP inventory."""
+    """Return only MCP inventory with proven user-declaration provenance."""
     state = (
         await db.execute(
             select(HostedRuntimeState)
@@ -983,20 +982,34 @@ async def get_agent_mcp_inventory(
             "Managed MCP inventory is temporarily unavailable.",
         ) from None
 
-    servers = [
-        AgentMcpServerInventoryItem(
-            id=server_id,
-            transport=server.transport
-            if isinstance(server, HostedRuntimeRemoteMcpServer)
-            else "stdio",
+    # The current runtime MCP wire does not identify who declared a server or
+    # whether the user can manage it. The exact built-in registration is
+    # platform-owned, while an empty map proves there is no user inventory.
+    # Anything else is valid runtime state but unproven inventory, so fail
+    # closed instead of turning arbitrary desired-state rows into user rows.
+    if persisted.servers and not _is_platform_only_mcp(persisted):
+        return AgentMcpInventoryResponse(
+            agent_id=str(agent_id),
+            deployment_id=state.deployment_id,
+            availability="unavailable",
         )
-        for server_id, server in sorted(persisted.servers.items())
-    ]
+
     return AgentMcpInventoryResponse(
         agent_id=str(agent_id),
         deployment_id=state.deployment_id,
         availability="available",
-        servers=servers,
+    )
+
+
+def _is_platform_only_mcp(persisted: PersistedHostedRuntimeMcp) -> bool:
+    """Recognize the complete canonical built-in declaration, not its id alone."""
+    if set(persisted.servers) != {"clawdi"}:
+        return False
+    server = persisted.servers["clawdi"]
+    return (
+        isinstance(server, HostedRuntimeStdioMcpServer)
+        and server.command == "clawdi"
+        and server.args == ["mcp"]
     )
 
 

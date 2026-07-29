@@ -618,7 +618,7 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
 
 
 @pytest.mark.asyncio
-async def test_mcp_inventory_distinguishes_unavailable_empty_and_safe_desired_fields(
+async def test_mcp_inventory_exposes_only_proven_user_declarations(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
 ):
@@ -716,6 +716,17 @@ async def test_mcp_inventory_distinguishes_unavailable_empty_and_safe_desired_fi
         "servers": [],
     }
 
+    state.mcp = {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
+    await db_session.commit()
+    platform_only = await client.get(f"/v1/agents/{env_id}/mcp")
+    assert platform_only.status_code == 200, platform_only.text
+    assert platform_only.json() == {
+        "agent_id": env_id,
+        "deployment_id": "dep-mcp-inventory",
+        "availability": "available",
+        "servers": [],
+    }
+
     state.mcp = {
         "servers": {
             "local": {"command": "secret-command", "args": ["--secret-arg"]},
@@ -737,21 +748,8 @@ async def test_mcp_inventory_distinguishes_unavailable_empty_and_safe_desired_fi
     assert inventory.json() == {
         "agent_id": env_id,
         "deployment_id": "dep-mcp-inventory",
-        "availability": "available",
-        "servers": [
-            {
-                "id": "local",
-                "transport": "stdio",
-                "enabled": True,
-                "source": "deployment_manifest",
-            },
-            {
-                "id": "remote",
-                "transport": "streamable-http",
-                "enabled": True,
-                "source": "deployment_manifest",
-            },
-        ],
+        "availability": "unavailable",
+        "servers": [],
     }
     serialized = inventory.text.lower()
     for forbidden in (
@@ -775,6 +773,35 @@ async def test_mcp_inventory_distinguishes_unavailable_empty_and_safe_desired_fi
         "servers",
     }
     assert set(item_schema["properties"]) == {"id", "transport", "enabled", "source"}
+    assert item_schema["properties"]["source"]["const"] == "explicit_user_declaration"
+    assert "source" in item_schema["required"]
+
+    state.mcp = {
+        "servers": {
+            "clawdi": {"command": "clawdi", "args": ["mcp"]},
+            "unproven": {"command": "private", "args": []},
+        }
+    }
+    await db_session.commit()
+    mixed_platform_and_unproven = await client.get(f"/v1/agents/{env_id}/mcp")
+    assert mixed_platform_and_unproven.status_code == 200, mixed_platform_and_unproven.text
+    assert mixed_platform_and_unproven.json() == {
+        "agent_id": env_id,
+        "deployment_id": "dep-mcp-inventory",
+        "availability": "unavailable",
+        "servers": [],
+    }
+
+    state.mcp = {"servers": {"clawdi": {"command": "other", "args": ["mcp"]}}}
+    await db_session.commit()
+    unexpected_reserved_declaration = await client.get(f"/v1/agents/{env_id}/mcp")
+    assert unexpected_reserved_declaration.status_code == 200, unexpected_reserved_declaration.text
+    assert unexpected_reserved_declaration.json() == {
+        "agent_id": env_id,
+        "deployment_id": "dep-mcp-inventory",
+        "availability": "unavailable",
+        "servers": [],
+    }
 
     state.mcp = {"servers": {"malformed": {"url": "https://mcp.example.test"}}}
     await db_session.commit()

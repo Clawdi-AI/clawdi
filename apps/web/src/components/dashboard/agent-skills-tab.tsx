@@ -65,16 +65,12 @@ export function AgentSkillsTab({
 	routeSearch,
 	isResolvingAgentProject = false,
 	projectionFence = agentId,
-	reservedSkillIds = new Set<string>(),
-	leadingCards,
 }: {
 	agentId: string;
 	agentProjectId: string | null | undefined;
 	routeSearch: AgentRouteSearch;
 	isResolvingAgentProject?: boolean;
 	projectionFence?: string;
-	reservedSkillIds?: ReadonlySet<string>;
-	leadingCards?: React.ReactNode;
 }) {
 	const {
 		skills,
@@ -82,14 +78,9 @@ export function AgentSkillsTab({
 		error: skillsError,
 		refetch: refetchSkills,
 	} = useAgentProjectSkills(agentId, agentProjectId, projectionFence);
-	const conflictingSkills = (skills ?? []).filter((skill) => reservedSkillIds.has(skill.skill_key));
-
 	if (!agentProjectId && !isResolvingAgentProject) {
 		return (
-			<div className="space-y-4">
-				{leadingCards ? (
-					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{leadingCards}</div>
-				) : null}
+			<div>
 				<Alert>
 					<AlertTitle>Agent-synced Skills are unavailable</AlertTitle>
 					<AlertDescription>
@@ -102,10 +93,7 @@ export function AgentSkillsTab({
 
 	if (skillsError) {
 		return (
-			<div className="space-y-4">
-				{leadingCards ? (
-					<div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{leadingCards}</div>
-				) : null}
+			<div>
 				<ApiErrorPanel
 					error={skillsError}
 					onRetry={() => {
@@ -118,26 +106,14 @@ export function AgentSkillsTab({
 	}
 
 	return (
-		<div className="flex flex-col gap-6">
-			{conflictingSkills.length > 0 ? (
-				<Alert>
-					<AlertTitle>Agent Skill conflicts with a manifest-managed Skill</AlertTitle>
-					<AlertDescription>
-						If the local Skill is still user-owned, rename or remove it on the Agent filesystem. If
-						the manifest has already taken ownership, projection cleanup will converge
-						automatically. The Cloud UI does not offer deletion.
-					</AlertDescription>
-				</Alert>
-			) : null}
+		<div>
 			<SkillCardGrid
 				skills={skills ?? []}
 				isLoading={isResolvingAgentProject || skillsLoading}
 				emptyMessage="No skills installed on this agent yet."
-				leadingCards={leadingCards}
 				capabilitiesFor={(skill) =>
 					skillCapabilities(skill, { kind: "environment", is_owner: true })
 				}
-				conflictSkillCheck={(skill) => reservedSkillIds.has(skill.skill_key)}
 				skillLink={(skill) =>
 					agentSkillDetailLink(agentId, skill.skill_key, skill.project_id, routeSearch)
 				}

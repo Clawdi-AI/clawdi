@@ -33,7 +33,6 @@ export function SkillCard({
 	skill,
 	readOnly = false,
 	readOnlyLabel = "Shared · Read-only",
-	conflict = false,
 	onUninstall,
 	uninstallPending = false,
 	selectMode = false,
@@ -46,7 +45,6 @@ export function SkillCard({
 	skill: SkillSummary;
 	readOnly?: boolean;
 	readOnlyLabel?: string;
-	conflict?: boolean;
 	onUninstall?: (skillKey: string, projectId: string) => void;
 	uninstallPending?: boolean;
 	selectMode?: boolean;
@@ -87,7 +85,6 @@ export function SkillCard({
 							{readOnlyLabel}
 						</Badge>
 					) : null}
-					{conflict ? <Badge variant="destructive">Conflict</Badge> : null}
 				</>
 			}
 			description={skill.description}
@@ -171,8 +168,6 @@ export function SkillCardGrid({
 	emptyVariant = "page",
 	readOnlySkillCheck,
 	capabilitiesFor,
-	conflictSkillCheck,
-	leadingCards,
 	onUninstall,
 	uninstallPending,
 	selectMode = false,
@@ -189,10 +184,6 @@ export function SkillCardGrid({
 	readOnlySkillCheck?: (skill: SkillSummary) => boolean;
 	/** Trusted capability projection shared by cards and bulk actions. */
 	capabilitiesFor?: (skill: SkillSummary) => SkillCapabilities;
-	/** Marks a reservation conflict without granting a cleanup mutation. */
-	conflictSkillCheck?: (skill: SkillSummary) => boolean;
-	/** Non-persisted inventory rows, such as Hosted manifest Skills. */
-	leadingCards?: React.ReactNode;
 	onUninstall?: (skillKey: string, projectId: string) => void;
 	uninstallPending?: boolean;
 	selectMode?: boolean;
@@ -206,19 +197,17 @@ export function SkillCardGrid({
 	if (isLoading) {
 		return (
 			<div className={HERO_GRID_CLASS}>
-				{leadingCards}
 				{Array.from({ length: 6 }).map((_, i) => (
 					<Skeleton key={i} className="h-28 w-full rounded-xl" />
 				))}
 			</div>
 		);
 	}
-	if (skills.length === 0 && leadingCards === undefined) {
+	if (skills.length === 0) {
 		return <EmptyState variant={emptyVariant} icon={Sparkles} description={emptyMessage} />;
 	}
 	return (
 		<div className={HERO_GRID_CLASS}>
-			{leadingCards}
 			{skills.map((skill) => {
 				const capabilities = capabilitiesFor?.(skill);
 				const readOnly = capabilities
@@ -230,7 +219,6 @@ export function SkillCardGrid({
 						skill={skill}
 						readOnly={readOnly}
 						readOnlyLabel={capabilities?.badgeLabel ?? undefined}
-						conflict={conflictSkillCheck?.(skill) ?? false}
 						onUninstall={onUninstall}
 						uninstallPending={uninstallPending}
 						selectMode={selectMode}

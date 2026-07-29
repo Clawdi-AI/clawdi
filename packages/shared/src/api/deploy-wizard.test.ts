@@ -56,7 +56,6 @@ function includedDeployment(occupiesSlot: boolean | null): HostedDeployDeploymen
 				resources: { vcpu: 2, memory_mib: 4096, disk_gib: 20 },
 				agents: [],
 				ports: [],
-				skills: [{ id: "clawdi", enabled: true, version: 1 }],
 				runtime_configuration: { providers: [], features: [] },
 				rollout_nonce: 0,
 				secret_references: [],
