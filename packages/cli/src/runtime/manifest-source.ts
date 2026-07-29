@@ -1117,6 +1117,15 @@ function validateLoadedManifest(
 			`manifest instanceId ${manifest.instanceId} does not match applied instanceId ${existing.instanceId}`,
 		);
 	}
+	if (
+		existing.instanceId === manifest.instanceId &&
+		existing.generation !== undefined &&
+		manifest.generation < existing.generation
+	) {
+		semanticErrors.push(
+			`manifest generation ${manifest.generation} is older than applied generation ${existing.generation}`,
+		);
+	}
 	if (semanticErrors.length > 0) {
 		return {
 			mode: "manifest-rejected",

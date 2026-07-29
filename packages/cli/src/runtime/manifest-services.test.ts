@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { readRuntimeInstallReceipts } from "./install-receipts";
 import { convergeRuntimeManifest, type RuntimeManifest } from "./manifest";
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
@@ -53,6 +54,7 @@ function writeFakeGatewayCli(input: {
 	logPath: string;
 	runtime: "openclaw" | "hermes";
 	unitPath: string;
+	version?: string;
 	failInstall?: boolean;
 	failUninstall?: boolean;
 	requiredSystemdState?: {
@@ -75,6 +77,13 @@ function writeFakeGatewayCli(input: {
 		`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
+	${
+		input.version
+			? `"--version")
+	printf '%s\\n' '${input.version}'
+	;;`
+			: ""
+	}
   "gateway install --force --json"|"gateway install --force"|"gateway install")
 	${stateCheck}
 	printf '%s %s\\n' '${input.runtime}' "$*" >> '${input.logPath}'
@@ -82,13 +91,15 @@ case "$*" in
 		input.failInstall
 			? "exit 41"
 			: `mkdir -p '${dirname(input.unitPath)}'
+    rm -f '${input.unitPath}'
     cat > '${input.unitPath}' <<'EOF'
 [Unit]
 Description=Official gateway
 
 [Service]
 ExecStart=official gateway run
-EOF`
+EOF
+    chmod 0644 '${input.unitPath}'`
 	}
 	;;
   "gateway uninstall")
@@ -104,6 +115,176 @@ esac
 	);
 	chmodSync(input.path, 0o700);
 }
+
+function installGateManifest(
+	paths: RuntimePaths,
+	runtime: "openclaw" | "hermes",
+	command: string,
+): RuntimeManifest {
+	return {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: `hdep_${runtime}_receipt`,
+		environmentId: `env_${runtime}_receipt`,
+		instanceId: `hri_${runtime}_receipt`,
+		generation: 1,
+		issuedAt: "2026-07-29T00:00:00.000Z",
+		workspaceRoot: join(paths.userHome, "workspace"),
+		controlPlane: { apiUrl: "https://cloud-api.example.test" },
+		runtimes: {
+			[runtime]: {
+				enabled: true,
+				run: runSettings(command, ["gateway", "run"]),
+				services: {},
+			},
+		},
+		...(runtime === "openclaw"
+			? {
+					projection: {
+						system: { home: paths.userHome, workspace: join(paths.userHome, "workspace") },
+						channels: { discord: { token: "secret://channels/discord" } },
+					},
+				}
+			: {}),
+		recovery: {},
+	};
+}
+
+function pluginInspectFixture(pluginSourcePath: string): Record<string, unknown> {
+	return {
+		plugin: {
+			id: "discord",
+			source: pluginSourcePath,
+			origin: "global",
+			status: "loaded",
+			version: "1.2.3",
+			enabled: true,
+		},
+		install: {
+			source: "npm",
+			spec: "@openclaw/discord",
+			installPath: dirname(pluginSourcePath),
+			resolvedName: "@openclaw/discord",
+			resolvedVersion: "1.2.3",
+			integrity: "sha512-test",
+		},
+	};
+}
+
+function writeFakePluginCli(input: {
+	path: string;
+	installLogPath: string;
+	inspectStatePath: string;
+	pluginSourcePath: string;
+	failInstallMarker: string;
+}): void {
+	mkdirSync(dirname(input.path), { recursive: true });
+	writeFileSync(
+		input.path,
+		`#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+  "--version") printf '%s\\n' 'OpenClaw 2026.7.29' ;;
+  "plugins inspect discord --json") cat '${input.inspectStatePath}' ;;
+  "plugins install @openclaw/discord")
+	mkdir -p '${dirname(input.inspectStatePath)}'
+	printf '%s\\n' '@openclaw/discord' >> '${input.installLogPath}'
+	[ ! -f '${input.failInstallMarker}' ] || exit 73
+	mkdir -p '${dirname(input.pluginSourcePath)}'
+	printf '%s\\n' 'export const discordPlugin = true;' > '${input.pluginSourcePath}'
+	chmod 0644 '${input.pluginSourcePath}'
+	printf '%s\\n' '${JSON.stringify(pluginInspectFixture(input.pluginSourcePath))}' > '${input.inspectStatePath}'
+	;;
+  "config patch --stdin") cat >/dev/null ;;
+  *) exit 64 ;;
+esac
+`,
+	);
+	chmodSync(input.path, 0o700);
+}
+
+interface InstallGateHarness {
+	converge: (commitAuthority?: () => void) => ReturnType<typeof convergeRuntimeManifest>;
+	drift: () => void;
+	failNextInstall: () => void;
+	restoreInstaller: () => void;
+	installCount: () => number;
+	receipt: () => unknown;
+}
+
+function officialServiceHarness(): InstallGateHarness {
+	const paths = tempRuntimePaths();
+	const logPath = join(paths.runRoot, "official-service-receipt.log");
+	const command = join(paths.userHome, ".local", "bin", "hermes");
+	const unitPath = join(paths.systemdUserRoot, "hermes-gateway.service");
+	const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
+	process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+	process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
+	writeFakeSystemctl({ path: systemctlCommand, logPath });
+	const writeCli = (failInstall = false) =>
+		writeFakeGatewayCli({
+			path: command,
+			logPath,
+			runtime: "hermes",
+			unitPath,
+			version: "Hermes Agent v0.18.0",
+			failInstall,
+		});
+	writeCli();
+	const load: RuntimeManifestLoad = {
+		manifest: installGateManifest(paths, "hermes", command),
+		source: "fixture-file",
+		sourcePath: "inline-service-receipt",
+		offline: false,
+	};
+	return {
+		converge: (commitAuthority) =>
+			convergeRuntimeManifest(load, paths, commitAuthority ? { commitAuthority } : {}),
+		drift: () => chmodSync(unitPath, 0o600),
+		failNextInstall: () => writeCli(true),
+		restoreInstaller: () => writeCli(),
+		installCount: () => readFileSync(logPath, "utf8").match(/hermes gateway install/g)?.length ?? 0,
+		receipt: () => readRuntimeInstallReceipts(paths)?.officialServices["hermes-gateway.service"],
+	};
+}
+
+function channelPluginHarness(): InstallGateHarness {
+	const paths = tempRuntimePaths();
+	const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
+	const installLogPath = join(paths.runRoot, "plugin-installs.log");
+	const inspectStatePath = join(paths.runRoot, "plugin-inspect.json");
+	const pluginSourcePath = join(paths.userHome, ".openclaw", "extensions", "discord", "index.js");
+	const failInstallMarker = join(paths.runRoot, "fail-plugin-install");
+	process.env.CLAWDI_SYSTEMD_APPLY = "0";
+	writeFakePluginCli({
+		path: command,
+		installLogPath,
+		inspectStatePath,
+		pluginSourcePath,
+		failInstallMarker,
+	});
+	const load: RuntimeManifestLoad = {
+		manifest: installGateManifest(paths, "openclaw", command),
+		source: "fixture-file",
+		sourcePath: "inline-plugin-receipt",
+		offline: false,
+		secretValues: {},
+	};
+	return {
+		converge: (commitAuthority) =>
+			convergeRuntimeManifest(load, paths, commitAuthority ? { commitAuthority } : {}),
+		drift: () => writeFileSync(pluginSourcePath, "export const discordPlugin = false;\n"),
+		failNextInstall: () => writeFileSync(failInstallMarker, "fail\n"),
+		restoreInstaller: () => rmSync(failInstallMarker, { force: true }),
+		installCount: () =>
+			readFileSync(installLogPath, "utf8").match(/@openclaw\/discord/g)?.length ?? 0,
+		receipt: () => readRuntimeInstallReceipts(paths)?.channelPlugins["openclaw:discord"],
+	};
+}
+
+const installGateHarnesses = [
+	["official service", officialServiceHarness],
+	["channel plugin", channelPluginHarness],
+] as const;
 
 function writeFakeSystemctl(input: {
 	path: string;
@@ -853,6 +1034,43 @@ describe("runtime manifest services", () => {
 		}
 	});
 
+	test.each(
+		installGateHarnesses,
+	)("gates %s installs on a verified no-op and fails closed on drift", (_name, createHarness) => {
+		const harness = createHarness();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+		expect(harness.receipt()).toBeDefined();
+
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+
+		harness.drift();
+		const receiptBeforeFailure = harness.receipt();
+		harness.failNextInstall();
+		expect(harness.converge().installErrors.join("\n")).toContain("install failed");
+		expect(harness.installCount()).toBe(2);
+		expect(harness.receipt()).toEqual(receiptBeforeFailure);
+
+		harness.restoreInstaller();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(3);
+	});
+
+	test.each(
+		installGateHarnesses,
+	)("does not bless post-install %s drift during authority commit", (_name, createHarness) => {
+		const harness = createHarness();
+		expect(harness.converge(harness.drift).installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+		expect(harness.receipt()).toBeUndefined();
+
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(2);
+		expect(harness.receipt()).toBeDefined();
+	});
+
 	test("uninstalls stale official gateway services when manifest disables them", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
@@ -1078,7 +1296,7 @@ cat > '${logPath}'
 		});
 	});
 
-	test("skips hosted drop-ins when official install fails without a base unit", () => {
+	test("leaves hosted drop-ins for forward convergence when official install fails", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
@@ -1130,7 +1348,7 @@ cat > '${logPath}'
 		);
 		expect(existsSync(paths.managedConfig)).toBe(false);
 		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
-		expect(existsSync(dropInPath)).toBe(false);
+		expect(existsSync(dropInPath)).toBe(true);
 		expect(
 			failedFirstInstall.outputs.systemdUserUnits.map((path) => path.split("/").at(-1)),
 		).not.toContain("openclaw-gateway.service");
@@ -1146,7 +1364,6 @@ cat > '${logPath}'
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
 		const previousManagedConfig = readFileSync(paths.managedConfig, "utf-8");
-		const previousDropIn = readFileSync(dropInPath, "utf-8");
 
 		writeFakeGatewayCli({
 			path: openclawCommand,
@@ -1162,7 +1379,6 @@ cat > '${logPath}'
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
 		expect(readFileSync(paths.managedConfig, "utf-8")).toBe(previousManagedConfig);
-		expect(readFileSync(dropInPath, "utf-8")).toBe(previousDropIn);
 		expect(failedReinstall.outputs.systemdUserUnits).toEqual([]);
 	});
 

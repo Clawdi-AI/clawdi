@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { type RuntimeAppliedStateV2, writeRuntimeAppliedState } from "./applied-state";
 import { HostedRuntimeHeartbeatSession } from "./heartbeat-observation";
@@ -56,6 +56,48 @@ function setApplyIdentityEnvironment(generation: number): void {
 	process.env.CLAWDI_RUNTIME_BOOT_NONCE = `boot-nonce-00000${generation}`;
 }
 
+function writeObservationHealth(paths: RuntimePaths, status: "ok" | "error"): void {
+	for (const path of [paths.runtimeWatchStatus, paths.providerHealthStatus]) {
+		mkdirSync(dirname(path), { recursive: true });
+	}
+	writeFileSync(paths.runtimeWatchStatus, JSON.stringify({ event: { status: "applied" } }));
+	writeFileSync(paths.providerHealthStatus, JSON.stringify({ providers: { default: { status } } }));
+}
+
+async function observationSchedule(
+	initialStatus: "ok" | "error",
+	stopAtMs: number,
+	transitionToOk = false,
+): Promise<Array<{ at: number; status: "ok" | "error" | "unknown" }>> {
+	const paths = tempRuntimePaths();
+	setApplyIdentityEnvironment(1);
+	writeRuntimeAppliedState(appliedState(1), paths);
+	writeObservationHealth(paths, initialStatus);
+	const abort = new AbortController();
+	const attempts: Array<{ at: number; status: "ok" | "error" | "unknown" }> = [];
+	let clock = 0;
+
+	await runRuntimeObservationProducer({
+		abort: abort.signal,
+		paths,
+		submit: async (_environmentId, event) => {
+			attempts.push({ at: clock, status: event.status });
+			return "accepted";
+		},
+		now: () => clock,
+		delay: async (ms) => {
+			await Promise.resolve();
+			await Promise.resolve();
+			await Promise.resolve();
+			clock += ms;
+			if (transitionToOk && attempts.length === 1) writeObservationHealth(paths, "ok");
+			if (clock >= stopAtMs) abort.abort();
+		},
+	});
+
+	return attempts;
+}
+
 describe("hosted runtime observation producer", () => {
 	test("re-reads the applied tuple after rotation and emits a new boot identity", async () => {
 		const paths = tempRuntimePaths();
@@ -94,10 +136,10 @@ describe("hosted runtime observation producer", () => {
 				}),
 		});
 
-		expect(await producer.sendOnce()).toBe("sent");
+		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
 		setApplyIdentityEnvironment(2);
 		writeRuntimeAppliedState(appliedState(2), paths);
-		expect(await producer.sendOnce()).toBe("sent");
+		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
 
 		expect(events).toHaveLength(2);
 		expect(events[0]).toMatchObject({
@@ -130,7 +172,7 @@ describe("hosted runtime observation producer", () => {
 			},
 		});
 
-		expect(await producer.sendOnce()).toBe("idle");
+		expect(await producer.sendOnce()).toEqual({ outcome: "idle" });
 		expect(submits).toBe(0);
 	});
 
@@ -148,7 +190,7 @@ describe("hosted runtime observation producer", () => {
 			},
 		});
 
-		expect(await producer.sendOnce()).toBe("idle");
+		expect(await producer.sendOnce()).toEqual({ outcome: "idle" });
 		expect(submits).toBe(0);
 	});
 
@@ -179,10 +221,10 @@ describe("hosted runtime observation producer", () => {
 				}),
 		});
 
-		expect(await producer.sendOnce()).toBe("failed");
+		expect(await producer.sendOnce()).toEqual({ outcome: "failed" });
 		setApplyIdentityEnvironment(2);
 		writeRuntimeAppliedState(appliedState(2), paths);
-		expect(await producer.sendOnce()).toBe("sent");
+		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
 
 		expect(submitted.map((event) => event.eventId)).toEqual([
 			"old-event-000001",
@@ -233,5 +275,26 @@ describe("hosted runtime observation producer", () => {
 
 		expect(submitted.map((event) => event.applied.generation)).toEqual([1, 2]);
 		expect(submitted[1]).toMatchObject({ sequence: 1, applied: { generation: 2 } });
+	});
+
+	test("reports a non-ok to ok transition within five seconds", async () => {
+		expect(await observationSchedule("error", 6_000, true)).toEqual([
+			{ at: 0, status: "error" },
+			{ at: 5_000, status: "ok" },
+		]);
+	});
+
+	test.each([
+		[
+			"bounds non-ok fast observations to ninety seconds",
+			"error",
+			151_000,
+			[...Array.from({ length: 19 }, (_, index) => index * 5_000), 150_000],
+		],
+		["keeps ready observations on the steady cadence", "ok", 61_000, [0, 60_000]],
+	] as const)("%s", async (_name, status, stopAtMs, expectedTimes) => {
+		const attempts = await observationSchedule(status, stopAtMs);
+		expect(attempts.map((attempt) => attempt.at)).toEqual([...expectedTimes]);
+		expect(attempts.every((attempt) => attempt.status === status)).toBe(true);
 	});
 });

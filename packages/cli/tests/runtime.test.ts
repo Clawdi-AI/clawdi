@@ -124,6 +124,99 @@ type EnvKey = (typeof ENV_KEYS)[number];
 let originalEnv: Partial<Record<EnvKey, string>>;
 let root: string;
 
+function fakeSystemdStatePath(
+	stateRoot: string,
+	scope: "system" | "user",
+	unit: string,
+	state: "active" | "enabled" | "failed" | "not-found",
+): string {
+	return join(stateRoot, `${scope}-${unit}.${state}`);
+}
+
+function writeFakeSystemdManager(input: {
+	path: string;
+	logPath: string;
+	stateRoot: string;
+	failNextSidecarRestart?: string;
+	failNextSidecarStop?: string;
+}): void {
+	mkdirSync(input.stateRoot, { recursive: true });
+	mkdirSync(dirname(input.path), { recursive: true });
+	writeFileSync(
+		input.path,
+		`#!/usr/bin/env bash
+set -euo pipefail
+raw="$*"
+printf '%s\\n' "$raw" >> '${input.logPath}'
+scope=system
+if [ "\${1:-}" = "--user" ]; then
+  scope=user
+  shift
+fi
+command="\${1:-}"
+shift || true
+state_path() {
+  printf '%s/%s-%s.%s' '${input.stateRoot}' "$scope" "$1" "$2"
+}
+case "$command" in
+  show)
+    unit="\${1:-}"
+    load_state=loaded
+    active_state=inactive
+    [ ! -f "$(state_path "$unit" active)" ] || active_state=active
+    [ ! -f "$(state_path "$unit" failed)" ] || active_state=failed
+    if [ -f "$(state_path "$unit" not-found)" ]; then load_state=not-found; active_state=inactive; fi
+    printf 'LoadState=%s\\nActiveState=%s\\n' "$load_state" "$active_state"
+    ;;
+  is-enabled)
+    unit="\${1:-}"
+    if [ -f "$(state_path "$unit" enabled)" ]; then
+      printf 'enabled\\n'
+    else
+      printf 'disabled\\n'
+      exit 1
+    fi
+    ;;
+  start)
+    for unit in "$@"; do rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; done
+    ;;
+  restart)
+    if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarRestart ?? ""}' ] && [ -f '${input.failNextSidecarRestart ?? ""}' ]; then
+      rm -f '${input.failNextSidecarRestart ?? ""}'
+      printf 'injected sidecar restart failure\\n' >&2
+      exit 42
+    fi
+    for unit in "$@"; do rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; done
+    ;;
+  stop)
+    if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarStop ?? ""}' ] && [ -f '${input.failNextSidecarStop ?? ""}' ]; then
+      rm -f '${input.failNextSidecarStop ?? ""}'
+      printf 'injected sidecar stop failure\\n' >&2
+      exit 43
+    fi
+    for unit in "$@"; do rm -f "$(state_path "$unit" active)" "$(state_path "$unit" failed)"; touch "$(state_path "$unit" not-found)"; done
+    ;;
+  enable)
+    start_now=0
+    if [ "\${1:-}" = "--now" ]; then start_now=1; shift; fi
+    for unit in "$@"; do
+      touch "$(state_path "$unit" enabled)"
+      if [ "$start_now" = "1" ]; then rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; fi
+    done
+    ;;
+  disable) for unit in "$@"; do rm -f "$(state_path "$unit" enabled)"; done ;;
+  reset-failed) for unit in "$@"; do rm -f "$(state_path "$unit" failed)"; done ;;
+  daemon-reload) ;;
+  *)
+    printf 'unexpected systemctl command: %s\\n' "$raw" >&2
+    exit 64
+    ;;
+esac
+`,
+	);
+	chmodSync(input.path, 0o700);
+}
+
 beforeEach(() => {
 	originalEnv = {};
 	process.exitCode = undefined;
@@ -5853,6 +5946,12 @@ exit 64
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
 printf '%s\\n' "$*" >> '${systemctlLog}'
+if [ "\${1:-}" = "--user" ]; then shift; fi
+if [ "\${1:-}" = "show" ]; then
+  printf 'LoadState=loaded\\nActiveState=active\\n'
+elif [ "\${1:-}" = "is-enabled" ]; then
+  printf 'enabled\\n'
+fi
 exit 0
 `,
 		);
@@ -5929,17 +6028,14 @@ exit 0
 				],
 			).toBe('"manifest-locale-1"');
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-			const resetFailedIndex = systemctlCalls.indexOf(
-				"--user reset-failed openclaw-gateway.service",
-			);
-			const enableIndex = systemctlCalls.indexOf("--user enable --now openclaw-gateway.service");
-			const restartIndex = systemctlCalls.indexOf("--user restart openclaw-gateway.service");
-			expect(resetFailedIndex).toBeGreaterThanOrEqual(0);
-			expect(enableIndex).toBeGreaterThan(resetFailedIndex);
-			expect(restartIndex).toBeGreaterThan(enableIndex);
+			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
+			expect(systemctlCalls.some((call) => call.includes("reset-failed"))).toBe(false);
+			expect(systemctlCalls.some((call) => call.includes("enable --now"))).toBe(false);
+			expect(systemctlCalls).toContain("restart clawdi-daemon.service");
 			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
 				false,
 			);
+			expect(systemctlCalls.some((call) => call.includes("stop clawdi-runtime-watch"))).toBe(false);
 			const watchStatus = JSON.parse(readFileSync(getRuntimePaths().runtimeWatchStatus, "utf-8"));
 			expect(watchStatus.event.generation).toBe(2);
 		} finally {
@@ -6094,7 +6190,12 @@ exit 64
 		writeFileSync(
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
-printf 'ActiveState=active\\nSubState=running\\n'
+if [ "\${1:-}" = "--user" ]; then shift; fi
+if [ "\${1:-}" = "show" ]; then
+  printf 'LoadState=loaded\\nActiveState=active\\n'
+elif [ "\${1:-}" = "is-enabled" ]; then
+  printf 'enabled\\n'
+fi
 `,
 		);
 		chmodSync(join(bin, "systemctl"), 0o700);
@@ -6238,7 +6339,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			expect(event.systemdApply).toEqual({
 				applied: true,
 				systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-watch.service"],
-				userUnitsChanged: ["openclaw-gateway.service"],
+				userUnitsChanged: [],
 			});
 			const watchStatus = JSON.parse(
 				readFileSync(join(state, "status", "runtime-watch.json"), "utf-8"),
@@ -6386,13 +6487,11 @@ exit 42
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		const targetConfig = join(home, ".openclaw", "openclaw.json");
-		const rollbackFixtures = [
-			paths.managedConfig,
-			join(paths.runConfigRoot, "openclaw.json"),
-			join(paths.systemdUserRoot, "clawdi-previous.service"),
-			targetConfig,
-		];
-		for (const [index, path] of rollbackFixtures.entries()) {
+		const rollbackFixtures = [paths.managedConfig, join(paths.runConfigRoot, "openclaw.json")];
+		const previousUserUnit = join(paths.systemdUserRoot, "clawdi-previous.service");
+		const forwardOnlyFixtures = [previousUserUnit, targetConfig];
+		const seededFixtures = [...rollbackFixtures, ...forwardOnlyFixtures];
+		for (const [index, path] of seededFixtures.entries()) {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(
 				path,
@@ -6489,6 +6588,7 @@ exit 42
 				if (!expected) throw new Error(`missing rollback fixture for ${path}`);
 				expect(readFileSync(path)).toEqual(expected);
 			}
+			expect(existsSync(previousUserUnit)).toBe(false);
 		} finally {
 			restore();
 			console.log = previousLog;
@@ -7523,27 +7623,31 @@ exit 64
 		const run = join(root, "run", "clawdi");
 		const bin = join(root, "bin");
 		const systemctlLog = join(root, "systemctl-egress-rotation.log");
+		const systemctlStateRoot = join(root, "systemctl-egress-state");
 		const failNextSidecarRestart = join(root, "fail-next-sidecar-restart");
+		const failNextSidecarStop = join(root, "fail-next-sidecar-stop");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(bin, { recursive: true });
 		seedOpenClawBinary(home);
+		writeFakeSystemdManager({
+			path: join(bin, "systemctl"),
+			logPath: systemctlLog,
+			stateRoot: systemctlStateRoot,
+			failNextSidecarRestart,
+			failNextSidecarStop,
+		});
 		writeFileSync(
-			join(bin, "systemctl"),
-			`#!/usr/bin/env bash
-set -euo pipefail
-printf '%s\\n' "$*" >> '${systemctlLog}'
-if [ "$*" = "restart clawdi-runtime-sidecar.service" ] && [ -f '${failNextSidecarRestart}' ]; then
-  rm -f '${failNextSidecarRestart}'
-  printf 'injected sidecar restart failure\\n' >&2
-  exit 42
-fi
-printf 'ActiveState=active\\nSubState=running\\n'
-`,
+			fakeSystemdStatePath(
+				systemctlStateRoot,
+				"system",
+				"clawdi-runtime-sidecar.service",
+				"active",
+			),
+			"orphan-active\n",
 		);
-		chmodSync(join(bin, "systemctl"), 0o700);
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -7583,42 +7687,26 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				},
 			]);
 			try {
-				const initialLoad = await loadRemoteRuntimeManifest(paths);
-				if (!("manifest" in initialLoad) || "notModified" in initialLoad) {
-					throw new Error("expected initial egress rotation manifest load");
-				}
-				const appliedLoad = applyRuntimeBundleChannelsToManifestLoad(initialLoad);
-				let committedRevision: string | undefined;
-				const initialConvergence = convergeRuntimeManifest(appliedLoad, paths, {
-					commitAuthority: (_convergence, authority) => {
-						committedRevision = authority.egressSidecarSecretRevision;
-					},
-					systemdApply: {
-						activate: () => ({
-							applied: true,
-							systemUnitsChanged: [],
-							userUnitsChanged: [],
-						}),
-						rollback: () => {},
-					},
-				});
-				expect(initialConvergence.installErrors).toEqual([]);
-				expect(committedRevision).toMatch(/^[a-f0-9]{64}$/);
-				if (!appliedLoad.sourceRevision) {
-					throw new Error("expected initial egress source revision");
-				}
-				commitRuntimeAppliedState({
-					load: appliedLoad,
-					paths,
-					etag: initialLoad.etag ?? '"egress-secret-revision-a"',
-					sourceRevision: appliedLoad.sourceRevision,
-					convergence: initialConvergence,
-					applyIdentity: null,
-					egressSidecarSecretRevision: committedRevision,
-				});
+				await runtimeWatch({ once: true, json: true });
 			} finally {
 				initialFetch.restore();
 			}
+			expect(process.exitCode ?? 0).toBe(0);
+			expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("applied");
+			const initialSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			expect(
+				initialSystemctlCalls.filter(
+					(call) => call === "start clawdi-daemon.service clawdi-runtime-watch.service",
+				),
+			).toHaveLength(1);
+			expect(
+				initialSystemctlCalls.filter(
+					(call) => call === "--user enable --now openclaw-gateway.service",
+				),
+			).toHaveLength(1);
+			expect(
+				initialSystemctlCalls.filter((call) => call === "restart clawdi-runtime-sidecar.service"),
+			).toHaveLength(1);
 
 			const egressSecretFile = join(run, "secrets", "egress-secrets.json");
 			const initialSidecarUnit = readSystemdSystemUnit(paths, "clawdi-runtime-sidecar");
@@ -7634,6 +7722,54 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			const initialAppliedState = readRuntimeAppliedState(paths);
 			const initialPrivateRevision = initialAppliedState?.egressSidecarSecretRevision;
 			expect(initialPrivateRevision).toMatch(/^[a-f0-9]{64}$/);
+
+			rmSync(
+				fakeSystemdStatePath(systemctlStateRoot, "system", "clawdi-daemon.service", "active"),
+				{ force: true },
+			);
+			writeFileSync(
+				fakeSystemdStatePath(systemctlStateRoot, "system", "clawdi-daemon.service", "failed"),
+				"failed\n",
+			);
+			for (const state of ["active", "enabled"] as const) {
+				rmSync(
+					fakeSystemdStatePath(systemctlStateRoot, "user", "openclaw-gateway.service", state),
+					{ force: true },
+				);
+			}
+			writeFileSync(systemctlLog, "");
+			logs.length = 0;
+			const managerRepairFetch = mockFetch([
+				{
+					method: "GET",
+					path: "/v1/runtime/manifest",
+					response: () =>
+						hostedRuntimeBundleResponse(
+							hostedEgressSecretRotationPayload(home, mitmproxy, initialSecret),
+							{ etag: '"egress-secret-revision-a-retry"' },
+						),
+				},
+			]);
+			try {
+				await runtimeWatch({ once: true, json: true });
+			} finally {
+				managerRepairFetch.restore();
+			}
+			expect(process.exitCode ?? 0).toBe(0);
+			expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("applied");
+			const managerRepairCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
+			for (const call of [
+				"reset-failed clawdi-daemon.service",
+				"start clawdi-daemon.service",
+				"--user enable --now openclaw-gateway.service",
+			]) {
+				expect(managerRepairCalls.filter((candidate) => candidate === call)).toHaveLength(1);
+			}
+			expect(managerRepairCalls.some((call) => call.includes("restart"))).toBe(false);
+			expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(
+				initialPrivateRevision,
+			);
+
 			const crashWrittenSecrets = JSON.parse(readFileSync(egressSecretFile, "utf-8")) as Record<
 				string,
 				string
@@ -7778,6 +7914,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 			writeFileSync(systemctlLog, "");
 			logs.length = 0;
 			process.exitCode = undefined;
+			writeFileSync(failNextSidecarStop, "fail\n");
 			const missingSidecarFetch = mockFetch([
 				{
 					method: "GET",
@@ -7797,6 +7934,17 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				},
 			]);
 			try {
+				await runtimeWatch({ once: true, json: true });
+				expect(process.exitCode).toBe(1);
+				const removalRejectedEvent = JSON.parse(logs.at(-1) ?? "{}");
+				expect(removalRejectedEvent.status).toBe("error");
+				expect(removalRejectedEvent.error).toContain("injected sidecar stop failure");
+				expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(
+					true,
+				);
+				writeFileSync(systemctlLog, "");
+				logs.length = 0;
+				process.exitCode = undefined;
 				await runtimeWatch({ once: true, json: true });
 			} finally {
 				missingSidecarFetch.restore();
@@ -7875,7 +8023,12 @@ chmod +x "$prefix/bin/clawdi"
 			join(bin, "systemctl"),
 			`#!/usr/bin/env bash
 printf '%s\\n' "$*" >> '${systemctlLog}'
-printf 'ActiveState=active\\nSubState=running\\n'
+if [ "\${1:-}" = "--user" ]; then shift; fi
+if [ "\${1:-}" = "show" ]; then
+  printf 'LoadState=loaded\\nActiveState=active\\n'
+elif [ "\${1:-}" = "is-enabled" ]; then
+  printf 'enabled\\n'
+fi
 `,
 		);
 		chmodSync(join(bin, "npm"), 0o700);
@@ -12251,7 +12404,7 @@ exit 64
 		rmSync(failUnset);
 	});
 
-	it("rolls back native MCP config and last-applied ownership after a partial map failure", () => {
+	it("keeps authority unchanged after a partial native MCP projection", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12320,11 +12473,14 @@ exit 64
 
 		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(readFileSync(calls, "utf-8")).toBe("set first\nset second\n");
-		expect(readFileSync(openclawConfig, "utf-8")).toBe(originalConfig);
+		expect(readOpenClawMcpServers(home)).toEqual({
+			"user-entry": { command: "user-owned", args: ["keep"] },
+			first: { command: "first", args: [] },
+		});
 		expect(existsSync(ledgerPath)).toBe(false);
 	});
 
-	it("rolls back existing managed OpenClaw and Hermes MCP state as one runtime apply", () => {
+	it("keeps prior MCP authority when a forward projection is partial", () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -12394,8 +12550,6 @@ exit 64
 			getRuntimePaths(),
 		);
 		expect(initial.installErrors).toEqual([]);
-		const previousOpenClaw = readFileSync(openclawConfig);
-		const previousHermes = readFileSync(hermesConfig);
 		const previousLedger = readFileSync(ledgerPath);
 		const previousOpenClawStat = statSync(openclawConfig);
 		const previousHermesStat = statSync(hermesConfig);
@@ -12410,8 +12564,13 @@ exit 64
 
 		expect(failed.installErrors.join("\n")).toContain("runtime MCP projection failed");
 		expect(readFileSync(calls, "utf-8")).toContain("set owned\nset owned\nset second\n");
-		expect(readFileSync(openclawConfig)).toEqual(previousOpenClaw);
-		expect(readFileSync(hermesConfig)).toEqual(previousHermes);
+		expect(readOpenClawMcpServers(home)).toEqual({
+			owned: { command: "owned", args: ["v2"] },
+		});
+		expect(readHermesConfigYaml(home).mcp_servers).toEqual({
+			owned: { command: "owned", args: ["v2"] },
+			second: { command: "second", args: [] },
+		});
 		expect(readFileSync(ledgerPath)).toEqual(previousLedger);
 		expect(statSync(openclawConfig).mode).toBe(previousOpenClawStat.mode);
 		expect(statSync(openclawConfig).uid).toBe(previousOpenClawStat.uid);
@@ -13066,7 +13225,7 @@ exit 64
 		expect(siblingRuntimeRev).toBe(baseRev);
 	});
 
-	it("uses applied state, not conflicting last-good, for the live runtime instance identity", async () => {
+	it("rejects a desired generation below the durable applied generation", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -13117,10 +13276,12 @@ exit 64
 
 		const loaded = await loadRuntimeManifest(paths, { manifestPath });
 
-		expect("manifest" in loaded).toBe(true);
-		if (!("manifest" in loaded)) throw new Error("expected manifest load success");
-		expect(loaded.manifest.generation).toBe(1);
-		expect(loaded.manifest.instanceId).toBe("iid_generation_reset");
+		expect("errors" in loaded).toBe(true);
+		if (!("errors" in loaded)) throw new Error("expected manifest rejection");
+		expect(loaded.mode).toBe("manifest-rejected");
+		expect(loaded.rejectedGeneration).toBe(1);
+		expect(loaded.activeGeneration).toBe(42);
+		expect(loaded.errors).toContain("manifest generation 1 is older than applied generation 42");
 	});
 
 	it("does not require egress secrets when every runtime is disabled", async () => {

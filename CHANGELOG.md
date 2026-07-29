@@ -10,6 +10,17 @@ database migration, CI, and implementation details.
   `clawdi-v...` CalVer tag format.
 - CLI/npm releases use `clawdi-cli-vX.Y.Z`.
 
+## Clawdi CLI v0.13.12
+
+Package: `clawdi@0.13.12`
+
+### Fixed
+
+- Made Hosted runtime reconciliation recover live systemd drift without
+  redundant restarts, reject stale generations, verify managed installer state,
+  and keep rollback snapshots within root-controlled paths.
+- Reduced deployment readiness latency while bounding retry load.
+
 ## Clawdi CLI v0.13.11
 
 Package: `clawdi@0.13.11`

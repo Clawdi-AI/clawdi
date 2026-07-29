@@ -7,7 +7,6 @@ import {
 	canStart,
 	canStop,
 	DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS,
-	DEPLOYMENT_TRANSITION_TIMEOUT_MS,
 	DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
 	type DeploymentOperationVerb,
 	deploymentPollingState,
@@ -293,27 +292,49 @@ describe("DeploymentStatus", () => {
 		expect(terminal.trackers.size).toBe(0);
 	});
 
-	test("stops at five minutes and distinguishes timeout from convergence", () => {
-		const nowMs = Date.parse("2026-07-25T00:00:00Z");
-		const deployment = hostedDeploymentFixture({
-			id: "hdep_polling",
-			status: "updating",
-			acceptedOperation: acceptedOperation("plan_change"),
+	test("keeps reconciling a create observed from 05:00 through Running at 05:09", () => {
+		const acceptedAtMs = Date.parse("2026-07-29T05:00:00Z");
+		const operation = acceptedOperation("create");
+		operation.metadata.deploymentId = "hdep_slow_create";
+		operation.metadata.createTime = "2026-07-29T05:00:00Z";
+		operation.metadata.updateTime = "2026-07-29T05:00:00Z";
+		const creating = hostedDeploymentFixture({
+			id: "hdep_slow_create",
+			status: "creating",
+			acceptedOperation: operation,
 		});
-		const pending = deploymentPollingState([deployment], new Map(), nowMs);
-		const timedOut = deploymentPollingState(
-			[deployment],
-			pending.trackers,
-			nowMs + DEPLOYMENT_TRANSITION_TIMEOUT_MS,
+		const accepted = deploymentPollingState([creating], new Map(), acceptedAtMs);
+		const lastFast = deploymentPollingState(
+			[creating],
+			accepted.trackers,
+			Date.parse("2026-07-29T05:04:59Z"),
+		);
+		const delayed = deploymentPollingState(
+			[creating],
+			lastFast.trackers,
+			Date.parse("2026-07-29T05:05:00Z"),
+		);
+		const running = deploymentPollingState(
+			[
+				hostedDeploymentFixture({
+					id: "hdep_slow_create",
+					status: "running",
+					acceptedOperation: operation,
+				}),
+			],
+			delayed.trackers,
+			Date.parse("2026-07-29T05:09:00Z"),
 		);
 
-		expect(pending.transitions.get("hdep_polling")?.kind).toBe("converging");
-		expect(timedOut.refetchInterval).toBe(false);
-		expect(timedOut.transitions.get("hdep_polling")).toEqual({
-			kind: "timed_out",
-			verb: "plan_change",
-			startedAtMs: nowMs,
-		});
+		expect([accepted.refetchInterval, lastFast.refetchInterval]).toEqual([
+			DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+			DEPLOYMENT_TRANSITIONAL_POLL_INTERVAL_MS,
+		]);
+		expect(delayed.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(delayed.transitions.get("hdep_slow_create")?.kind).toBe("timed_out");
+		expect(running.refetchInterval).toBe(DEPLOYMENT_RECONCILIATION_POLL_INTERVAL_MS);
+		expect(running.transitions.size).toBe(0);
+		expect(running.trackers.size).toBe(0);
 	});
 
 	test("schedules a modest reconciliation interval for steady inventory", () => {

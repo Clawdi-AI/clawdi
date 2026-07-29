@@ -922,7 +922,7 @@ export function OverviewReadinessPanel({
 			? "Your agent is running"
 			: startingTitle();
 	const description = deploymentTransitionTimedOut
-		? "Your agent did not reach Running within five minutes. Automatic checks have stopped. Check again to load the latest update."
+		? "The latest status still shows your agent starting after five minutes. Startup may still be continuing. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
 		: ready
 			? "It is ready to use."
 			: "This step should finish within five minutes. Startup continues if you leave this page.";
@@ -1342,7 +1342,7 @@ function ConsoleTab({
 				}
 				description={
 					deploymentTransitionTimedOut
-						? "The latest change to this agent did not finish within five minutes. Automatic checks have stopped. Check again to load the latest status."
+						? "The latest status still shows this change in progress after five minutes. It may still finish. We’ll keep checking automatically once a minute while you’re here, or you can check again now."
 						: isStarting
 							? `The live ${browserUiLabel} opens here once your agent is running. This page updates automatically.`
 							: `Start the agent to open the live ${browserUiLabel}. Current status: ${deploymentStatusLabel(status).toLowerCase()}.`
