@@ -54,48 +54,161 @@ export interface ShareToken {
 	last_seen_skill_keys?: string[];
 }
 
-interface ShareTokensFile {
+interface PersistedShareTokensFile {
 	version: 1;
-	tokens: ShareToken[];
+	tokens: unknown[];
 }
+
+export interface ShareTokenStoreIssue {
+	label: string;
+	reason: string;
+}
+
+const RAW_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
 function filePath(): string {
 	return join(clawdiHome(), "share-tokens.json");
 }
 
-function loadRaw(): ShareTokensFile {
+function loadRaw(): PersistedShareTokensFile {
 	const path = filePath();
 	if (!existsSync(path)) {
 		return { version: 1, tokens: [] };
 	}
 	try {
 		const text = readFileSync(path, "utf-8");
-		const parsed = JSON.parse(text) as ShareTokensFile;
-		if (parsed.version !== 1 || !Array.isArray(parsed.tokens)) {
+		const parsed: unknown = JSON.parse(text);
+		if (
+			typeof parsed !== "object" ||
+			parsed === null ||
+			!("version" in parsed) ||
+			parsed.version !== 1 ||
+			!("tokens" in parsed) ||
+			!Array.isArray(parsed.tokens)
+		) {
 			// Malformed file: treat as empty. Operator can re-accept
-			// any shares they care about; we don't bricks the CLI
+			// any shares they care about; we don't brick the CLI
 			// over local-state corruption.
 			return { version: 1, tokens: [] };
 		}
-		return parsed;
+		return { version: 1, tokens: parsed.tokens };
 	} catch {
 		return { version: 1, tokens: [] };
 	}
 }
 
-function save(state: ShareTokensFile): void {
+function save(state: PersistedShareTokensFile): void {
 	const path = filePath();
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 	writeFileSync(path, JSON.stringify(state, null, 2), { mode: 0o600 });
 }
 
+function nonEmptyString(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function persistedProjectId(value: unknown): string | undefined {
+	if (typeof value !== "object" || value === null) return undefined;
+	return (
+		("project_id" in value ? nonEmptyString(value.project_id) : undefined) ??
+		("scope_id" in value ? nonEmptyString(value.scope_id) : undefined)
+	);
+}
+
+function issueLabel(value: unknown, index: number): string {
+	if (typeof value !== "object" || value === null) return `local share entry ${index + 1}`;
+	const name =
+		("project_name" in value ? nonEmptyString(value.project_name) : undefined) ??
+		("scope_name" in value ? nonEmptyString(value.scope_name) : undefined);
+	if (name) return name;
+	const projectId = persistedProjectId(value);
+	return projectId ? `Project ${projectId}` : `local share entry ${index + 1}`;
+}
+
+function normalizeToken(
+	value: unknown,
+	index: number,
+): { kind: "token"; token: ShareToken } | { kind: "issue"; issue: ShareTokenStoreIssue } {
+	const label = issueLabel(value, index);
+	if (typeof value !== "object" || value === null) {
+		return { kind: "issue", issue: { label, reason: "entry is not an object" } };
+	}
+
+	const projectId = persistedProjectId(value);
+	const projectName =
+		("project_name" in value ? nonEmptyString(value.project_name) : undefined) ??
+		("scope_name" in value ? nonEmptyString(value.scope_name) : undefined);
+	const ownerDisplay = "owner_display" in value ? nonEmptyString(value.owner_display) : undefined;
+	const ownerHandle = "owner_handle" in value ? nonEmptyString(value.owner_handle) : undefined;
+	const token = "token" in value ? nonEmptyString(value.token) : undefined;
+	const redeemedAt = "redeemed_at" in value ? nonEmptyString(value.redeemed_at) : undefined;
+
+	const missing: string[] = [];
+	if (!projectId) missing.push("project id");
+	if (!projectName) missing.push("project name");
+	if (!ownerDisplay) missing.push("owner display");
+	if (!ownerHandle) missing.push("owner handle");
+	if (!redeemedAt) missing.push("redeemed timestamp");
+	if (!token) missing.push("share token");
+	if (token && !RAW_TOKEN_RE.test(token)) {
+		return {
+			kind: "issue",
+			issue: { label, reason: "invalid 43-character share token" },
+		};
+	}
+	if (!projectId || !projectName || !ownerDisplay || !ownerHandle || !redeemedAt || !token) {
+		return { kind: "issue", issue: { label, reason: `missing ${missing.join(", ")}` } };
+	}
+
+	// `scope_id`/`scope_name` were the released version:1 names before
+	// 911c955b renamed them without bumping the persisted-file version.
+	// Canonical fields are overlaid at read time while all other fields,
+	// including future fields, remain available to subsequent upserts.
+	const normalized: ShareToken & Record<string, unknown> = {
+		...value,
+		project_id: projectId,
+		project_name: projectName,
+		owner_display: ownerDisplay,
+		owner_handle: ownerHandle,
+		token,
+		redeemed_at: redeemedAt,
+	};
+	if ("upgraded_at" in value && typeof value.upgraded_at !== "string") {
+		delete normalized.upgraded_at;
+	}
+	if (
+		"last_seen_skill_keys" in value &&
+		(!Array.isArray(value.last_seen_skill_keys) ||
+			!value.last_seen_skill_keys.every((key) => typeof key === "string"))
+	) {
+		delete normalized.last_seen_skill_keys;
+	}
+	return { kind: "token", token: normalized };
+}
+
+export function readTokenStore(): {
+	tokens: ShareToken[];
+	issues: ShareTokenStoreIssue[];
+} {
+	const tokens: ShareToken[] = [];
+	const issues: ShareTokenStoreIssue[] = [];
+	for (const [index, value] of loadRaw().tokens.entries()) {
+		const normalized = normalizeToken(value, index);
+		if (normalized.kind === "issue") issues.push(normalized.issue);
+		else tokens.push(normalized.token);
+	}
+	return { tokens, issues };
+}
+
 export function listTokens(): ShareToken[] {
-	return loadRaw().tokens;
+	return readTokenStore().tokens;
 }
 
 export function addToken(token: ShareToken): void {
 	const state = loadRaw();
-	const idx = state.tokens.findIndex((t) => t.project_id === token.project_id);
+	const idx = state.tokens.findIndex((value) => persistedProjectId(value) === token.project_id);
 	if (idx === -1) {
 		state.tokens.push(token);
 	} else {
@@ -110,7 +223,7 @@ export function addToken(token: ShareToken): void {
 
 export function removeToken(projectId: string): void {
 	const state = loadRaw();
-	state.tokens = state.tokens.filter((t) => t.project_id !== projectId);
+	state.tokens = state.tokens.filter((value) => persistedProjectId(value) !== projectId);
 	save(state);
 }
 
