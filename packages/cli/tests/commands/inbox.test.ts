@@ -28,9 +28,9 @@ let agentHomeOverrides: AgentHomeOverrideSnapshot;
 
 const rawToken = "a".repeat(43);
 
-function addPendingShare(
+async function addPendingShare(
 	overrides: Partial<Parameters<typeof addToken>[0]> = {},
-): Parameters<typeof addToken>[0] {
+): Promise<Parameters<typeof addToken>[0]> {
 	const token = {
 		project_id: "project-shared",
 		project_name: "Shared Toolkit",
@@ -41,7 +41,7 @@ function addPendingShare(
 		api_origin: "https://api.test",
 		...overrides,
 	};
-	addToken(token);
+	await addToken(token);
 	return token;
 }
 
@@ -164,7 +164,7 @@ describe("inboxAcceptCommand", () => {
 		const staged = findToken("project-shared");
 		expect(staged).toBeDefined();
 		if (!staged) throw new Error("Expected staged share fixture");
-		addToken({ ...staged, upgraded_at: "2026-05-19T00:00:00.000Z" });
+		await addToken({ ...staged, upgraded_at: "2026-05-19T00:00:00.000Z" });
 		rmSync(join(tmpHome, ".clawdi", "auth.json"), { force: true });
 		const legacyFetch = mockFetch([]);
 		const legacyLines: string[] = [];
@@ -278,11 +278,11 @@ describe("inboxAcceptCommand", () => {
 	});
 
 	it("joins staged projects without pulling content and discloses ticket removal", async () => {
-		addPendingShare({ project_id: "uuid-project-shared" });
+		await addPendingShare({ project_id: "uuid-project-shared" });
 		const jsonJoinToken = "b".repeat(43);
 		const acceptToken = "c".repeat(43);
-		addPendingShare({ project_id: "uuid-project-json", token: jsonJoinToken });
-		addPendingShare({ project_id: "uuid-project-accept", token: acceptToken });
+		await addPendingShare({ project_id: "uuid-project-json", token: jsonJoinToken });
+		await addPendingShare({ project_id: "uuid-project-accept", token: acceptToken });
 		const joinedResponse = (projectId: string) =>
 			jsonResponse({
 				membership_id: `membership-${projectId}`,
@@ -399,7 +399,7 @@ describe("share ticket outcomes", () => {
 		];
 
 		for (const testCase of cases) {
-			addPendingShare({ api_origin: testCase.apiOrigin ?? "https://api.test" });
+			await addPendingShare({ api_origin: testCase.apiOrigin ?? "https://api.test" });
 			const { captured, restore } = mockFetch([
 				{
 					method: "POST",
@@ -438,8 +438,8 @@ describe("share ticket outcomes", () => {
 });
 
 describe("inboxForgetCommand", () => {
-	it("keeps local shared skill folders still referenced by another project from the same owner", () => {
-		addToken({
+	it("keeps local shared skill folders still referenced by another project from the same owner", async () => {
+		await addToken({
 			project_id: "project-a",
 			project_name: "A",
 			owner_display: "Alice",
@@ -448,7 +448,7 @@ describe("inboxForgetCommand", () => {
 			redeemed_at: "2026-05-18T00:00:00.000Z",
 			last_seen_skill_keys: ["deploy-tools"],
 		});
-		addToken({
+		await addToken({
 			project_id: "project-b",
 			project_name: "B",
 			owner_display: "Alice",
@@ -468,7 +468,7 @@ describe("inboxForgetCommand", () => {
 		const origLog = console.log;
 		console.log = () => {};
 		try {
-			inboxForgetCommand("project-a");
+			await inboxForgetCommand("project-a");
 		} finally {
 			console.log = origLog;
 		}

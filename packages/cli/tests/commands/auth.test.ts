@@ -168,7 +168,7 @@ describe("authLogin authentication boundary", () => {
 
 describe("interactive OAuth Cloud verification boundary", () => {
 	it("persists both verified and explicitly cloud-unverified grants without fake profile data", async () => {
-		addToken({
+		await addToken({
 			project_id: "project-shared",
 			project_name: "Team Toolkit",
 			owner_display: "Alice",

@@ -29,6 +29,16 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_STALE_MS = 60_000;
 const DEFAULT_RETRY_MS = 50;
 
+export class PrivateDirectoryLockTimeoutError extends Error {
+	readonly lockDir: string;
+
+	constructor(lockDir: string) {
+		super(`timed out waiting for private lock at ${lockDir}`);
+		this.name = "PrivateDirectoryLockTimeoutError";
+		this.lockDir = lockDir;
+	}
+}
+
 function errno(error: unknown, code: string): boolean {
 	return error instanceof Error && "code" in error && error.code === code;
 }
@@ -282,7 +292,7 @@ export async function withPrivateDirectoryLock<T>(
 				continue;
 			}
 			if (now() - startedAt >= timeoutMs) {
-				throw new Error(`timed out waiting for private lock at ${lockDir}`);
+				throw new PrivateDirectoryLockTimeoutError(lockDir);
 			}
 			await new Promise((resolve) => setTimeout(resolve, retryMs));
 		}

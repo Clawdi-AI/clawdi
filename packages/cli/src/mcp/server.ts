@@ -4,6 +4,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod/v3";
 import { getClawdiAccessToken } from "../lib/clerk-oauth";
 import { getConfig, isLoggedIn } from "../lib/config";
+import { timedFetch } from "../lib/timed-fetch";
 
 // Minimal shape of a JSON Schema property we care about when mapping
 // Composio tool definitions to Zod. Unknown fields are ignored.
@@ -217,18 +218,27 @@ function ensureMcpLogin(): void {
 }
 
 const MCP_ENDPOINT_PATH = "/v1/mcp/clawdi";
+const MCP_FORWARD_TIMEOUT_MS = 30_000;
 
-async function callClawdiMcp(method: string, params?: Record<string, unknown>): Promise<unknown> {
+export async function callClawdiMcp(
+	method: string,
+	params?: Record<string, unknown>,
+	timeoutMs = MCP_FORWARD_TIMEOUT_MS,
+): Promise<unknown> {
 	const config = getConfig();
 	const accessToken = await getClawdiAccessToken(config.apiUrl);
-	const response = await fetch(`${config.apiUrl}${MCP_ENDPOINT_PATH}`, {
-		method: "POST",
-		headers: {
-			Authorization: `Bearer ${accessToken}`,
-			"Content-Type": "application/json",
+	const response = await timedFetch(
+		`${config.apiUrl}${MCP_ENDPOINT_PATH}`,
+		{
+			method: "POST",
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params ?? {} }),
 		},
-		body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: params ?? {} }),
-	});
+		timeoutMs,
+	);
 	if (!response.ok) {
 		throw new Error(`Clawdi MCP request failed (HTTP ${response.status})`);
 	}

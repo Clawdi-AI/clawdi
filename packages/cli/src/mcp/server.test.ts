@@ -2,7 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createClawdiMcpServer, createConnectorToolDefinition, type McpTool } from "./server";
+import {
+	callClawdiMcp,
+	createClawdiMcpServer,
+	createConnectorToolDefinition,
+	type McpTool,
+} from "./server";
 
 describe("MCP connector helpers", () => {
 	it("throws instead of exiting when there is no CLI auth", async () => {
@@ -19,6 +24,46 @@ describe("MCP connector helpers", () => {
 			if (previousAuthToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
 			else process.env.CLAWDI_AUTH_TOKEN = previousAuthToken;
 			rmSync(clawdiHome, { recursive: true, force: true });
+		}
+	});
+
+	it("aborts a stalled MCP forwarding request at the configured deadline", async () => {
+		const previousAuthToken = process.env.CLAWDI_AUTH_TOKEN;
+		const previousAuthTokenOrigin = process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+		const previousApiUrl = process.env.CLAWDI_API_URL;
+		const originalFetch = globalThis.fetch;
+		process.env.CLAWDI_AUTH_TOKEN = "test-mcp-token";
+		process.env.CLAWDI_AUTH_TOKEN_ORIGIN = "http://localhost:8000";
+		process.env.CLAWDI_API_URL = "http://localhost:8000";
+		let aborted = false;
+		globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+			const body = new ReadableStream<Uint8Array>({
+				start(controller) {
+					init?.signal?.addEventListener(
+						"abort",
+						() => {
+							aborted = true;
+							controller.error(new DOMException("Aborted", "AbortError"));
+						},
+						{ once: true },
+					);
+				},
+			});
+			return new Response(body, { status: 200 });
+		}) as typeof fetch;
+		try {
+			await expect(callClawdiMcp("tools/list", {}, 10)).rejects.toThrow(
+				"request timed out after 10ms",
+			);
+			expect(aborted).toBe(true);
+		} finally {
+			globalThis.fetch = originalFetch;
+			if (previousAuthToken === undefined) delete process.env.CLAWDI_AUTH_TOKEN;
+			else process.env.CLAWDI_AUTH_TOKEN = previousAuthToken;
+			if (previousAuthTokenOrigin === undefined) delete process.env.CLAWDI_AUTH_TOKEN_ORIGIN;
+			else process.env.CLAWDI_AUTH_TOKEN_ORIGIN = previousAuthTokenOrigin;
+			if (previousApiUrl === undefined) delete process.env.CLAWDI_API_URL;
+			else process.env.CLAWDI_API_URL = previousApiUrl;
 		}
 	});
 

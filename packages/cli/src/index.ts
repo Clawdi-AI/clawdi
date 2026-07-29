@@ -1273,8 +1273,24 @@ program
 	.description("Install the latest CLI from npm (--check to only diagnose)")
 	.option("--check", "Only check for updates, don't install")
 	.option("--json", "Output as JSON")
+	.addOption(new Option("--background-worker").hideHelp())
+	.addOption(new Option("--current-version <version>").hideHelp())
+	.addOption(new Option("--channel <channel>").hideHelp())
+	.addOption(new Option("--latest <version>").hideHelp())
 	.action(async (opts) => {
-		const { update } = await import("./commands/update.js");
+		const { runBackgroundUpdateWorker, update } = await import("./commands/update.js");
+		if (opts.backgroundWorker) {
+			if (!opts.currentVersion || !opts.channel) {
+				throw new Error("background update worker requires current version and channel");
+			}
+			const result = await runBackgroundUpdateWorker({
+				currentVersion: opts.currentVersion,
+				channel: opts.channel,
+				latest: opts.latest,
+			});
+			if (result === "failed") process.exitCode = 1;
+			return;
+		}
 		await update(opts);
 	});
 
@@ -1719,7 +1735,7 @@ inboxCmd
 	.description("Local-only: remove a share record and its cached files")
 	.action(async (projectId) => {
 		const { inboxForgetCommand } = await import("./commands/inbox.js");
-		inboxForgetCommand(projectId);
+		await inboxForgetCommand(projectId);
 	});
 
 // Auto-update tick: prints any "✓ Updated to v…" notice from a previous

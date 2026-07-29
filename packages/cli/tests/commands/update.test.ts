@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
 	daemonAutoUpdateOnce,
+	detectGlobalInstall,
 	detectInstallerFromPaths,
+	detectUpdateOwnershipFromPaths,
 	installCommand,
 	maybeAutoUpdate,
+	runBackgroundUpdateWorker,
+	runInstallerProcess,
 	update,
 } from "../../src/commands/update";
 import {
@@ -27,6 +31,7 @@ let origExitCode: number | undefined;
 
 const npmOwnership = {
 	installer: "npm" as const,
+	installerExecutable: "/owned/npm/bin/npm",
 	executable: "/owned/npm/bin/clawdi",
 };
 
@@ -49,7 +54,7 @@ beforeEach(() => {
 	origHostPolicyPath = process.env.CLAWDI_HOST_POLICY_PATH;
 	origArgv = [...process.argv];
 	origExitCode = process.exitCode;
-	process.exitCode = undefined;
+	process.exitCode = 0;
 	delete process.env.CLAWDI_NO_UPDATE_CHECK;
 	delete process.env.CLAWDI_NO_AUTO_UPDATE;
 	delete process.env.CLAWDI_RUNTIME_MODE;
@@ -61,7 +66,8 @@ beforeEach(() => {
 
 afterEach(() => {
 	process.argv.splice(0, process.argv.length, ...origArgv);
-	process.exitCode = origExitCode;
+	// Bun latches a non-zero exit code when it is reset to `undefined`.
+	process.exitCode = origExitCode ?? 0;
 	if (origHome) process.env.HOME = origHome;
 	else delete process.env.HOME;
 	if (origNoCheck) process.env.CLAWDI_NO_UPDATE_CHECK = origNoCheck;
@@ -81,8 +87,10 @@ describe("detectInstaller", () => {
 			detectInstallerFromPaths("/home/user/.local/lib/node_modules/clawdi/bin/clawdi.mjs", {
 				npmBin: "/home/user/.local/bin",
 				npmRoot: "/home/user/.local/lib/node_modules",
+				npmExecutable: "/home/user/.local/bin/npm",
 				bunBin: "/home/user/.bun/bin",
 				bunRoot: "/home/user/.bun/install/global/node_modules",
+				bunExecutable: "/home/user/.bun/bin/bun",
 			}),
 		).toBe("npm");
 	});
@@ -94,11 +102,83 @@ describe("detectInstaller", () => {
 				{
 					npmBin: "/home/user/.local/bin",
 					npmRoot: "/home/user/.local/lib/node_modules",
+					npmExecutable: "/home/user/.local/bin/npm",
 					bunBin: "/home/user/.bun/bin",
 					bunRoot: "/home/user/.bun/install/global/node_modules",
+					bunExecutable: "/home/user/.bun/bin/bun",
 				},
 			),
 		).toBe("bun");
+	});
+
+	it("binds a Bun-owned install to its positively identified absolute Bun executable", () => {
+		expect(
+			detectUpdateOwnershipFromPaths(
+				"/home/user/.bun/install/global/node_modules/clawdi/bin/clawdi.mjs",
+				{
+					bunBin: "/home/user/.bun/bin",
+					bunRoot: "/home/user/.bun/install/global/node_modules",
+					bunExecutable: "/home/user/.bun/bin/bun",
+				},
+			),
+		).toEqual({
+			installer: "bun",
+			installerExecutable: "/home/user/.bun/bin/bun",
+			executable: "/home/user/.bun/bin/clawdi",
+		});
+		expect(
+			detectUpdateOwnershipFromPaths(
+				"/home/user/.bun/install/global/node_modules/clawdi/bin/clawdi.mjs",
+				{
+					bunBin: "/home/user/.bun/bin",
+					bunRoot: "/home/user/.bun/install/global/node_modules",
+					bunExecutable: "bun",
+				},
+			),
+		).toBeNull();
+	});
+
+	it("finds the owning absolute Bun executable outside the supervisor PATH", () => {
+		if (process.platform === "win32") return;
+		const bunExecutable = join(tmpHome, ".bun", "bin", "bun");
+		const invokedPath = join(
+			tmpHome,
+			".bun",
+			"install",
+			"global",
+			"node_modules",
+			"clawdi",
+			"bin",
+			"clawdi.mjs",
+		);
+		mkdirSync(dirname(bunExecutable), { recursive: true });
+		mkdirSync(dirname(invokedPath), { recursive: true });
+		writeFileSync(
+			bunExecutable,
+			[
+				"#!/bin/sh",
+				'if [ "$1" = pm ] && [ "$2" = bin ] && [ "$3" = -g ]; then',
+				`  printf "%s\\n" ${JSON.stringify(join(tmpHome, ".bun", "bin"))}`,
+				"  exit 0",
+				"fi",
+				"exit 1",
+			].join("\n"),
+		);
+		chmodSync(bunExecutable, 0o700);
+		writeFileSync(invokedPath, "// fixture\n");
+		const previousPath = process.env.PATH;
+		process.env.PATH = "/usr/bin:/bin";
+		process.argv[1] = invokedPath;
+		try {
+			expect(detectGlobalInstall()).toEqual({
+				installer: "bun",
+				installerExecutable: bunExecutable,
+				executable: join(tmpHome, ".bun", "bin", "clawdi"),
+			});
+		} finally {
+			if (previousPath === undefined) delete process.env.PATH;
+			else process.env.PATH = previousPath;
+		}
 	});
 
 	it("does not infer ownership from an executable merely being in a global bin", () => {
@@ -106,8 +186,10 @@ describe("detectInstaller", () => {
 			detectInstallerFromPaths("/home/user/.local/bin/clawdi", {
 				npmBin: "/home/user/.local/bin",
 				npmRoot: "/home/user/.local/lib/node_modules",
+				npmExecutable: "/home/user/.local/bin/npm",
 				bunBin: "/home/user/.bun/bin",
 				bunRoot: "/home/user/.bun/install/global/node_modules",
+				bunExecutable: "/home/user/.bun/bin/bun",
 			}),
 		).toBeNull();
 	});
@@ -117,6 +199,7 @@ describe("detectInstaller", () => {
 			detectInstallerFromPaths("/tmp/bunx-1000-clawdi@latest/node_modules/clawdi/bin/clawdi.mjs", {
 				bunBin: "/home/user/.bun/bin",
 				bunRoot: "/tmp/bunx-1000-clawdi@latest/node_modules",
+				bunExecutable: "/home/user/.bun/bin/bun",
 			}),
 		).toBeNull();
 		expect(
@@ -125,6 +208,7 @@ describe("detectInstaller", () => {
 				{
 					npmBin: "C:\\Users\\test\\AppData\\Roaming\\npm",
 					npmRoot: "C:\\Users\\test\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules",
+					npmExecutable: "C:\\Users\\test\\AppData\\Roaming\\npm\\npm.cmd",
 				},
 			),
 		).toBeNull();
@@ -136,6 +220,38 @@ describe("installCommand", () => {
 		expect(installCommand("npm", "1.2.3")).toBe("npm i -g clawdi@1.2.3");
 		expect(installCommand("bun", "1.2.3-beta.10")).toBe("bun add -g clawdi@1.2.3-beta.10");
 		expect(installCommand(null, "1.2.3")).toBe("npm i -g clawdi@1.2.3");
+	});
+});
+
+describe("installer process lifetime", () => {
+	it.each([
+		"timeout",
+		"abort",
+	] as const)("terminates the entire installer process group after %s", async (trigger) => {
+		if (process.platform === "win32") return;
+		const script = join(tmpHome, `installer-tree-${trigger}.sh`);
+		const descendantPidPath = join(tmpHome, `installer-descendant-${trigger}.pid`);
+		writeFileSync(
+			script,
+			[
+				"trap '' TERM",
+				'sh -c \'trap "" TERM; echo $$ > "$1"; while :; do sleep 1; done\' child "$1" &',
+				"wait",
+			].join("\n"),
+		);
+		const abort = new AbortController();
+		const running = runInstallerProcess("/bin/sh", [script, descendantPidPath], {
+			signal: abort.signal,
+			timeoutMs: trigger === "timeout" ? 200 : 5_000,
+			termGraceMs: 20,
+		});
+		await waitForPath(descendantPidPath);
+		if (trigger === "abort") abort.abort();
+		expect(await running).toBeNull();
+		const descendantPid = Number(readFileSync(descendantPidPath, "utf8").trim());
+		expect(Number.isInteger(descendantPid)).toBe(true);
+		await waitForProcessExit(descendantPid);
+		expect(processIsAlive(descendantPid)).toBe(false);
 	});
 });
 
@@ -250,6 +366,7 @@ describe("update install", () => {
 		const smokes: { command: string; args: string[] }[] = [];
 		const ownership = {
 			installer: "npm" as const,
+			installerExecutable: "C:\\Program Files\\npm\\npm.cmd",
 			executable: "C:\\Program Files\\npm\\clawdi.cmd",
 		};
 		const { restore } = mockFetch([
@@ -284,7 +401,7 @@ describe("update install", () => {
 		expect(installs).toEqual([
 			{
 				command: "cmd.exe",
-				args: ["/d", "/s", "/c", "npm.cmd", "i", "-g", "clawdi@99.0.0"],
+				args: ["/d", "/s", "/c", ownership.installerExecutable, "i", "-g", "clawdi@99.0.0"],
 			},
 		]);
 		expect(smokes).toEqual([
@@ -293,7 +410,7 @@ describe("update install", () => {
 				args: ["/d", "/s", "/c", ownership.executable, "--version"],
 			},
 		]);
-		expect(process.exitCode).toBeUndefined();
+		expect(process.exitCode).toBe(0);
 	});
 
 	it("does not claim success when the owned executable reports another version", async () => {
@@ -355,9 +472,67 @@ describe("update install", () => {
 		expect(captured).toContain("Automatic update is unsupported");
 		expect(captured).toContain("npm i -g clawdi@99.0.0");
 	});
+
+	it("uses the shared fenced update lease and never reclaims an old live owner", async () => {
+		const lockDir = join(tmpHome, ".clawdi", "update.lock");
+		mkdirSync(lockDir, { recursive: true });
+		writeFileSync(
+			join(lockDir, "owner.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.privateDirectoryLockOwner.v1",
+				pid: process.pid,
+				acquiredAt: "2000-01-01T00:00:00.000Z",
+				token: "live-update-owner",
+			}),
+		);
+		const { restore } = mockFetch([
+			{
+				method: "GET",
+				path: "/clawdi",
+				response: () => jsonResponse({ "dist-tags": { latest: "99.0.0" } }),
+			},
+		]);
+		try {
+			await withStdoutTty(() =>
+				update(
+					{},
+					{
+						detectOwnership: () => npmOwnership,
+						lockOptions: { timeoutMs: 0, staleMs: 1 },
+						installRunner: () => {
+							throw new Error("live owner must fence the manual installer");
+						},
+					},
+				),
+			);
+		} finally {
+			restore();
+		}
+		expect(process.exitCode).toBe(1);
+		expect(JSON.parse(readFileSync(join(lockDir, "owner.json"), "utf8")).token).toBe(
+			"live-update-owner",
+		);
+	});
 });
 
 describe("daemonAutoUpdateOnce", () => {
+	it("runs a startup request through exact install and owned executable validation", async () => {
+		const calls: Array<{ installer: string; args: string[] }> = [];
+		const result = await runBackgroundUpdateWorker(
+			{ currentVersion: "1.2.3", channel: "latest", latest: "1.2.4" },
+			{
+				ownership: npmOwnership,
+				installRunner: async (installer, args) => {
+					calls.push({ installer, args });
+					return 0;
+				},
+				versionReader: (executable) => (executable === npmOwnership.executable ? "1.2.4" : null),
+			},
+		);
+		expect(result).toBe("installed");
+		expect(calls).toEqual([{ installer: "npm", args: ["i", "-g", "clawdi@1.2.4"] }]);
+	});
+
 	it("cannot bypass hosted update authority with ignoreDisabled", async () => {
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		const { captured, restore } = mockFetch([]);
@@ -466,7 +641,7 @@ describe("daemonAutoUpdateOnce", () => {
 		}
 	});
 
-	it("respects autoUpdate=false for daemon auto-update", async () => {
+	it("normalizes legacy autoUpdate=false for daemon auto-update", async () => {
 		writeFileSync(join(tmpHome, ".clawdi", "config.json"), JSON.stringify({ autoUpdate: "false" }));
 		const { captured: fetches, restore } = mockFetch([]);
 		try {
@@ -481,8 +656,18 @@ describe("daemonAutoUpdateOnce", () => {
 		}
 	});
 
-	it("uses a cross-daemon lock so only one daemon installs at a time", async () => {
-		mkdirSync(join(tmpHome, ".clawdi", "daemon-auto-update.lock"), { recursive: true });
+	it("uses the shared updater lock for daemon and startup workers", async () => {
+		const lockDir = join(tmpHome, ".clawdi", "update.lock");
+		mkdirSync(lockDir, { recursive: true });
+		writeFileSync(
+			join(lockDir, "owner.json"),
+			JSON.stringify({
+				schemaVersion: "clawdi.privateDirectoryLockOwner.v1",
+				pid: process.pid,
+				acquiredAt: "2000-01-01T00:00:00.000Z",
+				token: "live-update-owner",
+			}),
+		);
 		const { restore } = mockFetch([
 			{
 				method: "GET",
@@ -499,6 +684,17 @@ describe("daemonAutoUpdateOnce", () => {
 				},
 			});
 			expect(result).toBe("locked");
+			expect(
+				await runBackgroundUpdateWorker(
+					{ currentVersion: "1.2.3", channel: "latest", latest: "1.2.4" },
+					{
+						ownership: npmOwnership,
+						installRunner: async () => {
+							throw new Error("startup worker must use the same lock");
+						},
+					},
+				),
+			).toBe("locked");
 		} finally {
 			restore();
 		}
@@ -638,7 +834,7 @@ describe("maybeAutoUpdate", () => {
 			await withStdoutTty(() =>
 				maybeAutoUpdate({
 					detectOwnership: () => npmOwnership,
-					spawnBackgroundInstall: () => {
+					spawnBackgroundWorker: () => {
 						throw new Error("should not spawn hosted local self-update");
 					},
 				}),
@@ -668,7 +864,7 @@ describe("maybeAutoUpdate", () => {
 					detectOwnership: () => {
 						throw new Error("--json must skip updater ownership detection");
 					},
-					spawnBackgroundInstall: () => {
+					spawnBackgroundWorker: () => {
 						throw new Error("--json must not install");
 					},
 				}),
@@ -697,7 +893,7 @@ describe("maybeAutoUpdate", () => {
 			await withStdoutTty(() =>
 				maybeAutoUpdate({
 					detectOwnership: () => null,
-					spawnBackgroundInstall: () => {
+					spawnBackgroundWorker: () => {
 						throw new Error("unowned invocation must not install");
 					},
 				}),
@@ -733,6 +929,25 @@ describe("maybeAutoUpdate", () => {
 		expect(captured).not.toContain("Updated clawdi to");
 	});
 
+	it("delegates first-run discovery without waiting for a registry request", async () => {
+		const workers: Array<{ latest?: string; channel: string }> = [];
+		const { captured: fetches, restore } = mockFetch([]);
+		try {
+			await withStdoutTty(() =>
+				maybeAutoUpdate({
+					detectOwnership: () => npmOwnership,
+					spawnBackgroundWorker: (request) => workers.push(request),
+				}),
+			);
+		} finally {
+			restore();
+		}
+		expect(fetches).toHaveLength(0);
+		expect(workers).toHaveLength(1);
+		expect(workers[0]?.latest).toBeUndefined();
+		expect(workers[0]?.channel).toBe("latest");
+	});
+
 	it("prints `Updated clawdi to vX` when last-version differs from current", async () => {
 		// Plant an OLDER last-version so the current binary version looks fresh.
 		writeFileSync(join(tmpHome, ".clawdi", "last-version"), "0.0.1");
@@ -746,9 +961,7 @@ describe("maybeAutoUpdate", () => {
 		try {
 			await withStdoutTty(() =>
 				maybeAutoUpdate({
-					detectOwnership: () => {
-						throw new Error("update notices must not probe global ownership");
-					},
+					detectOwnership: () => null,
 				}),
 			);
 		} finally {
@@ -839,10 +1052,10 @@ describe("maybeAutoUpdate", () => {
 			join(tmpHome, ".clawdi", cacheFile),
 			JSON.stringify({ checkedAt: new Date().toISOString(), latest: "999.0.0" }),
 		);
-		const installs: {
-			installer: string;
-			args: string[];
-			latest: string;
+		const workers: {
+			current: string;
+			latest?: string;
+			channel: string;
 			logFd: number;
 		}[] = [];
 		const orig = console.log;
@@ -855,8 +1068,8 @@ describe("maybeAutoUpdate", () => {
 			await withStdoutTty(() =>
 				maybeAutoUpdate({
 					detectOwnership: () => npmOwnership,
-					spawnBackgroundInstall: (installer, args, context) => {
-						installs.push({ installer, args, latest: context.latest, logFd: context.logFd });
+					spawnBackgroundWorker: (request) => {
+						workers.push(request);
 					},
 				}),
 			);
@@ -867,14 +1080,12 @@ describe("maybeAutoUpdate", () => {
 		expect(captured).toContain("Updating clawdi v");
 		expect(captured).toContain("→ v999.0.0 in background");
 		expect(captured).not.toContain("Major release");
-		expect(installs).toHaveLength(1);
-		expect(installs[0]?.installer).toBe("npm");
-		expect(installs[0]?.args).toEqual(["i", "-g", "clawdi@999.0.0"]);
-		expect(installs[0]?.latest).toBe("999.0.0");
-		expect(installs[0]?.logFd ?? -1).toBeGreaterThanOrEqual(0);
+		expect(workers).toHaveLength(1);
+		expect(workers[0]?.latest).toBe("999.0.0");
+		expect(workers[0]?.logFd ?? -1).toBeGreaterThanOrEqual(0);
 	});
 
-	it("respects autoUpdate=false config — skips install path", async () => {
+	it("normalizes legacy autoUpdate=false before the startup install path", async () => {
 		writeFileSync(join(tmpHome, ".clawdi", "config.json"), JSON.stringify({ autoUpdate: "false" }));
 		// Cache says a newer version is available.
 		writeFileSync(
@@ -951,4 +1162,31 @@ function writeDaemonHealth(agent: string, version: string): void {
 		join(dir, "health"),
 		`${JSON.stringify({ timestamp: new Date().toISOString(), version })}\n`,
 	);
+}
+
+async function waitForPath(path: string): Promise<void> {
+	for (let attempt = 0; attempt < 100; attempt++) {
+		try {
+			readFileSync(path);
+			return;
+		} catch {
+			await new Promise((resolve) => setTimeout(resolve, 5));
+		}
+	}
+	throw new Error(`timed out waiting for ${path}`);
+}
+
+function processIsAlive(pid: number): boolean {
+	try {
+		process.kill(pid, 0);
+		return true;
+	} catch {
+		return false;
+	}
+}
+
+async function waitForProcessExit(pid: number): Promise<void> {
+	for (let attempt = 0; attempt < 100 && processIsAlive(pid); attempt++) {
+		await new Promise((resolve) => setTimeout(resolve, 5));
+	}
 }

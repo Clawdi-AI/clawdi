@@ -1,20 +1,28 @@
 import { spawn, spawnSync } from "node:child_process";
 import {
+	accessSync,
 	closeSync,
+	constants,
 	existsSync,
 	mkdirSync,
 	openSync,
 	readFileSync,
 	realpathSync,
-	rmSync,
-	statSync,
-	writeFileSync,
 } from "node:fs";
-import { dirname, join, normalize, resolve, sep } from "node:path";
+import { delimiter, dirname, isAbsolute, join, normalize, resolve, sep } from "node:path";
 import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
+import { resolveCurrentCliInvocation } from "../lib/current-cli-invocation";
+import {
+	type PrivateDirectoryLockOptions,
+	PrivateDirectoryLockTimeoutError,
+	withPrivateDirectoryLock,
+} from "../lib/private-directory-lock";
+import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { terminateProcessGroup } from "../lib/process-group";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { compareSemver, isValidSemver } from "../lib/semver";
+import { timedFetch } from "../lib/timed-fetch";
 import { getCliVersion } from "../lib/version";
 import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
 import { detectRuntimeMode } from "../runtime/paths";
@@ -31,11 +39,14 @@ const REGISTRY_URL = "https://registry.npmjs.org/clawdi";
 // feel broken whenever a fix shipped.
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const DAEMON_UPDATE_INTERVAL_MS = 60 * 60 * 1000;
-const DAEMON_UPDATE_LOCK_STALE_MS = 15 * 60 * 1000;
+const INSTALL_TIMEOUT_MS = 3 * 60_000;
+const INSTALL_TERM_GRACE_MS = 2_000;
+const INSTALL_KILL_GRACE_MS = 1_000;
 export type Installer = "bun" | "npm";
 
-interface GlobalInstallOwnership {
+export interface GlobalInstallOwnership {
 	installer: Installer;
+	installerExecutable: string;
 	executable: string;
 }
 
@@ -44,19 +55,16 @@ interface UpdateCache {
 	latest: string;
 }
 
-type BackgroundInstallContext = {
+type BackgroundWorkerRequest = {
 	current: string;
-	latest: string;
+	latest?: string;
+	channel: string;
 	logFd: number;
 };
 
 type AutoUpdateRuntime = {
 	detectOwnership?: () => GlobalInstallOwnership | null;
-	spawnBackgroundInstall?: (
-		installer: Installer,
-		args: string[],
-		context: BackgroundInstallContext,
-	) => void;
+	spawnBackgroundWorker?: (request: BackgroundWorkerRequest) => void;
 };
 
 type ForegroundUpdateRuntime = {
@@ -64,6 +72,7 @@ type ForegroundUpdateRuntime = {
 	installRunner?: (command: string, args: string[]) => number | null;
 	platform?: NodeJS.Platform;
 	versionReader?: (command: string, args: string[]) => string | null;
+	lockOptions?: PrivateDirectoryLockOptions;
 };
 
 interface CommandVector {
@@ -93,11 +102,10 @@ function readCache(channel = "latest"): UpdateCache | null {
 
 function writeCache(latest: string, channel = "latest"): void {
 	try {
-		mkdirSync(getClawdiDir(), { recursive: true });
-		writeFileSync(
+		writePrivateFileAtomic(
 			cachePath(channel),
 			`${JSON.stringify({ checkedAt: new Date().toISOString(), latest }, null, 2)}\n`,
-			{ mode: 0o600 },
+			{ mode: PRIVATE_FILE_MODE, dirMode: PRIVATE_DIR_MODE },
 		);
 	} catch {
 		// best-effort; ignore
@@ -110,18 +118,14 @@ function updateChannelForVersion(version: string): string {
 }
 
 async function fetchLatest(timeoutMs = 3000, channel = "latest"): Promise<string | null> {
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	try {
-		const res = await fetch(REGISTRY_URL, { signal: controller.signal });
+		const res = await timedFetch(REGISTRY_URL, {}, timeoutMs);
 		if (!res.ok) return null;
 		const data = (await res.json()) as { "dist-tags"?: Record<string, string | undefined> };
 		const resolved = data["dist-tags"]?.[channel];
 		return resolved && isValidSemver(resolved) ? resolved : null;
 	} catch {
 		return null;
-	} finally {
-		clearTimeout(timer);
 	}
 }
 
@@ -199,34 +203,46 @@ export async function update(
 	}
 
 	const { installer } = ownership;
-	const args = installArgs(installer, latest);
-	const install = installerCommandVector(installer, args, runtime.platform);
 	console.log();
 	console.log(chalk.cyan(`Installing v${latest} via ${installer}…`));
-	const status = (runtime.installRunner ?? runForegroundInstall)(install.command, install.args);
-	if (status !== 0) {
+	const result = await runUpdateInstallWorker({
+		current,
+		latest,
+		ownership,
+		output: "inherit",
+		platform: runtime.platform,
+		lockOptions: runtime.lockOptions,
+		installRunner: runtime.installRunner
+			? async (command, args) => runtime.installRunner?.(command, args) ?? null
+			: undefined,
+		versionReader: runtime.versionReader,
+	});
+	if (result.status === "locked") {
 		console.log();
-		console.log(
-			chalk.red(`Install failed (${installer} exited ${status}). Try manually:`) +
-				"\n  " +
-				chalk.white(installCommand(installer, latest)),
-		);
-		process.exitCode = status ?? 1;
-		return;
-	}
-	const smoke = executableCommandVector(ownership.executable, ["--version"], runtime.platform);
-	const installedVersion = (runtime.versionReader ?? readCommandVersion)(smoke.command, smoke.args);
-	if (installedVersion !== latest) {
-		console.log();
-		console.log(
-			chalk.red(
-				`Install verification failed: expected ${latest}, got ${installedVersion ?? "no version"}.`,
-			),
-		);
+		console.log(chalk.yellow("Another clawdi update is already running."));
 		process.exitCode = 1;
 		return;
 	}
-	writeLastVersion(current);
+	if (result.status === "disabled") {
+		console.log();
+		console.log(chalk.yellow("Local CLI updates are disabled by Hosted policy."));
+		process.exitCode = 1;
+		return;
+	}
+	if (result.status === "failed") {
+		console.log();
+		console.log(
+			chalk.red(
+				result.installedVersion === undefined
+					? `Install failed (${installer} exited ${result.exitCode}). Try manually:`
+					: `Install verification failed: expected ${latest}, got ${result.installedVersion ?? "no version"}.`,
+			) +
+				"\n  " +
+				chalk.white(installCommand(installer, latest)),
+		);
+		process.exitCode = result.exitCode ?? 1;
+		return;
+	}
 	console.log();
 	console.log(chalk.green(`✓ clawdi v${latest} installed.`));
 }
@@ -249,8 +265,10 @@ function lastVersionPath(): string {
 
 function writeLastVersion(version: string): void {
 	try {
-		mkdirSync(getClawdiDir(), { recursive: true });
-		writeFileSync(lastVersionPath(), version, { mode: 0o644 });
+		writePrivateFileAtomic(lastVersionPath(), `${version}\n`, {
+			mode: PRIVATE_FILE_MODE,
+			dirMode: PRIVATE_DIR_MODE,
+		});
 	} catch {
 		// best-effort
 	}
@@ -264,76 +282,142 @@ function detectUpdateOwnership(runtime: ForegroundUpdateRuntime): GlobalInstallO
 	return runtime.detectOwnership?.() ?? detectGlobalInstall();
 }
 
-function detectGlobalInstall(): GlobalInstallOwnership | null {
-	const bunBin = bunGlobalBinDir();
-	return detectGlobalInstallFromPaths(process.argv[1], {
-		npmBin: npmGlobalBinDir(),
-		npmRoot: npmGlobalRootDir(),
-		bunBin,
-		bunRoot: bunBin ? bunGlobalRootDir(bunBin) : null,
-	});
+export function detectGlobalInstall(): GlobalInstallOwnership | null {
+	let invokedPath: string | undefined;
+	try {
+		invokedPath = resolveCurrentCliInvocation().entryPath ?? undefined;
+	} catch {
+		return null;
+	}
+	for (const npmExecutable of absoluteExecutableCandidates("npm")) {
+		const prefix = commandOutput(executableCommandVector(npmExecutable, ["prefix", "-g"]));
+		const npmRoot = commandOutput(executableCommandVector(npmExecutable, ["root", "-g"]));
+		const npmBin = prefix
+			? process.platform === "win32"
+				? normalizePath(prefix)
+				: normalizePath(join(prefix, "bin"))
+			: null;
+		const ownership = detectUpdateOwnershipFromPaths(invokedPath, {
+			npmBin,
+			npmRoot,
+			npmExecutable,
+		});
+		if (ownership) return ownership;
+	}
+
+	for (const bunExecutable of bunExecutableCandidates()) {
+		const bunBin = commandOutput(executableCommandVector(bunExecutable, ["pm", "bin", "-g"]));
+		const ownership = detectUpdateOwnershipFromPaths(invokedPath, {
+			bunBin,
+			bunRoot: bunBin ? bunGlobalRootDir(bunBin) : null,
+			bunExecutable,
+		});
+		if (ownership) return ownership;
+	}
+	return null;
 }
 
 export function detectInstallerFromPaths(
 	invokedPath: string | undefined,
-	paths: {
-		bunBin?: string | null;
-		bunRoot?: string | null;
-		npmBin?: string | null;
-		npmRoot?: string | null;
-	},
+	paths: GlobalInstallPaths,
 ): Installer | null {
-	return detectGlobalInstallFromPaths(invokedPath, paths)?.installer ?? null;
+	return detectUpdateOwnershipFromPaths(invokedPath, paths)?.installer ?? null;
 }
 
-function detectGlobalInstallFromPaths(
+type GlobalInstallPaths = {
+	bunBin?: string | null;
+	bunRoot?: string | null;
+	bunExecutable?: string | null;
+	npmBin?: string | null;
+	npmRoot?: string | null;
+	npmExecutable?: string | null;
+};
+
+export function detectUpdateOwnershipFromPaths(
 	invokedPath: string | undefined,
-	paths: {
-		bunBin?: string | null;
-		bunRoot?: string | null;
-		npmBin?: string | null;
-		npmRoot?: string | null;
-	},
+	paths: GlobalInstallPaths,
 ): GlobalInstallOwnership | null {
 	if (!invokedPath) return null;
 
 	const candidates = normalizedPathCandidates(invokedPath);
 	const npmBin = paths.npmBin ? normalizePath(paths.npmBin) : null;
 	const npmRoot = paths.npmRoot ? normalizePath(paths.npmRoot) : null;
+	const npmExecutable = absolutePath(paths.npmExecutable);
 	const bunBin = paths.bunBin ? normalizePath(paths.bunBin) : null;
 	const bunRoot = paths.bunRoot ? normalizePath(paths.bunRoot) : null;
+	const bunExecutable = absolutePath(paths.bunExecutable);
 	if (candidates.some(isTransientPath)) return null;
 	if (
 		npmBin &&
 		npmRoot &&
+		npmExecutable &&
 		candidates.some((candidate) => pathStartsWith(candidate, join(npmRoot, "clawdi")))
 	) {
-		return { installer: "npm", executable: globalExecutable("npm", npmBin) };
+		return {
+			installer: "npm",
+			installerExecutable: npmExecutable,
+			executable: globalExecutable("npm", npmBin),
+		};
 	}
 	if (
 		bunBin &&
 		bunRoot &&
+		bunExecutable &&
 		candidates.some((candidate) => pathStartsWith(candidate, join(bunRoot, "clawdi")))
 	) {
-		return { installer: "bun", executable: globalExecutable("bun", bunBin) };
+		return {
+			installer: "bun",
+			installerExecutable: bunExecutable,
+			executable: globalExecutable("bun", bunBin),
+		};
 	}
 	return null;
 }
 
-function npmGlobalBinDir(): string | null {
-	const prefix = commandOutput(installerCommandVector("npm", ["prefix", "-g"]));
-	if (!prefix) return null;
-	return process.platform === "win32" ? normalizePath(prefix) : normalizePath(join(prefix, "bin"));
+function absolutePath(path: string | null | undefined): string | null {
+	return path && isAbsolute(path) ? normalizePath(path) : null;
 }
 
-function npmGlobalRootDir(): string | null {
-	const root = commandOutput(installerCommandVector("npm", ["root", "-g"]));
-	return root ? normalizePath(root) : null;
+function bunExecutableCandidates(): string[] {
+	const candidates: string[] = [];
+	const bunInstall = process.env.BUN_INSTALL;
+	if (bunInstall) candidates.push(join(bunInstall, "bin", bunExecutableName()));
+	const home = process.env.HOME;
+	if (home) candidates.push(join(home, ".bun", "bin", bunExecutableName()));
+	candidates.push(...absoluteExecutableCandidates("bun"));
+	return verifiedAbsoluteExecutables(candidates);
 }
 
-function bunGlobalBinDir(): string | null {
-	const bin = commandOutput(executableCommandVector("bun", ["pm", "bin", "-g"]));
-	return bin ? normalizePath(bin) : null;
+function bunExecutableName(): string {
+	return process.platform === "win32" ? "bun.exe" : "bun";
+}
+
+function absoluteExecutableCandidates(command: "bun" | "npm"): string[] {
+	const names =
+		process.platform === "win32"
+			? command === "npm"
+				? ["npm.cmd", "npm.exe", "npm"]
+				: ["bun.exe", "bun"]
+			: [command];
+	const candidates = (process.env.PATH ?? "")
+		.split(delimiter)
+		.filter(Boolean)
+		.flatMap((directory) => names.map((name) => join(directory, name)));
+	return verifiedAbsoluteExecutables(candidates);
+}
+
+function verifiedAbsoluteExecutables(candidates: string[]): string[] {
+	const verified: string[] = [];
+	for (const candidate of candidates) {
+		if (!isAbsolute(candidate)) continue;
+		try {
+			accessSync(candidate, constants.X_OK);
+			verified.push(realpathSync(candidate));
+		} catch {
+			// Only an existing executable can own an installation.
+		}
+	}
+	return [...new Set(verified)];
 }
 
 function bunGlobalRootDir(binDir: string): string {
@@ -388,13 +472,13 @@ function pathStartsWith(path: string, parent: string): boolean {
 	return normalizedPath.startsWith(prefix);
 }
 
-function detectAutoUpdateOwnership(runtime: AutoUpdateRuntime): GlobalInstallOwnership | null {
-	return runtime.detectOwnership?.() ?? detectGlobalInstall();
-}
-
 function packageSpecForVersion(version: string): string {
 	if (!isValidSemver(version)) throw new Error(`invalid clawdi update version: ${version}`);
 	return `clawdi@${version}`;
+}
+
+function detectAutoUpdateOwnership(runtime: AutoUpdateRuntime): GlobalInstallOwnership | null {
+	return runtime.detectOwnership?.() ?? detectGlobalInstall();
 }
 
 function installArgs(installer: Installer, version: string): string[] {
@@ -435,26 +519,6 @@ function executableCommandVector(
 	return { command: executable, args };
 }
 
-function installerCommandVector(
-	installer: Installer,
-	args: string[],
-	platform: NodeJS.Platform = process.platform,
-): CommandVector {
-	const executable = installer === "npm" && platform === "win32" ? "npm.cmd" : installer;
-	return executableCommandVector(executable, args, platform);
-}
-
-function runForegroundInstall(command: string, args: string[]): number | null {
-	try {
-		return spawnSync(command, args, {
-			stdio: "inherit",
-			windowsHide: true,
-		}).status;
-	} catch {
-		return null;
-	}
-}
-
 function readCommandVersion(command: string, args: string[]): string | null {
 	try {
 		const result = spawnSync(command, args, {
@@ -468,11 +532,6 @@ function readCommandVersion(command: string, args: string[]): string | null {
 	} catch {
 		return null;
 	}
-}
-
-function readExecutableVersion(executable: string): string | null {
-	const vector = executableCommandVector(executable, ["--version"]);
-	return readCommandVersion(vector.command, vector.args);
 }
 
 function isLongLivedDaemonInvocation(args = process.argv.slice(2)): boolean {
@@ -526,8 +585,7 @@ function autoUpdateDisabled(): boolean {
 	if (process.env.CLAWDI_NO_AUTO_UPDATE) return true;
 	if (process.env.CLAWDI_NO_UPDATE_CHECK) return true;
 	if (isTransientInvocation()) return true;
-	const stored = getStoredConfig() as { autoUpdate?: unknown };
-	return stored.autoUpdate === false || stored.autoUpdate === "false";
+	return getStoredConfig().autoUpdate === false;
 }
 
 async function latestFromCacheOrRegistry(channel = "latest"): Promise<string | null> {
@@ -544,68 +602,94 @@ async function latestFromCacheOrRegistry(channel = "latest"): Promise<string | n
 	return cached?.latest ?? null;
 }
 
-function acquireDaemonUpdateLock(): (() => void) | null {
-	const root = getClawdiDir();
-	const lockDir = join(root, "daemon-auto-update.lock");
-	const acquire = () => {
-		mkdirSync(root, { recursive: true });
-		mkdirSync(lockDir, { mode: 0o700 });
-		writeFileSync(join(lockDir, "pid"), `${process.pid}\n`, { mode: 0o600 });
-		return () => {
-			rmSync(lockDir, { recursive: true, force: true });
-		};
-	};
-	try {
-		return acquire();
-	} catch {
-		try {
-			const age = Date.now() - statSync(lockDir).mtimeMs;
-			if (age > DAEMON_UPDATE_LOCK_STALE_MS) {
-				rmSync(lockDir, { recursive: true, force: true });
-				return acquire();
-			}
-		} catch {
-			// If stat/remove failed, treat as locked; another daemon
-			// will retry on the next cadence.
-		}
-		return null;
-	}
-}
+type InstallerOutput = "inherit" | "log";
 
-type InstallRunner = (
-	installer: Installer,
+type ProcessInstallRunner = (
+	command: string,
 	args: string[],
-	signal?: AbortSignal,
+	options: { signal?: AbortSignal; output: InstallerOutput },
 ) => Promise<number | null>;
 
-async function runInstall(installer: Installer, args: string[], signal?: AbortSignal) {
-	if (signal?.aborted) return null;
-
+export async function runInstallerProcess(
+	command: string,
+	args: string[],
+	options: {
+		signal?: AbortSignal;
+		output?: InstallerOutput;
+		timeoutMs?: number;
+		termGraceMs?: number;
+		killGraceMs?: number;
+	} = {},
+): Promise<number | null> {
+	if (options.signal?.aborted) return null;
+	const output = options.output ?? "log";
+	const timeoutMs = options.timeoutMs ?? INSTALL_TIMEOUT_MS;
+	const termGraceMs = options.termGraceMs ?? INSTALL_TERM_GRACE_MS;
+	const killGraceMs = options.killGraceMs ?? INSTALL_KILL_GRACE_MS;
+	if (
+		!Number.isFinite(timeoutMs) ||
+		timeoutMs <= 0 ||
+		!Number.isFinite(termGraceMs) ||
+		termGraceMs < 0 ||
+		!Number.isFinite(killGraceMs) ||
+		killGraceMs < 0
+	) {
+		throw new Error("installer timeout must be positive and grace periods must be non-negative");
+	}
 	const logPath = join(getClawdiDir(), "auto-update.log");
 	let logFd: number;
-	try {
-		mkdirSync(getClawdiDir(), { recursive: true });
-		logFd = openSync(logPath, "a");
-	} catch {
+	if (output === "log") {
+		try {
+			mkdirSync(getClawdiDir(), { recursive: true });
+			logFd = openSync(logPath, "a");
+		} catch {
+			logFd = -1;
+		}
+	} else {
 		logFd = -1;
 	}
 	try {
 		return await new Promise<number | null>((resolve) => {
-			const vector = installerCommandVector(installer, args);
-			const child = spawn(vector.command, vector.args, {
-				stdio: logFd >= 0 ? ["ignore", logFd, logFd] : "ignore",
+			const child = spawn(command, args, {
+				stdio: output === "inherit" ? "inherit" : logFd >= 0 ? ["ignore", logFd, logFd] : "ignore",
 				env: process.env,
+				detached: process.platform !== "win32",
 				windowsHide: true,
 			});
-			const onAbort = () => {
-				child.kill();
+			let markClosed = () => {};
+			const closed = new Promise<void>((resolveClosed) => {
+				markClosed = resolveClosed;
+			});
+			let termination: Promise<void> | null = null;
+			let settled = false;
+			const finish = (result: number | null) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timeout);
+				options.signal?.removeEventListener("abort", terminate);
+				process.removeListener("SIGINT", terminate);
+				process.removeListener("SIGTERM", terminate);
+				resolve(result);
 			};
-			signal?.addEventListener("abort", onAbort, { once: true });
-			if (signal?.aborted) onAbort();
-			child.on("error", () => resolve(null));
+			function terminate() {
+				if (termination || settled) return;
+				termination = terminateProcessGroup(child, closed, {
+					termTimeoutMs: termGraceMs,
+					killTimeoutMs: killGraceMs,
+				}).then(() => finish(null));
+			}
+			const timeout = setTimeout(terminate, timeoutMs);
+			options.signal?.addEventListener("abort", terminate, { once: true });
+			process.once("SIGINT", terminate);
+			process.once("SIGTERM", terminate);
+			if (options.signal?.aborted) terminate();
+			child.on("error", () => {
+				markClosed();
+				finish(null);
+			});
 			child.on("close", (code) => {
-				signal?.removeEventListener("abort", onAbort);
-				resolve(code);
+				markClosed();
+				if (!termination) finish(code);
 			});
 		});
 	} finally {
@@ -619,6 +703,63 @@ async function runInstall(installer: Installer, args: string[], signal?: AbortSi
 	}
 }
 
+type UpdateInstallWorkerResult =
+	| { status: "installed"; installedVersion: string }
+	| { status: "failed"; exitCode: number | null; installedVersion?: undefined }
+	| { status: "failed"; exitCode?: undefined; installedVersion: string | null }
+	| { status: "locked" }
+	| { status: "disabled" };
+
+async function runUpdateInstallWorker(input: {
+	current: string;
+	latest: string;
+	ownership: GlobalInstallOwnership;
+	output: InstallerOutput;
+	signal?: AbortSignal;
+	platform?: NodeJS.Platform;
+	lockOptions?: PrivateDirectoryLockOptions;
+	installRunner?: ProcessInstallRunner;
+	versionReader?: (command: string, args: string[]) => string | null;
+}): Promise<UpdateInstallWorkerResult> {
+	if (!evaluateHostPolicyForCommand("update").allowed) return { status: "disabled" };
+	if (input.signal?.aborted) return { status: "failed", exitCode: null };
+	const install = executableCommandVector(
+		input.ownership.installerExecutable,
+		installArgs(input.ownership.installer, input.latest),
+		input.platform,
+	);
+	const smoke = executableCommandVector(input.ownership.executable, ["--version"], input.platform);
+	try {
+		return await withPrivateDirectoryLock(
+			join(getClawdiDir(), "update.lock"),
+			async (lease) => {
+				const exitCode = await (input.installRunner ?? runInstallerProcess)(
+					install.command,
+					install.args,
+					{ signal: input.signal, output: input.output },
+				);
+				lease.assertOwned();
+				if (exitCode !== 0) return { status: "failed", exitCode };
+				const installedVersion = (input.versionReader ?? readCommandVersion)(
+					smoke.command,
+					smoke.args,
+				);
+				lease.assertOwned();
+				if (installedVersion !== input.latest) {
+					return { status: "failed", installedVersion };
+				}
+				writeLastVersion(input.current);
+				lease.assertOwned();
+				return { status: "installed", installedVersion };
+			},
+			input.lockOptions,
+		);
+	} catch (error) {
+		if (error instanceof PrivateDirectoryLockTimeoutError) return { status: "locked" };
+		throw error;
+	}
+}
+
 export type DaemonAutoUpdateResult =
 	| "disabled"
 	| "no_update"
@@ -627,11 +768,17 @@ export type DaemonAutoUpdateResult =
 	| "installed"
 	| "failed";
 
+type DaemonInstallRunner = (
+	installer: Installer,
+	args: string[],
+	signal?: AbortSignal,
+) => Promise<number | null>;
+
 export async function daemonAutoUpdateOnce(
 	opts: {
 		currentVersion?: string;
 		ownership?: GlobalInstallOwnership | null;
-		installRunner?: InstallRunner;
+		installRunner?: DaemonInstallRunner;
 		versionReader?: (executable: string) => string | null;
 		ignoreDisabled?: boolean;
 		restartCoordination?: RestartCoordination;
@@ -653,42 +800,51 @@ export async function daemonAutoUpdateOnce(
 		return "unsupported";
 	}
 	const { installer } = ownership;
-
-	const release = acquireDaemonUpdateLock();
-	if (!release) return "locked";
-	try {
-		log.info("daemon.auto_update_installing", { current, latest, channel, installer });
-		const installAndValidate = async (): Promise<DaemonAutoUpdateResult> => {
-			const status = await (opts.installRunner ?? runInstall)(
-				installer,
-				installArgs(installer, latest),
-				opts.signal,
-			);
-			if (status !== 0) {
-				log.warn("daemon.auto_update_failed", { current, latest, channel, installer, status });
-				return "failed";
-			}
-			const installedVersion = (opts.versionReader ?? readExecutableVersion)(ownership.executable);
-			if (installedVersion !== latest) {
+	log.info("daemon.auto_update_installing", { current, latest, channel, installer });
+	const installAndValidate = async (): Promise<DaemonAutoUpdateResult> => {
+		const result = await runUpdateInstallWorker({
+			current,
+			latest,
+			ownership,
+			output: "log",
+			signal: opts.signal,
+			lockOptions: { timeoutMs: 0 },
+			installRunner: opts.installRunner
+				? async (_command, _args, options) =>
+						opts.installRunner?.(installer, installArgs(installer, latest), options.signal) ?? null
+				: undefined,
+			versionReader: opts.versionReader
+				? () => opts.versionReader?.(ownership.executable) ?? null
+				: undefined,
+		});
+		if (result.status === "locked") return "locked";
+		if (result.status === "disabled") return "disabled";
+		if (result.status === "failed") {
+			if (result.installedVersion !== undefined) {
 				log.warn("daemon.auto_update_validation_failed", {
 					current,
 					latest,
 					channel,
 					installer,
-					installed_version: installedVersion,
+					installed_version: result.installedVersion,
 				});
-				return "failed";
+			} else {
+				log.warn("daemon.auto_update_failed", {
+					current,
+					latest,
+					channel,
+					installer,
+					status: result.exitCode,
+				});
 			}
-			writeLastVersion(current);
-			log.info("daemon.auto_update_installed", { from: current, to: latest, channel, installer });
-			return "installed";
-		};
-		return opts.restartCoordination
-			? await opts.restartCoordination.duringUpdateInstall(installAndValidate)
-			: await installAndValidate();
-	} finally {
-		release();
-	}
+			return "failed";
+		}
+		log.info("daemon.auto_update_installed", { from: current, to: latest, channel, installer });
+		return "installed";
+	};
+	return opts.restartCoordination
+		? await opts.restartCoordination.duringUpdateInstall(installAndValidate)
+		: await installAndValidate();
 }
 
 export function startDaemonAutoUpdate(opts: {
@@ -774,46 +930,19 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 	if (!isHumanTerminal) return;
 	if (isTransientInvocation()) return;
 
-	// `clawdi config set autoUpdate false` writes the literal string "false";
-	// fall back to a boolean compare for direct mutators of config.json.
-	const stored = getStoredConfig() as { autoUpdate?: unknown };
-	if (stored.autoUpdate === false || stored.autoUpdate === "false") return;
+	if (getStoredConfig().autoUpdate === false) return;
 
 	const cached = readCache(channel);
 	const now = Date.now();
-	let latest: string | null = cached?.latest ?? null;
-
-	if (!cached) {
-		// First run on this machine — no cache to fall back on. Block briefly
-		// for a registry lookup (3 s timeout); without this the first
-		// auto-update opportunity is silently dropped, costing the user one
-		// stale invocation before the system kicks in.
-		latest = await fetchLatest(3000, channel);
-		if (latest) writeCache(latest, channel);
-	} else if (now - new Date(cached.checkedAt).getTime() > CACHE_TTL_MS) {
-		// Have stale data — use it now, refresh in the background for the
-		// next invocation. Keeps the hot path snappy after the first run.
-		fetchLatest(3000, channel)
-			.then((l) => {
-				if (l) writeCache(l, channel);
-			})
-			.catch(() => {});
-	}
-
-	if (!latest) return;
-	if (!isNewer(latest, current)) return;
-
-	const ownership = detectAutoUpdateOwnership(runtime);
-	if (!ownership) return;
-	const { installer } = ownership;
-	const args = installArgs(installer, latest);
+	const cacheFresh = cached !== null && now - new Date(cached.checkedAt).getTime() <= CACHE_TTL_MS;
+	if (cacheFresh && !isNewer(cached.latest, current)) return;
+	const latest = cacheFresh ? cached.latest : undefined;
+	if (!detectAutoUpdateOwnership(runtime)) return;
 
 	// Redirect installer output to a logfile so silent failures (network
 	// flake, perms error, npm 4xx) leave a trail. `stdio: "ignore"` would
 	// throw the diagnosis away. Append (`"a"`) instead of truncate (`"w"`)
-	// so two concurrent CLI invocations spawning their own installs (which
-	// is rare but legal — the lock is gone on purpose) don't clobber each
-	// other's logs.
+	// so concurrent discovery workers do not clobber each other's diagnostics.
 	const logPath = join(getClawdiDir(), "auto-update.log");
 	let logFd: number;
 	try {
@@ -824,10 +953,12 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 		logFd = -1;
 	}
 
-	console.log(chalk.gray(`Updating clawdi v${current} → v${latest} in background…`));
+	if (latest) {
+		console.log(chalk.gray(`Updating clawdi v${current} → v${latest} in background…`));
+	}
 	try {
-		const spawner = runtime.spawnBackgroundInstall ?? spawnBackgroundInstall;
-		spawner(installer, args, { current, latest, logFd });
+		const spawner = runtime.spawnBackgroundWorker ?? spawnBackgroundUpdateWorker;
+		spawner({ current, latest, channel, logFd });
 	} finally {
 		if (logFd >= 0) {
 			try {
@@ -839,14 +970,23 @@ export async function maybeAutoUpdate(runtime: AutoUpdateRuntime = {}): Promise<
 	}
 }
 
-function spawnBackgroundInstall(
-	installer: Installer,
-	args: string[],
-	context: BackgroundInstallContext,
-): void {
-	const vector = installerCommandVector(installer, args);
-	const child = spawn(vector.command, vector.args, {
-		stdio: context.logFd >= 0 ? ["ignore", context.logFd, context.logFd] : "ignore",
+function spawnBackgroundUpdateWorker(request: BackgroundWorkerRequest): void {
+	let invocation: ReturnType<typeof resolveCurrentCliInvocation>;
+	try {
+		invocation = resolveCurrentCliInvocation([
+			"update",
+			"--background-worker",
+			"--current-version",
+			request.current,
+			"--channel",
+			request.channel,
+			...(request.latest ? ["--latest", request.latest] : []),
+		]);
+	} catch {
+		return;
+	}
+	const child = spawn(invocation.command, invocation.args, {
+		stdio: request.logFd >= 0 ? ["ignore", request.logFd, request.logFd] : "ignore",
 		detached: true,
 		env: process.env,
 		windowsHide: true,
@@ -856,6 +996,57 @@ function spawnBackgroundInstall(
 		// `auto-update.log` if they care, and the next invocation retries.
 	});
 	child.unref();
+}
+
+export async function runBackgroundUpdateWorker(
+	opts: {
+		currentVersion: string;
+		channel: string;
+		latest?: string;
+	},
+	runtime: {
+		ownership?: GlobalInstallOwnership | null;
+		installRunner?: DaemonInstallRunner;
+		versionReader?: (executable: string) => string | null;
+		lockOptions?: PrivateDirectoryLockOptions;
+	} = {},
+): Promise<DaemonAutoUpdateResult> {
+	if (detectRuntimeMode() === "hosted") return "disabled";
+	if (autoUpdateDisabled()) return "disabled";
+	if (!isValidSemver(opts.currentVersion)) return "failed";
+	if (opts.channel !== "latest" && opts.channel !== "beta") return "failed";
+	const latest = opts.latest ?? (await latestFromCacheOrRegistry(opts.channel));
+	if (!latest || !isValidSemver(latest) || !isNewer(latest, opts.currentVersion)) {
+		return "no_update";
+	}
+	writeCache(latest, opts.channel);
+	const ownership = runtime.ownership === undefined ? detectGlobalInstall() : runtime.ownership;
+	if (!ownership) return "unsupported";
+	const result = await runUpdateInstallWorker({
+		current: opts.currentVersion,
+		latest,
+		ownership,
+		output: "log",
+		lockOptions: runtime.lockOptions ?? { timeoutMs: 0 },
+		installRunner: runtime.installRunner
+			? async (_command, _args, options) =>
+					runtime.installRunner?.(
+						ownership.installer,
+						installArgs(ownership.installer, latest),
+						options.signal,
+					) ?? null
+			: undefined,
+		versionReader: runtime.versionReader
+			? () => runtime.versionReader?.(ownership.executable) ?? null
+			: undefined,
+	});
+	return result.status === "installed"
+		? "installed"
+		: result.status === "locked"
+			? "locked"
+			: result.status === "disabled"
+				? "disabled"
+				: "failed";
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
