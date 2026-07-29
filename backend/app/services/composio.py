@@ -22,9 +22,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+
+import httpx2
+from mcp import Client
+from mcp.client.streamable_http import streamable_http_client
+from mcp.types import CallToolResult, ListToolsResult
 
 from app.core.config import settings
 
@@ -51,6 +58,10 @@ CUSTOM_OAUTH_CONFIG_REQUIRED_MESSAGE = (
 
 class ConnectorAuthMetadataError(RuntimeError):
     """Raised when Composio does not return enough metadata to choose an auth flow."""
+
+
+class ComposioMcpUpstreamError(RuntimeError):
+    """Sanitized failure from the server-side Composio MCP client."""
 
 
 class ConnectorCustomAuthConfigRequired(RuntimeError):
@@ -102,6 +113,7 @@ def get_composio_sdk() -> Composio:
 async def close_composio_client() -> None:
     """Close the shared Composio HTTP clients on ASGI shutdown."""
     global _client, _sdk_client
+    _tool_router_session_cache.clear()
     if _client is not None:
         close = getattr(_client, "close", None)
         if callable(close):
@@ -137,6 +149,51 @@ def invalidate_tool_router_mcp_session(user_id: str) -> None:
     _tool_router_session_cache.pop(user_id, None)
 
 
+async def list_tool_router_mcp_tools(session: ComposioMcpSession) -> ListToolsResult:
+    """List tools through a fully initialized, operation-scoped MCP client."""
+    try:
+        async with _tool_router_mcp_client(session) as client:
+            return await client.list_tools()
+    except Exception as exc:
+        logger.warning(
+            "Composio MCP operation failed: operation=list_tools error_type=%s",
+            type(exc).__name__,
+        )
+        raise ComposioMcpUpstreamError("Composio MCP operation failed") from None
+
+
+async def call_tool_router_mcp_tool(
+    session: ComposioMcpSession, name: str, arguments: dict[str, Any]
+) -> CallToolResult:
+    """Call a tool through a fully initialized, operation-scoped MCP client."""
+    try:
+        async with _tool_router_mcp_client(session) as client:
+            return await client.call_tool(name, arguments)
+    except Exception as exc:
+        logger.warning(
+            "Composio MCP operation failed: operation=call_tool error_type=%s",
+            type(exc).__name__,
+        )
+        raise ComposioMcpUpstreamError("Composio MCP operation failed") from None
+
+
+@asynccontextmanager
+async def _tool_router_mcp_client(
+    session: ComposioMcpSession,
+) -> AsyncIterator[Client]:
+    # Keep Composio credentials on this server-owned HTTP client. These are
+    # the MCP SDK's documented settings for a caller-provided HTTP client.
+    http_client = httpx2.AsyncClient(
+        headers=session.headers,
+        timeout=httpx2.Timeout(30.0, read=300.0),
+        follow_redirects=True,
+    )
+    async with http_client:
+        transport = streamable_http_client(session.url, http_client=http_client)
+        async with Client(transport) as client:
+            yield client
+
+
 async def _create_tool_router_mcp_session(
     user_id: str, *, now: datetime | None = None
 ) -> ComposioMcpSession:
@@ -145,6 +202,8 @@ async def _create_tool_router_mcp_session(
     mcp = getattr(session, "mcp", None)
     url = getattr(mcp, "url", None)
     raw_headers = getattr(mcp, "headers", None)
+    raw_transport_type = getattr(mcp, "type", None)
+    transport_type = getattr(raw_transport_type, "value", raw_transport_type)
     if not isinstance(url, str) or not url.strip():
         raise RuntimeError("Composio session did not include mcp.url")
     if not isinstance(raw_headers, dict) or not raw_headers:
@@ -157,6 +216,8 @@ async def _create_tool_router_mcp_session(
         for key, value in raw_headers.items()
     ):
         raise RuntimeError("Composio session returned invalid mcp.headers")
+    if transport_type != "http":
+        raise RuntimeError("Composio session returned an unsupported mcp.type")
 
     issued_at = now or datetime.now(UTC)
     return ComposioMcpSession(

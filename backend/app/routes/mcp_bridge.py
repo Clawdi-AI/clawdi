@@ -7,7 +7,6 @@ import time
 from typing import Any
 from uuid import UUID
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +24,11 @@ from app.core.query_utils import like_needle
 from app.models.session import AgentEnvironment, Session
 from app.routes.memories import _attach_source_machines, _project_filter_memories
 from app.routes.public_sessions import _resolve_session_for_view
-from app.services.composio import ComposioMcpSession, get_tool_router_mcp_session
+from app.services.composio import (
+    call_tool_router_mcp_tool,
+    get_tool_router_mcp_session,
+    list_tool_router_mcp_tools,
+)
 from app.services.file_store import get_file_store
 from app.services.memory_provider import get_memory_provider
 from app.services.secret_detection import find_likely_secret, secret_memory_warning
@@ -320,8 +323,8 @@ async def _handle_clawdi_mcp_request(
         return _mcp_error(rpc_id, -32601, "Method not found")
     except HTTPException as exc:
         return _mcp_error(rpc_id, -32000, _http_exception_message(exc), is_tool_error=True)
-    except Exception:
-        logger.exception("Clawdi MCP error: user=%s method=%s", auth.user_id, method)
+    except Exception as exc:
+        logger.error("Clawdi MCP error: method=%s error_type=%s", method, type(exc).__name__)
         return _mcp_error(rpc_id, -32000, "internal error", is_tool_error=True)
 
 
@@ -374,21 +377,18 @@ async def _connector_mcp_tools(auth: AuthContext) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = []
     try:
         session = await get_tool_router_mcp_session(auth.user.clerk_id)
-        response = await _forward_composio_mcp_request(
-            session,
-            {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-        )
-        if isinstance(response, dict):
-            result = response.get("result")
-            if isinstance(result, dict) and isinstance(result.get("tools"), list):
-                tools = [tool for tool in result["tools"] if isinstance(tool, dict)]
+        result = await list_tool_router_mcp_tools(session)
+        serialized = result.model_dump(by_alias=True, exclude_none=True)
+        raw_tools = serialized.get("tools")
+        if isinstance(raw_tools, list):
+            tools = [tool for tool in raw_tools if isinstance(tool, dict)]
         _connector_tools_cache[auth.user.clerk_id] = (
             now + _CONNECTOR_TOOLS_CACHE_TTL_SECONDS,
             tools,
         )
     except Exception:
         # Failures are not cached — the next call retries immediately.
-        logger.info("Connector MCP tools unavailable for user=%s", auth.user_id)
+        logger.info("Connector MCP tools unavailable")
     return tools
 
 
@@ -615,71 +615,9 @@ async def _tool_connector_call(
     if is_runtime_deployment_principal(auth):
         _require_scope(auth, "connectors:invoke")
     session = await get_tool_router_mcp_session(auth.user.clerk_id)
-    response = await _forward_composio_mcp_request(
-        session,
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments},
-        },
-    )
-    if isinstance(response, dict) and response.get("error"):
-        return _tool_text(json.dumps(response["error"]), is_error=True)
-    result = response.get("result") if isinstance(response, dict) else response
+    response = await call_tool_router_mcp_tool(session, name, arguments)
+    result = response.model_dump(by_alias=True, exclude_none=True)
     if isinstance(result, dict):
         return result
     text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, indent=2)
     return _tool_text(text)
-
-
-async def _forward_composio_mcp_request(session: ComposioMcpSession, body) -> dict | list:
-    headers = _composio_mcp_headers(session)
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(session.url, json=body, headers=headers)
-
-    if not resp.is_success:
-        logger.warning(
-            "Composio MCP bridge upstream failure: status=%s",
-            resp.status_code,
-        )
-        rpc_id = body.get("id", 1) if isinstance(body, dict) else None
-        return {
-            "jsonrpc": "2.0",
-            "id": rpc_id,
-            "error": {"code": -32000, "message": "upstream MCP error"},
-        }
-
-    parsed = _parse_composio_mcp_response(resp)
-    if not isinstance(parsed, (dict, list)):
-        raise ValueError("Composio MCP bridge returned non-object JSON")
-    return parsed
-
-
-def _composio_mcp_headers(session: ComposioMcpSession) -> dict[str, str]:
-    return {
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        **session.headers,
-    }
-
-
-def _parse_composio_mcp_response(resp: httpx.Response):
-    content_type = resp.headers.get("content-type", "")
-    if "text/event-stream" not in content_type:
-        return resp.json()
-
-    events = []
-    data_lines: list[str] = []
-    for line in resp.text.splitlines():
-        if line.startswith("data:"):
-            data_lines.append(line[5:].lstrip())
-        elif not line and data_lines:
-            events.append("\n".join(data_lines))
-            data_lines = []
-    if data_lines:
-        events.append("\n".join(data_lines))
-    events = [event for event in events if event.strip() and event.strip() != "[DONE]"]
-    if not events:
-        raise ValueError("Composio MCP bridge returned an empty SSE response")
-    return json.loads(events[-1])

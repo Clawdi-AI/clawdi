@@ -12,6 +12,7 @@ dependencies = [
     "pyjwt[crypto]>=2.10",
     "cryptography>=44.0",
     "httpx>=0.28.1",
+    "httpx2>=2.5.0,<3.0.0",
     "idna>=3.10",
     "python-multipart>=0.0.20",
     "aiofiles>=24.1",
@@ -26,6 +27,8 @@ dependencies = [
     # composio-client 1.42.0. https://pypi.org/pypi/composio/0.18.0/json
     "composio==0.18.0",
     "composio-client==1.42.0",
+    # Official Streamable HTTP client lifecycle for Composio Tool Router.
+    "mcp==2.0.0",
     "prometheus-client>=0.25.0",
     "boto3>=1.35",
     "botocore>=1.35",
