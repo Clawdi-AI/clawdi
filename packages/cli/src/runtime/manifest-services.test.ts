@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { readRuntimeInstallReceipts, writeRuntimeInstallReceipts } from "./install-receipts";
+import { readRuntimeInstallReceipts } from "./install-receipts";
 import { convergeRuntimeManifest, type RuntimeManifest } from "./manifest";
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
@@ -116,18 +116,47 @@ esac
 	chmodSync(input.path, 0o700);
 }
 
-function openClawPluginInspectFixture(
-	pluginSourcePath: string,
-	version = "1.2.3",
-): Record<string, unknown> {
+function installGateManifest(
+	paths: RuntimePaths,
+	runtime: "openclaw" | "hermes",
+	command: string,
+): RuntimeManifest {
+	return {
+		schemaVersion: "clawdi.runtimeDesiredState.v1",
+		deploymentId: `hdep_${runtime}_receipt`,
+		environmentId: `env_${runtime}_receipt`,
+		instanceId: `hri_${runtime}_receipt`,
+		generation: 1,
+		issuedAt: "2026-07-29T00:00:00.000Z",
+		workspaceRoot: join(paths.userHome, "workspace"),
+		controlPlane: { apiUrl: "https://cloud-api.example.test" },
+		runtimes: {
+			[runtime]: {
+				enabled: true,
+				run: runSettings(command, ["gateway", "run"]),
+				services: {},
+			},
+		},
+		...(runtime === "openclaw"
+			? {
+					projection: {
+						system: { home: paths.userHome, workspace: join(paths.userHome, "workspace") },
+						channels: { discord: { token: "secret://channels/discord" } },
+					},
+				}
+			: {}),
+		recovery: {},
+	};
+}
+
+function pluginInspectFixture(pluginSourcePath: string): Record<string, unknown> {
 	return {
 		plugin: {
 			id: "discord",
-			name: "Discord",
 			source: pluginSourcePath,
 			origin: "global",
 			status: "loaded",
-			version,
+			version: "1.2.3",
 			enabled: true,
 		},
 		install: {
@@ -135,21 +164,18 @@ function openClawPluginInspectFixture(
 			spec: "@openclaw/discord",
 			installPath: dirname(pluginSourcePath),
 			resolvedName: "@openclaw/discord",
-			resolvedVersion: version,
-			resolvedSpec: `@openclaw/discord@${version}`,
+			resolvedVersion: "1.2.3",
 			integrity: "sha512-test",
 		},
 	};
 }
 
-function writeFakeOpenClawPluginCli(input: {
+function writeFakePluginCli(input: {
 	path: string;
 	installLogPath: string;
 	inspectStatePath: string;
 	pluginSourcePath: string;
 	failInstallMarker: string;
-	runtimeVersion: string;
-	pluginVersion?: string;
 }): void {
 	mkdirSync(dirname(input.path), { recursive: true });
 	writeFileSync(
@@ -157,67 +183,108 @@ function writeFakeOpenClawPluginCli(input: {
 		`#!/usr/bin/env bash
 set -euo pipefail
 case "$*" in
-  "--version")
-	printf '%s\\n' '${input.runtimeVersion}'
-	;;
-  "plugins inspect discord --json")
-	cat '${input.inspectStatePath}'
-	;;
+  "--version") printf '%s\\n' 'OpenClaw 2026.7.29' ;;
+  "plugins inspect discord --json") cat '${input.inspectStatePath}' ;;
   "plugins install @openclaw/discord")
-	printf '%s\\n' '@openclaw/discord' >> '${input.installLogPath}'
-	if [ -f '${input.failInstallMarker}' ]; then
-		exit 73
-	fi
 	mkdir -p '${dirname(input.inspectStatePath)}'
+	printf '%s\\n' '@openclaw/discord' >> '${input.installLogPath}'
+	[ ! -f '${input.failInstallMarker}' ] || exit 73
 	mkdir -p '${dirname(input.pluginSourcePath)}'
 	printf '%s\\n' 'export const discordPlugin = true;' > '${input.pluginSourcePath}'
 	chmod 0644 '${input.pluginSourcePath}'
-	cat > '${input.inspectStatePath}' <<'EOF'
-${JSON.stringify(openClawPluginInspectFixture(input.pluginSourcePath, input.pluginVersion))}
-EOF
+	printf '%s\\n' '${JSON.stringify(pluginInspectFixture(input.pluginSourcePath))}' > '${input.inspectStatePath}'
 	;;
-  "config patch --stdin")
-	cat >/dev/null
-	;;
-  *)
-	printf 'unexpected openclaw command: %s\\n' "$*" >&2
-	exit 64
-	;;
+  "config patch --stdin") cat >/dev/null ;;
+  *) exit 64 ;;
 esac
 `,
 	);
 	chmodSync(input.path, 0o700);
 }
 
-function openClawDiscordManifest(
-	paths: RuntimePaths,
-	command: string,
-	generation: number,
-	tokenRef: string,
-): RuntimeManifest {
+interface InstallGateHarness {
+	converge: (commitAuthority?: () => void) => ReturnType<typeof convergeRuntimeManifest>;
+	drift: () => void;
+	failNextInstall: () => void;
+	restoreInstaller: () => void;
+	installCount: () => number;
+	receipt: () => unknown;
+}
+
+function officialServiceHarness(): InstallGateHarness {
+	const paths = tempRuntimePaths();
+	const logPath = join(paths.runRoot, "official-service-receipt.log");
+	const command = join(paths.userHome, ".local", "bin", "hermes");
+	const unitPath = join(paths.systemdUserRoot, "hermes-gateway.service");
+	const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
+	process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
+	process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
+	writeFakeSystemctl({ path: systemctlCommand, logPath });
+	const writeCli = (failInstall = false) =>
+		writeFakeGatewayCli({
+			path: command,
+			logPath,
+			runtime: "hermes",
+			unitPath,
+			version: "Hermes Agent v0.18.0",
+			failInstall,
+		});
+	writeCli();
+	const load: RuntimeManifestLoad = {
+		manifest: installGateManifest(paths, "hermes", command),
+		source: "fixture-file",
+		sourcePath: "inline-service-receipt",
+		offline: false,
+	};
 	return {
-		schemaVersion: "clawdi.runtimeDesiredState.v1",
-		deploymentId: "hdep_plugin_receipt",
-		environmentId: "env_plugin_receipt",
-		instanceId: "hri_plugin_receipt",
-		generation,
-		issuedAt: "2026-07-29T00:00:00.000Z",
-		workspaceRoot: join(paths.userHome, "workspace"),
-		controlPlane: { apiUrl: "https://cloud-api.example.test" },
-		runtimes: {
-			openclaw: {
-				enabled: true,
-				run: runSettings(command, ["gateway", "run"]),
-				services: {},
-			},
-		},
-		projection: {
-			system: { home: paths.userHome, workspace: join(paths.userHome, "workspace") },
-			channels: { discord: { token: tokenRef } },
-		},
-		recovery: {},
+		converge: (commitAuthority) =>
+			convergeRuntimeManifest(load, paths, commitAuthority ? { commitAuthority } : {}),
+		drift: () => chmodSync(unitPath, 0o600),
+		failNextInstall: () => writeCli(true),
+		restoreInstaller: () => writeCli(),
+		installCount: () => readFileSync(logPath, "utf8").match(/hermes gateway install/g)?.length ?? 0,
+		receipt: () => readRuntimeInstallReceipts(paths)?.officialServices["hermes-gateway.service"],
 	};
 }
+
+function channelPluginHarness(): InstallGateHarness {
+	const paths = tempRuntimePaths();
+	const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
+	const installLogPath = join(paths.runRoot, "plugin-installs.log");
+	const inspectStatePath = join(paths.runRoot, "plugin-inspect.json");
+	const pluginSourcePath = join(paths.userHome, ".openclaw", "extensions", "discord", "index.js");
+	const failInstallMarker = join(paths.runRoot, "fail-plugin-install");
+	process.env.CLAWDI_SYSTEMD_APPLY = "0";
+	writeFakePluginCli({
+		path: command,
+		installLogPath,
+		inspectStatePath,
+		pluginSourcePath,
+		failInstallMarker,
+	});
+	const load: RuntimeManifestLoad = {
+		manifest: installGateManifest(paths, "openclaw", command),
+		source: "fixture-file",
+		sourcePath: "inline-plugin-receipt",
+		offline: false,
+		secretValues: {},
+	};
+	return {
+		converge: (commitAuthority) =>
+			convergeRuntimeManifest(load, paths, commitAuthority ? { commitAuthority } : {}),
+		drift: () => writeFileSync(pluginSourcePath, "export const discordPlugin = false;\n"),
+		failNextInstall: () => writeFileSync(failInstallMarker, "fail\n"),
+		restoreInstaller: () => rmSync(failInstallMarker, { force: true }),
+		installCount: () =>
+			readFileSync(installLogPath, "utf8").match(/@openclaw\/discord/g)?.length ?? 0,
+		receipt: () => readRuntimeInstallReceipts(paths)?.channelPlugins["openclaw:discord"],
+	};
+}
+
+const installGateHarnesses = [
+	["official service", officialServiceHarness],
+	["channel plugin", channelPluginHarness],
+] as const;
 
 function writeFakeSystemctl(input: {
 	path: string;
@@ -967,443 +1034,41 @@ describe("runtime manifest services", () => {
 		}
 	});
 
-	test("gates official service installs on installer contract and current base service identity", () => {
-		const paths = tempRuntimePaths();
-		const logPath = join(paths.runRoot, "official-service-receipt.log");
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		const unitPath = join(paths.systemdUserRoot, "hermes-gateway.service");
-		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
-		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
-		writeFakeSystemctl({ path: systemctlCommand, logPath });
-		writeFakeGatewayCli({
-			path: hermesCommand,
-			logPath,
-			runtime: "hermes",
-			unitPath,
-			version: "Hermes Agent v0.18.0",
-		});
-		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "hdep_service_receipt",
-			environmentId: "env_service_receipt",
-			instanceId: "hri_service_receipt",
-			generation: 1,
-			issuedAt: "2026-07-29T00:00:00.000Z",
-			workspaceRoot: join(paths.userHome, "workspace"),
-			controlPlane: { apiUrl: "https://cloud-api.example.test" },
-			runtimes: {
-				hermes: {
-					enabled: true,
-					providerMode: "configured",
-					provider_ids: ["provider-a"],
-					primary_model: { provider_id: "provider-a", model: "model-a" },
-					run: {
-						...runSettings(hermesCommand, ["gateway", "run"]),
-						secretEnv: { HERMES_RUNTIME_SECRET: "secret://runtime/hermes-a" },
-					},
-					services: {},
-				},
-			},
-			projection: {
-				providers: {
-					"provider-a": {
-						kind: "openai-compatible",
-						baseUrl: "https://provider-a.example.test/v1",
-						model: "model-a",
-						models: [{ id: "model-a" }],
-						apiMode: "openai_chat_completions",
-						managed_by: "user",
-						runtimeEnvName: "OPENAI_API_KEY",
-						apiKeySecretRef: "secret://provider/a",
-					},
-				},
-			},
-			recovery: {},
-		};
-		const converge = (desired: RuntimeManifest, secretValues: Record<string, string>) =>
-			convergeRuntimeManifest(
-				{
-					manifest: desired,
-					source: "fixture-file",
-					sourcePath: "inline-service-receipt",
-					offline: false,
-					secretValues,
-				},
-				paths,
-			);
-		const initialSecrets = {
-			"secret://runtime/hermes-a": "runtime-secret-a",
-			"secret://provider/a": "provider-secret-a",
-		};
+	test.each(
+		installGateHarnesses,
+	)("gates %s installs on a verified no-op and fails closed on drift", (_name, createHarness) => {
+		const harness = createHarness();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+		expect(harness.receipt()).toBeDefined();
 
-		expect(converge(manifest, initialSecrets).installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8").match(/hermes gateway install --force/g)).toHaveLength(1);
-		expect(
-			statSync(join(paths.serviceStateRoot, "status", "runtime-install-receipts.json")).mode &
-				0o777,
-		).toBe(0o600);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
 
-		writeFileSync(logPath, "");
-		expect(converge(manifest, initialSecrets).installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8")).toBe("");
-		const receiptPath = join(paths.serviceStateRoot, "status", "runtime-install-receipts.json");
-		chmodSync(receiptPath, 0o644);
-		expect(converge(manifest, initialSecrets).installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8")).toContain("hermes gateway install --force");
-		expect(statSync(receiptPath).mode & 0o777).toBe(0o600);
-		writeFileSync(logPath, "");
+		harness.drift();
+		const receiptBeforeFailure = harness.receipt();
+		harness.failNextInstall();
+		expect(harness.converge().installErrors.join("\n")).toContain("install failed");
+		expect(harness.installCount()).toBe(2);
+		expect(harness.receipt()).toEqual(receiptBeforeFailure);
 
-		const rotatedSecrets = {
-			"secret://runtime/hermes-a": "runtime-secret-rotated",
-			"secret://provider/a": "provider-secret-rotated",
-		};
-		expect(converge(manifest, rotatedSecrets).installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8")).toBe("");
-
-		const changedRuntimeMaterial = structuredClone(manifest);
-		changedRuntimeMaterial.generation = 2;
-		changedRuntimeMaterial.runtimes.hermes = {
-			...changedRuntimeMaterial.runtimes.hermes,
-			run: {
-				...runSettings(hermesCommand, ["gateway", "run", "--replace"]),
-				secretEnv: { HERMES_RUNTIME_SECRET: "secret://runtime/hermes-b" },
-			},
-		};
-		changedRuntimeMaterial.projection = {
-			providers: {
-				"provider-a": {
-					kind: "openai-compatible",
-					baseUrl: "https://provider-b.example.test/v1",
-					model: "model-b",
-					models: [{ id: "model-b" }],
-					apiMode: "openai_responses",
-					managed_by: "user",
-					runtimeEnvName: "OPENAI_API_KEY",
-					apiKeySecretRef: "secret://provider/b",
-				},
-			},
-		};
-		const changedSecrets = {
-			"secret://runtime/hermes-b": "runtime-secret-b",
-			"secret://provider/b": "provider-secret-b",
-		};
-		expect(converge(changedRuntimeMaterial, changedSecrets).installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8")).toBe("");
-
-		chmodSync(unitPath, 0o600);
-		expect(converge(changedRuntimeMaterial, changedSecrets).installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8")).toContain("hermes gateway install --force");
-		expect(statSync(unitPath).mode & 0o777).toBe(0o644);
-
-		writeFileSync(logPath, "");
-		writeFakeGatewayCli({
-			path: hermesCommand,
-			logPath,
-			runtime: "hermes",
-			unitPath,
-			version: "Hermes Agent v0.19.0",
-		});
-		expect(converge(changedRuntimeMaterial, changedSecrets).installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8")).toContain("hermes gateway install --force");
-
-		const receipts = readRuntimeInstallReceipts(paths);
-		if (!receipts) throw new Error("expected official service install receipt");
-		receipts.officialServices["hermes-gateway.service"] = {
-			...receipts.officialServices["hermes-gateway.service"],
-			desiredRevision: "0".repeat(64),
-		};
-		writeRuntimeInstallReceipts(receipts, paths);
-		writeFileSync(logPath, "");
-		expect(converge(changedRuntimeMaterial, changedSecrets).installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8")).toContain("hermes gateway install --force");
-
-		const receiptBeforeFailure = readRuntimeInstallReceipts(paths);
-		writeFakeGatewayCli({
-			path: hermesCommand,
-			logPath,
-			runtime: "hermes",
-			unitPath,
-			version: "Hermes Agent v0.20.0",
-			failInstall: true,
-		});
-		writeFileSync(logPath, "");
-		const failed = converge(changedRuntimeMaterial, changedSecrets);
-		expect(failed.installErrors.join("\n")).toContain(
-			"official hermes-gateway service install failed",
-		);
-		expect(readRuntimeInstallReceipts(paths)).toEqual(receiptBeforeFailure);
-
-		writeFakeGatewayCli({
-			path: hermesCommand,
-			logPath,
-			runtime: "hermes",
-			unitPath,
-			version: "Hermes Agent v0.20.0",
-		});
-		writeFileSync(logPath, "");
-		expect(converge(changedRuntimeMaterial, changedSecrets).installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8")).toContain("hermes gateway install --force");
+		harness.restoreInstaller();
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(3);
 	});
 
-	test("does not bless official service drift after installer success", () => {
-		const paths = tempRuntimePaths();
-		const logPath = join(paths.runRoot, "official-service-toctou.log");
-		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		const unitPath = join(paths.systemdUserRoot, "hermes-gateway.service");
-		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
-		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
-		writeFakeSystemctl({ path: systemctlCommand, logPath });
-		writeFakeGatewayCli({
-			path: hermesCommand,
-			logPath,
-			runtime: "hermes",
-			unitPath,
-			version: "Hermes Agent v0.18.0",
-		});
-		const manifest: RuntimeManifest = {
-			schemaVersion: "clawdi.runtimeDesiredState.v1",
-			deploymentId: "hdep_service_toctou",
-			environmentId: "env_service_toctou",
-			instanceId: "hri_service_toctou",
-			generation: 1,
-			issuedAt: "2026-07-29T00:00:00.000Z",
-			workspaceRoot: join(paths.userHome, "workspace"),
-			controlPlane: { apiUrl: "https://cloud-api.example.test" },
-			runtimes: {
-				hermes: {
-					enabled: true,
-					run: runSettings(hermesCommand, ["gateway", "run"]),
-					services: {},
-				},
-			},
-			recovery: {},
-		};
-		const load: RuntimeManifestLoad = {
-			manifest,
-			source: "fixture-file",
-			sourcePath: "inline-service-toctou",
-			offline: false,
-		};
+	test.each(
+		installGateHarnesses,
+	)("does not bless post-install %s drift during authority commit", (_name, createHarness) => {
+		const harness = createHarness();
+		expect(harness.converge(harness.drift).installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(1);
+		expect(harness.receipt()).toBeUndefined();
 
-		const first = convergeRuntimeManifest(load, paths, {
-			commitAuthority: () => {
-				writeFileSync(
-					unitPath,
-					"[Unit]\nDescription=Drifted gateway\n\n[Service]\nExecStart=drifted gateway run\n",
-				);
-			},
-		});
-		expect(first.installErrors).toEqual([]);
-		expect(readRuntimeInstallReceipts(paths)?.officialServices["hermes-gateway.service"]).toBe(
-			undefined,
-		);
-		expect(readFileSync(logPath, "utf8").match(/hermes gateway install --force/g)).toHaveLength(1);
-
-		const second = convergeRuntimeManifest(load, paths);
-		expect(second.installErrors).toEqual([]);
-		expect(readFileSync(logPath, "utf8").match(/hermes gateway install --force/g)).toHaveLength(2);
-		expect(
-			readRuntimeInstallReceipts(paths)?.officialServices["hermes-gateway.service"],
-		).toBeDefined();
-	});
-
-	test("gates OpenClaw channel plugin installs on plugin contract and inspected current identity", () => {
-		const paths = tempRuntimePaths();
-		const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
-		const installLogPath = join(paths.runRoot, "plugin-installs.log");
-		const inspectStatePath = join(paths.runRoot, "plugin-inspect.json");
-		const pluginSourcePath = join(paths.userHome, ".openclaw", "extensions", "discord", "index.js");
-		const failInstallMarker = join(paths.runRoot, "fail-plugin-install");
-		process.env.CLAWDI_SYSTEMD_APPLY = "0";
-		writeFakeOpenClawPluginCli({
-			path: command,
-			installLogPath,
-			inspectStatePath,
-			pluginSourcePath,
-			failInstallMarker,
-			runtimeVersion: "OpenClaw 2026.7.29",
-		});
-		const converge = (manifest: RuntimeManifest) =>
-			convergeRuntimeManifest(
-				{
-					manifest,
-					source: "fixture-file",
-					sourcePath: "inline-plugin-receipt",
-					offline: false,
-					secretValues: {},
-				},
-				paths,
-			);
-		const initial = openClawDiscordManifest(
-			paths,
-			command,
-			1,
-			"secret://channels/discord/account-a",
-		);
-
-		expect(converge(initial).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toEqual(["@openclaw/discord"]);
-		expect(converge(initial).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(1);
-
-		const accountChanged = openClawDiscordManifest(
-			paths,
-			command,
-			2,
-			"secret://channels/discord/account-b",
-		);
-		expect(converge(accountChanged).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(1);
-
-		writeFileSync(pluginSourcePath, "export const discordPlugin = false;\n");
-		expect(converge(accountChanged).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(2);
-
-		writeFileSync(
-			inspectStatePath,
-			JSON.stringify(openClawPluginInspectFixture(pluginSourcePath, "9.9.9")),
-		);
-		expect(converge(accountChanged).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(3);
-
-		const installRecordDrift = openClawPluginInspectFixture(pluginSourcePath);
-		const installRecord = installRecordDrift.install;
-		if (typeof installRecord !== "object" || installRecord === null) {
-			throw new Error("expected plugin install fixture");
-		}
-		installRecordDrift.install = { ...installRecord, spec: "@openclaw/other" };
-		writeFileSync(inspectStatePath, JSON.stringify(installRecordDrift));
-		expect(converge(accountChanged).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(4);
-
-		const receipts = readRuntimeInstallReceipts(paths);
-		if (!receipts) throw new Error("expected channel plugin install receipt");
-		receipts.channelPlugins["openclaw:discord"] = {
-			...receipts.channelPlugins["openclaw:discord"],
-			desiredRevision: "0".repeat(64),
-		};
-		writeRuntimeInstallReceipts(receipts, paths);
-		expect(converge(accountChanged).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(5);
-
-		writeFakeOpenClawPluginCli({
-			path: command,
-			installLogPath,
-			inspectStatePath,
-			pluginSourcePath,
-			failInstallMarker,
-			runtimeVersion: "OpenClaw 2026.7.30",
-		});
-		expect(converge(accountChanged).installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(6);
-	});
-
-	test("does not bless channel plugin drift after installer success", () => {
-		const paths = tempRuntimePaths();
-		const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
-		const installLogPath = join(paths.runRoot, "plugin-toctou-installs.log");
-		const inspectStatePath = join(paths.runRoot, "plugin-toctou-inspect.json");
-		const pluginSourcePath = join(paths.userHome, ".openclaw", "extensions", "discord", "index.js");
-		const failInstallMarker = join(paths.runRoot, "fail-plugin-toctou-install");
-		process.env.CLAWDI_SYSTEMD_APPLY = "0";
-		writeFakeOpenClawPluginCli({
-			path: command,
-			installLogPath,
-			inspectStatePath,
-			pluginSourcePath,
-			failInstallMarker,
-			runtimeVersion: "OpenClaw 2026.7.29",
-		});
-		const manifest = openClawDiscordManifest(
-			paths,
-			command,
-			1,
-			"secret://channels/discord/account-a",
-		);
-		const load: RuntimeManifestLoad = {
-			manifest,
-			source: "fixture-file",
-			sourcePath: "inline-plugin-toctou",
-			offline: false,
-			secretValues: {},
-		};
-
-		const first = convergeRuntimeManifest(load, paths, {
-			commitAuthority: () => {
-				writeFileSync(pluginSourcePath, "export const discordPlugin = false;\n");
-			},
-		});
-		expect(first.installErrors).toEqual([]);
-		expect(readRuntimeInstallReceipts(paths)?.channelPlugins["openclaw:discord"]).toBe(undefined);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(1);
-
-		const second = convergeRuntimeManifest(load, paths);
-		expect(second.installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(2);
-		expect(readRuntimeInstallReceipts(paths)?.channelPlugins["openclaw:discord"]).toBeDefined();
-	});
-
-	test("fails closed on unsupported plugin inspection without blessing a failed install", () => {
-		const paths = tempRuntimePaths();
-		const command = join(paths.userHome, ".openclaw", "bin", "openclaw");
-		const installLogPath = join(paths.runRoot, "plugin-installs.log");
-		const inspectStatePath = join(paths.runRoot, "plugin-inspect.json");
-		const pluginSourcePath = join(paths.userHome, ".openclaw", "extensions", "discord", "index.js");
-		const failInstallMarker = join(paths.runRoot, "fail-plugin-install");
-		process.env.CLAWDI_SYSTEMD_APPLY = "0";
-		writeFakeOpenClawPluginCli({
-			path: command,
-			installLogPath,
-			inspectStatePath,
-			pluginSourcePath,
-			failInstallMarker,
-			runtimeVersion: "OpenClaw 2026.7.29",
-		});
-		const manifest = openClawDiscordManifest(
-			paths,
-			command,
-			1,
-			"secret://channels/discord/account-a",
-		);
-		const converge = () =>
-			convergeRuntimeManifest(
-				{
-					manifest,
-					source: "fixture-file",
-					sourcePath: "inline-plugin-fail-closed",
-					offline: false,
-					secretValues: {},
-				},
-				paths,
-			);
-
-		expect(converge().installErrors).toEqual([]);
-		const receiptBeforeFailure = readRuntimeInstallReceipts(paths);
-		writeFileSync(
-			inspectStatePath,
-			JSON.stringify({
-				plugin: {
-					id: "discord",
-					source: pluginSourcePath,
-					origin: "global",
-					status: "loaded",
-					version: "1.2.3",
-				},
-				install: { source: "npm", spec: "@openclaw/discord", version: "1.2.3" },
-			}),
-		);
-		writeFileSync(failInstallMarker, "fail\n");
-		const failed = converge();
-		expect(failed.installErrors.join("\n")).toContain(
-			"runtime openclaw channel plugin install failed",
-		);
-		expect(readRuntimeInstallReceipts(paths)).toEqual(receiptBeforeFailure);
-
-		rmSync(failInstallMarker);
-		expect(converge().installErrors).toEqual([]);
-		expect(readFileSync(installLogPath, "utf8").trim().split("\n")).toHaveLength(3);
+		expect(harness.converge().installErrors).toEqual([]);
+		expect(harness.installCount()).toBe(2);
+		expect(harness.receipt()).toBeDefined();
 	});
 
 	test("uninstalls stale official gateway services when manifest disables them", () => {

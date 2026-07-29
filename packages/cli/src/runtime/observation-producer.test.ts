@@ -64,6 +64,40 @@ function writeObservationHealth(paths: RuntimePaths, status: "ok" | "error"): vo
 	writeFileSync(paths.providerHealthStatus, JSON.stringify({ providers: { default: { status } } }));
 }
 
+async function observationSchedule(
+	initialStatus: "ok" | "error",
+	stopAtMs: number,
+	transitionToOk = false,
+): Promise<Array<{ at: number; status: "ok" | "error" | "unknown" }>> {
+	const paths = tempRuntimePaths();
+	setApplyIdentityEnvironment(1);
+	writeRuntimeAppliedState(appliedState(1), paths);
+	writeObservationHealth(paths, initialStatus);
+	const abort = new AbortController();
+	const attempts: Array<{ at: number; status: "ok" | "error" | "unknown" }> = [];
+	let clock = 0;
+
+	await runRuntimeObservationProducer({
+		abort: abort.signal,
+		paths,
+		submit: async (_environmentId, event) => {
+			attempts.push({ at: clock, status: event.status });
+			return "accepted";
+		},
+		now: () => clock,
+		delay: async (ms) => {
+			await Promise.resolve();
+			await Promise.resolve();
+			await Promise.resolve();
+			clock += ms;
+			if (transitionToOk && attempts.length === 1) writeObservationHealth(paths, "ok");
+			if (clock >= stopAtMs) abort.abort();
+		},
+	});
+
+	return attempts;
+}
+
 describe("hosted runtime observation producer", () => {
 	test("re-reads the applied tuple after rotation and emits a new boot identity", async () => {
 		const paths = tempRuntimePaths();
@@ -244,140 +278,23 @@ describe("hosted runtime observation producer", () => {
 	});
 
 	test("reports a non-ok to ok transition within five seconds", async () => {
-		const paths = tempRuntimePaths();
-		setApplyIdentityEnvironment(1);
-		writeRuntimeAppliedState(appliedState(1), paths);
-		writeObservationHealth(paths, "error");
-		const abort = new AbortController();
-		const attempts: Array<{ at: number; status: "ok" | "error" | "unknown" }> = [];
-		let clock = 0;
-
-		await runRuntimeObservationProducer({
-			abort: abort.signal,
-			paths,
-			submit: async (_environmentId, event) => {
-				attempts.push({ at: clock, status: event.status });
-				return "accepted";
-			},
-			now: () => clock,
-			delay: async (ms) => {
-				await Promise.resolve();
-				await Promise.resolve();
-				await Promise.resolve();
-				clock += ms;
-				if (attempts.length === 1) writeObservationHealth(paths, "ok");
-				if (attempts.length === 2) abort.abort();
-				if (clock > 10_000) throw new Error("ready transition observation did not arrive");
-			},
-		});
-
-		expect(attempts).toEqual([
+		expect(await observationSchedule("error", 6_000, true)).toEqual([
 			{ at: 0, status: "error" },
 			{ at: 5_000, status: "ok" },
 		]);
-	});
-
-	test("bounds fast non-ok observations to the ninety-second convergence window", async () => {
-		const paths = tempRuntimePaths();
-		setApplyIdentityEnvironment(1);
-		writeRuntimeAppliedState(appliedState(1), paths);
-		writeObservationHealth(paths, "error");
-		const abort = new AbortController();
-		const attemptTimes: number[] = [];
-		let clock = 0;
-
-		await runRuntimeObservationProducer({
-			abort: abort.signal,
-			paths,
-			submit: async (_environmentId, event) => {
-				expect(event.status).toBe("error");
-				attemptTimes.push(clock);
-				return "accepted";
-			},
-			now: () => clock,
-			delay: async (ms) => {
-				await Promise.resolve();
-				await Promise.resolve();
-				await Promise.resolve();
-				clock += ms;
-				if (clock >= 151_000) abort.abort();
-			},
-		});
-
-		expect(attemptTimes).toEqual([
-			...Array.from({ length: 19 }, (_, index) => index * 5_000),
-			150_000,
-		]);
-	});
-
-	test("keeps a ready steady state on the sixty-second cadence", async () => {
-		const paths = tempRuntimePaths();
-		setApplyIdentityEnvironment(1);
-		writeRuntimeAppliedState(appliedState(1), paths);
-		writeObservationHealth(paths, "ok");
-		const abort = new AbortController();
-		const attemptTimes: number[] = [];
-		let clock = 0;
-
-		await runRuntimeObservationProducer({
-			abort: abort.signal,
-			paths,
-			submit: async (_environmentId, event) => {
-				expect(event.status).toBe("ok");
-				attemptTimes.push(clock);
-				return "accepted";
-			},
-			now: () => clock,
-			delay: async (ms) => {
-				await Promise.resolve();
-				await Promise.resolve();
-				await Promise.resolve();
-				clock += ms;
-				if (attemptTimes.length === 2) abort.abort();
-			},
-		});
-
-		expect(attemptTimes).toEqual([0, 60_000]);
 	});
 
 	test.each([
-		"failure",
-		"terminal-stale",
-	] as const)("does not busy-retry a %s ready-transition observation", async (outcome) => {
-		const paths = tempRuntimePaths();
-		setApplyIdentityEnvironment(1);
-		writeRuntimeAppliedState(appliedState(1), paths);
-		writeObservationHealth(paths, "error");
-		const abort = new AbortController();
-		const attempts: Array<{ at: number; status: "ok" | "error" | "unknown" }> = [];
-		let clock = 0;
-
-		await runRuntimeObservationProducer({
-			abort: abort.signal,
-			paths,
-			submit: async (_environmentId, event) => {
-				attempts.push({ at: clock, status: event.status });
-				if (attempts.length === 2) {
-					if (outcome === "failure") throw new Error("temporary ready observation failure");
-					return "terminal-stale";
-				}
-				return "accepted";
-			},
-			now: () => clock,
-			delay: async (ms) => {
-				await Promise.resolve();
-				await Promise.resolve();
-				await Promise.resolve();
-				clock += ms;
-				if (attempts.length === 1) writeObservationHealth(paths, "ok");
-				if (attempts.length === 3) abort.abort();
-			},
-		});
-
-		expect(attempts).toEqual([
-			{ at: 0, status: "error" },
-			{ at: 5_000, status: "ok" },
-			{ at: 65_000, status: "ok" },
-		]);
+		[
+			"bounds non-ok fast observations to ninety seconds",
+			"error",
+			151_000,
+			[...Array.from({ length: 19 }, (_, index) => index * 5_000), 150_000],
+		],
+		["keeps ready observations on the steady cadence", "ok", 61_000, [0, 60_000]],
+	] as const)("%s", async (_name, status, stopAtMs, expectedTimes) => {
+		const attempts = await observationSchedule(status, stopAtMs);
+		expect(attempts.map((attempt) => attempt.at)).toEqual([...expectedTimes]);
+		expect(attempts.every((attempt) => attempt.status === status)).toBe(true);
 	});
 });

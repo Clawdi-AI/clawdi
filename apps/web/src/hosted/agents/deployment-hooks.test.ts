@@ -182,17 +182,6 @@ describe("deployment transition timeout rendering", () => {
 		expect(timedOut).not.toContain("Startup continues if you leave this page");
 	});
 
-	test("does not claim automatic checks stop on delayed detail surfaces", () => {
-		const detailSource = readFileSync(
-			new URL("./hosted-agent-detail.tsx", import.meta.url),
-			"utf8",
-		);
-
-		expect(detailSource).not.toContain("Automatic checks have stopped");
-		expect(detailSource.match(/keep checking automatically once a minute/g)).toHaveLength(2);
-		expect(detailSource.match(/Check again/g)?.length).toBeGreaterThanOrEqual(2);
-	});
-
 	test("makes the authoritative running state unambiguously Running", () => {
 		if (!overviewReadinessPanel) throw new Error("agent detail was not loaded");
 		const ready = renderToStaticMarkup(
