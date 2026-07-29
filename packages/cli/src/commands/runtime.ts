@@ -1703,8 +1703,10 @@ function applySystemdRuntimeUpdate(
 			state.loadState !== "not-found" && state.activeState === "active" && systemdUnitEnabled(state)
 		);
 	});
-	const removedSystemConverged = system.removed.every((unit) =>
-		systemdUnitAbsentOrInactive(systemdUnitManagerState(paths, "system", unit)),
+	const removedSystemConverged = system.removed.every(
+		(unit) =>
+			unit === RUNTIME_WATCH_SYSTEM_UNIT ||
+			systemdUnitAbsentOrInactive(systemdUnitManagerState(paths, "system", unit)),
 	);
 	const removedUserConverged = user.removed.every((unit) => {
 		const state = systemdUnitManagerState(paths, "user", unit);

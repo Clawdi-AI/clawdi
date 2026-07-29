@@ -128,7 +128,7 @@ function fakeSystemdStatePath(
 	stateRoot: string,
 	scope: "system" | "user",
 	unit: string,
-	state: "active" | "enabled" | "failed",
+	state: "active" | "enabled" | "failed" | "not-found",
 ): string {
 	return join(stateRoot, `${scope}-${unit}.${state}`);
 }
@@ -161,10 +161,12 @@ state_path() {
 case "$command" in
   show)
     unit="\${1:-}"
+    load_state=loaded
     active_state=inactive
     [ ! -f "$(state_path "$unit" active)" ] || active_state=active
     [ ! -f "$(state_path "$unit" failed)" ] || active_state=failed
-    printf 'LoadState=loaded\\nActiveState=%s\\n' "$active_state"
+    if [ -f "$(state_path "$unit" not-found)" ]; then load_state=not-found; active_state=inactive; fi
+    printf 'LoadState=%s\\nActiveState=%s\\n' "$load_state" "$active_state"
     ;;
   is-enabled)
     unit="\${1:-}"
@@ -176,7 +178,7 @@ case "$command" in
     fi
     ;;
   start)
-    for unit in "$@"; do rm -f "$(state_path "$unit" failed)"; touch "$(state_path "$unit" active)"; done
+    for unit in "$@"; do rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; done
     ;;
   restart)
     if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarRestart ?? ""}' ] && [ -f '${input.failNextSidecarRestart ?? ""}' ]; then
@@ -184,7 +186,7 @@ case "$command" in
       printf 'injected sidecar restart failure\\n' >&2
       exit 42
     fi
-    for unit in "$@"; do rm -f "$(state_path "$unit" failed)"; touch "$(state_path "$unit" active)"; done
+    for unit in "$@"; do rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; done
     ;;
   stop)
     if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarStop ?? ""}' ] && [ -f '${input.failNextSidecarStop ?? ""}' ]; then
@@ -192,14 +194,14 @@ case "$command" in
       printf 'injected sidecar stop failure\\n' >&2
       exit 43
     fi
-    for unit in "$@"; do rm -f "$(state_path "$unit" active)" "$(state_path "$unit" failed)"; done
+    for unit in "$@"; do rm -f "$(state_path "$unit" active)" "$(state_path "$unit" failed)"; touch "$(state_path "$unit" not-found)"; done
     ;;
   enable)
     start_now=0
     if [ "\${1:-}" = "--now" ]; then start_now=1; shift; fi
     for unit in "$@"; do
       touch "$(state_path "$unit" enabled)"
-      if [ "$start_now" = "1" ]; then touch "$(state_path "$unit" active)"; fi
+      if [ "$start_now" = "1" ]; then rm -f "$(state_path "$unit" failed)" "$(state_path "$unit" not-found)"; touch "$(state_path "$unit" active)"; fi
     done
     ;;
   disable) for unit in "$@"; do rm -f "$(state_path "$unit" enabled)"; done ;;
@@ -6033,6 +6035,7 @@ exit 0
 			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
 				false,
 			);
+			expect(systemctlCalls.some((call) => call.includes("stop clawdi-runtime-watch"))).toBe(false);
 			const watchStatus = JSON.parse(readFileSync(getRuntimePaths().runtimeWatchStatus, "utf-8"));
 			expect(watchStatus.event.generation).toBe(2);
 		} finally {
