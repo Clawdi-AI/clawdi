@@ -47,7 +47,11 @@ import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../li
 import { getCliVersion } from "../lib/version";
 import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
 import { runRuntimeObservationProducer } from "../runtime/observation-producer";
-import { startAutoRestart } from "../serve/auto-restart";
+import {
+	createRestartCoordination,
+	type RestartCoordination,
+	startAutoRestart,
+} from "../serve/auto-restart";
 import {
 	type ControlRpcClientConfig,
 	type ControlRpcHandlers,
@@ -224,6 +228,7 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 	});
 
 	const abort = new AbortController();
+	const restartCoordination = createRestartCoordination(abort);
 	const triggerShutdown = (signal: string) => {
 		log.info("serve.signal", { signal });
 		abort.abort();
@@ -248,17 +253,17 @@ export async function serve(_opts: ServeOpts): Promise<void> {
 	// Skip in container mode — k8s rolls pods on its own schedule
 	// and self-restart inside a pod fights the orchestrator.
 	if (!isContainer) {
-		const watching = await startAutoRestart({ abort });
+		const watching = await startAutoRestart({ abort, restart: restartCoordination });
 		if (watching) {
 			log.info("serve.auto_restart_armed", { entry: watching });
 		}
-		if (startDaemonAutoUpdate({ abort })) {
+		if (startDaemonAutoUpdate({ abort, restart: restartCoordination })) {
 			log.info("serve.auto_update_armed", {});
 		}
 	}
 
 	const rpc = await startControlRpcServer(
-		createControlRpcHandlers({ abortController: abort }),
+		createControlRpcHandlers({ abortController: abort, restartCoordination }),
 		abort.signal,
 		rpcListen,
 	);
@@ -604,6 +609,7 @@ function rpcMethodCommandName(method: string): string {
 
 interface ControlRpcHandlerOptions {
 	abortController?: AbortController;
+	restartCoordination?: RestartCoordination;
 }
 
 export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): ControlRpcHandlers {
@@ -656,7 +662,8 @@ export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): C
 	handlers["auth.logout"] = (params) => authLogoutRpc(params);
 	if (evaluateHostPolicyForCommand("update").allowed) {
 		handlers["update.check"] = (params) => updateCheckRpc(params);
-		handlers["update.install"] = (params) => updateInstallRpc(params, opts.abortController);
+		handlers["update.install"] = (params) =>
+			updateInstallRpc(params, opts.abortController, opts.restartCoordination);
 	}
 	return handlers;
 }
@@ -1083,6 +1090,7 @@ function updateCheckRpc(params: unknown): Promise<unknown> {
 async function updateInstallRpc(
 	params: unknown,
 	abortController: AbortController | undefined,
+	restartCoordination: RestartCoordination | undefined,
 ): Promise<unknown> {
 	const record = rpcParamsRecord(params);
 	rejectRpcParams(record, new Set(["confirm"]));
@@ -1090,12 +1098,14 @@ async function updateInstallRpc(
 	const result = await daemonAutoUpdateOnce({
 		currentVersion: getCliVersion(),
 		ignoreDisabled: true,
+		restartCoordination,
 	});
 	const restartScheduled = result === "installed" && abortController !== undefined;
 	if (restartScheduled) {
 		setTimeout(() => {
 			log.info("daemon.update_install_restart_scheduled", {});
-			abortController.abort();
+			if (restartCoordination) restartCoordination.requestRestart();
+			else abortController.abort();
 		}, CONTROL_ACTION_DELAY_MS);
 	}
 	return {

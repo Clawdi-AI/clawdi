@@ -1,12 +1,14 @@
 interface ParsedSemver {
-	major: number;
-	minor: number;
-	patch: number;
+	major: string;
+	minor: string;
+	patch: string;
 	pre: string[];
 }
 
 const SEMVER_RE =
 	/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+const NUMERIC_IDENTIFIER_RE = /^\d+$/;
+const IDENTIFIER_RE = /^[0-9A-Za-z-]+$/;
 
 export function isValidSemver(value: string): boolean {
 	return parseSemver(value) !== null;
@@ -19,7 +21,8 @@ export function compareSemver(a: string, b: string): number {
 		throw new Error(`invalid semver comparison: ${a} <=> ${b}`);
 	}
 	for (const key of ["major", "minor", "patch"] as const) {
-		if (left[key] !== right[key]) return left[key] < right[key] ? -1 : 1;
+		const compared = compareNumericIdentifier(left[key], right[key]);
+		if (compared !== 0) return compared;
 	}
 	if (left.pre.length === 0 && right.pre.length === 0) return 0;
 	if (left.pre.length === 0) return 1;
@@ -31,11 +34,11 @@ export function compareSemver(a: string, b: string): number {
 		if (l === undefined) return -1;
 		if (r === undefined) return 1;
 		if (l === r) continue;
-		const lNum = numericIdentifier(l);
-		const rNum = numericIdentifier(r);
-		if (lNum !== null && rNum !== null) return lNum < rNum ? -1 : 1;
-		if (lNum !== null) return -1;
-		if (rNum !== null) return 1;
+		const lNumeric = NUMERIC_IDENTIFIER_RE.test(l);
+		const rNumeric = NUMERIC_IDENTIFIER_RE.test(r);
+		if (lNumeric && rNumeric) return compareNumericIdentifier(l, r);
+		if (lNumeric) return -1;
+		if (rNumeric) return 1;
 		return l < r ? -1 : 1;
 	}
 	return 0;
@@ -46,19 +49,30 @@ export function isSemverLessThan(a: string, b: string): boolean {
 }
 
 function parseSemver(value: string): ParsedSemver | null {
-	const match = SEMVER_RE.exec(value.trim());
+	const match = SEMVER_RE.exec(value);
 	if (!match) return null;
 	const [, major, minor, patch, pre] = match;
 	if (!major || !minor || !patch) return null;
+	const prerelease = pre ? pre.split(".") : [];
+	const build = value.includes("+") ? value.slice(value.indexOf("+") + 1).split(".") : [];
+	if (![...prerelease, ...build].every((part) => IDENTIFIER_RE.test(part))) return null;
+	if (
+		prerelease.some(
+			(part) => NUMERIC_IDENTIFIER_RE.test(part) && part.length > 1 && part.startsWith("0"),
+		)
+	) {
+		return null;
+	}
 	return {
-		major: Number.parseInt(major, 10),
-		minor: Number.parseInt(minor, 10),
-		patch: Number.parseInt(patch, 10),
-		pre: pre ? pre.split(".") : [],
+		major,
+		minor,
+		patch,
+		pre: prerelease,
 	};
 }
 
-function numericIdentifier(value: string): number | null {
-	if (!/^(0|[1-9]\d*)$/.test(value)) return null;
-	return Number.parseInt(value, 10);
+function compareNumericIdentifier(left: string, right: string): number {
+	if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+	if (left === right) return 0;
+	return left < right ? -1 : 1;
 }
