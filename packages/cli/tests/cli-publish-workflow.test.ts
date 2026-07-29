@@ -1,11 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parse } from "yaml";
+
+interface WorkflowJob {
+	needs?: unknown;
+	permissions?: Record<string, string>;
+	steps?: Array<Record<string, unknown>>;
+}
+
+interface WorkflowDocument {
+	jobs: Record<string, WorkflowJob>;
+}
 
 const workflow = readFileSync(
 	resolve(import.meta.dir, "../../../.github/workflows/cli-publish.yml"),
 	"utf8",
 );
+const workflowDocument = parse(workflow) as WorkflowDocument;
 const releaseRunbookDoc = readFileSync(
 	resolve(import.meta.dir, "../../../docs/runbooks/release.md"),
 	"utf8",
@@ -26,11 +38,24 @@ const cliPackage = JSON.parse(
 	readFileSync(resolve(import.meta.dir, "../package.json"), "utf8"),
 ) as { version: string; publishConfig?: { access?: string; tag?: unknown } };
 
-function expectedNpmTag(version: string): string {
-	return version.includes("-") ? "beta" : "latest";
-}
-
 describe("CLI publish workflow contract", () => {
+	test("keeps recovery decisions inside the protected publish topology", () => {
+		const build = workflowDocument.jobs["build-immutable-artifact"];
+		const publish = workflowDocument.jobs["publish-immutable-artifact-with-oidc"];
+
+		expect(Object.keys(workflowDocument.jobs)).toEqual([
+			"build-immutable-artifact",
+			"publish-immutable-artifact-with-oidc",
+		]);
+		expect(build.permissions).toEqual({ contents: "read" });
+		expect(publish.needs).toBe("build-immutable-artifact");
+		expect(publish.permissions).toEqual({ contents: "write", "id-token": "write" });
+		expect(build.steps?.find((step) => step.id === "check")?.["working-directory"]).toBe(
+			"packages/cli",
+		);
+		expect(publish.steps?.map((step) => step.id).filter(Boolean)).toEqual(["publish", "release"]);
+	});
+
 	test("keeps the protected OIDC publish fully repository-local", () => {
 		const build = workflow.indexOf("  build-immutable-artifact:");
 		const publish = workflow.indexOf("  publish-immutable-artifact-with-oidc:");
@@ -44,9 +69,6 @@ describe("CLI publish workflow contract", () => {
 		);
 		expect(publishJob).toContain("runs-on: ubuntu-latest");
 		expect(publishJob).not.toContain("vars.CI_RUNNER");
-		expect(workflow).toContain(
-			'echo "cli_tarball_filename=clawdi-$version.tgz" >> "$GITHUB_OUTPUT"',
-		);
 		expect(workflow).toContain("needs: build-immutable-artifact");
 		expect(workflow).toContain("environment: npm");
 		expect(workflow).toContain("id-token: write");
@@ -64,8 +86,6 @@ describe("CLI publish workflow contract", () => {
 		const publishCommands = workflow.match(/npm publish /g) ?? [];
 
 		expect(publishCommands).toHaveLength(1);
-		expect(workflow).toContain('echo "npm_tag=$npm_tag" >> "$GITHUB_OUTPUT"');
-		expect(workflow).toContain("p.version.includes('-') ? 'beta' : 'latest'");
 		expect(workflow).not.toContain("publishConfig");
 		expect(workflow).toContain(
 			`NPM_TAG: \${{ needs['build-immutable-artifact'].outputs.npm_tag }}`,
@@ -74,9 +94,6 @@ describe("CLI publish workflow contract", () => {
 			'npm publish "./release/$CLI_TARBALL_FILENAME" --access public --provenance --ignore-scripts --tag "$NPM_TAG"',
 		);
 		expect(cliPackage.version).not.toContain("-");
-		expect(expectedNpmTag(cliPackage.version)).toBe("latest");
-		expect(expectedNpmTag("1.2.3-beta.1")).toBe("beta");
-		expect(expectedNpmTag("1.2.3")).toBe("latest");
 		expect(cliPackage.publishConfig).toEqual({ access: "public" });
 		expect(publishManifestChecker).toContain(
 			'Object.hasOwn(packageJson.publishConfig ?? {}, "tag")',
