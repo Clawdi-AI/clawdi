@@ -2214,7 +2214,7 @@ async function runtimeWatchTickLocked(
 			systemdApplyResult.userUnitsChanged.length > 0;
 		if (errors.length > 0) {
 			const cliRollback = maybeRollbackFailedCliUpgrade(paths, manifestIdentity, errors);
-			if (cliRollback.status === "rolled_back") selfReexec = false;
+			if (cliRollback.status === "rolled_back") selfReexec = true;
 			const activeAppliedState = readRuntimeAppliedState(paths);
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",

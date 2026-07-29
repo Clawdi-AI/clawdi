@@ -198,6 +198,25 @@ describe("update --json", () => {
 });
 
 describe("daemonAutoUpdateOnce", () => {
+	it("cannot bypass hosted update authority with ignoreDisabled", async () => {
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		const { captured, restore } = mockFetch([]);
+		try {
+			const result = await daemonAutoUpdateOnce({
+				currentVersion: "1.2.3",
+				installer: "npm",
+				ignoreDisabled: true,
+				installRunner: async () => {
+					throw new Error("hosted policy must prevent local CLI installation");
+				},
+			});
+			expect(result).toBe("disabled");
+			expect(captured).toHaveLength(0);
+		} finally {
+			restore();
+		}
+	});
+
 	it("installs updates and leaves last-version for the next human CLI notice", async () => {
 		const calls: { installer: string; args: string[] }[] = [];
 		const { restore } = mockFetch([

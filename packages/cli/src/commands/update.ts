@@ -15,6 +15,7 @@ import chalk from "chalk";
 import { getClawdiDir, getStoredConfig } from "../lib/config";
 import { listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
+import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
 import { detectRuntimeMode } from "../runtime/paths";
 import { isSingletonDaemonInstalled, listInstalledAgents, readHealth } from "../serve/installer";
 import { log } from "../serve/log";
@@ -536,6 +537,7 @@ export async function daemonAutoUpdateOnce(
 		signal?: AbortSignal;
 	} = {},
 ): Promise<DaemonAutoUpdateResult> {
+	if (!evaluateHostPolicyForCommand("update").allowed) return "disabled";
 	if (!opts.ignoreDisabled && autoUpdateDisabled()) return "disabled";
 	if (opts.signal?.aborted) return "disabled";
 
@@ -576,6 +578,7 @@ export function startDaemonAutoUpdate(opts: {
 	intervalMs?: number;
 	initialDelayMs?: number;
 }): boolean {
+	if (!evaluateHostPolicyForCommand("update").allowed) return false;
 	if (autoUpdateDisabled()) return false;
 	const intervalMs = opts.intervalMs ?? DAEMON_UPDATE_INTERVAL_MS;
 	const initialDelayMs =

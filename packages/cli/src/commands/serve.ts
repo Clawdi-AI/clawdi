@@ -45,6 +45,7 @@ import {
 import { getAuth, getClawdiDir, getConfig, getPendingAuth, isLoggedIn } from "../lib/config";
 import { adapterForType, getEnvIdByAgent, listRegisteredAgentTypes } from "../lib/select-adapter";
 import { getCliVersion } from "../lib/version";
+import { evaluateHostPolicyForCommand } from "../runtime/host-policy";
 import { runRuntimeObservationProducer } from "../runtime/observation-producer";
 import { startAutoRestart } from "../serve/auto-restart";
 import {
@@ -653,8 +654,10 @@ export function createControlRpcHandlers(opts: ControlRpcHandlerOptions = {}): C
 	handlers["auth.login"] = (params) => authLoginRpc(params);
 	handlers["auth.complete"] = (params) => authCompleteRpc(params);
 	handlers["auth.logout"] = (params) => authLogoutRpc(params);
-	handlers["update.check"] = (params) => updateCheckRpc(params);
-	handlers["update.install"] = (params) => updateInstallRpc(params, opts.abortController);
+	if (evaluateHostPolicyForCommand("update").allowed) {
+		handlers["update.check"] = (params) => updateCheckRpc(params);
+		handlers["update.install"] = (params) => updateInstallRpc(params, opts.abortController);
+	}
 	return handlers;
 }
 
