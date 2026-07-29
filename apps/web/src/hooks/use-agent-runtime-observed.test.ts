@@ -21,6 +21,7 @@ describe("deployment-managed MCP inventory", () => {
 		);
 		expect(overview).toContain('label="Deployment MCP"');
 		expect(overview).toContain("deploymentManagedMcpValue(");
+		expect(overview).toContain("!projectionAvailable || runtimeObserved.isLoading");
 		expect(overview).not.toMatch(/mcp_server|managed_resources|desired_config_generation/);
 	});
 });

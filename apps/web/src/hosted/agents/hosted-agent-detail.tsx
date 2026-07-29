@@ -1164,7 +1164,7 @@ function OverviewTab({
 		: "Sessions appear once your agent is running.";
 	const managedMcpValue = deploymentManagedMcpValue(
 		runtimeObserved.data?.desired,
-		runtimeObserved.isLoading || runtimeObserved.isError,
+		!projectionAvailable || runtimeObserved.isLoading || runtimeObserved.isError,
 	);
 	return (
 		<div className="flex flex-col gap-5">

@@ -86,7 +86,7 @@ export function AgentSkillsTab({
 		refetch: refetchSkills,
 	} = useAgentProjectSkills(agentProjectId);
 	const uninstallSkill = useUninstallAgentSkill();
-	const managedSkills = runtimeObserved.data?.desired?.managed_skills ?? [];
+	const managedSkills = hostedManaged ? (runtimeObserved.data?.desired?.managed_skills ?? []) : [];
 	const reservedSkillIds = new Set(managedSkills.map((skill) => skill.id));
 	const conflictingSkills = (skills ?? []).filter((skill) => reservedSkillIds.has(skill.skill_key));
 
