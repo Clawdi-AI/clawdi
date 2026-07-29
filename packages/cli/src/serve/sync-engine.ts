@@ -330,6 +330,7 @@ export async function runSyncEngine(opts: EngineOpts): Promise<void> {
 				}
 			}
 		}
+		clearReservedSkillHashes(opts.adapter, lastPushedHash, registeredAgents.length <= 1);
 		log.info("engine.skills_lock_loaded", { skill_count: lastPushedHash.size });
 	}
 	// Skills currently being written by a pull (boot initialSync,
@@ -2427,6 +2428,29 @@ function deferReservedSkill(
 	const hadPersistentHash = key in lock.skills;
 	if (hadPersistentHash) delete lock.skills[key];
 	if (hadMemoryHash || hadPersistentHash) writeSkillsLock(lock);
+}
+
+export function clearReservedSkillHashes(
+	adapter: Pick<AgentAdapter, "agentType" | "getSkillsRootDir">,
+	lastPushedHash: Map<string, string>,
+	clearLegacyFlatKeys = listRegisteredAgentTypes().length <= 1,
+): void {
+	const lock = readSkillsLock();
+	let changed = false;
+	for (const skillKey of [...lastPushedHash.keys()]) {
+		if (!shouldIgnoreUserSkill(join(adapter.getSkillsRootDir(), skillKey), skillKey)) continue;
+		lastPushedHash.delete(skillKey);
+		const partitioned = skillCacheKey(adapter.agentType, skillKey);
+		if (partitioned in lock.skills) {
+			delete lock.skills[partitioned];
+			changed = true;
+		}
+		if (clearLegacyFlatKeys && skillKey in lock.skills) {
+			delete lock.skills[skillKey];
+			changed = true;
+		}
+	}
+	if (changed) writeSkillsLock(lock);
 }
 
 export function shouldForceFullSkillListing(

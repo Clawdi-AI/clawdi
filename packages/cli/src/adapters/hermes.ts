@@ -6,8 +6,8 @@ import { isValidSkillKey } from "../lib/skill-key";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
-	assertUserSkillTargetMutable,
 	migrateLegacyLocalSetupSkill,
+	mutateUserSkillTarget,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
@@ -312,15 +312,16 @@ export class HermesAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(skillsDir(), key);
-		assertUserSkillTargetMutable(dir, key);
-		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		mutateUserSkillTarget(dir, key, () => {
+			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		});
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const root = skillsDir();
-		assertUserSkillTargetMutable(join(root, key), key);
-		await replaceSkillArchiveTarGz(key, root, join(root, key), tarGzBytes, () =>
-			assertUserSkillTargetMutable(join(root, key), key),
+		const targetDir = join(root, key);
+		await replaceSkillArchiveTarGz(key, root, targetDir, tarGzBytes, undefined, (mutation) =>
+			mutateUserSkillTarget(targetDir, key, mutation),
 		);
 	}
 

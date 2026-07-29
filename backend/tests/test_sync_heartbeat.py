@@ -31,6 +31,8 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeConfigObservation
+from app.routes import sessions as session_routes
+from app.schemas.session import RuntimeObservedResponse
 from app.services.runtime_source import expected_runtime_bundle_v2_etag
 from tests.hosted_runtime_fixtures import (
     CANONICAL_CODEX_TOOLS,
@@ -581,12 +583,11 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
         "enabled_runtimes": ["openclaw"],
         "has_mcp": True,
         "has_tools": True,
-        "managed_skills": [{"id": "clawdi", "version": 1}],
         "updated_at": payload["desired"]["updated_at"],
     }
     canonical = await client.get(f"/v1/agents/{env_id}/runtime-observed")
     assert canonical.status_code == 200, canonical.text
-    assert canonical.json() == payload
+    assert canonical.json()["desired"]["managed_skills"] == [{"id": "clawdi", "version": 1}]
     serialized = canonical.text.lower()
     assert "secretref" not in serialized
     assert '"headers"' not in serialized
@@ -608,6 +609,96 @@ async def test_runtime_observed_endpoint_returns_desired_observed_health(
     assert payload["health"]["status"] == "ok"
     assert payload["health"]["reasons"] == []
     assert payload["health"]["observed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_observed_schema_is_enriched_without_environment_v1_drift(
+    client: httpx.AsyncClient,
+):
+    openapi = (await client.get("/openapi.json")).json()
+    environment_schema = openapi["paths"]["/v1/environments/{environment_id}/runtime-observed"][
+        "get"
+    ]["responses"]["200"]["content"]["application/json"]["schema"]
+    agent_schema = openapi["paths"]["/v1/agents/{agent_id}/runtime-observed"]["get"]["responses"][
+        "200"
+    ]["content"]["application/json"]["schema"]
+    assert environment_schema["$ref"].endswith("/RuntimeObservedResponse")
+    assert agent_schema["$ref"].endswith("/AgentRuntimeObservedResponse")
+    desired = openapi["components"]["schemas"]["RuntimeObservedDesiredResponse"]
+    agent_desired = openapi["components"]["schemas"]["AgentRuntimeObservedDesiredResponse"]
+    assert "managed_skills" not in desired["properties"]
+    assert "managed_skills" in agent_desired["properties"]
+
+
+@pytest.mark.asyncio
+async def test_agent_runtime_observed_fails_closed_across_generation_race(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    env_id = await _create_env(client)
+    state = canonical_hosted_runtime_state(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-race",
+        instance_id="iid-race",
+        generation=2,
+        cli_package_spec=_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC,
+        locale=_TEST_LOCALE,
+        system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        runtimes=_test_runtimes(),
+        skills={"entries": {"clawdi": {"enabled": True, "version": 1}}},
+        tools={**CANONICAL_CODEX_TOOLS, "catalog": "clawdi-default"},
+    )
+    db_session.add(state)
+    await db_session.commit()
+    stale_payload = (await client.get(f"/v1/environments/{env_id}/runtime-observed")).json()
+    stale_payload["desired"]["desired_config_generation"] = 1
+
+    async def stale_environment_response(*_args, **_kwargs) -> RuntimeObservedResponse:
+        return RuntimeObservedResponse.model_validate(stale_payload)
+
+    monkeypatch.setattr(
+        session_routes, "get_environment_runtime_observed", stale_environment_response
+    )
+    response = await client.get(f"/v1/agents/{env_id}/runtime-observed")
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Runtime desired state changed while it was being read; retry the request."
+    }
+
+
+@pytest.mark.asyncio
+async def test_agent_managed_skill_inventory_fails_closed_on_invalid_persisted_state(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+    state = canonical_hosted_runtime_state(
+        environment_id=uuid.UUID(env_id),
+        deployment_id="dep-invalid-skills",
+        instance_id="iid-invalid-skills",
+        generation=1,
+        cli_package_spec=_TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC,
+        locale=_TEST_LOCALE,
+        system=_TEST_SYSTEM,
+        live_sync={"enabled": False, "agents": []},
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        runtimes=_test_runtimes(),
+        skills={"entries": {"clawdi": {"enabled": True, "version": 1}}},
+        tools={**CANONICAL_CODEX_TOOLS, "catalog": "clawdi-default"},
+    )
+    state.skills = {"entries": []}
+    db_session.add(state)
+    await db_session.commit()
+
+    environment = await client.get(f"/v1/environments/{env_id}/runtime-observed")
+    assert environment.status_code == 200
+    assert "managed_skills" not in environment.json()["desired"]
+    agent = await client.get(f"/v1/agents/{env_id}/runtime-observed")
+    assert agent.status_code == 503
+    assert agent.json() == {"detail": "Managed Skill inventory is temporarily unavailable."}
 
 
 @pytest.mark.asyncio

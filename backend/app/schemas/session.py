@@ -313,8 +313,11 @@ class RuntimeObservedDesiredResponse(BaseModel):
     enabled_runtimes: list[str]
     has_mcp: bool = False
     has_tools: bool = False
-    managed_skills: list[RuntimeManagedSkillSummary] = Field(default_factory=list)
     updated_at: datetime | None = None
+
+
+class AgentRuntimeObservedDesiredResponse(RuntimeObservedDesiredResponse):
+    managed_skills: list[RuntimeManagedSkillSummary] = Field(default_factory=list)
 
 
 class RuntimeObservedHealthResponse(BaseModel):
@@ -337,6 +340,10 @@ class RuntimeObservedResponse(BaseModel):
     observed: RuntimeObservedConfigResponse | None = None
     health: RuntimeObservedHealthResponse
     provider_health: list[RuntimeObservedProviderHealthResponse] = []
+
+
+class AgentRuntimeObservedResponse(RuntimeObservedResponse):
+    desired: AgentRuntimeObservedDesiredResponse | None = None
 
 
 class RuntimeObservedSummaryCountsResponse(BaseModel):

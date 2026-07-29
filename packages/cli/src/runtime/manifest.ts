@@ -13,9 +13,7 @@ import {
 	readdirSync,
 	readFileSync,
 	readlinkSync,
-	renameSync,
 	rmSync,
-	statSync,
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
@@ -62,6 +60,9 @@ import {
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
+
+export { withRuntimeConvergeLock, withRuntimeConvergeLockAsync } from "./converge-lock";
+
 import {
 	isClawdiManagedProviderProjection,
 	managedMcpHeaderPlaceholder,
@@ -4008,191 +4009,6 @@ function revisionHash(value: unknown): string {
 		.update(JSON.stringify(canonicalize(value)))
 		.digest("hex")
 		.slice(0, 32);
-}
-
-function sleepSync(ms: number): void {
-	const signal = new Int32Array(new SharedArrayBuffer(4));
-	Atomics.wait(signal, 0, 0, ms);
-}
-
-function convergeLockOwnerPath(lockDir: string): string {
-	return join(lockDir, "owner.json");
-}
-
-function writeConvergeFileAtomic(path: string, content: string, mode: number): void {
-	const tmp = join(dirname(path), `.${basename(path)}.${process.pid}.${Date.now()}.tmp`);
-	let renamed = false;
-	try {
-		writeFileSync(tmp, content, { mode });
-		renameSync(tmp, path);
-		renamed = true;
-	} finally {
-		if (!renamed) rmSync(tmp, { force: true });
-	}
-}
-
-function writeConvergeLockOwner(lockDir: string): void {
-	writeConvergeFileAtomic(
-		convergeLockOwnerPath(lockDir),
-		`${JSON.stringify({
-			schemaVersion: "clawdi.runtimeConvergeLockOwner.v1",
-			pid: process.pid,
-			acquiredAt: new Date().toISOString(),
-		})}\n`,
-		0o600,
-	);
-}
-
-function readConvergeLockOwnerPid(lockDir: string): number | null {
-	try {
-		const raw = JSON.parse(readFileSync(convergeLockOwnerPath(lockDir), "utf-8")) as unknown;
-		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-		const pid = (raw as Record<string, unknown>).pid;
-		return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : null;
-	} catch {
-		return null;
-	}
-}
-
-function processIsAlive(pid: number): boolean {
-	try {
-		process.kill(pid, 0);
-		return true;
-	} catch (error) {
-		if (
-			error instanceof Error &&
-			"code" in error &&
-			(error as NodeJS.ErrnoException).code === "ESRCH"
-		) {
-			return false;
-		}
-		return true;
-	}
-}
-
-function reclaimStaleConvergeLock(lockDir: string, timeoutMs: number): boolean {
-	const ownerPid = readConvergeLockOwnerPid(lockDir);
-	if (ownerPid === null) {
-		let mtimeMs: number;
-		try {
-			mtimeMs = statSync(lockDir).mtimeMs;
-		} catch (error) {
-			if (
-				error instanceof Error &&
-				"code" in error &&
-				(error as NodeJS.ErrnoException).code === "ENOENT"
-			) {
-				return true;
-			}
-			throw error;
-		}
-		if (Date.now() - mtimeMs <= 2 * timeoutMs) return false;
-	} else if (processIsAlive(ownerPid)) {
-		return false;
-	}
-	const staleDir = `${lockDir}.stale.${process.pid}.${Date.now()}.${Math.random()
-		.toString(36)
-		.slice(2)}`;
-	try {
-		renameSync(lockDir, staleDir);
-	} catch (error) {
-		if (
-			error instanceof Error &&
-			"code" in error &&
-			(error as NodeJS.ErrnoException).code === "ENOENT"
-		) {
-			return true;
-		}
-		throw error;
-	}
-	rmSync(staleDir, { recursive: true, force: true });
-	return true;
-}
-
-export function withRuntimeConvergeLock<T>(
-	paths: RuntimePaths,
-	fn: () => T,
-	opts: { timeoutMs?: number } = {},
-): T {
-	const timeoutMs = opts.timeoutMs ?? 300_000;
-	const lockRoot = join(paths.runRoot, "locks");
-	const lockDir = join(lockRoot, "converge.lock");
-	const startedAt = Date.now();
-	mkdirSync(lockRoot, { recursive: true });
-	for (;;) {
-		try {
-			mkdirSync(lockDir);
-			try {
-				writeConvergeLockOwner(lockDir);
-			} catch (error) {
-				rmSync(lockDir, { recursive: true, force: true });
-				throw error;
-			}
-			break;
-		} catch (error) {
-			if (
-				!(error instanceof Error) ||
-				!("code" in error) ||
-				(error as NodeJS.ErrnoException).code !== "EEXIST"
-			) {
-				throw error;
-			}
-			if (reclaimStaleConvergeLock(lockDir, timeoutMs)) {
-				continue;
-			}
-			if (Date.now() - startedAt > timeoutMs) {
-				throw new Error(`timed out waiting for runtime converge lock at ${lockDir}`);
-			}
-			sleepSync(100);
-		}
-	}
-	try {
-		return fn();
-	} finally {
-		rmSync(lockDir, { recursive: true, force: true });
-	}
-}
-
-export async function withRuntimeConvergeLockAsync<T>(
-	paths: RuntimePaths,
-	fn: () => Promise<T>,
-	opts: { timeoutMs?: number } = {},
-): Promise<T> {
-	const timeoutMs = opts.timeoutMs ?? 300_000;
-	const lockRoot = join(paths.runRoot, "locks");
-	const lockDir = join(lockRoot, "converge.lock");
-	const startedAt = Date.now();
-	mkdirSync(lockRoot, { recursive: true });
-	for (;;) {
-		try {
-			mkdirSync(lockDir);
-			try {
-				writeConvergeLockOwner(lockDir);
-			} catch (error) {
-				rmSync(lockDir, { recursive: true, force: true });
-				throw error;
-			}
-			break;
-		} catch (error) {
-			if (
-				!(error instanceof Error) ||
-				!("code" in error) ||
-				(error as NodeJS.ErrnoException).code !== "EEXIST"
-			) {
-				throw error;
-			}
-			if (reclaimStaleConvergeLock(lockDir, timeoutMs)) continue;
-			if (Date.now() - startedAt > timeoutMs) {
-				throw new Error(`timed out waiting for runtime converge lock at ${lockDir}`);
-			}
-			await new Promise((resolve) => setTimeout(resolve, 100));
-		}
-	}
-	try {
-		return await fn();
-	} finally {
-		rmSync(lockDir, { recursive: true, force: true });
-	}
 }
 
 export function runtimeProgramRevision(

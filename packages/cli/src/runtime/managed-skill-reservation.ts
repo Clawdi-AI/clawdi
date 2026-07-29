@@ -13,11 +13,24 @@ import { basename, dirname, join, resolve } from "node:path";
 import { getClawdiDir } from "../lib/config";
 import { withPrivateDirectoryLockSync } from "../lib/private-directory-lock";
 import { writePrivateFileAtomic } from "../lib/private-file";
+import { withRuntimeConvergeLock } from "./converge-lock";
+import { getRuntimePaths } from "./paths";
 
 const LEDGER_FILE = "managed-skills.json";
 const LEDGER_SCHEMA = "clawdi.managedSkillReservations.v1";
 const MANAGED_SKILL_ID_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+// Exact local bundled Skill trees shipped by published CLI releases before the
+// ownership ledger. Pre-ledger installs had no marker, so content is the only
+// durable identity proof available for one-time adoption.
+const LEGACY_LOCAL_SETUP_SKILL_DIGESTS = new Set([
+	"954d8b81e67138cb59385353490679d191451d5d36bfe461571f91db43fb4bb4",
+	"b89cad1fa72e8b90b65b579e86e3fe57730b0d349710b13b192794d3862010bf",
+	"5719cc8e5dbdf4f3b7ff732589d3b23883fbead713652434a5e765c17308708a",
+	"2bb89a1ba5b546ea75cbc07351908aabdd19e3abc6fa4f3af0e83bb7fbda36d6",
+	"c8ce517615d7d8919d6149afee7b5702c39e157c5684b94b6fb365e3fc9644e7",
+	"ed7f4415a7a024990b7ce4d94040ce06621c5182ac42434b6eb6a19abefd5043",
+]);
 
 export type ManagedSkillReservationManager = "hosted-manifest" | "local-setup";
 
@@ -168,17 +181,33 @@ export function assertUserSkillTargetMutable(
 	}
 }
 
+/** Linearize a user-owned target commit with reservation/install/release commits. */
+export function mutateUserSkillTarget<T>(targetDir: string, skillId: string, mutation: () => T): T {
+	const commit = () => {
+		assertUserSkillTargetMutable(targetDir, skillId);
+		return mutation();
+	};
+	if (
+		process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted" ||
+		process.env.CLAWDI_SERVICE_STATE_DIR?.trim()
+	) {
+		return withRuntimeConvergeLock(getRuntimePaths({ mode: "hosted" }), commit);
+	}
+	return withPrivateDirectoryLockSync(join(getClawdiDir(), "locks", "managed-skills.lock"), commit);
+}
+
 export function migrateLegacyLocalSetupSkill(input: {
 	targetDir: string;
 	id: string;
 	version: number;
 	digest: (targetDir: string) => string;
-}): "adopted" | "already_migrated" | "absent" | "hosted" {
+}): "adopted" | "already_migrated" | "absent" | "unmanaged" | "hosted" {
 	if (process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase() === "hosted") return "hosted";
 	if (process.env.CLAWDI_SERVICE_STATE_DIR?.trim()) return "hosted";
 	const path = ledgerPath();
 	const target = resolve(input.targetDir);
 	if (
+		input.id !== "clawdi" ||
 		basename(target) !== input.id ||
 		!MANAGED_SKILL_ID_PATTERN.test(input.id) ||
 		!Number.isSafeInteger(input.version) ||
@@ -190,20 +219,24 @@ export function migrateLegacyLocalSetupSkill(input: {
 		const ledger = readLedger(path);
 		if (ledger.localSetupMigrations[target]) return "already_migrated";
 		const existing = ledger.reservations[target];
-		let outcome: "adopted" | "absent" = "absent";
+		let outcome: "adopted" | "absent" | "unmanaged" = "absent";
 		if (!existing && existsSync(target)) {
 			const digest = input.digest(target);
 			if (!SHA256_PATTERN.test(digest)) {
 				throw new Error("managed Skill migration digest is invalid");
 			}
-			ledger.reservations[target] = {
-				target,
-				id: input.id,
-				version: input.version,
-				digest,
-				manager: "local-setup",
-			};
-			outcome = "adopted";
+			if (LEGACY_LOCAL_SETUP_SKILL_DIGESTS.has(digest)) {
+				ledger.reservations[target] = {
+					target,
+					id: input.id,
+					version: input.version,
+					digest,
+					manager: "local-setup",
+				};
+				outcome = "adopted";
+			} else {
+				outcome = "unmanaged";
+			}
 		}
 		ledger.localSetupMigrations[target] = { target, id: input.id };
 		writeLedger(path, ledger);

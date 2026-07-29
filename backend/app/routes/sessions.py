@@ -47,6 +47,8 @@ from app.schemas.runtime_observed import (
 from app.schemas.session import (
     AgentReorderRequest,
     AgentResponse,
+    AgentRuntimeObservedDesiredResponse,
+    AgentRuntimeObservedResponse,
     EnvironmentCreate,
     EnvironmentCreatedResponse,
     EnvironmentReorderRequest,
@@ -880,15 +882,46 @@ async def get_environment_runtime_observed(
 
 @router.get(
     "/agents/{agent_id}/runtime-observed",
-    response_model=RuntimeObservedResponse,
+    response_model=AgentRuntimeObservedResponse,
 )
 async def get_agent_runtime_observed(
     agent_id: UUID,
     auth: AuthContext = Depends(get_auth),
     db: AsyncSession = Depends(get_session),
-) -> RuntimeObservedResponse:
+) -> AgentRuntimeObservedResponse:
     """Canonical Agent-identity route for runtime desired/observed summaries."""
-    return await get_environment_runtime_observed(agent_id, auth, db)
+    response = await get_environment_runtime_observed(agent_id, auth, db)
+    state = await db.get(HostedRuntimeState, agent_id)
+    desired = response.desired
+    if desired is None and state is None:
+        return AgentRuntimeObservedResponse(
+            environment=response.environment,
+            desired=None,
+            observed=response.observed,
+            health=response.health,
+            provider_health=response.provider_health,
+        )
+    if (
+        desired is None
+        or state is None
+        or desired.deployment_id != state.deployment_id
+        or desired.instance_id != state.instance_id
+        or desired.desired_config_generation != state.generation
+    ):
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Runtime desired state changed while it was being read; retry the request.",
+        )
+    agent_desired = AgentRuntimeObservedDesiredResponse.model_validate(desired.model_dump())
+    return AgentRuntimeObservedResponse(
+        environment=response.environment,
+        desired=agent_desired.model_copy(
+            update={"managed_skills": _runtime_managed_skill_summaries(state)}
+        ),
+        observed=response.observed,
+        health=response.health,
+        provider_health=response.provider_health,
+    )
 
 
 @router.get("/assets/{asset_key:path}", include_in_schema=False)
@@ -1028,7 +1061,6 @@ def _runtime_observed_desired(
         enabled_runtimes=_enabled_runtime_names(state.runtimes),
         has_mcp=state.mcp is not None,
         has_tools=state.tools is not None,
-        managed_skills=_runtime_managed_skill_summaries(state),
         updated_at=state.updated_at,
     )
 
@@ -1041,16 +1073,18 @@ def _runtime_managed_skill_summaries(
         try:
             skills = PersistedHostedRuntimeSkills.model_validate(state.skills)
         except ValueError:
-            skills = None
-        if skills is not None:
-            managed_skills.extend(
-                RuntimeManagedSkillSummary(
-                    id=skill_id,
-                    version=entry.version or 1,
-                )
-                for skill_id, entry in sorted(skills.entries.items())
-                if entry.enabled
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                "Managed Skill inventory is temporarily unavailable.",
+            ) from None
+        managed_skills.extend(
+            RuntimeManagedSkillSummary(
+                id=skill_id,
+                version=entry.version or 1,
             )
+            for skill_id, entry in sorted(skills.entries.items())
+            if entry.enabled
+        )
     return managed_skills
 
 

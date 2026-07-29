@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "bun:test";
 import {
 	chmodSync,
+	cpSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -9,7 +10,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { setup } from "../../src/commands/setup";
 import {
 	managedSkillReservationState,
@@ -175,14 +176,24 @@ describe("setup daemon install", () => {
 
 	it("adopts a pre-ledger clawdi target under the previous exclusion contract", async () => {
 		const target = join(home, ".codex", "skills", "clawdi");
+		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), target, { recursive: true });
+		installEnvironmentMock("env-codex");
+
+		await setup({ agent: "codex", yes: true, daemon: false });
+
+		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+	});
+
+	it("refuses to replace a custom pre-ledger same-name Skill", async () => {
+		const target = join(home, ".codex", "skills", "clawdi");
 		mkdirSync(target, { recursive: true });
 		writeFileSync(join(target, "SKILL.md"), "# User-owned Clawdi\n");
 		installEnvironmentMock("env-codex");
 
 		await setup({ agent: "codex", yes: true, daemon: false });
 
-		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).not.toBe("# User-owned Clawdi\n");
-		expect(managedSkillReservationState(target, "clawdi")).toBe("reserved");
+		expect(readFileSync(join(target, "SKILL.md"), "utf-8")).toBe("# User-owned Clawdi\n");
+		expect(managedSkillReservationState(target, "clawdi")).toBe("unreserved");
 	});
 
 	it("does not reclaim a future user clawdi target after migration and release", async () => {

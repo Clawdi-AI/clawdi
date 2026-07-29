@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { ClaudeCodeAdapter } from "../../src/adapters/claude-code";
 import { tarSkillDir } from "../../src/lib/tar";
 import {
@@ -308,8 +308,7 @@ describe("ClaudeCodeAdapter.collectSkills", () => {
 
 	it("adopts a pre-ledger bundled clawdi target without uploading it", async () => {
 		const legacy = join(tmpHome, ".claude", "skills", "clawdi");
-		mkdirSync(legacy, { recursive: true });
-		writeFileSync(join(legacy, "SKILL.md"), "# Legacy bundled Skill\n");
+		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), legacy, { recursive: true });
 		const adapter = new ClaudeCodeAdapter();
 		expect((await adapter.collectSkills()).map((skill) => skill.skillKey)).not.toContain("clawdi");
 		expect(await adapter.listSkillKeys()).not.toContain("clawdi");

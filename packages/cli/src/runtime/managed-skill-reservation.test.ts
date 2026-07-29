@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
 import {
+	cpSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -9,11 +10,13 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { managedSkillDirectoryDigest } from "./hosted-bundled-skill";
 import {
 	installReservedManagedSkill,
 	managedSkillReservationState,
 	migrateLegacyLocalSetupSkill,
+	mutateUserSkillTarget,
 	releaseManagedSkill,
 	replaceManagedSkillDirectoryAtomic,
 	reserveManagedSkill,
@@ -162,16 +165,14 @@ describe("managed Skill reservations", () => {
 		process.env.HOME = root;
 		const existing = join(root, "one", "skills", "clawdi");
 		const absent = join(root, "two", "skills", "clawdi");
-		mkdirSync(existing, { recursive: true });
-		writeFileSync(join(existing, "SKILL.md"), "# Old bundled Skill\n");
-		const digest = () => "a".repeat(64);
+		cpSync(resolve(import.meta.dir, "../../skills/clawdi"), existing, { recursive: true });
 
 		expect(
 			migrateLegacyLocalSetupSkill({
 				targetDir: existing,
 				id: "clawdi",
 				version: 1,
-				digest,
+				digest: managedSkillDirectoryDigest,
 			}),
 		).toBe("adopted");
 		expect(
@@ -179,7 +180,7 @@ describe("managed Skill reservations", () => {
 				targetDir: absent,
 				id: "clawdi",
 				version: 1,
-				digest,
+				digest: managedSkillDirectoryDigest,
 			}),
 		).toBe("absent");
 		expect(managedSkillReservationState(existing, "clawdi")).toBe("reserved");
@@ -191,10 +192,36 @@ describe("managed Skill reservations", () => {
 				targetDir: absent,
 				id: "clawdi",
 				version: 1,
-				digest,
+				digest: managedSkillDirectoryDigest,
 			}),
 		).toBe("already_migrated");
 		expect(managedSkillReservationState(absent, "clawdi")).toBe("unreserved");
+	});
+
+	it("records custom same-name content as unmanaged instead of adopting it", () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		process.env.HOME = root;
+		const custom = join(root, "one", "skills", "clawdi");
+		mkdirSync(custom, { recursive: true });
+		writeFileSync(join(custom, "SKILL.md"), "---\nname: clawdi\ndescription: User Skill\n---\n");
+
+		expect(
+			migrateLegacyLocalSetupSkill({
+				targetDir: custom,
+				id: "clawdi",
+				version: 1,
+				digest: managedSkillDirectoryDigest,
+			}),
+		).toBe("unmanaged");
+		expect(managedSkillReservationState(custom, "clawdi")).toBe("unreserved");
+		expect(
+			migrateLegacyLocalSetupSkill({
+				targetDir: custom,
+				id: "clawdi",
+				version: 1,
+				digest: managedSkillDirectoryDigest,
+			}),
+		).toBe("already_migrated");
 	});
 
 	it("atomically replaces stale files under an active reservation", () => {
@@ -387,5 +414,69 @@ reserveManagedSkill(${JSON.stringify({
 		delete process.env.CLAWDI_SERVICE_STATE_DIR;
 		expect(managedSkillReservationState(firstTarget, "first")).toBe("unreserved");
 		expect(managedSkillReservationState(secondTarget, "second")).toBe("reserved");
+	});
+
+	it("linearizes user target commits after a concurrent reservation install", async () => {
+		root = mkdtempSync(join(tmpdir(), "skill-reservation-"));
+		const path = join(root, "skills", "example");
+		const ready = join(root, "reservation-ready");
+		const moduleUrl = new URL("./managed-skill-reservation.ts", import.meta.url).href;
+		const child = Bun.spawn(
+			[
+				process.execPath,
+				"-e",
+				`import { mkdirSync, writeFileSync } from "node:fs";
+const { installReservedManagedSkill } = await import(${JSON.stringify(moduleUrl)});
+installReservedManagedSkill(${JSON.stringify({
+					targetDir: path,
+					id: "example",
+					version: 1,
+					digest: "5".repeat(64),
+					manager: "local-setup",
+				})}, () => {
+  mkdirSync(${JSON.stringify(path)}, { recursive: true });
+  writeFileSync(${JSON.stringify(join(path, "SKILL.md"))}, "# Managed\\n");
+  writeFileSync(${JSON.stringify(ready)}, "ready");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250);
+});`,
+			],
+			{
+				env: {
+					...process.env,
+					HOME: root,
+					CLAWDI_RUNTIME_MODE: "",
+					CLAWDI_SERVICE_STATE_DIR: "",
+				},
+				stdout: "pipe",
+				stderr: "pipe",
+			},
+		);
+		for (let attempt = 0; attempt < 200 && !existsSync(ready); attempt += 1) {
+			await Bun.sleep(10);
+		}
+		expect(existsSync(ready)).toBe(true);
+		process.env.HOME = root;
+		delete process.env.CLAWDI_RUNTIME_MODE;
+		delete process.env.CLAWDI_SERVICE_STATE_DIR;
+
+		expect(() =>
+			mutateUserSkillTarget(path, "example", () => rmSync(path, { recursive: true, force: true })),
+		).toThrow("reserved by a managed Skill owner");
+		expect(await child.exited).toBe(0);
+		expect(readFileSync(join(path, "SKILL.md"), "utf8")).toBe("# Managed\n");
+		expect(() =>
+			mutateUserSkillTarget(path, "example", () =>
+				writeFileSync(join(path, "SKILL.md"), "# Overwritten\n"),
+			),
+		).toThrow("reserved by a managed Skill owner");
+
+		releaseManagedSkill({
+			targetDir: path,
+			id: "example",
+			manager: "local-setup",
+			removeTarget: () => undefined,
+		});
+		mutateUserSkillTarget(path, "example", () => writeFileSync(join(path, "SKILL.md"), "# User\n"));
+		expect(readFileSync(join(path, "SKILL.md"), "utf8")).toBe("# User\n");
 	});
 });

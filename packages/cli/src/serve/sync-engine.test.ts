@@ -4,10 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CollectSessionsResult } from "../adapters/base";
 import { ApiError } from "../lib/api-client";
+import { readSkillsLock, skillCacheKey, writeSkillsLock } from "../lib/skills-lock";
+import { releaseManagedSkill, reserveManagedSkill } from "../runtime/managed-skill-reservation";
 import type { PendingSkillUploadEcho } from "./sync-engine";
 import {
 	addInFlight,
 	classifyHeartbeatFailure,
+	clearReservedSkillHashes,
 	consumePendingSkillUploadEcho,
 	enqueueChangedSessionsAfterStability,
 	filterValidSkillKeysForSync,
@@ -88,6 +91,75 @@ describe("reserved Skill reconcile listing", () => {
 		const observed = new Set(["managed"]);
 		const pulled = new Map([["managed", "current-cloud-hash"]]);
 		expect(shouldForceFullSkillListing(observed, pulled, () => false)).toBe(false);
+	});
+});
+
+describe("reserved Skill boot cache cleanup", () => {
+	it("clears only reserved hashes even when Cloud has no matching key", () => {
+		const root = mkdtempSync(join(tmpdir(), "reserved-skill-cache-"));
+		const originalHome = process.env.HOME;
+		const originalMode = process.env.CLAWDI_RUNTIME_MODE;
+		const originalStateDir = process.env.CLAWDI_SERVICE_STATE_DIR;
+		try {
+			process.env.HOME = root;
+			delete process.env.CLAWDI_RUNTIME_MODE;
+			delete process.env.CLAWDI_SERVICE_STATE_DIR;
+			const skillsRoot = join(root, ".claude", "skills");
+			const managed = join(skillsRoot, "managed");
+			mkdirSync(managed, { recursive: true });
+			writeFileSync(join(managed, "SKILL.md"), "# Managed\n");
+			reserveManagedSkill({
+				targetDir: managed,
+				id: "managed",
+				version: 1,
+				digest: "a".repeat(64),
+				manager: "local-setup",
+			});
+			const managedCacheKey = skillCacheKey("claude_code", "managed");
+			const unrelatedCacheKey = skillCacheKey("claude_code", "unrelated");
+			writeSkillsLock({
+				version: 2,
+				skills: {
+					[managedCacheKey]: { hash: "same-content-hash" },
+					[unrelatedCacheKey]: { hash: "unrelated-hash" },
+					[skillCacheKey("codex", "managed")]: { hash: "other-agent-hash" },
+				},
+			});
+			const pushed = new Map([
+				["managed", "same-content-hash"],
+				["unrelated", "unrelated-hash"],
+			]);
+
+			clearReservedSkillHashes(
+				{ agentType: "claude_code", getSkillsRootDir: () => skillsRoot },
+				pushed,
+				false,
+			);
+
+			expect(pushed.has("managed")).toBe(false);
+			expect(pushed.get("unrelated")).toBe("unrelated-hash");
+			const persisted = readSkillsLock().skills;
+			expect(persisted[managedCacheKey]).toBeUndefined();
+			expect(persisted[unrelatedCacheKey]?.hash).toBe("unrelated-hash");
+			expect(persisted[skillCacheKey("codex", "managed")]?.hash).toBe("other-agent-hash");
+
+			releaseManagedSkill({
+				targetDir: managed,
+				id: "managed",
+				manager: "local-setup",
+				removeTarget: () => undefined,
+			});
+			// A future user Skill with identical bytes is no longer suppressed by the old hash.
+			expect(pushed.get("managed")).toBeUndefined();
+		} finally {
+			if (originalHome === undefined) delete process.env.HOME;
+			else process.env.HOME = originalHome;
+			if (originalMode === undefined) delete process.env.CLAWDI_RUNTIME_MODE;
+			else process.env.CLAWDI_RUNTIME_MODE = originalMode;
+			if (originalStateDir === undefined) delete process.env.CLAWDI_SERVICE_STATE_DIR;
+			else process.env.CLAWDI_SERVICE_STATE_DIR = originalStateDir;
+			rmSync(root, { recursive: true, force: true });
+		}
 	});
 });
 

@@ -5,8 +5,8 @@ import { durationSecondsBetween } from "../lib/session-duration";
 import { replaceSkillArchiveTarGz } from "../lib/tar";
 import { managedSkillDirectoryDigest } from "../runtime/hosted-bundled-skill";
 import {
-	assertUserSkillTargetMutable,
 	migrateLegacyLocalSetupSkill,
+	mutateUserSkillTarget,
 	shouldIgnoreUserSkill,
 } from "../runtime/managed-skill-reservation";
 import type {
@@ -341,15 +341,16 @@ export class ClaudeCodeAdapter implements AgentAdapter {
 
 	async removeLocalSkill(key: string): Promise<void> {
 		const dir = join(claudeDir(), "skills", key);
-		assertUserSkillTargetMutable(dir, key);
-		if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		mutateUserSkillTarget(dir, key, () => {
+			if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+		});
 	}
 
 	async writeSkillArchive(key: string, tarGzBytes: Buffer): Promise<void> {
 		const skillsDir = join(claudeDir(), "skills");
-		assertUserSkillTargetMutable(join(skillsDir, key), key);
-		await replaceSkillArchiveTarGz(key, skillsDir, join(skillsDir, key), tarGzBytes, () =>
-			assertUserSkillTargetMutable(join(skillsDir, key), key),
+		const targetDir = join(skillsDir, key);
+		await replaceSkillArchiveTarGz(key, skillsDir, targetDir, tarGzBytes, undefined, (mutation) =>
+			mutateUserSkillTarget(targetDir, key, mutation),
 		);
 	}
 
