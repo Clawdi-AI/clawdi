@@ -34,6 +34,7 @@ describe("RetryQueue", () => {
 		const a = new RetryQueue({ agentType: "claude_code" });
 		a.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
@@ -57,6 +58,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
@@ -65,6 +67,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h2",
@@ -76,6 +79,86 @@ describe("RetryQueue", () => {
 		if (front?.kind !== "skill_push") throw new Error("expected skill_push");
 		expect(front.new_hash).toBe("h2");
 		await q.flushPersist();
+	});
+
+	it("recreate replaces a pending delete for the same Skill key", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		q.enqueue({
+			kind: "skill_delete",
+			agent_id: "agent-a",
+			project_id: "project-a",
+			skill_key: "nested/alpha",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 3,
+		});
+		q.enqueue({
+			kind: "skill_push",
+			agent_id: "agent-a",
+			project_id: "project-a",
+			skill_key: "nested/alpha",
+			new_hash: "new-bytes",
+			enqueued_at: "2026-01-01T00:00:01Z",
+			attempts: 0,
+		});
+
+		expect(q.depth).toBe(1);
+		const item = q.peek();
+		if (item?.kind !== "skill_push") throw new Error("expected latest push");
+		expect(item.new_hash).toBe("new-bytes");
+		expect(item.attempts).toBe(0);
+	});
+
+	it("local removal replaces a pending push for the same Skill key", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		q.enqueue({
+			kind: "skill_push",
+			agent_id: "agent-a",
+			project_id: "project-a",
+			skill_key: "alpha",
+			new_hash: "old-bytes",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 2,
+		});
+		q.enqueue({
+			kind: "skill_delete",
+			agent_id: "agent-a",
+			project_id: "project-a",
+			skill_key: "alpha",
+			enqueued_at: "2026-01-01T00:00:01Z",
+			attempts: 0,
+		});
+
+		expect(q.depth).toBe(1);
+		const item = q.peek();
+		if (item?.kind !== "skill_delete") throw new Error("expected latest delete");
+		expect(item.agent_id).toBe("agent-a");
+		expect(item.project_id).toBe("project-a");
+	});
+
+	it("a stale push completion cannot remove a newer delete", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		q.enqueue({
+			kind: "skill_push",
+			agent_id: "agent-a",
+			project_id: "project-a",
+			skill_key: "alpha",
+			new_hash: "old-bytes",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		});
+		const stalePush = q.peek();
+		if (stalePush?.kind !== "skill_push") throw new Error("expected push");
+		q.enqueue({
+			kind: "skill_delete",
+			agent_id: "agent-a",
+			project_id: "project-a",
+			skill_key: "alpha",
+			enqueued_at: "2026-01-01T00:00:01Z",
+			attempts: 0,
+		});
+
+		expect(q.markDoneIfVersion(stalePush)).toBe(false);
+		expect(q.peek()?.kind).toBe("skill_delete");
 	});
 
 	it("coalesces a burst of persists into one active flush", async () => {
@@ -90,6 +173,7 @@ describe("RetryQueue", () => {
 		for (let i = 0; i < 10_000; i++) {
 			q.enqueue({
 				kind: "skill_push",
+				agent_id: "test-agent",
 				project_id: "test-project",
 				skill_key: "alpha",
 				new_hash: `h${i}`,
@@ -113,6 +197,7 @@ describe("RetryQueue", () => {
 
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
@@ -128,6 +213,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
@@ -144,6 +230,7 @@ describe("RetryQueue", () => {
 		for (const k of ["a", "b", "c"]) {
 			q.enqueue({
 				kind: "skill_push",
+				agent_id: "test-agent",
 				project_id: "test-project",
 				skill_key: k,
 				new_hash: `${k}-h`,
@@ -161,6 +248,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
@@ -181,6 +269,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
@@ -192,6 +281,7 @@ describe("RetryQueue", () => {
 		// While the drain is "uploading", the watcher fires again.
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h2",
@@ -211,6 +301,7 @@ describe("RetryQueue", () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
@@ -239,10 +330,35 @@ describe("RetryQueue", () => {
 		expect(front2.attempts).toBe(2);
 	});
 
+	it("persists delete retry attempts with its identity fence", async () => {
+		const q = new RetryQueue({ agentType: "claude_code" });
+		q.enqueue({
+			kind: "skill_delete",
+			agent_id: "agent-a",
+			project_id: "project-a",
+			skill_key: "alpha",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		});
+		const pending = q.peek();
+		if (pending?.kind !== "skill_delete") throw new Error("expected delete");
+		q.bumpAttempts(pending);
+		await q.flushPersist();
+
+		const reloaded = new RetryQueue({ agentType: "claude_code" });
+		reloaded.load();
+		const retry = reloaded.peek();
+		if (retry?.kind !== "skill_delete") throw new Error("expected persisted delete");
+		expect(retry.attempts).toBe(1);
+		expect(retry.agent_id).toBe("agent-a");
+		expect(retry.project_id).toBe("project-a");
+	});
+
 	it("survives a corrupt line in the on-disk file", async () => {
 		const q = new RetryQueue({ agentType: "claude_code" });
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "test-project",
 			skill_key: "alpha",
 			new_hash: "h1",
@@ -272,13 +388,11 @@ describe("RetryQueue", () => {
 		await reloaded.flushPersist();
 	});
 
-	it("loads legacy skill_push items written without project_id", () => {
+	it("loads legacy skill_push items without treating them as fenced", () => {
 		// Pre-project-stamp daemon binaries persisted skill_push items
-		// without a `project_id` field. After upgrade, those items
-		// must NOT silently disappear — `isQueueItem` accepts the
-		// missing field, and the drain loop stamps the current
-		// project before upload. Without this back-compat, a daemon
-		// upgrading mid-flight would lose every queued offline edit.
+		// without stable identity fields. Keep the item visible to the
+		// drain loop so it can fail closed and request a fresh scan;
+		// never invent a Project or Agent fence during deserialization.
 		const path = join(process.env.CLAWDI_STATE_DIR ?? tmp, "claude_code", "queue.jsonl");
 		const dir = join(process.env.CLAWDI_STATE_DIR ?? tmp, "claude_code");
 		mkdirSync(dir, { recursive: true });
@@ -301,6 +415,60 @@ describe("RetryQueue", () => {
 		expect(item && "project_id" in item ? item.project_id : undefined).toBeUndefined();
 		// Sanity: the skill_key survived load.
 		expect(item && "skill_key" in item ? item.skill_key : undefined).toBe("legacy-x");
+	});
+
+	it("rejects an unfenced persisted delete", async () => {
+		const stateDir = process.env.CLAWDI_STATE_DIR ?? tmp;
+		const path = join(stateDir, "claude_code", "queue.jsonl");
+		mkdirSync(join(stateDir, "claude_code"), { recursive: true });
+		writeFileSync(
+			path,
+			`${JSON.stringify({
+				kind: "skill_delete",
+				skill_key: "alpha",
+				enqueued_at: "2026-01-01T00:00:00Z",
+				attempts: 0,
+				version: 1,
+			})}\n`,
+		);
+
+		const q = new RetryQueue({ agentType: "claude_code" });
+		q.load();
+		expect(q.depth).toBe(0);
+		await q.flushPersist();
+	});
+
+	it("load keeps the greatest-version Skill operation across kinds", async () => {
+		const stateDir = process.env.CLAWDI_STATE_DIR ?? tmp;
+		const path = join(stateDir, "claude_code", "queue.jsonl");
+		mkdirSync(join(stateDir, "claude_code"), { recursive: true });
+		const identity = { agent_id: "agent-a", project_id: "project-a", skill_key: "alpha" };
+		writeFileSync(
+			path,
+			`${[
+				JSON.stringify({
+					kind: "skill_delete",
+					...identity,
+					enqueued_at: "2026-01-01T00:00:02Z",
+					attempts: 0,
+					version: 8,
+				}),
+				JSON.stringify({
+					kind: "skill_push",
+					...identity,
+					new_hash: "stale",
+					enqueued_at: "2026-01-01T00:00:01Z",
+					attempts: 0,
+					version: 7,
+				}),
+			].join("\n")}\n`,
+		);
+
+		const q = new RetryQueue({ agentType: "claude_code" });
+		q.load();
+		expect(q.depth).toBe(1);
+		expect(q.peek()?.kind).toBe("skill_delete");
+		await q.flushPersist();
 	});
 
 	it("scrubs queued items whose skill_key violates the backend pattern", async () => {
@@ -371,6 +539,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "s",
 			skill_key: "alpha",
 			new_hash: "ha",
@@ -379,6 +548,7 @@ describe("RetryQueue", () => {
 		});
 		q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "s",
 			skill_key: "beta",
 			new_hash: "hb",
@@ -396,6 +566,28 @@ describe("RetryQueue", () => {
 		if (skill?.kind !== "skill_push") throw new Error("expected skill_push");
 		expect(skill.skill_key).toBe("beta");
 		await q.flushPersist();
+	});
+
+	it("eviction treats skill_delete as a shedable Skill operation", async () => {
+		const q = new RetryQueue({ agentType: "claude_code", maxItems: 1 });
+		q.enqueue({
+			kind: "session_push",
+			local_session_id: "session-a",
+			content_hash: "session-hash",
+			enqueued_at: "2026-01-01T00:00:00Z",
+			attempts: 0,
+		});
+		q.enqueue({
+			kind: "skill_delete",
+			agent_id: "agent-a",
+			project_id: "project-a",
+			skill_key: "alpha",
+			enqueued_at: "2026-01-01T00:00:01Z",
+			attempts: 0,
+		});
+
+		expect(q.all().map((item) => item.kind)).toEqual(["session_push"]);
+		expect(q.drainDroppedDelta()).toBe(1);
 	});
 
 	it("onEvict callback fires once per evicted item", async () => {
@@ -467,6 +659,7 @@ describe("RetryQueue", () => {
 		// legacy-stamp doesn't collide with a fresh enqueue.
 		const v = q.enqueue({
 			kind: "skill_push",
+			agent_id: "test-agent",
 			project_id: "s",
 			skill_key: "fresh-key",
 			new_hash: "h-fresh",

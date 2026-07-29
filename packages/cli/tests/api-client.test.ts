@@ -3,6 +3,10 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApiError, retryingFetch } from "../src/lib/api-client";
+import {
+	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	SKILL_SYNC_PROTOCOL_HEADER,
+} from "../src/lib/skill-sync-protocol";
 
 // ApiClient reads ~/.clawdi/{auth,config}.json at construction via getAuth/getConfig.
 // We redirect HOME to a tmpdir so each test gets a fresh auth/config.
@@ -264,6 +268,96 @@ describe("ApiClient error classification", () => {
 		} finally {
 			clearTimeout(abortTimer);
 			globalThis.fetch = origFetch;
+		}
+	});
+});
+
+describe("Agent-authoritative Skill sync rollout", () => {
+	it("falls back to the legacy Project upload only when the dedicated route is absent", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const originalFetch = globalThis.fetch;
+		const requests: Request[] = [];
+		globalThis.fetch = async (input, init) => {
+			const request = new Request(input, init);
+			requests.push(request);
+			if (requests.length === 1) return new Response("missing", { status: 404 });
+			return Response.json({ skill_key: "demo", version: 1, status: "uploaded" });
+		};
+		try {
+			const { ApiClient } = await import("../src/lib/api-client");
+			await new ApiClient().uploadAgentSkill(
+				"agent-1",
+				"project-1",
+				"demo",
+				Buffer.from("archive"),
+				"demo.tar.gz",
+				"a".repeat(64),
+			);
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+
+		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+			"/v1/agents/agent-1/skills/sync/upload",
+			"/v1/projects/project-1/skills/upload",
+		]);
+		for (const request of requests) {
+			expect(request.headers.get(SKILL_SYNC_PROTOCOL_HEADER)).toBe(
+				SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+			);
+		}
+	});
+
+	it("does not hide a dedicated upload rejection behind the compatibility alias", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const originalFetch = globalThis.fetch;
+		let requests = 0;
+		globalThis.fetch = async () => {
+			requests += 1;
+			return new Response("forbidden", { status: 403 });
+		};
+		try {
+			const { ApiClient } = await import("../src/lib/api-client");
+			await expect(
+				new ApiClient().uploadAgentSkill(
+					"agent-1",
+					"project-1",
+					"demo",
+					Buffer.from("archive"),
+					"demo.tar.gz",
+				),
+			).rejects.toMatchObject({ status: 403 });
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+		expect(requests).toBe(1);
+	});
+
+	it("falls back to the exact Project delete with the explicit protocol fence", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const originalFetch = globalThis.fetch;
+		const requests: Request[] = [];
+		globalThis.fetch = async (input, init) => {
+			const request = input instanceof Request ? input : new Request(input, init);
+			requests.push(request);
+			return new Response(null, { status: requests.length === 1 ? 404 : 200 });
+		};
+		try {
+			const { ApiClient } = await import("../src/lib/api-client");
+			await new ApiClient().deleteAgentSkill("agent-1", "demo", "project-1");
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+
+		expect(requests.map((request) => new URL(request.url).pathname)).toEqual([
+			"/v1/agents/agent-1/skills/sync/demo",
+			"/v1/projects/project-1/skills/demo",
+		]);
+		expect(new URL(requests[0].url).searchParams.get("project_id")).toBe("project-1");
+		for (const request of requests) {
+			expect(request.headers.get(SKILL_SYNC_PROTOCOL_HEADER)).toBe(
+				SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+			);
 		}
 	});
 });

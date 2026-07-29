@@ -45,7 +45,7 @@ Examples:
   $ clawdi setup                    Detect agents and register the current machine
   $ clawdi session list             Preview local sessions before pushing
   $ clawdi push --all               Upload everything (every agent, project, module)
-  $ clawdi pull --all               Download everything from the cloud
+  $ clawdi pull --all               Mirror sessions for all registered agents
   $ clawdi skill list --json        Machine-readable skill listing
   $ clawdi memory search "redis"    Search memories by text
   $ clawdi vault set OPENAI_API_KEY Store a secret
@@ -318,7 +318,7 @@ Examples:
 program
 	.command("pull")
 	.description(
-		"Pull cloud data — `skills` writes archives to agent dirs; `sessions` mirrors to ~/.clawdi/sessions/",
+		"Mirror sessions, or explicitly import Skills from a Cloud-owned workspace/personal Project",
 	)
 	.option(
 		"--modules <modules>",
@@ -326,7 +326,7 @@ program
 	)
 	.option(
 		"-p, --project <id-or-slug>",
-		"Pull skills from an explicit project into the target agent(s)",
+		"Import Skills from an explicit workspace/personal Project (Agent Projects are rejected)",
 	)
 	.option("--agent <type>", "Narrow to one agent (claude_code, codex, hermes, openclaw)")
 	.option(
@@ -334,16 +334,13 @@ program
 		"Pull everything: every module, every registered agent (still narrowable via --modules / --agent)",
 	)
 	.option("--all-agents", "Pull for every registered agent on this machine (implied by --all)")
-	.option(
-		"--dry-run",
-		"Preview without downloading. Use to check which skills will be overwritten locally.",
-	)
+	.option("--dry-run", "Preview session mirrors or explicit Skill imports without writing locally")
 	.addHelpText(
 		"after",
 		`
 Examples:
-  $ clawdi pull --all                    Pull everything (every agent, every module)
-  $ clawdi pull                          Pull for the registered agent (or all of them if multiple)
+  $ clawdi pull --all                    Mirror sessions for every registered agent
+  $ clawdi pull                          Mirror sessions for the registered agent(s)
   $ clawdi pull --modules sessions
   $ clawdi pull --agent claude_code --dry-run
   $ clawdi pull --modules skills --project @alice/engineering --agent codex`,

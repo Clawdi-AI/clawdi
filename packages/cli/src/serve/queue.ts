@@ -16,10 +16,11 @@
  * visible. Without a bound, a daemon offline overnight would
  * fill the disk.
  *
- * Dedup — if a `skill_push` for the same `skill_key` is already
- * in the queue, we replace it instead of stacking duplicates.
- * The user only ever cares about the latest content; older
- * versions in the queue are dead bytes.
+ * Dedup — `skill_push` and `skill_delete` share one key space. A
+ * later operation for the same `skill_key` replaces the earlier
+ * operation regardless of kind, because the latest filesystem
+ * state is the only state that may be projected. Session pushes
+ * remain independently deduplicated by local session ID.
  *
  * NOT a job runner — this module just stores and orders. The
  * sync-engine pops items and decides what to do with them.
@@ -44,21 +45,25 @@ type ItemBase = {
 	version: number;
 };
 
+type SkillOperationBase = ItemBase & {
+	skill_key: string;
+	// Optional only because QueueItem also represents legacy items
+	// loaded from disk. New enqueue inputs require both identity
+	// fields; the drain loop must fail closed when a legacy item is
+	// missing either fence.
+	agent_id?: string;
+	project_id?: string;
+};
+
 export type QueueItem =
-	| (ItemBase & {
+	| (SkillOperationBase & {
 			kind: "skill_push";
-			skill_key: string;
-			// Project ID this item was enqueued under. Drained items
-			// whose stamped project no longer matches the daemon's
-			// current project are dropped (mid-flight reassignment).
-			// Optional for back-compat with queue files written by
-			// pre-project-stamp binaries; the drain loop stamps the
-			// current project when the field is absent so legacy
-			// pending work doesn't silently disappear on upgrade.
-			project_id?: string;
 			// Hash of what we're about to upload. Distinguishes
 			// duplicates: same skill_key with same new_hash = dedup.
 			new_hash: string;
+	  })
+	| (SkillOperationBase & {
+			kind: "skill_delete";
 	  })
 	| (ItemBase & {
 			kind: "session_push";
@@ -66,19 +71,20 @@ export type QueueItem =
 			content_hash: string;
 	  });
 
-/** Distributive `Omit` — TS's built-in `Omit<U, K>` collapses
- * a union into a structural intersection that loses kind-
- * specific keys. The `T extends unknown` clause forces
- * distribution over each variant, preserving narrowing. */
-type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : never;
-
 /** What the caller passes to `enqueue()` — same as a QueueItem
- * minus the `version` field, which the queue stamps itself.
- * Derived from QueueItem so future variants flow through
- * automatically; the previous hand-rolled union had to be
- * updated twice and `stampVersion`'s exhaustiveness check
- * couldn't catch the omission. */
-type QueueItemInput = DistributiveOmit<QueueItem, "version">;
+ * minus the `version` field, which the queue stamps itself. New
+ * skill operations require the stable Agent and Project fences;
+ * only `load()` may produce an unfenced legacy QueueItem. */
+type QueueItemInput =
+	| (Omit<Extract<QueueItem, { kind: "skill_push" }>, "version" | "agent_id" | "project_id"> & {
+			agent_id: string;
+			project_id: string;
+	  })
+	| (Omit<Extract<QueueItem, { kind: "skill_delete" }>, "version" | "agent_id" | "project_id"> & {
+			agent_id: string;
+			project_id: string;
+	  })
+	| Omit<Extract<QueueItem, { kind: "session_push" }>, "version">;
 
 const DEFAULT_MAX_ITEMS = 500;
 
@@ -97,6 +103,7 @@ function ensureDir(p: string) {
  * an `as QueueItem` cast. */
 function stampVersion(item: QueueItemInput, version: number): QueueItem {
 	if (item.kind === "skill_push") return { ...item, version };
+	if (item.kind === "skill_delete") return { ...item, version };
 	if (item.kind === "session_push") return { ...item, version };
 	// Exhaustiveness check — `_x: never` errors at compile time
 	// if the union grows without a corresponding arm.
@@ -124,9 +131,9 @@ function isQueueItem(raw: unknown): raw is QueueItem {
 	// mismatch (corruption); load() normalizes missing values to
 	// 0 so a binary upgrade doesn't silently drop pending work.
 	if (r.version !== undefined && typeof r.version !== "number") return false;
-	if (r.kind === "skill_push") {
+	if (r.kind === "skill_push" || r.kind === "skill_delete") {
 		if (typeof r.skill_key !== "string") return false;
-		if (typeof r.new_hash !== "string") return false;
+		if (r.kind === "skill_push" && typeof r.new_hash !== "string") return false;
 		// Mirror the backend's SKILL_KEY_PATTERN so a queue file
 		// persisted before the watcher learned to filter dotfile
 		// dirs (`.system`, `.cache`, `.git`) doesn't keep
@@ -136,13 +143,19 @@ function isQueueItem(raw: unknown): raw is QueueItem {
 		// (`category/foo`, up to 4 components) so a queued
 		// Hermes push survives a daemon restart.
 		if (!isValidSkillKey(r.skill_key)) return false;
-		// Legacy queue items written by an older binary may not
-		// carry `project_id`. Accept them — the drain loop stamps
-		// the current project before upload, so legacy work doesn't
-		// silently disappear after a binary upgrade. Reject only
-		// if the field is present but the wrong type (corruption
-		// signal, not a back-compat case).
+		// Legacy skill_push items may not carry either identity
+		// field. Accept the shape so the drain loop can fail closed
+		// deliberately instead of silently losing queued work during
+		// deserialization. New skill_delete items always have both.
+		if (r.agent_id !== undefined && typeof r.agent_id !== "string") return false;
 		if (r.project_id !== undefined && typeof r.project_id !== "string") return false;
+		if (r.agent_id === "" || r.project_id === "") return false;
+		if (
+			r.kind === "skill_delete" &&
+			(typeof r.agent_id !== "string" || typeof r.project_id !== "string")
+		) {
+			return false;
+		}
 		return true;
 	}
 	if (r.kind === "session_push") {
@@ -229,7 +242,19 @@ export class RetryQueue {
 						...parsed,
 						version: parsed.version ?? 0,
 					};
-					this.items.push(normalized);
+					const existingIdx = this.items.findIndex((existing) => sameKey(existing, normalized));
+					if (existingIdx < 0) {
+						this.items.push(normalized);
+					} else if (this.items[existingIdx].version <= normalized.version) {
+						// Persisted files should already be deduplicated, but
+						// tolerate files produced during mixed-version rollout.
+						// The greatest version is the latest filesystem state;
+						// equal legacy versions fall back to the later line.
+						this.items[existingIdx] = normalized;
+						droppedDuringLoad += 1;
+					} else {
+						droppedDuringLoad += 1;
+					}
 				} else {
 					droppedDuringLoad += 1;
 				}
@@ -330,11 +355,10 @@ export class RetryQueue {
 	 * stamp the caller should use later for `markDoneIfVersion`. */
 	enqueue(item: QueueItemInput): number {
 		const stamped = stampVersion(item, this.nextVersion++);
-		// Dedup by (kind, key). For skill_push the key is skill_key;
-		// for session_push it's local_session_id. A new entry with
-		// the same key replaces the old one (and bumps the version
-		// counter) — the user never cares about a stale push when
-		// a fresh one is queued.
+		// Skill pushes and deletes deliberately share `skill_key` as
+		// one dedup namespace. Delete-after-push and recreate-after-
+		// delete therefore both converge to the latest local state.
+		// Sessions remain keyed by local_session_id.
 		const idx = this.items.findIndex((existing) => sameKey(existing, stamped));
 		if (idx >= 0) {
 			this.items[idx] = stamped;
@@ -379,11 +403,11 @@ export class RetryQueue {
 	}
 
 	private evictIfFull(): void {
-		// Eviction priority: drop oldest skill_push first, only fall
+		// Eviction priority: drop oldest skill operation first, only fall
 		// back to dropping sessions when no skills remain to evict.
-		// Skills are content-deduped by skill_key — re-pushing the
-		// current state is cheap because the watcher keeps emitting
-		// the latest hash. Session content, by contrast, is the
+		// Skills are content-deduped by skill_key — the periodic local
+		// inventory scan re-derives the latest push/delete state after
+		// eviction. Session content, by contrast, is the
 		// agent's transcript history: once dropped from the queue
 		// it's gone for the lifetime of this daemon (the in-flight
 		// guard holds the hash, the watcher won't re-enqueue).
@@ -392,7 +416,7 @@ export class RetryQueue {
 		// silently evict pending session uploads. Sessions take
 		// a back seat only after we've shed every shedable skill.
 		while (this.items.length > this.maxItems) {
-			const shedIdx = this.items.findIndex((i) => i.kind === "skill_push");
+			const shedIdx = this.items.findIndex((i) => isSkillOperation(i));
 			let evicted: QueueItem;
 			if (shedIdx >= 0) {
 				evicted = this.items.splice(shedIdx, 1)[0];
@@ -411,7 +435,7 @@ export class RetryQueue {
 			// piece together what was lost.
 			log.warn("queue.evicted", {
 				kind: evicted.kind,
-				key: evicted.kind === "skill_push" ? evicted.skill_key : evicted.local_session_id,
+				key: isSkillOperation(evicted) ? evicted.skill_key : evicted.local_session_id,
 				queue_depth: this.items.length,
 				dropped_total: this.droppedCount,
 			});
@@ -495,12 +519,17 @@ export class RetryQueue {
 }
 
 function sameKey(a: QueueItem, b: QueueItem): boolean {
-	if (a.kind !== b.kind) return false;
-	if (a.kind === "skill_push" && b.kind === "skill_push") {
+	if (isSkillOperation(a) && isSkillOperation(b)) {
 		return a.skill_key === b.skill_key;
 	}
 	if (a.kind === "session_push" && b.kind === "session_push") {
 		return a.local_session_id === b.local_session_id;
 	}
 	return false;
+}
+
+function isSkillOperation(
+	item: QueueItem,
+): item is Extract<QueueItem, { kind: "skill_push" | "skill_delete" }> {
+	return item.kind === "skill_push" || item.kind === "skill_delete";
 }

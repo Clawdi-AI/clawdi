@@ -24,6 +24,10 @@
  * keep a long outage from drifting into an hour-long retry gap.
  */
 
+import {
+	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	SKILL_SYNC_PROTOCOL_HEADER,
+} from "../lib/skill-sync-protocol";
 import { log, toErrorMessage } from "./log";
 
 /** Events the server emits. Mirrors `bump_skills_revision` on
@@ -32,32 +36,36 @@ import { log, toErrorMessage } from "./log";
  *
  * `project_id` carries the project that owns the affected skill —
  * daemons MUST drop events whose project_id doesn't match their
- * env's default_project_id, otherwise a skill_deleted in project A
- * would prompt env B's daemon to delete its (different) local
- * skill with the same skill_key. The phase-1 design defers
- * server-side filtering to phase 2; daemon-side filtering is the
- * v1 mitigation. */
+ * Agent Project. Skill events are invalidation hints only: the
+ * filesystem-authoritative sync engine re-scans local state and never
+ * downloads or deletes local content in response to Cloud events. */
 export type SkillServerEvent =
 	| {
-			type: "skill_changed";
+			type: "skill_changed" | "agent_skill_changed";
 			skill_key: string;
 			project_id: string;
 			skills_revision: number;
-			/** Tree hash of the bytes the server now stores. The
-			 * daemon uses this to recognize its OWN upload echoing
-			 * back via SSE: if the event's content_hash matches the
-			 * daemon's lastPushedHash for that key, the bytes on
-			 * disk already match and pulling would race a fresher
-			 * local edit. Optional for forward/back compat with
-			 * server versions that didn't carry the field. */
+			/** Optional projection hash retained for wire compatibility.
+			 * It is never authority for local filesystem mutation. */
 			content_hash?: string;
 	  }
 	| {
-			type: "skill_deleted";
+			type: "skill_deleted" | "agent_skill_deleted";
 			skill_key: string;
 			project_id: string;
 			skills_revision: number;
 	  };
+
+type SkillChangedEventType = "skill_changed" | "agent_skill_changed";
+type SkillDeletedEventType = "skill_deleted" | "agent_skill_deleted";
+
+function isSkillChangedEventType(value: unknown): value is SkillChangedEventType {
+	return value === "skill_changed" || value === "agent_skill_changed";
+}
+
+function isSkillDeletedEventType(value: unknown): value is SkillDeletedEventType {
+	return value === "skill_deleted" || value === "agent_skill_deleted";
+}
 
 export type RuntimeManifestChangedEvent = {
 	type: "runtime_manifest_changed";
@@ -260,6 +268,7 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 			Authorization: `Bearer ${accessToken}`,
 			Accept: "text/event-stream",
 			"Cache-Control": "no-cache",
+			[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 		},
 		signal: opts.abort,
 	});
@@ -390,7 +399,9 @@ function parseServerEvent(value: unknown): ServerEvent | null {
 			? { type: event.type, environment_id: event.environment_id }
 			: null;
 	}
-	if (event.type !== "skill_changed" && event.type !== "skill_deleted") return null;
+	const changed = isSkillChangedEventType(event.type);
+	const deleted = isSkillDeletedEventType(event.type);
+	if (!changed && !deleted) return null;
 	if (
 		typeof event.skill_key !== "string" ||
 		event.skill_key.length === 0 ||
@@ -401,20 +412,22 @@ function parseServerEvent(value: unknown): ServerEvent | null {
 	) {
 		return null;
 	}
-	return event.type === "skill_changed"
-		? {
-				type: event.type,
-				skill_key: event.skill_key,
-				project_id: event.project_id,
-				skills_revision: event.skills_revision,
-				...(typeof event.content_hash === "string" ? { content_hash: event.content_hash } : {}),
-			}
-		: {
-				type: event.type,
-				skill_key: event.skill_key,
-				project_id: event.project_id,
-				skills_revision: event.skills_revision,
-			};
+	if (changed && isSkillChangedEventType(event.type)) {
+		return {
+			type: event.type,
+			skill_key: event.skill_key,
+			project_id: event.project_id,
+			skills_revision: event.skills_revision,
+			...(typeof event.content_hash === "string" ? { content_hash: event.content_hash } : {}),
+		};
+	}
+	if (!isSkillDeletedEventType(event.type)) return null;
+	return {
+		type: event.type,
+		skill_key: event.skill_key,
+		project_id: event.project_id,
+		skills_revision: event.skills_revision,
+	};
 }
 
 function errorInfo(err: unknown): { reason: string; http_status?: number; request_id?: string } {

@@ -6,7 +6,9 @@
  */
 
 import { describe, expect, it } from "bun:test";
+import { createHash, randomBytes } from "node:crypto";
 import {
+	chmodSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -18,8 +20,17 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import * as tar from "tar";
-import { replaceSkillArchiveTarGz, tarSingleFile, tarSkillDir } from "../src/lib/tar";
+import { computeSkillFolderHash } from "../src/lib/skills-lock";
+import {
+	computeSkillArchiveHash,
+	extractTarGz,
+	replaceSkillArchiveTarGz,
+	SKILL_ARCHIVE_EXTRACTION_LIMITS,
+	tarSingleFile,
+	tarSkillDir,
+} from "../src/lib/tar";
 
 function buildSkill(layout: Record<string, string>): { path: string; cleanup: () => void } {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-tar-test-"));
@@ -42,6 +53,145 @@ async function listEntries(bytes: Buffer): Promise<string[]> {
 	});
 	return entries;
 }
+
+async function createTarGz(cwd: string, paths: string[]): Promise<Buffer> {
+	const chunks: Buffer[] = [];
+	await tar
+		.create({ gzip: true, cwd }, paths)
+		.on("data", (chunk: Buffer) => chunks.push(chunk))
+		.promise();
+	return Buffer.concat(chunks);
+}
+
+function createSpecialEntryTarGz(type: "FIFO" | "CharacterDevice" | "BlockDevice"): Buffer {
+	const header = new tar.Header({
+		path: "special",
+		type,
+		mode: 0o600,
+		uid: 0,
+		gid: 0,
+		size: 0,
+		mtime: new Date(0),
+	});
+	const headerBlock = Buffer.alloc(512);
+	if (header.encode(headerBlock)) throw new Error("crafted tar header unexpectedly needs PAX");
+	return gzipSync(Buffer.concat([headerBlock, Buffer.alloc(1_024)]));
+}
+
+describe("extractTarGz resource limits", () => {
+	it("extracts a valid nested Hermes archive within every limit", async () => {
+		const { path, cleanup } = buildSkill({
+			"category/foo/SKILL.md": "# nested",
+			"category/foo/references/notes.md": "safe",
+		});
+		const destination = mkdtempSync(join(tmpdir(), "clawdi-tar-extract-test-"));
+		try {
+			const bytes = await createTarGz(path, ["category/foo"]);
+			await extractTarGz(destination, bytes);
+			expect(readFileSync(join(destination, "category/foo/SKILL.md"), "utf8")).toBe("# nested");
+			expect(readFileSync(join(destination, "category/foo/references/notes.md"), "utf8")).toBe(
+				"safe",
+			);
+		} finally {
+			cleanup();
+			rmSync(destination, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an archive over the entry-count ceiling", async () => {
+		const source = mkdtempSync(join(tmpdir(), "clawdi-tar-count-source-"));
+		const destination = mkdtempSync(join(tmpdir(), "clawdi-tar-count-target-"));
+		try {
+			const archiveRoot = join(source, "many");
+			mkdirSync(archiveRoot, { recursive: true });
+			for (let index = 0; index < SKILL_ARCHIVE_EXTRACTION_LIMITS.entryCount; index += 1) {
+				writeFileSync(join(archiveRoot, `${index.toString().padStart(4, "0")}.txt`), "");
+			}
+			const bytes = await createTarGz(source, ["many"]);
+			await expect(extractTarGz(destination, bytes)).rejects.toThrow(
+				`exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.entryCount} entries`,
+			);
+		} finally {
+			rmSync(source, { recursive: true, force: true });
+			rmSync(destination, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects an oversized entry before writing its payload", async () => {
+		const source = mkdtempSync(join(tmpdir(), "clawdi-tar-entry-source-"));
+		const destination = mkdtempSync(join(tmpdir(), "clawdi-tar-entry-target-"));
+		try {
+			mkdirSync(join(source, "large"), { recursive: true });
+			writeFileSync(
+				join(source, "large/payload.bin"),
+				Buffer.alloc(SKILL_ARCHIVE_EXTRACTION_LIMITS.entryBytes + 1),
+			);
+			const bytes = await createTarGz(source, ["large"]);
+			await expect(extractTarGz(destination, bytes)).rejects.toThrow(
+				`entry exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.entryBytes} bytes`,
+			);
+			expect(existsSync(join(destination, "large/payload.bin"))).toBe(false);
+		} finally {
+			rmSync(source, { recursive: true, force: true });
+			rmSync(destination, { recursive: true, force: true });
+		}
+	});
+
+	it("bounds cumulative writes from a highly-compressible archive", async () => {
+		const source = mkdtempSync(join(tmpdir(), "clawdi-tar-total-source-"));
+		const destination = mkdtempSync(join(tmpdir(), "clawdi-tar-total-target-"));
+		try {
+			const archiveRoot = join(source, "large");
+			mkdirSync(archiveRoot, { recursive: true });
+			const firstEntry = Buffer.alloc(SKILL_ARCHIVE_EXTRACTION_LIMITS.entryBytes);
+			randomBytes(128 * 1024).copy(firstEntry);
+			writeFileSync(join(archiveRoot, "a.bin"), firstEntry);
+			writeFileSync(
+				join(archiveRoot, "b.bin"),
+				Buffer.alloc(SKILL_ARCHIVE_EXTRACTION_LIMITS.entryBytes),
+			);
+			writeFileSync(join(archiveRoot, "c.bin"), Buffer.alloc(1));
+			const bytes = await createTarGz(source, ["large"]);
+			// This is intentionally bomb-shaped: tens of MiB of zeros should
+			// compress to a tiny input while still being bounded on expansion.
+			expect(bytes.length).toBeLessThan(SKILL_ARCHIVE_EXTRACTION_LIMITS.entryBytes);
+			await expect(extractTarGz(destination, bytes)).rejects.toThrow(
+				`exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.totalEntryBytes} total entry bytes`,
+			);
+			expect(existsSync(join(destination, "large/c.bin"))).toBe(false);
+		} finally {
+			rmSync(source, { recursive: true, force: true });
+			rmSync(destination, { recursive: true, force: true });
+		}
+	});
+
+	it("stops malformed gzip expansion before feeding an unbounded tar stream", async () => {
+		const destination = mkdtempSync(join(tmpdir(), "clawdi-tar-expanded-target-"));
+		try {
+			const bomb = gzipSync(Buffer.alloc(SKILL_ARCHIVE_EXTRACTION_LIMITS.expandedTarBytes + 1));
+			await expect(extractTarGz(destination, bomb)).rejects.toThrow(
+				`exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.expandedTarBytes} expanded tar bytes`,
+			);
+			expect(readdirSync(destination)).toEqual([]);
+		} finally {
+			rmSync(destination, { recursive: true, force: true });
+		}
+	});
+
+	it("rejects special filesystem entries before writing to the destination", async () => {
+		for (const type of ["FIFO", "CharacterDevice", "BlockDevice"] as const) {
+			const destination = mkdtempSync(join(tmpdir(), "clawdi-tar-special-target-"));
+			try {
+				await expect(extractTarGz(destination, createSpecialEntryTarGz(type))).rejects.toThrow(
+					"unsupported entry type",
+				);
+				expect(readdirSync(destination)).toEqual([]);
+			} finally {
+				rmSync(destination, { recursive: true, force: true });
+			}
+		}
+	});
+});
 
 describe("tarSkillDir filter", () => {
 	it("excludes node_modules / .git / dist / __pycache__ at any depth inside the skill", async () => {
@@ -149,7 +299,7 @@ describe("tarSkillDir filter", () => {
 		}
 	});
 
-	it("drops symlink entries from downloaded shared skill archives", async () => {
+	it("rejects symlink entries from imported shared skill archives", async () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-shared-extract-test-"));
 		try {
 			mkdirSync(join(root, "safe-skill"), { recursive: true });
@@ -164,9 +314,10 @@ describe("tarSkillDir filter", () => {
 
 			const skillsRoot = join(root, "skills");
 			const target = join(skillsRoot, "target");
-			await replaceSkillArchiveTarGz("safe-skill", skillsRoot, target, Buffer.concat(chunks));
-			expect(existsSync(join(target, "SKILL.md"))).toBe(true);
-			expect(existsSync(join(target, "leak"))).toBe(false);
+			await expect(
+				replaceSkillArchiveTarGz("safe-skill", skillsRoot, target, Buffer.concat(chunks)),
+			).rejects.toThrow("unsupported entry type");
+			expect(existsSync(target)).toBe(false);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -217,9 +368,16 @@ describe("tarSkillDir filter", () => {
 			);
 			mkdirSync(join(root, "autoplan"), { recursive: true });
 			symlinkSync(join(root, "gstack", "autoplan", "SKILL.md"), join(root, "autoplan", "SKILL.md"));
-			const bytes = await tarSkillDir(join(root, "autoplan"));
+			const skillDir = join(root, "autoplan");
+			const bytes = await tarSkillDir(skillDir);
 			const entries = await listEntries(bytes);
 			expect(entries).toContain("autoplan/SKILL.md");
+			const firstHash = await computeSkillFolderHash(skillDir, undefined, "autoplan");
+			expect(await computeSkillArchiveHash(bytes, "autoplan")).toBe(firstHash);
+
+			writeFileSync(join(root, "gstack", "autoplan", "SKILL.md"), "# changed target\n");
+			const changedHash = await computeSkillFolderHash(skillDir, undefined, "autoplan");
+			expect(changedHash).not.toBe(firstHash);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -252,6 +410,9 @@ describe("tarSkillDir filter", () => {
 			// `follow: true`) — its presence proves we accepted the
 			// sibling-category symlink rather than throwing.
 			expect(entries.some((e) => e.endsWith("ref.md"))).toBe(true);
+			expect(await computeSkillArchiveHash(bytes, "category/foo")).toBe(
+				await computeSkillFolderHash(join(root, "category", "foo"), undefined, "category/foo"),
+			);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
@@ -271,9 +432,75 @@ describe("tarSkillDir filter", () => {
 			await expect(
 				tarSkillDir(join(root, "category", "foo"), undefined, "category/foo"),
 			).rejects.toThrow(/pointing outside the agent's skills directory/);
+			await expect(
+				computeSkillFolderHash(join(root, "category", "foo"), undefined, "category/foo"),
+			).rejects.toThrow(/pointing outside the agent's skills directory/);
 		} finally {
 			rmSync(root, { recursive: true, force: true });
 		}
+	});
+
+	it("rejects an in-trust directory symlink cycle before archiving or hashing", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-tar-cycle-test-"));
+		try {
+			const skillDir = join(root, "cycle");
+			mkdirSync(skillDir, { recursive: true });
+			writeFileSync(join(skillDir, "SKILL.md"), "# cycle\n");
+			symlinkSync(skillDir, join(skillDir, "loop"));
+			await expect(tarSkillDir(skillDir)).rejects.toThrow(/cyclic/);
+			await expect(computeSkillFolderHash(skillDir, undefined, "cycle")).rejects.toThrow(/cyclic/);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps chmod-only changes outside the published path-and-bytes hash", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-tar-mode-test-"));
+		try {
+			const skillDir = join(root, "mode-only");
+			mkdirSync(skillDir, { recursive: true });
+			const skillFile = join(skillDir, "SKILL.md");
+			writeFileSync(skillFile, "# stable bytes\n");
+			const before = await computeSkillFolderHash(skillDir, undefined, "mode-only");
+			chmodSync(skillFile, 0o700);
+			expect(await computeSkillFolderHash(skillDir, undefined, "mode-only")).toBe(before);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	it("orders projected paths by Python-compatible codepoint order", async () => {
+		const { path, cleanup } = buildSkill({
+			"ordered/a.md": "lower",
+			"ordered/Z.md": "upper",
+			"ordered/SKILL.md": "skill",
+		});
+		try {
+			const expected = createHash("sha256");
+			for (const [relativePath, content] of [
+				["SKILL.md", "skill"],
+				["Z.md", "upper"],
+				["a.md", "lower"],
+			] as const) {
+				expected.update(relativePath);
+				expected.update(content);
+			}
+			const bytes = await tarSkillDir(join(path, "ordered"));
+			expect(await computeSkillArchiveHash(bytes, "ordered")).toBe(expected.digest("hex"));
+		} finally {
+			cleanup();
+		}
+	});
+
+	it("matches the Python hash for astral and BMP paths in the same archive", async () => {
+		const encoded = readFileSync(
+			new URL("../../../test-fixtures/skill-hash/unicode-tree.tar.gz.b64", import.meta.url),
+			"utf8",
+		).trim();
+		const archive = Buffer.from(encoded, "base64");
+		expect(await computeSkillArchiveHash(archive, "unicode")).toBe(
+			"18e78f6921e3d0fe6443fa12b74921e9b4bb5bead518ca9b3af638a2ab1eda10",
+		);
 	});
 
 	it("rejects nested escapes through an in-trust symlinked directory", async () => {

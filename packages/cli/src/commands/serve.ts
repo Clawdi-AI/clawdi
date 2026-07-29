@@ -1,9 +1,10 @@
 /**
  * `clawdi daemon` entry.
  *
- * Long-lived process. Watches local skill directories, mirrors
- * cloud changes back to the local agent, posts heartbeats, and
- * keeps a bounded retry queue to survive transient outages.
+ * Long-lived process. Watches local skill directories, projects their
+ * Agent-authoritative state to Cloud, posts heartbeats, and keeps a bounded
+ * retry queue to survive transient outages. Cloud Skill events only wake a
+ * local re-scan; they never mutate the Agent filesystem.
  *
  * Three deploy contexts share this same code:
  *   - laptop: started by the user via `clawdi daemon install`

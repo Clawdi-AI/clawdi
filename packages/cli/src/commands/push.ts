@@ -25,13 +25,11 @@ import {
 import { isValidSkillKey } from "../lib/skill-key";
 import {
 	computeSkillFolderHash,
-	readSkillsLock,
-	type SkillsLock,
-	skillCacheKey,
-	writeSkillsLock,
+	readSkillProjectionState,
+	recordSkillProjectionClaim,
 } from "../lib/skills-lock";
 import { type ModuleState, readModuleState, writeModuleState } from "../lib/state";
-import { tarSkillDir } from "../lib/tar";
+import { snapshotSkillArchive } from "../lib/tar";
 
 const RESETUP_HINT =
 	"This machine's environment is no longer registered. Run `clawdi setup` again.";
@@ -125,7 +123,6 @@ export async function push(opts: PushOpts) {
 
 	const moduleState = readModuleState();
 	const sessionsLock = readSessionsLock();
-	const skillsLock = readSkillsLock();
 
 	// Project selection is agent-independent (derived only from flags), so
 	// resolve it once and report it once — not per agent.
@@ -148,14 +145,7 @@ export async function push(opts: PushOpts) {
 		for (const agentType of targetTypes) {
 			const adapter = adapterForType(agentType);
 			if (!adapter) continue;
-			const scan = await scanOneAgent(
-				adapter,
-				modules,
-				opts,
-				projectFilter,
-				sessionsLock,
-				skillsLock,
-			);
+			const scan = await scanOneAgent(adapter, modules, opts, projectFilter, sessionsLock);
 			if ("error" in scan) {
 				scanError = scan.error;
 				break;
@@ -231,7 +221,7 @@ export async function push(opts: PushOpts) {
 		if (toUpload.length > 1) {
 			p.log.step(chalk.bold(`▶ ${adapterRegistry[scan.agentType].displayName}`));
 		}
-		const result = await uploadOneAgent(scan, moduleState, sessionsLock, skillsLock);
+		const result = await uploadOneAgent(scan, moduleState, sessionsLock);
 		if (result === "aborted") {
 			aborted = true;
 			break;
@@ -248,7 +238,6 @@ export async function push(opts: PushOpts) {
 	// loop aborted partway — entries we mutated for successful agents
 	// are still valid and would otherwise be lost on the next push.
 	writeSessionsLock(sessionsLock);
-	writeSkillsLock(skillsLock);
 
 	if (aborted) {
 		p.outro(chalk.red("Aborted."));
@@ -291,7 +280,6 @@ async function scanOneAgent(
 	opts: PushOpts,
 	projectFilter: string | undefined,
 	sessionsLock: SessionsLock,
-	skillsLock: SkillsLock,
 ): Promise<AgentScanResult | { error: string }> {
 	const agentType = adapter.agentType;
 	const envId = getEnvIdByAgent(agentType);
@@ -354,18 +342,26 @@ async function scanOneAgent(
 		sessions = (await adapter.collectSessions({ projectFilter })).sessions;
 	}
 	if (modules.includes("skills")) {
-		// Hash each skill's file tree and diff against the skills-lock here,
-		// in the scan — the same per-entity cache check sessions get below —
-		// so the summary's skill count reflects what will actually upload.
+		// Always route local Skills through the authenticated Agent claim
+		// boundary. Legacy hash-only lock entries are not ownership evidence;
+		// skipping on them would leave same-byte Cloud rows unclaimed.
 		let invalidSkillCount = 0;
+		let exactClaims = new Map<string, string>();
+		if (!opts.dryRun && envId) {
+			const skillProjectId = await fetchProjectIdForEnv(new ApiClient(), envId);
+			exactClaims = readSkillProjectionState(agentType, envId, skillProjectId).claims;
+		}
 		for (const skill of await adapter.collectSkills()) {
 			if (!isValidSkillKey(skill.skillKey)) {
 				invalidSkillCount++;
 				continue;
 			}
-			skill.contentHash = await computeSkillFolderHash(skill.directoryPath);
-			const cached = skillsLock.skills[skillCacheKey(agentType, skill.skillKey)]?.hash;
-			if (cached === skill.contentHash) skillsCacheSkipped++;
+			skill.contentHash = await computeSkillFolderHash(
+				skill.directoryPath,
+				undefined,
+				skill.skillKey,
+			);
+			if (exactClaims.get(skill.skillKey) === skill.contentHash) skillsCacheSkipped++;
 			else skills.push(skill);
 		}
 		if (invalidSkillCount > 0) {
@@ -459,7 +455,6 @@ async function uploadOneAgent(
 	scan: AgentScanResult,
 	moduleState: ModuleState,
 	sessionsLock: SessionsLock,
-	skillsLock: SkillsLock,
 ): Promise<AgentUploadResult | "aborted"> {
 	const { agentType, envId, sessions, skills } = scan;
 
@@ -627,16 +622,17 @@ async function uploadOneAgent(
 			for (const skill of skills) {
 				// Pass skill_key so nested Hermes layouts archive
 				// entries under `category/foo/...` (matching the
-				// cloud key), not just `foo/...` which would
-				// extract to the wrong path on pull.
-				const tarBytes = await tarSkillDir(skill.directoryPath, undefined, skill.skillKey);
+				// cloud key), not just `foo/...` which would violate the
+				// projection archive-root contract.
+				const snapshot = await snapshotSkillArchive(skill.directoryPath, undefined, skill.skillKey);
 				try {
-					await api.uploadSkill(
+					await api.uploadAgentSkill(
+						envId,
 						skillProjectId,
 						skill.skillKey,
-						tarBytes,
+						snapshot.archive,
 						`${skill.skillKey}.tar.gz`,
-						skill.contentHash,
+						snapshot.hash,
 					);
 					pushed++;
 					// Cache key is partitioned by `(agentType, skillKey)`: in
@@ -644,11 +640,13 @@ async function uploadOneAgent(
 					// `foo` content under different projects; a flat skill_key
 					// cache would say "B already in sync" the moment A pushed,
 					// leaving B's project missing the skill.
-					if (skill.contentHash) {
-						skillsLock.skills[skillCacheKey(agentType, skill.skillKey)] = {
-							hash: skill.contentHash,
-						};
-					}
+					recordSkillProjectionClaim({
+						agentType,
+						agentId: envId,
+						projectId: skillProjectId,
+						skillKey: skill.skillKey,
+						hash: snapshot.hash,
+					});
 				} catch (e) {
 					// 413 = upstream (Cloudflare / nginx) refused the body. Almost
 					// always a single oversized skill; skip it and keep going so
@@ -666,7 +664,7 @@ async function uploadOneAgent(
 							(typeof e.body === "string" &&
 								/(?:^|[^0-9])413(?:[^0-9]|$)|payload too large/i.test(e.body)));
 					if (!is413) throw e;
-					const mb = (tarBytes.length / 1024 / 1024).toFixed(1);
+					const mb = (snapshot.archive.length / 1024 / 1024).toFixed(1);
 					skipped.push({ key: skill.skillKey, reason: `${mb} MB exceeds upload limit` });
 				}
 				skillSpinner.message(`Uploading skills (${pushed + skipped.length}/${skills.length})...`);

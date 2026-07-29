@@ -64,7 +64,7 @@ export function registerServeCommand(program: Command, handlers?: ServeHandlers)
 		.option("--port <port>", "Control HTTP RPC port")
 		.option("--allow-remote", "Allow the control HTTP RPC listener to bind a non-loopback host")
 		.description(
-			"Manage the background sync daemon — pushes local skill edits to cloud, pulls dashboard installs via SSE",
+			"Manage the background sync daemon — projects local Agent Skills to Cloud and mirrors sessions",
 		)
 		.addHelpText(
 			"after",

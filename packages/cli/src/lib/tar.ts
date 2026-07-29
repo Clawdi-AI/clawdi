@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
 	existsSync,
 	lstatSync,
@@ -9,6 +10,7 @@ import {
 } from "node:fs";
 import { lstat, readdir, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { createGunzip } from "node:zlib";
 import * as tar from "tar";
 import { isReservedSkillArchivePath } from "../runtime/managed-skill-reservation";
 import { assertValidSkillKey } from "./skill-key";
@@ -68,6 +70,27 @@ export const SKILL_TAR_EXCLUDE = new Set([
 	".codex",
 ]);
 
+/** Extraction ceilings for Agent-authored Skill archives. The compressed
+ * upload limit alone cannot contain a gzip bomb, so extraction also bounds
+ * declared file content and the actual decompressed tar stream. */
+export const SKILL_ARCHIVE_EXTRACTION_LIMITS = Object.freeze({
+	entryCount: 1_024,
+	entryBytes: 16 * 1024 * 1024,
+	totalEntryBytes: 32 * 1024 * 1024,
+	// Includes tar headers, block padding, and extended metadata in addition
+	// to file content. This stays above the maximum legitimate entry payload
+	// plus worst-case ordinary header/padding overhead at the entry-count cap.
+	expandedTarBytes: 36 * 1024 * 1024,
+});
+
+function isRegularArchiveFile(type: string | undefined): boolean {
+	return type === "File" || type === "OldFile" || type === "ContiguousFile";
+}
+
+function isAllowedArchiveEntry(type: string | undefined): boolean {
+	return isRegularArchiveFile(type) || type === "Directory";
+}
+
 /**
  * Extract a gzipped tar archive into `cwd`.
  *
@@ -78,22 +101,85 @@ export const SKILL_TAR_EXCLUDE = new Set([
  * `end`; waiting for `finish` lets the caller resume before that finalization.
  */
 export function extractTarGz(cwd: string, bytes: Buffer): Promise<void> {
+	return assertExpandedTarLimit(bytes).then(
+		() =>
+			new Promise((resolvePromise, reject) => {
+				let entryCount = 0;
+				let totalEntryBytes = 0;
+				const stream = tar.extract({
+					cwd,
+					gzip: true,
+					filter: (path, entry) => {
+						entryCount += 1;
+						if (entryCount > SKILL_ARCHIVE_EXTRACTION_LIMITS.entryCount) {
+							throw new Error(
+								`Skill archive exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.entryCount} entries`,
+							);
+						}
+						const size = entry.size;
+						if (!Number.isSafeInteger(size) || size < 0) {
+							throw new Error("Skill archive contains an invalid entry size");
+						}
+						if (size > SKILL_ARCHIVE_EXTRACTION_LIMITS.entryBytes) {
+							throw new Error(
+								`Skill archive entry exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.entryBytes} bytes`,
+							);
+						}
+						totalEntryBytes += size;
+						if (totalEntryBytes > SKILL_ARCHIVE_EXTRACTION_LIMITS.totalEntryBytes) {
+							throw new Error(
+								`Skill archive exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.totalEntryBytes} total entry bytes`,
+							);
+						}
+						if (path.includes("..") || path.startsWith("/")) return false;
+						if (isReservedSkillArchivePath(path)) {
+							throw new Error("Skill archive contains reserved management metadata");
+						}
+						const type = "type" in entry ? entry.type : undefined;
+						if (!isAllowedArchiveEntry(type)) {
+							throw new Error("Skill archive contains an unsupported entry type");
+						}
+						return true;
+					},
+				});
+				stream.on("close", () => resolvePromise());
+				stream.on("error", reject);
+				stream.end(bytes);
+			}),
+	);
+}
+
+/** Decompress once into a counting sink before giving the archive to tar.
+ * This makes the absolute expansion limit independent of tar EOF/backpressure
+ * behavior and guarantees a gzip bomb is rejected before extraction writes. */
+function assertExpandedTarLimit(bytes: Buffer): Promise<void> {
 	return new Promise((resolvePromise, reject) => {
-		const stream = tar.extract({
-			cwd,
-			gzip: true,
-			filter: (path, entry) => {
-				if (path.includes("..") || path.startsWith("/")) return false;
-				if (isReservedSkillArchivePath(path)) {
-					throw new Error("Skill archive contains reserved management metadata");
-				}
-				const type = "type" in entry ? entry.type : undefined;
-				return type !== "SymbolicLink" && type !== "Link";
-			},
+		let expandedTarBytes = 0;
+		let settled = false;
+		const gunzip = createGunzip();
+		const fail = (error: Error): void => {
+			if (settled) return;
+			settled = true;
+			gunzip.destroy();
+			reject(error);
+		};
+		gunzip.on("error", (error) => fail(error));
+		gunzip.on("data", (chunk: Buffer) => {
+			expandedTarBytes += chunk.length;
+			if (expandedTarBytes > SKILL_ARCHIVE_EXTRACTION_LIMITS.expandedTarBytes) {
+				fail(
+					new Error(
+						`Skill archive exceeds ${SKILL_ARCHIVE_EXTRACTION_LIMITS.expandedTarBytes} expanded tar bytes`,
+					),
+				);
+			}
 		});
-		stream.on("close", () => resolvePromise());
-		stream.on("error", reject);
-		stream.end(bytes);
+		gunzip.on("end", () => {
+			if (settled) return;
+			settled = true;
+			resolvePromise();
+		});
+		gunzip.end(bytes);
 	});
 }
 
@@ -213,60 +299,59 @@ async function findEscapingSymlinks(
 	};
 	const escaping: string[] = [];
 
-	// Track symlink targets we've already descended into so a cycle
-	// (`a -> b`, `b -> a`, both inside the trust root) doesn't make
-	// the walk hang. realpath-resolved keys collapse cycles to the
-	// same canonical path.
-	const visited = new Set<string>();
+	// Canonical directory identities make the validation graph explicit.
+	// A completed directory can be reused by multiple safe symlinks, while a
+	// target already on the active recursion stack is a cycle and must fail
+	// closed before `tar.create({ follow: true })` can recurse into it.
+	const completedDirectories = new Set<string>();
+	const activeDirectories = new Set<string>();
 	const walk = async (current: string): Promise<void> => {
+		let canonicalCurrent: string;
+		try {
+			canonicalCurrent = await realpath(current);
+		} catch {
+			escaping.push(current);
+			return;
+		}
+		if (activeDirectories.has(canonicalCurrent)) {
+			escaping.push(current);
+			return;
+		}
+		if (completedDirectories.has(canonicalCurrent)) return;
+		activeDirectories.add(canonicalCurrent);
 		const entries = await readdir(current, { withFileTypes: true });
-		for (const ent of entries) {
-			const fullPath = join(current, ent.name);
-			if (ent.isSymbolicLink()) {
-				try {
-					const target = await realpath(fullPath);
-					if (!isInsideTrust(target)) {
-						escaping.push(fullPath);
-						continue;
-					}
-					// Symlink stays inside the trust root, but tar
-					// uses `follow: true` and will dereference any
-					// further symlinks INSIDE that target. A
-					// `skill/shared -> ../shared` symlink is fine on
-					// its own; if `../shared/leak -> /etc/hosts`
-					// then we must reject it because the published
-					// tarball would otherwise carry /etc/hosts.
-					// Recurse into the resolved target so the same
-					// escape check fires for nested links. Skip if
-					// the resolved target isn't a directory (a
-					// symlink to a single file is fully covered by
-					// the in-trust check above).
-					if (visited.has(target)) continue;
-					visited.add(target);
+		try {
+			for (const ent of entries) {
+				if (SKILL_TAR_EXCLUDE.has(ent.name)) continue;
+				const fullPath = join(current, ent.name);
+				if (ent.isSymbolicLink()) {
 					try {
+						const target = await realpath(fullPath);
+						if (!isInsideTrust(target)) {
+							escaping.push(fullPath);
+							continue;
+						}
 						const targetStats = await lstat(target);
 						if (targetStats.isDirectory()) await walk(target);
 					} catch {
-						// Target vanished between realpath and
-						// lstat; nothing to recurse into.
+						// Broken, racing, or cyclic links cannot be represented as
+						// a stable dereferenced projection.
+						escaping.push(fullPath);
 					}
-				} catch {
-					// Broken symlink — refuse to archive it; the
-					// uploaded blob would be empty / surprising.
-					escaping.push(fullPath);
+					continue;
 				}
-				continue;
-			}
-			if (ent.isDirectory()) {
-				if (SKILL_TAR_EXCLUDE.has(ent.name)) continue;
-				try {
-					const stats = await lstat(fullPath);
-					if (stats.isDirectory()) await walk(fullPath);
-				} catch {
-					// Directory disappeared between readdir and lstat;
-					// skip silently.
+				if (ent.isDirectory()) {
+					try {
+						const stats = await lstat(fullPath);
+						if (stats.isDirectory()) await walk(fullPath);
+					} catch {
+						// A vanished ordinary directory contributes no archive bytes.
+					}
 				}
 			}
+		} finally {
+			activeDirectories.delete(canonicalCurrent);
+			completedDirectories.add(canonicalCurrent);
 		}
 	};
 
@@ -301,7 +386,7 @@ export async function tarSkillDir(
 	// flat layouts it equals `basename(dirPath)`; for Hermes
 	// nested layouts it's `category/foo` etc. The archive's
 	// directory entries MUST use the full key as the prefix so a
-	// later download/extract at the skills root recreates the
+	// later projection/import extraction at the skills root recreates the
 	// correct on-disk path. Pre-fix the daemon archived only
 	// `basename(dirPath)` (e.g. `foo/`) for a `category/foo`
 	// upload — the cloud row was keyed `category/foo` but the
@@ -331,7 +416,7 @@ export async function tarSkillDir(
 	const escaping = await findEscapingSymlinks(dirPath, trustRoot ?? cwd);
 	if (escaping.length > 0) {
 		throw new Error(
-			`Skill contains symlink(s) pointing outside the agent's skills directory; refusing to upload: ${escaping.join(", ")}`,
+			`Skill contains symlink(s) pointing outside the agent's skills directory, broken, or cyclic; refusing to upload: ${escaping.join(", ")}`,
 		);
 	}
 
@@ -363,6 +448,79 @@ export async function tarSkillDir(
 		.on("data", (chunk: Buffer) => chunks.push(chunk))
 		.promise();
 	return Buffer.concat(chunks);
+}
+
+/** Hash the exact dereferenced regular-file projection carried by a Skill
+ * archive. The ordering and `path + bytes` framing intentionally match the
+ * backend's published hash contract and Python's codepoint string ordering. */
+export async function computeSkillArchiveHash(bytes: Buffer, skillKey?: string): Promise<string> {
+	const stripCount = skillKey ? skillKey.split("/").length : 1;
+	const fileReads: Array<Promise<{ relativePath: string; content: Buffer }>> = [];
+	const stream = tar.list({
+		gzip: true,
+		onReadEntry: (entry) => {
+			if (!isRegularArchiveFile(entry.type)) {
+				entry.resume();
+				return;
+			}
+			const parts = entry.path.split("/");
+			const relativeParts = parts.slice(stripCount);
+			const relativePath = relativeParts.join("/");
+			if (!relativePath || relativeParts.some((part) => SKILL_TAR_EXCLUDE.has(part))) {
+				entry.resume();
+				return;
+			}
+			fileReads.push(
+				entry.concat().then((content) => ({ relativePath, content: Buffer.from(content) })),
+			);
+		},
+	});
+	await new Promise<void>((resolvePromise, reject) => {
+		stream.on("end", resolvePromise);
+		stream.on("error", reject);
+		stream.end(bytes);
+	});
+	const files = await Promise.all(fileReads);
+	files.sort((a, b) => compareUnicodeCodePoints(a.relativePath, b.relativePath));
+	const hash = createHash("sha256");
+	for (const file of files) {
+		hash.update(file.relativePath);
+		hash.update(file.content);
+	}
+	return hash.digest("hex");
+}
+
+/** Match Python's lexicographic `str` ordering by Unicode code point.
+ * JavaScript's relational string operators compare UTF-16 code units, which
+ * orders astral characters before some BMP characters and breaks server hash
+ * parity for otherwise valid archive paths. */
+export function compareUnicodeCodePoints(left: string, right: string): number {
+	const leftIterator = left[Symbol.iterator]();
+	const rightIterator = right[Symbol.iterator]();
+	while (true) {
+		const leftNext = leftIterator.next();
+		const rightNext = rightIterator.next();
+		if (leftNext.done || rightNext.done) {
+			if (leftNext.done && rightNext.done) return 0;
+			return leftNext.done ? -1 : 1;
+		}
+		const leftPoint = leftNext.value.codePointAt(0);
+		const rightPoint = rightNext.value.codePointAt(0);
+		if (leftPoint === undefined || rightPoint === undefined) {
+			throw new Error("Unicode iterator returned an empty code point");
+		}
+		if (leftPoint !== rightPoint) return leftPoint < rightPoint ? -1 : 1;
+	}
+}
+
+/** Capture one validated archive and the published hash of those exact bytes. */
+export async function snapshotSkillArchive(
+	dirPath: string,
+	trustRoot?: string | string[],
+	skillKey?: string,
+): Promise<{ archive: Buffer; hash: string }> {
+	const archive = await tarSkillDir(dirPath, trustRoot, skillKey);
+	return { archive, hash: await computeSkillArchiveHash(archive, skillKey) };
 }
 
 /**

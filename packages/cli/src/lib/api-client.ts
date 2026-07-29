@@ -5,6 +5,10 @@ import { canonicalApiOrigin, normalizeCloudApiBaseUrl } from "./api-origin";
 import { assertCloudCredentialEndpoint, getClawdiAccessToken } from "./clerk-oauth";
 import { getAuth, getConfig } from "./config";
 import { assertValidSkillKey } from "./skill-key";
+import {
+	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	SKILL_SYNC_PROTOCOL_HEADER,
+} from "./skill-sync-protocol";
 import { getCliVersion } from "./version";
 
 type SkillUploadResponse = components["schemas"]["SkillUploadResponse"];
@@ -266,6 +270,7 @@ export class ApiClient {
 					request.headers.set("Authorization", `Bearer ${await getClawdiAccessToken(baseUrl)}`);
 				}
 				request.headers.set("User-Agent", USER_AGENT);
+				request.headers.set(SKILL_SYNC_PROTOCOL_HEADER, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1);
 				// Generate a per-request correlation ID. Backend's
 				// RequestIDMiddleware accepts the header and echoes
 				// it on the response + every log line, so an oncall
@@ -338,6 +343,85 @@ export class ApiClient {
 		);
 	}
 
+	/**
+	 * Project a Skill authored in an Agent filesystem. The Agent id is the
+	 * authority boundary; the server derives and fences the owning Project.
+	 * Keep this separate from uploadSkill(): the project route remains the
+	 * compatibility/cloud boundary and must never be used by new daemon code.
+	 */
+	async uploadAgentSkill(
+		agentId: string,
+		projectId: string,
+		skillKey: string,
+		file: Buffer,
+		filename: string,
+		contentHash?: string,
+	): Promise<SkillUploadResponse> {
+		assertValidSkillKey(skillKey);
+		const fields: Record<string, string> = { skill_key: skillKey };
+		if (contentHash) fields.content_hash = contentHash;
+		try {
+			return await this.multipartPost<SkillUploadResponse>(
+				`/v1/agents/${encodeURIComponent(agentId)}/skills/sync/upload`,
+				fields,
+				file,
+				filename,
+			);
+		} catch (error) {
+			if (!(error instanceof ApiError) || error.status !== 404) throw error;
+			// Consumer-first rollout: older backends do not expose the
+			// Agent-authoritative route. Their generic Project upload is safe for
+			// this one-way client because SSE/listing never mutates local files.
+			return this.uploadSkill(projectId, skillKey, file, filename, contentHash);
+		}
+	}
+
+	/** Report that an Agent-authoritative local Skill is absent. Idempotent. */
+	async deleteAgentSkill(agentId: string, skillKey: string, projectId: string): Promise<void> {
+		assertValidSkillKey(skillKey);
+		const url = new URL(
+			`${this.baseUrl}/v1/agents/${encodeURIComponent(agentId)}/skills/sync/${encodeURIComponent(skillKey)}`,
+		);
+		url.searchParams.set("project_id", projectId);
+		const accessToken = await this.getAccessToken();
+		const req = new Request(url, {
+			method: "DELETE",
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				"User-Agent": USER_AGENT,
+				"X-Request-ID": randomUUID(),
+				[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+			},
+		});
+		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
+		if (res.status === 404) {
+			const fallback = new Request(
+				`${this.baseUrl}/v1/projects/${encodeURIComponent(projectId)}/skills/${encodeURIComponent(skillKey)}`,
+				{
+					method: "DELETE",
+					headers: {
+						Authorization: `Bearer ${accessToken}`,
+						"User-Agent": USER_AGENT,
+						"X-Request-ID": randomUUID(),
+						[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+					},
+				},
+			);
+			const fallbackResponse = await retryingFetch(fallback, DEFAULT_TIMEOUT_MS, this.abortSignal);
+			if (fallbackResponse.ok) return;
+			const fallbackBody = await fallbackResponse.text();
+			throw new ApiError({
+				status: fallbackResponse.status,
+				body: fallbackBody,
+				hint: hintFor(fallbackResponse.status),
+			});
+		}
+		if (!res.ok) {
+			const body = await res.text();
+			throw new ApiError({ status: res.status, body, hint: hintFor(res.status) });
+		}
+	}
+
 	/** Upload per-session content JSON to `/v1/sessions/{id}/upload`. */
 	async uploadSessionContent(
 		localSessionId: string,
@@ -387,6 +471,7 @@ export class ApiClient {
 			const headers: Record<string, string> = {
 				Authorization: `Bearer ${accessToken}`,
 				"User-Agent": USER_AGENT,
+				[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 				...(extraHeaders ?? {}),
 			};
 			const res = await fetch(`${this.baseUrl}${path}`, {

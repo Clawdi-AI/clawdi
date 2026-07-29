@@ -13,6 +13,10 @@
  */
 
 import { afterEach, describe, expect, it } from "bun:test";
+import {
+	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	SKILL_SYNC_PROTOCOL_HEADER,
+} from "../lib/skill-sync-protocol";
 import { classifySseReconnect, consumeSse, parseRecord } from "./sse-client";
 
 const originalFetch = globalThis.fetch;
@@ -34,6 +38,26 @@ describe("classifySseReconnect", () => {
 });
 
 describe("consumeSse reconnect metadata", () => {
+	it("declares the Agent-authoritative protocol on every stream", async () => {
+		const protocols: Array<string | null> = [];
+		globalThis.fetch = Object.assign(
+			async (input: RequestInfo | URL, init?: RequestInit) => {
+				protocols.push(new Request(input, init).headers.get(SKILL_SYNC_PROTOCOL_HEADER));
+				return new Response(null, { status: 502 });
+			},
+			{ preconnect: originalFetch.preconnect },
+		);
+		const abort = new AbortController();
+		await consumeSse({
+			apiUrl: "https://cloud.example",
+			apiKey: "test-key",
+			abort: abort.signal,
+			onEvent: () => {},
+			onDisconnect: () => abort.abort(),
+		});
+		expect(protocols).toEqual([SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1]);
+	});
+
 	it("reports request ids and transient classification for HTTP reconnects", async () => {
 		const fakeFetch: typeof fetch = Object.assign(
 			async () =>
@@ -117,6 +141,30 @@ describe("consumeSse reconnect metadata", () => {
 });
 
 describe("parseRecord", () => {
+	it("parses additive Agent projection events as invalidations", () => {
+		for (const type of ["agent_skill_changed", "agent_skill_deleted"] as const) {
+			const parsed = parseRecord(
+				`event: ${type}\ndata: {"type":"${type}","skill_key":"hello","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":8}`,
+			);
+			expect(parsed).toMatchObject({
+				type,
+				skill_key: "hello",
+				project_id: "00000000-0000-0000-0000-000000000001",
+				skills_revision: 8,
+			});
+		}
+	});
+
+	it("uses event names that the released live-only parser ignores during rolling deploys", () => {
+		// origin/main's released parser accepts exactly these two Skill event
+		// names. Keeping Agent projection invalidations additive prevents an
+		// already-open old SSE stream from writing/deleting local files when a
+		// new backend worker broadcasts through PostgreSQL NOTIFY.
+		const releasedSkillEventTypes = new Set(["skill_changed", "skill_deleted"]);
+		expect(releasedSkillEventTypes.has("agent_skill_changed")).toBe(false);
+		expect(releasedSkillEventTypes.has("agent_skill_deleted")).toBe(false);
+	});
+
 	it("parses a well-formed skill_changed record", () => {
 		const record =
 			'event: skill_changed\ndata: {"type":"skill_changed","skill_key":"hello","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":7}';

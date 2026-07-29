@@ -9,7 +9,6 @@ import {
 	type AgentHomeOverrideSnapshot,
 	jsonResponse,
 	mockFetch,
-	okEnvironmentProbe,
 	restoreAgentHomeOverrides,
 	seedAuthAndEnv,
 	snapshotAndClearAgentHomeOverrides,
@@ -56,6 +55,23 @@ async function buildSkillTar(skillKey: string, skillMdContent: string): Promise<
 	return bytes;
 }
 
+function cloudProjectList(kind: "workspace" | "personal" | "environment" = "workspace") {
+	return {
+		method: "GET",
+		path: /^\/v1\/projects(?:\?.*)?$/,
+		response: () =>
+			jsonResponse([
+				{
+					id: TEST_PROJECT_ID,
+					name: "Import Source",
+					slug: "import-source",
+					kind,
+					is_owner: true,
+				},
+			]),
+	};
+}
+
 describe("pull — Hermes fixture", () => {
 	it("bounds cloud session pagination if the backend keeps returning full pages", async () => {
 		setup("hermes");
@@ -89,7 +105,7 @@ describe("pull — Hermes fixture", () => {
 		expect(captured.filter((request) => request.path.startsWith("/v1/sessions"))).toHaveLength(50);
 	});
 
-	it("downloads the cloud skill into $HOME/.hermes/skills/<key>/", async () => {
+	it("imports an explicit workspace Skill into $HOME/.hermes/skills/<key>/", async () => {
 		setup("hermes");
 
 		const tarBytes = await buildSkillTar(
@@ -104,7 +120,7 @@ content
 		);
 
 		const { captured, restore } = mockFetch([
-			okEnvironmentProbe(),
+			cloudProjectList(),
 			{
 				method: "GET",
 				path: `/v1/projects/${TEST_PROJECT_ID}/skills/demo/download`,
@@ -118,7 +134,7 @@ content
 		]);
 
 		try {
-			await pull({ agent: "hermes", modules: "skills" });
+			await pull({ agent: "hermes", modules: "skills", project: TEST_PROJECT_ID });
 		} finally {
 			restore();
 		}
@@ -137,7 +153,7 @@ content
 	it("--dry-run fetches listing but does not download", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
-			okEnvironmentProbe(),
+			cloudProjectList(),
 			{
 				method: "GET",
 				path: `/v1/projects/${TEST_PROJECT_ID}/skills/demo/download`,
@@ -150,7 +166,12 @@ content
 			},
 		]);
 		try {
-			await pull({ agent: "hermes", modules: "skills", dryRun: true });
+			await pull({
+				agent: "hermes",
+				modules: "skills",
+				project: TEST_PROJECT_ID,
+				dryRun: true,
+			});
 		} finally {
 			restore();
 		}
@@ -168,15 +189,41 @@ content
 	it("cloud returns empty list → short-circuit", async () => {
 		setup("hermes");
 		const { captured, restore } = mockFetch([
-			okEnvironmentProbe(),
+			cloudProjectList(),
 			{ method: "GET", path: "/v1/skills", response: () => jsonResponse({ items: [] }) },
 		]);
+		try {
+			await pull({ agent: "hermes", modules: "skills", project: TEST_PROJECT_ID });
+		} finally {
+			restore();
+		}
+		expect(captured.some((c) => c.path.endsWith("/download"))).toBe(false);
+	});
+
+	it("fails closed when a Skill pull omits an explicit Cloud-owned Project", async () => {
+		setup("hermes");
+		const { captured, restore } = mockFetch([]);
 		try {
 			await pull({ agent: "hermes", modules: "skills" });
 		} finally {
 			restore();
 		}
-		expect(captured.some((c) => c.path.endsWith("/download"))).toBe(false);
+		expect(process.exitCode).toBe(1);
+		expect(captured).toHaveLength(0);
+	});
+
+	it("rejects an explicit Agent Project as a Skill import source", async () => {
+		setup("hermes");
+		const { captured, restore } = mockFetch([cloudProjectList("environment")]);
+		try {
+			await expect(
+				pull({ agent: "hermes", modules: "skills", project: TEST_PROJECT_ID }),
+			).rejects.toThrow(/Agent Projects are filesystem-authoritative/);
+		} finally {
+			restore();
+		}
+		expect(captured.some((request) => request.path.startsWith("/v1/skills"))).toBe(false);
+		expect(captured.some((request) => request.path.endsWith("/download"))).toBe(false);
 	});
 
 	it("aborts with exitCode=1 when not logged in (no fetch)", async () => {
@@ -194,7 +241,7 @@ content
 });
 
 describe("pull — Claude Code fixture", () => {
-	it("downloads into $HOME/.claude/skills/<key>/", async () => {
+	it("imports an explicit workspace Skill into $HOME/.claude/skills/<key>/", async () => {
 		setup("claude-code");
 		const tarBytes = await buildSkillTar(
 			"fresh",
@@ -205,7 +252,7 @@ description: new
 # fresh`,
 		);
 		const { restore } = mockFetch([
-			okEnvironmentProbe(),
+			cloudProjectList(),
 			{
 				method: "GET",
 				path: `/v1/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
@@ -218,7 +265,7 @@ description: new
 			},
 		]);
 		try {
-			await pull({ agent: "claude_code", modules: "skills" });
+			await pull({ agent: "claude_code", modules: "skills", project: TEST_PROJECT_ID });
 		} finally {
 			restore();
 		}
@@ -227,7 +274,7 @@ description: new
 });
 
 describe("pull — Codex fixture", () => {
-	it("downloads into $HOME/.codex/skills/<key>/", async () => {
+	it("imports an explicit workspace Skill into $HOME/.codex/skills/<key>/", async () => {
 		setup("codex");
 		const tarBytes = await buildSkillTar(
 			"fresh",
@@ -238,7 +285,7 @@ description: new
 # fresh`,
 		);
 		const { restore } = mockFetch([
-			okEnvironmentProbe(),
+			cloudProjectList(),
 			{
 				method: "GET",
 				path: `/v1/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
@@ -251,7 +298,7 @@ description: new
 			},
 		]);
 		try {
-			await pull({ agent: "codex", modules: "skills" });
+			await pull({ agent: "codex", modules: "skills", project: TEST_PROJECT_ID });
 		} finally {
 			restore();
 		}
@@ -260,7 +307,7 @@ description: new
 });
 
 describe("pull — OpenClaw fixture", () => {
-	it("downloads into $HOME/.openclaw/agents/main/skills/<key>/", async () => {
+	it("imports an explicit workspace Skill into $HOME/.openclaw/agents/main/skills/<key>/", async () => {
 		setup("openclaw");
 		const tarBytes = await buildSkillTar(
 			"fresh",
@@ -271,7 +318,7 @@ description: new
 # fresh`,
 		);
 		const { restore } = mockFetch([
-			okEnvironmentProbe(),
+			cloudProjectList(),
 			{
 				method: "GET",
 				path: `/v1/projects/${TEST_PROJECT_ID}/skills/fresh/download`,
@@ -284,7 +331,7 @@ description: new
 			},
 		]);
 		try {
-			await pull({ agent: "openclaw", modules: "skills" });
+			await pull({ agent: "openclaw", modules: "skills", project: TEST_PROJECT_ID });
 		} finally {
 			restore();
 		}
