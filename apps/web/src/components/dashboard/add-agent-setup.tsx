@@ -25,13 +25,13 @@ function useOrigin() {
 
 // One paste connects the machine: install, authorize (opens the browser),
 // then auto-detect every local agent and start the sync daemons.
-const ONE_COMMAND = "bun add -g clawdi && clawdi auth login && clawdi setup";
+const ONE_COMMAND = "npm install -g clawdi@latest && clawdi auth login && clawdi setup";
 
 const CLI_STEPS = [
 	{
 		title: "Install the CLI",
-		code: "bun add -g clawdi",
-		description: "Or use npm: npm install -g clawdi",
+		code: "npm install -g clawdi@latest",
+		description: "Requires Node.js 22.5+. Prefer Bun? Use: bun add -g clawdi@latest",
 	},
 	{
 		title: "Log in",
@@ -127,6 +127,7 @@ export function AddAgentSetup() {
 					<StepNumber n={1} />
 					<span className="text-sm font-medium">Run this in a terminal on the machine</span>
 				</div>
+				<p className="mt-1.5 text-xs text-muted-foreground">Node.js 22.5+ is required.</p>
 				<div className="mt-2 rounded-lg border bg-muted/30">
 					<div className="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
 						<span className="text-2xs uppercase tracking-wider text-muted-foreground">

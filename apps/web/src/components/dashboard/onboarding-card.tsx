@@ -9,28 +9,33 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 
 type OnboardingCardProps = {
 	variant?: "first-agent" | "additional-agent";
-	hosted?: boolean;
+	canDeployOnClawdi?: boolean;
 };
 
 /**
  * Overview hero card for connecting a new agent. Rendered in the Overview
  * primary slot when the user has zero agents, and as a secondary
- * side-panel card once at least one agent is registered. Hosted first-agent
- * onboarding leads with deploy and reveals the shared CLI setup on demand.
+ * side-panel card once at least one agent is registered. When Cloud agent
+ * creation is available, both placements offer the same deploy-or-connect
+ * choice and reveal the shared CLI setup on demand.
  */
-export function OnboardingCard({ variant = "first-agent", hosted = false }: OnboardingCardProps) {
+export function OnboardingCard({
+	variant = "first-agent",
+	canDeployOnClawdi = false,
+}: OnboardingCardProps) {
 	const [showCliSetup, setShowCliSetup] = useState(false);
 	const isAdditionalAgent = variant === "additional-agent";
-	const showHostedFirstAgentChoice = hosted && !isAdditionalAgent;
 	const title = isAdditionalAgent
 		? "Add another agent"
-		: showHostedFirstAgentChoice
+		: canDeployOnClawdi
 			? "Get your first agent running"
 			: "Let's connect your first agent";
 	const description = isAdditionalAgent
-		? "Manage multiple agents from one place. Projects help each agent use the right skills and credentials."
-		: showHostedFirstAgentChoice
-			? "Deploy a fully hosted agent in minutes, or connect an agent you already run with the CLI."
+		? canDeployOnClawdi
+			? "Deploy another agent on Clawdi, or connect an agent on your machine."
+			: "Connect another agent on your machine and manage it from this dashboard."
+		: canDeployOnClawdi
+			? "Deploy on Clawdi in minutes, or connect an agent on your machine."
 			: "Connect an agent first. Then create a Project to organize reusable skills and credentials you can share with teammates.";
 
 	return (
@@ -43,11 +48,11 @@ export function OnboardingCard({ variant = "first-agent", hosted = false }: Onbo
 				<CardDescription>{description}</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-5">
-				{showHostedFirstAgentChoice ? (
+				{canDeployOnClawdi ? (
 					<>
-						<div className="flex flex-col gap-2 sm:flex-row">
+						<div className="flex flex-col gap-2">
 							<Button render={<Link to="/deploy" />} nativeButton={false} size="lg">
-								<Rocket data-icon="inline-start" /> Deploy a hosted agent
+								<Rocket data-icon="inline-start" /> Deploy on Clawdi
 							</Button>
 							<Button
 								type="button"
@@ -57,13 +62,13 @@ export function OnboardingCard({ variant = "first-agent", hosted = false }: Onbo
 								aria-controls={showCliSetup ? "first-agent-cli-setup" : undefined}
 								onClick={() => setShowCliSetup((visible) => !visible)}
 							>
-								<TerminalSquare data-icon="inline-start" /> Connect via CLI
+								<TerminalSquare data-icon="inline-start" /> Connect an agent on your machine
 							</Button>
 						</div>
 						{showCliSetup ? (
 							<div id="first-agent-cli-setup" className="space-y-4 border-t pt-5">
 								<div>
-									<h3 className="text-sm font-semibold">Connect an agent you already run</h3>
+									<h3 className="text-sm font-semibold">Connect an agent on your machine</h3>
 									<p className="text-sm text-muted-foreground">
 										Run the setup command on the machine where your agent lives.
 									</p>
