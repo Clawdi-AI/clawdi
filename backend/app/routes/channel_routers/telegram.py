@@ -437,6 +437,24 @@ async def telegram_webhook(
     text = telegram_text_from_update(payload)
     command = parse_pair_command(text)
     provider_event_id = telegram_event_id_from_update(payload)
+    previous_link_id: UUID | None = None
+    if command is not None and command.kind in {"pair", "unpair"}:
+        previous_binding = (
+            await db.execute(
+                select(ChannelBinding)
+                .where(
+                    ChannelBinding.account_id == account.id,
+                    ChannelBinding.external_chat_id == external_chat_id,
+                )
+                .order_by(
+                    (ChannelBinding.status == BINDING_STATUS_ACTIVE).desc(),
+                    ChannelBinding.created_at.desc(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if previous_binding is not None:
+            previous_link_id = previous_binding.bot_agent_link_id
     if command is not None:
         existing = await find_existing_inbound_provider_event(
             db,
@@ -495,10 +513,13 @@ async def telegram_webhook(
     )
     if reply is not None:
         await db.commit()
-    await _replay_telegram_commands_on_pair(
+    await _reconcile_telegram_commands_after_binding_change(
         db,
         account=account,
-        binding=binding_result.binding if binding_result.paired else None,
+        binding=binding_result.binding,
+        previous_link_id=previous_link_id,
+        paired=binding_result.paired,
+        unpaired=binding_result.unpaired,
     )
     if messages and message.binding_id and not binding_result.command_handled:
         delivered_at = datetime.now(UTC)
@@ -753,6 +774,69 @@ async def _fan_out_telegram_commands(
     return None
 
 
+async def _reconcile_telegram_commands_after_binding_change(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding | None,
+    previous_link_id: UUID | None,
+    paired: bool,
+    unpaired: bool,
+) -> None:
+    if binding is None or not (paired or unpaired):
+        return
+    current_link_id = binding.bot_agent_link_id if paired else None
+    if previous_link_id is not None and previous_link_id != current_link_id:
+        previous_link = await db.get(ChannelBotAgentLink, previous_link_id)
+        if previous_link is not None:
+            await _clear_telegram_commands_for_binding(
+                account=account,
+                link=previous_link,
+                binding=binding,
+            )
+    if paired:
+        await _replay_telegram_commands_on_pair(db, account=account, binding=binding)
+
+
+async def _clear_telegram_commands_for_binding(
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+    binding: ChannelBinding,
+) -> None:
+    if not account.encrypted_provider_token or not account.provider_token_nonce:
+        return
+    config = link.config if isinstance(link.config, dict) else {}
+    shadow = config.get("telegram_agent_commands")
+    if not isinstance(shadow, dict):
+        return
+    cleared: set[str] = set()
+    for key in shadow:
+        if not isinstance(key, str):
+            continue
+        scope_key, language_code = _telegram_command_shadow_parts(key)
+        scope = _telegram_command_scope_for_binding(binding, scope_key=scope_key)
+        if scope is None:
+            continue
+        identity = json.dumps([scope, language_code], sort_keys=True, separators=(",", ":"))
+        if identity in cleared:
+            continue
+        cleared.add(identity)
+        payload: dict[str, Any] = {"scope": scope}
+        if language_code:
+            payload["language_code"] = language_code
+        try:
+            response = await _post_telegram_command_payload(
+                account=account,
+                method="deleteMyCommands",
+                payload=payload,
+            )
+        except HTTPException:
+            return
+        if response.status_code >= 400:
+            return
+
+
 async def _replay_telegram_commands_on_pair(
     db: AsyncSession,
     *,
@@ -824,6 +908,25 @@ def _telegram_command_fanout_scope(
         return {"type": "chat", "chat_id": binding.external_chat_id}
     if scope_key == "all_chat_administrators" and is_group:
         return {"type": "chat_administrators", "chat_id": binding.external_chat_id}
+    return None
+
+
+def _telegram_command_scope_for_binding(
+    binding: ChannelBinding,
+    *,
+    scope_key: str,
+) -> dict[str, Any] | None:
+    broad_scope = _telegram_command_fanout_scope(binding, scope_key=scope_key)
+    if broad_scope is not None:
+        return broad_scope
+    parts = scope_key.split(":")
+    if len(parts) == 2 and parts[0] in {"chat", "chat_administrators"}:
+        if parts[1] == binding.external_chat_id:
+            return {"type": parts[0], "chat_id": parts[1]}
+        return None
+    if len(parts) == 3 and parts[0] == "chat_member":
+        if parts[1] == binding.external_chat_id:
+            return {"type": "chat_member", "chat_id": parts[1], "user_id": parts[2]}
     return None
 
 

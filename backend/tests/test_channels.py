@@ -4031,6 +4031,152 @@ async def test_telegram_pairing_replays_stored_broad_scope_commands(
 
 
 @pytest.mark.asyncio
+async def test_telegram_repair_and_unpair_clear_previous_link_commands(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-command-repair-isolation",
+                "provider_token": "123456:telegram-secret",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    await _pair_telegram_chat(client, created=created, chat_id="777", chat_type="private")
+    first_commands = [{"command": "first", "description": "First link"}]
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setMyCommands"),
+            headers=_telegram_agent_headers(created),
+            json={"commands": first_commands},
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setMyCommands"),
+            headers=_telegram_agent_headers(created),
+            json={"commands": first_commands, "language_code": "es"},
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setMyCommands"),
+            headers=_telegram_agent_headers(created),
+            json={
+                "commands": first_commands,
+                "scope": {"type": "chat_member", "chat_id": "777", "user_id": "4242"},
+            },
+        )
+    ).status_code == 200
+    assert (
+        await client.delete(f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}")
+    ).status_code == 204
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    second_pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second["id"], "ttl_seconds": 900},
+        )
+    ).json()
+
+    _reset_fake_provider_client({"ok": True, "result": True})
+    repaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 2,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": f"/bot_pair {second_pair['code']}",
+                "chat": {"id": 777, "type": "private"},
+            },
+        },
+    )
+
+    assert repaired.status_code == 200
+    assert repaired.json()["paired"] is True
+    command_calls = [
+        call
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith(("/setMyCommands", "/deleteMyCommands"))
+    ]
+    assert all(call["url"].endswith("/deleteMyCommands") for call in command_calls)
+    assert {json.dumps(call["json"], sort_keys=True) for call in command_calls} == {
+        json.dumps({"scope": {"type": "chat", "chat_id": "777"}}, sort_keys=True),
+        json.dumps(
+            {"scope": {"type": "chat", "chat_id": "777"}, "language_code": "es"},
+            sort_keys=True,
+        ),
+        json.dumps(
+            {"scope": {"type": "chat_member", "chat_id": "777", "user_id": "4242"}},
+            sort_keys=True,
+        ),
+    }
+    second_get = await client.post(
+        _telegram_bot_path(second, "getMyCommands", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={},
+    )
+    assert second_get.json()["result"] == [
+        {"command": "bot_pair", "description": "Pair this chat with Clawdi."},
+        {"command": "bot_unpair", "description": "Disconnect this chat from Clawdi."},
+    ]
+
+    second_commands = [{"command": "second", "description": "Second link"}]
+    _reset_fake_provider_client({"ok": True, "result": True})
+    assert (
+        await client.post(
+            _telegram_bot_path(second, "setMyCommands", account_id=created["id"]),
+            headers=_telegram_agent_headers(second),
+            json={"commands": second_commands},
+        )
+    ).status_code == 200
+    assert [
+        call["json"] for call in _FakeProviderClient.calls if call["url"].endswith("/setMyCommands")
+    ] == [{"commands": second_commands, "scope": {"type": "chat", "chat_id": "777"}}]
+
+    _reset_fake_provider_client({"ok": True, "result": True})
+    unpaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 3,
+            "message": {
+                "message_id": 3,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": "/bot_unpair",
+                "chat": {"id": 777, "type": "private"},
+            },
+        },
+    )
+    assert unpaired.status_code == 200
+    assert unpaired.json()["unpaired"] is True
+    assert [
+        call["json"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/deleteMyCommands")
+    ] == [{"scope": {"type": "chat", "chat_id": "777"}}]
+
+
+@pytest.mark.asyncio
 async def test_telegram_generic_bot_api_proxies_only_bound_chats(
     client: httpx.AsyncClient,
     monkeypatch,
