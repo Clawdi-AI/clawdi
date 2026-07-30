@@ -102,6 +102,7 @@ import {
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import {
 	pairCodeExpired,
+	pairingCommand,
 	WHATSAPP_COMING_SOON_MESSAGE,
 	WHATSAPP_LINKING_READY,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
@@ -1099,7 +1100,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 					code: data.code,
 					expires_at: data.expires_at,
 					agent_link_id: data.agent_link_id,
-					pairing_command: data.pairing_command,
+					pairing_command: data.pairing_command || pairingCommand(data.code),
 					bot_username: data.bot_username ?? null,
 					deep_link: data.deep_link ?? null,
 					qr_payload: data.qr_payload ?? null,

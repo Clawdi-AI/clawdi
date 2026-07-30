@@ -1049,15 +1049,6 @@ async def admin_create_channel(
     db: AsyncSession = Depends(get_session),
 ) -> AdminChannelCreatedResponse:
     await validate_channel_account_config_urls(provider=body.provider, config=body.config)
-    if (
-        body.provider == CHANNEL_PROVIDER_TELEGRAM
-        and body.visibility == "public"
-        and not body.provider_token
-    ):
-        raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
-            "public Telegram channels require a provider token",
-        )
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     ciphertext, nonce = encrypt_optional_token(body.provider_token)
     webhook_secret = generate_webhook_secret()
