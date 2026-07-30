@@ -171,6 +171,23 @@ describe("runtime egress engine maintained fetch", () => {
 		expect(result.error).toContain("pinned linux x86_64 release archive");
 	});
 
+	it("redacts unexpected engine preparation diagnostics", () => {
+		const result = ensureRuntimeMitmproxy(
+			{
+				type: "mitmproxy" as const,
+				version: "12.2.3",
+				url: "not-a-url-test-token",
+				sha256: "a".repeat(64),
+			},
+			runtimePaths(),
+		);
+
+		expect(result.status).toBe("degraded");
+		if (result.status !== "degraded") throw new Error("expected degraded");
+		expect(result.error).toBe("mitmproxy preparation failed");
+		expect(result.error).not.toContain("test-token");
+	});
+
 	it("degrades cleanly when the manifest has no pin", () => {
 		const result = ensureRuntimeMitmproxy(null, runtimePaths());
 

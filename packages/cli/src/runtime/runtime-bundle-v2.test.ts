@@ -88,7 +88,7 @@ describe("hosted runtime bundle v2", () => {
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
-			"f7aecccd700e4c6e3fa21cd8f7935b95bdcc9de1540c5aa9ff41c2984bcac6f5",
+			"12ae1174be36ad789afcfd639ee54a7061a97e19614822ddb9addac3a53c7fc9",
 		);
 		expect(projected.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
@@ -913,7 +913,7 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe('"bundle-golden"');
 		expect(loaded.sourceRevision).toBe(
-			"f7aecccd700e4c6e3fa21cd8f7935b95bdcc9de1540c5aa9ff41c2984bcac6f5",
+			"12ae1174be36ad789afcfd639ee54a7061a97e19614822ddb9addac3a53c7fc9",
 		);
 		expect(loaded.channelBindings).toHaveLength(1);
 	});
@@ -967,6 +967,19 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_EGRESS_GID = "10002";
 		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
 		const paths = getRuntimePaths({ mode: "hosted" });
+		const goldenRaw = JSON.parse(readFileSync(goldenPath, "utf-8")) as {
+			manifest: { egressEngine: { version: string; sha256: string } };
+		};
+		const goldenEngine = goldenRaw.manifest.egressEngine;
+		const goldenMitmdump = join(
+			paths.egressEngineMaintainedRoot,
+			goldenEngine.version,
+			goldenEngine.sha256,
+			"mitmdump",
+		);
+		mkdirSync(dirname(goldenMitmdump), { recursive: true });
+		writeFileSync(goldenMitmdump, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(goldenMitmdump, 0o755);
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(openclawBin, "#!/usr/bin/env sh\ncat >/dev/null || true\nexit 0\n");

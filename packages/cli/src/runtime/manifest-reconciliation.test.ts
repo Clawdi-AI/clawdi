@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -13,6 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parse as parseYaml } from "yaml";
+import { commitRuntimeAppliedState } from "../commands/runtime";
 import {
 	readRuntimeAppliedState,
 	runtimeContentSha256,
@@ -85,7 +87,9 @@ function hostedSystemFixture(overrides: Record<string, unknown> = {}): Record<st
 	};
 }
 
-function hostedOpenClawNativeAuth(publicUrl = "https://agent.example.test/control") {
+function hostedOpenClawNativeAuth(
+	publicUrl = "https://agent.example.test/control",
+): NonNullable<RuntimeManifest["openclawGatewayAuth"]> {
 	void publicUrl;
 	return {
 		mode: "token",
@@ -148,6 +152,164 @@ function baseManifest(
 		recovery: {},
 		...overrides,
 	};
+}
+
+function testEgressEnginePin(
+	version: string,
+	sha256: string,
+): NonNullable<RuntimeManifest["egressEngine"]> {
+	return {
+		type: "mitmproxy",
+		version,
+		url: `https://downloads.mitmproxy.org/${version}/mitmproxy-${version}-linux-x86_64.tar.gz`,
+		sha256,
+	};
+}
+
+function installCachedTestEgressEngine(paths: RuntimePaths, version: string) {
+	const engine = testEgressEnginePin(version, "a".repeat(64));
+	const binaryPath = join(paths.egressEngineMaintainedRoot, version, engine.sha256, "mitmdump");
+	mkdirSync(dirname(binaryPath), { recursive: true });
+	writeFileSync(binaryPath, "#!/usr/bin/env sh\nexit 0\n");
+	chmodSync(binaryPath, 0o755);
+	return engine;
+}
+
+function writeTestMitmproxyArchive(
+	paths: RuntimePaths,
+	name: string,
+	kind: "ready" | "missing-mitmdump" | "corrupt",
+): { path: string; sha256: string } {
+	const fixtureRoot = join(dirname(paths.serviceStateRoot), "egress-engine-fixtures", name);
+	const archivePath = join(fixtureRoot, `${name}.tar.gz`);
+	mkdirSync(fixtureRoot, { recursive: true });
+	if (kind === "corrupt") {
+		writeFileSync(archivePath, "not a tar.gz archive\n");
+	} else {
+		const sourceRoot = join(fixtureRoot, "source", `mitmproxy-${name}`);
+		mkdirSync(sourceRoot, { recursive: true });
+		if (kind === "ready") {
+			const binaryPath = join(sourceRoot, "mitmdump");
+			writeFileSync(binaryPath, "#!/usr/bin/env sh\nexit 0\n");
+			chmodSync(binaryPath, 0o755);
+		} else {
+			writeFileSync(join(sourceRoot, "README.txt"), "mitmdump intentionally absent\n");
+		}
+		execFileSync("tar", ["-czf", archivePath, "-C", join(fixtureRoot, "source"), "."]);
+	}
+	return {
+		path: archivePath,
+		sha256: createHash("sha256").update(readFileSync(archivePath)).digest("hex"),
+	};
+}
+
+function installTestMitmproxyCurl(
+	paths: RuntimePaths,
+	artifactPath: string | null,
+): { commandPath: string; markerPath: string } {
+	const binRoot = join(dirname(paths.serviceStateRoot), "egress-engine-test-bin");
+	const curlPath = join(binRoot, "curl");
+	const markerPath = join(binRoot, "curl-invoked");
+	mkdirSync(binRoot, { recursive: true });
+	writeFileSync(
+		curlPath,
+		artifactPath
+			? [
+					"#!/usr/bin/env bash",
+					"set -euo pipefail",
+					`printf invoked > ${JSON.stringify(markerPath)}`,
+					`cp -- ${JSON.stringify(artifactPath)} "$5"`,
+					"",
+				].join("\n")
+			: [
+					"#!/usr/bin/env bash",
+					"set -euo pipefail",
+					`printf invoked > ${JSON.stringify(markerPath)}`,
+					"printf 'artifact endpoint unavailable: test-token\\n' >&2",
+					"exit 22",
+					"",
+				].join("\n"),
+	);
+	chmodSync(curlPath, 0o700);
+	return { commandPath: curlPath, markerPath };
+}
+
+function egressRuntimeManifest(
+	paths: RuntimePaths,
+	input: {
+		generation: number;
+		engine?: RuntimeManifest["egressEngine"];
+		profile: "enabled" | "disabled" | "absent";
+	},
+): RuntimeManifest {
+	process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
+	const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
+	mkdirSync(dirname(commandPath), { recursive: true });
+	writeFileSync(commandPath, "#!/usr/bin/env sh\nexit 0\n");
+	chmodSync(commandPath, 0o700);
+	return baseManifest(
+		paths,
+		{
+			openclaw: {
+				enabled: true,
+				run: runSettings(commandPath, ["gateway", "run"]),
+				services: {},
+			},
+		},
+		{
+			generation: input.generation,
+			issuedAt: `2026-07-01T00:0${input.generation}:00.000Z`,
+			openclawGatewayAuth: hostedOpenClawNativeAuth(),
+			projection: {
+				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+				system: hostedSystemFixture(),
+			},
+			...(input.engine ? { egressEngine: input.engine } : {}),
+			...(input.profile === "absent"
+				? {}
+				: {
+						egressProfiles: {
+							profiles: [
+								{
+									id: "required-egress",
+									enabled: input.profile === "enabled",
+									kind: "http" as const,
+									match: {
+										scheme: "https" as const,
+										host: "api.example.test",
+										headers: {},
+										query: {},
+									},
+									rewrite: {
+										upstreamBaseUrl: "https://upstream.example.test",
+										preservePath: true,
+										setHeaders: {},
+									},
+									logging: { redactHeaders: [], redactUrlPatterns: [] },
+									priority: 100,
+								},
+							],
+						},
+					}),
+		},
+	);
+}
+
+function commitTestRuntimeAuthority(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+	convergence: ReturnType<typeof convergeRuntimeManifest>,
+	authority: { egressSidecarSecretRevision?: string },
+): void {
+	commitRuntimeAppliedState({
+		load,
+		paths,
+		etag: `"generation-${load.manifest.generation}"`,
+		sourceRevision: runtimeContentSha256({ generation: load.manifest.generation }),
+		convergence,
+		applyIdentity: null,
+		egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
+	});
 }
 
 function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -1047,7 +1209,10 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			}),
 		);
-		const normalized = hostedManifestToRuntimeManifest(hosted);
+		const normalized: RuntimeManifest = {
+			...hostedManifestToRuntimeManifest(hosted),
+			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-control-ui"),
+		};
 		expect(normalized.projection?.system).toEqual(hosted.system);
 
 		const result = convergeRuntimeManifest(
@@ -1095,6 +1260,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const projected = hostedManifestToRuntimeManifest(hosted);
 		const normalized: RuntimeManifest = {
 			...projected,
+			egressEngine: installCachedTestEgressEngine(paths, "12.2.3-test-native-auth"),
 			projection: {
 				...projected.projection,
 				sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
@@ -1139,7 +1305,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			"utf8",
 		);
 		expect(gatewayEnv).toContain('OPENCLAW_GATEWAY_TOKEN="gateway-token"');
-		expect(result.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1))).not.toContain(
+		expect(result.outputs.systemdSystemUnits.map((path) => path.split("/").at(-1))).toContain(
 			"clawdi-runtime-sidecar.service",
 		);
 	});
@@ -2312,6 +2478,233 @@ describe("runtime manifest reconciliation invariants", () => {
 		const sidecarRevision = runtimeSidecarProgramRevision(manifest);
 		expect(runtimeSidecarProgramRevision(egressManifest)).not.toBe(sidecarRevision);
 		expect(runtimeSidecarProgramRevision(metadataOnlyChange)).not.toBe(sidecarRevision);
+	});
+
+	test.each([
+		["network", "failed to download mitmproxy"],
+		["sha-mismatch", "checksum mismatch"],
+		["corrupt-archive", "tar failed to extract mitmproxy"],
+		["missing-mitmdump", "archive did not contain mitmdump"],
+		["activation", "injected egress activation failure"],
+	] as const)("fails closed and preserves authority on first-install and upgrade %s failure", (failure, expectedError) => {
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const prepareFailure = (paths: RuntimePaths, phase: "first" | "upgrade") => {
+			const version = `12.2.3-test-${failure}-${phase}`;
+			if (failure === "network") {
+				const curl = installTestMitmproxyCurl(paths, null);
+				return {
+					engine: testEgressEnginePin(version, "a".repeat(64)),
+					downloadCommand: curl.commandPath,
+				};
+			}
+			const kind =
+				failure === "corrupt-archive"
+					? "corrupt"
+					: failure === "missing-mitmdump"
+						? "missing-mitmdump"
+						: "ready";
+			const artifact = writeTestMitmproxyArchive(paths, `${failure}-${phase}`, kind);
+			const curl = installTestMitmproxyCurl(paths, artifact.path);
+			return {
+				engine: testEgressEnginePin(
+					version,
+					failure === "sha-mismatch" ? "0".repeat(64) : artifact.sha256,
+				),
+				downloadCommand: curl.commandPath,
+			};
+		};
+		const hooks = (rollback: () => void, failActivation: boolean) => ({
+			activateEgressPrerequisite: successfulPrerequisiteActivation,
+			activate: () => {
+				if (failActivation) throw new Error("injected egress activation failure");
+				return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+			},
+			rollback,
+		});
+		const managedStatePaths = (paths: RuntimePaths) => [
+			paths.managedConfig,
+			paths.syncState,
+			paths.egressEngineStatus,
+			paths.manifestLastGood,
+			paths.managedSecretCacheFile,
+			paths.appliedState,
+			paths.egressProfileBundle,
+			join(paths.managedSecretRoot, "egress-secrets.json"),
+			paths.egressAddon,
+			paths.egressTransparentEnv,
+			paths.egressSystemCaFile,
+			join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
+			join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
+			runtimeRunConfigPath("openclaw", paths),
+		];
+		const capture = (paths: readonly string[]) =>
+			new Map(paths.map((path) => [path, existsSync(path) ? readFileSync(path, "utf-8") : null]));
+		const expectSnapshot = (snapshot: Map<string, string | null>) => {
+			for (const [path, expected] of snapshot) {
+				if (expected === null) expect(existsSync(path)).toBe(false);
+				else expect(readFileSync(path, "utf-8")).toBe(expected);
+			}
+		};
+
+		const firstPaths = tempRuntimePaths();
+		const firstSnapshot = capture(managedStatePaths(firstPaths));
+		const firstFailure = prepareFailure(firstPaths, "first");
+		const firstManifest = egressRuntimeManifest(firstPaths, {
+			generation: 1,
+			engine: firstFailure.engine,
+			profile: "enabled",
+		});
+		const firstLoad = manifestLoad(firstManifest, `inline-egress-${failure}-first`);
+		let firstCommits = 0;
+		const failedFirstInstall = convergeRuntimeManifest(firstLoad, firstPaths, {
+			cacheLastGood: false,
+			commitAuthority: (convergence, authority) => {
+				firstCommits += 1;
+				commitTestRuntimeAuthority(firstLoad, firstPaths, convergence, authority);
+			},
+			egressEngineEnsureOptions: { downloadCommand: firstFailure.downloadCommand },
+			systemdApply: hooks(() => {}, failure === "activation"),
+		});
+		const firstErrors = failedFirstInstall.installErrors.join("\n");
+		expect(firstErrors).toContain(expectedError);
+		if (failure !== "activation") {
+			expect(firstErrors).toStartWith(
+				"runtime apply failed: required egress engine is not ready: ",
+			);
+		}
+		expect(firstErrors).not.toContain("test-token");
+		expect(firstCommits).toBe(0);
+		expectSnapshot(firstSnapshot);
+		expect(existsSync(firstPaths.manifestLastGood)).toBe(false);
+		expect(existsSync(firstPaths.appliedState)).toBe(false);
+
+		const upgradePaths = tempRuntimePaths();
+		const baselineArtifact = writeTestMitmproxyArchive(
+			upgradePaths,
+			`baseline-${failure}`,
+			"ready",
+		);
+		const baselineCurl = installTestMitmproxyCurl(upgradePaths, baselineArtifact.path);
+		const baselineManifest = egressRuntimeManifest(upgradePaths, {
+			generation: 1,
+			engine: testEgressEnginePin(`12.2.3-test-baseline-${failure}`, baselineArtifact.sha256),
+			profile: "enabled",
+		});
+		const baselineLoad = manifestLoad(baselineManifest, `inline-egress-${failure}-baseline`);
+		const baseline = convergeRuntimeManifest(baselineLoad, upgradePaths, {
+			cacheLastGood: false,
+			commitAuthority: (convergence, authority) =>
+				commitTestRuntimeAuthority(baselineLoad, upgradePaths, convergence, authority),
+			egressEngineEnsureOptions: { downloadCommand: baselineCurl.commandPath },
+			systemdApply: hooks(() => {}, false),
+		});
+		expect(baseline.installErrors).toEqual([]);
+		expect(baseline.outputs.egressEngine?.status).toBe("ready");
+		const sidecarUnit = join(upgradePaths.systemdSystemRoot, "clawdi-runtime-sidecar.service");
+		expect(existsSync(sidecarUnit)).toBe(true);
+		const previous = capture(managedStatePaths(upgradePaths));
+
+		const upgradeFailure = prepareFailure(upgradePaths, "upgrade");
+		const upgradeManifest = egressRuntimeManifest(upgradePaths, {
+			generation: 2,
+			engine: upgradeFailure.engine,
+			profile: "enabled",
+		});
+		const upgradeLoad = manifestLoad(upgradeManifest, `inline-egress-${failure}-upgrade`);
+		let upgradeCommits = 0;
+		let rollbackCalls = 0;
+		const failedUpgrade = convergeRuntimeManifest(upgradeLoad, upgradePaths, {
+			cacheLastGood: false,
+			commitAuthority: (convergence, authority) => {
+				upgradeCommits += 1;
+				commitTestRuntimeAuthority(upgradeLoad, upgradePaths, convergence, authority);
+			},
+			egressEngineEnsureOptions: { downloadCommand: upgradeFailure.downloadCommand },
+			systemdApply: hooks(() => {
+				rollbackCalls += 1;
+			}, failure === "activation"),
+		});
+		const upgradeErrors = failedUpgrade.installErrors.join("\n");
+		expect(upgradeErrors).toContain(expectedError);
+		if (failure !== "activation") {
+			expect(upgradeErrors).toStartWith(
+				"runtime apply failed: required egress engine is not ready: ",
+			);
+		}
+		expect(upgradeErrors).not.toContain("test-token");
+		expect(upgradeCommits).toBe(0);
+		expect(rollbackCalls).toBe(failure === "activation" ? 1 : 0);
+		expectSnapshot(previous);
+		expect(readRuntimeAppliedState(upgradePaths)?.generation).toBe(1);
+		expect(JSON.parse(readFileSync(upgradePaths.manifestLastGood, "utf-8"))).toMatchObject({
+			generation: 1,
+		});
+	});
+
+	test("converges enabled egress when the pinned engine is ready", () => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const artifact = writeTestMitmproxyArchive(paths, "ready-success", "ready");
+		const curl = installTestMitmproxyCurl(paths, artifact.path);
+		const manifest = egressRuntimeManifest(paths, {
+			generation: 1,
+			engine: testEgressEnginePin("12.2.3-test-success", artifact.sha256),
+			profile: "enabled",
+		});
+		const load = manifestLoad(manifest, "inline-egress-success");
+		let commits = 0;
+		const result = convergeRuntimeManifest(load, paths, {
+			cacheLastGood: false,
+			commitAuthority: (convergence, authority) => {
+				commits += 1;
+				commitTestRuntimeAuthority(load, paths, convergence, authority);
+			},
+			egressEngineEnsureOptions: { downloadCommand: curl.commandPath },
+			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
+				activate: successfulPrerequisiteActivation,
+				rollback: () => {},
+			},
+		});
+
+		expect(result.installErrors).toEqual([]);
+		expect(result.outputs.egressEngine).toEqual(expect.objectContaining({ status: "ready" }));
+		expect(commits).toBe(1);
+		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
+		expect(existsSync(paths.manifestLastGood)).toBe(true);
+		expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(true);
+	});
+
+	test.each([
+		"disabled",
+		"absent",
+	] as const)("does not require the egress engine when profiles are %s", (profile) => {
+		const paths = tempRuntimePaths();
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+		const curl = installTestMitmproxyCurl(paths, null);
+		const manifest = egressRuntimeManifest(paths, {
+			generation: 1,
+			engine: testEgressEnginePin(`12.2.3-test-${profile}`, "a".repeat(64)),
+			profile,
+		});
+		const load = manifestLoad(manifest, `inline-egress-${profile}`);
+		let commits = 0;
+		const result = convergeRuntimeManifest(load, paths, {
+			cacheLastGood: false,
+			commitAuthority: (convergence, authority) => {
+				commits += 1;
+				commitTestRuntimeAuthority(load, paths, convergence, authority);
+			},
+			egressEngineEnsureOptions: { downloadCommand: curl.commandPath },
+		});
+
+		expect(result.installErrors).toEqual([]);
+		expect(commits).toBe(1);
+		expect(existsSync(curl.markerPath)).toBe(false);
+		expect(result.outputs.egressEngine).toBeNull();
+		expect(existsSync(paths.egressProfileBundle)).toBe(false);
+		expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(false);
+		expect(readRuntimeAppliedState(paths)?.generation).toBe(1);
 	});
 
 	test("restarts only active sidecars for committed egress secret lifecycle changes", () => {

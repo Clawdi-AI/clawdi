@@ -124,7 +124,11 @@ import {
 	manifestSecretRefs,
 	type RuntimeManifestLoad,
 } from "./manifest-source";
-import { ensureRuntimeMitmproxy, type RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
+import {
+	type EnsureRuntimeMitmproxyOptions,
+	ensureRuntimeMitmproxy,
+	type RuntimeMitmproxyEnsureResult,
+} from "./mitmproxy-fetch";
 import type { RuntimePaths } from "./paths";
 import { detectRuntimeMode } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
@@ -4081,6 +4085,22 @@ function writeEgressEngineStatus(
 	return result;
 }
 
+function requireV2EgressEngineReady(
+	manifest: RuntimeManifest,
+	profileBundlePath: string | null,
+	engine: RuntimeMitmproxyEnsureResult | null,
+): void {
+	if (
+		manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2" &&
+		profileBundlePath &&
+		engine?.status !== "ready"
+	) {
+		throw new Error(
+			`required egress engine is not ready: ${engine?.error ?? "status unavailable"}`,
+		);
+	}
+}
+
 function writeEgressAddon(paths: RuntimePaths): { path: string; sha256: string } {
 	const source = resolvePackagedEgressAddon();
 	const content = readFileSync(source, "utf-8");
@@ -5870,6 +5890,7 @@ export function convergeRuntimeManifest(
 			authority: RuntimePrivateAppliedAuthority,
 		) => void;
 		managedGatewayModelListFetcher?: ManagedGatewayModelListFetcher;
+		egressEngineEnsureOptions?: EnsureRuntimeMitmproxyOptions;
 		systemdApply?: RuntimeSystemdApplyHooks;
 	} = {},
 ): RuntimeConvergenceResult {
@@ -6137,9 +6158,12 @@ export function convergeRuntimeManifest(
 			? writeEgressProfileBundle(egressProfileBundle, paths)
 			: clearEgressProfileBundle(paths);
 		const egressEngine = writeEgressEngineStatus(
-			egressProfileBundlePath ? ensureRuntimeMitmproxy(manifest.egressEngine, paths) : null,
+			egressProfileBundlePath
+				? ensureRuntimeMitmproxy(manifest.egressEngine, paths, opts.egressEngineEnsureOptions)
+				: null,
 			paths,
 		);
+		requireV2EgressEngineReady(manifest, egressProfileBundlePath, egressEngine);
 		const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
 		const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 		writeSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(manifest));
