@@ -3795,6 +3795,326 @@ async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
             "forwarded": True,
         },
         {
+            "name": "inbound photo file owned by same link",
+            "method": "sendPhoto",
+            "json": {"chat_id": "111", "photo": "file-first"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "foreign top-level photo",
+            "method": "sendPhoto",
+            "json": {"chat_id": "111", "photo": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level document",
+            "method": "sendDocument",
+            "json": {"chat_id": "111", "document": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level sticker",
+            "method": "sendSticker",
+            "json": {"chat_id": "111", "sticker": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level animation",
+            "method": "sendAnimation",
+            "json": {"chat_id": "111", "animation": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level audio",
+            "method": "sendAudio",
+            "json": {"chat_id": "111", "audio": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level video",
+            "method": "sendVideo",
+            "json": {"chat_id": "111", "video": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level voice",
+            "method": "sendVoice",
+            "json": {"chat_id": "111", "voice": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level video note",
+            "method": "sendVideoNote",
+            "json": {"chat_id": "111", "video_note": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level live photo",
+            "method": "sendLivePhoto",
+            "json": {
+                "chat_id": "111",
+                "live_photo": "file-second",
+                "photo": "file-first",
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign reusable video cover",
+            "method": "sendVideo",
+            "json": {
+                "chat_id": "111",
+                "video": "https://example.com/video.mp4",
+                "cover": "file-second",
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "thumbnail cannot reuse file id",
+            "method": "sendVideo",
+            "json": {
+                "chat_id": "111",
+                "video": "https://example.com/video.mp4",
+                "thumbnail": "file-first",
+            },
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign media group item",
+            "method": "sendMediaGroup",
+            "json": {
+                "chat_id": "111",
+                "media": [
+                    {"type": "photo", "media": "file-second"},
+                    {"type": "document", "media": "https://example.com/report.pdf"},
+                ],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "query-encoded foreign media group item",
+            "method": "sendMediaGroup",
+            "params": {
+                "chat_id": "111",
+                "media": json.dumps([{"type": "photo", "media": "file-second"}]),
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "duplicate query file parameter",
+            "method": "sendPhoto",
+            "params": [
+                ("chat_id", "111"),
+                ("photo", "file-second"),
+                ("photo", "https://example.com/photo.jpg"),
+            ],
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "duplicate JSON file key",
+            "method": "sendPhoto",
+            "content": b"""
+                {"chat_id":"111","photo":"file-second",
+                "photo":"https://example.com/photo.jpg"}
+            """,
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "query cannot override body file authorization",
+            "method": "sendPhoto",
+            "query": {"photo": "file-second"},
+            "json": {"chat_id": "111", "photo": "https://example.com/photo.jpg"},
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "same-link media group item and URL",
+            "method": "sendMediaGroup",
+            "json": {
+                "chat_id": "111",
+                "media": [
+                    {"type": "photo", "media": "file-first"},
+                    {"type": "document", "media": "https://example.com/report.pdf"},
+                ],
+            },
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "foreign paid media cover",
+            "method": "sendPaidMedia",
+            "json": {
+                "chat_id": "111",
+                "star_count": 1,
+                "media": [
+                    {
+                        "type": "video",
+                        "media": "https://example.com/video.mp4",
+                        "cover": "file-second",
+                    }
+                ],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign paid media file",
+            "method": "sendPaidMedia",
+            "json": {
+                "chat_id": "111",
+                "star_count": 1,
+                "media": [{"type": "photo", "media": "file-second"}],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign edited media",
+            "method": "editMessageMedia",
+            "json": {
+                "chat_id": "111",
+                "message_id": 1,
+                "media": {"type": "document", "media": "file-second"},
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign edited ephemeral media",
+            "method": "editEphemeralMessageMedia",
+            "json": {
+                "chat_id": "111",
+                "receiver_user_id": 7,
+                "ephemeral_message_id": 8,
+                "media": {"type": "photo", "media": "file-second"},
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign poll description media",
+            "method": "sendPoll",
+            "json": {
+                "chat_id": "111",
+                "question": "Question?",
+                "options": [{"text": "One"}, {"text": "Two"}],
+                "media": {"type": "photo", "media": "file-second"},
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign poll option media",
+            "method": "sendPoll",
+            "json": {
+                "chat_id": "111",
+                "question": "Question?",
+                "options": [
+                    {
+                        "text": "One",
+                        "media": {"type": "sticker", "media": "file-second"},
+                    },
+                    {"text": "Two"},
+                ],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign rich message media",
+            "method": "sendRichMessage",
+            "json": {
+                "chat_id": "111",
+                "rich_message": {
+                    "html": '<img src="tg://photo?id=hero">',
+                    "media": [
+                        {
+                            "id": "hero",
+                            "media": {"type": "photo", "media": "file-second"},
+                        }
+                    ],
+                },
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign rich message block media",
+            "method": "sendRichMessage",
+            "json": {
+                "chat_id": "111",
+                "rich_message": {
+                    "blocks": [
+                        {
+                            "type": "details",
+                            "summary": "Media",
+                            "blocks": [
+                                {
+                                    "type": "video",
+                                    "video": {"type": "video", "media": "file-second"},
+                                }
+                            ],
+                        }
+                    ]
+                },
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "HTTPS media URL",
+            "method": "sendDocument",
+            "json": {
+                "chat_id": "111",
+                "document": "https://example.com/report.pdf",
+            },
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "URL unsupported for live photo",
+            "method": "sendLivePhoto",
+            "json": {
+                "chat_id": "111",
+                "live_photo": "https://example.com/live.mp4",
+                "photo": "file-first",
+            },
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "unknown nested media type",
+            "method": "sendMediaGroup",
+            "json": {
+                "chat_id": "111",
+                "media": [{"type": "future_media", "media": "file-first"}],
+            },
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "unmodeled file field on non-media method",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "text": "hello", "photo": "file-first"},
+            "status": 400,
+            "forwarded": False,
+        },
+        {
             "name": "unscoped business connection",
             "method": "sendMessage",
             "json": {
@@ -3822,11 +4142,20 @@ async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
     )
     for case in cases:
         _reset_fake_provider_client({"ok": True, "result": True})
-        request_kwargs = {"params": case["params"]} if "params" in case else {"json": case["json"]}
+        request_headers = _telegram_agent_headers(created)
+        if "params" in case:
+            request_kwargs = {"params": case["params"]}
+        elif "content" in case:
+            request_kwargs = {"content": case["content"]}
+            request_headers = {**request_headers, "content-type": "application/json"}
+        else:
+            request_kwargs = {"json": case["json"]}
+        if "query" in case:
+            request_kwargs["params"] = case["query"]
         response = await client.request(
             "GET" if "params" in case else "POST",
             _telegram_bot_path(created, case["method"]),
-            headers=_telegram_agent_headers(created),
+            headers=request_headers,
             **request_kwargs,
         )
         assert response.status_code == case["status"], case["name"]
@@ -4658,11 +4987,22 @@ async def test_telegram_multipart_reply_parameters_are_scope_checked(
 
 
 @pytest.mark.asyncio
-async def test_telegram_multipart_attach_refs_are_rewritten_before_proxy(
+async def test_telegram_uploaded_file_response_is_recorded_for_reuse(
     client: httpx.AsyncClient,
     monkeypatch,
 ):
-    _reset_fake_provider_client({"ok": True, "result": {"message_id": 7}})
+    _reset_fake_provider_client(
+        {
+            "ok": True,
+            "result": {
+                "message_id": 7,
+                "photo": [
+                    {"file_id": "uploaded-photo-small"},
+                    {"file_id": "uploaded-photo"},
+                ],
+            },
+        }
+    )
     monkeypatch.setattr(
         "app.routes.channel_routers.telegram.httpx.AsyncClient",
         _FakeProviderClient,
@@ -4685,6 +5025,64 @@ async def test_telegram_multipart_attach_refs_are_rewritten_before_proxy(
     assert 'name="photo"; filename="photo.png"' in forwarded
     assert "attach://photo_file" not in forwarded
     assert 'name="photo_file"; filename="photo.png"' not in forwarded
+
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 8}})
+    reuse = await client.post(
+        _telegram_bot_path(created, "sendPhoto"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "42", "photo": "uploaded-photo"},
+    )
+
+    assert reuse.status_code == 200
+    assert len(_FakeProviderClient.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_status", [200, 400])
+async def test_telegram_failed_outbound_response_does_not_grant_file_reference(
+    client: httpx.AsyncClient,
+    monkeypatch,
+    provider_status: int,
+):
+    _reset_fake_provider_client(
+        {
+            "ok": False,
+            "error_code": 400,
+            "description": "Bad Request: upload failed",
+            "result": {"document": {"file_id": "failed-upload-file"}},
+        },
+        status_code=provider_status,
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name=f"telegram-failed-upload-ref-{provider_status}",
+        chat_id="42",
+    )
+
+    failed = await client.post(
+        _telegram_bot_path(created, "sendDocument"),
+        headers=_telegram_agent_headers(created),
+        data={"chat_id": "42"},
+        files={"document": ("report.pdf", b"PDFDATA", "application/pdf")},
+    )
+    assert failed.status_code == provider_status
+    assert failed.json()["ok"] is False
+    assert len(_FakeProviderClient.calls) == 1
+
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 8}})
+    reuse = await client.post(
+        _telegram_bot_path(created, "sendDocument"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "42", "document": "failed-upload-file"},
+    )
+
+    assert reuse.status_code == 403
+    assert reuse.json()["description"] == "Forbidden: file_id is not bound to this bot"
+    assert _FakeProviderClient.calls == []
 
 
 @pytest.mark.asyncio

@@ -1780,14 +1780,22 @@ def _telegram_update_references(payload: dict[str, Any]) -> set[tuple[str, str]]
         if isinstance(callback_id, str) and callback_id:
             references.add((TELEGRAM_REF_CALLBACK_QUERY_ID, callback_id))
 
+    for file_id in telegram_file_ids(payload):
+        references.add((TELEGRAM_REF_FILE_ID, file_id))
     for node in _walk_json_dicts(payload):
-        file_id = node.get("file_id")
-        if isinstance(file_id, str) and file_id:
-            references.add((TELEGRAM_REF_FILE_ID, file_id))
         file_path = node.get("file_path")
         if isinstance(file_path, str) and file_path:
             references.add((TELEGRAM_REF_FILE_PATH, file_path))
     return references
+
+
+def telegram_file_ids(payload: Any) -> set[str]:
+    file_ids: set[str] = set()
+    for node in _walk_json_dicts(payload):
+        file_id = node.get("file_id")
+        if isinstance(file_id, str) and file_id:
+            file_ids.add(file_id)
+    return file_ids
 
 
 def _walk_json_dicts(value: Any) -> list[dict[str, Any]]:

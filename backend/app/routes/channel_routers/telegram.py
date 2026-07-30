@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import json
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -20,6 +21,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from app.core.config import settings
 from app.core.database import get_session
@@ -70,6 +72,7 @@ from app.services.channels import (
     telegram_chat_from_update,
     telegram_event_id_from_update,
     telegram_external_user_id_from_update,
+    telegram_file_ids,
     telegram_message_id_from_update,
     telegram_text_from_update,
     verify_hashed_token,
@@ -212,6 +215,180 @@ _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES = frozenset(
 _TELEGRAM_CHAT_COMMAND_SCOPE_TYPES = frozenset({"chat", "chat_administrators", "chat_member"})
 
 
+@dataclass(frozen=True)
+class _TelegramFilePolicy:
+    allow_file_id: bool
+    allow_url: bool
+
+
+_TELEGRAM_REUSABLE_FILE = _TelegramFilePolicy(allow_file_id=True, allow_url=True)
+_TELEGRAM_REUSABLE_FILE_NO_URL = _TelegramFilePolicy(allow_file_id=True, allow_url=False)
+_TELEGRAM_UPLOAD_ONLY_FILE = _TelegramFilePolicy(allow_file_id=False, allow_url=False)
+_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS = {
+    "thumbnail": _TELEGRAM_UPLOAD_ONLY_FILE,
+    # The pinned Bot API source still accepts the legacy alias.
+    "thumb": _TELEGRAM_UPLOAD_ONLY_FILE,
+}
+
+# Telegram file arguments are method- and field-specific. In particular,
+# thumbnails are upload-only while video covers are reusable. Keep these
+# shapes explicit so Bot API additions require an isolation review.
+_TELEGRAM_TOP_LEVEL_FILE_FIELDS = {
+    "sendanimation": {
+        "animation": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "sendaudio": {
+        "audio": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "senddocument": {
+        "document": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "sendlivephoto": {
+        "live_photo": _TELEGRAM_REUSABLE_FILE_NO_URL,
+        "photo": _TELEGRAM_REUSABLE_FILE_NO_URL,
+    },
+    "sendphoto": {"photo": _TELEGRAM_REUSABLE_FILE},
+    "sendsticker": {"sticker": _TELEGRAM_REUSABLE_FILE},
+    "sendvideo": {
+        "video": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+        "cover": _TELEGRAM_REUSABLE_FILE,
+    },
+    "sendvideonote": {
+        "video_note": _TELEGRAM_REUSABLE_FILE_NO_URL,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "sendvoice": {"voice": _TELEGRAM_REUSABLE_FILE},
+    "setchatphoto": {"photo": _TELEGRAM_UPLOAD_ONLY_FILE},
+}
+
+_TELEGRAM_INPUT_MEDIA_FILE_FIELDS = {
+    "animation": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "audio": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "document": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "live_photo": {
+        "media": _TELEGRAM_REUSABLE_FILE_NO_URL,
+        "photo": _TELEGRAM_REUSABLE_FILE_NO_URL,
+    },
+    "photo": {"media": _TELEGRAM_REUSABLE_FILE},
+    "sticker": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "video": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+        "cover": _TELEGRAM_REUSABLE_FILE,
+    },
+    "voice_note": {"media": _TELEGRAM_REUSABLE_FILE},
+}
+
+_TELEGRAM_PAID_MEDIA_FILE_FIELDS = {
+    media_type: _TELEGRAM_INPUT_MEDIA_FILE_FIELDS[media_type]
+    for media_type in ("live_photo", "photo", "video")
+}
+
+_TELEGRAM_STANDARD_INPUT_MEDIA_TYPES = frozenset(
+    {"animation", "audio", "document", "live_photo", "photo", "video"}
+)
+_TELEGRAM_MEDIA_GROUP_TYPES = frozenset({"audio", "document", "live_photo", "photo", "video"})
+_TELEGRAM_POLL_MEDIA_TYPES = frozenset(
+    {"animation", "audio", "document", "live_photo", "location", "photo", "venue", "video"}
+)
+_TELEGRAM_POLL_OPTION_MEDIA_TYPES = frozenset(
+    {"animation", "link", "live_photo", "location", "photo", "sticker", "venue", "video"}
+)
+_TELEGRAM_RICH_MEDIA_TYPES = frozenset({"animation", "audio", "photo", "video", "voice_note"})
+_TELEGRAM_FILE_FIELD_NAMES = frozenset(
+    {
+        "animation",
+        "audio",
+        "cover",
+        "document",
+        "file_id",
+        "live_photo",
+        "media",
+        "photo",
+        "sticker",
+        "thumb",
+        "thumbnail",
+        "video",
+        "video_note",
+        "voice",
+        "voice_note",
+    }
+)
+
+
+@dataclass(frozen=True)
+class _TelegramNestedMediaPolicy:
+    parameter_names: tuple[str, ...]
+    allowed_types: frozenset[str]
+    file_fields_by_type: dict[str, dict[str, _TelegramFilePolicy]]
+
+
+_TELEGRAM_NESTED_MEDIA_POLICIES = {
+    "sendmediagroup": (
+        _TelegramNestedMediaPolicy(
+            ("media",),
+            _TELEGRAM_MEDIA_GROUP_TYPES,
+            _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+        ),
+    ),
+    "sendpaidmedia": (
+        _TelegramNestedMediaPolicy(
+            ("media",),
+            frozenset(_TELEGRAM_PAID_MEDIA_FILE_FIELDS),
+            _TELEGRAM_PAID_MEDIA_FILE_FIELDS,
+        ),
+    ),
+    "sendpoll": (
+        _TelegramNestedMediaPolicy(
+            ("media", "explanation_media"),
+            _TELEGRAM_POLL_MEDIA_TYPES,
+            _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+        ),
+        _TelegramNestedMediaPolicy(
+            ("options",),
+            _TELEGRAM_POLL_OPTION_MEDIA_TYPES,
+            _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+        ),
+    ),
+    **{
+        method: (
+            _TelegramNestedMediaPolicy(
+                ("media",),
+                _TELEGRAM_STANDARD_INPUT_MEDIA_TYPES,
+                _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+            ),
+        )
+        for method in ("editmessagemedia", "editephemeralmessagemedia")
+    },
+    **{
+        method: (
+            _TelegramNestedMediaPolicy(
+                ("rich_message",),
+                _TELEGRAM_RICH_MEDIA_TYPES,
+                _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+            ),
+        )
+        for method in ("editmessagetext", "sendrichmessage", "sendrichmessagedraft")
+    },
+}
+
+
 @router.api_route(
     "/bot/{routing_id}/{method}",
     methods=["GET", "POST"],
@@ -239,12 +416,21 @@ async def telegram_bot_api(
     account = agent.account
     raw_body = await request.body()
     params = await _request_params(request)
+    duplicate_parameter = await _telegram_duplicate_parameter(request, raw_body, params)
+    if duplicate_parameter is not None:
+        return _telegram_error_response(
+            f"Bad Request: duplicate parameter {duplicate_parameter}", 400
+        )
+    if request.method != "GET":
+        params = {**dict(request.query_params), **params}
     method_key = method.lower()
 
     if method_key == "getme":
         if account.encrypted_provider_token and account.provider_token_nonce:
             return await _proxy_telegram_bot_method(
+                db,
                 account=account,
+                bot_agent_link_id=agent.link.id,
                 method="getMe",
                 request=request,
                 raw_body=raw_body,
@@ -430,7 +616,9 @@ async def telegram_bot_api(
             )
 
     return await _proxy_telegram_bot_method(
+        db,
         account=account,
+        bot_agent_link_id=agent.link.id,
         method=method,
         request=request,
         raw_body=raw_body,
@@ -717,6 +905,59 @@ def _telegram_json_parameter(value: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return value
+
+
+class _DuplicateTelegramJsonKey(ValueError):
+    pass
+
+
+async def _telegram_duplicate_parameter(
+    request: Request,
+    raw_body: bytes,
+    params: dict[str, Any],
+) -> str | None:
+    content_type = request.headers.get("content-type", "").lower()
+    is_form = "application/x-www-form-urlencoded" in content_type
+    is_multipart = "multipart/form-data" in content_type
+    values = list(request.query_params.multi_items())
+    if request.method != "GET":
+        if is_form or is_multipart:
+            values.extend((await request.form()).multi_items())
+        else:
+            if _telegram_json_has_duplicate_key(raw_body):
+                return "JSON key"
+            values.extend(params.items())
+
+    seen: set[str] = set()
+    for key, value in values:
+        if key in seen:
+            return key
+        seen.add(key)
+        if (
+            isinstance(value, str)
+            and value.strip().startswith(("{", "["))
+            and _telegram_json_has_duplicate_key(value)
+        ):
+            return key
+    return None
+
+
+def _telegram_json_has_duplicate_key(value: str | bytes) -> bool:
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in result:
+                raise _DuplicateTelegramJsonKey
+            result[key] = item
+        return result
+
+    try:
+        json.loads(value, object_pairs_hook=unique_object)
+    except _DuplicateTelegramJsonKey:
+        return True
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return False
 
 
 def _telegram_command_scope_key(params: dict[str, Any]) -> str:
@@ -1578,7 +1819,126 @@ async def _authorize_telegram_chat_method(
             "Forbidden: callback_query_id is not bound to this bot",
             403,
         )
+
+    file_ids, file_error = _telegram_outbound_file_references(method_key, params)
+    if file_error is not None:
+        return _telegram_error_response(f"Bad Request: {file_error}", 400)
+    for file_id in file_ids:
+        if not await channel_agent_reference_exists(
+            db,
+            account=account,
+            ref_kind=TELEGRAM_REF_FILE_ID,
+            ref_value=file_id,
+            bot_agent_link_id=bot_agent_link_id,
+        ):
+            return _telegram_error_response(
+                "Forbidden: file_id is not bound to this bot",
+                403,
+            )
     return None
+
+
+def _telegram_outbound_file_references(
+    method_key: str,
+    params: dict[str, Any],
+) -> tuple[set[str], str | None]:
+    references: set[str] = set()
+    modeled_top_level_fields = set(_TELEGRAM_TOP_LEVEL_FILE_FIELDS.get(method_key, {}))
+
+    for field_name, policy in _TELEGRAM_TOP_LEVEL_FILE_FIELDS.get(method_key, {}).items():
+        if field_name in params and not _collect_telegram_file_reference(
+            params[field_name], policy, references
+        ):
+            return references, f"invalid {field_name}"
+
+    for nested_policy in _TELEGRAM_NESTED_MEDIA_POLICIES.get(method_key, ()):
+        modeled_top_level_fields.update(
+            _TELEGRAM_FILE_FIELD_NAMES & set(nested_policy.parameter_names)
+        )
+        for parameter_name in nested_policy.parameter_names:
+            if parameter_name in params and not _collect_telegram_nested_media_references(
+                params[parameter_name], nested_policy, references
+            ):
+                return references, f"invalid {parameter_name} media"
+
+    unmodeled_fields = (params.keys() & _TELEGRAM_FILE_FIELD_NAMES) - modeled_top_level_fields
+    if unmodeled_fields:
+        return references, f"unmodeled media field {sorted(unmodeled_fields)[0]}"
+    return references, None
+
+
+def _collect_telegram_file_reference(
+    value: Any,
+    policy: _TelegramFilePolicy,
+    references: set[str],
+) -> bool:
+    if isinstance(value, UploadFile):
+        return True
+    if not isinstance(value, str):
+        return False
+    value = value.strip()
+    if not value:
+        return False
+    if value.startswith("attach://"):
+        return bool(value.removeprefix("attach://"))
+    if _telegram_media_url(value):
+        return policy.allow_url
+    if "://" in value or not policy.allow_file_id:
+        return False
+    references.add(value)
+    return True
+
+
+def _telegram_media_url(value: str) -> bool:
+    try:
+        parsed = httpx.URL(value)
+    except httpx.InvalidURL:
+        return False
+    return parsed.scheme in {"http", "https"} and parsed.host is not None
+
+
+def _collect_telegram_nested_media_references(
+    value: Any,
+    policy: _TelegramNestedMediaPolicy,
+    references: set[str],
+) -> bool:
+    value = _telegram_json_parameter(value)
+    if not isinstance(value, (dict, list)):
+        return False
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, list):
+            stack.extend(current)
+            continue
+        if not isinstance(current, dict):
+            continue
+
+        media_type = _optional_str(current.get("type"))
+        if (
+            media_type is not None
+            and "media" in current
+            and not isinstance(current["media"], (str, UploadFile))
+        ):
+            return False
+        direct_file_fields = {
+            field_name
+            for field_name in current.keys() & _TELEGRAM_FILE_FIELD_NAMES
+            if isinstance(current[field_name], (str, UploadFile))
+        }
+        if direct_file_fields:
+            file_fields = policy.file_fields_by_type.get(media_type or "")
+            if media_type not in policy.allowed_types or file_fields is None:
+                return False
+            if direct_file_fields - file_fields.keys():
+                return False
+            for field_name, file_policy in file_fields.items():
+                if field_name in current and not _collect_telegram_file_reference(
+                    current[field_name], file_policy, references
+                ):
+                    return False
+        stack.extend(current.values())
+    return True
 
 
 def _referenced_telegram_chat_ids(params: dict[str, Any]) -> set[str]:
@@ -1639,8 +1999,10 @@ def _telegram_response_json(response: Any) -> dict[str, Any]:
 
 
 async def _proxy_telegram_bot_method(
+    db: AsyncSession,
     *,
     account: Any,
+    bot_agent_link_id: UUID,
     method: str,
     request: Request,
     raw_body: bytes,
@@ -1651,6 +2013,23 @@ async def _proxy_telegram_bot_method(
         request=request,
         raw_body=raw_body,
     )
+    if 200 <= response.status_code < 300:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and payload.get("ok") is True:
+            file_ids = telegram_file_ids(payload.get("result"))
+            for file_id in sorted(file_ids):
+                await record_channel_agent_reference(
+                    db,
+                    account=account,
+                    bot_agent_link_id=bot_agent_link_id,
+                    ref_kind=TELEGRAM_REF_FILE_ID,
+                    ref_value=file_id,
+                )
+            if file_ids:
+                await db.commit()
     return Response(
         content=response.content,
         status_code=response.status_code,
