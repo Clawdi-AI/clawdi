@@ -157,7 +157,7 @@ env:
     ENVIRONMENT: production
     DEBUG: "false"
     # CI exports GITHUB_SHA; operator deploys without it simply go untagged.
-    SENTRY_RELEASE: <%= ENV.fetch("GITHUB_SHA", "") %>
+    SENTRY_RELEASE: "<%= ENV.fetch('GITHUB_SHA', '') %>"
     PUBLIC_API_URL: https://cloud-api.clawdi.ai
     WEB_ORIGIN: https://cloud.clawdi.ai
     CORS_ORIGINS: '["https://www.clawdi.ai","https://clawdi.ai","https://api.clawdi.ai","https://cloud.clawdi.ai"]'
