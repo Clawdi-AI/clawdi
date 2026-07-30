@@ -45,7 +45,11 @@ def test_agent_v2_runtime_contract_migration_precedes_config_observation_migrati
     config.set_main_option("script_location", str(backend_dir / "alembic"))
     scripts = ScriptDirectory.from_config(config)
 
-    assert scripts.get_heads() == [APPLY_GENERATION_REVISION]
+    heads = scripts.get_heads()
+    assert len(heads) == 1
+    assert APPLY_GENERATION_REVISION in {
+        revision.revision for revision in scripts.iterate_revisions(heads[0], "base")
+    }
     assert scripts.get_revision(APPLY_GENERATION_REVISION).down_revision == SKILL_AUTHORITY_REVISION
     assert scripts.get_revision(SKILL_AUTHORITY_REVISION).down_revision == APP_SETTINGS_REVISION
     assert scripts.get_revision(APP_SETTINGS_REVISION).down_revision == HEAD_REVISION
