@@ -28,6 +28,19 @@ export function resolveRuntimeApplyGeneration(identity: RuntimeGenerationIdentit
 	return identity.applyGeneration ?? identity.generation;
 }
 
+export function runtimeApplyIdentitiesEqual(
+	left: RuntimeApplyIdentity | null,
+	right: RuntimeApplyIdentity | null,
+): boolean {
+	if (left === null || right === null) return left === right;
+	return (
+		left.generation === right.generation &&
+		left.manifestETag === right.manifestETag &&
+		left.applyReceiptId === right.applyReceiptId &&
+		left.bootNonce === right.bootNonce
+	);
+}
+
 export const RUNTIME_APPLY_IDENTITY_FILE_ENV = "CLAWDI_RUNTIME_APPLY_IDENTITY_FILE";
 export const HOSTED_RUNTIME_APPLY_IDENTITY_FILE =
 	"/var/run/secrets/clawdi-runtime-identity/runtime-apply-identity.json";

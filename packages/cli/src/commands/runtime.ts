@@ -22,17 +22,19 @@ import { getCliVersion } from "../lib/version";
 import {
 	type RuntimeAppliedContentIdentity,
 	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "../runtime/applied-state";
 import {
 	type RuntimeApplyIdentity,
-	readRuntimeApplyIdentityFromEnv,
+	readRuntimeApplyContext,
 	resolveRuntimeApplyGeneration,
+	runtimeApplyIdentitiesEqual,
 } from "../runtime/apply-identity";
 import {
-	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
+	readRuntimeCredential,
 	runtimeAuthTokenFileLabel,
 } from "../runtime/auth-token";
 import { applyRuntimeBundleChannelsToManifestLoad } from "../runtime/channels";
@@ -1253,7 +1255,8 @@ function hasRuntimeCredential(input: {
 	if (input.manifestPath) return true;
 	const paths = input.paths ?? getRuntimePaths();
 	if (existsSync(paths.manifestLastGood)) return true;
-	return ensureRuntimeAuthTokenFile(paths) !== null;
+	const applyContext = readRuntimeApplyContext();
+	return readRuntimeCredential(paths, applyContext.runtimeEnvironment) !== null;
 }
 
 function runtimeCredentialName(paths: ReturnType<typeof getRuntimePaths>): string {
@@ -2404,7 +2407,11 @@ async function runtimeWatchTickAfterCliReconciliation(
 	if (
 		"notModified" in manifestLoad &&
 		activeAppliedState !== null &&
-		activeAppliedState.etag === responseManifestEtag
+		activeAppliedState.etag === responseManifestEtag &&
+		runtimeApplyIdentitiesEqual(
+			manifestLoad.applyContext?.identity ?? null,
+			runtimeAppliedApplyIdentity(activeAppliedState),
+		)
 	) {
 		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
 		return {

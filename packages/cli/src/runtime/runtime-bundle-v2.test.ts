@@ -1048,7 +1048,7 @@ describe("hosted runtime bundle v2", () => {
 			convergence: onlineConvergence,
 			applyIdentity: {
 				generation: 1,
-				manifestETag: '"manifest-golden-1"',
+				manifestETag: '"bundle-golden"',
 				applyReceiptId: "apply-receipt-golden-0001",
 				bootNonce: "boot-nonce-golden-000001",
 			},
@@ -1138,6 +1138,10 @@ describe("hosted runtime bundle v2", () => {
 		rmSync(egressSecretFile);
 		expect(existsSync(egressSecretFile)).toBe(false);
 		networkAvailable = false;
+		process.env.CLAWDI_RUNTIME_GENERATION = "1";
+		process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = '"bundle-golden"';
+		process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = "apply-receipt-golden-0001";
+		process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-golden-000001";
 		const offlineLoad = await loadRuntimeManifest(paths);
 		if (!("manifest" in offlineLoad)) throw new Error(JSON.stringify(offlineLoad));
 		expect(offlineLoad.source).toBe("last-good-cache");
@@ -1156,6 +1160,14 @@ describe("hosted runtime bundle v2", () => {
 			expect(offlineEgressSecretStat.gid).toBe(10002);
 		}
 
+		for (const name of [
+			"CLAWDI_RUNTIME_GENERATION",
+			"CLAWDI_RUNTIME_MANIFEST_ETAG",
+			"CLAWDI_RUNTIME_APPLY_RECEIPT_ID",
+			"CLAWDI_RUNTIME_BOOT_NONCE",
+		]) {
+			delete process.env[name];
+		}
 		rmSync(paths.appliedState);
 		const uncommittedCacheLoad = await loadRuntimeManifest(paths);
 		expect("errors" in uncommittedCacheLoad).toBe(true);
@@ -1166,6 +1178,10 @@ describe("hosted runtime bundle v2", () => {
 			"cached strict-v2 manifest has no durable applied authority",
 		);
 		writeFileSync(paths.appliedState, appliedStateText);
+		process.env.CLAWDI_RUNTIME_GENERATION = "1";
+		process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = '"bundle-golden"';
+		process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = "apply-receipt-golden-0001";
+		process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-golden-000001";
 
 		const committedManifest = z
 			.record(z.string(), z.unknown())

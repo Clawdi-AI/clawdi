@@ -154,7 +154,7 @@ describe("hosted runtime observation producer", () => {
 			sequence: 1,
 			eventId: "event-or-boot-identity",
 			applyReceiptId: "apply-receipt-0003",
-			bootNonce: "boot-nonce-000003",
+			bootNonce: "boot-nonce-000001",
 			applied: { generation: 3, etag: '"manifest-3"' },
 		});
 	});

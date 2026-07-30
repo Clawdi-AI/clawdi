@@ -1,6 +1,5 @@
 import { readFileSync, rmSync } from "node:fs";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
-import { readRuntimeApplyContext } from "./apply-identity";
 import type { RuntimePaths } from "./paths";
 import type { RuntimeEnvironmentAuthority } from "./secret-values";
 
@@ -43,23 +42,22 @@ export function writeRuntimeAuthToken(paths: RuntimePaths, token: string): strin
 	return paths.daemonAuthToken;
 }
 
+export function readRuntimeCredential(
+	paths: RuntimePaths,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
+): string | null {
+	return readRuntimeCredentialSource(paths, runtimeEnvironment)?.token ?? null;
+}
+
 export function ensureRuntimeAuthTokenFile(
 	paths: RuntimePaths,
-	runtimeEnvironment: RuntimeEnvironmentAuthority = readRuntimeApplyContext().runtimeEnvironment,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): string | null {
-	const envName =
-		paths.mode === "hosted"
-			? runtimeAuthEnvName(runtimeEnvironment.values)
-			: RUNTIME_AUTH_TOKEN_ENV;
-	const token = runtimeEnvironment.values[envName]?.trim();
-	if (token) return writeRuntimeAuthToken(paths, token);
-	if (runtimeEnvironment.kind === "projected-environment") {
-		rmSync(paths.daemonAuthToken, { force: true });
-		return null;
+	const credential = readRuntimeCredentialSource(paths, runtimeEnvironment);
+	if (credential?.source === "environment") {
+		return writeRuntimeAuthToken(paths, credential.token);
 	}
-	if (readRuntimeAuthToken(paths)) {
-		return paths.daemonAuthToken;
-	}
+	if (credential?.source === "file") return paths.daemonAuthToken;
 	rmSync(paths.daemonAuthToken, { force: true });
 	return null;
 }
@@ -76,4 +74,25 @@ function normalizeRuntimeAuthToken(token: string): string | null {
 		if (code <= 0x1f || code === 0x7f) return null;
 	}
 	return normalized;
+}
+
+function readRuntimeCredentialSource(
+	paths: RuntimePaths,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
+): { source: "environment" | "file"; token: string } | null {
+	const envName =
+		paths.mode === "hosted"
+			? runtimeAuthEnvName(runtimeEnvironment.values)
+			: RUNTIME_AUTH_TOKEN_ENV;
+	const rawToken = runtimeEnvironment.values[envName];
+	if (rawToken?.trim()) {
+		const token = normalizeRuntimeAuthToken(rawToken);
+		if (!token) {
+			throw new Error("runtime auth token must be non-empty and contain no control characters");
+		}
+		return { source: "environment", token };
+	}
+	if (runtimeEnvironment.kind === "projected-environment") return null;
+	const token = readRuntimeAuthToken(paths);
+	return token ? { source: "file", token } : null;
 }

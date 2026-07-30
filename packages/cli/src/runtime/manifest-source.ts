@@ -8,15 +8,11 @@ import {
 } from "./applied-state";
 import {
 	type RuntimeApplyContext,
-	type RuntimeApplyIdentity,
 	readRuntimeApplyContext,
 	resolveRuntimeApplyGeneration,
+	runtimeApplyIdentitiesEqual,
 } from "./apply-identity";
-import {
-	ensureRuntimeAuthTokenFile,
-	readRuntimeAuthToken,
-	runtimeAuthTokenFileLabel,
-} from "./auth-token";
+import { readRuntimeCredential, runtimeAuthTokenFileLabel } from "./auth-token";
 import { egressProfileSecretRefs } from "./egress-profiles";
 import {
 	hostedManifestEgressProfiles,
@@ -332,8 +328,7 @@ function rawGeneration(value: unknown): number | null {
 }
 
 function runtimeCredential(paths: RuntimePaths, applyContext: RuntimeApplyContext): string | null {
-	ensureRuntimeAuthTokenFile(paths, applyContext.runtimeEnvironment);
-	return readRuntimeAuthToken(paths);
+	return readRuntimeCredential(paths, applyContext.runtimeEnvironment);
 }
 
 function resolveRuntimeSource(
@@ -1014,6 +1009,20 @@ function loadLastGoodManifest(
 		const cachedApplyIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
 		const strictV2Cache =
 			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
+		if (
+			opts.requireOfflineBoot &&
+			(strictV2Cache || cachedApplyIdentity !== null) &&
+			!runtimeApplyIdentitiesEqual(applyContext.identity, cachedApplyIdentity)
+		) {
+			return {
+				mode: "repair",
+				stage: "local",
+				errors: [
+					"cached strict-v2 apply identity does not match the current runtime apply identity; refusing offline boot",
+				],
+				activeGeneration: appliedState?.generation ?? null,
+			};
+		}
 		const cached = loadCachedSecretValues(paths);
 		if ("errors" in cached) return cached;
 		const boundCached = bindRuntimeApplyContext(cached, applyContext);

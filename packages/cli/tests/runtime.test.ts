@@ -1586,6 +1586,20 @@ function writeTestRuntimeAppliedState(
 	);
 }
 
+const OFFLINE_RUNTIME_APPLY_IDENTITY = {
+	generation: 3,
+	manifestETag: '"manifest-etag-offline"',
+	applyReceiptId: "apply-receipt-offline-0001",
+	bootNonce: "boot-nonce-offline-000001",
+};
+
+function setRuntimeApplyIdentityEnvironment(identity: typeof OFFLINE_RUNTIME_APPLY_IDENTITY): void {
+	process.env.CLAWDI_RUNTIME_GENERATION = String(identity.generation);
+	process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = identity.manifestETag;
+	process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = identity.applyReceiptId;
+	process.env.CLAWDI_RUNTIME_BOOT_NONCE = identity.bootNonce;
+}
+
 function writeOfflineStrictAppliedState(
 	paths: RuntimePaths,
 	manifest: RuntimeManifest,
@@ -1599,9 +1613,9 @@ function writeOfflineStrictAppliedState(
 			etag: '"transport-etag-offline"',
 			sourceRevision: "a".repeat(64),
 			generation: manifest.generation,
-			manifestETag: '"manifest-etag-offline"',
-			applyReceiptId: "apply-receipt-offline-0001",
-			bootNonce: "boot-nonce-offline-000001",
+			manifestETag: OFFLINE_RUNTIME_APPLY_IDENTITY.manifestETag,
+			applyReceiptId: OFFLINE_RUNTIME_APPLY_IDENTITY.applyReceiptId,
+			bootNonce: OFFLINE_RUNTIME_APPLY_IDENTITY.bootNonce,
 			contentIdentity: {
 				sourcePath: "https://runtime.test/v1/runtime/manifest",
 				sha256: contentSha256,
@@ -2042,7 +2056,7 @@ describe("runtime manifest datasource", () => {
 		}
 	});
 
-	it("does not reuse a cached strict-v2 tuple as new applied authority", async () => {
+	it("gates strict-v2 offline cache on the current, durable, and migration identity states", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -2065,6 +2079,7 @@ describe("runtime manifest datasource", () => {
 				registry: "https://registry.npmjs.org",
 			},
 			runtimes: { openclaw: { enabled: false } },
+			projection: { sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2" },
 			recovery: { cacheManifest: true, allowOfflineBoot: true },
 		};
 		writeFileSync(join(state, "cache", "manifest.last-good.json"), JSON.stringify(manifest));
@@ -2077,24 +2092,46 @@ describe("runtime manifest datasource", () => {
 				secretValues: {},
 			}),
 		);
+		setRuntimeApplyIdentityEnvironment(OFFLINE_RUNTIME_APPLY_IDENTITY);
 		const loaded = await loadRuntimeManifest(paths);
 		if (!("manifest" in loaded)) {
 			throw new Error(`expected offline manifest load success: ${loaded.errors.join("; ")}`);
 		}
-		const convergence = convergeRuntimeManifest(loaded, paths, { cacheLastGood: false });
-		commitRuntimeAppliedState({
-			load: loaded,
-			paths,
-			etag: '"transport-etag-offline-reapplied"',
-			sourceRevision: "c".repeat(64),
-			convergence,
-			applyIdentity: null,
+		expect(loaded.applyContext?.identity).toEqual(OFFLINE_RUNTIME_APPLY_IDENTITY);
+
+		setRuntimeApplyIdentityEnvironment({
+			...OFFLINE_RUNTIME_APPLY_IDENTITY,
+			applyReceiptId: "apply-receipt-offline-0002",
 		});
-		const reapplied = readRuntimeAppliedState(paths);
-		expect(reapplied?.generation).toBe(3);
-		expect(reapplied?.manifestETag).toBeUndefined();
-		expect(reapplied?.applyReceiptId).toBeUndefined();
-		expect(reapplied?.bootNonce).toBeUndefined();
+		const mismatched = await loadRuntimeManifest(paths);
+		expect("errors" in mismatched).toBe(true);
+		if (!("errors" in mismatched)) throw new Error("expected offline identity mismatch");
+		expect(mismatched.errors).toContain(
+			"cached strict-v2 apply identity does not match the current runtime apply identity; refusing offline boot",
+		);
+
+		const applied = readRuntimeAppliedState(paths);
+		if (!applied) throw new Error("expected durable offline applied state");
+		const {
+			manifestETag: _manifestETag,
+			applyReceiptId: _applyReceiptId,
+			bootNonce: _bootNonce,
+			...legacyApplied
+		} = applied;
+		writeRuntimeAppliedState(legacyApplied, paths);
+		const applyIdentityPath = join(run, "secrets", "runtime-apply-identity.json");
+		writeRuntimeApplyIdentityFile(applyIdentityPath, OFFLINE_RUNTIME_APPLY_IDENTITY, {}, [
+			"CLAWDI_AUTH_TOKEN",
+		]);
+		process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE = applyIdentityPath;
+		const firstIdentityFileMigration = await loadRuntimeManifest(paths);
+		expect("errors" in firstIdentityFileMigration).toBe(true);
+		if (!("errors" in firstIdentityFileMigration)) {
+			throw new Error("expected first identity-file migration to fail closed");
+		}
+		expect(firstIdentityFileMigration.errors).toContain(
+			"cached strict-v2 apply identity does not match the current runtime apply identity; refusing offline boot",
+		);
 	});
 
 	it("refuses strict-v2 offline identity restoration when cached manifest content changed", async () => {
@@ -2135,6 +2172,7 @@ describe("runtime manifest datasource", () => {
 				secretValues: {},
 			}),
 		);
+		setRuntimeApplyIdentityEnvironment(OFFLINE_RUNTIME_APPLY_IDENTITY);
 
 		const loaded = await loadRuntimeManifest(paths);
 		expect("errors" in loaded).toBe(true);
@@ -2195,6 +2233,7 @@ describe("runtime manifest datasource", () => {
 				}),
 			}),
 		);
+		setRuntimeApplyIdentityEnvironment(OFFLINE_RUNTIME_APPLY_IDENTITY);
 
 		const loaded = await loadRuntimeManifest(paths);
 		expect("errors" in loaded).toBe(true);
@@ -5270,7 +5309,7 @@ exit 64
 		);
 	});
 
-	it("uses the deployment-selected auth env and ignores runtime source file auth", async () => {
+	it("reads the deployment-selected auth env without mutating the legacy token file", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -5285,7 +5324,11 @@ exit 64
 		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CUSTOM_RUNTIME_TOKEN";
 		process.env.CLAWDI_AUTH_TOKEN = "stale-default-token";
 		process.env.CUSTOM_RUNTIME_TOKEN = "bootstrap-token";
-		writeFileSync(join(run, "secrets", "auth-token"), "stale-file-token\n");
+		const paths = getRuntimePaths();
+		writeFileSync(paths.daemonAuthToken, "stale-file-token\n");
+		const fixedTokenTime = new Date("2026-07-30T00:00:00.000Z");
+		utimesSync(paths.daemonAuthToken, fixedTokenTime, fixedTokenTime);
+		const tokenMtimeBeforeFetch = statSync(paths.daemonAuthToken).mtimeMs;
 		writeFileSync(
 			sourcePath,
 			JSON.stringify({
@@ -5327,10 +5370,11 @@ exit 64
 		]);
 
 		try {
-			const loaded = await loadRuntimeManifest(getRuntimePaths());
+			const loaded = await loadRuntimeManifest(paths);
 			if (!("manifest" in loaded)) throw new Error(loaded.errors.join("\n"));
 			expect(captured[0].headers.authorization).toBe("Bearer bootstrap-token");
-			expect(readFileSync(join(run, "secrets", "auth-token"), "utf-8")).toBe("bootstrap-token\n");
+			expect(readFileSync(paths.daemonAuthToken, "utf-8")).toBe("stale-file-token\n");
+			expect(statSync(paths.daemonAuthToken).mtimeMs).toBe(tokenMtimeBeforeFetch);
 		} finally {
 			restore();
 		}
@@ -6538,10 +6582,12 @@ fi
 			{
 				method: "GET",
 				path: "/v1/runtime/manifest",
-				response: () =>
-					hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, generation), {
-						etag: manifestEtag,
-					}),
+				response: (request) =>
+					request.headers["if-none-match"]
+						? new Response(null, { status: 304, headers: { etag: manifestEtag } })
+						: hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, generation), {
+								etag: manifestEtag,
+							}),
 			},
 		]);
 
@@ -6558,7 +6604,44 @@ fi
 			expect(initialDaemonAuthTokenRevision).toMatch(/^[a-f0-9]{64}$/);
 			const initialDaemonUnit = readSystemdSystemUnit(paths, "clawdi-daemon");
 			const initialDaemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
+			const requestsBeforeMatchingTuple = watchFetch.captured.length;
 			writeFileSync(systemctlLog, "");
+			process.exitCode = undefined;
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode ?? 0).toBe(0);
+			expect(watchFetch.captured.slice(requestsBeforeMatchingTuple)).toHaveLength(1);
+			expect(watchFetch.captured.at(-1)?.headers["if-none-match"]).toBe('"manifest-generation-30"');
+			expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("not_modified");
+			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
+
+			writeRuntimeApplyIdentityFile(applyIdentityPath, {
+				generation,
+				manifestETag: manifestEtag,
+				applyReceiptId: "apply-receipt-generation-0030-refreshed",
+				bootNonce: "boot-nonce-generation-0002",
+			});
+			const requestsBeforeTupleRefresh = watchFetch.captured.length;
+			writeFileSync(systemctlLog, "");
+			process.exitCode = undefined;
+			await runtimeWatch({ once: true, json: true });
+
+			expect(process.exitCode ?? 0).toBe(0);
+			expect(watchFetch.captured.slice(requestsBeforeTupleRefresh)).toHaveLength(2);
+			expect(
+				watchFetch.captured
+					.slice(requestsBeforeTupleRefresh)
+					.map((request) => request.headers["if-none-match"] ?? null),
+			).toEqual(['"manifest-generation-30"', null]);
+			expect(readRuntimeAppliedState(paths)).toMatchObject({
+				generation: 30,
+				manifestETag: '"manifest-generation-30"',
+				applyReceiptId: "apply-receipt-generation-0030-refreshed",
+				bootNonce: "boot-nonce-generation-0002",
+			});
+			expect(readFileSync(systemctlLog, "utf-8")).not.toMatch(
+				/(?:^|\s)(?:daemon-reload|start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
+			);
 
 			generation = 31;
 			manifestEtag = '"manifest-generation-31"';
@@ -6599,7 +6682,7 @@ fi
 				applyReceiptId: "apply-receipt-generation-0031",
 				bootNonce: "boot-nonce-generation-0001",
 			});
-			expect(watchFetch.captured).toHaveLength(3);
+			expect(watchFetch.captured).toHaveLength(8);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"--user restart openclaw-gateway.service",
 			);
@@ -6723,6 +6806,12 @@ fi
 				{ CLAWDI_AUTH_TOKEN: "rotated-runtime-auth-token" },
 				["OPENCLAW_GATEWAY_TOKEN"],
 			);
+			const tokenPath = join(run, "secrets", "auth-token");
+			const fixedTokenTime = new Date("2026-07-30T00:00:00.000Z");
+			utimesSync(tokenPath, fixedTokenTime, fixedTokenTime);
+			const tokenBeforeRejection = readFileSync(tokenPath, "utf-8");
+			const tokenMtimeBeforeRejection = statSync(tokenPath).mtimeMs;
+			const appliedStateBeforeRejection = readFileSync(paths.appliedState, "utf-8");
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
 
@@ -6735,11 +6824,13 @@ fi
 				"OpenClaw native gateway token is unavailable",
 			);
 			expect(readRuntimeAppliedState(getRuntimePaths())?.generation).toBe(33);
-			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
-				"--user restart openclaw-gateway.service",
-			);
+			expect(readFileSync(tokenPath, "utf-8")).toBe(tokenBeforeRejection);
+			expect(statSync(tokenPath).mtimeMs).toBe(tokenMtimeBeforeRejection);
+			expect(readFileSync(paths.appliedState, "utf-8")).toBe(appliedStateBeforeRejection);
+			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
 
 			const fetchCountBeforeMissingAuth = watchFetch.captured.length;
+			writeFileSync(systemctlLog, "");
 			generation = 35;
 			manifestEtag = '"manifest-generation-35"';
 			writeRuntimeApplyIdentityFile(
@@ -6753,6 +6844,9 @@ fi
 				{},
 				["CLAWDI_AUTH_TOKEN"],
 			);
+			const tokenBeforeFetchFailure = readFileSync(tokenPath, "utf-8");
+			const tokenMtimeBeforeFetchFailure = statSync(tokenPath).mtimeMs;
+			const appliedStateBeforeFetchFailure = readFileSync(paths.appliedState, "utf-8");
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
 
@@ -6762,7 +6856,10 @@ fi
 				stage: "network",
 			});
 			expect(watchFetch.captured).toHaveLength(fetchCountBeforeMissingAuth);
-			expect(existsSync(join(run, "secrets", "auth-token"))).toBe(false);
+			expect(readFileSync(tokenPath, "utf-8")).toBe(tokenBeforeFetchFailure);
+			expect(statSync(tokenPath).mtimeMs).toBe(tokenMtimeBeforeFetchFailure);
+			expect(readFileSync(paths.appliedState, "utf-8")).toBe(appliedStateBeforeFetchFailure);
+			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
 			expect(readRuntimeAppliedState(getRuntimePaths())?.generation).toBe(33);
 		} finally {
 			watchFetch.restore();

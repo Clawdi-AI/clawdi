@@ -1,4 +1,4 @@
-import { RUNTIME_AUTH_TOKEN_ENV, readRuntimeAuthToken } from "./auth-token";
+import { RUNTIME_AUTH_TOKEN_ENV, readRuntimeCredential } from "./auth-token";
 import type { RuntimeManifest } from "./manifest-contract";
 import { hostedMcpDesiredStateSchema } from "./manifest-resources";
 import type { RuntimePaths } from "./paths";
@@ -24,7 +24,9 @@ export function createRuntimeSecretResolver(
 
 	return {
 		resolve(ref) {
-			if (privateFileBackedRefs.has(ref)) return readRuntimeAuthToken(paths);
+			if (privateFileBackedRefs.has(ref)) {
+				return readRuntimeCredential(paths, runtimeEnvironment);
+			}
 			return runtimeSecretValue(secretValues ?? {}, ref, runtimeEnvironment);
 		},
 		isPrivateFileBacked(ref) {

@@ -7,6 +7,7 @@ import {
 	readRuntimeApplyIdentity,
 	readRuntimeApplyIdentityFromEnv,
 	resolveRuntimeApplyGeneration,
+	runtimeApplyIdentitiesEqual,
 	runtimeApplyIdentityEnvironment,
 	runtimeApplyIdentityServiceEnvironment,
 } from "./apply-identity";
@@ -47,6 +48,23 @@ describe("runtime apply identity environment", () => {
 			CLAWDI_RUNTIME_APPLY_RECEIPT_ID: "apply-receipt-0003",
 			CLAWDI_RUNTIME_BOOT_NONCE: "boot-nonce-000003",
 		});
+	});
+
+	test("compares the complete four-field identity tuple", () => {
+		const identity = readRuntimeApplyIdentityFromEnv(completeEnvironment);
+		if (!identity) throw new Error("expected complete apply identity");
+		expect(runtimeApplyIdentitiesEqual(identity, { ...identity })).toBe(true);
+		for (const different of [
+			{ ...identity, generation: identity.generation + 1 },
+			{ ...identity, manifestETag: '"manifest-8"' },
+			{ ...identity, applyReceiptId: "apply-receipt-0008" },
+			{ ...identity, bootNonce: "boot-nonce-000008" },
+		]) {
+			expect(runtimeApplyIdentitiesEqual(identity, different)).toBe(false);
+		}
+		expect(runtimeApplyIdentitiesEqual(identity, null)).toBe(false);
+		expect(runtimeApplyIdentitiesEqual(null, identity)).toBe(false);
+		expect(runtimeApplyIdentitiesEqual(null, null)).toBe(true);
 	});
 
 	test("returns null when the entire tuple is absent", () => {
