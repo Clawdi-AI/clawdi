@@ -40,7 +40,7 @@ afterEach(() => {
 });
 
 describe("runtime applied state", () => {
-	test("uses a strict v2 schema with one applied authority", () => {
+	test("uses a strict v2 schema for private applied authority", () => {
 		const state = appliedStateFixture();
 		expect(runtimeAppliedStateSchema.safeParse(state).success).toBe(true);
 		expect(runtimeAppliedStateSchema.safeParse({ ...state, unexpected: true }).success).toBe(false);
@@ -70,6 +70,18 @@ describe("runtime applied state", () => {
 			runtimeAppliedStateSchema.safeParse({
 				...state,
 				egressSidecarSecretRevision: "not-a-private-revision",
+			}).success,
+		).toBe(false);
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				daemonAuthTokenRevision: "d".repeat(64),
+			}).success,
+		).toBe(true);
+		expect(
+			runtimeAppliedStateSchema.safeParse({
+				...state,
+				daemonAuthTokenRevision: "not-a-private-revision",
 			}).success,
 		).toBe(false);
 	});

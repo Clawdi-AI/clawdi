@@ -53,7 +53,9 @@ import {
 } from "../src/runtime/hosted-egress-profiles";
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
+	buildOpenClawHostedProviderPatch,
 	convergeRuntimeManifest,
+	hostedAiProviderCatalog,
 	loadRuntimeManifest,
 	type RuntimeConvergenceResult,
 	type RuntimeManifest,
@@ -3866,11 +3868,26 @@ exit 0
 				etag: `"${providerCase.id}-1"`,
 			});
 
-			const second = convergeRuntimeManifest(
-				hostedProviderSwitchLoad(home, providerCase.second, 2),
-				paths,
-			);
+			const secondLoad = hostedProviderSwitchLoad(home, providerCase.second, 2);
+			const second = convergeRuntimeManifest(secondLoad, paths);
 			expect(second.installErrors).toEqual([]);
+			if (providerCase.id === "byok-to-byok") {
+				const projectionInput = hostedAiProviderCatalog(secondLoad.manifest, "openclaw");
+				expect(projectionInput).not.toBeNull();
+				if (!projectionInput) throw new Error("expected OpenClaw provider projection input");
+				const sharedPatch = buildOpenClawHostedProviderPatch(projectionInput, [firstAgentProvider]);
+				const appliedProviderPatches = readFileSync(openclawPatchLog, "utf-8")
+					.split("\n---\n")
+					.map((content) => content.trim())
+					.filter(Boolean)
+					.map((content) => JSON.parse(content) as unknown)
+					.filter((patch): patch is Record<string, unknown> => {
+						if (!isRecord(patch)) return false;
+						const models = patch.models;
+						return isRecord(models) && isRecord(models.providers);
+					});
+				expect(appliedProviderPatches.at(-1)).toEqual(JSON.parse(sharedPatch.content));
+			}
 
 			const openclawProviders = applyOpenClawProviderPatchLog(openclawPatchLog, {
 				"user-local": {
@@ -5436,6 +5453,7 @@ exit 64
 							sourceRevision: load.sourceRevision,
 							convergence,
 							applyIdentity: null,
+							daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
 							egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 						});
 					},
@@ -6467,6 +6485,7 @@ fi
 		const systemctlLog = join(root, "systemctl.log");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
+		const previousUmask = process.umask(0o022);
 		const logs: string[] = [];
 		let generation = 30;
 		let manifestEtag = '"manifest-generation-30"';
@@ -6528,10 +6547,18 @@ fi
 
 		try {
 			await runtimeWatch({ once: true, json: true });
-			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
+			const paths = getRuntimePaths();
+			const initialAppliedState = readRuntimeAppliedState(paths);
+			if (!initialAppliedState) throw new Error(logs.join("\n"));
+			expect(initialAppliedState).toMatchObject({
 				etag: '"manifest-generation-30"',
 				generation: 30,
 			});
+			const initialDaemonAuthTokenRevision = initialAppliedState?.daemonAuthTokenRevision;
+			expect(initialDaemonAuthTokenRevision).toMatch(/^[a-f0-9]{64}$/);
+			const initialDaemonUnit = readSystemdSystemUnit(paths, "clawdi-daemon");
+			const initialDaemonEnv = readSystemdEnvFile(paths, "clawdi-daemon");
+			writeFileSync(systemctlLog, "");
 
 			generation = 31;
 			manifestEtag = '"manifest-generation-31"';
@@ -6576,6 +6603,8 @@ fi
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"--user restart openclaw-gateway.service",
 			);
+			expect(readFileSync(systemctlLog, "utf-8")).not.toContain("restart clawdi-daemon.service");
+			const committedBeforeTokenRotation = readFileSync(paths.appliedState, "utf-8");
 
 			writeFileSync(systemctlLog, "");
 			process.env.CLAWDI_AUTH_TOKEN = "stale-process-auth-token";
@@ -6598,11 +6627,14 @@ fi
 			await runtimeWatch({ once: true, json: true });
 
 			expect(process.exitCode ?? 0).toBe(0);
-			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
+			const rotatedAppliedState = readRuntimeAppliedState(paths);
+			expect(rotatedAppliedState).toMatchObject({
 				generation: 32,
 				manifestETag: '"manifest-generation-32"',
 				bootNonce: "boot-nonce-generation-0001",
 			});
+			expect(rotatedAppliedState?.daemonAuthTokenRevision).toMatch(/^[a-f0-9]{64}$/);
+			expect(rotatedAppliedState?.daemonAuthTokenRevision).not.toBe(initialDaemonAuthTokenRevision);
 			expect(watchFetch.captured.at(-1)?.headers.authorization).toBe(
 				"Bearer rotated-runtime-auth-token",
 			);
@@ -6615,6 +6647,33 @@ fi
 			);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"restart clawdi-runtime-sidecar.service",
+			);
+			expect(readSystemdSystemUnit(paths, "clawdi-daemon")).toBe(initialDaemonUnit);
+			expect(readSystemdEnvFile(paths, "clawdi-daemon")).toBe(initialDaemonEnv);
+			expect(initialDaemonUnit).not.toContain(
+				rotatedAppliedState?.daemonAuthTokenRevision ?? "missing-daemon-token-revision",
+			);
+			expect(initialDaemonEnv).not.toContain(
+				rotatedAppliedState?.daemonAuthTokenRevision ?? "missing-daemon-token-revision",
+			);
+
+			// Simulate a crash after the desired token file/unit were written but before
+			// the private applied authority advanced. The unchanged public unit cannot
+			// prove activation, so the next pass must retry the daemon restart.
+			writeFileSync(paths.appliedState, committedBeforeTokenRotation);
+			writeFileSync(systemctlLog, "");
+			process.exitCode = undefined;
+			await runtimeWatch({ once: true, json: true });
+			expect(process.exitCode ?? 0).toBe(0);
+			expect(
+				readFileSync(systemctlLog, "utf-8")
+					.trim()
+					.split("\n")
+					.filter((call) => call === "restart clawdi-daemon.service"),
+			).toHaveLength(1);
+			expect(readSystemdSystemUnit(paths, "clawdi-daemon")).toBe(initialDaemonUnit);
+			expect(readRuntimeAppliedState(paths)?.daemonAuthTokenRevision).toBe(
+				rotatedAppliedState?.daemonAuthTokenRevision,
 			);
 
 			writeFileSync(systemctlLog, "");
@@ -6708,6 +6767,7 @@ fi
 		} finally {
 			watchFetch.restore();
 			console.log = previousLog;
+			process.umask(previousUmask);
 			process.exitCode = previousExitCode;
 		}
 	});

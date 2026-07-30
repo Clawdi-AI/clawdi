@@ -2,7 +2,7 @@ import { RUNTIME_AUTH_TOKEN_ENV, readRuntimeAuthToken } from "./auth-token";
 import type { RuntimeManifest } from "./manifest-contract";
 import { hostedMcpDesiredStateSchema } from "./manifest-resources";
 import type { RuntimePaths } from "./paths";
-import { runtimeSecretValue } from "./secret-values";
+import { type RuntimeEnvironmentAuthority, runtimeSecretValue } from "./secret-values";
 
 const HOSTED_MCP_AUTH_SECRET_REF = `env://${RUNTIME_AUTH_TOKEN_ENV}`;
 
@@ -15,6 +15,7 @@ export function createRuntimeSecretResolver(
 	manifest: RuntimeManifest,
 	paths: RuntimePaths,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): RuntimeSecretResolver {
 	const privateFileBackedRefs = new Set<string>();
 	if (paths.mode === "hosted" && hostedMcpAuthSecretRefDeclared(manifest)) {
@@ -24,7 +25,7 @@ export function createRuntimeSecretResolver(
 	return {
 		resolve(ref) {
 			if (privateFileBackedRefs.has(ref)) return readRuntimeAuthToken(paths);
-			return runtimeSecretValue(secretValues ?? {}, ref);
+			return runtimeSecretValue(secretValues ?? {}, ref, runtimeEnvironment);
 		},
 		isPrivateFileBacked(ref) {
 			return privateFileBackedRefs.has(ref);

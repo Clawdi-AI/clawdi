@@ -46,6 +46,10 @@ export const runtimeAppliedStateSchema = z
 			.string()
 			.regex(/^[a-f0-9]{64}$/)
 			.optional(),
+		daemonAuthTokenRevision: z
+			.string()
+			.regex(/^[a-f0-9]{64}$/)
+			.optional(),
 		providerIds: providerIdsSchema,
 		projectedProviderIds: projectedProviderIdsSchema,
 	})

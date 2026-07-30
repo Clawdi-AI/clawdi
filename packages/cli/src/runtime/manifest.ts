@@ -54,15 +54,14 @@ import {
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
 import {
-	RUNTIME_APPLY_IDENTITY_FILE_ENV,
-	runtimeApplyIdentityEnvironment,
+	type RuntimeApplyContext,
+	runtimeApplyContextServiceEnvironment,
 	runtimeApplyIdentityServiceEnvironment,
 } from "./apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
 	RUNTIME_AUTH_TOKEN_SECRET_REF,
 	readRuntimeAuthToken,
-	writeRuntimeAuthToken,
 } from "./auth-token";
 import {
 	adoptableLegacyHostedBundledSkill,
@@ -106,6 +105,8 @@ import {
 import {
 	isEnvSecretRef,
 	normalizeSecretValues,
+	processRuntimeEnvironment,
+	type RuntimeEnvironmentAuthority,
 	runtimeSecretValue as resolveRuntimeSecretValue,
 } from "./secret-values";
 
@@ -214,6 +215,7 @@ type RuntimeSystemdApplyResult = {
 interface RuntimeSystemdApplySignal {
 	// Private, in-memory apply metadata. It must not enter convergence outputs,
 	// status, diagnostics, logs, or any generated public artifact.
+	restartDaemon: boolean;
 	restartEgressSidecar: boolean;
 }
 
@@ -224,8 +226,9 @@ interface RuntimeSystemdApplyHooks {
 }
 
 export interface RuntimePrivateAppliedAuthority {
-	// This is a secret-dependent verifier and may only be persisted in the
+	// These are secret-dependent verifiers and may only be persisted in the
 	// root-owned 0600 applied-state authority.
+	daemonAuthTokenRevision?: string;
 	egressSidecarSecretRevision?: string;
 }
 
@@ -439,6 +442,7 @@ const MANAGED_HERMES_WHATSAPP_AUTH_ROOT = [".hermes", "platforms", "whatsapp"] a
 function materializeHostedChannelCredentials(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 	home: string,
 ): void {
 	if (!hostedChannelCredentialsDeclared(manifest)) return;
@@ -457,7 +461,11 @@ function materializeHostedChannelCredentials(
 			continue;
 		}
 		expectedAuthDirs.add(resolve(credential.authDir));
-		const credsJson = resolveRuntimeSecretValue(normalizedSecrets, credential.credsJsonSecretRef);
+		const credsJson = resolveRuntimeSecretValue(
+			normalizedSecrets,
+			credential.credsJsonSecretRef,
+			runtimeEnvironment,
+		);
 		if (!credsJson) {
 			removeManagedWhatsAppAuthDir(credential.authDir);
 			errors.push(
@@ -480,6 +488,7 @@ function materializeHostedChannelCredentials(
 function validateHostedChannelCredentialsPlan(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 	home: string,
 ): void {
 	if (!hostedChannelCredentialsDeclared(manifest) || !WHATSAPP_UPSTREAM_READY) return;
@@ -487,7 +496,11 @@ function validateHostedChannelCredentialsPlan(
 	for (const credential of hostedWhatsAppAuthCredentials(manifest)) {
 		const authDirError = managedWhatsAppAuthDirError(home, credential);
 		if (authDirError) throw new Error(authDirError);
-		const credsJson = resolveRuntimeSecretValue(normalizedSecrets, credential.credsJsonSecretRef);
+		const credsJson = resolveRuntimeSecretValue(
+			normalizedSecrets,
+			credential.credsJsonSecretRef,
+			runtimeEnvironment,
+		);
 		if (!credsJson) {
 			throw new Error(
 				`missing WhatsApp auth state secret for ${credential.accountKey}/${credential.credentialId}`,
@@ -793,7 +806,7 @@ function scopedSecretValues(
 		if (isEnvSecretRef(ref) && !options.resolveEnv) continue;
 		const value = options.resolver
 			? options.resolver.resolve(ref)
-			: resolveRuntimeSecretValue(normalizedValues, ref);
+			: resolveRuntimeSecretValue(normalizedValues, ref, processRuntimeEnvironment());
 		if (!value) {
 			if (options.require?.(ref)) throw new Error(`Runtime secret ${ref} is unavailable.`);
 			continue;
@@ -816,6 +829,7 @@ export function runtimeRecoverableSecretValues(
 function writeProviderHealthStatus(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 	paths: RuntimePaths,
 ): string | null {
 	const providers = recordValue(manifest.projection?.providers);
@@ -832,7 +846,7 @@ function writeProviderHealthStatus(
 		const secretAvailable =
 			apiKeySecretRef === null
 				? null
-				: providerSecretAvailable(secretValues ?? {}, apiKeySecretRef);
+				: providerSecretAvailable(secretValues ?? {}, apiKeySecretRef, runtimeEnvironment);
 		const reasons = providerHealthReasons(provider, secretAvailable);
 		observed[providerId] = {
 			status: reasons.length > 0 ? "error" : "ok",
@@ -867,8 +881,12 @@ function writeProviderHealthStatus(
 	return paths.providerHealthStatus;
 }
 
-function providerSecretAvailable(secretValues: Record<string, string>, ref: string): boolean {
-	return resolveRuntimeSecretValue(secretValues, ref) !== null;
+function providerSecretAvailable(
+	secretValues: Record<string, string>,
+	ref: string,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
+): boolean {
+	return resolveRuntimeSecretValue(secretValues, ref, runtimeEnvironment) !== null;
 }
 
 function providerHealthReasons(
@@ -2086,8 +2104,9 @@ function egressSecretMaterial(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): RuntimeEgressSecretMaterial {
-	const resolver = createRuntimeSecretResolver(manifest, paths, secretValues);
+	const resolver = createRuntimeSecretResolver(manifest, paths, secretValues, runtimeEnvironment);
 	const scoped = scopedSecretValues(secretValues, egressSecretRefs(manifest), {
 		resolveEnv: true,
 		resolver,
@@ -2140,6 +2159,7 @@ function writeEgressSecretFile(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
 	paths: RuntimePaths,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): {
 	path: string | null;
 	changed: boolean;
@@ -2148,7 +2168,7 @@ function writeEgressSecretFile(
 } {
 	const secretFilePath = egressSecretFilePath(paths);
 	const previousContent = existsSync(secretFilePath) ? readFileSync(secretFilePath, "utf-8") : null;
-	const material = egressSecretMaterial(manifest, secretValues, paths);
+	const material = egressSecretMaterial(manifest, secretValues, paths, runtimeEnvironment);
 	const path = writeEgressSecretMaterial(material, paths);
 	return {
 		path,
@@ -2179,7 +2199,12 @@ function verifiedCommittedEgressSecretMaterial(
 		const committed = loadCommittedRuntimeManifest(paths);
 		if ("errors" in committed) return null;
 		if (egressSecretRefs(committed.manifest).some(isEnvSecretRef)) return null;
-		return egressSecretMaterial(committed.manifest, committed.secretValues, paths);
+		return egressSecretMaterial(
+			committed.manifest,
+			committed.secretValues,
+			paths,
+			committed.applyContext?.runtimeEnvironment ?? processRuntimeEnvironment(),
+		);
 	} catch {
 		return null;
 	}
@@ -2266,7 +2291,7 @@ interface HostedCodexManagedProvider {
 	apiKeySecretRef: string | null;
 }
 
-type HostedAiProviderProjectionInput = {
+export type HostedAiProviderProjectionInput = {
 	catalog: AiProviderCatalog;
 	primaryModel: AgentPrimaryModel;
 };
@@ -2332,6 +2357,7 @@ function applyHostedAiProviderProjection(
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 	home: string,
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
@@ -2353,6 +2379,7 @@ function applyHostedAiProviderProjection(
 				observation.commandPath,
 				manifest,
 				secretValues,
+				runtimeEnvironment,
 				home,
 				workspaceRoot,
 			);
@@ -2372,33 +2399,25 @@ function applyHostedAiProviderProjection(
 			observation.commandPath,
 			manifest,
 			secretValues,
+			runtimeEnvironment,
 			home,
 			workspaceRoot,
 		);
-		const activeProviderIds = projectionInput
-			? [...openClawProjectedProviderIds(projectionInput)].sort()
-			: [];
-		const deletedProviderIds = staleProviderIds(
-			new Set(previousProviderIds),
-			new Set(activeProviderIds),
-		);
-		if (projectionInput) {
-			applyOpenClawHostedProviderProjection(
+		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
+		if (providerPatch.apply) {
+			runRuntimeUserCommand(
 				observation.commandPath,
-				projectionInput,
-				deletedProviderIds,
-				home,
-				workspaceRoot,
-			);
-		} else if (deletedProviderIds.length > 0) {
-			applyOpenClawHostedProviderDeleteProjection(
-				observation.commandPath,
-				deletedProviderIds,
+				["config", "patch", "--stdin", ...providerPatch.args],
+				providerPatch.content,
 				home,
 				workspaceRoot,
 			);
 		}
-		return { path: observation.commandPath, revision: null, providerIds: activeProviderIds };
+		return {
+			path: observation.commandPath,
+			revision: null,
+			providerIds: providerPatch.providerIds,
+		};
 	}
 	return { path: null, revision: null, providerIds: [] };
 }
@@ -2430,29 +2449,16 @@ function previewHostedAiProviderProjectionRevision(
 		return null;
 	}
 	if (name === "openclaw") {
-		const activeProviderIds = projectionInput
-			? [...openClawProjectedProviderIds(projectionInput)].sort()
-			: [];
-		const deletedProviderIds = staleProviderIds(
-			new Set(previousProviderIds),
-			new Set(activeProviderIds),
-		);
+		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (!projectionInput) {
 			return revisionHash({
 				openClawProviderProjection: "delete",
-				patch: openClawProviderDeletePatch(deletedProviderIds),
+				patch: JSON.parse(providerPatch.content) as unknown,
 			});
 		}
-		const projection = buildAgentTargetProjection(
-			"openclaw",
-			projectionInput.catalog,
-			projectionInput.primaryModel,
-		);
-		const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
-		if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
 		return revisionHash({
 			openClawProviderProjection: "json-patch",
-			patch: mergeOpenClawProviderDeletes(file.content, deletedProviderIds),
+			patch: providerPatch.content,
 		});
 	}
 	return applyHostedHermesAiProviderProjection(
@@ -2746,13 +2752,26 @@ function removeLegacyHermesModelProviderPlugin(home: string): void {
 	rmSync(legacyHermesModelProviderPluginDir(home), { recursive: true, force: true });
 }
 
-function applyOpenClawHostedProviderProjection(
-	command: string,
-	projectionInput: HostedAiProviderProjectionInput,
-	deletedProviderIds: readonly string[],
-	home: string,
-	workspaceRoot: string,
-): void {
+export interface OpenClawHostedProviderPatch {
+	apply: boolean;
+	args: string[];
+	content: string;
+	providerIds: string[];
+}
+
+export function buildOpenClawHostedProviderPatch(
+	projectionInput: HostedAiProviderProjectionInput | null,
+	previousProviderIds: readonly string[],
+): OpenClawHostedProviderPatch {
+	if (!projectionInput) {
+		const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set());
+		return {
+			apply: deletedProviderIds.length > 0,
+			args: [],
+			content: `${JSON.stringify(openClawProviderDeletePatch(deletedProviderIds), null, 2)}\n`,
+			providerIds: [],
+		};
+	}
 	const projection = buildAgentTargetProjection(
 		"openclaw",
 		projectionInput.catalog,
@@ -2760,41 +2779,14 @@ function applyOpenClawHostedProviderProjection(
 	);
 	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
 	if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
-	runRuntimeUserCommand(
-		command,
-		["config", "patch", "--stdin", ...openClawProviderModelReplacementArgs(file.content)],
-		mergeOpenClawProviderDeletes(file.content, deletedProviderIds),
-		home,
-		workspaceRoot,
-	);
-}
-
-function applyOpenClawHostedProviderDeleteProjection(
-	command: string,
-	deletedProviderIds: readonly string[],
-	home: string,
-	workspaceRoot: string,
-): void {
-	runRuntimeUserCommand(
-		command,
-		["config", "patch", "--stdin"],
-		`${JSON.stringify(openClawProviderDeletePatch(deletedProviderIds), null, 2)}\n`,
-		home,
-		workspaceRoot,
-	);
-}
-
-function openClawProjectedProviderIds(
-	projectionInput: HostedAiProviderProjectionInput,
-): Set<string> {
-	const projection = buildAgentTargetProjection(
-		"openclaw",
-		projectionInput.catalog,
-		projectionInput.primaryModel,
-	);
-	const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
-	if (!file) return new Set();
-	return openClawProviderIdsFromPatch(file.content);
+	const providerIds = [...openClawProviderIdsFromPatch(file.content)].sort();
+	const deletedProviderIds = staleProviderIds(new Set(previousProviderIds), new Set(providerIds));
+	return {
+		apply: true,
+		args: openClawProviderModelReplacementArgs(file.content),
+		content: mergeOpenClawProviderDeletes(file.content, deletedProviderIds),
+		providerIds,
+	};
 }
 
 function openClawProviderIdsFromPatch(content: string): Set<string> {
@@ -2920,11 +2912,13 @@ function staleProviderIds(
 function openClawGatewayHostedPatch(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): Record<string, unknown> | null {
 	const allowedOrigins = openClawControlUiAllowedOrigins(manifest);
 	const gatewayToken = runtimeSecretValue(
 		secretValues ?? {},
 		manifest.openclawGatewayAuth?.tokenRef ?? `env://${OPENCLAW_GATEWAY_TOKEN_ENV}`,
+		runtimeEnvironment,
 	);
 	const isHostedV2 = manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
 	const nativeAuth = isHostedV2 ? manifest.openclawGatewayAuth : undefined;
@@ -2991,10 +2985,11 @@ function applyOpenClawGatewayHostedProjection(
 	command: string,
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 	home: string,
 	workspaceRoot: string,
 ): void {
-	const patch = openClawGatewayHostedPatch(manifest, secretValues);
+	const patch = openClawGatewayHostedPatch(manifest, secretValues, runtimeEnvironment);
 	if (!patch) return;
 	runRuntimeUserCommand(
 		command,
@@ -4371,24 +4366,20 @@ function writeLiveSyncEnvironmentIndex(agentTypes: Set<RuntimeName>, paths: Runt
 
 function writeDaemonAuthToken(
 	paths: RuntimePaths,
-	secretValues: Record<string, string> | undefined,
-	applyIdentityRuntimeEnv: Record<string, string> | null | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): string | null {
-	if (applyIdentityRuntimeEnv !== undefined) {
-		const path = ensureRuntimeAuthTokenFile(paths, applyIdentityRuntimeEnv);
-		if (!path) return null;
-		makeManagedSecretRoot(dirname(path));
-		makeRootOwned(path);
-		return path;
-	}
-	const projectedToken = runtimeSecretValue(secretValues ?? {}, RUNTIME_AUTH_TOKEN_SECRET_REF);
-	const path = projectedToken
-		? writeRuntimeAuthToken(paths, projectedToken)
-		: ensureRuntimeAuthTokenFile(paths);
+	const path = ensureRuntimeAuthTokenFile(paths, runtimeEnvironment);
 	if (!path) return null;
 	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
 	return path;
+}
+
+function daemonAuthTokenRevision(token: string): string {
+	return runtimeContentSha256({
+		schemaVersion: "clawdi.daemonAuthTokenRevision.v1",
+		token,
+	});
 }
 
 function canonicalize(value: unknown): unknown {
@@ -4416,6 +4407,7 @@ export function runtimeProgramRevision(
 	runtime: string,
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevision: string | null = null,
+	runtimeEnvironment: RuntimeEnvironmentAuthority = processRuntimeEnvironment(),
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
 	const desiredProgram = desiredRuntime
@@ -4442,7 +4434,10 @@ export function runtimeProgramRevision(
 	return revisionHash({
 		renderedProjection: {
 			channels: channelProjection,
-			gateway: runtime === "openclaw" ? openClawGatewayHostedPatch(manifest, secretValues) : null,
+			gateway:
+				runtime === "openclaw"
+					? openClawGatewayHostedPatch(manifest, secretValues, runtimeEnvironment)
+					: null,
 			locale:
 				manifest.locale && hostedTarget
 					? managedLocaleBlock(manifest.locale)
@@ -4469,15 +4464,11 @@ function runtimeServiceProgramRevision(
 	});
 }
 
-export function daemonProgramRevision(
-	manifest: RuntimeManifest,
-	runtimeAuthToken: string | null = null,
-): string {
+export function daemonProgramRevision(manifest: RuntimeManifest): string {
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
 		liveSync: manifest.liveSync ?? null,
-		runtimeAuthToken,
 	});
 }
 
@@ -4537,6 +4528,7 @@ function buildRuntimeSystemdUserProgram(input: {
 	config: RuntimeRunConfig;
 	paths: RuntimePaths;
 	secretValues: Record<string, string> | undefined;
+	runtimeEnvironment: RuntimeEnvironmentAuthority;
 	egress: RuntimeEgressSystemdProgram | null;
 }): RuntimeSystemdUserProgram | null {
 	if (!input.config.enabled) return null;
@@ -4552,7 +4544,7 @@ function buildRuntimeSystemdUserProgram(input: {
 	};
 	const resolvedSecretEnv: Record<string, string> = {};
 	for (const [envName, ref] of Object.entries(input.config.secretEnv)) {
-		const value = runtimeSecretValue(input.secretValues ?? {}, ref);
+		const value = runtimeSecretValue(input.secretValues ?? {}, ref, input.runtimeEnvironment);
 		if (!value) {
 			throw new Error(`Runtime secret ${ref} for ${envName} is unavailable.`);
 		}
@@ -4579,8 +4571,12 @@ function buildRuntimeSystemdUserProgram(input: {
 	};
 }
 
-export function runtimeSecretValue(secrets: Record<string, string>, ref: string): string | null {
-	return resolveRuntimeSecretValue(secrets, ref);
+export function runtimeSecretValue(
+	secrets: Record<string, string>,
+	ref: string,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
+): string | null {
+	return resolveRuntimeSecretValue(secrets, ref, runtimeEnvironment);
 }
 
 function hashToUInt16(input: string): number {
@@ -4661,6 +4657,7 @@ function runtimeSystemdProgramRevision(
 	program: RuntimeSystemdUserProgram,
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevisions: Partial<Record<string, string | null>> = {},
+	runtimeEnvironment: RuntimeEnvironmentAuthority = processRuntimeEnvironment(),
 ): string {
 	if (program.service)
 		return runtimeServiceProgramRevision(manifest, program.runtime, program.service);
@@ -4669,6 +4666,7 @@ function runtimeSystemdProgramRevision(
 		program.runtime,
 		secretValues,
 		providerProjectionRevisions[program.runtime] ?? null,
+		runtimeEnvironment,
 	);
 }
 
@@ -5199,28 +5197,43 @@ function removeStaleSystemdEnvironmentFiles(paths: RuntimePaths, writtenUnits: s
 function runtimeManifestUrlEnv(
 	sourcePath: string,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): string {
 	if (/^https?:\/\//i.test(sourcePath)) return sourcePath;
-	return runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_MANIFEST_URL") ?? "";
+	return (
+		runtimeSecretValue(
+			secretValues ?? {},
+			"env://CLAWDI_RUNTIME_MANIFEST_URL",
+			runtimeEnvironment,
+		) ?? ""
+	);
 }
 
 function runtimeSystemdCommonEnvironment(
 	sourcePath: string,
 	paths: RuntimePaths,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): Record<string, string> {
 	const runtimeUser =
-		runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_USER") ?? "clawdi";
+		runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_USER", runtimeEnvironment) ??
+		"clawdi";
 	const environment: Record<string, string> = {
 		HOME: paths.userHome,
 		CLAWDI_RUNTIME_MODE:
-			runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_MODE") ?? "hosted",
+			runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_MODE", runtimeEnvironment) ??
+			"hosted",
 		CLAWDI_RUNTIME_AUTH_ENV:
-			runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_AUTH_ENV") ?? "",
+			runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_AUTH_ENV", runtimeEnvironment) ??
+			"",
 		CLAWDI_RUNTIME_USER: runtimeUser,
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
-		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(sourcePath, secretValues),
+		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(
+			sourcePath,
+			secretValues,
+			runtimeEnvironment,
+		),
 		PATH: runtimeSystemdPath(paths),
 	};
 	return environment;
@@ -5255,6 +5268,7 @@ function writeRuntimeSystemdUserProgram(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
 	secretValues: Record<string, string> | undefined;
+	runtimeEnvironment: RuntimeEnvironmentAuthority;
 	providerProjectionRevisions: Partial<Record<string, string | null>>;
 }): string {
 	const { program } = input;
@@ -5270,6 +5284,7 @@ function writeRuntimeSystemdUserProgram(input: {
 			program,
 			input.secretValues,
 			input.providerProjectionRevisions,
+			input.runtimeEnvironment,
 		),
 		...(officialRuntimeServiceDescriptorForProgram(program)?.unitEnv?.(unitName) ?? {}),
 	};
@@ -5316,11 +5331,10 @@ function writeSystemdUnits(
 	workspaceRoot: string,
 	daemonAuthTokenFile: string | null,
 	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
 	commonEnvironment: Record<string, string>,
-	applyIdentityFilePath: string | null | undefined,
-	applyIdentity: RuntimeManifestLoad["applyIdentity"],
-	runtimeAuthToken: string | null,
+	applyContext: RuntimeApplyContext | undefined,
 ): { systemUnits: string[]; userUnits: string[]; egressSidecarActive: boolean } {
 	const runtimeUser = commonEnvironment.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const systemUnits: string[] = [];
@@ -5330,11 +5344,9 @@ function writeSystemdUnits(
 	const userUnits: string[] = [];
 	const runtimeUid = shouldRunEgress ? runtimeUserUid(runtimeUser) : null;
 	const applyIdentityEnvironment =
-		applyIdentityFilePath === undefined
+		applyContext === undefined
 			? runtimeApplyIdentityServiceEnvironment()
-			: applyIdentityFilePath === null
-				? runtimeApplyIdentityEnvironment(applyIdentity ?? null)
-				: { [RUNTIME_APPLY_IDENTITY_FILE_ENV]: applyIdentityFilePath };
+			: runtimeApplyContextServiceEnvironment(applyContext);
 	if (daemonAuthTokenFile) {
 		const watchSecretEnvironment = runtimeWatchSecretEnvironment(runtimePrograms);
 		systemUnits.push(
@@ -5382,7 +5394,7 @@ function writeSystemdUnits(
 					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
 					CLAWDI_NO_AUTO_UPDATE: "1",
 					CLAWDI_NO_UPDATE_CHECK: "1",
-					CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest, runtimeAuthToken),
+					CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
 				},
 			}),
 		);
@@ -5422,6 +5434,7 @@ function writeSystemdUnits(
 				manifest,
 				paths,
 				secretValues,
+				runtimeEnvironment,
 				providerProjectionRevisions,
 			}),
 		);
@@ -5486,6 +5499,7 @@ function planRuntimeSystemdUserPrograms(input: {
 	workspaceRoot: string;
 	generatedAt: string;
 	secretValues: Record<string, string> | undefined;
+	runtimeEnvironment: RuntimeEnvironmentAuthority;
 	observations: Map<string, RuntimeInstallObservation>;
 	egressProfileBundlePath: string | null;
 	egress: RuntimeEgressSystemdProgram | null;
@@ -5532,6 +5546,7 @@ function planRuntimeSystemdUserPrograms(input: {
 				config: runConfig,
 				paths: input.paths,
 				secretValues: input.secretValues,
+				runtimeEnvironment: input.runtimeEnvironment,
 				egress: input.egress,
 			});
 			if (program) programs.push(program);
@@ -5571,6 +5586,7 @@ function planRuntimeSystemdUserPrograms(input: {
 				config: serviceRunConfig,
 				paths: input.paths,
 				secretValues: input.secretValues,
+				runtimeEnvironment: input.runtimeEnvironment,
 				egress: input.egress,
 			});
 			if (program) programs.push(program);
@@ -5863,6 +5879,7 @@ function validateRuntimeProjectionPlan(input: {
 	paths: RuntimePaths;
 	workspaceRoot: string;
 	secretValues: Record<string, string> | undefined;
+	runtimeEnvironment: RuntimeEnvironmentAuthority;
 	observations: Map<string, RuntimeInstallObservation>;
 	previousProjectedProviderIds: Record<string, string[]>;
 	managedModelOverrides?: ManagedGatewayModelOverrides;
@@ -5872,6 +5889,7 @@ function validateRuntimeProjectionPlan(input: {
 		paths,
 		workspaceRoot,
 		secretValues,
+		runtimeEnvironment,
 		observations,
 		previousProjectedProviderIds,
 		managedModelOverrides,
@@ -5941,24 +5959,14 @@ function validateRuntimeProjectionPlan(input: {
 			managedModelOverrides === undefined;
 		if (name === "openclaw") {
 			if (projectionInput && !projectionRequiresInstalledModelProbe) {
-				const projection = buildAgentTargetProjection(
-					"openclaw",
-					projectionInput.catalog,
-					projectionInput.primaryModel,
-				);
-				const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
-				if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
-				mergeOpenClawProviderDeletes(
-					file.content,
-					staleProviderIds(
-						new Set(previousProjectedProviderIds.openclaw ?? []),
-						openClawProviderIdsFromPatch(file.content),
-					),
+				buildOpenClawHostedProviderPatch(
+					projectionInput,
+					previousProjectedProviderIds.openclaw ?? [],
 				);
 			} else if (!configuredProjectionUnavailable) {
-				JSON.stringify(openClawProviderDeletePatch(previousProjectedProviderIds.openclaw ?? []));
+				buildOpenClawHostedProviderPatch(null, previousProjectedProviderIds.openclaw ?? []);
 			}
-			JSON.stringify(openClawGatewayHostedPatch(manifest, secretValues));
+			JSON.stringify(openClawGatewayHostedPatch(manifest, secretValues, runtimeEnvironment));
 		}
 		if (name === "hermes") {
 			if (projectionInput && !projectionRequiresInstalledModelProbe) {
@@ -5996,7 +6004,7 @@ function validateRuntimeProjectionPlan(input: {
 		}
 	}
 	validateHostedMcpProjectionPlan(manifest, paths, observations);
-	validateHostedChannelCredentialsPlan(manifest, secretValues, home);
+	validateHostedChannelCredentialsPlan(manifest, secretValues, runtimeEnvironment, home);
 }
 
 export function convergeRuntimeManifest(
@@ -6015,6 +6023,7 @@ export function convergeRuntimeManifest(
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
 	const secretValues = runtimeSecretValues(load);
+	const runtimeEnvironment = load.applyContext?.runtimeEnvironment ?? processRuntimeEnvironment();
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	const enabledRuntimes = Object.entries(manifest.runtimes)
@@ -6063,6 +6072,7 @@ export function convergeRuntimeManifest(
 		paths,
 		workspaceRoot,
 		secretValues,
+		runtimeEnvironment,
 		observations,
 		previousProjectedProviderIds,
 	});
@@ -6087,6 +6097,7 @@ export function convergeRuntimeManifest(
 		workspaceRoot,
 		generatedAt,
 		secretValues,
+		runtimeEnvironment,
 		observations,
 		egressProfileBundlePath: plannedEgressProfileBundlePath,
 		egress: null,
@@ -6180,6 +6191,7 @@ export function convergeRuntimeManifest(
 		paths,
 		workspaceRoot,
 		secretValues,
+		runtimeEnvironment,
 		observations,
 		previousProjectedProviderIds,
 		managedModelOverrides,
@@ -6189,6 +6201,8 @@ export function convergeRuntimeManifest(
 	const liveSnapshot = captureRuntimeLiveSnapshot(manifest, paths, workspaceRoot);
 	let systemdActivationAttempted = false;
 	let systemdActivationApplied = false;
+	let restartDaemon = false;
+	let desiredDaemonAuthTokenRevision: string | undefined;
 	let restartEgressSidecar = false;
 	let desiredEgressSidecarSecretRevision: string | undefined;
 	let rollbackEgressSecretOverride: RuntimeEgressSecretMaterial | undefined;
@@ -6269,7 +6283,11 @@ export function convergeRuntimeManifest(
 		writeJsonFile(paths.sensitiveInstanceData, {
 			schemaVersion: "clawdi.runtimeSensitiveInstanceData.v1",
 			generatedAt,
-			tokenSource: runtimeSecretValue(secretValues ?? {}, RUNTIME_AUTH_TOKEN_SECRET_REF)
+			tokenSource: runtimeSecretValue(
+				secretValues ?? {},
+				RUNTIME_AUTH_TOKEN_SECRET_REF,
+				runtimeEnvironment,
+			)
 				? "CLAWDI_AUTH_TOKEN"
 				: load.source,
 			token: "<redacted>",
@@ -6286,15 +6304,20 @@ export function convergeRuntimeManifest(
 		);
 		requireV2EgressEngineReady(manifest, egressProfileBundlePath, egressEngine);
 		const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
-		const daemonAuthTokenFile = writeDaemonAuthToken(
-			paths,
-			secretValues,
-			load.applyIdentityRuntimeEnv,
-		);
+		const daemonAuthTokenFile = writeDaemonAuthToken(paths, runtimeEnvironment);
 		const runtimeAuthToken = daemonAuthTokenFile ? readRuntimeAuthToken(paths) : null;
+		if (runtimeAuthToken) {
+			desiredDaemonAuthTokenRevision = daemonAuthTokenRevision(runtimeAuthToken);
+			restartDaemon = desiredDaemonAuthTokenRevision !== appliedState?.daemonAuthTokenRevision;
+		}
 		writeSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(manifest));
 		try {
-			materializeHostedChannelCredentials(manifest, secretValues, projectionHome);
+			materializeHostedChannelCredentials(
+				manifest,
+				secretValues,
+				runtimeEnvironment,
+				projectionHome,
+			);
 		} catch (error) {
 			installErrors.push(
 				`runtime channel credential materialization failed: ${
@@ -6302,7 +6325,12 @@ export function convergeRuntimeManifest(
 				}`,
 			);
 		}
-		const egressSecretWrite = writeEgressSecretFile(manifest, secretValues, paths);
+		const egressSecretWrite = writeEgressSecretFile(
+			manifest,
+			secretValues,
+			paths,
+			runtimeEnvironment,
+		);
 		const egressSecretFile = egressSecretWrite.path;
 		const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 		const egressSystemdProgram = runtimeEgressSystemdProgram(
@@ -6329,7 +6357,7 @@ export function convergeRuntimeManifest(
 			egressUid,
 			egressGid,
 		});
-		writeProviderHealthStatus(manifest, load.secretValues, paths);
+		writeProviderHealthStatus(manifest, load.secretValues, runtimeEnvironment, paths);
 		const liveSyncEnvironments = writeLiveSyncEnvironmentFiles(manifest, paths);
 		const writtenRunConfigIds = new Set<string>();
 		runtimeSystemdUserPrograms.push(
@@ -6339,6 +6367,7 @@ export function convergeRuntimeManifest(
 				workspaceRoot,
 				generatedAt,
 				secretValues,
+				runtimeEnvironment,
 				observations,
 				egressProfileBundlePath,
 				egress: egressSystemdProgram,
@@ -6361,6 +6390,7 @@ export function convergeRuntimeManifest(
 			load.sourcePath,
 			paths,
 			secretValues,
+			runtimeEnvironment,
 		);
 		try {
 			const codexProjection = applyHostedCodexManagedProviderProjection(
@@ -6456,6 +6486,7 @@ export function convergeRuntimeManifest(
 					observation,
 					manifest,
 					secretValues,
+					runtimeEnvironment,
 					projectionHome,
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
@@ -6572,11 +6603,10 @@ export function convergeRuntimeManifest(
 			workspaceRoot,
 			daemonAuthTokenFile,
 			secretValues,
+			runtimeEnvironment,
 			providerProjectionRevisions,
 			commonSystemdEnvironment,
-			load.applyIdentityFilePath,
-			load.applyIdentity,
-			runtimeAuthToken,
+			load.applyContext,
 		);
 		const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
 		if (systemdUnits.egressSidecarActive) {
@@ -6641,6 +6671,7 @@ export function convergeRuntimeManifest(
 		) {
 			systemdActivationAttempted = true;
 			const prerequisite = opts.systemdApply.activateEgressPrerequisite({
+				restartDaemon,
 				restartEgressSidecar,
 			});
 			if (!prerequisite.applied) {
@@ -6661,7 +6692,7 @@ export function convergeRuntimeManifest(
 		removeStaleRuntimeSecretFiles(writtenRuntimeSecretIds, paths);
 		if (opts.systemdApply) {
 			systemdActivationAttempted = true;
-			const activation = opts.systemdApply.activate({ restartEgressSidecar });
+			const activation = opts.systemdApply.activate({ restartDaemon, restartEgressSidecar });
 			systemdActivationApplied = activation.applied;
 		}
 		if (installErrors.length === 0 && opts.cacheLastGood !== false) {
@@ -6711,10 +6742,17 @@ export function convergeRuntimeManifest(
 			},
 		};
 		if (installErrors.length === 0) {
+			const daemonRevisionPreviouslyCommitted =
+				desiredDaemonAuthTokenRevision !== undefined &&
+				desiredDaemonAuthTokenRevision === appliedState?.daemonAuthTokenRevision;
 			const egressRevisionPreviouslyCommitted =
 				desiredEgressSidecarSecretRevision !== undefined &&
 				desiredEgressSidecarSecretRevision === appliedState?.egressSidecarSecretRevision;
 			opts.commitAuthority?.(convergence, {
+				...(desiredDaemonAuthTokenRevision !== undefined &&
+				(systemdActivationApplied || daemonRevisionPreviouslyCommitted)
+					? { daemonAuthTokenRevision: desiredDaemonAuthTokenRevision }
+					: {}),
 				...(desiredEgressSidecarSecretRevision !== undefined &&
 				(systemdActivationApplied || egressRevisionPreviouslyCommitted)
 					? { egressSidecarSecretRevision: desiredEgressSidecarSecretRevision }
@@ -6762,7 +6800,7 @@ export function convergeRuntimeManifest(
 			egressRollbackAuthorityVerified
 		) {
 			try {
-				opts.systemdApply.rollback({ restartEgressSidecar });
+				opts.systemdApply.rollback({ restartDaemon, restartEgressSidecar });
 			} catch (rollbackError) {
 				installErrors.push(
 					`runtime systemd rollback failed: ${

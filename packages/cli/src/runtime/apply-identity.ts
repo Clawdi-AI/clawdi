@@ -1,6 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { z } from "zod";
+import {
+	type ProcessRuntimeEnvironment,
+	type ProjectedRuntimeEnvironment,
+	processRuntimeEnvironment,
+	projectedRuntimeEnvironment,
+} from "./secret-values";
 
 export const runtimeApplyIdentitySchema = z
 	.object({
@@ -51,12 +57,18 @@ const runtimeApplyIdentityFileSchema = runtimeApplyIdentitySchema
 
 type RuntimeApplyIdentityFile = z.infer<typeof runtimeApplyIdentityFileSchema>;
 
-export interface RuntimeApplyContext {
-	identity: RuntimeApplyIdentity;
-	// null preserves the legacy process-environment contract when no file is configured.
-	runtimeEnv: Record<string, string> | null;
-	sourcePath: string | null;
-}
+export type RuntimeApplyContext =
+	| {
+			kind: "process-environment";
+			identity: RuntimeApplyIdentity | null;
+			runtimeEnvironment: ProcessRuntimeEnvironment;
+	  }
+	| {
+			kind: "identity-file";
+			identity: RuntimeApplyIdentity;
+			sourcePath: string;
+			runtimeEnvironment: ProjectedRuntimeEnvironment;
+	  };
 
 export const RUNTIME_APPLY_IDENTITY_ENV = {
 	generation: "CLAWDI_RUNTIME_GENERATION",
@@ -106,34 +118,32 @@ export function readRuntimeApplyIdentity(
 	env: Readonly<Record<string, string | undefined>> = process.env,
 	discoveryPath: string = HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
 ): RuntimeApplyIdentity | null {
-	return readRuntimeApplyContext(env, discoveryPath)?.identity ?? null;
+	return readRuntimeApplyContext(env, discoveryPath).identity;
 }
 
 export function readRuntimeApplyContext(
 	env: Readonly<Record<string, string | undefined>> = process.env,
 	discoveryPath: string = HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
-): RuntimeApplyContext | null {
-	const explicitPath = env[RUNTIME_APPLY_IDENTITY_FILE_ENV];
-	const configuredPath =
-		explicitPath !== undefined
-			? explicitPath
-			: existsSync(discoveryPath)
-				? discoveryPath
-				: undefined;
-	if (configuredPath === undefined) {
-		const identity = readRuntimeApplyIdentityFromEnv(env);
-		return identity ? { identity, runtimeEnv: null, sourcePath: null } : null;
+): RuntimeApplyContext {
+	const configuredPath = configuredRuntimeApplyIdentityPath(env, discoveryPath);
+	if (configuredPath === null) {
+		return {
+			kind: "process-environment",
+			identity: readRuntimeApplyIdentityFromEnv(env),
+			runtimeEnvironment: processRuntimeEnvironment(env),
+		};
 	}
 	const parsed = readRuntimeApplyIdentityFile(configuredPath);
 	const { schemaVersion: _schemaVersion, runtimeEnv, ...identity } = parsed;
-	return { identity, runtimeEnv, sourcePath: configuredPath };
+	return {
+		kind: "identity-file",
+		identity,
+		sourcePath: configuredPath,
+		runtimeEnvironment: projectedRuntimeEnvironment(runtimeEnv),
+	};
 }
 
 function readRuntimeApplyIdentityFile(configuredPath: string): RuntimeApplyIdentityFile {
-	if (!configuredPath || configuredPath !== configuredPath.trim() || !isAbsolute(configuredPath)) {
-		throw new Error(`${RUNTIME_APPLY_IDENTITY_FILE_ENV} must be a canonical absolute path`);
-	}
-
 	let raw: unknown;
 	try {
 		raw = JSON.parse(readFileSync(configuredPath, "utf-8")) as unknown;
@@ -171,24 +181,30 @@ export function runtimeApplyIdentityServiceEnvironment(
 	env: Readonly<Record<string, string | undefined>> = process.env,
 	discoveryPath: string = HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
 ): Record<string, string> {
+	return runtimeApplyContextServiceEnvironment(readRuntimeApplyContext(env, discoveryPath));
+}
+
+export function runtimeApplyContextServiceEnvironment(
+	context: RuntimeApplyContext,
+): Record<string, string> {
+	if (context.kind === "identity-file") {
+		return { [RUNTIME_APPLY_IDENTITY_FILE_ENV]: context.sourcePath };
+	}
+	return runtimeApplyIdentityEnvironment(context.identity);
+}
+
+function configuredRuntimeApplyIdentityPath(
+	env: Readonly<Record<string, string | undefined>>,
+	discoveryPath: string,
+): string | null {
 	const explicitPath = env[RUNTIME_APPLY_IDENTITY_FILE_ENV];
 	const configuredPath =
-		explicitPath !== undefined
-			? explicitPath
-			: existsSync(discoveryPath)
-				? discoveryPath
-				: undefined;
-	if (configuredPath !== undefined) {
-		if (
-			!configuredPath ||
-			configuredPath !== configuredPath.trim() ||
-			!isAbsolute(configuredPath)
-		) {
-			throw new Error(`${RUNTIME_APPLY_IDENTITY_FILE_ENV} must be a canonical absolute path`);
-		}
-		return { [RUNTIME_APPLY_IDENTITY_FILE_ENV]: configuredPath };
+		explicitPath !== undefined ? explicitPath : existsSync(discoveryPath) ? discoveryPath : null;
+	if (configuredPath === null) return null;
+	if (!configuredPath || configuredPath !== configuredPath.trim() || !isAbsolute(configuredPath)) {
+		throw new Error(`${RUNTIME_APPLY_IDENTITY_FILE_ENV} must be a canonical absolute path`);
 	}
-	return runtimeApplyIdentityEnvironment(readRuntimeApplyIdentityFromEnv(env));
+	return configuredPath;
 }
 
 function canonicalIdentityValue(min: number, max: number): z.ZodString {

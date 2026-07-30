@@ -48,7 +48,11 @@ import {
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
-import { markProjectedRuntimeEnvironment, normalizeSecretValues } from "./secret-values";
+import {
+	normalizeSecretValues,
+	processRuntimeEnvironment,
+	projectedRuntimeEnvironment,
+} from "./secret-values";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const successfulPrerequisiteActivation = () => ({
@@ -1902,7 +1906,9 @@ describe("runtime manifest reconciliation invariants", () => {
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
 		});
 		expect(runConfig.secretFilePath).toBeNull();
-		expect(runtimeSecretValue({}, "env://OPENCLAW_GATEWAY_TOKEN")).toBe("gateway-token");
+		expect(
+			runtimeSecretValue({}, "env://OPENCLAW_GATEWAY_TOKEN", processRuntimeEnvironment()),
+		).toBe("gateway-token");
 		const unit = readFileSync(
 			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
 			"utf8",
@@ -4023,35 +4029,41 @@ describe("runtime manifest reconciliation invariants", () => {
 			runtimeSecretValue(
 				{ "secret://providers/default/api-key": "sk-exact" },
 				"secret://providers/default/api-key",
+				processRuntimeEnvironment(),
 			),
 		).toBe("sk-exact");
 		expect(
 			runtimeSecretValue(
 				{ "secret://providers/default/api-key": "sk-normalized" },
 				"providers/default/api-key",
+				processRuntimeEnvironment(),
 			),
 		).toBe("sk-normalized");
 		expect(
 			runtimeSecretValue(
 				{ "providers/default/api-key": "sk-stripped" },
 				"secret://providers/default/api-key",
+				processRuntimeEnvironment(),
 			),
 		).toBe("sk-stripped");
-		expect(runtimeSecretValue({}, "secret://providers/default/api-key")).toBeNull();
+		expect(
+			runtimeSecretValue({}, "secret://providers/default/api-key", processRuntimeEnvironment()),
+		).toBeNull();
 	});
 
 	test("uses a discovered apply-context snapshot instead of stale process env", () => {
 		delete process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE;
 		process.env.OPENCLAW_GATEWAY_TOKEN = "stale-process-token";
-		const projected = normalizeSecretValues(
-			markProjectedRuntimeEnvironment({
-				"env://OPENCLAW_GATEWAY_TOKEN": "projected-file-token",
-			}),
-		);
+		const projected = normalizeSecretValues({
+			"env://OPENCLAW_GATEWAY_TOKEN": "projected-file-token",
+		});
+		const runtimeEnvironment = projectedRuntimeEnvironment({
+			OPENCLAW_GATEWAY_TOKEN: "projected-file-token",
+		});
 
-		expect(runtimeSecretValue(projected, "env://OPENCLAW_GATEWAY_TOKEN")).toBe(
+		expect(runtimeSecretValue(projected, "env://OPENCLAW_GATEWAY_TOKEN", runtimeEnvironment)).toBe(
 			"projected-file-token",
 		);
-		expect(runtimeSecretValue(projected, "env://MISSING_TOKEN")).toBeNull();
+		expect(runtimeSecretValue(projected, "env://MISSING_TOKEN", runtimeEnvironment)).toBeNull();
 	});
 });

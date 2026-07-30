@@ -11,7 +11,11 @@ import type {
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
-import { runtimeSecretValue } from "./secret-values";
+import {
+	processRuntimeEnvironment,
+	type RuntimeEnvironmentAuthority,
+	runtimeSecretValue,
+} from "./secret-values";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 type EgressProfile = EgressProfileInputBundle["profiles"][number];
@@ -99,8 +103,9 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 ): RuntimeManifestLoad {
 	if (!load.channelBindings) return load;
 	const secretValues = load.secretValues ?? {};
+	const runtimeEnvironment = load.applyContext?.runtimeEnvironment ?? processRuntimeEnvironment();
 	const links: ManagedChannelLink[] = load.channelBindings.map((binding) =>
-		managedBundleChannelLink(binding, secretValues),
+		managedBundleChannelLink(binding, secretValues, runtimeEnvironment),
 	);
 	return {
 		...load,
@@ -112,9 +117,18 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 function managedBundleChannelLink(
 	binding: RuntimeBundleChannelBinding,
 	secretValues: Record<string, string>,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): ManagedChannelLink {
-	const agentToken = runtimeSecretValue(secretValues, binding.agentTokenSecretRef);
-	const placeholderToken = runtimeSecretValue(secretValues, binding.placeholderTokenSecretRef);
+	const agentToken = runtimeSecretValue(
+		secretValues,
+		binding.agentTokenSecretRef,
+		runtimeEnvironment,
+	);
+	const placeholderToken = runtimeSecretValue(
+		secretValues,
+		binding.placeholderTokenSecretRef,
+		runtimeEnvironment,
+	);
 	if (!agentToken) throw new Error(`runtime bundle is missing ${binding.agentTokenSecretRef}`);
 	if (!placeholderToken) {
 		throw new Error(`runtime bundle is missing ${binding.placeholderTokenSecretRef}`);

@@ -17,6 +17,7 @@ import { convergeRuntimeManifest, type RuntimeManifest } from "./manifest";
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
+import { projectedRuntimeEnvironment } from "./secret-values";
 
 const originalEnv = { ...process.env };
 const originalConsoleWarn = console.warn;
@@ -478,10 +479,7 @@ describe("runtime manifest services", () => {
 
 	test("renders the Hermes password dashboard directly", () => {
 		const paths = tempRuntimePaths();
-		process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE = join(
-			paths.runRoot,
-			"runtime-apply-identity.json",
-		);
+		const applyIdentityPath = join(paths.runRoot, "runtime-apply-identity.json");
 		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "stale-dashboard-password";
 		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "stale-dashboard-session-secret";
 		process.env.RUNTIME_SOURCE_TOKEN = "stale-runtime-source-token";
@@ -538,16 +536,31 @@ describe("runtime manifest services", () => {
 			},
 			recovery: {},
 		};
+		const projectedValues = {
+			CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
+			CLAWDI_AUTH_TOKEN: "test-token",
+			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "dashboard-password",
+			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "dashboard-session-secret",
+			RUNTIME_SOURCE_TOKEN: "runtime-source-token",
+		};
+		const applyContext = {
+			kind: "identity-file" as const,
+			identity: {
+				generation: 1,
+				manifestETag: '"manifest-1"',
+				applyReceiptId: "apply-receipt-0001",
+				bootNonce: "boot-nonce-000001",
+			},
+			sourcePath: applyIdentityPath,
+			runtimeEnvironment: projectedRuntimeEnvironment(projectedValues),
+		};
 		const load: RuntimeManifestLoad = {
 			manifest,
 			source: "fixture-file",
 			sourcePath: "inline-hermes-single",
 			offline: false,
+			applyContext,
 			secretValues: {
-				"env://CLAWDI_AUTH_TOKEN": "test-token",
-				"env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "dashboard-password",
-				"env://HERMES_DASHBOARD_BASIC_AUTH_SECRET": "dashboard-session-secret",
-				"env://RUNTIME_SOURCE_TOKEN": "runtime-source-token",
 				"secret://runtime/token": "bundle-runtime-token",
 				"secret://unrelated": "unrelated-inline-secret",
 			},
@@ -657,10 +670,13 @@ describe("runtime manifest services", () => {
 		const rotated = convergeRuntimeManifest(
 			{
 				...load,
-				secretValues: {
-					...load.secretValues,
-					"env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "rotated-dashboard-password",
-					"env://HERMES_DASHBOARD_BASIC_AUTH_SECRET": "rotated-dashboard-session-secret",
+				applyContext: {
+					...applyContext,
+					runtimeEnvironment: projectedRuntimeEnvironment({
+						...projectedValues,
+						HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "rotated-dashboard-password",
+						HERMES_DASHBOARD_BASIC_AUTH_SECRET: "rotated-dashboard-session-secret",
+					}),
 				},
 			},
 			paths,
@@ -710,9 +726,12 @@ describe("runtime manifest services", () => {
 			{
 				...load,
 				manifest: sourceChangedManifest,
-				secretValues: {
-					...load.secretValues,
-					"env://NEXT_RUNTIME_SOURCE_TOKEN": "next-runtime-source-value",
+				applyContext: {
+					...applyContext,
+					runtimeEnvironment: projectedRuntimeEnvironment({
+						...projectedValues,
+						NEXT_RUNTIME_SOURCE_TOKEN: "next-runtime-source-value",
+					}),
 				},
 			},
 			paths,

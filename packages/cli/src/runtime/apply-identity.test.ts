@@ -10,6 +10,7 @@ import {
 	runtimeApplyIdentityEnvironment,
 	runtimeApplyIdentityServiceEnvironment,
 } from "./apply-identity";
+import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 
 const completeEnvironment = {
 	CLAWDI_RUNTIME_GENERATION: "7",
@@ -129,17 +130,21 @@ describe("runtime apply identity file", () => {
 				...completeEnvironment,
 			}),
 		).toEqual({
+			kind: "identity-file",
 			identity: {
 				generation: 8,
 				manifestETag: '"manifest-8"',
 				applyReceiptId: "apply-receipt-0008",
 				bootNonce: "boot-nonce-000007",
 			},
-			runtimeEnv: {
-				CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-				CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime.test/v1/runtime/manifest",
-				CLAWDI_AUTH_TOKEN: "runtime-auth-token-0008",
-				OPENCLAW_GATEWAY_TOKEN: "gateway-token-0008",
+			runtimeEnvironment: {
+				kind: "projected-environment",
+				values: {
+					CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
+					CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime.test/v1/runtime/manifest",
+					CLAWDI_AUTH_TOKEN: "runtime-auth-token-0008",
+					OPENCLAW_GATEWAY_TOKEN: "gateway-token-0008",
+				},
 			},
 			sourcePath: path,
 		});
@@ -202,8 +207,11 @@ describe("runtime apply identity file", () => {
 			readRuntimeApplyIdentityFromEnv(completeEnvironment),
 		);
 		expect(readRuntimeApplyContext(completeEnvironment, missingDiscoveryPath)).toMatchObject({
-			runtimeEnv: null,
-			sourcePath: null,
+			kind: "process-environment",
+			runtimeEnvironment: {
+				kind: "process-environment",
+				values: completeEnvironment,
+			},
 		});
 	});
 
@@ -222,23 +230,52 @@ describe("runtime apply identity file", () => {
 				runtimeEnv: {
 					CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
 					CLAWDI_AUTH_TOKEN: "discovered-token",
+					OPENCLAW_GATEWAY_TOKEN: "discovered-gateway-token",
 				},
 			}),
 		);
 
-		expect(readRuntimeApplyContext(completeEnvironment, discovered)).toEqual({
+		const context = readRuntimeApplyContext(
+			{ ...completeEnvironment, STALE_ONLY_PROCESS_TOKEN: "stale-process-token" },
+			discovered,
+		);
+		expect(context).toEqual({
+			kind: "identity-file",
 			identity: {
 				generation: 9,
 				manifestETag: '"manifest-9"',
 				applyReceiptId: "apply-receipt-0009",
 				bootNonce: "boot-nonce-000009",
 			},
-			runtimeEnv: {
-				CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-				CLAWDI_AUTH_TOKEN: "discovered-token",
+			runtimeEnvironment: {
+				kind: "projected-environment",
+				values: {
+					CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
+					CLAWDI_AUTH_TOKEN: "discovered-token",
+					OPENCLAW_GATEWAY_TOKEN: "discovered-gateway-token",
+				},
 			},
 			sourcePath: discovered,
 		});
+		const clonedSecrets = {
+			...Object.fromEntries(
+				Object.entries(
+					normalizeSecretValues({
+						"env://OPENCLAW_GATEWAY_TOKEN": "discovered-gateway-token",
+					}),
+				),
+			),
+		};
+		expect(
+			runtimeSecretValue(clonedSecrets, "env://OPENCLAW_GATEWAY_TOKEN", context.runtimeEnvironment),
+		).toBe("discovered-gateway-token");
+		expect(
+			runtimeSecretValue(
+				clonedSecrets,
+				"env://STALE_ONLY_PROCESS_TOKEN",
+				context.runtimeEnvironment,
+			),
+		).toBeNull();
 		expect(runtimeApplyIdentityServiceEnvironment(completeEnvironment, discovered)).toEqual({
 			CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: discovered,
 		});
