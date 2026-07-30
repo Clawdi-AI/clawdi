@@ -138,6 +138,26 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).not.toContain("NPM_TOKEN");
 	});
 
+	test("recovers registry publication races without republishing", () => {
+		const boundaryCheck = workflow.indexOf(
+			'if [ "$NPM_ACTION" = "publish" ] && npm_release_visible; then',
+		);
+		const publishDecision = workflow.indexOf('case "$NPM_ACTION" in');
+		const visibilityWait = workflow.indexOf("for attempt in $(seq 1 12); do");
+		const integrityRead = workflow.indexOf(
+			'published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)',
+		);
+
+		expect(boundaryCheck).toBeGreaterThan(-1);
+		expect(boundaryCheck).toBeLessThan(publishDecision);
+		expect(visibilityWait).toBeGreaterThan(publishDecision);
+		expect(visibilityWait).toBeLessThan(integrityRead);
+		expect(workflow).toContain('if [ "$attempt" -lt 12 ]; then sleep 5; fi');
+		expect(workflow).toContain(
+			'echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2',
+		);
+	});
+
 	test("creates the CLI release only after publishing", () => {
 		expect(workflow.indexOf("npm publish ")).toBeLessThan(
 			workflow.indexOf('release create "$tag"'),
