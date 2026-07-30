@@ -13,7 +13,6 @@ import {
 import { useCallback, useEffect, useRef } from "react";
 import { isDeployApiConfigured, useBillingClient } from "@/hosted/billing/billing-client";
 import type {
-	ComputeFixPaymentRequest,
 	ComputePlanChangeQuoteRequest,
 	ComputePlanChangeRequest,
 	ComputePlanChangeResult,
@@ -22,19 +21,14 @@ import type {
 	ComputeSubscriptionResumeRequest,
 	HostedComputeSubscription,
 	HostedDeployment,
-	PortalRequest,
 } from "@/hosted/billing/contracts";
 import { billingQueryRetry } from "@/hosted/billing/errors";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import {
-	type SubscriptionCreateOutcomeView,
 	type SubscriptionCreateQuoteView,
-	type SubscriptionCreateRequestView,
 	type SubscriptionCreateSelection,
-	subscriptionCreateOutcome,
 	subscriptionCreateQuoteRequest,
 	subscriptionCreateQuoteView,
-	subscriptionCreateRequest,
 } from "@/hosted/billing/subscription/subscription-create-adapter";
 import {
 	deploymentPollingState,
@@ -163,25 +157,6 @@ export function usePlans() {
 	});
 }
 
-export function useCreateSubscription() {
-	const client = useBillingClient();
-	const qc = useQueryClient();
-	return useMutation<SubscriptionCreateOutcomeView, Error, SubscriptionCreateRequestView>({
-		mutationFn: async (request) => {
-			const apiRequest = subscriptionCreateRequest(request);
-			return subscriptionCreateOutcome(
-				await client.checkout(apiRequest.body, apiRequest.idempotencyKey),
-			);
-		},
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: billingKeys.deployments });
-			qc.invalidateQueries({ queryKey: billingKeys.wallet });
-			qc.invalidateQueries({ queryKey: billingKeys.billingHistoryRoot });
-			qc.invalidateQueries({ queryKey: ["agents"] });
-		},
-	});
-}
-
 export function useSubscriptionCreateQuote(
 	selection: SubscriptionCreateSelection | null,
 	{ enabled = true }: { enabled?: boolean } = {},
@@ -248,20 +223,6 @@ export function useCancelSubscription() {
 		onSuccess: (next, body) => {
 			applyDeploymentSubscriptionResult(qc, body.deployment_id, next);
 		},
-	});
-}
-
-export function usePortal() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (body: PortalRequest) => client.portal(body),
-	});
-}
-
-export function useFixPayment() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (body: ComputeFixPaymentRequest) => client.fixPayment(body),
 	});
 }
 

@@ -649,27 +649,4 @@ describe("compute plan changes", () => {
 		await expect(result).rejects.toBeInstanceOf(PlanChangeTerminalError);
 		await expect(result).rejects.toThrow("The payment method was rejected");
 	});
-
-	it("keeps the deployed synchronous response compatible without a competing read", async () => {
-		const requests: Request[] = [];
-		const client = testClient(async (request) => {
-			requests.push(request.clone());
-			return jsonResponse({
-				operation_id: "plan-change-1",
-				subscription_id: 42,
-				funding_source: "stripe",
-				current_plan_slug: "compute_basic",
-				target_plan_slug: "compute_performance",
-				target_billing_term_months: 1,
-				status: "awaiting_payment",
-				effective_at: NOW,
-			});
-		});
-
-		await expect(client.changePlan({ operation_id: "plan-change-1" })).resolves.toEqual({
-			kind: "pending",
-			waitingFor: "payment",
-		});
-		expect(requests.map((request) => request.method)).toEqual(["POST"]);
-	});
 });

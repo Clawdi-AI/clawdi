@@ -248,23 +248,6 @@ function completedPlanChange(operation: ParsedPlanChangeOperation): ComputePlanC
 	throw invalidPlanChangeResponse();
 }
 
-function legacyPlanChangeResult(value: unknown): ComputePlanChangeResult | null {
-	if (!isRecord(value) || !("operation_id" in value)) return null;
-	if (typeof value.status !== "string" || typeof value.effective_at !== "string") {
-		throw invalidPlanChangeResponse();
-	}
-	if (value.status === "complete" || value.status === "scheduled") {
-		return { kind: value.status, effectiveAt: value.effective_at };
-	}
-	if (value.status === "awaiting_payment") {
-		return { kind: "pending", waitingFor: "payment" };
-	}
-	if (value.status === "awaiting_projection") {
-		return { kind: "pending", waitingFor: "update" };
-	}
-	throw invalidPlanChangeResponse();
-}
-
 /**
  * Generated deploy-api client facade. Request/response bodies come from
  * `packages/shared/src/api/deploy.generated.ts`; this hook only centralizes
@@ -436,14 +419,13 @@ export function createBillingClient(
 			body: ComputePlanChangeRequest,
 			onAccepted?: (operationName: string) => void,
 		): Promise<ComputePlanChangeResult> => {
-			const response: unknown = unwrapDeploy(
+			const response = unwrapDeploy(
 				await api.POST("/v2/subscription/plan/change", {
 					headers: { "Idempotency-Key": body.operation_id },
 					body,
 				}),
 			);
-			const legacy = legacyPlanChangeResult(response);
-			return legacy ?? waitForPlanChange(response, body.operation_id, onAccepted);
+			return waitForPlanChange(response, body.operation_id, onAccepted);
 		},
 		checkPlanChange: async (operationName: string) =>
 			getOperation(operationIdFromName(operationName)).then((value) => {

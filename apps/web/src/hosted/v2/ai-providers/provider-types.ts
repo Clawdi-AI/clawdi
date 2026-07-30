@@ -5,7 +5,7 @@ import {
 	defaultAiProviderModels,
 	defaultAiProviderRuntimeEnvName,
 } from "@clawdi/shared";
-import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+import type { AiProvider, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 /**
  * The six AI provider types (backend `ProviderType`) with the defaults the
@@ -22,11 +22,7 @@ export const PROVIDER_TYPES = [
 ] as const;
 export type ProviderTypeId = (typeof PROVIDER_TYPES)[number];
 
-export type ApiMode =
-	| "openai_chat"
-	| "openai_responses"
-	| "anthropic_messages"
-	| "google_generate_content";
+export type ApiMode = NonNullable<AiProviderUpsert["api_mode"]>;
 
 export type ProviderCatalogModel = NonNullable<AiProvider["models"]>[number];
 

@@ -255,7 +255,6 @@ describe("structural secret boundaries without the denylist", () => {
 		];
 		const legacyCallers: string[] = [];
 		for (const path of productionSourceFiles(sourceRoot)) {
-			if (path.endsWith("/hosted/billing/hooks.ts")) continue;
 			const contents = readFileSync(path, "utf8");
 			for (const hook of legacySensitiveHooks) {
 				if (new RegExp(`\\b${hook}\\s*\\(`).test(contents)) {

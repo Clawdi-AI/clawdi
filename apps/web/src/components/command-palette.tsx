@@ -169,11 +169,11 @@ function CommandPalette({
 			searchText: "settings general profile api keys model providers billing preferences account",
 		};
 		const shortcuts = [...BASE_NAV_SHORTCUTS, settingsShortcut];
-		if (IS_HOSTED && (hostedAccess.canCreateCloudAgents || hostedAccess.status === "error")) {
+		if (IS_HOSTED && hostedAccess.canCreateCloudAgents) {
 			shortcuts.push(...CLOUD_NAV_SHORTCUTS);
 		}
 		return shortcuts;
-	}, [hostedAccess.canCreateCloudAgents, hostedAccess.status]);
+	}, [hostedAccess.canCreateCloudAgents]);
 
 	// Reset the input when the palette closes so reopening is a fresh state
 	// — otherwise stale results from the previous query briefly flash before

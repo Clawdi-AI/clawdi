@@ -1,6 +1,7 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { WalletLedgerEntry, WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
+import { WALLET_TOPUP_ACCEPTED_TOAST } from "@/hosted/billing/wallet/top-up-return.logic";
 import {
 	TOPUP_INCREMENT_CENTS,
 	TOPUP_MAX_CENTS,
@@ -62,8 +63,8 @@ export function completeTopup(
 	controls.resetAttempt();
 	controls.onComplete?.(status);
 	if (status === "succeeded") {
-		controls.toastInfo("Payment accepted", {
-			description: "We're confirming your Wallet credit now.",
+		controls.toastInfo(WALLET_TOPUP_ACCEPTED_TOAST.title, {
+			description: WALLET_TOPUP_ACCEPTED_TOAST.description,
 		});
 	} else {
 		controls.toastInfo("Payment processing", {

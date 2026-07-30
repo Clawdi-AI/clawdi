@@ -17,6 +17,11 @@ export interface WalletTopupReturnToast {
 	description: string;
 }
 
+export const WALLET_TOPUP_ACCEPTED_TOAST = {
+	title: "Payment accepted",
+	description: "We're confirming your Wallet credit now.",
+} as const;
+
 export function buildWalletTopupReturnUrl(currentHref: string): string {
 	const url = new URL(currentHref);
 	url.searchParams.set(SETTINGS_QUERY_KEY, "billing-wallet");
@@ -45,8 +50,7 @@ export function walletTopupReturnToast(status: string | null | undefined): Walle
 	if (status === "succeeded") {
 		return {
 			kind: "info",
-			title: "Payment accepted",
-			description: "We're confirming your Wallet credit now.",
+			...WALLET_TOPUP_ACCEPTED_TOAST,
 		};
 	}
 	if (status === "processing") {
