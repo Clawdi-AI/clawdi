@@ -213,12 +213,11 @@ jobs:
           ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
 
       - name: Pin server host keys
+        env:
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
         run: |
           mkdir -p ~/.ssh
-          {
-            echo "|1|6VsutRLikG/F8Efp7xl84gwcmwo=|7R6A3maqxFauB/u3pxnpiN4DFyE= ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEydrRjB+jX9/F0RAGK1E6y3VJmw6pnA4vUhFYmuWC9v"
-            echo "jump.phala.systems ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHYb1XDF9By6XWbQG++HWkIElz9+8f8hYafMokBGjdKY"
-          } >> ~/.ssh/known_hosts
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
 
       - name: Write Kamal secrets
         env:
@@ -243,6 +242,8 @@ jobs:
         env:
           CLOUDFLARE_ORIGIN_CERT: ${{ secrets.CLOUDFLARE_ORIGIN_CERT }}
           CLOUDFLARE_ORIGIN_KEY: ${{ secrets.CLOUDFLARE_ORIGIN_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_SSH_PROXY_COMMAND: ${{ secrets.DEPLOY_SSH_PROXY_COMMAND }}
         run: |
           gem install kamal -v '~> 2.12' --no-document
           kamal deploy -P --version "${{ needs.build.outputs.image_tag }}"
