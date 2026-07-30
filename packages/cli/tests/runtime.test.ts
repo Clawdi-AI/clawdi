@@ -11276,6 +11276,23 @@ exit 64
 			expect(patchText).toContain('"default": {');
 			expect(patchText).toContain('"source": "env"');
 			expect(patchText).toContain('"plugins"');
+			expect(patchText).toContain('"dmScope": "per-account-channel-peer"');
+			expect(patchText).not.toContain('"streaming"');
+			const isolationPatch = patchText
+				.split("\n---\n")
+				.filter((entry) => entry.trim().length > 0)
+				.map((entry): unknown => JSON.parse(entry))
+				.map((entry) => expectRecord(entry, "OpenClaw config patch"))
+				.find((entry) => entry.session !== undefined);
+			if (!isolationPatch) throw new Error("OpenClaw session isolation patch was not rendered");
+			const sessionPatch = expectRecord(isolationPatch.session, "OpenClaw session patch");
+			expect(sessionPatch).toEqual({ dmScope: "per-account-channel-peer" });
+			for (const current of ["main", "per-peer", "per-channel-peer", "per-account-channel-peer"]) {
+				expect({ dmScope: current, resetTriggers: ["/new"], ...sessionPatch }).toEqual({
+					dmScope: "per-account-channel-peer",
+					resetTriggers: ["/new"],
+				});
+			}
 			expect(readFileSync(openclawPluginInstalls, "utf-8")).toBe("@openclaw/discord\n");
 			const openclawRunConfig = JSON.parse(
 				readFileSync(join(state, "config", "run", "openclaw.json"), "utf-8"),
@@ -11452,9 +11469,33 @@ exit 64
 		const workspace = join(home, "clawdi");
 		const hermesBin = join(home, ".local", "bin", "hermes");
 		mkdirSync(dirname(hermesBin), { recursive: true });
+		mkdirSync(join(home, ".hermes"), { recursive: true });
 		mkdirSync(dirname(ambientHermesConfig), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		writeFileSync(
+			join(home, ".hermes", "config.yaml"),
+			[
+				"custom_root: keep",
+				"streaming:",
+				"  enabled: false",
+				"display:",
+				"  theme: user-theme",
+				"  platforms:",
+				"    discord:",
+				"      streaming: false",
+				"    telegram:",
+				"      compact: true",
+				"platforms:",
+				"  telegram:",
+				"    custom: keep-telegram",
+				"    extra:",
+				"      custom_extra: keep-extra",
+				"  discord:",
+				"    custom: keep-discord",
+				"",
+			].join("\n"),
+		);
 		writeFileSync(ambientHermesConfig, ambientSentinel);
 		chmodSync(hermesBin, 0o700);
 		process.env.HOME = ambientHome;
@@ -11561,6 +11602,27 @@ exit 64
 		expect(hermesConfig).toContain("thread_require_mention: false");
 		expect(hermesConfig).not.toContain("telegram-agent-token");
 		expect(hermesConfig).not.toContain("discord-agent-token");
+		const parsedHermesConfig = readHermesConfigYaml(home);
+		expect(parsedHermesConfig.streaming).toEqual({ enabled: false });
+		expect(parsedHermesConfig).not.toHaveProperty("streaming.transport");
+		expect(parsedHermesConfig).not.toHaveProperty("thread_sessions_per_user");
+		expect(parsedHermesConfig).toMatchObject({
+			custom_root: "keep",
+			display: {
+				theme: "user-theme",
+				platforms: {
+					discord: { streaming: false },
+					telegram: { compact: true, streaming: true },
+				},
+			},
+			platforms: {
+				telegram: {
+					custom: "keep-telegram",
+					extra: { custom_extra: "keep-extra", group_sessions_per_user: false },
+				},
+				discord: { custom: "keep-discord" },
+			},
+		});
 
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
@@ -11586,6 +11648,46 @@ exit 64
 		const profileBundle = readFileSync(join(state, "config", "egress", "profiles.json"), "utf-8");
 		expect(profileBundle).toContain("/v1/channels/telegram");
 		expect(profileBundle).toContain("/v1/channels/discord");
+
+		const removed = convergeRuntimeManifest(
+			applyRuntimeChannelsToManifestLoad(
+				load,
+				{
+					channels: [],
+					source: "remote-datasource",
+					sourcePath: "https://runtime.test/v1/channels",
+					etag: testBundleEtag("empty-hermes-channels"),
+				},
+				paths,
+			),
+			paths,
+		);
+		expect(removed.installErrors).toEqual([]);
+		const clearedHermesConfig = readHermesConfigYaml(home);
+		expect(clearedHermesConfig.streaming).toEqual({ enabled: false });
+		expect(clearedHermesConfig).not.toHaveProperty("streaming.transport");
+		expect(clearedHermesConfig).not.toHaveProperty("thread_sessions_per_user");
+		expect(clearedHermesConfig).toMatchObject({
+			custom_root: "keep",
+			display: {
+				theme: "user-theme",
+				platforms: {
+					discord: { streaming: false },
+					telegram: { compact: true },
+				},
+			},
+			platforms: {
+				telegram: {
+					custom: "keep-telegram",
+					extra: { custom_extra: "keep-extra" },
+				},
+				discord: { custom: "keep-discord" },
+			},
+		});
+		expect(clearedHermesConfig).not.toHaveProperty(
+			"platforms.telegram.extra.group_sessions_per_user",
+		);
+		expect(clearedHermesConfig).not.toHaveProperty("display.platforms.telegram.streaming");
 	});
 
 	it("keeps Hermes native WhatsApp disabled until upstream websocket support is ready", () => {
@@ -11858,6 +11960,9 @@ exit 64
 		expect(hermesConfig).toContain("enabled: false");
 		expect(hermesConfig).not.toContain("stale: should-be-removed");
 		expect(hermesConfig).not.toContain("/stale/session");
+		const clearedChannelsConfig = readHermesConfigYaml(home);
+		expect(clearedChannelsConfig).not.toHaveProperty("display");
+		expect(clearedChannelsConfig).not.toHaveProperty("platforms.telegram");
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);
@@ -11951,6 +12056,7 @@ exit 0
 		expect(patchText).not.toContain("bluebubbles");
 		expect(patchText).not.toContain('"$patch"');
 		expect(patchText).not.toContain('"botToken"');
+		expect(patchText).not.toContain('"session"');
 	});
 
 	it("does not mutate live config when an OpenClaw channel plugin install fails", () => {

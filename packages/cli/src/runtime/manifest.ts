@@ -3144,9 +3144,10 @@ function hermesManagedChannelsPatch(
 	channelCredentials: unknown,
 ): Record<string, Record<string, unknown>> {
 	const baseUrl = stripTrailingSlash(cloudApiUrl);
+	const telegramEnabled = channelHasAccounts(channels.telegram);
 	const whatsapp = hermesWhatsAppProjection(channels, channelCredentials, baseUrl);
 	return {
-		telegram: channelHasAccounts(channels.telegram)
+		telegram: telegramEnabled
 			? {
 					enabled: true,
 					dm_policy: "open",
@@ -3184,6 +3185,11 @@ function hermesManagedChannelsPatch(
 				}
 			: { enabled: false },
 		platforms: {
+			telegram: {
+				extra: {
+					group_sessions_per_user: telegramEnabled ? false : null,
+				},
+			},
 			whatsapp: whatsapp
 				? {
 						enabled: true,
@@ -3193,6 +3199,13 @@ function hermesManagedChannelsPatch(
 						},
 					}
 				: { enabled: false },
+		},
+		display: {
+			platforms: {
+				telegram: {
+					streaming: telegramEnabled ? true : null,
+				},
+			},
 		},
 	};
 }
@@ -3251,6 +3264,7 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 	const deleteEntries = openClawManagedChannelDeletes();
 	const runtimeReadyChannels = openClawRuntimeReadyChannels(channels);
 	const usesEnvSecretRefs = openClawManagedChannelUsesEnvSecretRefs(runtimeReadyChannels);
+	const isolatesTelegramDms = channelHasAccounts(runtimeReadyChannels.telegram);
 	return {
 		channels: {
 			...deleteEntries,
@@ -3272,6 +3286,13 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 					},
 				}
 			: undefined,
+		...(isolatesTelegramDms
+			? {
+					session: {
+						dmScope: "per-account-channel-peer",
+					},
+				}
+			: {}),
 	};
 }
 

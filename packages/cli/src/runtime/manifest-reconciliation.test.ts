@@ -2493,6 +2493,18 @@ describe("runtime manifest reconciliation invariants", () => {
 				},
 			},
 		};
+		const managedTelegramChannelChange: RuntimeManifest = {
+			...manifest,
+			projection: {
+				channels: {
+					telegram: {
+						enabled: true,
+						defaultAccount: "managed-telegram",
+						accounts: { "managed-telegram": { enabled: true } },
+					},
+				},
+			},
+		};
 		const serviceOnlyChange: RuntimeManifest = {
 			...manifest,
 			runtimes: {
@@ -2593,6 +2605,9 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(
 			runtimeProgramRevision(relevantGatewayProjectionChange, "openclaw", secretValues),
 		).not.toBe(runtimeRevision);
+		expect(runtimeProgramRevision(managedTelegramChannelChange, "openclaw", secretValues)).not.toBe(
+			runtimeRevision,
+		);
 		expect(runtimeProgramRevision(skillOnlyChange, "openclaw", secretValues)).not.toBe(
 			runtimeRevision,
 		);
@@ -2605,10 +2620,12 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(runtimeSidecarProgramRevision(cliOnlyChange)).toBe(sidecarRevision);
 		expect(runtimeSidecarProgramRevision(terminalToolingOnlyChange)).toBe(sidecarRevision);
 		expect(runtimeSidecarProgramRevision(skillOnlyChange)).toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(managedTelegramChannelChange)).toBe(sidecarRevision);
 		const daemonRevision = daemonProgramRevision(manifest);
 		expect(daemonProgramRevision(metadataOnlyChange)).toBe(daemonRevision);
 		expect(daemonProgramRevision(terminalToolingOnlyChange)).toBe(daemonRevision);
 		expect(daemonProgramRevision(skillOnlyChange)).toBe(daemonRevision);
+		expect(daemonProgramRevision(managedTelegramChannelChange)).toBe(daemonRevision);
 		expect(daemonProgramRevision(egressManifest)).toBe(daemonRevision);
 		expect(daemonProgramRevision(cliOnlyChange)).not.toBe(daemonRevision);
 	});
