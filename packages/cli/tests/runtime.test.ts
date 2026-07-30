@@ -11605,7 +11605,9 @@ exit 64
 		const parsedHermesConfig = readHermesConfigYaml(home);
 		expect(parsedHermesConfig.streaming).toEqual({ enabled: false });
 		expect(parsedHermesConfig).not.toHaveProperty("streaming.transport");
-		expect(parsedHermesConfig).not.toHaveProperty("thread_sessions_per_user");
+		expect(parsedHermesConfig).not.toHaveProperty(
+			"platforms.telegram.extra.thread_sessions_per_user",
+		);
 		expect(parsedHermesConfig).toMatchObject({
 			custom_root: "keep",
 			display: {
@@ -11666,7 +11668,9 @@ exit 64
 		const clearedHermesConfig = readHermesConfigYaml(home);
 		expect(clearedHermesConfig.streaming).toEqual({ enabled: false });
 		expect(clearedHermesConfig).not.toHaveProperty("streaming.transport");
-		expect(clearedHermesConfig).not.toHaveProperty("thread_sessions_per_user");
+		expect(clearedHermesConfig).not.toHaveProperty(
+			"platforms.telegram.extra.thread_sessions_per_user",
+		);
 		expect(clearedHermesConfig).toMatchObject({
 			custom_root: "keep",
 			display: {
@@ -11963,6 +11967,11 @@ exit 64
 		const clearedChannelsConfig = readHermesConfigYaml(home);
 		expect(clearedChannelsConfig).not.toHaveProperty("display");
 		expect(clearedChannelsConfig).not.toHaveProperty("platforms.telegram");
+		expect(clearedChannelsConfig).not.toHaveProperty(
+			"platforms.telegram.extra.thread_sessions_per_user",
+		);
+		expect(clearedChannelsConfig).not.toHaveProperty("streaming.enabled");
+		expect(clearedChannelsConfig).not.toHaveProperty("streaming.transport");
 		const runConfig = JSON.parse(
 			readFileSync(join(state, "config", "run", "hermes.json"), "utf-8"),
 		);

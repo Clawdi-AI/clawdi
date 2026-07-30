@@ -129,6 +129,13 @@ function runSettings(command: string, args: string[]): RuntimeRunSettings {
 	return { command, args, env: {}, prependPath: [] };
 }
 
+function systemdProgramRevision(paths: RuntimePaths, programName: string): string {
+	const content = readFileSync(join(paths.systemdEnvRoot, `${programName}.service.env`), "utf-8");
+	const revision = /^CLAWDI_RUNTIME_REV="([^"]+)"$/m.exec(content)?.[1];
+	if (!revision) throw new Error(`Missing CLAWDI_RUNTIME_REV for ${programName}`);
+	return revision;
+}
+
 function manifestLoad(
 	manifest: RuntimeManifest,
 	sourcePath: string,
@@ -2628,6 +2635,65 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(daemonProgramRevision(managedTelegramChannelChange)).toBe(daemonRevision);
 		expect(daemonProgramRevision(egressManifest)).toBe(daemonRevision);
 		expect(daemonProgramRevision(cliOnlyChange)).not.toBe(daemonRevision);
+	});
+
+	test("scopes managed Telegram revisions to the OpenClaw and Hermes runtime programs", () => {
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		const paths = tempRuntimePaths();
+		const command = "/bin/true";
+		const manifest = baseManifest(paths, {
+			openclaw: {
+				enabled: true,
+				run: runSettings(command, ["gateway"]),
+				services: { worker: runSettings(command, ["worker"]) },
+			},
+			hermes: {
+				enabled: true,
+				run: runSettings(command, ["gateway"]),
+				services: {},
+			},
+			observer: {
+				enabled: true,
+				run: runSettings(command, ["observe"]),
+				services: {},
+			},
+		});
+		const managedTelegram: RuntimeManifest = {
+			...manifest,
+			projection: {
+				channels: {
+					telegram: {
+						enabled: true,
+						defaultAccount: "managed-telegram",
+						accounts: { "managed-telegram": { enabled: true } },
+					},
+				},
+			},
+		};
+
+		const baseline = convergeRuntimeManifest(manifestLoad(manifest, "inline-revision-base"), paths);
+		expect(baseline.installErrors).toEqual([]);
+		const workerRevision = systemdProgramRevision(paths, "clawdi-openclaw-worker");
+
+		const projected = convergeRuntimeManifest(
+			manifestLoad(managedTelegram, "inline-revision-managed-telegram"),
+			paths,
+		);
+		expect(projected.installErrors).toEqual([]);
+		expect(runtimeProgramRevision(managedTelegram, "openclaw", {})).not.toBe(
+			runtimeProgramRevision(manifest, "openclaw", {}),
+		);
+		expect(runtimeProgramRevision(managedTelegram, "hermes", {})).not.toBe(
+			runtimeProgramRevision(manifest, "hermes", {}),
+		);
+		expect(runtimeProgramRevision(managedTelegram, "observer", {})).toBe(
+			runtimeProgramRevision(manifest, "observer", {}),
+		);
+		expect(systemdProgramRevision(paths, "clawdi-openclaw-worker")).toBe(workerRevision);
+		expect(runtimeSidecarProgramRevision(managedTelegram)).toBe(
+			runtimeSidecarProgramRevision(manifest),
+		);
+		expect(daemonProgramRevision(managedTelegram)).toBe(daemonProgramRevision(manifest));
 	});
 
 	test.each([
