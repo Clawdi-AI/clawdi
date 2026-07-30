@@ -47,6 +47,7 @@ from app.models.channel import (
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
     ChannelAgentCredential,
+    ChannelAgentReference,
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
@@ -2131,6 +2132,167 @@ async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
     ).scalar_one()
     assert account.archived_at is None
     assert account.visibility == "public"
+
+
+@pytest.mark.asyncio
+async def test_explicit_link_channel_reference_uses_public_link_owner(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"public-reference-owner-{uuid4().hex}",
+    )
+    assert created.status_code == 201, created.text
+    account_id = UUID(created.json()["id"])
+    link_user, link_agent = await _create_user_with_channel_agent(
+        db_session,
+        label="public-reference-link",
+    )
+    async with _client_for_user(db_session, link_user) as link_client:
+        linked = await link_client.post(
+            f"/v1/channels/{account_id}/agent-links",
+            json={"agent_id": str(link_agent.id)},
+        )
+    assert linked.status_code == 201, linked.text
+    link_id = UUID(linked.json()["id"])
+    account = await db_session.get(ChannelAccount, account_id)
+    assert account is not None
+    assert account.user_id != link_user.id
+
+    reference = await channel_service.record_channel_agent_reference(
+        db_session,
+        account=account,
+        bot_agent_link_id=link_id,
+        ref_kind="test_public_link_reference",
+        ref_value="public-link-file",
+    )
+    await db_session.commit()
+
+    assert reference.user_id == link_user.id
+    assert reference.bot_agent_link_id == link_id
+
+    reference.user_id = account.user_id
+    await db_session.commit()
+    repaired_reference = await channel_service.record_channel_agent_reference(
+        db_session,
+        account=account,
+        bot_agent_link_id=link_id,
+        ref_kind="test_public_link_reference",
+        ref_value="public-link-file",
+    )
+    await db_session.commit()
+
+    assert repaired_reference.id == reference.id
+    assert repaired_reference.user_id == link_user.id
+
+
+@pytest.mark.asyncio
+async def test_explicit_cross_account_link_reference_is_rejected(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
+    first = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"reference-account-first-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    second = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"reference-account-second-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(first["id"]))
+    assert account is not None
+
+    with pytest.raises(
+        ValueError,
+        match="bot agent link does not belong to channel account",
+    ):
+        await channel_service.record_channel_agent_reference(
+            db_session,
+            account=account,
+            bot_agent_link_id=UUID(second["agent_link_id"]),
+            ref_kind="test_cross_account_reference",
+            ref_value="foreign-link-file",
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_link", [True, False], ids=["link-scoped", "unlinked"])
+async def test_concurrent_channel_reference_recording_converges(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    use_link: bool,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"concurrent-reference-{use_link}-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account_id = UUID(created["id"])
+    link_id = UUID(created["agent_link_id"]) if use_link else None
+    ref_kind = f"test_concurrent_reference_{use_link}"
+    ref_value = "same-reference"
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    start = asyncio.Event()
+    ready_count = 0
+
+    async def record() -> UUID:
+        nonlocal ready_count
+        async with sessionmaker() as session:
+            account = await session.get(ChannelAccount, account_id)
+            assert account is not None
+            ready_count += 1
+            if ready_count == 2:
+                start.set()
+            await start.wait()
+            reference = await channel_service.record_channel_agent_reference(
+                session,
+                account=account,
+                bot_agent_link_id=link_id,
+                ref_kind=ref_kind,
+                ref_value=ref_value,
+            )
+            await session.commit()
+            return reference.id
+
+    reference_ids = await asyncio.gather(record(), record())
+    references = list(
+        (
+            await db_session.execute(
+                select(ChannelAgentReference).where(
+                    ChannelAgentReference.account_id == account_id,
+                    ChannelAgentReference.bot_agent_link_id == link_id,
+                    ChannelAgentReference.ref_kind == ref_kind,
+                    ChannelAgentReference.ref_value == ref_value,
+                )
+            )
+        ).scalars()
+    )
+
+    assert reference_ids[0] == reference_ids[1]
+    assert len(references) == 1
 
 
 @pytest.mark.asyncio

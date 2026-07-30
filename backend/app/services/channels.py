@@ -10,13 +10,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1679,25 +1680,28 @@ async def record_channel_agent_reference(
 ) -> ChannelAgentReference:
     scoped_link_id = binding.bot_agent_link_id if binding else bot_agent_link_id
     owner_user_id = binding.user_id if binding is not None else account.user_id
+    if binding is not None and binding.account_id != account.id:
+        raise ValueError("channel binding does not belong to channel account")
     if message is not None:
+        if message.account_id != account.id:
+            raise ValueError("channel message does not belong to channel account")
         owner_user_id = message.user_id
-    result = await db.execute(
-        select(ChannelAgentReference).where(
-            ChannelAgentReference.account_id == account.id,
-            ChannelAgentReference.bot_agent_link_id == scoped_link_id,
-            ChannelAgentReference.ref_kind == ref_kind,
-            ChannelAgentReference.ref_value == ref_value,
-        )
-    )
-    existing = result.scalar_one_or_none()
-    if existing is not None:
-        existing.binding_id = binding.id if binding else existing.binding_id
-        existing.message_id = message.id if message else existing.message_id
-        existing.metadata_ = metadata or existing.metadata_
-        await db.flush()
-        return existing
+    if binding is None and bot_agent_link_id is not None:
+        link_user_id = (
+            await db.execute(
+                select(ChannelBotAgentLink.user_id).where(
+                    ChannelBotAgentLink.id == bot_agent_link_id,
+                    ChannelBotAgentLink.account_id == account.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if link_user_id is None:
+            raise ValueError("bot agent link does not belong to channel account")
+        if message is None:
+            owner_user_id = link_user_id
 
-    reference = ChannelAgentReference(
+    insert_statement = postgresql_insert(ChannelAgentReference).values(
+        id=uuid4(),
         account_id=account.id,
         bot_agent_link_id=scoped_link_id,
         binding_id=binding.id if binding else None,
@@ -1708,9 +1712,39 @@ async def record_channel_agent_reference(
         ref_value=ref_value,
         metadata_=metadata,
     )
-    db.add(reference)
-    await db.flush()
-    return reference
+    reference_table = ChannelAgentReference.__table__
+    update_values = {
+        "binding_id": (
+            insert_statement.excluded.binding_id
+            if binding is not None
+            else reference_table.c.binding_id
+        ),
+        "message_id": (
+            insert_statement.excluded.message_id
+            if message is not None
+            else reference_table.c.message_id
+        ),
+        "metadata": insert_statement.excluded.metadata if metadata else reference_table.c.metadata,
+    }
+    if scoped_link_id is None:
+        upsert_statement = insert_statement.on_conflict_do_update(
+            index_elements=[
+                reference_table.c.account_id,
+                reference_table.c.ref_kind,
+                reference_table.c.ref_value,
+            ],
+            index_where=reference_table.c.bot_agent_link_id.is_(None),
+            set_=update_values,
+        )
+    else:
+        upsert_statement = insert_statement.on_conflict_do_update(
+            constraint="uq_channel_agent_references_account_link_kind_value",
+            set_={**update_values, "user_id": insert_statement.excluded.user_id},
+        )
+    result = await db.execute(
+        upsert_statement.returning(ChannelAgentReference).execution_options(populate_existing=True)
+    )
+    return result.scalar_one()
 
 
 async def channel_agent_reference_exists(
