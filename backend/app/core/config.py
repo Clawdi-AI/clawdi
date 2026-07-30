@@ -106,6 +106,17 @@ class Settings(BaseSettings):
             return _normalize_pem_env_value(v)
         return v
 
+    @field_validator("clerk_pem_public_key")
+    @classmethod
+    def normalize_pem_newlines(cls, value: str) -> str:
+        """Accept PEM keys carrying escaped newlines.
+
+        Docker env files cannot represent literal newlines, so any
+        deployment that passes the key through one delivers `\n` as two
+        characters, which no PEM parser accepts.
+        """
+        return value.replace("\\n", "\n")
+
     @field_validator("clerk_jwt_issuer")
     @classmethod
     def _canonicalize_clerk_issuer(cls, value: str) -> str:
