@@ -13514,6 +13514,9 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 		expect(existsSync(join(run, "secrets", "runtimes", "openclaw.json"))).toBe(false);
 		expect(statSync(egressSecretPath).mode & 0o777).toBe(0o600);
 		if (typeof process.getuid === "function" && process.getuid() === 0) {
+			const openclawUnitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
+			expect(statSync(openclawUnitPath).uid).toBe(10_001);
+			expect(statSync(openclawUnitPath).gid).toBe(10_001);
 			expect(statSync(egressSecretPath).uid).toBe(10002);
 			expect(statSync(egressSecretPath).gid).toBe(10002);
 		}
