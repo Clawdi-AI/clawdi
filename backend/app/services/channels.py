@@ -1678,15 +1678,37 @@ async def record_channel_agent_reference(
     bot_agent_link_id: UUID | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ChannelAgentReference:
-    scoped_link_id = binding.bot_agent_link_id if binding else bot_agent_link_id
-    owner_user_id = binding.user_id if binding is not None else account.user_id
     if binding is not None and binding.account_id != account.id:
         raise ValueError("channel binding does not belong to channel account")
-    if message is not None:
-        if message.account_id != account.id:
-            raise ValueError("channel message does not belong to channel account")
-        owner_user_id = message.user_id
-    if binding is None and bot_agent_link_id is not None:
+    if message is not None and message.account_id != account.id:
+        raise ValueError("channel message does not belong to channel account")
+
+    link_ids = {
+        link_id
+        for link_id in (
+            binding.bot_agent_link_id if binding is not None else None,
+            message.bot_agent_link_id if message is not None else None,
+            bot_agent_link_id,
+        )
+        if link_id is not None
+    }
+    if len(link_ids) > 1:
+        raise ValueError("channel reference link context does not match")
+    scoped_link_id = next(iter(link_ids), None)
+
+    owner_user_ids = {
+        owner_user_id
+        for owner_user_id in (
+            binding.user_id if binding is not None else None,
+            message.user_id if message is not None else None,
+        )
+        if owner_user_id is not None
+    }
+    if len(owner_user_ids) > 1:
+        raise ValueError("channel reference owner context does not match")
+    owner_user_id = next(iter(owner_user_ids), account.user_id)
+
+    if bot_agent_link_id is not None:
         link_user_id = (
             await db.execute(
                 select(ChannelBotAgentLink.user_id).where(
@@ -1697,8 +1719,60 @@ async def record_channel_agent_reference(
         ).scalar_one_or_none()
         if link_user_id is None:
             raise ValueError("bot agent link does not belong to channel account")
-        if message is None:
+        if owner_user_ids and link_user_id != owner_user_id:
+            raise ValueError("channel reference owner context does not match")
+        if not owner_user_ids:
             owner_user_id = link_user_id
+
+    if scoped_link_id is None:
+        # PostgreSQL NULLs do not conflict under the Link-scoped constraint.
+        # Lock the stable parent so all service writes share one serialization point.
+        locked_account_id = (
+            await db.execute(
+                select(ChannelAccount.id).where(ChannelAccount.id == account.id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if locked_account_id is None:
+            raise ValueError("channel account does not exist")
+
+        existing = (
+            await db.execute(
+                select(ChannelAgentReference)
+                .where(
+                    ChannelAgentReference.account_id == account.id,
+                    ChannelAgentReference.bot_agent_link_id.is_(None),
+                    ChannelAgentReference.ref_kind == ref_kind,
+                    ChannelAgentReference.ref_value == ref_value,
+                )
+                .order_by(
+                    ChannelAgentReference.updated_at.desc(),
+                    ChannelAgentReference.created_at.desc(),
+                    ChannelAgentReference.id.desc(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.binding_id = binding.id if binding else existing.binding_id
+            existing.message_id = message.id if message else existing.message_id
+            existing.metadata_ = metadata or existing.metadata_
+            await db.flush()
+            return existing
+
+        reference = ChannelAgentReference(
+            account_id=account.id,
+            bot_agent_link_id=None,
+            binding_id=binding.id if binding else None,
+            message_id=message.id if message else None,
+            user_id=owner_user_id,
+            provider=account.provider,
+            ref_kind=ref_kind,
+            ref_value=ref_value,
+            metadata_=metadata,
+        )
+        db.add(reference)
+        await db.flush()
+        return reference
 
     insert_statement = postgresql_insert(ChannelAgentReference).values(
         id=uuid4(),
@@ -1726,21 +1800,10 @@ async def record_channel_agent_reference(
         ),
         "metadata": insert_statement.excluded.metadata if metadata else reference_table.c.metadata,
     }
-    if scoped_link_id is None:
-        upsert_statement = insert_statement.on_conflict_do_update(
-            index_elements=[
-                reference_table.c.account_id,
-                reference_table.c.ref_kind,
-                reference_table.c.ref_value,
-            ],
-            index_where=reference_table.c.bot_agent_link_id.is_(None),
-            set_=update_values,
-        )
-    else:
-        upsert_statement = insert_statement.on_conflict_do_update(
-            constraint="uq_channel_agent_references_account_link_kind_value",
-            set_={**update_values, "user_id": insert_statement.excluded.user_id},
-        )
+    upsert_statement = insert_statement.on_conflict_do_update(
+        constraint="uq_channel_agent_references_account_link_kind_value",
+        set_={**update_values, "user_id": insert_statement.excluded.user_id},
+    )
     result = await db.execute(
         upsert_statement.returning(ChannelAgentReference).execution_options(populate_existing=True)
     )
@@ -1757,12 +1820,15 @@ async def channel_agent_reference_exists(
 ) -> bool:
     filters = [
         ChannelAgentReference.account_id == account.id,
+        (
+            ChannelAgentReference.bot_agent_link_id == bot_agent_link_id
+            if bot_agent_link_id is not None
+            else ChannelAgentReference.bot_agent_link_id.is_(None)
+        ),
         ChannelAgentReference.ref_kind == ref_kind,
         ChannelAgentReference.ref_value == ref_value,
     ]
-    if bot_agent_link_id is not None:
-        filters.append(ChannelAgentReference.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(select(ChannelAgentReference.id).where(*filters))
+    result = await db.execute(select(ChannelAgentReference.id).where(*filters).limit(1))
     return result.scalar_one_or_none() is not None
 
 
@@ -1776,12 +1842,24 @@ async def get_channel_agent_reference(
 ) -> ChannelAgentReference | None:
     filters = [
         ChannelAgentReference.account_id == account.id,
+        (
+            ChannelAgentReference.bot_agent_link_id == bot_agent_link_id
+            if bot_agent_link_id is not None
+            else ChannelAgentReference.bot_agent_link_id.is_(None)
+        ),
         ChannelAgentReference.ref_kind == ref_kind,
         ChannelAgentReference.ref_value == ref_value,
     ]
-    if bot_agent_link_id is not None:
-        filters.append(ChannelAgentReference.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(select(ChannelAgentReference).where(*filters))
+    result = await db.execute(
+        select(ChannelAgentReference)
+        .where(*filters)
+        .order_by(
+            ChannelAgentReference.updated_at.desc(),
+            ChannelAgentReference.created_at.desc(),
+            ChannelAgentReference.id.desc(),
+        )
+        .limit(1)
+    )
     return result.scalar_one_or_none()
 
 

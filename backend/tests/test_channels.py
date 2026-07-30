@@ -237,6 +237,42 @@ async def _create_admin_channel(
         settings.admin_api_key = original_admin_key
 
 
+async def _create_public_channel_with_links(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    *,
+    label: str,
+    link_count: int = 2,
+) -> tuple[ChannelAccount, list[ChannelBotAgentLink]]:
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"{label}-{uuid4().hex}",
+    )
+    assert created.status_code == 201, created.text
+    account_id = UUID(created.json()["id"])
+    links: list[ChannelBotAgentLink] = []
+    for index in range(link_count):
+        link_user, link_agent = await _create_user_with_channel_agent(
+            db_session,
+            label=f"{label}-{index}",
+        )
+        async with _client_for_user(db_session, link_user) as link_client:
+            linked = await link_client.post(
+                f"/v1/channels/{account_id}/agent-links",
+                json={"agent_id": str(link_agent.id)},
+            )
+        assert linked.status_code == 201, linked.text
+        link = await db_session.get(ChannelBotAgentLink, UUID(linked.json()["id"]))
+        assert link is not None
+        links.append(link)
+    account = await db_session.get(ChannelAccount, account_id)
+    assert account is not None
+    return account, links
+
+
 class _FakeProviderResponse:
     def __init__(
         self,
@@ -2094,6 +2130,9 @@ async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
     channel_agent,
     monkeypatch,
 ):
+    _reset_fake_provider_client({"ok": True, "result": {"username": "ClawdiPublicBoundaryBot"}})
+    monkeypatch.setattr(settings, "public_api_url", "https://cloud.example.test")
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = await _create_admin_channel(
         client,
         target_clerk_id=seed_user.clerk_id,
@@ -2105,7 +2144,6 @@ async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
     account_id = created.json()["id"]
 
     _FakeProviderClient.calls = []
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
 
     sync = await client.post(f"/v1/channels/{account_id}/commands/sync", json={})
     delete = await client.delete(f"/v1/channels/{account_id}")
@@ -2233,6 +2271,56 @@ async def test_explicit_cross_account_link_reference_is_rejected(
 
 
 @pytest.mark.asyncio
+async def test_channel_reference_context_rejects_mismatched_links(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    account, links = await _create_public_channel_with_links(
+        client,
+        db_session,
+        seed_user,
+        label="reference-context",
+    )
+    first_link, second_link = links
+    first_binding = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=first_link.id,
+        user_id=first_link.user_id,
+        external_chat_id="reference-context-first",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    second_message = ChannelMessage(
+        account_id=account.id,
+        bot_agent_link_id=second_link.id,
+        user_id=second_link.user_id,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        external_chat_id="reference-context-second",
+        payload={},
+    )
+    db_session.add_all([first_binding, second_message])
+    await db_session.commit()
+
+    contexts = (
+        {"binding": first_binding, "message": second_message},
+        {"binding": first_binding, "bot_agent_link_id": second_link.id},
+        {"message": second_message, "bot_agent_link_id": first_link.id},
+    )
+    for context in contexts:
+        with pytest.raises(
+            ValueError,
+            match="channel reference link context does not match",
+        ):
+            await channel_service.record_channel_agent_reference(
+                db_session,
+                account=account,
+                ref_kind="test_mismatched_reference_context",
+                ref_value="mismatched-reference",
+                **context,
+            )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("use_link", [True, False], ids=["link-scoped", "unlinked"])
 async def test_concurrent_channel_reference_recording_converges(
     client: httpx.AsyncClient,
@@ -2293,6 +2381,140 @@ async def test_concurrent_channel_reference_recording_converges(
 
     assert reference_ids[0] == reference_ids[1]
     assert len(references) == 1
+
+
+@pytest.mark.asyncio
+async def test_hard_deleted_links_preserve_duplicate_unlinked_reference_history(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    account, links = await _create_public_channel_with_links(
+        client,
+        db_session,
+        seed_user,
+        label="reference-link-deletion",
+    )
+    references = [
+        await channel_service.record_channel_agent_reference(
+            db_session,
+            account=account,
+            bot_agent_link_id=link.id,
+            ref_kind="test_link_deletion_reference",
+            ref_value="shared-reference",
+        )
+        for link in links
+    ]
+    await db_session.commit()
+    reference_ids = {reference.id for reference in references}
+
+    for link in links:
+        await db_session.delete(link)
+    await db_session.commit()
+    db_session.expire_all()
+
+    preserved = list(
+        (
+            await db_session.execute(
+                select(ChannelAgentReference).where(
+                    ChannelAgentReference.id.in_(reference_ids),
+                )
+            )
+        ).scalars()
+    )
+    assert {reference.id for reference in preserved} == reference_ids
+    assert all(reference.bot_agent_link_id is None for reference in preserved)
+
+
+@pytest.mark.asyncio
+async def test_existing_duplicate_unlinked_references_are_read_and_updated_deterministically(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"duplicate-unlinked-reference-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    older = ChannelAgentReference(
+        account_id=account.id,
+        user_id=account.user_id,
+        provider=account.provider,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    newer = ChannelAgentReference(
+        account_id=account.id,
+        user_id=account.user_id,
+        provider=account.provider,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    db_session.add_all([older, newer])
+    await db_session.commit()
+
+    assert await channel_service.channel_agent_reference_exists(
+        db_session,
+        account=account,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+    )
+    selected = await channel_service.get_channel_agent_reference(
+        db_session,
+        account=account,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+    )
+    assert selected is not None
+    assert selected.id == newer.id
+    assert (
+        await channel_service.get_channel_agent_reference(
+            db_session,
+            account=account,
+            bot_agent_link_id=UUID(created["agent_link_id"]),
+            ref_kind="test_duplicate_unlinked_reference",
+            ref_value="duplicate-reference",
+        )
+        is None
+    )
+
+    canonical = await channel_service.record_channel_agent_reference(
+        db_session,
+        account=account,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+        metadata={"canonical": True},
+    )
+    await db_session.commit()
+    preserved = list(
+        (
+            await db_session.execute(
+                select(ChannelAgentReference).where(
+                    ChannelAgentReference.account_id == account.id,
+                    ChannelAgentReference.bot_agent_link_id.is_(None),
+                    ChannelAgentReference.ref_kind == "test_duplicate_unlinked_reference",
+                    ChannelAgentReference.ref_value == "duplicate-reference",
+                )
+            )
+        ).scalars()
+    )
+
+    assert canonical.id == newer.id
+    assert len(preserved) == 2
+    assert older.metadata_ is None
+    assert newer.metadata_ == {"canonical": True}
 
 
 @pytest.mark.asyncio
@@ -2576,13 +2798,17 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     seed_user,
     monkeypatch,
 ):
-    created = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider="telegram",
-        name=f"public-group-telegram-{uuid4().hex}",
-        provider_token="123456:telegram-secret",
-    )
+    _reset_fake_provider_client({"ok": True, "result": {"username": "ClawdiPublicGroupBot"}})
+    with monkeypatch.context() as provider_mock:
+        provider_mock.setattr(settings, "public_api_url", "https://cloud.example.test")
+        provider_mock.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+        created = await _create_admin_channel(
+            client,
+            target_clerk_id=seed_user.clerk_id,
+            provider="telegram",
+            name=f"public-group-telegram-{uuid4().hex}",
+            provider_token="123456:telegram-secret",
+        )
     assert created.status_code == 201, created.text
     channel = created.json()
     account_id = UUID(channel["id"])

@@ -521,14 +521,6 @@ class ChannelAgentReference(Base, TimestampMixin):
             "ref_value",
             name="uq_channel_agent_references_account_link_kind_value",
         ),
-        Index(
-            "uq_channel_agent_references_account_unlinked_kind_value",
-            "account_id",
-            "ref_kind",
-            "ref_value",
-            unique=True,
-            postgresql_where=sql_text("bot_agent_link_id IS NULL"),
-        ),
     )
 
 
