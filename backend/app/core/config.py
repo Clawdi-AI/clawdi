@@ -117,8 +117,14 @@ class Settings(BaseSettings):
         candidate = value.strip()
         if candidate and "-----BEGIN" not in candidate:
             import base64
+            import binascii
 
-            candidate = base64.b64decode(candidate).decode("utf-8")
+            try:
+                candidate = base64.b64decode(candidate, validate=True).decode(
+                    "utf-8"
+                )
+            except (binascii.Error, UnicodeDecodeError):
+                pass  # not base64 (e.g. test fixtures); leave unchanged
         return candidate
 
     @field_validator("clerk_jwt_issuer")
