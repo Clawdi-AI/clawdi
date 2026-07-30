@@ -143,7 +143,7 @@ describe("CLI publish workflow contract", () => {
 			'if [ "$NPM_ACTION" = "publish" ] && npm_release_visible; then',
 		);
 		const publishDecision = workflow.indexOf('case "$NPM_ACTION" in');
-		const visibilityWait = workflow.indexOf("for attempt in $(seq 1 12); do");
+		const visibilityWait = workflow.indexOf("for attempt in $(seq 1 12); do", publishDecision);
 		const integrityRead = workflow.indexOf(
 			'published_integrity=$(npm view "clawdi@$VERSION" dist.integrity)',
 		);
@@ -155,6 +155,15 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain('if [ "$attempt" -lt 12 ]; then sleep 5; fi');
 		expect(workflow).toContain(
 			'echo "clawdi@$VERSION was not visible in the npm registry after 60 seconds" >&2',
+		);
+		expect(workflow.match(/attestation_bundle=\$\(curl --fail --silent --location/g)).toHaveLength(
+			2,
+		);
+		expect(workflow).toContain(
+			'echo "clawdi@$VERSION provenance was not visible after 60 seconds" >&2',
+		);
+		expect(workflow).toContain(
+			'echo "clawdi@$version provenance was not visible after 60 seconds" >&2',
 		);
 	});
 

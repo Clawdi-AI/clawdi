@@ -68,7 +68,17 @@ jobs:
           console.log(attestations.url);
           NODE
             )
-            attestation_bundle=$(curl --fail --silent --show-error --location "$attestation_url")
+            attestation_bundle=""
+            for attempt in $(seq 1 12); do
+              if attestation_bundle=$(curl --fail --silent --location "$attestation_url"); then
+                break
+              fi
+              if [ "$attempt" -lt 12 ]; then sleep 5; fi
+            done
+            if [ -z "$attestation_bundle" ]; then
+              echo "clawdi@$version provenance was not visible after 60 seconds" >&2
+              exit 69
+            fi
           fi
           release_json=null
           if existing_release=$(gh release view "$tag" --json isDraft,targetCommitish,assets 2>/dev/null); then
@@ -335,7 +345,17 @@ jobs:
           console.log(attestations.url);
           NODE
           )
-          attestation_bundle=$(curl --fail --silent --show-error --location "$attestation_url")
+          attestation_bundle=""
+          for attempt in $(seq 1 12); do
+            if attestation_bundle=$(curl --fail --silent --location "$attestation_url"); then
+              break
+            fi
+            if [ "$attempt" -lt 12 ]; then sleep 5; fi
+          done
+          if [ -z "$attestation_bundle" ]; then
+            echo "clawdi@$VERSION provenance was not visible after 60 seconds" >&2
+            exit 69
+          fi
           tag="clawdi-cli-v$VERSION"
           release_json=null
           if existing_release=$(gh release view "$tag" --json isDraft,targetCommitish,assets 2>/dev/null); then
