@@ -93,6 +93,8 @@ accessories:
   postgres:
     image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18 # pgvector pg18 + pgBackRest (WAL archiving to R2)
     host: 66.220.6.123
+    options:
+      ulimit: nofile=65536:65536
     # 512MB buffers (default 128MB is tiny for 16G host); idle-in-transaction
     # timeout guards against the connection-pile-up-behind-locks failure mode.
     cmd: >-
