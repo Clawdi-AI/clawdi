@@ -250,11 +250,13 @@ Done: the command returns HTTP 200 JSON containing
 `"key":"clerk_cli_oauth"` and the canonicalized whole value.
 
 The value is strictly validated and canonicalized before the setting and its
-control-plane audit event commit together. `CLERK_PEM_PUBLIC_KEY` remains the
-JWT signature verifier, and `CLERK_SECRET_KEY` remains the server-only key used
-to revoke a refresh grant. Never include either secret in the setting. Empty
-`audience` and `authorized_parties` values disable binding for those optional
-token claims.
+control-plane audit event commit together. JWT signatures are verified against
+`CLERK_JWT_ISSUER/.well-known/jwks.json` by default. Self-hosters can set
+`CLERK_PEM_PUBLIC_KEY` as a supported networkless override; it accepts a
+verbatim, escaped-newline, or base64-encoded PEM. `CLERK_SECRET_KEY` remains the
+server-only key used to revoke a refresh grant. Never include either secret in
+the setting. Empty `audience` and `authorized_parties` values disable binding
+for those optional token claims.
 
 ## Logs in development
 

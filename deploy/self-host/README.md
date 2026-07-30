@@ -52,9 +52,12 @@ and tags it as `ghcr.io/clawdi-ai/clawdi-web:local`. To run a published web
 image instead, set `CLAWDI_WEB_IMAGE_TAG` to an available tag whose build-time
 public variables match this deployment.
 
-The dashboard requires Clerk auth configuration. Fill both
-`VITE_CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY` before enabling the
-`web` profile.
+The dashboard requires Clerk auth configuration. Fill
+`VITE_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, and `CLERK_JWT_ISSUER` before
+enabling the `web` profile. The backend fetches signing keys from the issuer's
+`/.well-known/jwks.json` endpoint by default. Set `CLERK_PEM_PUBLIC_KEY` only as
+the supported networkless override; verbatim, escaped-newline, and
+base64-encoded PEM values are accepted.
 
 For a reverse proxy, set `PUBLIC_API_URL`, `WEB_ORIGIN`, `CORS_ORIGINS`, and
 `TRUST_FORWARDED_FOR=true` in `.env`, then bind `API_HOST` / `WEB_HOST` to the

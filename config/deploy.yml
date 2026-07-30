@@ -168,7 +168,7 @@ env:
     MEMORY_EMBEDDING_MODEL: text-embedding-3-small
   secret:
     - ADMIN_API_KEY
-    - CLERK_PEM_PUBLIC_KEY
+    - CLERK_JWT_ISSUER
     - CLERK_SECRET_KEY
     - COMPOSIO_API_KEY
     - DATABASE_URL
