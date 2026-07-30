@@ -22,6 +22,7 @@ from app.services.runtime_source import (
 )
 
 router = APIRouter(prefix="/runtime", tags=["runtime"])
+_RUNTIME_MANIFEST_CACHE_CONTROL = "no-store, no-transform"
 
 
 @router.get("/manifest")
@@ -61,7 +62,7 @@ async def get_runtime_manifest(
     etag = expected_runtime_bundle_v2_etag(source.source_revision)
     headers = {
         "ETag": etag,
-        "Cache-Control": "no-store",
+        "Cache-Control": _RUNTIME_MANIFEST_CACHE_CONTROL,
         "Vary": "Accept",
         "Content-Type": RUNTIME_BUNDLE_V2_MEDIA_TYPE,
     }

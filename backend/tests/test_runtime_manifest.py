@@ -933,7 +933,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     assert response.status_code == 200, response.text
     etag = response.headers.get("etag")
     assert etag is not None
-    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["cache-control"] == "no-store, no-transform"
     payload = response.json()
     manifest = payload["manifest"]
     assert manifest["schemaVersion"] == "clawdi.hosted-runtime.manifest.v1"
@@ -983,7 +983,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
 
     assert not_modified.status_code == 304
     assert not_modified.headers["etag"] == etag
-    assert not_modified.headers["cache-control"] == "no-store"
+    assert not_modified.headers["cache-control"] == "no-store, no-transform"
     assert not_modified.content == b""
 
 
@@ -3790,10 +3790,12 @@ async def test_runtime_manifest_requires_exact_v2_media_type(admin_client, db_se
         "placeholderTokenSecretRef",
     }
     assert bundle.headers["content-type"] == RUNTIME_BUNDLE_V2_MEDIA_TYPE
+    assert bundle.headers["cache-control"] == "no-store, no-transform"
     assert bundle.headers["vary"] == "Accept"
     assert bundle.headers["etag"] == expected_runtime_bundle_v2_etag(body["sourceRevision"])
     assert bundle_not_modified.status_code == 304
     assert bundle_not_modified.headers["etag"] == bundle.headers["etag"]
+    assert bundle_not_modified.headers["cache-control"] == "no-store, no-transform"
     assert bundle_not_modified.headers["vary"] == "Accept"
     assert unsupported.status_code == 406
     assert unsupported.headers["cache-control"] == "no-store"
