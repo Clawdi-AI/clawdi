@@ -8,6 +8,11 @@ import {
 } from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import {
+	type RuntimeApplyContext,
+	type RuntimeApplyIdentity,
+	readRuntimeApplyContext,
+} from "./apply-identity";
+import {
 	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
 	runtimeAuthTokenFileLabel,
@@ -33,15 +38,26 @@ import {
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { isSupportedRuntimeName, type RuntimeRunSettings } from "./run-config";
 import { createRuntimeSecretResolver } from "./runtime-secret-resolver";
-import { canonicalSecretRefName, normalizeSecretValues } from "./secret-values";
+import {
+	canonicalSecretRefName,
+	envSecretRefName,
+	markProjectedRuntimeEnvironment,
+	normalizeSecretValues,
+} from "./secret-values";
 
 export interface RuntimeManifestLoad {
 	manifest: RuntimeManifest;
 	source: "fixture-file" | "remote-datasource" | "last-good-cache";
 	sourcePath: string;
 	offline: boolean;
-	// Values supplied by the manifest datasource. Keep this deploy-surface map provider-only.
+	// Datasource values plus the in-memory exact projected env-secret snapshot.
 	secretValues?: Record<string, string>;
+	// Exact projected authority captured before fetching this manifest.
+	applyIdentity?: RuntimeApplyIdentity;
+	// null means this load deliberately used the legacy process environment.
+	applyIdentityFilePath?: string | null;
+	// In-memory only; undefined is reserved for direct internal/test loads.
+	applyIdentityRuntimeEnv?: Record<string, string> | null;
 	channelBindings?: RuntimeBundleChannelBinding[];
 	sourceRevision?: string;
 	// Original datasource manifest before local runtime projections are applied.
@@ -124,6 +140,9 @@ export interface RuntimeManifestNotModified {
 	sourcePath: string;
 	notModified: true;
 	etag?: string;
+	applyIdentity?: RuntimeApplyIdentity;
+	applyIdentityFilePath?: string | null;
+	applyIdentityRuntimeEnv?: Record<string, string> | null;
 }
 
 export interface RuntimeManifestFailure {
@@ -317,13 +336,22 @@ function rawGeneration(value: unknown): number | null {
 	return typeof generation === "number" && Number.isInteger(generation) ? generation : null;
 }
 
-function runtimeCredential(paths: RuntimePaths): string | null {
-	ensureRuntimeAuthTokenFile(paths);
+function runtimeCredential(
+	paths: RuntimePaths,
+	applyContext: RuntimeApplyContext | null,
+): string | null {
+	ensureRuntimeAuthTokenFile(paths, applyContext?.runtimeEnv ?? null);
 	return readRuntimeAuthToken(paths);
 }
 
-function resolveRuntimeSource(paths: RuntimePaths): RuntimeSource {
-	const explicit = process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim();
+function resolveRuntimeSource(
+	paths: RuntimePaths,
+	applyContext: RuntimeApplyContext | null,
+): RuntimeSource {
+	const explicit =
+		applyContext?.runtimeEnv === null || !applyContext
+			? process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim()
+			: applyContext.runtimeEnv.CLAWDI_RUNTIME_MANIFEST_URL?.trim();
 	if (explicit) {
 		let url: URL;
 		try {
@@ -371,6 +399,7 @@ function readRuntimeSource(paths: RuntimePaths): RuntimeSource {
 
 async function fetchRuntimeManifestPayload(
 	paths: RuntimePaths,
+	applyContext: RuntimeApplyContext | null,
 	opts: { ifNoneMatch?: string } = {},
 ): Promise<
 	| {
@@ -384,8 +413,8 @@ async function fetchRuntimeManifestPayload(
 			etag?: string;
 	  }
 > {
-	const source = resolveRuntimeSource(paths);
-	const token = runtimeCredential(paths);
+	const source = resolveRuntimeSource(paths, applyContext);
+	const token = runtimeCredential(paths, applyContext);
 	if (!token) {
 		throw new Error(`missing ${runtimeAuthTokenFileLabel(paths)}`);
 	}
@@ -440,9 +469,15 @@ export async function loadRemoteRuntimeManifest(
 	paths: RuntimePaths,
 	opts: { ifNoneMatch?: string } = {},
 ): Promise<RuntimeManifestLoad | RuntimeManifestFailure | RuntimeManifestNotModified> {
+	let applyContext: RuntimeApplyContext | null;
+	try {
+		applyContext = readRuntimeApplyContext();
+	} catch (error) {
+		return runtimeApplyContextFailure(error);
+	}
 	let fetched: Awaited<ReturnType<typeof fetchRuntimeManifestPayload>>;
 	try {
-		fetched = await fetchRuntimeManifestPayload(paths, opts);
+		fetched = await fetchRuntimeManifestPayload(paths, applyContext, opts);
 	} catch (error) {
 		return {
 			mode: "repair",
@@ -460,6 +495,7 @@ export async function loadRemoteRuntimeManifest(
 			sourcePath: fetched.url,
 			notModified: true,
 			etag: fetched.etag ?? opts.ifNoneMatch,
+			...runtimeApplyContextLoadFields(applyContext),
 		};
 	}
 
@@ -470,7 +506,10 @@ export async function loadRemoteRuntimeManifest(
 		sourceRevision?: string;
 	};
 	try {
-		normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
+		normalized = bindRuntimeApplyContext(
+			normalizeRemoteManifestPayload(fetched.raw, paths),
+			applyContext,
+		);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",
@@ -482,9 +521,50 @@ export async function loadRemoteRuntimeManifest(
 	}
 	const loaded = validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
 	if ("manifest" in loaded) {
-		return { ...loaded, etag: fetched.etag };
+		return {
+			...loaded,
+			etag: fetched.etag,
+			...runtimeApplyContextLoadFields(applyContext),
+		};
 	}
 	return loaded;
+}
+
+function runtimeApplyContextFailure(error: unknown): RuntimeManifestFailure {
+	return {
+		mode: "repair",
+		stage: "local",
+		errors: [error instanceof Error ? error.message : String(error)],
+	};
+}
+
+function runtimeApplyContextLoadFields(applyContext: RuntimeApplyContext | null): {
+	applyIdentity?: RuntimeApplyIdentity;
+	applyIdentityFilePath: string | null;
+	applyIdentityRuntimeEnv: Record<string, string> | null;
+} {
+	return {
+		...(applyContext ? { applyIdentity: applyContext.identity } : {}),
+		applyIdentityFilePath: applyContext?.sourcePath ?? null,
+		applyIdentityRuntimeEnv: applyContext?.runtimeEnv ?? null,
+	};
+}
+
+function bindRuntimeApplyContext<
+	T extends {
+		secretValues?: Record<string, string>;
+	},
+>(input: T, applyContext: RuntimeApplyContext | null): T {
+	if (applyContext?.runtimeEnv === null || !applyContext) return input;
+	const secretValues = markProjectedRuntimeEnvironment(
+		Object.fromEntries(
+			Object.entries(input.secretValues ?? {}).filter(([ref]) => envSecretRefName(ref) === null),
+		),
+	);
+	for (const [envName, value] of Object.entries(applyContext.runtimeEnv)) {
+		secretValues[`env://${envName}`] = value;
+	}
+	return { ...input, secretValues };
 }
 
 function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
@@ -774,6 +854,12 @@ export async function loadRuntimeManifest(
 	paths: RuntimePaths,
 	opts: { manifestPath?: string } = {},
 ): Promise<RuntimeManifestLoad | RuntimeManifestFailure> {
+	let applyContext: RuntimeApplyContext | null;
+	try {
+		applyContext = readRuntimeApplyContext();
+	} catch (error) {
+		return runtimeApplyContextFailure(error);
+	}
 	const manifestPath = opts.manifestPath ?? runtimeManifestFixturePath();
 	if (
 		manifestPath &&
@@ -789,13 +875,13 @@ export async function loadRuntimeManifest(
 	if (!manifestPath) {
 		let fetched: { url: string; raw: unknown; etag?: string };
 		try {
-			const result = await fetchRuntimeManifestPayload(paths);
+			const result = await fetchRuntimeManifestPayload(paths, applyContext);
 			if ("notModified" in result) {
 				throw new Error("runtime manifest datasource returned 304 without If-None-Match");
 			}
 			fetched = result;
 		} catch (error) {
-			const cached = loadLastGoodManifest(paths);
+			const cached = loadLastGoodManifest(paths, offlineLastGoodManifestLoadOptions, applyContext);
 			if ("manifest" in cached) return cached;
 			return {
 				mode: "repair",
@@ -811,7 +897,10 @@ export async function loadRuntimeManifest(
 
 		let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
 		try {
-			normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
+			normalized = bindRuntimeApplyContext(
+				normalizeRemoteManifestPayload(fetched.raw, paths),
+				applyContext,
+			);
 		} catch (error) {
 			return {
 				mode: "manifest-rejected",
@@ -822,7 +911,13 @@ export async function loadRuntimeManifest(
 			};
 		}
 		const loaded = validateLoadedManifest(normalized, paths, "remote-datasource", fetched.url);
-		if ("manifest" in loaded) return { ...loaded, etag: fetched.etag };
+		if ("manifest" in loaded) {
+			return {
+				...loaded,
+				etag: fetched.etag,
+				...runtimeApplyContextLoadFields(applyContext),
+			};
+		}
 		return loaded;
 	}
 
@@ -858,7 +953,7 @@ export async function loadRuntimeManifest(
 	}
 	let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
 	try {
-		normalized = normalizeManifestFixturePayload(raw, paths);
+		normalized = bindRuntimeApplyContext(normalizeManifestFixturePayload(raw, paths), applyContext);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",
@@ -885,7 +980,11 @@ export async function loadRuntimeManifest(
 		};
 	}
 
-	return validateLoadedManifest(normalized, paths, "fixture-file", manifestPath);
+	const loaded = validateLoadedManifest(normalized, paths, "fixture-file", manifestPath);
+	if ("manifest" in loaded) {
+		return { ...loaded, ...runtimeApplyContextLoadFields(applyContext) };
+	}
+	return loaded;
 }
 
 interface LastGoodManifestLoadOptions {
@@ -903,6 +1002,7 @@ const offlineLastGoodManifestLoadOptions: LastGoodManifestLoadOptions = {
 function loadLastGoodManifest(
 	paths: RuntimePaths,
 	opts: LastGoodManifestLoadOptions = offlineLastGoodManifestLoadOptions,
+	applyContext: RuntimeApplyContext | null = readRuntimeApplyContext(),
 ): RuntimeManifestLoad | RuntimeManifestFailure {
 	if (!existsSync(paths.manifestLastGood)) {
 		return {
@@ -937,11 +1037,12 @@ function loadLastGoodManifest(
 			manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
 		const cached = loadCachedSecretValues(paths);
 		if ("errors" in cached) return cached;
+		const boundCached = bindRuntimeApplyContext(cached, applyContext);
 		const secretRefs = manifestSecretRefs(manifest);
 		if (secretRefs.length > 0) {
 			const missingSecretRefs = manifestSecretRefsMissingValues(
 				manifest,
-				cached.secretValues,
+				boundCached.secretValues,
 				paths,
 			);
 			if (missingSecretRefs.length > 0) {
@@ -972,7 +1073,14 @@ function loadLastGoodManifest(
 				resolveRuntimeApplyGeneration(appliedState) !== resolveRuntimeApplyGeneration(manifest) ||
 				appliedState.instanceId !== manifest.instanceId ||
 				appliedState.contentIdentity.sha256 !==
-					runtimeContentSha256({ manifest, secretValues: cached.secretValues }))
+					runtimeContentSha256({
+						manifest,
+						secretValues: Object.fromEntries(
+							Object.entries(boundCached.secretValues).filter(
+								([ref]) => envSecretRefName(ref) === null,
+							),
+						),
+					}))
 		) {
 			return {
 				mode: "repair",
@@ -989,7 +1097,8 @@ function loadLastGoodManifest(
 				source: "last-good-cache",
 				sourcePath: paths.manifestLastGood,
 				offline: true,
-				secretValues: cached.secretValues,
+				secretValues: boundCached.secretValues,
+				...runtimeApplyContextLoadFields(applyContext),
 			};
 		}
 		return {
@@ -997,6 +1106,7 @@ function loadLastGoodManifest(
 			source: "last-good-cache",
 			sourcePath: paths.manifestLastGood,
 			offline: true,
+			...runtimeApplyContextLoadFields(applyContext),
 		};
 	} catch (error) {
 		return {

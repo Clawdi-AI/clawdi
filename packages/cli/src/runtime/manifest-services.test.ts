@@ -478,9 +478,13 @@ describe("runtime manifest services", () => {
 
 	test("renders the Hermes password dashboard directly", () => {
 		const paths = tempRuntimePaths();
-		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "dashboard-password";
-		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "dashboard-session-secret";
-		process.env.RUNTIME_SOURCE_TOKEN = "runtime-source-token";
+		process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE = join(
+			paths.runRoot,
+			"runtime-apply-identity.json",
+		);
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "stale-dashboard-password";
+		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "stale-dashboard-session-secret";
+		process.env.RUNTIME_SOURCE_TOKEN = "stale-runtime-source-token";
 		process.env.UNRELATED_RUNTIME_SECRET = "must-not-be-exposed";
 		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const warnings: string[] = [];
@@ -540,6 +544,10 @@ describe("runtime manifest services", () => {
 			sourcePath: "inline-hermes-single",
 			offline: false,
 			secretValues: {
+				"env://CLAWDI_AUTH_TOKEN": "test-token",
+				"env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "dashboard-password",
+				"env://HERMES_DASHBOARD_BASIC_AUTH_SECRET": "dashboard-session-secret",
+				"env://RUNTIME_SOURCE_TOKEN": "runtime-source-token",
 				"secret://runtime/token": "bundle-runtime-token",
 				"secret://unrelated": "unrelated-inline-secret",
 			},
@@ -585,6 +593,7 @@ describe("runtime manifest services", () => {
 		);
 		const watchUnitPath = join(paths.systemdSystemRoot, "clawdi-runtime-watch.service");
 		const watchUnit = readFileSync(watchUnitPath, "utf8");
+		const gatewayUnit = readUserServiceConfig(paths, "hermes-gateway");
 		const watchEnvPath = join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env");
 		const watchEnvStat = statSync(watchEnvPath);
 		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_USERNAME="admin"');
@@ -645,14 +654,23 @@ describe("runtime manifest services", () => {
 		expect(hermesConfig).not.toContain("dashboard-session-secret");
 		expect(existsSync(runtimeRunConfigPath("openclaw", paths))).toBe(false);
 
-		// Changing process.env here models platform reinjection before a watcher
-		// restart. A running watcher cannot acquire a newly injected or rotated
-		// source variable by rewriting its EnvironmentFile.
-		process.env.HERMES_DASHBOARD_BASIC_AUTH_PASSWORD = "rotated-dashboard-password";
-		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "rotated-dashboard-session-secret";
-		process.env.RUNTIME_SOURCE_TOKEN = "rotated-runtime-source-token";
-		const rotated = convergeRuntimeManifest(load, paths);
+		const rotated = convergeRuntimeManifest(
+			{
+				...load,
+				secretValues: {
+					...load.secretValues,
+					"env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD": "rotated-dashboard-password",
+					"env://HERMES_DASHBOARD_BASIC_AUTH_SECRET": "rotated-dashboard-session-secret",
+				},
+			},
+			paths,
+		);
 		expect(rotated.installErrors).toEqual([]);
+		const rotatedDashboardUnit = readFileSync(
+			join(paths.systemdUserRoot, "clawdi-hermes-dashboard.service"),
+			"utf8",
+		);
+		const rotatedGatewayUnit = readUserServiceConfig(paths, "hermes-gateway");
 		const rotatedWatchEnv = readFileSync(watchEnvPath, "utf8");
 		const rotatedWatchUnit = readFileSync(watchUnitPath, "utf8");
 		expect(rotatedWatchEnv).toContain(
@@ -661,7 +679,7 @@ describe("runtime manifest services", () => {
 		expect(rotatedWatchEnv).toContain(
 			'HERMES_DASHBOARD_BASIC_AUTH_SECRET="rotated-dashboard-session-secret"',
 		);
-		expect(rotatedWatchEnv).toContain('RUNTIME_TARGET_TOKEN="rotated-runtime-source-token"');
+		expect(rotatedWatchEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
 		expect(rotatedWatchEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
 		expect(rotatedWatchEnv).not.toContain(
 			'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"',
@@ -669,8 +687,10 @@ describe("runtime manifest services", () => {
 		expect(rotatedWatchEnv).not.toContain(
 			'HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"',
 		);
-		expect(rotatedWatchEnv).not.toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
-		// Value-only rotation must not alter the public unit or its revision.
+		expect(rotatedDashboardUnit).not.toBe(dashboardUnit);
+		expect(rotatedGatewayUnit).toBe(gatewayUnit);
+		// The root watcher consumes projected files on each tick, so its public
+		// unit need not restart solely to acquire rotated secret bytes.
 		expect(rotatedWatchUnit).toBe(watchUnit);
 		expect(rotatedWatchUnit).not.toContain("runtime-source-token");
 		expect(rotatedWatchUnit).not.toContain("rotated-runtime-source-token");
@@ -687,7 +707,14 @@ describe("runtime manifest services", () => {
 		process.env.NEXT_RUNTIME_SOURCE_TOKEN = "next-runtime-source-value";
 		sourceChangedRun.secretEnv.RUNTIME_TARGET_TOKEN = "env://NEXT_RUNTIME_SOURCE_TOKEN";
 		const sourceChanged = convergeRuntimeManifest(
-			{ ...load, manifest: sourceChangedManifest },
+			{
+				...load,
+				manifest: sourceChangedManifest,
+				secretValues: {
+					...load.secretValues,
+					"env://NEXT_RUNTIME_SOURCE_TOKEN": "next-runtime-source-value",
+				},
+			},
 			paths,
 		);
 		expect(sourceChanged.installErrors).toEqual([]);

@@ -1,13 +1,16 @@
 import { readFileSync, rmSync } from "node:fs";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { readRuntimeApplyContext } from "./apply-identity";
 import type { RuntimePaths } from "./paths";
 
 export const RUNTIME_AUTH_TOKEN_ENV = "CLAWDI_AUTH_TOKEN";
 export const RUNTIME_AUTH_TOKEN_SECRET_REF = `env://${RUNTIME_AUTH_TOKEN_ENV}`;
 export const RUNTIME_AUTH_ENV_SELECTOR = "CLAWDI_RUNTIME_AUTH_ENV";
 
-export function runtimeAuthEnvName(): string {
-	const selected = process.env[RUNTIME_AUTH_ENV_SELECTOR]?.trim();
+export function runtimeAuthEnvName(
+	env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+	const selected = env[RUNTIME_AUTH_ENV_SELECTOR]?.trim();
 	if (!selected) {
 		throw new Error(`missing ${RUNTIME_AUTH_ENV_SELECTOR}`);
 	}
@@ -39,10 +42,27 @@ export function writeRuntimeAuthToken(paths: RuntimePaths, token: string): strin
 	return paths.daemonAuthToken;
 }
 
-export function ensureRuntimeAuthTokenFile(paths: RuntimePaths): string | null {
-	const envName = paths.mode === "hosted" ? runtimeAuthEnvName() : RUNTIME_AUTH_TOKEN_ENV;
-	const token = process.env[envName]?.trim();
+export function ensureRuntimeAuthTokenFile(
+	paths: RuntimePaths,
+	projectedRuntimeEnv: Record<string, string> | null | undefined = undefined,
+): string | null {
+	const resolvedRuntimeEnv =
+		projectedRuntimeEnv === undefined
+			? (readRuntimeApplyContext()?.runtimeEnv ?? null)
+			: projectedRuntimeEnv;
+	const envName =
+		paths.mode === "hosted"
+			? runtimeAuthEnvName(resolvedRuntimeEnv ?? process.env)
+			: RUNTIME_AUTH_TOKEN_ENV;
+	const token =
+		resolvedRuntimeEnv === null
+			? process.env[envName]?.trim()
+			: resolvedRuntimeEnv?.[envName]?.trim();
 	if (token) return writeRuntimeAuthToken(paths, token);
+	if (resolvedRuntimeEnv !== null) {
+		rmSync(paths.daemonAuthToken, { force: true });
+		return null;
+	}
 	if (readRuntimeAuthToken(paths)) {
 		return paths.daemonAuthToken;
 	}

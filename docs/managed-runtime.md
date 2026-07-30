@@ -782,6 +782,26 @@ from the generation, and the generation cannot be inferred from the ETag. These
 CONFIG convergence fields are separate from hosted provider COMPUTE convergence
 fields such as desired or observed replica generation.
 
+Strict-v2 workloads may provide their current apply authority through the
+single JSON file named by `CLAWDI_RUNTIME_APPLY_IDENTITY_FILE`. The file is a
+strict `clawdi.runtimeApplyIdentity.v1` object containing `generation`,
+`manifestETag`, `applyReceiptId`, `bootNonce`, and a required `runtimeEnv` map.
+`runtimeEnv` contains the exact canonical process-environment values projected
+for that authority tuple. When the path is configured, a missing or malformed
+file fails closed, `env://NAME` resolves only from `runtimeEnv`, and a missing
+name never falls back to stale process-start environment. These projected
+values remain in memory and service environment files; they are not copied to
+the last-good secret cache. The applied generation must match the manifest and
+`manifestETag` must match the fetched bundle ETag before durable authority can
+advance. This lets one atomic projected-file swap advance config, secrets, and
+apply identity in place; `bootNonce` remains a workload-boot identity rather
+than a config-generation identity. The legacy process environment is accepted
+only when no identity-file path was configured and the canonical hosted mount
+`/var/run/secrets/clawdi-runtime-identity/runtime-apply-identity.json` does not
+exist. This one-boot discovery rule lets a CLI installed by an older bootstrap
+unit acquire the file contract; newly rendered units then pass the discovered
+path explicitly. An existing but malformed canonical file fails closed.
+
 The CLI writes durable non-secret state under the service state root. Important
 outputs include:
 

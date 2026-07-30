@@ -39,7 +39,7 @@ function appliedState(generation: number): RuntimeAppliedStateV2 {
 		generation,
 		manifestETag: `"manifest-${generation}"`,
 		applyReceiptId: `apply-receipt-000${generation}`,
-		bootNonce: `boot-nonce-00000${generation}`,
+		bootNonce: "boot-nonce-000001",
 		contentIdentity: {
 			sourcePath: "https://runtime.test/v1/runtime/manifest",
 			sha256: (generation === 1 ? "c" : "d").repeat(64),
@@ -53,7 +53,28 @@ function setApplyIdentityEnvironment(generation: number): void {
 	process.env.CLAWDI_RUNTIME_GENERATION = String(generation);
 	process.env.CLAWDI_RUNTIME_MANIFEST_ETAG = `"manifest-${generation}"`;
 	process.env.CLAWDI_RUNTIME_APPLY_RECEIPT_ID = `apply-receipt-000${generation}`;
-	process.env.CLAWDI_RUNTIME_BOOT_NONCE = `boot-nonce-00000${generation}`;
+	process.env.CLAWDI_RUNTIME_BOOT_NONCE = "boot-nonce-000001";
+}
+
+function writeApplyIdentityFile(paths: RuntimePaths, generation: number): void {
+	const path = join(paths.runRoot, "secrets", "runtime-apply-identity.json");
+	mkdirSync(dirname(path), { recursive: true });
+	process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE = path;
+	writeFileSync(
+		path,
+		JSON.stringify({
+			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
+			generation,
+			manifestETag: `"manifest-${generation}"`,
+			applyReceiptId: `apply-receipt-000${generation}`,
+			bootNonce: "boot-nonce-000001",
+			runtimeEnv: {
+				CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
+				CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime.test/v1/runtime/manifest",
+				CLAWDI_AUTH_TOKEN: "runtime-auth-token",
+			},
+		}),
+	);
 }
 
 function writeObservationHealth(paths: RuntimePaths, status: "ok" | "error"): void {
@@ -138,9 +159,9 @@ describe("hosted runtime observation producer", () => {
 		});
 	});
 
-	test("re-reads the applied tuple after rotation and emits a new boot identity", async () => {
+	test("re-reads the projected tuple after rotation and preserves the workload boot nonce", async () => {
 		const paths = tempRuntimePaths();
-		setApplyIdentityEnvironment(1);
+		writeApplyIdentityFile(paths, 1);
 		writeRuntimeAppliedState(appliedState(1), paths);
 		const ids = [
 			"boot-000000000001",
@@ -176,7 +197,7 @@ describe("hosted runtime observation producer", () => {
 		});
 
 		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
-		setApplyIdentityEnvironment(2);
+		writeApplyIdentityFile(paths, 2);
 		writeRuntimeAppliedState(appliedState(2), paths);
 		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
 
@@ -194,7 +215,7 @@ describe("hosted runtime observation producer", () => {
 			sequence: 1,
 			eventId: "event-00000000002",
 			applyReceiptId: "apply-receipt-0002",
-			bootNonce: "boot-nonce-000002",
+			bootNonce: "boot-nonce-000001",
 			applied: { generation: 2, etag: '"manifest-2"' },
 		});
 	});

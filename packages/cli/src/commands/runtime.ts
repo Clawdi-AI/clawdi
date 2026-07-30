@@ -1317,6 +1317,11 @@ export function commitRuntimeAppliedState(input: {
 			`runtime apply identity generation ${input.applyIdentity.generation} does not match resolved manifest apply generation ${resolveRuntimeApplyGeneration(input.convergence.manifest)}`,
 		);
 	}
+	if (input.applyIdentity && input.applyIdentity.manifestETag !== input.etag) {
+		throw new Error(
+			`runtime apply identity manifest ETag ${input.applyIdentity.manifestETag} does not match fetched bundle ETag ${input.etag}`,
+		);
+	}
 	const providerIds = runtimeSourceProviderIds(input.load.manifest);
 	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
 	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
@@ -1504,7 +1509,7 @@ function readFileIfExists(path: string): string | null {
 	return readFileSync(path, "utf-8");
 }
 
-interface SystemdUnitSnapshot {
+export interface SystemdUnitSnapshot {
 	system: Map<string, string>;
 	user: Map<string, string>;
 }
@@ -1525,7 +1530,9 @@ interface CommandResult {
 const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
 const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 
-function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
+export function readSystemdUnitSnapshot(
+	paths: ReturnType<typeof getRuntimePaths>,
+): SystemdUnitSnapshot {
 	return {
 		system: readManagedSystemdUnits(paths.systemdSystemRoot),
 		user: readManagedSystemdUnits(paths.systemdUserRoot),
@@ -1583,7 +1590,7 @@ function changedSystemdUnits(
 	};
 }
 
-function applySystemdRuntimeUpdate(
+export function applySystemdRuntimeUpdate(
 	paths: ReturnType<typeof getRuntimePaths>,
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
@@ -2122,7 +2129,7 @@ async function runtimeInitLocked(
 		try {
 			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded, paths);
 			const contentRevision = runtimePublicContentRevision(convergenceLoad);
-			const applyIdentity = readRuntimeApplyIdentityFromEnv();
+			const applyIdentity = convergenceLoad.applyIdentity ?? null;
 			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
 				authorityCommit: (convergence, authority) =>
 					commitRuntimeAppliedState({
@@ -2420,7 +2427,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			bundleEtag,
 			paths,
 		);
-		const applyIdentity = readRuntimeApplyIdentityFromEnv();
+		const applyIdentity = loaded.applyIdentity ?? null;
 		const applyResult = applyRuntimeDesiredState(loaded, paths, {
 			authorityCommit: (convergence, authority) =>
 				commitRuntimeAppliedState({

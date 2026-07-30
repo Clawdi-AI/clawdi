@@ -1,7 +1,25 @@
+import { RUNTIME_APPLY_IDENTITY_FILE_ENV } from "./apply-identity";
 import { normalizeSecretRef } from "./hosted-egress-profiles";
 
 const ENV_SECRET_REF_PREFIX = "env://";
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const PROJECTED_RUNTIME_ENV = Symbol("clawdi.projectedRuntimeEnv");
+
+type RuntimeSecretValues = Record<string, unknown> & {
+	[PROJECTED_RUNTIME_ENV]?: true;
+};
+
+export function markProjectedRuntimeEnvironment<T extends Record<string, string>>(values: T): T {
+	Object.defineProperty(values, PROJECTED_RUNTIME_ENV, {
+		value: true,
+		enumerable: true,
+	});
+	return values;
+}
+
+function hasProjectedRuntimeEnvironment(values: Record<string, unknown>): boolean {
+	return (values as RuntimeSecretValues)[PROJECTED_RUNTIME_ENV] === true;
+}
 
 export function envSecretRefName(ref: string): string | null {
 	if (!ref.startsWith(ENV_SECRET_REF_PREFIX)) return null;
@@ -16,6 +34,8 @@ export function isEnvSecretRef(ref: string): boolean {
 export function normalizeSecretValues(
 	secretValues: Record<string, string> | undefined,
 ): Record<string, string> {
+	const projectedRuntimeEnvironment =
+		secretValues !== undefined && hasProjectedRuntimeEnvironment(secretValues);
 	const canonicalValues = new Map<string, string>();
 	for (const [ref, value] of Object.entries(secretValues ?? {})) {
 		if (isEnvSecretRef(ref)) continue;
@@ -35,7 +55,7 @@ export function normalizeSecretValues(
 	for (const [secretRef, value] of canonicalValues) {
 		normalized[secretRef] = value;
 	}
-	return normalized;
+	return projectedRuntimeEnvironment ? markProjectedRuntimeEnvironment(normalized) : normalized;
 }
 
 export function canonicalSecretRefName(ref: string | null | undefined): string | null {
@@ -46,6 +66,13 @@ export function canonicalSecretRefName(ref: string | null | undefined): string |
 export function runtimeSecretValue(secrets: Record<string, unknown>, ref: string): string | null {
 	const envName = envSecretRefName(ref);
 	if (envName) {
+		if (
+			process.env[RUNTIME_APPLY_IDENTITY_FILE_ENV] !== undefined ||
+			hasProjectedRuntimeEnvironment(secrets)
+		) {
+			const projected = secrets[`${ENV_SECRET_REF_PREFIX}${envName}`];
+			return typeof projected === "string" && projected.length > 0 ? projected : null;
+		}
 		const value = process.env[envName]?.trim();
 		return value ? value : null;
 	}

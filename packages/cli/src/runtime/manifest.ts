@@ -53,8 +53,17 @@ import {
 } from "../lib/hermes-config-merge";
 import { writePrivateFileAtomic } from "../lib/private-file";
 import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
-import { readRuntimeApplyIdentityFromEnv, runtimeApplyIdentityEnvironment } from "./apply-identity";
-import { ensureRuntimeAuthTokenFile } from "./auth-token";
+import {
+	RUNTIME_APPLY_IDENTITY_FILE_ENV,
+	runtimeApplyIdentityEnvironment,
+	runtimeApplyIdentityServiceEnvironment,
+} from "./apply-identity";
+import {
+	ensureRuntimeAuthTokenFile,
+	RUNTIME_AUTH_TOKEN_SECRET_REF,
+	readRuntimeAuthToken,
+	writeRuntimeAuthToken,
+} from "./auth-token";
 import {
 	adoptableLegacyHostedBundledSkill,
 	assertHostedBundledSkillCatalogDigest,
@@ -2322,6 +2331,7 @@ function applyHostedAiProviderProjection(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
 	home: string,
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
@@ -2339,7 +2349,13 @@ function applyHostedAiProviderProjection(
 	assertHostedProviderProjectionMode(name, manifest, projectionInput);
 	if (manifest.runtimes[name]?.providerMode === "configured" && !projectionInput) {
 		if (name === "openclaw") {
-			applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
+			applyOpenClawGatewayHostedProjection(
+				observation.commandPath,
+				manifest,
+				secretValues,
+				home,
+				workspaceRoot,
+			);
 		}
 		return { path: null, revision: null, providerIds: [...previousProviderIds] };
 	}
@@ -2352,7 +2368,13 @@ function applyHostedAiProviderProjection(
 		);
 	}
 	if (name === "openclaw") {
-		applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
+		applyOpenClawGatewayHostedProjection(
+			observation.commandPath,
+			manifest,
+			secretValues,
+			home,
+			workspaceRoot,
+		);
 		const activeProviderIds = projectionInput
 			? [...openClawProjectedProviderIds(projectionInput)].sort()
 			: [];
@@ -2390,7 +2412,7 @@ function previewHostedAiProviderProjectionRevision(
 	managedModelOverrides: ManagedGatewayModelOverrides,
 ): string | null {
 	if (
-		name !== "hermes" ||
+		(name !== "openclaw" && name !== "hermes") ||
 		!observation.enabled ||
 		observation.status === "install_failed" ||
 		!observation.commandPath
@@ -2406,6 +2428,32 @@ function previewHostedAiProviderProjectionRevision(
 	assertHostedProviderProjectionMode(name, manifest, projectionInput);
 	if (manifest.runtimes[name]?.providerMode === "configured" && !projectionInput) {
 		return null;
+	}
+	if (name === "openclaw") {
+		const activeProviderIds = projectionInput
+			? [...openClawProjectedProviderIds(projectionInput)].sort()
+			: [];
+		const deletedProviderIds = staleProviderIds(
+			new Set(previousProviderIds),
+			new Set(activeProviderIds),
+		);
+		if (!projectionInput) {
+			return revisionHash({
+				openClawProviderProjection: "delete",
+				patch: openClawProviderDeletePatch(deletedProviderIds),
+			});
+		}
+		const projection = buildAgentTargetProjection(
+			"openclaw",
+			projectionInput.catalog,
+			projectionInput.primaryModel,
+		);
+		const file = projection.files.find((entry) => entry.path.endsWith(".openclaw.json"));
+		if (!file) throw new Error("OpenClaw projection did not include a config patch JSON file.");
+		return revisionHash({
+			openClawProviderProjection: "json-patch",
+			patch: mergeOpenClawProviderDeletes(file.content, deletedProviderIds),
+		});
 	}
 	return applyHostedHermesAiProviderProjection(
 		observation,
@@ -2869,9 +2917,15 @@ function staleProviderIds(
 		.sort((left, right) => left.localeCompare(right));
 }
 
-function openClawGatewayHostedPatch(manifest: RuntimeManifest): Record<string, unknown> | null {
+function openClawGatewayHostedPatch(
+	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
+): Record<string, unknown> | null {
 	const allowedOrigins = openClawControlUiAllowedOrigins(manifest);
-	const gatewayToken = process.env[OPENCLAW_GATEWAY_TOKEN_ENV]?.trim();
+	const gatewayToken = runtimeSecretValue(
+		secretValues ?? {},
+		manifest.openclawGatewayAuth?.tokenRef ?? `env://${OPENCLAW_GATEWAY_TOKEN_ENV}`,
+	);
 	const isHostedV2 = manifest.projection?.sourceBundleVersion === "clawdi.hosted-runtime.bundle.v2";
 	const nativeAuth = isHostedV2 ? manifest.openclawGatewayAuth : undefined;
 	if (isHostedV2 && nativeAuth?.activation.enabled !== true) {
@@ -2936,10 +2990,11 @@ function openClawControlUiBasePath(manifest: RuntimeManifest): string {
 function applyOpenClawGatewayHostedProjection(
 	command: string,
 	manifest: RuntimeManifest,
+	secretValues: Record<string, string> | undefined,
 	home: string,
 	workspaceRoot: string,
 ): void {
-	const patch = openClawGatewayHostedPatch(manifest);
+	const patch = openClawGatewayHostedPatch(manifest, secretValues);
 	if (!patch) return;
 	runRuntimeUserCommand(
 		command,
@@ -3484,6 +3539,22 @@ function applyHostedBundledSkills(
 		for (const entry of readdirSync(targetDir)) makeRuntimeUserOwned(join(targetDir, entry));
 	}
 	return targets;
+}
+
+function hostedBundledSkillProjection(
+	manifest: RuntimeManifest,
+	runtime: string,
+): Array<{ id: string; version: number; digest: string }> | null {
+	if (runtime !== "openclaw" && runtime !== "hermes") return null;
+	if (manifest.runtimes[runtime]?.enabled !== true) return [];
+	return hostedBundledSkillIds()
+		.sort((left, right) => left.localeCompare(right))
+		.flatMap((skillId) => {
+			const desired = manifest.projection?.skills?.entries[skillId];
+			if (desired?.enabled !== true) return [];
+			const bundled = resolveHostedBundledSkill(skillId, desired.version);
+			return [{ id: bundled.id, version: bundled.version, digest: bundled.digest }];
+		});
 }
 
 function applyHostedMcpProjections(
@@ -4298,8 +4369,22 @@ function writeLiveSyncEnvironmentIndex(agentTypes: Set<RuntimeName>, paths: Runt
 	);
 }
 
-function writeDaemonAuthToken(paths: RuntimePaths): string | null {
-	const path = ensureRuntimeAuthTokenFile(paths);
+function writeDaemonAuthToken(
+	paths: RuntimePaths,
+	secretValues: Record<string, string> | undefined,
+	applyIdentityRuntimeEnv: Record<string, string> | null | undefined,
+): string | null {
+	if (applyIdentityRuntimeEnv !== undefined) {
+		const path = ensureRuntimeAuthTokenFile(paths, applyIdentityRuntimeEnv);
+		if (!path) return null;
+		makeManagedSecretRoot(dirname(path));
+		makeRootOwned(path);
+		return path;
+	}
+	const projectedToken = runtimeSecretValue(secretValues ?? {}, RUNTIME_AUTH_TOKEN_SECRET_REF);
+	const path = projectedToken
+		? writeRuntimeAuthToken(paths, projectedToken)
+		: ensureRuntimeAuthTokenFile(paths);
 	if (!path) return null;
 	makeManagedSecretRoot(dirname(path));
 	makeRootOwned(path);
@@ -4333,19 +4418,40 @@ export function runtimeProgramRevision(
 	providerProjectionRevision: string | null = null,
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
+	const desiredProgram = desiredRuntime
+		? Object.fromEntries(Object.entries(desiredRuntime).filter(([field]) => field !== "services"))
+		: null;
 	const runtimeSecretRefs = desiredRuntime
 		? Object.values(
 				mergeRuntimeSecretEnv(runtime, desiredRuntime, hostedProviderSecretEnv(manifest, runtime)),
 			)
 		: [];
+	const channels = hostedChannelProjection(manifest);
+	const hostedTarget = runtime === "openclaw" || runtime === "hermes";
+	const channelProjection = channels
+		? runtime === "openclaw"
+			? openClawManagedChannelsPatch(channels)
+			: runtime === "hermes"
+				? hermesManagedChannelsPatch(
+						channels,
+						manifest.controlPlane.apiUrl,
+						manifest.projection?.channelCredentials,
+					)
+				: null
+		: null;
 	return revisionHash({
-		clawdiCli: manifest.clawdiCli ?? null,
-		controlPlane: manifest.controlPlane,
-		egressProfiles: manifest.egressProfiles ?? null,
-		locale: manifest.locale ?? null,
-		projection: manifest.projection ?? null,
-		providerProjectionRevision,
-		runtime: desiredRuntime ?? null,
+		renderedProjection: {
+			channels: channelProjection,
+			gateway: runtime === "openclaw" ? openClawGatewayHostedPatch(manifest, secretValues) : null,
+			locale:
+				manifest.locale && hostedTarget
+					? managedLocaleBlock(manifest.locale)
+					: (manifest.locale?.timezone ?? null),
+			mcp: hostedTarget ? hostedMcpIntent(manifest) : null,
+			provider: providerProjectionRevision,
+			skills: hostedBundledSkillProjection(manifest, runtime),
+		},
+		runtime: desiredProgram,
 		secretValues: scopedSecretValues(secretValues, runtimeSecretRefs),
 	});
 }
@@ -4356,8 +4462,6 @@ function runtimeServiceProgramRevision(
 	service: string,
 ): string {
 	return revisionHash({
-		clawdiCli: manifest.clawdiCli ?? null,
-		controlPlane: manifest.controlPlane,
 		runtime: runtime,
 		service,
 		settings: manifest.runtimes[runtime]?.services?.[service] ?? null,
@@ -4365,11 +4469,15 @@ function runtimeServiceProgramRevision(
 	});
 }
 
-function daemonProgramRevision(manifest: RuntimeManifest): string {
+export function daemonProgramRevision(
+	manifest: RuntimeManifest,
+	runtimeAuthToken: string | null = null,
+): string {
 	return revisionHash({
 		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
 		liveSync: manifest.liveSync ?? null,
+		runtimeAuthToken,
 	});
 }
 
@@ -4488,10 +4596,8 @@ export function runtimeSidecarProgramRevision(
 		throw new Error("runtime sidecar egress revision requires the configured numeric identity");
 	}
 	return revisionHash({
-		clawdiCli: manifest.clawdiCli ?? null,
 		runtimeSidecar: "hosted-runtime-sidecar-v4",
 		instanceId: manifest.instanceId,
-		generation: manifest.generation,
 		egressProfiles: manifest.egressProfiles ?? null,
 		egress: egressProgram
 			? {
@@ -5090,24 +5196,31 @@ function removeStaleSystemdEnvironmentFiles(paths: RuntimePaths, writtenUnits: s
 	}
 }
 
-function runtimeManifestUrlEnv(sourcePath: string): string {
+function runtimeManifestUrlEnv(
+	sourcePath: string,
+	secretValues: Record<string, string> | undefined,
+): string {
 	if (/^https?:\/\//i.test(sourcePath)) return sourcePath;
-	return process.env.CLAWDI_RUNTIME_MANIFEST_URL?.trim() || "";
+	return runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_MANIFEST_URL") ?? "";
 }
 
 function runtimeSystemdCommonEnvironment(
 	sourcePath: string,
 	paths: RuntimePaths,
+	secretValues: Record<string, string> | undefined,
 ): Record<string, string> {
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	const runtimeUser =
+		runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_USER") ?? "clawdi";
 	const environment: Record<string, string> = {
 		HOME: paths.userHome,
-		CLAWDI_RUNTIME_MODE: "hosted",
-		CLAWDI_RUNTIME_AUTH_ENV: process.env.CLAWDI_RUNTIME_AUTH_ENV?.trim() ?? "",
+		CLAWDI_RUNTIME_MODE:
+			runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_MODE") ?? "hosted",
+		CLAWDI_RUNTIME_AUTH_ENV:
+			runtimeSecretValue(secretValues ?? {}, "env://CLAWDI_RUNTIME_AUTH_ENV") ?? "",
 		CLAWDI_RUNTIME_USER: runtimeUser,
 		CLAWDI_SERVICE_STATE_DIR: paths.serviceStateRoot,
 		CLAWDI_RUN_DIR: paths.runRoot,
-		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(sourcePath),
+		CLAWDI_RUNTIME_MANIFEST_URL: runtimeManifestUrlEnv(sourcePath, secretValues),
 		PATH: runtimeSystemdPath(paths),
 	};
 	return environment;
@@ -5205,17 +5318,23 @@ function writeSystemdUnits(
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevisions: Partial<Record<string, string | null>>,
 	commonEnvironment: Record<string, string>,
+	applyIdentityFilePath: string | null | undefined,
+	applyIdentity: RuntimeManifestLoad["applyIdentity"],
+	runtimeAuthToken: string | null,
 ): { systemUnits: string[]; userUnits: string[]; egressSidecarActive: boolean } {
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
+	const runtimeUser = commonEnvironment.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const systemUnits: string[] = [];
 	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;
 	const activeEgressProgram = shouldRunEgress ? egressProgram : null;
 	const activeEgressIdentity = shouldRunEgress ? egressIdentity : null;
 	const userUnits: string[] = [];
 	const runtimeUid = shouldRunEgress ? runtimeUserUid(runtimeUser) : null;
-	const applyIdentityEnvironment = runtimeApplyIdentityEnvironment(
-		readRuntimeApplyIdentityFromEnv(),
-	);
+	const applyIdentityEnvironment =
+		applyIdentityFilePath === undefined
+			? runtimeApplyIdentityServiceEnvironment()
+			: applyIdentityFilePath === null
+				? runtimeApplyIdentityEnvironment(applyIdentity ?? null)
+				: { [RUNTIME_APPLY_IDENTITY_FILE_ENV]: applyIdentityFilePath };
 	if (daemonAuthTokenFile) {
 		const watchSecretEnvironment = runtimeWatchSecretEnvironment(runtimePrograms);
 		systemUnits.push(
@@ -5234,8 +5353,8 @@ function writeSystemdUnits(
 				},
 				// Unit files are 0644. Hash only secret destination names into their
 				// revision so the unit cannot become an offline verifier for values.
-				// A running watcher acquires rotated values only after the platform
-				// reinjects its environment and restarts it.
+				// The watcher resolves values from the atomic apply-context file on
+				// each tick; keep secret bytes out of its public revision material.
 				revisionEnv: {
 					...commonEnvironment,
 					...applyIdentityEnvironment,
@@ -5263,7 +5382,7 @@ function writeSystemdUnits(
 					CLAWDI_API_URL: manifest.controlPlane.apiUrl,
 					CLAWDI_NO_AUTO_UPDATE: "1",
 					CLAWDI_NO_UPDATE_CHECK: "1",
-					CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest),
+					CLAWDI_RUNTIME_REV: daemonProgramRevision(manifest, runtimeAuthToken),
 				},
 			}),
 		);
@@ -5839,7 +5958,7 @@ function validateRuntimeProjectionPlan(input: {
 			} else if (!configuredProjectionUnavailable) {
 				JSON.stringify(openClawProviderDeletePatch(previousProjectedProviderIds.openclaw ?? []));
 			}
-			JSON.stringify(openClawGatewayHostedPatch(manifest));
+			JSON.stringify(openClawGatewayHostedPatch(manifest, secretValues));
 		}
 		if (name === "hermes") {
 			if (projectionInput && !projectionRequiresInstalledModelProbe) {
@@ -6150,7 +6269,9 @@ export function convergeRuntimeManifest(
 		writeJsonFile(paths.sensitiveInstanceData, {
 			schemaVersion: "clawdi.runtimeSensitiveInstanceData.v1",
 			generatedAt,
-			tokenSource: process.env.CLAWDI_AUTH_TOKEN ? "CLAWDI_AUTH_TOKEN" : load.source,
+			tokenSource: runtimeSecretValue(secretValues ?? {}, RUNTIME_AUTH_TOKEN_SECRET_REF)
+				? "CLAWDI_AUTH_TOKEN"
+				: load.source,
 			token: "<redacted>",
 		});
 
@@ -6165,7 +6286,12 @@ export function convergeRuntimeManifest(
 		);
 		requireV2EgressEngineReady(manifest, egressProfileBundlePath, egressEngine);
 		const egressAddon = egressProfileBundlePath ? writeEgressAddon(paths) : clearEgressAddon(paths);
-		const daemonAuthTokenFile = writeDaemonAuthToken(paths);
+		const daemonAuthTokenFile = writeDaemonAuthToken(
+			paths,
+			secretValues,
+			load.applyIdentityRuntimeEnv,
+		);
+		const runtimeAuthToken = daemonAuthTokenFile ? readRuntimeAuthToken(paths) : null;
 		writeSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(manifest));
 		try {
 			materializeHostedChannelCredentials(manifest, secretValues, projectionHome);
@@ -6231,7 +6357,11 @@ export function convergeRuntimeManifest(
 				managedModelOverrides,
 			);
 		}
-		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(load.sourcePath, paths);
+		const commonSystemdEnvironment = runtimeSystemdCommonEnvironment(
+			load.sourcePath,
+			paths,
+			secretValues,
+		);
 		try {
 			const codexProjection = applyHostedCodexManagedProviderProjection(
 				manifest,
@@ -6325,6 +6455,7 @@ export function convergeRuntimeManifest(
 					name,
 					observation,
 					manifest,
+					secretValues,
 					projectionHome,
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
@@ -6443,6 +6574,9 @@ export function convergeRuntimeManifest(
 			secretValues,
 			providerProjectionRevisions,
 			commonSystemdEnvironment,
+			load.applyIdentityFilePath,
+			load.applyIdentity,
+			runtimeAuthToken,
 		);
 		const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
 		if (systemdUnits.egressSidecarActive) {
