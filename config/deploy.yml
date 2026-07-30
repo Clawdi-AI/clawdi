@@ -30,7 +30,7 @@ aliases:
 ssh:
   user: phala
   # Self-hosters connect directly unless they provide a proxy command.
-<% if ENV["DEPLOY_SSH_PROXY_COMMAND"] %>
+<% if ENV["DEPLOY_SSH_PROXY_COMMAND"].to_s.strip != "" %>
   proxy_command: <%= ENV["DEPLOY_SSH_PROXY_COMMAND"] %>
 <% end %>
   keys:
