@@ -23,6 +23,11 @@ export function pairingCommand(code: string): string {
 	return `/bot_pair ${code}`;
 }
 
+export function pairCodeExpired(expiresAt: string, nowMs: number): boolean {
+	const expiresAtMs = Date.parse(expiresAt);
+	return !Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs;
+}
+
 /** Account-level activity is useful, but it is not proof of agent-runtime delivery. */
 export function channelActivityAfterLink(
 	lastMessageAt: string | null | undefined,

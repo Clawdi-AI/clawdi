@@ -47,6 +47,7 @@ from app.models.channel import (
     PAIR_CODE_STATUS_REVOKED,
     ChannelAccount,
     ChannelAgentCredential,
+    ChannelAgentReference,
     ChannelBinding,
     ChannelBindingAlias,
     ChannelBotAgentLink,
@@ -75,6 +76,7 @@ from app.services.channels import (
     extract_discord_routing_key,
     generate_agent_token,
     hash_token,
+    normalize_telegram_bot_username,
     parse_pair_command,
     record_discord_dispatch,
     send_provider_outbound_payload,
@@ -233,6 +235,42 @@ async def _create_admin_channel(
         )
     finally:
         settings.admin_api_key = original_admin_key
+
+
+async def _create_public_channel_with_links(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    *,
+    label: str,
+    link_count: int = 2,
+) -> tuple[ChannelAccount, list[ChannelBotAgentLink]]:
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"{label}-{uuid4().hex}",
+    )
+    assert created.status_code == 201, created.text
+    account_id = UUID(created.json()["id"])
+    links: list[ChannelBotAgentLink] = []
+    for index in range(link_count):
+        link_user, link_agent = await _create_user_with_channel_agent(
+            db_session,
+            label=f"{label}-{index}",
+        )
+        async with _client_for_user(db_session, link_user) as link_client:
+            linked = await link_client.post(
+                f"/v1/channels/{account_id}/agent-links",
+                json={"agent_id": str(link_agent.id)},
+            )
+        assert linked.status_code == 201, linked.text
+        link = await db_session.get(ChannelBotAgentLink, UUID(linked.json()["id"]))
+        assert link is not None
+        links.append(link)
+    account = await db_session.get(ChannelAccount, account_id)
+    assert account is not None
+    return account, links
 
 
 class _FakeProviderResponse:
@@ -664,7 +702,7 @@ async def test_create_telegram_channel_registers_provider_webhook(
 ):
     previous_public_api_url = settings.public_api_url
     settings.public_api_url = "https://cloud.example.test"
-    _reset_fake_provider_client({"ok": True, "result": True})
+    _reset_fake_provider_client({"ok": True, "result": {"username": "ClawdiWebhookBot"}})
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     try:
         response = await client.post(
@@ -680,13 +718,22 @@ async def test_create_telegram_channel_registers_provider_webhook(
 
     assert response.status_code == 201
     created = response.json()
-    assert len(_FakeProviderClient.calls) == 1
-    call = _FakeProviderClient.calls[0]
+    assert len(_FakeProviderClient.calls) == 2
+    assert _FakeProviderClient.calls[0]["url"].endswith("/bot123456:telegram-secret/getMe")
+    call = _FakeProviderClient.calls[1]
     assert call["url"].endswith("/bot123456:telegram-secret/setWebhook")
     assert call["json"] == {
         "url": created["webhook_url"],
         "secret_token": created["webhook_secret"],
     }
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
+        )
+    ).json()
+    assert pair["bot_username"] == "ClawdiWebhookBot"
+    assert pair["deep_link"] == f"https://t.me/ClawdiWebhookBot?start={pair['code']}"
 
 
 def test_generate_telegram_agent_token_matches_bot_api_contract():
@@ -2083,6 +2130,9 @@ async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
     channel_agent,
     monkeypatch,
 ):
+    _reset_fake_provider_client({"ok": True, "result": {"username": "ClawdiPublicBoundaryBot"}})
+    monkeypatch.setattr(settings, "public_api_url", "https://cloud.example.test")
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = await _create_admin_channel(
         client,
         target_clerk_id=seed_user.clerk_id,
@@ -2094,7 +2144,6 @@ async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
     account_id = created.json()["id"]
 
     _FakeProviderClient.calls = []
-    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
 
     sync = await client.post(f"/v1/channels/{account_id}/commands/sync", json={})
     delete = await client.delete(f"/v1/channels/{account_id}")
@@ -2121,6 +2170,351 @@ async def test_public_bot_account_is_admin_managed_even_for_seed_owner(
     ).scalar_one()
     assert account.archived_at is None
     assert account.visibility == "public"
+
+
+@pytest.mark.asyncio
+async def test_explicit_link_channel_reference_uses_public_link_owner(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider="telegram",
+        name=f"public-reference-owner-{uuid4().hex}",
+    )
+    assert created.status_code == 201, created.text
+    account_id = UUID(created.json()["id"])
+    link_user, link_agent = await _create_user_with_channel_agent(
+        db_session,
+        label="public-reference-link",
+    )
+    async with _client_for_user(db_session, link_user) as link_client:
+        linked = await link_client.post(
+            f"/v1/channels/{account_id}/agent-links",
+            json={"agent_id": str(link_agent.id)},
+        )
+    assert linked.status_code == 201, linked.text
+    link_id = UUID(linked.json()["id"])
+    account = await db_session.get(ChannelAccount, account_id)
+    assert account is not None
+    assert account.user_id != link_user.id
+
+    reference = await channel_service.record_channel_agent_reference(
+        db_session,
+        account=account,
+        bot_agent_link_id=link_id,
+        ref_kind="test_public_link_reference",
+        ref_value="public-link-file",
+    )
+    await db_session.commit()
+
+    assert reference.user_id == link_user.id
+    assert reference.bot_agent_link_id == link_id
+
+    reference.user_id = account.user_id
+    await db_session.commit()
+    repaired_reference = await channel_service.record_channel_agent_reference(
+        db_session,
+        account=account,
+        bot_agent_link_id=link_id,
+        ref_kind="test_public_link_reference",
+        ref_value="public-link-file",
+    )
+    await db_session.commit()
+
+    assert repaired_reference.id == reference.id
+    assert repaired_reference.user_id == link_user.id
+
+
+@pytest.mark.asyncio
+async def test_explicit_cross_account_link_reference_is_rejected(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
+    first = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"reference-account-first-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    second = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"reference-account-second-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(first["id"]))
+    assert account is not None
+
+    with pytest.raises(
+        ValueError,
+        match="bot agent link does not belong to channel account",
+    ):
+        await channel_service.record_channel_agent_reference(
+            db_session,
+            account=account,
+            bot_agent_link_id=UUID(second["agent_link_id"]),
+            ref_kind="test_cross_account_reference",
+            ref_value="foreign-link-file",
+        )
+
+
+@pytest.mark.asyncio
+async def test_channel_reference_context_rejects_mismatched_links(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    account, links = await _create_public_channel_with_links(
+        client,
+        db_session,
+        seed_user,
+        label="reference-context",
+    )
+    first_link, second_link = links
+    first_binding = ChannelBinding(
+        account_id=account.id,
+        bot_agent_link_id=first_link.id,
+        user_id=first_link.user_id,
+        external_chat_id="reference-context-first",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    second_message = ChannelMessage(
+        account_id=account.id,
+        bot_agent_link_id=second_link.id,
+        user_id=second_link.user_id,
+        direction=MESSAGE_DIRECTION_INBOUND,
+        external_chat_id="reference-context-second",
+        payload={},
+    )
+    db_session.add_all([first_binding, second_message])
+    await db_session.commit()
+
+    contexts = (
+        {"binding": first_binding, "message": second_message},
+        {"binding": first_binding, "bot_agent_link_id": second_link.id},
+        {"message": second_message, "bot_agent_link_id": first_link.id},
+    )
+    for context in contexts:
+        with pytest.raises(
+            ValueError,
+            match="channel reference link context does not match",
+        ):
+            await channel_service.record_channel_agent_reference(
+                db_session,
+                account=account,
+                ref_kind="test_mismatched_reference_context",
+                ref_value="mismatched-reference",
+                **context,
+            )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("use_link", [True, False], ids=["link-scoped", "unlinked"])
+async def test_concurrent_channel_reference_recording_converges(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    use_link: bool,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"concurrent-reference-{use_link}-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account_id = UUID(created["id"])
+    link_id = UUID(created["agent_link_id"]) if use_link else None
+    ref_kind = f"test_concurrent_reference_{use_link}"
+    ref_value = "same-reference"
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    start = asyncio.Event()
+    ready_count = 0
+
+    async def record() -> UUID:
+        nonlocal ready_count
+        async with sessionmaker() as session:
+            account = await session.get(ChannelAccount, account_id)
+            assert account is not None
+            ready_count += 1
+            if ready_count == 2:
+                start.set()
+            await start.wait()
+            reference = await channel_service.record_channel_agent_reference(
+                session,
+                account=account,
+                bot_agent_link_id=link_id,
+                ref_kind=ref_kind,
+                ref_value=ref_value,
+            )
+            await session.commit()
+            return reference.id
+
+    reference_ids = await asyncio.gather(record(), record())
+    references = list(
+        (
+            await db_session.execute(
+                select(ChannelAgentReference).where(
+                    ChannelAgentReference.account_id == account_id,
+                    ChannelAgentReference.bot_agent_link_id == link_id,
+                    ChannelAgentReference.ref_kind == ref_kind,
+                    ChannelAgentReference.ref_value == ref_value,
+                )
+            )
+        ).scalars()
+    )
+
+    assert reference_ids[0] == reference_ids[1]
+    assert len(references) == 1
+
+
+@pytest.mark.asyncio
+async def test_hard_deleted_links_preserve_duplicate_unlinked_reference_history(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    account, links = await _create_public_channel_with_links(
+        client,
+        db_session,
+        seed_user,
+        label="reference-link-deletion",
+    )
+    references = [
+        await channel_service.record_channel_agent_reference(
+            db_session,
+            account=account,
+            bot_agent_link_id=link.id,
+            ref_kind="test_link_deletion_reference",
+            ref_value="shared-reference",
+        )
+        for link in links
+    ]
+    await db_session.commit()
+    reference_ids = {reference.id for reference in references}
+
+    for link in links:
+        await db_session.delete(link)
+    await db_session.commit()
+    db_session.expire_all()
+
+    preserved = list(
+        (
+            await db_session.execute(
+                select(ChannelAgentReference).where(
+                    ChannelAgentReference.id.in_(reference_ids),
+                )
+            )
+        ).scalars()
+    )
+    assert {reference.id for reference in preserved} == reference_ids
+    assert all(reference.bot_agent_link_id is None for reference in preserved)
+
+
+@pytest.mark.asyncio
+async def test_existing_duplicate_unlinked_references_are_read_and_updated_deterministically(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": f"duplicate-unlinked-reference-{uuid4().hex}",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    older = ChannelAgentReference(
+        account_id=account.id,
+        user_id=account.user_id,
+        provider=account.provider,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+    )
+    newer = ChannelAgentReference(
+        account_id=account.id,
+        user_id=account.user_id,
+        provider=account.provider,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 2, tzinfo=UTC),
+    )
+    db_session.add_all([older, newer])
+    await db_session.commit()
+
+    assert await channel_service.channel_agent_reference_exists(
+        db_session,
+        account=account,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+    )
+    selected = await channel_service.get_channel_agent_reference(
+        db_session,
+        account=account,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+    )
+    assert selected is not None
+    assert selected.id == newer.id
+    assert (
+        await channel_service.get_channel_agent_reference(
+            db_session,
+            account=account,
+            bot_agent_link_id=UUID(created["agent_link_id"]),
+            ref_kind="test_duplicate_unlinked_reference",
+            ref_value="duplicate-reference",
+        )
+        is None
+    )
+
+    canonical = await channel_service.record_channel_agent_reference(
+        db_session,
+        account=account,
+        ref_kind="test_duplicate_unlinked_reference",
+        ref_value="duplicate-reference",
+        metadata={"canonical": True},
+    )
+    await db_session.commit()
+    preserved = list(
+        (
+            await db_session.execute(
+                select(ChannelAgentReference).where(
+                    ChannelAgentReference.account_id == account.id,
+                    ChannelAgentReference.bot_agent_link_id.is_(None),
+                    ChannelAgentReference.ref_kind == "test_duplicate_unlinked_reference",
+                    ChannelAgentReference.ref_value == "duplicate-reference",
+                )
+            )
+        ).scalars()
+    )
+
+    assert canonical.id == newer.id
+    assert len(preserved) == 2
+    assert older.metadata_ is None
+    assert newer.metadata_ == {"canonical": True}
 
 
 @pytest.mark.asyncio
@@ -2404,13 +2798,17 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     seed_user,
     monkeypatch,
 ):
-    created = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider="telegram",
-        name=f"public-group-telegram-{uuid4().hex}",
-        provider_token="123456:telegram-secret",
-    )
+    _reset_fake_provider_client({"ok": True, "result": {"username": "ClawdiPublicGroupBot"}})
+    with monkeypatch.context() as provider_mock:
+        provider_mock.setattr(settings, "public_api_url", "https://cloud.example.test")
+        provider_mock.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+        created = await _create_admin_channel(
+            client,
+            target_clerk_id=seed_user.clerk_id,
+            provider="telegram",
+            name=f"public-group-telegram-{uuid4().hex}",
+            provider_token="123456:telegram-secret",
+        )
     assert created.status_code == 201, created.text
     channel = created.json()
     account_id = UUID(channel["id"])
@@ -3590,6 +3988,569 @@ async def test_telegram_command_sync_rejects_private_provider_base_url(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-method-capabilities",
+                "provider_token": "123456:telegram-secret",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    await _pair_telegram_chat(client, created=created, chat_id="111", chat_type="private")
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    second_pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second["id"], "ttl_seconds": 900},
+        )
+    ).json()
+    paired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 2,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": f"/bot_pair {second_pair['code']}",
+                "chat": {"id": 222, "type": "private"},
+            },
+        },
+    )
+    assert paired.json()["paired"] is True
+
+    for update_id, chat_id, callback_query_id, file_id in (
+        (3, 111, "cb-first", "file-first"),
+        (4, 222, "cb-second", "file-second"),
+    ):
+        inbound = await client.post(
+            f"/v1/channels/telegram/{created['id']}/webhook",
+            headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+            json={
+                "update_id": update_id,
+                "callback_query": {
+                    "id": callback_query_id,
+                    "data": "approve",
+                    "message": {
+                        "message_id": update_id,
+                        "chat": {"id": chat_id, "type": "private"},
+                        "document": {"file_id": file_id, "file_name": "report.pdf"},
+                    },
+                },
+            },
+        )
+        assert inbound.status_code == 200
+
+    cases = (
+        {
+            "name": "valid chat-scoped method",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "text": "allowed"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "unknown method with bound chat",
+            "method": "futureGlobalMutation",
+            "json": {"chat_id": "111"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "unknown method without chat",
+            "method": "futureGlobalMutation",
+            "json": {},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "known global mutation with smuggled chat",
+            "method": "setMyProfilePhoto",
+            "json": {"chat_id": "111", "photo": "attach://photo"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "known chat method without chat",
+            "method": "sendMessage",
+            "json": {"text": "missing target"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "chat owned by another link",
+            "method": "sendMessage",
+            "json": {"chat_id": "222", "text": "blocked"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "source chat owned by another link",
+            "method": "forwardMessage",
+            "json": {"chat_id": "111", "from_chat_id": "222", "message_id": 1},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "reply chat owned by another link",
+            "method": "sendMessage",
+            "json": {
+                "chat_id": "111",
+                "text": "blocked reply",
+                "reply_parameters": {"chat_id": "222", "message_id": 1},
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "query-encoded reply chat owned by another link",
+            "method": "sendMessage",
+            "params": {
+                "chat_id": "111",
+                "text": "blocked reply",
+                "reply_parameters": json.dumps({"chat_id": "222", "message_id": 1}),
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "sender chat owned by another link",
+            "method": "banChatSenderChat",
+            "json": {"chat_id": "111", "sender_chat_id": "222"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "callback query owned by another link",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "callback_query_id": "cb-second", "text": "blocked"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "callback query owned by same link",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "callback_query_id": "cb-first", "text": "allowed"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "callback answer owned by another link",
+            "method": "answerCallbackQuery",
+            "json": {"callback_query_id": "cb-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "callback answer owned by same link",
+            "method": "answerCallbackQuery",
+            "json": {"callback_query_id": "cb-first"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "file owned by another link",
+            "method": "getFile",
+            "json": {"file_id": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "file owned by same link",
+            "method": "getFile",
+            "json": {"file_id": "file-first"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "inbound photo file owned by same link",
+            "method": "sendPhoto",
+            "json": {"chat_id": "111", "photo": "file-first"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "foreign top-level photo",
+            "method": "sendPhoto",
+            "json": {"chat_id": "111", "photo": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level document",
+            "method": "sendDocument",
+            "json": {"chat_id": "111", "document": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level sticker",
+            "method": "sendSticker",
+            "json": {"chat_id": "111", "sticker": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level animation",
+            "method": "sendAnimation",
+            "json": {"chat_id": "111", "animation": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level audio",
+            "method": "sendAudio",
+            "json": {"chat_id": "111", "audio": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level video",
+            "method": "sendVideo",
+            "json": {"chat_id": "111", "video": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level voice",
+            "method": "sendVoice",
+            "json": {"chat_id": "111", "voice": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level video note",
+            "method": "sendVideoNote",
+            "json": {"chat_id": "111", "video_note": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign top-level live photo",
+            "method": "sendLivePhoto",
+            "json": {
+                "chat_id": "111",
+                "live_photo": "file-second",
+                "photo": "file-first",
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign reusable video cover",
+            "method": "sendVideo",
+            "json": {
+                "chat_id": "111",
+                "video": "https://example.com/video.mp4",
+                "cover": "file-second",
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "thumbnail cannot reuse file id",
+            "method": "sendVideo",
+            "json": {
+                "chat_id": "111",
+                "video": "https://example.com/video.mp4",
+                "thumbnail": "file-first",
+            },
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign media group item",
+            "method": "sendMediaGroup",
+            "json": {
+                "chat_id": "111",
+                "media": [
+                    {"type": "photo", "media": "file-second"},
+                    {"type": "document", "media": "https://example.com/report.pdf"},
+                ],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "query-encoded foreign media group item",
+            "method": "sendMediaGroup",
+            "params": {
+                "chat_id": "111",
+                "media": json.dumps([{"type": "photo", "media": "file-second"}]),
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "duplicate query file parameter",
+            "method": "sendPhoto",
+            "params": [
+                ("chat_id", "111"),
+                ("photo", "file-second"),
+                ("photo", "https://example.com/photo.jpg"),
+            ],
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "duplicate JSON file key",
+            "method": "sendPhoto",
+            "content": b"""
+                {"chat_id":"111","photo":"file-second",
+                "photo":"https://example.com/photo.jpg"}
+            """,
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "query cannot override body file authorization",
+            "method": "sendPhoto",
+            "query": {"photo": "file-second"},
+            "json": {"chat_id": "111", "photo": "https://example.com/photo.jpg"},
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "same-link media group item and URL",
+            "method": "sendMediaGroup",
+            "json": {
+                "chat_id": "111",
+                "media": [
+                    {"type": "photo", "media": "file-first"},
+                    {"type": "document", "media": "https://example.com/report.pdf"},
+                ],
+            },
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "foreign paid media cover",
+            "method": "sendPaidMedia",
+            "json": {
+                "chat_id": "111",
+                "star_count": 1,
+                "media": [
+                    {
+                        "type": "video",
+                        "media": "https://example.com/video.mp4",
+                        "cover": "file-second",
+                    }
+                ],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign paid media file",
+            "method": "sendPaidMedia",
+            "json": {
+                "chat_id": "111",
+                "star_count": 1,
+                "media": [{"type": "photo", "media": "file-second"}],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign edited media",
+            "method": "editMessageMedia",
+            "json": {
+                "chat_id": "111",
+                "message_id": 1,
+                "media": {"type": "document", "media": "file-second"},
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign edited ephemeral media",
+            "method": "editEphemeralMessageMedia",
+            "json": {
+                "chat_id": "111",
+                "receiver_user_id": 7,
+                "ephemeral_message_id": 8,
+                "media": {"type": "photo", "media": "file-second"},
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign poll description media",
+            "method": "sendPoll",
+            "json": {
+                "chat_id": "111",
+                "question": "Question?",
+                "options": [{"text": "One"}, {"text": "Two"}],
+                "media": {"type": "photo", "media": "file-second"},
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign poll option media",
+            "method": "sendPoll",
+            "json": {
+                "chat_id": "111",
+                "question": "Question?",
+                "options": [
+                    {
+                        "text": "One",
+                        "media": {"type": "sticker", "media": "file-second"},
+                    },
+                    {"text": "Two"},
+                ],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign rich message media",
+            "method": "sendRichMessage",
+            "json": {
+                "chat_id": "111",
+                "rich_message": {
+                    "html": '<img src="tg://photo?id=hero">',
+                    "media": [
+                        {
+                            "id": "hero",
+                            "media": {"type": "photo", "media": "file-second"},
+                        }
+                    ],
+                },
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "foreign rich message block media",
+            "method": "sendRichMessage",
+            "json": {
+                "chat_id": "111",
+                "rich_message": {
+                    "blocks": [
+                        {
+                            "type": "details",
+                            "summary": "Media",
+                            "blocks": [
+                                {
+                                    "type": "video",
+                                    "video": {"type": "video", "media": "file-second"},
+                                }
+                            ],
+                        }
+                    ]
+                },
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "HTTPS media URL",
+            "method": "sendDocument",
+            "json": {
+                "chat_id": "111",
+                "document": "https://example.com/report.pdf",
+            },
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "URL unsupported for live photo",
+            "method": "sendLivePhoto",
+            "json": {
+                "chat_id": "111",
+                "live_photo": "https://example.com/live.mp4",
+                "photo": "file-first",
+            },
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "unknown nested media type",
+            "method": "sendMediaGroup",
+            "json": {
+                "chat_id": "111",
+                "media": [{"type": "future_media", "media": "file-first"}],
+            },
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "unmodeled file field on non-media method",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "text": "hello", "photo": "file-first"},
+            "status": 400,
+            "forwarded": False,
+        },
+        {
+            "name": "unscoped business connection",
+            "method": "sendMessage",
+            "json": {
+                "chat_id": "111",
+                "business_connection_id": "business-other",
+                "text": "blocked",
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "unscoped inline message",
+            "method": "editMessageText",
+            "json": {"chat_id": "111", "inline_message_id": "inline-other", "text": "blocked"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "shared Stars mutation",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "allow_paid_broadcast": True, "text": "blocked"},
+            "status": 403,
+            "forwarded": False,
+        },
+    )
+    for case in cases:
+        _reset_fake_provider_client({"ok": True, "result": True})
+        request_headers = _telegram_agent_headers(created)
+        if "params" in case:
+            request_kwargs = {"params": case["params"]}
+        elif "content" in case:
+            request_kwargs = {"content": case["content"]}
+            request_headers = {**request_headers, "content-type": "application/json"}
+        else:
+            request_kwargs = {"json": case["json"]}
+        if "query" in case:
+            request_kwargs["params"] = case["query"]
+        response = await client.request(
+            "GET" if "params" in case else "POST",
+            _telegram_bot_path(created, case["method"]),
+            headers=request_headers,
+            **request_kwargs,
+        )
+        assert response.status_code == case["status"], case["name"]
+        assert bool(_FakeProviderClient.calls) is case["forwarded"], case["name"]
+
+
+@pytest.mark.asyncio
 async def test_telegram_bot_profile_shadow_is_account_scoped(client: httpx.AsyncClient):
     account_a = (
         await client.post(
@@ -3627,6 +4588,280 @@ async def test_telegram_bot_profile_shadow_is_account_scoped(client: httpx.Async
 
 
 @pytest.mark.asyncio
+async def test_telegram_bot_profile_shadow_is_link_scoped_on_shared_account(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-shared-profile",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setMyName"),
+            headers=_telegram_agent_headers(created),
+            json={"name": "First link"},
+        )
+    ).status_code == 200
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    first_get = await client.post(
+        _telegram_bot_path(created, "getMyName"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    second_get = await client.post(
+        _telegram_bot_path(second, "getMyName", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={},
+    )
+
+    assert first_get.json() == {"ok": True, "result": {"name": "First link"}}
+    assert second_get.json() == {"ok": True, "result": {"name": ""}}
+
+
+@pytest.mark.asyncio
+async def test_telegram_chat_menu_button_is_scoped_and_replayed_per_link(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-shared-menu-button",
+                "provider_token": "123456:telegram-secret",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    await _pair_telegram_chat(client, created=created, chat_id="777", chat_type="private")
+    first_default = {"type": "web_app", "text": "First", "web_app": {"url": "https://a.test"}}
+    first_chat = {"type": "commands"}
+    invalid_menu = await client.post(
+        _telegram_bot_path(created, "setChatMenuButton"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "menu_button": {
+                "type": "web_app",
+                "text": "Unsafe",
+                "web_app": {"url": "http://a.test"},
+            }
+        },
+    )
+    assert invalid_menu.status_code == 400
+    assert _FakeProviderClient.calls == []
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setChatMenuButton"),
+            headers=_telegram_agent_headers(created),
+            json={"menu_button": first_default},
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setChatMenuButton"),
+            headers=_telegram_agent_headers(created),
+            json={"chat_id": "777", "menu_button": first_chat},
+        )
+    ).status_code == 200
+    first_get = await client.post(
+        _telegram_bot_path(created, "getChatMenuButton"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "777"},
+    )
+    assert first_get.json() == {"ok": True, "result": first_chat}
+
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    blocked_second_get = await client.post(
+        _telegram_bot_path(second, "getChatMenuButton", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={"chat_id": "777"},
+    )
+    assert blocked_second_get.status_code == 403
+    second_default = {
+        "type": "web_app",
+        "text": "Second",
+        "web_app": {"url": "https://b.test"},
+    }
+    _reset_fake_provider_client({"ok": True, "result": True})
+    assert (
+        await client.post(
+            _telegram_bot_path(second, "setChatMenuButton", account_id=created["id"]),
+            headers=_telegram_agent_headers(second),
+            json={"menu_button": second_default},
+        )
+    ).status_code == 200
+    assert _FakeProviderClient.calls == []
+
+    second_pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second["id"], "ttl_seconds": 900},
+        )
+    ).json()
+    _reset_fake_provider_client({"ok": True, "result": True})
+    repaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 2,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": f"/bot_pair {second_pair['code']}",
+                "chat": {"id": 777, "type": "private"},
+            },
+        },
+    )
+    assert repaired.status_code == 200
+    assert [
+        call["json"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/setChatMenuButton")
+    ] == [{"chat_id": "777", "menu_button": second_default}]
+    blocked_first_get = await client.post(
+        _telegram_bot_path(created, "getChatMenuButton"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "777"},
+    )
+    second_get = await client.post(
+        _telegram_bot_path(second, "getChatMenuButton", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={"chat_id": "777"},
+    )
+    assert blocked_first_get.status_code == 403
+    assert second_get.json() == {"ok": True, "result": second_default}
+
+    _reset_fake_provider_client({"ok": True, "result": True})
+    unpaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 3,
+            "message": {
+                "message_id": 3,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": "/bot_unpair",
+                "chat": {"id": 777, "type": "private"},
+            },
+        },
+    )
+    assert unpaired.status_code == 200
+    assert [
+        call["json"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/setChatMenuButton")
+    ] == [{"chat_id": "777", "menu_button": {"type": "default"}}]
+
+
+@pytest.mark.asyncio
+async def test_shared_account_runtime_placeholder_authenticates_each_link_token(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-shared-runtime-auth",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    sdk_path = _telegram_bot_path(created, "getMe")
+
+    first_auth = await client.post(sdk_path, headers=_telegram_agent_headers(created), json={})
+    second_auth = await client.post(sdk_path, headers=_telegram_agent_headers(second), json={})
+
+    assert first_auth.status_code == 200
+    assert second_auth.status_code == 200
+    assert first_auth.json()["ok"] is True
+    assert second_auth.json()["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_telegram_legacy_profile_fallback_only_applies_to_single_link(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-legacy-profile",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.config = {"telegram_bot_profile": {"name:": "Legacy account name"}}
+    await db_session.commit()
+    single_link = await client.post(
+        _telegram_bot_path(created, "getMyName"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    first_after_share = await client.post(
+        _telegram_bot_path(created, "getMyName"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    second_after_share = await client.post(
+        _telegram_bot_path(second, "getMyName", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={},
+    )
+
+    assert single_link.json() == {"ok": True, "result": {"name": "Legacy account name"}}
+    assert first_after_share.json() == {"ok": True, "result": {"name": ""}}
+    assert second_after_share.json() == {"ok": True, "result": {"name": ""}}
+
+
+@pytest.mark.asyncio
 async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
     client: httpx.AsyncClient,
 ):
@@ -3652,6 +4887,19 @@ async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
         headers=_telegram_agent_headers(created),
         json={"scope": {"type": "chat", "chat_id": 99}},
     )
+    query_wrong_scope = await client.get(
+        _telegram_bot_path(created, "getMyCommands"),
+        headers=_telegram_agent_headers(created),
+        params={"scope": json.dumps({"type": "chat", "chat_id": 99})},
+    )
+    unknown_scope = await client.post(
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "commands": [{"command": "future", "description": "Future"}],
+            "scope": {"type": "future_global_scope", "chat_id": 42},
+        },
+    )
 
     assert set_commands.status_code == 200
     assert get_commands.json() == {
@@ -3660,6 +4908,9 @@ async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
     }
     assert wrong_scope.status_code == 403
     assert wrong_scope.json()["ok"] is False
+    assert query_wrong_scope.status_code == 403
+    assert unknown_scope.status_code == 400
+    assert unknown_scope.json()["description"] == "Bad Request: invalid scope"
 
 
 @pytest.mark.asyncio
@@ -3896,6 +5147,152 @@ async def test_telegram_pairing_replays_stored_broad_scope_commands(
 
 
 @pytest.mark.asyncio
+async def test_telegram_repair_and_unpair_clear_previous_link_commands(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-command-repair-isolation",
+                "provider_token": "123456:telegram-secret",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    await _pair_telegram_chat(client, created=created, chat_id="777", chat_type="private")
+    first_commands = [{"command": "first", "description": "First link"}]
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setMyCommands"),
+            headers=_telegram_agent_headers(created),
+            json={"commands": first_commands},
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setMyCommands"),
+            headers=_telegram_agent_headers(created),
+            json={"commands": first_commands, "language_code": "es"},
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setMyCommands"),
+            headers=_telegram_agent_headers(created),
+            json={
+                "commands": first_commands,
+                "scope": {"type": "chat_member", "chat_id": "777", "user_id": "4242"},
+            },
+        )
+    ).status_code == 200
+    assert (
+        await client.delete(f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}")
+    ).status_code == 204
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    second_pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second["id"], "ttl_seconds": 900},
+        )
+    ).json()
+
+    _reset_fake_provider_client({"ok": True, "result": True})
+    repaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 2,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": f"/bot_pair {second_pair['code']}",
+                "chat": {"id": 777, "type": "private"},
+            },
+        },
+    )
+
+    assert repaired.status_code == 200
+    assert repaired.json()["paired"] is True
+    command_calls = [
+        call
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith(("/setMyCommands", "/deleteMyCommands"))
+    ]
+    assert all(call["url"].endswith("/deleteMyCommands") for call in command_calls)
+    assert {json.dumps(call["json"], sort_keys=True) for call in command_calls} == {
+        json.dumps({"scope": {"type": "chat", "chat_id": "777"}}, sort_keys=True),
+        json.dumps(
+            {"scope": {"type": "chat", "chat_id": "777"}, "language_code": "es"},
+            sort_keys=True,
+        ),
+        json.dumps(
+            {"scope": {"type": "chat_member", "chat_id": "777", "user_id": "4242"}},
+            sort_keys=True,
+        ),
+    }
+    second_get = await client.post(
+        _telegram_bot_path(second, "getMyCommands", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={},
+    )
+    assert second_get.json()["result"] == [
+        {"command": "bot_pair", "description": "Pair this chat with Clawdi."},
+        {"command": "bot_unpair", "description": "Disconnect this chat from Clawdi."},
+    ]
+
+    second_commands = [{"command": "second", "description": "Second link"}]
+    _reset_fake_provider_client({"ok": True, "result": True})
+    assert (
+        await client.post(
+            _telegram_bot_path(second, "setMyCommands", account_id=created["id"]),
+            headers=_telegram_agent_headers(second),
+            json={"commands": second_commands},
+        )
+    ).status_code == 200
+    assert [
+        call["json"] for call in _FakeProviderClient.calls if call["url"].endswith("/setMyCommands")
+    ] == [{"commands": second_commands, "scope": {"type": "chat", "chat_id": "777"}}]
+
+    _reset_fake_provider_client({"ok": True, "result": True})
+    unpaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 3,
+            "message": {
+                "message_id": 3,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": "/bot_unpair",
+                "chat": {"id": 777, "type": "private"},
+            },
+        },
+    )
+    assert unpaired.status_code == 200
+    assert unpaired.json()["unpaired"] is True
+    assert [
+        call["json"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/deleteMyCommands")
+    ] == [{"scope": {"type": "chat", "chat_id": "777"}}]
+
+
+@pytest.mark.asyncio
 async def test_telegram_generic_bot_api_proxies_only_bound_chats(
     client: httpx.AsyncClient,
     monkeypatch,
@@ -3945,7 +5342,7 @@ async def test_telegram_generic_bot_api_proxies_only_bound_chats(
         blocked_reply.json()["description"] == "Forbidden: referenced chat is not bound to this bot"
     )
     assert no_chat.status_code == 403
-    assert no_chat.json()["description"] == "Forbidden: method requires a bound chat_id"
+    assert no_chat.json()["description"] == "Forbidden: method is not available to this bot"
     assert _FakeProviderClient.calls[0]["url"].endswith(
         "/bot123456:telegram-secret/editMessageText"
     )
@@ -3978,11 +5375,22 @@ async def test_telegram_multipart_reply_parameters_are_scope_checked(
 
 
 @pytest.mark.asyncio
-async def test_telegram_multipart_attach_refs_are_rewritten_before_proxy(
+async def test_telegram_uploaded_file_response_is_recorded_for_reuse(
     client: httpx.AsyncClient,
     monkeypatch,
 ):
-    _reset_fake_provider_client({"ok": True, "result": {"message_id": 7}})
+    _reset_fake_provider_client(
+        {
+            "ok": True,
+            "result": {
+                "message_id": 7,
+                "photo": [
+                    {"file_id": "uploaded-photo-small"},
+                    {"file_id": "uploaded-photo"},
+                ],
+            },
+        }
+    )
     monkeypatch.setattr(
         "app.routes.channel_routers.telegram.httpx.AsyncClient",
         _FakeProviderClient,
@@ -4005,6 +5413,64 @@ async def test_telegram_multipart_attach_refs_are_rewritten_before_proxy(
     assert 'name="photo"; filename="photo.png"' in forwarded
     assert "attach://photo_file" not in forwarded
     assert 'name="photo_file"; filename="photo.png"' not in forwarded
+
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 8}})
+    reuse = await client.post(
+        _telegram_bot_path(created, "sendPhoto"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "42", "photo": "uploaded-photo"},
+    )
+
+    assert reuse.status_code == 200
+    assert len(_FakeProviderClient.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider_status", [200, 400])
+async def test_telegram_failed_outbound_response_does_not_grant_file_reference(
+    client: httpx.AsyncClient,
+    monkeypatch,
+    provider_status: int,
+):
+    _reset_fake_provider_client(
+        {
+            "ok": False,
+            "error_code": 400,
+            "description": "Bad Request: upload failed",
+            "result": {"document": {"file_id": "failed-upload-file"}},
+        },
+        status_code=provider_status,
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name=f"telegram-failed-upload-ref-{provider_status}",
+        chat_id="42",
+    )
+
+    failed = await client.post(
+        _telegram_bot_path(created, "sendDocument"),
+        headers=_telegram_agent_headers(created),
+        data={"chat_id": "42"},
+        files={"document": ("report.pdf", b"PDFDATA", "application/pdf")},
+    )
+    assert failed.status_code == provider_status
+    assert failed.json()["ok"] is False
+    assert len(_FakeProviderClient.calls) == 1
+
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 8}})
+    reuse = await client.post(
+        _telegram_bot_path(created, "sendDocument"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "42", "document": "failed-upload-file"},
+    )
+
+    assert reuse.status_code == 403
+    assert reuse.json()["description"] == "Forbidden: file_id is not bound to this bot"
+    assert _FakeProviderClient.calls == []
 
 
 @pytest.mark.asyncio
@@ -4253,6 +5719,59 @@ async def test_telegram_agent_webhook_5xx_defers_ack_to_worker(
     assert result.message_id == message.id
     assert result.delivered is True
     assert message.delivered_at is not None
+    assert len(_SequencedProviderClient.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_telegram_update_redelivery_retries_failed_agent_webhook(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    _reset_sequenced_provider_client([503, 200])
+    monkeypatch.setattr(
+        "app.services.channel_webhooks.httpx.AsyncClient",
+        _SequencedProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-redelivery-retry",
+        provider_token=None,
+    )
+    await client.post(
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
+        json={"url": "https://agent.example/agent-hook"},
+    )
+    payload = {
+        "update_id": 909,
+        "message": {
+            "message_id": 77,
+            "text": "retry identical update",
+            "chat": {"id": 42, "type": "private"},
+        },
+    }
+    webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+
+    first = await client.post(webhook_url, headers=headers, json=payload)
+    redelivery = await client.post(webhook_url, headers=headers, json=payload)
+    messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == UUID(created["id"]),
+                    ChannelMessage.provider_event_id == "909",
+                )
+            )
+        ).scalars()
+    )
+
+    assert first.status_code == 200
+    assert redelivery.status_code == 200
+    assert len(messages) == 1
+    assert messages[0].provider_message_id == "77"
+    assert messages[0].delivered_at is not None
     assert len(_SequencedProviderClient.calls) == 2
 
 
@@ -6541,12 +8060,126 @@ async def test_telegram_webhook_pair_code_creates_binding(client: httpx.AsyncCli
     assert webhook.status_code == 200
     assert webhook.json()["paired"] is True
     assert webhook.json()["binding_id"]
-
     bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json()[0]["external_chat_id"] == "987654321"
     assert bindings.json()[0]["external_chat_type"] == "private"
     assert bindings.json()[0]["external_chat_name"] == "paco"
+
+
+@pytest.mark.asyncio
+async def test_telegram_pair_code_returns_server_owned_deep_link_metadata(
+    client: httpx.AsyncClient,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-deep-link",
+                "config": {"bot_username": "@Clawdi_Test_Bot"},
+            },
+        )
+    ).json()
+    response = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
+    )
+
+    assert response.status_code == 201
+    pair = response.json()
+    assert pair["pairing_command"] == f"/bot_pair {pair['code']}"
+    assert pair["bot_username"] == "Clawdi_Test_Bot"
+    assert pair["deep_link"] == f"https://t.me/Clawdi_Test_Bot?start={pair['code']}"
+    assert pair["qr_payload"] == pair["deep_link"]
+    assert created["agent_token"] not in pair["deep_link"]
+    assert "telegram-secret" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_telegram_pair_code_omits_link_metadata_for_invalid_username(
+    client: httpx.AsyncClient,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-no-username",
+                "config": {"bot_username": "ValidUser"},
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
+        )
+    ).json()
+
+    assert pair["bot_username"] is None
+    assert pair["deep_link"] is None
+    assert pair["qr_payload"] is None
+    assert pair["pairing_command"] == f"/bot_pair {pair['code']}"
+
+
+@pytest.mark.asyncio
+async def test_telegram_inbound_dedupes_update_redelivery_but_keeps_edits(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-update-identity",
+        chat_id="4242",
+        provider_token=None,
+    )
+    webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+    original = {
+        "update_id": 7001,
+        "message": {
+            "message_id": 88,
+            "text": "before edit",
+            "chat": {"id": 4242, "type": "private"},
+        },
+    }
+    edited = {
+        "update_id": 7002,
+        "edited_message": {
+            "message_id": 88,
+            "text": "after edit",
+            "chat": {"id": 4242, "type": "private"},
+        },
+    }
+
+    assert (await client.post(webhook_url, headers=headers, json=original)).status_code == 200
+    assert (await client.post(webhook_url, headers=headers, json=original)).status_code == 200
+    assert (await client.post(webhook_url, headers=headers, json=edited)).status_code == 200
+    messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == UUID(created["id"]),
+                    ChannelMessage.provider_event_id.in_(["7001", "7002"]),
+                )
+            )
+        ).scalars()
+    )
+    assert sorted(
+        (message.provider_event_id, message.provider_message_id, message.text)
+        for message in messages
+    ) == [
+        ("7001", "88", "before edit"),
+        ("7002", "88", "after edit"),
+    ]
+    activity = await client.get(f"/v1/channels/{created['id']}/activity")
+    edited_items = [
+        item
+        for item in activity.json()["items"]
+        if item.get("text") in {"before edit", "after edit"}
+    ]
+    assert [item["provider_message_id"] for item in edited_items] == ["88", "88"]
 
 
 @pytest.mark.asyncio
@@ -6702,9 +8335,21 @@ async def test_telegram_webhook_unpair_sends_user_reply(
 
     assert unpaired.status_code == 200
     assert unpaired.json()["unpaired"] is True
-    assert [call["json"]["text"] for call in _FakeProviderClient.calls] == [
+    assert [
+        call["json"]["text"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/sendMessage")
+    ] == [
         "Paired! This chat is now connected to your agent.",
         "Unpaired. This chat is no longer connected to an agent.",
+    ]
+    assert [
+        call["json"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/setChatMenuButton")
+    ] == [
+        {"chat_id": "987654323", "menu_button": {"type": "default"}},
+        {"chat_id": "987654323", "menu_button": {"type": "default"}},
     ]
 
 
@@ -6751,7 +8396,10 @@ async def test_telegram_webhook_pair_reply_failure_does_not_roll_back_binding(
     bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json()[0]["external_chat_id"] == "987654324"
-    assert len(_FailingProviderClient.calls) == 1
+    assert [call["url"].rsplit("/", 1)[-1] for call in _FailingProviderClient.calls] == [
+        "sendMessage",
+        "setChatMenuButton",
+    ]
 
 
 @pytest.mark.asyncio
@@ -6805,6 +8453,116 @@ async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
 
 
 @pytest.mark.asyncio
+async def test_telegram_start_claims_explicit_agent_link_and_redelivery_is_idempotent(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    real_httpx_async_client = httpx.AsyncClient
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 100}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-explicit-start-pair",
+                "agent_id": str(channel_agent.id),
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    _clear_fake_provider_calls()
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second["id"], "ttl_seconds": 900},
+        )
+    ).json()
+    payload = {
+        "update_id": 7101,
+        "message": {
+            "message_id": 91,
+            "text": f"/start@Clawdi_Test_Bot {pair['code']}",
+            "chat": {"id": 987654399, "type": "private"},
+            "from": {"id": 987654399, "is_bot": False},
+        },
+    }
+    webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+    from app.routes.channel_routers import telegram as telegram_router
+
+    original_find = telegram_router.find_existing_inbound_provider_event
+    precheck_count = 0
+    both_prechecks_started = asyncio.Event()
+
+    async def synchronized_find(*args, **kwargs):
+        nonlocal precheck_count
+        precheck_count += 1
+        if precheck_count <= 2:
+            if precheck_count == 2:
+                both_prechecks_started.set()
+            await both_prechecks_started.wait()
+        return await original_find(*args, **kwargs)
+
+    monkeypatch.setattr(
+        telegram_router,
+        "find_existing_inbound_provider_event",
+        synchronized_find,
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def independent_session():
+        async with sessionmaker() as session:
+            yield session
+
+    previous_session_override = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = independent_session
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with real_httpx_async_client(
+            transport=transport, base_url="http://test"
+        ) as concurrent:
+            first, redelivery = await asyncio.gather(
+                concurrent.post(webhook_url, headers=headers, json=payload),
+                concurrent.post(webhook_url, headers=headers, json=payload),
+            )
+    finally:
+        app.dependency_overrides[get_session] = previous_session_override
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
+    events = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == UUID(created["id"]),
+                    ChannelMessage.provider_event_id == "7101",
+                )
+            )
+        ).scalars()
+    )
+
+    assert first.status_code == 200
+    assert redelivery.status_code == 200
+    assert sorted([first.json()["paired"], redelivery.json()["paired"]]) == [False, True]
+    assert len(bindings.json()) == 1
+    assert len(events) == 1
+    assert bindings.json()[0]["agent_link_id"] == second["id"]
+    pairing_replies = [
+        call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")
+    ]
+    assert len(pairing_replies) == 1
+    assert "paired" in pairing_replies[0]["json"]["text"].lower()
+
+
+@pytest.mark.asyncio
 async def test_telegram_webhook_rejects_invalid_secret(client: httpx.AsyncClient):
     created = (
         await client.post(
@@ -6848,6 +8606,14 @@ def test_parse_pair_command_matches_strict_bot_shapes():
     assert unknown is not None
     assert unknown.kind == "unknown"
     assert unknown.command == "/bot_foo"
+
+
+def test_normalize_telegram_bot_username_requires_bot_suffix():
+    assert normalize_telegram_bot_username(" @Clawdi_Test_Bot ") == "Clawdi_Test_Bot"
+    assert normalize_telegram_bot_username("ClawdiPublicBot") == "ClawdiPublicBot"
+    assert normalize_telegram_bot_username("ValidUser") is None
+    assert normalize_telegram_bot_username("bad!") is None
+    assert normalize_telegram_bot_username("bot") is None
 
 
 def test_discord_gateway_helpers_build_protocol_payloads():

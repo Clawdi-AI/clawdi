@@ -167,7 +167,7 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 				linkId: link.id,
 				agentId: link.agent_id,
 				agentToken: link.agent_token,
-				secretRef: channelSecretRef(account.provider, accountKey),
+				secretRef: channelLinkSecretRef(account.provider, accountKey, link.id),
 				placeholderSecretRef: channelPlaceholderSecretRef(account.provider, accountKey),
 				credentials: (account.runtime_credentials ?? []).filter(
 					(credential) => credential.agent_link_id === link.id,
@@ -176,8 +176,8 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 		}
 	}
 	return links.sort((left, right) =>
-		`${left.account.provider}:${left.accountKey}`.localeCompare(
-			`${right.account.provider}:${right.accountKey}`,
+		`${left.account.provider}:${left.accountKey}:${left.linkId}`.localeCompare(
+			`${right.account.provider}:${right.accountKey}:${right.linkId}`,
 		),
 	);
 }
@@ -648,8 +648,12 @@ function addSecretValue(values: Record<string, string>, ref: string, value: stri
 	values[ref.replace(/^secret:\/\//, "")] = value;
 }
 
-function channelSecretRef(provider: ChannelProvider, accountKey: string): string {
-	return `secret://channels/${provider}/${accountKey}/agent-token`;
+function channelLinkSecretRef(
+	provider: ChannelProvider,
+	accountKey: string,
+	linkId: string,
+): string {
+	return `secret://channels/${provider}/${accountKey}/links/${linkId}/agent-token`;
 }
 
 function channelPlaceholderSecretRef(provider: ChannelProvider, accountKey: string): string {

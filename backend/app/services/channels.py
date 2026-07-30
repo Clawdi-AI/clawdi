@@ -10,13 +10,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from time import monotonic
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,6 +77,7 @@ log = logging.getLogger(__name__)
 PAIR_COMMAND = "/bot_pair"
 UNPAIR_COMMAND = "/bot_unpair"
 PAIR_CODE_PATTERN = re.compile(r"^PAIR[A-Z0-9]{8,}$")
+TELEGRAM_BOT_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{5,32}bot$", re.IGNORECASE)
 DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
     {
         "name": "bot_pair",
@@ -254,12 +256,28 @@ async def configure_telegram_provider_webhook(
     provider_token: str,
     webhook_url: str,
     webhook_secret: str,
-) -> None:
+) -> str | None:
     # Telegram requires an HTTPS webhook. Local development keeps the default
     # localhost URL and can still exercise inbound routes directly.
     if not webhook_url.lower().startswith("https://"):
-        return
+        return None
     base_url = settings.channel_telegram_api_base_url.strip().rstrip("/")
+    identity = await _post_provider_json(
+        channel=CHANNEL_PROVIDER_TELEGRAM,
+        method="getMe",
+        url=f"{base_url}/bot{provider_token}/getMe",
+        json_payload={},
+        timeout_seconds=20.0,
+        unreachable_detail="telegram api unreachable",
+        rejected_detail="telegram bot token was rejected",
+    )
+    if identity.get("ok") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="telegram bot token was rejected",
+        )
+    identity_result = identity.get("result")
+    username = identity_result.get("username") if isinstance(identity_result, dict) else None
     payload = await _post_provider_json(
         channel=CHANNEL_PROVIDER_TELEGRAM,
         method="setWebhook",
@@ -277,6 +295,14 @@ async def configure_telegram_provider_webhook(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="telegram bot token or webhook was rejected",
         )
+    return normalize_telegram_bot_username(username)
+
+
+def normalize_telegram_bot_username(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    username = value.strip().lstrip("@")
+    return username if TELEGRAM_BOT_USERNAME_PATTERN.fullmatch(username) else None
 
 
 async def store_channel_secrets(
@@ -1349,16 +1375,23 @@ def telegram_text_from_update(payload: dict[str, Any]) -> str | None:
 
 
 def telegram_message_id_from_update(payload: dict[str, Any]) -> str | None:
-    callback_query = payload.get("callback_query")
-    if isinstance(callback_query, dict):
-        callback_id = callback_query.get("id")
-        if callback_id is not None:
-            return str(callback_id)
     message = _telegram_message_from_update(payload)
     if not isinstance(message, dict):
         return None
     message_id = message.get("message_id")
     return str(message_id) if message_id is not None else None
+
+
+def telegram_event_id_from_update(payload: dict[str, Any]) -> str | None:
+    update_id = payload.get("update_id")
+    if isinstance(update_id, (int, str)) and str(update_id).strip():
+        return str(update_id).strip()
+    callback_query = payload.get("callback_query")
+    if isinstance(callback_query, dict):
+        callback_id = callback_query.get("id")
+        if callback_id is not None:
+            return str(callback_id)
+    return telegram_message_id_from_update(payload)
 
 
 def telegram_external_user_id_from_update(payload: dict[str, Any]) -> str | None:
@@ -1447,14 +1480,16 @@ async def record_inbound_message(
     provider_message_id: str | None,
     text: str | None,
     payload: dict[str, Any],
+    provider_event_id: str | None = None,
 ) -> ChannelMessage:
-    if provider_message_id is not None:
+    event_id = provider_event_id or provider_message_id
+    if event_id is not None:
         existing = await _find_existing_inbound_message(
             db,
             account=account,
             binding=binding,
             external_chat_id=external_chat_id,
-            provider_message_id=provider_message_id,
+            provider_event_id=event_id,
         )
         if existing is not None:
             return existing
@@ -1467,6 +1502,7 @@ async def record_inbound_message(
         direction=MESSAGE_DIRECTION_INBOUND,
         external_chat_id=external_chat_id,
         provider_message_id=provider_message_id,
+        provider_event_id=event_id,
         text=text,
         payload=payload,
     )
@@ -1480,7 +1516,7 @@ async def record_inbound_message(
             account=account,
             binding=binding,
             external_chat_id=external_chat_id,
-            provider_message_id=provider_message_id,
+            provider_event_id=event_id,
         )
         if existing is not None:
             return existing
@@ -1495,15 +1531,15 @@ async def _find_existing_inbound_message(
     account: ChannelAccount,
     binding: ChannelBinding | None,
     external_chat_id: str,
-    provider_message_id: str | None,
+    provider_event_id: str | None,
 ) -> ChannelMessage | None:
-    if provider_message_id is None:
+    if provider_event_id is None:
         return None
     filters = [
         ChannelMessage.account_id == account.id,
         ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
         ChannelMessage.external_chat_id == external_chat_id,
-        ChannelMessage.provider_message_id == provider_message_id,
+        ChannelMessage.provider_event_id == provider_event_id,
     ]
     if binding is None:
         filters.append(ChannelMessage.bot_agent_link_id.is_(None))
@@ -1512,6 +1548,29 @@ async def _find_existing_inbound_message(
     result = await db.execute(
         select(ChannelMessage)
         .where(*filters)
+        .order_by(ChannelMessage.created_at.asc(), ChannelMessage.id.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def find_existing_inbound_provider_event(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    external_chat_id: str,
+    provider_event_id: str | None,
+) -> ChannelMessage | None:
+    if provider_event_id is None:
+        return None
+    result = await db.execute(
+        select(ChannelMessage)
+        .where(
+            ChannelMessage.account_id == account.id,
+            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+            ChannelMessage.external_chat_id == external_chat_id,
+            ChannelMessage.provider_event_id == provider_event_id,
+        )
         .order_by(ChannelMessage.created_at.asc(), ChannelMessage.id.asc())
         .limit(1)
     )
@@ -1527,6 +1586,7 @@ async def record_inbound_messages_for_bindings(
     provider_message_id: str | None,
     text: str | None,
     payload: dict[str, Any],
+    provider_event_id: str | None = None,
 ) -> list[tuple[ChannelMessage, ChannelBinding | None]]:
     target_bindings: tuple[ChannelBinding | None, ...]
     if binding_result.bindings:
@@ -1546,6 +1606,7 @@ async def record_inbound_messages_for_bindings(
             provider_message_id=provider_message_id,
             text=text,
             payload=payload,
+            provider_event_id=provider_event_id,
         )
         messages.append((message, binding))
     if binding_result.command_handled:
@@ -1617,27 +1678,104 @@ async def record_channel_agent_reference(
     bot_agent_link_id: UUID | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ChannelAgentReference:
-    scoped_link_id = binding.bot_agent_link_id if binding else bot_agent_link_id
-    owner_user_id = binding.user_id if binding is not None else account.user_id
-    if message is not None:
-        owner_user_id = message.user_id
-    result = await db.execute(
-        select(ChannelAgentReference).where(
-            ChannelAgentReference.account_id == account.id,
-            ChannelAgentReference.bot_agent_link_id == scoped_link_id,
-            ChannelAgentReference.ref_kind == ref_kind,
-            ChannelAgentReference.ref_value == ref_value,
-        )
-    )
-    existing = result.scalar_one_or_none()
-    if existing is not None:
-        existing.binding_id = binding.id if binding else existing.binding_id
-        existing.message_id = message.id if message else existing.message_id
-        existing.metadata_ = metadata or existing.metadata_
-        await db.flush()
-        return existing
+    if binding is not None and binding.account_id != account.id:
+        raise ValueError("channel binding does not belong to channel account")
+    if message is not None and message.account_id != account.id:
+        raise ValueError("channel message does not belong to channel account")
 
-    reference = ChannelAgentReference(
+    link_ids = {
+        link_id
+        for link_id in (
+            binding.bot_agent_link_id if binding is not None else None,
+            message.bot_agent_link_id if message is not None else None,
+            bot_agent_link_id,
+        )
+        if link_id is not None
+    }
+    if len(link_ids) > 1:
+        raise ValueError("channel reference link context does not match")
+    scoped_link_id = next(iter(link_ids), None)
+
+    owner_user_ids = {
+        owner_user_id
+        for owner_user_id in (
+            binding.user_id if binding is not None else None,
+            message.user_id if message is not None else None,
+        )
+        if owner_user_id is not None
+    }
+    if len(owner_user_ids) > 1:
+        raise ValueError("channel reference owner context does not match")
+    owner_user_id = next(iter(owner_user_ids), account.user_id)
+
+    if bot_agent_link_id is not None:
+        link_user_id = (
+            await db.execute(
+                select(ChannelBotAgentLink.user_id).where(
+                    ChannelBotAgentLink.id == bot_agent_link_id,
+                    ChannelBotAgentLink.account_id == account.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if link_user_id is None:
+            raise ValueError("bot agent link does not belong to channel account")
+        if owner_user_ids and link_user_id != owner_user_id:
+            raise ValueError("channel reference owner context does not match")
+        if not owner_user_ids:
+            owner_user_id = link_user_id
+
+    if scoped_link_id is None:
+        # PostgreSQL NULLs do not conflict under the Link-scoped constraint.
+        # Lock the stable parent so all service writes share one serialization point.
+        locked_account_id = (
+            await db.execute(
+                select(ChannelAccount.id).where(ChannelAccount.id == account.id).with_for_update()
+            )
+        ).scalar_one_or_none()
+        if locked_account_id is None:
+            raise ValueError("channel account does not exist")
+
+        existing = (
+            await db.execute(
+                select(ChannelAgentReference)
+                .where(
+                    ChannelAgentReference.account_id == account.id,
+                    ChannelAgentReference.bot_agent_link_id.is_(None),
+                    ChannelAgentReference.ref_kind == ref_kind,
+                    ChannelAgentReference.ref_value == ref_value,
+                )
+                .order_by(
+                    ChannelAgentReference.updated_at.desc(),
+                    ChannelAgentReference.created_at.desc(),
+                    ChannelAgentReference.id.desc(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            existing.binding_id = binding.id if binding else existing.binding_id
+            existing.message_id = message.id if message else existing.message_id
+            existing.metadata_ = metadata or existing.metadata_
+            await db.flush()
+            return existing
+
+        reference = ChannelAgentReference(
+            account_id=account.id,
+            bot_agent_link_id=None,
+            binding_id=binding.id if binding else None,
+            message_id=message.id if message else None,
+            user_id=owner_user_id,
+            provider=account.provider,
+            ref_kind=ref_kind,
+            ref_value=ref_value,
+            metadata_=metadata,
+        )
+        db.add(reference)
+        await db.flush()
+        return reference
+
+    insert_statement = postgresql_insert(ChannelAgentReference).values(
+        id=uuid4(),
         account_id=account.id,
         bot_agent_link_id=scoped_link_id,
         binding_id=binding.id if binding else None,
@@ -1648,9 +1786,28 @@ async def record_channel_agent_reference(
         ref_value=ref_value,
         metadata_=metadata,
     )
-    db.add(reference)
-    await db.flush()
-    return reference
+    reference_table = ChannelAgentReference.__table__
+    update_values = {
+        "binding_id": (
+            insert_statement.excluded.binding_id
+            if binding is not None
+            else reference_table.c.binding_id
+        ),
+        "message_id": (
+            insert_statement.excluded.message_id
+            if message is not None
+            else reference_table.c.message_id
+        ),
+        "metadata": insert_statement.excluded.metadata if metadata else reference_table.c.metadata,
+    }
+    upsert_statement = insert_statement.on_conflict_do_update(
+        constraint="uq_channel_agent_references_account_link_kind_value",
+        set_={**update_values, "user_id": insert_statement.excluded.user_id},
+    )
+    result = await db.execute(
+        upsert_statement.returning(ChannelAgentReference).execution_options(populate_existing=True)
+    )
+    return result.scalar_one()
 
 
 async def channel_agent_reference_exists(
@@ -1663,12 +1820,15 @@ async def channel_agent_reference_exists(
 ) -> bool:
     filters = [
         ChannelAgentReference.account_id == account.id,
+        (
+            ChannelAgentReference.bot_agent_link_id == bot_agent_link_id
+            if bot_agent_link_id is not None
+            else ChannelAgentReference.bot_agent_link_id.is_(None)
+        ),
         ChannelAgentReference.ref_kind == ref_kind,
         ChannelAgentReference.ref_value == ref_value,
     ]
-    if bot_agent_link_id is not None:
-        filters.append(ChannelAgentReference.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(select(ChannelAgentReference.id).where(*filters))
+    result = await db.execute(select(ChannelAgentReference.id).where(*filters).limit(1))
     return result.scalar_one_or_none() is not None
 
 
@@ -1682,12 +1842,24 @@ async def get_channel_agent_reference(
 ) -> ChannelAgentReference | None:
     filters = [
         ChannelAgentReference.account_id == account.id,
+        (
+            ChannelAgentReference.bot_agent_link_id == bot_agent_link_id
+            if bot_agent_link_id is not None
+            else ChannelAgentReference.bot_agent_link_id.is_(None)
+        ),
         ChannelAgentReference.ref_kind == ref_kind,
         ChannelAgentReference.ref_value == ref_value,
     ]
-    if bot_agent_link_id is not None:
-        filters.append(ChannelAgentReference.bot_agent_link_id == bot_agent_link_id)
-    result = await db.execute(select(ChannelAgentReference).where(*filters))
+    result = await db.execute(
+        select(ChannelAgentReference)
+        .where(*filters)
+        .order_by(
+            ChannelAgentReference.updated_at.desc(),
+            ChannelAgentReference.created_at.desc(),
+            ChannelAgentReference.id.desc(),
+        )
+        .limit(1)
+    )
     return result.scalar_one_or_none()
 
 
@@ -1720,14 +1892,22 @@ def _telegram_update_references(payload: dict[str, Any]) -> set[tuple[str, str]]
         if isinstance(callback_id, str) and callback_id:
             references.add((TELEGRAM_REF_CALLBACK_QUERY_ID, callback_id))
 
+    for file_id in telegram_file_ids(payload):
+        references.add((TELEGRAM_REF_FILE_ID, file_id))
     for node in _walk_json_dicts(payload):
-        file_id = node.get("file_id")
-        if isinstance(file_id, str) and file_id:
-            references.add((TELEGRAM_REF_FILE_ID, file_id))
         file_path = node.get("file_path")
         if isinstance(file_path, str) and file_path:
             references.add((TELEGRAM_REF_FILE_PATH, file_path))
     return references
+
+
+def telegram_file_ids(payload: Any) -> set[str]:
+    file_ids: set[str] = set()
+    for node in _walk_json_dicts(payload):
+        file_id = node.get("file_id")
+        if isinstance(file_id, str) and file_id:
+            file_ids.add(file_id)
+    return file_ids
 
 
 def _walk_json_dicts(value: Any) -> list[dict[str, Any]]:

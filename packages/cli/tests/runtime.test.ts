@@ -5698,6 +5698,65 @@ exit 64
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
 	});
 
+	it("reconciles environment-scoped hosted bundle channel create, rotation, and removal", () => {
+		const accountKey = "clawdi_00000000000000000000000000000001";
+		const agentRef = `secret://channels/telegram/${accountKey}/agent-token`;
+		const placeholderRef = `secret://channels/telegram/${accountKey}/placeholder-token`;
+		const placeholder = "999999999:0123456789abcdef0123456789abcdef";
+		const base: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_bundle_channel",
+				environmentId: "env_bundle_channel",
+				instanceId: "iid_bundle_channel",
+				generation: 1,
+				issuedAt: "2026-07-30T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: true }, hermes: { enabled: false } },
+			},
+			source: "remote-datasource",
+			sourcePath: "https://cloud-api.test/v1/runtime/manifest",
+			offline: false,
+		};
+		const binding: RuntimeBundleChannelBinding = {
+			provider: "telegram",
+			accountKey,
+			agentTokenSecretRef: agentRef,
+			placeholderTokenSecretRef: placeholderRef,
+		};
+		const active = applyRuntimeBundleChannelsToManifestLoad({
+			...base,
+			channelBindings: [binding],
+			secretValues: { [agentRef]: "agent-token-v1", [placeholderRef]: placeholder },
+			sourceRevision: "a".repeat(64),
+		});
+		const rotated = applyRuntimeBundleChannelsToManifestLoad({
+			...base,
+			channelBindings: [binding],
+			secretValues: { [agentRef]: "agent-token-v2", [placeholderRef]: placeholder },
+			sourceRevision: "b".repeat(64),
+		});
+		const removed = applyRuntimeBundleChannelsToManifestLoad({
+			...base,
+			channelBindings: [],
+			secretValues: {},
+			sourceRevision: "c".repeat(64),
+		});
+
+		expect(active.manifest.projection?.channels).toMatchObject({
+			telegram: { defaultAccount: accountKey, accounts: { [accountKey]: { enabled: true } } },
+		});
+		expect(active.manifest.egressProfiles?.profiles).toHaveLength(2);
+		expect(JSON.stringify(active.manifest)).not.toContain("agent-token-v1");
+		expect(JSON.stringify(active)).not.toContain("provider-token");
+		expect(rotated.sourceRevision).toBe("b".repeat(64));
+		expect(rotated.secretValues?.[agentRef]).toBe("agent-token-v2");
+		expect(removed.manifest.projection?.channels).toEqual({});
+		expect(removed.manifest.egressProfiles?.profiles).toEqual([]);
+		expect(removed.manifest.runtimes.openclaw?.run?.secretEnv ?? {}).toEqual({});
+		expect(removed.secretValues).toEqual({});
+	});
+
 	it("merges channel secrets into source-level secretValues during pure projection", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
@@ -5782,19 +5841,25 @@ exit 64
 
 		expect(projected.secretValues).toMatchObject({
 			"provider.default.apiKey": "sk-provider",
-			"secret://channels/telegram/clawdi_accttelegram/agent-token": "telegram-agent-token",
-			"secret://channels/discord/clawdi_acctdiscord1/agent-token": "discord-agent-token",
+			"secret://channels/telegram/clawdi_accttelegram/links/link-telegram-1/agent-token":
+				"telegram-agent-token",
+			"secret://channels/discord/clawdi_acctdiscord1/links/link-discord-1/agent-token":
+				"discord-agent-token",
 		});
 		expect(projected.sourceManifest).toEqual(loaded.manifest);
 		expect(JSON.stringify(projected.sourceManifest)).not.toContain('"channels"');
 		expect(
-			projected.secretValues?.["secret://channels/telegram/clawdi_accttelegram/agent-token"],
+			projected.secretValues?.[
+				"secret://channels/telegram/clawdi_accttelegram/links/link-telegram-1/agent-token"
+			],
 		).toBe("telegram-agent-token");
 		expect(
 			projected.secretValues?.["secret://channels/telegram/clawdi_accttelegram/placeholder-token"],
 		).toMatch(/^999999999:[a-f0-9]{32}$/);
 		expect(
-			projected.secretValues?.["secret://channels/discord/clawdi_acctdiscord1/agent-token"],
+			projected.secretValues?.[
+				"secret://channels/discord/clawdi_acctdiscord1/links/link-discord-1/agent-token"
+			],
 		).toBe("discord-agent-token");
 		expect(
 			projected.secretValues?.["secret://channels/discord/clawdi_acctdiscord1/placeholder-token"],

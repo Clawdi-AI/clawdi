@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 from uuid import UUID
 
 from fastapi import (
@@ -99,6 +100,7 @@ from app.services.channels import (
     hash_token,
     list_owned_active_bot_agent_links,
     list_owned_active_bot_agent_links_for_agent,
+    normalize_telegram_bot_username,
     rotate_bot_agent_link_token,
     store_channel_secrets,
     sync_channel_commands,
@@ -540,11 +542,15 @@ async def create_channel(
     try:
         await db.flush()
         if body.provider == CHANNEL_PROVIDER_TELEGRAM and body.provider_token:
-            await configure_telegram_provider_webhook(
+            bot_username = await configure_telegram_provider_webhook(
                 provider_token=body.provider_token,
                 webhook_url=channel_webhook_url(account.id, body.provider),
                 webhook_secret=webhook_secret,
             )
+            if bot_username is not None:
+                config = dict(account.config) if isinstance(account.config, dict) else {}
+                config["bot_username"] = bot_username
+                account.config = config
         link: ChannelBotAgentLink | None = None
         link_agent_token: str | None = None
         if initial_agent_id is not None:
@@ -731,6 +737,13 @@ async def create_channel_pair_code(
     )
     await db.commit()
     await db.refresh(created.pair_code)
+    pairing_command = f"/bot_pair {created.code}"
+    bot_username = _telegram_bot_username(account)
+    deep_link = (
+        f"https://t.me/{bot_username}?start={quote(created.code, safe='')}"
+        if bot_username is not None
+        else None
+    )
     return ChannelPairCodeResponse(
         id=created.pair_code.id,
         agent_link_id=created.link.id,
@@ -738,6 +751,10 @@ async def create_channel_pair_code(
         agent_token=created.agent_token,
         code=created.code,
         expires_at=created.pair_code.expires_at,
+        pairing_command=pairing_command,
+        bot_username=bot_username,
+        deep_link=deep_link,
+        qr_payload=deep_link,
     )
 
 
@@ -1284,6 +1301,15 @@ def _native_transport_health(account: ChannelAccount) -> dict[str, Any] | None:
     from app.services.whatsapp_shared_runtime import whatsapp_shared_bot_transport_status
 
     return whatsapp_shared_bot_transport_status(account.id).as_dict()
+
+
+def _telegram_bot_username(account: ChannelAccount) -> str | None:
+    if account.provider != CHANNEL_PROVIDER_TELEGRAM or not isinstance(account.config, dict):
+        return None
+    value = account.config.get("bot_username")
+    if not isinstance(value, str):
+        return None
+    return normalize_telegram_bot_username(value)
 
 
 def _sanitize_activity_details(value: Any, *, depth: int = 0) -> Any:

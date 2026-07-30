@@ -1654,7 +1654,14 @@ async def test_admin_upsert_managed_ai_provider_rejects_invalid_base_url(admin_c
 
 
 @pytest.mark.asyncio
-async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_session, seed_user):
+async def test_admin_channel_lifecycle_manages_public_bot(
+    admin_client,
+    client,
+    db_session,
+    seed_user,
+    channel_agent,
+    monkeypatch,
+):
 
     from sqlalchemy import select
 
@@ -1663,6 +1670,14 @@ async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_sessi
         decrypt_provider_token,
         get_channel_secret,
         verify_hashed_token,
+    )
+
+    async def fake_configure_telegram_provider_webhook(**_kwargs):
+        return "ClawdiPublicBot"
+
+    monkeypatch.setattr(
+        "app.routes.admin.configure_telegram_provider_webhook",
+        fake_configure_telegram_provider_webhook,
     )
 
     created = await admin_client.post(
@@ -1693,7 +1708,21 @@ async def test_admin_channel_lifecycle_manages_public_bot(admin_client, db_sessi
     assert account.user_id == seed_user.id
     assert account.visibility == "public"
     assert decrypt_provider_token(account) == "123456:admin-token"
+    assert account.config == {"commands": "managed", "bot_username": "ClawdiPublicBot"}
     assert await get_channel_secret(db_session, account=account, name="app_secret") == "secret-v1"
+
+    linked = await client.post(
+        f"/v1/channels/{body['id']}/agent-links",
+        json={"agent_id": str(channel_agent.id)},
+    )
+    assert linked.status_code == 201, linked.text
+    pair = await client.post(
+        f"/v1/channels/{body['id']}/pair-codes",
+        json={"agent_link_id": linked.json()["id"], "ttl_seconds": 900},
+    )
+    assert pair.status_code == 201, pair.text
+    assert pair.json()["bot_username"] == "ClawdiPublicBot"
+    assert pair.json()["deep_link"] == (f"https://t.me/ClawdiPublicBot?start={pair.json()['code']}")
 
     listed = await admin_client.get(
         "/v1/admin/channels",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import json
 import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -20,6 +21,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.datastructures import UploadFile
 
 from app.core.config import settings
 from app.core.database import get_session
@@ -56,6 +58,7 @@ from app.services.channels import (
     decrypt_provider_token,
     drop_pending_telegram_updates,
     find_binding,
+    find_existing_inbound_provider_event,
     get_active_channel_account,
     parse_pair_command,
     pending_channel_inbox_count,
@@ -67,7 +70,9 @@ from app.services.channels import (
     resolve_inbound_binding,
     send_pairing_command_reply,
     telegram_chat_from_update,
+    telegram_event_id_from_update,
     telegram_external_user_id_from_update,
+    telegram_file_ids,
     telegram_message_id_from_update,
     telegram_text_from_update,
     verify_hashed_token,
@@ -83,6 +88,305 @@ from app.services.telegram_rate_limiter import telegram_rate_limiter
 from app.services.url_security import UnsafeOutboundUrlError, validate_channel_http_url
 
 router = APIRouter(prefix="/channels/telegram", tags=["channels"])
+
+
+# Keep this list explicit. Telegram ignores parameters it doesn't use, so the
+# presence of a bound chat_id must never authorize an unknown method.
+_TELEGRAM_CHAT_SCOPED_METHODS = frozenset(
+    {
+        "approvesuggestedpost",
+        "approvechatjoinrequest",
+        "banchatmember",
+        "banchatsenderchat",
+        "closeforumtopic",
+        "closegeneralforumtopic",
+        "copymessage",
+        "copymessages",
+        "createchatinvitelink",
+        "createchatsubscriptioninvitelink",
+        "createforumtopic",
+        "declinechatjoinrequest",
+        "declinesuggestedpost",
+        "deleteallmessagereactions",
+        "deletechatphoto",
+        "deletechatstickerset",
+        "deleteephemeralmessage",
+        "deleteforumtopic",
+        "deletemessage",
+        "deletemessagereaction",
+        "deletemessages",
+        "editchatinvitelink",
+        "editchatsubscriptioninvitelink",
+        "editephemeralmessagecaption",
+        "editephemeralmessagemedia",
+        "editephemeralmessagereplymarkup",
+        "editephemeralmessagetext",
+        "editforumtopic",
+        "editgeneralforumtopic",
+        "editmessagecaption",
+        "editmessagechecklist",
+        "editmessagelivelocation",
+        "editmessagemedia",
+        "editmessagereplymarkup",
+        "editmessagetext",
+        "exportchatinvitelink",
+        "forwardmessage",
+        "forwardmessages",
+        "getchat",
+        "getchatadministrators",
+        "getchatgifts",
+        "getchatmember",
+        "getchatmembercount",
+        "getchatmemberscount",
+        "getgamehighscores",
+        "getuserchatboosts",
+        "hidegeneralforumtopic",
+        "kickchatmember",
+        "leavechat",
+        "pinchatmessage",
+        "promotechatmember",
+        "removechatverification",
+        "reopenforumtopic",
+        "reopengeneralforumtopic",
+        "restrictchatmember",
+        "revokechatinvitelink",
+        "sendanimation",
+        "sendaudio",
+        "sendchataction",
+        "sendchecklist",
+        "sendcontact",
+        "senddice",
+        "senddocument",
+        "sendgame",
+        "sendinvoice",
+        "sendlivephoto",
+        "sendlocation",
+        "sendmediagroup",
+        "sendmessage",
+        "sendmessagedraft",
+        "sendpaidmedia",
+        "sendphoto",
+        "sendpoll",
+        "sendrichmessage",
+        "sendrichmessagedraft",
+        "sendsticker",
+        "sendvenue",
+        "sendvideo",
+        "sendvideonote",
+        "sendvoice",
+        "setchatadministratorcustomtitle",
+        "setchatdescription",
+        "setchatmembertag",
+        "setchatpermissions",
+        "setchatphoto",
+        "setchatstickerset",
+        "setchattitle",
+        "setgamescore",
+        "setmessagereaction",
+        "stopmessagelivelocation",
+        "stoppoll",
+        "unbanchatmember",
+        "unbanchatsenderchat",
+        "unhidegeneralforumtopic",
+        "unpinallchatmessages",
+        "unpinallforumtopicmessages",
+        "unpinallgeneralforumtopicmessages",
+        "unpinchatmessage",
+        "verifychat",
+    }
+)
+
+# These parameters select resources in addition to the method's primary chat.
+_TELEGRAM_REFERENCED_CHAT_PATHS = (
+    ("from_chat_id",),
+    ("sender_chat_id",),
+    ("actor_chat_id",),
+    ("reply_parameters", "chat_id"),
+)
+
+_TELEGRAM_BROAD_COMMAND_SCOPE_TYPES = frozenset(
+    {
+        "default",
+        "all_private_chats",
+        "all_group_chats",
+        "all_chat_administrators",
+    }
+)
+_TELEGRAM_CHAT_COMMAND_SCOPE_TYPES = frozenset({"chat", "chat_administrators", "chat_member"})
+
+
+@dataclass(frozen=True)
+class _TelegramFilePolicy:
+    allow_file_id: bool
+    allow_url: bool
+
+
+_TELEGRAM_REUSABLE_FILE = _TelegramFilePolicy(allow_file_id=True, allow_url=True)
+_TELEGRAM_REUSABLE_FILE_NO_URL = _TelegramFilePolicy(allow_file_id=True, allow_url=False)
+_TELEGRAM_UPLOAD_ONLY_FILE = _TelegramFilePolicy(allow_file_id=False, allow_url=False)
+_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS = {
+    "thumbnail": _TELEGRAM_UPLOAD_ONLY_FILE,
+    # The pinned Bot API source still accepts the legacy alias.
+    "thumb": _TELEGRAM_UPLOAD_ONLY_FILE,
+}
+
+# Telegram file arguments are method- and field-specific. In particular,
+# thumbnails are upload-only while video covers are reusable. Keep these
+# shapes explicit so Bot API additions require an isolation review.
+_TELEGRAM_TOP_LEVEL_FILE_FIELDS = {
+    "sendanimation": {
+        "animation": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "sendaudio": {
+        "audio": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "senddocument": {
+        "document": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "sendlivephoto": {
+        "live_photo": _TELEGRAM_REUSABLE_FILE_NO_URL,
+        "photo": _TELEGRAM_REUSABLE_FILE_NO_URL,
+    },
+    "sendphoto": {"photo": _TELEGRAM_REUSABLE_FILE},
+    "sendsticker": {"sticker": _TELEGRAM_REUSABLE_FILE},
+    "sendvideo": {
+        "video": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+        "cover": _TELEGRAM_REUSABLE_FILE,
+    },
+    "sendvideonote": {
+        "video_note": _TELEGRAM_REUSABLE_FILE_NO_URL,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "sendvoice": {"voice": _TELEGRAM_REUSABLE_FILE},
+    "setchatphoto": {"photo": _TELEGRAM_UPLOAD_ONLY_FILE},
+}
+
+_TELEGRAM_INPUT_MEDIA_FILE_FIELDS = {
+    "animation": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "audio": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "document": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "live_photo": {
+        "media": _TELEGRAM_REUSABLE_FILE_NO_URL,
+        "photo": _TELEGRAM_REUSABLE_FILE_NO_URL,
+    },
+    "photo": {"media": _TELEGRAM_REUSABLE_FILE},
+    "sticker": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+    },
+    "video": {
+        "media": _TELEGRAM_REUSABLE_FILE,
+        **_TELEGRAM_UPLOAD_ONLY_THUMBNAIL_FIELDS,
+        "cover": _TELEGRAM_REUSABLE_FILE,
+    },
+    "voice_note": {"media": _TELEGRAM_REUSABLE_FILE},
+}
+
+_TELEGRAM_PAID_MEDIA_FILE_FIELDS = {
+    media_type: _TELEGRAM_INPUT_MEDIA_FILE_FIELDS[media_type]
+    for media_type in ("live_photo", "photo", "video")
+}
+
+_TELEGRAM_STANDARD_INPUT_MEDIA_TYPES = frozenset(
+    {"animation", "audio", "document", "live_photo", "photo", "video"}
+)
+_TELEGRAM_MEDIA_GROUP_TYPES = frozenset({"audio", "document", "live_photo", "photo", "video"})
+_TELEGRAM_POLL_MEDIA_TYPES = frozenset(
+    {"animation", "audio", "document", "live_photo", "location", "photo", "venue", "video"}
+)
+_TELEGRAM_POLL_OPTION_MEDIA_TYPES = frozenset(
+    {"animation", "link", "live_photo", "location", "photo", "sticker", "venue", "video"}
+)
+_TELEGRAM_RICH_MEDIA_TYPES = frozenset({"animation", "audio", "photo", "video", "voice_note"})
+_TELEGRAM_FILE_FIELD_NAMES = frozenset(
+    {
+        "animation",
+        "audio",
+        "cover",
+        "document",
+        "file_id",
+        "live_photo",
+        "media",
+        "photo",
+        "sticker",
+        "thumb",
+        "thumbnail",
+        "video",
+        "video_note",
+        "voice",
+        "voice_note",
+    }
+)
+
+
+@dataclass(frozen=True)
+class _TelegramNestedMediaPolicy:
+    parameter_names: tuple[str, ...]
+    allowed_types: frozenset[str]
+    file_fields_by_type: dict[str, dict[str, _TelegramFilePolicy]]
+
+
+_TELEGRAM_NESTED_MEDIA_POLICIES = {
+    "sendmediagroup": (
+        _TelegramNestedMediaPolicy(
+            ("media",),
+            _TELEGRAM_MEDIA_GROUP_TYPES,
+            _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+        ),
+    ),
+    "sendpaidmedia": (
+        _TelegramNestedMediaPolicy(
+            ("media",),
+            frozenset(_TELEGRAM_PAID_MEDIA_FILE_FIELDS),
+            _TELEGRAM_PAID_MEDIA_FILE_FIELDS,
+        ),
+    ),
+    "sendpoll": (
+        _TelegramNestedMediaPolicy(
+            ("media", "explanation_media"),
+            _TELEGRAM_POLL_MEDIA_TYPES,
+            _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+        ),
+        _TelegramNestedMediaPolicy(
+            ("options",),
+            _TELEGRAM_POLL_OPTION_MEDIA_TYPES,
+            _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+        ),
+    ),
+    **{
+        method: (
+            _TelegramNestedMediaPolicy(
+                ("media",),
+                _TELEGRAM_STANDARD_INPUT_MEDIA_TYPES,
+                _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+            ),
+        )
+        for method in ("editmessagemedia", "editephemeralmessagemedia")
+    },
+    **{
+        method: (
+            _TelegramNestedMediaPolicy(
+                ("rich_message",),
+                _TELEGRAM_RICH_MEDIA_TYPES,
+                _TELEGRAM_INPUT_MEDIA_FILE_FIELDS,
+            ),
+        )
+        for method in ("editmessagetext", "sendrichmessage", "sendrichmessagedraft")
+    },
+}
 
 
 @router.api_route(
@@ -112,12 +416,21 @@ async def telegram_bot_api(
     account = agent.account
     raw_body = await request.body()
     params = await _request_params(request)
+    duplicate_parameter = await _telegram_duplicate_parameter(request, raw_body, params)
+    if duplicate_parameter is not None:
+        return _telegram_error_response(
+            f"Bad Request: duplicate parameter {duplicate_parameter}", 400
+        )
+    if request.method != "GET":
+        params = {**dict(request.query_params), **params}
     method_key = method.lower()
 
     if method_key == "getme":
         if account.encrypted_provider_token and account.provider_token_nonce:
             return await _proxy_telegram_bot_method(
+                db,
                 account=account,
+                bot_agent_link_id=agent.link.id,
                 method="getMe",
                 request=request,
                 raw_body=raw_body,
@@ -245,7 +558,9 @@ async def telegram_bot_api(
             return command_error
         return _telegram_ok(_get_telegram_commands(agent.link, params=params))
 
-    profile_result = await _handle_telegram_profile_shadow(account, method_key, params)
+    profile_result = await _handle_telegram_profile_shadow(
+        db, account, agent.link, method_key, params
+    )
     if profile_result is not None:
         await db.commit()
         return profile_result
@@ -270,10 +585,11 @@ async def telegram_bot_api(
             request=request,
         )
 
-    outbound_error = await _validate_telegram_outbound_scope(
+    outbound_error = await _authorize_telegram_chat_method(
         db,
         account=account,
         bot_agent_link_id=agent.link.id,
+        method_key=method_key,
         params=params,
     )
     if outbound_error is not None:
@@ -300,7 +616,9 @@ async def telegram_bot_api(
             )
 
     return await _proxy_telegram_bot_method(
+        db,
         account=account,
+        bot_agent_link_id=agent.link.id,
         method=method,
         request=request,
         raw_body=raw_body,
@@ -432,6 +750,34 @@ async def telegram_webhook(
     external_chat_id, external_chat_type, external_chat_name = chat
     text = telegram_text_from_update(payload)
     command = parse_pair_command(text)
+    provider_event_id = telegram_event_id_from_update(payload)
+    previous_link_id: UUID | None = None
+    if command is not None and command.kind in {"pair", "unpair"}:
+        previous_binding = (
+            await db.execute(
+                select(ChannelBinding)
+                .where(
+                    ChannelBinding.account_id == account.id,
+                    ChannelBinding.external_chat_id == external_chat_id,
+                )
+                .order_by(
+                    (ChannelBinding.status == BINDING_STATUS_ACTIVE).desc(),
+                    ChannelBinding.created_at.desc(),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if previous_binding is not None:
+            previous_link_id = previous_binding.bot_agent_link_id
+    if command is not None:
+        existing = await find_existing_inbound_provider_event(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            provider_event_id=provider_event_id,
+        )
+        if existing is not None:
+            return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -442,6 +788,15 @@ async def telegram_webhook(
         text=text,
         command=command,
     )
+    if command is not None:
+        existing = await find_existing_inbound_provider_event(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            provider_event_id=provider_event_id,
+        )
+        if existing is not None:
+            return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
 
     messages = await record_inbound_messages_for_bindings(
         db,
@@ -449,6 +804,7 @@ async def telegram_webhook(
         binding_result=binding_result,
         external_chat_id=external_chat_id,
         provider_message_id=telegram_message_id_from_update(payload),
+        provider_event_id=provider_event_id,
         text=text,
         payload=payload,
     )
@@ -471,10 +827,13 @@ async def telegram_webhook(
     )
     if reply is not None:
         await db.commit()
-    await _replay_telegram_commands_on_pair(
+    await _reconcile_telegram_link_state_after_binding_change(
         db,
         account=account,
-        binding=binding_result.binding if binding_result.paired else None,
+        binding=binding_result.binding,
+        previous_link_id=previous_link_id,
+        paired=binding_result.paired,
+        unpaired=binding_result.unpaired,
     )
     if messages and message.binding_id and not binding_result.command_handled:
         delivered_at = datetime.now(UTC)
@@ -539,12 +898,74 @@ def _set_link_config(link: ChannelBotAgentLink, updates: dict[str, Any]) -> None
     link.config = config
 
 
+def _telegram_json_parameter(value: Any) -> Any:
+    if not isinstance(value, str) or not value.strip().startswith(("{", "[")):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
+class _DuplicateTelegramJsonKey(ValueError):
+    pass
+
+
+async def _telegram_duplicate_parameter(
+    request: Request,
+    raw_body: bytes,
+    params: dict[str, Any],
+) -> str | None:
+    content_type = request.headers.get("content-type", "").lower()
+    is_form = "application/x-www-form-urlencoded" in content_type
+    is_multipart = "multipart/form-data" in content_type
+    values = list(request.query_params.multi_items())
+    if request.method != "GET":
+        if is_form or is_multipart:
+            values.extend((await request.form()).multi_items())
+        else:
+            if _telegram_json_has_duplicate_key(raw_body):
+                return "JSON key"
+            values.extend(params.items())
+
+    seen: set[str] = set()
+    for key, value in values:
+        if key in seen:
+            return key
+        seen.add(key)
+        if (
+            isinstance(value, str)
+            and value.strip().startswith(("{", "["))
+            and _telegram_json_has_duplicate_key(value)
+        ):
+            return key
+    return None
+
+
+def _telegram_json_has_duplicate_key(value: str | bytes) -> bool:
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in result:
+                raise _DuplicateTelegramJsonKey
+            result[key] = item
+        return result
+
+    try:
+        json.loads(value, object_pairs_hook=unique_object)
+    except _DuplicateTelegramJsonKey:
+        return True
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return False
+
+
 def _telegram_command_scope_key(params: dict[str, Any]) -> str:
-    scope = params.get("scope")
+    scope = _telegram_json_parameter(params.get("scope"))
     if not isinstance(scope, dict):
         return "default"
     scope_type = _optional_str(scope.get("type"))
-    if scope_type in {"default", "all_private_chats", "all_group_chats", "all_chat_administrators"}:
+    if scope_type in _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES:
         return "default" if scope_type == "default" else scope_type
     chat_id = _optional_str(scope.get("chat_id"))
     if scope_type in {"chat", "chat_administrators"} and chat_id:
@@ -602,12 +1023,17 @@ async def _validate_telegram_command_scope(
     bot_agent_link_id: UUID,
     params: dict[str, Any],
 ) -> JSONResponse | None:
-    scope = params.get("scope")
+    raw_scope = params.get("scope")
+    if raw_scope is None:
+        return None
+    scope = _telegram_json_parameter(raw_scope)
     if not isinstance(scope, dict):
-        return None
+        return _telegram_error_response("Bad Request: invalid scope", 400)
     scope_type = _optional_str(scope.get("type"))
-    if scope_type not in {"chat", "chat_administrators", "chat_member"}:
+    if scope_type in _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES:
         return None
+    if scope_type not in _TELEGRAM_CHAT_COMMAND_SCOPE_TYPES:
+        return _telegram_error_response("Bad Request: invalid scope", 400)
     chat_id = _optional_str(scope.get("chat_id"))
     if chat_id is None:
         return _telegram_error_response("Bad Request: invalid scope", 400)
@@ -625,7 +1051,7 @@ async def _validate_telegram_command_scope(
 
 
 def _store_telegram_commands(link: ChannelBotAgentLink, *, params: dict[str, Any]) -> None:
-    commands = params.get("commands")
+    commands = _telegram_json_parameter(params.get("commands"))
     stored_commands = (
         [command for command in commands if isinstance(command, dict)]
         if isinstance(commands, list)
@@ -680,15 +1106,10 @@ async def _fan_out_telegram_commands(
     if not account.encrypted_provider_token or not account.provider_token_nonce:
         return None
 
-    scope = params.get("scope")
+    scope = _telegram_json_parameter(params.get("scope"))
     scope_type = _optional_str(scope.get("type")) if isinstance(scope, dict) else None
-    if isinstance(scope, dict) and scope_type not in {
-        "default",
-        "all_private_chats",
-        "all_group_chats",
-        "all_chat_administrators",
-    }:
-        response = await _post_telegram_command_payload(
+    if isinstance(scope, dict) and scope_type not in _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES:
+        response = await _post_telegram_bot_payload(
             account=account,
             method=method,
             payload=_telegram_command_provider_payload(method, params, scope=scope),
@@ -712,7 +1133,7 @@ async def _fan_out_telegram_commands(
         fanout_scope = _telegram_command_fanout_scope(binding, scope_key=scope_key)
         if fanout_scope is None:
             continue
-        response = await _post_telegram_command_payload(
+        response = await _post_telegram_bot_payload(
             account=account,
             method=method,
             payload=_telegram_command_provider_payload(
@@ -727,6 +1148,75 @@ async def _fan_out_telegram_commands(
                 content=_telegram_response_json(response),
             )
     return None
+
+
+async def _reconcile_telegram_link_state_after_binding_change(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding | None,
+    previous_link_id: UUID | None,
+    paired: bool,
+    unpaired: bool,
+) -> None:
+    if binding is None or not (paired or unpaired):
+        return
+    current_link_id = binding.bot_agent_link_id if paired else None
+    if previous_link_id is not None and previous_link_id != current_link_id:
+        previous_link = await db.get(ChannelBotAgentLink, previous_link_id)
+        if previous_link is not None:
+            await _clear_telegram_commands_for_binding(
+                account=account,
+                link=previous_link,
+                binding=binding,
+            )
+    if paired:
+        await _replay_telegram_commands_on_pair(db, account=account, binding=binding)
+    await _reconcile_telegram_menu_button_after_binding_change(
+        db,
+        account=account,
+        binding=binding,
+        paired=paired,
+    )
+
+
+async def _clear_telegram_commands_for_binding(
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+    binding: ChannelBinding,
+) -> None:
+    if not account.encrypted_provider_token or not account.provider_token_nonce:
+        return
+    config = link.config if isinstance(link.config, dict) else {}
+    shadow = config.get("telegram_agent_commands")
+    if not isinstance(shadow, dict):
+        return
+    cleared: set[str] = set()
+    for key in shadow:
+        if not isinstance(key, str):
+            continue
+        scope_key, language_code = _telegram_command_shadow_parts(key)
+        scope = _telegram_command_scope_for_binding(binding, scope_key=scope_key)
+        if scope is None:
+            continue
+        identity = json.dumps([scope, language_code], sort_keys=True, separators=(",", ":"))
+        if identity in cleared:
+            continue
+        cleared.add(identity)
+        payload: dict[str, Any] = {"scope": scope}
+        if language_code:
+            payload["language_code"] = language_code
+        try:
+            response = await _post_telegram_bot_payload(
+                account=account,
+                method="deleteMyCommands",
+                payload=payload,
+            )
+        except HTTPException:
+            return
+        if response.status_code >= 400:
+            return
 
 
 async def _replay_telegram_commands_on_pair(
@@ -748,12 +1238,7 @@ async def _replay_telegram_commands_on_pair(
         if not isinstance(key, str) or not isinstance(commands, list):
             continue
         scope_key, language_code = _telegram_command_shadow_parts(key)
-        if scope_key not in {
-            "default",
-            "all_private_chats",
-            "all_group_chats",
-            "all_chat_administrators",
-        }:
+        if scope_key not in _TELEGRAM_BROAD_COMMAND_SCOPE_TYPES:
             continue
         scope = _telegram_command_fanout_scope(binding, scope_key=scope_key)
         if scope is None:
@@ -765,13 +1250,47 @@ async def _replay_telegram_commands_on_pair(
         if language_code:
             payload["language_code"] = language_code
         try:
-            await _post_telegram_command_payload(
+            await _post_telegram_bot_payload(
                 account=account,
                 method="setMyCommands",
                 payload=payload,
             )
         except HTTPException:
             return
+
+
+async def _reconcile_telegram_menu_button_after_binding_change(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding,
+    paired: bool,
+) -> None:
+    if (
+        not _telegram_binding_supports_menu_button(binding)
+        or not account.encrypted_provider_token
+        or not account.provider_token_nonce
+    ):
+        return
+    menu_button: dict[str, Any] = {"type": "default"}
+    if paired:
+        link = await db.get(ChannelBotAgentLink, binding.bot_agent_link_id)
+        if link is not None and link.status == BOT_AGENT_LINK_STATUS_ACTIVE:
+            menu_button = _telegram_menu_button_value(
+                link,
+                chat_id=binding.external_chat_id,
+            )
+    try:
+        await _post_telegram_bot_payload(
+            account=account,
+            method="setChatMenuButton",
+            payload={
+                "chat_id": binding.external_chat_id,
+                "menu_button": menu_button,
+            },
+        )
+    except HTTPException:
+        return
 
 
 def _telegram_command_shadow_parts(key: str) -> tuple[str, str]:
@@ -803,6 +1322,25 @@ def _telegram_command_fanout_scope(
     return None
 
 
+def _telegram_command_scope_for_binding(
+    binding: ChannelBinding,
+    *,
+    scope_key: str,
+) -> dict[str, Any] | None:
+    broad_scope = _telegram_command_fanout_scope(binding, scope_key=scope_key)
+    if broad_scope is not None:
+        return broad_scope
+    parts = scope_key.split(":")
+    if len(parts) == 2 and parts[0] in {"chat", "chat_administrators"}:
+        if parts[1] == binding.external_chat_id:
+            return {"type": parts[0], "chat_id": parts[1]}
+        return None
+    if len(parts) == 3 and parts[0] == "chat_member":
+        if parts[1] == binding.external_chat_id:
+            return {"type": "chat_member", "chat_id": parts[1], "user_id": parts[2]}
+    return None
+
+
 def _telegram_command_provider_payload(
     method: str,
     params: dict[str, Any],
@@ -814,12 +1352,12 @@ def _telegram_command_provider_payload(
     if language_code:
         payload["language_code"] = language_code
     if method.lower() == "setmycommands":
-        commands = params.get("commands")
+        commands = _telegram_json_parameter(params.get("commands"))
         payload["commands"] = commands if isinstance(commands, list) else []
     return payload
 
 
-async def _post_telegram_command_payload(
+async def _post_telegram_bot_payload(
     *,
     account: Any,
     method: str,
@@ -840,16 +1378,21 @@ async def _post_telegram_command_payload(
 
 
 async def _handle_telegram_profile_shadow(
+    db: AsyncSession,
     account: Any,
+    link: ChannelBotAgentLink,
     method_key: str,
     params: dict[str, Any],
 ) -> dict[str, Any] | JSONResponse | None:
+    if method_key == "setchatmenubutton":
+        return await _set_telegram_chat_menu_button(db, account, link, params)
+    if method_key == "getchatmenubutton":
+        return await _get_telegram_chat_menu_button(db, account, link, params)
     if method_key in {
         "setmyname",
         "setmydescription",
         "setmyshortdescription",
         "setmydefaultadministratorrights",
-        "setchatmenubutton",
     }:
         value_result = _telegram_profile_set_value(method_key, params)
         if value_result is None:
@@ -858,7 +1401,7 @@ async def _handle_telegram_profile_shadow(
                 400,
             )
         field_key, value = value_result
-        _set_telegram_profile_value(account, params=params, field_key=field_key, value=value)
+        _set_telegram_profile_value(link, params=params, field_key=field_key, value=value)
         return _telegram_ok(True)
 
     if method_key in {
@@ -866,10 +1409,127 @@ async def _handle_telegram_profile_shadow(
         "getmydescription",
         "getmyshortdescription",
         "getmydefaultadministratorrights",
-        "getchatmenubutton",
     }:
-        return _telegram_ok(_telegram_profile_get_value(account, method_key, params))
+        allow_legacy_fallback = await _telegram_profile_legacy_fallback_is_safe(
+            db, account_id=link.account_id
+        )
+        return _telegram_ok(
+            _telegram_profile_get_value(
+                account,
+                link,
+                method_key,
+                params,
+                allow_legacy_fallback=allow_legacy_fallback,
+            )
+        )
     return None
+
+
+async def _set_telegram_chat_menu_button(
+    db: AsyncSession,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+    params: dict[str, Any],
+) -> dict[str, Any] | JSONResponse:
+    raw_menu_button = params.get("menu_button", {"type": "default"})
+    menu_button = _normalize_telegram_menu_button(raw_menu_button)
+    if menu_button is None:
+        return _telegram_error_response("Bad Request: invalid menu_button", 400)
+    chat_id = _optional_str(params.get("chat_id"))
+    bindings: list[ChannelBinding]
+    if chat_id is not None:
+        binding = await find_binding(
+            db,
+            account=account,
+            external_chat_id=chat_id,
+            bot_agent_link_id=link.id,
+        )
+        if binding is None:
+            return _telegram_error_response("Forbidden: bot was blocked by the user", 403)
+        if not _telegram_binding_supports_menu_button(binding):
+            return _telegram_error_response(
+                "Bad Request: chat_id must identify a private chat", 400
+            )
+        bindings = [binding]
+    else:
+        result = await db.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == account.id,
+                ChannelBinding.bot_agent_link_id == link.id,
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            )
+        )
+        bindings = [
+            binding
+            for binding in result.scalars().all()
+            if _telegram_binding_supports_menu_button(binding)
+        ]
+
+    if account.encrypted_provider_token and account.provider_token_nonce:
+        for binding in bindings:
+            response = await _post_telegram_bot_payload(
+                account=account,
+                method="setChatMenuButton",
+                payload={
+                    "chat_id": binding.external_chat_id,
+                    "menu_button": menu_button,
+                },
+            )
+            if response.status_code >= 400:
+                return JSONResponse(
+                    status_code=response.status_code,
+                    content=_telegram_response_json(response),
+                )
+
+    field_key = _telegram_menu_button_field_key(chat_id)
+    _set_telegram_profile_value(link, params={}, field_key=field_key, value=menu_button)
+    return _telegram_ok(True)
+
+
+def _normalize_telegram_menu_button(value: Any) -> dict[str, Any] | None:
+    value = _telegram_json_parameter(value)
+    if not isinstance(value, dict):
+        return None
+    button_type = _optional_str(value.get("type"))
+    if button_type in {"default", "commands"}:
+        return {"type": button_type}
+    if button_type != "web_app":
+        return None
+    text = _optional_str(value.get("text"))
+    web_app = value.get("web_app")
+    url = _optional_str(web_app.get("url")) if isinstance(web_app, dict) else None
+    if text is None or url is None or not url.lower().startswith("https://"):
+        return None
+    try:
+        parsed_url = httpx.URL(url)
+    except httpx.InvalidURL:
+        return None
+    if parsed_url.scheme != "https" or not parsed_url.host:
+        return None
+    return {"type": "web_app", "text": text, "web_app": {"url": url}}
+
+
+async def _get_telegram_chat_menu_button(
+    db: AsyncSession,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+    params: dict[str, Any],
+) -> dict[str, Any] | JSONResponse:
+    chat_id = _optional_str(params.get("chat_id"))
+    if chat_id is not None:
+        binding = await find_binding(
+            db,
+            account=account,
+            external_chat_id=chat_id,
+            bot_agent_link_id=link.id,
+        )
+        if binding is None:
+            return _telegram_error_response("Forbidden: bot was blocked by the user", 403)
+        if not _telegram_binding_supports_menu_button(binding):
+            return _telegram_error_response(
+                "Bad Request: chat_id must identify a private chat", 400
+            )
+    return _telegram_ok(_telegram_menu_button_value(link, chat_id=chat_id))
 
 
 def _telegram_profile_set_value(
@@ -894,10 +1554,6 @@ def _telegram_profile_set_value(
             else "default_admin_rights:groups"
         )
         return field_key, params.get("rights")
-    if method_key == "setchatmenubutton":
-        if params.get("chat_id") is not None:
-            return None
-        return "menu_button:default", params.get("menu_button") or {}
     return None
 
 
@@ -907,29 +1563,31 @@ def _telegram_profile_required_hint(method_key: str) -> str:
         "setmydescription": "description is required",
         "setmyshortdescription": "short_description is required",
         "setmydefaultadministratorrights": "rights is required",
-        "setchatmenubutton": "menu_button is required (or supply chat_id for per-chat)",
     }.get(method_key, "invalid profile request")
 
 
 def _set_telegram_profile_value(
-    account: Any,
+    link: ChannelBotAgentLink,
     *,
     params: dict[str, Any],
     field_key: str,
     value: Any,
 ) -> None:
-    config = dict(account.config) if isinstance(account.config, dict) else {}
+    config = dict(link.config) if isinstance(link.config, dict) else {}
     profile = config.get("telegram_bot_profile")
     profile_shadow = dict(profile) if isinstance(profile, dict) else {}
     profile_shadow[_telegram_profile_key(params, field_key)] = value
     config["telegram_bot_profile"] = profile_shadow
-    account.config = config
+    link.config = config
 
 
 def _telegram_profile_get_value(
     account: Any,
+    link: ChannelBotAgentLink,
     method_key: str,
     params: dict[str, Any],
+    *,
+    allow_legacy_fallback: bool,
 ) -> dict[str, Any]:
     field_key = {
         "getmyname": "name",
@@ -940,12 +1598,17 @@ def _telegram_profile_get_value(
             if params.get("for_channels") is True
             else "default_admin_rights:groups"
         ),
-        "getchatmenubutton": "menu_button:default",
     }[method_key]
-    config = account.config if isinstance(account.config, dict) else {}
-    profile = config.get("telegram_bot_profile")
+    link_config = link.config if isinstance(link.config, dict) else {}
+    profile = link_config.get("telegram_bot_profile")
     profile_shadow = profile if isinstance(profile, dict) else {}
-    stored = profile_shadow.get(_telegram_profile_key(params, field_key))
+    profile_key = _telegram_profile_key(params, field_key)
+    stored = profile_shadow.get(profile_key)
+    if stored is None and allow_legacy_fallback:
+        account_config = account.config if isinstance(account.config, dict) else {}
+        legacy_profile = account_config.get("telegram_bot_profile")
+        if isinstance(legacy_profile, dict):
+            stored = legacy_profile.get(profile_key)
     if method_key == "getmyname":
         return {"name": stored if isinstance(stored, str) else ""}
     if method_key == "getmydescription":
@@ -954,11 +1617,53 @@ def _telegram_profile_get_value(
         return {"short_description": stored if isinstance(stored, str) else ""}
     if method_key == "getmydefaultadministratorrights":
         return stored if isinstance(stored, dict) else {}
-    return stored if isinstance(stored, dict) else {"type": "default"}
+    return stored if isinstance(stored, dict) else {}
+
+
+async def _telegram_profile_legacy_fallback_is_safe(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+) -> bool:
+    result = await db.execute(
+        select(ChannelBotAgentLink.id)
+        .where(
+            ChannelBotAgentLink.account_id == account_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+        )
+        .limit(2)
+    )
+    return len(result.scalars().all()) == 1
 
 
 def _telegram_profile_key(params: dict[str, Any], field_key: str) -> str:
     return f"{field_key}:{_telegram_language_code(params)}"
+
+
+def _telegram_menu_button_field_key(chat_id: str | None) -> str:
+    return "menu_button:default" if chat_id is None else f"menu_button:chat:{chat_id}"
+
+
+def _telegram_menu_button_value(
+    link: ChannelBotAgentLink,
+    *,
+    chat_id: str | None,
+) -> dict[str, Any]:
+    config = link.config if isinstance(link.config, dict) else {}
+    profile = config.get("telegram_bot_profile")
+    shadow = profile if isinstance(profile, dict) else {}
+    if chat_id is not None:
+        chat_value = shadow.get(_telegram_profile_key({}, _telegram_menu_button_field_key(chat_id)))
+        if isinstance(chat_value, dict):
+            return dict(chat_value)
+    default_value = shadow.get(_telegram_profile_key({}, _telegram_menu_button_field_key(None)))
+    return dict(default_value) if isinstance(default_value, dict) else {"type": "default"}
+
+
+def _telegram_binding_supports_menu_button(binding: ChannelBinding) -> bool:
+    chat_type = (binding.external_chat_type or "private").lower()
+    return chat_type in {"private", "dm"}
 
 
 async def _handle_telegram_get_file(
@@ -1044,13 +1749,35 @@ async def _handle_telegram_callback_answer(
     return payload
 
 
-async def _validate_telegram_outbound_scope(
+async def _authorize_telegram_chat_method(
     db: AsyncSession,
     *,
     account: Any,
     bot_agent_link_id: UUID,
+    method_key: str,
     params: dict[str, Any],
 ) -> JSONResponse | None:
+    if method_key not in _TELEGRAM_CHAT_SCOPED_METHODS:
+        return _telegram_error_response("Forbidden: method is not available to this bot", 403)
+
+    business_connection_id = _optional_str(params.get("business_connection_id"))
+    if business_connection_id is not None:
+        return _telegram_error_response(
+            "Forbidden: business_connection_id is not bound to this bot",
+            403,
+        )
+    inline_message_id = _optional_str(params.get("inline_message_id"))
+    if inline_message_id is not None:
+        return _telegram_error_response(
+            "Forbidden: inline_message_id is not bound to this bot",
+            403,
+        )
+    if _telegram_boolean_param_is_true(params.get("allow_paid_broadcast")):
+        return _telegram_error_response(
+            "Forbidden: paid broadcasts are not available to this bot",
+            403,
+        )
+
     chat_id = _optional_str(params.get("chat_id"))
     if chat_id is None:
         return _telegram_error_response("Forbidden: method requires a bound chat_id", 403)
@@ -1079,20 +1806,164 @@ async def _validate_telegram_outbound_scope(
                 "Forbidden: referenced chat is not bound to this bot",
                 403,
             )
+
+    callback_query_id = _optional_str(params.get("callback_query_id"))
+    if callback_query_id is not None and not await channel_agent_reference_exists(
+        db,
+        account=account,
+        ref_kind=TELEGRAM_REF_CALLBACK_QUERY_ID,
+        ref_value=callback_query_id,
+        bot_agent_link_id=bot_agent_link_id,
+    ):
+        return _telegram_error_response(
+            "Forbidden: callback_query_id is not bound to this bot",
+            403,
+        )
+
+    file_ids, file_error = _telegram_outbound_file_references(method_key, params)
+    if file_error is not None:
+        return _telegram_error_response(f"Bad Request: {file_error}", 400)
+    for file_id in file_ids:
+        if not await channel_agent_reference_exists(
+            db,
+            account=account,
+            ref_kind=TELEGRAM_REF_FILE_ID,
+            ref_value=file_id,
+            bot_agent_link_id=bot_agent_link_id,
+        ):
+            return _telegram_error_response(
+                "Forbidden: file_id is not bound to this bot",
+                403,
+            )
     return None
+
+
+def _telegram_outbound_file_references(
+    method_key: str,
+    params: dict[str, Any],
+) -> tuple[set[str], str | None]:
+    references: set[str] = set()
+    modeled_top_level_fields = set(_TELEGRAM_TOP_LEVEL_FILE_FIELDS.get(method_key, {}))
+
+    for field_name, policy in _TELEGRAM_TOP_LEVEL_FILE_FIELDS.get(method_key, {}).items():
+        if field_name in params and not _collect_telegram_file_reference(
+            params[field_name], policy, references
+        ):
+            return references, f"invalid {field_name}"
+
+    for nested_policy in _TELEGRAM_NESTED_MEDIA_POLICIES.get(method_key, ()):
+        modeled_top_level_fields.update(
+            _TELEGRAM_FILE_FIELD_NAMES & set(nested_policy.parameter_names)
+        )
+        for parameter_name in nested_policy.parameter_names:
+            if parameter_name in params and not _collect_telegram_nested_media_references(
+                params[parameter_name], nested_policy, references
+            ):
+                return references, f"invalid {parameter_name} media"
+
+    unmodeled_fields = (params.keys() & _TELEGRAM_FILE_FIELD_NAMES) - modeled_top_level_fields
+    if unmodeled_fields:
+        return references, f"unmodeled media field {sorted(unmodeled_fields)[0]}"
+    return references, None
+
+
+def _collect_telegram_file_reference(
+    value: Any,
+    policy: _TelegramFilePolicy,
+    references: set[str],
+) -> bool:
+    if isinstance(value, UploadFile):
+        return True
+    if not isinstance(value, str):
+        return False
+    value = value.strip()
+    if not value:
+        return False
+    if value.startswith("attach://"):
+        return bool(value.removeprefix("attach://"))
+    if _telegram_media_url(value):
+        return policy.allow_url
+    if "://" in value or not policy.allow_file_id:
+        return False
+    references.add(value)
+    return True
+
+
+def _telegram_media_url(value: str) -> bool:
+    try:
+        parsed = httpx.URL(value)
+    except httpx.InvalidURL:
+        return False
+    return parsed.scheme in {"http", "https"} and parsed.host is not None
+
+
+def _collect_telegram_nested_media_references(
+    value: Any,
+    policy: _TelegramNestedMediaPolicy,
+    references: set[str],
+) -> bool:
+    value = _telegram_json_parameter(value)
+    if not isinstance(value, (dict, list)):
+        return False
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if isinstance(current, list):
+            stack.extend(current)
+            continue
+        if not isinstance(current, dict):
+            continue
+
+        media_type = _optional_str(current.get("type"))
+        if (
+            media_type is not None
+            and "media" in current
+            and not isinstance(current["media"], (str, UploadFile))
+        ):
+            return False
+        direct_file_fields = {
+            field_name
+            for field_name in current.keys() & _TELEGRAM_FILE_FIELD_NAMES
+            if isinstance(current[field_name], (str, UploadFile))
+        }
+        if direct_file_fields:
+            file_fields = policy.file_fields_by_type.get(media_type or "")
+            if media_type not in policy.allowed_types or file_fields is None:
+                return False
+            if direct_file_fields - file_fields.keys():
+                return False
+            for field_name, file_policy in file_fields.items():
+                if field_name in current and not _collect_telegram_file_reference(
+                    current[field_name], file_policy, references
+                ):
+                    return False
+        stack.extend(current.values())
+    return True
 
 
 def _referenced_telegram_chat_ids(params: dict[str, Any]) -> set[str]:
     chat_ids: set[str] = set()
-    from_chat_id = _optional_str(params.get("from_chat_id"))
-    if from_chat_id is not None:
-        chat_ids.add(from_chat_id)
-    reply_parameters = params.get("reply_parameters")
-    if isinstance(reply_parameters, dict):
-        reply_chat_id = _optional_str(reply_parameters.get("chat_id"))
-        if reply_chat_id is not None:
-            chat_ids.add(reply_chat_id)
+    for path in _TELEGRAM_REFERENCED_CHAT_PATHS:
+        chat_id = _optional_str(_telegram_param_at_path(params, path))
+        if chat_id is not None:
+            chat_ids.add(chat_id)
     return chat_ids
+
+
+def _telegram_param_at_path(params: dict[str, Any], path: tuple[str, ...]) -> Any:
+    value: Any = params
+    for key in path:
+        value = _telegram_json_parameter(value)
+        if not isinstance(value, dict):
+            return None
+        value = value.get(key)
+    return value
+
+
+def _telegram_boolean_param_is_true(value: Any) -> bool:
+    if value is True or value == 1:
+        return True
+    return isinstance(value, str) and value.strip().lower() == "true"
 
 
 async def _proxy_telegram_json_method(
@@ -1128,8 +1999,10 @@ def _telegram_response_json(response: Any) -> dict[str, Any]:
 
 
 async def _proxy_telegram_bot_method(
+    db: AsyncSession,
     *,
     account: Any,
+    bot_agent_link_id: UUID,
     method: str,
     request: Request,
     raw_body: bytes,
@@ -1140,6 +2013,23 @@ async def _proxy_telegram_bot_method(
         request=request,
         raw_body=raw_body,
     )
+    if 200 <= response.status_code < 300:
+        try:
+            payload = response.json()
+        except ValueError:
+            payload = None
+        if isinstance(payload, dict) and payload.get("ok") is True:
+            file_ids = telegram_file_ids(payload.get("result"))
+            for file_id in sorted(file_ids):
+                await record_channel_agent_reference(
+                    db,
+                    account=account,
+                    bot_agent_link_id=bot_agent_link_id,
+                    ref_kind=TELEGRAM_REF_FILE_ID,
+                    ref_value=file_id,
+                )
+            if file_ids:
+                await db.commit()
     return Response(
         content=response.content,
         status_code=response.status_code,

@@ -139,6 +139,10 @@ class ChannelPairCodeResponse(BaseModel):
     agent_token: str | None = None
     code: str
     expires_at: datetime
+    pairing_command: str
+    bot_username: str | None = None
+    deep_link: str | None = None
+    qr_payload: str | None = None
 
 
 class ChannelCommandSpec(BaseModel):
