@@ -681,8 +681,10 @@ async def test_list_skills_etag_binds_revision_and_project(
     # Capture project A's listing ETag.
     list_a = await client.get(f"/v1/skills?project_id={project_id}")
     assert list_a.status_code == 200, list_a.text
+    assert list_a.headers.get("Cache-Control") == "no-transform"
     etag_a = list_a.headers.get("ETag")
     assert etag_a is not None
+    assert etag_a.startswith('"') and etag_a.endswith('"')
     # ETag carries `<revision>:<project_id>`. Sanity-check both
     # components are present so a regression to plain
     # `<revision>` would fail the test.
@@ -695,6 +697,31 @@ async def test_list_skills_etag_binds_revision_and_project(
         headers={"If-None-Match": etag_a},
     )
     assert r304.status_code == 304, r304.text
+    assert r304.headers.get("ETag") == etag_a
+    assert r304.headers.get("Cache-Control") == "no-transform"
+
+    # If-None-Match uses weak comparison for GET. A weak validator exposed by
+    # an intermediary must still match the origin's strong collection ETag.
+    weak_r304 = await client.get(
+        f"/v1/skills?project_id={project_id}",
+        headers={"If-None-Match": f"W/{etag_a}"},
+    )
+    assert weak_r304.status_code == 304, weak_r304.text
+    assert weak_r304.headers.get("ETag") == etag_a
+    assert weak_r304.headers.get("Cache-Control") == "no-transform"
+
+    # The hidden compatibility alias mounts this same listing contract.
+    alias_list = await client.get(f"/api/skills?project_id={project_id}")
+    assert alias_list.status_code == 200, alias_list.text
+    assert alias_list.headers.get("ETag") == etag_a
+    assert alias_list.headers.get("Cache-Control") == "no-transform"
+    alias_304 = await client.get(
+        f"/api/skills?project_id={project_id}",
+        headers={"If-None-Match": etag_a},
+    )
+    assert alias_304.status_code == 304, alias_304.text
+    assert alias_304.headers.get("ETag") == etag_a
+    assert alias_304.headers.get("Cache-Control") == "no-transform"
 
     # Now register a SECOND project and land a skill there. Crucially,
     # the second upload bumps the user-wide skills_revision (pre-fix
@@ -771,8 +798,10 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
         headers=AGENT_SKILL_SYNC_HEADERS,
     )
     assert first.status_code == 200, first.text
+    assert first.headers.get("Cache-Control") == "no-transform"
     etag = first.headers.get("ETag")
     assert etag
+    assert etag.startswith('"') and etag.endswith('"')
 
     def _fail_session_factory():
         raise AssertionError("matching bound-key skills ETag opened a DB session")
@@ -785,6 +814,15 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
     )
     assert cached.status_code == 304, cached.text
     assert cached.headers.get("ETag") == etag
+    assert cached.headers.get("Cache-Control") == "no-transform"
+
+    weak_cached = await client.get(
+        f"/v1/skills?project_id={project_id}",
+        headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": f"W/{etag}"},
+    )
+    assert weak_cached.status_code == 304, weak_cached.text
+    assert weak_cached.headers.get("ETag") == etag
+    assert weak_cached.headers.get("Cache-Control") == "no-transform"
 
 
 @pytest.mark.asyncio
