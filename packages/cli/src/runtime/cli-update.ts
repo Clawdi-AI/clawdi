@@ -42,6 +42,7 @@ export interface RuntimeCliUpdateResult {
 }
 
 interface RuntimeCliBootstrapStatus {
+	schemaVersion?: string;
 	status?: string;
 	source?: string;
 	packageSpec?: string;
@@ -234,7 +235,11 @@ export function applyRuntimeCliDesiredState(
 		runningVersion?: string;
 	} = {},
 ): RuntimeCliUpdateResult {
-	const reconciliation = reconcileCliUpgradeTransaction(paths, opts);
+	const rootBootstrapRequired = requiresHostedV2RootBootstrap(manifest, paths);
+	if (rootBootstrapRequired) supersedeCliUpgradeStateWithRootBootstrap(paths);
+	const reconciliation = rootBootstrapRequired
+		? cliReconciliationResult(paths, "unchanged", opts.runningVersion)
+		: reconcileCliUpgradeTransaction(paths, opts);
 	if (reconciliation.selfReexec) {
 		const status = readBootstrapStatus(paths.cliBootstrapStatus);
 		return baseResult(
@@ -262,13 +267,11 @@ export function applyRuntimeCliDesiredState(
 	}
 	validatePackageSpec(packageSpec);
 	const registry = cliRegistry(manifest);
-	const current = migrateAndHardenCurrentCliInstall(
-		paths,
-		readBootstrapStatus(paths.cliBootstrapStatus),
-		packageSpec,
-		registry,
-	);
-	if (requiresHostedV2RootBootstrap(manifest, paths)) {
+	const bootstrapStatus = readBootstrapStatus(paths.cliBootstrapStatus);
+	const current = rootBootstrapRequired
+		? hardenRootBootstrappedCliInstall(paths, bootstrapStatus)
+		: migrateAndHardenCurrentCliInstall(paths, bootstrapStatus, packageSpec, registry);
+	if (rootBootstrapRequired) {
 		const binding = requireHostedV2CliBootstrapBinding(paths, current);
 		if (binding.identity.packageSpec !== packageSpec || binding.identity.registry !== registry) {
 			return baseResult("deferred", paths, {
@@ -400,6 +403,15 @@ function requiresHostedV2RootBootstrap(manifest: RuntimeManifest, paths: Runtime
 	);
 }
 
+function hardenRootBootstrappedCliInstall(
+	paths: RuntimePaths,
+	status: RuntimeCliBootstrapStatus | null,
+): RuntimeCliBootstrapStatus | null {
+	hardenHostedImageShimBestEffort(paths);
+	hardenExistingManagedCliBoundary(paths, status);
+	return status;
+}
+
 type RuntimeCliResultValues = Pick<
 	RuntimeCliUpdateResult,
 	"packageSpec" | "registry" | "activeTarget" | "version"
@@ -465,6 +477,7 @@ function bootstrapStatusInstallIdentity(
 	paths: RuntimePaths,
 ): RuntimeCliInstallIdentity | null {
 	if (
+		status?.schemaVersion !== "clawdi.cliNpmBootstrapStatus.v1" ||
 		status?.status !== "installed" ||
 		status.source !== "npm" ||
 		status.activePath !== paths.cliManagedBin
@@ -507,21 +520,16 @@ function requireHostedV2CliBootstrapBinding(
 			"Hosted v2 CLI bootstrap status has no supported promoted cliIntegrity; root bootstrap is required",
 		);
 	}
-	if (status?.verification !== undefined) {
-		const verification = cliVerificationStateSchema.safeParse(status.verification);
-		const fileIdentity = cliVerificationIdentity(identity.activeTarget);
-		if (
-			!verification.success ||
-			!fileIdentity ||
-			!verificationIdentityMatches(verification.data, fileIdentity)
-		) {
-			writeCliBootstrapStatus(paths, identity, undefined, {
-				preserveExistingIntegrity: false,
-			});
-			throw new Error(
-				"Hosted v2 CLI target changed after promoted bootstrap verification; root bootstrap is required",
-			);
-		}
+	const verification = cliVerificationStateSchema.safeParse(status?.verification);
+	const fileIdentity = cliVerificationIdentity(identity.activeTarget);
+	if (
+		!verification.success ||
+		!fileIdentity ||
+		!verificationIdentityMatches(verification.data, fileIdentity)
+	) {
+		throw new Error(
+			"Hosted v2 CLI target changed after promoted bootstrap verification; root bootstrap is required",
+		);
 	}
 	return { identity, cliIntegrity: integrity.data };
 }
@@ -1150,7 +1158,8 @@ function preservedCliIntegrity(
 ): string | undefined {
 	const status = readBootstrapStatus(paths.cliBootstrapStatus);
 	if (
-		!status ||
+		status?.schemaVersion !== "clawdi.cliNpmBootstrapStatus.v1" ||
+		status.activePath !== paths.cliManagedBin ||
 		!statusHasInstallIdentity(status, input) ||
 		activeLinkTarget(paths.cliManagedBin) !== input.activeTarget ||
 		!currentFileIdentity
@@ -1159,7 +1168,6 @@ function preservedCliIntegrity(
 	}
 	const integrity = cliBootstrapIntegritySchema.safeParse(status.cliIntegrity);
 	if (!integrity.success) return undefined;
-	if (status.verification === undefined) return integrity.data;
 	const previousVerification = cliVerificationStateSchema.safeParse(status.verification);
 	if (
 		!previousVerification.success ||
@@ -1189,6 +1197,21 @@ export function rollbackPendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	reason: string,
 ): RuntimeCliRollbackResult {
+	let rootBinding: ReturnType<typeof promotedRootBootstrapBinding>;
+	try {
+		rootBinding = supersedeCliUpgradeStateWithRootBootstrap(paths);
+	} catch (error) {
+		return rollbackErrorResult(null, error);
+	}
+	if (rootBinding) {
+		return {
+			status: "not_pending",
+			version: rootBinding.identity.version,
+			previousVersion: null,
+			activeTarget: rootBinding.identity.activeTarget,
+			previousActiveTarget: null,
+		};
+	}
 	let transaction: RuntimeCliUpgradeTransaction | null = null;
 	try {
 		transaction = readCliUpgradeState(paths).transaction ?? null;
@@ -1260,6 +1283,9 @@ export function completePendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	currentVersion: string,
 ): RuntimeCliReconciliationResult {
+	if (supersedeCliUpgradeStateWithRootBootstrap(paths)) {
+		return cliReconciliationResult(paths, "unchanged", currentVersion);
+	}
 	const reconciliation = reconcileCliUpgradeTransaction(paths, {
 		runningVersion: currentVersion,
 	});
@@ -1283,7 +1309,48 @@ export function reconcilePendingRuntimeCliUpgrade(
 	paths: RuntimePaths,
 	runningVersion: string,
 ): RuntimeCliReconciliationResult {
+	if (supersedeCliUpgradeStateWithRootBootstrap(paths)) {
+		return cliReconciliationResult(paths, "unchanged", runningVersion);
+	}
 	return reconcileCliUpgradeTransaction(paths, { runningVersion });
+}
+
+function promotedRootBootstrapBinding(
+	paths: RuntimePaths,
+): { identity: RuntimeCliInstallIdentity; cliIntegrity: string } | null {
+	if (paths.mode !== "hosted") return null;
+	const status = readBootstrapStatus(paths.cliBootstrapStatus);
+	if (status?.cliIntegrity === undefined) return null;
+	return requireHostedV2CliBootstrapBinding(paths, status);
+}
+
+function supersedeCliUpgradeStateWithRootBootstrap(
+	paths: RuntimePaths,
+): { identity: RuntimeCliInstallIdentity; cliIntegrity: string } | null {
+	const binding = promotedRootBootstrapBinding(paths);
+	if (!binding || !existsSync(paths.cliUpgradeState)) return binding;
+
+	let badVersions: RuntimeCliBadVersion[] = [];
+	try {
+		const parsed = JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8")) as unknown;
+		const v2 = cliUpgradeStateV2Schema.safeParse(parsed);
+		if (v2.success) {
+			if (v2.data.transaction === null) return binding;
+			badVersions = v2.data.badVersions;
+		} else {
+			const v1 = cliUpgradeStateV1Schema.safeParse(parsed);
+			if (v1.success) badVersions = v1.data.badVersions ?? [];
+		}
+	} catch {
+		// A canonical root binding is the sole authority. Malformed legacy state
+		// is intentionally replaced without attempting its executable recovery.
+	}
+	writeCliUpgradeState(paths, {
+		schemaVersion: "clawdi.cliUpgradeState.v2",
+		transaction: null,
+		badVersions,
+	});
+	return binding;
 }
 
 function prepareCliUpgradeTransaction(

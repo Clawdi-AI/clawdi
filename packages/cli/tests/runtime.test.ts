@@ -338,6 +338,7 @@ echo "seeded clawdi"
 	chmodSync(target, 0o700);
 	rmSync(active, { force: true });
 	symlinkSync(target, active);
+	const targetStat = statSync(target);
 	writeFileSync(
 		join(state, "status", "cli-bootstrap.json"),
 		JSON.stringify({
@@ -353,6 +354,13 @@ echo "seeded clawdi"
 			activeTarget: target,
 			version,
 			cliIntegrity: TEST_CLI_INTEGRITY,
+			verification: {
+				verifiedAt: new Date().toISOString(),
+				device: targetStat.dev,
+				inode: targetStat.ino,
+				size: targetStat.size,
+				modifiedAtMs: targetStat.mtimeMs,
+			},
 			error: null,
 		}),
 	);
@@ -466,7 +474,6 @@ function writeCliBootstrapFixture(paths: RuntimePaths, identity: RuntimeCliFixtu
 			activePath: paths.cliManagedBin,
 			activeTarget: identity.activeTarget,
 			version: identity.version,
-			cliIntegrity: TEST_CLI_INTEGRITY,
 			error: null,
 		})}\n`,
 		{ mode: 0o600 },
@@ -8422,7 +8429,7 @@ chmod +x "$prefix/bin/clawdi"
 		}
 	});
 
-	it("migrates a writable legacy hosted CLI entrypoint into the root-only boundary", () => {
+	it("migrates a generic legacy hosted CLI entrypoint without promoting spoofed integrity", () => {
 		const version = "0.13.1-beta.0";
 		const packageSpec = `clawdi@${version}`;
 		const home = join(root, "home-cli-boundary", "clawdi");
@@ -8473,8 +8480,15 @@ exit 64
 		paths.imageShim = join(root, "usr", "local", "lib", "clawdi", "bootstrap", "clawdi");
 		paths.legacyImageShim = legacyImageShim;
 
-		const desired = normalizeManifestPayload(hostedCliManifestResponse(home, packageSpec));
-		const result = applyRuntimeCliDesiredState(desired.manifest, paths);
+		const hostedDesired = normalizeManifestPayload(hostedCliManifestResponse(home, packageSpec));
+		expect(() => applyRuntimeCliDesiredState(hostedDesired.manifest, paths)).toThrow(
+			/no valid promoted install identity/,
+		);
+		expect(existsSync(paths.cliManagedBin)).toBe(false);
+		expect(readlinkSync(legacyActive)).toBe(activeTarget);
+
+		const desired = genericCliDesiredState(packageSpec);
+		const result = applyRuntimeCliDesiredState(desired, paths);
 
 		expect(result.status).toBe("current");
 		expect(paths.cliManagedBin).toBe(join(state, "managed-cli", "bin", "clawdi"));
@@ -8485,9 +8499,9 @@ exit 64
 		expect(statSync(paths.cliNpmPrefix).mode & 0o777).toBe(0o700);
 		expect(statSync(activeTarget).mode & 0o777).toBe(0o700);
 		expect(statSync(paths.cliBootstrapStatus).mode & 0o777).toBe(0o600);
-		expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8")).cliIntegrity).toBe(
-			TEST_CLI_INTEGRITY,
-		);
+		expect(
+			JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8")).cliIntegrity,
+		).toBeUndefined();
 		expect(statSync(legacyImageShim).mode & 0o777).toBe(0o700);
 	});
 
@@ -9323,7 +9337,59 @@ chmod +x "$prefix/bin/clawdi"
 		expect(status.verification).toBeDefined();
 	});
 
-	it("invalidates promoted CLI integrity without executing bytes changed after verification", () => {
+	it("does not promote unverified integrity during a generic verification rewrite", () => {
+		const version = "0.13.12-beta.0";
+		const packageSpec = `clawdi@${version}`;
+		const home = join(root, "home-cli-integrity-unverified-rewrite", "clawdi");
+		const state = join(root, "state-cli-integrity-unverified-rewrite");
+		const run = join(root, "run-cli-integrity-unverified-rewrite");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, packageSpec, version, "https://registry.npmjs.org");
+		const paths = getRuntimePaths();
+		const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		delete status.verification;
+		writeFileSync(paths.cliBootstrapStatus, JSON.stringify(status));
+
+		const result = applyRuntimeCliDesiredState(genericCliDesiredState(packageSpec), paths);
+		const rewritten = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+
+		expect(result.status).toBe("current");
+		expect(rewritten.verification).toBeDefined();
+		expect(rewritten.cliIntegrity).toBeUndefined();
+		expect(() =>
+			applyRuntimeCliDesiredState(
+				normalizeManifestPayload(hostedCliManifestResponse(home, packageSpec)).manifest,
+				paths,
+			),
+		).toThrow(/no supported promoted cliIntegrity/);
+	});
+
+	it("rejects promoted root status without executable verification identity", () => {
+		const version = "0.13.12-beta.0";
+		const packageSpec = `clawdi@${version}`;
+		const home = join(root, "home-cli-integrity-no-verification", "clawdi");
+		const state = join(root, "state-cli-integrity-no-verification");
+		const run = join(root, "run-cli-integrity-no-verification");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, packageSpec, version, "https://registry.npmjs.org");
+		const paths = getRuntimePaths();
+		const status = JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"));
+		delete status.verification;
+		writeFileSync(paths.cliBootstrapStatus, JSON.stringify(status));
+		const desired = normalizeManifestPayload(hostedCliManifestResponse(home, packageSpec));
+
+		expect(() => applyRuntimeCliDesiredState(desired.manifest, paths)).toThrow(
+			/target changed after promoted bootstrap verification/,
+		);
+	});
+
+	it("rejects promoted CLI drift without discarding the root-bootstrap marker", () => {
 		const version = "0.13.12-beta.1";
 		const packageSpec = `clawdi@${version}`;
 		const home = join(root, "home-cli-integrity-bytes", "clawdi");
@@ -9356,9 +9422,9 @@ exit 64
 			/target changed after promoted bootstrap verification/,
 		);
 		expect(existsSync(executionMarker)).toBe(false);
-		expect(
-			JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8")).cliIntegrity,
-		).toBeUndefined();
+		expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8")).cliIntegrity).toBe(
+			TEST_CLI_INTEGRITY,
+		);
 	});
 
 	it.each([
@@ -9386,6 +9452,78 @@ exit 64
 		expect(() => applyRuntimeCliDesiredState(desired.manifest, paths)).toThrow(
 			/no supported promoted cliIntegrity/,
 		);
+		expect(rollbackPendingRuntimeCliUpgrade(paths, "invalid root binding")).toMatchObject({
+			status: "error",
+			error: expect.stringMatching(/no supported promoted cliIntegrity/),
+		});
+	});
+
+	it("lets a promoted root bootstrap supersede a stale CLI upgrade journal", () => {
+		const version = "0.13.12-beta.5";
+		const packageSpec = `clawdi@${version}`;
+		const home = join(root, "home-cli-root-journal", "clawdi");
+		const state = join(root, "state-cli-root-journal");
+		const run = join(root, "run-cli-root-journal");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		seedCurrentCliInstall(state, packageSpec, version, "https://registry.npmjs.org");
+		const paths = getRuntimePaths();
+		const executionMarker = join(root, "stale-root-journal-executed");
+		const previousIdentity = createVersionedCliFixture(paths, "0.13.11");
+		writeFileSync(
+			previousIdentity.activeTarget,
+			`#!/usr/bin/env bash
+touch '${executionMarker}'
+if [ "\${1:-}" = "--version" ]; then echo '${previousIdentity.version}'; exit 0; fi
+if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then echo '{"status":"ok"}'; exit 0; fi
+exit 64
+`,
+			{ mode: 0o700 },
+		);
+		const promotedIdentity = {
+			packageSpec,
+			registry: "https://registry.npmjs.org",
+			npmPrefix: paths.cliNpmPrefix,
+			activeTarget: readlinkSync(paths.cliManagedBin),
+			version,
+		};
+		writeCliTransactionFixture(paths, {
+			phase: "activated",
+			previousIdentity,
+			newIdentity: promotedIdentity,
+			rollbackReason: "stale unbound rollback",
+		});
+
+		expect(reconcilePendingRuntimeCliUpgrade(paths, version)).toEqual({
+			status: "unchanged",
+			selfReexec: false,
+		});
+		expect(completePendingRuntimeCliUpgrade(paths, version)).toEqual({
+			status: "unchanged",
+			selfReexec: false,
+		});
+		expect(rollbackPendingRuntimeCliUpgrade(paths, "must not restore unbound bytes")).toMatchObject(
+			{
+				status: "not_pending",
+				version,
+				previousVersion: null,
+			},
+		);
+
+		const desired = normalizeManifestPayload(hostedCliManifestResponse(home, packageSpec));
+		expect(applyRuntimeCliDesiredState(desired.manifest, paths).status).toBe("current");
+		expect(existsSync(executionMarker)).toBe(false);
+		expect(JSON.parse(readFileSync(paths.cliUpgradeState, "utf-8"))).toEqual({
+			schemaVersion: "clawdi.cliUpgradeState.v2",
+			transaction: null,
+			badVersions: [],
+		});
+		expect(JSON.parse(readFileSync(paths.cliBootstrapStatus, "utf-8"))).toMatchObject({
+			packageSpec,
+			cliIntegrity: TEST_CLI_INTEGRITY,
+		});
 	});
 
 	it("does not carry promoted integrity to CLI-installed bytes with a different identity", () => {

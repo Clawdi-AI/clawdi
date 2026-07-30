@@ -307,9 +307,8 @@ describe("CLI smoke — src entry", () => {
 
 	it("runtime init converges a strict hosted manifest-file fixture", async () => {
 		const { tmpdir } = await import("node:os");
-		const { chmodSync, existsSync, mkdirSync, rmSync, symlinkSync, writeFileSync } = await import(
-			"node:fs"
-		);
+		const { chmodSync, existsSync, mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } =
+			await import("node:fs");
 		const root = join(tmpdir(), `clawdi-smoke-runtime-strict-${Date.now()}`);
 		const previousUmask = process.umask(0o022);
 		const home = join(root, "home", "clawdi");
@@ -318,7 +317,7 @@ describe("CLI smoke — src entry", () => {
 		const manifestPath = join(root, "strict-hosted-manifest.json");
 		const installer = join(root, "install-openclaw.sh");
 		const systemctl = join(root, "bin", "systemctl");
-		const managedCli = join(state, "bin", "clawdi");
+		const managedCli = join(state, "managed-cli", "bin", "clawdi");
 		const managedCliTarget = join(state, "npm", "bin", "clawdi");
 		const egressEngine = {
 			type: "mitmproxy",
@@ -377,6 +376,7 @@ exit 64
 		mkdirSync(dirname(mitmdump), { recursive: true });
 		writeFileSync(mitmdump, "#!/usr/bin/env sh\nexit 0\n");
 		chmodSync(mitmdump, 0o755);
+		const managedCliStat = statSync(managedCliTarget);
 		writeFileSync(
 			join(state, "status", "cli-bootstrap.json"),
 			JSON.stringify({
@@ -384,10 +384,20 @@ exit 64
 				status: "installed",
 				source: "npm",
 				packageSpec: "clawdi@0.12.10-beta.57",
+				cliIntegrity: `sha512-${"A".repeat(86)}==`,
 				registry: "https://registry.npmjs.org",
+				npmPrefix: join(state, "npm"),
+				npmCache: join(state, "npm-cache"),
 				activePath: managedCli,
 				activeTarget: managedCliTarget,
 				version: "0.12.10-beta.57",
+				verification: {
+					verifiedAt: new Date().toISOString(),
+					device: managedCliStat.dev,
+					inode: managedCliStat.ino,
+					size: managedCliStat.size,
+					modifiedAtMs: managedCliStat.mtimeMs,
+				},
 			}),
 		);
 		writeFileSync(
