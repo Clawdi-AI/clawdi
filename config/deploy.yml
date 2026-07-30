@@ -29,10 +29,10 @@ aliases:
 
 ssh:
   user: phala
-  # All deploys (CI and operator) reach the box through the jump host.
-  # -F none skips ssh config files (ownership differs inside the kamal
-  # container); auth comes from the ssh agent or default key files.
-  proxy_command: "ssh -F none -o StrictHostKeyChecking=accept-new -l phala -W %h:%p jump.phala.systems"
+  # Self-hosters connect directly unless they provide a proxy command.
+<% if ENV["DEPLOY_SSH_PROXY_COMMAND"] %>
+  proxy_command: <%= ENV["DEPLOY_SSH_PROXY_COMMAND"] %>
+<% end %>
   keys:
     - ~/.ssh/clawdi_access_ed25519
 
@@ -49,13 +49,13 @@ builder:
 servers:
   web:
     hosts:
-      - 66.220.6.123
+      - <%= ENV.fetch("DEPLOY_HOST") %>
     options:
       memory: 4g # embedding model (~1.6G resident) + launch-load headroom
       ulimit: nofile=65536:65536 # long-lived SSE/WebSocket connections
   channels-worker:
     hosts:
-      - 66.220.6.123
+      - <%= ENV.fetch("DEPLOY_HOST") %>
     proxy: false
     options:
       memory: 2g # grows with connected channel accounts
@@ -67,7 +67,6 @@ servers:
 proxy:
   hosts:
     - cloud-api.clawdi.ai
-    - cloud-api-next.clawdi.ai # temporary smoke-test host; remove after cutover
   app_port: 8000
   # All traffic stays behind Cloudflare (orange cloud). TLS between Cloudflare
   # and this origin uses a Cloudflare Origin CA wildcard cert — no ACME.
@@ -92,7 +91,7 @@ volumes:
 accessories:
   postgres:
     image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18 # pgvector pg18 + pgBackRest (WAL archiving to R2)
-    host: 66.220.6.123
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
     options:
       ulimit: nofile=65536:65536
     # 512MB buffers (default 128MB is tiny for 16G host); idle-in-transaction
@@ -113,9 +112,6 @@ accessories:
           PGBACKREST_PG1_PATH: /var/lib/postgresql/18/docker
           PGBACKREST_PG1_SOCKET_PATH: /var/run/postgresql
           PGBACKREST_REPO1_TYPE: s3
-          PGBACKREST_REPO1_PATH: /clawdi
-          PGBACKREST_REPO1_S3_BUCKET: clawdi-db-backup
-          PGBACKREST_REPO1_S3_ENDPOINT: 1d694c298092ffa09c793cbca4587812.r2.cloudflarestorage.com
           PGBACKREST_REPO1_S3_REGION: auto
           PGBACKREST_REPO1_S3_URI_STYLE: path
           PGBACKREST_REPO1_RETENTION_FULL: "2"
@@ -125,6 +121,9 @@ accessories:
         POSTGRES_USER: clawdi
       secret:
         - POSTGRES_PASSWORD
+        - PGBACKREST_REPO1_PATH
+        - PGBACKREST_REPO1_S3_BUCKET
+        - PGBACKREST_REPO1_S3_ENDPOINT
         - PGBACKREST_REPO1_S3_KEY
         - PGBACKREST_REPO1_S3_KEY_SECRET
         - PGBACKREST_REPO1_CIPHER_PASS
@@ -133,7 +132,7 @@ accessories:
     # Scheduled pgBackRest runs (Sunday full, daily diff) against the server's
     # shared data and socket volumes. See docs/ops/postgres-backup-restore.md.
     image: ghcr.io/clawdi-ai/postgres-pgbackrest:pg18
-    host: 66.220.6.123
+    host: <%= ENV.fetch("DEPLOY_HOST") %>
     cmd: gosu postgres supercronic /etc/pgbackrest/backup-cron
     volumes:
       - /home/phala/clawdi-postgres/data:/var/lib/postgresql
@@ -143,6 +142,9 @@ accessories:
         <<: *pgbackrest-env
         PGBACKREST_LOG_LEVEL_CONSOLE: info
       secret:
+        - PGBACKREST_REPO1_PATH
+        - PGBACKREST_REPO1_S3_BUCKET
+        - PGBACKREST_REPO1_S3_ENDPOINT
         - PGBACKREST_REPO1_S3_KEY
         - PGBACKREST_REPO1_S3_KEY_SECRET
         - PGBACKREST_REPO1_CIPHER_PASS

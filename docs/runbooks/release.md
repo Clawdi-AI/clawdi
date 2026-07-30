@@ -190,8 +190,15 @@ releases.
 
 ## Production Deployment Checks
 
-The deployment platform is outside this repository, but every deploy should
-run these checks before traffic is considered healthy:
+### Production values
+
+[`config/deploy.yml`](../../config/deploy.yml) keeps the Kamal structure public
+while production values stay outside the repository. CI injects them from
+GitHub Actions secrets; operators keep Kamal secrets in the gitignored
+`.kamal/secrets` file and export deployment parameters before running Kamal.
+Self-hosters set `DEPLOY_HOST` to their own server.
+
+Every deploy should run these checks before traffic is considered healthy:
 
 1. Apply migrations before starting code that depends on them:
 
