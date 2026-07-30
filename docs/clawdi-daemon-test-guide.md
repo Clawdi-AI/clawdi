@@ -178,6 +178,15 @@ The daemon log shows an SSE invalidation followed by a local scan and
 projection upload. `cmp` stays silent and exits 0. If SSE was disconnected,
 the five-minute strong-ETag complete Agent-Project listing catches the missed
 revision; failed, truncated, or unfenced listings never authorize cleanup.
+The backend reads current caller and visible-owner revisions from PostgreSQL
+before returning 304, including for Agent-bound keys whose authentication
+snapshot may still be cached. The ETag keeps the numeric revision first for
+CLI 0.13.13, then binds the deterministic cross-project order and the complete
+visible set's Project name/kind/origin-Agent and machine-name metadata. Every
+metadata-only page retains the same ETag, and page 2 always returns its body.
+Requests with `include_content=true` ignore conditional validators and return
+200 without ETag because transient object-storage reads can produce partial
+`content=null` results; such responses are never valid cleanup evidence.
 Deleting the local `test-skill` directory then removes the Cloud projection;
 no Cloud event may recreate the directory.
 

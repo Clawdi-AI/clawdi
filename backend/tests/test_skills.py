@@ -685,11 +685,25 @@ async def test_list_skills_etag_binds_revision_and_project(
     etag_a = list_a.headers.get("ETag")
     assert etag_a is not None
     assert etag_a.startswith('"') and etag_a.endswith('"')
-    # ETag carries `<revision>:<project_id>`. Sanity-check both
-    # components are present so a regression to plain
-    # `<revision>` would fail the test.
-    assert ":" in etag_a.strip('"'), f"expected revision:project tag, got {etag_a}"
+    # Keep the numeric revision first for CLI 0.13.13 parsing, then salt the
+    # corrected ordering/metadata identity so pre-fix validators cannot mask
+    # the new representation.
+    etag_parts = etag_a.strip('"').split(":")
+    assert etag_parts[0].isdigit()
+    assert etag_parts[1] == "skills-v2"
     assert project_id in etag_a, f"project_id missing from ETag {etag_a}"
+
+    legacy_etag = (
+        '"'
+        + ":".join([etag_parts[0], etag_parts[2], etag_parts[3], etag_parts[4], etag_parts[6]])
+        + '"'
+    )
+    legacy_replay = await client.get(
+        f"/v1/skills?project_id={project_id}",
+        headers={"If-None-Match": legacy_etag},
+    )
+    assert legacy_replay.status_code == 200, legacy_replay.text
+    assert legacy_replay.headers["etag"] == etag_a
 
     # Replaying the same ETag against the same project returns 304.
     r304 = await client.get(
@@ -763,33 +777,29 @@ async def test_list_skills_etag_binds_revision_and_project(
 
 
 @pytest.mark.asyncio
-async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
+async def test_bound_api_key_skills_etag_reads_current_db_revision(
     client: httpx.AsyncClient,
+    db_session,
     seed_user,
     project_id: str,
-    monkeypatch: pytest.MonkeyPatch,
 ):
-    """Hot daemon reconcile path: a matching bound-key ETag should not open
-    the list handler's DB session.
+    """A bound key must not 304 from its TTL-cached auth revision snapshot."""
+    from sqlalchemy import update
 
-    Auth has already resolved the env-bound API key to exactly one Agent
-    Project. For that caller shape the collection ETag is derivable from the
-    auth snapshot, so the 304 path should avoid the DB-backed project
-    visibility and listing work entirely.
-    """
     from app.core.auth import AuthContext, get_auth_short_session
     from app.main import app
     from app.models.api_key import ApiKey
-    from app.routes import skills as skills_route
+    from app.models.user import User
 
     project_uuid = uuid.UUID(project_id)
+    stale_auth = AuthContext(
+        user=seed_user,
+        api_key=ApiKey(user_id=seed_user.id, environment_id=uuid.uuid4()),
+        api_key_project_id=project_uuid,
+    )
 
     async def _override_get_auth() -> AuthContext:
-        return AuthContext(
-            user=seed_user,
-            api_key=ApiKey(user_id=seed_user.id, environment_id=uuid.uuid4()),
-            api_key_project_id=project_uuid,
-        )
+        return stale_auth
 
     app.dependency_overrides[get_auth_short_session] = _override_get_auth
 
@@ -803,6 +813,9 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
     etag = first.headers.get("ETag")
     assert etag
     assert etag.startswith('"') and etag.endswith('"')
+    first_revision, etag_version, *_ = etag.strip('"').split(":")
+    assert int(first_revision) == stale_auth.skills_revision
+    assert etag_version == "skills-v2"
 
     # Released CLI 0.13.13 expects one ETag across every page in a complete
     # inventory read. Preserve that fence while preventing a page-1 validator
@@ -810,7 +823,6 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
     query_variants = [
         (f"{canonical_url}&q=missing", True, 304),
         (f"/v1/skills?project_id={project_id}&page=1&page_size=25", True, 304),
-        (f"{canonical_url}&include_content=true", True, 304),
         (f"/v1/skills?project_id={project_id}&page=2&page_size=200", False, 200),
     ]
     for url, etag_must_differ, replay_status in query_variants:
@@ -829,26 +841,144 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
         )
         assert replay.status_code == replay_status, (url, replay.text)
 
-    def _fail_session_factory():
-        raise AssertionError("matching bound-key skills ETag opened a DB session")
+    inline = await client.get(
+        f"{canonical_url}&include_content=true",
+        headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
+    )
+    assert inline.status_code == 200, inline.text
+    assert inline.headers.get("etag") is None
+    inline_replay = await client.get(
+        f"{canonical_url}&include_content=true",
+        headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
+    )
+    assert inline_replay.status_code == 200, inline_replay.text
+    assert inline_replay.headers.get("etag") is None
 
-    monkeypatch.setattr(skills_route, "async_session_factory", _fail_session_factory)
+    # Simulate the API-key auth cache retaining its old user snapshot while a
+    # Skill mutation commits a newer revision in PostgreSQL.
+    await db_session.execute(
+        update(User)
+        .where(User.id == seed_user.id)
+        .values(skills_revision=User.skills_revision + 1)
+        .execution_options(synchronize_session=False)
+    )
+    await db_session.commit()
+    assert stale_auth.skills_revision == int(first_revision)
 
-    cached = await client.get(
+    changed = await client.get(
         canonical_url,
         headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
     )
-    assert cached.status_code == 304, cached.text
-    assert cached.headers.get("ETag") == etag
-    assert cached.headers.get("Cache-Control") == "no-transform"
+    assert changed.status_code == 200, changed.text
+    changed_etag = changed.headers["etag"]
+    assert changed_etag != etag
+    assert int(changed_etag.strip('"').split(":", 1)[0]) == int(first_revision) + 1
 
-    weak_cached = await client.get(
-        canonical_url,
-        headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": f"W/{etag}"},
+
+@pytest.mark.asyncio
+async def test_list_skills_order_and_etag_are_stable_across_pages(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    project_id: str,
+    workspace_project,
+):
+    """Duplicate cross-project keys sort by project id with one page fence."""
+    from app.models.skill import Skill
+
+    project_ids = [uuid.UUID(project_id), workspace_project.id]
+    rows = [
+        Skill(
+            id=uuid.uuid4(),
+            user_id=seed_user.id,
+            project_id=current_project_id,
+            skill_key="same-key",
+            name=f"Skill {current_project_id}",
+            content_hash=str(index) * 64,
+        )
+        for index, current_project_id in enumerate(project_ids, start=1)
+    ]
+    db_session.add_all(reversed(rows))
+    await db_session.commit()
+
+    first = await client.get("/v1/skills", params={"page": 1, "page_size": 1})
+    second = await client.get("/v1/skills", params={"page": 2, "page_size": 1})
+    assert first.status_code == second.status_code == 200
+    assert first.headers["etag"] == second.headers["etag"]
+    listed_project_ids = [
+        first.json()["items"][0]["project_id"],
+        second.json()["items"][0]["project_id"],
+    ]
+    assert listed_project_ids == sorted(str(project) for project in project_ids)
+
+    # Compatibility debt: page 2 returns its body even when sent page 1's
+    # validator, and echoes the same collection ETag.
+    page_two_replay = await client.get(
+        "/v1/skills",
+        params={"page": 2, "page_size": 1},
+        headers={"If-None-Match": first.headers["etag"]},
     )
-    assert weak_cached.status_code == 304, weak_cached.text
-    assert weak_cached.headers.get("ETag") == etag
-    assert weak_cached.headers.get("Cache-Control") == "no-transform"
+    assert page_two_replay.status_code == 200, page_two_replay.text
+    assert page_two_replay.headers["etag"] == first.headers["etag"]
+
+
+@pytest.mark.asyncio
+async def test_list_skills_etag_covers_project_and_machine_metadata(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    environment_project,
+):
+    """Metadata-only mutations must invalidate the strong list validator."""
+    from app.models.project import PROJECT_KIND_WORKSPACE
+    from app.models.session import AgentEnvironment
+    from app.models.skill import Skill
+
+    skill = Skill(
+        user_id=seed_user.id,
+        project_id=environment_project.id,
+        skill_key="metadata",
+        name="Metadata",
+        content_hash="a" * 64,
+    )
+    db_session.add(skill)
+    await db_session.commit()
+
+    url = f"/v1/skills?project_id={environment_project.id}"
+    first = await client.get(url)
+    assert first.status_code == 200, first.text
+    first_etag = first.headers["etag"]
+    revision = first_etag.strip('"').split(":", 1)[0]
+
+    environment = await db_session.get(
+        AgentEnvironment,
+        environment_project.origin_environment_id,
+    )
+    assert environment is not None
+    environment.machine_name = "Renamed machine"
+    environment_project.name = "Renamed project"
+    await db_session.commit()
+
+    renamed = await client.get(url, headers={"If-None-Match": first_etag})
+    assert renamed.status_code == 200, renamed.text
+    renamed_item = renamed.json()["items"][0]
+    assert renamed_item["project_name"] == "Renamed project"
+    assert renamed_item["machine_name"] == "Renamed machine"
+    assert renamed.headers["etag"] != first_etag
+    assert renamed.headers["etag"].strip('"').split(":", 1)[0] == revision
+
+    renamed_etag = renamed.headers["etag"]
+    environment_project.kind = PROJECT_KIND_WORKSPACE
+    environment_project.origin_environment_id = None
+    await db_session.commit()
+    detached = await client.get(url, headers={"If-None-Match": renamed_etag})
+    assert detached.status_code == 200, detached.text
+    detached_item = detached.json()["items"][0]
+    assert detached_item["project_kind"] == PROJECT_KIND_WORKSPACE
+    assert detached_item["environment_id"] is None
+    assert detached_item["machine_name"] is None
+    assert detached.headers["etag"] != renamed_etag
+    assert detached.headers["etag"].strip('"').split(":", 1)[0] == revision
 
 
 @pytest.mark.asyncio
@@ -889,6 +1019,60 @@ async def test_list_skills_releases_db_transaction_before_inline_content_fetch(
     assert listing.status_code == 200, listing.text
     item = next(item for item in listing.json()["items"] if item["skill_key"] == "inline")
     assert item["content"] == content
+    assert listing.headers.get("etag") is None
+
+
+@pytest.mark.asyncio
+async def test_list_skills_inline_content_failure_is_unfenced_and_retried(
+    client: httpx.AsyncClient,
+    project_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A transient object-store failure must not become a reusable 304."""
+    from app.routes import skills as skills_route
+
+    content = "---\nname: retry-inline\ndescription: retry storage\n---\n# Retry\n"
+    tar_bytes, _ = tar_from_content("retry-inline", content)
+    upload = await client.post(
+        f"/v1/projects/{project_id}/skills/upload",
+        data={"skill_key": "retry-inline"},
+        files={"file": ("retry-inline.tar.gz", tar_bytes, "application/gzip")},
+    )
+    assert upload.status_code == 200, upload.text
+
+    metadata = await client.get(f"/v1/skills?project_id={project_id}")
+    assert metadata.status_code == 200, metadata.text
+    metadata_etag = metadata.headers["etag"]
+    real_file_store = skills_route.file_store
+
+    class FailingFileStore:
+        async def get(self, key: str) -> bytes:
+            raise RuntimeError(f"temporary read failure for {key}")
+
+    monkeypatch.setattr(skills_route, "file_store", FailingFileStore())
+    failed = await client.get(
+        f"/v1/skills?project_id={project_id}&include_content=true",
+        headers={"If-None-Match": metadata_etag},
+    )
+    assert failed.status_code == 200, failed.text
+    assert failed.headers.get("etag") is None
+    assert failed.headers["cache-control"] == "no-transform"
+    failed_item = next(
+        item for item in failed.json()["items"] if item["skill_key"] == "retry-inline"
+    )
+    assert failed_item["content"] is None
+
+    monkeypatch.setattr(skills_route, "file_store", real_file_store)
+    recovered = await client.get(
+        f"/v1/skills?project_id={project_id}&include_content=true",
+        headers={"If-None-Match": metadata_etag},
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.headers.get("etag") is None
+    recovered_item = next(
+        item for item in recovered.json()["items"] if item["skill_key"] == "retry-inline"
+    )
+    assert recovered_item["content"] == content
 
 
 @pytest.mark.asyncio
