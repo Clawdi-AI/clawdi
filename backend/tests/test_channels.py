@@ -3600,6 +3600,240 @@ async def test_telegram_command_sync_rejects_private_provider_base_url(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-method-capabilities",
+                "provider_token": "123456:telegram-secret",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    await _pair_telegram_chat(client, created=created, chat_id="111", chat_type="private")
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    second_pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second["id"], "ttl_seconds": 900},
+        )
+    ).json()
+    paired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 2,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": f"/bot_pair {second_pair['code']}",
+                "chat": {"id": 222, "type": "private"},
+            },
+        },
+    )
+    assert paired.json()["paired"] is True
+
+    for update_id, chat_id, callback_query_id, file_id in (
+        (3, 111, "cb-first", "file-first"),
+        (4, 222, "cb-second", "file-second"),
+    ):
+        inbound = await client.post(
+            f"/v1/channels/telegram/{created['id']}/webhook",
+            headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+            json={
+                "update_id": update_id,
+                "callback_query": {
+                    "id": callback_query_id,
+                    "data": "approve",
+                    "message": {
+                        "message_id": update_id,
+                        "chat": {"id": chat_id, "type": "private"},
+                        "document": {"file_id": file_id, "file_name": "report.pdf"},
+                    },
+                },
+            },
+        )
+        assert inbound.status_code == 200
+
+    cases = (
+        {
+            "name": "valid chat-scoped method",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "text": "allowed"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "unknown method with bound chat",
+            "method": "futureGlobalMutation",
+            "json": {"chat_id": "111"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "unknown method without chat",
+            "method": "futureGlobalMutation",
+            "json": {},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "known global mutation with smuggled chat",
+            "method": "setMyProfilePhoto",
+            "json": {"chat_id": "111", "photo": "attach://photo"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "known chat method without chat",
+            "method": "sendMessage",
+            "json": {"text": "missing target"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "chat owned by another link",
+            "method": "sendMessage",
+            "json": {"chat_id": "222", "text": "blocked"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "source chat owned by another link",
+            "method": "forwardMessage",
+            "json": {"chat_id": "111", "from_chat_id": "222", "message_id": 1},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "reply chat owned by another link",
+            "method": "sendMessage",
+            "json": {
+                "chat_id": "111",
+                "text": "blocked reply",
+                "reply_parameters": {"chat_id": "222", "message_id": 1},
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "query-encoded reply chat owned by another link",
+            "method": "sendMessage",
+            "params": {
+                "chat_id": "111",
+                "text": "blocked reply",
+                "reply_parameters": json.dumps({"chat_id": "222", "message_id": 1}),
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "sender chat owned by another link",
+            "method": "banChatSenderChat",
+            "json": {"chat_id": "111", "sender_chat_id": "222"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "callback query owned by another link",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "callback_query_id": "cb-second", "text": "blocked"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "callback query owned by same link",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "callback_query_id": "cb-first", "text": "allowed"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "callback answer owned by another link",
+            "method": "answerCallbackQuery",
+            "json": {"callback_query_id": "cb-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "callback answer owned by same link",
+            "method": "answerCallbackQuery",
+            "json": {"callback_query_id": "cb-first"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "file owned by another link",
+            "method": "getFile",
+            "json": {"file_id": "file-second"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "file owned by same link",
+            "method": "getFile",
+            "json": {"file_id": "file-first"},
+            "status": 200,
+            "forwarded": True,
+        },
+        {
+            "name": "unscoped business connection",
+            "method": "sendMessage",
+            "json": {
+                "chat_id": "111",
+                "business_connection_id": "business-other",
+                "text": "blocked",
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "unscoped inline message",
+            "method": "editMessageText",
+            "json": {"chat_id": "111", "inline_message_id": "inline-other", "text": "blocked"},
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "shared Stars mutation",
+            "method": "sendMessage",
+            "json": {"chat_id": "111", "allow_paid_broadcast": True, "text": "blocked"},
+            "status": 403,
+            "forwarded": False,
+        },
+    )
+    for case in cases:
+        _reset_fake_provider_client({"ok": True, "result": True})
+        request_kwargs = {"params": case["params"]} if "params" in case else {"json": case["json"]}
+        response = await client.request(
+            "GET" if "params" in case else "POST",
+            _telegram_bot_path(created, case["method"]),
+            headers=_telegram_agent_headers(created),
+            **request_kwargs,
+        )
+        assert response.status_code == case["status"], case["name"]
+        assert bool(_FakeProviderClient.calls) is case["forwarded"], case["name"]
+
+
+@pytest.mark.asyncio
 async def test_telegram_bot_profile_shadow_is_account_scoped(client: httpx.AsyncClient):
     account_a = (
         await client.post(
@@ -3678,6 +3912,155 @@ async def test_telegram_bot_profile_shadow_is_link_scoped_on_shared_account(
 
     assert first_get.json() == {"ok": True, "result": {"name": "First link"}}
     assert second_get.json() == {"ok": True, "result": {"name": ""}}
+
+
+@pytest.mark.asyncio
+async def test_telegram_chat_menu_button_is_scoped_and_replayed_per_link(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": True})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-shared-menu-button",
+                "provider_token": "123456:telegram-secret",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    await _pair_telegram_chat(client, created=created, chat_id="777", chat_type="private")
+    first_default = {"type": "web_app", "text": "First", "web_app": {"url": "https://a.test"}}
+    first_chat = {"type": "commands"}
+    invalid_menu = await client.post(
+        _telegram_bot_path(created, "setChatMenuButton"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "menu_button": {
+                "type": "web_app",
+                "text": "Unsafe",
+                "web_app": {"url": "http://a.test"},
+            }
+        },
+    )
+    assert invalid_menu.status_code == 400
+    assert _FakeProviderClient.calls == []
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setChatMenuButton"),
+            headers=_telegram_agent_headers(created),
+            json={"menu_button": first_default},
+        )
+    ).status_code == 200
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setChatMenuButton"),
+            headers=_telegram_agent_headers(created),
+            json={"chat_id": "777", "menu_button": first_chat},
+        )
+    ).status_code == 200
+    first_get = await client.post(
+        _telegram_bot_path(created, "getChatMenuButton"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "777"},
+    )
+    assert first_get.json() == {"ok": True, "result": first_chat}
+
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    blocked_second_get = await client.post(
+        _telegram_bot_path(second, "getChatMenuButton", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={"chat_id": "777"},
+    )
+    assert blocked_second_get.status_code == 403
+    second_default = {
+        "type": "web_app",
+        "text": "Second",
+        "web_app": {"url": "https://b.test"},
+    }
+    _reset_fake_provider_client({"ok": True, "result": True})
+    assert (
+        await client.post(
+            _telegram_bot_path(second, "setChatMenuButton", account_id=created["id"]),
+            headers=_telegram_agent_headers(second),
+            json={"menu_button": second_default},
+        )
+    ).status_code == 200
+    assert _FakeProviderClient.calls == []
+
+    second_pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second["id"], "ttl_seconds": 900},
+        )
+    ).json()
+    _reset_fake_provider_client({"ok": True, "result": True})
+    repaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 2,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": f"/bot_pair {second_pair['code']}",
+                "chat": {"id": 777, "type": "private"},
+            },
+        },
+    )
+    assert repaired.status_code == 200
+    assert [
+        call["json"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/setChatMenuButton")
+    ] == [{"chat_id": "777", "menu_button": second_default}]
+    blocked_first_get = await client.post(
+        _telegram_bot_path(created, "getChatMenuButton"),
+        headers=_telegram_agent_headers(created),
+        json={"chat_id": "777"},
+    )
+    second_get = await client.post(
+        _telegram_bot_path(second, "getChatMenuButton", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={"chat_id": "777"},
+    )
+    assert blocked_first_get.status_code == 403
+    assert second_get.json() == {"ok": True, "result": second_default}
+
+    _reset_fake_provider_client({"ok": True, "result": True})
+    unpaired = await client.post(
+        f"/v1/channels/telegram/{created['id']}/webhook",
+        headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+        json={
+            "update_id": 3,
+            "message": {
+                "message_id": 3,
+                "from": {"id": 4242, "is_bot": False, "first_name": "Pairer"},
+                "text": "/bot_unpair",
+                "chat": {"id": 777, "type": "private"},
+            },
+        },
+    )
+    assert unpaired.status_code == 200
+    assert [
+        call["json"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/setChatMenuButton")
+    ] == [{"chat_id": "777", "menu_button": {"type": "default"}}]
 
 
 @pytest.mark.asyncio
@@ -3787,6 +4170,19 @@ async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
         headers=_telegram_agent_headers(created),
         json={"scope": {"type": "chat", "chat_id": 99}},
     )
+    query_wrong_scope = await client.get(
+        _telegram_bot_path(created, "getMyCommands"),
+        headers=_telegram_agent_headers(created),
+        params={"scope": json.dumps({"type": "chat", "chat_id": 99})},
+    )
+    unknown_scope = await client.post(
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "commands": [{"command": "future", "description": "Future"}],
+            "scope": {"type": "future_global_scope", "chat_id": 42},
+        },
+    )
 
     assert set_commands.status_code == 200
     assert get_commands.json() == {
@@ -3795,6 +4191,9 @@ async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
     }
     assert wrong_scope.status_code == 403
     assert wrong_scope.json()["ok"] is False
+    assert query_wrong_scope.status_code == 403
+    assert unknown_scope.status_code == 400
+    assert unknown_scope.json()["description"] == "Bad Request: invalid scope"
 
 
 @pytest.mark.asyncio
@@ -4226,7 +4625,7 @@ async def test_telegram_generic_bot_api_proxies_only_bound_chats(
         blocked_reply.json()["description"] == "Forbidden: referenced chat is not bound to this bot"
     )
     assert no_chat.status_code == 403
-    assert no_chat.json()["description"] == "Forbidden: method requires a bound chat_id"
+    assert no_chat.json()["description"] == "Forbidden: method is not available to this bot"
     assert _FakeProviderClient.calls[0]["url"].endswith(
         "/bot123456:telegram-secret/editMessageText"
     )
@@ -7150,9 +7549,21 @@ async def test_telegram_webhook_unpair_sends_user_reply(
 
     assert unpaired.status_code == 200
     assert unpaired.json()["unpaired"] is True
-    assert [call["json"]["text"] for call in _FakeProviderClient.calls] == [
+    assert [
+        call["json"]["text"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/sendMessage")
+    ] == [
         "Paired! This chat is now connected to your agent.",
         "Unpaired. This chat is no longer connected to an agent.",
+    ]
+    assert [
+        call["json"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/setChatMenuButton")
+    ] == [
+        {"chat_id": "987654323", "menu_button": {"type": "default"}},
+        {"chat_id": "987654323", "menu_button": {"type": "default"}},
     ]
 
 
@@ -7199,7 +7610,10 @@ async def test_telegram_webhook_pair_reply_failure_does_not_roll_back_binding(
     bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json()[0]["external_chat_id"] == "987654324"
-    assert len(_FailingProviderClient.calls) == 1
+    assert [call["url"].rsplit("/", 1)[-1] for call in _FailingProviderClient.calls] == [
+        "sendMessage",
+        "setChatMenuButton",
+    ]
 
 
 @pytest.mark.asyncio
