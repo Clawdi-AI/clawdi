@@ -76,6 +76,7 @@ log = logging.getLogger(__name__)
 PAIR_COMMAND = "/bot_pair"
 UNPAIR_COMMAND = "/bot_unpair"
 PAIR_CODE_PATTERN = re.compile(r"^PAIR[A-Z0-9]{8,}$")
+TELEGRAM_BOT_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{5,32}bot$", re.IGNORECASE)
 DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
     {
         "name": "bot_pair",
@@ -293,7 +294,14 @@ async def configure_telegram_provider_webhook(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="telegram bot token or webhook was rejected",
         )
-    return username.strip().lstrip("@") if isinstance(username, str) else None
+    return normalize_telegram_bot_username(username)
+
+
+def normalize_telegram_bot_username(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    username = value.strip().lstrip("@")
+    return username if TELEGRAM_BOT_USERNAME_PATTERN.fullmatch(username) else None
 
 
 async def store_channel_secrets(

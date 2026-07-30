@@ -245,7 +245,9 @@ async def telegram_bot_api(
             return command_error
         return _telegram_ok(_get_telegram_commands(agent.link, params=params))
 
-    profile_result = await _handle_telegram_profile_shadow(account, agent.link, method_key, params)
+    profile_result = await _handle_telegram_profile_shadow(
+        db, account, agent.link, method_key, params
+    )
     if profile_result is not None:
         await db.commit()
         return profile_result
@@ -840,6 +842,7 @@ async def _post_telegram_command_payload(
 
 
 async def _handle_telegram_profile_shadow(
+    db: AsyncSession,
     account: Any,
     link: ChannelBotAgentLink,
     method_key: str,
@@ -869,7 +872,18 @@ async def _handle_telegram_profile_shadow(
         "getmydefaultadministratorrights",
         "getchatmenubutton",
     }:
-        return _telegram_ok(_telegram_profile_get_value(account, link, method_key, params))
+        allow_legacy_fallback = await _telegram_profile_legacy_fallback_is_safe(
+            db, account_id=link.account_id
+        )
+        return _telegram_ok(
+            _telegram_profile_get_value(
+                account,
+                link,
+                method_key,
+                params,
+                allow_legacy_fallback=allow_legacy_fallback,
+            )
+        )
     return None
 
 
@@ -932,6 +946,8 @@ def _telegram_profile_get_value(
     link: ChannelBotAgentLink,
     method_key: str,
     params: dict[str, Any],
+    *,
+    allow_legacy_fallback: bool,
 ) -> dict[str, Any]:
     field_key = {
         "getmyname": "name",
@@ -949,7 +965,7 @@ def _telegram_profile_get_value(
     profile_shadow = profile if isinstance(profile, dict) else {}
     profile_key = _telegram_profile_key(params, field_key)
     stored = profile_shadow.get(profile_key)
-    if stored is None:
+    if stored is None and allow_legacy_fallback:
         account_config = account.config if isinstance(account.config, dict) else {}
         legacy_profile = account_config.get("telegram_bot_profile")
         if isinstance(legacy_profile, dict):
@@ -963,6 +979,23 @@ def _telegram_profile_get_value(
     if method_key == "getmydefaultadministratorrights":
         return stored if isinstance(stored, dict) else {}
     return stored if isinstance(stored, dict) else {"type": "default"}
+
+
+async def _telegram_profile_legacy_fallback_is_safe(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+) -> bool:
+    result = await db.execute(
+        select(ChannelBotAgentLink.id)
+        .where(
+            ChannelBotAgentLink.account_id == account_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+        )
+        .limit(2)
+    )
+    return len(result.scalars().all()) == 1
 
 
 def _telegram_profile_key(params: dict[str, Any], field_key: str) -> str:

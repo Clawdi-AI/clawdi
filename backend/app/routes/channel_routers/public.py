@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 from urllib.parse import quote
 from uuid import UUID
@@ -101,6 +100,7 @@ from app.services.channels import (
     hash_token,
     list_owned_active_bot_agent_links,
     list_owned_active_bot_agent_links_for_agent,
+    normalize_telegram_bot_username,
     rotate_bot_agent_link_token,
     store_channel_secrets,
     sync_channel_commands,
@@ -114,8 +114,6 @@ from app.services.whatsapp_baileys import (
     whatsapp_agent_websocket_url,
     whatsapp_media_proxy_base_url,
 )
-
-TELEGRAM_USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9_]{5,32}$")
 
 router = APIRouter(prefix="/channels", tags=["channels"])
 
@@ -549,7 +547,7 @@ async def create_channel(
                 webhook_url=channel_webhook_url(account.id, body.provider),
                 webhook_secret=webhook_secret,
             )
-            if bot_username is not None and TELEGRAM_USERNAME_PATTERN.fullmatch(bot_username):
+            if bot_username is not None:
                 config = dict(account.config) if isinstance(account.config, dict) else {}
                 config["bot_username"] = bot_username
                 account.config = config
@@ -1311,8 +1309,7 @@ def _telegram_bot_username(account: ChannelAccount) -> str | None:
     value = account.config.get("bot_username")
     if not isinstance(value, str):
         return None
-    username = value.strip().lstrip("@")
-    return username if TELEGRAM_USERNAME_PATTERN.fullmatch(username) else None
+    return normalize_telegram_bot_username(value)
 
 
 def _sanitize_activity_details(value: Any, *, depth: int = 0) -> Any:

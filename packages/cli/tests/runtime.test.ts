@@ -5697,6 +5697,65 @@ exit 64
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
 	});
 
+	it("reconciles environment-scoped hosted bundle channel create, rotation, and removal", () => {
+		const accountKey = "clawdi_00000000000000000000000000000001";
+		const agentRef = `secret://channels/telegram/${accountKey}/agent-token`;
+		const placeholderRef = `secret://channels/telegram/${accountKey}/placeholder-token`;
+		const placeholder = "999999999:0123456789abcdef0123456789abcdef";
+		const base: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_bundle_channel",
+				environmentId: "env_bundle_channel",
+				instanceId: "iid_bundle_channel",
+				generation: 1,
+				issuedAt: "2026-07-30T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: true }, hermes: { enabled: false } },
+			},
+			source: "remote-datasource",
+			sourcePath: "https://cloud-api.test/v1/runtime/manifest",
+			offline: false,
+		};
+		const binding: RuntimeBundleChannelBinding = {
+			provider: "telegram",
+			accountKey,
+			agentTokenSecretRef: agentRef,
+			placeholderTokenSecretRef: placeholderRef,
+		};
+		const active = applyRuntimeBundleChannelsToManifestLoad({
+			...base,
+			channelBindings: [binding],
+			secretValues: { [agentRef]: "agent-token-v1", [placeholderRef]: placeholder },
+			sourceRevision: "a".repeat(64),
+		});
+		const rotated = applyRuntimeBundleChannelsToManifestLoad({
+			...base,
+			channelBindings: [binding],
+			secretValues: { [agentRef]: "agent-token-v2", [placeholderRef]: placeholder },
+			sourceRevision: "b".repeat(64),
+		});
+		const removed = applyRuntimeBundleChannelsToManifestLoad({
+			...base,
+			channelBindings: [],
+			secretValues: {},
+			sourceRevision: "c".repeat(64),
+		});
+
+		expect(active.manifest.projection?.channels).toMatchObject({
+			telegram: { defaultAccount: accountKey, accounts: { [accountKey]: { enabled: true } } },
+		});
+		expect(active.manifest.egressProfiles?.profiles).toHaveLength(2);
+		expect(JSON.stringify(active.manifest)).not.toContain("agent-token-v1");
+		expect(JSON.stringify(active)).not.toContain("provider-token");
+		expect(rotated.sourceRevision).toBe("b".repeat(64));
+		expect(rotated.secretValues?.[agentRef]).toBe("agent-token-v2");
+		expect(removed.manifest.projection?.channels).toEqual({});
+		expect(removed.manifest.egressProfiles?.profiles).toEqual([]);
+		expect(removed.manifest.runtimes.openclaw?.run?.secretEnv ?? {}).toEqual({});
+		expect(removed.secretValues).toEqual({});
+	});
+
 	it("merges channel secrets into source-level secretValues during pure projection", () => {
 		const loaded: RuntimeManifestLoad = {
 			manifest: {
@@ -5815,85 +5874,6 @@ exit 64
 			discord: { enabled: true },
 		});
 		expect(JSON.stringify(projected.manifest.projection?.channels ?? {})).not.toContain("whatsapp");
-	});
-
-	it("isolates two Telegram links on one account across config, secrets, and routing", () => {
-		const loaded: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_shared_telegram",
-				environmentId: "env_shared_telegram",
-				instanceId: "iid_shared_telegram",
-				generation: 1,
-				issuedAt: "2026-07-30T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: true }, hermes: { enabled: false } },
-			},
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/manifest",
-		};
-		const accountId = "acct-telegram-shared";
-		const projected = applyRuntimeChannelsToManifestLoad(loaded, {
-			channels: [
-				{
-					id: accountId,
-					provider: "telegram",
-					name: "Shared bot",
-					status: "active",
-					visibility: "private",
-					runtime_links: [
-						{
-							id: "link-alpha-0001",
-							account_id: accountId,
-							agent_id: "agent-alpha",
-							status: "active",
-							agent_token: "agent-token-alpha",
-						},
-						{
-							id: "link-beta-0002",
-							account_id: accountId,
-							agent_id: "agent-beta",
-							status: "active",
-							agent_token: "agent-token-beta",
-						},
-					],
-					runtime_credentials: [],
-				},
-			],
-			source: "remote-datasource",
-			sourcePath: "https://runtime.test/channels",
-		});
-		const telegram = projected.manifest.projection?.channels?.telegram as {
-			accounts: Record<string, { botToken: { id: string } }>;
-		};
-		const accountEntries = Object.entries(telegram.accounts);
-		expect(accountEntries).toHaveLength(2);
-		expect(accountEntries.map(([key]) => key)).toEqual([
-			"clawdi_accttelegram_link_linkalpha000",
-			"clawdi_accttelegram_link_linkbeta0002",
-		]);
-		expect(new Set(accountEntries.map(([, config]) => config.botToken.id)).size).toBe(2);
-		expect(projected.secretValues).toMatchObject({
-			"secret://channels/telegram/clawdi_accttelegram/links/link-alpha-0001/agent-token":
-				"agent-token-alpha",
-			"secret://channels/telegram/clawdi_accttelegram/links/link-beta-0002/agent-token":
-				"agent-token-beta",
-		});
-		const profiles = projected.manifest.egressProfiles?.profiles ?? [];
-		expect(profiles).toHaveLength(4);
-		const routingRefs = profiles.map(
-			(profile) =>
-				(profile.rewrite as { setHeaders: { authorization: { secretRef: string } } }).setHeaders
-					.authorization.secretRef,
-		);
-		expect(new Set(routingRefs)).toEqual(
-			new Set([
-				"secret://channels/telegram/clawdi_accttelegram/links/link-alpha-0001/agent-token",
-				"secret://channels/telegram/clawdi_accttelegram/links/link-beta-0002/agent-token",
-			]),
-		);
-		expect(JSON.stringify(projected.manifest)).not.toContain("agent-token-alpha");
-		expect(JSON.stringify(projected.manifest)).not.toContain("agent-token-beta");
 	});
 
 	it("gates WhatsApp runtime channel projection until upstream support is ready", () => {

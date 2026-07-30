@@ -19,6 +19,7 @@ describe("hosted channel instructions and gates", () => {
 		expect(pairCodeExpired(deadline, Date.parse("2026-07-30T11:59:59Z"))).toBe(false);
 		expect(pairCodeExpired(deadline, Date.parse(deadline))).toBe(true);
 		expect(pairCodeExpired(deadline, Date.parse("2026-07-30T12:00:01Z"))).toBe(true);
+		expect(pairCodeExpired("not-a-timestamp", Date.parse(deadline))).toBe(true);
 	});
 
 	test("keeps unavailable providers out of direct agent linking", () => {

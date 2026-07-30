@@ -294,6 +294,34 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
     ]
 
 
+def test_runtime_source_never_decrypts_or_projects_channel_provider_token(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    account, _link = batch.channels[ENV_ID][0]
+    account.encrypted_provider_token = b"real-provider-token-ciphertext"
+    account.provider_token_nonce = b"real-provider-token-nonce"
+    decrypt_calls: list[tuple[bytes, bytes]] = []
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        decrypt_calls.append((ciphertext, nonce))
+        return "projected-secret"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+    bundle = render_runtime_bundle(
+        render_runtime_source(
+            batch,
+            environment_id=ENV_ID,
+            public_api_url="https://cloud.test/",
+            vault_key_identity="vault-key-generation-1",
+            decrypt_secrets=True,
+        )
+    )
+
+    assert (b"real-provider-token-ciphertext", b"real-provider-token-nonce") not in decrypt_calls
+    assert "real-provider-token" not in json.dumps(bundle)
+
+
 def test_runtime_bundle_omits_legacy_apply_generation_and_tracks_explicit_apply_only_changes() -> (
     None
 ):

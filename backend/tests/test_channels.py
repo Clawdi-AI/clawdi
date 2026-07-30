@@ -75,6 +75,7 @@ from app.services.channels import (
     extract_discord_routing_key,
     generate_agent_token,
     hash_token,
+    normalize_telegram_bot_username,
     parse_pair_command,
     record_discord_dispatch,
     send_provider_outbound_payload,
@@ -3680,6 +3681,87 @@ async def test_telegram_bot_profile_shadow_is_link_scoped_on_shared_account(
 
 
 @pytest.mark.asyncio
+async def test_shared_account_runtime_placeholder_authenticates_each_link_token(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-shared-runtime-auth",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    sdk_path = _telegram_bot_path(created, "getMe")
+
+    first_auth = await client.post(sdk_path, headers=_telegram_agent_headers(created), json={})
+    second_auth = await client.post(sdk_path, headers=_telegram_agent_headers(second), json={})
+
+    assert first_auth.status_code == 200
+    assert second_auth.status_code == 200
+    assert first_auth.json()["ok"] is True
+    assert second_auth.json()["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_telegram_legacy_profile_fallback_only_applies_to_single_link(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-legacy-profile",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    account.config = {"telegram_bot_profile": {"name:": "Legacy account name"}}
+    await db_session.commit()
+    single_link = await client.post(
+        _telegram_bot_path(created, "getMyName"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    first_after_share = await client.post(
+        _telegram_bot_path(created, "getMyName"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    second_after_share = await client.post(
+        _telegram_bot_path(second, "getMyName", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={},
+    )
+
+    assert single_link.json() == {"ok": True, "result": {"name": "Legacy account name"}}
+    assert first_after_share.json() == {"ok": True, "result": {"name": ""}}
+    assert second_after_share.json() == {"ok": True, "result": {"name": ""}}
+
+
+@pytest.mark.asyncio
 async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
     client: httpx.AsyncClient,
 ):
@@ -6640,7 +6722,7 @@ async def test_telegram_pair_code_omits_link_metadata_for_invalid_username(
             json={
                 "provider": "telegram",
                 "name": "telegram-no-username",
-                "config": {"bot_username": "bad!"},
+                "config": {"bot_username": "ValidUser"},
             },
         )
     ).json()
@@ -6962,6 +7044,58 @@ async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
 
 
 @pytest.mark.asyncio
+async def test_telegram_start_claims_explicit_agent_link_and_redelivery_is_idempotent(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-explicit-start-pair",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": second["id"], "ttl_seconds": 900},
+        )
+    ).json()
+    payload = {
+        "update_id": 7101,
+        "message": {
+            "message_id": 91,
+            "text": f"/start@Clawdi_Test_Bot {pair['code']}",
+            "chat": {"id": 987654399, "type": "private"},
+            "from": {"id": 987654399, "is_bot": False},
+        },
+    }
+    webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+
+    first = await client.post(webhook_url, headers=headers, json=payload)
+    redelivery = await client.post(webhook_url, headers=headers, json=payload)
+    bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
+
+    assert first.status_code == 200
+    assert first.json()["paired"] is True
+    assert redelivery.status_code == 200
+    assert redelivery.json()["paired"] is False
+    assert len(bindings.json()) == 1
+    assert bindings.json()[0]["agent_link_id"] == second["id"]
+
+
+@pytest.mark.asyncio
 async def test_telegram_webhook_rejects_invalid_secret(client: httpx.AsyncClient):
     created = (
         await client.post(
@@ -7005,6 +7139,14 @@ def test_parse_pair_command_matches_strict_bot_shapes():
     assert unknown is not None
     assert unknown.kind == "unknown"
     assert unknown.command == "/bot_foo"
+
+
+def test_normalize_telegram_bot_username_requires_bot_suffix():
+    assert normalize_telegram_bot_username(" @Clawdi_Test_Bot ") == "Clawdi_Test_Bot"
+    assert normalize_telegram_bot_username("ClawdiPublicBot") == "ClawdiPublicBot"
+    assert normalize_telegram_bot_username("ValidUser") is None
+    assert normalize_telegram_bot_username("bad!") is None
+    assert normalize_telegram_bot_username("bot") is None
 
 
 def test_discord_gateway_helpers_build_protocol_payloads():

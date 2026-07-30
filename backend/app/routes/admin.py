@@ -43,6 +43,7 @@ from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
 from app.models.app_setting import AppSetting
 from app.models.channel import (
+    CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDERS,
     ChannelAccount,
 )
@@ -100,6 +101,7 @@ from app.services.channel_config import validate_channel_account_config_urls
 from app.services.channels import (
     archive_channel_account,
     channel_webhook_url,
+    configure_telegram_provider_webhook,
     encrypt_optional_token,
     generate_webhook_secret,
     hash_token,
@@ -1047,6 +1049,15 @@ async def admin_create_channel(
     db: AsyncSession = Depends(get_session),
 ) -> AdminChannelCreatedResponse:
     await validate_channel_account_config_urls(provider=body.provider, config=body.config)
+    if (
+        body.provider == CHANNEL_PROVIDER_TELEGRAM
+        and body.visibility == "public"
+        and not body.provider_token
+    ):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "public Telegram channels require a provider token",
+        )
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     ciphertext, nonce = encrypt_optional_token(body.provider_token)
     webhook_secret = generate_webhook_secret()
@@ -1063,6 +1074,21 @@ async def admin_create_channel(
     db.add(account)
     try:
         await db.flush()
+        if body.provider == CHANNEL_PROVIDER_TELEGRAM and body.provider_token:
+            bot_username = await configure_telegram_provider_webhook(
+                provider_token=body.provider_token,
+                webhook_url=channel_webhook_url(account.id, body.provider),
+                webhook_secret=webhook_secret,
+            )
+            if body.visibility == "public" and bot_username is None:
+                raise HTTPException(
+                    status.HTTP_502_BAD_GATEWAY,
+                    "Telegram bot identity has no valid bot username",
+                )
+            if bot_username is not None:
+                config = dict(account.config) if isinstance(account.config, dict) else {}
+                config["bot_username"] = bot_username
+                account.config = config
         await store_channel_secrets(db, account=account, secrets_by_name=body.secrets)
         record_control_plane_audit(
             db,
