@@ -108,14 +108,24 @@ class Settings(BaseSettings):
 
     @field_validator("clerk_pem_public_key")
     @classmethod
-    def normalize_pem_newlines(cls, value: str) -> str:
-        """Accept PEM keys carrying escaped newlines.
+    def decode_pem_public_key(cls, value: str) -> str:
+        """Accept the PEM either verbatim or base64-encoded.
 
-        Docker env files cannot represent literal newlines, so any
-        deployment that passes the key through one delivers `\n` as two
-        characters, which no PEM parser accepts.
+        Multi-line PEM cannot survive dotenv/env-file transports intact,
+        so deployments provide it base64-encoded on a single line.
         """
-        return value.replace("\\n", "\n")
+        candidate = value.strip()
+        if candidate and "-----BEGIN" not in candidate:
+            import base64
+            import binascii
+
+            try:
+                candidate = base64.b64decode(candidate, validate=True).decode(
+                    "utf-8"
+                )
+            except (binascii.Error, UnicodeDecodeError):
+                pass  # not base64 (e.g. test fixtures); leave unchanged
+        return candidate
 
     @field_validator("clerk_jwt_issuer")
     @classmethod
