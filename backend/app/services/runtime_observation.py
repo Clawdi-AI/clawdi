@@ -1082,6 +1082,7 @@ async def read_runtime_observations(
         .all()
     )
     matching_prefix: list[V2RuntimeObservationInbox] = []
+    skipped_mismatch_position = decoded.stream_position
     for event in events:
         if (
             event.generation != expected_apply_identity.generation
@@ -1089,11 +1090,18 @@ async def read_runtime_observations(
             or event.apply_receipt_id != expected_apply_identity.apply_receipt_id
             or event.boot_nonce != expected_apply_identity.boot_nonce
         ):
+            if matching_prefix:
+                break
+            skipped_mismatch_position = event.id
+            continue
+        # Keep the first matching event after an obsolete leading tuple for the
+        # next read, whose returned cursor can be durably ACKed first.
+        if skipped_mismatch_position != decoded.stream_position:
             break
         matching_prefix.append(event)
     has_more = len(matching_prefix) > limit
     page = matching_prefix[:limit]
-    next_position = page[-1].id if page else decoded.stream_position
+    next_position = page[-1].id if page else skipped_mismatch_position
     heads = list(
         (
             await db.execute(

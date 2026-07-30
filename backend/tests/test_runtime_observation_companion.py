@@ -1862,6 +1862,244 @@ async def test_snapshot_and_high_water_share_one_repeatable_read_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_read_advances_over_leading_mismatch_without_crossing_matching_event(
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    base = datetime.now(UTC)
+    registration = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="leading-mismatch-controller",
+    )
+    stale = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="stale-session",
+            sequence=1,
+            captured_at=base,
+        ),
+        received_at=base,
+    )
+    rotated = _rotated_identity()
+    matching = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="rotated-session",
+            sequence=1,
+            captured_at=base + timedelta(seconds=1),
+            generation=rotated.generation,
+            manifest_etag=rotated.manifest_etag,
+            apply_receipt_id=rotated.apply_receipt_id,
+            boot_nonce=rotated.boot_nonce,
+        ),
+        received_at=base + timedelta(seconds=1),
+    )
+    stale_tail = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="stale-session",
+            sequence=2,
+            captured_at=base + timedelta(seconds=2),
+        ),
+        received_at=base + timedelta(seconds=2),
+    )
+
+    skipped_page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="leading-mismatch-controller",
+        expected_apply_identity=rotated,
+        after_cursor=registration["cursor"],
+        limit=100,
+    )
+
+    assert skipped_page["events"] == []
+    assert (
+        runtime_observation_service.decode_runtime_observation_cursor(
+            skipped_page["nextCursor"]
+        ).stream_position
+        == stale.stream_position
+    )
+    assert (
+        runtime_observation_service.decode_runtime_observation_cursor(
+            skipped_page["streamHighWaterCursor"]
+        ).stream_position
+        == stale_tail.stream_position
+    )
+
+    matching_page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="leading-mismatch-controller",
+        expected_apply_identity=rotated,
+        after_cursor=skipped_page["nextCursor"],
+        limit=100,
+    )
+
+    assert [event["evidenceReference"]["eventId"] for event in matching_page["events"]] == [
+        matching.event_id
+    ]
+    assert (
+        runtime_observation_service.decode_runtime_observation_cursor(
+            matching_page["nextCursor"]
+        ).stream_position
+        == matching.stream_position
+    )
+
+    resumed_stale_page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="leading-mismatch-controller",
+        expected_apply_identity=_expected_identity(),
+        after_cursor=matching_page["nextCursor"],
+        limit=100,
+    )
+    assert [event["evidenceReference"]["eventId"] for event in resumed_stale_page["events"]] == [
+        stale_tail.event_id
+    ]
+
+
+@pytest.mark.asyncio
+async def test_read_treats_same_generation_different_receipt_as_identity_mismatch(
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    base = datetime.now(UTC)
+    registration = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="same-generation-receipt-controller",
+    )
+    stale = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="old-receipt-session",
+            captured_at=base,
+        ),
+        received_at=base,
+    )
+    expected = RuntimeApplyIdentity(
+        generation=1,
+        manifest_etag=_MANIFEST_ETAG,
+        apply_receipt_id="apply-receipt-00000002",
+        boot_nonce=_BOOT_NONCE,
+    )
+    matching = await ingest_runtime_observation(
+        db_session,
+        environment_id=environment.id,
+        value=_payload(
+            boot_session_id="new-receipt-session",
+            captured_at=base + timedelta(seconds=1),
+            apply_receipt_id=expected.apply_receipt_id,
+            boot_nonce=expected.boot_nonce,
+        ),
+        received_at=base + timedelta(seconds=1),
+    )
+
+    skipped_page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="same-generation-receipt-controller",
+        expected_apply_identity=expected,
+        after_cursor=registration["cursor"],
+        limit=100,
+    )
+    assert skipped_page["events"] == []
+    assert (
+        runtime_observation_service.decode_runtime_observation_cursor(
+            skipped_page["nextCursor"]
+        ).stream_position
+        == stale.stream_position
+    )
+
+    matching_page = await read_runtime_observations(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="same-generation-receipt-controller",
+        expected_apply_identity=expected,
+        after_cursor=skipped_page["nextCursor"],
+        limit=100,
+    )
+    assert [event["evidenceReference"]["eventId"] for event in matching_page["events"]] == [
+        matching.event_id
+    ]
+
+
+@pytest.mark.asyncio
+async def test_read_advances_across_all_mismatch_physical_pages(
+    db_session: AsyncSession,
+    seed_user,
+):
+    environment, _ = await _provision_environment(db_session, seed_user)
+    base = datetime.now(UTC)
+    registration = await register_runtime_observation_consumer(
+        db_session,
+        environment_id=environment.id,
+        owner_id=seed_user.id,
+        deployment_id=_DEPLOYMENT_ID,
+        consumer_id="all-mismatch-controller",
+    )
+    ingested = []
+    for sequence in range(1, 7):
+        ingested.append(
+            await ingest_runtime_observation(
+                db_session,
+                environment_id=environment.id,
+                value=_payload(
+                    boot_session_id="stale-page-session",
+                    sequence=sequence,
+                    captured_at=base + timedelta(seconds=sequence),
+                ),
+                received_at=base + timedelta(seconds=sequence),
+            )
+        )
+
+    cursor = registration["cursor"]
+    positions = [
+        runtime_observation_service.decode_runtime_observation_cursor(cursor).stream_position
+    ]
+    for _ in range(2):
+        page = await read_runtime_observations(
+            db_session,
+            environment_id=environment.id,
+            owner_id=seed_user.id,
+            deployment_id=_DEPLOYMENT_ID,
+            consumer_id="all-mismatch-controller",
+            expected_apply_identity=_rotated_identity(),
+            after_cursor=cursor,
+            limit=2,
+        )
+        assert page["events"] == []
+        cursor = page["nextCursor"]
+        positions.append(
+            runtime_observation_service.decode_runtime_observation_cursor(cursor).stream_position
+        )
+
+    assert positions == [0, ingested[2].stream_position, ingested[5].stream_position]
+
+
+@pytest.mark.asyncio
 async def test_short_tuple_filtered_page_does_not_skip_next_tuple_first_event(
     db_session: AsyncSession,
     seed_user,
