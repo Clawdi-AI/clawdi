@@ -1,5 +1,9 @@
 import { clerkMiddleware } from "@clerk/tanstack-react-start/server";
 import {
+	sentryGlobalFunctionMiddleware,
+	sentryGlobalRequestMiddleware,
+} from "@sentry/tanstackstart-react";
+import {
 	type AnyRequestMiddleware,
 	createCsrfMiddleware,
 	createStart,
@@ -10,10 +14,14 @@ const csrfMiddleware = createCsrfMiddleware({
 	filter: (ctx) => ctx.handlerType === "serverFn",
 });
 
-const requestMiddleware: AnyRequestMiddleware[] = [csrfMiddleware];
+const requestMiddleware: AnyRequestMiddleware[] = [];
+
+if (env.VITE_SENTRY_DSN) {
+	requestMiddleware.push(sentryGlobalRequestMiddleware);
+}
 
 if (!env.VITE_DEV_AUTH_BYPASS) {
-	requestMiddleware.unshift(
+	requestMiddleware.push(
 		clerkMiddleware({
 			publishableKey: env.VITE_CLERK_PUBLISHABLE_KEY,
 			signInUrl: "/sign-in",
@@ -22,6 +30,9 @@ if (!env.VITE_DEV_AUTH_BYPASS) {
 	);
 }
 
+requestMiddleware.push(csrfMiddleware);
+
 export const startInstance = createStart(() => ({
 	requestMiddleware,
+	functionMiddleware: env.VITE_SENTRY_DSN ? [sentryGlobalFunctionMiddleware] : [],
 }));
