@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
 	chmodSync,
-	cpSync,
 	existsSync,
 	lstatSync,
 	mkdirSync,
@@ -63,14 +62,24 @@ const HOSTED_BUNDLED_SKILL_CATALOG = new Map<
 ]);
 
 export interface ReconcileHostedBundledSkillInput {
-	skillId: string;
-	version: number;
-	sourceDir: string;
+	bundle: HostedBundledSkillBundle;
 	targetDir: string;
 	/** A root-owned reservation for this exact target authorizes replacement. */
 	reserved?: boolean;
 	/** Deterministic failure hooks for the shared activation contract. */
 	activation?: ManagedSkillDirectoryActivationOptions;
+}
+
+interface HostedBundledSkillFile {
+	readonly relativePath: string;
+	readonly mode: 0o644 | 0o755;
+	/** Base64 keeps the captured bytes immutable across the privilege boundary. */
+	readonly contentBase64: string;
+}
+
+export interface HostedBundledSkillBundle {
+	readonly catalogEntry: HostedBundledSkillCatalogEntry;
+	readonly files: readonly HostedBundledSkillFile[];
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -271,11 +280,46 @@ export function assertHostedBundledSkillCatalogDigest(
 	}
 }
 
+export function loadHostedBundledSkill(
+	skillId: string,
+	version: number,
+	sourceDir: string,
+): HostedBundledSkillBundle {
+	const catalogEntry = resolveHostedBundledSkill(skillId, version);
+	const sourceFiles: ManagedBundleHashEntry[] = [];
+	const stat = lstatSync(sourceDir);
+	if (!stat.isDirectory()) {
+		throw new Error(`bundled hosted skill path is not a directory: ${sourceDir}`);
+	}
+	collectHostedBundledSkillFiles(sourceDir, "", false, false, sourceFiles);
+	if (computeManagedBundleHash(sourceFiles) !== catalogEntry.digest) {
+		throw new Error(
+			`bundled hosted skill catalog digest mismatch for ${catalogEntry.id} version ${catalogEntry.version}`,
+		);
+	}
+	const files = sourceFiles.map((file) =>
+		Object.freeze({
+			relativePath: file.relativePath,
+			mode: canonicalManagedBundleFileMode(file.mode),
+			contentBase64: Buffer.from(file.content).toString("base64"),
+		}),
+	);
+	return Object.freeze({ catalogEntry, files: Object.freeze(files) });
+}
+
+function materializeHostedBundledSkill(bundle: HostedBundledSkillBundle, targetDir: string): void {
+	mkdirSync(targetDir, { recursive: true, mode: HOSTED_BUNDLED_SKILL_DIRECTORY_MODE });
+	for (const file of bundle.files) {
+		const path = join(targetDir, file.relativePath);
+		mkdirSync(dirname(path), { recursive: true, mode: HOSTED_BUNDLED_SKILL_DIRECTORY_MODE });
+		writeFileSync(path, Buffer.from(file.contentBase64, "base64"), { mode: file.mode });
+	}
+}
+
 export function reconcileHostedBundledSkill(
 	input: ReconcileHostedBundledSkillInput,
 ): "unchanged" | "replaced" {
-	const catalogEntry = resolveHostedBundledSkill(input.skillId, input.version);
-	assertHostedBundledSkillCatalogDigest(catalogEntry, input.sourceDir);
+	const catalogEntry = input.bundle.catalogEntry;
 	const marker: HostedBundledSkillMarker = {
 		schema: HOSTED_BUNDLED_SKILL_MARKER_SCHEMA,
 		owner: HOSTED_BUNDLED_SKILL_OWNER,
@@ -306,7 +350,7 @@ export function reconcileHostedBundledSkill(
 	const stagedTarget = join(stagingRoot, basename(input.targetDir));
 	const trash = join(parent, `.${basename(input.targetDir)}-trash-${process.pid}-${randomUUID()}`);
 	try {
-		cpSync(input.sourceDir, stagedTarget, { recursive: true });
+		materializeHostedBundledSkill(input.bundle, stagedTarget);
 		normalizeHostedBundledSkillModes(stagedTarget);
 		if (hostedBundledSkillDigest(stagedTarget, false, true) !== catalogEntry.digest) {
 			throw new Error(

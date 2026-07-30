@@ -67,6 +67,7 @@ import {
 	adoptableLegacyHostedBundledSkill,
 	assertHostedBundledSkillCatalogDigest,
 	hostedBundledSkillIds,
+	loadHostedBundledSkill,
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
@@ -3563,6 +3564,13 @@ function applyHostedBundledSkills(
 			throw new Error(`refusing to replace unmanaged ${skillName} skill at ${targetDir}`);
 		}
 		const bundled = catalogEntry;
+		// Root captures and verifies the source before the callback drops to the
+		// runtime identity. The callback can only mutate the target from bytes.
+		const bundle = loadHostedBundledSkill(
+			skillName,
+			desired.version,
+			hostedBundledSkillSourceDir(bundled.assetDirectory),
+		);
 		const result = installReservedManagedSkill(
 			{
 				targetDir,
@@ -3574,18 +3582,13 @@ function applyHostedBundledSkills(
 			() =>
 				withRuntimeUserFileAccess(() =>
 					reconcileHostedBundledSkill({
-						skillId: skillName,
-						version: desired.version,
-						sourceDir: hostedBundledSkillSourceDir(bundled.assetDirectory),
+						bundle,
 						targetDir,
 						reserved: true,
 					}),
 				),
 		);
 		if (result === "unchanged") continue;
-		makeRuntimeUserOwnedAncestors(targetDir, home);
-		makeRuntimeUserOwned(targetDir);
-		for (const entry of readdirSync(targetDir)) makeRuntimeUserOwned(join(targetDir, entry));
 	}
 	return targets;
 }

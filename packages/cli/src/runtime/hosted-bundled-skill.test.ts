@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
 	adoptableLegacyHostedBundledSkill,
+	loadHostedBundledSkill,
 	reconcileHostedBundledSkill,
 	resolveHostedBundledSkill,
 } from "./hosted-bundled-skill";
@@ -51,9 +52,7 @@ describe("hosted bundled skill reconciliation", () => {
 		activation?: Parameters<typeof reconcileHostedBundledSkill>[0]["activation"],
 	) {
 		return reconcileHostedBundledSkill({
-			skillId: "clawdi",
-			version: 1,
-			sourceDir,
+			bundle: loadHostedBundledSkill("clawdi", 1, sourceDir),
 			targetDir,
 			activation,
 		});
@@ -229,23 +228,30 @@ describe("hosted bundled skill reconciliation", () => {
 		expect(existsSync(targetDir)).toBe(false);
 	});
 
+	it("materializes only from the verified in-memory bundle", () => {
+		const copiedSource = join(root, "captured-source");
+		cpSync(bundledSourceDir, copiedSource, { recursive: true });
+		const bundle = loadHostedBundledSkill("clawdi", 1, copiedSource);
+		rmSync(copiedSource, { recursive: true });
+
+		expect(
+			reconcileHostedBundledSkill({
+				bundle,
+				targetDir,
+			}),
+		).toBe("replaced");
+		expect(readFileSync(join(targetDir, "SKILL.md"))).toEqual(
+			readFileSync(join(bundledSourceDir, "SKILL.md")),
+		);
+	});
+
 	it("fails closed for unknown ids, unknown versions, and unmanaged targets", () => {
-		expect(() =>
-			reconcileHostedBundledSkill({
-				skillId: "unknown",
-				version: 1,
-				sourceDir: bundledSourceDir,
-				targetDir,
-			}),
-		).toThrow("no bundled hosted skill is registered for unknown");
-		expect(() =>
-			reconcileHostedBundledSkill({
-				skillId: "clawdi",
-				version: 2,
-				sourceDir: bundledSourceDir,
-				targetDir,
-			}),
-		).toThrow("no bundled hosted skill clawdi version 2 is registered");
+		expect(() => loadHostedBundledSkill("unknown", 1, bundledSourceDir)).toThrow(
+			"no bundled hosted skill is registered for unknown",
+		);
+		expect(() => loadHostedBundledSkill("clawdi", 2, bundledSourceDir)).toThrow(
+			"no bundled hosted skill clawdi version 2 is registered",
+		);
 
 		mkdirSync(targetDir, { recursive: true });
 		writeFileSync(join(targetDir, "SKILL.md"), "user owned\n");

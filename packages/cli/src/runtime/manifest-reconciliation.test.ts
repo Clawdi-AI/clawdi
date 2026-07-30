@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	chownSync,
+	cpSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -14,7 +15,7 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { commitRuntimeAppliedState } from "../commands/runtime";
 import {
@@ -22,6 +23,7 @@ import {
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "./applied-state";
+import { loadHostedBundledSkill } from "./hosted-bundled-skill";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
@@ -3717,6 +3719,18 @@ describe("runtime manifest reconciliation invariants", () => {
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const skillDir = join(paths.userHome, ".hermes", "skills", "clawdi");
 		const ledger = join(paths.projectionRoot, "managed-skills.json");
+		const cliRoot = resolve(import.meta.dir, "../..");
+		const skillSource = join(cliRoot, "skills", "hosted-versions", "1", "clawdi");
+		const protectedSourceAncestors = [
+			skillSource,
+			dirname(skillSource),
+			dirname(dirname(skillSource)),
+			dirname(dirname(dirname(skillSource))),
+			cliRoot,
+		];
+		const originalSourceModes = new Map(
+			protectedSourceAncestors.map((path) => [path, statSync(path).mode & 0o777]),
+		);
 		const runtimeUid = Number.parseInt(
 			execFileSync("id", ["-u", "nobody"], { encoding: "utf8" }).trim(),
 			10,
@@ -3749,35 +3763,64 @@ describe("runtime manifest reconciliation invariants", () => {
 			},
 			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
 		);
-
-		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-hermes-skill"), paths);
-
-		expect(result.installErrors).toEqual([]);
-		expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toContain("# Clawdi");
-		expect(statSync(skillDir).uid).toBe(runtimeUid);
-		expect(statSync(join(skillDir, "SKILL.md")).uid).toBe(runtimeUid);
-		expect(statSync(paths.projectionRoot).uid).toBe(0);
-		expect(statSync(paths.projectionRoot).mode & 0o777).toBe(0o755);
-		expect(statSync(ledger).uid).toBe(0);
-		expect(statSync(ledger).mode & 0o022).toBe(0);
-
-		expect(() =>
-			execFileSync("runuser", ["-u", "nobody", "--", "test", "-w", paths.projectionRoot]),
-		).toThrow();
-
-		const removal = convergeRuntimeManifest(
-			manifestLoad(
-				{ ...manifest, projection: { skills: { entries: {} } } },
-				"inline-hermes-skill-removal",
-			),
-			paths,
+		const driftedSource = join(fixtureRoot, "drifted-skill-source");
+		cpSync(skillSource, driftedSource, { recursive: true });
+		writeFileSync(join(driftedSource, "SKILL.md"), "catalog drift\n");
+		expect(() => loadHostedBundledSkill("clawdi", 1, driftedSource)).toThrow(
+			"catalog digest mismatch",
 		);
 
-		expect(removal.installErrors).toEqual([]);
-		expect(existsSync(skillDir)).toBe(false);
-		expect(readFileSync(ledger, "utf8")).not.toContain(skillDir);
-		expect(statSync(ledger).uid).toBe(0);
-		expect(statSync(ledger).mode & 0o022).toBe(0);
+		for (const path of protectedSourceAncestors) chmodSync(path, 0o700);
+		try {
+			for (const path of protectedSourceAncestors) {
+				expect(() => execFileSync("runuser", ["-u", "nobody", "--", "test", "-x", path])).toThrow();
+			}
+			expect(() =>
+				execFileSync("runuser", [
+					"-u",
+					"nobody",
+					"--",
+					"test",
+					"-r",
+					join(skillSource, "SKILL.md"),
+				]),
+			).toThrow();
+			const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-hermes-skill"), paths);
+			expect(result.installErrors).toEqual([]);
+			expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toContain("# Clawdi");
+			expect(statSync(skillDir).uid).toBe(runtimeUid);
+			expect(statSync(join(skillDir, "SKILL.md")).uid).toBe(runtimeUid);
+			expect(statSync(paths.projectionRoot).uid).toBe(0);
+			expect(statSync(paths.projectionRoot).mode & 0o777).toBe(0o755);
+			expect(statSync(ledger).uid).toBe(0);
+			expect(statSync(ledger).mode & 0o022).toBe(0);
+			for (const path of protectedSourceAncestors) {
+				expect(statSync(path).mode & 0o777).toBe(0o700);
+			}
+
+			expect(() =>
+				execFileSync("runuser", ["-u", "nobody", "--", "test", "-w", paths.projectionRoot]),
+			).toThrow();
+
+			const removal = convergeRuntimeManifest(
+				manifestLoad(
+					{ ...manifest, projection: { skills: { entries: {} } } },
+					"inline-hermes-skill-removal",
+				),
+				paths,
+			);
+
+			expect(removal.installErrors).toEqual([]);
+			expect(existsSync(skillDir)).toBe(false);
+			expect(readFileSync(ledger, "utf8")).not.toContain(skillDir);
+			expect(statSync(ledger).uid).toBe(0);
+			expect(statSync(ledger).mode & 0o022).toBe(0);
+			for (const path of protectedSourceAncestors) {
+				expect(statSync(path).mode & 0o777).toBe(0o700);
+			}
+		} finally {
+			for (const [path, mode] of [...originalSourceModes].reverse()) chmodSync(path, mode);
+		}
 	});
 
 	test("rolls back root managed state and leaves user projections for forward convergence", () => {
