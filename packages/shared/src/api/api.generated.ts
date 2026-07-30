@@ -1268,7 +1268,7 @@ export interface paths {
          *     knows it's reading a Clawdi session and which agent / project it
          *     came from.
          *
-         *     `Content-Type: text/markdown; charset=utf-8`. NO cache header:
+         *     `Content-Type: text/markdown; charset=utf-8` and `Cache-Control: no-store`:
          *     revoke-immediacy beats CDN saving — the
          *     `(file_key, content_hash)` cache in `load_session_messages`
          *     already absorbs the parse cost.

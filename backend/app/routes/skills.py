@@ -38,6 +38,7 @@ from app.core.skill_key import (
     validate_derived_skill_key,
 )
 from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
     SKILL_SYNC_PROTOCOL_HEADER,
     require_agent_authoritative_skill_sync,
 )
@@ -266,7 +267,12 @@ async def list_skills(
     fast_response = _bound_api_key_skills_304_response(
         auth=auth,
         selected_project_id=project_id,
+        q=q,
+        page=page,
+        page_size=page_size,
+        include_content=include_content,
         if_none_match=if_none_match,
+        skill_sync_protocol=skill_sync_protocol,
     )
     if fast_response is not None:
         return fast_response
@@ -377,8 +383,11 @@ async def _list_skills_with_db(
         selected_project_id=selected_project_id,
         visible_project_ids=visible_project_ids,
         visible_revision_fingerprint=visible_revision_fingerprint,
+        q=q,
+        page_size=page_size,
+        include_content=include_content,
     )
-    if if_none_match_contains(if_none_match, etag):
+    if page == 1 and if_none_match_contains(if_none_match, etag):
         await db.commit()
         return Response(
             status_code=status.HTTP_304_NOT_MODIFIED,
@@ -527,7 +536,12 @@ def _bound_api_key_skills_304_response(
     *,
     auth: AuthContext,
     selected_project_id: UUID | None,
+    q: str | None,
+    page: int,
+    page_size: int,
+    include_content: bool,
     if_none_match: str | None,
+    skill_sync_protocol: str | None,
 ) -> Response | None:
     """Serve the hot daemon conditional-GET path without opening a DB session.
 
@@ -540,24 +554,28 @@ def _bound_api_key_skills_304_response(
     Dashboard JWTs and unbound CLI keys still go through the DB-backed path so
     shared-project owner revisions stay part of the ETag.
     """
-    if if_none_match is None or auth.api_key_project_id is None:
+    if (
+        if_none_match is None
+        or auth.api_key_project_id is None
+        or selected_project_id != auth.api_key_project_id
+        or q is not None
+        or page != 1
+        or page_size != 200
+        or include_content
+        or skill_sync_protocol != SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1
+    ):
         return None
 
-    if selected_project_id is not None:
-        visible_project_ids = (
-            [selected_project_id] if selected_project_id == auth.api_key_project_id else []
-        )
-    else:
-        visible_project_ids = [auth.api_key_project_id]
-
-    visible_revision_fingerprint = (
-        _auth_user_skills_revision_fingerprint(auth) if visible_project_ids else "none"
-    )
+    visible_project_ids = [auth.api_key_project_id]
+    visible_revision_fingerprint = _auth_user_skills_revision_fingerprint(auth)
     etag = _skills_collection_etag(
         revision=auth.skills_revision,
         selected_project_id=selected_project_id,
         visible_project_ids=visible_project_ids,
         visible_revision_fingerprint=visible_revision_fingerprint,
+        q=q,
+        page_size=page_size,
+        include_content=include_content,
     )
     if not if_none_match_contains(if_none_match, etag):
         return None
@@ -573,10 +591,40 @@ def _skills_collection_etag(
     selected_project_id: UUID | None,
     visible_project_ids: list[UUID],
     visible_revision_fingerprint: str,
+    q: str | None,
+    page_size: int,
+    include_content: bool,
 ) -> str:
     project_tag = str(selected_project_id) if selected_project_id is not None else "all"
     visible_fingerprint = _visible_project_fingerprint(visible_project_ids)
-    return f'"{revision}:{project_tag}:{visible_fingerprint}:{visible_revision_fingerprint}"'
+    representation_fingerprint = _skills_representation_fingerprint(
+        q=q,
+        page_size=page_size,
+        include_content=include_content,
+    )
+    return (
+        f'"{revision}:{project_tag}:{visible_fingerprint}:'
+        f'{visible_revision_fingerprint}:{representation_fingerprint}"'
+    )
+
+
+def _skills_representation_fingerprint(
+    *,
+    q: str | None,
+    page_size: int,
+    include_content: bool,
+) -> str:
+    """Bind representation-changing list options without breaking page fences.
+
+    CLI 0.13.13 requires every page in one complete inventory read to expose
+    the same strong collection ETag. Keep `page` out of this fingerprint until
+    that released cross-page contract can be versioned; conditional requests
+    are limited to page 1 separately so a page-1 validator cannot suppress a
+    page-2 body.
+    """
+    normalized_q = q or ""
+    value = f"{normalized_q}\0{page_size}\0{int(include_content)}"
+    return hashlib.sha256(value.encode()).hexdigest()[:16]
 
 
 def _visible_project_fingerprint(visible_project_ids: list[UUID]) -> str:

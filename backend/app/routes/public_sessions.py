@@ -17,6 +17,7 @@ Access policy:
 from __future__ import annotations
 
 import logging
+import re
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
@@ -54,6 +55,13 @@ router = APIRouter(tags=["public-sessions"])
 log = logging.getLogger(__name__)
 
 file_store = get_file_store()
+PUBLIC_SESSION_EXPORT_CACHE_CONTROL = "no-store"
+_PUBLIC_SESSION_EXPORT_PATH = re.compile(r"^/(?:v1|api)/public/sessions/[^/]+/export\.(?:md|json)$")
+
+
+def is_public_session_export_path(path: str) -> bool:
+    """Match canonical and compatibility export paths, including invalid ids."""
+    return _PUBLIC_SESSION_EXPORT_PATH.fullmatch(path) is not None
 
 
 async def _resolve_session_for_view(
@@ -186,7 +194,7 @@ async def export_shared_session_markdown(
     knows it's reading a Clawdi session and which agent / project it
     came from.
 
-    `Content-Type: text/markdown; charset=utf-8`. NO cache header:
+    `Content-Type: text/markdown; charset=utf-8` and `Cache-Control: no-store`:
     revoke-immediacy beats CDN saving — the
     `(file_key, content_hash)` cache in `load_session_messages`
     already absorbs the parse cost.
@@ -214,6 +222,7 @@ async def export_shared_session_markdown(
     return Response(
         content=body,
         media_type="text/markdown; charset=utf-8",
+        headers={"Cache-Control": PUBLIC_SESSION_EXPORT_CACHE_CONTROL},
     )
 
 
@@ -223,6 +232,7 @@ async def export_shared_session_markdown(
     response_model_exclude_none=True,
 )
 async def export_shared_session_json(
+    response: Response,
     session_id: UUID = Path(...),
     db: AsyncSession = Depends(get_session),
     visitor: AuthContext | None = Depends(optional_web_auth),
@@ -233,6 +243,7 @@ async def export_shared_session_json(
     machine_name, and any other field the share link is not meant
     to expose.
     """
+    response.headers["Cache-Control"] = PUBLIC_SESSION_EXPORT_CACHE_CONTROL
     session, agent_type, _ = await _resolve_session_for_view(db, session_id, visitor)
 
     if not session.file_key:

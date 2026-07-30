@@ -793,8 +793,9 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
 
     app.dependency_overrides[get_auth_short_session] = _override_get_auth
 
+    canonical_url = f"/v1/skills?project_id={project_id}&page=1&page_size=200"
     first = await client.get(
-        f"/v1/skills?project_id={project_id}",
+        canonical_url,
         headers=AGENT_SKILL_SYNC_HEADERS,
     )
     assert first.status_code == 200, first.text
@@ -803,13 +804,38 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
     assert etag
     assert etag.startswith('"') and etag.endswith('"')
 
+    # Released CLI 0.13.13 expects one ETag across every page in a complete
+    # inventory read. Preserve that fence while preventing a page-1 validator
+    # from suppressing any non-canonical representation body.
+    query_variants = [
+        (f"{canonical_url}&q=missing", True, 304),
+        (f"/v1/skills?project_id={project_id}&page=1&page_size=25", True, 304),
+        (f"{canonical_url}&include_content=true", True, 304),
+        (f"/v1/skills?project_id={project_id}&page=2&page_size=200", False, 200),
+    ]
+    for url, etag_must_differ, replay_status in query_variants:
+        changed_shape = await client.get(
+            url,
+            headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
+        )
+        assert changed_shape.status_code == 200, (url, changed_shape.text)
+        variant_etag = changed_shape.headers.get("ETag")
+        assert variant_etag is not None
+        assert (variant_etag != etag) is etag_must_differ
+
+        replay = await client.get(
+            url,
+            headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": variant_etag},
+        )
+        assert replay.status_code == replay_status, (url, replay.text)
+
     def _fail_session_factory():
         raise AssertionError("matching bound-key skills ETag opened a DB session")
 
     monkeypatch.setattr(skills_route, "async_session_factory", _fail_session_factory)
 
     cached = await client.get(
-        f"/v1/skills?project_id={project_id}",
+        canonical_url,
         headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": etag},
     )
     assert cached.status_code == 304, cached.text
@@ -817,7 +843,7 @@ async def test_bound_api_key_matching_skills_etag_304_skips_list_db_session(
     assert cached.headers.get("Cache-Control") == "no-transform"
 
     weak_cached = await client.get(
-        f"/v1/skills?project_id={project_id}",
+        canonical_url,
         headers={**AGENT_SKILL_SYNC_HEADERS, "If-None-Match": f"W/{etag}"},
     )
     assert weak_cached.status_code == 304, weak_cached.text
