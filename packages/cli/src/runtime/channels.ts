@@ -40,6 +40,7 @@ const OPENCLAW_CHANNEL_TOKEN_ENV_SUFFIX = "_AGENT_TOKEN";
 interface ManagedChannelLink {
 	account: RuntimeChannelAccount;
 	accountKey: string;
+	runtimeAccountKey: string;
 	linkId: string;
 	agentId: string;
 	agentToken: string;
@@ -144,6 +145,7 @@ function managedBundleChannelLink(
 			runtime_credentials: [],
 		},
 		accountKey: binding.accountKey,
+		runtimeAccountKey: binding.accountKey,
 		linkId: binding.accountKey,
 		agentId: "bundle",
 		agentToken,
@@ -155,20 +157,32 @@ function managedBundleChannelLink(
 
 function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelLink[] {
 	const links: ManagedChannelLink[] = [];
+	const activeLinkCounts = new Map<string, number>();
+	for (const account of channels) {
+		const count = account.runtime_links.filter(
+			(link) => link.status === "active" && Boolean(link.agent_token),
+		).length;
+		activeLinkCounts.set(`${account.provider}:${account.id}`, count);
+	}
 	for (const account of channels) {
 		if (account.status !== "active") continue;
 		if (account.provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		for (const link of account.runtime_links) {
 			if (link.status !== "active" || !link.agent_token) continue;
 			const accountKey = channelAccountKey(account);
+			const runtimeAccountKey =
+				(activeLinkCounts.get(`${account.provider}:${account.id}`) ?? 0) > 1
+					? channelLinkRuntimeAccountKey(accountKey, link.id)
+					: accountKey;
 			links.push({
 				account,
 				accountKey,
+				runtimeAccountKey,
 				linkId: link.id,
 				agentId: link.agent_id,
 				agentToken: link.agent_token,
-				secretRef: channelSecretRef(account.provider, accountKey),
-				placeholderSecretRef: channelPlaceholderSecretRef(account.provider, accountKey),
+				secretRef: channelLinkSecretRef(account.provider, accountKey, link.id),
+				placeholderSecretRef: channelPlaceholderSecretRef(account.provider, runtimeAccountKey),
 				credentials: (account.runtime_credentials ?? []).filter(
 					(credential) => credential.agent_link_id === link.id,
 				),
@@ -176,8 +190,8 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 		}
 	}
 	return links.sort((left, right) =>
-		`${left.account.provider}:${left.accountKey}`.localeCompare(
-			`${right.account.provider}:${right.accountKey}`,
+		`${left.account.provider}:${left.runtimeAccountKey}`.localeCompare(
+			`${right.account.provider}:${right.runtimeAccountKey}`,
 		),
 	);
 }
@@ -219,8 +233,8 @@ function buildOpenClawChannelsProjection(
 		const provider = link.account.provider;
 		if (provider === "whatsapp" && !WHATSAPP_UPSTREAM_READY) continue;
 		if (provider === "telegram") {
-			const channel = ensureAccountChannel(channels, "telegram", link.accountKey);
-			channel.accounts[link.accountKey] = {
+			const channel = ensureAccountChannel(channels, "telegram", link.runtimeAccountKey);
+			channel.accounts[link.runtimeAccountKey] = {
 				enabled: true,
 				botToken: openClawChannelPlaceholderTokenSecretRef(link),
 				dmPolicy: "open",
@@ -232,8 +246,8 @@ function buildOpenClawChannelsProjection(
 			continue;
 		}
 		if (provider === "discord") {
-			const channel = ensureAccountChannel(channels, "discord", link.accountKey);
-			channel.accounts[link.accountKey] = {
+			const channel = ensureAccountChannel(channels, "discord", link.runtimeAccountKey);
+			channel.accounts[link.runtimeAccountKey] = {
 				enabled: true,
 				token: openClawChannelPlaceholderTokenSecretRef(link),
 				dmPolicy: "open",
@@ -244,12 +258,12 @@ function buildOpenClawChannelsProjection(
 			continue;
 		}
 		if (provider === "whatsapp") {
-			const channel = ensureAccountChannel(channels, "whatsapp", link.accountKey);
+			const channel = ensureAccountChannel(channels, "whatsapp", link.runtimeAccountKey);
 			const credential = whatsappBaileysCredentialProjection(link, runtimeHome, {
 				openclaw: true,
 				hermes: false,
 			});
-			channel.accounts[link.accountKey] = {
+			channel.accounts[link.runtimeAccountKey] = {
 				enabled: true,
 				wsUrl: `${toWebSocketUrl(stripTrailingSlash(cloudApiUrl))}/v1/channels/whatsapp/${link.account.id}/baileys`,
 				token: openClawChannelPlaceholderTokenSecretRef(link),
@@ -377,7 +391,7 @@ function openClawChannelPlaceholderTokenSecretRef(link: ManagedChannelLink): Ope
 
 function openClawChannelTokenEnvName(link: ManagedChannelLink): string {
 	return `${OPENCLAW_CHANNEL_TOKEN_ENV_PREFIX}${envKeySegment(link.account.provider)}_${envKeySegment(
-		link.accountKey,
+		link.runtimeAccountKey,
 	)}${OPENCLAW_CHANNEL_TOKEN_ENV_SUFFIX}`;
 }
 
@@ -448,7 +462,7 @@ function buildManagedChannelEgressProfiles(
 	const baseUrl = stripTrailingSlash(cloudApiUrl);
 	const profiles: EgressProfile[] = [];
 	for (const link of links) {
-		const idSuffix = `${link.account.provider}-${link.accountKey}`;
+		const idSuffix = `${link.account.provider}-${link.runtimeAccountKey}`;
 		if (link.account.provider === "telegram") {
 			for (const route of [
 				{ id: `native-${idSuffix}-managed`, pathPrefix: "/bot" },
@@ -612,7 +626,7 @@ function channelSecretValues(
 		addSecretValue(
 			values,
 			link.placeholderSecretRef,
-			channelPlaceholderToken(link.account.provider, link.accountKey),
+			channelPlaceholderToken(link.account.provider, link.runtimeAccountKey),
 		);
 		for (const credential of whatsappBaileysCredentials(link)) {
 			const creds = whatsappCredentialCreds(credential);
@@ -648,8 +662,12 @@ function addSecretValue(values: Record<string, string>, ref: string, value: stri
 	values[ref.replace(/^secret:\/\//, "")] = value;
 }
 
-function channelSecretRef(provider: ChannelProvider, accountKey: string): string {
-	return `secret://channels/${provider}/${accountKey}/agent-token`;
+function channelLinkSecretRef(
+	provider: ChannelProvider,
+	accountKey: string,
+	linkId: string,
+): string {
+	return `secret://channels/${provider}/${accountKey}/links/${linkId}/agent-token`;
 }
 
 function channelPlaceholderSecretRef(provider: ChannelProvider, accountKey: string): string {
@@ -663,6 +681,14 @@ function channelPlaceholderToken(provider: ChannelProvider, accountKey: string):
 		.slice(0, 32);
 	if (provider === "telegram") return `999999999:${suffix}`;
 	return `clawdi_${suffix}`;
+}
+
+function channelLinkRuntimeAccountKey(accountKey: string, linkId: string): string {
+	const compactLinkId = linkId
+		.replace(/[^a-zA-Z0-9]/g, "")
+		.slice(0, 12)
+		.toLowerCase();
+	return `${accountKey}_link_${compactLinkId || "channel"}`;
 }
 
 function whatsappBaileysCredentialProjection(

@@ -245,7 +245,7 @@ async def telegram_bot_api(
             return command_error
         return _telegram_ok(_get_telegram_commands(agent.link, params=params))
 
-    profile_result = await _handle_telegram_profile_shadow(account, method_key, params)
+    profile_result = await _handle_telegram_profile_shadow(account, agent.link, method_key, params)
     if profile_result is not None:
         await db.commit()
         return profile_result
@@ -841,6 +841,7 @@ async def _post_telegram_command_payload(
 
 async def _handle_telegram_profile_shadow(
     account: Any,
+    link: ChannelBotAgentLink,
     method_key: str,
     params: dict[str, Any],
 ) -> dict[str, Any] | JSONResponse | None:
@@ -858,7 +859,7 @@ async def _handle_telegram_profile_shadow(
                 400,
             )
         field_key, value = value_result
-        _set_telegram_profile_value(account, params=params, field_key=field_key, value=value)
+        _set_telegram_profile_value(link, params=params, field_key=field_key, value=value)
         return _telegram_ok(True)
 
     if method_key in {
@@ -868,7 +869,7 @@ async def _handle_telegram_profile_shadow(
         "getmydefaultadministratorrights",
         "getchatmenubutton",
     }:
-        return _telegram_ok(_telegram_profile_get_value(account, method_key, params))
+        return _telegram_ok(_telegram_profile_get_value(account, link, method_key, params))
     return None
 
 
@@ -912,22 +913,23 @@ def _telegram_profile_required_hint(method_key: str) -> str:
 
 
 def _set_telegram_profile_value(
-    account: Any,
+    link: ChannelBotAgentLink,
     *,
     params: dict[str, Any],
     field_key: str,
     value: Any,
 ) -> None:
-    config = dict(account.config) if isinstance(account.config, dict) else {}
+    config = dict(link.config) if isinstance(link.config, dict) else {}
     profile = config.get("telegram_bot_profile")
     profile_shadow = dict(profile) if isinstance(profile, dict) else {}
     profile_shadow[_telegram_profile_key(params, field_key)] = value
     config["telegram_bot_profile"] = profile_shadow
-    account.config = config
+    link.config = config
 
 
 def _telegram_profile_get_value(
     account: Any,
+    link: ChannelBotAgentLink,
     method_key: str,
     params: dict[str, Any],
 ) -> dict[str, Any]:
@@ -942,10 +944,16 @@ def _telegram_profile_get_value(
         ),
         "getchatmenubutton": "menu_button:default",
     }[method_key]
-    config = account.config if isinstance(account.config, dict) else {}
-    profile = config.get("telegram_bot_profile")
+    link_config = link.config if isinstance(link.config, dict) else {}
+    profile = link_config.get("telegram_bot_profile")
     profile_shadow = profile if isinstance(profile, dict) else {}
-    stored = profile_shadow.get(_telegram_profile_key(params, field_key))
+    profile_key = _telegram_profile_key(params, field_key)
+    stored = profile_shadow.get(profile_key)
+    if stored is None:
+        account_config = account.config if isinstance(account.config, dict) else {}
+        legacy_profile = account_config.get("telegram_bot_profile")
+        if isinstance(legacy_profile, dict):
+            stored = legacy_profile.get(profile_key)
     if method_key == "getmyname":
         return {"name": stored if isinstance(stored, str) else ""}
     if method_key == "getmydescription":

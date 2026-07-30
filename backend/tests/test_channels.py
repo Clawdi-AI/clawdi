@@ -664,7 +664,7 @@ async def test_create_telegram_channel_registers_provider_webhook(
 ):
     previous_public_api_url = settings.public_api_url
     settings.public_api_url = "https://cloud.example.test"
-    _reset_fake_provider_client({"ok": True, "result": True})
+    _reset_fake_provider_client({"ok": True, "result": {"username": "ClawdiWebhookBot"}})
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     try:
         response = await client.post(
@@ -680,13 +680,22 @@ async def test_create_telegram_channel_registers_provider_webhook(
 
     assert response.status_code == 201
     created = response.json()
-    assert len(_FakeProviderClient.calls) == 1
-    call = _FakeProviderClient.calls[0]
+    assert len(_FakeProviderClient.calls) == 2
+    assert _FakeProviderClient.calls[0]["url"].endswith("/bot123456:telegram-secret/getMe")
+    call = _FakeProviderClient.calls[1]
     assert call["url"].endswith("/bot123456:telegram-secret/setWebhook")
     assert call["json"] == {
         "url": created["webhook_url"],
         "secret_token": created["webhook_secret"],
     }
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
+        )
+    ).json()
+    assert pair["bot_username"] == "ClawdiWebhookBot"
+    assert pair["deep_link"] == f"https://t.me/ClawdiWebhookBot?start={pair['code']}"
 
 
 def test_generate_telegram_agent_token_matches_bot_api_contract():
@@ -3627,6 +3636,50 @@ async def test_telegram_bot_profile_shadow_is_account_scoped(client: httpx.Async
 
 
 @pytest.mark.asyncio
+async def test_telegram_bot_profile_shadow_is_link_scoped_on_shared_account(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-shared-profile",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setMyName"),
+            headers=_telegram_agent_headers(created),
+            json={"name": "First link"},
+        )
+    ).status_code == 200
+    second = (
+        await client.post(
+            f"/v1/channels/{created['id']}/agent-links",
+            json={"agent_id": str(second_channel_agent.id)},
+        )
+    ).json()
+    first_get = await client.post(
+        _telegram_bot_path(created, "getMyName"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    second_get = await client.post(
+        _telegram_bot_path(second, "getMyName", account_id=created["id"]),
+        headers=_telegram_agent_headers(second),
+        json={},
+    )
+
+    assert first_get.json() == {"ok": True, "result": {"name": "First link"}}
+    assert second_get.json() == {"ok": True, "result": {"name": ""}}
+
+
+@pytest.mark.asyncio
 async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
     client: httpx.AsyncClient,
 ):
@@ -6541,12 +6594,116 @@ async def test_telegram_webhook_pair_code_creates_binding(client: httpx.AsyncCli
     assert webhook.status_code == 200
     assert webhook.json()["paired"] is True
     assert webhook.json()["binding_id"]
-
     bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
     assert bindings.json()[0]["external_chat_id"] == "987654321"
     assert bindings.json()[0]["external_chat_type"] == "private"
     assert bindings.json()[0]["external_chat_name"] == "paco"
+
+
+@pytest.mark.asyncio
+async def test_telegram_pair_code_returns_server_owned_deep_link_metadata(
+    client: httpx.AsyncClient,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-deep-link",
+                "config": {"bot_username": "@Clawdi_Test_Bot"},
+            },
+        )
+    ).json()
+    response = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
+    )
+
+    assert response.status_code == 201
+    pair = response.json()
+    assert pair["pairing_command"] == f"/bot_pair {pair['code']}"
+    assert pair["bot_username"] == "Clawdi_Test_Bot"
+    assert pair["deep_link"] == f"https://t.me/Clawdi_Test_Bot?start={pair['code']}"
+    assert pair["qr_payload"] == pair["deep_link"]
+    assert created["agent_token"] not in pair["deep_link"]
+    assert "telegram-secret" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_telegram_pair_code_omits_link_metadata_for_invalid_username(
+    client: httpx.AsyncClient,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-no-username",
+                "config": {"bot_username": "bad!"},
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"agent_link_id": created["agent_link_id"], "ttl_seconds": 900},
+        )
+    ).json()
+
+    assert pair["bot_username"] is None
+    assert pair["deep_link"] is None
+    assert pair["qr_payload"] is None
+    assert pair["pairing_command"] == f"/bot_pair {pair['code']}"
+
+
+@pytest.mark.asyncio
+async def test_telegram_inbound_dedupes_update_redelivery_but_keeps_edits(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-update-identity",
+        chat_id="4242",
+        provider_token=None,
+    )
+    webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+    original = {
+        "update_id": 7001,
+        "message": {
+            "message_id": 88,
+            "text": "before edit",
+            "chat": {"id": 4242, "type": "private"},
+        },
+    }
+    edited = {
+        "update_id": 7002,
+        "edited_message": {
+            "message_id": 88,
+            "text": "after edit",
+            "chat": {"id": 4242, "type": "private"},
+        },
+    }
+
+    assert (await client.post(webhook_url, headers=headers, json=original)).status_code == 200
+    assert (await client.post(webhook_url, headers=headers, json=original)).status_code == 200
+    assert (await client.post(webhook_url, headers=headers, json=edited)).status_code == 200
+    messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == UUID(created["id"]),
+                    ChannelMessage.provider_message_id.in_(["7001", "7002"]),
+                )
+            )
+        ).scalars()
+    )
+    assert sorted((message.provider_message_id, message.text) for message in messages) == [
+        ("7001", "before edit"),
+        ("7002", "after edit"),
+    ]
 
 
 @pytest.mark.asyncio

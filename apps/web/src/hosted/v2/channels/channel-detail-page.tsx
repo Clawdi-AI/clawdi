@@ -6,6 +6,7 @@ import {
 	ArrowUpRight,
 	Check,
 	Copy,
+	ExternalLink,
 	Eye,
 	EyeOff,
 	KeyRound,
@@ -20,6 +21,7 @@ import {
 	Trash2,
 	TriangleAlert,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
@@ -99,7 +101,7 @@ import {
 } from "@/hosted/v2/channels/channels-hooks";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
 import {
-	pairingCommand,
+	pairCodeExpired,
 	WHATSAPP_COMING_SOON_MESSAGE,
 	WHATSAPP_LINKING_READY,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
@@ -1014,17 +1016,16 @@ type PairCodeResult = {
 	code: string;
 	expires_at: string;
 	agent_link_id: string;
+	pairing_command: string;
+	bot_username: string | null;
+	deep_link: string | null;
+	qr_payload: string | null;
 };
 
 type RevealedAgentToken = {
 	agentLinkId: string;
 	value: string;
 };
-
-function isExpired(expiresAt: string, nowMs: number): boolean {
-	const expiresAtMs = new Date(expiresAt).getTime();
-	return Number.isFinite(expiresAtMs) && expiresAtMs <= nowMs;
-}
 
 function PairCodeTab({ accountId, provider }: { accountId: string; provider: string }) {
 	const envs = useEnvironments();
@@ -1065,7 +1066,7 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 		result && revealedAgentToken?.agentLinkId === result.agent_link_id
 			? revealedAgentToken.value
 			: null;
-	const resultExpired = result ? isExpired(result.expires_at, nowMs) : false;
+	const resultExpired = result ? pairCodeExpired(result.expires_at, nowMs) : false;
 
 	useEffect(() => {
 		if (!result) return;
@@ -1081,8 +1082,11 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 		setResult(null);
 		void (async () => {
 			try {
+				const selectedLink = links.data?.find((candidate) => candidate.agent_id === agentId);
 				const data = await create.execute({
-					agent_id: agentId || undefined,
+					...(selectedLink
+						? { agent_link_id: selectedLink.id }
+						: { agent_id: agentId || undefined }),
 					ttl_seconds: Number(ttl),
 				});
 				if (data.agent_token) {
@@ -1095,6 +1099,10 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 					code: data.code,
 					expires_at: data.expires_at,
 					agent_link_id: data.agent_link_id,
+					pairing_command: data.pairing_command,
+					bot_username: data.bot_username ?? null,
+					deep_link: data.deep_link ?? null,
+					qr_payload: data.qr_payload ?? null,
 				});
 			} catch {
 				// useSensitiveAction already surfaces the API error.
@@ -1208,17 +1216,52 @@ function PairCodeTab({ accountId, provider }: { accountId: string; provider: str
 			{result ? (
 				<div className="flex flex-col gap-3 rounded-lg border border-primary/30 bg-primary/5 p-4">
 					<div className="text-xs font-medium text-primary">Pairing code</div>
-					<div className="font-mono text-3xl font-semibold tracking-[0.2em]">{result.code}</div>
+					{provider === "telegram" && result.qr_payload ? (
+						<div className="flex flex-col items-center gap-3">
+							<div
+								className={cn(
+									"rounded-xl border bg-white p-3 shadow-sm",
+									resultExpired && "pointer-events-none opacity-40 blur-[2px]",
+								)}
+								aria-disabled={resultExpired}
+							>
+								<QRCodeSVG value={result.qr_payload} size={192} />
+							</div>
+							{resultExpired || !result.deep_link ? (
+								<Button disabled>
+									Open Telegram <ExternalLink className="size-4" />
+								</Button>
+							) : (
+								<Button
+									render={<a href={result.deep_link} target="_blank" rel="noopener noreferrer" />}
+									nativeButton={false}
+								>
+									Open Telegram <ExternalLink className="size-4" />
+								</Button>
+							)}
+							{result.deep_link && !resultExpired ? (
+								<CopyInline value={result.deep_link} label="Telegram pairing link" />
+							) : null}
+						</div>
+					) : (
+						<div className="font-mono text-3xl font-semibold tracking-[0.2em]">{result.code}</div>
+					)}
 					<p className="text-sm text-muted-foreground">
 						{resultExpired ? (
 							"Expired. Generate a new code."
 						) : (
 							<>
-								Send <span className="font-mono font-medium">{pairingCommand(result.code)}</span>{" "}
-								from the chat you want to pair. Expires {relativeTime(result.expires_at)}.
+								{provider === "telegram" && !result.deep_link
+									? "This bot has no valid Telegram username, so link and QR pairing are unavailable. "
+									: null}
+								Send <span className="font-mono font-medium">{result.pairing_command}</span> from
+								the chat you want to pair. Expires {relativeTime(result.expires_at)}.
 							</>
 						)}
 					</p>
+					{!resultExpired ? (
+						<CopyInline value={result.pairing_command} label="pairing command" />
+					) : null}
 					{visibleAgentToken ? (
 						<TokenReveal
 							label="Agent token"

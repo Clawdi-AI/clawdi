@@ -5781,19 +5781,25 @@ exit 64
 
 		expect(projected.secretValues).toMatchObject({
 			"provider.default.apiKey": "sk-provider",
-			"secret://channels/telegram/clawdi_accttelegram/agent-token": "telegram-agent-token",
-			"secret://channels/discord/clawdi_acctdiscord1/agent-token": "discord-agent-token",
+			"secret://channels/telegram/clawdi_accttelegram/links/link-telegram-1/agent-token":
+				"telegram-agent-token",
+			"secret://channels/discord/clawdi_acctdiscord1/links/link-discord-1/agent-token":
+				"discord-agent-token",
 		});
 		expect(projected.sourceManifest).toEqual(loaded.manifest);
 		expect(JSON.stringify(projected.sourceManifest)).not.toContain('"channels"');
 		expect(
-			projected.secretValues?.["secret://channels/telegram/clawdi_accttelegram/agent-token"],
+			projected.secretValues?.[
+				"secret://channels/telegram/clawdi_accttelegram/links/link-telegram-1/agent-token"
+			],
 		).toBe("telegram-agent-token");
 		expect(
 			projected.secretValues?.["secret://channels/telegram/clawdi_accttelegram/placeholder-token"],
 		).toMatch(/^999999999:[a-f0-9]{32}$/);
 		expect(
-			projected.secretValues?.["secret://channels/discord/clawdi_acctdiscord1/agent-token"],
+			projected.secretValues?.[
+				"secret://channels/discord/clawdi_acctdiscord1/links/link-discord-1/agent-token"
+			],
 		).toBe("discord-agent-token");
 		expect(
 			projected.secretValues?.["secret://channels/discord/clawdi_acctdiscord1/placeholder-token"],
@@ -5809,6 +5815,85 @@ exit 64
 			discord: { enabled: true },
 		});
 		expect(JSON.stringify(projected.manifest.projection?.channels ?? {})).not.toContain("whatsapp");
+	});
+
+	it("isolates two Telegram links on one account across config, secrets, and routing", () => {
+		const loaded: RuntimeManifestLoad = {
+			manifest: {
+				schemaVersion: "clawdi.runtimeDesiredState.v1",
+				deploymentId: "dep_shared_telegram",
+				environmentId: "env_shared_telegram",
+				instanceId: "iid_shared_telegram",
+				generation: 1,
+				issuedAt: "2026-07-30T00:00:00Z",
+				controlPlane: { apiUrl: "https://cloud-api.test" },
+				runtimes: { openclaw: { enabled: true }, hermes: { enabled: false } },
+			},
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/manifest",
+		};
+		const accountId = "acct-telegram-shared";
+		const projected = applyRuntimeChannelsToManifestLoad(loaded, {
+			channels: [
+				{
+					id: accountId,
+					provider: "telegram",
+					name: "Shared bot",
+					status: "active",
+					visibility: "private",
+					runtime_links: [
+						{
+							id: "link-alpha-0001",
+							account_id: accountId,
+							agent_id: "agent-alpha",
+							status: "active",
+							agent_token: "agent-token-alpha",
+						},
+						{
+							id: "link-beta-0002",
+							account_id: accountId,
+							agent_id: "agent-beta",
+							status: "active",
+							agent_token: "agent-token-beta",
+						},
+					],
+					runtime_credentials: [],
+				},
+			],
+			source: "remote-datasource",
+			sourcePath: "https://runtime.test/channels",
+		});
+		const telegram = projected.manifest.projection?.channels?.telegram as {
+			accounts: Record<string, { botToken: { id: string } }>;
+		};
+		const accountEntries = Object.entries(telegram.accounts);
+		expect(accountEntries).toHaveLength(2);
+		expect(accountEntries.map(([key]) => key)).toEqual([
+			"clawdi_accttelegram_link_linkalpha000",
+			"clawdi_accttelegram_link_linkbeta0002",
+		]);
+		expect(new Set(accountEntries.map(([, config]) => config.botToken.id)).size).toBe(2);
+		expect(projected.secretValues).toMatchObject({
+			"secret://channels/telegram/clawdi_accttelegram/links/link-alpha-0001/agent-token":
+				"agent-token-alpha",
+			"secret://channels/telegram/clawdi_accttelegram/links/link-beta-0002/agent-token":
+				"agent-token-beta",
+		});
+		const profiles = projected.manifest.egressProfiles?.profiles ?? [];
+		expect(profiles).toHaveLength(4);
+		const routingRefs = profiles.map(
+			(profile) =>
+				(profile.rewrite as { setHeaders: { authorization: { secretRef: string } } }).setHeaders
+					.authorization.secretRef,
+		);
+		expect(new Set(routingRefs)).toEqual(
+			new Set([
+				"secret://channels/telegram/clawdi_accttelegram/links/link-alpha-0001/agent-token",
+				"secret://channels/telegram/clawdi_accttelegram/links/link-beta-0002/agent-token",
+			]),
+		);
+		expect(JSON.stringify(projected.manifest)).not.toContain("agent-token-alpha");
+		expect(JSON.stringify(projected.manifest)).not.toContain("agent-token-beta");
 	});
 
 	it("gates WhatsApp runtime channel projection until upstream support is ready", () => {

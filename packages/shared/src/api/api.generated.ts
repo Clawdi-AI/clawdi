@@ -4079,6 +4079,14 @@ export interface components {
              * Format: date-time
              */
             expires_at: string;
+            /** Pairing Command */
+            pairing_command: string;
+            /** Bot Username */
+            bot_username?: string | null;
+            /** Deep Link */
+            deep_link?: string | null;
+            /** Qr Payload */
+            qr_payload?: string | null;
         };
         /** ChannelRuntimeAccountResponse */
         ChannelRuntimeAccountResponse: {

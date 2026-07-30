@@ -254,12 +254,28 @@ async def configure_telegram_provider_webhook(
     provider_token: str,
     webhook_url: str,
     webhook_secret: str,
-) -> None:
+) -> str | None:
     # Telegram requires an HTTPS webhook. Local development keeps the default
     # localhost URL and can still exercise inbound routes directly.
     if not webhook_url.lower().startswith("https://"):
-        return
+        return None
     base_url = settings.channel_telegram_api_base_url.strip().rstrip("/")
+    identity = await _post_provider_json(
+        channel=CHANNEL_PROVIDER_TELEGRAM,
+        method="getMe",
+        url=f"{base_url}/bot{provider_token}/getMe",
+        json_payload={},
+        timeout_seconds=20.0,
+        unreachable_detail="telegram api unreachable",
+        rejected_detail="telegram bot token was rejected",
+    )
+    if identity.get("ok") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="telegram bot token was rejected",
+        )
+    identity_result = identity.get("result")
+    username = identity_result.get("username") if isinstance(identity_result, dict) else None
     payload = await _post_provider_json(
         channel=CHANNEL_PROVIDER_TELEGRAM,
         method="setWebhook",
@@ -277,6 +293,7 @@ async def configure_telegram_provider_webhook(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="telegram bot token or webhook was rejected",
         )
+    return username.strip().lstrip("@") if isinstance(username, str) else None
 
 
 async def store_channel_secrets(
@@ -1349,6 +1366,9 @@ def telegram_text_from_update(payload: dict[str, Any]) -> str | None:
 
 
 def telegram_message_id_from_update(payload: dict[str, Any]) -> str | None:
+    update_id = payload.get("update_id")
+    if isinstance(update_id, (int, str)) and str(update_id).strip():
+        return str(update_id).strip()
     callback_query = payload.get("callback_query")
     if isinstance(callback_query, dict):
         callback_id = callback_query.get("id")

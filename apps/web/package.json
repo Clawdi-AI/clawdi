@@ -48,6 +48,7 @@
 		"nuqs": "^2.9.0",
 		"openapi-fetch": "^0.17.0",
 		"posthog-js": "^1.396.6",
+		"qrcode.react": "^4.2.0",
 		"react": "catalog:",
 		"react-dom": "catalog:",
 		"react-markdown": "^10.1.0",
