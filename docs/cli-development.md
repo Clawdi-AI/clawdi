@@ -17,11 +17,11 @@ closest-to-end-user:
 Native release builds use one catalog-backed layout:
 `dist-native/<target>/{clawdi,skills/,egress-addon/}`. The supported targets are
 Linux x64/arm64 for glibc and musl, plus macOS x64/arm64. Build and exercise the
-host target with:
+host target with the same internal lifecycle command used by ephemeral CI:
 
 ```bash
 bun run --cwd packages/cli build:native
-bun run --cwd packages/cli test:native-linux-lifecycle
+bun run --cwd packages/cli test:native-linux-lifecycle:internal
 ```
 
 The lifecycle command exercises the Linux x64 release layout. `build:native`
@@ -283,12 +283,12 @@ when an upstream agent's on-disk format changes and a test breaks.
 ### Running tests
 
 ```bash
-bun test                              # everything (~350 tests, ~5s)
-bun run test:e2e                     # process-level vault reference e2e
-scripts/vault-e2e.sh                 # real backend + Postgres vault smoke
-bun test tests/adapters/              # adapter layer only
-bun test tests/commands/push.test.ts  # just push regression
-bun run test:watch                    # watch mode
+bun run --cwd packages/cli test                                # full Docker-isolated suite
+bun run --cwd packages/cli test:e2e                            # Docker-isolated process E2E
+bun run --cwd packages/cli test -- tests/adapters/             # focused adapter layer
+bun run --cwd packages/cli test -- tests/commands/push.test.ts # focused command regression
+scripts/vault-e2e.sh                                           # real backend + Postgres smoke
+bun run --cwd packages/cli test:watch:local                    # opt-in host-local watch
 ```
 
 ## Releasing

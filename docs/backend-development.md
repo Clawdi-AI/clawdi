@@ -27,6 +27,8 @@ root:
 
 ```bash
 scripts/test.sh backend
+# Equivalent from the backend project:
+cd backend && pdm test
 ```
 
 That command bind-mounts the host checkout read-only, copies it into an
@@ -34,6 +36,9 @@ isolated container workspace, runs `uv sync` inside the container, starts a
 throwaway `pgvector/pgvector:pg16` Postgres service, applies Alembic migrations,
 and runs pytest. It also uses fake home/cache directories backed by container
 tmpfs and does not reuse the dev database.
+
+The PDM `test` command returns to the same Docker entrypoint. Raw
+`uv run pytest` remains an explicit host-local workflow only.
 
 The host-local commands below are opt-in for fast backend iteration after you
 have installed dependencies locally.

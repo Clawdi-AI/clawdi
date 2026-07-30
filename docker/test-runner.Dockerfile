@@ -38,8 +38,3 @@ ENV HOME=/tmp/clawdi-home \
 
 WORKDIR /work
 RUN chown 1000:1000 /work && chmod 755 /work
-
-COPY docker/test-runner.sh /usr/local/bin/clawdi-test-runner
-RUN chmod +x /usr/local/bin/clawdi-test-runner
-
-ENTRYPOINT ["clawdi-test-runner"]

@@ -58,11 +58,7 @@ jobs:
     if: github.event_name != 'schedule'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     outputs:
-      web: ${{ steps.filter.outputs.web }}
-      cli: ${{ steps.filter.outputs.cli }}
-      shared: ${{ steps.filter.outputs.shared }}
-      sidecar: ${{ steps.filter.outputs.sidecar }}
-      infra: ${{ steps.filter.outputs.infra }}
+      client: ${{ steps.filter.outputs.client }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
     steps:
       - uses: actions/checkout@v6
@@ -70,16 +66,12 @@ jobs:
         uses: dorny/paths-filter@v4
         with:
           filters: |
-            web:
+            client:
               - "apps/web/**"
-            cli:
-              - "packages/cli/**"
-              - "install.sh"
-            shared:
               - "packages/shared/**"
-            sidecar:
+              - "packages/cli/**"
               - "packages/whatsapp-baileys-sidecar/**"
-            infra:
+              - "install.sh"
               - "package.json"
               - "bun.lock"
               - "turbo.json"
@@ -98,22 +90,13 @@ jobs:
 
   # Lint, typecheck, build, and client package tests in one job.
   #
-  # These are seconds of work each (Biome ~2s, each typecheck 1-4s, web build
-  # ~6s). Splitting them across five jobs plus a matrix meant paying job setup
-  # five times and holding five runner slots for ~35s of actual work, which is
-  # what drove this workflow's queueing. Turbo already resolves the task graph
-  # and skips unaffected packages, so the per-target guard logic these jobs
-  # carried was redundant with it.
+  # The consolidated gate intentionally verifies all four client packages.
+  # One change signal therefore describes the work this job actually performs.
   verify:
     needs: changes
     if: >-
-      github.event_name != 'schedule' && (
-        needs.changes.outputs.web == 'true' ||
-        needs.changes.outputs.cli == 'true' ||
-        needs.changes.outputs.shared == 'true' ||
-        needs.changes.outputs.sidecar == 'true' ||
-        needs.changes.outputs.infra == 'true'
-      )
+      github.event_name != 'schedule' &&
+      needs.changes.outputs.client == 'true'
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
     timeout-minutes: 20
     env:
@@ -141,10 +124,7 @@ jobs:
         run: |
           sh -n install.sh
           packages/cli/dist-native/linux-x64/clawdi --version
-          CLAWDI_NATIVE_BINARY=packages/cli/dist-native/linux-x64/clawdi \
-            bun test \
-              packages/cli/tests/e2e/native-installer.e2e.test.ts \
-              packages/cli/tests/e2e/native-daemon.e2e.test.ts
+          bun run --cwd packages/cli test:native-linux-lifecycle:internal
       - name: Validate CLI publish payload
         run: bun run --cwd packages/cli check:publish-manifest
       - name: Test client packages

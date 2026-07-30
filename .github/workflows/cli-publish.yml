@@ -152,7 +152,7 @@ jobs:
         working-directory: packages/cli
         run: bun run typecheck
 
-      - name: Test
+      - name: Test (ephemeral internal suite)
         if: steps.check.outputs.should_release == 'true'
         run: bun test --isolate --max-concurrency=1 packages/cli
 
@@ -165,6 +165,11 @@ jobs:
           bun run build:native-release
           ./dist-native/linux-x64/clawdi --version
           bun run check:native-release
+
+      - name: Native lifecycle (ephemeral internal suite)
+        if: steps.check.outputs.should_release == 'true'
+        working-directory: packages/cli
+        run: |
           CLAWDI_NATIVE_BINARY=dist-native/linux-x64/clawdi \
             bun test \
               tests/e2e/native-installer.e2e.test.ts \

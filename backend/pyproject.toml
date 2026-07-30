@@ -95,7 +95,7 @@ migrate = "alembic upgrade head"
 audit-ai-provider-models = "python -m scripts.audit_ai_provider_models"
 lint = "ruff check ."
 format = "ruff format ."
-test = "pytest -q"
+test = { shell = "../scripts/test.sh backend" }
 
 [tool.ruff]
 target-version = "py312"
