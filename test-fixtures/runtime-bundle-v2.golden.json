@@ -18,6 +18,12 @@
 		},
 		"deploymentId": "dep_test",
 		"environmentId": "20000000-0000-0000-0000-000000000002",
+		"egressEngine": {
+			"sha256": "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+			"type": "mitmproxy",
+			"url": "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+			"version": "12.2.3"
+		},
 		"generation": 7,
 		"instanceId": "hri_test",
 		"issuedAt": "2026-07-13T00:00:00+00:00",
@@ -128,5 +134,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "f7aecccd700e4c6e3fa21cd8f7935b95bdcc9de1540c5aa9ff41c2984bcac6f5"
+	"sourceRevision": "12ae1174be36ad789afcfd639ee54a7061a97e19614822ddb9addac3a53c7fc9"
 }

@@ -122,6 +122,7 @@ const ENV_KEYS = [
 type EnvKey = (typeof ENV_KEYS)[number];
 
 let originalEnv: Partial<Record<EnvKey, string>>;
+let originalUmask: number;
 let root: string;
 
 function fakeSystemdStatePath(
@@ -138,7 +139,6 @@ function writeFakeSystemdManager(input: {
 	logPath: string;
 	stateRoot: string;
 	failNextSidecarRestart?: string;
-	failNextSidecarStop?: string;
 	sidecarReadyPath?: string;
 }): void {
 	mkdirSync(input.stateRoot, { recursive: true });
@@ -198,11 +198,6 @@ case "$command" in
     done
     ;;
   stop)
-    if [ "$*" = "clawdi-runtime-sidecar.service" ] && [ -n '${input.failNextSidecarStop ?? ""}' ] && [ -f '${input.failNextSidecarStop ?? ""}' ]; then
-      rm -f '${input.failNextSidecarStop ?? ""}'
-      printf 'injected sidecar stop failure\\n' >&2
-      exit 43
-    fi
     for unit in "$@"; do rm -f "$(state_path "$unit" active)" "$(state_path "$unit" failed)"; touch "$(state_path "$unit" not-found)"; done
     ;;
   enable)
@@ -227,6 +222,7 @@ esac
 }
 
 beforeEach(() => {
+	originalUmask = process.umask(0o022);
 	originalEnv = {};
 	process.exitCode = undefined;
 	for (const key of ENV_KEYS) {
@@ -244,6 +240,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+	process.umask(originalUmask);
 	for (const key of ENV_KEYS) delete process.env[key];
 	for (const [key, value] of Object.entries(originalEnv)) {
 		process.env[key as EnvKey] = value;
@@ -527,6 +524,7 @@ const TEST_HOSTED_CODEX_TERMINAL_TOOLING = {
 
 function hostedRequiredState() {
 	return {
+		egressEngine: TEST_EGRESS_ENGINE_PIN,
 		providers: {
 			default: {
 				kind: "openai-compatible",
@@ -625,6 +623,7 @@ function hostedRuntimeBundleResponse(
 	payload: HostedRuntimeResponseFixture,
 	options: { etag?: string; sourceRevision?: string } = {},
 ): Response {
+	seedMitmproxyCache();
 	const runtime = payload.manifest.runtime;
 	if (runtime === "openclaw") {
 		process.env.OPENCLAW_GATEWAY_TOKEN ??= "test-openclaw-gateway-token";
@@ -2669,7 +2668,7 @@ chmod +x "$HOME/.local/bin/hermes"
 			const hermesEnv = readSystemdEnvFile(paths, "hermes-gateway");
 			const hermesDashboardEnv = readSystemdEnvFile(paths, "clawdi-hermes-dashboard");
 
-			expect(convergence.outputs.systemdSystemUnits).not.toContain(
+			expect(convergence.outputs.systemdSystemUnits).toContain(
 				join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
 			);
 			expect(hermesEnv).not.toContain("CLAWDI_MANAGED_OPENAI_API_KEY");
@@ -5952,7 +5951,7 @@ exit 64
 		]);
 	});
 
-	it("runtime watch wakes on its own manifest SSE signal and restarts only the runtime unit", async () => {
+	it("runtime watch restarts changed runtime and egress units without restarting itself", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -6051,7 +6050,9 @@ exit 0
 			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
 			expect(systemctlCalls.some((call) => call.includes("reset-failed"))).toBe(false);
 			expect(systemctlCalls.some((call) => call.includes("enable --now"))).toBe(false);
-			expect(systemctlCalls).toContain("restart clawdi-daemon.service");
+			expect(systemctlCalls).toContain(
+				"restart clawdi-daemon.service clawdi-runtime-sidecar.service",
+			);
 			expect(systemctlCalls.some((call) => call.includes("restart clawdi-runtime-watch"))).toBe(
 				false,
 			);
@@ -6237,6 +6238,7 @@ fi
 			logs.push(String(value));
 		};
 		seedCurrentCliInstall(state, "clawdi@0.13.0-test", "0.13.0-test", "https://registry.npmjs.org");
+		seedMitmproxyCache();
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -6357,7 +6359,11 @@ fi
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: true,
-				systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-watch.service"],
+				systemUnitsChanged: [
+					"clawdi-daemon.service",
+					"clawdi-runtime-sidecar.service",
+					"clawdi-runtime-watch.service",
+				],
 				userUnitsChanged: [],
 			});
 			const watchStatus = JSON.parse(
@@ -7559,7 +7565,11 @@ chmod +x "$prefix/bin/clawdi"
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
 				applied: false,
-				systemUnitsChanged: ["clawdi-daemon.service", "clawdi-runtime-watch.service"],
+				systemUnitsChanged: [
+					"clawdi-daemon.service",
+					"clawdi-runtime-sidecar.service",
+					"clawdi-runtime-watch.service",
+				],
 				userUnitsChanged: ["openclaw-gateway.service"],
 			});
 		} finally {
@@ -7769,7 +7779,7 @@ exit 0
 		});
 	});
 
-	it("keeps public sidecar artifacts stable while forcing private egress secret restarts", async () => {
+	it("keeps public sidecar artifacts stable and rejects required engine degradation", async () => {
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -7777,7 +7787,6 @@ exit 0
 		const systemctlLog = join(root, "systemctl-egress-rotation.log");
 		const systemctlStateRoot = join(root, "systemctl-egress-state");
 		const failNextSidecarRestart = join(root, "fail-next-sidecar-restart");
-		const failNextSidecarStop = join(root, "fail-next-sidecar-stop");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
 		const logs: string[] = [];
@@ -7789,7 +7798,6 @@ exit 0
 			logPath: systemctlLog,
 			stateRoot: systemctlStateRoot,
 			failNextSidecarRestart,
-			failNextSidecarStop,
 		});
 		writeFileSync(
 			fakeSystemdStatePath(
@@ -7826,7 +7834,7 @@ exit 0
 			const initialSecret = "000000";
 			const rotatedSecret = "000001";
 			const rejectedSecret = "000002";
-			const missingSidecarSecret = "000003";
+			const invalidEngineSecret = "000003";
 			const initialFetch = mockFetch([
 				{
 					method: "GET",
@@ -8066,8 +8074,7 @@ exit 0
 			writeFileSync(systemctlLog, "");
 			logs.length = 0;
 			process.exitCode = undefined;
-			writeFileSync(failNextSidecarStop, "fail\n");
-			const missingSidecarFetch = mockFetch([
+			const invalidEngineFetch = mockFetch([
 				{
 					method: "GET",
 					path: "/v1/runtime/manifest",
@@ -8079,7 +8086,7 @@ exit 0
 									...mitmproxy,
 									url: "https://invalid.example.test/mitmproxy.tar.gz",
 								},
-								missingSidecarSecret,
+								invalidEngineSecret,
 							),
 							{ etag: '"egress-secret-revision-d"' },
 						),
@@ -8087,37 +8094,26 @@ exit 0
 			]);
 			try {
 				await runtimeWatch({ once: true, json: true });
-				expect(process.exitCode).toBe(1);
-				const removalRejectedEvent = JSON.parse(logs.at(-1) ?? "{}");
-				expect(removalRejectedEvent.status).toBe("error");
-				expect(removalRejectedEvent.error).toContain("injected sidecar stop failure");
-				expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(
-					true,
-				);
-				writeFileSync(systemctlLog, "");
-				logs.length = 0;
-				process.exitCode = undefined;
-				await runtimeWatch({ once: true, json: true });
 			} finally {
-				missingSidecarFetch.restore();
+				invalidEngineFetch.restore();
 			}
-			expect(process.exitCode ?? 0).toBe(0);
-			const missingSidecarEvent = JSON.parse(logs.at(-1) ?? "{}");
-			expect(missingSidecarEvent.status).toBe("applied");
-			expect(missingSidecarEvent.systemdApply.systemUnitsChanged).toEqual([]);
+			expect(process.exitCode).toBe(1);
+			const invalidEngineEvent = JSON.parse(logs.at(-1) ?? "{}");
+			expect(invalidEngineEvent.status).toBe("error");
+			expect(invalidEngineEvent.error).toContain(
+				"required egress engine is not ready: mitmproxy URL must use official mitmproxy downloads",
+			);
+			expect(JSON.stringify(invalidEngineEvent)).not.toContain(invalidEngineSecret);
 			expect(existsSync(join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"))).toBe(
-				false,
+				true,
 			);
 			expect(JSON.parse(readFileSync(egressSecretFile, "utf-8"))).toMatchObject({
-				"secret://provider.default.apiKey": missingSidecarSecret,
+				"secret://provider.default.apiKey": rotatedSecret,
 			});
-			const missingSidecarSystemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
-			expect(
-				missingSidecarSystemctlCalls.filter(
-					(call) => call === "restart clawdi-runtime-sidecar.service",
-				),
-			).toHaveLength(0);
-			expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
+			expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedAppliedState);
+			expect(readFileSync(paths.manifestLastGood, "utf-8")).toBe(committedLastGood);
+			expect(readFileSync(paths.managedSecretCacheFile, "utf-8")).toBe(committedSecretCache);
+			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
 		} finally {
 			console.log = previousLog;
 			process.exitCode = previousExitCode;
@@ -10633,6 +10629,7 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		const paths = getRuntimePaths();
 
 		const load: RuntimeManifestLoad = {
 			manifest: {
@@ -10645,6 +10642,7 @@ exit 64
 				issuedAt: "2026-07-07T00:00:00Z",
 				workspaceRoot: workspace,
 				controlPlane: { apiUrl: "https://cloud-api.test/" },
+				egressEngine: seedMitmproxyCache(paths),
 				runtimes: {
 					hermes: {
 						enabled: true,
@@ -10714,7 +10712,6 @@ exit 64
 			etag: '"hermes-channels"',
 		};
 
-		const paths = getRuntimePaths();
 		const projected = applyRuntimeChannelsToManifestLoad(load, channels, paths);
 		const convergence = convergeRuntimeManifest(projected, paths);
 

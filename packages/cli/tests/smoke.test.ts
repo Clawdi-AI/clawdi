@@ -285,6 +285,7 @@ describe("CLI smoke — src entry", () => {
 			"node:fs"
 		);
 		const root = join(tmpdir(), `clawdi-smoke-runtime-strict-${Date.now()}`);
+		const previousUmask = process.umask(0o022);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
@@ -292,6 +293,21 @@ describe("CLI smoke — src entry", () => {
 		const installer = join(root, "install-openclaw.sh");
 		const managedCli = join(state, "bin", "clawdi");
 		const managedCliTarget = join(state, "npm", "bin", "clawdi");
+		const egressEngine = {
+			type: "mitmproxy",
+			version: "12.2.3",
+			url: "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+			sha256: "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
+		} as const;
+		const mitmdump = join(
+			state,
+			"maintained",
+			"egress-engine",
+			"mitmproxy",
+			egressEngine.version,
+			egressEngine.sha256,
+			"mitmdump",
+		);
 		mkdirSync(home, { recursive: true });
 		mkdirSync(dirname(installer), { recursive: true });
 		mkdirSync(dirname(managedCli), { recursive: true });
@@ -317,6 +333,9 @@ exit 64
 		);
 		chmodSync(managedCliTarget, 0o700);
 		symlinkSync(managedCliTarget, managedCli);
+		mkdirSync(dirname(mitmdump), { recursive: true });
+		writeFileSync(mitmdump, "#!/usr/bin/env sh\nexit 0\n");
+		chmodSync(mitmdump, 0o755);
 		writeFileSync(
 			join(state, "status", "cli-bootstrap.json"),
 			JSON.stringify({
@@ -356,6 +375,7 @@ exit 64
 						},
 					},
 					controlPlane: { cloudApiUrl: "https://cloud-api.test" },
+					egressEngine,
 					clawdiCli: {
 						source: "npm:clawdi",
 						packageSpec: "clawdi@0.12.10-beta.57",
@@ -431,6 +451,7 @@ exit 64
 			expect(existsSync(join(home, ".openclaw", "bin", "openclaw"))).toBe(true);
 			expect(existsSync(join(state, "cache", "manifest.last-good.json"))).toBe(true);
 		} finally {
+			process.umask(previousUmask);
 			rmSync(root, { recursive: true, force: true });
 		}
 	});
