@@ -1086,7 +1086,7 @@ export interface components {
             /** Client Secret */
             client_secret?: string | null;
             /** Subscription Id */
-            subscription_id?: number | null;
+            subscription_id?: string | null;
             /** Invoice Id */
             invoice_id?: string | null;
             /** Deployment Id */
