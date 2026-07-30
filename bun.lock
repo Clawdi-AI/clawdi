@@ -76,9 +76,6 @@
       "bin": {
         "clawdi": "bin/clawdi.mjs",
       },
-      "dependencies": {
-        "eventsource-parser": "^3.0.8",
-      },
       "devDependencies": {
         "@clack/prompts": "^1.7.0",
         "@clawdi/shared": "workspace:*",
@@ -87,6 +84,7 @@
         "@types/node": "^22.20.0",
         "chalk": "^5.4.0",
         "commander": "^15.0.0",
+        "eventsource-parser": "^3.0.8",
         "openapi-fetch": "^0.17.0",
         "tar": "^7.5.19",
         "typescript": "catalog:",
