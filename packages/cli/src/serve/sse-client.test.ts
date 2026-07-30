@@ -38,6 +38,67 @@ describe("classifySseReconnect", () => {
 });
 
 describe("consumeSse reconnect metadata", () => {
+	it.each([
+		["LF", "\n"],
+		["CRLF", "\r\n"],
+		["CR", "\r"],
+	])("parses %s framing across arbitrary chunk boundaries", async (_name, newline) => {
+		const body = [
+			"event: skill_changed",
+			'data: {"type":"skill_changed",',
+			'data: "skill_key":"chunked","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":3}',
+			"",
+			"",
+		].join(newline);
+		const bytes = new TextEncoder().encode(body);
+		globalThis.fetch = Object.assign(
+			async () =>
+				new Response(
+					new ReadableStream<Uint8Array>({
+						start(controller) {
+							for (let index = 0; index < bytes.length; index += 3) {
+								controller.enqueue(bytes.slice(index, index + 3));
+							}
+							controller.close();
+						},
+					}),
+				),
+			{ preconnect: originalFetch.preconnect },
+		);
+		const abort = new AbortController();
+		const events: unknown[] = [];
+		await consumeSse({
+			apiUrl: "https://cloud.example",
+			apiKey: "test-key",
+			abort: abort.signal,
+			onEvent: (event) => {
+				events.push(event);
+			},
+			onDisconnect: () => abort.abort(),
+		});
+		expect(events).toEqual([expect.objectContaining({ skill_key: "chunked" })]);
+	});
+
+	it("ignores comments and malformed records while continuing the stream", async () => {
+		const body =
+			': ping\nmalformed-field\n\nevent: skill_changed\ndata: not-json\n\nevent: skill_deleted\ndata: {"type":"skill_deleted","skill_key":"valid","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":4}\n\n';
+		globalThis.fetch = Object.assign(async () => new Response(body), {
+			preconnect: originalFetch.preconnect,
+		});
+		const abort = new AbortController();
+		const events: unknown[] = [];
+		await consumeSse({
+			apiUrl: "https://cloud.example",
+			apiKey: "test-key",
+			abort: abort.signal,
+			onEvent: (event) => {
+				events.push(event);
+			},
+			onDisconnect: () => abort.abort(),
+		});
+		expect(events).toEqual([expect.objectContaining({ skill_key: "valid" })]);
+	});
+
 	it("declares the Agent-authoritative protocol on every stream", async () => {
 		const protocols: Array<string | null> = [];
 		globalThis.fetch = Object.assign(
