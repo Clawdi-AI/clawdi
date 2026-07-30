@@ -7,10 +7,10 @@ import time
 API_ROLE = "api"
 CHANNELS_WORKER_ROLE = "channels-worker"
 
-# How long the API keeps serving after SIGTERM. The Coolify proxy (traefik)
-# only stops routing to a container on its die event, so the listener must
-# stay open past the stop signal or every rolling deploy feeds a few seconds
-# of traffic to a closed socket (surfacing in browsers as CORS-less 502s).
+# How long the API keeps serving after SIGTERM. Some container proxies only
+# stop routing on the container's die event, so the listener must stay open
+# past the stop signal or a rolling deploy can feed a few seconds of traffic
+# to a closed socket (surfacing in browsers as CORS-less 502s).
 # Together with uvicorn's graceful shutdown this must stay under the 10s
 # docker stop timeout, after which the container is SIGKILLed.
 API_SIGTERM_DRAIN_SECONDS = 5

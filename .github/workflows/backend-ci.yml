@@ -4,7 +4,6 @@ on:
   pull_request:
     paths:
       - "backend/**"
-      - "infra/deploy/coolify/**"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
       - ".dockerignore"
@@ -20,7 +19,6 @@ on:
     branches: [main]
     paths:
       - "backend/**"
-      - "infra/deploy/coolify/**"
       - "deploy/self-host/**"
       - "apps/web/Dockerfile"
       - ".dockerignore"
@@ -59,7 +57,6 @@ jobs:
               - "backend/uv.lock"
               - "backend/alembic.ini"
               - "backend/Dockerfile"
-              - "infra/deploy/coolify/**"
               - "deploy/self-host/**"
               - "apps/web/Dockerfile"
               - ".dockerignore"
@@ -116,11 +113,6 @@ jobs:
         run: uv run deptry app
       - name: Generated OpenAPI client is current
         run: uv run python scripts/check_generated_api.py
-      - name: Coolify deploy contract sanity
-        run: |
-          python3 -m py_compile ../infra/deploy/coolify/*.py
-          python3 -m json.tool ../infra/deploy/coolify/production-stack.json >/dev/null
-
   test:
     needs: changes
     if: needs.changes.outputs.test == 'true'

@@ -195,13 +195,13 @@ async def revoke_oauth_refresh_grant(
 def _real_client_ip(request: Request) -> str:
     """Resolve the real CLI client IP, falling back to "unknown".
 
-    Behind a proxy (Coolify, Cloudflare, ingress)
-    `request.client.host` is the PROXY's IP — every CLI login
-    then shares one bucket and the rate limiter throttles all
-    users together. With `settings.trust_forwarded_for=true` we
-    read the standard `X-Forwarded-For` (first hop = the
-    originating client) or `CF-Connecting-IP`. Trust is gated so
-    a direct-uvicorn dev setup can't be header-spoofed.
+    Behind a reverse proxy or ingress, `request.client.host` is
+    the proxy's IP — every CLI login then shares one bucket and
+    the rate limiter throttles all users together. With
+    `settings.trust_forwarded_for=true` we read the standard
+    `X-Forwarded-For` (first hop = the originating client) or
+    `CF-Connecting-IP`. Trust is gated so a direct-uvicorn dev
+    setup can't be header-spoofed.
     """
     if settings.trust_forwarded_for:
         fwd = request.headers.get("x-forwarded-for")
@@ -334,8 +334,8 @@ async def start_device_flow(
     db: AsyncSession = Depends(get_session),
 ):
     # Bucket on the real client IP (proxy-aware) so concurrent
-    # CLI logins behind the same Coolify/Cloudflare proxy don't
-    # share a single 90/min bucket.
+    # CLI logins behind the same reverse proxy don't share a single
+    # 90/min bucket.
     _check_device_rate_limit(_real_client_ip(request))
     # Bound the (unauthenticated) write surface: prune anything past TTL and
     # refuse new inserts above a hard ceiling. Cheap — both queries hit the

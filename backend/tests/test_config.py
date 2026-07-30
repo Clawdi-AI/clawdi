@@ -1,3 +1,5 @@
+import base64
+
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -27,7 +29,17 @@ def test_settings_normalizes_literal_escaped_clerk_pem_newlines():
     load_pem_public_key(settings.clerk_pem_public_key.encode("utf-8"))
 
 
-def test_settings_normalizes_coolify_line_continuation_clerk_pem_newlines():
+def test_settings_decodes_base64_clerk_pem():
+    pem = _public_pem()
+    encoded = base64.b64encode(pem.encode("utf-8")).decode("ascii")
+
+    settings = Settings(clerk_pem_public_key=encoded)
+
+    assert settings.clerk_pem_public_key == pem
+    load_pem_public_key(settings.clerk_pem_public_key.encode("utf-8"))
+
+
+def test_settings_normalizes_line_continuation_clerk_pem_newlines():
     pem = _public_pem()
     settings = Settings(clerk_pem_public_key=pem.replace("\n", "\\" + "\n"))
 
@@ -35,7 +47,7 @@ def test_settings_normalizes_coolify_line_continuation_clerk_pem_newlines():
     load_pem_public_key(settings.clerk_pem_public_key.encode("utf-8"))
 
 
-def test_settings_normalizes_coolify_line_continuation_clerk_pem_from_env(monkeypatch):
+def test_settings_normalizes_line_continuation_clerk_pem_from_env(monkeypatch):
     pem = _public_pem()
     monkeypatch.setenv("CLERK_PEM_PUBLIC_KEY", pem.replace("\n", "\\" + "\n"))
 
