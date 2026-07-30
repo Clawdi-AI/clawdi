@@ -44,6 +44,8 @@ from app.routes.projects import router as projects_router
 from app.routes.public_sessions import (
     PUBLIC_SESSION_EXPORT_CACHE_CONTROL,
     is_public_session_export_path,
+)
+from app.routes.public_sessions import (
     router as public_sessions_router,
 )
 from app.routes.runtime import router as runtime_router
