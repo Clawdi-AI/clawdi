@@ -3,7 +3,7 @@ import { z } from "zod";
 import { ApiClient, unwrap } from "../lib/api-client";
 import { log, toErrorMessage } from "../serve/log";
 import { readRuntimeAppliedState, runtimeAppliedApplyIdentity } from "./applied-state";
-import { type RuntimeApplyIdentity, readRuntimeApplyIdentityFromEnv } from "./apply-identity";
+import { type RuntimeApplyIdentity, readRuntimeApplyIdentity } from "./apply-identity";
 import {
 	HostedRuntimeHeartbeatSession,
 	type HostedRuntimeObservedEvent,
@@ -132,7 +132,7 @@ export class HostedRuntimeObservationProducer {
 	}
 
 	private readAttestedContext(): AttestedRuntimeObservationContext | null {
-		const expectedApplyIdentity = readRuntimeApplyIdentityFromEnv();
+		const expectedApplyIdentity = readRuntimeApplyIdentity();
 		if (!expectedApplyIdentity) return null;
 		const appliedState = readRuntimeAppliedState(this.paths);
 		const appliedIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;

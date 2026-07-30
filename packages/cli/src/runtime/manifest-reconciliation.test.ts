@@ -23,6 +23,7 @@ import {
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
+	daemonProgramRevision,
 	hostedAiProviderCatalog,
 	type RuntimeManifest,
 	runtimeLiveSnapshotPaths,
@@ -47,7 +48,11 @@ import {
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
-import { normalizeSecretValues } from "./secret-values";
+import {
+	normalizeSecretValues,
+	processRuntimeEnvironment,
+	projectedRuntimeEnvironment,
+} from "./secret-values";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const successfulPrerequisiteActivation = () => ({
@@ -1901,7 +1906,9 @@ describe("runtime manifest reconciliation invariants", () => {
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
 		});
 		expect(runConfig.secretFilePath).toBeNull();
-		expect(runtimeSecretValue({}, "env://OPENCLAW_GATEWAY_TOKEN")).toBe("gateway-token");
+		expect(
+			runtimeSecretValue({}, "env://OPENCLAW_GATEWAY_TOKEN", processRuntimeEnvironment()),
+		).toBe("gateway-token");
 		const unit = readFileSync(
 			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
 			"utf8",
@@ -2414,7 +2421,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		]);
 	});
 
-	test("keeps runtime secret revisions scoped to runtime programs", () => {
+	test("keeps reconcile impact scoped to the affected process", () => {
 		const paths = tempRuntimePaths();
 		const runtimeSecretRef = "secret://runtimes/openclaw/api-key";
 		const egressSecretRef = "secret://providers/default/api-key";
@@ -2445,14 +2452,76 @@ describe("runtime manifest reconciliation invariants", () => {
 			generation: 2,
 			issuedAt: "2026-07-01T00:01:00.000Z",
 		};
-		const egressManifest: RuntimeManifest = {
+		const cliOnlyChange: RuntimeManifest = {
 			...manifest,
-			runtimes: {
-				openclaw: {
-					...manifest.runtimes.openclaw,
-					run: runSettings("openclaw", ["gateway", "run"]),
+			clawdiCli: { source: "npm:clawdi", packageSpec: "clawdi@0.13.16" },
+		};
+		const controlPlaneOnlyChange: RuntimeManifest = {
+			...manifest,
+			controlPlane: { apiUrl: "https://unrelated-control-plane.example.test" },
+		};
+		const terminalToolingOnlyChange: RuntimeManifest = {
+			...manifest,
+			projection: { terminalTooling: { codex: { enabled: false } } },
+		};
+		const skillOnlyChange: RuntimeManifest = {
+			...manifest,
+			projection: {
+				skills: { entries: { clawdi: { enabled: true, version: 1 } } },
+			},
+		};
+		const unrelatedProviderChange: RuntimeManifest = {
+			...manifest,
+			projection: {
+				providers: {
+					unrelated: {
+						type: "custom_openai_compatible",
+						baseUrl: "https://unrelated.example.test/v1",
+					},
 				},
 			},
+		};
+		const relevantGatewayProjectionChange: RuntimeManifest = {
+			...manifest,
+			projection: {
+				system: {
+					openclawControlUiAllowedOrigins: ["https://gateway.example.test"],
+				},
+			},
+		};
+		const serviceOnlyChange: RuntimeManifest = {
+			...manifest,
+			runtimes: {
+				...manifest.runtimes,
+				openclaw: {
+					...manifest.runtimes.openclaw,
+					services: { worker: runSettings("openclaw", ["worker"]) },
+				},
+			},
+		};
+		const multiRuntimeManifest: RuntimeManifest = {
+			...manifest,
+			runtimes: {
+				...manifest.runtimes,
+				hermes: {
+					enabled: true,
+					run: runSettings("hermes", ["gateway"]),
+					services: {},
+				},
+			},
+		};
+		const unrelatedRuntimeChange: RuntimeManifest = {
+			...multiRuntimeManifest,
+			runtimes: {
+				...multiRuntimeManifest.runtimes,
+				hermes: {
+					...multiRuntimeManifest.runtimes.hermes,
+					run: runSettings("hermes", ["gateway", "--verbose"]),
+				},
+			},
+		};
+		const egressManifest: RuntimeManifest = {
+			...manifest,
 			egressProfiles: {
 				profiles: [
 					{
@@ -2497,9 +2566,47 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(runtimeProgramRevision(metadataOnlyChange, "openclaw", secretValues)).toBe(
 			runtimeRevision,
 		);
+		expect(runtimeProgramRevision(cliOnlyChange, "openclaw", secretValues)).toBe(runtimeRevision);
+		expect(runtimeProgramRevision(controlPlaneOnlyChange, "openclaw", secretValues)).toBe(
+			runtimeRevision,
+		);
+		expect(runtimeProgramRevision(egressManifest, "openclaw", secretValues)).toBe(runtimeRevision);
+		expect(runtimeProgramRevision(terminalToolingOnlyChange, "openclaw", secretValues)).toBe(
+			runtimeRevision,
+		);
+		expect(runtimeProgramRevision(unrelatedProviderChange, "openclaw", secretValues)).toBe(
+			runtimeRevision,
+		);
+		expect(runtimeProgramRevision(serviceOnlyChange, "openclaw", secretValues)).toBe(
+			runtimeRevision,
+		);
+		expect(runtimeProgramRevision(unrelatedRuntimeChange, "openclaw", secretValues)).toBe(
+			runtimeProgramRevision(multiRuntimeManifest, "openclaw", secretValues),
+		);
+		expect(runtimeProgramRevision(unrelatedRuntimeChange, "hermes", secretValues)).not.toBe(
+			runtimeProgramRevision(multiRuntimeManifest, "hermes", secretValues),
+		);
+		expect(
+			runtimeProgramRevision(relevantGatewayProjectionChange, "openclaw", secretValues),
+		).not.toBe(runtimeRevision);
+		expect(runtimeProgramRevision(skillOnlyChange, "openclaw", secretValues)).not.toBe(
+			runtimeRevision,
+		);
+		expect(runtimeProgramRevision(manifest, "openclaw", secretValues, "provider-b")).not.toBe(
+			runtimeProgramRevision(manifest, "openclaw", secretValues, "provider-a"),
+		);
 		const sidecarRevision = runtimeSidecarProgramRevision(manifest);
 		expect(runtimeSidecarProgramRevision(egressManifest)).not.toBe(sidecarRevision);
-		expect(runtimeSidecarProgramRevision(metadataOnlyChange)).not.toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(metadataOnlyChange)).toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(cliOnlyChange)).toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(terminalToolingOnlyChange)).toBe(sidecarRevision);
+		expect(runtimeSidecarProgramRevision(skillOnlyChange)).toBe(sidecarRevision);
+		const daemonRevision = daemonProgramRevision(manifest);
+		expect(daemonProgramRevision(metadataOnlyChange)).toBe(daemonRevision);
+		expect(daemonProgramRevision(terminalToolingOnlyChange)).toBe(daemonRevision);
+		expect(daemonProgramRevision(skillOnlyChange)).toBe(daemonRevision);
+		expect(daemonProgramRevision(egressManifest)).toBe(daemonRevision);
+		expect(daemonProgramRevision(cliOnlyChange)).not.toBe(daemonRevision);
 	});
 
 	test.each([
@@ -2836,20 +2943,56 @@ describe("runtime manifest reconciliation invariants", () => {
 		const secretFile = join(paths.managedSecretRoot, "egress-secrets.json");
 		const sidecarUnit = join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service");
 
-		expect(converge(activeManifest, "000000").installErrors).toEqual([]);
+		const initial = converge(activeManifest, "000000");
+		expect(initial.installErrors).toEqual([]);
+		const renderedGatewayUnit = initial.outputs.systemdUserUnits[0];
+		if (!renderedGatewayUnit) throw new Error("active runtime did not render a gateway unit");
+		const gatewayUnitName = renderedGatewayUnit.split("/").at(-1);
+		if (!gatewayUnitName) throw new Error("rendered gateway unit has no file name");
+		const gatewayUnit = join(
+			paths.systemdUserRoot,
+			`${gatewayUnitName}.d`,
+			"10-clawdi-hosted.conf",
+		);
+		const gatewayEnv = join(paths.systemdEnvRoot, `${gatewayUnitName}.env`);
 		expect(signals.at(-1)).toBe(true);
 		expect(statSync(secretFile).mode & 0o777).toBe(0o600);
 		expect(readFileSync(secretFile, "utf-8")).toContain("000000");
+		const activeGatewayUnit = readFileSync(gatewayUnit, "utf-8");
+		expect(readFileSync(gatewayEnv, "utf-8")).toContain("NODE_EXTRA_CA_CERTS");
 
 		expect(converge(activeManifest, "000000").installErrors).toEqual([]);
 		expect(signals.at(-1)).toBe(false);
+		expect(readFileSync(gatewayUnit, "utf-8")).toBe(activeGatewayUnit);
 
 		expect(converge(activeManifest, "000001").installErrors).toEqual([]);
 		expect(signals.at(-1)).toBe(true);
 		expect(readFileSync(secretFile, "utf-8")).toContain("000001");
+		expect(readFileSync(gatewayUnit, "utf-8")).toBe(activeGatewayUnit);
+
+		const changedProfileManifest: RuntimeManifest = {
+			...activeManifest,
+			egressProfiles: {
+				profiles:
+					activeManifest.egressProfiles?.profiles.map((profile) => ({
+						...profile,
+						priority: profile.priority + 1,
+					})) ?? [],
+			},
+		};
+		expect(converge(changedProfileManifest, "000001").installErrors).toEqual([]);
+		expect(readFileSync(gatewayUnit, "utf-8")).toBe(activeGatewayUnit);
+
+		const noEgressManifest: RuntimeManifest = {
+			...activeManifest,
+			egressProfiles: { profiles: [] },
+		};
+		expect(converge(noEgressManifest, undefined).installErrors).toEqual([]);
+		expect(readFileSync(gatewayUnit, "utf-8")).not.toBe(activeGatewayUnit);
+		expect(readFileSync(gatewayEnv, "utf-8")).not.toContain("NODE_EXTRA_CA_CERTS");
 
 		const noSidecarManifest: RuntimeManifest = {
-			...activeManifest,
+			...changedProfileManifest,
 			runtimes: { openclaw: { ...activeManifest.runtimes.openclaw, enabled: false } },
 		};
 		expect(converge(noSidecarManifest, "000002").installErrors).toEqual([]);
@@ -2868,7 +3011,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 		expect(converge(deletedManifest, undefined).installErrors).toEqual([]);
 		expect(signals.at(-1)).toBe(false);
-		expect(signals).toEqual([true, false, true, false, false, false]);
+		expect(signals).toEqual([true, false, true, false, false, false, false, false]);
 	});
 
 	test("recovers committed egress secrets before retrying a crash-interrupted sidecar load", () => {
@@ -3886,20 +4029,41 @@ describe("runtime manifest reconciliation invariants", () => {
 			runtimeSecretValue(
 				{ "secret://providers/default/api-key": "sk-exact" },
 				"secret://providers/default/api-key",
+				processRuntimeEnvironment(),
 			),
 		).toBe("sk-exact");
 		expect(
 			runtimeSecretValue(
 				{ "secret://providers/default/api-key": "sk-normalized" },
 				"providers/default/api-key",
+				processRuntimeEnvironment(),
 			),
 		).toBe("sk-normalized");
 		expect(
 			runtimeSecretValue(
 				{ "providers/default/api-key": "sk-stripped" },
 				"secret://providers/default/api-key",
+				processRuntimeEnvironment(),
 			),
 		).toBe("sk-stripped");
-		expect(runtimeSecretValue({}, "secret://providers/default/api-key")).toBeNull();
+		expect(
+			runtimeSecretValue({}, "secret://providers/default/api-key", processRuntimeEnvironment()),
+		).toBeNull();
+	});
+
+	test("uses a discovered apply-context snapshot instead of stale process env", () => {
+		delete process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE;
+		process.env.OPENCLAW_GATEWAY_TOKEN = "stale-process-token";
+		const projected = normalizeSecretValues({
+			"env://OPENCLAW_GATEWAY_TOKEN": "projected-file-token",
+		});
+		const runtimeEnvironment = projectedRuntimeEnvironment({
+			OPENCLAW_GATEWAY_TOKEN: "projected-file-token",
+		});
+
+		expect(runtimeSecretValue(projected, "env://OPENCLAW_GATEWAY_TOKEN", runtimeEnvironment)).toBe(
+			"projected-file-token",
+		);
+		expect(runtimeSecretValue(projected, "env://MISSING_TOKEN", runtimeEnvironment)).toBeNull();
 	});
 });

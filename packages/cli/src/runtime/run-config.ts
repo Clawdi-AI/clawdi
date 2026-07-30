@@ -5,7 +5,7 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
-import { runtimeSecretValue } from "./secret-values";
+import { processRuntimeEnvironment, runtimeSecretValue } from "./secret-values";
 
 export const runtimeNameSchema = z
 	.string()
@@ -227,7 +227,11 @@ export function buildRuntimeRunInvocation(
 	const env = {
 		...baseEnv,
 		...read.config.env,
-		...runtimeSecretEnv(read.config.secretFilePath, read.config.secretEnv),
+		...runtimeSecretEnv(
+			read.config.secretFilePath,
+			read.config.secretEnv,
+			processRuntimeEnvironment(baseEnv),
+		),
 		...(read.config.secretFilePath && read.config.egressProfileBundlePath
 			? { CLAWDI_EGRESS_SECRET_FILE: read.config.secretFilePath }
 			: {}),
@@ -270,6 +274,7 @@ function defaultRuntimeArgs(runtime: RuntimeName): string[] {
 function runtimeSecretEnv(
 	secretFilePath: string | null,
 	secretEnv: Record<string, string>,
+	runtimeEnvironment: ReturnType<typeof processRuntimeEnvironment>,
 ): Record<string, string> {
 	const entries = Object.entries(secretEnv);
 	if (entries.length === 0) return {};
@@ -294,7 +299,7 @@ function runtimeSecretEnv(
 	}
 	const env: Record<string, string> = {};
 	for (const [envName, ref] of entries) {
-		const value = runtimeSecretValue(secrets, ref);
+		const value = runtimeSecretValue(secrets, ref, runtimeEnvironment);
 		if (!value) {
 			throw new Error(`Runtime secret ${ref} for ${envName} is unavailable.`);
 		}

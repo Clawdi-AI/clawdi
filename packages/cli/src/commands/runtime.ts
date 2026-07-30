@@ -22,17 +22,19 @@ import { getCliVersion } from "../lib/version";
 import {
 	type RuntimeAppliedContentIdentity,
 	readRuntimeAppliedState,
+	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "../runtime/applied-state";
 import {
 	type RuntimeApplyIdentity,
-	readRuntimeApplyIdentityFromEnv,
+	readRuntimeApplyContext,
 	resolveRuntimeApplyGeneration,
+	runtimeApplyIdentitiesEqual,
 } from "../runtime/apply-identity";
 import {
-	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
+	readRuntimeCredential,
 	runtimeAuthTokenFileLabel,
 } from "../runtime/auth-token";
 import { applyRuntimeBundleChannelsToManifestLoad } from "../runtime/channels";
@@ -1253,7 +1255,8 @@ function hasRuntimeCredential(input: {
 	if (input.manifestPath) return true;
 	const paths = input.paths ?? getRuntimePaths();
 	if (existsSync(paths.manifestLastGood)) return true;
-	return ensureRuntimeAuthTokenFile(paths) !== null;
+	const applyContext = readRuntimeApplyContext();
+	return readRuntimeCredential(paths, applyContext.runtimeEnvironment) !== null;
 }
 
 function runtimeCredentialName(paths: ReturnType<typeof getRuntimePaths>): string {
@@ -1307,6 +1310,7 @@ export function commitRuntimeAppliedState(input: {
 	sourceRevision: string;
 	convergence: ReturnType<typeof convergeRuntimeManifest>;
 	applyIdentity: RuntimeApplyIdentity | null;
+	daemonAuthTokenRevision?: string;
 	egressSidecarSecretRevision?: string;
 }): void {
 	if (
@@ -1315,6 +1319,11 @@ export function commitRuntimeAppliedState(input: {
 	) {
 		throw new Error(
 			`runtime apply identity generation ${input.applyIdentity.generation} does not match resolved manifest apply generation ${resolveRuntimeApplyGeneration(input.convergence.manifest)}`,
+		);
+	}
+	if (input.applyIdentity && input.applyIdentity.manifestETag !== input.etag) {
+		throw new Error(
+			`runtime apply identity manifest ETag ${input.applyIdentity.manifestETag} does not match fetched bundle ETag ${input.etag}`,
 		);
 	}
 	const providerIds = runtimeSourceProviderIds(input.load.manifest);
@@ -1338,6 +1347,9 @@ export function commitRuntimeAppliedState(input: {
 					}
 				: {}),
 			contentIdentity: runtimeAppliedContentIdentity(input.load),
+			...(input.daemonAuthTokenRevision
+				? { daemonAuthTokenRevision: input.daemonAuthTokenRevision }
+				: {}),
 			...(input.egressSidecarSecretRevision
 				? { egressSidecarSecretRevision: input.egressSidecarSecretRevision }
 				: {}),
@@ -1504,7 +1516,7 @@ function readFileIfExists(path: string): string | null {
 	return readFileSync(path, "utf-8");
 }
 
-interface SystemdUnitSnapshot {
+export interface SystemdUnitSnapshot {
 	system: Map<string, string>;
 	user: Map<string, string>;
 }
@@ -1523,9 +1535,12 @@ interface CommandResult {
 }
 
 const RUNTIME_WATCH_SYSTEM_UNIT = "clawdi-runtime-watch.service";
+const RUNTIME_DAEMON_SYSTEM_UNIT = "clawdi-daemon.service";
 const RUNTIME_SIDECAR_SYSTEM_UNIT = "clawdi-runtime-sidecar.service";
 
-function readSystemdUnitSnapshot(paths: ReturnType<typeof getRuntimePaths>): SystemdUnitSnapshot {
+export function readSystemdUnitSnapshot(
+	paths: ReturnType<typeof getRuntimePaths>,
+): SystemdUnitSnapshot {
 	return {
 		system: readManagedSystemdUnits(paths.systemdSystemRoot),
 		user: readManagedSystemdUnits(paths.systemdUserRoot),
@@ -1583,7 +1598,7 @@ function changedSystemdUnits(
 	};
 }
 
-function applySystemdRuntimeUpdate(
+export function applySystemdRuntimeUpdate(
 	paths: ReturnType<typeof getRuntimePaths>,
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
@@ -2122,7 +2137,7 @@ async function runtimeInitLocked(
 		try {
 			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded, paths);
 			const contentRevision = runtimePublicContentRevision(convergenceLoad);
-			const applyIdentity = readRuntimeApplyIdentityFromEnv();
+			const applyIdentity = convergenceLoad.applyContext?.identity ?? null;
 			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
 				authorityCommit: (convergence, authority) =>
 					commitRuntimeAppliedState({
@@ -2132,6 +2147,7 @@ async function runtimeInitLocked(
 						sourceRevision: loaded.sourceRevision ?? contentRevision,
 						convergence,
 						applyIdentity,
+						daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
 						egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 					}),
 				manifestIdentity: {
@@ -2391,7 +2407,11 @@ async function runtimeWatchTickAfterCliReconciliation(
 	if (
 		"notModified" in manifestLoad &&
 		activeAppliedState !== null &&
-		activeAppliedState.etag === responseManifestEtag
+		activeAppliedState.etag === responseManifestEtag &&
+		runtimeApplyIdentitiesEqual(
+			manifestLoad.applyContext?.identity ?? null,
+			runtimeAppliedApplyIdentity(activeAppliedState),
+		)
 	) {
 		const completion = completePendingRuntimeCliUpgrade(paths, getCliVersion());
 		return {
@@ -2420,7 +2440,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 			bundleEtag,
 			paths,
 		);
-		const applyIdentity = readRuntimeApplyIdentityFromEnv();
+		const applyIdentity = loaded.applyContext?.identity ?? null;
 		const applyResult = applyRuntimeDesiredState(loaded, paths, {
 			authorityCommit: (convergence, authority) =>
 				commitRuntimeAppliedState({
@@ -2430,6 +2450,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 					sourceRevision,
 					convergence,
 					applyIdentity,
+					daemonAuthTokenRevision: authority.daemonAuthTokenRevision,
 					egressSidecarSecretRevision: authority.egressSidecarSecretRevision,
 				}),
 			continueOnCliUpdateError: true,
@@ -2611,7 +2632,7 @@ function applyRuntimeDesiredState(
 					);
 				}
 			},
-			activate: ({ restartEgressSidecar }) => {
+			activate: ({ restartDaemon, restartEgressSidecar }) => {
 				// Official installers run after the prerequisite phase and add their
 				// base units, so final reconciliation must observe a fresh rendered state.
 				failedSystemdUnits = readSystemdUnitSnapshot(paths);
@@ -2621,7 +2642,10 @@ function applyRuntimeDesiredState(
 						previousSystemdUnits,
 						failedSystemdUnits,
 						{
-							forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+							forceRestartSystemUnits: [
+								...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
+								...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
+							],
 							recoverFailedUnits: opts.recoverFailedSystemdUnits,
 							skipActivatedSystemUnits: egressPrerequisiteActivated
 								? [RUNTIME_SIDECAR_SYSTEM_UNIT]
@@ -2635,10 +2659,13 @@ function applyRuntimeDesiredState(
 					);
 				}
 			},
-			rollback: ({ restartEgressSidecar }) => {
+			rollback: ({ restartDaemon, restartEgressSidecar }) => {
 				if (!failedSystemdUnits) return;
 				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths), {
-					forceRestartSystemUnits: restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+					forceRestartSystemUnits: [
+						...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
+						...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
+					],
 					recoverFailedUnits: false,
 				});
 			},

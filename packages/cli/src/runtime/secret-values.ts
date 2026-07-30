@@ -3,6 +3,30 @@ import { normalizeSecretRef } from "./hosted-egress-profiles";
 const ENV_SECRET_REF_PREFIX = "env://";
 const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
+export interface ProcessRuntimeEnvironment {
+	kind: "process-environment";
+	values: Readonly<Record<string, string | undefined>>;
+}
+
+export interface ProjectedRuntimeEnvironment {
+	kind: "projected-environment";
+	values: Readonly<Record<string, string>>;
+}
+
+export type RuntimeEnvironmentAuthority = ProcessRuntimeEnvironment | ProjectedRuntimeEnvironment;
+
+export function processRuntimeEnvironment(
+	values: Readonly<Record<string, string | undefined>> = process.env,
+): ProcessRuntimeEnvironment {
+	return { kind: "process-environment", values };
+}
+
+export function projectedRuntimeEnvironment(
+	values: Readonly<Record<string, string>>,
+): ProjectedRuntimeEnvironment {
+	return { kind: "projected-environment", values: { ...values } };
+}
+
 export function envSecretRefName(ref: string): string | null {
 	if (!ref.startsWith(ENV_SECRET_REF_PREFIX)) return null;
 	const envName = ref.slice(ENV_SECRET_REF_PREFIX.length);
@@ -43,10 +67,14 @@ export function canonicalSecretRefName(ref: string | null | undefined): string |
 	return normalized?.startsWith("secret://") ? normalized.slice("secret://".length) : null;
 }
 
-export function runtimeSecretValue(secrets: Record<string, unknown>, ref: string): string | null {
+export function runtimeSecretValue(
+	secrets: Record<string, unknown>,
+	ref: string,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
+): string | null {
 	const envName = envSecretRefName(ref);
 	if (envName) {
-		const value = process.env[envName]?.trim();
+		const value = runtimeEnvironment.values[envName]?.trim();
 		return value ? value : null;
 	}
 	const normalized = normalizeSecretRef(ref);
