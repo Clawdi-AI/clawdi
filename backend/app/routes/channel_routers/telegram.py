@@ -456,6 +456,15 @@ async def telegram_webhook(
         text=text,
         command=command,
     )
+    if command is not None:
+        existing = await find_existing_inbound_provider_event(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            provider_event_id=provider_event_id,
+        )
+        if existing is not None:
+            return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
 
     messages = await record_inbound_messages_for_bindings(
         db,

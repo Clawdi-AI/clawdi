@@ -7109,10 +7109,12 @@ async def test_telegram_webhook_start_deep_link_pair_code_creates_binding(
 @pytest.mark.asyncio
 async def test_telegram_start_claims_explicit_agent_link_and_redelivery_is_idempotent(
     client: httpx.AsyncClient,
+    db_session: AsyncSession,
     channel_agent,
     second_channel_agent,
     monkeypatch: pytest.MonkeyPatch,
 ):
+    real_httpx_async_client = httpx.AsyncClient
     _reset_fake_provider_client({"ok": True, "result": {"message_id": 100}})
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
@@ -7150,16 +7152,62 @@ async def test_telegram_start_claims_explicit_agent_link_and_redelivery_is_idemp
     }
     webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
     headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+    from app.routes.channel_routers import telegram as telegram_router
 
-    first = await client.post(webhook_url, headers=headers, json=payload)
-    redelivery = await client.post(webhook_url, headers=headers, json=payload)
+    original_find = telegram_router.find_existing_inbound_provider_event
+    precheck_count = 0
+    both_prechecks_started = asyncio.Event()
+
+    async def synchronized_find(*args, **kwargs):
+        nonlocal precheck_count
+        precheck_count += 1
+        if precheck_count <= 2:
+            if precheck_count == 2:
+                both_prechecks_started.set()
+            await both_prechecks_started.wait()
+        return await original_find(*args, **kwargs)
+
+    monkeypatch.setattr(
+        telegram_router,
+        "find_existing_inbound_provider_event",
+        synchronized_find,
+    )
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def independent_session():
+        async with sessionmaker() as session:
+            yield session
+
+    previous_session_override = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = independent_session
+    try:
+        transport = httpx.ASGITransport(app=app)
+        async with real_httpx_async_client(
+            transport=transport, base_url="http://test"
+        ) as concurrent:
+            first, redelivery = await asyncio.gather(
+                concurrent.post(webhook_url, headers=headers, json=payload),
+                concurrent.post(webhook_url, headers=headers, json=payload),
+            )
+    finally:
+        app.dependency_overrides[get_session] = previous_session_override
     bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
+    events = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == UUID(created["id"]),
+                    ChannelMessage.provider_event_id == "7101",
+                )
+            )
+        ).scalars()
+    )
 
     assert first.status_code == 200
-    assert first.json()["paired"] is True
     assert redelivery.status_code == 200
-    assert redelivery.json()["paired"] is False
+    assert sorted([first.json()["paired"], redelivery.json()["paired"]]) == [False, True]
     assert len(bindings.json()) == 1
+    assert len(events) == 1
     assert bindings.json()[0]["agent_link_id"] == second["id"]
     pairing_replies = [
         call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")

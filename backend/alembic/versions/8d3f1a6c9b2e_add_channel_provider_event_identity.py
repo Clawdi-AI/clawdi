@@ -23,8 +23,19 @@ def upgrade() -> None:
         sa.Column("provider_event_id", sa.String(length=300), nullable=True),
     )
     op.execute(
-        "UPDATE channel_messages SET provider_event_id = provider_message_id "
-        "WHERE direction = 'inbound' AND provider_message_id IS NOT NULL"
+        """
+        UPDATE channel_messages AS message
+        SET provider_event_id = CASE
+            WHEN account.provider = 'telegram'
+             AND jsonb_typeof(message.payload->'update_id') IN ('number', 'string')
+            THEN COALESCE(NULLIF(message.payload->>'update_id', ''), message.provider_message_id)
+            ELSE message.provider_message_id
+        END
+        FROM channel_accounts AS account
+        WHERE message.account_id = account.id
+          AND message.direction = 'inbound'
+          AND message.provider_message_id IS NOT NULL
+        """
     )
     op.drop_index("ux_channel_messages_inbound_provider_message_bound")
     op.drop_index("ux_channel_messages_inbound_provider_message_unbound")
@@ -52,6 +63,26 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ux_channel_messages_inbound_provider_message_unbound")
     op.drop_index("ux_channel_messages_inbound_provider_message_bound")
+    # The old schema cannot represent edited provider events that share a message ID.
+    # Keep the earliest public ID and clear later duplicates before restoring its indexes.
+    op.execute(
+        """
+        WITH ranked AS (
+            SELECT id,
+                   row_number() OVER (
+                       PARTITION BY account_id, external_chat_id,
+                                    provider_message_id, bot_agent_link_id
+                       ORDER BY created_at, id
+                   ) AS duplicate_rank
+            FROM channel_messages
+            WHERE direction = 'inbound' AND provider_message_id IS NOT NULL
+        )
+        UPDATE channel_messages AS message
+        SET provider_message_id = NULL
+        FROM ranked
+        WHERE message.id = ranked.id AND ranked.duplicate_rank > 1
+        """
+    )
     op.create_index(
         "ux_channel_messages_inbound_provider_message_bound",
         "channel_messages",
