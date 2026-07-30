@@ -56,9 +56,7 @@ log = logging.getLogger(__name__)
 
 file_store = get_file_store()
 PUBLIC_SESSION_EXPORT_CACHE_CONTROL = "no-store"
-_PUBLIC_SESSION_EXPORT_PATH = re.compile(
-    r"^/(?:v1|api)/public/sessions/[^/]+/export\.(?:md|json)$"
-)
+_PUBLIC_SESSION_EXPORT_PATH = re.compile(r"^/(?:v1|api)/public/sessions/[^/]+/export\.(?:md|json)$")
 
 
 def is_public_session_export_path(path: str) -> bool:
