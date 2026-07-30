@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
 	chmodSync,
+	chownSync,
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
@@ -3707,6 +3708,76 @@ describe("runtime manifest reconciliation invariants", () => {
 			expect(readFileSync(path)).toEqual(expected);
 		}
 		expect(existsSync(installerLog)).toBe(false);
+	});
+
+	test("keeps the hosted skill ledger root owned while mutating the runtime-user skill tree", () => {
+		if (process.geteuid?.() !== 0) return;
+		const paths = tempRuntimePaths();
+		const fixtureRoot = dirname(paths.serviceStateRoot);
+		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
+		const skillDir = join(paths.userHome, ".hermes", "skills", "clawdi");
+		const ledger = join(paths.projectionRoot, "managed-skills.json");
+		const runtimeUid = Number.parseInt(
+			execFileSync("id", ["-u", "nobody"], { encoding: "utf8" }).trim(),
+			10,
+		);
+		const runtimeGid = Number.parseInt(
+			execFileSync("id", ["-g", "nobody"], { encoding: "utf8" }).trim(),
+			10,
+		);
+		process.env.CLAWDI_RUNTIME_USER = "nobody";
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
+
+		chmodSync(fixtureRoot, 0o755);
+		mkdirSync(paths.projectionRoot, { recursive: true });
+		chmodSync(paths.projectionRoot, 0o755);
+		mkdirSync(paths.clawdiHome, { recursive: true });
+		chownSync(paths.clawdiHome, runtimeUid, runtimeGid);
+		mkdirSync(dirname(hermesCommand), { recursive: true });
+		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n");
+		chmodSync(hermesCommand, 0o755);
+
+		const manifest = baseManifest(
+			paths,
+			{
+				hermes: {
+					enabled: true,
+					run: runSettings(hermesCommand, ["gateway"]),
+					services: {},
+				},
+			},
+			{ projection: { skills: { entries: { clawdi: { enabled: true, version: 1 } } } } },
+		);
+
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-hermes-skill"), paths);
+
+		expect(result.installErrors).toEqual([]);
+		expect(readFileSync(join(skillDir, "SKILL.md"), "utf8")).toContain("# Clawdi");
+		expect(statSync(skillDir).uid).toBe(runtimeUid);
+		expect(statSync(join(skillDir, "SKILL.md")).uid).toBe(runtimeUid);
+		expect(statSync(paths.projectionRoot).uid).toBe(0);
+		expect(statSync(paths.projectionRoot).mode & 0o777).toBe(0o755);
+		expect(statSync(ledger).uid).toBe(0);
+		expect(statSync(ledger).mode & 0o022).toBe(0);
+
+		expect(() =>
+			execFileSync("runuser", ["-u", "nobody", "--", "test", "-w", paths.projectionRoot]),
+		).toThrow();
+
+		const removal = convergeRuntimeManifest(
+			manifestLoad(
+				{ ...manifest, projection: { skills: { entries: {} } } },
+				"inline-hermes-skill-removal",
+			),
+			paths,
+		);
+
+		expect(removal.installErrors).toEqual([]);
+		expect(existsSync(skillDir)).toBe(false);
+		expect(readFileSync(ledger, "utf8")).not.toContain(skillDir);
+		expect(statSync(ledger).uid).toBe(0);
+		expect(statSync(ledger).mode & 0o022).toBe(0);
 	});
 
 	test("rolls back root managed state and leaves user projections for forward convergence", () => {

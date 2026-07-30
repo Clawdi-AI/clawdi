@@ -3519,6 +3519,8 @@ function applyHostedBundledSkills(
 	manifest: RuntimeManifest,
 	home: string,
 ): string[] {
+	// Reservation state is root-authoritative. Drop privilege only inside the
+	// callbacks that mutate runtime-user-owned Skill trees.
 	const installEnabled = hostedBundledSkillsEnabled();
 	const targets: string[] = [];
 	for (const skillName of hostedBundledSkillIds()) {
@@ -3545,7 +3547,8 @@ function applyHostedBundledSkills(
 				targetDir,
 				id: skillName,
 				manager: "hosted-manifest",
-				removeTarget: () => rmSync(targetDir, { recursive: true, force: true }),
+				removeTarget: () =>
+					withRuntimeUserFileAccess(() => rmSync(targetDir, { recursive: true, force: true })),
 			});
 			continue;
 		}
@@ -3569,13 +3572,15 @@ function applyHostedBundledSkills(
 				digest: bundled.digest,
 			},
 			() =>
-				reconcileHostedBundledSkill({
-					skillId: skillName,
-					version: desired.version,
-					sourceDir: hostedBundledSkillSourceDir(bundled.assetDirectory),
-					targetDir,
-					reserved: true,
-				}),
+				withRuntimeUserFileAccess(() =>
+					reconcileHostedBundledSkill({
+						skillId: skillName,
+						version: desired.version,
+						sourceDir: hostedBundledSkillSourceDir(bundled.assetDirectory),
+						targetDir,
+						reserved: true,
+					}),
+				),
 		);
 		if (result === "unchanged") continue;
 		makeRuntimeUserOwnedAncestors(targetDir, home);
@@ -6544,9 +6549,7 @@ export function convergeRuntimeManifest(
 		}
 		for (const name of HOSTED_RUNTIME_TARGETS) {
 			try {
-				withRuntimeUserFileAccess(() =>
-					applyHostedBundledSkills(name, observations.get(name), manifest, projectionHome),
-				);
+				applyHostedBundledSkills(name, observations.get(name), manifest, projectionHome);
 			} catch (error) {
 				installErrors.push(
 					`runtime ${name} skill projection failed: ${
