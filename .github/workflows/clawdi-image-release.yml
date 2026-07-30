@@ -10,24 +10,6 @@ on:
       ref:
         description: "Git ref to build. Defaults to the workflow SHA."
         required: false
-      deploy:
-        description: "Update and deploy the Coolify Applications after publishing."
-        required: false
-        type: boolean
-        default: false
-      wait:
-        description: "Wait for Coolify deployments to finish when deploy=true."
-        required: false
-        type: boolean
-        default: true
-      deploy_scope:
-        description: "Coolify Applications to deploy after updating image tags."
-        required: false
-        type: choice
-        options:
-          - api-only
-          - all
-        default: api-only
       build_web:
         description: "Also publish the web image. Requires matching public web build variables."
         required: false
@@ -68,8 +50,6 @@ jobs:
     outputs:
       image_tag: ${{ steps.rev.outputs.sha }}
       build_required: ${{ steps.runtime-changes.outputs.build }}
-      deploy_scope: ${{ steps.deploy-mode.outputs.deploy_scope }}
-      should_deploy: ${{ steps.deploy-mode.outputs.should_deploy }}
     steps:
       - name: Resolve source ref
         id: source-ref
@@ -92,27 +72,6 @@ jobs:
       - id: rev
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Resolve deploy mode
-        id: deploy-mode
-        env:
-          AUTO_DEPLOY: ${{ vars.CLAWDI_COOLIFY_AUTO_DEPLOY }}
-        run: |
-          should_deploy=false
-          deploy_scope="${{ inputs.deploy_scope }}"
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
-            deploy_scope=all
-            if [ "${AUTO_DEPLOY}" = "true" ]; then
-              should_deploy=true
-            fi
-          elif [ "${{ inputs.deploy }}" = "true" ]; then
-            should_deploy=true
-          fi
-          if [ -z "$deploy_scope" ]; then
-            deploy_scope=api-only
-          fi
-          echo "deploy_scope=${deploy_scope}" >> "$GITHUB_OUTPUT"
-          echo "should_deploy=${should_deploy}" >> "$GITHUB_OUTPUT"
-
       - name: Detect backend image changes
         id: runtime-changes
         run: |
@@ -129,7 +88,7 @@ jobs:
           readarray -t files <<< "$changed_files"
           for file in "${files[@]}"; do
             case "$file" in
-              backend/*|.dockerignore|infra/deploy/coolify/production-stack.json|infra/deploy/coolify/deploy_ghcr_runtime.py|.github/workflows/clawdi-image-release.yml)
+              backend/*|.dockerignore|.github/workflows/clawdi-image-release.yml)
                 build=true
                 ;;
             esac
