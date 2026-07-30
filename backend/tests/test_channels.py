@@ -4392,6 +4392,59 @@ async def test_telegram_agent_webhook_5xx_defers_ack_to_worker(
 
 
 @pytest.mark.asyncio
+async def test_telegram_update_redelivery_retries_failed_agent_webhook(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch,
+):
+    _reset_sequenced_provider_client([503, 200])
+    monkeypatch.setattr(
+        "app.services.channel_webhooks.httpx.AsyncClient",
+        _SequencedProviderClient,
+    )
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-redelivery-retry",
+        provider_token=None,
+    )
+    await client.post(
+        _telegram_bot_path(created, "setWebhook"),
+        headers=_telegram_agent_headers(created),
+        json={"url": "https://agent.example/agent-hook"},
+    )
+    payload = {
+        "update_id": 909,
+        "message": {
+            "message_id": 77,
+            "text": "retry identical update",
+            "chat": {"id": 42, "type": "private"},
+        },
+    }
+    webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+
+    first = await client.post(webhook_url, headers=headers, json=payload)
+    redelivery = await client.post(webhook_url, headers=headers, json=payload)
+    messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == UUID(created["id"]),
+                    ChannelMessage.provider_event_id == "909",
+                )
+            )
+        ).scalars()
+    )
+
+    assert first.status_code == 200
+    assert redelivery.status_code == 200
+    assert len(messages) == 1
+    assert messages[0].provider_message_id == "77"
+    assert messages[0].delivered_at is not None
+    assert len(_SequencedProviderClient.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_telegram_agent_webhook_inactive_link_records_debug_health(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
@@ -6777,15 +6830,25 @@ async def test_telegram_inbound_dedupes_update_redelivery_but_keeps_edits(
             await db_session.execute(
                 select(ChannelMessage).where(
                     ChannelMessage.account_id == UUID(created["id"]),
-                    ChannelMessage.provider_message_id.in_(["7001", "7002"]),
+                    ChannelMessage.provider_event_id.in_(["7001", "7002"]),
                 )
             )
         ).scalars()
     )
-    assert sorted((message.provider_message_id, message.text) for message in messages) == [
-        ("7001", "before edit"),
-        ("7002", "after edit"),
+    assert sorted(
+        (message.provider_event_id, message.provider_message_id, message.text)
+        for message in messages
+    ) == [
+        ("7001", "88", "before edit"),
+        ("7002", "88", "after edit"),
     ]
+    activity = await client.get(f"/v1/channels/{created['id']}/activity")
+    edited_items = [
+        item
+        for item in activity.json()["items"]
+        if item.get("text") in {"before edit", "after edit"}
+    ]
+    assert [item["provider_message_id"] for item in edited_items] == ["88", "88"]
 
 
 @pytest.mark.asyncio
@@ -7048,7 +7111,10 @@ async def test_telegram_start_claims_explicit_agent_link_and_redelivery_is_idemp
     client: httpx.AsyncClient,
     channel_agent,
     second_channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
 ):
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 100}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
     created = (
         await client.post(
             "/v1/channels",
@@ -7056,9 +7122,11 @@ async def test_telegram_start_claims_explicit_agent_link_and_redelivery_is_idemp
                 "provider": "telegram",
                 "name": "telegram-explicit-start-pair",
                 "agent_id": str(channel_agent.id),
+                "provider_token": "123456:telegram-secret",
             },
         )
     ).json()
+    _clear_fake_provider_calls()
     second = (
         await client.post(
             f"/v1/channels/{created['id']}/agent-links",
@@ -7093,6 +7161,11 @@ async def test_telegram_start_claims_explicit_agent_link_and_redelivery_is_idemp
     assert redelivery.json()["paired"] is False
     assert len(bindings.json()) == 1
     assert bindings.json()[0]["agent_link_id"] == second["id"]
+    pairing_replies = [
+        call for call in _FakeProviderClient.calls if call["url"].endswith("/sendMessage")
+    ]
+    assert len(pairing_replies) == 1
+    assert "paired" in pairing_replies[0]["json"]["text"].lower()
 
 
 @pytest.mark.asyncio

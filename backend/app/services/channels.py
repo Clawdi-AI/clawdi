@@ -1374,6 +1374,14 @@ def telegram_text_from_update(payload: dict[str, Any]) -> str | None:
 
 
 def telegram_message_id_from_update(payload: dict[str, Any]) -> str | None:
+    message = _telegram_message_from_update(payload)
+    if not isinstance(message, dict):
+        return None
+    message_id = message.get("message_id")
+    return str(message_id) if message_id is not None else None
+
+
+def telegram_event_id_from_update(payload: dict[str, Any]) -> str | None:
     update_id = payload.get("update_id")
     if isinstance(update_id, (int, str)) and str(update_id).strip():
         return str(update_id).strip()
@@ -1382,11 +1390,7 @@ def telegram_message_id_from_update(payload: dict[str, Any]) -> str | None:
         callback_id = callback_query.get("id")
         if callback_id is not None:
             return str(callback_id)
-    message = _telegram_message_from_update(payload)
-    if not isinstance(message, dict):
-        return None
-    message_id = message.get("message_id")
-    return str(message_id) if message_id is not None else None
+    return telegram_message_id_from_update(payload)
 
 
 def telegram_external_user_id_from_update(payload: dict[str, Any]) -> str | None:
@@ -1475,14 +1479,16 @@ async def record_inbound_message(
     provider_message_id: str | None,
     text: str | None,
     payload: dict[str, Any],
+    provider_event_id: str | None = None,
 ) -> ChannelMessage:
-    if provider_message_id is not None:
+    event_id = provider_event_id or provider_message_id
+    if event_id is not None:
         existing = await _find_existing_inbound_message(
             db,
             account=account,
             binding=binding,
             external_chat_id=external_chat_id,
-            provider_message_id=provider_message_id,
+            provider_event_id=event_id,
         )
         if existing is not None:
             return existing
@@ -1495,6 +1501,7 @@ async def record_inbound_message(
         direction=MESSAGE_DIRECTION_INBOUND,
         external_chat_id=external_chat_id,
         provider_message_id=provider_message_id,
+        provider_event_id=event_id,
         text=text,
         payload=payload,
     )
@@ -1508,7 +1515,7 @@ async def record_inbound_message(
             account=account,
             binding=binding,
             external_chat_id=external_chat_id,
-            provider_message_id=provider_message_id,
+            provider_event_id=event_id,
         )
         if existing is not None:
             return existing
@@ -1523,15 +1530,15 @@ async def _find_existing_inbound_message(
     account: ChannelAccount,
     binding: ChannelBinding | None,
     external_chat_id: str,
-    provider_message_id: str | None,
+    provider_event_id: str | None,
 ) -> ChannelMessage | None:
-    if provider_message_id is None:
+    if provider_event_id is None:
         return None
     filters = [
         ChannelMessage.account_id == account.id,
         ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
         ChannelMessage.external_chat_id == external_chat_id,
-        ChannelMessage.provider_message_id == provider_message_id,
+        ChannelMessage.provider_event_id == provider_event_id,
     ]
     if binding is None:
         filters.append(ChannelMessage.bot_agent_link_id.is_(None))
@@ -1540,6 +1547,29 @@ async def _find_existing_inbound_message(
     result = await db.execute(
         select(ChannelMessage)
         .where(*filters)
+        .order_by(ChannelMessage.created_at.asc(), ChannelMessage.id.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def find_existing_inbound_provider_event(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    external_chat_id: str,
+    provider_event_id: str | None,
+) -> ChannelMessage | None:
+    if provider_event_id is None:
+        return None
+    result = await db.execute(
+        select(ChannelMessage)
+        .where(
+            ChannelMessage.account_id == account.id,
+            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+            ChannelMessage.external_chat_id == external_chat_id,
+            ChannelMessage.provider_event_id == provider_event_id,
+        )
         .order_by(ChannelMessage.created_at.asc(), ChannelMessage.id.asc())
         .limit(1)
     )
@@ -1555,6 +1585,7 @@ async def record_inbound_messages_for_bindings(
     provider_message_id: str | None,
     text: str | None,
     payload: dict[str, Any],
+    provider_event_id: str | None = None,
 ) -> list[tuple[ChannelMessage, ChannelBinding | None]]:
     target_bindings: tuple[ChannelBinding | None, ...]
     if binding_result.bindings:
@@ -1574,6 +1605,7 @@ async def record_inbound_messages_for_bindings(
             provider_message_id=provider_message_id,
             text=text,
             payload=payload,
+            provider_event_id=provider_event_id,
         )
         messages.append((message, binding))
     if binding_result.command_handled:

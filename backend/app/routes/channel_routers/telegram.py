@@ -56,6 +56,7 @@ from app.services.channels import (
     decrypt_provider_token,
     drop_pending_telegram_updates,
     find_binding,
+    find_existing_inbound_provider_event,
     get_active_channel_account,
     parse_pair_command,
     pending_channel_inbox_count,
@@ -67,6 +68,7 @@ from app.services.channels import (
     resolve_inbound_binding,
     send_pairing_command_reply,
     telegram_chat_from_update,
+    telegram_event_id_from_update,
     telegram_external_user_id_from_update,
     telegram_message_id_from_update,
     telegram_text_from_update,
@@ -434,6 +436,16 @@ async def telegram_webhook(
     external_chat_id, external_chat_type, external_chat_name = chat
     text = telegram_text_from_update(payload)
     command = parse_pair_command(text)
+    provider_event_id = telegram_event_id_from_update(payload)
+    if command is not None:
+        existing = await find_existing_inbound_provider_event(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            provider_event_id=provider_event_id,
+        )
+        if existing is not None:
+            return TelegramWebhookResponse(ok=True, binding_id=existing.binding_id)
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -451,6 +463,7 @@ async def telegram_webhook(
         binding_result=binding_result,
         external_chat_id=external_chat_id,
         provider_message_id=telegram_message_id_from_update(payload),
+        provider_event_id=provider_event_id,
         text=text,
         payload=payload,
     )
