@@ -60,6 +60,7 @@ describe("hosted runtime observed v2", () => {
 		const companion = readHostedRuntimeObserved(paths, {
 			reportedAt: "2026-07-13T06:01:00.000Z",
 			appliedState: readRuntimeAppliedState(paths),
+			etagAuthority: "control-plane",
 		});
 		expect(companion?.applied).toEqual({
 			etag: '"frozen-companion-manifest"',

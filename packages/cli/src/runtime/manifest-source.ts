@@ -490,10 +490,10 @@ export async function loadRemoteRuntimeManifest(
 		sourceRevision?: string;
 	};
 	try {
-		normalized = bindRuntimeApplyContext(
-			normalizeRemoteManifestPayload(fetched.raw, paths),
-			applyContext,
-		);
+		normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
+		assertRemoteBundleAuthority(normalized.sourceRevision, fetched.etag);
+		assertRuntimeApplyContextMatchesManifest(normalized.manifest, applyContext);
+		normalized = bindRuntimeApplyContext(normalized, applyContext);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",
@@ -538,6 +538,33 @@ function bindRuntimeApplyContext<
 		Object.entries(input.secretValues ?? {}).filter(([ref]) => envSecretRefName(ref) === null),
 	);
 	return { ...input, secretValues };
+}
+
+function assertRuntimeApplyContextMatchesManifest(
+	manifest: RuntimeManifest,
+	applyContext: RuntimeApplyContext,
+): void {
+	if (
+		applyContext.identity &&
+		applyContext.identity.generation !== resolveRuntimeApplyGeneration(manifest)
+	) {
+		throw new Error(
+			`runtime apply identity generation ${applyContext.identity.generation} does not match resolved manifest apply generation ${resolveRuntimeApplyGeneration(manifest)}`,
+		);
+	}
+}
+
+function assertRemoteBundleAuthority(
+	sourceRevision: string | undefined,
+	etag: string | undefined,
+): void {
+	if (!sourceRevision) return;
+	const expected = `"sha256:${sourceRevision}"`;
+	if (etag !== expected) {
+		throw new Error(
+			`runtime bundle ETag ${etag ?? "missing"} does not match its sourceRevision validator ${expected}`,
+		);
+	}
 }
 
 function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
@@ -868,12 +895,16 @@ export async function loadRuntimeManifest(
 			};
 		}
 
-		let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
+		let normalized: {
+			manifest: RuntimeManifest;
+			secretValues?: Record<string, string>;
+			sourceRevision?: string;
+		};
 		try {
-			normalized = bindRuntimeApplyContext(
-				normalizeRemoteManifestPayload(fetched.raw, paths),
-				applyContext,
-			);
+			normalized = normalizeRemoteManifestPayload(fetched.raw, paths);
+			assertRemoteBundleAuthority(normalized.sourceRevision, fetched.etag);
+			assertRuntimeApplyContextMatchesManifest(normalized.manifest, applyContext);
+			normalized = bindRuntimeApplyContext(normalized, applyContext);
 		} catch (error) {
 			return {
 				mode: "manifest-rejected",
@@ -926,7 +957,9 @@ export async function loadRuntimeManifest(
 	}
 	let normalized: { manifest: RuntimeManifest; secretValues?: Record<string, string> };
 	try {
-		normalized = bindRuntimeApplyContext(normalizeManifestFixturePayload(raw, paths), applyContext);
+		normalized = normalizeManifestFixturePayload(raw, paths);
+		assertRuntimeApplyContextMatchesManifest(normalized.manifest, applyContext);
+		normalized = bindRuntimeApplyContext(normalized, applyContext);
 	} catch (error) {
 		return {
 			mode: "manifest-rejected",

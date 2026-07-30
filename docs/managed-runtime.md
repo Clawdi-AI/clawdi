@@ -792,11 +792,14 @@ file fails closed, `env://NAME` resolves only from `runtimeEnv`, and a missing
 name never falls back to stale process-start environment. These projected
 values remain in memory and service environment files; they are not copied to
 the last-good secret cache. The applied generation must match the manifest and
-`manifestETag` must match the fetched bundle ETag before durable authority can
-advance. This lets one atomic projected-file swap advance config, secrets, and
-apply identity in place; `bootNonce` remains a workload-boot identity rather
-than a config-generation identity. The legacy process environment is accepted
-only when no identity-file path was configured and the canonical hosted mount
+is validated before convergence can mutate live state. `manifestETag` names the
+Hosted control-plane snapshot and is persisted separately from the fetched
+bundle's HTTP ETag, which remains the strong validator derived from
+`sourceRevision`; the two values are intentionally independent. This lets one
+atomic projected-file swap advance config, secrets, and apply identity in
+place; `bootNonce` remains a workload-boot identity rather than a
+config-generation identity. The legacy process environment is accepted only
+when no identity-file path was configured and the canonical hosted mount
 `/var/run/secrets/clawdi-runtime-identity/runtime-apply-identity.json` does not
 exist. This one-boot discovery rule lets a CLI installed by an older bootstrap
 unit acquire the file contract; newly rendered units then pass the discovered
@@ -824,6 +827,15 @@ outputs include:
 | `$CLAWDI_RUN_DIR/systemd/system/*.service` or `/run/systemd/system/*.service` | Generated system units for root-owned Clawdi support programs |
 | `$HOME/.config/systemd/user/*.service` | Official runtime gateway base units and direct runtime-user programs |
 | `$HOME/.config/systemd/user/*.service.d/10-clawdi-hosted.conf` | Transparent hosted drop-ins for official runtime units |
+
+Reconciliation has two recovery groups. Root system authority (system units,
+their env files, sidecar inputs, caches, and applied state) is snapshotted and
+rolled back as one group. Runtime-user launch state (user units and drop-ins,
+their env files, run configs, runtime secret projections, and native agent
+config) stays on the desired generation and converges forward on retry. Directory
+trust checks are independent of this recovery choice: every root-managed
+directory must still be a real, root-owned directory without group/world write
+permission before Apply begins.
 
 Generic MCP reconciliation compares desired servers, the previous managed
 last-applied map, and the current native map. OpenClaw current state is the
