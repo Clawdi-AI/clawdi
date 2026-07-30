@@ -360,6 +360,8 @@ bun run test             # same clean Docker runner
 scripts/test.sh ci       # focused CI harness profile; not a product test replacement
 scripts/test.sh js       # JS typecheck + web/shared/sidecar/CLI tests
 scripts/test.sh cli      # CLI typecheck + full CLI tests
+scripts/test.sh shared   # shared package typecheck + tests
+scripts/test.sh sidecar  # WhatsApp sidecar typecheck + tests
 scripts/test.sh web      # web typecheck + tests + OSS build only
 scripts/test.sh backend  # Alembic + backend pytest against throwaway Postgres
 ```
@@ -376,18 +378,18 @@ service and do not reuse the dev database.
 
 Clean Test Runner CI uses the first-class `ci` profile to exercise the runner
 contract in one container without repeating the full web and CLI product
-suites. The normal `all`, `js`, `web`, `cli`, and `backend` entrypoints retain
-their comprehensive behavior. Core runner changes can use the workflow's
-manual `suite=all` dispatch gate without adding full-suite duplication to
-routine pull requests. See
+suites. The normal `all`, `js`, `web`, `cli`, `shared`, `sidecar`, and `backend`
+entrypoints retain their comprehensive behavior. Core runner changes can use
+the workflow's manual `suite=all` dispatch gate without adding full-suite
+duplication to routine pull requests. See
 [`docs/clean-test-runner.md`](docs/clean-test-runner.md) for the exact focused
 suite, measured resource envelope, and override variables.
 
 For a focused CLI pytest-style argument pass-through, append paths after the
 suite name, for example `scripts/test.sh cli tests/api-client.test.ts`. The
-full package-local test commands remain available through `bun run test:local`
-or package-level scripts as opt-in development loops when you need to
-investigate broader failures.
+public package-level `test` scripts also route through this Docker runner.
+Explicit host-local development loops remain available from the workspace root
+through `bun run test:local`; `test:internal` is reserved for the runner and CI.
 
 Install workspace dependencies from the repo root:
 

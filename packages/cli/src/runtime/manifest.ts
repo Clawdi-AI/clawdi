@@ -127,6 +127,7 @@ import {
 import { ensureRuntimeMitmproxy, type RuntimeMitmproxyEnsureResult } from "./mitmproxy-fetch";
 import type { RuntimePaths } from "./paths";
 import { detectRuntimeMode } from "./paths";
+import { hostedRuntimeProjectionHome } from "./projection-home";
 import {
 	buildRuntimeRunConfig,
 	isSupportedRuntimeName,
@@ -425,10 +426,11 @@ const MANAGED_HERMES_WHATSAPP_AUTH_ROOT = [".hermes", "platforms", "whatsapp"] a
 function materializeHostedChannelCredentials(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	home: string,
 ): void {
 	if (!hostedChannelCredentialsDeclared(manifest)) return;
 	if (!WHATSAPP_UPSTREAM_READY) {
-		removeStaleManagedWhatsAppAuthDirs(manifest, new Set());
+		removeStaleManagedWhatsAppAuthDirs(home, new Set());
 		return;
 	}
 	const credentials = hostedWhatsAppAuthCredentials(manifest);
@@ -436,7 +438,7 @@ function materializeHostedChannelCredentials(
 	const expectedAuthDirs = new Set<string>();
 	const errors: string[] = [];
 	for (const credential of credentials) {
-		const authDirError = managedWhatsAppAuthDirError(manifest, credential);
+		const authDirError = managedWhatsAppAuthDirError(home, credential);
 		if (authDirError) {
 			errors.push(authDirError);
 			continue;
@@ -451,12 +453,12 @@ function materializeHostedChannelCredentials(
 			continue;
 		}
 		try {
-			materializeManagedWhatsAppAuthDir(credential, credsJson);
+			materializeManagedWhatsAppAuthDir(credential, credsJson, home);
 		} catch (error) {
 			errors.push(error instanceof Error ? error.message : String(error));
 		}
 	}
-	removeStaleManagedWhatsAppAuthDirs(manifest, expectedAuthDirs);
+	removeStaleManagedWhatsAppAuthDirs(home, expectedAuthDirs);
 	if (errors.length > 0) {
 		throw new Error(errors.join("; "));
 	}
@@ -465,11 +467,12 @@ function materializeHostedChannelCredentials(
 function validateHostedChannelCredentialsPlan(
 	manifest: RuntimeManifest,
 	secretValues: Record<string, string> | undefined,
+	home: string,
 ): void {
 	if (!hostedChannelCredentialsDeclared(manifest) || !WHATSAPP_UPSTREAM_READY) return;
 	const normalizedSecrets = normalizeSecretValues(secretValues);
 	for (const credential of hostedWhatsAppAuthCredentials(manifest)) {
-		const authDirError = managedWhatsAppAuthDirError(manifest, credential);
+		const authDirError = managedWhatsAppAuthDirError(home, credential);
 		if (authDirError) throw new Error(authDirError);
 		const credsJson = resolveRuntimeSecretValue(normalizedSecrets, credential.credsJsonSecretRef);
 		if (!credsJson) {
@@ -578,6 +581,7 @@ function parseManagedWhatsAppAuthCredentials(value: unknown): ManagedWhatsAppAut
 function materializeManagedWhatsAppAuthDir(
 	credential: ManagedWhatsAppAuthCredential,
 	credsJson: string,
+	home: string,
 ): void {
 	let parsedCreds: unknown;
 	try {
@@ -611,7 +615,7 @@ function materializeManagedWhatsAppAuthDir(
 		}
 	}
 
-	makeRuntimeUserPrivateDir(credential.authDir);
+	makeRuntimeUserPrivateDir(credential.authDir, home);
 	writePrivateFileAtomic(
 		join(credential.authDir, "creds.json"),
 		`${JSON.stringify(parsedCreds, null, 2)}\n`,
@@ -632,10 +636,10 @@ function materializeManagedWhatsAppAuthDir(
 }
 
 function managedWhatsAppAuthDirError(
-	manifest: RuntimeManifest,
+	home: string,
 	credential: ManagedWhatsAppAuthCredential,
 ): string | null {
-	const roots = managedWhatsAppAuthRootsForCredential(manifest, credential);
+	const roots = managedWhatsAppAuthRootsForCredential(home, credential);
 	if (roots.length === 0) return "WhatsApp auth credential projection is missing runtime home";
 	const resolvedAuthDir = resolve(credential.authDir);
 	for (const root of roots) {
@@ -648,10 +652,10 @@ function managedWhatsAppAuthDirError(
 }
 
 function managedWhatsAppAuthRootsForCredential(
-	manifest: RuntimeManifest,
+	home: string,
 	credential: ManagedWhatsAppAuthCredential,
 ): string[] {
-	const roots = managedWhatsAppAuthRoots(manifest);
+	const roots = managedWhatsAppAuthRoots(home);
 	if (credential.target === "hermes") {
 		return roots.hermes ? [roots.hermes] : [];
 	}
@@ -661,11 +665,10 @@ function managedWhatsAppAuthRootsForCredential(
 	return [roots.openclaw, roots.hermes].filter((root): root is string => Boolean(root));
 }
 
-function managedWhatsAppAuthRoots(manifest: RuntimeManifest): {
+function managedWhatsAppAuthRoots(home: string): {
 	openclaw: string | null;
 	hermes: string | null;
 } {
-	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	return {
 		openclaw: home ? resolve(home, ...MANAGED_WHATSAPP_AUTH_ROOT) : null,
 		hermes: home ? resolve(home, ...MANAGED_HERMES_WHATSAPP_AUTH_ROOT) : null,
@@ -690,11 +693,8 @@ function removeManagedWhatsAppAuthDir(authDir: string): void {
 	rmSync(authDir, { recursive: true, force: true });
 }
 
-function removeStaleManagedWhatsAppAuthDirs(
-	manifest: RuntimeManifest,
-	expected: Set<string>,
-): void {
-	for (const root of Object.values(managedWhatsAppAuthRoots(manifest))) {
+function removeStaleManagedWhatsAppAuthDirs(home: string, expected: Set<string>): void {
+	for (const root of Object.values(managedWhatsAppAuthRoots(home))) {
 		if (!root || !existsSync(root)) continue;
 		removeStaleManagedWhatsAppAuthDirsUnderRoot(root, expected);
 	}
@@ -990,9 +990,9 @@ function publishRootOwnedToolTree(path: string): void {
 	chmodSync(path, node.mode & 0o111 ? 0o755 : 0o644);
 }
 
-function makeRuntimeUserPrivateDir(path: string): void {
+function makeRuntimeUserPrivateDir(path: string, home: string): void {
 	mkdirSync(path, { recursive: true });
-	makeRuntimeUserOwnedAncestors(path);
+	makeRuntimeUserOwnedAncestors(path, home);
 	makeRuntimeUserOwned(path);
 	try {
 		chmodSync(path, 0o700);
@@ -1011,13 +1011,12 @@ function makeEgressIdentityPrivateDir(path: string): void {
 	}
 }
 
-function makeRuntimeUserOwnedAncestors(path: string): void {
-	const home = process.env.HOME ? resolve(process.env.HOME) : null;
-	if (!home) return;
+function makeRuntimeUserOwnedAncestors(path: string, home: string): void {
+	const resolvedHome = resolve(home);
 	let current = resolve(dirname(path));
-	while (current === home || current.startsWith(`${home}/`)) {
+	while (current === resolvedHome || current.startsWith(`${resolvedHome}/`)) {
 		makeRuntimeUserOwned(current);
-		if (current === home) return;
+		if (current === resolvedHome) return;
 		current = dirname(current);
 	}
 }
@@ -1315,7 +1314,11 @@ function runOfficialInstaller(name: string, install: RuntimeInstall): RuntimeIns
 	}
 }
 
-function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"][string]) {
+function observeRuntimeInstall(
+	name: string,
+	runtime: RuntimeManifest["runtimes"][string],
+	home: string,
+) {
 	if (!runtime.enabled) {
 		return {
 			runtime: name,
@@ -1346,7 +1349,7 @@ function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"
 				status: "configured",
 				executionUser: null,
 				commandPath,
-				appRoot: commandPath ? runtimeAppRoot(name, process.env.HOME ?? "") : null,
+				appRoot: commandPath ? runtimeAppRoot(name, home) : null,
 				install: null,
 				installerUrl: null,
 				executedInstallerUrl: null,
@@ -1378,9 +1381,10 @@ function observeRuntimeInstall(name: string, runtime: RuntimeManifest["runtimes"
 function planRuntimeInstallObservation(
 	name: string,
 	runtime: RuntimeManifest["runtimes"][string],
+	home: string,
 ): RuntimeInstallObservation {
-	if (!runtime.install) return observeRuntimeInstall(name, runtime);
-	if (!runtime.enabled) return observeRuntimeInstall(name, runtime);
+	if (!runtime.install) return observeRuntimeInstall(name, runtime, home);
+	if (!runtime.enabled) return observeRuntimeInstall(name, runtime, home);
 	const commandPath = runtimeCommandPath(name, runtime.install.home);
 	const appRoot = runtimeAppRoot(name, runtime.install.home);
 	return {
@@ -1496,7 +1500,7 @@ function applyHostedLocaleProjection(
 		const auth = manifest.hermesDashboardAuth;
 		if (!auth && !locale) return null;
 		const hermesHome = join(home, ".hermes");
-		makeRuntimeUserPrivateDir(hermesHome);
+		makeRuntimeUserPrivateDir(hermesHome, home);
 		const configPath = join(hermesHome, "config.yaml");
 		if (auth) {
 			mergeHermesDashboardBasicAuth(configPath, auth.username, auth.sessionTtlSeconds);
@@ -2314,6 +2318,7 @@ function applyHostedAiProviderProjection(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
+	home: string,
 	workspaceRoot: string,
 	previousProviderIds: readonly string[],
 	managedModelOverrides: ManagedGatewayModelOverrides,
@@ -2328,7 +2333,6 @@ function applyHostedAiProviderProjection(
 		}),
 	);
 	assertHostedProviderProjectionMode(name, manifest, projectionInput);
-	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	if (manifest.runtimes[name]?.providerMode === "configured" && !projectionInput) {
 		if (name === "openclaw") {
 			applyOpenClawGatewayHostedProjection(observation.commandPath, manifest, home, workspaceRoot);
@@ -2377,6 +2381,7 @@ function previewHostedAiProviderProjectionRevision(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
+	home: string,
 	previousProviderIds: readonly string[],
 	managedModelOverrides: ManagedGatewayModelOverrides,
 ): string | null {
@@ -2402,7 +2407,7 @@ function previewHostedAiProviderProjectionRevision(
 		observation,
 		projectionInput,
 		previousProviderIds,
-		projectionSystemHome(manifest) ?? process.env.HOME ?? "",
+		home,
 		false,
 	).revision;
 }
@@ -2416,12 +2421,12 @@ function applyHostedCodexManagedProviderProjection(
 	if (!provider) return { path: null, revision: null, providerIds: [] };
 
 	const codexHome = hostedCodexHome(home);
-	makeRuntimeUserPrivateDir(codexHome);
+	makeRuntimeUserPrivateDir(codexHome, home);
 	const configPath = join(codexHome, CODEX_MANAGED_PROVIDER_CONFIG_FILE);
 	const configContent = hostedCodexManagedConfigToml(provider);
 	writePrivateFileAtomic(configPath, configContent, { mode: 0o600, dirMode: 0o700 });
 	makeRuntimeUserOwned(configPath);
-	makeRuntimeUserPrivateDir(codexHome);
+	makeRuntimeUserPrivateDir(codexHome, home);
 
 	return {
 		path: configPath,
@@ -2971,6 +2976,7 @@ function applyHostedChannelProjection(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
+	home: string,
 	workspaceRoot: string,
 ): string | null {
 	if (name !== "openclaw" && name !== "hermes") return null;
@@ -2980,7 +2986,6 @@ function applyHostedChannelProjection(
 	const channels = hostedChannelProjection(manifest);
 	if (!channels) return null;
 
-	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	if (name === "hermes") {
 		const configPath = join(home, ".hermes", "config.yaml");
 		mergeHermesChannelConfig(
@@ -3008,6 +3013,7 @@ function installHostedChannelProjectionDependencies(
 	name: string,
 	observation: RuntimeInstallObservation,
 	manifest: RuntimeManifest,
+	home: string,
 	workspaceRoot: string,
 	previousReceipts: RuntimeInstallReceipts | null,
 	receiptTargets: RuntimeInstallReceiptTargets,
@@ -3018,7 +3024,6 @@ function installHostedChannelProjectionDependencies(
 	}
 	const channels = hostedChannelProjection(manifest);
 	if (!channels) return;
-	const home = projectionSystemHome(manifest) ?? process.env.HOME ?? "";
 	installOpenClawChannelPlugins({
 		commandPath: observation.commandPath,
 		channels,
@@ -3470,7 +3475,7 @@ function applyHostedBundledSkills(
 				}),
 		);
 		if (result === "unchanged") continue;
-		makeRuntimeUserOwnedAncestors(targetDir);
+		makeRuntimeUserOwnedAncestors(targetDir, home);
 		makeRuntimeUserOwned(targetDir);
 		for (const entry of readdirSync(targetDir)) makeRuntimeUserOwned(join(targetDir, entry));
 	}
@@ -3552,7 +3557,7 @@ function buildHostedMcpReconciliationPlan(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 ): HostedMcpReconciliationPlan {
 	const intent = hostedMcpIntent(manifest);
-	const home = projectionSystemHome(manifest) ?? paths.userHome;
+	const home = hostedRuntimeProjectionHome(manifest, paths);
 	const ledger = readHostedMcpManagedLedger(paths);
 	const nextLedger: HostedMcpManagedLedger = {
 		schemaVersion: HOSTED_MCP_LEDGER_SCHEMA_VERSION,
@@ -3690,13 +3695,6 @@ function validateHostedMcpProjectionPlan(
 	observations: ReadonlyMap<string, RuntimeInstallObservation>,
 ): void {
 	buildHostedMcpReconciliationPlan(manifest, paths, observations);
-}
-
-function projectionSystemHome(manifest: RuntimeManifest): string | null {
-	const system = manifest.projection?.system;
-	if (typeof system !== "object" || system === null || Array.isArray(system)) return null;
-	const home = (system as Record<string, unknown>).home;
-	return typeof home === "string" && home.trim() ? home.trim() : null;
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
@@ -5308,7 +5306,7 @@ function runtimeSecretValues(load: RuntimeManifestLoad): Record<string, string> 
 
 function validateRuntimeManifestPlan(manifest: RuntimeManifest, paths: RuntimePaths): void {
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
-	const home = projectionSystemHome(manifest) ?? paths.userHome;
+	const home = hostedRuntimeProjectionHome(manifest, paths);
 	for (const name of HOSTED_RUNTIME_TARGETS) {
 		validateHostedBundledSkillsPlan(name, manifest, home);
 	}
@@ -5739,7 +5737,7 @@ function validateRuntimeProjectionPlan(input: {
 		previousProjectedProviderIds,
 		managedModelOverrides,
 	} = input;
-	const home = projectionSystemHome(manifest) ?? paths.userHome;
+	const home = hostedRuntimeProjectionHome(manifest, paths);
 	const localeBlock = manifest.locale ? managedLocaleBlock(manifest.locale) : null;
 	if (localeBlock) {
 		for (const name of Object.keys(manifest.runtimes)) {
@@ -5859,7 +5857,7 @@ function validateRuntimeProjectionPlan(input: {
 		}
 	}
 	validateHostedMcpProjectionPlan(manifest, paths, observations);
-	validateHostedChannelCredentialsPlan(manifest, secretValues);
+	validateHostedChannelCredentialsPlan(manifest, secretValues, home);
 }
 
 export function convergeRuntimeManifest(
@@ -5877,6 +5875,7 @@ export function convergeRuntimeManifest(
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
 	const secretValues = runtimeSecretValues(load);
+	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	const enabledRuntimes = Object.entries(manifest.runtimes)
 		.filter(([, runtime]) => runtime.enabled)
@@ -5915,7 +5914,7 @@ export function convergeRuntimeManifest(
 
 	validateRuntimeManifestPlan(manifest, paths);
 	for (const [name, runtime] of runtimeEntries) {
-		const observation = planRuntimeInstallObservation(name, runtime);
+		const observation = planRuntimeInstallObservation(name, runtime, projectionHome);
 		observations.set(name, observation);
 		if (observation.error) installErrors.push(observation.error);
 	}
@@ -5955,7 +5954,7 @@ export function convergeRuntimeManifest(
 	validateRuntimeSystemdProgramsPlan(plannedRuntimePrograms);
 	observations.clear();
 	for (const [name, runtime] of runtimeEntries) {
-		const observation = observeRuntimeInstall(name, runtime);
+		const observation = observeRuntimeInstall(name, runtime, projectionHome);
 		observations.set(name, observation);
 		if (observation.error) installErrors.push(observation.error);
 	}
@@ -6000,6 +5999,7 @@ export function convergeRuntimeManifest(
 				name,
 				observation,
 				manifest,
+				projectionHome,
 				paths.userHome,
 				previousInstallReceipts,
 				installReceiptTargets,
@@ -6030,7 +6030,7 @@ export function convergeRuntimeManifest(
 	const managedModelOverrides = resolveManagedGatewayModelOverrides(
 		manifest,
 		enabledRuntimes,
-		paths.userHome,
+		projectionHome,
 		workspaceRoot,
 		plannedEgressProfileBundlePath ? paths.egressSystemCaFile : null,
 		opts.managedGatewayModelListFetcher ?? fetchManagedGatewayModelList,
@@ -6065,7 +6065,7 @@ export function convergeRuntimeManifest(
 
 		mkdirSync(workspaceRoot, { recursive: true });
 		makeRuntimeUserOwned(paths.userHome);
-		makeRuntimeUserPrivateDir(paths.clawdiHome);
+		makeRuntimeUserPrivateDir(paths.clawdiHome, paths.userHome);
 		makeRuntimeUserOwned(workspaceRoot);
 		makeRootReadableDir(paths.installInventory);
 		makeRootReadableDir(paths.projectionRoot);
@@ -6077,7 +6077,7 @@ export function convergeRuntimeManifest(
 		makeRootReadableDir(paths.egressRoot);
 		makeEgressIdentityPrivateDir(paths.egressCaDir);
 		makeRootReadableDir(dirname(paths.egressSystemCaFile));
-		makeRuntimeUserPrivateDir(paths.egressScratchRoot);
+		makeRuntimeUserPrivateDir(paths.egressScratchRoot, paths.userHome);
 
 		let manifestLastGood: string | null = null;
 		writeJsonFile(paths.managedConfig, {
@@ -6144,7 +6144,7 @@ export function convergeRuntimeManifest(
 		const daemonAuthTokenFile = writeDaemonAuthToken(paths);
 		writeSecretValues(secretValues, paths, egressSidecarOnlySecretRefs(manifest));
 		try {
-			materializeHostedChannelCredentials(manifest, secretValues);
+			materializeHostedChannelCredentials(manifest, secretValues, projectionHome);
 		} catch (error) {
 			installErrors.push(
 				`runtime channel credential materialization failed: ${
@@ -6202,6 +6202,7 @@ export function convergeRuntimeManifest(
 				name,
 				observation,
 				manifest,
+				projectionHome,
 				previousProjectedProviderIds[name] ?? [],
 				managedModelOverrides,
 			);
@@ -6210,7 +6211,7 @@ export function convergeRuntimeManifest(
 		try {
 			const codexProjection = applyHostedCodexManagedProviderProjection(
 				manifest,
-				projectionSystemHome(manifest) ?? paths.userHome,
+				projectionHome,
 				codexCli,
 			);
 			providerProjectionRevisions.codex = codexProjection.revision;
@@ -6227,12 +6228,7 @@ export function convergeRuntimeManifest(
 		}
 		for (const name of HOSTED_RUNTIME_TARGETS) {
 			try {
-				applyHostedBundledSkills(
-					name,
-					observations.get(name),
-					manifest,
-					projectionSystemHome(manifest) ?? paths.userHome,
-				);
+				applyHostedBundledSkills(name, observations.get(name), manifest, projectionHome);
 			} catch (error) {
 				installErrors.push(
 					`runtime ${name} skill projection failed: ${
@@ -6289,7 +6285,7 @@ export function convergeRuntimeManifest(
 				const localeFile = applyHostedLocaleProjection(
 					name,
 					manifest,
-					projectionSystemHome(manifest) ?? paths.userHome,
+					projectionHome,
 					workspaceRoot,
 				);
 				if (localeFile) managedLocaleFiles.push(localeFile);
@@ -6305,6 +6301,7 @@ export function convergeRuntimeManifest(
 					name,
 					observation,
 					manifest,
+					projectionHome,
 					workspaceRoot,
 					previousProjectedProviderIds[name] ?? [],
 					managedModelOverrides,
@@ -6318,7 +6315,7 @@ export function convergeRuntimeManifest(
 				);
 			}
 			try {
-				applyHostedChannelProjection(name, observation, manifest, workspaceRoot);
+				applyHostedChannelProjection(name, observation, manifest, projectionHome, workspaceRoot);
 			} catch (error) {
 				installErrors.push(
 					`runtime ${name} channel projection failed: ${

@@ -41,7 +41,9 @@ bun run --cwd apps/web build:oss
 ```
 
 `typecheck` runs `tsr generate` before `tsc --noEmit`, so TanStack Router's
-generated route tree stays current.
+generated route tree stays current. The public package `test` command routes
+through the Docker-backed clean runner; `test:internal` is reserved for that
+runner and CI.
 
 For broader changes, run the full web test suite:
 

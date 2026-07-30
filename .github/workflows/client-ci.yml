@@ -6,6 +6,7 @@ on:
       - "apps/web/**"
       - "packages/shared/**"
       - "packages/cli/**"
+      - "packages/whatsapp-baileys-sidecar/**"
       - "install.sh"
       - "scripts/filter-deploy-openapi.py"
       - "scripts/openapi-typescript.sh"
@@ -24,6 +25,7 @@ on:
       - "apps/web/**"
       - "packages/shared/**"
       - "packages/cli/**"
+      - "packages/whatsapp-baileys-sidecar/**"
       - "install.sh"
       - "scripts/filter-deploy-openapi.py"
       - "scripts/openapi-typescript.sh"
@@ -59,6 +61,7 @@ jobs:
       web: ${{ steps.filter.outputs.web }}
       cli: ${{ steps.filter.outputs.cli }}
       shared: ${{ steps.filter.outputs.shared }}
+      sidecar: ${{ steps.filter.outputs.sidecar }}
       infra: ${{ steps.filter.outputs.infra }}
       deploy_contract: ${{ steps.filter.outputs.deploy_contract }}
     steps:
@@ -74,6 +77,8 @@ jobs:
               - "install.sh"
             shared:
               - "packages/shared/**"
+            sidecar:
+              - "packages/whatsapp-baileys-sidecar/**"
             infra:
               - "package.json"
               - "bun.lock"
@@ -91,7 +96,7 @@ jobs:
               - "apps/web/package.json"
               - ".github/workflows/client-ci.yml"
 
-  # Lint, typecheck, build, and CLI tests in one job.
+  # Lint, typecheck, build, and client package tests in one job.
   #
   # These are seconds of work each (Biome ~2s, each typecheck 1-4s, web build
   # ~6s). Splitting them across five jobs plus a matrix meant paying job setup
@@ -106,6 +111,7 @@ jobs:
         needs.changes.outputs.web == 'true' ||
         needs.changes.outputs.cli == 'true' ||
         needs.changes.outputs.shared == 'true' ||
+        needs.changes.outputs.sidecar == 'true' ||
         needs.changes.outputs.infra == 'true'
       )
     runs-on: ${{ vars.CI_RUNNER || 'blacksmith-16vcpu-ubuntu-2404' }}
@@ -126,6 +132,7 @@ jobs:
         run: >-
           bunx turbo typecheck build
           --filter=web --filter=clawdi --filter=@clawdi/shared
+          --filter=@clawdi/whatsapp-baileys-sidecar
           --output-logs=errors-only
       # Smoke tests exercise the compiled bin wrapper, built above by Turbo.
       - name: Build native CLI
@@ -140,8 +147,12 @@ jobs:
               packages/cli/tests/e2e/native-daemon.e2e.test.ts
       - name: Validate CLI publish payload
         run: bun run --cwd packages/cli check:publish-manifest
-      - name: Test CLI
-        run: bun test --isolate --max-concurrency=1 packages/cli
+      - name: Test client packages
+        run: |
+          bun run --cwd apps/web test:internal
+          bun run --cwd packages/shared test:internal
+          bun run --cwd packages/whatsapp-baileys-sidecar test:internal
+          bun run --cwd packages/cli test:internal
 
   deploy-contract-drift:
     needs: changes

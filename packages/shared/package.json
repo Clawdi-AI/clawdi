@@ -11,7 +11,9 @@
 		"./style/theme.css": "./src/style/theme.css"
 	},
 	"scripts": {
-		"typecheck": "tsc --noEmit"
+		"typecheck": "tsc --noEmit",
+		"test": "../../scripts/test.sh shared",
+		"test:internal": "bun test src"
 	},
 	"devDependencies": {
 		"@types/bun": "^1.3.14",

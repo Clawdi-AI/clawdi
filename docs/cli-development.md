@@ -228,15 +228,16 @@ one unambiguous default model.
 ```bash
 bun install
 bun run --cwd packages/cli typecheck   # tsc --noEmit
-bun run --cwd packages/cli test        # ~350 tests, ~5s
+bun run --cwd packages/cli test        # Docker-isolated CLI suite
 bun run --cwd packages/cli build       # produces dist/
 ```
 
 ## Testing
 
-All tests run with `bun test` (~5s for the full suite, ~350 tests) and never
-touch the network, your real `~/.clawdi`, or a real agent install. They're
-designed to be safe to run on every file save.
+The public package `test` command runs through the clean Docker runner with a
+fake `HOME`; pass a test path or Bun test filter after the command for a focused
+run. `test:internal` is reserved for the Docker runner and CI and must not be
+used as a normal host-local entrypoint. Tests do not use a real agent install.
 
 For daemon end-to-end and manual browser verification, see
 [`clawdi-daemon-test-guide.md`](clawdi-daemon-test-guide.md).

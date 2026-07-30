@@ -9,6 +9,8 @@ import type {
 	RuntimeChannelsLoad,
 	RuntimeManifestLoad,
 } from "./manifest-source";
+import { getRuntimePaths, type RuntimePaths } from "./paths";
+import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runtimeSecretValue } from "./secret-values";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
@@ -74,10 +76,11 @@ interface RuntimeChannelCredentialProjection {
 export function applyRuntimeChannelsToManifestLoad(
 	load: RuntimeManifestLoad,
 	channels: RuntimeChannelsLoad | null,
+	paths: RuntimePaths = getRuntimePaths({ mode: "hosted" }),
 ): RuntimeManifestLoad {
 	if (!channels) return load;
 	const managedLinks = managedChannelLinks(channels.channels);
-	const manifest = applyRuntimeChannelProjection(load.manifest, managedLinks);
+	const manifest = applyRuntimeChannelProjection(load.manifest, managedLinks, paths);
 	const secretValues = {
 		...(load.secretValues ?? {}),
 		...channelSecretValues(managedLinks, manifest.projection?.channelCredentials),
@@ -92,6 +95,7 @@ export function applyRuntimeChannelsToManifestLoad(
 
 export function applyRuntimeBundleChannelsToManifestLoad(
 	load: RuntimeManifestLoad,
+	paths: RuntimePaths = getRuntimePaths({ mode: "hosted" }),
 ): RuntimeManifestLoad {
 	if (!load.channelBindings) return load;
 	const secretValues = load.secretValues ?? {};
@@ -100,7 +104,7 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 	);
 	return {
 		...load,
-		manifest: applyRuntimeChannelProjection(load.manifest, links),
+		manifest: applyRuntimeChannelProjection(load.manifest, links, paths),
 		sourceManifest: load.sourceManifest ?? load.manifest,
 	};
 }
@@ -167,9 +171,10 @@ function managedChannelLinks(channels: RuntimeChannelAccount[]): ManagedChannelL
 function applyRuntimeChannelProjection(
 	manifest: RuntimeManifest,
 	links: ManagedChannelLink[],
+	paths: RuntimePaths,
 ): RuntimeManifest {
 	const managedProfiles = buildManagedChannelEgressProfiles(links, manifest.controlPlane.apiUrl);
-	const runtimeHome = runtimeProjectionHome(manifest);
+	const runtimeHome = hostedRuntimeProjectionHome(manifest, paths);
 	const channelCredentials = buildRuntimeChannelCredentialsProjection(
 		links,
 		runtimeHome,
@@ -727,12 +732,6 @@ function runtimeCredentialTargets(manifest: RuntimeManifest): RuntimeCredentialT
 		openclaw: manifest.runtimes.openclaw?.enabled === true,
 		hermes: manifest.runtimes.hermes?.enabled === true,
 	};
-}
-
-function runtimeProjectionHome(manifest: RuntimeManifest): string {
-	const system = recordValue(manifest.projection?.system);
-	const home = system ? stringValue(system.home) : null;
-	return home ?? process.env.HOME ?? "/home/clawdi";
 }
 
 function recordValue(value: unknown): Record<string, unknown> | null {
