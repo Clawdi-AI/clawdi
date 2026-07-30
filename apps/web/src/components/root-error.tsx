@@ -1,5 +1,6 @@
 "use client";
 
+import * as Sentry from "@sentry/tanstackstart-react";
 import { AlertTriangle, RotateCcw } from "lucide-react";
 import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,10 @@ export default function RootError({
 	reset: () => void;
 }) {
 	useEffect(() => {
+		if (import.meta.env.VITE_SENTRY_DSN) {
+			Sentry.captureException(error);
+		}
+
 		// Error objects can carry request details. Keep the production signal
 		// without serializing a possibly secret-bearing payload into browser logs.
 		console.error("Unhandled app error");

@@ -96,6 +96,10 @@ export const env = createEnv({
 		// analytics both validate cleanly.
 		VITE_POSTHOG_TOKEN: z.string().min(1).optional(),
 
+		// Optional public Sentry DSN. An absent DSN keeps every Sentry hook a
+		// clean no-op for local development and self-hosted deployments.
+		VITE_SENTRY_DSN: httpsOrHttp().optional(),
+
 		// Stripe publishable key for hosted wallet top-up PaymentIntent
 		// confirmation. Optional: OSS and hosted-without-card builds validate
 		// cleanly; the top-up dialog disables card confirmation when this is absent.

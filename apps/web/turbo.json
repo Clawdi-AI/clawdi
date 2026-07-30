@@ -10,6 +10,7 @@
 				"VERCEL",
 				"VERCEL_*",
 				"NITRO_*",
+				"SENTRY_*",
 				"SERVER_PRESET",
 				"SKIP_ENV_VALIDATION"
 			],

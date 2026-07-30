@@ -2,7 +2,6 @@
 
 import { createRootRoute, HeadContent, Outlet, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
-import "../../instrumentation-client";
 import { AppNotFound } from "@/components/app-not-found";
 import { AuthProvider } from "@/components/auth-provider";
 import { Providers } from "@/components/providers";
