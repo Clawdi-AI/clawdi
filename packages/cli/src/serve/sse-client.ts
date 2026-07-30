@@ -80,6 +80,7 @@ const STALE_MS = 60_000;
 const HEARTBEAT_HINT_MS = 25_000;
 const BASE_BACKOFF_MS = 1_000;
 const MAX_BACKOFF_MS = 60_000;
+const MAX_SSE_RETRY_AFTER_MS = 5 * 60 * 1000;
 
 interface Opts {
 	apiUrl: string;
@@ -255,7 +256,7 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 	}
 	if (res.status === 429) {
 		const retryAfter = res.headers.get("retry-after");
-		const retryAfterMs = parseRetryAfter(retryAfter);
+		const retryAfterMs = parseRetryAfter(retryAfter, { maxMs: MAX_SSE_RETRY_AFTER_MS });
 		if (retryAfter !== null && retryAfterMs === null) {
 			log.warn("sse.retry_after_unparseable", { value: retryAfter });
 		}
@@ -299,6 +300,7 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 	}, HEARTBEAT_HINT_MS);
 
 	let firstByteFired = false;
+	let trailingBareCr = false;
 	const pendingEvents: EventSourceMessage[] = [];
 	const parser = createParser({
 		onEvent: (event) => pendingEvents.push(event),
@@ -309,6 +311,11 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 			const parsed = parseEventMessage(pendingEvents.shift());
 			if (parsed) await opts.onEvent(parsed);
 		}
+	};
+	const feedDecodedChunk = (chunk: string): void => {
+		if (chunk.length === 0) return;
+		trailingBareCr = chunk.endsWith("\r");
+		parser.feed(chunk);
 	};
 	try {
 		while (true) {
@@ -321,11 +328,16 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 				// resets to 0, and the daemon hammers the server
 				// every cycle.
 				if (staleDetected) throw new Error("stale");
-				parser.feed(decoder.decode());
-				// Resolve a trailing bare CR, which is a complete SSE line
-				// terminator but remains ambiguous to an incremental parser
-				// until either the next byte or EOF is known.
-				parser.feed("\n");
+				feedDecodedChunk(decoder.decode());
+				// A CR at the true end of the decoded stream is a complete line
+				// terminator, but the incremental parser holds it in case an LF
+				// arrives in the next chunk. Resolve only that ambiguity: adding
+				// an LF after any other ending would synthesize an empty line and
+				// incorrectly dispatch an incomplete final event.
+				if (trailingBareCr) parser.feed("\n");
+				// WHATWG requires pending event data to be discarded at EOF when
+				// no final empty line was received.
+				parser.reset();
 				await drainEvents();
 				return;
 			}
@@ -334,7 +346,7 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 				opts.onFirstByte?.();
 			}
 			lastChunkAt = Date.now();
-			parser.feed(decoder.decode(value, { stream: true }));
+			feedDecodedChunk(decoder.decode(value, { stream: true }));
 			await drainEvents();
 		}
 	} finally {

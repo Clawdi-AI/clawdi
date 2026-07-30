@@ -247,14 +247,17 @@ describe("ApiClient error classification", () => {
 		}
 	});
 
-	it("keeps Retry-After outside the attempt timeout but abortable by the caller", async () => {
+	it.each([
+		["ordinary", "60"],
+		["arbitrarily large", "9".repeat(1_000)],
+	])("keeps %s Retry-After outside the attempt timeout but abortable", async (_name, retryAfter) => {
 		const origFetch = globalThis.fetch;
 		let fetchCalls = 0;
 		globalThis.fetch = async () => {
 			fetchCalls += 1;
 			return new Response("rate limited", {
 				status: 429,
-				headers: { "retry-after": "60" },
+				headers: { "retry-after": retryAfter },
 			});
 		};
 		const callerAbort = new AbortController();
@@ -267,6 +270,37 @@ describe("ApiClient error classification", () => {
 			expect(fetchCalls).toBe(1);
 		} finally {
 			clearTimeout(abortTimer);
+			globalThis.fetch = origFetch;
+		}
+	});
+
+	it("does not apply the five-minute SSE policy to REST Retry-After", async () => {
+		const origFetch = globalThis.fetch;
+		const origSetTimeout = globalThis.setTimeout;
+		const scheduledDelays: number[] = [];
+		let fetchCalls = 0;
+		globalThis.fetch = async () => {
+			fetchCalls += 1;
+			return fetchCalls === 1
+				? new Response("rate limited", {
+						status: 429,
+						headers: { "retry-after": "600" },
+					})
+				: new Response("ok");
+		};
+		globalThis.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
+			scheduledDelays.push(delay ?? 0);
+			return origSetTimeout(callback, 0, ...args);
+		}) as typeof setTimeout;
+
+		try {
+			const response = await retryingFetch(new Request("http://127.0.0.1:0"), 30_000, undefined);
+			expect(response.status).toBe(200);
+			expect(fetchCalls).toBe(2);
+			expect(scheduledDelays).toContain(600_000);
+			expect(scheduledDelays).not.toContain(300_000);
+		} finally {
+			globalThis.setTimeout = origSetTimeout;
 			globalThis.fetch = origFetch;
 		}
 	});
