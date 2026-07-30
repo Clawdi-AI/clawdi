@@ -11,6 +11,15 @@ export const runtimeApplyIdentitySchema = z
 
 export type RuntimeApplyIdentity = z.infer<typeof runtimeApplyIdentitySchema>;
 
+export interface RuntimeGenerationIdentity {
+	generation: number;
+	applyGeneration?: number;
+}
+
+export function resolveRuntimeApplyGeneration(identity: RuntimeGenerationIdentity): number {
+	return identity.applyGeneration ?? identity.generation;
+}
+
 export const RUNTIME_APPLY_IDENTITY_ENV = {
 	generation: "CLAWDI_RUNTIME_GENERATION",
 	manifestETag: "CLAWDI_RUNTIME_MANIFEST_ETAG",

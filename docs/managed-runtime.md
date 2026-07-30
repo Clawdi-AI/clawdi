@@ -346,6 +346,14 @@ The v2 strong ETag is `"sha256:<sourceRevision>"`; the immutable renderer and
 the revision's effective public and secret-source identity make it a strong
 validator without decrypting secrets in the health summary.
 
+The bundle root optionally carries `applyGeneration`, the deployment Apply
+identity. The inner manifest `generation` remains checkpoint/content identity.
+`applyGeneration` is omitted while persisted runtime state is null, preserving
+the legacy bundle bytes and validator; once explicit, it is included in
+`sourceRevision`. It must be positive. Checkpoint and Apply generations are
+independent monotonic sequences, with no ordering relationship between their
+values.
+
 The CLI normalizes these wire contracts into the desired-state shape:
 
 - `clawdi.hosted-runtime.manifest.v1` is the hosted control-plane response
@@ -365,7 +373,8 @@ Normalization maps hosted fields into the internal shape:
 
 | Hosted field | Internal purpose |
 | --- | --- |
-| `deploymentId`, `environmentId`, `instanceId`, `generation` | Identity, cache keys, status, and idempotence |
+| `deploymentId`, `environmentId`, `instanceId`, `generation` | Deployment/instance identity and checkpoint/content generation for cache and content state |
+| Bundle root `applyGeneration` | Optional deployment Apply identity; legacy bundles resolve it from checkpoint `generation` through one named compatibility rule |
 | `runtime` | Required selected compute runtime; exactly one enabled `openclaw` or `hermes` entry must match it |
 | `locale.language`, `locale.timezone` | Required supported language and valid IANA timezone |
 | `system.openclawControlUiAllowedOrigins` | Strict-v2 OpenClaw public origin allowlist |
@@ -556,7 +565,8 @@ source behind `POST /v1/mcp/clawdi`; neither appears
 as a separate MCP row. No URL, header, secret reference, command, argument, or
 environment value is projected to the browser.
 
-Manifest `generation` is part of the remote manifest ETag. The CLI applies any
+Manifest `generation` is the checkpoint/content identity and is part of the
+remote manifest ETag. The CLI applies any
 non-304 manifest without monotonic generation gating, while treating generation
 as the desired intent sequence and the ETag as effective content identity. A
 generation-only control-plane bump therefore produces a new ETag so `runtime
@@ -571,10 +581,12 @@ records unchanged.
 The last-good manifest and scoped secret cache are each replaced atomically,
 then `runtime-applied.json` is replaced atomically as the final commit record.
 After a crash, strict-v2 offline load requires that final record to match the
-cached generation, instance, manifest, and canonical secret union exactly, so
+cached checkpoint generation, resolved Apply generation, instance, manifest,
+and canonical secret union exactly, so
 a partially advanced cache fails closed instead of becoming mixed authority.
 Last-good remains an offline recovery cache; `runtime-applied.json` is the
-online record of the applied instance, config generation, content identity,
+online record of the applied instance, checkpoint generation, optional Apply
+generation, content identity,
 source manifest provider IDs, and the target-specific projected provider ID map
 needed for stale deletion. The record is committed only after Apply succeeds.
 
@@ -733,7 +745,19 @@ At the boundary:
 - the CLI owns local validation, projection, diagnostics, and command launch;
 - the runtime process owns normal agent behavior after launch.
 
-For Agent v2, `generation` remains the Hosted intent/CAS sequence.
+For Agent v2, `generation` remains the Hosted checkpoint/content intent and CAS
+sequence. Optional bundle-root `applyGeneration` is the deployment Apply
+identity. The only compatibility resolution is `applyGeneration` when explicit,
+otherwise legacy `generation`; cache, applied-state, offline, observation, and
+health paths all use that named boundary rule rather than inferring one identity
+from the other.
+The canonical `/v1/agents/{agent_id}/runtime-observed` response intentionally
+keeps `desired.desired_config_generation` as the checkpoint and
+`observed.observed_config_generation` as the Apply identity; only its health
+comparison resolves the explicit Apply generation or named legacy fallback.
+The deprecated `/v1/environments/{environment_id}/runtime-observed` v1 route
+retains its byte-frozen checkpoint comparison and is not changed by this
+amendment.
 `sourceRevision` is a deterministic SHA-256 identity of the effective public
 descriptor and the selected encrypted secret-source identities, keyed by
 secret reference. For the immutable v2 renderer, the strong ETag is derived as
@@ -741,13 +765,15 @@ secret reference. For the immutable v2 renderer, the strong ETag is derived as
 loader and pure materializer inside a read-only repeatable-read snapshot; the
 summary path does not decrypt secrets.
 
-The manifest wire field remains `generation`, but it is specifically the
-desired config generation. Cloud API records daemon convergence separately as
+The inner manifest wire field remains `generation`, but it is specifically the
+desired checkpoint/content generation. Cloud API records daemon convergence separately as
 `observed_at`, `observed_config_generation`, and `observed_manifest_etag`, plus
 validated diagnostics JSONB. Agent v2 diagnostics report applied ETag,
 `sourceRevision`, and the source-level applied provider ID set only from
-`runtime-applied.json`; target-specific projected IDs remain local stale-deletion
-state. Health compares the v2 ETag with the validator derived from current
+`runtime-applied.json`; its observation tuple reports resolved Apply generation,
+not checkpoint generation. Target-specific projected IDs remain local stale-deletion
+state. Health compares observed config generation to explicit Apply generation,
+with the same named checkpoint fallback for legacy state, and compares the v2 ETag with the validator derived from current
 `sourceRevision` and requires exact provider-set equality, reporting missing and
 extra sets separately. Legacy provider-set authority remains unknown.
 `observed_at` is the server receipt time for the accepted heartbeat; the
@@ -766,7 +792,7 @@ outputs include:
 | `cache/manifest.last-good.json` | Last successfully applied effective, channel-projected manifest for offline recovery |
 | `cache/runtime-secrets.last-good.json` | Root-only `0600` canonical union of active non-`env://` secret refs required to reproduce last-good |
 | `cache/manifest.etag`, `cache/channels.etag` | Legacy v1 cache validators; not Agent v2 authority |
-| `status/runtime-applied.json` | Root-only `0600` Agent v2 authority for one ETag, source revision, instance, generation, private recoverability content identity, source provider IDs, and target-specific projected provider IDs |
+| `status/runtime-applied.json` | Root-only `0600` Agent v2 authority for one ETag, source revision, instance, checkpoint `generation`, optional `applyGeneration`, private recoverability content identity, source provider IDs, and target-specific projected provider IDs |
 | `install-inventory/<runtime>.json` | Install/verify observation |
 | `managed-cli/bin/clawdi` | Root-only active managed CLI link used by system services |
 | `npm/` | Root-only managed CLI package prefixes and active targets |
@@ -1054,11 +1080,44 @@ responses. Both include `current_generation`. Equal identical state is an
 idempotent `200`, while higher generations apply. Rejected and idempotent writes
 do not create duplicate state, audit events, or manifest invalidation.
 
+`apply_generation` is a separate nullable persistence/API field constrained to
+positive values. Omission preserves the current value;
+explicit null is rejected so null remains legacy/gated state only. An unbound
+row may bind a positive value once, and Apply generation may advance at an
+unchanged checkpoint when no other material field changes. Apply-generation
+regression, explicit clear, and any same-checkpoint material change are
+rejected. Checkpoint-only model, Skill, MCP, or CLI pin changes preserve the
+existing Apply generation. Each sequence is monotonic on its own; neither is
+ordered relative to the other, and no cross-sequence upper bound applies.
+
 Additive manifest capabilities roll out consumer first: publish and select a
 CLI version that understands the new fields, then advance existing deployments
 through ordinary higher-generation runtime-state reconciliation. Database
 migrations backfill stored authority where required; operators do not patch
 individual production rows to advance deployments.
+
+For the optional v2 `applyGeneration` amendment, strict older consumers reject
+the new root field. This OSS consumer release must deploy before Hosted producer
+activation. The nullable database field is the default-closed receiving edge;
+Hosted must not write it until compatible CLI deployment is confirmed.
+
+The pre-activation sequence uses existing Hosted desired-state behavior. If a
+deployment is at metadata/apply `1` and checkpoint `2`, first leave the CLI pin
+unchanged and accept the existing
+`POST /v2/deployments/{deployment_id}/restart` mutation, whose desired-state
+change increments only `rollout_nonce`; while the producer gate is off, the
+legacy checkpoint floor aligns the deployment to `2/2` without a runtime-state
+content change. Next, select the exact compatible CLI and use its ordinary
+controlled rollout to advance metadata and the CLI-pin checkpoint together to
+`3/3`. A direct CLI pin from `1/2` would produce `2/3`, so it is not an
+alignment mechanism. Verify the online bundle, `runtime-applied.json`,
+last-good cache, offline boot, observation tuple, and canonical Agent health
+before enabling the Hosted producer gate. No direct database, Cloud state, Pod
+cache, or tenant filesystem mutation is part of this protocol.
+
+After every active CLI and stored applied state has explicit Apply identity, a
+narrow follow-up contract release removes the optionality, legacy fallback,
+null omission gate, temporary rollout text, and legacy compatibility tests.
 
 Bundled-Skill versioning follows expand, migrate, contract ordering. During
 expand, the CLI accepts the prior enabled-only Skill entry and canonicalizes

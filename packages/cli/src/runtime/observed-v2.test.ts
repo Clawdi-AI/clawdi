@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getCliVersion } from "../lib/version";
-import { writeRuntimeAppliedState } from "./applied-state";
+import { readRuntimeAppliedState, writeRuntimeAppliedState } from "./applied-state";
 import { readHostedRuntimeObserved } from "./observed";
 import { getRuntimePaths } from "./paths";
 
@@ -33,7 +33,8 @@ describe("hosted runtime observed v2", () => {
 				applyReceiptId: "apply-receipt-observed-v2",
 				bootNonce: "boot-nonce-observed-v2-01",
 				sourceRevision: "a".repeat(64),
-				generation: 9,
+				generation: 2,
+				applyGeneration: 1,
 				contentIdentity: {
 					sourcePath: "https://runtime.test/v1/runtime/manifest",
 					sha256: "b".repeat(64),
@@ -52,7 +53,18 @@ describe("hosted runtime observed v2", () => {
 		expect(observed?.applied).toEqual({
 			etag: '"bundle-applied"',
 			sourceRevision: "a".repeat(64),
-			generation: 9,
+			generation: 1,
+			instanceId: "hri_observed",
+			appliedProviderIds: ["managed"],
+		});
+		const companion = readHostedRuntimeObserved(paths, {
+			reportedAt: "2026-07-13T06:01:00.000Z",
+			appliedState: readRuntimeAppliedState(paths),
+		});
+		expect(companion?.applied).toEqual({
+			etag: '"frozen-companion-manifest"',
+			sourceRevision: "a".repeat(64),
+			generation: 1,
 			instanceId: "hri_observed",
 			appliedProviderIds: ["managed"],
 		});

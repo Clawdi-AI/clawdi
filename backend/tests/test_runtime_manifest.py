@@ -1148,6 +1148,102 @@ async def test_equal_generation_material_conflict_returns_current_generation_wit
 
 
 @pytest.mark.asyncio
+async def test_admin_runtime_state_binds_and_advances_apply_generation_at_same_checkpoint(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"runtime-apply-generation-{uuid4().hex[:8]}",
+        machine_name="Runtime apply generation",
+        agent_type="openclaw",
+    )
+    body = _runtime_state_body(str(env.id), generation=2)
+    environment_id = env.id
+    invalid = await admin_client.put(
+        f"/v1/admin/environments/{environment_id}/runtime-state",
+        headers=_AUTH,
+        json={**body, "apply_generation": 0},
+    )
+    assert invalid.status_code == 422, invalid.text
+
+    initial = await admin_client.put(
+        f"/v1/admin/environments/{environment_id}/runtime-state",
+        headers=_AUTH,
+        json=body,
+    )
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["apply_generation"] is None
+
+    explicit_null = await admin_client.put(
+        f"/v1/admin/environments/{environment_id}/runtime-state",
+        headers=_AUTH,
+        json={**body, "apply_generation": None},
+    )
+    assert explicit_null.status_code == 409, explicit_null.text
+    assert explicit_null.json() == {
+        "detail": {
+            "code": "apply_generation_conflict",
+            "current_apply_generation": None,
+        }
+    }
+
+    for apply_generation in (1, 2, 3):
+        bound = await admin_client.put(
+            f"/v1/admin/environments/{environment_id}/runtime-state",
+            headers=_AUTH,
+            json={**body, "apply_generation": apply_generation},
+        )
+        assert bound.status_code == 200, bound.text
+        assert bound.json()["generation"] == 2
+        assert bound.json()["apply_generation"] == apply_generation
+
+    for apply_generation, code in (
+        (2, "stale_apply_generation"),
+        (None, "apply_generation_conflict"),
+    ):
+        rejected = await admin_client.put(
+            f"/v1/admin/environments/{environment_id}/runtime-state",
+            headers=_AUTH,
+            json={**body, "apply_generation": apply_generation},
+        )
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json() == {
+            "detail": {
+                "code": code,
+                "current_apply_generation": 3,
+            }
+        }
+
+    checkpoint_runtimes = _runtime_state()
+    checkpoint_runtimes["openclaw"]["primary_model"]["model"] = "gpt-checkpoint-next"
+    checkpoint_only = await admin_client.put(
+        f"/v1/admin/environments/{environment_id}/runtime-state",
+        headers=_AUTH,
+        json={
+            **body,
+            "generation": 4,
+            "cli_package_spec": "clawdi@0.12.10-beta.58",
+            "runtimes": checkpoint_runtimes,
+            "mcp": {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
+            "skills": {"entries": {"clawdi": {"enabled": True, "version": 2}}},
+        },
+    )
+    assert checkpoint_only.status_code == 200, checkpoint_only.text
+    assert checkpoint_only.json()["apply_generation"] == 3
+    state = await db_session.get(HostedRuntimeState, environment_id)
+    assert state is not None
+    assert state.generation == 4
+    assert state.apply_generation == 3
+    assert state.cli_package_spec == "clawdi@0.12.10-beta.58"
+    assert state.runtimes["openclaw"]["primary_model"]["model"] == "gpt-checkpoint-next"
+    assert state.mcp == {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}}
+    assert state.skills == {"entries": {"clawdi": {"enabled": True, "version": 2}}}
+
+
+@pytest.mark.asyncio
 async def test_concurrent_same_generation_runtime_state_updates_allow_one_winner(
     admin_client,
     db_session,
@@ -3800,6 +3896,40 @@ async def test_runtime_manifest_requires_exact_v2_media_type(admin_client, db_se
     assert unsupported.status_code == 406
     assert unsupported.headers["cache-control"] == "no-store"
     assert unsupported.headers["vary"] == "Accept"
+
+
+@pytest.mark.asyncio
+async def test_runtime_bundle_emits_explicit_apply_generation_and_revalidates_apply_only_change(
+    admin_client,
+    db_session,
+    seed_user,
+):
+    env, _, _, _, _ = await _create_bundle_runtime(admin_client, db_session, seed_user)
+    state = await db_session.get(HostedRuntimeState, env.id)
+    assert state is not None
+    state.apply_generation = 1
+    await db_session.commit()
+    api_key = ApiKey(user_id=seed_user.id, environment_id=env.id, label="bundle-apply-generation")
+
+    async with await _runtime_client(db_session, seed_user, api_key) as client:
+        initial = await client.get("/v1/runtime/manifest")
+        initial_body = initial.json()
+        state.apply_generation = 3
+        await db_session.commit()
+        advanced = await client.get(
+            "/v1/runtime/manifest",
+            headers={"If-None-Match": initial.headers["etag"]},
+        )
+    app.dependency_overrides.clear()
+
+    assert initial.status_code == 200, initial.text
+    assert initial_body["applyGeneration"] == 1
+    assert initial_body["manifest"]["generation"] == state.generation
+    assert advanced.status_code == 200, advanced.text
+    assert advanced.json()["applyGeneration"] == 3
+    assert advanced.json()["manifest"]["generation"] == state.generation
+    assert advanced.json()["sourceRevision"] != initial_body["sourceRevision"]
+    assert advanced.headers["etag"] != initial.headers["etag"]
 
 
 @pytest.mark.asyncio

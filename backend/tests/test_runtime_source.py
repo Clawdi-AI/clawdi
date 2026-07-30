@@ -46,7 +46,12 @@ def test_runtime_bundle_v2_etag_is_derived_from_source_revision() -> None:
 
 
 def _batch(
-    *, provider_label: str = "Primary", channel_name: str = "Bot", token: bytes = b"token"
+    *,
+    provider_label: str = "Primary",
+    channel_name: str = "Bot",
+    token: bytes = b"token",
+    generation: int = 2,
+    apply_generation: int | None = 1,
 ) -> RuntimeSourceBatch:
     now = datetime(2026, 7, 13, tzinfo=UTC)
     environment = AgentEnvironment(id=ENV_ID, user_id=USER_ID)
@@ -54,7 +59,8 @@ def _batch(
         environment_id=ENV_ID,
         deployment_id="dep_test",
         instance_id="hri_test",
-        generation=7,
+        generation=generation,
+        apply_generation=apply_generation,
         cli_package_spec="clawdi@0.12.10-beta.57",
         locale={"language": "en", "timezone": "UTC"},
         system={
@@ -68,6 +74,12 @@ def _batch(
                     "capability": "openclaw-native-auth-v1",
                 },
             },
+        },
+        egress_engine={
+            "type": "mitmproxy",
+            "version": "12.2.3",
+            "url": "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
+            "sha256": "2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5",
         },
         runtimes={
             "openclaw": {
@@ -280,6 +292,40 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
             ),
         }
     ]
+
+
+def test_runtime_bundle_omits_legacy_apply_generation_and_tracks_explicit_apply_only_changes() -> (
+    None
+):
+    legacy = render_runtime_source(
+        _batch(apply_generation=None),
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+    )
+    apply_one = render_runtime_source(
+        _batch(apply_generation=1),
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+    )
+    apply_three = render_runtime_source(
+        _batch(apply_generation=3),
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=False,
+    )
+
+    legacy_bundle = render_runtime_bundle(legacy)
+    assert "applyGeneration" not in legacy_bundle
+    assert legacy_bundle["manifest"]["generation"] == 2
+    assert apply_one.manifest == apply_three.manifest
+    assert apply_one.source_revision != apply_three.source_revision
+    assert render_runtime_bundle(apply_one)["applyGeneration"] == 1
+    assert render_runtime_bundle(apply_three)["applyGeneration"] == 3
 
 
 def test_unmanaged_runtime_tool_secret_uses_auth_payload_without_user_vault_refs(

@@ -99,6 +99,45 @@ async function observationSchedule(
 }
 
 describe("hosted runtime observation producer", () => {
+	test("accepts apply generation three at checkpoint two and submits its exact identity", async () => {
+		const paths = tempRuntimePaths();
+		setApplyIdentityEnvironment(3);
+		writeRuntimeAppliedState(
+			{
+				...appliedState(3),
+				generation: 2,
+				applyGeneration: 3,
+			},
+			paths,
+		);
+		let submitted: components["schemas"]["RuntimeObservationEventV2"] | null = null;
+		const producer = new HostedRuntimeObservationProducer({
+			abort: new AbortController().signal,
+			paths,
+			submit: async (_environmentId, event) => {
+				submitted = event;
+				return "accepted";
+			},
+			sessionFactory: (environmentId, sessionPaths) =>
+				new HostedRuntimeHeartbeatSession({
+					environmentId,
+					paths: sessionPaths,
+					createId: () => "event-or-boot-identity",
+					now: () => new Date("2026-07-22T00:01:00.000Z"),
+				}),
+		});
+
+		expect(await producer.sendOnce()).toEqual({ outcome: "accepted", status: "unknown" });
+		expect(submitted).toMatchObject({
+			bootSessionId: "event-or-boot-identity",
+			sequence: 1,
+			eventId: "event-or-boot-identity",
+			applyReceiptId: "apply-receipt-0003",
+			bootNonce: "boot-nonce-000003",
+			applied: { generation: 3, etag: '"manifest-3"' },
+		});
+	});
+
 	test("re-reads the applied tuple after rotation and emits a new boot identity", async () => {
 		const paths = tempRuntimePaths();
 		setApplyIdentityEnvironment(1);

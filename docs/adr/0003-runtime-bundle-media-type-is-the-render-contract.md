@@ -1,6 +1,6 @@
 # ADR-0003: Runtime Bundle Media Type Is the Render Contract
 
-**Status:** Accepted
+**Status:** Accepted (amended 2026-07-30)
 **Date:** 2026-07-13
 **Deciders:** Clawdi maintainers
 
@@ -20,8 +20,9 @@ one strict `clawdi.hosted-runtime.bundle.v2` response containing the hosted
 manifest, sanitized Telegram and Discord channel bindings, merged secret
 values, and a deterministic `sourceRevision`.
 
-The v2 renderer and canonical JSON encoding are frozen. A response-affecting
-behavior change requires a new media type and schema version. An unsupported
+The v2 renderer and canonical JSON encoding are frozen except for the narrow
+consumer-first amendment below. Any other response-affecting behavior change
+requires a new media type and schema version. An unsupported
 or missing media type returns `406`; the CLI does not fall back to a legacy
 manifest representation or a separate `/v1/channels` flow. Agent v2 had no
 released client, so the endpoint has no unpublished compatibility response.
@@ -55,6 +56,56 @@ heartbeat reports the source-level set, while health requires exact equality
 with current desired provider IDs. SSE invalidation only reduces latency;
 conditional polling and the applied ETag/sourceRevision preserve correctness.
 
+### 2026-07-30 generation identity amendment
+
+The inner manifest `generation` permanently remains the checkpoint/content
+generation. The bundle root may additionally contain positive
+`applyGeneration` as the deployment Apply identity. The checkpoint and Apply
+sequences are independently positive and monotonic; there is no ordering
+relationship between their values.
+When runtime state has no explicit Apply generation, the backend omits the root
+field and preserves the previously released bundle bytes, `sourceRevision`, and
+ETag. When present, `applyGeneration` participates in `sourceRevision`, so an
+Apply-only advance cannot receive an incorrect `304`.
+
+This is a one-field amendment to correct an identity conflation, not a second
+renderer or state machine. The CLI uses one named compatibility resolver:
+explicit `applyGeneration` wins, otherwise legacy state falls back to
+`generation`. The same rule governs bundle Apply validation, durable applied
+state, offline recovery, observation tuples, and backend health. Durable
+`runtime-applied.json` retains checkpoint `generation` and optional
+`applyGeneration` separately.
+
+Previously released CLI schemas reject unknown bundle fields. Therefore the
+activation gate is the nullable persisted `apply_generation` itself: it is
+default-closed and the renderer omits the wire field while it is null. This OSS
+consumer release must be deployed before any Hosted producer writes a non-null
+value. Hosted activation is permitted only after the compatible CLI is present
+on every targeted runtime.
+
+Existing split identities require an ordered pre-activation rollout. For the
+concrete metadata/apply `1`, checkpoint `2` case, the Hosted producer remains
+off while the existing accepted
+`POST /v2/deployments/{deployment_id}/restart` path increments only its
+desired-state `rollout_nonce`; the legacy checkpoint floor then aligns the pair
+to `2/2` without changing runtime-state content. Only after that equality may
+the exact CLI pin and its ordinary controlled rollout advance both sequences to
+`3/3`.
+Pinning the CLI directly from `1/2` would instead produce `2/3`, which the old
+single-generation fallback rejects. The rollout must then verify the online
+bundle, durable applied state, last-good cache, offline boot, observation tuple,
+and canonical Agent health before the Hosted producer gate is enabled. This is
+a release-order constraint over the existing restart and desired-state paths,
+not another state machine.
+
+This compatibility phase is temporary. After all active CLIs accept the field
+and all persisted runtime/applied states carry explicit Apply generation, a
+follow-up contract release can remove nullable field shapes, the legacy
+fallback, the null-as-omission activation gate, rollout notes, and legacy
+fallback tests. That release must either introduce the next media type or amend
+this ADR again before making the v2 field required; it must not leave a
+permanent dual-track protocol.
+
 ## Consequences
 
 - There is one network representation, validator, apply operation, and applied
@@ -67,5 +118,7 @@ conditional polling and the applied ETag/sourceRevision preserve correctness.
 - Offline recovery caches the effective projected manifest. Secret persistence
   remains limited to the existing root-only, reference-scoped secret cache; the
   plaintext bundle is never persisted as a whole.
+- Checkpoint/content generation and deployment Apply generation remain distinct
+  through rendering, cache, applied state, and observation.
 - A future renderer change adds a new exact media type; clients never negotiate
   by fallback.
