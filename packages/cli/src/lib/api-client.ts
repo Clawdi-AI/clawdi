@@ -4,6 +4,7 @@ import createClient, { type Client } from "openapi-fetch";
 import { canonicalApiOrigin, normalizeCloudApiBaseUrl } from "./api-origin";
 import { assertCloudCredentialEndpoint, getClawdiAccessToken } from "./clerk-oauth";
 import { getAuth, getConfig } from "./config";
+import { parseRetryAfter } from "./retry-after";
 import { assertValidSkillKey } from "./skill-key";
 import {
 	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
@@ -202,10 +203,10 @@ export async function retryingFetch(
 		if (buffered.ok) return buffered;
 
 		if (buffered.status === 429 && retry && attempt < maxAttempts - 1) {
-			const retryAfter = Number(buffered.headers.get("retry-after"));
-			if (Number.isFinite(retryAfter) && retryAfter > 0) {
+			const retryAfterMs = parseRetryAfter(buffered.headers.get("retry-after"));
+			if (retryAfterMs !== null) {
 				try {
-					await sleep(retryAfter * 1000, externalSignal);
+					await sleep(retryAfterMs, externalSignal);
 				} catch {
 					throw new ApiError({
 						status: 0,

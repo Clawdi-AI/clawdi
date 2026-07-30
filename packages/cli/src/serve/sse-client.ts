@@ -24,6 +24,8 @@
  * keep a long outage from drifting into an hour-long retry gap.
  */
 
+import { createParser, type EventSourceMessage } from "eventsource-parser";
+import { parseRetryAfter } from "../lib/retry-after";
 import {
 	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
 	SKILL_SYNC_PROTOCOL_HEADER,
@@ -116,13 +118,18 @@ class SseConnectionError extends Error {
 	readonly reason: string;
 	readonly httpStatus?: number;
 	readonly requestId?: string;
+	readonly retryAfterMs?: number;
 
-	constructor(reason: string, fields?: { httpStatus?: number; requestId?: string | null }) {
+	constructor(
+		reason: string,
+		fields?: { httpStatus?: number; requestId?: string | null; retryAfterMs?: number | null },
+	) {
 		super(reason);
 		this.name = "SseConnectionError";
 		this.reason = reason;
 		this.httpStatus = fields?.httpStatus;
 		this.requestId = fields?.requestId ?? undefined;
+		this.retryAfterMs = fields?.retryAfterMs ?? undefined;
 	}
 }
 
@@ -173,11 +180,7 @@ export async function consumeSse(opts: Opts): Promise<void> {
 				opts.onAuthFailure?.();
 				return;
 			}
-			// Honor Retry-After on 429 rate-limit. The error message
-			// carries the value as `rate_limited:<seconds>`; parse
-			// it and use as the floor for this reconnect's wait.
-			const rateLimitMs = parseRateLimit(error.reason);
-			const wait = rateLimitMs ?? backoffMs(attempt);
+			const wait = error.retry_after_ms ?? backoffMs(attempt);
 			const info = buildReconnectInfo({
 				reason: error.reason,
 				attempt,
@@ -230,35 +233,6 @@ function pruneUndefined(fields: Record<string, unknown>): Record<string, unknown
 	return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
 }
 
-function parseRateLimit(reason: string): number | null {
-	if (!reason.startsWith("rate_limited:")) return null;
-	const raw = reason.slice("rate_limited:".length).trim();
-	if (!raw) return null;
-	// RFC 7231 §7.1.3 allows two formats for Retry-After:
-	//   - delta-seconds (integer)
-	//   - HTTP-date (RFC 1123 format, e.g. "Wed, 21 Oct 2015 07:28:00 GMT")
-	// Most servers send seconds, but Cloudflare and some CDNs send
-	// dates. Try seconds first; if the value looks non-numeric, fall
-	// through to Date.parse.
-	let ms: number;
-	const asSeconds = Number.parseInt(raw, 10);
-	if (Number.isFinite(asSeconds) && /^\s*\d+\s*$/.test(raw)) {
-		ms = asSeconds * 1000;
-	} else {
-		const t = Date.parse(raw);
-		if (!Number.isFinite(t)) {
-			log.warn("sse.retry_after_unparseable", { value: raw });
-			return null;
-		}
-		ms = t - Date.now();
-	}
-	if (ms <= 0) return null;
-	// Clamp at 5 minutes — if the server says wait an hour, that's
-	// almost certainly a misbehaving proxy, and we'd rather cap the
-	// daemon's silence to keep heartbeats flowing than sleep blind.
-	return Math.min(ms, 5 * 60 * 1000);
-}
-
 async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise<void> {
 	const url = `${opts.apiUrl.replace(/\/+$/, "")}/v1/sync/events`;
 	const accessToken = opts.getAccessToken ? await opts.getAccessToken() : opts.apiKey;
@@ -280,9 +254,15 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 		});
 	}
 	if (res.status === 429) {
-		throw new SseConnectionError(`rate_limited:${res.headers.get("retry-after") ?? ""}`, {
+		const retryAfter = res.headers.get("retry-after");
+		const retryAfterMs = parseRetryAfter(retryAfter);
+		if (retryAfter !== null && retryAfterMs === null) {
+			log.warn("sse.retry_after_unparseable", { value: retryAfter });
+		}
+		throw new SseConnectionError("rate_limited", {
 			httpStatus: res.status,
 			requestId: res.headers.get("x-request-id"),
+			retryAfterMs,
 		});
 	}
 	if (!res.ok) {
@@ -300,7 +280,6 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 
 	const reader = res.body.getReader();
 	const decoder = new TextDecoder("utf-8");
-	let buffer = "";
 	let lastChunkAt = Date.now();
 	let staleDetected = false;
 
@@ -320,6 +299,17 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 	}, HEARTBEAT_HINT_MS);
 
 	let firstByteFired = false;
+	const pendingEvents: EventSourceMessage[] = [];
+	const parser = createParser({
+		onEvent: (event) => pendingEvents.push(event),
+		onError: (error) => log.warn("sse.framing_invalid", { error: toErrorMessage(error) }),
+	});
+	const drainEvents = async (): Promise<void> => {
+		while (pendingEvents.length > 0) {
+			const parsed = parseEventMessage(pendingEvents.shift());
+			if (parsed) await opts.onEvent(parsed);
+		}
+	};
 	try {
 		while (true) {
 			const { value, done } = await reader.read();
@@ -331,6 +321,12 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 				// resets to 0, and the daemon hammers the server
 				// every cycle.
 				if (staleDetected) throw new Error("stale");
+				parser.feed(decoder.decode());
+				// Resolve a trailing bare CR, which is a complete SSE line
+				// terminator but remains ambiguous to an incremental parser
+				// until either the next byte or EOF is known.
+				parser.feed("\n");
+				await drainEvents();
 				return;
 			}
 			if (!firstByteFired) {
@@ -338,18 +334,8 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
 				opts.onFirstByte?.();
 			}
 			lastChunkAt = Date.now();
-			buffer += decoder.decode(value, { stream: true });
-
-			// SSE record terminator is a blank line. Process every
-			// completed record and keep the partial tail in `buffer`.
-			let split: number = buffer.indexOf("\n\n");
-			while (split !== -1) {
-				const record = buffer.slice(0, split);
-				buffer = buffer.slice(split + 2);
-				split = buffer.indexOf("\n\n");
-				const parsed = parseRecord(record);
-				if (parsed) await opts.onEvent(parsed);
-			}
+			parser.feed(decoder.decode(value, { stream: true }));
+			await drainEvents();
 		}
 	} finally {
 		clearInterval(stale);
@@ -361,32 +347,26 @@ async function dialAndStream(opts: Opts & { onFirstByte?: () => void }): Promise
  * tests can drive synthetic byte sequences without standing up a
  * full SSE round-trip. */
 export function parseRecord(record: string): ServerEvent | null {
-	let eventType = "";
-	let dataPayload = "";
-	for (const line of record.split("\n")) {
-		if (!line || line.startsWith(":")) continue;
-		const colon = line.indexOf(":");
-		if (colon === -1) continue;
-		const field = line.slice(0, colon);
-		// SSE allows one optional space after the colon.
-		const value = line.slice(colon + 1).replace(/^ /, "");
-		if (field === "event") eventType = value;
-		else if (field === "data") dataPayload += dataPayload ? `\n${value}` : value;
-	}
-	if (!eventType || !dataPayload) return null;
+	let message: EventSourceMessage | undefined;
+	createParser({ onEvent: (event) => (message = event) }).feed(`${record}\n\n`);
+	return parseEventMessage(message);
+}
+
+function parseEventMessage(message: EventSourceMessage | undefined): ServerEvent | null {
+	if (!message?.event || !message.data) return null;
 
 	try {
-		const parsed = parseServerEvent(JSON.parse(dataPayload) as unknown);
+		const parsed = parseServerEvent(JSON.parse(message.data) as unknown);
 		if (!parsed) {
-			log.warn("sse.event_invalid", { event_type: eventType });
+			log.warn("sse.event_invalid", { event_type: message.event });
 			return null;
 		}
-		if (parsed.type !== eventType) {
-			log.warn("sse.event_type_mismatch", { header: eventType, body_type: parsed.type });
+		if (parsed.type !== message.event) {
+			log.warn("sse.event_type_mismatch", { header: message.event, body_type: parsed.type });
 		}
 		return parsed;
 	} catch (e) {
-		log.warn("sse.parse_failed", { record, error: toErrorMessage(e) });
+		log.warn("sse.parse_failed", { data: message.data, error: toErrorMessage(e) });
 		return null;
 	}
 }
@@ -430,12 +410,18 @@ function parseServerEvent(value: unknown): ServerEvent | null {
 	};
 }
 
-function errorInfo(err: unknown): { reason: string; http_status?: number; request_id?: string } {
+function errorInfo(err: unknown): {
+	reason: string;
+	http_status?: number;
+	request_id?: string;
+	retry_after_ms?: number;
+} {
 	if (err instanceof SseConnectionError) {
 		return {
 			reason: err.reason,
 			http_status: err.httpStatus,
 			request_id: err.requestId,
+			retry_after_ms: err.retryAfterMs,
 		};
 	}
 	if (!(err instanceof Error)) return { reason: "unknown" };

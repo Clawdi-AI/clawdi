@@ -73,5 +73,8 @@
 		"typescript": "catalog:",
 		"yaml": "^2.9.0",
 		"zod": "catalog:"
+	},
+	"dependencies": {
+		"eventsource-parser": "^3.0.8"
 	}
 }

@@ -76,6 +76,9 @@
       "bin": {
         "clawdi": "bin/clawdi.mjs",
       },
+      "dependencies": {
+        "eventsource-parser": "^3.0.8",
+      },
       "devDependencies": {
         "@clack/prompts": "^1.7.0",
         "@clawdi/shared": "workspace:*",
