@@ -800,7 +800,7 @@ atomic projected-file swap advance config, secrets, and apply identity in
 place; `bootNonce` remains a workload-boot identity rather than a
 config-generation identity. The legacy process environment is accepted only
 when no identity-file path was configured and the canonical hosted mount
-`/var/run/secrets/clawdi-runtime-identity/runtime-apply-identity.json` does not
+`/etc/clawdi/runtime-identity/runtime-apply-identity.json` does not
 exist. This one-boot discovery rule lets a CLI installed by an older bootstrap
 unit acquire the file contract; newly rendered units then pass the discovered
 path explicitly. An existing but malformed canonical file fails closed.

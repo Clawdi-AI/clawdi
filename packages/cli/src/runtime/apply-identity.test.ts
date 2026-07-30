@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
 	readRuntimeApplyContext,
 	readRuntimeApplyIdentity,
 	readRuntimeApplyIdentityFromEnv,
@@ -110,6 +111,12 @@ describe("runtime apply identity environment", () => {
 });
 
 describe("runtime apply identity file", () => {
+	test("uses the hosted filesystem ABI by default", () => {
+		expect(HOSTED_RUNTIME_APPLY_IDENTITY_FILE).toBe(
+			"/etc/clawdi/runtime-identity/runtime-apply-identity.json",
+		);
+	});
+
 	test("reads the complete canonical tuple from the configured file", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-apply-identity-"));
 		roots.push(root);

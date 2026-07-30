@@ -43,7 +43,7 @@ export function runtimeApplyIdentitiesEqual(
 
 export const RUNTIME_APPLY_IDENTITY_FILE_ENV = "CLAWDI_RUNTIME_APPLY_IDENTITY_FILE";
 export const HOSTED_RUNTIME_APPLY_IDENTITY_FILE =
-	"/var/run/secrets/clawdi-runtime-identity/runtime-apply-identity.json";
+	"/etc/clawdi/runtime-identity/runtime-apply-identity.json";
 
 const runtimeProjectedEnvironmentSchema = z.record(
 	z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
