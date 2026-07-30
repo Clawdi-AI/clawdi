@@ -36,11 +36,11 @@ Product workflows remain responsible for their full product suites. The
 focused profile is intentionally rejected if extra arguments are supplied so
 its selection cannot drift through an undocumented CI-only shell argument.
 
-The shell implementation defines each package command once in a lower-level
-primitive. The public `js`, `web`, `cli`, and `backend` wrappers and the `ci`
-profile compose those same primitives with full or focused arguments. Install
-steps remain in the wrappers, so every entrypoint installs JavaScript and
-backend dependencies at most once per container.
+The host entrypoint reinvokes the same `scripts/test.sh` inside the container
+with an explicit `--in-container` marker. That single script owns source-copy,
+dependency-install, suite composition, and dispatch behavior. JavaScript and
+backend install steps remain in the suite wrappers, so every entrypoint
+installs each dependency set at most once per container.
 
 Done: `scripts/test.sh ci` exits 0 and reports passing contract, web, shared,
 sidecar, CLI, and backend smoke tests.
@@ -52,13 +52,14 @@ the shared workspace-typecheck, web-test, web-build, shared-test,
 sidecar-test, CLI-test, and backend-test primitives. Web, CLI, and backend use
 the focused files listed above; shared and sidecar remain complete.
 
-The lightweight contract test statically verifies the composition layer:
+The lightweight contract test statically verifies the boundary invariants:
 
-- Every package command is owned by exactly one primitive.
-- Public wrappers and `ci` call those primitives in the expected order.
-- Focused arguments appear only at the `ci` composition boundary.
-- Public suite dispatch, workflow selection, paths, and resources remain
-  present.
+- Public package and PDM defaults enter Docker while raw package suites are
+  explicitly internal or host-local.
+- The runner self-reinvokes, mounts source read-only, copies it before installs,
+  and selects PostgreSQL only for suites that require it.
+- Full and focused commands, argument routing, workflow selection, paths, and
+  measured resources remain present without mirroring the shell dispatch.
 
 Routine pull requests do not dynamically invoke every public wrapper or rerun
 the full web, CLI, and backend product suites. For a core runner change,
@@ -79,12 +80,13 @@ suite` step reports the full web, shared, sidecar, CLI, and backend counts.
 
 ## Client CI gate independence
 
-Client CI keeps web build and the web/CLI/shared typecheck matrix as separate
-required jobs, but both now depend only on the path-filter job. Each job starts
-from its own `actions/checkout` and neither uploads nor downloads an artifact.
-The Turbo typecheck task also declares no outputs. Consequently, the previous
-`build -> typecheck` scheduling edge could not transfer `tsr generate` output
-or any other generated file to the build job.
+Client CI uses one consolidated `verify` job for lint, build, typecheck, native
+CLI smoke, publish-manifest validation, and the internal test suites for web,
+shared, WhatsApp sidecar, and CLI. Because that job intentionally verifies all
+four packages, one aggregated `client` path-filter signal controls it. A
+separate `deploy_contract` signal controls only generated deploy-contract
+drift checks. The job has no matrix or artifact transfer, and the Turbo
+typecheck task declares no outputs.
 
 A build-only check copied the repository into a fresh isolated runner
 workspace, installed dependencies, asserted that `apps/web/.output` and
@@ -96,7 +98,7 @@ test -f apps/web/.output/server/index.mjs
 ```
 
 The command passed without running typecheck first. This verifies the same
-fresh-checkout contract already used by the Client CI build job.
+fresh-checkout contract used by the consolidated Client CI `verify` job.
 
 ## Resource envelope
 
@@ -154,10 +156,10 @@ backend smoke cases. A separate full backend run completed in 117.522 seconds
 with 1,279 passed and 7 skipped tests. It peaked at 1,165,012,992 bytes and 87
 PIDs in the runner and 182,202,368 bytes and 17 PIDs in PostgreSQL.
 
-The current single-container `ci` profile executes 84 cases: 8 runner
-contract, 14 web, 31 shared, 9 sidecar, 16 CLI, and 6 backend smoke tests. The
-same profile was measured once with high override ceilings and once with the
-defaults:
+At the measurement baseline, the single-container `ci` profile executed 84
+cases: 8 runner contract, 14 web, 31 shared, 9 sidecar, 16 CLI, and 6 backend
+smoke tests. That profile was measured once with high override ceilings and
+once with the defaults:
 
 | Profile limits | Wall | Runner avg CPU | Runner memory peak | Runner PID peak | Swap peak | OOM kills |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -182,5 +184,5 @@ These are sizing observations from one host, not general product benchmark
 claims. The CI efficiency claim is limited to removing duplicate suite
 execution and two repeated container dependency installs.
 
-Done: `bun test packages/cli/tests/clean-test-runner.test.ts` reports 8 passing
-contract tests.
+Done: `scripts/test.sh cli tests/clean-test-runner.test.ts` reports 8 passing
+contract tests through the Docker runner.

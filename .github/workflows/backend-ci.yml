@@ -168,5 +168,5 @@ jobs:
         run: |
           uv run alembic downgrade 62bdb2921f5f
           uv run alembic upgrade head
-      - name: Pytest
+      - name: Pytest (ephemeral internal suite)
         run: uv run pytest -q

@@ -123,7 +123,9 @@ describe("CLI publish workflow contract", () => {
 		expect(workflow).toContain('tarball="$CLI_TARBALL_FILENAME"');
 		expect(workflow).toContain(`name: \${{ env.CLI_ARTIFACT_NAME }}`);
 		expect(workflow).toContain("run: bun run typecheck");
+		expect(workflow).toContain("- name: Test (ephemeral internal suite)");
 		expect(workflow).toContain("run: bun test --isolate --max-concurrency=1 packages/cli");
+		expect(workflow).toContain("- name: Native lifecycle (ephemeral internal suite)");
 		expect(workflow.indexOf("- name: Test")).toBeLessThan(
 			workflow.indexOf("- name: Build package and native release matrix"),
 		);
