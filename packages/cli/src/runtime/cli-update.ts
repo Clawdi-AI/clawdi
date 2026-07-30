@@ -35,6 +35,8 @@ export interface RuntimeCliUpdateResult {
 	activePath: string;
 	activeTarget: string | null;
 	version: string | null;
+	// The active managed target no longer matches the code in this process.
+	// Callers must stop before manifest convergence or any authority side effect.
 	selfReexec: boolean;
 	error?: string | null;
 }
@@ -332,13 +334,18 @@ export function applyRuntimeCliDesiredState(
 	);
 	activateCliUpgradeTransaction(paths);
 	pruneCliPackagePrefixes(paths, [installed.npmPrefix, previousIdentity?.npmPrefix ?? null]);
-	return baseResult("installed", paths, {
-		packageSpec,
-		registry,
-		npmPrefix: installed.npmPrefix,
-		activeTarget: installed.activeTarget,
-		version: installed.version,
-	});
+	return baseResult(
+		"installed",
+		paths,
+		{
+			packageSpec,
+			registry,
+			npmPrefix: installed.npmPrefix,
+			activeTarget: installed.activeTarget,
+			version: installed.version,
+		},
+		true,
+	);
 }
 
 type RuntimeCliResultValues = Pick<
@@ -1161,7 +1168,7 @@ function reconcileCliUpgradeTransaction(
 	const state = readCliUpgradeState(paths);
 	if (state.migratedFromV1) writeCliUpgradeState(paths, state);
 	const transaction = state.transaction ?? null;
-	if (!transaction) return cliReconciliationResult(paths, "unchanged", opts.runningVersion);
+	if (!transaction) return { status: "unchanged", selfReexec: false };
 	if (transaction.rollback) {
 		finishCliRollback(paths, transaction);
 		return cliReconciliationResult(paths, "rolled_back", opts.runningVersion);
@@ -1228,7 +1235,6 @@ function cliReconciliationResult(
 	return {
 		status,
 		selfReexec:
-			status !== "unchanged" &&
 			runningVersion !== undefined &&
 			activeVersion !== undefined &&
 			activeVersion !== runningVersion,

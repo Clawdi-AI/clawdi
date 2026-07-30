@@ -1195,6 +1195,11 @@ interface RuntimeVerifyOptions {
 	json?: boolean;
 }
 
+// The image bootstrap is a RemainAfterExit oneshot with Restart=on-failure.
+// A dedicated temporary-failure exit makes it start the newly activated CLI;
+// runtime watch instead exits cleanly because its unit uses Restart=always.
+const RUNTIME_INIT_CLI_HANDOFF_EXIT_CODE = 75;
+
 interface RuntimeDoctorCheck {
 	name: string;
 	ok: boolean;
@@ -1212,6 +1217,7 @@ interface MinimumCliVersionGate {
 
 type RuntimeApplyResult =
 	| RuntimeApplyConvergedResult
+	| RuntimeApplyCliHandoffResult
 	| RuntimeApplyGatedResult
 	| RuntimeApplyCliUpdateFailedResult;
 
@@ -1226,6 +1232,11 @@ interface RuntimeApplyGatedResult {
 	kind: "minimum_cli_version_gated";
 	cliUpdate: RuntimeCliUpdateResult;
 	gate: MinimumCliVersionGate;
+}
+
+interface RuntimeApplyCliHandoffResult {
+	kind: "cli_handoff";
+	cliUpdate: RuntimeCliUpdateResult;
 }
 
 interface RuntimeApplyCliUpdateFailedResult {
@@ -1945,6 +1956,10 @@ function emitRuntimeWatchEvent(value: unknown, json: boolean | undefined): void 
 		console.log(`runtime watch applied generation ${event.generation ?? "unknown"}`);
 		return;
 	}
+	if (event.status === "cli_handoff") {
+		console.log("runtime watch handed off to the managed CLI");
+		return;
+	}
 	if (event.status === "error") {
 		console.error(`runtime watch error: ${event.error ?? event.errors?.[0] ?? "unknown error"}`);
 	}
@@ -1978,6 +1993,67 @@ function repairStatus(
 		},
 		paths,
 	);
+}
+
+function finishRuntimeInitCliHandoff(input: {
+	opts: RuntimeInitOptions;
+	paths: ReturnType<typeof getRuntimePaths>;
+	mode: "hosted";
+	bootId: string;
+	hostPolicy: ReturnType<typeof readHostPolicy>;
+	manifestLoad?: RuntimeManifestLoad;
+	detail:
+		| { cliUpdate: RuntimeCliUpdateResult }
+		| { reconciliation: RuntimeCliReconciliationResult };
+}): void {
+	const activeAppliedState = readRuntimeAppliedState(input.paths);
+	const status = buildRuntimeBootStatus(
+		{
+			mode: input.manifestLoad?.offline ? "degraded-offline" : "normal",
+			status: "ok",
+			stage: "config",
+			bootId: input.bootId,
+			runtimeMode: input.mode,
+			activeGeneration: activeAppliedState?.generation ?? null,
+			rejectedGeneration: null,
+			instanceId: activeAppliedState?.instanceId ?? null,
+			enabledRuntimes: [],
+			errors: [],
+			exitCode: RUNTIME_INIT_CLI_HANDOFF_EXIT_CODE,
+			datasource: "RuntimeSource",
+			hostPolicy: hostPolicySummary(input.hostPolicy),
+			...(input.manifestLoad
+				? {
+						manifestSource: {
+							type: input.manifestLoad.source,
+							path: input.manifestLoad.sourcePath,
+							offline: input.manifestLoad.offline,
+						},
+					}
+				: {}),
+		},
+		input.paths,
+	);
+	writeRuntimeBootStatus(status, input.paths);
+	if (input.opts.json || !process.stdout.isTTY) {
+		console.log(
+			JSON.stringify(
+				{
+					...status,
+					handoff: "cli_reexec",
+					...input.detail,
+					selfReexec: true,
+				},
+				null,
+				2,
+			),
+		);
+	} else {
+		console.log(chalk.bold("clawdi runtime init"));
+		console.log(chalk.green("  CLI activated; restarting under the managed binary"));
+		console.log(chalk.gray(`  status: ${input.paths.bootStatus}`));
+	}
+	process.exitCode = RUNTIME_INIT_CLI_HANDOFF_EXIT_CODE;
 }
 
 export async function runtimeVerify(opts: RuntimeVerifyOptions = {}) {
@@ -2074,6 +2150,37 @@ async function runtimeInitLocked(
 		if (opts.json || !process.stdout.isTTY) console.log(JSON.stringify(status, null, 2));
 		else console.log(chalk.red(status.error));
 		process.exitCode = 20;
+		return;
+	}
+	try {
+		const reconciliation = reconcilePendingRuntimeCliUpgrade(paths, getCliVersion());
+		if (reconciliation.selfReexec) {
+			finishRuntimeInitCliHandoff({
+				opts,
+				paths,
+				mode,
+				bootId,
+				hostPolicy,
+				detail: { reconciliation },
+			});
+			return;
+		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		const status = repairStatus(
+			{
+				bootId,
+				runtimeMode: mode,
+				stage: "local",
+				exitCode: 23,
+				errors: [message],
+			},
+			paths,
+		);
+		writeRuntimeBootStatus(status, paths);
+		if (opts.json || !process.stdout.isTTY) console.log(JSON.stringify(status, null, 2));
+		else console.log(chalk.red(message));
+		process.exitCode = 23;
 		return;
 	}
 
@@ -2222,6 +2329,18 @@ async function runtimeInitLocked(
 			process.exitCode = 23;
 			return;
 		}
+		if (applyResult.kind === "cli_handoff") {
+			finishRuntimeInitCliHandoff({
+				opts,
+				paths,
+				mode,
+				bootId,
+				hostPolicy,
+				manifestLoad: convergenceLoad,
+				detail: { cliUpdate: applyResult.cliUpdate },
+			});
+			return;
+		}
 		if (applyResult.kind === "minimum_cli_version_gated") {
 			const activeAppliedState = readRuntimeAppliedState(paths);
 			const status = buildRuntimeBootStatus(
@@ -2268,6 +2387,7 @@ async function runtimeInitLocked(
 		const { convergence } = applyResult;
 		const runtimeErrors = [...convergence.installErrors];
 		const installOk = runtimeErrors.length === 0;
+		if (installOk) completePendingRuntimeCliUpgrade(paths, getCliVersion());
 		const activeAppliedState = readRuntimeAppliedState(paths);
 		const status = buildRuntimeBootStatus(
 			{
@@ -2373,6 +2493,16 @@ async function runtimeWatchTickLocked(
 			selfReexec: false,
 		};
 	}
+	if (reconciliation.selfReexec) {
+		return {
+			schemaVersion: "clawdi.runtimeWatchEvent.v1",
+			status: "cli_handoff",
+			stage: "cli-update",
+			handoff: "cli_reexec",
+			reconciliation,
+			selfReexec: true,
+		};
+	}
 	const event = await runtimeWatchTickAfterCliReconciliation(paths, opts);
 	return {
 		...event,
@@ -2473,6 +2603,26 @@ async function runtimeWatchTickAfterCliReconciliation(
 			recoverFailedSystemdUnits: opts.recoverFailedSystemdUnits,
 			requireSystemdApplied: applyIdentity !== null,
 		});
+		if (applyResult.kind === "cli_handoff") {
+			const activeAppliedState = readRuntimeAppliedState(paths);
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "cli_handoff",
+				stage: "cli-update",
+				handoff: "cli_reexec",
+				activeGeneration: activeAppliedState?.generation ?? null,
+				desiredGeneration: loaded.manifest.generation,
+				instanceId: activeAppliedState?.instanceId ?? null,
+				cliUpdate: applyResult.cliUpdate,
+				selfReexec: true,
+				systemdUnitsChanged: false,
+				systemdApply: {
+					applied: false,
+					systemUnitsChanged: [],
+					userUnitsChanged: [],
+				},
+			};
+		}
 		if (applyResult.kind === "cli_update_failed") {
 			const error = applyResult.cliUpdate.error ?? "CLI update failed";
 			const activeAppliedState = readRuntimeAppliedState(paths);
@@ -2486,7 +2636,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 				rejectedGeneration: loaded.manifest.generation,
 				instanceId: activeAppliedState?.instanceId ?? null,
 				cliUpdate: applyResult.cliUpdate,
-				selfReexec: shouldSelfReexecForCliUpdate(applyResult.cliUpdate),
+				selfReexec: applyResult.cliUpdate.selfReexec,
 				systemdUnitsChanged: false,
 				systemdApply: {
 					applied: false,
@@ -2511,7 +2661,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 				activeGeneration: applyResult.gate.activeGeneration,
 				rejectedGeneration: applyResult.gate.rejectedGeneration,
 				cliUpdate: applyResult.cliUpdate,
-				selfReexec: shouldSelfReexecForCliUpdate(applyResult.cliUpdate),
+				selfReexec: applyResult.cliUpdate.selfReexec,
 				gate: applyResult.gate,
 			};
 		}
@@ -2519,7 +2669,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 		const cliUpdateError =
 			cliUpdate.status === "error" ? (cliUpdate.error ?? "CLI update failed") : null;
 		const errors = [...(cliUpdateError ? [cliUpdateError] : []), ...convergence.installErrors];
-		let selfReexec = shouldSelfReexecForCliUpdate(cliUpdate);
+		let selfReexec = cliUpdate.selfReexec;
 		const systemdUnitsChanged =
 			systemdApplyResult.systemUnitsChanged.length > 0 ||
 			systemdApplyResult.userUnitsChanged.length > 0;
@@ -2593,7 +2743,7 @@ function applyRuntimeDesiredState(
 		};
 	}
 	if (cliUpdate.selfReexec) {
-		return { kind: "cli_update_failed", cliUpdate };
+		return { kind: "cli_handoff", cliUpdate };
 	}
 	const gate = minimumCliVersionGate(load.manifest, paths);
 	if (gate) {
@@ -2722,13 +2872,6 @@ function runtimeCliUpdateError(
 		selfReexec: false,
 		error: error instanceof Error ? error.message : String(error),
 	};
-}
-
-function shouldSelfReexecForCliUpdate(cliUpdate: RuntimeCliUpdateResult): boolean {
-	if (cliUpdate.selfReexec) return true;
-	if (cliUpdate.status === "installed") return true;
-	if (!cliUpdate.version || !cliUpdate.activeTarget) return false;
-	return cliUpdate.version !== getCliVersion();
 }
 
 function runtimeManifestIdentityForWatch(
