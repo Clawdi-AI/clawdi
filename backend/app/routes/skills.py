@@ -61,6 +61,7 @@ from app.schemas.skill import (
     SkillUploadResponse,
 )
 from app.services.file_store import get_file_store
+from app.services.http_cache import if_none_match_contains
 from app.services.runtime_manifest_resources import (
     assert_project_skill_not_runtime_managed,
     project_skill_advisory_lock_key,
@@ -108,6 +109,7 @@ scope_router = APIRouter(
 log = logging.getLogger(__name__)
 
 file_store = get_file_store()
+_SKILLS_LIST_CACHE_CONTROL = "no-transform"
 
 
 def _file_key(user_id, project_id, skill_key: str) -> str:
@@ -376,9 +378,12 @@ async def _list_skills_with_db(
         visible_project_ids=visible_project_ids,
         visible_revision_fingerprint=visible_revision_fingerprint,
     )
-    if if_none_match is not None and if_none_match.strip() == etag:
+    if if_none_match_contains(if_none_match, etag):
         await db.commit()
-        return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
+        return Response(
+            status_code=status.HTTP_304_NOT_MODIFIED,
+            headers={"ETag": etag, "Cache-Control": _SKILLS_LIST_CACHE_CONTROL},
+        )
 
     # Drop the `Skill.user_id == auth.user_id` filter that was here
     # pre-sharing: that would have blocked viewer members from seeing
@@ -514,7 +519,7 @@ async def _list_skills_with_db(
     return Response(
         content=response.model_dump_json(),
         media_type="application/json",
-        headers={"ETag": etag},
+        headers={"ETag": etag, "Cache-Control": _SKILLS_LIST_CACHE_CONTROL},
     )
 
 
@@ -554,9 +559,12 @@ def _bound_api_key_skills_304_response(
         visible_project_ids=visible_project_ids,
         visible_revision_fingerprint=visible_revision_fingerprint,
     )
-    if if_none_match.strip() != etag:
+    if not if_none_match_contains(if_none_match, etag):
         return None
-    return Response(status_code=status.HTTP_304_NOT_MODIFIED, headers={"ETag": etag})
+    return Response(
+        status_code=status.HTTP_304_NOT_MODIFIED,
+        headers={"ETag": etag, "Cache-Control": _SKILLS_LIST_CACHE_CONTROL},
+    )
 
 
 def _skills_collection_etag(
