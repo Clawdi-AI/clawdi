@@ -9,8 +9,14 @@ const cleanRunnerWorkflow = readRepoFile(".github/workflows/clean-test-runner-ci
 const setupBunAction = readRepoFile(".github/actions/setup-bun-ci/action.yml");
 const outerRunner = readRepoFile("scripts/test.sh");
 const innerRunner = readRepoFile("docker/test-runner.sh");
+const runnerDockerfile = readRepoFile("docker/test-runner.Dockerfile");
 const compose = readRepoFile("docker-compose.test.yml");
 const turboConfig = readRepoFile("turbo.json");
+const rootPackage = readRepoFile("package.json");
+const webPackage = readRepoFile("apps/web/package.json");
+const cliPackage = readRepoFile("packages/cli/package.json");
+const sharedPackage = readRepoFile("packages/shared/package.json");
+const sidecarPackage = readRepoFile("packages/whatsapp-baileys-sidecar/package.json");
 
 function section(source: string, start: string, end: string): string {
 	const startIndex = source.indexOf(start);
@@ -33,7 +39,9 @@ const compositionFunctions = new Set([
 	"web_build",
 	"cli_typecheck",
 	"cli_tests",
+	"shared_typecheck",
 	"shared_tests",
+	"sidecar_typecheck",
 	"sidecar_tests",
 	"runner_contract_tests",
 	"backend_tests",
@@ -47,7 +55,7 @@ function calledCompositionFunctions(shellFunction: string): string[] {
 }
 
 describe("client workflow contract", () => {
-	// Lint, typecheck, build, and the CLI tests run in a single `verify` job.
+	// Lint, typecheck, build, and client package tests run in a single `verify` job.
 	// The invariant worth protecting is that typecheck and build stay
 	// independent gates — neither serialized behind the other, neither
 	// consuming the other's output as an artifact. A single Turbo graph
@@ -58,6 +66,7 @@ describe("client workflow contract", () => {
 
 		expect(verifyJob).toContain("needs: changes");
 		expect(verifyJob).toContain("uses: actions/checkout@v6");
+		expect(verifyJob).not.toContain("matrix:");
 		expect(clientWorkflow).not.toContain("actions/upload-artifact");
 		expect(clientWorkflow).not.toContain("actions/download-artifact");
 
@@ -65,16 +74,27 @@ describe("client workflow contract", () => {
 		expect(typecheckTask).toContain('"outputs": []');
 
 		expect(verifyJob).toContain("bunx turbo typecheck build");
-		for (const filter of ["--filter=web", "--filter=clawdi", "--filter=@clawdi/shared"]) {
+		for (const filter of [
+			"--filter=web",
+			"--filter=clawdi",
+			"--filter=@clawdi/shared",
+			"--filter=@clawdi/whatsapp-baileys-sidecar",
+		]) {
 			expect(verifyJob).toContain(filter);
 		}
+		expect(clientWorkflow).toContain(`sidecar: \${{ steps.filter.outputs.sidecar }}`);
+		expect(clientWorkflow).toContain("needs.changes.outputs.sidecar == 'true'");
+		expect(occurrences(clientWorkflow, '- "packages/whatsapp-baileys-sidecar/**"')).toBe(3);
 	});
 
-	test("retains the existing client build and test commands", () => {
+	test("runs every client package internal suite in the consolidated job", () => {
 		for (const command of [
 			"bun run check",
 			"bun run --cwd packages/cli check:publish-manifest",
-			"bun test --isolate --max-concurrency=1 packages/cli",
+			"bun run --cwd apps/web test:internal",
+			"bun run --cwd packages/shared test:internal",
+			"bun run --cwd packages/whatsapp-baileys-sidecar test:internal",
+			"bun run --cwd packages/cli test:internal",
 		]) {
 			expect(clientWorkflow).toContain(command);
 		}
@@ -91,16 +111,41 @@ describe("client workflow contract", () => {
 
 describe("clean runner suite contract", () => {
 	test("keeps every public suite entrypoint routed", () => {
-		expect(outerRunner).toContain("all|backend|ci|js|cli|web)");
+		expect(outerRunner).toContain("all|backend|ci|js|cli|shared|sidecar|web)");
 		expect(outerRunner).toContain("all|backend|ci)\n");
-		expect(outerRunner).toContain("js|cli|web)\n");
+		expect(outerRunner).toContain("js|cli|shared|sidecar|web)\n");
 
 		const dispatch = section(innerRunner, 'case "$suite" in\n', "esac\n");
-		for (const suite of ["all", "js", "cli", "web", "backend", "ci"]) {
+		for (const suite of ["all", "js", "cli", "shared", "sidecar", "web", "backend", "ci"]) {
 			expect(dispatch).toContain(`\t${suite})\n`);
 		}
 		expect(dispatch).toContain('run_js\n\t\trun_backend "$@"');
 		expect(dispatch).toContain('run_ci "$@"');
+	});
+
+	test("separates public Docker entrypoints from internal package suites", () => {
+		for (const [source, publicCommand, internalCommand] of [
+			[webPackage, "../../scripts/test.sh web", "bun test"],
+			[cliPackage, "../../scripts/test.sh cli", "bun test --isolate --max-concurrency=1"],
+			[sharedPackage, "../../scripts/test.sh shared", "bun test src"],
+			[sidecarPackage, "../../scripts/test.sh sidecar", "bun test"],
+		] as const) {
+			expect(source).toContain(`"test": "${publicCommand}"`);
+			expect(source).toContain(`"test:internal": "${internalCommand}"`);
+			expect(source).not.toContain('"test:raw"');
+		}
+		expect(rootPackage).toContain('"test": "scripts/test.sh"');
+		expect(rootPackage).toContain('"test:local": "turbo test:internal"');
+		expect(turboConfig).toContain('"test:internal": {');
+		expect(turboConfig).not.toContain('"test": {');
+		for (const publicInvocation of [
+			'bun run --cwd apps/web test "$@"',
+			'bun run --cwd packages/cli test "$@"',
+			"bun run --cwd packages/shared test\n",
+			"bun run --cwd packages/whatsapp-baileys-sidecar test\n",
+		]) {
+			expect(innerRunner).not.toContain(publicInvocation);
+		}
 	});
 
 	test("composes public and focused suites from single command primitives", () => {
@@ -118,7 +163,7 @@ describe("clean runner suite contract", () => {
 			{
 				name: "web_tests",
 				next: "web_build",
-				commands: ['bun run --cwd apps/web test "$@"'],
+				commands: ['bun run --cwd apps/web test:internal "$@"'],
 			},
 			{
 				name: "web_build",
@@ -132,23 +177,33 @@ describe("clean runner suite contract", () => {
 			},
 			{
 				name: "cli_tests",
+				next: "shared_typecheck",
+				commands: ['bun run --cwd packages/cli test:internal "$@"'],
+			},
+			{
+				name: "shared_typecheck",
 				next: "shared_tests",
-				commands: ['bun run --cwd packages/cli test "$@"'],
+				commands: ["bun run --cwd packages/shared typecheck"],
 			},
 			{
 				name: "shared_tests",
+				next: "sidecar_typecheck",
+				commands: ["bun run --cwd packages/shared test:internal"],
+			},
+			{
+				name: "sidecar_typecheck",
 				next: "sidecar_tests",
-				commands: ["bun test packages/shared/src"],
+				commands: ["bun run --cwd packages/whatsapp-baileys-sidecar typecheck"],
 			},
 			{
 				name: "sidecar_tests",
 				next: "runner_contract_tests",
-				commands: ["bun run --cwd packages/whatsapp-baileys-sidecar test"],
+				commands: ["bun run --cwd packages/whatsapp-baileys-sidecar test:internal"],
 			},
 			{
 				name: "runner_contract_tests",
 				next: "backend_tests",
-				commands: ["bun test packages/cli/tests/clean-test-runner.test.ts"],
+				commands: ["bun run --cwd packages/cli test:internal tests/clean-test-runner.test.ts"],
 			},
 			{
 				name: "backend_tests",
@@ -178,8 +233,16 @@ describe("clean runner suite contract", () => {
 				],
 			},
 			{
-				body: section(innerRunner, "run_cli() {\n", "run_web() {\n"),
+				body: section(innerRunner, "run_cli() {\n", "run_shared() {\n"),
 				calls: ["install_js", "cli_typecheck", "cli_tests"],
+			},
+			{
+				body: section(innerRunner, "run_shared() {\n", "run_sidecar() {\n"),
+				calls: ["install_js", "shared_typecheck", "shared_tests"],
+			},
+			{
+				body: section(innerRunner, "run_sidecar() {\n", "run_web() {\n"),
+				calls: ["install_js", "sidecar_typecheck", "sidecar_tests"],
 			},
 			{
 				body: section(innerRunner, "run_web() {\n", "run_backend() {\n"),
@@ -216,8 +279,10 @@ describe("clean runner suite contract", () => {
 			["web_tests", 4],
 			["web_build", 3],
 			["cli_tests", 4],
-			["shared_tests", 3],
-			["sidecar_tests", 3],
+			["shared_typecheck", 2],
+			["shared_tests", 4],
+			["sidecar_typecheck", 2],
+			["sidecar_tests", 4],
 			["backend_tests", 3],
 		] as const) {
 			expect(occurrences(innerRunner, primitive)).toBe(useCount);
@@ -320,5 +385,8 @@ describe("clean runner resource contract", () => {
 		expect(cleanRunnerWorkflow).toContain(
 			"run: docker compose -f docker-compose.test.yml config >/dev/null",
 		);
+		expect(compose).toContain('user: "1000:1000"');
+		expect(runnerDockerfile).toContain("groupadd --gid 1000 clawdi-test");
+		expect(runnerDockerfile).toContain("useradd --uid 1000 --gid 1000");
 	});
 });

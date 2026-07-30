@@ -22,6 +22,9 @@ RUN apt-get update \
 		rsync \
 	&& rm -rf /var/lib/apt/lists/*
 
+RUN groupadd --gid 1000 clawdi-test \
+	&& useradd --uid 1000 --gid 1000 --home-dir /tmp/clawdi-home --no-create-home clawdi-test
+
 ENV HOME=/tmp/clawdi-home \
 	CLAWDI_NO_AUTO_UPDATE=1 \
 	CLAWDI_NO_UPDATE_CHECK=1 \

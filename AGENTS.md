@@ -162,12 +162,14 @@ CLI checks:
 ```bash
 bun run --cwd packages/cli typecheck
 bun run --cwd packages/cli test
-bun test packages/shared/src
+bun run --cwd packages/shared test
 bun run --cwd packages/whatsapp-baileys-sidecar typecheck
 bun run --cwd packages/whatsapp-baileys-sidecar test
 ```
 
-Done: command output reports passing tests/typechecks.
+Package `test` commands use the Docker-backed clean runner. `test:internal` is
+reserved for that runner and CI; use `test:local` only for an explicit
+host-local workspace loop. Done: command output reports passing tests/typechecks.
 
 ## Owner Docs
 

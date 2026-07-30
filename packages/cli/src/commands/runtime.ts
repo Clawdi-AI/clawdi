@@ -2116,7 +2116,7 @@ async function runtimeInitLocked(
 		let convergenceLoad = loaded;
 		let applyResult: RuntimeApplyResult;
 		try {
-			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded);
+			convergenceLoad = applyRuntimeBundleChannelsToManifestLoad(loaded, paths);
 			const contentRevision = runtimePublicContentRevision(convergenceLoad);
 			const applyIdentity = readRuntimeApplyIdentityFromEnv();
 			applyResult = applyRuntimeDesiredState(convergenceLoad, paths, {
@@ -2405,7 +2405,7 @@ async function runtimeWatchTickAfterCliReconciliation(
 	try {
 		const fresh =
 			"notModified" in manifestLoad ? await loadFullRuntimeManifestForWatch(paths) : manifestLoad;
-		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh);
+		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh, paths);
 		const bundleEtag = loaded.etag;
 		const sourceRevision = loaded.sourceRevision;
 		if (!bundleEtag || !sourceRevision) {

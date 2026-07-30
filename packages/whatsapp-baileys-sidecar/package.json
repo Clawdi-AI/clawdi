@@ -10,7 +10,8 @@
 		"dev": "bun run src/index.ts",
 		"start": "bun run src/index.ts",
 		"typecheck": "tsc --noEmit",
-		"test": "bun test"
+		"test": "../../scripts/test.sh sidecar",
+		"test:internal": "bun test"
 	},
 	"dependencies": {
 		"baileys": "npm:@whiskeysockets/baileys@7.0.0-rc13",

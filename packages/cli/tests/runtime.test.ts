@@ -10612,18 +10612,24 @@ exit 64
 		}
 	});
 
-	it("converges Hermes native Telegram and Discord channel projection", () => {
+	it("keeps hosted Hermes channel projection under runtime HOME", () => {
 		const home = join(root, "home", "clawdi");
+		const ambientHome = join(root, "ambient-home");
+		const ambientHermesConfig = join(ambientHome, ".hermes", "config.yaml");
+		const ambientSentinel = "ambient-sentinel: unchanged\n";
 		const state = join(root, "var", "lib", "clawdi");
 		const run = join(root, "run", "clawdi");
 		const workspace = join(home, "clawdi");
 		const hermesBin = join(home, ".local", "bin", "hermes");
 		mkdirSync(dirname(hermesBin), { recursive: true });
+		mkdirSync(dirname(ambientHermesConfig), { recursive: true });
 		mkdirSync(workspace, { recursive: true });
 		writeFileSync(hermesBin, "#!/usr/bin/env bash\nexit 0\n");
+		writeFileSync(ambientHermesConfig, ambientSentinel);
 		chmodSync(hermesBin, 0o700);
-		process.env.HOME = home;
+		process.env.HOME = ambientHome;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_RUNTIME_HOME = home;
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
@@ -10637,6 +10643,7 @@ exit 64
 				instanceId: "iid_hermes_channels",
 				generation: 12,
 				issuedAt: "2026-07-07T00:00:00Z",
+				workspaceRoot: workspace,
 				controlPlane: { apiUrl: "https://cloud-api.test/" },
 				runtimes: {
 					hermes: {
@@ -10657,7 +10664,8 @@ exit 64
 					},
 				},
 				projection: {
-					system: { home, workspace },
+					sourceBundleVersion: "clawdi.hosted-runtime.bundle.v2",
+					system: {},
 				},
 				recovery: {},
 			},
@@ -10706,10 +10714,13 @@ exit 64
 			etag: '"hermes-channels"',
 		};
 
-		const projected = applyRuntimeChannelsToManifestLoad(load, channels);
-		const convergence = convergeRuntimeManifest(projected, getRuntimePaths());
+		const paths = getRuntimePaths();
+		const projected = applyRuntimeChannelsToManifestLoad(load, channels, paths);
+		const convergence = convergeRuntimeManifest(projected, paths);
 
 		expect(convergence.installErrors).toEqual([]);
+		expect(paths.userHome).toBe(home);
+		expect(readFileSync(ambientHermesConfig, "utf-8")).toBe(ambientSentinel);
 		const hermesConfig = readFileSync(join(home, ".hermes", "config.yaml"), "utf-8");
 		expect(hermesConfig).toContain("telegram:");
 		expect(hermesConfig).toContain("enabled: true");

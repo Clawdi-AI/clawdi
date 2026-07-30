@@ -55,7 +55,7 @@ web_typecheck() {
 }
 
 web_tests() {
-	bun run --cwd apps/web test "$@"
+	bun run --cwd apps/web test:internal "$@"
 }
 
 web_build() {
@@ -67,19 +67,27 @@ cli_typecheck() {
 }
 
 cli_tests() {
-	bun run --cwd packages/cli test "$@"
+	bun run --cwd packages/cli test:internal "$@"
+}
+
+shared_typecheck() {
+	bun run --cwd packages/shared typecheck
 }
 
 shared_tests() {
-	bun test packages/shared/src
+	bun run --cwd packages/shared test:internal
+}
+
+sidecar_typecheck() {
+	bun run --cwd packages/whatsapp-baileys-sidecar typecheck
 }
 
 sidecar_tests() {
-	bun run --cwd packages/whatsapp-baileys-sidecar test
+	bun run --cwd packages/whatsapp-baileys-sidecar test:internal
 }
 
 runner_contract_tests() {
-	bun test packages/cli/tests/clean-test-runner.test.ts
+	bun run --cwd packages/cli test:internal tests/clean-test-runner.test.ts
 }
 
 backend_tests() {
@@ -112,6 +120,18 @@ run_cli() {
 	install_js
 	cli_typecheck
 	cli_tests "$@"
+}
+
+run_shared() {
+	install_js
+	shared_typecheck
+	shared_tests
+}
+
+run_sidecar() {
+	install_js
+	sidecar_typecheck
+	sidecar_tests
 }
 
 run_web() {
@@ -161,6 +181,20 @@ case "$suite" in
 	cli)
 		run_cli "$@"
 		;;
+	shared)
+		if [[ $# -gt 0 ]]; then
+			echo "Suite 'shared' does not accept extra arguments" >&2
+			exit 2
+		fi
+		run_shared
+		;;
+	sidecar)
+		if [[ $# -gt 0 ]]; then
+			echo "Suite 'sidecar' does not accept extra arguments" >&2
+			exit 2
+		fi
+		run_sidecar
+		;;
 	web)
 		run_web "$@"
 		;;
@@ -172,7 +206,7 @@ case "$suite" in
 		;;
 	*)
 		echo "Unknown test suite: $suite" >&2
-		echo "Usage: scripts/test.sh [all|ci|js|cli|web|backend] [suite args...]" >&2
+		echo "Usage: scripts/test.sh [all|ci|js|cli|shared|sidecar|web|backend] [suite args...]" >&2
 		exit 2
 		;;
 esac

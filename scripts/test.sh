@@ -11,11 +11,11 @@ if [[ $# -gt 0 ]]; then
 fi
 
 case "$suite" in
-	all|backend|ci|js|cli|web)
+	all|backend|ci|js|cli|shared|sidecar|web)
 		;;
 	*)
 		echo "Unknown test suite: $suite" >&2
-		echo "Usage: scripts/test.sh [all|ci|js|cli|web|backend] [suite args...]" >&2
+		echo "Usage: scripts/test.sh [all|ci|js|cli|shared|sidecar|web|backend] [suite args...]" >&2
 		exit 2
 		;;
 esac
@@ -43,7 +43,7 @@ case "$suite" in
 	all|backend|ci)
 		"${compose[@]}" run --rm test-runner "$suite" "$@"
 		;;
-	js|cli|web)
+	js|cli|shared|sidecar|web)
 		"${compose[@]}" run --rm --no-deps test-runner "$suite" "$@"
 		;;
 esac
