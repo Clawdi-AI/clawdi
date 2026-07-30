@@ -240,7 +240,6 @@ def _apply_public_session_export_cache_policy(
     return response
 
 
-@app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(
     request: Request,
     exc: RequestValidationError,

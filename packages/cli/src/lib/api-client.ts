@@ -4,7 +4,7 @@ import createClient, { type Client } from "openapi-fetch";
 import { canonicalApiOrigin, normalizeCloudApiBaseUrl } from "./api-origin";
 import { assertCloudCredentialEndpoint, getClawdiAccessToken } from "./clerk-oauth";
 import { getAuth, getConfig } from "./config";
-import { parseRetryAfter } from "./retry-after";
+import { MAX_SAFE_RETRY_AFTER_MS, parseRetryAfter } from "./retry-after";
 import { assertValidSkillKey } from "./skill-key";
 import {
 	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
@@ -19,6 +19,10 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_RETRIES = 3;
 const RETRY_DELAYS_MS = [100, 400, 1600] as const;
 const USER_AGENT = `clawdi-cli/${getCliVersion()}`;
+// Node-compatible timers cannot safely schedule a single delay above this
+// value. Longer Retry-After waits are split into chunks without changing the
+// server-requested REST delay.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 
 /** Error thrown by ApiClient. Carries HTTP status and a human-facing hint. */
 export class ApiError extends Error {
@@ -75,15 +79,26 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 			reject(new DOMException("Aborted", "AbortError"));
 			return;
 		}
+		let remainingMs = ms;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		const onAbort = () => {
-			clearTimeout(timer);
+			if (timer !== undefined) clearTimeout(timer);
 			reject(new DOMException("Aborted", "AbortError"));
 		};
-		const timer = setTimeout(() => {
-			signal?.removeEventListener("abort", onAbort);
-			resolve();
-		}, ms);
+		const scheduleNextChunk = () => {
+			if (remainingMs <= 0) {
+				signal?.removeEventListener("abort", onAbort);
+				resolve();
+				return;
+			}
+			const chunkMs = Math.min(remainingMs, MAX_TIMER_DELAY_MS);
+			timer = setTimeout(() => {
+				remainingMs -= chunkMs;
+				scheduleNextChunk();
+			}, chunkMs);
+		};
 		signal?.addEventListener("abort", onAbort, { once: true });
+		scheduleNextChunk();
 	});
 }
 
@@ -203,7 +218,9 @@ export async function retryingFetch(
 		if (buffered.ok) return buffered;
 
 		if (buffered.status === 429 && retry && attempt < maxAttempts - 1) {
-			const retryAfterMs = parseRetryAfter(buffered.headers.get("retry-after"));
+			const retryAfterMs = parseRetryAfter(buffered.headers.get("retry-after"), {
+				maxMs: MAX_SAFE_RETRY_AFTER_MS,
+			});
 			if (retryAfterMs !== null) {
 				try {
 					await sleep(retryAfterMs, externalSignal);

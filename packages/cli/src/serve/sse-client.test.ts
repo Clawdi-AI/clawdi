@@ -25,6 +25,36 @@ afterEach(() => {
 	globalThis.fetch = originalFetch;
 });
 
+function responseFromChunks(chunks: string[]): Response {
+	const encoder = new TextEncoder();
+	return new Response(
+		new ReadableStream<Uint8Array>({
+			start(controller) {
+				for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
+				controller.close();
+			},
+		}),
+	);
+}
+
+async function consumeChunks(chunks: string[]): Promise<unknown[]> {
+	globalThis.fetch = Object.assign(async () => responseFromChunks(chunks), {
+		preconnect: originalFetch.preconnect,
+	});
+	const abort = new AbortController();
+	const events: unknown[] = [];
+	await consumeSse({
+		apiUrl: "https://cloud.example",
+		apiKey: "test-key",
+		abort: abort.signal,
+		onEvent: (event) => {
+			events.push(event);
+		},
+		onDisconnect: () => abort.abort(),
+	});
+	return events;
+}
+
 describe("classifySseReconnect", () => {
 	it("treats the first few reconnects as transient churn", () => {
 		expect(classifySseReconnect(1)).toBe("transient");
@@ -77,6 +107,37 @@ describe("consumeSse reconnect metadata", () => {
 			onDisconnect: () => abort.abort(),
 		});
 		expect(events).toEqual([expect.objectContaining({ skill_key: "chunked" })]);
+	});
+
+	it.each([
+		["no final line terminator", "\n", ""],
+		["a single final LF", "\n", "\n"],
+		["a final CRLF without a blank line", "\r\n", "\r\n"],
+		["a final bare CR without a blank line", "\r", "\r"],
+	])("discards an incomplete event at EOF with %s", async (_name, newline, suffix) => {
+		const body = [
+			"event: skill_changed",
+			'data: {"type":"skill_changed","skill_key":"incomplete","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":3}',
+		].join(newline);
+		expect(await consumeChunks([body + suffix])).toEqual([]);
+	});
+
+	it.each([
+		["LF", "\n"],
+		["CRLF", "\r\n"],
+		["bare CR", "\r"],
+	])("dispatches a complete %s-framed event at EOF", async (_name, newline) => {
+		const body =
+			[
+				"event: skill_changed",
+				'data: {"type":"skill_changed","skill_key":"complete","project_id":"00000000-0000-0000-0000-000000000001","skills_revision":4}',
+			].join(newline) +
+			newline +
+			newline;
+		// One-character chunks force every CRLF pair across a chunk boundary.
+		expect(await consumeChunks([...body])).toEqual([
+			expect.objectContaining({ skill_key: "complete" }),
+		]);
 	});
 
 	it("ignores comments and malformed records while continuing the stream", async () => {
@@ -156,6 +217,32 @@ describe("consumeSse reconnect metadata", () => {
 				request_id: "req-sse-502",
 			},
 		]);
+	});
+
+	it.each([
+		["zero", "0", 0],
+		["a value above the SSE policy", "600", 300_000],
+		["an arbitrarily large value", "9".repeat(1_000), 300_000],
+	])("applies the explicit five-minute SSE cap to %s Retry-After", async (_name, value, waitMs) => {
+		globalThis.fetch = Object.assign(
+			async () => new Response(null, { status: 429, headers: { "retry-after": value } }),
+			{ preconnect: originalFetch.preconnect },
+		);
+		const abort = new AbortController();
+		const disconnects: Array<{ wait_ms: number }> = [];
+
+		await consumeSse({
+			apiUrl: "https://cloud.example",
+			apiKey: "test-key",
+			abort: abort.signal,
+			onEvent: () => {},
+			onDisconnect: (info) => {
+				disconnects.push(info);
+				abort.abort();
+			},
+		});
+
+		expect(disconnects).toEqual([expect.objectContaining({ wait_ms: waitMs })]);
 	});
 
 	it("starts unstable close failure counts at one", async () => {

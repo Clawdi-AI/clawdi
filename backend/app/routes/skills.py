@@ -1,5 +1,6 @@
 import hashlib
 import io
+import json
 import logging
 import tarfile
 from uuid import UUID
@@ -38,7 +39,6 @@ from app.core.skill_key import (
     validate_derived_skill_key,
 )
 from app.core.skill_sync_protocol import (
-    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
     SKILL_SYNC_PROTOCOL_HEADER,
     require_agent_authoritative_skill_sync,
 )
@@ -71,6 +71,7 @@ from app.services.sync_events import (
     AGENT_SKILL_CHANGED_EVENT,
     AGENT_SKILL_DELETED_EVENT,
     bump_skills_revision,
+    get_skills_revision,
 )
 from app.services.tar_utils import (
     TarValidationError,
@@ -111,6 +112,7 @@ log = logging.getLogger(__name__)
 
 file_store = get_file_store()
 _SKILLS_LIST_CACHE_CONTROL = "no-transform"
+_SKILLS_ETAG_VERSION = "skills-v2"
 
 
 def _file_key(user_id, project_id, skill_key: str) -> str:
@@ -264,19 +266,6 @@ async def list_skills(
         and auth.api_key.environment_id is not None
     ):
         require_agent_authoritative_skill_sync(skill_sync_protocol)
-    fast_response = _bound_api_key_skills_304_response(
-        auth=auth,
-        selected_project_id=project_id,
-        q=q,
-        page=page,
-        page_size=page_size,
-        include_content=include_content,
-        if_none_match=if_none_match,
-        skill_sync_protocol=skill_sync_protocol,
-    )
-    if fast_response is not None:
-        return fast_response
-
     async with async_session_factory() as db:
         return await _list_skills_with_db(
             auth=auth,
@@ -303,6 +292,17 @@ async def _list_skills_with_db(
     if_none_match: str | None,
     skill_sync_protocol: str | None,
 ) -> Paginated[SkillSummaryResponse]:
+    # Keep every query that contributes to the strong collection ETag and its
+    # response body in one snapshot. Cross-page consistency remains fenced by
+    # the shared collection revision because released CLI 0.13.13 performs a
+    # separate request for each page.
+    await db.connection(
+        execution_options={
+            "isolation_level": "REPEATABLE READ",
+            "postgresql_readonly": True,
+        }
+    )
+
     # Collection-level ETag short-circuit: when the daemon's last-seen
     # revision matches current, return 304 with no body so periodic complete
     # Agent-Project inventory catch-up costs nothing on quiet accounts.
@@ -326,33 +326,19 @@ async def _list_skills_with_db(
     # it can't write to). When the caller pins `project_id`,
     # intersect with what they're allowed to see — an ID
     # outside that set yields a deliberately-empty listing.
-    revision = auth.skills_revision
     selected_project_id = project_id
     if selected_project_id is not None:
         if auth.api_key_project_id is not None:
             visible_project_ids = (
                 [selected_project_id] if selected_project_id == auth.api_key_project_id else []
             )
-            visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
-                db,
-                auth,
-                visible_project_ids,
-            )
         elif auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
             bound_project_id = await resolve_default_write_project(db, auth)
             visible_project_ids = (
                 [selected_project_id] if selected_project_id == bound_project_id else []
             )
-            visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
-                db,
-                auth,
-                visible_project_ids,
-            )
         else:
-            (
-                visible_project_ids,
-                visible_revision_fingerprint,
-            ) = await _selected_project_visibility_and_revision_fingerprint(
+            visible_project_ids = await _selected_project_visibility(
                 db,
                 auth,
                 selected_project_id,
@@ -360,22 +346,22 @@ async def _list_skills_with_db(
     else:
         # Unscoped read: full inventory across owned + shared projects.
         visible_project_ids = await project_ids_visible_to(db, auth)
-        visible_revision_fingerprint = await _visible_skills_revision_fingerprint(
-            db,
-            auth,
-            visible_project_ids,
-        )
+
+    # Do not trust `auth.skills_revision` here. API-key authentication caches
+    # that snapshot for longer than the daemon polling interval, so it can lag
+    # a committed Skill mutation. Both the caller revision (kept as the first
+    # ETag segment for CLI 0.13.13) and every visible owner's revision come
+    # from this database snapshot before a 304 is considered.
+    revision = await get_skills_revision(db, auth.user_id)
+    (
+        visible_revision_fingerprint,
+        metadata_fingerprint,
+        project_meta,
+    ) = await _visible_skills_etag_state(db, visible_project_ids)
     if (auth.is_cli or auth.oauth_cli) and visible_project_ids:
-        has_agent_project = (
-            await db.execute(
-                select(func.count())
-                .select_from(Project)
-                .where(
-                    Project.id.in_(visible_project_ids),
-                    Project.kind == PROJECT_KIND_ENVIRONMENT,
-                )
-            )
-        ).scalar_one()
+        has_agent_project = any(
+            meta["kind"] == PROJECT_KIND_ENVIRONMENT for meta in project_meta.values()
+        )
         if has_agent_project:
             require_agent_authoritative_skill_sync(skill_sync_protocol)
     etag = _skills_collection_etag(
@@ -383,11 +369,15 @@ async def _list_skills_with_db(
         selected_project_id=selected_project_id,
         visible_project_ids=visible_project_ids,
         visible_revision_fingerprint=visible_revision_fingerprint,
+        metadata_fingerprint=metadata_fingerprint,
         q=q,
         page_size=page_size,
         include_content=include_content,
     )
-    if page == 1 and if_none_match_contains(if_none_match, etag):
+    # Inline content depends on object storage after the DB snapshot closes.
+    # Always render that shape so a transient prior failure cannot turn its
+    # partial `content=None` body into a reusable 304 validator.
+    if page == 1 and not include_content and if_none_match_contains(if_none_match, etag):
         await db.commit()
         return Response(
             status_code=status.HTTP_304_NOT_MODIFIED,
@@ -405,7 +395,7 @@ async def _list_skills_with_db(
             Skill.is_active,
             Skill.project_id.in_(visible_project_ids),
         )
-        .order_by(Skill.skill_key)
+        .order_by(Skill.skill_key, Skill.project_id, Skill.id)
     )
     if q:
         needle = like_needle(q)
@@ -422,45 +412,6 @@ async def _list_skills_with_db(
     skills = (
         (await db.execute(base.limit(page_size).offset((page - 1) * page_size))).scalars().all()
     )
-
-    # Bulk-fetch the project + machine metadata for the visible
-    # skills in one query each (vs N+1). Two indexed lookups
-    # against `projects.id` and `agent_environments.id`.
-    project_ids_in_listing = {s.project_id for s in skills if s.project_id is not None}
-    project_meta: dict = {}
-    if project_ids_in_listing:
-        project_rows = (
-            await db.execute(
-                select(
-                    Project.id,
-                    Project.name,
-                    Project.kind,
-                    Project.origin_environment_id,
-                ).where(Project.id.in_(project_ids_in_listing))
-            )
-        ).all()
-        env_ids_in_listing = {
-            sid_row.origin_environment_id
-            for sid_row in project_rows
-            if sid_row.origin_environment_id is not None
-        }
-        env_meta: dict = {}
-        if env_ids_in_listing:
-            env_rows = (
-                await db.execute(
-                    select(AgentEnvironment.id, AgentEnvironment.machine_name).where(
-                        AgentEnvironment.id.in_(env_ids_in_listing)
-                    )
-                )
-            ).all()
-            env_meta = {row.id: row.machine_name for row in env_rows}
-        for sid_row in project_rows:
-            project_meta[sid_row.id] = {
-                "name": sid_row.name,
-                "kind": sid_row.kind,
-                "environment_id": sid_row.origin_environment_id,
-                "machine_name": env_meta.get(sid_row.origin_environment_id),
-            }
 
     items: list[SkillSummaryResponse] = []
     content_fetches: list[tuple[int, UUID, str]] = []
@@ -522,66 +473,16 @@ async def _list_skills_with_db(
     response = Paginated[SkillSummaryResponse](
         items=items, total=total, page=page, page_size=page_size
     )
-    # Attach the same project-bound ETag the 304 path would have
-    # echoed; daemons cache the full string and replay it on the
-    # next request.
+    headers = {"Cache-Control": _SKILLS_LIST_CACHE_CONTROL}
+    if not include_content:
+        # Metadata-only pages expose one shared collection fence. Inline
+        # content depends on fallible object storage and deliberately has no
+        # reusable strong validator, whether every fetch succeeded or not.
+        headers["ETag"] = etag
     return Response(
         content=response.model_dump_json(),
         media_type="application/json",
-        headers={"ETag": etag, "Cache-Control": _SKILLS_LIST_CACHE_CONTROL},
-    )
-
-
-def _bound_api_key_skills_304_response(
-    *,
-    auth: AuthContext,
-    selected_project_id: UUID | None,
-    q: str | None,
-    page: int,
-    page_size: int,
-    include_content: bool,
-    if_none_match: str | None,
-    skill_sync_protocol: str | None,
-) -> Response | None:
-    """Serve the hot daemon conditional-GET path without opening a DB session.
-
-    Env-bound API keys are already narrowed by the auth snapshot to exactly one
-    Agent Project (`auth.api_key_project_id`) and never see shared projects.
-    Their visible-owner revision is therefore the authenticated user's cached
-    `skills_revision`. That makes the 304 ETag fully derivable from the auth
-    context and query parameters.
-
-    Dashboard JWTs and unbound CLI keys still go through the DB-backed path so
-    shared-project owner revisions stay part of the ETag.
-    """
-    if (
-        if_none_match is None
-        or auth.api_key_project_id is None
-        or selected_project_id != auth.api_key_project_id
-        or q is not None
-        or page != 1
-        or page_size != 200
-        or include_content
-        or skill_sync_protocol != SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1
-    ):
-        return None
-
-    visible_project_ids = [auth.api_key_project_id]
-    visible_revision_fingerprint = _auth_user_skills_revision_fingerprint(auth)
-    etag = _skills_collection_etag(
-        revision=auth.skills_revision,
-        selected_project_id=selected_project_id,
-        visible_project_ids=visible_project_ids,
-        visible_revision_fingerprint=visible_revision_fingerprint,
-        q=q,
-        page_size=page_size,
-        include_content=include_content,
-    )
-    if not if_none_match_contains(if_none_match, etag):
-        return None
-    return Response(
-        status_code=status.HTTP_304_NOT_MODIFIED,
-        headers={"ETag": etag, "Cache-Control": _SKILLS_LIST_CACHE_CONTROL},
+        headers=headers,
     )
 
 
@@ -591,6 +492,7 @@ def _skills_collection_etag(
     selected_project_id: UUID | None,
     visible_project_ids: list[UUID],
     visible_revision_fingerprint: str,
+    metadata_fingerprint: str,
     q: str | None,
     page_size: int,
     include_content: bool,
@@ -603,8 +505,9 @@ def _skills_collection_etag(
         include_content=include_content,
     )
     return (
-        f'"{revision}:{project_tag}:{visible_fingerprint}:'
-        f'{visible_revision_fingerprint}:{representation_fingerprint}"'
+        f'"{revision}:{_SKILLS_ETAG_VERSION}:{project_tag}:{visible_fingerprint}:'
+        f"{visible_revision_fingerprint}:{metadata_fingerprint}:"
+        f'{representation_fingerprint}"'
     )
 
 
@@ -636,28 +539,21 @@ def _visible_project_fingerprint(visible_project_ids: list[UUID]) -> str:
     ).hexdigest()[:16]
 
 
-def _auth_user_skills_revision_fingerprint(auth: AuthContext) -> str:
-    return hashlib.sha256(f"{auth.user_id}:{auth.skills_revision}".encode()).hexdigest()[:16]
-
-
-async def _selected_project_visibility_and_revision_fingerprint(
+async def _selected_project_visibility(
     db: AsyncSession,
     auth: AuthContext,
     selected_project_id: UUID,
-) -> tuple[list[UUID], str]:
-    """Validate one selected project and fetch its owner revision in one query.
+) -> list[UUID]:
+    """Validate one selected project without loading the full visible set.
 
     The daemon always calls `/v1/skills?project_id=<env-project>`. For unbound
-    CLI keys and dashboard JWTs, the old path loaded the caller's full visible
-    project set and then ran a second owner-revision query even though the
-    representation is scoped to one project. This keeps the same read policy
-    (owned OR shared membership) but collapses the hot conditional-GET path to
-    one indexed lookup.
+    CLI keys and dashboard JWTs this keeps the same read policy (owned OR
+    shared membership) with one indexed lookup. Current owner revisions and
+    response-visible metadata are loaded separately for every caller shape.
     """
-    row = (
+    project = (
         await db.execute(
-            select(Project.user_id, User.skills_revision)
-            .join(User, User.id == Project.user_id)
+            select(Project.id)
             .outerjoin(
                 ProjectMembership,
                 and_(
@@ -673,17 +569,8 @@ async def _selected_project_visibility_and_revision_fingerprint(
                 ),
             )
         )
-    ).first()
-    if row is None:
-        return [], "none"
-    return [selected_project_id], _owner_skills_revision_fingerprint(
-        row.user_id,
-        row.skills_revision,
-    )
-
-
-def _owner_skills_revision_fingerprint(owner_id: UUID, skills_revision: int | None) -> str:
-    return hashlib.sha256(f"{owner_id}:{int(skills_revision or 0)}".encode()).hexdigest()[:16]
+    ).scalar_one_or_none()
+    return [project] if project is not None else []
 
 
 async def _resolve_legacy_skill(
@@ -712,38 +599,76 @@ async def _resolve_legacy_skill(
     return skill
 
 
-async def _visible_skills_revision_fingerprint(
+async def _visible_skills_etag_state(
     db: AsyncSession,
-    auth: AuthContext,
-    visible_project_ids: list,
-) -> str:
-    """Fingerprint skill revisions for every owner represented in
-    the caller's visible project set.
+    visible_project_ids: list[UUID],
+) -> tuple[str, str, dict]:
+    """Load current owner revisions and all response-visible metadata.
 
     `users.skills_revision` is bumped on the owner account when a skill
     changes. For shared projects, the recipient's own revision does not
-    move, so an ETag based only on `auth.user_id` would incorrectly 304
-    after the owner updated shared content. Hashing the visible projects'
-    owner revisions keeps conditional GETs correct without adding a new
-    project-level revision table in this PR.
+    move. Project and Agent metadata have no shared revision counter, so hash
+    their actual projected values. Both fingerprints cover the full visible
+    set and therefore remain identical across pages.
     """
     if not visible_project_ids:
-        return "none"
-
-    if auth.api_key_project_id is not None and set(visible_project_ids) == {
-        auth.api_key_project_id
-    }:
-        return _auth_user_skills_revision_fingerprint(auth)
+        return "none", "none", {}
 
     rows = (
         await db.execute(
-            select(Project.user_id, User.skills_revision)
+            select(
+                Project.id,
+                Project.user_id,
+                User.skills_revision,
+                Project.name,
+                Project.kind,
+                Project.origin_environment_id,
+                AgentEnvironment.machine_name,
+            )
             .join(User, User.id == Project.user_id)
+            .outerjoin(
+                AgentEnvironment,
+                AgentEnvironment.id == Project.origin_environment_id,
+            )
             .where(Project.id.in_(visible_project_ids))
         )
     ).all()
-    parts = sorted(f"{owner_id}:{int(revision or 0)}" for owner_id, revision in rows)
-    return hashlib.sha256(":".join(parts).encode()).hexdigest()[:16]
+    owner_revisions = {row.user_id: int(row.skills_revision or 0) for row in rows}
+    owner_parts = sorted(f"{owner_id}:{revision}" for owner_id, revision in owner_revisions.items())
+    visible_revision_fingerprint = hashlib.sha256(":".join(owner_parts).encode()).hexdigest()[:16]
+
+    rows_by_project_id = {row.id: row for row in rows}
+    metadata_values = []
+    project_meta: dict = {}
+    for project_id in sorted(set(visible_project_ids), key=str):
+        row = rows_by_project_id.get(project_id)
+        if row is None:
+            metadata_values.append([str(project_id), None, None, None, None])
+            continue
+        environment_id = row.origin_environment_id
+        metadata_values.append(
+            [
+                str(project_id),
+                row.name,
+                row.kind,
+                str(environment_id) if environment_id is not None else None,
+                row.machine_name,
+            ]
+        )
+        project_meta[project_id] = {
+            "name": row.name,
+            "kind": row.kind,
+            "environment_id": environment_id,
+            "machine_name": row.machine_name,
+        }
+    metadata_fingerprint = hashlib.sha256(
+        json.dumps(
+            metadata_values,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()[:16]
+    return visible_revision_fingerprint, metadata_fingerprint, project_meta
 
 
 async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> SkillDetailResponse:
