@@ -20,7 +20,8 @@ from app.models.platform_idempotency import PlatformMutationIdempotency
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
-from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES
+from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES, PlatformRuntimeStateUpsert
+from app.services.platform_contract import platform_request_hash, store_platform_response
 from app.services.user_provisioning import lazy_create_partner_user_with_personal_project
 from tests.conftest import create_env_with_project
 
@@ -577,6 +578,135 @@ async def test_platform_runtime_state_enforces_generation_contract(
     assert state is not None
     assert state.generation == 2
     assert state.instance_id == initial_body["instance_id"]
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_state_advances_apply_generation_without_weakening_checkpoint(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key="apply-generation-agent-create",
+    )
+    assert created.status_code == 200, created.text
+    body = {
+        **_runtime_body(owner, agent_id),
+        "generation": 2,
+        "apply_generation": 1,
+    }
+    invalid = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-invalid"),
+        json={**body, "apply_generation": 0},
+    )
+    assert invalid.status_code == 422, invalid.text
+
+    initial = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-initial"),
+        json=body,
+    )
+    assert initial.status_code == 200, initial.text
+    assert initial.json()["apply_generation"] == 1
+
+    advanced = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-advanced"),
+        json={**body, "apply_generation": 2},
+    )
+    assert advanced.status_code == 200, advanced.text
+    assert advanced.json()["apply_generation"] == 2
+
+    independent_advance = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-independent-advance"),
+        json={**body, "apply_generation": 3},
+    )
+    assert independent_advance.status_code == 200, independent_advance.text
+    assert independent_advance.json()["generation"] == 2
+    assert independent_advance.json()["apply_generation"] == 3
+
+    for key, apply_generation, code in (
+        ("apply-generation-regression", 2, "stale_apply_generation"),
+        ("apply-generation-clear", None, "apply_generation_conflict"),
+    ):
+        rejected = await platform_client.put(
+            f"/v1/platform/agents/{agent_id}/runtime-state",
+            headers=_headers(key),
+            json={**body, "apply_generation": apply_generation},
+        )
+        assert rejected.status_code == 409, rejected.text
+        assert rejected.json()["detail"]["code"] == code
+        assert rejected.json()["detail"]["current_apply_generation"] == 3
+
+    checkpoint_only = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("apply-generation-checkpoint-only"),
+        json={**_runtime_body(owner, agent_id), "generation": 4},
+    )
+    assert checkpoint_only.status_code == 200, checkpoint_only.text
+    assert checkpoint_only.json()["apply_generation"] == 3
+
+    state = await db_session.get(HostedRuntimeState, agent_id)
+    assert state is not None
+    assert state.generation == 4
+    assert state.apply_generation == 3
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_state_replays_pre_apply_generation_idempotency_shape(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key="idempotency-shape-agent-create",
+    )
+    assert created.status_code == 200, created.text
+    body = _runtime_body(owner, agent_id)
+    parsed = PlatformRuntimeStateUpsert.model_validate(body)
+    legacy_payload = {"agent_id": str(agent_id), **parsed.model_dump(mode="json")}
+    legacy_payload.pop("apply_generation")
+    idempotency_key = "runtime-state-before-apply-generation"
+    replay_body = {
+        "environment_id": str(agent_id),
+        "deployment_id": body["deployment_id"],
+        "instance_id": body["instance_id"],
+        "generation": body["generation"],
+    }
+    store_platform_response(
+        db_session,
+        operation="runtime_state.upsert",
+        idempotency_key=idempotency_key,
+        request_hash=platform_request_hash(legacy_payload),
+        owner_user_id=seed_user.id,
+        resource_type="hosted_runtime_state",
+        resource_id=str(agent_id),
+        response_status=200,
+        response_body=replay_body,
+    )
+    await db_session.commit()
+
+    replay = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers(idempotency_key),
+        json=body,
+    )
+
+    assert replay.status_code == 200, replay.text
+    assert replay.json() == replay_body
+    assert await db_session.get(HostedRuntimeState, agent_id) is None
 
 
 @pytest.mark.asyncio

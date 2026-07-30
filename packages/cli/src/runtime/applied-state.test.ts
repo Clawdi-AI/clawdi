@@ -74,7 +74,7 @@ describe("runtime applied state", () => {
 		).toBe(false);
 	});
 
-	test("accepts the frozen apply identity only as a complete bounded tuple", () => {
+	test("reads old state through the named fallback and preserves explicit apply generation", () => {
 		const state = {
 			...appliedStateFixture(),
 			egressSidecarSecretRevision: "e".repeat(64),
@@ -91,6 +91,36 @@ describe("runtime applied state", () => {
 			manifestETag: '"manifest-generation-7"',
 			applyReceiptId: "apply-receipt-0007",
 			bootNonce: "boot-nonce-000007",
+		});
+		const splitGeneration = runtimeAppliedStateSchema.parse({
+			...complete,
+			generation: 2,
+			applyGeneration: 1,
+			manifestETag: '"manifest-generation-1"',
+			applyReceiptId: "apply-receipt-0001",
+			bootNonce: "boot-nonce-000001",
+		});
+		expect(splitGeneration.generation).toBe(2);
+		expect(splitGeneration.applyGeneration).toBe(1);
+		expect(runtimeAppliedApplyIdentity(splitGeneration)).toEqual({
+			generation: 1,
+			manifestETag: '"manifest-generation-1"',
+			applyReceiptId: "apply-receipt-0001",
+			bootNonce: "boot-nonce-000001",
+		});
+		const independentlyAdvancedApply = runtimeAppliedStateSchema.parse({
+			...complete,
+			generation: 2,
+			applyGeneration: 3,
+			manifestETag: '"manifest-generation-3"',
+			applyReceiptId: "apply-receipt-0003",
+			bootNonce: "boot-nonce-000003",
+		});
+		expect(runtimeAppliedApplyIdentity(independentlyAdvancedApply)).toEqual({
+			generation: 3,
+			manifestETag: '"manifest-generation-3"',
+			applyReceiptId: "apply-receipt-0003",
+			bootNonce: "boot-nonce-000003",
 		});
 		expect(runtimeAppliedApplyIdentity(runtimeAppliedStateSchema.parse(state))).toBeNull();
 		expect(

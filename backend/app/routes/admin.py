@@ -122,6 +122,10 @@ from app.services.managed_ai_provider import (
     lock_deployment_managed_provider_mutation,
     upsert_clawdi_managed_provider,
 )
+from app.services.runtime_generation import (
+    RuntimeApplyGenerationUpdateError,
+    resolve_runtime_apply_generation_update,
+)
 from app.services.runtime_manifest_resources import (
     enabled_runtime_manifest_skill_ids,
     lock_runtime_manifest_skill_reservations,
@@ -1442,20 +1446,39 @@ async def _admin_upsert_runtime_state(
         skill_ids=old_skill_ids | new_skill_ids,
     )
     previous_generation = state.generation if state is not None else None
-    desired_state = _runtime_state_values(body)
-    changed_fields = _runtime_state_changed_fields(existing_state, desired_state)
-    if existing_state is not None and body.generation <= existing_state.generation:
+    previous_apply_generation = state.apply_generation if state is not None else None
+    if existing_state is not None and body.generation < existing_state.generation:
         current_generation = existing_state.generation
-        if body.generation < current_generation:
-            await db.rollback()
-            raise HTTPException(
-                status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "stale_generation",
-                    "current_generation": current_generation,
-                },
-            )
-        material_changes = [field for field in changed_fields if field != "generation"]
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": "stale_generation",
+                "current_generation": current_generation,
+            },
+        )
+    try:
+        apply_generation = resolve_runtime_apply_generation_update(
+            current=previous_apply_generation,
+            requested=body.apply_generation,
+            explicitly_set="apply_generation" in body.model_fields_set,
+        )
+    except RuntimeApplyGenerationUpdateError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail={
+                "code": exc.code,
+                "current_apply_generation": exc.current_apply_generation,
+            },
+        ) from exc
+    desired_state = _runtime_state_values(body, apply_generation=apply_generation)
+    changed_fields = _runtime_state_changed_fields(existing_state, desired_state)
+    if existing_state is not None and body.generation == existing_state.generation:
+        current_generation = existing_state.generation
+        material_changes = [
+            field for field in changed_fields if field not in {"generation", "apply_generation"}
+        ]
         if material_changes:
             await db.rollback()
             raise HTTPException(
@@ -1465,13 +1488,15 @@ async def _admin_upsert_runtime_state(
                     "current_generation": current_generation,
                 },
             )
-        await db.commit()
-        return AdminRuntimeStateResponse(
-            environment_id=environment_id,
-            deployment_id=body.deployment_id,
-            instance_id=body.instance_id,
-            generation=body.generation,
-        )
+        if not changed_fields:
+            await db.commit()
+            return AdminRuntimeStateResponse(
+                environment_id=environment_id,
+                deployment_id=body.deployment_id,
+                instance_id=body.instance_id,
+                generation=body.generation,
+                apply_generation=apply_generation,
+            )
     if state is None:
         state = HostedRuntimeState(environment_id=environment_id)
         db.add(state)
@@ -1492,6 +1517,8 @@ async def _admin_upsert_runtime_state(
             "instance_id": body.instance_id,
             "generation": body.generation,
             "previous_generation": previous_generation,
+            "apply_generation": apply_generation,
+            "previous_apply_generation": previous_apply_generation,
             "cli_package_spec": body.cli_package_spec,
             "locale": body.locale.model_dump(),
             "enabled_runtimes": _enabled_runtime_names(desired_state["runtimes"]),
@@ -1517,6 +1544,7 @@ async def _admin_upsert_runtime_state(
         deployment_id=body.deployment_id,
         instance_id=body.instance_id,
         generation=body.generation,
+        apply_generation=apply_generation,
     )
 
 
@@ -1679,7 +1707,11 @@ def _enabled_runtime_names(runtimes: dict[str, object]) -> list[str]:
     )
 
 
-def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
+def _runtime_state_values(
+    body: AdminRuntimeStateUpsert,
+    *,
+    apply_generation: int | None = None,
+) -> dict[str, Any]:
     def optional_wire_value(field: str) -> Any:
         value = getattr(body, field)
         if value is None:
@@ -1690,6 +1722,7 @@ def _runtime_state_values(body: AdminRuntimeStateUpsert) -> dict[str, Any]:
         "deployment_id": body.deployment_id,
         "instance_id": body.instance_id,
         "generation": body.generation,
+        "apply_generation": apply_generation,
         "cli_package_spec": body.cli_package_spec,
         "locale": body.locale.model_dump(mode="json"),
         "system": body.system.model_dump(exclude_none=True, mode="json"),
@@ -1718,7 +1751,8 @@ def _runtime_state_changed_fields(
     return [
         field
         for field, value in desired_state.items()
-        if state is None or getattr(state, field) != value
+        if (state is None and (field != "apply_generation" or value is not None))
+        or (state is not None and getattr(state, field) != value)
     ]
 
 

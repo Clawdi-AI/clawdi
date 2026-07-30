@@ -96,6 +96,37 @@ function blockAtomicWrite(path: string): () => void {
 }
 
 describe("hosted runtime heartbeat observation", () => {
+	test("emits the exact apply tuple when checkpoint and apply generations differ", () => {
+		const paths = tempRuntimePaths();
+		writeRuntimeAppliedState(
+			{
+				...companionAppliedState(1),
+				generation: 2,
+				applyGeneration: 1,
+			},
+			paths,
+		);
+		const session = new HostedRuntimeHeartbeatSession({
+			environmentId: "env_split_generation",
+			paths,
+			now: clockSequence(["2026-07-16T01:00:00.000Z"]),
+			createId: idSequence(["boot-session-split", "event-split-000001"]),
+		});
+
+		const event = session.nextEvent()?.event;
+		expect(event).toMatchObject({
+			applyReceiptId: "apply-receipt-0001",
+			bootNonce: "boot-nonce-000001",
+			bootSessionId: "boot-session-split",
+			sequence: 1,
+			eventId: "event-split-000001",
+			applied: {
+				generation: 1,
+				etag: '"frozen-manifest-1"',
+			},
+		});
+	});
+
 	test("captures one immutable apply identity for the entire boot session", () => {
 		const paths = tempRuntimePaths();
 		writeRuntimeAppliedState(companionAppliedState(7), paths);

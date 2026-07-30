@@ -228,6 +228,7 @@ const runtimeDesiredStateShape = {
 	environmentId: z.string().min(1),
 	instanceId: z.string().min(1),
 	generation: z.number().int().nonnegative(),
+	applyGeneration: z.number().int().positive().safe().optional(),
 	minimumCliVersion: semverSchema.optional(),
 	issuedAt: z.string().min(1),
 	expiresAt: z.string().min(1).optional(),

@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { chmodSync, chownSync, existsSync, readFileSync, statSync } from "node:fs";
 import { z } from "zod";
 import { writePrivateFileAtomic } from "../lib/private-file";
-import { type RuntimeApplyIdentity, runtimeApplyIdentitySchema } from "./apply-identity";
+import {
+	type RuntimeApplyIdentity,
+	resolveRuntimeApplyGeneration,
+	runtimeApplyIdentitySchema,
+} from "./apply-identity";
 import type { RuntimePaths } from "./paths";
 
 const appliedContentSourceSchema = z
@@ -33,6 +37,7 @@ export const runtimeAppliedStateSchema = z
 		etag: z.string().min(1),
 		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
 		generation: z.number().int().nonnegative(),
+		applyGeneration: z.number().int().positive().safe().optional(),
 		manifestETag: z.string().min(1).max(128).optional(),
 		applyReceiptId: z.string().min(16).max(128).optional(),
 		bootNonce: z.string().min(16).max(128).optional(),
@@ -55,7 +60,7 @@ export const runtimeAppliedStateSchema = z
 				path: ["manifestETag"],
 			});
 		}
-		if (present === applyFields.length && state.generation < 1) {
+		if (present === applyFields.length && resolveRuntimeApplyGeneration(state) < 1) {
 			ctx.addIssue({
 				code: "custom",
 				message: "apply identity generation must be at least 1",
@@ -80,7 +85,7 @@ export function runtimeAppliedApplyIdentity(
 		return null;
 	}
 	const parsed = runtimeApplyIdentitySchema.safeParse({
-		generation: state.generation,
+		generation: resolveRuntimeApplyGeneration(state),
 		manifestETag: state.manifestETag,
 		applyReceiptId: state.applyReceiptId,
 		bootNonce: state.bootNonce,

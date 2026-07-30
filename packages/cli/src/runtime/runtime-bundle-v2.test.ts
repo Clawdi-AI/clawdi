@@ -17,6 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { commitRuntimeAppliedState, runtimeAppliedContentIdentity } from "../commands/runtime";
 import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
+import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
 import {
 	hostedManifestEgressProfiles,
@@ -79,6 +80,18 @@ afterEach(() => {
 });
 
 describe("hosted runtime bundle v2", () => {
+	test("reads an old bundle by falling back from omitted apply generation to checkpoint", () => {
+		const raw = z
+			.record(z.string(), z.unknown())
+			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
+		delete raw.applyGeneration;
+		const load = normalizeHostedRuntimeBundleV2(raw);
+
+		expect(load.manifest.generation).toBe(2);
+		expect(load.manifest.applyGeneration).toBeUndefined();
+		expect(resolveRuntimeApplyGeneration(load.manifest)).toBe(2);
+	});
+
 	test("accepts the hosted-emitted gateway secret contract before projecting channels", () => {
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
 		const load = normalizeHostedRuntimeBundleV2(raw);
@@ -88,7 +101,7 @@ describe("hosted runtime bundle v2", () => {
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(
-			"12ae1174be36ad789afcfd639ee54a7061a97e19614822ddb9addac3a53c7fc9",
+			"da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1",
 		);
 		expect(projected.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
 			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
@@ -804,14 +817,17 @@ describe("hosted runtime bundle v2", () => {
 		).toThrow(`runtime bundle is missing ${canonicalAgentRef}`);
 	});
 
-	test("rejects response-carried apply identity and keeps the inner manifest v1-only", () => {
+	test("accepts root apply generation while keeping the inner manifest v1-only and strict", () => {
 		const raw = z
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
 		const manifest = z.record(z.string(), z.unknown()).parse(raw.manifest);
-		expect(normalizeHostedRuntimeBundleV2(raw).manifest.projection?.sourceSchemaVersion).toBe(
+		const normalized = normalizeHostedRuntimeBundleV2(raw);
+		expect(normalized.manifest.projection?.sourceSchemaVersion).toBe(
 			"clawdi.hosted-runtime.manifest.v1",
 		);
+		expect(normalized.manifest.generation).toBe(2);
+		expect(normalized.manifest.applyGeneration).toBe(1);
 		expect(() =>
 			normalizeHostedRuntimeBundleV2({
 				...raw,
@@ -824,6 +840,14 @@ describe("hosted runtime bundle v2", () => {
 				},
 			}),
 		).toThrow();
+		expect(() => normalizeHostedRuntimeBundleV2({ ...raw, unexpectedApplyField: 1 })).toThrow();
+		const independentGenerations = normalizeHostedRuntimeBundleV2({
+			...raw,
+			applyGeneration: 3,
+		});
+		expect(independentGenerations.manifest.generation).toBe(2);
+		expect(independentGenerations.manifest.applyGeneration).toBe(3);
+		expect(resolveRuntimeApplyGeneration(independentGenerations.manifest)).toBe(3);
 	});
 
 	test("negotiates the exact media type and uses one conditional validator", async () => {
@@ -913,7 +937,7 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe('"bundle-golden"');
 		expect(loaded.sourceRevision).toBe(
-			"12ae1174be36ad789afcfd639ee54a7061a97e19614822ddb9addac3a53c7fc9",
+			"da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1",
 		);
 		expect(loaded.channelBindings).toHaveLength(1);
 	});
@@ -1023,10 +1047,10 @@ describe("hosted runtime bundle v2", () => {
 			sourceRevision,
 			convergence: onlineConvergence,
 			applyIdentity: {
-				generation: onlineLoad.manifest.generation,
-				manifestETag: '"manifest-golden-7"',
-				applyReceiptId: "apply-receipt-golden-0007",
-				bootNonce: "boot-nonce-golden-000007",
+				generation: 1,
+				manifestETag: '"manifest-golden-1"',
+				applyReceiptId: "apply-receipt-golden-0001",
+				bootNonce: "boot-nonce-golden-000001",
 			},
 		});
 
@@ -1054,6 +1078,8 @@ describe("hosted runtime bundle v2", () => {
 
 		const applied = readRuntimeAppliedState(paths);
 		if (!applied) throw new Error("online apply did not commit durable authority");
+		expect(applied.generation).toBe(2);
+		expect(applied.applyGeneration).toBe(1);
 		const appliedStateText = readFileSync(paths.appliedState, "utf-8");
 		const appliedStateStat = statSync(paths.appliedState);
 		expect(appliedStateStat.mode & 0o777).toBe(0o600);
@@ -1116,6 +1142,8 @@ describe("hosted runtime bundle v2", () => {
 		if (!("manifest" in offlineLoad)) throw new Error(JSON.stringify(offlineLoad));
 		expect(offlineLoad.source).toBe("last-good-cache");
 		expect(offlineLoad.offline).toBe(true);
+		expect(offlineLoad.manifest.generation).toBe(2);
+		expect(offlineLoad.manifest.applyGeneration).toBe(1);
 		expect(runtimeAppliedContentIdentity(offlineLoad).sha256).toBe(canonicalContentSha);
 		const offlineConvergence = converge(offlineLoad);
 		expect(offlineConvergence.mode).toBe("degraded-offline");
@@ -1157,6 +1185,19 @@ describe("hosted runtime bundle v2", () => {
 		expect(manifestOnlyCrashLoad.errors.join("\n")).toContain(
 			"cached manifest does not match the durable strict-v2 apply identity",
 		);
+		writeFileSync(
+			paths.manifestLastGood,
+			`${JSON.stringify({ ...committedManifest, applyGeneration: 2 })}\n`,
+		);
+		const applyOnlyCrashLoad = await loadRuntimeManifest(paths);
+		expect("errors" in applyOnlyCrashLoad).toBe(true);
+		if (!("errors" in applyOnlyCrashLoad)) {
+			throw new Error("expected apply-generation mixed snapshot failure");
+		}
+		expect(applyOnlyCrashLoad.errors.join("\n")).toContain(
+			"cached manifest does not match the durable strict-v2 apply identity",
+		);
+		writeFileSync(paths.manifestLastGood, manifestCacheText);
 		writeFileSync(
 			paths.managedSecretCacheFile,
 			`${JSON.stringify({

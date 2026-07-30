@@ -12,6 +12,12 @@ from app.models.session import AgentEnvironment  # noqa: F401 - register FK targ
 
 class HostedRuntimeState(Base, TimestampMixin):
     __tablename__ = "hosted_runtime_states"
+    __table_args__ = (
+        CheckConstraint(
+            "apply_generation IS NULL OR apply_generation >= 1",
+            name="ck_hosted_runtime_states_apply_generation",
+        ),
+    )
 
     environment_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -21,6 +27,7 @@ class HostedRuntimeState(Base, TimestampMixin):
     deployment_id: Mapped[str] = mapped_column(String(200), nullable=False)
     instance_id: Mapped[str] = mapped_column(String(200), nullable=False)
     generation: Mapped[int] = mapped_column(Integer, nullable=False)
+    apply_generation: Mapped[int | None] = mapped_column(Integer)
     cli_package_spec: Mapped[str] = mapped_column(String(200), nullable=False)
     locale: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)
     system: Mapped[dict] = mapped_column(JSONB(none_as_null=True), nullable=False)

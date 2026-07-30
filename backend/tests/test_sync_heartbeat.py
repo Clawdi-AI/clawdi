@@ -1104,7 +1104,7 @@ async def test_v2_health_requires_expected_etag_and_exact_source_provider_set(
 
 
 @pytest.mark.asyncio
-async def test_runtime_observed_health_uses_typed_config_generation(
+async def test_runtime_observed_health_uses_explicit_apply_generation(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
 ):
@@ -1114,6 +1114,62 @@ async def test_runtime_observed_health_uses_typed_config_generation(
             environment_id=uuid.UUID(env_id),
             deployment_id="dep-config-convergence",
             instance_id="iid-config-convergence",
+            generation=2,
+            apply_generation=3,
+            cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
+            locale=_TEST_LOCALE,
+            system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            runtimes=_test_runtimes(),
+        )
+    )
+    await db_session.commit()
+
+    heartbeat = await client.post(
+        f"/v1/agents/{env_id}/sync-heartbeat",
+        json={"runtime_observed": _runtime_observed(applied_generation=3)},
+    )
+    assert heartbeat.status_code == 204, heartbeat.text
+
+    observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
+    assert observation is not None
+    diagnostics = observation.diagnostics
+    assert isinstance(diagnostics, dict)
+    applied = diagnostics["applied"]
+    assert isinstance(applied, dict)
+    observation.diagnostics = {
+        **diagnostics,
+        "applied": {**applied, "generation": 2},
+    }
+    await db_session.commit()
+
+    response = await client.get(f"/v1/agents/{env_id}/runtime-observed")
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["desired"]["desired_config_generation"] == 2
+    assert payload["observed"]["observed_config_generation"] == 3
+    assert "config_generation_mismatch" not in payload["health"]["reasons"]
+
+    deprecated = await client.get(f"/v1/environments/{env_id}/runtime-observed")
+    assert deprecated.status_code == 200, deprecated.text
+    deprecated_payload = deprecated.json()
+    assert deprecated_payload["desired"]["desired_config_generation"] == 2
+    assert deprecated_payload["observed"]["observed_config_generation"] == 3
+    assert "config_generation_mismatch" in deprecated_payload["health"]["reasons"]
+
+
+@pytest.mark.asyncio
+async def test_runtime_observed_health_falls_back_to_legacy_checkpoint_generation(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    env_id = await _create_env(client)
+    db_session.add(
+        canonical_hosted_runtime_state(
+            environment_id=uuid.UUID(env_id),
+            deployment_id="dep-legacy-config-convergence",
+            instance_id="iid-legacy-config-convergence",
             generation=5,
             cli_package_spec=_TEST_CLI_PACKAGE_SPEC,
             locale=_TEST_LOCALE,
@@ -1131,24 +1187,9 @@ async def test_runtime_observed_health_uses_typed_config_generation(
     )
     assert heartbeat.status_code == 204, heartbeat.text
 
-    observation = await db_session.get(HostedRuntimeConfigObservation, uuid.UUID(env_id))
-    assert observation is not None
-    diagnostics = observation.diagnostics
-    assert isinstance(diagnostics, dict)
-    applied = diagnostics["applied"]
-    assert isinstance(applied, dict)
-    observation.diagnostics = {
-        **diagnostics,
-        "applied": {**applied, "generation": 5},
-    }
-    await db_session.commit()
-
-    response = await client.get(f"/v1/environments/{env_id}/runtime-observed")
-    assert response.status_code == 200, response.text
-    payload = response.json()
+    payload = (await client.get(f"/v1/agents/{env_id}/runtime-observed")).json()
     assert payload["desired"]["desired_config_generation"] == 5
     assert payload["observed"]["observed_config_generation"] == 4
-    assert payload["health"]["status"] == "unknown"
     assert "config_generation_mismatch" in payload["health"]["reasons"]
 
 

@@ -996,6 +996,28 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(result.error.issues).toContainEqual(expect.objectContaining({ path: ["bridge"] }));
 	});
 
+	test("accepts independent positive checkpoint and apply generations at the shared boundary", () => {
+		const paths = tempRuntimePaths();
+		const manifest = baseManifest(paths, {
+			openclaw: {
+				enabled: true,
+				run: runSettings("openclaw", ["gateway", "run"]),
+				services: {},
+			},
+		});
+
+		const result = manifestSchema.safeParse({
+			...manifest,
+			generation: 2,
+			applyGeneration: 3,
+		});
+
+		expect(result.success).toBe(true);
+		if (!result.success) throw result.error;
+		expect(result.data.generation).toBe(2);
+		expect(result.data.applyGeneration).toBe(3);
+	});
+
 	test.each([
 		"system.user",
 		"system.home",

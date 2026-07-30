@@ -57,6 +57,10 @@ from app.services.platform_workload_auth import (
     issue_platform_workload_token,
     require_platform_mutation_auth,
 )
+from app.services.runtime_generation import (
+    RuntimeApplyGenerationUpdateError,
+    resolve_runtime_apply_generation_update,
+)
 from app.services.runtime_manifest_resources import (
     enabled_runtime_manifest_skill_ids,
     lock_runtime_manifest_skill_reservations,
@@ -703,7 +707,10 @@ async def platform_upsert_runtime_state(
         db,
         operation="runtime_state.upsert",
         idempotency_key=idempotency_key,
-        request_payload={"agent_id": str(agent_id), **body.model_dump(mode="json")},
+        request_payload={
+            "agent_id": str(agent_id),
+            **_runtime_state_idempotency_payload(body),
+        },
         owner=body.owner,
         owner_user_id=owner.id,
         resource_type="hosted_runtime_state",
@@ -749,36 +756,70 @@ async def platform_upsert_runtime_state(
         skill_ids=old_skill_ids | new_skill_ids,
     )
     previous_generation = runtime_state.generation if runtime_state is not None else None
-    changed_fields = _runtime_state_changed_fields(runtime_state, body)
-    if runtime_state is not None and body.generation <= runtime_state.generation:
+    previous_apply_generation = (
+        runtime_state.apply_generation if runtime_state is not None else None
+    )
+    if runtime_state is not None and body.generation < runtime_state.generation:
         current_generation = runtime_state.generation
-        if body.generation < current_generation:
-            await _reject(
-                db,
-                status_code=status.HTTP_409_CONFLICT,
-                detail={
-                    "code": "stale_generation",
-                    "current_generation": current_generation,
-                },
-                result="stale_generation",
-                owner=body.owner,
-                owner_user_id=owner.id,
-                resource_type="hosted_runtime_state",
-                resource_id=str(agent_id),
-                action=action,
-                request=request,
-                idempotency_key=idempotency_key,
-                environment_id=agent_id,
-            )
-            raise AssertionError("unreachable")
-        material_changes = [field for field in changed_fields if field != "generation"]
+        await _reject(
+            db,
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "stale_generation",
+                "current_generation": current_generation,
+            },
+            result="stale_generation",
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="hosted_runtime_state",
+            resource_id=str(agent_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=agent_id,
+        )
+        raise AssertionError("unreachable")
+    try:
+        apply_generation = resolve_runtime_apply_generation_update(
+            current=previous_apply_generation,
+            requested=body.apply_generation,
+            explicitly_set="apply_generation" in body.model_fields_set,
+        )
+    except RuntimeApplyGenerationUpdateError as exc:
+        await _reject(
+            db,
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": exc.code,
+                "current_apply_generation": exc.current_apply_generation,
+            },
+            result=exc.code,
+            owner=body.owner,
+            owner_user_id=owner.id,
+            resource_type="hosted_runtime_state",
+            resource_id=str(agent_id),
+            action=action,
+            request=request,
+            idempotency_key=idempotency_key,
+            environment_id=agent_id,
+        )
+        raise AssertionError("unreachable")
+    changed_fields = _runtime_state_changed_fields(
+        runtime_state,
+        body,
+        apply_generation=apply_generation,
+    )
+    if runtime_state is not None and body.generation == runtime_state.generation:
+        material_changes = [
+            field for field in changed_fields if field not in {"generation", "apply_generation"}
+        ]
         if material_changes:
             await _reject(
                 db,
                 status_code=status.HTTP_409_CONFLICT,
                 detail={
                     "code": "generation_conflict",
-                    "current_generation": current_generation,
+                    "current_generation": runtime_state.generation,
                 },
                 result="generation_conflict",
                 owner=body.owner,
@@ -794,7 +835,7 @@ async def platform_upsert_runtime_state(
     if runtime_state is None:
         runtime_state = HostedRuntimeState(environment_id=agent_id)
         db.add(runtime_state)
-    _assign_runtime_state(runtime_state, body)
+    _assign_runtime_state(runtime_state, body, apply_generation=apply_generation)
     if changed_fields:
         queue_runtime_manifest_changed(db, agent.user_id, agent_id)
     response = PlatformRuntimeStateResponse(
@@ -802,6 +843,7 @@ async def platform_upsert_runtime_state(
         deployment_id=body.deployment_id,
         instance_id=body.instance_id,
         generation=body.generation,
+        apply_generation=apply_generation,
     )
     await _complete_mutation(
         db,
@@ -821,6 +863,8 @@ async def platform_upsert_runtime_state(
             "deployment_id": body.deployment_id,
             "generation": body.generation,
             "previous_generation": previous_generation,
+            "apply_generation": apply_generation,
+            "previous_apply_generation": previous_apply_generation,
             "changed_fields": changed_fields,
         },
     )
@@ -1066,10 +1110,13 @@ async def platform_revoke_api_key(
 def _assign_runtime_state(
     state: HostedRuntimeState,
     body: PlatformRuntimeStateUpsert,
+    *,
+    apply_generation: int | None,
 ) -> None:
     state.deployment_id = body.deployment_id
     state.instance_id = body.instance_id
     state.generation = body.generation
+    state.apply_generation = apply_generation
     state.cli_package_spec = body.cli_package_spec
     state.locale = body.locale.model_dump()
     state.system = body.system.model_dump(exclude_none=True, mode="json")
@@ -1086,6 +1133,13 @@ def _assign_runtime_state(
     state.tools = body.tools.model_dump(exclude_none=True, exclude_unset=True, mode="json")
 
 
+def _runtime_state_idempotency_payload(body: PlatformRuntimeStateUpsert) -> dict[str, Any]:
+    payload = body.model_dump(mode="json")
+    if "apply_generation" not in body.model_fields_set:
+        payload.pop("apply_generation", None)
+    return payload
+
+
 def _optional_runtime_model(value: BaseModel | None) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -1095,11 +1149,14 @@ def _optional_runtime_model(value: BaseModel | None) -> dict[str, Any] | None:
 def _runtime_state_changed_fields(
     state: HostedRuntimeState | None,
     body: PlatformRuntimeStateUpsert,
+    *,
+    apply_generation: int | None,
 ) -> list[str]:
     fields = [
         "deployment_id",
         "instance_id",
         "generation",
+        "apply_generation",
         "cli_package_spec",
         "locale",
         "system",
@@ -1113,10 +1170,14 @@ def _runtime_state_changed_fields(
         "tools",
     ]
     if state is None:
-        return fields
+        return [
+            field for field in fields if field != "apply_generation" or apply_generation is not None
+        ]
     changed: list[str] = []
     for field in fields:
-        if field == "locale":
+        if field == "apply_generation":
+            body_value = apply_generation
+        elif field == "locale":
             body_value = body.locale.model_dump()
         elif field == "system":
             body_value = body.system.model_dump(exclude_none=True, mode="json")

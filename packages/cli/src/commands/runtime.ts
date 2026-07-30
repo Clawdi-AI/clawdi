@@ -28,6 +28,7 @@ import {
 import {
 	type RuntimeApplyIdentity,
 	readRuntimeApplyIdentityFromEnv,
+	resolveRuntimeApplyGeneration,
 } from "../runtime/apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
@@ -1310,10 +1311,10 @@ export function commitRuntimeAppliedState(input: {
 }): void {
 	if (
 		input.applyIdentity &&
-		input.applyIdentity.generation !== input.convergence.manifest.generation
+		input.applyIdentity.generation !== resolveRuntimeApplyGeneration(input.convergence.manifest)
 	) {
 		throw new Error(
-			`runtime apply identity generation ${input.applyIdentity.generation} does not match applied manifest generation ${input.convergence.manifest.generation}`,
+			`runtime apply identity generation ${input.applyIdentity.generation} does not match resolved manifest apply generation ${resolveRuntimeApplyGeneration(input.convergence.manifest)}`,
 		);
 	}
 	const providerIds = runtimeSourceProviderIds(input.load.manifest);
@@ -1326,6 +1327,9 @@ export function commitRuntimeAppliedState(input: {
 			etag: input.etag,
 			sourceRevision: input.sourceRevision,
 			generation: input.convergence.manifest.generation,
+			...(input.convergence.manifest.applyGeneration === undefined
+				? {}
+				: { applyGeneration: input.convergence.manifest.applyGeneration }),
 			...(input.applyIdentity
 				? {
 						manifestETag: input.applyIdentity.manifestETag,

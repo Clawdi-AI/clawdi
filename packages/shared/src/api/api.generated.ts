@@ -5575,6 +5575,8 @@ export interface components {
             instance_id: string;
             /** Generation */
             generation: number;
+            /** Apply Generation */
+            apply_generation?: number | null;
         };
         /** PlatformRuntimeStateUpsert */
         PlatformRuntimeStateUpsert: {
@@ -5585,6 +5587,8 @@ export interface components {
             instance_id: string;
             /** Generation */
             generation: number;
+            /** Apply Generation */
+            apply_generation?: number | null;
             /** Cli Package Spec */
             cli_package_spec: string;
             locale: components["schemas"]["HostedRuntimeLocale"];

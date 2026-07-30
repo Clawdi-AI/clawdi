@@ -93,6 +93,7 @@ from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
 from app.services.memory_provider import get_memory_provider
+from app.services.runtime_generation import resolve_runtime_apply_generation
 from app.services.runtime_source import (
     RuntimeSourceError,
     expected_runtime_bundle_v2_etag,
@@ -1192,11 +1193,30 @@ def _agent_runtime_observed_health(
         reasons.append("runtime_applied_missing")
     elif diagnostics.applied.instance_id != state.instance_id:
         reasons.append("applied_instance_id_mismatch")
+
+    observed_generation = (
+        observation.observed_config_generation if observation is not None else None
+    )
+    if observed_generation is not None:
+        generation_matches = observed_generation == resolve_runtime_apply_generation(
+            generation=state.generation,
+            apply_generation=state.apply_generation,
+        )
+        if generation_matches:
+            reasons = [reason for reason in reasons if reason != "config_generation_mismatch"]
+        elif "config_generation_mismatch" not in reasons:
+            reasons.append("config_generation_mismatch")
     if reasons == health.reasons:
         return health
+
+    status_value = health.status
+    if reasons and status_value == "ok":
+        status_value = "unknown"
+    elif not reasons and status_value == "unknown" and diagnostics.status == "ok":
+        status_value = "ok"
     return health.model_copy(
         update={
-            "status": "unknown" if health.status == "ok" else health.status,
+            "status": status_value,
             "reasons": reasons,
         }
     )

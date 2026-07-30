@@ -7,6 +7,7 @@
 			"provider": "telegram"
 		}
 	],
+	"applyGeneration": 1,
 	"manifest": {
 		"clawdiCli": {
 			"packageSpec": "clawdi@0.12.10-beta.57",
@@ -24,7 +25,7 @@
 			"url": "https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz",
 			"version": "12.2.3"
 		},
-		"generation": 7,
+		"generation": 2,
 		"instanceId": "hri_test",
 		"issuedAt": "2026-07-13T00:00:00+00:00",
 		"liveSync": {
@@ -134,5 +135,5 @@
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "12ae1174be36ad789afcfd639ee54a7061a97e19614822ddb9addac3a53c7fc9"
+	"sourceRevision": "da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1"
 }

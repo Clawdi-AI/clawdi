@@ -6,6 +6,7 @@ import {
 	runtimeAppliedApplyIdentity,
 	runtimeContentSha256,
 } from "./applied-state";
+import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import {
 	ensureRuntimeAuthTokenFile,
 	readRuntimeAuthToken,
@@ -71,6 +72,7 @@ const hostedRuntimeBundleV2Schema = z
 		schemaVersion: z.literal("clawdi.hosted-runtime.bundle.v2"),
 		sourceRevision: z.string().regex(/^[a-f0-9]{64}$/),
 		manifest: hostedRuntimeBundleV2ManifestSchema,
+		applyGeneration: z.number().int().positive().safe().optional(),
 		channelBindings: z.array(runtimeBundleChannelBindingSchema),
 		secretValues: z.record(z.string(), z.string()),
 	})
@@ -95,7 +97,9 @@ const hostedRuntimeBundleV2Schema = z
 export function normalizeHostedRuntimeBundleV2(value: unknown): RuntimeManifestLoad {
 	const bundle = hostedRuntimeBundleV2Schema.parse(value);
 	return {
-		manifest: markHostedRuntimeBundleV2(hostedManifestToRuntimeManifest(bundle.manifest)),
+		manifest: markHostedRuntimeBundleV2(
+			hostedManifestToRuntimeManifest(bundle.manifest, bundle.applyGeneration),
+		),
 		source: "remote-datasource",
 		sourcePath: "https://fixture.invalid/v1/runtime/manifest",
 		offline: false,
@@ -254,7 +258,9 @@ function normalizeRemoteManifestPayload(
 	if (paths.mode !== "hosted") return normalizeManifestPayload(value);
 	const hostedResponse = hostedRuntimeBundleV2Schema.parse(value);
 	return {
-		manifest: markHostedRuntimeBundleV2(hostedManifestToRuntimeManifest(hostedResponse.manifest)),
+		manifest: markHostedRuntimeBundleV2(
+			hostedManifestToRuntimeManifest(hostedResponse.manifest, hostedResponse.applyGeneration),
+		),
 		secretValues: normalizeSecretValues(hostedResponse.secretValues),
 		channelBindings: hostedResponse.channelBindings,
 		sourceRevision: hostedResponse.sourceRevision,
@@ -485,7 +491,10 @@ function runtimeFetchFailureStage(error: unknown): "network" | "auth" {
 	return error instanceof RuntimeAuthError ? "auth" : "network";
 }
 
-export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): RuntimeManifest {
+export function hostedManifestToRuntimeManifest(
+	hosted: HostedRuntimeManifest,
+	applyGeneration?: number,
+): RuntimeManifest {
 	const paths = getRuntimePaths({ mode: "hosted" });
 	const workspaceRoot = paths.workspaceRoot;
 	const selectedRuntime = hosted.runtime;
@@ -496,6 +505,7 @@ export function hostedManifestToRuntimeManifest(hosted: HostedRuntimeManifest): 
 		environmentId: hosted.environmentId,
 		instanceId: hosted.instanceId,
 		generation: hosted.generation,
+		...(applyGeneration === undefined ? {} : { applyGeneration }),
 		minimumCliVersion: hosted.minimumCliVersion,
 		issuedAt: hosted.issuedAt,
 		expiresAt: hosted.expiresAt,
@@ -959,6 +969,7 @@ function loadLastGoodManifest(
 			(strictV2Cache || cachedApplyIdentity || opts.requireAppliedAuthority) &&
 			appliedState &&
 			(appliedState?.generation !== manifest.generation ||
+				resolveRuntimeApplyGeneration(appliedState) !== resolveRuntimeApplyGeneration(manifest) ||
 				appliedState.instanceId !== manifest.instanceId ||
 				appliedState.contentIdentity.sha256 !==
 					runtimeContentSha256({ manifest, secretValues: cached.secretValues }))

@@ -136,6 +136,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     deployment_id: str = Field(min_length=1, max_length=200)
     instance_id: str = Field(min_length=1, max_length=200)
     generation: int = Field(ge=0)
+    apply_generation: int | None = Field(default=None, ge=1)
     cli_package_spec: str = Field(min_length=1, max_length=200)
     locale: HostedRuntimeLocale
     system: HostedRuntimeSystem
@@ -176,6 +177,7 @@ class AdminRuntimeStateResponse(BaseModel):
     deployment_id: str
     instance_id: str
     generation: int
+    apply_generation: int | None = None
 
 
 class AdminManagedAiProviderUpsert(BaseModel):

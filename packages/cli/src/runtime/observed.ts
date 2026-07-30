@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { getCliVersion } from "../lib/version";
 import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
+import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
@@ -48,7 +49,7 @@ export function readHostedRuntimeObserved(
 						? appliedState.etag
 						: (appliedState.manifestETag ?? appliedState.etag),
 				sourceRevision: appliedState.sourceRevision,
-				generation: appliedState.generation,
+				generation: resolveRuntimeApplyGeneration(appliedState),
 				instanceId: appliedState.instanceId,
 				appliedProviderIds: [...appliedState.providerIds],
 			}

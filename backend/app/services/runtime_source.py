@@ -97,6 +97,7 @@ class RenderedRuntimeSource:
     channel_bindings: list[dict[str, str]]
     secret_values: dict[str, str]
     source_revision: str
+    apply_generation: int | None
 
 
 @dataclass(frozen=True)
@@ -463,18 +464,29 @@ def render_runtime_source(
         "channelBindings": bindings,
         "secretSources": secret_sources,
     }
+    if state.apply_generation is not None:
+        descriptor["applyGeneration"] = state.apply_generation
     source_revision = hashlib.sha256(_canonical(descriptor).encode()).hexdigest()
-    return RenderedRuntimeSource(manifest, bindings, secrets, source_revision)
+    return RenderedRuntimeSource(
+        manifest=manifest,
+        channel_bindings=bindings,
+        secret_values=secrets,
+        source_revision=source_revision,
+        apply_generation=state.apply_generation,
+    )
 
 
 def render_runtime_bundle(source: RenderedRuntimeSource) -> dict[str, Any]:
-    return {
+    bundle = {
         "schemaVersion": RUNTIME_BUNDLE_V2_SCHEMA_VERSION,
         "sourceRevision": source.source_revision,
         "manifest": source.manifest,
         "channelBindings": source.channel_bindings,
         "secretValues": source.secret_values,
     }
+    if source.apply_generation is not None:
+        bundle["applyGeneration"] = source.apply_generation
+    return bundle
 
 
 def vault_key_identity(value: str) -> str:
