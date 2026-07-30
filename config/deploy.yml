@@ -53,12 +53,15 @@ servers:
     options:
       memory: 4g # embedding model (~1.6G resident) + launch-load headroom
       ulimit: nofile=65536:65536 # long-lived SSE/WebSocket connections
+      # tini as PID 1 reaps orphaned subprocesses (zombie prevention).
+      init: true
   channels-worker:
     hosts:
       - <%= ENV.fetch("DEPLOY_HOST") %>
     proxy: false
     options:
       memory: 2g # grows with connected channel accounts
+      init: true
       ulimit: nofile=65536:65536 # per-account gateway sockets
     env:
       clear:
