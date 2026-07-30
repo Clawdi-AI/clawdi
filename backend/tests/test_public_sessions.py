@@ -209,6 +209,7 @@ async def test_public_export_md_has_front_matter_and_body(
     r = await anon_client.get(f"/v1/public/sessions/{sid}/export.md")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("text/markdown")
+    assert r.headers["cache-control"] == "no-store"
     body = r.text
 
     assert body.startswith("---\n")
@@ -232,6 +233,7 @@ async def test_public_export_json_strips_owner_fields(
 
     r = await anon_client.get(f"/v1/public/sessions/{sid}/export.json")
     assert r.status_code == 200
+    assert r.headers["cache-control"] == "no-store"
     body = r.json()
 
     assert body["summary"] == "Public test session"
@@ -285,6 +287,61 @@ async def test_link_revoke_returns_401_to_anon(
     for path_suffix in ["", "/messages", "/export.md", "/export.json"]:
         r = await anon_client.get(f"/v1/public/sessions/{sid}{path_suffix}")
         assert r.status_code == 401, f"{path_suffix} → {r.status_code}"
+        if path_suffix.startswith("/export."):
+            assert r.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("suffix", ["export.md", "export.json"])
+@pytest.mark.parametrize("prefix", ["v1", "api"])
+async def test_public_exports_disable_caching_on_validation_and_missing_session(
+    anon_client: httpx.AsyncClient,
+    suffix: str,
+    prefix: str,
+):
+    invalid = await anon_client.get(f"/{prefix}/public/sessions/not-a-uuid/{suffix}")
+    assert invalid.status_code == 422, invalid.text
+    assert invalid.headers["cache-control"] == "no-store"
+
+    missing = await anon_client.get(
+        f"/{prefix}/public/sessions/00000000-0000-0000-0000-000000000000/{suffix}"
+    )
+    assert missing.status_code == 404, missing.text
+    assert missing.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failure_name", "expected_status"),
+    [("missing", 404), ("invalid", 500)],
+)
+async def test_public_exports_disable_caching_on_content_errors(
+    client: httpx.AsyncClient,
+    anon_client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_name: str,
+    expected_status: int,
+):
+    from app.routes import public_sessions as public_sessions_route
+    from app.services.session_content import SessionContentInvalid, SessionContentMissing
+
+    sid, _ = await _seed_session_with_content(
+        client,
+        local_session_id=f"sess-export-{failure_name}",
+    )
+    await _enable_link(client, sid)
+
+    async def _fail_content_load(*_args):
+        if failure_name == "missing":
+            raise SessionContentMissing("missing test content")
+        raise SessionContentInvalid("invalid test content")
+
+    monkeypatch.setattr(public_sessions_route, "load_session_messages", _fail_content_load)
+
+    for suffix in ("export.md", "export.json"):
+        response = await anon_client.get(f"/v1/public/sessions/{sid}/{suffix}")
+        assert response.status_code == expected_status, response.text
+        assert response.headers["cache-control"] == "no-store"
 
 
 @pytest.mark.asyncio

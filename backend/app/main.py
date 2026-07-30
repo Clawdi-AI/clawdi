@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from http import HTTPStatus
 from typing import Any, Literal
 
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -41,7 +41,11 @@ from app.routes.memories import router as memories_router
 from app.routes.metrics import router as metrics_router
 from app.routes.platform import router as platform_router
 from app.routes.projects import router as projects_router
-from app.routes.public_sessions import router as public_sessions_router
+from app.routes.public_sessions import (
+    PUBLIC_SESSION_EXPORT_CACHE_CONTROL,
+    is_public_session_export_path,
+    router as public_sessions_router,
+)
 from app.routes.runtime import router as runtime_router
 from app.routes.runtime_observation_v2 import router as runtime_observation_v2_router
 from app.routes.search import router as search_router
@@ -225,6 +229,15 @@ app.add_middleware(RequestIDMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
 
+def _apply_public_session_export_cache_policy(
+    request: Request,
+    response: Response,
+) -> Response:
+    if is_public_session_export_path(request.url.path):
+        response.headers["Cache-Control"] = PUBLIC_SESSION_EXPORT_CACHE_CONTROL
+    return response
+
+
 @app.exception_handler(RequestValidationError)
 async def request_validation_exception_handler(
     request: Request,
@@ -244,9 +257,12 @@ async def request_validation_exception_handler(
             request.headers.get("content-length", ""),
             _validation_errors_for_log(exc),
         )
-    return JSONResponse(
-        status_code=422,
-        content={"detail": jsonable_encoder(exc.errors())},
+    return _apply_public_session_export_cache_policy(
+        request,
+        JSONResponse(
+            status_code=422,
+            content={"detail": jsonable_encoder(exc.errors())},
+        ),
     )
 
 
@@ -307,12 +323,14 @@ async def clawdi_http_exception_handler(
     exc: StarletteHTTPException,
 ):
     if _is_bluebubbles_request(request):
-        return _bluebubbles_error_response(
+        response = _bluebubbles_error_response(
             status_code=exc.status_code,
             detail=exc.detail,
             headers=exc.headers,
         )
-    return await http_exception_handler(request, exc)
+    else:
+        response = await http_exception_handler(request, exc)
+    return _apply_public_session_export_cache_policy(request, response)
 
 
 @app.exception_handler(RequestValidationError)
