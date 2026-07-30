@@ -28,13 +28,23 @@ def upgrade() -> None:
         SET provider_event_id = CASE
             WHEN account.provider = 'telegram'
              AND jsonb_typeof(message.payload->'update_id') IN ('number', 'string')
-            THEN COALESCE(NULLIF(message.payload->>'update_id', ''), message.provider_message_id)
+            THEN COALESCE(
+                NULLIF(BTRIM(message.payload->>'update_id'), ''),
+                message.provider_message_id
+            )
             ELSE message.provider_message_id
         END
         FROM channel_accounts AS account
         WHERE message.account_id = account.id
           AND message.direction = 'inbound'
-          AND message.provider_message_id IS NOT NULL
+          AND (
+              message.provider_message_id IS NOT NULL
+              OR (
+                  account.provider = 'telegram'
+                  AND jsonb_typeof(message.payload->'update_id') IN ('number', 'string')
+                  AND NULLIF(BTRIM(message.payload->>'update_id'), '') IS NOT NULL
+              )
+          )
         """
     )
     op.drop_index("ux_channel_messages_inbound_provider_message_bound")

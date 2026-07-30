@@ -32,6 +32,8 @@ def test_channel_provider_event_identity_migration_backfills_and_downgrades(
     link_id = uuid.uuid4()
     first_id = uuid.uuid4()
     malformed_id = uuid.uuid4()
+    no_message_id = uuid.uuid4()
+    blank_update_id = uuid.uuid4()
     second_id = uuid.uuid4()
     sync_engine = create_engine(engine.url.set(drivername="postgresql+psycopg2"))
     old_op = migration.op
@@ -110,6 +112,32 @@ def test_channel_provider_event_identity_migration_backfills_and_downgrades(
                     "payload": '{"update_id": {"malformed": true}}',
                 },
             )
+            connection.execute(
+                sa.text(
+                    """
+                    INSERT INTO channel_messages (
+                        id, account_id, direction, external_chat_id, provider_message_id,
+                        bot_agent_link_id, payload, created_at
+                    ) VALUES
+                    (
+                        :no_message_id, :account_id, 'inbound', '44', NULL, :link_id,
+                        CAST(:numeric_payload AS jsonb), '2026-07-30T00:00:00Z'
+                    ),
+                    (
+                        :blank_update_id, :account_id, 'inbound', '45', '101', :link_id,
+                        CAST(:blank_payload AS jsonb), '2026-07-30T00:00:00Z'
+                    )
+                    """
+                ),
+                {
+                    "no_message_id": no_message_id,
+                    "blank_update_id": blank_update_id,
+                    "account_id": account_id,
+                    "link_id": link_id,
+                    "numeric_payload": '{"update_id": 7003}',
+                    "blank_payload": '{"update_id": "   "}',
+                },
+            )
             migration.op = Operations(MigrationContext.configure(connection))
 
             migration.upgrade()
@@ -126,6 +154,20 @@ def test_channel_provider_event_identity_migration_backfills_and_downgrades(
                     {"id": malformed_id},
                 )
                 == "99"
+            )
+            assert (
+                connection.scalar(
+                    sa.text("SELECT provider_event_id FROM channel_messages WHERE id = :id"),
+                    {"id": no_message_id},
+                )
+                == "7003"
+            )
+            assert (
+                connection.scalar(
+                    sa.text("SELECT provider_event_id FROM channel_messages WHERE id = :id"),
+                    {"id": blank_update_id},
+                )
+                == "101"
             )
 
             connection.execute(
