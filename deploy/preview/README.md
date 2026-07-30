@@ -122,7 +122,7 @@ for each service.
     Variables → check "Preview deploys" so they apply to PR builds). Copy
     secrets from your production environment:
     ```
-    CLERK_PEM_PUBLIC_KEY=...
+    CLERK_JWT_ISSUER=https://<your-clerk-frontend-api>
     VAULT_ENCRYPTION_KEY=...
     ENCRYPTION_KEY=...
     COMPOSIO_API_KEY=...
@@ -137,6 +137,9 @@ for each service.
     REPO_REF=<production-tracking-branch>
     PG_PASSWORD=preview_local
     ```
+    The backend fetches signing keys from
+    `CLERK_JWT_ISSUER/.well-known/jwks.json`. Set `CLERK_PEM_PUBLIC_KEY` only
+    when a preview needs the supported networkless PEM override.
     Per-deploy URL env vars (`PUBLIC_API_URL`, `WEB_ORIGIN`, `CORS_ORIGINS`,
     `VITE_CLAWDI_API_URL`) are derived inside each container's startup
     command from the auto-injected `SERVICE_FQDN_*` — no need to set them

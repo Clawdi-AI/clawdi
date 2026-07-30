@@ -130,7 +130,8 @@ services:
       # ${SERVICE_FQDN_API} would resolve from the project .env which holds the
       # production tracker's value, not the PR-specific one.)
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:-@example.com}
-      CLERK_PEM_PUBLIC_KEY: ${CLERK_PEM_PUBLIC_KEY}
+      CLERK_JWT_ISSUER: ${CLERK_JWT_ISSUER}
+      CLERK_PEM_PUBLIC_KEY: ${CLERK_PEM_PUBLIC_KEY:-}
       # Snapshot-rebind: opt-in path that reattaches a sign-in to an
       # existing snapshot user row by verified email when the JWT's
       # Clerk sub doesn't match (necessary because the preview's Clerk

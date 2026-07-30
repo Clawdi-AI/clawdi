@@ -203,6 +203,8 @@ class Settings(BaseSettings):
     metrics_basic_auth_user: str = "prometheus"
     metrics_basic_auth_password: str = ""
 
+    # Optional networkless override. By default Clerk signing keys are fetched
+    # from the JWKS endpoint derived from clerk_jwt_issuer.
     clerk_pem_public_key: str = ""
     # Optional: Clerk Backend API secret. Used by the snapshot-email-rebind
     # path to fetch a user's verified primary email when the session token
@@ -210,7 +212,8 @@ class Settings(BaseSettings):
     # `enable_snapshot_email_rebind` is true.
     clerk_secret_key: str = ""
 
-    # Optional strict claim binding for dashboard/browser session JWTs.
+    # Required for default JWKS verification and used as optional strict claim
+    # binding for dashboard/browser session JWTs when a static PEM overrides it.
     # Keep these separate from the Public OAuth App resource values: Clerk
     # session templates and OAuth access tokens can use different audiences.
     # Empty values preserve the historical signature-only session validation.

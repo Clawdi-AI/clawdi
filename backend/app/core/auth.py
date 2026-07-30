@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -38,6 +39,19 @@ logger = logging.getLogger(__name__)
 
 API_KEY_PREFIX = "clawdi_"
 _OAUTH_ACCESS_JWT_TYPES = frozenset({"at+jwt", "application/at+jwt"})
+_CLERK_JWKS_LIFESPAN_SECONDS = 300
+_CLERK_JWKS_TIMEOUT_SECONDS = 5
+
+_clerk_jwks_client = (
+    jwt.PyJWKClient(
+        f"{settings.clerk_jwt_issuer}/.well-known/jwks.json",
+        cache_keys=True,
+        lifespan=_CLERK_JWKS_LIFESPAN_SECONDS,
+        timeout=_CLERK_JWKS_TIMEOUT_SECONDS,
+    )
+    if settings.clerk_jwt_issuer
+    else None
+)
 
 # Only touch api_key.last_used_at if the previous update was at least this
 # long ago. Every authenticated CLI request used to write+commit the row,
@@ -407,11 +421,51 @@ def _session_claims_match_configured_clerk_values(payload: dict) -> bool:
     return True
 
 
-def _decode_clerk_session_jwt(token: str) -> dict | None:
+async def warm_clerk_jwks() -> None:
+    """Warm the shared JWKS cache without making startup depend on Clerk."""
+    if settings.clerk_pem_public_key or _clerk_jwks_client is None:
+        return
+    try:
+        await asyncio.to_thread(_clerk_jwks_client.get_signing_keys)
+    except Exception:  # noqa: BLE001 - warmup must never prevent startup
+        logger.warning("Clerk JWKS warmup failed.", exc_info=True)
+    else:
+        logger.info("Clerk JWKS cache warmed.")
+
+
+async def _resolve_clerk_signing_key(token: str) -> str | jwt.PyJWK | None:
+    if settings.clerk_pem_public_key:
+        return settings.clerk_pem_public_key
+    if _clerk_jwks_client is None:
+        logger.error("Clerk JWT verification is not configured: CLERK_JWT_ISSUER is empty.")
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Clerk JWT verification is not configured",
+        )
+
+    try:
+        return await asyncio.to_thread(_clerk_jwks_client.get_signing_key_from_jwt, token)
+    except jwt.PyJWKClientConnectionError as error:
+        logger.exception("Clerk JWKS signing-key lookup failed.")
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Clerk JWT verification is temporarily unavailable",
+        ) from error
+    except (jwt.InvalidTokenError, jwt.PyJWKClientError):
+        return None
+    except Exception as error:  # noqa: BLE001 - external JWKS failures must be clean auth errors
+        logger.exception("Clerk JWKS signing-key lookup failed.")
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            "Clerk JWT verification is temporarily unavailable",
+        ) from error
+
+
+def _decode_clerk_session_jwt(token: str, signing_key: str | jwt.PyJWK) -> dict | None:
     try:
         payload = jwt.decode(
             token,
-            settings.clerk_pem_public_key,
+            signing_key,
             algorithms=["RS256"],
             options={"verify_aud": False, "verify_iss": False},
         )
@@ -420,11 +474,15 @@ def _decode_clerk_session_jwt(token: str) -> dict | None:
     return payload if _session_claims_match_configured_clerk_values(payload) else None
 
 
-def _decode_clerk_oauth_access_jwt(token: str, oauth_setting: ClerkCliOAuthSetting) -> dict | None:
+def _decode_clerk_oauth_access_jwt(
+    token: str,
+    signing_key: str | jwt.PyJWK,
+    oauth_setting: ClerkCliOAuthSetting,
+) -> dict | None:
     try:
         payload = jwt.decode(
             token,
-            settings.clerk_pem_public_key,
+            signing_key,
             algorithms=["RS256"],
             issuer=oauth_setting.issuer,
             leeway=5,
@@ -456,11 +514,6 @@ def _decode_clerk_oauth_access_jwt(token: str, oauth_setting: ClerkCliOAuthSetti
 
 
 async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | None:
-    if not settings.clerk_pem_public_key:
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR, "Clerk public key not configured"
-        )
-
     oauth_cli = _is_oauth_access_jwt(token)
     if oauth_cli:
         try:
@@ -475,9 +528,14 @@ async def _auth_via_clerk_jwt(token: str, db: AsyncSession) -> AuthContext | Non
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 "OAuth CLI authentication is not configured",
             )
-        payload = _decode_clerk_oauth_access_jwt(token, oauth_setting)
-    else:
-        payload = _decode_clerk_session_jwt(token)
+    signing_key = await _resolve_clerk_signing_key(token)
+    if signing_key is None:
+        return None
+    payload = (
+        _decode_clerk_oauth_access_jwt(token, signing_key, oauth_setting)
+        if oauth_cli
+        else _decode_clerk_session_jwt(token, signing_key)
+    )
     if payload is None:
         return None
 

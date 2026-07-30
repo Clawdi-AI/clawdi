@@ -16,6 +16,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.core.auth import warm_clerk_jwks
 from app.core.config import settings
 from app.core.database import get_session
 from app.core.sentry import init_sentry
@@ -103,6 +104,8 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     except Exception:
         await stop_postgres_listener()
         raise
+
+    await warm_clerk_jwks()
 
     if settings.memory_embedding_mode.lower() == "local":
 
