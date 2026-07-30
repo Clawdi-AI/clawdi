@@ -29,6 +29,8 @@ const FORMAT_MEDIA_TYPE: Record<string, string> = {
 	json: "application/json; charset=utf-8",
 };
 
+const NO_STORE_HEADERS = { "cache-control": "no-store" };
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export function publicSessionExportErrorMessage(status: number): string {
@@ -54,10 +56,10 @@ export async function GET(
 	{ id, format }: { id: string; format: string },
 ): Promise<Response> {
 	if (!ALLOWED_FORMATS.has(format)) {
-		return new Response("Not found", { status: 404 });
+		return new Response("Not found", { status: 404, headers: NO_STORE_HEADERS });
 	}
 	if (!UUID_RE.test(id)) {
-		return new Response("Not found", { status: 404 });
+		return new Response("Not found", { status: 404, headers: NO_STORE_HEADERS });
 	}
 
 	const api = createClient<paths>({ baseUrl: env.VITE_CLAWDI_API_URL });
@@ -77,14 +79,17 @@ export async function GET(
 	if (result.error !== undefined) {
 		return new Response(publicSessionExportErrorMessage(result.response.status), {
 			status: result.response.status,
-			headers: { "content-type": "text/plain; charset=utf-8" },
+			headers: {
+				...NO_STORE_HEADERS,
+				"content-type": "text/plain; charset=utf-8",
+			},
 		});
 	}
 
-	// NO cache-control — revocation / permission-toggle must take effect immediately.
 	return new Response(result.data, {
 		status: 200,
 		headers: {
+			...NO_STORE_HEADERS,
 			"content-type": FORMAT_MEDIA_TYPE[format],
 		},
 	});
