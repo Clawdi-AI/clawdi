@@ -8,10 +8,10 @@ from pydantic_settings import BaseSettings
 
 
 def _normalize_pem_env_value(value: str) -> str:
-    # Coolify can preserve escaped newlines either as literal "\n" pairs or as
-    # a line-continuation backslash followed by a real newline. Build the latter
-    # pattern explicitly so Python source line-continuation rules cannot change
-    # the string we are matching.
+    # Environment transports can preserve escaped newlines either as literal
+    # "\n" pairs or as a line-continuation backslash followed by a real newline.
+    # Build the latter pattern explicitly so Python source line-continuation
+    # rules cannot change the string we are matching.
     return value.replace("\\" + "\r\n", "\n").replace("\\" + "\n", "\n").replace("\\n", "\n")
 
 
@@ -94,12 +94,12 @@ class Settings(BaseSettings):
     )
     @classmethod
     def _strip_wrapping_quotes(cls, v: object) -> object:
-        # Coolify's UI sometimes round-trips secret values with literal
+        # Deployment dashboards can round-trip secret values with literal
         # surrounding quotes (e.g. `'sk_test_...'`). When that env reaches us
-        # raw, the quotes end up baked into the Authorization header / JWT
-        # public key and Clerk rejects the request with a confusing 401 or
-        # signature-verification error. Strip a single matched pair on load
-        # so downstream code never has to think about it.
+        # raw, the quotes end up baked into the Authorization header / JWT public
+        # key and Clerk rejects the request with a confusing 401 or signature-
+        # verification error. Strip a single matched pair on load so downstream
+        # code never has to think about it.
         if isinstance(v, str) and len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
             v = v[1:-1]
         if isinstance(v, str) and "BEGIN PUBLIC KEY" in v:
@@ -115,17 +115,18 @@ class Settings(BaseSettings):
         so deployments provide it base64-encoded on a single line.
         """
         candidate = value.strip()
-        if candidate and "-----BEGIN" not in candidate:
-            import base64
-            import binascii
+        if not candidate:
+            return candidate
+        if "-----BEGIN" in candidate:
+            return value
 
-            try:
-                candidate = base64.b64decode(candidate, validate=True).decode(
-                    "utf-8"
-                )
-            except (binascii.Error, UnicodeDecodeError):
-                pass  # not base64 (e.g. test fixtures); leave unchanged
-        return candidate
+        import base64
+        import binascii
+
+        try:
+            return base64.b64decode(candidate, validate=True).decode("utf-8")
+        except (binascii.Error, UnicodeDecodeError):
+            return value  # not base64 (e.g. test fixtures); leave unchanged
 
     @field_validator("clerk_jwt_issuer")
     @classmethod
@@ -170,7 +171,7 @@ class Settings(BaseSettings):
 
     # Trust the standard `X-Forwarded-For` / `CF-Connecting-IP`
     # headers as the source of the real client IP. Required for
-    # any proxied deployment (Coolify, Cloudflare, k8s ingress)
+    # any deployment behind a reverse proxy or ingress
     # because uvicorn's `request.client.host` is the proxy's
     # address, not the user's. Off by default so a misconfigured
     # local dev / direct-uvicorn setup can't be header-spoofed.
