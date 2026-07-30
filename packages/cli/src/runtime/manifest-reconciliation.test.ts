@@ -9,6 +9,7 @@ import {
 	readFileSync,
 	rmSync,
 	statSync,
+	symlinkSync,
 	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -2664,7 +2665,6 @@ describe("runtime manifest reconciliation invariants", () => {
 			paths.egressSystemCaFile,
 			join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service"),
 			join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
-			runtimeRunConfigPath("openclaw", paths),
 		];
 		const capture = (paths: readonly string[]) =>
 			new Map(paths.map((path) => [path, existsSync(path) ? readFileSync(path, "utf-8") : null]));
@@ -2704,6 +2704,13 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(firstErrors).not.toContain("test-token");
 		expect(firstCommits).toBe(0);
 		expectSnapshot(firstSnapshot);
+		if (failure === "activation") {
+			expect(
+				JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", firstPaths), "utf-8")),
+			).toMatchObject({
+				generation: 1,
+			});
+		}
 		expect(existsSync(firstPaths.manifestLastGood)).toBe(false);
 		expect(existsSync(firstPaths.appliedState)).toBe(false);
 
@@ -2764,6 +2771,9 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(upgradeCommits).toBe(0);
 		expect(rollbackCalls).toBe(failure === "activation" ? 1 : 0);
 		expectSnapshot(previous);
+		expect(
+			JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", upgradePaths), "utf-8")),
+		).toMatchObject({ generation: failure === "activation" ? 2 : 1 });
 		expect(readRuntimeAppliedState(upgradePaths)?.generation).toBe(1);
 		expect(JSON.parse(readFileSync(upgradePaths.manifestLastGood, "utf-8"))).toMatchObject({
 			generation: 1,
@@ -3719,8 +3729,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.runtimeSecretFileRoot, { recursive: true });
+		mkdirSync(paths.systemdEnvRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		chmodSync(paths.runConfigRoot, 0o755);
+		chmodSync(paths.systemdEnvRoot, 0o755);
 		chmodSync(paths.managedSecretRoot, 0o711);
 		chmodSync(paths.runtimeSecretFileRoot, 0o700);
 		writeFileSync(
@@ -3752,14 +3764,20 @@ describe("runtime manifest reconciliation invariants", () => {
 				readFileSync(path),
 			]),
 		);
-		const rootManagedPaths = [paths.managedConfig, join(paths.runConfigRoot, "stale.json")];
+		const rootManagedPaths = [paths.managedConfig];
+		const forwardRunConfig = join(paths.runConfigRoot, "openclaw.json");
 		const forwardRuntimeSecret = join(paths.runtimeSecretFileRoot, "stale.json");
 		const staleUserUnit = join(paths.systemdUserRoot, "clawdi-old.service");
+		const userEnvironment = join(paths.systemdEnvRoot, "openclaw-gateway.service.env");
+		const systemEnvironment = join(paths.systemdEnvRoot, "clawdi-daemon.service.env");
 		for (const [index, path] of [
 			...rootManagedPaths,
+			forwardRunConfig,
 			forwardRuntimeSecret,
 			staleUserUnit,
 			targetConfig,
+			userEnvironment,
+			systemEnvironment,
 		].entries()) {
 			mkdirSync(dirname(path), { recursive: true });
 			writeFileSync(path, path === targetConfig ? '{"mcp":{"servers":{}}}\n' : `old-${index}\n`);
@@ -3767,6 +3785,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		chmodSync(paths.managedConfig, 0o640);
 		const previousManagedStat = statSync(paths.managedConfig);
 		const previous = new Map(rootManagedPaths.map((path) => [path, readFileSync(path)]));
+		const previousSystemEnvironment = readFileSync(systemEnvironment);
 		const manifest = baseManifest(
 			paths,
 			{
@@ -3800,7 +3819,10 @@ describe("runtime manifest reconciliation invariants", () => {
 			expect(readFileSync(path)).toEqual(expected);
 		}
 		expect(existsSync(forwardRuntimeSecret)).toBe(false);
+		expect(readFileSync(forwardRunConfig, "utf-8")).not.toContain("old-");
 		expect(readFileSync(targetConfig, "utf-8")).toBe(forwardConfig);
+		expect(readFileSync(userEnvironment, "utf-8")).not.toContain("old-");
+		expect(readFileSync(systemEnvironment)).toEqual(previousSystemEnvironment);
 		expect(existsSync(staleUserUnit)).toBe(false);
 		expect(existsSync(managedUserDropIn)).toBe(false);
 		expect(readFileSync(siblingUserDropIn)).toEqual(previousSiblingUserDropIn);
@@ -3846,7 +3868,6 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths.manifestLastGood,
 				paths.managedSecretCacheFile,
 				paths.appliedState,
-				paths.runConfigRoot,
 				paths.egressProfileRoot,
 				paths.installInventory,
 				paths.projectionRoot,
@@ -3854,7 +3875,9 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths.managedSecretFile,
 				paths.daemonAuthToken,
 				join(paths.managedSecretRoot, "egress-secrets.json"),
-				paths.systemdEnvRoot,
+				join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
+				join(paths.systemdEnvRoot, "clawdi-daemon.service.env"),
+				join(paths.systemdEnvRoot, "clawdi-runtime-sidecar.service.env"),
 				paths.instanceData,
 				paths.sensitiveInstanceData,
 				paths.egressAddon,
@@ -3890,6 +3913,8 @@ describe("runtime manifest reconciliation invariants", () => {
 			paths.egressScratchRoot,
 			paths.egressCaDir,
 			paths.runtimeSecretFileRoot,
+			paths.systemdEnvRoot,
+			paths.runConfigRoot,
 		]) {
 			expect(snapshotPaths).not.toContain(userWritablePath);
 		}
@@ -3899,13 +3924,35 @@ describe("runtime manifest reconciliation invariants", () => {
 			}
 		}
 
-		mkdirSync(paths.runConfigRoot, { recursive: true });
-		chmodSync(paths.runConfigRoot, 0o777);
+		mkdirSync(paths.projectionRoot, { recursive: true });
+		chmodSync(paths.projectionRoot, 0o777);
 		expect(() =>
 			convergeRuntimeManifest(manifestLoad(baseManifest(paths, {}), "inline-writable-root"), paths),
-		).toThrow(
-			`runtime live-state snapshot directory is group/world writable: ${paths.runConfigRoot}`,
-		);
+		).toThrow(`runtime managed directory is group/world writable: ${paths.projectionRoot}`);
+
+		for (const key of ["runConfigRoot", "systemdEnvRoot"] as const) {
+			const unsafePaths = tempRuntimePaths();
+			mkdirSync(unsafePaths[key], { recursive: true });
+			chmodSync(unsafePaths[key], 0o777);
+			expect(() =>
+				convergeRuntimeManifest(
+					manifestLoad(baseManifest(unsafePaths, {}), `inline-writable-${key}`),
+					unsafePaths,
+				),
+			).toThrow(`runtime managed directory is group/world writable: ${unsafePaths[key]}`);
+		}
+
+		const symlinkPaths = tempRuntimePaths();
+		const redirectedRoot = join(dirname(symlinkPaths.serviceStateRoot), "redirected-run-config");
+		mkdirSync(redirectedRoot, { recursive: true });
+		mkdirSync(dirname(symlinkPaths.runConfigRoot), { recursive: true });
+		symlinkSync(redirectedRoot, symlinkPaths.runConfigRoot);
+		expect(() =>
+			convergeRuntimeManifest(
+				manifestLoad(baseManifest(symlinkPaths, {}), "inline-symlink-run-config"),
+				symlinkPaths,
+			),
+		).toThrow(`runtime managed directory is not a real directory: ${symlinkPaths.runConfigRoot}`);
 	});
 
 	test("rejects a malformed Hermes MCP patch before Apply", () => {

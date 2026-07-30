@@ -660,6 +660,10 @@ interface HostedRuntimeResponseFixture {
 	channelBindings?: RuntimeBundleChannelBinding[];
 }
 
+function testBundleEtag(label: string): string {
+	return `"sha256:${runtimeContentSha256({ testBundleEtag: label })}"`;
+}
+
 function hostedRuntimeBundleResponse(
 	payload: HostedRuntimeResponseFixture,
 	options: { etag?: string; sourceRevision?: string } = {},
@@ -677,8 +681,10 @@ function hostedRuntimeBundleResponse(
 		...TEST_HOSTED_CODEX_SECRET_VALUES,
 		...(payload.secretValues ?? {}),
 	};
+	const etagSourceRevision = options.etag?.match(/^"sha256:([a-f0-9]{64})"$/)?.[1];
 	const sourceRevision =
 		options.sourceRevision ??
+		etagSourceRevision ??
 		runtimeContentSha256({
 			manifest: payload.manifest,
 			channelBindings,
@@ -688,8 +694,8 @@ function hostedRuntimeBundleResponse(
 		throw new Error("hosted runtime bundle fixture sourceRevision must be 64 hex characters");
 	}
 	const etag = options.etag ?? `"sha256:${sourceRevision}"`;
-	if (!/^"[^"]+"$/.test(etag)) {
-		throw new Error("hosted runtime bundle fixture ETag must be a strong quoted validator");
+	if (etag !== `"sha256:${sourceRevision}"`) {
+		throw new Error("hosted runtime bundle fixture ETag must name its sourceRevision");
 	}
 	return new Response(
 		JSON.stringify({
@@ -934,7 +940,7 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 	};
 	const convergence = convergeRuntimeManifest(load, paths);
 	writeTestRuntimeAppliedState(paths, load, convergence, {
-		etag: '"manifest-locale-1"',
+		etag: testBundleEtag("manifest-locale-1"),
 	});
 	return paths;
 }
@@ -1610,7 +1616,7 @@ function writeOfflineStrictAppliedState(
 			schemaVersion: "clawdi.runtimeAppliedState.v2",
 			appliedAt: "2026-07-16T00:01:00.000Z",
 			instanceId: manifest.instanceId,
-			etag: '"transport-etag-offline"',
+			etag: testBundleEtag("transport-etag-offline"),
 			sourceRevision: "a".repeat(64),
 			generation: manifest.generation,
 			manifestETag: OFFLINE_RUNTIME_APPLY_IDENTITY.manifestETag,
@@ -5618,6 +5624,7 @@ exit 64
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_AUTH_TOKEN = "";
+		const currentEtag = testBundleEtag("etag-current");
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		writeFileSync(
 			sourcePath,
@@ -5635,22 +5642,22 @@ exit 64
 				response: () =>
 					new Response(null, {
 						status: 304,
-						headers: { etag: '"etag-current"' },
+						headers: { etag: currentEtag },
 					}),
 			},
 		]);
 
 		try {
 			const loaded = await loadRemoteRuntimeManifest(getRuntimePaths(), {
-				ifNoneMatch: '"etag-current"',
+				ifNoneMatch: currentEtag,
 			});
 
 			expect("notModified" in loaded).toBe(true);
 			if (!("notModified" in loaded)) throw new Error("expected 304 manifest load");
-			expect(loaded.etag).toBe('"etag-current"');
+			expect(loaded.etag).toBe(currentEtag);
 			expect(captured).toHaveLength(1);
 			expect(captured[0].headers.authorization).toBe("Bearer file-runtime-token");
-			expect(captured[0].headers["if-none-match"]).toBe('"etag-current"');
+			expect(captured[0].headers["if-none-match"]).toBe(currentEtag);
 		} finally {
 			restore();
 		}
@@ -5680,7 +5687,7 @@ exit 64
 			channels: [],
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/v1/channels",
-			etag: '"empty-channels"',
+			etag: testBundleEtag("empty-channels"),
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
@@ -5767,7 +5774,7 @@ exit 64
 			],
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/v1/channels",
-			etag: '"channel-secret-boundary"',
+			etag: testBundleEtag("channel-secret-boundary"),
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
@@ -5870,7 +5877,7 @@ exit 64
 			],
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/v1/channels",
-			etag: '"whatsapp-creds"',
+			etag: testBundleEtag("whatsapp-creds"),
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
@@ -5973,7 +5980,7 @@ exit 64
 			channels: [],
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/v1/channels",
-			etag: '"empty-channels"',
+			etag: testBundleEtag("empty-channels"),
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
@@ -6041,7 +6048,7 @@ exit 64
 			],
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/v1/channels",
-			etag: '"channels"',
+			etag: testBundleEtag("channels"),
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(loaded, channels);
@@ -6098,12 +6105,12 @@ exit 0
 						resolveInitialManifestRequest?.();
 						return new Response(null, {
 							status: 304,
-							headers: { etag: '"manifest-locale-1"' },
+							headers: { etag: testBundleEtag("manifest-locale-1") },
 						});
 					}
 					setTimeout(() => abort.abort(), 25);
 					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
-						etag: '"manifest-locale-2"',
+						etag: testBundleEtag("manifest-locale-2"),
 					});
 				},
 			},
@@ -6141,12 +6148,12 @@ exit 0
 			expect(events.map((event) => event.status)).toEqual(["not_modified", "applied"]);
 			expect(events[0].generation).toBe(1);
 			expect(events[0].instanceId).toBe("iid_watch_locale");
-			expect(events[1].etag).toBe('"manifest-locale-2"');
+			expect(events[1].etag).toBe(testBundleEtag("manifest-locale-2"));
 			expect(
 				captured.filter((request) => request.path === "/v1/runtime/manifest")[1].headers[
 					"if-none-match"
 				],
-			).toBe('"manifest-locale-1"');
+			).toBe(testBundleEtag("manifest-locale-1"));
 			const systemctlCalls = readFileSync(systemctlLog, "utf-8").trim().split("\n");
 			expect(systemctlCalls).toContain("--user restart openclaw-gateway.service");
 			expect(systemctlCalls.some((call) => call.includes("reset-failed"))).toBe(false);
@@ -6185,7 +6192,7 @@ exit 0
 					if (manifestCalls === 1) return new Response(null, { status: 304 });
 					setTimeout(() => abort.abort(), 0);
 					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
-						etag: '"manifest-locale-2"',
+						etag: testBundleEtag("manifest-locale-2"),
 					});
 				},
 			},
@@ -6240,7 +6247,7 @@ exit 0
 					}
 					setTimeout(() => abort.abort(), 0);
 					return hostedRuntimeBundleResponse(hostedRuntimeWatchLocalePayload(home, 2), {
-						etag: '"manifest-locale-2"',
+						etag: testBundleEtag("manifest-locale-2"),
 					});
 				},
 			},
@@ -6424,7 +6431,7 @@ fi
 							status: 200,
 							headers: {
 								"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-								etag: '"etag-watch-12"',
+								etag: `"sha256:${"a".repeat(64)}"`,
 							},
 						},
 					),
@@ -6455,7 +6462,7 @@ fi
 			expect(appliedState).toMatchObject({
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				instanceId: "iid_watch",
-				etag: '"etag-watch-12"',
+				etag: `"sha256:${"a".repeat(64)}"`,
 				sourceRevision: "a".repeat(64),
 				generation: 12,
 				manifestETag: '"etag-watch-12"',
@@ -6466,7 +6473,7 @@ fi
 			const event = JSON.parse(logs.at(-1) ?? "{}");
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(12);
-			expect(event.etag).toBe('"etag-watch-12"');
+			expect(event.etag).toBe(`"sha256:${"a".repeat(64)}"`);
 			expect(event.convergence.appliedState).toBe(getRuntimePaths().appliedState);
 			expect(event.systemdUnitsChanged).toBe(true);
 			expect(event.systemdApply).toEqual({
@@ -6485,7 +6492,7 @@ fi
 			const observed = readHostedRuntimeObserved(getRuntimePaths());
 			expect(observed?.status).toBe("ok");
 			expect(observed?.applied).toMatchObject({
-				etag: '"etag-watch-12"',
+				etag: `"sha256:${"a".repeat(64)}"`,
 				sourceRevision: "a".repeat(64),
 				generation: 12,
 				appliedProviderIds: ["default"],
@@ -6532,7 +6539,7 @@ fi
 		const previousUmask = process.umask(0o022);
 		const logs: string[] = [];
 		let generation = 30;
-		let manifestEtag = '"manifest-generation-30"';
+		let manifestEtag = testBundleEtag("manifest-generation-30");
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(dirname(systemctlPath), { recursive: true });
 		writeFileSync(
@@ -6597,7 +6604,7 @@ fi
 			const initialAppliedState = readRuntimeAppliedState(paths);
 			if (!initialAppliedState) throw new Error(logs.join("\n"));
 			expect(initialAppliedState).toMatchObject({
-				etag: '"manifest-generation-30"',
+				etag: testBundleEtag("manifest-generation-30"),
 				generation: 30,
 			});
 			const initialDaemonAuthTokenRevision = initialAppliedState?.daemonAuthTokenRevision;
@@ -6611,7 +6618,7 @@ fi
 
 			expect(process.exitCode ?? 0).toBe(0);
 			expect(watchFetch.captured.slice(requestsBeforeMatchingTuple)).toHaveLength(1);
-			expect(watchFetch.captured.at(-1)?.headers["if-none-match"]).toBe('"manifest-generation-30"');
+			expect(watchFetch.captured.at(-1)?.headers["if-none-match"]).toBe(manifestEtag);
 			expect(JSON.parse(logs.at(-1) ?? "{}").status).toBe("not_modified");
 			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
 
@@ -6632,10 +6639,10 @@ fi
 				watchFetch.captured
 					.slice(requestsBeforeTupleRefresh)
 					.map((request) => request.headers["if-none-match"] ?? null),
-			).toEqual(['"manifest-generation-30"', null]);
+			).toEqual([manifestEtag, null]);
 			expect(readRuntimeAppliedState(paths)).toMatchObject({
 				generation: 30,
-				manifestETag: '"manifest-generation-30"',
+				manifestETag: manifestEtag,
 				applyReceiptId: "apply-receipt-generation-0030-refreshed",
 				bootNonce: "boot-nonce-generation-0002",
 			});
@@ -6643,23 +6650,51 @@ fi
 				/(?:^|\s)(?:daemon-reload|start|restart|stop|enable|disable|reset-failed)(?:\s|$)/m,
 			);
 
-			generation = 31;
-			manifestEtag = '"manifest-generation-31"';
+			const committedBeforeMismatchedGeneration = readFileSync(paths.appliedState, "utf-8");
+			writeFileSync(systemctlLog, "");
 			writeRuntimeApplyIdentityFile(applyIdentityPath, {
-				generation,
-				manifestETag: '"manifest-generation-30"',
+				generation: 31,
+				manifestETag: '"hosted-control-plane-generation-31"',
 				applyReceiptId: "apply-receipt-generation-0031",
 				bootNonce: "boot-nonce-generation-0001",
 			});
 			process.exitCode = undefined;
 			await runtimeWatch({ once: true, json: true });
+
 			expect(process.exitCode).toBe(1);
 			expect(JSON.parse(logs.at(-1) ?? "{}")).toMatchObject({
 				status: "error",
-				stage: "final",
+				mode: "manifest-rejected",
 			});
-			expect(JSON.parse(logs.at(-1) ?? "{}").error).toContain("does not match fetched bundle ETag");
-			expect(readRuntimeAppliedState(getRuntimePaths())?.generation).toBe(30);
+			expect(JSON.parse(logs.at(-1) ?? "{}").error).toContain(
+				"runtime apply identity generation 31 does not match resolved manifest apply generation 30",
+			);
+			expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedBeforeMismatchedGeneration);
+			expect(readFileSync(systemctlLog, "utf-8")).toBe("");
+
+			generation = 31;
+			manifestEtag = testBundleEtag("manifest-generation-31");
+			writeRuntimeApplyIdentityFile(applyIdentityPath, {
+				generation,
+				manifestETag: '"hosted-control-plane-generation-31"',
+				applyReceiptId: "apply-receipt-generation-0031",
+				bootNonce: "boot-nonce-generation-0001",
+			});
+			process.exitCode = undefined;
+			await runtimeWatch({ once: true, json: true });
+			expect(process.exitCode ?? 0).toBe(0);
+			expect(JSON.parse(logs.at(-1) ?? "{}")).toMatchObject({
+				status: "applied",
+				generation: 31,
+				etag: testBundleEtag("manifest-generation-31"),
+			});
+			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
+				etag: testBundleEtag("manifest-generation-31"),
+				generation: 31,
+				manifestETag: '"hosted-control-plane-generation-31"',
+				applyReceiptId: "apply-receipt-generation-0031",
+				bootNonce: "boot-nonce-generation-0001",
+			});
 
 			writeRuntimeApplyIdentityFile(applyIdentityPath, {
 				generation,
@@ -6674,15 +6709,15 @@ fi
 			const event = JSON.parse(logs.at(-1) ?? "{}");
 			expect(event.status).toBe("applied");
 			expect(event.generation).toBe(31);
-			expect(event.etag).toBe('"manifest-generation-31"');
+			expect(event.etag).toBe(manifestEtag);
 			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
-				etag: '"manifest-generation-31"',
+				etag: testBundleEtag("manifest-generation-31"),
 				generation: 31,
-				manifestETag: '"manifest-generation-31"',
+				manifestETag: manifestEtag,
 				applyReceiptId: "apply-receipt-generation-0031",
 				bootNonce: "boot-nonce-generation-0001",
 			});
-			expect(watchFetch.captured).toHaveLength(8);
+			expect(watchFetch.captured).toHaveLength(10);
 			expect(readFileSync(systemctlLog, "utf-8")).not.toContain(
 				"--user restart openclaw-gateway.service",
 			);
@@ -6695,7 +6730,7 @@ fi
 			process.env.STALE_RUNTIME_AUTH_TOKEN = "stale-selected-auth-token";
 			process.env.OPENCLAW_GATEWAY_TOKEN = "stale-process-gateway-token";
 			generation = 32;
-			manifestEtag = '"manifest-generation-32"';
+			manifestEtag = testBundleEtag("manifest-generation-32");
 			writeRuntimeApplyIdentityFile(
 				applyIdentityPath,
 				{
@@ -6713,7 +6748,7 @@ fi
 			const rotatedAppliedState = readRuntimeAppliedState(paths);
 			expect(rotatedAppliedState).toMatchObject({
 				generation: 32,
-				manifestETag: '"manifest-generation-32"',
+				manifestETag: manifestEtag,
 				bootNonce: "boot-nonce-generation-0001",
 			});
 			expect(rotatedAppliedState?.daemonAuthTokenRevision).toMatch(/^[a-f0-9]{64}$/);
@@ -6761,7 +6796,7 @@ fi
 
 			writeFileSync(systemctlLog, "");
 			generation = 33;
-			manifestEtag = '"manifest-generation-33"';
+			manifestEtag = testBundleEtag("manifest-generation-33");
 			writeRuntimeApplyIdentityFile(
 				applyIdentityPath,
 				{
@@ -6781,7 +6816,7 @@ fi
 			expect(process.exitCode ?? 0).toBe(0);
 			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
 				generation: 33,
-				manifestETag: '"manifest-generation-33"',
+				manifestETag: manifestEtag,
 				bootNonce: "boot-nonce-generation-0001",
 			});
 			expect(readSystemdEnvFile(getRuntimePaths(), "openclaw-gateway")).toContain(
@@ -6794,7 +6829,7 @@ fi
 
 			writeFileSync(systemctlLog, "");
 			generation = 34;
-			manifestEtag = '"manifest-generation-34"';
+			manifestEtag = testBundleEtag("manifest-generation-34");
 			writeRuntimeApplyIdentityFile(
 				applyIdentityPath,
 				{
@@ -6832,7 +6867,7 @@ fi
 			const fetchCountBeforeMissingAuth = watchFetch.captured.length;
 			writeFileSync(systemctlLog, "");
 			generation = 35;
-			manifestEtag = '"manifest-generation-35"';
+			manifestEtag = testBundleEtag("manifest-generation-35");
 			writeRuntimeApplyIdentityFile(
 				applyIdentityPath,
 				{
@@ -6902,9 +6937,10 @@ exit 42
 		mkdirSync(paths.runConfigRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		const targetConfig = join(home, ".openclaw", "openclaw.json");
-		const rollbackFixtures = [paths.managedConfig, join(paths.runConfigRoot, "openclaw.json")];
+		const forwardRunConfig = join(paths.runConfigRoot, "openclaw.json");
+		const rollbackFixtures = [paths.managedConfig];
 		const previousUserUnit = join(paths.systemdUserRoot, "clawdi-previous.service");
-		const forwardOnlyFixtures = [previousUserUnit, targetConfig];
+		const forwardOnlyFixtures = [previousUserUnit, targetConfig, forwardRunConfig];
 		const seededFixtures = [...rollbackFixtures, ...forwardOnlyFixtures];
 		for (const [index, path] of seededFixtures.entries()) {
 			mkdirSync(dirname(path), { recursive: true });
@@ -6920,7 +6956,7 @@ exit 42
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: "iid_watch_systemd_failure",
-				etag: '"etag-watch-previous"',
+				etag: testBundleEtag("etag-watch-previous"),
 				sourceRevision: "a".repeat(64),
 				generation: 12,
 				contentIdentity: {
@@ -6979,7 +7015,7 @@ exit 42
 							},
 							secretValues: {},
 						},
-						{ etag: '"etag-watch-systemd-failure"' },
+						{ etag: testBundleEtag("etag-watch-systemd-failure") },
 					),
 			},
 		]);
@@ -7003,6 +7039,7 @@ exit 42
 				if (!expected) throw new Error(`missing rollback fixture for ${path}`);
 				expect(readFileSync(path)).toEqual(expected);
 			}
+			expect(readFileSync(forwardRunConfig, "utf-8")).not.toContain("previous-");
 			expect(existsSync(previousUserUnit)).toBe(false);
 		} finally {
 			restore();
@@ -7082,12 +7119,13 @@ exit 42
 				[channelPlaceholderSecretRef]: "999999999:54db03c2296520629c70cfb6e3b15f8e",
 			},
 		};
-		const manifestResponse = (etag = '"manifest-etag-stable"') =>
+		const stableBundleEtag = `"sha256:${hostedPayload.sourceRevision}"`;
+		const manifestResponse = () =>
 			new Response(JSON.stringify(hostedPayload), {
 				status: 200,
 				headers: {
 					"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-					etag,
+					etag: stableBundleEtag,
 				},
 			});
 
@@ -7153,7 +7191,7 @@ exit 64
 					schemaVersion: "clawdi.runtimeAppliedState.v2",
 					appliedAt: "2026-07-13T00:00:00.000Z",
 					instanceId: "iid_watch_secret",
-					etag: '"manifest-etag-stable"',
+					etag: stableBundleEtag,
 					sourceRevision: "d".repeat(64),
 					generation: 22,
 					contentIdentity: {
@@ -7188,9 +7226,9 @@ exit 64
 					request.headers["if-none-match"]
 						? new Response(null, {
 								status: 304,
-								headers: { etag: '"manifest-etag-stable"' },
+								headers: { etag: stableBundleEtag },
 							})
-						: manifestResponse('"manifest-etag-effective"'),
+						: manifestResponse(),
 			},
 		]);
 
@@ -7201,14 +7239,14 @@ exit 64
 				throw new Error(logs.join("\n"));
 			}
 			expect(watchFetch.captured.map((request) => request.path)).toEqual(["/v1/runtime/manifest"]);
-			expect(watchFetch.captured[0].headers["if-none-match"]).toBe('"manifest-etag-stable"');
+			expect(watchFetch.captured[0].headers["if-none-match"]).toBe(stableBundleEtag);
 			const event = JSON.parse(logs[0]);
 			expect(event.status).toBe("not_modified");
 			expect(event.generation).toBe(22);
-			expect(event.etag).toBe('"manifest-etag-stable"');
+			expect(event.etag).toBe(stableBundleEtag);
 			expect(readRuntimeAppliedState(paths)).toMatchObject({
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
-				etag: '"manifest-etag-stable"',
+				etag: stableBundleEtag,
 				sourceRevision: "d".repeat(64),
 				generation: 22,
 				providerIds: ["clawdi-managed-v2"],
@@ -7295,7 +7333,7 @@ exit 64
 						status: 200,
 						headers: {
 							"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-							etag: '"malformed-bundle"',
+							etag: testBundleEtag("malformed-bundle"),
 						},
 					}),
 				"error",
@@ -7326,13 +7364,15 @@ exit 64
 							},
 							secretValues: {},
 						},
-						{ etag: '"etag-recovered"' },
+						{ etag: testBundleEtag("etag-recovered") },
 					),
 				"applied",
 			);
 
 			expect(recovered.generation).toBe(18);
-			expect(readRuntimeAppliedState(getRuntimePaths())?.etag).toBe('"etag-recovered"');
+			expect(readRuntimeAppliedState(getRuntimePaths())?.etag).toBe(
+				testBundleEtag("etag-recovered"),
+			);
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
 		} finally {
 			console.log = previousLog;
@@ -7714,7 +7754,7 @@ printf 'ActiveState=active\\nSubState=running\\n'
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T06:00:00.000Z",
 				instanceId: "iid-provider-observed",
-				etag: '"provider-observed"',
+				etag: testBundleEtag("provider-observed"),
 				sourceRevision: "a".repeat(64),
 				generation: 9,
 				contentIdentity: {
@@ -7994,7 +8034,7 @@ chmod +x "$prefix/bin/clawdi"
 							},
 							secretValues: {},
 						},
-						{ etag: '"etag-cli-update-13"' },
+						{ etag: testBundleEtag("etag-cli-update-13") },
 					),
 			},
 		]);
@@ -8185,7 +8225,7 @@ exit 0
 				response: () =>
 					hostedRuntimeBundleResponse(
 						hostedEgressSecretRotationPayload(home, mitmproxy, "cold-home-secret", runtime),
-						{ etag: '"cold-home-egress"' },
+						{ etag: testBundleEtag("cold-home-egress") },
 					),
 			},
 		]);
@@ -8237,7 +8277,7 @@ exit 0
 		}
 		expect(readRuntimeAppliedState(paths)).toMatchObject({
 			generation: 41,
-			etag: '"cold-home-egress"',
+			etag: testBundleEtag("cold-home-egress"),
 		});
 	});
 
@@ -8304,7 +8344,7 @@ exit 0
 					response: () =>
 						hostedRuntimeBundleResponse(
 							hostedEgressSecretRotationPayload(home, mitmproxy, initialSecret),
-							{ etag: '"egress-secret-revision-a"' },
+							{ etag: testBundleEtag("egress-secret-revision-a") },
 						),
 				},
 			]);
@@ -8368,7 +8408,7 @@ exit 0
 					response: () =>
 						hostedRuntimeBundleResponse(
 							hostedEgressSecretRotationPayload(home, mitmproxy, initialSecret),
-							{ etag: '"egress-secret-revision-a-retry"' },
+							{ etag: testBundleEtag("egress-secret-revision-a-retry") },
 						),
 				},
 			]);
@@ -8414,7 +8454,7 @@ exit 0
 					response: () =>
 						hostedRuntimeBundleResponse(
 							hostedEgressSecretRotationPayload(home, mitmproxy, rotatedSecret),
-							{ etag: '"egress-secret-revision-b"' },
+							{ etag: testBundleEtag("egress-secret-revision-b") },
 						),
 				},
 			]);
@@ -8496,7 +8536,7 @@ exit 0
 					response: () =>
 						hostedRuntimeBundleResponse(
 							hostedEgressSecretRotationPayload(home, mitmproxy, rejectedSecret),
-							{ etag: '"egress-secret-revision-c"' },
+							{ etag: testBundleEtag("egress-secret-revision-c") },
 						),
 				},
 			]);
@@ -8550,7 +8590,7 @@ exit 0
 								},
 								invalidEngineSecret,
 							),
-							{ etag: '"egress-secret-revision-d"' },
+							{ etag: testBundleEtag("egress-secret-revision-d") },
 						),
 				},
 			]);
@@ -8781,7 +8821,7 @@ fi
 								"provider.default.apiKey": "sk-after-upgrade",
 							},
 						},
-						{ etag: '"etag-cli-egress-2"' },
+						{ etag: testBundleEtag("etag-cli-egress-2") },
 					),
 			},
 		]);
@@ -9620,12 +9660,13 @@ chmod +x "$prefix/bin/clawdi"
 			},
 			secretValues: {},
 		};
+		const bundleEtag = `"sha256:${"a".repeat(64)}"`;
 		writeRuntimeAppliedState(
 			{
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: "iid_cli_self_heal",
-				etag: '"manifest-self-heal"',
+				etag: bundleEtag,
 				sourceRevision: "a".repeat(64),
 				generation: 30,
 				contentIdentity: {
@@ -9645,10 +9686,10 @@ chmod +x "$prefix/bin/clawdi"
 					request.headers["if-none-match"]
 						? new Response(null, {
 								status: 304,
-								headers: { etag: '"manifest-self-heal"' },
+								headers: { etag: bundleEtag },
 							})
 						: hostedRuntimeBundleResponse(manifestPayload, {
-								etag: '"manifest-self-heal"',
+								etag: bundleEtag,
 							}),
 			},
 		]);
@@ -9677,7 +9718,7 @@ chmod +x "$prefix/bin/clawdi"
 				"/v1/runtime/manifest",
 				"/v1/runtime/manifest",
 			]);
-			expect(captured[0].headers["if-none-match"]).toBe('"manifest-self-heal"');
+			expect(captured[0].headers["if-none-match"]).toBe(bundleEtag);
 			expect(captured[1].headers["if-none-match"]).toBeUndefined();
 			const events = logs.map((line) => JSON.parse(line));
 			expect(events.map((event) => event.status)).toEqual(["not_modified", "applied"]);
@@ -9834,7 +9875,7 @@ chmod +x "$HOME/.openclaw/bin/openclaw"
 									"999999999:00000000000000000000000000000000",
 							},
 						},
-						{ etag: '"etag-projection-failed"' },
+						{ etag: testBundleEtag("etag-projection-failed") },
 					),
 			},
 		]);
@@ -9963,7 +10004,7 @@ chmod +x "$prefix/bin/clawdi"
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: "iid_cli_rollback",
-				etag: '"etag-cli-rollback"',
+				etag: testBundleEtag("etag-cli-rollback"),
 				sourceRevision: "a".repeat(64),
 				generation: 18,
 				contentIdentity: {
@@ -9985,7 +10026,7 @@ chmod +x "$prefix/bin/clawdi"
 							manifest,
 							secretValues: {},
 						},
-						{ etag: '"etag-cli-rollback"' },
+						{ etag: testBundleEtag("etag-cli-rollback") },
 					),
 			},
 		]);
@@ -10110,7 +10151,7 @@ chmod +x "$prefix/bin/clawdi"
 							},
 							secretValues: {},
 						},
-						{ etag: '"etag-cli-failed"' },
+						{ etag: testBundleEtag("etag-cli-failed") },
 					),
 			},
 		]);
@@ -10237,7 +10278,7 @@ chmod +x "$prefix/bin/clawdi"
 							},
 							secretValues: {},
 						},
-						{ etag: '"etag-min-cli"' },
+						{ etag: testBundleEtag("etag-min-cli") },
 					),
 			},
 		]);
@@ -10606,7 +10647,7 @@ chmod +x "$prefix/bin/clawdi"
 		const paths = getRuntimePaths();
 		const manifestIdentity = {
 			generation: 1,
-			etag: '"etag-cli-rollback-lifecycle"',
+			etag: testBundleEtag("etag-cli-rollback-lifecycle"),
 			previouslyApplied: true,
 		};
 		const manifestFor = (version: string): RuntimeManifest => ({
@@ -10878,7 +10919,7 @@ exit 64
 									"clawdi_00000000000000000000000000000000",
 							},
 						},
-						{ etag: '"manifest-etag-init-7"' },
+						{ etag: testBundleEtag("manifest-etag-init-7") },
 					),
 			},
 		]);
@@ -10890,7 +10931,7 @@ exit 64
 			expect(captured).toHaveLength(1);
 			expect(captured[0].path).toBe("/v1/runtime/manifest");
 			expect(readRuntimeAppliedState(getRuntimePaths())).toMatchObject({
-				etag: '"manifest-etag-init-7"',
+				etag: testBundleEtag("manifest-etag-init-7"),
 				generation: 7,
 			});
 			expect(existsSync(join(state, "cache", "manifest.etag"))).toBe(false);
@@ -11002,6 +11043,7 @@ exit 64
 				"utf-8",
 			),
 		) as {
+			sourceRevision: string;
 			manifest: {
 				runtime: string;
 				system: Record<string, unknown>;
@@ -11013,6 +11055,11 @@ exit 64
 		const missingSecretRef = bundle.channelBindings[0]?.agentTokenSecretRef;
 		if (!missingSecretRef) throw new Error("golden bundle has no channel binding");
 		delete bundle.secretValues[missingSecretRef];
+		bundle.sourceRevision = runtimeContentSha256({
+			manifest: bundle.manifest,
+			channelBindings: bundle.channelBindings,
+			secretValues: bundle.secretValues,
+		});
 
 		mkdirSync(join(run, "secrets"), { recursive: true });
 		mkdirSync(dirname(policyPath), { recursive: true });
@@ -11046,7 +11093,7 @@ exit 64
 						status: 200,
 						headers: {
 							"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-							etag: '"bundle-malformed-channel-ref"',
+							etag: `"sha256:${bundle.sourceRevision}"`,
 						},
 					}),
 			},
@@ -11171,7 +11218,7 @@ exit 64
 			],
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/v1/channels",
-			etag: '"hermes-channels"',
+			etag: testBundleEtag("hermes-channels"),
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(load, channels, paths);
@@ -11317,7 +11364,7 @@ exit 64
 			],
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/v1/channels",
-			etag: '"hermes-whatsapp"',
+			etag: testBundleEtag("hermes-whatsapp"),
 		};
 
 		const projected = applyRuntimeChannelsToManifestLoad(load, channels);
@@ -11361,7 +11408,7 @@ exit 64
 				channels: [],
 				source: "remote-datasource",
 				sourcePath: "https://runtime.test/v1/channels",
-				etag: '"empty-hermes-whatsapp"',
+				etag: testBundleEtag("empty-hermes-whatsapp"),
 			}),
 			getRuntimePaths(),
 		);
@@ -11473,7 +11520,7 @@ exit 64
 			channels: [],
 			source: "remote-datasource",
 			sourcePath: "https://runtime.test/v1/channels",
-			etag: '"empty-hermes-channels"',
+			etag: testBundleEtag("empty-hermes-channels"),
 		});
 
 		const convergence = convergeRuntimeManifest(projected, getRuntimePaths());
@@ -13700,7 +13747,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: previousManifest.instanceId,
-				etag: '"manifest-generation-1"',
+				etag: testBundleEtag("manifest-generation-1"),
 				sourceRevision: "a".repeat(64),
 				generation: 1,
 				contentIdentity: {
@@ -13996,7 +14043,7 @@ install -D -m 700 '${fixtureBinary}' "$HOME/.openclaw/bin/openclaw"
 				schemaVersion: "clawdi.runtimeAppliedState.v2",
 				appliedAt: "2026-07-13T05:00:00.000Z",
 				instanceId: desiredManifest.instanceId,
-				etag: '"generation-reset-previous"',
+				etag: testBundleEtag("generation-reset-previous"),
 				sourceRevision: "a".repeat(64),
 				generation: 42,
 				contentIdentity: {

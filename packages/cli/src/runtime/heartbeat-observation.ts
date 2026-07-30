@@ -243,6 +243,7 @@ export class HostedRuntimeHeartbeatSession {
 		const snapshot = readHostedRuntimeObserved(this.paths, {
 			reportedAt: capturedAt,
 			appliedState: this.capturedAppliedState,
+			etagAuthority: "control-plane",
 		});
 		if (!snapshot) return null;
 		const event = hostedRuntimeObservedEventSchema.parse({

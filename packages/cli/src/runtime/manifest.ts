@@ -2014,6 +2014,21 @@ function mergeRuntimeServiceEnvWithProviderPlaceholders(
 	};
 }
 
+function resolvedRuntimeServiceSettings(
+	manifest: RuntimeManifest,
+	runtime: RuntimeName,
+	service: RuntimeServiceName,
+	settings: RuntimeRunSettings,
+	providerEnv: Record<string, string>,
+): RuntimeRunSettings {
+	return mergeRuntimeServiceEnvWithProviderPlaceholders(
+		runtime,
+		service,
+		hermesDashboardServiceSettings(manifest, runtime, service, settings),
+		providerEnv,
+	);
+}
+
 function runtimeSecretFilePath(paths: RuntimePaths, runtimeName: string): string {
 	return join(paths.runtimeSecretFileRoot, `${runtimeName}.json`);
 }
@@ -4451,16 +4466,14 @@ export function runtimeProgramRevision(
 	});
 }
 
-function runtimeServiceProgramRevision(
-	manifest: RuntimeManifest,
-	runtime: string,
-	service: string,
-): string {
+function runtimeServiceProgramRevision(program: RuntimeSystemdUserProgram): string {
 	return revisionHash({
-		runtime: runtime,
-		service,
-		settings: manifest.runtimes[runtime]?.services?.[service] ?? null,
-		timezone: manifest.locale?.timezone ?? null,
+		runtime: program.runtime,
+		service: program.service,
+		command: program.command,
+		args: program.args,
+		cwd: program.cwd,
+		env: program.env,
 	});
 }
 
@@ -4659,8 +4672,7 @@ function runtimeSystemdProgramRevision(
 	providerProjectionRevisions: Partial<Record<string, string | null>> = {},
 	runtimeEnvironment: RuntimeEnvironmentAuthority = processRuntimeEnvironment(),
 ): string {
-	if (program.service)
-		return runtimeServiceProgramRevision(manifest, program.runtime, program.service);
+	if (program.service) return runtimeServiceProgramRevision(program);
 	return runtimeProgramRevision(
 		manifest,
 		program.runtime,
@@ -5475,8 +5487,9 @@ function validateRuntimeManifestPlan(manifest: RuntimeManifest, paths: RuntimePa
 			: {};
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
-			const settings = mergeRuntimeServiceEnvWithProviderPlaceholders(
-				name,
+			const settings = resolvedRuntimeServiceSettings(
+				manifest,
+				runtimeName,
 				service,
 				serviceSettings,
 				providerPlaceholderEnv,
@@ -5508,42 +5521,22 @@ function planRuntimeSystemdUserPrograms(input: {
 	for (const [name, runtime] of Object.entries(input.manifest.runtimes).sort(([a], [b]) =>
 		a.localeCompare(b),
 	)) {
-		const runtimeName = runtimeNameSchema.parse(name);
 		const observation = input.observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
-		const providerPlaceholderEnv = runtime.enabled
-			? hostedProviderPlaceholderEnv(input.manifest, name)
-			: {};
-		const providerSecretEnv = runtime.enabled ? hostedProviderSecretEnv(input.manifest, name) : {};
-		const settings = mergeRuntimeEnvWithProviderPlaceholders(
+		const resolved = resolveRuntimeRunConfigs({
+			manifest: input.manifest,
+			paths: input.paths,
 			name,
-			runtime.run,
-			providerPlaceholderEnv,
-		);
-		const secretEnv = runtime.enabled
-			? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
-			: {};
-		const secretFilePath =
-			Object.keys(scopedSecretValues(input.secretValues, Object.values(secretEnv))).length > 0
-				? runtimeSecretFilePath(input.paths, name)
-				: null;
-		const runConfig = buildRuntimeRunConfig({
-			runtime: runtimeName,
-			enabled: runtime.enabled,
-			generatedAt: input.generatedAt,
-			generation: input.manifest.generation,
-			instanceId: input.manifest.instanceId,
-			commandPath: observation.commandPath,
-			appRoot: observation.appRoot,
+			runtime,
+			observation,
 			workspaceRoot: input.workspaceRoot,
+			generatedAt: input.generatedAt,
+			secretValues: input.secretValues,
 			egressProfileBundlePath: input.egressProfileBundlePath,
-			settings,
-			secretFilePath,
-			secretEnv,
 		});
 		if (runtime.enabled && shouldRunRuntime(name, input.manifest)) {
 			const program = buildRuntimeSystemdUserProgram({
-				config: runConfig,
+				config: resolved.runtime,
 				paths: input.paths,
 				secretValues: input.secretValues,
 				runtimeEnvironment: input.runtimeEnvironment,
@@ -5551,37 +5544,7 @@ function planRuntimeSystemdUserPrograms(input: {
 			});
 			if (program) programs.push(program);
 		}
-		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
-			const service = runtimeServiceNameSchema.parse(serviceName);
-			const dashboardSettings = hermesDashboardServiceSettings(
-				input.manifest,
-				runtimeName,
-				service,
-				serviceSettings,
-			);
-			const serviceRunSettings = mergeRuntimeServiceEnvWithProviderPlaceholders(
-				name,
-				service,
-				dashboardSettings,
-				providerPlaceholderEnv,
-			);
-			const serviceSecretEnv = runtime.enabled
-				? mergeRuntimeServiceSecretEnv(name, service, serviceRunSettings, secretEnv)
-				: {};
-			const serviceRunConfig = buildRuntimeRunConfig({
-				runtime: runtimeName,
-				service,
-				enabled: runtime.enabled,
-				generatedAt: input.generatedAt,
-				generation: input.manifest.generation,
-				instanceId: input.manifest.instanceId,
-				commandPath: observation.commandPath,
-				appRoot: observation.appRoot,
-				workspaceRoot: input.workspaceRoot,
-				settings: serviceRunSettings,
-				secretFilePath: null,
-				secretEnv: serviceSecretEnv,
-			});
+		for (const serviceRunConfig of resolved.services) {
 			const program = buildRuntimeSystemdUserProgram({
 				config: serviceRunConfig,
 				paths: input.paths,
@@ -5621,6 +5584,89 @@ function hermesDashboardServiceSettings(
 			HERMES_DASHBOARD_BASIC_AUTH_SECRET: auth.sessionSecretRef,
 		},
 	};
+}
+
+interface ResolvedRuntimeRunConfigs {
+	runtime: RuntimeRunConfig;
+	services: RuntimeRunConfig[];
+	secretEnv: Record<string, string>;
+	secretFilePath: string | null;
+}
+
+function resolveRuntimeRunConfigs(input: {
+	manifest: RuntimeManifest;
+	paths: RuntimePaths;
+	name: string;
+	runtime: RuntimeManifest["runtimes"][string];
+	observation: RuntimeInstallObservation;
+	workspaceRoot: string;
+	generatedAt: string;
+	secretValues: Record<string, string> | undefined;
+	egressProfileBundlePath: string | null;
+}): ResolvedRuntimeRunConfigs {
+	const runtimeName = runtimeNameSchema.parse(input.name);
+	const providerPlaceholderEnv = input.runtime.enabled
+		? hostedProviderPlaceholderEnv(input.manifest, input.name)
+		: {};
+	const providerSecretEnv = input.runtime.enabled
+		? hostedProviderSecretEnv(input.manifest, input.name)
+		: {};
+	assertNoProviderEnvOverlap(input.name, providerPlaceholderEnv, providerSecretEnv);
+	const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
+		input.name,
+		input.runtime.run,
+		providerPlaceholderEnv,
+	);
+	const secretEnv = input.runtime.enabled
+		? mergeRuntimeSecretEnv(input.name, input.runtime, providerSecretEnv)
+		: {};
+	const secretFilePath =
+		Object.keys(scopedSecretValues(input.secretValues, Object.values(secretEnv))).length > 0
+			? runtimeSecretFilePath(input.paths, input.name)
+			: null;
+	const runtime = buildRuntimeRunConfig({
+		runtime: runtimeName,
+		enabled: input.runtime.enabled,
+		generatedAt: input.generatedAt,
+		generation: input.manifest.generation,
+		instanceId: input.manifest.instanceId,
+		commandPath: input.observation.commandPath,
+		appRoot: input.observation.appRoot,
+		workspaceRoot: input.workspaceRoot,
+		egressProfileBundlePath: input.egressProfileBundlePath,
+		settings: runtimeRunSettings,
+		secretFilePath,
+		secretEnv,
+	});
+	const services = Object.entries(input.runtime.services ?? {})
+		.sort(([left], [right]) => left.localeCompare(right))
+		.map(([serviceName, serviceSettings]) => {
+			const service = runtimeServiceNameSchema.parse(serviceName);
+			const settings = resolvedRuntimeServiceSettings(
+				input.manifest,
+				runtimeName,
+				service,
+				serviceSettings,
+				providerPlaceholderEnv,
+			);
+			return buildRuntimeRunConfig({
+				runtime: runtimeName,
+				service,
+				enabled: input.runtime.enabled,
+				generatedAt: input.generatedAt,
+				generation: input.manifest.generation,
+				instanceId: input.manifest.instanceId,
+				commandPath: input.observation.commandPath,
+				appRoot: input.observation.appRoot,
+				workspaceRoot: input.workspaceRoot,
+				settings,
+				secretFilePath: null,
+				secretEnv: input.runtime.enabled
+					? mergeRuntimeServiceSecretEnv(input.name, service, settings, secretEnv)
+					: {},
+			});
+		});
+	return { runtime, services, secretEnv, secretFilePath };
 }
 
 function validateRuntimeSystemdProgramsPlan(programs: RuntimeSystemdUserProgram[]): void {
@@ -5714,7 +5760,6 @@ export function runtimeLiveSnapshotPaths(
 		paths.manifestLastGood,
 		paths.managedSecretCacheFile,
 		paths.appliedState,
-		paths.runConfigRoot,
 		paths.egressProfileRoot,
 		paths.installInventory,
 		paths.projectionRoot,
@@ -5722,7 +5767,6 @@ export function runtimeLiveSnapshotPaths(
 		paths.managedSecretFile,
 		paths.daemonAuthToken,
 		egressSecretFilePath(paths),
-		paths.systemdEnvRoot,
 		paths.instanceData,
 		paths.sensitiveInstanceData,
 		paths.egressAddon,
@@ -5732,9 +5776,40 @@ export function runtimeLiveSnapshotPaths(
 	]);
 	for (const name of ["clawdi-runtime-watch", "clawdi-daemon", "clawdi-runtime-sidecar"]) {
 		result.add(join(paths.systemdSystemRoot, systemdUnitFileName(name)));
+		result.add(systemdEnvironmentFilePath(paths, name));
 	}
 	addExistingManagedSystemdSystemPaths(paths, result);
 	return [...result].sort();
+}
+
+function runtimeManagedDirectoryPaths(manifest: RuntimeManifest, paths: RuntimePaths): string[] {
+	return [
+		paths.runConfigRoot,
+		paths.systemdEnvRoot,
+		paths.egressProfileRoot,
+		paths.installInventory,
+		paths.projectionRoot,
+		join(paths.instanceRoot, manifest.instanceId),
+	];
+}
+
+function assertRuntimeManagedDirectoryTrusted(path: string): void {
+	let stat: ReturnType<typeof lstatSync>;
+	try {
+		stat = lstatSync(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!stat.isDirectory() || stat.isSymbolicLink()) {
+		throw new Error(`runtime managed directory is not a real directory: ${path}`);
+	}
+	if ((stat.mode & 0o022) !== 0) {
+		throw new Error(`runtime managed directory is group/world writable: ${path}`);
+	}
+	if (runningAsRoot() && stat.uid !== 0) {
+		throw new Error(`runtime managed directory is not root-owned: ${path}`);
+	}
 }
 
 function runtimeLiveSnapshotMetadataPaths(snapshotPaths: readonly string[]): string[] {
@@ -5823,6 +5898,9 @@ function captureRuntimeLiveSnapshot(
 	paths: RuntimePaths,
 	workspaceRoot: string,
 ): RuntimeLiveSnapshot {
+	for (const path of runtimeManagedDirectoryPaths(manifest, paths)) {
+		assertRuntimeManagedDirectoryTrusted(path);
+	}
 	const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths, workspaceRoot);
 	return {
 		entries: new Map([
@@ -5924,6 +6002,7 @@ function validateRuntimeProjectionPlan(input: {
 	)) {
 		const observation = observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
+		const runtimeName = runtimeNameSchema.parse(name);
 		const providerPlaceholderEnv = runtime.enabled
 			? hostedProviderPlaceholderEnv(manifest, name)
 			: {};
@@ -5936,8 +6015,9 @@ function validateRuntimeProjectionPlan(input: {
 		scopedSecretValues(secretValues, Object.values(secretEnv));
 		for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
 			const service = runtimeServiceNameSchema.parse(serviceName);
-			const settings = mergeRuntimeServiceEnvWithProviderPlaceholders(
-				name,
+			const settings = resolvedRuntimeServiceSettings(
+				manifest,
+				runtimeName,
 				service,
 				serviceSettings,
 				providerPlaceholderEnv,
@@ -6512,72 +6592,36 @@ export function convergeRuntimeManifest(
 			if (installErrors.length > 0) {
 				throw new Error(installErrors.join("; "));
 			}
-			const runtimeName = runtimeNameSchema.parse(name);
-			const providerPlaceholderEnv = runtime.enabled
-				? hostedProviderPlaceholderEnv(manifest, name)
-				: {};
-			const providerSecretEnv = runtime.enabled ? hostedProviderSecretEnv(manifest, name) : {};
-			assertNoProviderEnvOverlap(name, providerPlaceholderEnv, providerSecretEnv);
-			const runtimeRunSettings = mergeRuntimeEnvWithProviderPlaceholders(
+			const resolved = resolveRuntimeRunConfigs({
+				manifest,
+				paths,
 				name,
-				runtime.run,
-				providerPlaceholderEnv,
-			);
-			const secretEnv = runtime.enabled
-				? mergeRuntimeSecretEnv(name, runtime, providerSecretEnv)
-				: {};
+				runtime,
+				observation,
+				workspaceRoot,
+				generatedAt,
+				secretValues,
+				egressProfileBundlePath,
+			});
 			const runtimeProviderSecretFile = writeRuntimeProviderSecretFile(
 				name,
 				secretValues,
-				secretEnv,
+				resolved.secretEnv,
 				paths,
 			);
+			if (runtimeProviderSecretFile !== resolved.secretFilePath) {
+				throw new Error(`runtime ${name} secret projection did not match its resolved plan`);
+			}
 			if (runtimeProviderSecretFile) writtenRuntimeSecretIds.add(name);
-			const runConfig = buildRuntimeRunConfig({
-				runtime: runtimeName,
-				enabled: runtime.enabled,
-				generatedAt,
-				generation: manifest.generation,
-				instanceId: manifest.instanceId,
-				commandPath: observation.commandPath,
-				appRoot: observation.appRoot,
-				workspaceRoot,
-				egressProfileBundlePath,
-				settings: runtimeRunSettings,
-				secretFilePath: runtimeProviderSecretFile,
-				secretEnv,
-			});
-			const runConfigPath = writeRuntimeRunConfig(runConfig, paths);
+			const runConfigPath = writeRuntimeRunConfig(resolved.runtime, paths);
 			runConfigs.push(runConfigPath);
-			writtenRunConfigIds.add(runtimeRunConfigId(runtimeName));
-			for (const [serviceName, serviceSettings] of Object.entries(runtime.services ?? {})) {
-				const service = runtimeServiceNameSchema.parse(serviceName);
-				const serviceRunSettings = mergeRuntimeServiceEnvWithProviderPlaceholders(
-					name,
-					service,
-					serviceSettings,
-					providerPlaceholderEnv,
-				);
-				const serviceSecretEnv = runtime.enabled
-					? mergeRuntimeServiceSecretEnv(name, service, serviceRunSettings, secretEnv)
-					: {};
-				const serviceRunConfig = buildRuntimeRunConfig({
-					runtime: runtimeName,
-					service,
-					enabled: runtime.enabled,
-					generatedAt,
-					generation: manifest.generation,
-					instanceId: manifest.instanceId,
-					commandPath: observation.commandPath,
-					appRoot: observation.appRoot,
-					workspaceRoot,
-					settings: serviceRunSettings,
-					secretFilePath: null,
-					secretEnv: serviceSecretEnv,
-				});
+			writtenRunConfigIds.add(runtimeRunConfigId(resolved.runtime.runtime));
+			for (const serviceRunConfig of resolved.services) {
 				const serviceRunConfigPath = writeRuntimeRunConfig(serviceRunConfig, paths);
 				runConfigs.push(serviceRunConfigPath);
-				writtenRunConfigIds.add(runtimeRunConfigId(runtimeName, service));
+				writtenRunConfigIds.add(
+					runtimeRunConfigId(serviceRunConfig.runtime, serviceRunConfig.service),
+				);
 			}
 
 			const semaphorePath = join(semRoot, `${name}.enabled`);

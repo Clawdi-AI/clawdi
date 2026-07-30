@@ -615,6 +615,18 @@ describe("runtime manifest services", () => {
 		expect(dashboardEnv).toContain(
 			'HERMES_DASHBOARD_PUBLIC_URL="https://agent.example.test/hermes"',
 		);
+		const dashboardRunConfig = JSON.parse(
+			readFileSync(runtimeRunConfigPath("hermes", paths, "dashboard"), "utf8"),
+		) as { env?: Record<string, string>; secretEnv?: Record<string, string> };
+		expect(dashboardRunConfig.env).toMatchObject({
+			HERMES_DASHBOARD_BASIC_AUTH_USERNAME: "admin",
+			HERMES_DASHBOARD_BASIC_AUTH_TTL_SECONDS: "43200",
+			HERMES_DASHBOARD_PUBLIC_URL: "https://agent.example.test/hermes",
+		});
+		expect(dashboardRunConfig.secretEnv).toMatchObject({
+			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
+			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+		});
 		expect(gatewayEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
 		expect(gatewayEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
 		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"');

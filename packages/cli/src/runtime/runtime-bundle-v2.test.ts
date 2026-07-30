@@ -921,13 +921,14 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
 		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
 		const paths = getRuntimePaths({ mode: "hosted" });
+		const sourceRevision = "da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1";
 		globalThis.fetch = Object.assign(
 			async () =>
 				new Response(readFileSync(goldenPath, "utf-8"), {
 					status: 200,
 					headers: {
 						"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-						etag: '"bundle-golden"',
+						etag: `"sha256:${sourceRevision}"`,
 					},
 				}),
 			{ preconnect: () => undefined },
@@ -935,11 +936,37 @@ describe("hosted runtime bundle v2", () => {
 
 		const loaded = await loadRemoteRuntimeManifest(paths);
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
-		expect(loaded.etag).toBe('"bundle-golden"');
-		expect(loaded.sourceRevision).toBe(
-			"da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1",
-		);
+		expect(loaded.etag).toBe(`"sha256:${sourceRevision}"`);
+		expect(loaded.sourceRevision).toBe(sourceRevision);
 		expect(loaded.channelBindings).toHaveLength(1);
+	});
+
+	test("rejects a bundle whose HTTP validator does not name its source revision", async () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-runtime-bundle-authority-"));
+		roots.push(root);
+		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
+		process.env.CLAWDI_RUN_DIR = join(root, "run");
+		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
+		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
+		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
+		globalThis.fetch = Object.assign(
+			async () =>
+				new Response(readFileSync(goldenPath, "utf-8"), {
+					status: 200,
+					headers: {
+						"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
+						etag: '"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"',
+					},
+				}),
+			{ preconnect: () => undefined },
+		);
+
+		const loaded = await loadRemoteRuntimeManifest(getRuntimePaths({ mode: "hosted" }));
+		expect(loaded).toMatchObject({ mode: "manifest-rejected", stage: "network" });
+		expect("errors" in loaded ? loaded.errors.join("\n") : "").toContain(
+			"does not match its sourceRevision validator",
+		);
 	});
 
 	test("caches the effective projected manifest and complete active secret union", () => {
@@ -992,6 +1019,7 @@ describe("hosted runtime bundle v2", () => {
 		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const goldenRaw = JSON.parse(readFileSync(goldenPath, "utf-8")) as {
+			sourceRevision: string;
 			manifest: { egressEngine: { version: string; sha256: string } };
 		};
 		const goldenEngine = goldenRaw.manifest.egressEngine;
@@ -1017,7 +1045,7 @@ describe("hosted runtime bundle v2", () => {
 					status: 200,
 					headers: {
 						"content-type": HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE,
-						etag: '"bundle-golden"',
+						etag: `"sha256:${goldenRaw.sourceRevision}"`,
 					},
 				});
 			},

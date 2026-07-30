@@ -58,7 +58,11 @@ import {
 	withRuntimeConvergeLockAsync,
 } from "../runtime/manifest";
 import { manifestSchema as runtimeDesiredStateSchema } from "../runtime/manifest-contract";
-import { loadRemoteRuntimeManifest, type RuntimeManifestLoad } from "../runtime/manifest-source";
+import {
+	loadRemoteRuntimeManifest,
+	type RuntimeManifestFailure,
+	type RuntimeManifestLoad,
+} from "../runtime/manifest-source";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../runtime/paths";
 import {
 	buildRuntimeBootStatus,
@@ -1321,11 +1325,8 @@ export function commitRuntimeAppliedState(input: {
 			`runtime apply identity generation ${input.applyIdentity.generation} does not match resolved manifest apply generation ${resolveRuntimeApplyGeneration(input.convergence.manifest)}`,
 		);
 	}
-	if (input.applyIdentity && input.applyIdentity.manifestETag !== input.etag) {
-		throw new Error(
-			`runtime apply identity manifest ETag ${input.applyIdentity.manifestETag} does not match fetched bundle ETag ${input.etag}`,
-		);
-	}
+	// The apply identity names the Hosted control-plane snapshot; `etag` names
+	// the independently rendered runtime bundle. Persist both authorities.
 	const providerIds = runtimeSourceProviderIds(input.load.manifest);
 	input.convergence.outputs.manifestLastGood = cacheRuntimeSourceManifest(input.load, input.paths);
 	input.convergence.outputs.appliedState = writeRuntimeAppliedState(
@@ -2429,6 +2430,18 @@ async function runtimeWatchTickAfterCliReconciliation(
 	try {
 		const fresh =
 			"notModified" in manifestLoad ? await loadFullRuntimeManifestForWatch(paths) : manifestLoad;
+		if ("errors" in fresh) {
+			return {
+				schemaVersion: "clawdi.runtimeWatchEvent.v1",
+				status: "error",
+				mode: fresh.mode,
+				stage: fresh.stage,
+				errors: fresh.errors,
+				error: fresh.errors[0],
+				activeGeneration: fresh.activeGeneration ?? null,
+				rejectedGeneration: fresh.rejectedGeneration ?? null,
+			};
+		}
 		const loaded = applyRuntimeBundleChannelsToManifestLoad(fresh, paths);
 		const bundleEtag = loaded.etag;
 		const sourceRevision = loaded.sourceRevision;
@@ -2751,13 +2764,10 @@ function maybeRollbackFailedCliUpgrade(
 
 async function loadFullRuntimeManifestForWatch(
 	paths: ReturnType<typeof getRuntimePaths>,
-): Promise<RuntimeManifestLoad> {
+): Promise<RuntimeManifestLoad | RuntimeManifestFailure> {
 	const loaded = await loadRemoteRuntimeManifest(paths);
 	if ("notModified" in loaded) {
 		throw new Error("runtime manifest datasource returned 304 without If-None-Match");
-	}
-	if ("errors" in loaded) {
-		throw new Error(loaded.errors.join("; "));
 	}
 	return loaded;
 }
