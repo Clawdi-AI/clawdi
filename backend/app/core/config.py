@@ -115,7 +115,7 @@ class Settings(BaseSettings):
         deployment that passes the key through one delivers `\n` as two
         characters, which no PEM parser accepts.
         """
-        return value.replace("\\n", "\n")
+        return value.replace("\\\\n", "\n").replace("\\n", "\n")
 
     @field_validator("clerk_jwt_issuer")
     @classmethod
