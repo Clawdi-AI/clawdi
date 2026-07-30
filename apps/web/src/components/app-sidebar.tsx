@@ -1586,8 +1586,7 @@ export function AppSidebar({
 		},
 		[],
 	);
-	const showCloudFeatures =
-		hydrated && IS_HOSTED && (hostedAccess.canCreateCloudAgents || hostedAccess.status === "error");
+	const showCloudFeatures = hydrated && IS_HOSTED && hostedAccess.canCreateCloudAgents;
 	const agentRoute = parseAgentPathname(pathname);
 	const activeAgentId = agentRoute?.agentId ?? null;
 	const activeDeploymentSelector = agentRoute ? agentDeploymentSelector(routeSearch) : null;

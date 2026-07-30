@@ -165,15 +165,6 @@ export type {
 } from "@/hosted/hosted-agent-resolution";
 export { resolveAgentDeployment } from "@/hosted/hosted-agent-resolution";
 
-export function useCreateTerminalSession() {
-	const client = useBillingClient();
-	return useMutation({
-		mutationFn: (vars: { id: string }) => client.createTerminalSession(vars.id),
-		onError: (error) =>
-			toast.error("Couldn't open terminal", { description: deploymentMutationErrorMessage(error) }),
-	});
-}
-
 export function useDeploymentLifecycle() {
 	const client = useBillingClient();
 	const qc = useQueryClient();

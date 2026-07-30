@@ -111,9 +111,7 @@ export function WalletPage() {
 				const status = paymentIntent?.status;
 				showWalletTopupReturnToast(walletTopupReturnToast(status));
 				invalidateWalletActivity(queryClient);
-				if (status === "succeeded") {
-					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null);
-				} else if (status === "processing" || status === "requires_capture") {
+				if (status === "succeeded" || status === "processing" || status === "requires_capture") {
 					void confirmWalletTopup(queryClient, paymentIntent?.id ?? null);
 				}
 			} catch {
