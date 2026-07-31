@@ -190,13 +190,14 @@ describe("derivedProviderFields", () => {
 	test("uses explicit protocol contracts for Kimi Code and Kimi API products", () => {
 		const kimi = testPreset("kimi-coding");
 		expect(kimi.label).toBe("Kimi Code");
-		expect(kimi.catalog[0]?.alias).toBe("Kimi K2.7 Code");
+		expect(kimi.catalog.map((model) => model.id)).toEqual(["k3-256k", "k3", "kimi-for-coding"]);
+		expect(kimi.catalog[0]?.alias).toBe("Kimi K3 (256K)");
 		expect(providerTypeForPreset(kimi)).toBe("anthropic");
 		expect(derivedProviderFields("anthropic", "api_key", kimi)).toEqual({
 			baseUrl: "https://api.kimi.com/coding",
 			apiMode: "anthropic_messages",
 			runtimeEnv: "KIMI_CODING_API_KEY",
-			modelsText: "kimi-for-coding",
+			modelsText: "k3-256k\nk3\nkimi-for-coding",
 		});
 
 		const moonshot = testPreset("moonshot");
@@ -258,6 +259,11 @@ describe("derivedProviderFields", () => {
 		expect(providerPresetRegion(testPreset("stepfun"), "cn")?.api_key_url).toBe(
 			"https://platform.stepfun.com/interface-key",
 		);
+		expect(providerPresetRegion(testPreset("qwen-dashscope"), "global")).toMatchObject({
+			label: "Singapore",
+			base_url: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+			api_key_url: "https://modelstudio.console.alibabacloud.com/ap-southeast-1?tab=model#/api-key",
+		});
 	});
 
 	test("uses shared defaults for known providers", () => {
@@ -265,7 +271,7 @@ describe("derivedProviderFields", () => {
 			baseUrl: "https://api.openai.com/v1",
 			apiMode: "openai_responses",
 			runtimeEnv: "OPENAI_API_KEY",
-			modelsText: "gpt-5.5\ngpt-5.4\ngpt-5.4-mini",
+			modelsText: "gpt-5.6-sol\ngpt-5.6-terra\ngpt-5.6-luna",
 		});
 		expect(shouldUseCatalogModels("openai", "api_key")).toBe(true);
 	});
@@ -282,7 +288,7 @@ describe("derivedProviderFields", () => {
 			"deepseek-v4-pro",
 		]);
 		expect(testPreset("stepfun").catalog.map((model) => model.id)).toEqual(["step-3.7-flash"]);
-		expect(testPreset("stepfun").catalog[0]?.context_window).toBeUndefined();
+		expect(testPreset("stepfun").catalog[0]?.context_window).toBe(262_144);
 		expect(testPreset("openrouter").catalog.map((model) => model.id)).toEqual([
 			"openrouter/auto-beta",
 			"~openai/gpt-latest",
@@ -295,24 +301,26 @@ describe("derivedProviderFields", () => {
 		expect(testPreset("groq").catalog.map((model) => model.id)).toEqual(["openai/gpt-oss-120b"]);
 
 		const zhipu = testPreset("zhipu-glm");
-		expect(zhipu.catalog.find((model) => model.id === "glm-5.1")?.context_window).toBeUndefined();
-		expect(zhipu.catalog.find((model) => model.id === "glm-4.7")?.context_window).toBeUndefined();
-		expect(
-			testPreset("minimax").catalog.find((model) => model.id === "MiniMax-M2")?.context_window,
-		).toBeUndefined();
+		expect(zhipu.catalog.find((model) => model.id === "glm-5.1")?.context_window).toBe(200_000);
+		expect(zhipu.catalog.find((model) => model.id === "glm-4.7")?.context_window).toBe(200_000);
+		expect(testPreset("minimax").catalog.map((model) => [model.id, model.context_window])).toEqual([
+			["MiniMax-M3", 1_000_000],
+			["MiniMax-M2.7", 204_800],
+		]);
 
 		const mistral = testPreset("mistral");
 		expect(mistral.label).toBe("Mistral AI");
 		expect(mistral.catalog.map((model) => [model.id, model.context_window])).toEqual([
-			["mistral-large-latest", 256_000],
 			["mistral-medium-latest", 256_000],
-			["codestral-latest", 128_000],
+			["mistral-small-latest", 256_000],
+			["mistral-large-latest", 256_000],
 		]);
 
 		const gemini = testPreset("google-gemini-openai");
 		expect(gemini.catalog.map((model) => [model.id, model.context_window])).toEqual([
+			["gemini-3.6-flash", 1_048_576],
 			["gemini-3.5-flash", 1_048_576],
-			["gemini-2.5-pro", 1_048_576],
+			["gemini-3.5-flash-lite", 1_048_576],
 		]);
 	});
 
@@ -321,7 +329,7 @@ describe("derivedProviderFields", () => {
 			baseUrl: "https://api.openai.com/v1",
 			apiMode: "openai_responses",
 			runtimeEnv: "OPENAI_API_KEY",
-			modelsText: "gpt-5.5\ngpt-5.4\ngpt-5.3-codex\ngpt-5.4-mini",
+			modelsText: "gpt-5.6-sol\ngpt-5.6-terra\ngpt-5.6-luna",
 		});
 		expect(shouldUseCatalogModels("openai", "oauth")).toBe(true);
 	});

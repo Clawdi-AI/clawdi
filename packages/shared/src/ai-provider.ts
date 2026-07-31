@@ -162,22 +162,49 @@ const DEFAULT_RUNTIME_ENV_NAME: Partial<Record<AiProviderType, string>> = {
 };
 
 const DEFAULT_MODEL_CATALOG: Partial<Record<AiProviderType, readonly AiProviderModel[]>> = {
-	openai: [{ id: "gpt-5.5" }, { id: "gpt-5.4" }, { id: "gpt-5.4-mini" }],
-	anthropic: [{ id: "claude-sonnet-5" }, { id: "claude-opus-4-6" }, { id: "claude-haiku-4-5" }],
-	openrouter: [
-		{ id: "anthropic/claude-sonnet-5" },
-		{ id: "anthropic/claude-opus-4.6" },
-		{ id: "openai/gpt-5.5" },
+	openai: [
+		{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol", context_window: 1_050_000 },
+		{ id: "gpt-5.6-terra", label: "GPT-5.6 Terra", context_window: 1_050_000 },
+		{ id: "gpt-5.6-luna", label: "GPT-5.6 Luna", context_window: 1_050_000 },
 	],
-	gemini: [{ id: "gemini-2.5-pro" }, { id: "gemini-3.5-flash" }],
-	mistral: [{ id: "mistral-large-latest" }],
+	anthropic: [
+		{ id: "claude-sonnet-5", label: "Claude Sonnet 5", context_window: 1_000_000 },
+		{ id: "claude-opus-5", label: "Claude Opus 5", context_window: 1_000_000 },
+		{ id: "claude-haiku-4-5", label: "Claude Haiku 4.5", context_window: 200_000 },
+	],
+	openrouter: [
+		{ id: "openrouter/auto-beta", label: "Auto Router (Beta)", context_window: 2_000_000 },
+		{ id: "~openai/gpt-latest", label: "OpenAI GPT Latest", context_window: 1_050_000 },
+		{
+			id: "anthropic/claude-sonnet-5",
+			label: "Claude Sonnet 5",
+			context_window: 1_000_000,
+		},
+	],
+	gemini: [
+		{ id: "gemini-3.6-flash", label: "Gemini 3.6 Flash", context_window: 1_048_576 },
+		{ id: "gemini-3.5-flash", label: "Gemini 3.5 Flash", context_window: 1_048_576 },
+		{
+			id: "gemini-3.5-flash-lite",
+			label: "Gemini 3.5 Flash-Lite",
+			context_window: 1_048_576,
+		},
+	],
+	mistral: [
+		{
+			id: "mistral-medium-latest",
+			label: "Mistral Medium 3.5",
+			context_window: 256_000,
+		},
+		{ id: "mistral-small-latest", label: "Mistral Small 4", context_window: 256_000 },
+		{ id: "mistral-large-latest", label: "Mistral Large 3", context_window: 256_000 },
+	],
 };
 
 export const CODEX_OAUTH_MODEL_CATALOG: readonly AiProviderModel[] = [
-	{ id: "gpt-5.5" },
-	{ id: "gpt-5.4" },
-	{ id: "gpt-5.3-codex" },
-	{ id: "gpt-5.4-mini" },
+	{ id: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+	{ id: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
+	{ id: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
 ];
 
 export const CLAWDI_MANAGED_PROVIDER_ID = "clawdi";
