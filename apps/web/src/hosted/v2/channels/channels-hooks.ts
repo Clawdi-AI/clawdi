@@ -162,6 +162,8 @@ export function useCreateChannel() {
 				id: result.id,
 				name: result.name,
 				provider: result.provider,
+				agentLinkId: result.agent_link_id ?? null,
+				agentId: result.agent_id ?? null,
 			};
 		} catch (error) {
 			toastApiError("Couldn't connect channel")(error);
@@ -185,34 +187,6 @@ export function useDeleteChannel() {
 			toast.success("Channel removed");
 		},
 		onError: toastApiError("Couldn't remove channel"),
-	});
-}
-
-export function useLinkAgent(accountId: string) {
-	const api = useApi();
-	const qc = useQueryClient();
-	return useSensitiveAction(async (agentId: string) => {
-		try {
-			const result = unwrap(
-				await api.POST("/v1/channels/{account_id}/agent-links", {
-					params: { path: { account_id: accountId } },
-					body: { agent_id: agentId },
-				}),
-			);
-			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
-			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
-			qc.invalidateQueries({ queryKey: keys.pool });
-			return {
-				id: result.id,
-				account_id: result.account_id,
-				agent_id: result.agent_id,
-				status: result.status,
-				created_at: result.created_at,
-			};
-		} catch (error) {
-			toastApiError("Couldn't link agent")(error);
-			throw error;
-		}
 	});
 }
 
@@ -270,23 +244,6 @@ export function useUnlinkAgentChannel(agentId: string) {
 			toast.success("Channel unlinked");
 		},
 		onError: toastApiError("Couldn't unlink channel"),
-	});
-}
-
-/** Unlink keyed by channel account (for the channel-detail Agents tab). */
-export function useUnlinkChannelAgent(accountId: string) {
-	const editApi = useChannelEditApi();
-	const qc = useQueryClient();
-	return useMutation({
-		mutationFn: (linkId: string) => editApi.unlinkAgent(accountId, linkId),
-		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) });
-			qc.invalidateQueries({ queryKey: ["agent-channel-links"] });
-			qc.invalidateQueries({ queryKey: keys.list });
-			qc.invalidateQueries({ queryKey: keys.pool });
-			toast.success("Agent unlinked");
-		},
-		onError: toastApiError("Couldn't unlink agent"),
 	});
 }
 

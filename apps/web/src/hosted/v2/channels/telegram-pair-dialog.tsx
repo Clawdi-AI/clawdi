@@ -19,9 +19,9 @@ import {
 	pairCodeExpiryLabel,
 	telegramPairDeepLink,
 } from "@/hosted/v2/channels/channel-detail-page.logic";
+import { pairCodeExpired } from "@/hosted/v2/channels/channel-linking.logic";
 import { CopyInline } from "@/hosted/v2/channels/channel-ui";
 import { useCreatePairCode } from "@/hosted/v2/channels/channels-hooks";
-import { pairCodeExpired } from "@/hosted/v2/channels/link-agent-dialog.logic";
 import { cn } from "@/lib/utils";
 
 const TELEGRAM_PAIR_TTL_SECONDS = 900;

@@ -23,4 +23,16 @@ describe("hosted agent detail header", () => {
 		expect(source).toContain("customProviders={availableProviders}");
 		expect(source).toContain("onClick={() => toggleProvider(p.provider_id)}");
 	});
+
+	test("removes the shared runtime dashboard action without removing Console access", () => {
+		const detailSource = readFileSync(
+			new URL("./hosted-agent-detail.tsx", import.meta.url),
+			"utf8",
+		);
+
+		expect(detailSource).not.toContain("const headerActions");
+		expect(detailSource).not.toContain("actions={headerActions}");
+		expect(detailSource).not.toContain("Access {runtimeBrowserUiLabel(runtime)}");
+		expect(detailSource).toContain("<RuntimeUiAccessDialog");
+	});
 });

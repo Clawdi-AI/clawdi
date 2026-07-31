@@ -112,7 +112,9 @@ from app.services.channels import (
     configure_telegram_provider_webhook,
     encrypt_optional_token,
     generate_webhook_secret,
+    get_telegram_bot_username,
     hash_token,
+    normalize_telegram_bot_username,
     store_channel_secrets,
     sync_channel_commands,
     upsert_channel_secrets,
@@ -1151,13 +1153,45 @@ async def admin_update_channel(
         account.status = body.status
     if "visibility" in updates and body.visibility is not None:
         account.visibility = body.visibility
+    current_telegram_bot_username = (
+        normalize_telegram_bot_username(
+            account.config.get("bot_username") if isinstance(account.config, dict) else None
+        )
+        if account.provider == CHANNEL_PROVIDER_TELEGRAM
+        else None
+    )
+    telegram_bot_username = current_telegram_bot_username
     if "provider_token" in updates:
+        if account.provider == CHANNEL_PROVIDER_TELEGRAM and body.provider_token:
+            if current_telegram_bot_username is None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=(
+                        "Telegram bot identity is missing; recreate the channel "
+                        "to replace its token."
+                    ),
+                )
+            telegram_bot_username = await get_telegram_bot_username(body.provider_token)
+            if telegram_bot_username.casefold() != current_telegram_bot_username.casefold():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Telegram provider token belongs to a different bot.",
+                )
         ciphertext, nonce = encrypt_optional_token(body.provider_token)
         account.encrypted_provider_token = ciphertext
         account.provider_token_nonce = nonce
     if "config" in updates:
         await validate_channel_account_config_urls(provider=account.provider, config=body.config)
         account.config = body.config
+    if account.provider == CHANNEL_PROVIDER_TELEGRAM and (
+        "provider_token" in updates or "config" in updates
+    ):
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        if "provider_token" in updates and body.provider_token is None:
+            config.pop("bot_username", None)
+        elif telegram_bot_username is not None:
+            config["bot_username"] = telegram_bot_username
+        account.config = config
     try:
         if "secrets" in updates:
             await upsert_channel_secrets(db, account=account, secrets_by_name=body.secrets)

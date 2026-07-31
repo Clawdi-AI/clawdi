@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 // Fixed upstream contracts are used because this repository does not vendor or
 // execute either runtime. Keep these fixtures aligned with the audited sources:
-// OpenClaw f4a7f2b553d3fd788552f3f3ae1004ecac8b2370
+// OpenClaw npm 2026.7.1-2 (0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c)
 //   src/config/zod-schema.session.ts::SessionSchema
 //   src/routing/session-key.ts::buildAgentPeerSessionKey
-// Hermes 736fc4d86a1acd8c96473aeb55f9c783e2170dca
+// Hermes 0.19.1 main (f3cda0ceb18d8ba7465a6d223098ef0e56c8fee1)
 //   gateway/session.py::build_session_key
 //   gateway/platforms/telegram.py::TelegramAdapter._build_message_event
 

@@ -58,6 +58,7 @@ from app.services.channels import (
     get_channel_secret,
     get_or_create_bot_agent_link,
     get_owned_bot_agent_link,
+    get_strict_v2_hosted_channel_agent_or_409,
     get_usable_channel_account,
     list_owned_active_bot_agent_links,
     parse_pair_command,
@@ -136,7 +137,6 @@ async def create_whatsapp_tenant_credential(
         account=account,
         agent_id=link.agent_id,
         user_id=link.user_id,
-        existing_same_account_link=True,
     )
     stored = await mint_whatsapp_agent_credential(
         db,
@@ -207,12 +207,19 @@ async def _resolve_whatsapp_tenant_link(
     body: WhatsAppTenantCredentialCreate,
 ) -> ChannelBotAgentLink:
     if body.agent_link_id is not None:
-        return await get_owned_bot_agent_link(
+        link = await get_owned_bot_agent_link(
             db,
             account=account,
             link_id=body.agent_link_id,
             user_id=auth.user_id,
         )
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db,
+            user_id=auth.user_id,
+            agent_id=link.agent_id,
+            lock_runtime_fence=True,
+        )
+        return link
     if body.agent_id is not None:
         await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=body.agent_id)
         link, _agent_token = await get_or_create_bot_agent_link(
@@ -221,9 +228,21 @@ async def _resolve_whatsapp_tenant_link(
             agent_id=body.agent_id,
             user_id=auth.user_id,
         )
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db,
+            user_id=auth.user_id,
+            agent_id=link.agent_id,
+            lock_runtime_fence=True,
+        )
         return link
     links = await list_owned_active_bot_agent_links(db, account=account, user_id=auth.user_id)
     if len(links) == 1:
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db,
+            user_id=auth.user_id,
+            agent_id=links[0].agent_id,
+            lock_runtime_fence=True,
+        )
         return links[0]
     detail = "agent_id or agent_link_id is required"
     if len(links) > 1:

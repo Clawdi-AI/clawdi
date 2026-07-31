@@ -19,7 +19,11 @@ from app.models.channel import (
     ChannelMessage,
 )
 from app.services.channel_webhooks import deliver_telegram_agent_webhook
-from app.services.channels import telegram_update_payload
+from app.services.channels import (
+    bot_agent_link_has_provider_cardinality_capability,
+    bot_agent_link_has_strict_v2_authority,
+    telegram_update_payload,
+)
 from app.services.metrics import webhook_ttl_drops
 
 log = logging.getLogger(__name__)
@@ -55,7 +59,7 @@ class ChannelWebhookDeliveryWorker:
                 await db.rollback()
                 return None
             message, account, link = candidate
-            result = await self._deliver_message(message, account, link)
+            result = await self._deliver_message(db, message, account, link)
             await db.commit()
             return result
 
@@ -126,6 +130,7 @@ class ChannelWebhookDeliveryWorker:
 
     async def _deliver_message(
         self,
+        db: AsyncSession,
         message: ChannelMessage,
         account: ChannelAccount,
         link: ChannelBotAgentLink,
@@ -135,6 +140,21 @@ class ChannelWebhookDeliveryWorker:
         if created_at is not None and now - created_at > self._ttl:
             message.delivered_at = now
             webhook_ttl_drops.inc()
+            return ChannelWebhookDeliveryResult(
+                message_id=message.id, delivered=False, expired=True
+            )
+
+        if not await bot_agent_link_has_strict_v2_authority(
+            db,
+            link=link,
+        ) or not await bot_agent_link_has_provider_cardinality_capability(
+            db,
+            account=account,
+            link=link,
+        ):
+            # Historical or retired Links stay listable for cleanup but have no
+            # data-plane authority. Consume old queued work without delivering it.
+            message.delivered_at = now
             return ChannelWebhookDeliveryResult(
                 message_id=message.id, delivered=False, expired=True
             )

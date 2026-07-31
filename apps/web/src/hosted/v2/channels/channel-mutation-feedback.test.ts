@@ -13,16 +13,12 @@ function expectFeedbackBeforeRequest(contents: string, feedback: string, request
 }
 
 describe("channel mutation feedback", () => {
-	test("acknowledges connect and shared-bot link before starting their requests", () => {
+	test("acknowledges bot connection before starting its request", () => {
 		const connect = source("./connect-bot-dialog.tsx");
-		const link = source("./link-agent-dialog.tsx");
 
 		expectFeedbackBeforeRequest(connect, "setSubmitting(true)", "await create.execute(body)");
-		expectFeedbackBeforeRequest(link, "setSubmitting(true)", "await link.execute(agentId)");
 		expect(connect).toContain('{isSubmitting ? "Close" : "Cancel"}');
-		expect(link).toContain('{isSubmitting ? "Close" : "Cancel"}');
 		expect(connect).not.toContain("channelDialogOpenChangeAllowed");
-		expect(link).not.toContain("channelDialogOpenChangeAllowed");
 	});
 
 	test("keeps agent-page link, unlink, and pair-code feedback scoped to the acting control", () => {
@@ -42,7 +38,7 @@ describe("channel mutation feedback", () => {
 		);
 		expectFeedbackBeforeRequest(detail, "setCreatingPairCode(true)", "await pair.execute");
 		expectFeedbackBeforeRequest(pairDialog, "setGenerating(true)", "await pair.execute");
-		expect(detail).toContain("unlinking={unlinkingLinkIds.has(l.id)}");
+		expect(detail).toContain("unlinking={unlinkingLinkIds.has(link.id)}");
 		expect(detail).toContain('linking ? "Linking…" : "Link"');
 		expect(detail).toContain('creatingPairCode ? <Spinner className="size-3.5" />');
 		expect(detail).toContain('"Generating…"');
@@ -54,19 +50,16 @@ describe("channel mutation feedback", () => {
 		expect(pairedChatRow).toContain('unpair.error ? "Retry unpair"');
 	});
 
-	test("uses per-action feedback for detail-page mutations", () => {
+	test("uses per-action feedback for bot-owned detail mutations", () => {
 		const detail = source("./channel-detail-page.tsx");
 
 		for (const [feedback, request] of [
 			["setRemoving(true)", "await del.mutateAsync(id)"],
-			["setUnlinkingLinks((prev)", "await unlink.mutateAsync(linkId)"],
-			["setCreatingCredential(true)", "await create.execute"],
-			["setRevokingCredentials((prev)", "await revoke.mutateAsync"],
 			["setSyncing(true)", "await sync.mutateAsync"],
 		] as const) {
 			expectFeedbackBeforeRequest(detail, feedback, request);
 		}
-		expect(detail).toContain("const isUnlinking = unlinkingLinks.has(link.id)");
-		expect(detail).toContain("revokingCredentials.has(d.credential_id)");
+		expect(detail).not.toContain("useUnlinkChannelAgent");
+		expect(detail).not.toContain("useDeleteChannelBinding");
 	});
 });

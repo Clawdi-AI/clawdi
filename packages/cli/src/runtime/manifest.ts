@@ -3225,7 +3225,7 @@ function applyHostedChannelProjection(
 	}
 	runRuntimeUserCommand(
 		observation.commandPath,
-		["config", "patch", "--stdin"],
+		["config", "patch", "--stdin", ...openClawManagedAccountReplaceArgs(channels)],
 		`${JSON.stringify(openClawManagedChannelsPatch(channels), null, 2)}\n`,
 		home,
 		workspaceRoot,
@@ -3262,7 +3262,7 @@ function hermesManagedChannelsPatch(
 	channels: Record<string, unknown>,
 	cloudApiUrl: string,
 	channelCredentials: unknown,
-): Record<string, Record<string, unknown>> {
+): Record<string, unknown> {
 	const baseUrl = stripTrailingSlash(cloudApiUrl);
 	const telegramEnabled = channelHasAccounts(channels.telegram);
 	const whatsapp = hermesWhatsAppProjection(channels, channelCredentials, baseUrl);
@@ -3304,10 +3304,13 @@ function hermesManagedChannelsPatch(
 					require_mention: false,
 				}
 			: { enabled: false },
+		group_sessions_per_user: telegramEnabled ? false : null,
+		thread_sessions_per_user: telegramEnabled ? false : null,
 		platforms: {
 			telegram: {
 				extra: {
 					group_sessions_per_user: telegramEnabled ? false : null,
+					thread_sessions_per_user: telegramEnabled ? false : null,
 				},
 			},
 			whatsapp: whatsapp
@@ -3384,7 +3387,9 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 	const deleteEntries = openClawManagedChannelDeletes();
 	const runtimeReadyChannels = openClawRuntimeReadyChannels(channels);
 	const usesEnvSecretRefs = openClawManagedChannelUsesEnvSecretRefs(runtimeReadyChannels);
-	const isolatesTelegramDms = channelHasAccounts(runtimeReadyChannels.telegram);
+	const isolatesManagedDms =
+		channelHasAccounts(runtimeReadyChannels.telegram) ||
+		channelHasAccounts(runtimeReadyChannels.discord);
 	return {
 		channels: {
 			...deleteEntries,
@@ -3407,9 +3412,20 @@ function openClawManagedChannelsPatch(channels: Record<string, unknown>): Record
 				}
 			: undefined,
 		session: {
-			dmScope: isolatesTelegramDms ? "per-account-channel-peer" : null,
+			dmScope: isolatesManagedDms ? "per-account-channel-peer" : null,
 		},
 	};
+}
+
+function openClawManagedAccountReplaceArgs(channels: Record<string, unknown>): string[] {
+	const runtimeReadyChannels = openClawRuntimeReadyChannels(channels);
+	const args: string[] = [];
+	for (const provider of OPENCLAW_MANAGED_CHANNELS) {
+		const channel = runtimeReadyChannels[provider];
+		if (!isPlainRecord(channel) || !isPlainRecord(channel.accounts)) continue;
+		args.push("--replace-path", `channels.${provider}.accounts`);
+	}
+	return args;
 }
 
 function openClawRuntimeReadyChannels(channels: Record<string, unknown>): Record<string, unknown> {

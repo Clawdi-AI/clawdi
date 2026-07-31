@@ -41,14 +41,8 @@ export function HealthBadge({ status, className }: { status: string; className?:
 	);
 }
 
-/** Owner / shared access label for pool items. */
-export function AccessBadge({ access }: { access: string }) {
-	const owner = access === "owner";
-	return (
-		<StatusBadge status={owner ? "info" : "neutral"}>
-			{owner ? "Your bot" : "Ready to use"}
-		</StatusBadge>
-	);
+export function isNormalChannelHealth(status: string | null | undefined): boolean {
+	return status?.toLowerCase() === "ok";
 }
 
 const CHANNEL_STATUS_TONE: Record<string, StatusTone> = {
@@ -72,6 +66,10 @@ export function ChannelStatusBadge({ status, className }: { status: string; clas
 			<span className="capitalize">{status}</span>
 		</StatusBadge>
 	);
+}
+
+export function isNormalChannelStatus(status: string | null | undefined): boolean {
+	return ["active", "connected", "paired"].includes(status?.toLowerCase() ?? "");
 }
 
 const DELIVERY_TONE: Record<string, StatusTone> = {

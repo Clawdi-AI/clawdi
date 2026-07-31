@@ -207,7 +207,7 @@ def _add_prefix_colliding_channel(batch: RuntimeSourceBatch) -> None:
     account = ChannelAccount(
         id=PREFIX_COLLISION_ACCOUNT_ID,
         user_id=USER_ID,
-        provider="telegram",
+        provider="discord",
         name="Second bot",
         status="active",
         visibility="private",
@@ -754,10 +754,20 @@ def test_runtime_source_rejects_duplicate_normalized_provider_ref_before_decrypt
     assert decrypt_calls == []
 
 
-def test_runtime_source_rejects_duplicate_channel_ref_before_decrypt(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("provider", "label"),
+    [("telegram", "Telegram"), ("discord", "Discord")],
+)
+def test_runtime_source_rejects_duplicate_provider_accounts_before_decrypt(
+    monkeypatch,
+    provider: str,
+    label: str,
+) -> None:
     from app.services import runtime_source
 
     batch = _batch()
+    account, _link = batch.channels[ENV_ID][0]
+    account.provider = provider
     batch.channels[ENV_ID] = (*batch.channels[ENV_ID], *batch.channels[ENV_ID])
     decrypt_calls: list[tuple[bytes, bytes]] = []
 
@@ -770,8 +780,8 @@ def test_runtime_source_rejects_duplicate_channel_ref_before_decrypt(monkeypatch
     with pytest.raises(
         RuntimeSourceError,
         match=(
-            "Runtime secret reference collision: "
-            rf"secret://channels/telegram/clawdi_{ACCOUNT_ID.hex}/agent-token"
+            rf"This Agent has multiple active {label} bots\. "
+            r"Unlink the extras until only one remains\."
         ),
     ):
         render_runtime_source(

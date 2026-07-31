@@ -18,7 +18,7 @@ import httpx
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.websockets import WebSocketDisconnect
@@ -54,7 +54,10 @@ from app.models.channel import (
     ChannelDelivery,
     ChannelMessage,
     ChannelPairCode,
+    ChannelSecret,
 )
+from app.models.hosted_runtime import HostedRuntimeState
+from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.routes.channel_routers.discord import (
     _DISCORD_GATEWAY_SESSIONS,
     _discord_bound_guild_channels,
@@ -80,6 +83,7 @@ from app.services.channels import (
     parse_pair_command,
     record_discord_dispatch,
     send_provider_outbound_payload,
+    telegram_direct_messages_topic_id_from_update,
     telegram_message_thread_id_from_update,
     wait_for_telegram_updates,
 )
@@ -95,7 +99,12 @@ from app.services.discord_gateway_worker import (
     record_discord_gateway_dispatch,
 )
 from app.services.discord_rate_limiter import DiscordRateLimiter
+from app.services.runtime_observation import retire_runtime_environment
 from app.services.telegram_rate_limiter import telegram_rate_limiter
+from app.services.whatsapp_baileys import (
+    load_or_create_whatsapp_auth_cert,
+    mint_whatsapp_agent_credential,
+)
 
 pytestmark = [pytest.mark.usefixtures("channel_agent"), pytest.mark.committed_db]
 
@@ -155,7 +164,8 @@ async def _create_user_with_channel_agent(
     db_session: AsyncSession,
     *,
     label: str,
-    agent_type: str = "claude_code",
+    agent_type: str = "openclaw",
+    hosted: bool = True,
 ):
     from app.models.project import PROJECT_KIND_ENVIRONMENT, PROJECT_KIND_PERSONAL, Project
     from app.models.session import AgentEnvironment
@@ -199,6 +209,40 @@ async def _create_user_with_channel_agent(
     db_session.add(agent)
     await db_session.flush()
     agent_project.origin_environment_id = agent.id
+    if hosted:
+        deployment_id = f"dep-{uuid4().hex}"
+        db_session.add_all(
+            [
+                HostedRuntimeState(
+                    environment_id=agent.id,
+                    deployment_id=deployment_id,
+                    instance_id=f"instance-{uuid4().hex}",
+                    generation=1,
+                    cli_package_spec="clawdi@0.12.10-beta.57",
+                    locale={"language": "en", "timezone": "UTC"},
+                    system={},
+                    runtimes={
+                        agent_type: {
+                            "enabled": True,
+                            "providerMode": "unmanaged",
+                            "provider_ids": [],
+                            "install": {"source": "official"},
+                        }
+                    },
+                    live_sync={
+                        "enabled": True,
+                        "agents": [{"agentType": agent_type, "environmentId": str(agent.id)}],
+                    },
+                    recovery={"cacheManifest": True, "allowOfflineBoot": True},
+                    tools={},
+                ),
+                V2RuntimeEnvironmentFence(
+                    environment_id=agent.id,
+                    owner_id=user.id,
+                    deployment_id=deployment_id,
+                ),
+            ]
+        )
     await db_session.commit()
     await db_session.refresh(user)
     await db_session.refresh(agent)
@@ -236,6 +280,63 @@ async def _create_admin_channel(
         )
     finally:
         settings.admin_api_key = original_admin_key
+
+
+async def _create_public_telegram_account_for_user(
+    client: httpx.AsyncClient,
+    *,
+    user,
+    label: str,
+) -> dict[str, Any]:
+    response = await _create_admin_channel(
+        client,
+        target_clerk_id=user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"{label}-{uuid4().hex}",
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+async def _seed_existing_channel_link(
+    db_session: AsyncSession,
+    *,
+    account_id: str,
+    agent,
+) -> tuple[ChannelBotAgentLink, str]:
+    """Seed an already-existing Link for tests of legacy provider behavior."""
+    account = await db_session.get(ChannelAccount, UUID(account_id))
+    assert account is not None
+    raw_token = generate_agent_token(account.provider)
+    link = ChannelBotAgentLink(
+        account_id=account.id,
+        user_id=agent.user_id,
+        agent_id=agent.id,
+    )
+    channel_service.store_agent_link_token(link, raw_token)
+    db_session.add(link)
+    await db_session.commit()
+    await db_session.refresh(link)
+    return link, raw_token
+
+
+async def _seed_created_channel_link(
+    db_session: AsyncSession,
+    *,
+    created: dict[str, Any],
+    agent,
+) -> ChannelBotAgentLink:
+    link, raw_token = await _seed_existing_channel_link(
+        db_session,
+        account_id=created["id"],
+        agent=agent,
+    )
+    created.update(
+        agent_id=str(agent.id),
+        agent_link_id=str(link.id),
+        agent_token=raw_token,
+    )
+    return link
 
 
 async def _create_public_channel_with_links(
@@ -514,6 +615,7 @@ async def _create_paired_telegram_channel(
     provider_token: str | None = "123456:telegram-secret",
     config: dict[str, Any] | None = None,
     chat_type: str | None = None,
+    agent_id: UUID | None = None,
 ) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "provider": "telegram",
@@ -523,6 +625,8 @@ async def _create_paired_telegram_channel(
         payload["provider_token"] = provider_token
     if config is not None:
         payload["config"] = config
+    if agent_id is not None:
+        payload["agent_id"] = str(agent_id)
     created = (
         await client.post(
             "/v1/channels",
@@ -605,16 +709,20 @@ async def _create_paired_discord_channel(
     guild_id: str = "discord-guild-1",
     provider_token: str = "discord-provider-token",
     application_id: str = "discord-app-1",
+    agent_id: UUID | None = None,
 ) -> dict[str, Any]:
+    create_payload: dict[str, Any] = {
+        "provider": "discord",
+        "name": name,
+        "provider_token": provider_token,
+        "config": {"application_id": application_id},
+    }
+    if agent_id is not None:
+        create_payload["agent_id"] = str(agent_id)
     created = (
         await client.post(
             "/v1/channels",
-            json={
-                "provider": "discord",
-                "name": name,
-                "provider_token": provider_token,
-                "config": {"application_id": application_id},
-            },
+            json=create_payload,
         )
     ).json()
     pair = (
@@ -1332,7 +1440,7 @@ async def test_env_bound_list_channels_filters_non_v2_runtime_providers(
 
 
 @pytest.mark.asyncio
-async def test_env_bound_channel_etag_is_stable_with_duplicate_sort_keys(
+async def test_env_bound_channel_etag_is_stable(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
@@ -1348,36 +1456,6 @@ async def test_env_bound_channel_etag_is_stable_with_duplicate_sort_keys(
         },
     )
     assert created_response.status_code == 201, created_response.text
-    created_ids = [created_response.json()["id"]]
-
-    other_user, _ = await _create_user_with_channel_agent(db_session, label="runtime-duplicate")
-    other_token_ciphertext, other_token_nonce = encrypt_optional_token("123456:telegram-secret-1")
-    other_agent_token_ciphertext, other_agent_token_nonce = encrypt_optional_token(
-        "telegram-agent-secret-1"
-    )
-    other_account = ChannelAccount(
-        user_id=other_user.id,
-        provider="telegram",
-        name=duplicate_name,
-        encrypted_provider_token=other_token_ciphertext,
-        provider_token_nonce=other_token_nonce,
-        webhook_secret_hash=hash_token("runtime-duplicate-webhook-secret"),
-    )
-    db_session.add(other_account)
-    await db_session.flush()
-    db_session.add(
-        ChannelBotAgentLink(
-            account_id=other_account.id,
-            user_id=seed_user.id,
-            agent_id=channel_agent.id,
-            agent_token_hash=hash_token("telegram-agent-secret-1"),
-            encrypted_agent_token=other_agent_token_ciphertext,
-            agent_token_nonce=other_agent_token_nonce,
-        )
-    )
-    created_ids.append(str(other_account.id))
-    await db_session.commit()
-
     api_key = ApiKey(user_id=seed_user.id, environment_id=channel_agent.id, label="hosted")
     async with _client_for_api_key(db_session, seed_user, api_key) as runtime_client:
         first = await runtime_client.get("/v1/channels")
@@ -1386,8 +1464,7 @@ async def test_env_bound_channel_etag_is_stable_with_duplicate_sort_keys(
         second = await runtime_client.get("/v1/channels", headers={"If-None-Match": etag})
 
     assert second.status_code == 304, second.text
-    listed_ids = [item["id"] for item in first.json()]
-    assert listed_ids == sorted(listed_ids)
+    assert [item["id"] for item in first.json()] == [created_response.json()["id"]]
 
 
 @pytest.mark.asyncio
@@ -1648,9 +1725,10 @@ async def test_public_bot_pool_capacity_rejects_new_agent_links(
         ("hermes", CHANNEL_PROVIDER_TELEGRAM),
         ("hermes", CHANNEL_PROVIDER_DISCORD),
         ("openclaw", CHANNEL_PROVIDER_TELEGRAM),
+        ("openclaw", CHANNEL_PROVIDER_DISCORD),
     ],
 )
-async def test_hosted_agent_rejects_second_link_when_provider_session_is_not_account_aware(
+async def test_hosted_agent_rejects_second_provider_account_but_keeps_existing_link_working(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
@@ -1682,14 +1760,935 @@ async def test_hosted_agent_rejects_second_link_when_provider_session_is_not_acc
             f"/v1/channels/{first_account.json()['id']}/agent-links",
             json={"agent_id": str(agent.id)},
         )
+        idempotent_link = await user_client.post(
+            f"/v1/channels/{first_account.json()['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
         second_link = await user_client.post(
             f"/v1/channels/{second_account.json()['id']}/agent-links",
             json={"agent_id": str(agent.id)},
         )
+        pair_code = await user_client.post(
+            f"/v1/channels/{first_account.json()['id']}/pair-codes",
+            json={"agent_link_id": first_link.json()["id"], "ttl_seconds": 900},
+        )
+        rotated = await user_client.post(
+            f"/v1/channels/{first_account.json()['id']}/agent-links/{first_link.json()['id']}/token"
+        )
+        api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="multi-account")
+        async with _client_for_api_key(db_session, user, api_key) as runtime_client:
+            runtime_channels = await runtime_client.get("/v1/channels")
+    eligible_agent_ids = await channel_service.list_strict_v2_hosted_channel_agent_ids(
+        db_session,
+        user_id=user.id,
+        provider=provider,
+    )
 
     assert first_link.status_code == 201, first_link.text
+    assert idempotent_link.status_code == 201, idempotent_link.text
+    assert idempotent_link.json()["id"] == first_link.json()["id"]
+    assert idempotent_link.json()["agent_token"] is None
     assert second_link.status_code == 409
-    assert second_link.json()["detail"].startswith(f"one-{provider}-link-per-{agent_type}-agent")
+    label = "Telegram" if provider == CHANNEL_PROVIDER_TELEGRAM else "Discord"
+    assert second_link.json()["detail"] == (
+        f"This Agent already has a {label} bot. Unlink it before connecting another."
+    )
+    assert pair_code.status_code == 201, pair_code.text
+    assert pair_code.json()["agent_link_id"] == first_link.json()["id"]
+    assert rotated.status_code == 200, rotated.text
+    assert rotated.json()["agent_token"] != first_link.json()["agent_token"]
+    assert agent.id not in eligible_agent_ids
+    assert runtime_channels.status_code == 200, runtime_channels.text
+    assert [item["id"] for item in runtime_channels.json()] == [first_account.json()["id"]]
+
+
+@pytest.mark.asyncio
+async def test_second_managed_telegram_account_is_rejected_before_provider_io(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="telegram-provider-admission",
+        agent_type="openclaw",
+    )
+    _reset_fake_provider_client({"ok": True, "result": {"username": "AdmissionTestBot"}})
+    monkeypatch.setattr(settings, "public_api_url", "https://cloud.example.test")
+    async with _client_for_user(db_session, user) as user_client:
+        monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+        first = await user_client.post(
+            "/v1/channels",
+            json={
+                "provider": CHANNEL_PROVIDER_TELEGRAM,
+                "name": "telegram-provider-admission-first",
+                "provider_token": "123456:first-token",
+                "agent_id": str(agent.id),
+            },
+        )
+        assert first.status_code == 201, first.text
+        assert [call["url"].rsplit("/", 1)[-1] for call in _FakeProviderClient.calls] == [
+            "getMe",
+            "setWebhook",
+        ]
+        _clear_fake_provider_calls()
+        second = await user_client.post(
+            "/v1/channels",
+            json={
+                "provider": CHANNEL_PROVIDER_TELEGRAM,
+                "name": "telegram-provider-admission-second",
+                "provider_token": "123456:second-token",
+                "agent_id": str(agent.id),
+            },
+        )
+
+    assert second.status_code == 409, second.text
+    assert second.json()["detail"] == (
+        "This Agent already has a Telegram bot. Unlink it before connecting another."
+    )
+    assert _FakeProviderClient.calls == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_second_provider_link_is_serialized(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    first_account = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"concurrent-provider-first-{uuid4().hex}",
+    )
+    second_account = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"concurrent-provider-second-{uuid4().hex}",
+    )
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="concurrent-provider-link",
+        agent_type="openclaw",
+    )
+    session_factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+
+    async def create_link(account_id: str) -> tuple[str, str]:
+        async with session_factory() as session:
+            account = await session.get(ChannelAccount, UUID(account_id))
+            assert account is not None
+            try:
+                link, _token = await channel_service.get_or_create_bot_agent_link(
+                    session,
+                    account=account,
+                    agent_id=agent.id,
+                    user_id=user.id,
+                )
+                await session.commit()
+                return "created", str(link.id)
+            except HTTPException as exc:
+                await session.rollback()
+                return "rejected", str(exc.detail)
+
+    results = await asyncio.gather(
+        create_link(first_account.json()["id"]),
+        create_link(second_account.json()["id"]),
+    )
+
+    assert sorted(result[0] for result in results) == ["created", "rejected"]
+    assert next(detail for outcome, detail in results if outcome == "rejected") == (
+        "This Agent already has a Telegram bot. Unlink it before connecting another."
+    )
+
+
+@pytest.mark.asyncio
+async def test_one_bot_account_can_link_and_pair_chats_to_multiple_agents(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    account_response = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"shared-bot-multiple-agents-{uuid4().hex}",
+    )
+    assert account_response.status_code == 201, account_response.text
+    account = account_response.json()
+    user_a, agent_a = await _create_user_with_channel_agent(db_session, label="shared-bot-a")
+    user_b, agent_b = await _create_user_with_channel_agent(db_session, label="shared-bot-b")
+
+    async with _client_for_user(db_session, user_a) as client_a:
+        link_a = await client_a.post(
+            f"/v1/channels/{account['id']}/agent-links",
+            json={"agent_id": str(agent_a.id)},
+        )
+        pair_a = await client_a.post(
+            f"/v1/channels/{account['id']}/pair-codes",
+            json={"agent_link_id": link_a.json()["id"], "ttl_seconds": 900},
+        )
+    async with _client_for_user(db_session, user_b) as client_b:
+        link_b = await client_b.post(
+            f"/v1/channels/{account['id']}/agent-links",
+            json={"agent_id": str(agent_b.id)},
+        )
+        pair_b = await client_b.post(
+            f"/v1/channels/{account['id']}/pair-codes",
+            json={"agent_link_id": link_b.json()["id"], "ttl_seconds": 900},
+        )
+
+    assert link_a.status_code == 201, link_a.text
+    assert link_b.status_code == 201, link_b.text
+    assert pair_a.status_code == 201, pair_a.text
+    assert pair_b.status_code == 201, pair_b.text
+    for update_id, chat_id, code in (
+        (9101, 501, pair_a.json()["code"]),
+        (9102, 502, pair_b.json()["code"]),
+    ):
+        paired = await client.post(
+            f"/v1/channels/telegram/{account['id']}/webhook",
+            headers={"x-telegram-bot-api-secret-token": account["webhook_secret"]},
+            json={
+                "update_id": update_id,
+                "message": {
+                    "message_id": update_id,
+                    "text": f"/bot_pair {code}",
+                    "chat": {"id": chat_id, "type": "private"},
+                    "from": {"id": chat_id},
+                },
+            },
+        )
+        assert paired.status_code == 200, paired.text
+        assert paired.json()["paired"] is True
+
+    bindings = list(
+        (
+            await db_session.execute(
+                select(ChannelBinding).where(ChannelBinding.account_id == UUID(account["id"]))
+            )
+        ).scalars()
+    )
+    assert {(binding.external_chat_id, binding.bot_agent_link_id) for binding in bindings} == {
+        ("501", UUID(link_a.json()["id"])),
+        ("502", UUID(link_b.json()["id"])),
+    }
+
+
+@pytest.mark.asyncio
+async def test_interrupted_link_archive_is_completed_before_replacement(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"interrupted-link-archive-{uuid4().hex}",
+    )
+    assert created.status_code == 201, created.text
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="interrupted-link-archive",
+        agent_type="openclaw",
+    )
+    interrupted = ChannelBotAgentLink(
+        account_id=UUID(created.json()["id"]),
+        user_id=user.id,
+        agent_id=agent.id,
+        status="archived",
+        archived_at=None,
+    )
+    db_session.add(interrupted)
+    await db_session.commit()
+
+    async with _client_for_user(db_session, user) as user_client:
+        replacement = await user_client.post(
+            f"/v1/channels/{created.json()['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+
+    assert replacement.status_code == 201, replacement.text
+    assert replacement.json()["id"] != str(interrupted.id)
+    await db_session.refresh(interrupted)
+    assert interrupted.archived_at is not None
+
+
+@pytest.mark.asyncio
+async def test_historical_duplicate_managed_accounts_are_visible_but_fail_closed_until_unlinked(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    first = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"historical-duplicate-first-{uuid4().hex}",
+    )
+    second = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"historical-duplicate-second-{uuid4().hex}",
+    )
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="historical-duplicate-managed-accounts",
+        agent_type="openclaw",
+    )
+    first_link, first_token = await _seed_existing_channel_link(
+        db_session,
+        account_id=first.json()["id"],
+        agent=agent,
+    )
+    second_link, second_token = await _seed_existing_channel_link(
+        db_session,
+        account_id=second.json()["id"],
+        agent=agent,
+    )
+    pair_code = ChannelPairCode(
+        account_id=UUID(second.json()["id"]),
+        bot_agent_link_id=second_link.id,
+        user_id=user.id,
+        code_hash=hash_token("PAIRDUPLICATE01"),
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
+    )
+    legacy_binding = ChannelBinding(
+        account_id=UUID(first.json()["id"]),
+        bot_agent_link_id=first_link.id,
+        user_id=user.id,
+        external_chat_id="duplicate-ingress-chat",
+        external_chat_type="private",
+        external_chat_name="Historical duplicate ingress",
+    )
+    db_session.add_all((pair_code, legacy_binding))
+    await db_session.commit()
+    first_account = await db_session.get(ChannelAccount, UUID(first.json()["id"]))
+    second_account = await db_session.get(ChannelAccount, UUID(second.json()["id"]))
+    assert first_account is not None
+    assert second_account is not None
+
+    from app.routes.channel_routers import telegram as telegram_router
+
+    agent_deliveries: list[dict[str, Any]] = []
+
+    async def _record_agent_delivery(_account, _link, payload):
+        agent_deliveries.append(payload)
+        return True
+
+    monkeypatch.setattr(
+        telegram_router,
+        "_deliver_telegram_agent_webhook",
+        _record_agent_delivery,
+    )
+    ingress_delivered = await telegram_router._deliver_telegram_agent_webhook_for_binding(
+        db_session,
+        account=first_account,
+        binding=legacy_binding,
+        payload={"update_id": 99101},
+    )
+
+    claim = await channel_service.claim_pair_code(
+        db_session,
+        account=second_account,
+        raw_code="PAIRDUPLICATE01",
+        external_chat_id="duplicate-account-chat",
+        external_chat_type="private",
+        external_chat_name="Second bot chat",
+        external_user_id="duplicate-user",
+    )
+    await db_session.commit()
+    async with _client_for_user(db_session, user) as user_client:
+        visible_duplicates = await user_client.get(
+            "/v1/channels/agent-links",
+            params={"agent_id": str(agent.id)},
+        )
+        idempotent = await user_client.post(
+            f"/v1/channels/{first.json()['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+        duplicate_pair = await user_client.post(
+            f"/v1/channels/{second.json()['id']}/pair-codes",
+            json={"agent_link_id": str(second_link.id), "ttl_seconds": 900},
+        )
+        duplicate_rotate = await user_client.post(
+            f"/v1/channels/{second.json()['id']}/agent-links/{second_link.id}/token"
+        )
+    api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="duplicate-runtime")
+    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
+        runtime_channels = await runtime_client.get("/v1/channels")
+    first_auth = await client.post(
+        _telegram_bot_path(
+            {"id": first.json()["id"], "agent_token": first_token},
+            "getMe",
+        ),
+        headers={"Authorization": f"Bearer {first_token}"},
+    )
+    second_auth = await client.post(
+        _telegram_bot_path(
+            {"id": second.json()["id"], "agent_token": second_token},
+            "getMe",
+        ),
+        headers={"Authorization": f"Bearer {second_token}"},
+    )
+
+    assert claim.binding is None
+    assert claim.reason == "invalid"
+    assert ingress_delivered is False
+    assert agent_deliveries == []
+    await db_session.refresh(pair_code)
+    assert pair_code.status == PAIR_CODE_STATUS_REVOKED
+    assert visible_duplicates.status_code == 200
+    assert {item["id"] for item in visible_duplicates.json()} == {
+        str(first_link.id),
+        str(second_link.id),
+    }
+    assert idempotent.status_code == 201
+    assert idempotent.json()["id"] == str(first_link.id)
+    remediation = (
+        "This Agent has multiple active Telegram bots. Unlink the extras until only one remains."
+    )
+    assert duplicate_pair.status_code == 409
+    assert duplicate_pair.json()["detail"] == remediation
+    assert duplicate_rotate.status_code == 409
+    assert duplicate_rotate.json()["detail"] == remediation
+    assert runtime_channels.status_code == 409
+    assert runtime_channels.json()["detail"] == remediation
+    assert first_auth.status_code == 409
+    assert first_auth.json()["detail"] == remediation
+    assert second_auth.status_code == 409
+    assert second_auth.json()["detail"] == remediation
+    assert first_link.id != second_link.id
+
+    async with _client_for_user(db_session, user) as user_client:
+        unlinked = await user_client.delete(
+            f"/v1/channels/{second.json()['id']}/agent-links/{second_link.id}"
+        )
+        remaining_links = await user_client.get(
+            "/v1/channels/agent-links",
+            params={"agent_id": str(agent.id)},
+        )
+        rotated = await user_client.post(
+            f"/v1/channels/{first.json()['id']}/agent-links/{first_link.id}/token"
+        )
+    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
+        recovered_runtime_channels = await runtime_client.get("/v1/channels")
+
+    assert unlinked.status_code == 204
+    assert [item["id"] for item in remaining_links.json()] == [str(first_link.id)]
+    assert rotated.status_code == 200, rotated.text
+    assert recovered_runtime_channels.status_code == 200
+    assert [item["id"] for item in recovered_runtime_channels.json()] == [first.json()["id"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", ["codex", "claude_code", "openclaw", "hermes"])
+async def test_channel_agent_link_rejects_agents_without_strict_v2_authority(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    agent_type: str,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label=f"local-{agent_type}",
+        agent_type=agent_type,
+        hosted=False,
+    )
+    account = await _create_public_telegram_account_for_user(
+        client,
+        user=user,
+        label=f"strict-link-{agent_type}",
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        response = await user_client.post(
+            f"/v1/channels/{account['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == channel_service.STRICT_V2_AGENT_LINK_DETAIL
+    links = list(
+        (
+            await db_session.execute(
+                select(ChannelBotAgentLink).where(
+                    ChannelBotAgentLink.account_id == UUID(account["id"]),
+                    ChannelBotAgentLink.agent_id == agent.id,
+                )
+            )
+        ).scalars()
+    )
+    assert links == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent_type", ["openclaw", "hermes"])
+async def test_channel_agent_link_accepts_strict_v2_runtime_agents(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    agent_type: str,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label=f"strict-{agent_type}",
+        agent_type=agent_type,
+    )
+    account = await _create_public_telegram_account_for_user(
+        client,
+        user=user,
+        label=f"strict-link-{agent_type}",
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        response = await user_client.post(
+            f"/v1/channels/{account['id']}/agent-links",
+            json={"agent_id": str(agent.id)},
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["agent_id"] == str(agent.id)
+
+
+@pytest.mark.asyncio
+async def test_channel_link_admission_serializes_behind_runtime_retirement(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    engine,
+    seed_user,
+):
+    created = await _create_admin_channel(
+        client,
+        target_clerk_id=seed_user.clerk_id,
+        provider=CHANNEL_PROVIDER_TELEGRAM,
+        name=f"retirement-admission-{uuid4().hex}",
+    )
+    assert created.status_code == 201, created.text
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="retirement-admission",
+        agent_type="openclaw",
+    )
+    fence = await db_session.get(V2RuntimeEnvironmentFence, agent.id)
+    assert fence is not None
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with session_factory() as retirement_session:
+        await retire_runtime_environment(
+            retirement_session,
+            environment_id=agent.id,
+            expected_deployment_id=fence.deployment_id,
+            retirement_id="channel-link-retirement",
+            owner_id=user.id,
+        )
+
+        async def create_link_after_retirement_lock():
+            async with session_factory() as link_session:
+                account = await link_session.get(ChannelAccount, UUID(created.json()["id"]))
+                assert account is not None
+                return await channel_service.get_or_create_bot_agent_link(
+                    link_session,
+                    account=account,
+                    agent_id=agent.id,
+                    user_id=user.id,
+                )
+
+        pending_link = asyncio.create_task(create_link_after_retirement_lock())
+        await asyncio.sleep(0.05)
+        assert not pending_link.done()
+        await retirement_session.commit()
+
+    with pytest.raises(HTTPException) as rejected:
+        await asyncio.wait_for(pending_link, timeout=5)
+    assert rejected.value.status_code == 409
+    links = list(
+        (
+            await db_session.execute(
+                select(ChannelBotAgentLink).where(
+                    ChannelBotAgentLink.account_id == UUID(created.json()["id"]),
+                    ChannelBotAgentLink.agent_id == agent.id,
+                )
+            )
+        ).scalars()
+    )
+    assert links == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "invalid_authority",
+    [
+        "missing_state",
+        "missing_fence",
+        "retired_fence",
+        "wrong_owner",
+        "wrong_deployment",
+        "runtime_mismatch",
+        "multiple_runtimes",
+        "invalid_runtime",
+    ],
+)
+async def test_strict_v2_channel_agent_authority_fails_closed(
+    db_session: AsyncSession,
+    invalid_authority: str,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label=f"invalid-authority-{invalid_authority}",
+        agent_type="openclaw",
+    )
+    state = await db_session.get(HostedRuntimeState, agent.id)
+    fence = await db_session.get(V2RuntimeEnvironmentFence, agent.id)
+    assert state is not None
+    assert fence is not None
+
+    candidate_state: HostedRuntimeState | None = state
+    candidate_fence: V2RuntimeEnvironmentFence | None = fence
+    if invalid_authority == "missing_state":
+        candidate_state = None
+    elif invalid_authority == "missing_fence":
+        candidate_fence = None
+    elif invalid_authority == "retired_fence":
+        fence.state = "retired"
+    elif invalid_authority == "wrong_owner":
+        fence.owner_id = uuid4()
+    elif invalid_authority == "wrong_deployment":
+        fence.deployment_id = f"other-{uuid4().hex}"
+    elif invalid_authority == "runtime_mismatch":
+        state.runtimes = {"hermes": state.runtimes["openclaw"]}
+    elif invalid_authority == "multiple_runtimes":
+        state.runtimes = {
+            "openclaw": state.runtimes["openclaw"],
+            "hermes": state.runtimes["openclaw"],
+        }
+    elif invalid_authority == "invalid_runtime":
+        state.runtimes = {"openclaw": {"enabled": True, "providerMode": "invalid"}}
+
+    assert not channel_service.is_strict_v2_hosted_channel_agent(
+        agent,
+        candidate_state,
+        candidate_fence,
+    )
+    await db_session.rollback()
+
+
+@pytest.mark.asyncio
+async def test_channel_create_and_cli_fallback_reject_local_agent_without_residual_account(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="local-channel-create",
+        agent_type="openclaw",
+        hosted=False,
+    )
+    explicit_name = f"local-explicit-{uuid4().hex}"
+    cli_name = f"local-cli-{uuid4().hex}"
+    api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="local-cli")
+
+    async with _client_for_user(db_session, user) as user_client:
+        explicit = await user_client.post(
+            "/v1/channels",
+            json={
+                "provider": CHANNEL_PROVIDER_TELEGRAM,
+                "name": explicit_name,
+                "agent_id": str(agent.id),
+            },
+        )
+    async with _client_for_api_key(db_session, user, api_key) as cli_client:
+        cli = await cli_client.post(
+            "/v1/channels",
+            json={"provider": CHANNEL_PROVIDER_TELEGRAM, "name": cli_name},
+        )
+
+    assert explicit.status_code == 409
+    assert cli.status_code == 409
+    assert explicit.json()["detail"] == channel_service.STRICT_V2_AGENT_LINK_DETAIL
+    assert cli.json()["detail"] == channel_service.STRICT_V2_AGENT_LINK_DETAIL
+    accounts = list(
+        (
+            await db_session.execute(
+                select(ChannelAccount).where(
+                    ChannelAccount.user_id == user.id,
+                    ChannelAccount.name.in_([explicit_name, cli_name]),
+                )
+            )
+        ).scalars()
+    )
+    assert accounts == []
+
+
+@pytest.mark.asyncio
+async def test_web_channel_create_does_not_auto_link_sole_local_agent(
+    db_session: AsyncSession,
+):
+    user, _agent = await _create_user_with_channel_agent(
+        db_session,
+        label="local-web-fallback",
+        agent_type="openclaw",
+        hosted=False,
+    )
+    name = f"local-web-{uuid4().hex}"
+
+    async with _client_for_user(db_session, user) as user_client:
+        response = await user_client.post(
+            "/v1/channels",
+            json={"provider": CHANNEL_PROVIDER_TELEGRAM, "name": name},
+        )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["agent_id"] is None
+    assert response.json()["agent_link_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_web_channel_create_explicit_null_does_not_auto_link_sole_cloud_agent(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
+    response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": CHANNEL_PROVIDER_TELEGRAM,
+            "name": f"cloud-inventory-{uuid4().hex}",
+            "agent_id": None,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    created = response.json()
+    assert created["agent_id"] is None
+    assert created["agent_link_id"] is None
+    link = (
+        await db_session.execute(
+            select(ChannelBotAgentLink).where(
+                ChannelBotAgentLink.account_id == UUID(created["id"]),
+                ChannelBotAgentLink.agent_id == channel_agent.id,
+            )
+        )
+    ).scalar_one_or_none()
+    assert link is None
+
+
+@pytest.mark.asyncio
+async def test_pair_code_agent_id_cannot_create_link_for_local_agent(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="local-pair-agent-id",
+        agent_type="openclaw",
+        hosted=False,
+    )
+    account = await _create_public_telegram_account_for_user(
+        client,
+        user=user,
+        label="strict-pair-agent-id",
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        response = await user_client.post(
+            f"/v1/channels/{account['id']}/pair-codes",
+            json={"agent_id": str(agent.id), "ttl_seconds": 900},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == channel_service.STRICT_V2_AGENT_LINK_DETAIL
+    links = list(
+        (
+            await db_session.execute(
+                select(ChannelBotAgentLink).where(
+                    ChannelBotAgentLink.account_id == UUID(account["id"]),
+                    ChannelBotAgentLink.agent_id == agent.id,
+                )
+            )
+        ).scalars()
+    )
+    assert links == []
+
+
+@pytest.mark.asyncio
+async def test_historical_local_link_remains_listable_and_cleanable_but_cannot_pair(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="historical-local-link",
+        agent_type="openclaw",
+        hosted=False,
+    )
+    account_body = await _create_public_telegram_account_for_user(
+        client,
+        user=user,
+        label="historical-local-link",
+    )
+    account_id = UUID(account_body["id"])
+    link = ChannelBotAgentLink(
+        account_id=account_id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    historical_agent_token = generate_agent_token(CHANNEL_PROVIDER_TELEGRAM)
+    channel_service.store_agent_link_token(link, historical_agent_token)
+    db_session.add(link)
+    await db_session.flush()
+    binding = ChannelBinding(
+        account_id=account_id,
+        bot_agent_link_id=link.id,
+        user_id=user.id,
+        external_chat_id="historical-chat",
+        external_chat_type="private",
+        external_chat_name="Cleanup chat",
+    )
+    db_session.add(binding)
+    await db_session.commit()
+
+    api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="historical-local-runtime")
+    async with _client_for_api_key(db_session, user, api_key) as runtime_client:
+        runtime_channels = await runtime_client.get("/v1/channels")
+    bot_api = await client.post(
+        _telegram_bot_path(
+            {"id": str(account_id), "agent_token": historical_agent_token},
+            "getMe",
+        ),
+        headers={"Authorization": f"Bearer {historical_agent_token}"},
+    )
+    inbound = await client.post(
+        f"/v1/channels/telegram/{account_id}/webhook",
+        headers={"x-telegram-bot-api-secret-token": account_body["webhook_secret"]},
+        json={
+            "update_id": 9001,
+            "message": {
+                "message_id": 9002,
+                "text": "must not reach a local runtime",
+                "chat": {"id": "historical-chat", "type": "private"},
+                "from": {"id": 9003, "is_bot": False},
+            },
+        },
+    )
+
+    async with _client_for_user(db_session, user) as user_client:
+        channel_links = await user_client.get(f"/v1/channels/{account_id}/agent-links")
+        agent_links = await user_client.get(
+            "/v1/channels/agent-links",
+            params={"agent_id": str(agent.id)},
+        )
+        bindings = await user_client.get(f"/v1/channels/{account_id}/bindings")
+        pair_by_link = await user_client.post(
+            f"/v1/channels/{account_id}/pair-codes",
+            json={"agent_link_id": str(link.id), "ttl_seconds": 900},
+        )
+        pair_implicit = await user_client.post(
+            f"/v1/channels/{account_id}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+        rotate = await user_client.post(f"/v1/channels/{account_id}/agent-links/{link.id}/token")
+        unpair = await user_client.delete(f"/v1/channels/{account_id}/bindings/{binding.id}")
+        unlink = await user_client.delete(f"/v1/channels/{account_id}/agent-links/{link.id}")
+
+    assert channel_links.status_code == 200
+    assert [item["id"] for item in channel_links.json()] == [str(link.id)]
+    assert agent_links.status_code == 200
+    assert [item["id"] for item in agent_links.json()] == [str(link.id)]
+    assert bindings.status_code == 200
+    assert [item["id"] for item in bindings.json()] == [str(binding.id)]
+    assert pair_by_link.status_code == 409
+    assert pair_implicit.status_code == 409
+    assert rotate.status_code == 409
+    assert pair_by_link.json()["detail"] == channel_service.STRICT_V2_AGENT_LINK_DETAIL
+    assert rotate.json()["detail"] == channel_service.STRICT_V2_AGENT_LINK_DETAIL
+    assert runtime_channels.status_code == 200
+    assert runtime_channels.json() == []
+    assert historical_agent_token not in runtime_channels.text
+    assert bot_api.status_code == 401
+    assert inbound.status_code == 200
+    assert inbound.json()["binding_id"] is None
+    inbound_message = (
+        await db_session.execute(
+            select(ChannelMessage).where(
+                ChannelMessage.account_id == account_id,
+                ChannelMessage.provider_event_id == "update:9001",
+            )
+        )
+    ).scalar_one()
+    assert inbound_message.binding_id is None
+    assert inbound_message.bot_agent_link_id is None
+    assert unpair.status_code == 200, unpair.text
+    assert unpair.json()["unpaired"] is True
+    assert unlink.status_code == 204
+    await db_session.refresh(binding)
+    await db_session.refresh(link)
+    assert binding.status == BINDING_STATUS_ARCHIVED
+    assert link.status == BOT_AGENT_LINK_STATUS_ARCHIVED
+
+
+@pytest.mark.asyncio
+async def test_historical_pending_pair_code_cannot_create_new_chat_binding(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="historical-pending-pair-code",
+        agent_type="openclaw",
+        hosted=False,
+    )
+    account_body = await _create_public_telegram_account_for_user(
+        client,
+        user=user,
+        label="historical-pending-pair-code",
+    )
+    account_id = UUID(account_body["id"])
+    link = ChannelBotAgentLink(
+        account_id=account_id,
+        user_id=user.id,
+        agent_id=agent.id,
+    )
+    db_session.add(link)
+    await db_session.flush()
+    pair_code = ChannelPairCode(
+        account_id=account_id,
+        bot_agent_link_id=link.id,
+        user_id=user.id,
+        code_hash=hash_token("PAIRHISTORICAL01"),
+        expires_at=datetime.now(UTC) + timedelta(minutes=15),
+    )
+    db_session.add(pair_code)
+    await db_session.commit()
+    account = await db_session.get(ChannelAccount, account_id)
+    assert account is not None
+
+    claim = await channel_service.claim_pair_code(
+        db_session,
+        account=account,
+        raw_code="PAIRHISTORICAL01",
+        external_chat_id="new-chat-after-fix",
+        external_chat_type="private",
+        external_chat_name="Must not pair",
+        external_user_id="historical-user",
+    )
+    await db_session.commit()
+
+    assert claim.binding is None
+    assert claim.reason == "invalid"
+    await db_session.refresh(pair_code)
+    assert pair_code.status == PAIR_CODE_STATUS_REVOKED
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == account_id,
+                ChannelBinding.external_chat_id == "new-chat-after-fix",
+            )
+        )
+    ).scalar_one_or_none()
+    assert binding is None
 
 
 @pytest.mark.asyncio
@@ -1778,44 +2777,68 @@ async def test_hosted_runtime_agent_rejects_whatsapp_links_and_tenant_credential
 
 
 @pytest.mark.asyncio
-async def test_openclaw_agent_keeps_multi_link_behavior_for_account_aware_provider(
+async def test_historical_local_whatsapp_link_cannot_mint_tenant_credentials(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
 ):
-    provider = CHANNEL_PROVIDER_DISCORD
-    first_account = await _create_admin_channel(
+    created = await _create_admin_channel(
         client,
         target_clerk_id=seed_user.clerk_id,
-        provider=provider,
-        name=f"openclaw-{provider}-first-{uuid4().hex}",
+        provider=CHANNEL_PROVIDER_WHATSAPP,
+        name=f"historical-local-whatsapp-{uuid4().hex}",
+        config={"phone_number_id": "phone-historical-local"},
     )
-    second_account = await _create_admin_channel(
-        client,
-        target_clerk_id=seed_user.clerk_id,
-        provider=provider,
-        name=f"openclaw-{provider}-second-{uuid4().hex}",
-    )
-    assert first_account.status_code == 201, first_account.text
-    assert second_account.status_code == 201, second_account.text
+    assert created.status_code == 201, created.text
+    account_id = created.json()["id"]
     user, agent = await _create_user_with_channel_agent(
         db_session,
-        label=f"openclaw-{provider}",
+        label="historical-local-whatsapp",
         agent_type="openclaw",
+        hosted=False,
+    )
+    link, _token = await _seed_existing_channel_link(
+        db_session,
+        account_id=account_id,
+        agent=agent,
     )
 
     async with _client_for_user(db_session, user) as user_client:
-        first_link = await user_client.post(
-            f"/v1/channels/{first_account.json()['id']}/agent-links",
-            json={"agent_id": str(agent.id)},
+        by_link = await user_client.post(
+            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
+            json={"agent_link_id": str(link.id)},
         )
-        second_link = await user_client.post(
-            f"/v1/channels/{second_account.json()['id']}/agent-links",
-            json={"agent_id": str(agent.id)},
+        implicit = await user_client.post(
+            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
+            json={},
         )
+        listed_links = await user_client.get(f"/v1/channels/{account_id}/agent-links")
+        listed_credentials = await user_client.get(
+            f"/v1/channels/whatsapp/{account_id}/tenant-creds"
+        )
+        unlink = await user_client.delete(f"/v1/channels/{account_id}/agent-links/{link.id}")
 
-    assert first_link.status_code == 201, first_link.text
-    assert second_link.status_code == 201, second_link.text
+    expected_detail = channel_service.STRICT_V2_AGENT_LINK_DETAIL
+    assert by_link.status_code == 409
+    assert by_link.json()["detail"] == expected_detail
+    assert implicit.status_code == 409
+    assert implicit.json()["detail"] == expected_detail
+    assert listed_links.status_code == 200
+    assert [item["id"] for item in listed_links.json()] == [str(link.id)]
+    assert listed_credentials.status_code == 200
+    assert listed_credentials.json() == []
+    assert unlink.status_code == 204
+    credentials = list(
+        (
+            await db_session.execute(
+                select(ChannelAgentCredential).where(
+                    ChannelAgentCredential.bot_agent_link_id == link.id,
+                    ChannelAgentCredential.revoked_at.is_(None),
+                )
+            )
+        ).scalars()
+    )
+    assert credentials == []
 
 
 @pytest.mark.asyncio
@@ -2090,7 +3113,7 @@ async def test_list_channel_agent_links_by_agent_returns_linked_channel_summarie
         await client.post(
             "/v1/channels",
             json={
-                "provider": "telegram",
+                "provider": "discord",
                 "name": f"agent-links-private-{uuid4().hex}",
                 "agent_id": str(channel_agent.id),
             },
@@ -2271,6 +3294,7 @@ async def test_explicit_cross_account_link_reference_is_rejected(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     channel_agent,
+    second_channel_agent,
 ):
     first = (
         await client.post(
@@ -2278,7 +3302,7 @@ async def test_explicit_cross_account_link_reference_is_rejected(
             json={
                 "provider": "telegram",
                 "name": f"reference-account-first-{uuid4().hex}",
-                "agent_id": str(channel_agent.id),
+                "agent_id": str(second_channel_agent.id),
             },
         )
     ).json()
@@ -2696,23 +3720,46 @@ async def test_public_whatsapp_bot_runtime_credentials_are_user_scoped(
     assert created.status_code == 201, created.text
     account_id = created.json()["id"]
 
-    user_a, agent_a = await _create_user_with_channel_agent(db_session, label="public-wa-a")
-    user_b, _agent_b = await _create_user_with_channel_agent(db_session, label="public-wa-b")
+    user_a, agent_a = await _create_user_with_channel_agent(
+        db_session,
+        label="public-wa-a",
+        agent_type="claude_code",
+        hosted=False,
+    )
+    user_b, _agent_b = await _create_user_with_channel_agent(
+        db_session,
+        label="public-wa-b",
+        agent_type="claude_code",
+        hosted=False,
+    )
+    link_a, _token = await _seed_existing_channel_link(
+        db_session,
+        account_id=account_id,
+        agent=agent_a,
+    )
+    account = await db_session.get(ChannelAccount, UUID(account_id))
+    assert account is not None
+    # Seed historical persisted state directly so this test stays focused on
+    # read isolation; the public create API is intentionally fail-closed.
+    stored = await mint_whatsapp_agent_credential(
+        db_session,
+        account=account,
+        bot_agent_link_id=link_a.id,
+        user_id=user_a.id,
+        phone_user="15551234567",
+    )
+    await db_session.commit()
+    await db_session.refresh(stored.credential)
 
     async with _client_for_user(db_session, user_a) as client_a:
         auth_cert = await client_a.get(f"/v1/channels/whatsapp/{account_id}/auth-cert")
-        credential = await client_a.post(
-            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
-            json={"agent_id": str(agent_a.id), "phone_user": "15551234567"},
-        )
         listed_a = await client_a.get(f"/v1/channels/whatsapp/{account_id}/tenant-creds")
 
     assert auth_cert.status_code == 200
     assert auth_cert.json()["ISSUER"] == "clawdi"
-    assert credential.status_code == 201, credential.text
-    assert credential.json()["agent_id"] == str(agent_a.id)
-    assert credential.json()["auth_cert"]["ISSUER"] == "clawdi"
     assert len(listed_a.json()) == 1
+    assert listed_a.json()[0]["credential_id"] == str(stored.credential.id)
+    assert listed_a.json()[0]["agent_id"] == str(agent_a.id)
 
     async with _client_for_user(db_session, user_b) as client_b:
         listed_b = await client_b.get(f"/v1/channels/whatsapp/{account_id}/tenant-creds")
@@ -2725,7 +3772,7 @@ async def test_public_whatsapp_bot_runtime_credentials_are_user_scoped(
 
 
 @pytest.mark.asyncio
-async def test_env_bound_list_channels_returns_latest_whatsapp_runtime_credential(
+async def test_env_bound_list_channels_hides_historical_local_whatsapp_credentials(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
@@ -2740,21 +3787,44 @@ async def test_env_bound_list_channels_returns_latest_whatsapp_runtime_credentia
     )
     assert created.status_code == 201, created.text
     account_id = created.json()["id"]
-    user, agent = await _create_user_with_channel_agent(db_session, label="runtime-wa-creds")
+    user, agent = await _create_user_with_channel_agent(
+        db_session,
+        label="runtime-wa-creds",
+        agent_type="claude_code",
+        hosted=False,
+    )
+    link, _token = await _seed_existing_channel_link(
+        db_session,
+        account_id=account_id,
+        agent=agent,
+    )
+    account = await db_session.get(ChannelAccount, UUID(account_id))
+    assert account is not None
+    # Seed historical persisted state directly to verify the env-bound read
+    # projection without reopening tenant-credential admission.
+    await load_or_create_whatsapp_auth_cert(db_session, account=account)
+    first = await mint_whatsapp_agent_credential(
+        db_session,
+        account=account,
+        bot_agent_link_id=link.id,
+        user_id=user.id,
+        phone_user="15551234567",
+    )
+    await db_session.commit()
+    second = await mint_whatsapp_agent_credential(
+        db_session,
+        account=account,
+        bot_agent_link_id=link.id,
+        user_id=user.id,
+        phone_user="15557654321",
+    )
+    await db_session.commit()
+    await db_session.refresh(first.credential)
+    await db_session.refresh(second.credential)
 
     async with _client_for_user(db_session, user) as user_client:
-        first = await user_client.post(
-            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
-            json={"agent_id": str(agent.id), "phone_user": "15551234567"},
-        )
-        second = await user_client.post(
-            f"/v1/channels/whatsapp/{account_id}/tenant-creds",
-            json={"agent_id": str(agent.id), "phone_user": "15557654321"},
-        )
         browser_list = await user_client.get("/v1/channels")
 
-    assert first.status_code == 201, first.text
-    assert second.status_code == 201, second.text
     assert browser_list.status_code == 200, browser_list.text
     assert "runtime_credentials" not in browser_list.text
     assert "advSecretKey" not in browser_list.text
@@ -2772,8 +3842,8 @@ async def test_env_bound_list_channels_returns_latest_whatsapp_runtime_credentia
         .all()
     )
     assert {str(credential.id) for credential in active_credentials} == {
-        first.json()["credential_id"],
-        second.json()["credential_id"],
+        str(first.credential.id),
+        str(second.credential.id),
     }
 
     api_key = ApiKey(user_id=user.id, environment_id=agent.id, label="hosted-wa-runtime")
@@ -2782,30 +3852,11 @@ async def test_env_bound_list_channels_returns_latest_whatsapp_runtime_credentia
 
     assert listed.status_code == 200, listed.text
     assert "wa-provider-token" not in listed.text
-    assert first.json()["credential_id"] not in listed.text
-    payload = listed.json()
-    assert len(payload) == 1
-    runtime_credentials = payload[0]["runtime_credentials"]
-    assert len(runtime_credentials) == 1
-    runtime_credential = runtime_credentials[0]
-    assert runtime_credential["id"] == second.json()["credential_id"]
-    assert runtime_credential["agent_id"] == str(agent.id)
-    assert runtime_credential["agent_link_id"] == second.json()["agent_link_id"]
-    assert runtime_credential["kind"] == "whatsapp_baileys_auth_state"
-    assert runtime_credential["jid"] == second.json()["jid"]
-    assert runtime_credential["identity_pub_key_hex"] == second.json()["identity_pub_key_hex"]
-    material = runtime_credential["material"]
-    assert material["schemaVersion"] == "clawdi.whatsappBaileysAuthState.v1"
-    assert material["creds"]["advSecretKey"]
-    assert material["creds"]["me"]["id"] == second.json()["jid"]
-    assert material["authCert"]["ISSUER"] == "clawdi"
-    assert material["websocketUrl"].endswith(f"/v1/channels/whatsapp/{account_id}/baileys")
-    assert material["mediaProxyBaseUrl"].endswith("/v1/channels/whatsapp/media")
+    assert str(first.credential.id) not in listed.text
+    assert listed.json() == []
 
     async with _client_for_user(db_session, user) as user_client:
-        deleted = await user_client.delete(
-            f"/v1/channels/{account_id}/agent-links/{second.json()['agent_link_id']}"
-        )
+        deleted = await user_client.delete(f"/v1/channels/{account_id}/agent-links/{link.id}")
     assert deleted.status_code == 204, deleted.text
 
     active_credentials_after_unlink = (
@@ -2836,6 +3887,7 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     seed_user,
     monkeypatch,
 ):
+    real_httpx_async_client = httpx.AsyncClient
     _reset_fake_provider_client({"ok": True, "result": {"username": "ClawdiPublicGroupBot"}})
     with monkeypatch.context() as provider_mock:
         provider_mock.setattr(settings, "public_api_url", "https://cloud.example.test")
@@ -2860,7 +3912,12 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
             f"/v1/channels/{account_id}/pair-codes",
             json={"agent_id": str(agent_a.id), "ttl_seconds": 900},
         )
+        pair_a_again = await client_a.post(
+            f"/v1/channels/{account_id}/pair-codes",
+            json={"agent_id": str(agent_a.id), "ttl_seconds": 900},
+        )
     assert pair_a.status_code == 201
+    assert pair_a_again.status_code == 201
 
     async with _client_for_user(db_session, user_b) as client_b:
         pair_b = await client_b.post(
@@ -2972,29 +4029,65 @@ async def test_group_pairing_can_only_be_changed_by_pairing_actor(
     await db_session.refresh(binding)
     assert binding.status == "archived"
 
-    paired_b = await client.post(
-        f"/v1/channels/telegram/{account_id}/webhook",
-        headers={"x-telegram-bot-api-secret-token": webhook_secret},
-        json=group_command(8105, f"/bot_pair {pair_b.json()['code']}", 2222),
-    )
-    assert paired_b.status_code == 200
-    assert paired_b.json()["paired"] is True
+    session_factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    previous_session_override = app.dependency_overrides[get_session]
+
+    async def concurrent_session_override():
+        async with session_factory() as request_session:
+            yield request_session
+
+    app.dependency_overrides[get_session] = concurrent_session_override
+    try:
+        async with real_httpx_async_client(
+            transport=client._transport,
+            base_url=str(client.base_url),
+        ) as concurrent:
+            claim_a, claim_b = await asyncio.gather(
+                concurrent.post(
+                    f"/v1/channels/telegram/{account_id}/webhook",
+                    headers={"x-telegram-bot-api-secret-token": webhook_secret},
+                    json=group_command(8105, f"/bot_pair {pair_a_again.json()['code']}", 1111),
+                ),
+                concurrent.post(
+                    f"/v1/channels/telegram/{account_id}/webhook",
+                    headers={"x-telegram-bot-api-secret-token": webhook_secret},
+                    json=group_command(8106, f"/bot_pair {pair_b.json()['code']}", 2222),
+                ),
+            )
+    finally:
+        app.dependency_overrides[get_session] = previous_session_override
+    assert claim_a.status_code == 200
+    assert claim_b.status_code == 200
+    assert sorted([claim_a.json()["paired"], claim_b.json()["paired"]]) == [False, True]
 
     active_binding = (
         await db_session.execute(
-            select(ChannelBinding).where(
+            select(ChannelBinding)
+            .where(
                 ChannelBinding.account_id == account_id,
                 ChannelBinding.external_chat_id == "-99002",
                 ChannelBinding.status == "active",
             )
+            .execution_options(populate_existing=True)
         )
     ).scalar_one()
-    assert active_binding.user_id == user_b.id
-    assert active_binding.paired_external_user_id == "2222"
+    pair_code_a_again = await db_session.get(
+        ChannelPairCode,
+        UUID(pair_a_again.json()["id"]),
+        populate_existing=True,
+    )
     await db_session.refresh(pair_code_b)
-    assert pair_code_b.status == "claimed"
-    assert pair_code_b.claimed_external_chat_id == "-99002"
-    assert pair_code_b.claimed_external_user_id == "2222"
+    assert pair_code_a_again is not None
+    claimed_codes = [code for code in (pair_code_a_again, pair_code_b) if code.status == "claimed"]
+    assert len(claimed_codes) == 1
+    assert {pair_code_a_again.status, pair_code_b.status} == {"claimed", "pending"}
+    winner = claimed_codes[0]
+    assert winner.claimed_external_chat_id == "-99002"
+    assert winner.claimed_external_user_id in {"1111", "2222"}
+    assert active_binding.paired_external_user_id == winner.claimed_external_user_id
+    assert active_binding.user_id == (
+        user_a.id if winner.claimed_external_user_id == "1111" else user_b.id
+    )
 
 
 @pytest.mark.asyncio
@@ -3430,20 +4523,30 @@ async def test_channel_send_uses_current_chat_route_after_repair(
 @pytest.mark.asyncio
 async def test_telegram_same_provider_multiple_bots_are_account_scoped(
     client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
 ):
     first = (
         await client.post(
             "/v1/channels",
-            json={"provider": "telegram", "name": "telegram-bot-one"},
+            json={
+                "provider": "telegram",
+                "name": "telegram-bot-one",
+                "agent_id": str(second_channel_agent.id),
+            },
         )
     ).json()
     second = (
         await client.post(
             "/v1/channels",
-            json={"provider": "telegram", "name": "telegram-bot-two"},
+            json={
+                "provider": "telegram",
+                "name": "telegram-bot-two",
+                "agent_id": str(channel_agent.id),
+            },
         )
     ).json()
-    assert first["agent_id"] == second["agent_id"]
+    assert first["agent_id"] != second["agent_id"]
     assert first["agent_link_id"] != second["agent_link_id"]
     assert first["agent_token"] != second["agent_token"]
 
@@ -4565,6 +5668,31 @@ async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
             "status": 403,
             "forwarded": False,
         },
+        {
+            "name": "shared payment invoice",
+            "method": "sendInvoice",
+            "json": {
+                "chat_id": "111",
+                "title": "Unsafe invoice",
+                "description": "Payment updates have no attributable chat",
+                "payload": "link-opaque",
+                "currency": "XTR",
+                "prices": [{"label": "Item", "amount": 1}],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
+        {
+            "name": "shared paid media domain",
+            "method": "sendPaidMedia",
+            "json": {
+                "chat_id": "111",
+                "star_count": 1,
+                "media": [{"type": "photo", "media": "https://example.com/photo.jpg"}],
+            },
+            "status": 403,
+            "forwarded": False,
+        },
     )
     for case in cases:
         _reset_fake_provider_client({"ok": True, "result": True})
@@ -4589,17 +5717,29 @@ async def test_telegram_bot_api_chat_capabilities_are_agent_link_scoped(
 
 
 @pytest.mark.asyncio
-async def test_telegram_bot_profile_shadow_is_account_scoped(client: httpx.AsyncClient):
+async def test_telegram_bot_profile_shadow_is_account_scoped(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+):
     account_a = (
         await client.post(
             "/v1/channels",
-            json={"provider": "telegram", "name": "telegram-profile-a"},
+            json={
+                "provider": "telegram",
+                "name": "telegram-profile-a",
+                "agent_id": str(channel_agent.id),
+            },
         )
     ).json()
     account_b = (
         await client.post(
             "/v1/channels",
-            json={"provider": "telegram", "name": "telegram-profile-b"},
+            json={
+                "provider": "telegram",
+                "name": "telegram-profile-b",
+                "agent_id": str(second_channel_agent.id),
+            },
         )
     ).json()
 
@@ -4667,6 +5807,57 @@ async def test_telegram_bot_profile_shadow_is_link_scoped_on_shared_account(
 
     assert first_get.json() == {"ok": True, "result": {"name": "First link"}}
     assert second_get.json() == {"ok": True, "result": {"name": ""}}
+
+
+@pytest.mark.asyncio
+async def test_telegram_profile_shadow_accepts_official_clear_and_boolean_wire_values(
+    client: httpx.AsyncClient,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "telegram", "name": "telegram-profile-wire-values"},
+        )
+    ).json()
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setMyName"),
+            headers=_telegram_agent_headers(created),
+            json={"name": "Before clear"},
+        )
+    ).status_code == 200
+    cleared = await client.post(
+        _telegram_bot_path(created, "setMyName"),
+        headers=_telegram_agent_headers(created),
+        json={"name": ""},
+    )
+    rights = {"can_manage_chat": True}
+    set_channel_rights = await client.get(
+        _telegram_bot_path(created, "setMyDefaultAdministratorRights"),
+        headers=_telegram_agent_headers(created),
+        params={"rights": json.dumps(rights), "for_channels": "yes"},
+    )
+    get_channel_rights = await client.get(
+        _telegram_bot_path(created, "getMyDefaultAdministratorRights"),
+        headers=_telegram_agent_headers(created),
+        params={"for_channels": "1"},
+    )
+    get_group_rights = await client.get(
+        _telegram_bot_path(created, "getMyDefaultAdministratorRights"),
+        headers=_telegram_agent_headers(created),
+    )
+
+    assert cleared.status_code == 200
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "getMyName"),
+            headers=_telegram_agent_headers(created),
+            json={},
+        )
+    ).json() == {"ok": True, "result": {"name": ""}}
+    assert set_channel_rights.status_code == 200
+    assert get_channel_rights.json() == {"ok": True, "result": rights}
+    assert get_group_rights.json() == {"ok": True, "result": {}}
 
 
 @pytest.mark.asyncio
@@ -4938,6 +6129,14 @@ async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
             "scope": {"type": "future_global_scope", "chat_id": 42},
         },
     )
+    incomplete_member_scope = await client.post(
+        _telegram_bot_path(created, "setMyCommands"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "commands": [{"command": "member", "description": "Member"}],
+            "scope": {"type": "chat_member", "chat_id": 42},
+        },
+    )
 
     assert set_commands.status_code == 200
     assert get_commands.json() == {
@@ -4949,6 +6148,8 @@ async def test_telegram_bot_commands_are_shadowed_and_scope_checked(
     assert query_wrong_scope.status_code == 403
     assert unknown_scope.status_code == 400
     assert unknown_scope.json()["description"] == "Bad Request: invalid scope"
+    assert incomplete_member_scope.status_code == 400
+    assert incomplete_member_scope.json()["description"] == "Bad Request: invalid scope"
 
 
 @pytest.mark.asyncio
@@ -5234,9 +6435,24 @@ async def test_telegram_repair_and_unpair_clear_previous_link_commands(
             },
         )
     ).status_code == 200
+    _reset_fake_provider_client({"ok": True, "result": True})
     assert (
         await client.delete(f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}")
     ).status_code == 204
+    unlink_command_calls = [
+        call for call in _FakeProviderClient.calls if call["url"].endswith("/deleteMyCommands")
+    ]
+    assert {json.dumps(call["json"], sort_keys=True) for call in unlink_command_calls} == {
+        json.dumps({"scope": {"type": "chat", "chat_id": "777"}}, sort_keys=True),
+        json.dumps(
+            {"scope": {"type": "chat", "chat_id": "777"}, "language_code": "es"},
+            sort_keys=True,
+        ),
+        json.dumps(
+            {"scope": {"type": "chat_member", "chat_id": "777", "user_id": "4242"}},
+            sort_keys=True,
+        ),
+    }
     second = (
         await client.post(
             f"/v1/channels/{created['id']}/agent-links",
@@ -5272,18 +6488,7 @@ async def test_telegram_repair_and_unpair_clear_previous_link_commands(
         for call in _FakeProviderClient.calls
         if call["url"].endswith(("/setMyCommands", "/deleteMyCommands"))
     ]
-    assert all(call["url"].endswith("/deleteMyCommands") for call in command_calls)
-    assert {json.dumps(call["json"], sort_keys=True) for call in command_calls} == {
-        json.dumps({"scope": {"type": "chat", "chat_id": "777"}}, sort_keys=True),
-        json.dumps(
-            {"scope": {"type": "chat", "chat_id": "777"}, "language_code": "es"},
-            sort_keys=True,
-        ),
-        json.dumps(
-            {"scope": {"type": "chat_member", "chat_id": "777", "user_id": "4242"}},
-            sort_keys=True,
-        ),
-    }
+    assert command_calls == []
     second_get = await client.post(
         _telegram_bot_path(second, "getMyCommands", account_id=created["id"]),
         headers=_telegram_agent_headers(second),
@@ -5616,7 +6821,7 @@ async def test_channel_request_parsing_rejects_malformed_json_and_non_object_bod
 
 
 @pytest.mark.asyncio
-async def test_channel_request_parsing_accepts_form_encoded_wire_values(
+async def test_channel_request_parsing_accepts_query_boolean_wire_values(
     client: httpx.AsyncClient,
 ):
     created = await _create_paired_telegram_channel(
@@ -5643,10 +6848,10 @@ async def test_channel_request_parsing_accepts_form_encoded_wire_values(
         json={"url": "https://agent.example/webhook"},
     )
 
-    deleted = await client.post(
+    deleted = await client.get(
         _telegram_bot_path(created, "deleteWebhook"),
         headers=_telegram_agent_headers(created),
-        data={"drop_pending_updates": "true"},
+        params={"drop_pending_updates": "true"},
     )
     updates = await client.get(
         _telegram_bot_path(created, "getUpdates"), headers=_telegram_agent_headers(created)
@@ -5799,7 +7004,7 @@ async def test_telegram_update_redelivery_retries_failed_agent_webhook(
             await db_session.execute(
                 select(ChannelMessage).where(
                     ChannelMessage.account_id == UUID(created["id"]),
-                    ChannelMessage.provider_event_id == "909",
+                    ChannelMessage.provider_event_id == "update:909",
                 )
             )
         ).scalars()
@@ -5809,6 +7014,16 @@ async def test_telegram_update_redelivery_retries_failed_agent_webhook(
     assert redelivery.status_code == 200
     assert len(messages) == 1
     assert messages[0].provider_message_id == "77"
+    assert messages[0].delivered_at is None
+    assert len(_SequencedProviderClient.calls) == 1
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    result = await ChannelWebhookDeliveryWorker(sessionmaker).run_once()
+    await db_session.refresh(messages[0])
+
+    assert result is not None
+    assert result.message_id == messages[0].id
+    assert result.delivered is True
     assert messages[0].delivered_at is not None
     assert len(_SequencedProviderClient.calls) == 2
 
@@ -6068,6 +7283,8 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     monkeypatch,
+    channel_agent,
+    second_channel_agent,
 ):
     _reset_sequenced_provider_client([503, 503, 503, 200])
     monkeypatch.setattr(
@@ -6079,12 +7296,14 @@ async def test_telegram_webhook_worker_skips_non_webhook_queue_head(
         name="telegram-worker-polling-queue-head",
         provider_token=None,
         chat_id="4201",
+        agent_id=channel_agent.id,
     )
     webhook_channel = await _create_paired_telegram_channel(
         client,
         name="telegram-worker-webhook-behind-queue-head",
         provider_token=None,
         chat_id="4202",
+        agent_id=second_channel_agent.id,
     )
     await client.post(
         _telegram_bot_path(webhook_channel, "setWebhook"),
@@ -6564,6 +7783,8 @@ async def test_discord_application_commands_validate_application_and_guild_scope
 async def test_discord_global_commands_fan_out_only_to_uncontested_guilds(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
     monkeypatch,
 ):
     _reset_fake_provider_client([])
@@ -6579,6 +7800,7 @@ async def test_discord_global_commands_fan_out_only_to_uncontested_guilds(
                 "name": "discord-command-fanout",
                 "provider_token": "discord-provider-token",
                 "config": {"application_id": "app-fanout"},
+                "agent_id": str(channel_agent.id),
             },
         )
     ).json()
@@ -6589,6 +7811,7 @@ async def test_discord_global_commands_fan_out_only_to_uncontested_guilds(
                 "provider": "discord",
                 "name": "discord-command-contender",
                 "config": {"application_id": "app-contender"},
+                "agent_id": str(second_channel_agent.id),
             },
         )
     ).json()
@@ -6703,6 +7926,8 @@ async def test_discord_pairing_replays_stored_global_commands_to_new_guild(
 @pytest.mark.asyncio
 async def test_discord_interaction_callback_and_followup_require_recorded_token(
     client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
     monkeypatch,
 ):
     _reset_fake_provider_client({"id": "discord-upstream"})
@@ -6714,6 +7939,7 @@ async def test_discord_interaction_callback_and_followup_require_recorded_token(
         client,
         name="discord-interaction-ref",
         application_id="discord-app-123",
+        agent_id=channel_agent.id,
     )
     await _record_discord_interaction(
         client,
@@ -6730,6 +7956,7 @@ async def test_discord_interaction_callback_and_followup_require_recorded_token(
                 "name": "discord-interaction-other",
                 "provider_token": "discord-provider-token-2",
                 "config": {"application_id": "discord-app-123"},
+                "agent_id": str(second_channel_agent.id),
             },
         )
     ).json()
@@ -6794,7 +8021,11 @@ async def test_discord_interaction_callback_and_followup_require_recorded_token(
 
 
 @pytest.mark.asyncio
-async def test_discord_bot_profile_shadow_is_account_scoped(client: httpx.AsyncClient):
+async def test_discord_bot_profile_shadow_is_account_scoped(
+    client: httpx.AsyncClient,
+    channel_agent,
+    second_channel_agent,
+):
     account_a = (
         await client.post(
             "/v1/channels",
@@ -6802,6 +8033,7 @@ async def test_discord_bot_profile_shadow_is_account_scoped(client: httpx.AsyncC
                 "provider": "discord",
                 "name": "discord-profile-a",
                 "config": {"application_id": "discord-app-profile-a"},
+                "agent_id": str(channel_agent.id),
             },
         )
     ).json()
@@ -6812,6 +8044,7 @@ async def test_discord_bot_profile_shadow_is_account_scoped(client: httpx.AsyncC
                 "provider": "discord",
                 "name": "discord-profile-b",
                 "config": {"application_id": "discord-app-profile-b"},
+                "agent_id": str(second_channel_agent.id),
             },
         )
     ).json()
@@ -6966,6 +8199,7 @@ async def test_whatsapp_graph_agent_send_uses_agent_token_and_binding(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     monkeypatch,
+    channel_agent,
 ):
     _FakeProviderClient.calls = []
     _FakeProviderClient.response_payload = {"messages": [{"id": "wamid.agent.pair-reply"}]}
@@ -6981,6 +8215,7 @@ async def test_whatsapp_graph_agent_send_uses_agent_token_and_binding(
             },
         )
     ).json()
+    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
     pair = (
         await client.post(
             f"/v1/channels/{created['id']}/pair-codes",
@@ -8232,16 +9467,27 @@ async def test_telegram_inbound_dedupes_update_redelivery_but_keeps_edits(
             "chat": {"id": 4242, "type": "private"},
         },
     }
+    conflicting_chat_replay = {
+        "update_id": 7001,
+        "message": {
+            "message_id": 99,
+            "text": "must not become a second physical update",
+            "chat": {"id": 4343, "type": "private"},
+        },
+    }
 
     assert (await client.post(webhook_url, headers=headers, json=original)).status_code == 200
     assert (await client.post(webhook_url, headers=headers, json=original)).status_code == 200
+    assert (
+        await client.post(webhook_url, headers=headers, json=conflicting_chat_replay)
+    ).status_code == 200
     assert (await client.post(webhook_url, headers=headers, json=edited)).status_code == 200
     messages = list(
         (
             await db_session.execute(
                 select(ChannelMessage).where(
                     ChannelMessage.account_id == UUID(created["id"]),
-                    ChannelMessage.provider_event_id.in_(["7001", "7002"]),
+                    ChannelMessage.provider_event_id.in_(["update:7001", "update:7002"]),
                 )
             )
         ).scalars()
@@ -8250,8 +9496,8 @@ async def test_telegram_inbound_dedupes_update_redelivery_but_keeps_edits(
         (message.provider_event_id, message.provider_message_id, message.text)
         for message in messages
     ) == [
-        ("7001", "88", "before edit"),
-        ("7002", "88", "after edit"),
+        ("update:7001", "88", "before edit"),
+        ("update:7002", "88", "after edit"),
     ]
     activity = await client.get(f"/v1/channels/{created['id']}/activity")
     edited_items = [
@@ -8260,6 +9506,83 @@ async def test_telegram_inbound_dedupes_update_redelivery_but_keeps_edits(
         if item.get("text") in {"before edit", "after edit"}
     ]
     assert [item["provider_message_id"] for item in edited_items] == ["88", "88"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_concurrent_redelivery_has_one_agent_side_effect(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    real_httpx_async_client = httpx.AsyncClient
+    created = await _create_paired_telegram_channel(
+        client,
+        name="telegram-concurrent-redelivery",
+        chat_id="4242",
+        provider_token=None,
+    )
+    assert (
+        await client.post(
+            _telegram_bot_path(created, "setWebhook"),
+            headers=_telegram_agent_headers(created),
+            json={"url": "https://agent.example/concurrent-redelivery"},
+        )
+    ).status_code == 200
+    _reset_sequenced_provider_client([200])
+    monkeypatch.setattr(
+        "app.services.channel_webhooks.httpx.AsyncClient",
+        _SequencedProviderClient,
+    )
+    update = {
+        "update_id": 7_501,
+        "message": {
+            "message_id": 101,
+            "text": "deliver exactly once",
+            "chat": {"id": 4242, "type": "private"},
+        },
+    }
+    session_factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    previous_session_override = app.dependency_overrides[get_session]
+
+    async def concurrent_session_override():
+        async with session_factory() as request_session:
+            yield request_session
+
+    app.dependency_overrides[get_session] = concurrent_session_override
+    try:
+        async with real_httpx_async_client(
+            transport=client._transport,
+            base_url=str(client.base_url),
+        ) as concurrent:
+            first, second = await asyncio.gather(
+                concurrent.post(
+                    f"/v1/channels/telegram/{created['id']}/webhook",
+                    headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+                    json=update,
+                ),
+                concurrent.post(
+                    f"/v1/channels/telegram/{created['id']}/webhook",
+                    headers={"x-telegram-bot-api-secret-token": created["webhook_secret"]},
+                    json=update,
+                ),
+            )
+    finally:
+        app.dependency_overrides[get_session] = previous_session_override
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage).where(
+                    ChannelMessage.account_id == UUID(created["id"]),
+                    ChannelMessage.provider_event_id == "update:7501",
+                )
+            )
+        ).scalars()
+    )
+    assert len(messages) == 1
+    assert len(_SequencedProviderClient.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -8459,6 +9782,251 @@ async def test_telegram_webhook_unpair_sends_user_reply(
         {"chat_id": "987654323", "menu_button": {"type": "default"}},
         {"chat_id": "987654323", "menu_button": {"type": "default"}},
     ]
+
+
+@pytest.mark.asyncio
+async def test_telegram_channel_direct_message_pairing_replies_stay_in_originating_topic(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 104}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient", _FakeProviderClient
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-direct-message-topic-replies",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    webhook_url = f"/v1/channels/telegram/{created['id']}/webhook"
+    headers = {"x-telegram-bot-api-secret-token": created["webhook_secret"]}
+    chat = {
+        "id": -100987654326,
+        "type": "supergroup",
+        "is_direct_messages": True,
+    }
+
+    paired = await client.post(
+        webhook_url,
+        headers=headers,
+        json={
+            "update_id": 1,
+            "message": {
+                "message_id": 48,
+                "direct_messages_topic": {"topic_id": 4242},
+                "is_topic_message": True,
+                "text": f"/bot_pair {pair['code']}",
+                "chat": chat,
+                "from": {"id": 4242, "is_bot": False},
+            },
+        },
+    )
+    same_actor = await client.post(
+        webhook_url,
+        headers=headers,
+        json={
+            "update_id": 2,
+            "message": {
+                "message_id": 49,
+                "direct_messages_topic": {"topic_id": 4242},
+                "is_topic_message": True,
+                "text": "same actor reaches its isolated topic",
+                "chat": chat,
+                "from": {"id": 4242, "is_bot": False},
+            },
+        },
+    )
+    updates = await client.post(
+        _telegram_bot_path(created, "getUpdates"),
+        headers=_telegram_agent_headers(created),
+        json={},
+    )
+    agent_reply = await client.post(
+        _telegram_bot_path(created, "sendMessage"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "chat_id": -100987654326,
+            "message_thread_id": 4242,
+            "text": "reply through virtual topic transport",
+        },
+    )
+    edit_own_message = await client.post(
+        _telegram_bot_path(created, "editMessageText"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "chat_id": -100987654326,
+            "message_id": 104,
+            "text": "edit an owned streamed message",
+        },
+    )
+    edit_other_topic_message = await client.post(
+        _telegram_bot_path(created, "editMessageText"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "chat_id": -100987654326,
+            "message_id": 105,
+            "text": "must not edit another topic",
+        },
+    )
+    query_reply = await client.get(
+        _telegram_bot_path(created, "sendMessage"),
+        headers=_telegram_agent_headers(created),
+        params={
+            "chat_id": -100987654326,
+            "message_thread_id": 4242,
+            "text": "query topic transport",
+        },
+    )
+    form_reply = await client.post(
+        _telegram_bot_path(created, "sendMessage"),
+        headers=_telegram_agent_headers(created),
+        data={
+            "chat_id": -100987654326,
+            "message_thread_id": 4242,
+            "text": "form topic transport",
+        },
+    )
+    multipart_reply = await client.post(
+        _telegram_bot_path(created, "sendMessage"),
+        headers=_telegram_agent_headers(created),
+        data={
+            "chat_id": -100987654326,
+            "message_thread_id": 4242,
+            "text": "multipart topic transport",
+        },
+        files={"attachment": ("unused.txt", b"unused")},
+    )
+    duplicate_topic = await client.post(
+        _telegram_bot_path(created, "sendMessage"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "chat_id": -100987654326,
+            "message_thread_id": 4242,
+            "direct_messages_topic_id": 4242,
+            "text": "ambiguous topic transport",
+        },
+    )
+    other_topic_reply = await client.post(
+        _telegram_bot_path(created, "sendMessage"),
+        headers=_telegram_agent_headers(created),
+        json={
+            "chat_id": -100987654326,
+            "message_thread_id": 9999,
+            "text": "must not cross direct-message actors",
+        },
+    )
+    other_actor = await client.post(
+        webhook_url,
+        headers=headers,
+        json={
+            "update_id": 3,
+            "message": {
+                "message_id": 50,
+                "direct_messages_topic": {"topic_id": 9999},
+                "is_topic_message": True,
+                "text": "must not cross direct-message actors",
+                "chat": chat,
+                "from": {"id": 9999, "is_bot": False},
+            },
+        },
+    )
+    unpaired = await client.post(
+        webhook_url,
+        headers=headers,
+        json={
+            "update_id": 4,
+            "message": {
+                "message_id": 51,
+                "direct_messages_topic": {"topic_id": 4242},
+                "is_topic_message": True,
+                "text": "/bot_unpair",
+                "chat": chat,
+                "from": {"id": 4242, "is_bot": False},
+            },
+        },
+    )
+
+    assert paired.status_code == 200
+    assert paired.json()["paired"] is True
+    assert same_actor.status_code == 200
+    assert updates.status_code == 200
+    assert updates.json()["result"][0]["message"]["message_thread_id"] == 4242
+    assert updates.json()["result"][0]["message"]["direct_messages_topic"] == {"topic_id": 4242}
+    assert agent_reply.status_code == 200
+    assert edit_own_message.status_code == 200
+    assert edit_other_topic_message.status_code == 403
+    assert query_reply.status_code == 200
+    assert form_reply.status_code == 200
+    assert multipart_reply.status_code == 200
+    assert duplicate_topic.status_code == 400
+    assert other_topic_reply.status_code == 403
+    assert other_actor.status_code == 200
+    assert other_actor.json()["binding_id"] is None
+    assert unpaired.status_code == 200
+    assert unpaired.json()["unpaired"] is True
+    assert [
+        call["json"]
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/sendMessage") and "json" in call
+    ] == [
+        {
+            "chat_id": "-100987654326",
+            "direct_messages_topic_id": 4242,
+            "text": "Paired! This chat is now connected to your agent.",
+        },
+        {
+            "chat_id": "-100987654326",
+            "direct_messages_topic_id": 4242,
+            "text": "Unpaired. This chat is no longer connected to an agent.",
+        },
+    ]
+    proxied_reply = next(
+        call
+        for call in _FakeProviderClient.calls
+        if call.get("method") == "POST" and call["url"].endswith("/sendMessage")
+    )
+    assert json.loads(proxied_reply["content"]) == {
+        "chat_id": -100987654326,
+        "direct_messages_topic_id": 4242,
+        "text": "reply through virtual topic transport",
+    }
+    query_call = next(
+        call
+        for call in _FakeProviderClient.calls
+        if call.get("method") == "GET" and call["url"].endswith("/sendMessage")
+    )
+    assert ("direct_messages_topic_id", "4242") in query_call["params"]
+    assert all(key != "message_thread_id" for key, _value in query_call["params"])
+    form_call = next(
+        call
+        for call in _FakeProviderClient.calls
+        if call.get("method") == "POST"
+        and call["url"].endswith("/sendMessage")
+        and b"form+topic+transport" in call.get("content", b"")
+    )
+    assert b"direct_messages_topic_id=4242" in form_call["content"]
+    assert b"message_thread_id" not in form_call["content"]
+    multipart_call = next(
+        call
+        for call in _FakeProviderClient.calls
+        if call.get("method") == "POST"
+        and call["url"].endswith("/sendMessage")
+        and b"multipart topic transport" in call.get("content", b"")
+    )
+    assert b'name="direct_messages_topic_id"' in multipart_call["content"]
+    assert b'name="message_thread_id"' not in multipart_call["content"]
 
 
 @pytest.mark.asyncio
@@ -8960,7 +10528,7 @@ async def test_telegram_start_claims_explicit_agent_link_and_redelivery_is_idemp
             await db_session.execute(
                 select(ChannelMessage).where(
                     ChannelMessage.account_id == UUID(created["id"]),
-                    ChannelMessage.provider_event_id == "7101",
+                    ChannelMessage.provider_event_id == "update:7101",
                 )
             )
         ).scalars()
@@ -9054,6 +10622,49 @@ def test_telegram_reply_thread_requires_a_true_private_or_forum_topic():
     assert (
         telegram_message_thread_id_from_update(
             update(chat_type="group", is_topic=True, is_forum=False)
+        )
+        is None
+    )
+
+
+def test_telegram_direct_message_reply_topic_requires_a_true_direct_messages_chat():
+    def update(*, chat_type: str, is_direct_messages: bool, topic_id: object):
+        return {
+            "message": {
+                "direct_messages_topic": {"topic_id": topic_id},
+                "chat": {
+                    "id": -1001,
+                    "type": chat_type,
+                    "is_direct_messages": is_direct_messages,
+                },
+            }
+        }
+
+    assert (
+        telegram_direct_messages_topic_id_from_update(
+            update(
+                chat_type="supergroup",
+                is_direct_messages=True,
+                topic_id=4_294_967_297,
+            )
+        )
+        == 4_294_967_297
+    )
+    assert (
+        telegram_direct_messages_topic_id_from_update(
+            update(chat_type="supergroup", is_direct_messages=False, topic_id=77)
+        )
+        is None
+    )
+    assert (
+        telegram_direct_messages_topic_id_from_update(
+            update(chat_type="private", is_direct_messages=True, topic_id=77)
+        )
+        is None
+    )
+    assert (
+        telegram_direct_messages_topic_id_from_update(
+            update(chat_type="supergroup", is_direct_messages=True, topic_id=True)
         )
         is None
     )
@@ -10321,7 +11932,11 @@ async def test_imessage_webhook_pair_code_sends_user_reply(
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_webhook_pair_code_creates_binding(client: httpx.AsyncClient):
+async def test_whatsapp_webhook_pair_code_creates_binding(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
     created = (
         await client.post(
             "/v1/channels",
@@ -10333,6 +11948,7 @@ async def test_whatsapp_webhook_pair_code_creates_binding(client: httpx.AsyncCli
             },
         )
     ).json()
+    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
     pair = (
         await client.post(
             f"/v1/channels/{created['id']}/pair-codes",
@@ -10386,7 +12002,9 @@ async def test_whatsapp_webhook_pair_code_creates_binding(client: httpx.AsyncCli
 @pytest.mark.asyncio
 async def test_whatsapp_webhook_pair_code_sends_user_reply(
     client: httpx.AsyncClient,
+    db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
+    channel_agent,
 ):
     _reset_fake_provider_client({"messages": [{"id": "wamid.pair-reply"}]})
     monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
@@ -10401,6 +12019,7 @@ async def test_whatsapp_webhook_pair_code_sends_user_reply(
             },
         )
     ).json()
+    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
     pair = (
         await client.post(
             f"/v1/channels/{created['id']}/pair-codes",
@@ -10446,6 +12065,8 @@ async def test_whatsapp_webhook_pair_code_sends_user_reply(
 @pytest.mark.asyncio
 async def test_same_external_chat_id_is_isolated_across_channel_providers(
     client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
 ):
     shared_chat_id = "shared-chat-id"
     channel_specs = [
@@ -10489,6 +12110,11 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
         provider: (await client.post("/v1/channels", json=body)).json()
         for provider, body in channel_specs
     }
+    await _seed_created_channel_link(
+        db_session,
+        created=created_by_provider["whatsapp"],
+        agent=channel_agent,
+    )
     pair_codes = {
         provider: (
             await client.post(
@@ -10576,7 +12202,11 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_webhook_accepts_meta_hmac_signature(client: httpx.AsyncClient):
+async def test_whatsapp_webhook_accepts_meta_hmac_signature(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
     app_secret = "wa-app-secret"
     created = (
         await client.post(
@@ -10588,6 +12218,7 @@ async def test_whatsapp_webhook_accepts_meta_hmac_signature(client: httpx.AsyncC
             },
         )
     ).json()
+    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
     pair = (
         await client.post(
             f"/v1/channels/{created['id']}/pair-codes",
@@ -10662,6 +12293,7 @@ async def test_whatsapp_webhook_rejects_bad_meta_hmac_signature(client: httpx.As
 async def test_whatsapp_webhook_skips_from_me_messages(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
+    channel_agent,
 ):
     created = (
         await client.post(
@@ -10669,6 +12301,7 @@ async def test_whatsapp_webhook_skips_from_me_messages(
             json={"provider": "whatsapp", "name": "wa-from-me"},
         )
     ).json()
+    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
     pair = (
         await client.post(
             f"/v1/channels/{created['id']}/pair-codes",
@@ -10708,13 +12341,18 @@ async def test_whatsapp_webhook_skips_from_me_messages(
 
 
 @pytest.mark.asyncio
-async def test_whatsapp_webhook_pairs_from_common_baileys_wrappers(client: httpx.AsyncClient):
+async def test_whatsapp_webhook_pairs_from_common_baileys_wrappers(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
     created = (
         await client.post(
             "/v1/channels",
             json={"provider": "whatsapp", "name": "wa-wrapper-pair"},
         )
     ).json()
+    await _seed_created_channel_link(db_session, created=created, agent=channel_agent)
     wrappers = [
         (
             "ephemeral",
@@ -10829,6 +12467,7 @@ async def test_delete_channel_fails_pending_outbound_deliveries(
                 "provider": "telegram",
                 "name": "telegram-delete-outbox",
                 "provider_token": "123456:telegram-secret",
+                "secrets": {"signing_key": "delete-me"},
             },
         )
     ).json()
@@ -10849,6 +12488,18 @@ async def test_delete_channel_fails_pending_outbound_deliveries(
     assert delivery.locked_at is None
     assert delivery.locked_by is None
     assert delivery.last_error == "channel account archived"
+    account = await db_session.get(ChannelAccount, UUID(created["id"]), populate_existing=True)
+    assert account is not None
+    assert account.encrypted_provider_token is None
+    assert account.provider_token_nonce is None
+    assert (
+        await db_session.scalar(
+            select(func.count(ChannelSecret.id)).where(
+                ChannelSecret.account_id == UUID(created["id"])
+            )
+        )
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -10944,6 +12595,7 @@ async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
             f"/v1/channels/{created['id']}/agent-links/{created['agent_link_id']}"
         )
         assert deleted.status_code == 204, deleted.text
+        _clear_fake_provider_calls()
 
         await channel_service.deliver_channel_delivery(worker_db, delivery=delivery)
         await worker_db.commit()
@@ -10960,6 +12612,131 @@ async def test_channel_delivery_does_not_send_after_claimed_link_is_archived(
     assert delivery.locked_at is None
     assert delivery.locked_by is None
     assert delivery.last_error == "channel agent link archived"
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_does_not_send_after_runtime_is_retired(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    channel_agent,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 702}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-runtime-retired-outbox",
+                "provider_token": "123456:telegram-secret",
+                "agent_id": str(channel_agent.id),
+            },
+        )
+    ).json()
+    binding = ChannelBinding(
+        account_id=UUID(created["id"]),
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="111",
+        external_chat_type="private",
+        external_chat_name="Test Chat",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    sent = await client.post(
+        f"/v1/channels/{created['id']}/messages",
+        json={"binding_id": str(binding.id), "text": "must stop at retirement"},
+    )
+    assert sent.status_code == 201, sent.text
+
+    fence = await db_session.get(V2RuntimeEnvironmentFence, channel_agent.id)
+    assert fence is not None
+    await retire_runtime_environment(
+        db_session,
+        environment_id=channel_agent.id,
+        expected_deployment_id=fence.deployment_id,
+        retirement_id="channel-delivery-retirement",
+        owner_id=seed_user.id,
+    )
+    await db_session.commit()
+    _clear_fake_provider_calls()
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
+
+    assert delivered_id == UUID(sent.json()["delivery_id"])
+    assert _FakeProviderClient.calls == []
+    delivery = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == delivered_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert delivery.status == DELIVERY_STATUS_FAILED
+    assert delivery.last_error == "channel agent link has no managed runtime authority"
+
+
+@pytest.mark.asyncio
+async def test_channel_delivery_does_not_send_after_binding_is_unpaired(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user,
+    monkeypatch,
+):
+    _reset_fake_provider_client({"ok": True, "result": {"message_id": 701}})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    monkeypatch.setattr(
+        "app.routes.channel_routers.telegram.httpx.AsyncClient", _FakeProviderClient
+    )
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "telegram",
+                "name": "telegram-binding-unpair-outbox",
+                "provider_token": "123456:telegram-secret",
+            },
+        )
+    ).json()
+    binding = ChannelBinding(
+        account_id=UUID(created["id"]),
+        bot_agent_link_id=UUID(created["agent_link_id"]),
+        user_id=seed_user.id,
+        external_chat_id="111",
+        external_chat_type="private",
+        external_chat_name="Test Chat",
+        status=BINDING_STATUS_ACTIVE,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    sent = await client.post(
+        f"/v1/channels/{created['id']}/messages",
+        json={"binding_id": str(binding.id), "text": "must be cancelled"},
+    )
+    assert sent.status_code == 201, sent.text
+
+    unpaired = await client.delete(f"/v1/channels/{created['id']}/bindings/{binding.id}")
+    assert unpaired.status_code == 200, unpaired.text
+    _clear_fake_provider_calls()
+
+    sessionmaker = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    delivered_id = await ChannelDeliveryWorker(sessionmaker).run_once()
+
+    assert delivered_id == UUID(sent.json()["delivery_id"])
+    assert _FakeProviderClient.calls == []
+    delivery = (
+        await db_session.execute(
+            select(ChannelDelivery)
+            .where(ChannelDelivery.id == UUID(sent.json()["delivery_id"]))
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert delivery.status == DELIVERY_STATUS_FAILED
+    assert delivery.last_error == "channel binding archived"
 
 
 @pytest.mark.asyncio

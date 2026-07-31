@@ -31,6 +31,7 @@ from app.models.channel import (
     ChannelBotAgentLink,
 )
 from app.models.hosted_runtime import HostedRuntimeConfigObservation, HostedRuntimeState
+from app.models.runtime_observation import V2RuntimeEnvironmentFence
 from app.models.session import AgentEnvironment
 from app.models.user import User
 from app.routes.admin import _admin_upsert_runtime_state
@@ -254,11 +255,19 @@ async def _create_bundle_runtime(admin_client, db_session, seed_user):
     )
     db_session.add(link)
     await db_session.commit()
-    await _write_runtime_state(
+    state_body = await _write_runtime_state(
         admin_client,
         str(env.id),
         runtimes=_runtime_state(provider_ids=[provider.provider_id]),
     )
+    db_session.add(
+        V2RuntimeEnvironmentFence(
+            environment_id=env.id,
+            owner_id=seed_user.id,
+            deployment_id=state_body["deployment_id"],
+        )
+    )
+    await db_session.commit()
     return env, provider, payload, account, link
 
 
