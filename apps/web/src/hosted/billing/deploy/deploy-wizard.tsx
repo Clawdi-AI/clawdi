@@ -45,9 +45,9 @@ import { useCheckoutReturnHandler } from "@/hosted/billing/checkout-return";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
+	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
 	findNewDeploymentId,
-	hasCheckoutClientSecret,
 } from "@/hosted/billing/components/stripe-checkout.logic";
 import {
 	StripeCheckoutDialog,
@@ -118,6 +118,7 @@ import {
 	newIdempotencyKey,
 } from "@/hosted/billing/idempotency";
 import { useSensitiveCreateSubscription } from "@/hosted/billing/sensitive-actions";
+import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 import {
 	type SubscriptionCreateRequestView,
 	type SubscriptionCreateSelection,
@@ -168,7 +169,7 @@ import { cn } from "@/lib/utils";
 type Compute = "basic" | "performance";
 type DeployPaymentMethod = "card" | "wallet";
 type NativeDeployCheckout = {
-	clientSecret: string;
+	clientSecret: CheckoutSessionClientSecret;
 	previousDeploymentIds: string[];
 	request: SubscriptionCreateRequestView;
 	summary: StripeCheckoutSummary;
@@ -838,9 +839,10 @@ export function DeployWizard() {
 					return;
 				}
 				const result = outcome.checkout;
-				if (cardCheckoutUiMode === CHECKOUT_ELEMENTS_UI_MODE && hasCheckoutClientSecret(result)) {
+				const clientSecret = checkoutSessionClientSecret(result);
+				if (cardCheckoutUiMode === CHECKOUT_ELEMENTS_UI_MODE && clientSecret) {
 					setCheckoutSession({
-						clientSecret: result.client_secret,
+						clientSecret,
 						previousDeploymentIds: (deployments.data ?? []).map(
 							(deployment) => deployment.resource.id,
 						),

@@ -21,7 +21,6 @@ export type HostedDeployManagedModel = Schemas["V2ManagedModelCatalogItem"];
 export type HostedDeploySubscriptionQuote = Schemas["V2ComputeSubscriptionQuoteResponse-Output"];
 export type HostedDeploySubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];
 export type HostedDeployCheckoutRequest = Schemas["V2ComputeCheckoutRequest"];
-export type HostedDeployCheckoutResult = Schemas["V2CheckoutResponse"];
 export type HostedDeployOperation = Schemas["LongRunningOperation"];
 export type HostedDeployRequestStatus = Schemas["V2HostedDeployRequestReadResponse"];
 export type HostedDeployWallet = Schemas["V2WalletResponse"];

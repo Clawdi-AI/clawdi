@@ -1,9 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type {
-	CheckoutResult,
-	ComputeSubscriptionQuoteResponse,
-	DeployRequest,
-} from "@/hosted/billing/contracts";
+import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
+import type { ComputeSubscriptionQuoteResponse, DeployRequest } from "@/hosted/billing/contracts";
 import {
 	type SubscriptionCreateRequestView,
 	subscriptionCreateOutcome,
@@ -113,12 +110,19 @@ describe("subscription creation adapter", () => {
 	});
 
 	test("projects activation identity and entitlement fields consumed by the UI", () => {
-		const activation: CheckoutResult = {
+		const activation: Extract<CheckoutOperationResult, { flow_type: "subscription_activation" }> = {
 			flow_type: "subscription_activation",
 			funding_source: "wallet",
 			checkout_url: "",
+			subscription_id: "csub_contract",
+			invoice_id: null,
 			deploy_request_id: "subscription-create-test",
 			deployment_id: "hdep_created",
+			deployment_name: null,
+			metadata_generation: null,
+			debited_usd: null,
+			balance_after_usd: null,
+			current_period_start: null,
 			current_period_end: "2027-07-15T00:00:00Z",
 			entitled_until: "2027-07-16T00:00:00Z",
 		};

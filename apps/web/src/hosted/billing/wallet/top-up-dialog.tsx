@@ -28,6 +28,7 @@ import { isIdempotencyKeyReusedError, normalizeBillingError } from "@/hosted/bil
 import { formatCents } from "@/hosted/billing/format";
 import { newIdempotencyKey } from "@/hosted/billing/idempotency";
 import { useSensitiveTopUp } from "@/hosted/billing/sensitive-actions";
+import type { PaymentIntentClientSecret } from "@/hosted/billing/stripe-client-secret";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import {
 	type PaymentOutcome,
@@ -96,7 +97,7 @@ export function TopUpDialog({
 	const runAction = useActionLock();
 	const [step, setStep] = useState<Step>("amount");
 	const [dollars, setDollars] = useState(String(TOPUP_DEFAULT_CENTS / 100));
-	const [clientSecret, setClientSecret] = useState<string | null>(null);
+	const [clientSecret, setClientSecret] = useState<PaymentIntentClientSecret | null>(null);
 	const [amountTouched, setAmountTouched] = useState(false);
 	const [paymentSubmitting, setPaymentSubmitting] = useState(false);
 	useSettingsEditState({ dirty: false, busy: open && (topUp.isPending || paymentSubmitting) });

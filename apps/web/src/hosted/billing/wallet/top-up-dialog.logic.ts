@@ -1,6 +1,10 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { WalletLedgerEntry, WalletTopupResult } from "@/hosted/billing/contracts";
 import { billingKeys } from "@/hosted/billing/query-keys";
+import {
+	type PaymentIntentClientSecret,
+	walletTopupPaymentIntentClientSecret,
+} from "@/hosted/billing/stripe-client-secret";
 import { WALLET_TOPUP_ACCEPTED_TOAST } from "@/hosted/billing/wallet/top-up-return.logic";
 import {
 	TOPUP_INCREMENT_CENTS,
@@ -23,7 +27,7 @@ export interface TopupCompletionControls {
 }
 
 export interface TopupStartResultControls extends TopupCompletionControls {
-	startPayment: (clientSecret: string) => void;
+	startPayment: (clientSecret: PaymentIntentClientSecret) => void;
 	toastError: TopupToast;
 }
 
@@ -132,14 +136,15 @@ export function handleTopupStartResult(
 		completeTopup("succeeded", controls);
 		return;
 	}
-	if (result.flow_type === "payment_intent" && result.client_secret) {
+	const clientSecret = walletTopupPaymentIntentClientSecret(result);
+	if (clientSecret) {
 		// A pending ledger row matters only on a mounted activity surface. Keep
 		// balance and the rest of wallet activity untouched until payment settles.
 		void controls.queryClient.refetchQueries({
 			queryKey: billingKeys.ledgerRoot,
 			type: "active",
 		});
-		controls.startPayment(result.client_secret);
+		controls.startPayment(clientSecret);
 		return;
 	}
 	if (isProcessingTopupStatus(result.status)) {

@@ -8,6 +8,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
+import type { PaymentIntentClientSecret } from "@/hosted/billing/stripe-client-secret";
 import {
 	type PaymentOutcome,
 	paymentOutcomeForStatus,
@@ -120,7 +121,7 @@ export function StripePaymentForm({
 	summary,
 	onSubmittingChange,
 }: {
-	clientSecret: string;
+	clientSecret: PaymentIntentClientSecret;
 	onComplete: (status: PaymentOutcome) => void;
 	onCancel: () => void;
 	returnUrl?: PaymentReturnUrl;
