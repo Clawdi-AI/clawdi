@@ -9590,6 +9590,8 @@ if [ "\${1:-}" = "--version" ]; then
   exit 0
 fi
 if [ "\${1:-} \${2:-} \${3:-}" = "runtime verify --json" ]; then
+  test "\${CLAWDI_SERVICE_STATE_DIR:-}" != "${state}"
+  test "\${CLAWDI_RUN_DIR:-}" != "${run}"
   echo '{"status":"ok"}'
   exit 0
 fi
