@@ -233,6 +233,8 @@ import {
 	agentProviderHasSingleLinkLimit,
 	channelActivityAfterLink,
 	channelProviderLinkingReady,
+	discordPairingShouldSyncCommands,
+	pairingActionLabel,
 } from "@/hosted/v2/channels/channel-linking.logic";
 import {
 	ChannelStatusBadge,
@@ -252,6 +254,7 @@ import {
 	useUnlinkAgentChannel,
 } from "@/hosted/v2/channels/channels-hooks";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
+import { DiscordPairDialog } from "@/hosted/v2/channels/discord-pair-dialog";
 import { PairedChatRow } from "@/hosted/v2/channels/paired-chat-row";
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import {
@@ -2355,10 +2358,20 @@ function ChannelsTab({
 	const accountSummaries = useMemo(() => {
 		const map = new Map<string, ChannelAccountSummary>();
 		for (const channel of channels.data ?? []) {
-			map.set(channel.id, { provider: channel.provider, name: channel.name });
+			map.set(channel.id, {
+				provider: channel.provider,
+				name: channel.name,
+				visibility: channel.visibility,
+			});
 		}
 		for (const list of Object.values(botPool.data?.providers ?? {})) {
-			for (const bot of list) map.set(bot.id, { provider: bot.provider, name: bot.name });
+			for (const bot of list) {
+				map.set(bot.id, {
+					provider: bot.provider,
+					name: bot.name,
+					visibility: bot.visibility,
+				});
+			}
 		}
 		return map;
 	}, [channels.data, botPool.data]);
@@ -2456,7 +2469,10 @@ function ChannelsTab({
 				});
 			} else {
 				toast.success("Channel linked", {
-					description: "Pair a chat from the connected channel row.",
+					description:
+						account?.provider === "discord"
+							? "Use Pair Discord from the connected Discord Bot row."
+							: "Pair a chat from the connected channel row.",
 				});
 			}
 			return data;
@@ -2567,7 +2583,7 @@ function ChannelsTab({
 				<div className="space-y-1">
 					<SectionLabel>Add a channel</SectionLabel>
 					<p className="px-0.5 text-sm text-muted-foreground">
-						Link a bot to this Agent, then pair the chats it should answer.
+						Link a bot to this Agent, then choose where it should answer.
 					</p>
 				</div>
 				{botPool.isLoading ? (
@@ -2665,7 +2681,10 @@ function ChannelsTab({
 						return;
 					}
 					toast.success("Channel connected", {
-						description: "Pair a chat from the connected channel row.",
+						description:
+							bot.provider === "discord"
+								? "Use Pair Discord from the connected Discord Bot row."
+								: "Pair a chat from the connected channel row.",
 					});
 				}}
 			/>
@@ -2706,13 +2725,14 @@ function ConnectedChannelGroup({
 	onBindingsRetry: () => void;
 	onUnlink: () => void;
 	unlinking: boolean;
-	fallbackAccount?: { provider: string; name: string };
+	fallbackAccount?: ChannelAccountSummary;
 	health?: components["schemas"]["ChannelHealthItemResponse"];
 	healthLoading: boolean;
 	healthError: boolean;
 	onHealthRetry: () => void;
 }) {
 	const showChats = pairedChats.length > 0 || bindingsLoading || bindingsError;
+	const provider = link.account?.provider ?? fallbackAccount?.provider ?? "";
 
 	return (
 		<div data-agent-channel-group-id={link.id} className="min-w-0">
@@ -2748,7 +2768,11 @@ function ConnectedChannelGroup({
 							className="ml-4 flex min-h-12 flex-wrap items-center gap-2 border-l-2 border-muted py-2 pl-3"
 						>
 							<AlertCircle className="size-4 shrink-0 text-destructive" />
-							<p className="min-w-0 flex-1 text-sm font-medium">Couldn&apos;t load paired chats</p>
+							<p className="min-w-0 flex-1 text-sm font-medium">
+								{provider === "discord"
+									? "Couldn’t load paired servers or direct messages"
+									: "Couldn’t load paired chats"}
+							</p>
 							<Button type="button" variant="outline" size="sm" onClick={onBindingsRetry}>
 								<RefreshCw className="size-3.5" />
 								Retry
@@ -2818,7 +2842,7 @@ function LinkedChannelRow({
 	link: AgentChannelLink;
 	onUnlink: () => void;
 	unlinking: boolean;
-	fallbackAccount?: { provider: string; name: string };
+	fallbackAccount?: ChannelAccountSummary;
 	health?: components["schemas"]["ChannelHealthItemResponse"];
 	healthLoading: boolean;
 	healthError: boolean;
@@ -2827,6 +2851,7 @@ function LinkedChannelRow({
 	const pair = useCreatePairCode(link.account_id);
 	const [code, setCode] = useState<AgentPairCodeResult | null>(null);
 	const [telegramPairOpen, setTelegramPairOpen] = useState(false);
+	const [discordPairOpen, setDiscordPairOpen] = useState(false);
 	const [nowMs, setNowMs] = useState(() => Date.now());
 	const [creatingPairCode, setCreatingPairCode] = useState(false);
 	const pairInFlightRef = useRef(false);
@@ -2835,6 +2860,8 @@ function LinkedChannelRow({
 	// account NEVER white-screens (apps/web/src has no ErrorBoundary).
 	const account = link.account ?? fallbackAccount ?? null;
 	const provider = account?.provider ?? "";
+	const isDiscord = provider === "discord";
+	const syncDiscordCommands = discordPairingShouldSyncCommands(account?.visibility);
 	const name = account?.name ?? "Unnamed channel";
 	const hasActivity = channelActivityAfterLink(health?.last_message_at, link.created_at);
 	useEffect(() => {
@@ -2889,10 +2916,10 @@ function LinkedChannelRow({
 						<span>No activity yet</span>
 					)}
 				</div>
-				{provider !== "telegram" && pair.error ? (
+				{provider !== "telegram" && !isDiscord && pair.error ? (
 					<p className="mt-1 text-xs font-medium text-destructive">Pair failed · Try again</p>
 				) : null}
-				{code && provider !== "telegram" ? (
+				{code && provider !== "telegram" && !isDiscord ? (
 					<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
 						<CopyInline value={code.pairing_command} label="pairing command" />
 						<span className="text-muted-foreground">
@@ -2909,6 +2936,7 @@ function LinkedChannelRow({
 					disabled={provider !== "telegram" && creatingPairCode}
 					onClick={() => {
 						if (provider === "telegram") setTelegramPairOpen(true);
+						else if (isDiscord) setDiscordPairOpen(true);
 						else void createPairCode();
 					}}
 				>
@@ -2919,7 +2947,7 @@ function LinkedChannelRow({
 							? "Pair Telegram"
 							: pair.error
 								? "Retry pairing"
-								: "Pair chat"}
+								: pairingActionLabel(provider)}
 				</Button>
 				<ConfirmAction
 					title="Unlink this channel?"
@@ -2947,6 +2975,15 @@ function LinkedChannelRow({
 					accountId={link.account_id}
 					agentLinkId={link.id}
 					channelName={name}
+				/>
+			) : null}
+			{isDiscord ? (
+				<DiscordPairDialog
+					open={discordPairOpen}
+					onOpenChange={setDiscordPairOpen}
+					accountId={link.account_id}
+					agentLinkId={link.id}
+					syncCommandsBeforePairing={syncDiscordCommands}
 				/>
 			) : null}
 		</div>

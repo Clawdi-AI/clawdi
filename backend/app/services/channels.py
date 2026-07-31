@@ -106,6 +106,11 @@ DEFAULT_CHANNEL_COMMANDS: tuple[dict[str, Any], ...] = (
         "options": [],
     },
 )
+DISCORD_ADMINISTRATOR_PERMISSION = 1 << 3
+DISCORD_MANAGE_GUILD_PERMISSION = 1 << 5
+DISCORD_GUILD_PERMISSION_DENIED = "discord_guild_permission_denied"
+DISCORD_GUILD_USE_INTERACTION = "discord_guild_use_interaction"
+DISCORD_DM_CHAT_TYPES = frozenset({"dm", "direct_messages", "group_dm", "private"})
 DELIVERY_LINK_LOCK_CONTENTION_ERROR = "channel agent link is being updated"
 DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
 HERMES_AGENT_TYPE = "hermes"
@@ -194,6 +199,10 @@ PAIRING_REPLY_FORBIDDEN = "Only the user who paired this chat can change its pai
 
 
 class BindingActorMismatchError(Exception):
+    pass
+
+
+class BindingAgentLinkMismatchError(Exception):
     pass
 
 
@@ -1329,6 +1338,8 @@ async def claim_pair_code(
                 external_chat_name=external_chat_name,
                 external_user_id=external_user_id,
             )
+    except BindingAgentLinkMismatchError:
+        return PairCodeClaimResult(reason="already_paired")
     except (BindingActorMismatchError, IntegrityError):
         return PairCodeClaimResult(reason="forbidden")
     pair_code.status = PAIR_CODE_STATUS_CLAIMED
@@ -1370,11 +1381,23 @@ async def get_or_create_binding(
     )
     binding = result.scalars().first()
     if binding is not None:
-        if binding.status == BINDING_STATUS_ACTIVE and not binding_is_controlled_by_actor(
-            binding,
-            external_user_id=external_user_id,
-        ):
-            raise BindingActorMismatchError
+        if binding.status == BINDING_STATUS_ACTIVE:
+            if not binding_is_controlled_by_actor(
+                binding,
+                external_user_id=external_user_id,
+            ):
+                raise BindingActorMismatchError
+            if account.provider == CHANNEL_PROVIDER_DISCORD:
+                if binding.bot_agent_link_id != bot_agent_link_id:
+                    # One active Discord guild/DM scope cannot be silently
+                    # moved between AgentLinks. Explicit unpair archives the
+                    # scope first, after which a new Link may claim it.
+                    raise BindingAgentLinkMismatchError
+                if not discord_binding_matches_chat_type(
+                    binding,
+                    external_chat_type=external_chat_type,
+                ):
+                    raise BindingActorMismatchError
         binding.bot_agent_link_id = bot_agent_link_id
         binding.user_id = user_id
         binding.external_chat_type = external_chat_type
@@ -1419,6 +1442,16 @@ def binding_is_controlled_by_actor(
     if binding.paired_external_user_id is None:
         return external_user_id is None
     return binding.paired_external_user_id == external_user_id
+
+
+def discord_binding_matches_chat_type(
+    binding: ChannelBinding,
+    *,
+    external_chat_type: str | None,
+) -> bool:
+    binding_is_dm = (binding.external_chat_type or "").lower() in DISCORD_DM_CHAT_TYPES
+    incoming_is_dm = (external_chat_type or "").lower() in DISCORD_DM_CHAT_TYPES
+    return binding_is_dm == incoming_is_dm
 
 
 async def find_binding(
@@ -1523,6 +1556,7 @@ async def upsert_binding_alias(
     binding: ChannelBinding,
     alias_external_chat_id: str,
     alias_kind: str,
+    require_same_binding: bool = False,
 ) -> ChannelBindingAlias:
     result = await db.execute(
         select(ChannelBindingAlias).where(
@@ -1532,6 +1566,13 @@ async def upsert_binding_alias(
     )
     alias = result.scalar_one_or_none()
     if alias is not None:
+        if require_same_binding and alias.binding_id != binding.id:
+            existing_binding = await db.get(ChannelBinding, alias.binding_id)
+            if existing_binding is not None and existing_binding.status == BINDING_STATUS_ACTIVE:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="channel binding alias does not match",
+                )
         alias.binding_id = binding.id
         alias.alias_kind = alias_kind
         alias.user_id = binding.user_id
@@ -1561,6 +1602,8 @@ async def resolve_inbound_binding(
     external_user_id: str | None,
     text: str | None,
     command: ChannelPairCommand | None = None,
+    command_denied_reason: str | None = None,
+    command_actor_required: bool = False,
 ) -> InboundBindingResult:
     parsed = command if command is not None else parse_pair_command(text)
     if parsed is not None and parsed.kind in {"pair", "unpair"}:
@@ -1570,6 +1613,15 @@ async def resolve_inbound_binding(
             external_chat_id=external_chat_id,
         )
     bindings = await find_bindings(db, account=account, external_chat_id=external_chat_id)
+    if account.provider == CHANNEL_PROVIDER_DISCORD:
+        bindings = [
+            active_binding
+            for active_binding in bindings
+            if discord_binding_matches_chat_type(
+                active_binding,
+                external_chat_type=external_chat_type,
+            )
+        ]
     binding = bindings[0] if bindings else None
     if parsed is None:
         authorized_bindings: list[ChannelBinding] = []
@@ -1604,7 +1656,16 @@ async def resolve_inbound_binding(
             binding=authorized_bindings[0] if authorized_bindings else None,
             bindings=tuple(authorized_bindings),
         )
-    if external_user_id is None and pairing_command_requires_actor(external_chat_type):
+    if command_denied_reason is not None:
+        return InboundBindingResult(
+            binding=binding,
+            bindings=tuple(bindings),
+            command_handled=True,
+            pair_failed_reason=command_denied_reason,
+        )
+    if external_user_id is None and (
+        command_actor_required or pairing_command_requires_actor(external_chat_type)
+    ):
         return InboundBindingResult(
             binding=binding,
             bindings=tuple(bindings),
@@ -1735,6 +1796,70 @@ def pairing_reply_for_command(
     return "Message received."
 
 
+def discord_guild_command_denied_reason(
+    payload: dict[str, Any],
+    *,
+    command: ChannelPairCommand | None,
+    guild_id: str | None,
+) -> str | None:
+    """Require Discord-computed guild permissions for pairing mutations.
+
+    Discord interaction ``member.permissions`` is the authoritative computed
+    decimal-string bitfield. MESSAGE_CREATE does not normally include it, so
+    text commands fail closed unless a trusted ingress supplied the same
+    computed field. Discord API docs baseline:
+    b2f8adafc037242291b8f875d4cdf3adc4d48bb7.
+    """
+    if command is None or command.kind not in {"pair", "unpair"} or guild_id is None:
+        return None
+    data = _discord_event_data(payload)
+    member = data.get("member")
+    raw_permissions = member.get("permissions") if isinstance(member, dict) else None
+    is_interaction = payload.get("type") == 2 or payload.get("t") == "INTERACTION_CREATE"
+    if not isinstance(raw_permissions, str) or re.fullmatch(r"[0-9]+", raw_permissions) is None:
+        return DISCORD_GUILD_PERMISSION_DENIED if is_interaction else DISCORD_GUILD_USE_INTERACTION
+    try:
+        permissions = int(raw_permissions, 10)
+    except ValueError:
+        return DISCORD_GUILD_PERMISSION_DENIED if is_interaction else DISCORD_GUILD_USE_INTERACTION
+    required = DISCORD_MANAGE_GUILD_PERMISSION | DISCORD_ADMINISTRATOR_PERMISSION
+    if permissions & required:
+        return None
+    return DISCORD_GUILD_PERMISSION_DENIED
+
+
+def discord_pairing_reply_for_command(
+    command: ChannelPairCommand | None,
+    result: InboundBindingResult,
+    *,
+    guild_id: str | None,
+) -> str:
+    if guild_id is None:
+        scope = "direct message"
+        scope_title = "Direct message"
+    else:
+        scope = "server"
+        scope_title = "Server"
+    if result.paired:
+        return f"{scope_title} paired. This Discord {scope} is now connected to your agent."
+    if result.unpaired:
+        return f"{scope_title} unpaired. This Discord {scope} is no longer connected to an agent."
+    if result.pair_failed_reason == DISCORD_GUILD_USE_INTERACTION:
+        return (
+            "Use the /bot_pair or /bot_unpair slash command; "
+            "pairing a server requires Manage Server permission."
+        )
+    if result.pair_failed_reason == DISCORD_GUILD_PERMISSION_DENIED:
+        return "You need Manage Server permission to pair or unpair this server."
+    if result.pair_failed_reason == "forbidden":
+        return f"Only the user who paired this {scope} can change its pairing."
+    if result.pair_failed_reason == "already_paired":
+        return f"This {scope} is already paired to another Agent. Unpair it first."
+    if command is not None and command.kind == "unpair" and not result.unpaired:
+        return f"This {scope} is not paired."
+    return pairing_reply_for_command(command, result)
+
+
 def extract_pair_code(text: str | None) -> str | None:
     command = parse_pair_command(text)
     return command.code if command is not None and command.kind == "pair" else None
@@ -1750,10 +1875,11 @@ async def send_pairing_command_reply(
     telegram_direct_messages_topic_id: int | None = None,
     command: ChannelPairCommand | None,
     binding_result: InboundBindingResult,
+    reply: str | None = None,
 ) -> ChannelMessage | None:
     if not binding_result.command_handled:
         return None
-    reply = pairing_reply_for_command(command, binding_result)
+    reply_text = reply or pairing_reply_for_command(command, binding_result)
     reply_link_id = (
         binding_result.binding.bot_agent_link_id
         if binding_result.binding is not None and (binding_result.paired or binding_result.unpaired)
@@ -1765,7 +1891,7 @@ async def send_pairing_command_reply(
             db,
             account=account,
             external_chat_id=send_external_chat_id or external_chat_id,
-            text=reply,
+            text=reply_text,
             bot_agent_link_id=reply_link_id,
             bind_to_existing=bind_reply_to_existing,
             telegram_message_thread_id=telegram_message_thread_id,
@@ -3991,6 +4117,8 @@ async def record_discord_dispatch(
     external_chat_id = key.chat_id if key is not None else chat[0]
     external_chat_type = key.chat_type if key is not None else chat[1]
     external_chat_name = chat[2] if chat is not None else key.scope_id
+    command = discord_pair_command_from_payload(frame)
+    guild_id = key.scope_id if key is not None else discord_channel_scope_from_payload(frame)[1]
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -3999,9 +4127,15 @@ async def record_discord_dispatch(
         external_chat_name=external_chat_name,
         external_user_id=discord_external_user_id_from_payload(frame),
         text=discord_text_from_payload(frame),
-        command=discord_pair_command_from_payload(frame),
+        command=command,
+        command_denied_reason=discord_guild_command_denied_reason(
+            frame,
+            command=command,
+            guild_id=guild_id,
+        ),
+        command_actor_required=True,
     )
-    if binding_result.binding is None:
+    if binding_result.binding is None and not binding_result.command_handled:
         return False
     data = frame.get("d")
     payload = frame if isinstance(data, dict) else {"d": data}
@@ -4027,6 +4161,7 @@ async def record_discord_dispatch(
                 binding=binding,
                 alias_external_chat_id=key.channel_id,
                 alias_kind="discord_channel",
+                require_same_binding=True,
             )
         await record_discord_interaction_references(
             db,
@@ -4036,6 +4171,17 @@ async def record_discord_dispatch(
             payload=payload,
         )
         await record_inactive_bot_agent_link_event(db, account=account, binding=binding)
+    if binding_result.command_handled:
+        reply = discord_pairing_reply_for_command(command, binding_result, guild_id=guild_id)
+        await send_pairing_command_reply(
+            db,
+            account=account,
+            external_chat_id=external_chat_id,
+            send_external_chat_id=key.channel_id if key is not None else None,
+            command=command,
+            binding_result=binding_result,
+            reply=reply,
+        )
     return True
 
 
@@ -4485,11 +4631,23 @@ def _command_description(command: dict[str, Any]) -> str:
 
 
 def _discord_command_payload(command: dict[str, Any]) -> dict[str, Any]:
+    name = _command_name(command)
     payload: dict[str, Any] = {
-        "name": _command_name(command),
+        "name": name,
         "description": _command_description(command),
         "type": 1,
     }
+    if name in {"bot_pair", "bot_unpair"}:
+        # Discord's provider-specific default keeps Telegram's command payload
+        # byte-for-byte unchanged. Server-side interaction checks remain the
+        # authority; this only makes Discord hide the commands by default from
+        # members without MANAGE_GUILD.
+        payload["default_member_permissions"] = str(DISCORD_MANAGE_GUILD_PERMISSION)
+        payload["description"] = (
+            "Pair this server or direct message with Clawdi."
+            if name == "bot_pair"
+            else "Disconnect this server or direct message from Clawdi."
+        )
     options = command.get("options")
     if isinstance(options, list):
         payload["options"] = [option for option in options if isinstance(option, dict)]

@@ -65,6 +65,7 @@ from app.routes.channel_routers.discord import (
     _discord_gateway_url,
     _discord_guild_create_payload,
 )
+from app.routes.channel_routers.shared import _discord_gateway_dispatch
 from app.services import channels as channel_service
 from app.services.bluebubbles_socket import BlueBubblesSocketManager
 from app.services.channel_debug_events import record_channel_debug_event
@@ -452,6 +453,10 @@ class _FailingProviderClient(_FakeProviderClient):
         self.calls.append({"url": url, **kwargs})
         raise httpx.ConnectError("network down")
 
+    async def request(self, method, url, **kwargs):
+        self.calls.append({"method": method, "url": url, **kwargs})
+        raise httpx.ConnectError("network down")
+
 
 class _SequencedProviderClient(_FakeProviderClient):
     status_codes: list[int] = []
@@ -731,7 +736,7 @@ async def _create_paired_discord_channel(
             json={"ttl_seconds": 900},
         )
     ).json()
-    await client.post(
+    paired = await client.post(
         f"/v1/channels/discord/{created['id']}/webhook",
         headers={"x-clawdi-channel-secret": created["webhook_secret"]},
         json={
@@ -741,12 +746,19 @@ async def _create_paired_discord_channel(
             "application_id": application_id,
             "channel_id": channel_id,
             "guild_id": guild_id,
-            "member": {"user": {"id": "discord-pair-user"}},
+            "member": {
+                "permissions": "32",
+                "user": {"id": "discord-pair-user"},
+            },
             "data": {
                 "name": "bot_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
             },
         },
+    )
+    assert paired.status_code == 200, paired.text
+    assert paired.json()["data"]["content"] == (
+        "Server paired. This Discord server is now connected to your agent."
     )
     return created
 
@@ -7907,6 +7919,7 @@ async def test_discord_pairing_replays_stored_global_commands_to_new_guild(
                 "guild_id": "guild-replay",
                 "content": f"/bot_pair {pair['code']}",
                 "author": {"id": "discord-replay-user"},
+                "member": {"permissions": "32"},
             },
         },
     )
@@ -8192,6 +8205,132 @@ async def test_discord_channel_rest_accepts_bound_channel_alias(
     assert _FakeProviderClient.calls[0]["headers"]["Authorization"] == (
         "Bot discord-provider-token"
     )
+
+
+@pytest.mark.asyncio
+async def test_discord_channel_rest_resolves_caches_and_reuses_unobserved_guild_channel(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-unobserved-channel-rest",
+        channel_id="discord-observed-channel",
+        guild_id="discord-bound-guild",
+    )
+    _reset_fake_provider_client(
+        {
+            "id": "discord-unobserved-channel",
+            "guild_id": "discord-bound-guild",
+            "type": 11,
+            "parent_id": "discord-observed-channel",
+        }
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.shared.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    headers = {"Authorization": f"Bot {created['agent_token']}"}
+
+    channel_get = await client.get(
+        "/v1/channels/discord/v10/channels/discord-unobserved-channel",
+        headers=headers,
+    )
+    cached_operation = await client.put(
+        "/v1/channels/discord/v10/channels/discord-unobserved-channel/permissions/role-1",
+        headers=headers,
+        json={"allow": "1024", "deny": "0", "type": 0},
+    )
+
+    assert channel_get.status_code == 200
+    assert channel_get.json()["guild_id"] == "discord-bound-guild"
+    assert cached_operation.status_code == 200
+    assert [(call["method"], urlparse(call["url"]).path) for call in _FakeProviderClient.calls] == [
+        ("GET", "/api/v10/channels/discord-unobserved-channel"),
+        ("PUT", "/api/v10/channels/discord-unobserved-channel/permissions/role-1"),
+    ]
+    alias = (
+        await db_session.execute(
+            select(ChannelBindingAlias).where(
+                ChannelBindingAlias.account_id == UUID(created["id"]),
+                ChannelBindingAlias.alias_external_chat_id == "discord-unobserved-channel",
+                ChannelBindingAlias.alias_kind == "discord_channel",
+            )
+        )
+    ).scalar_one()
+    assert alias.bot_agent_link_id == UUID(created["agent_link_id"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_payload", "provider_status", "provider_content"),
+    [
+        ({"id": "unknown-channel", "guild_id": "wrong-guild"}, 200, None),
+        ({"id": "unknown-channel", "type": 1}, 200, None),
+        ({"id": "different-channel", "guild_id": "bound-guild"}, 200, None),
+        ({}, 200, b"not-json"),
+        ({"message": "upstream error"}, 500, None),
+    ],
+)
+async def test_discord_unobserved_channel_lookup_failures_do_not_authorize(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_payload: dict[str, Any],
+    provider_status: int,
+    provider_content: bytes | None,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name=f"discord-unobserved-denied-{uuid4().hex}",
+        channel_id="observed-channel",
+        guild_id="bound-guild",
+    )
+    _reset_fake_provider_client(
+        provider_payload,
+        status_code=provider_status,
+        content=provider_content,
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.shared.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+
+    response = await client.get(
+        "/v1/channels/discord/v10/channels/unknown-channel",
+        headers={"Authorization": f"Bot {created['agent_token']}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"code": 50001, "message": "Missing Access"}
+    assert len(_FakeProviderClient.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_discord_unobserved_channel_provider_network_error_fails_closed(
+    client: httpx.AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-unobserved-provider-error",
+        channel_id="observed-channel",
+        guild_id="bound-guild",
+    )
+    _FailingProviderClient.calls = []
+    monkeypatch.setattr(
+        "app.routes.channel_routers.shared.httpx.AsyncClient",
+        _FailingProviderClient,
+    )
+
+    response = await client.get(
+        "/v1/channels/discord/v10/channels/unknown-channel",
+        headers={"Authorization": f"Bot {created['agent_token']}"},
+    )
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "discord api unreachable"}
+    assert len(_FailingProviderClient.calls) == 1
 
 
 @pytest.mark.asyncio
@@ -11489,6 +11628,7 @@ async def test_discord_webhook_pair_code_creates_binding(client: httpx.AsyncClie
                 "guild_id": "guild-1",
                 "content": f"/bot_pair {pair['code']}",
                 "author": {"id": "discord-msg-pair-user"},
+                "member": {"permissions": "32"},
                 "channel": {"id": "chan-1", "name": "ops"},
             },
         },
@@ -11605,6 +11745,7 @@ async def test_discord_message_pair_code_sends_user_reply(
                 "guild_id": "guild-1",
                 "content": f"/bot_pair {pair['code']}",
                 "author": {"id": "discord-msg-pair-user"},
+                "member": {"permissions": "32"},
                 "channel": {"id": "chan-1", "name": "ops"},
             },
         },
@@ -11619,9 +11760,362 @@ async def test_discord_message_pair_code_sends_user_reply(
     )
     assert reply_call["headers"]["Authorization"] == ("Bot discord-provider-token")
     assert reply_call["json"] == {
-        "content": "Paired! This chat is now connected to your agent.",
+        "content": "Server paired. This Discord server is now connected to your agent.",
         "allowed_mentions": {"parse": []},
     }
+
+
+@pytest.mark.asyncio
+async def test_discord_guild_text_pair_without_computed_permissions_fails_closed(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _reset_fake_provider_client({"id": "discord-permission-instruction"})
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-text-pair-permissions",
+                "provider_token": "discord-provider-token",
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    denied = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "guild-text-pair-denied",
+                "channel_id": "guild-thread-invoking",
+                "guild_id": "guild-text-pair",
+                "channel_type": 11,
+                "content": f"/bot_pair {pair['code']}",
+                "author": {"id": "guild-text-actor"},
+            },
+        },
+    )
+
+    assert denied.status_code == 200
+    assert denied.json()["paired"] is False
+    assert (
+        await db_session.get(ChannelPairCode, UUID(pair["id"]))
+    ).status == PAIR_CODE_STATUS_PENDING
+    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+    reply_call = next(
+        call
+        for call in _FakeProviderClient.calls
+        if call["url"].endswith("/channels/guild-thread-invoking/messages")
+    )
+    assert reply_call["json"]["content"] == (
+        "Use the /bot_pair or /bot_unpair slash command; "
+        "pairing a server requires Manage Server permission."
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("permissions", ["32", "8"])
+async def test_discord_guild_interaction_pair_allows_manage_guild_or_administrator(
+    client: httpx.AsyncClient,
+    permissions: str,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "discord", "name": f"discord-pair-authority-{permissions}"},
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+
+    response = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": f"pair-authority-{permissions}",
+            "token": f"pair-authority-token-{permissions}",
+            "channel_id": "authority-channel",
+            "guild_id": f"authority-guild-{permissions}",
+            "member": {
+                "permissions": permissions,
+                "user": {"id": "authority-admin"},
+            },
+            "data": {
+                "name": "bot_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["content"].startswith("Server paired.")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("permissions", ["0", None, "malformed", 32])
+async def test_discord_guild_interaction_pair_denies_non_authoritative_permissions(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    permissions: Any,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={"provider": "discord", "name": f"discord-pair-denied-{uuid4().hex}"},
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    member: dict[str, Any] = {"user": {"id": "ordinary-member"}}
+    if permissions is not None:
+        member["permissions"] = permissions
+
+    response = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": f"pair-denied-{uuid4().hex}",
+            "token": f"pair-denied-token-{uuid4().hex}",
+            "channel_id": "denied-channel",
+            "guild_id": "denied-guild",
+            "member": member,
+            "data": {
+                "name": "bot_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["content"] == (
+        "You need Manage Server permission to pair or unpair this server."
+    )
+    assert (
+        await db_session.get(ChannelPairCode, UUID(pair["id"]))
+    ).status == PAIR_CODE_STATUS_PENDING
+    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_discord_guild_unpair_requires_current_authority_and_pairing_actor(
+    client: httpx.AsyncClient,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-unpair-two-part-authority",
+        channel_id="unpair-authority-channel",
+        guild_id="unpair-authority-guild",
+    )
+
+    async def unpair(*, actor: str, permissions: str, suffix: str) -> httpx.Response:
+        return await client.post(
+            f"/v1/channels/discord/{created['id']}/webhook",
+            headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+            json={
+                "type": 2,
+                "id": f"unpair-authority-{suffix}",
+                "token": f"unpair-authority-token-{suffix}",
+                "channel_id": "unpair-authority-channel",
+                "guild_id": "unpair-authority-guild",
+                "member": {
+                    "permissions": permissions,
+                    "user": {"id": actor},
+                },
+                "data": {"name": "bot_unpair"},
+            },
+        )
+
+    no_permission = await unpair(
+        actor="discord-pair-user",
+        permissions="0",
+        suffix="no-permission",
+    )
+    wrong_actor = await unpair(
+        actor="different-admin",
+        permissions="32",
+        suffix="wrong-actor",
+    )
+    allowed = await unpair(
+        actor="discord-pair-user",
+        permissions="8",
+        suffix="allowed",
+    )
+
+    assert no_permission.json()["data"]["content"] == (
+        "You need Manage Server permission to pair or unpair this server."
+    )
+    assert wrong_actor.json()["data"]["content"] == (
+        "Only the user who paired this server can change its pairing."
+    )
+    assert allowed.json()["data"]["content"].startswith("Server unpaired.")
+    assert (await client.get(f"/v1/channels/{created['id']}/bindings")).json() == []
+
+
+@pytest.mark.asyncio
+async def test_discord_guild_cannot_move_to_second_link_until_explicit_unpair_and_alias_repair(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+    second_channel_agent,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-guild-link-conflict",
+        channel_id="link-a-channel",
+        guild_id="single-link-guild",
+        agent_id=channel_agent.id,
+    )
+    link_a_id = UUID(created["agent_link_id"])
+    link_b = await client.post(
+        f"/v1/channels/{created['id']}/agent-links",
+        json={"agent_id": str(second_channel_agent.id)},
+    )
+    assert link_b.status_code == 201, link_b.text
+    link_b_body = link_b.json()
+    pair_b = await client.post(
+        f"/v1/channels/{created['id']}/pair-codes",
+        json={"agent_link_id": link_b_body["id"], "ttl_seconds": 900},
+    )
+    assert pair_b.status_code == 201, pair_b.text
+    pair_b_body = pair_b.json()
+
+    conflict = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "link-b-conflicting-pair",
+            "token": "link-b-conflicting-pair-token",
+            "channel_id": "link-a-channel",
+            "guild_id": "single-link-guild",
+            "member": {
+                "permissions": "32",
+                "user": {"id": "discord-pair-user"},
+            },
+            "data": {
+                "name": "bot_pair",
+                "options": [{"name": "code", "value": pair_b_body["code"]}],
+            },
+        },
+    )
+
+    assert conflict.status_code == 200
+    assert conflict.json()["data"]["content"] == (
+        "This server is already paired to another Agent. Unpair it first."
+    )
+    binding = (
+        await db_session.execute(
+            select(ChannelBinding).where(
+                ChannelBinding.account_id == UUID(created["id"]),
+                ChannelBinding.external_chat_id == "single-link-guild",
+                ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            )
+        )
+    ).scalar_one()
+    binding_id = binding.id
+    assert binding.bot_agent_link_id == link_a_id
+    pair_code = await db_session.get(ChannelPairCode, UUID(pair_b_body["id"]))
+    assert pair_code is not None
+    assert pair_code.status == PAIR_CODE_STATUS_PENDING
+
+    unpaired = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "link-a-explicit-unpair",
+            "token": "link-a-explicit-unpair-token",
+            "channel_id": "link-a-channel",
+            "guild_id": "single-link-guild",
+            "member": {
+                "permissions": "32",
+                "user": {"id": "discord-pair-user"},
+            },
+            "data": {"name": "bot_unpair"},
+        },
+    )
+    assert unpaired.json()["data"]["content"].startswith("Server unpaired.")
+
+    repaired = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "link-b-pair-after-unpair",
+            "token": "link-b-pair-after-unpair-token",
+            "channel_id": "link-b-channel",
+            "guild_id": "single-link-guild",
+            "member": {
+                "permissions": "32",
+                "user": {"id": "link-b-admin"},
+            },
+            "data": {
+                "name": "bot_pair",
+                "options": [{"name": "code", "value": pair_b_body["code"]}],
+            },
+        },
+    )
+    assert repaired.json()["data"]["content"].startswith("Server paired.")
+
+    await db_session.refresh(binding)
+    await db_session.refresh(pair_code)
+    assert binding.id == binding_id
+    assert binding.status == BINDING_STATUS_ACTIVE
+    assert binding.bot_agent_link_id == UUID(link_b_body["id"])
+    assert pair_code.status == "claimed"
+    stale_alias = (
+        await db_session.execute(
+            select(ChannelBindingAlias).where(
+                ChannelBindingAlias.account_id == UUID(created["id"]),
+                ChannelBindingAlias.alias_external_chat_id == "link-a-channel",
+            )
+        )
+    ).scalar_one()
+    assert stale_alias.binding_id == binding_id
+    assert stale_alias.bot_agent_link_id == link_a_id
+
+    _reset_fake_provider_client(
+        {
+            "id": "link-a-channel",
+            "guild_id": "single-link-guild",
+            "type": 0,
+        }
+    )
+    monkeypatch.setattr(
+        "app.routes.channel_routers.shared.httpx.AsyncClient",
+        _FakeProviderClient,
+    )
+    old_channel = await client.get(
+        "/v1/channels/discord/v10/channels/link-a-channel",
+        headers={"Authorization": f"Bot {link_b_body['agent_token']}"},
+    )
+
+    assert old_channel.status_code == 200
+    assert len(_FakeProviderClient.calls) == 1
+    await db_session.refresh(stale_alias)
+    assert stale_alias.binding_id == binding_id
+    assert stale_alias.bot_agent_link_id == UUID(link_b_body["id"])
 
 
 @pytest.mark.asyncio
@@ -11649,7 +12143,10 @@ async def test_discord_interaction_unpair_archives_binding(client: httpx.AsyncCl
             "channel_id": "chan-discord-unpair",
             "guild_id": "guild-discord-unpair",
             "channel": {"id": "chan-discord-unpair", "name": "ops", "type": 0},
-            "member": {"user": {"id": "discord-user-unpair"}},
+            "member": {
+                "permissions": "32",
+                "user": {"id": "discord-user-unpair"},
+            },
             "data": {
                 "name": "bot_pair",
                 "options": [{"name": "code", "value": pair["code"]}],
@@ -11667,7 +12164,10 @@ async def test_discord_interaction_unpair_archives_binding(client: httpx.AsyncCl
             "channel_id": "chan-discord-unpair",
             "guild_id": "guild-discord-unpair",
             "channel": {"id": "chan-discord-unpair", "name": "ops", "type": 0},
-            "member": {"user": {"id": "discord-user-unpair"}},
+            "member": {
+                "permissions": "32",
+                "user": {"id": "discord-user-unpair"},
+            },
             "data": {"name": "bot_unpair"},
         },
     )
@@ -11675,7 +12175,7 @@ async def test_discord_interaction_unpair_archives_binding(client: httpx.AsyncCl
     assert unpaired.status_code == 200
     assert (
         unpaired.json()["data"]["content"]
-        == "Unpaired. This chat is no longer connected to an agent."
+        == "Server unpaired. This Discord server is no longer connected to an agent."
     )
     bindings = await client.get(f"/v1/channels/{created['id']}/bindings")
     assert bindings.status_code == 200
@@ -11700,6 +12200,215 @@ def test_discord_dispatch_routing_key_uses_guild_binding_and_channel_alias_sourc
     assert key.scope_id == "guild-2"
     assert key.channel_id == "chan-2"
     assert key.chat_type == "guild_text"
+
+
+@pytest.mark.asyncio
+async def test_discord_guild_binding_routes_other_members_channels_and_threads(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+):
+    created = await _create_paired_discord_channel(
+        client,
+        name="discord-guild-trust-boundary",
+        channel_id="guild-channel-a",
+        guild_id="guild-shared",
+    )
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+
+    channel_frame = {
+        "op": 0,
+        "t": "MESSAGE_CREATE",
+        "s": 51,
+        "d": {
+            "id": "guild-message-b",
+            "channel_id": "guild-channel-b",
+            "guild_id": "guild-shared",
+            "channel_type": 0,
+            "content": "ordinary member in channel B",
+            "author": {"id": "ordinary-member-b"},
+            "member": {"roles": ["ordinary-role"]},
+            "clawdi_test_marker": {"preserved": True},
+        },
+    }
+    thread_frame = {
+        "op": 0,
+        "t": "MESSAGE_CREATE",
+        "s": 52,
+        "d": {
+            "id": "guild-thread-message",
+            "channel_id": "guild-thread-b-1",
+            "guild_id": "guild-shared",
+            "channel_type": 11,
+            "content": "thread reply",
+            "author": {"id": "ordinary-member-c"},
+        },
+    }
+
+    assert await record_discord_dispatch(db_session, account=account, frame=channel_frame)
+    assert await record_discord_dispatch(db_session, account=account, frame=thread_frame)
+    await db_session.commit()
+
+    messages = list(
+        (
+            await db_session.execute(
+                select(ChannelMessage)
+                .where(
+                    ChannelMessage.account_id == account.id,
+                    ChannelMessage.provider_message_id.in_(
+                        ["guild-message-b", "guild-thread-message"]
+                    ),
+                )
+                .order_by(ChannelMessage.provider_message_id)
+            )
+        ).scalars()
+    )
+    assert len(messages) == 2
+    assert {message.binding_id for message in messages} == {messages[0].binding_id}
+    assert {message.external_chat_id for message in messages} == {"guild-shared"}
+    dispatches = {
+        message.provider_message_id: _discord_gateway_dispatch(message) for message in messages
+    }
+    assert dispatches["guild-message-b"]["d"] == channel_frame["d"]
+    assert dispatches["guild-thread-message"]["d"] == thread_frame["d"]
+    assert {
+        dispatches["guild-message-b"]["d"]["channel_id"],
+        dispatches["guild-thread-message"]["d"]["channel_id"],
+    } == {"guild-channel-b", "guild-thread-b-1"}
+
+    aliases = list(
+        (
+            await db_session.execute(
+                select(ChannelBindingAlias).where(
+                    ChannelBindingAlias.account_id == account.id,
+                    ChannelBindingAlias.alias_external_chat_id.in_(
+                        ["guild-channel-b", "guild-thread-b-1"]
+                    ),
+                )
+            )
+        ).scalars()
+    )
+    assert len(aliases) == 2
+    assert {alias.binding_id for alias in aliases} == {messages[0].binding_id}
+
+
+@pytest.mark.asyncio
+async def test_discord_dm_round_trip_is_isolated_from_other_dms_and_guilds(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = (
+        await client.post(
+            "/v1/channels",
+            json={
+                "provider": "discord",
+                "name": "discord-dm-boundary",
+                "provider_token": "discord-provider-token",
+                "config": {"application_id": "discord-dm-app"},
+            },
+        )
+    ).json()
+    pair = (
+        await client.post(
+            f"/v1/channels/{created['id']}/pair-codes",
+            json={"ttl_seconds": 900},
+        )
+    ).json()
+    paired = await client.post(
+        f"/v1/channels/discord/{created['id']}/webhook",
+        headers={"x-clawdi-channel-secret": created["webhook_secret"]},
+        json={
+            "type": 2,
+            "id": "dm-pair-interaction",
+            "token": "dm-pair-token",
+            "application_id": "discord-dm-app",
+            "channel_id": "discord-dm-a",
+            "user": {"id": "discord-dm-actor"},
+            "data": {
+                "name": "bot_pair",
+                "options": [{"name": "code", "value": pair["code"]}],
+            },
+        },
+    )
+    assert paired.status_code == 200
+    assert paired.json()["data"]["content"] == (
+        "Direct message paired. This Discord direct message is now connected to your agent."
+    )
+
+    account = await db_session.get(ChannelAccount, UUID(created["id"]))
+    assert account is not None
+    dm_frame = {
+        "op": 0,
+        "t": "MESSAGE_CREATE",
+        "s": 61,
+        "d": {
+            "id": "discord-dm-message",
+            "channel_id": "discord-dm-a",
+            "channel_type": 1,
+            "content": "hello from the paired DM",
+            "author": {"id": "discord-dm-actor"},
+        },
+    }
+    assert await record_discord_dispatch(db_session, account=account, frame=dm_frame)
+    assert not await record_discord_dispatch(
+        db_session,
+        account=account,
+        frame={
+            "op": 0,
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "discord-other-dm-message",
+                "channel_id": "discord-dm-b",
+                "channel_type": 1,
+                "content": "unpaired DM",
+                "author": {"id": "discord-other-dm-actor"},
+            },
+        },
+    )
+    assert not await record_discord_dispatch(
+        db_session,
+        account=account,
+        frame={
+            "op": 0,
+            "t": "MESSAGE_CREATE",
+            "d": {
+                "id": "discord-guild-collision-message",
+                "channel_id": "guild-channel",
+                "guild_id": "discord-dm-a",
+                "channel_type": 0,
+                "content": "must not cross into the DM binding",
+                "author": {"id": "guild-member"},
+            },
+        },
+    )
+    await db_session.commit()
+
+    message = (
+        await db_session.execute(
+            select(ChannelMessage).where(ChannelMessage.provider_message_id == "discord-dm-message")
+        )
+    ).scalar_one()
+    assert message.external_chat_id == "discord-dm-a"
+    assert _discord_gateway_dispatch(message)["d"] == dm_frame["d"]
+
+    _reset_fake_provider_client(
+        {
+            "id": "discord-dm-reply",
+            "channel_id": "discord-dm-a",
+            "content": "DM reply",
+        }
+    )
+    monkeypatch.setattr("app.services.channels.httpx.AsyncClient", _FakeProviderClient)
+    reply = await client.post(
+        "/v1/channels/discord/v10/channels/discord-dm-a/messages",
+        headers={"Authorization": f"Bot {created['agent_token']}"},
+        json={"content": "DM reply"},
+    )
+    assert reply.status_code == 200
+    assert reply.json()["channel_id"] == "discord-dm-a"
+    assert len(_FakeProviderClient.calls) == 1
+    assert _FakeProviderClient.calls[0]["url"].endswith("/channels/discord-dm-a/messages")
 
 
 @pytest.mark.asyncio
@@ -11730,6 +12439,7 @@ async def test_discord_dispatch_records_bound_message(
                 "guild_id": "guild-dispatch",
                 "content": f"/bot_pair {pair['code']}",
                 "author": {"id": "discord-dispatch-pair-user"},
+                "member": {"permissions": "32"},
             },
         },
     )
@@ -11807,6 +12517,7 @@ async def test_discord_gateway_dispatch_pair_code_creates_binding(
                 "guild_id": "guild-gateway",
                 "content": f"/bot_pair {pair['code']}",
                 "author": {"id": "discord-gateway-pair-user"},
+                "member": {"permissions": "32"},
             },
         },
     )
@@ -12146,6 +12857,7 @@ async def test_same_external_chat_id_is_isolated_across_channel_providers(
             "id": "discord-shared-msg",
             "channel_id": shared_chat_id,
             "content": f"/bot_pair {pair_codes['discord']}",
+            "author": {"id": "shared-discord-sender"},
         },
     )
     imessage = created_by_provider["imessage"]
@@ -12967,8 +13679,10 @@ async def test_discord_command_sync_upserts_application_commands(
     )
     assert _FakeProviderClient.calls[0]["headers"]["Authorization"] == "Bot discord-token"
     assert _FakeProviderClient.calls[0]["json"]["name"] == "bot_pair"
+    assert _FakeProviderClient.calls[0]["json"]["default_member_permissions"] == "32"
     assert _FakeProviderClient.calls[0]["json"]["options"][0]["name"] == "code"
     assert _FakeProviderClient.calls[1]["json"]["name"] == "bot_unpair"
+    assert _FakeProviderClient.calls[1]["json"]["default_member_permissions"] == "32"
 
 
 @pytest.mark.asyncio

@@ -9,7 +9,7 @@ import { Spinner } from "@/components/ui/spinner";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 import { ChannelStatusBadge, isNormalChannelStatus } from "@/hosted/v2/channels/channel-ui";
 import { useDeleteChannelBinding } from "@/hosted/v2/channels/channels-hooks";
-import { pairedChatTitle } from "@/hosted/v2/channels/paired-chat-row.logic";
+import { pairedChatScopeLabel, pairedChatTitle } from "@/hosted/v2/channels/paired-chat-row.logic";
 import { cn } from "@/lib/utils";
 
 export const PAIRED_CHAT_ROW_CLASS =
@@ -28,8 +28,14 @@ export function PairedChatRow({
 }) {
 	const unpair = useDeleteChannelBinding(accountId);
 	const chatType = binding.external_chat_type?.toLowerCase();
-	const privateChat = chatType === "private";
-	const chatName = pairedChatTitle(binding);
+	const scope = pairedChatScopeLabel(provider, binding);
+	const privateChat = chatType === "private" || scope === "direct message";
+	const chatName = pairedChatTitle(binding, provider);
+	const discordDescription =
+		scope === "server"
+			? "This entire Discord server will be disconnected. Its channels and threads are not paired separately."
+			: "Only this Discord direct message will be disconnected. Paired servers stay active.";
+	const confirmLabel = provider === "discord" ? `Unpair ${scope}` : "Unpair chat";
 
 	return (
 		<div
@@ -61,8 +67,12 @@ export function PairedChatRow({
 			<div className="flex min-w-0 justify-end sm:shrink-0">
 				<ConfirmAction
 					title={`Unpair ${chatName}?`}
-					description="Only this chat will be disconnected. Other chats and the connected channel stay active."
-					confirmLabel="Unpair chat"
+					description={
+						provider === "discord"
+							? discordDescription
+							: "Only this chat will be disconnected. Other chats and the connected channel stay active."
+					}
+					confirmLabel={confirmLabel}
 					destructive
 					onConfirm={() => unpair.mutateAsync(binding.id)}
 				>
@@ -72,7 +82,13 @@ export function PairedChatRow({
 						) : (
 							<Link2Off className="size-3.5" />
 						)}
-						{unpair.isPending ? "Unpairing…" : unpair.error ? "Retry unpair" : "Unpair"}
+						{unpair.isPending
+							? "Unpairing…"
+							: unpair.error
+								? "Retry unpair"
+								: provider === "discord"
+									? confirmLabel
+									: "Unpair"}
 					</Button>
 				</ConfirmAction>
 			</div>

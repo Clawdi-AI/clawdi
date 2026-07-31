@@ -1,7 +1,11 @@
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
 
-export type ChannelAccountSummary = { provider: string; name: string };
+export type ChannelAccountSummary = {
+	provider: string;
+	name: string;
+	visibility?: "private" | "public";
+};
 
 export type AgentPairedChatItem = {
 	accountId: string;

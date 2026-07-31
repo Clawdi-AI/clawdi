@@ -2,15 +2,36 @@ import { describe, expect, test } from "bun:test";
 
 // Fixed upstream contracts are used because this repository does not vendor or
 // execute either runtime. Keep these fixtures aligned with the audited sources:
-// OpenClaw npm 2026.7.1-2 (0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c)
-//   src/config/zod-schema.session.ts::SessionSchema
+// OpenClaw main (aaab981ab097749eef632f2601d5dca147a0e494)
 //   src/routing/session-key.ts::buildAgentPeerSessionKey
-// Hermes 0.19.1 main (f3cda0ceb18d8ba7465a6d223098ef0e56c8fee1)
+//   extensions/discord/src/monitor/route-resolution.ts::buildDiscordRoutePeer
+// Hermes main (1789e06ed8b1c68b6ebfb2fcd472534aedcff999)
 //   gateway/session.py::build_session_key
-//   gateway/platforms/telegram.py::TelegramAdapter._build_message_event
+//   plugins/platforms/telegram/adapter.py::TelegramAdapter._build_message_event
+//   plugins/platforms/discord/adapter.py (effective_channel.id source routing)
 
 function openClawDirectSessionKey(channel: string, accountId: string, peerId: string): string {
 	return `agent:main:${channel}:${accountId}:direct:${peerId}`;
+}
+
+function openClawDiscordSessionKey(source: {
+	accountId: string;
+	conversationId: string;
+	directUserId?: string;
+}): string {
+	return source.directUserId
+		? openClawDirectSessionKey("discord", source.accountId, source.directUserId)
+		: `agent:main:discord:channel:${source.conversationId}`;
+}
+
+function hermesDiscordSessionKey(source: {
+	chatType: "dm" | "group" | "thread";
+	chatId: string;
+	threadId?: string;
+}): string {
+	return ["agent:main", "discord", source.chatType, source.chatId, source.threadId]
+		.filter(Boolean)
+		.join(":");
 }
 
 function hermesTelegramThreadId(
@@ -137,5 +158,64 @@ describe("managed Telegram upstream session contracts", () => {
 				threadId: hermesTelegramThreadId("dm", "77", true, false),
 			}),
 		).toBe("agent:main:telegram:dm:101:77");
+	});
+});
+
+describe("managed Discord upstream session contracts", () => {
+	test("OpenClaw keys guild channels and threads by their physical conversation ids", () => {
+		const channelA = openClawDiscordSessionKey({
+			accountId: "managed-discord",
+			conversationId: "channel-a",
+		});
+		const channelB = openClawDiscordSessionKey({
+			accountId: "managed-discord",
+			conversationId: "channel-b",
+		});
+		const threadB = openClawDiscordSessionKey({
+			accountId: "managed-discord",
+			conversationId: "thread-b-1",
+		});
+
+		expect(channelA).toBe("agent:main:discord:channel:channel-a");
+		expect(new Set([channelA, channelB, threadB]).size).toBe(3);
+		for (const key of [channelA, channelB, threadB]) expect(key).not.toContain("guild-1");
+	});
+
+	test("Hermes keys guild channels, threads, and DMs by effective Discord channel ids", () => {
+		const channelA = hermesDiscordSessionKey({ chatType: "group", chatId: "channel-a" });
+		const channelB = hermesDiscordSessionKey({ chatType: "group", chatId: "channel-b" });
+		const threadB = hermesDiscordSessionKey({
+			chatType: "thread",
+			chatId: "thread-b-1",
+			threadId: "thread-b-1",
+		});
+		const dm = hermesDiscordSessionKey({ chatType: "dm", chatId: "dm-channel-1" });
+
+		expect(channelA).toBe("agent:main:discord:group:channel-a");
+		expect(threadB).toBe("agent:main:discord:thread:thread-b-1:thread-b-1");
+		expect(dm).toBe("agent:main:discord:dm:dm-channel-1");
+		expect(new Set([channelA, channelB, threadB, dm]).size).toBe(4);
+		for (const key of [channelA, channelB, threadB]) expect(key).not.toContain("guild-1");
+	});
+
+	test("OpenClaw keeps managed Discord DMs account- and user-scoped", () => {
+		const dmA = openClawDiscordSessionKey({
+			accountId: "managed-a",
+			conversationId: "dm-channel-a",
+			directUserId: "user-a",
+		});
+		const dmB = openClawDiscordSessionKey({
+			accountId: "managed-a",
+			conversationId: "dm-channel-b",
+			directUserId: "user-b",
+		});
+		const otherAccount = openClawDiscordSessionKey({
+			accountId: "managed-b",
+			conversationId: "dm-channel-a",
+			directUserId: "user-a",
+		});
+
+		expect(dmA).toBe("agent:main:discord:managed-a:direct:user-a");
+		expect(new Set([dmA, dmB, otherAccount]).size).toBe(3);
 	});
 });

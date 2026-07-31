@@ -31,10 +31,12 @@ from app.core.database import (
 )
 from app.models.channel import (
     BINDING_STATUS_ACTIVE,
+    BOT_AGENT_LINK_STATUS_ACTIVE,
     CHANNEL_PROVIDER_DISCORD,
     ChannelAccount,
     ChannelBinding,
     ChannelBindingAlias,
+    ChannelBotAgentLink,
 )
 from app.routes.channel_routers.shared import (
     _discord_application_id,
@@ -42,6 +44,7 @@ from app.routes.channel_routers.shared import (
     _discord_gateway_dispatch,
     _discord_interaction_content,
     _discord_message_result,
+    _DiscordProviderResult,
     _fan_out_discord_global_commands,
     _handle_discord_application_commands,
     _json_object_from_bytes,
@@ -49,6 +52,7 @@ from app.routes.channel_routers.shared import (
     _optional_str,
     _proxy_discord_request,
     _public_ws_url,
+    _request_discord_provider,
     _request_params,
     _require_bound_chat,
     _resolve_discord_agent_context,
@@ -64,12 +68,13 @@ from app.services.channels import (
     discord_channel_scope_from_payload,
     discord_chat_from_payload,
     discord_external_user_id_from_payload,
+    discord_guild_command_denied_reason,
     discord_message_id_from_payload,
     discord_pair_command_from_payload,
+    discord_pairing_reply_for_command,
     discord_text_from_payload,
     get_active_channel_account,
     get_channel_agent_reference,
-    pairing_reply_for_command,
     record_discord_interaction_references,
     record_inactive_bot_agent_link_event,
     record_inbound_messages_for_bindings,
@@ -240,12 +245,18 @@ async def discord_agent_rest(
         and request.method == "POST"
     ):
         channel_id = segments[1]
-        await _require_bound_chat(
-            db,
-            account=account,
-            external_chat_id=channel_id,
-            bot_agent_link_id=agent.link.id,
-        )
+        try:
+            await _authorize_discord_channel_request(
+                db,
+                agent=agent,
+                channel_id=channel_id,
+                request=request,
+                original_is_channel_get=False,
+            )
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_403_FORBIDDEN:
+                return _discord_rest_error("Missing Access", 50001, 403)
+            raise
         params = await _request_params(request)
         text = _optional_str(params.get("content")) or ""
         message = await send_channel_outbound_message(
@@ -258,12 +269,21 @@ async def discord_agent_rest(
         await db.commit()
         return _discord_message_result(message, channel_id=channel_id, content=text)
     if segments and segments[0] == "channels" and len(segments) >= 2:
-        await _require_bound_chat(
-            db,
-            account=account,
-            external_chat_id=segments[1],
-            bot_agent_link_id=agent.link.id,
-        )
+        original_is_channel_get = len(segments) == 2 and request.method == "GET"
+        try:
+            preflight = await _authorize_discord_channel_request(
+                db,
+                agent=agent,
+                channel_id=segments[1],
+                request=request,
+                original_is_channel_get=original_is_channel_get,
+            )
+        except HTTPException as exc:
+            if exc.status_code == status.HTTP_403_FORBIDDEN:
+                return _discord_rest_error("Missing Access", 50001, 403)
+            raise
+        if original_is_channel_get and preflight is not None:
+            return preflight.as_response()
         return await _proxy_discord_request(account=account, request=request, path=discord_path)
     if segments and segments[0] == "guilds" and len(segments) >= 2:
         if not await _discord_guild_is_bound(
@@ -275,6 +295,114 @@ async def discord_agent_rest(
             return _discord_rest_error("Missing Access", 50001, 403)
         return await _proxy_discord_request(account=account, request=request, path=discord_path)
     return _discord_rest_error("Missing Access", 50001, 403)
+
+
+async def _authorize_discord_channel_request(
+    db: AsyncSession,
+    *,
+    agent: ChannelAgentContext,
+    channel_id: str,
+    request: Request,
+    original_is_channel_get: bool,
+) -> _DiscordProviderResult | None:
+    """Resolve a physical Discord channel without making it a Binding.
+
+    Known channel aliases stay local. For an unobserved ID, Discord's own
+    Channel object is the authority for ``guild_id`` (threads are channels),
+    then the account and AgentLink are revalidated before the alias is cached.
+    A Channel without ``guild_id`` can only use a direct DM Binding.
+    """
+    try:
+        await _require_bound_chat(
+            db,
+            account=agent.account,
+            external_chat_id=channel_id,
+            bot_agent_link_id=agent.link.id,
+        )
+        return None
+    except HTTPException as exc:
+        if exc.status_code != status.HTTP_403_FORBIDDEN:
+            raise
+
+    path = f"channels/{channel_id}"
+    preflight = await _request_discord_provider(
+        account=agent.account,
+        method="GET",
+        path=path,
+        query_params=request.query_params if original_is_channel_get else None,
+    )
+    payload = preflight.json_object() if preflight.status_code == status.HTTP_200_OK else None
+    if payload is None or _optional_str(payload.get("id")) != channel_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="channel is not paired")
+    guild_id = _optional_str(payload.get("guild_id"))
+    binding = await _discord_revalidated_channel_binding(
+        db,
+        agent=agent,
+        channel_id=channel_id,
+        guild_id=guild_id,
+    )
+    if binding is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="channel is not paired")
+    if guild_id is not None and channel_id != binding.external_chat_id:
+        await upsert_binding_alias(
+            db,
+            binding=binding,
+            alias_external_chat_id=channel_id,
+            alias_kind="discord_channel",
+            require_same_binding=True,
+        )
+        await db.commit()
+    return preflight
+
+
+async def _discord_revalidated_channel_binding(
+    db: AsyncSession,
+    *,
+    agent: ChannelAgentContext,
+    channel_id: str,
+    guild_id: str | None,
+) -> ChannelBinding | None:
+    agent_token_hash = agent.link.agent_token_hash
+    if not agent_token_hash:
+        return None
+    await resolve_channel_agent_by_identity(
+        db,
+        provider=CHANNEL_PROVIDER_DISCORD,
+        account_id=agent.account.id,
+        link_id=agent.link.id,
+        agent_token_hash=agent_token_hash,
+    )
+    result = await db.execute(
+        select(ChannelBinding)
+        .join(
+            ChannelBotAgentLink,
+            (ChannelBotAgentLink.id == ChannelBinding.bot_agent_link_id)
+            & (ChannelBotAgentLink.account_id == ChannelBinding.account_id)
+            & (ChannelBotAgentLink.user_id == ChannelBinding.user_id),
+        )
+        .where(
+            ChannelBinding.account_id == agent.account.id,
+            ChannelBinding.bot_agent_link_id == agent.link.id,
+            ChannelBinding.status == BINDING_STATUS_ACTIVE,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+        )
+    )
+    candidates = list(result.scalars().all())
+    if guild_id is not None:
+        matching = [
+            binding for binding in candidates if _discord_binding_guild_id(binding) == guild_id
+        ]
+    else:
+        matching = [
+            binding
+            for binding in candidates
+            if binding.external_chat_id == channel_id
+            and _discord_binding_guild_id(binding) is None
+            and (binding.external_chat_type or "").lower()
+            in {"dm", "direct_messages", "group_dm", "private"}
+        ]
+    return matching[0] if len(matching) == 1 else None
 
 
 @router.websocket("/gateway")
@@ -611,6 +739,7 @@ async def discord_webhook(
         return {"ok": True}
     external_chat_id, external_chat_type, external_chat_name = chat
     command = discord_pair_command_from_payload(payload)
+    channel_id, guild_id = discord_channel_scope_from_payload(payload)
     binding_result = await resolve_inbound_binding(
         db,
         account=account,
@@ -620,6 +749,12 @@ async def discord_webhook(
         external_user_id=discord_external_user_id_from_payload(payload),
         text=discord_text_from_payload(payload),
         command=command,
+        command_denied_reason=discord_guild_command_denied_reason(
+            payload,
+            command=command,
+            guild_id=guild_id,
+        ),
+        command_actor_required=True,
     )
 
     messages = await record_inbound_messages_for_bindings(
@@ -631,7 +766,6 @@ async def discord_webhook(
         text=discord_text_from_payload(payload),
         payload=payload,
     )
-    channel_id, guild_id = discord_channel_scope_from_payload(payload)
     for message, binding in messages:
         if (
             binding is not None
@@ -644,6 +778,7 @@ async def discord_webhook(
                 binding=binding,
                 alias_external_chat_id=channel_id,
                 alias_kind="discord_channel",
+                require_same_binding=True,
             )
         await record_discord_interaction_references(
             db,
@@ -655,6 +790,7 @@ async def discord_webhook(
         await record_inactive_bot_agent_link_event(db, account=account, binding=binding)
     await db.commit()
     message = messages[0][0]
+    reply_text = discord_pairing_reply_for_command(command, binding_result, guild_id=guild_id)
     if payload.get("type") == 2:
         return {
             "type": 4,
@@ -663,7 +799,7 @@ async def discord_webhook(
                     command=command,
                     paired=binding_result.paired,
                     unpaired=binding_result.unpaired,
-                    reply=pairing_reply_for_command(command, binding_result),
+                    reply=reply_text,
                 ),
                 "flags": 64,
             },
@@ -682,6 +818,7 @@ async def discord_webhook(
         send_external_chat_id=channel_id,
         command=command,
         binding_result=binding_result,
+        reply=reply_text,
     )
     if reply is not None:
         await db.commit()

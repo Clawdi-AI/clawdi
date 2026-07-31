@@ -26,6 +26,29 @@ export function pairingCommand(code: string): string {
 	return `/bot_pair ${code}`;
 }
 
+export function pairingActionLabel(provider: string): string {
+	return provider === "discord" ? "Pair Discord" : "Pair chat";
+}
+
+export function discordPairingShouldSyncCommands(
+	visibility: "private" | "public" | undefined,
+): boolean {
+	return visibility === "private";
+}
+
+export async function prepareProviderPairing<T>({
+	provider,
+	syncCommands,
+	createPairCode,
+}: {
+	provider: string;
+	syncCommands?: () => Promise<unknown>;
+	createPairCode: () => Promise<T>;
+}): Promise<T> {
+	if (provider === "discord" && syncCommands) await syncCommands();
+	return createPairCode();
+}
+
 export function pairCodeExpired(expiresAt: string, nowMs: number): boolean {
 	const expiresAtMs = Date.parse(expiresAt);
 	return !Number.isFinite(expiresAtMs) || expiresAtMs <= nowMs;

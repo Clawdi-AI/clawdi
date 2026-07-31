@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
@@ -914,71 +915,113 @@ def _discord_gateway_dispatch(message: Any) -> dict[str, Any]:
     }
 
 
-async def _proxy_discord_request(
+@dataclass(frozen=True)
+class _DiscordProviderResult:
+    content: bytes
+    status_code: int
+    media_type: str
+    headers: dict[str, str] | None = None
+
+    def as_response(self) -> Response:
+        return Response(
+            content=self.content,
+            status_code=self.status_code,
+            media_type=self.media_type,
+            headers=self.headers,
+        )
+
+    def json_object(self) -> dict[str, Any] | None:
+        try:
+            payload = json.loads(self.content)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return None
+        return payload if isinstance(payload, dict) else None
+
+
+async def _request_discord_provider(
     *,
     account: ChannelAccount,
-    request: Request,
+    method: str,
     path: str,
-) -> Response:
+    body: bytes | None = None,
+    content_type: str = "application/json",
+    query_params: Any = None,
+) -> _DiscordProviderResult:
     token = decrypt_provider_token(account)
     normalized_path = f"/{path.lstrip('/')}"
     base_url = settings.channel_discord_api_base_url.strip()
     await _validate_discord_provider_base_url(base_url)
     url = f"{base_url.rstrip('/')}{normalized_path}"
-    body = await request.body()
     headers = {
         "Authorization": f"Bot {token}",
-        "Content-Type": request.headers.get("content-type", "application/json"),
+        "Content-Type": content_type,
     }
-    decision = discord_rate_limiter.check(request.method, normalized_path)
+    decision = discord_rate_limiter.check(method, normalized_path)
     if not decision.allowed:
         rate_limit_rejects.labels(
             channel="discord",
             scope="bot" if decision.global_limit else "route",
         ).inc()
-        return Response(
+        return _DiscordProviderResult(
             content=json.dumps(
                 {
                     "message": "You are being rate limited.",
                     "retry_after": decision.retry_after_seconds,
                     "global": decision.global_limit,
                 }
-            ),
+            ).encode("utf-8"),
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             media_type="application/json",
             headers={"Retry-After": str(decision.retry_after_seconds or 1)},
         )
     try:
-        with track_proxy_latency("discord", request.method):
+        with track_proxy_latency("discord", method):
             async with httpx.AsyncClient(timeout=20.0) as client:
-                discord_rate_limiter.consume(request.method, normalized_path)
+                discord_rate_limiter.consume(method, normalized_path)
                 response = await client.request(
-                    request.method,
+                    method,
                     url,
                     content=body if body else None,
                     headers=headers,
-                    params=request.query_params,
+                    params=query_params,
                 )
                 discord_rate_limiter.observe(
-                    request.method,
+                    method,
                     normalized_path,
                     response.headers,
                     response.status_code,
                 )
     except httpx.HTTPError as exc:
-        outbound_errors.labels(channel="discord", method=request.method).inc()
+        outbound_errors.labels(channel="discord", method=method).inc()
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="discord api unreachable",
         ) from exc
-    outbound_messages.labels(channel="discord", method=request.method).inc()
+    outbound_messages.labels(channel="discord", method=method).inc()
     if response.status_code >= 400:
-        outbound_errors.labels(channel="discord", method=request.method).inc()
-    return Response(
+        outbound_errors.labels(channel="discord", method=method).inc()
+    return _DiscordProviderResult(
         content=response.content,
         status_code=response.status_code,
         media_type=response.headers.get("content-type", "application/json"),
     )
+
+
+async def _proxy_discord_request(
+    *,
+    account: ChannelAccount,
+    request: Request,
+    path: str,
+) -> Response:
+    result = await _request_discord_provider(
+        account=account,
+        method=request.method,
+        path=path,
+        body=await request.body(),
+        content_type=request.headers.get("content-type", "application/json"),
+        query_params=request.query_params,
+    )
+    return result.as_response()
 
 
 async def _validate_discord_provider_base_url(base_url: str) -> None:

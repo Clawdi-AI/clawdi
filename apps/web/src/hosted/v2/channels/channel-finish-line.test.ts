@@ -28,12 +28,11 @@ describe("hosted-agent channel finish line", () => {
 	});
 
 	test("separates linking a channel from pairing a chat with one short instruction", () => {
-		expect(channelsTab).toContain(
-			"Link a bot to this Agent, then pair the chats it should answer.",
-		);
+		expect(channelsTab).toContain("Link a bot to this Agent, then choose where it should answer.");
 		expect(channelsTab).toContain("Pair Telegram");
-		expect(channelsTab).toContain("Pair chat");
+		expect(channelsTab).toContain("pairingActionLabel(provider)");
 		expect(channelsTab).toContain("<TelegramPairDialog");
+		expect(channelsTab).toContain("<DiscordPairDialog");
 		expect(channelsTab).toContain("agentLinkId={link.id}");
 		expect(channelsTab).toContain("pairing_command");
 		expect(channelsTab).not.toContain("Agent token");

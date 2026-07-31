@@ -4,13 +4,83 @@ import {
 	agentProviderLinkLimitDescription,
 	channelActivityAfterLink,
 	channelProviderLinkingReady,
+	discordPairingShouldSyncCommands,
 	pairCodeExpired,
+	pairingActionLabel,
 	pairingCommand,
+	prepareProviderPairing,
 } from "./channel-linking.logic";
 
 describe("hosted channel instructions and gates", () => {
 	test("renders the exact command accepted by the channel backend", () => {
 		expect(pairingCommand("PAIRABC123")).toBe("/bot_pair PAIRABC123");
+	});
+
+	test("uses one discoverable Discord pairing action for servers and direct messages", () => {
+		expect(pairingActionLabel("discord")).toBe("Pair Discord");
+		expect(pairingActionLabel("imessage")).toBe("Pair chat");
+	});
+
+	test("syncs commands only for user-owned private Discord bots", () => {
+		expect(discordPairingShouldSyncCommands("private")).toBe(true);
+		expect(discordPairingShouldSyncCommands("public")).toBe(false);
+		expect(discordPairingShouldSyncCommands(undefined)).toBe(false);
+	});
+
+	test("syncs Discord commands before creating a pair code and stops on sync failure", async () => {
+		const events: string[] = [];
+		const result = await prepareProviderPairing({
+			provider: "discord",
+			syncCommands: async () => {
+				events.push("sync commands");
+			},
+			createPairCode: async () => {
+				events.push("create pair code");
+				return "PAIRABC123";
+			},
+		});
+		expect(result).toBe("PAIRABC123");
+		expect(events).toEqual(["sync commands", "create pair code"]);
+
+		let pairCodeCreated = false;
+		await expect(
+			prepareProviderPairing({
+				provider: "discord",
+				syncCommands: async () => {
+					throw new Error("sync failed");
+				},
+				createPairCode: async () => {
+					pairCodeCreated = true;
+				},
+			}),
+		).rejects.toThrow("sync failed");
+		expect(pairCodeCreated).toBe(false);
+	});
+
+	test("lets public Discord bots use centrally managed commands without owner-only sync", async () => {
+		const events: string[] = [];
+		const result = await prepareProviderPairing({
+			provider: "discord",
+			createPairCode: async () => {
+				events.push("create pair code");
+				return "PUBLICPAIR123";
+			},
+		});
+
+		expect(result).toBe("PUBLICPAIR123");
+		expect(events).toEqual(["create pair code"]);
+	});
+
+	test("does not alter non-Discord pairing with command sync", async () => {
+		let syncCalled = false;
+		await prepareProviderPairing({
+			provider: "telegram",
+			syncCommands: async () => {
+				syncCalled = true;
+			},
+			createPairCode: async () => "telegram-code",
+		});
+		expect(syncCalled).toBe(false);
 	});
 
 	test("expires pairing actions exactly at the server deadline", () => {
