@@ -648,7 +648,7 @@ export function HostedAgentDetail({
 						!deploymentProjectionQueryable ? (
 							<StoppedAgentState deployment={deployment} />
 						) : projection.status === "resolved" ? (
-							<ChannelsTab environmentId={environmentId} agentType={runtime} />
+							<ChannelsTab environmentId={environmentId} agentType={runtime} agentName={name} />
 						) : (
 							<ChannelsSyncState
 								isChecking={isCheckingDeployment || agentQuery.isFetching}
@@ -2330,9 +2330,11 @@ const AGENT_CHANNEL_ACTIONS_CLASS =
 function ChannelsTab({
 	environmentId,
 	agentType,
+	agentName,
 }: {
 	environmentId: string;
 	agentType: HostedRuntime;
+	agentName: string;
 }) {
 	const api = useApi();
 	const qc = useQueryClient();
@@ -2342,6 +2344,11 @@ function ChannelsTab({
 	const linked = useAgentChannelLinks(environmentId, isCloudEnvId(environmentId));
 	const unlink = useUnlinkAgentChannel(environmentId);
 	const [recentLink, setRecentLink] = useState<AgentChannelLink | null>(null);
+	const [telegramPair, setTelegramPair] = useState<{
+		accountId: string;
+		agentLinkId: string;
+		channelName: string;
+	} | null>(null);
 	const [connectOpen, setConnectOpen] = useState(false);
 	const [linkingAccountId, setLinkingAccountId] = useState<string | null>(null);
 	const linkInFlightRef = useRef(false);
@@ -2439,9 +2446,18 @@ function ChannelsTab({
 			qc.invalidateQueries({ queryKey: ["channel-agent-links", data.account_id] });
 			qc.invalidateQueries({ queryKey: ["channel-bot-pool"] });
 			qc.invalidateQueries({ queryKey: ["channels"] });
-			toast.success("Channel linked", {
-				description: "Pair a chat from the connected channel row.",
-			});
+			const account = accountSummaries.get(data.account_id);
+			if (account?.provider === "telegram") {
+				setTelegramPair({
+					accountId: data.account_id,
+					agentLinkId: data.id,
+					channelName: account.name,
+				});
+			} else {
+				toast.success("Channel linked", {
+					description: "Pair a chat from the connected channel row.",
+				});
+			}
 			return data;
 		} catch (error) {
 			toastApiError("Couldn't link channel")(error);
@@ -2633,7 +2649,36 @@ function ChannelsTab({
 				</details>
 			</section>
 
-			<ConnectBotDialog open={connectOpen} onOpenChange={setConnectOpen} />
+			<ConnectBotDialog
+				open={connectOpen}
+				onOpenChange={setConnectOpen}
+				agentId={environmentId}
+				onAgentConnected={(bot) => {
+					if (bot.provider === "telegram") {
+						setTelegramPair({
+							accountId: bot.id,
+							agentLinkId: bot.agentLinkId,
+							channelName: bot.name,
+						});
+						return;
+					}
+					toast.success("Channel connected", {
+						description: "Pair a chat from the connected channel row.",
+					});
+				}}
+			/>
+			{telegramPair ? (
+				<TelegramPairDialog
+					open
+					onOpenChange={(open) => {
+						if (!open) setTelegramPair(null);
+					}}
+					accountId={telegramPair.accountId}
+					agentLinkId={telegramPair.agentLinkId}
+					agentName={agentName}
+					channelName={telegramPair.channelName}
+				/>
+			) : null}
 		</div>
 	);
 }

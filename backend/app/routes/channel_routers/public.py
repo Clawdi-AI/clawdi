@@ -539,11 +539,15 @@ async def create_channel(
     if body.provider not in CHANNEL_PROVIDERS:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="unsupported provider")
     await validate_channel_account_config_urls(provider=body.provider, config=body.config)
-    initial_agent_id = await _resolve_initial_agent_id(
-        db,
-        auth=auth,
-        requested_agent_id=body.agent_id,
-        provider=body.provider,
+    initial_agent_id = (
+        None
+        if "agent_id" in body.model_fields_set and body.agent_id is None
+        else await _resolve_initial_agent_id(
+            db,
+            auth=auth,
+            requested_agent_id=body.agent_id,
+            provider=body.provider,
+        )
     )
 
     ciphertext, nonce = encrypt_optional_token(body.provider_token)

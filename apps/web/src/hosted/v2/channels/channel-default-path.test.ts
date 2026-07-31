@@ -5,26 +5,33 @@ function source(relativePath: string): string {
 	return readFileSync(new URL(relativePath, import.meta.url), "utf8");
 }
 
-describe("channel default path", () => {
-	test("puts ready-to-go bots before personal bot management", () => {
+describe("global Channels inventory", () => {
+	test("shows only owned bot assets and never exposes the ready-bot linking flow", () => {
 		const channelsPage = source("./channels-page.tsx");
-		const readyIndex = channelsPage.indexOf("<ReadyBotsSection");
-		const personalIndex = channelsPage.indexOf("<YourChannelsSection");
 
-		expect(readyIndex).toBeGreaterThanOrEqual(0);
-		expect(personalIndex).toBeGreaterThan(readyIndex);
-		expect(channelsPage).toContain("Start instantly with a ready-to-go bot");
-		expect(channelsPage).toContain("Connect your own bot");
-		expect(channelsPage).toContain("Ready-to-go bots");
+		expect(channelsPage).toContain("<OwnedBotsSection");
+		expect(channelsPage).toContain("data-owned-bots-section");
+		expect(channelsPage).toContain("Manage the bots you own");
+		expect(channelsPage).toContain("Connect bot");
 		expect(channelsPage).toContain("orderedChannelsForFilter");
-		expect(channelsPage).toContain("orderedPoolItemsForFilter");
-		expect(channelsPage).toContain("data-ready-bots-section");
-		expect(channelsPage).toContain("data-your-bots-section");
-		expect(channelsPage).not.toContain("ProviderChannelGroup");
-		expect(channelsPage).not.toContain("function channelGroups");
-		expect(channelsPage).not.toContain("function poolGroups");
-		expect(channelsPage).not.toContain("Shared bots");
-		expect(channelsPage).not.toContain("shared bot");
+		expect(channelsPage).not.toContain("useBotPool");
+		expect(channelsPage).not.toContain("ReadyBotsSection");
+		expect(channelsPage).not.toContain("Ready-to-go bots");
+		expect(channelsPage).not.toContain("data-ready-bots-section");
+		expect(channelsPage).not.toContain("data-pool-account-id");
+		expect(channelsPage).not.toContain("LinkAgentDialog");
+		expect(channelsPage).not.toContain("Link an agent");
+		expect(channelsPage).not.toContain("At capacity");
+	});
+
+	test("creates an unlinked asset globally and targets the current Agent only in Agent context", () => {
+		const connectDialog = source("./connect-bot-dialog.tsx");
+		const agentDetail = source("../../agents/hosted-agent-detail.tsx");
+
+		expect(connectDialog).toContain("const linkTarget = { agent_id: agentId ?? null }");
+		expect(agentDetail).toContain("agentId={environmentId}");
+		expect(agentDetail).toContain("onAgentConnected={(bot)");
+		expect(agentDetail).toContain("setTelegramPair({");
 	});
 
 	test("renders actionable provider steps and real external links in the connect dialog", () => {
@@ -38,31 +45,13 @@ describe("channel default path", () => {
 		expect(connectDialog).not.toContain("Guild ID");
 	});
 
-	test("moves a successful ready-bot link into the agent finish line", () => {
-		const linkDialog = source("./link-agent-dialog.tsx");
-
-		expect(linkDialog).toContain("Pair a Telegram");
-		expect(linkDialog).toContain("chat now or manage it from the Agent");
-		expect(linkDialog).toContain("Linked · syncing automatically");
-		expect(linkDialog).not.toContain("exact chat");
-		expect(linkDialog.match(/!selectedAgent/g)).toHaveLength(1);
-		expect(linkDialog).toContain("const submitBlocked");
-		expect(linkDialog).toContain("agentSectionLink(");
-		expect(linkDialog).toContain('"channels"');
-		expect(linkDialog).toContain("agentDeploymentRouteQuery(routeSearch)");
-		expect(linkDialog).toContain("Open Agent Channels");
-		expect(linkDialog).not.toContain("agent_token");
-		expect(linkDialog).not.toContain("Agent token");
-	});
-
-	test("does not repeat pool access labels on cards or detail", () => {
+	test("does not repeat provider or normal-state labels on inventory cards", () => {
 		const channelsPage = source("./channels-page.tsx");
 		const channelDetail = source("./channel-detail-page.tsx");
 
 		expect(channelsPage).not.toContain("AccessBadge");
 		expect(channelsPage).not.toContain("Ready to use");
-		expect(channelDetail).not.toContain("Ready-to-go bot");
-		expect(channelDetail).not.toContain(["description={`", "$", "{meta.label} ·"].join(""));
+		expect(channelDetail).not.toContain("description={`");
 		expect(channelDetail).not.toContain('"Shared bot"');
 	});
 });

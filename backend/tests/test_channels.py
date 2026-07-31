@@ -1990,6 +1990,36 @@ async def test_web_channel_create_does_not_auto_link_sole_local_agent(
 
 
 @pytest.mark.asyncio
+async def test_web_channel_create_explicit_null_does_not_auto_link_sole_cloud_agent(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    channel_agent,
+):
+    response = await client.post(
+        "/v1/channels",
+        json={
+            "provider": CHANNEL_PROVIDER_TELEGRAM,
+            "name": f"cloud-inventory-{uuid4().hex}",
+            "agent_id": None,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    created = response.json()
+    assert created["agent_id"] is None
+    assert created["agent_link_id"] is None
+    link = (
+        await db_session.execute(
+            select(ChannelBotAgentLink).where(
+                ChannelBotAgentLink.account_id == UUID(created["id"]),
+                ChannelBotAgentLink.agent_id == channel_agent.id,
+            )
+        )
+    ).scalar_one_or_none()
+    assert link is None
+
+
+@pytest.mark.asyncio
 async def test_pair_code_agent_id_cannot_create_link_for_local_agent(
     client: httpx.AsyncClient,
     db_session: AsyncSession,

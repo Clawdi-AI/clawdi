@@ -42,9 +42,18 @@ import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/link-agent-dialog.l
 export function ConnectBotDialog({
 	open,
 	onOpenChange,
+	agentId,
+	onAgentConnected,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
+	agentId?: string;
+	onAgentConnected?: (bot: {
+		id: string;
+		name: string;
+		provider: string;
+		agentLinkId: string;
+	}) => void;
 }) {
 	const create = useCreateChannel();
 	const [provider, setProvider] = useState<ChannelProviderId>("telegram");
@@ -110,17 +119,18 @@ export function ConnectBotDialog({
 
 	function buildBody(): ChannelCreate | null {
 		const trimmedName = name.trim();
+		const linkTarget = { agent_id: agentId ?? null };
 		if (meta.connect === "discord") {
 			const config: Record<string, unknown> = { application_id: applicationId.trim() };
 			if (publicKey.trim()) config.public_key = publicKey.trim();
 			if (guildId.trim()) config.guild_id = guildId.trim();
-			return { provider, name: trimmedName, provider_token: token.trim(), config };
+			return { provider, name: trimmedName, provider_token: token.trim(), config, ...linkTarget };
 		}
 		if (meta.connect === "token") {
-			return { provider, name: trimmedName, provider_token: token.trim() };
+			return { provider, name: trimmedName, provider_token: token.trim(), ...linkTarget };
 		}
 		if (!WHATSAPP_LINKING_READY) return null;
-		return { provider, name: trimmedName };
+		return { provider, name: trimmedName, ...linkTarget };
 	}
 
 	async function submit() {
@@ -134,6 +144,16 @@ export function ConnectBotDialog({
 			const data = await create.execute(body);
 			setToken("");
 			if (openRef.current && dialogSessionRef.current === dialogSession) {
+				if (agentId && data.agentLinkId && onAgentConnected) {
+					handleOpenChange(false);
+					onAgentConnected({
+						id: data.id,
+						name: data.name,
+						provider: data.provider,
+						agentLinkId: data.agentLinkId,
+					});
+					return;
+				}
 				setCreated({ id: data.id, name: data.name, provider: data.provider });
 			} else {
 				toast.success("Channel connected", {

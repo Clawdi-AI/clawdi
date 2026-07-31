@@ -162,6 +162,8 @@ export function useCreateChannel() {
 				id: result.id,
 				name: result.name,
 				provider: result.provider,
+				agentLinkId: result.agent_link_id ?? null,
+				agentId: result.agent_id ?? null,
 			};
 		} catch (error) {
 			toastApiError("Couldn't connect channel")(error);
