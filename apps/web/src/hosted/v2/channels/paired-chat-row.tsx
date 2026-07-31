@@ -37,6 +37,8 @@ export function PairedChatRow({
 
 	return (
 		<div
+			data-hosted="true"
+			data-v2="true"
 			data-channel-binding-id={binding.id}
 			data-channel-binding-account-id={accountId}
 			data-channel-binding-agent-link-id={binding.agent_link_id ?? undefined}
