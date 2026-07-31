@@ -4716,6 +4716,51 @@ async def test_oauth_device_accept_polls_then_persists_tokens(
         "app.routes.ai_providers.async_session_factory",
         device_session_factory,
     )
+    normalize_calls = 0
+    supported_validation_calls = 0
+    route_shape_validation_calls = 0
+    locked_shape_validation_calls = 0
+    original_normalize = ai_provider_routes._normalize_profile
+    original_supported_validation = ai_provider_routes._validate_supported_oauth_provider
+    original_route_shape_validation = ai_provider_routes._validate_codex_oauth_provider_shape
+    original_locked_shape_validation = oauth_attempt_service.validate_codex_oauth_provider_shape
+
+    def count_normalize(value: str) -> str:
+        nonlocal normalize_calls
+        normalize_calls += 1
+        return original_normalize(value)
+
+    def count_supported_validation(value: str) -> None:
+        nonlocal supported_validation_calls
+        supported_validation_calls += 1
+        original_supported_validation(value)
+
+    def count_route_shape_validation(provider) -> None:
+        nonlocal route_shape_validation_calls
+        route_shape_validation_calls += 1
+        original_route_shape_validation(provider)
+
+    def count_locked_shape_validation(provider) -> None:
+        nonlocal locked_shape_validation_calls
+        locked_shape_validation_calls += 1
+        original_locked_shape_validation(provider)
+
+    monkeypatch.setattr(ai_provider_routes, "_normalize_profile", count_normalize)
+    monkeypatch.setattr(
+        ai_provider_routes,
+        "_validate_supported_oauth_provider",
+        count_supported_validation,
+    )
+    monkeypatch.setattr(
+        ai_provider_routes,
+        "_validate_codex_oauth_provider_shape",
+        count_route_shape_validation,
+    )
+    monkeypatch.setattr(
+        oauth_attempt_service,
+        "validate_codex_oauth_provider_shape",
+        count_locked_shape_validation,
+    )
     previous = settings.ai_provider_oauth_config_json
     settings.ai_provider_oauth_config_json = json.dumps(
         {
@@ -4806,6 +4851,12 @@ async def test_oauth_device_accept_polls_then_persists_tokens(
             },
         )
         assert accepted.status_code == 201, accepted.text
+        assert normalize_calls == 1
+        assert supported_validation_calls == 1
+        assert route_shape_validation_calls == 1
+        # The second shape check is the intentional lock-time fence inside
+        # attempt persistence, after the upstream device response returns.
+        assert locked_shape_validation_calls == 1
         authorization = accepted.json()["authorization"]
         assert authorization == {
             "flow": "device_code",
