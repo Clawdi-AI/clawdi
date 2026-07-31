@@ -33,6 +33,11 @@ export default defineConfig(({ mode }) => {
 		server: {
 			port: 3000,
 		},
+		ssr: {
+			// LobeHub's root React API uses extensionless ESM imports throughout
+			// its peer graph, so Vite must transform that graph before Node SSR.
+			noExternal: [/^@lobehub\//],
+		},
 		resolve: {
 			tsconfigPaths: true,
 		},

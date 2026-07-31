@@ -2413,11 +2413,19 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("deploy keeps AI providers expanded and provider selection exclusive", async ({ page }) => {
+test("deploy keeps AI providers expanded and provider selection exclusive", async ({
+	page,
+}, testInfo) => {
 	await stubHostedApi(page, { plans: [basicPlan], deployments: [] });
 	await page.goto("/deploy");
 
 	await expect(page.getByRole("button", { name: /^Hermes/ })).toContainText("Recommended");
+	for (const framework of ["Hermes", "OpenClaw"]) {
+		const icon = page.locator(`[role="img"][aria-label="${framework}"]`);
+		await expect(icon).toHaveCount(1);
+		await expect(icon.locator("svg")).toHaveAttribute("data-icon-source", "lobehub");
+		await expect(icon.locator("svg")).toHaveAttribute("viewBox", "0 0 24 24");
+	}
 	await expect(
 		page.getByText("Agent software can’t be changed later", { exact: true }),
 	).toHaveCount(0);
@@ -2437,6 +2445,17 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 	await expect(unmanaged).toHaveAttribute("aria-pressed", "false");
 	await expect(page.getByTestId("managed-model-choices")).toBeVisible();
 	await expect(page.getByRole("button", { name: "Change", exact: true })).toHaveCount(0);
+
+	for (const viewport of [
+		{ name: "1280", width: 1280, height: 900 },
+		{ name: "390", width: 390, height: 844 },
+	]) {
+		await page.setViewportSize(viewport);
+		await page.screenshot({
+			path: testInfo.outputPath(`deploy-framework-icons-${viewport.name}.png`),
+			fullPage: true,
+		});
+	}
 });
 
 test("AI Providers preserves provider identity and keeps technical details progressive", async ({
@@ -2494,6 +2513,9 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await expect(main.getByText("Clawdi", { exact: true })).toBeVisible();
 	await expect(main.getByText("Included", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("Research DeepSeek", { exact: true })).toBeVisible();
+	const deepSeekIcons = main.getByRole("img", { name: "DeepSeek", exact: true });
+	await expect(deepSeekIcons.first().locator("svg")).toHaveAttribute("data-icon-source", "lobehub");
+	await expect(deepSeekIcons.first().locator("svg")).toHaveAttribute("viewBox", "0 0 24 24");
 	await expect(main.getByText("DeepSeek · DeepSeek V4 Flash", { exact: true })).toBeVisible();
 	await expect(main.getByText("DeepSeek proxy", { exact: true })).toBeVisible();
 	await expect(
@@ -6602,6 +6624,10 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 	await expect(page.getByRole("button", { name: /All\s+4/ })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Telegram\s+2/ })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Discord\s+2/ })).toBeVisible();
+	for (const channel of ["telegram", "discord"]) {
+		const icons = page.locator(`img[src="https://assets.clawdi.ai/icons/${channel}.png"]`);
+		await expect(icons.first()).toBeVisible();
+	}
 	await expect(page.getByRole("button", { name: /WhatsApp/ })).toHaveCount(0);
 	await expect(page.locator("[data-ready-bots-section]")).toHaveCount(0);
 	await expect(page.locator("[data-pool-account-id]")).toHaveCount(0);

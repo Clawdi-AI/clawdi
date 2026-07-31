@@ -1,22 +1,6 @@
-"use client";
-
-import anthropicIcon from "@lobehub/icons-static-svg/icons/anthropic.svg";
-import deepSeekIcon from "@lobehub/icons-static-svg/icons/deepseek-color.svg";
-import geminiIcon from "@lobehub/icons-static-svg/icons/gemini-color.svg";
-import grokIcon from "@lobehub/icons-static-svg/icons/grok.svg";
-import groqIcon from "@lobehub/icons-static-svg/icons/groq.svg";
-import kimiIcon from "@lobehub/icons-static-svg/icons/kimi.svg";
-import miniMaxIcon from "@lobehub/icons-static-svg/icons/minimax-color.svg";
-import mistralIcon from "@lobehub/icons-static-svg/icons/mistral-color.svg";
-import openAiIcon from "@lobehub/icons-static-svg/icons/openai.svg";
-import openRouterIcon from "@lobehub/icons-static-svg/icons/openrouter-color.svg";
-import qwenIcon from "@lobehub/icons-static-svg/icons/qwen-color.svg";
-import stepFunIcon from "@lobehub/icons-static-svg/icons/stepfun-color.svg";
-import togetherAiIcon from "@lobehub/icons-static-svg/icons/together-color.svg";
-import xAiIcon from "@lobehub/icons-static-svg/icons/xai.svg";
-import zhipuIcon from "@lobehub/icons-static-svg/icons/zhipu-color.svg";
-import { useState } from "react";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
+import { BrandIconTile } from "@/components/brand-icon-tile";
+import { providerBrandIcon } from "@/components/entity-brand-icons";
 import { cn } from "@/lib/utils";
 
 /**
@@ -29,8 +13,8 @@ import { cn } from "@/lib/utils";
  *
  * Sources, in resolution order:
  *   - channel   → full-color app-icon PNG on Clawdi's CDN
- *   - framework → local app-icon PNG in /public/agents
- *   - provider  → official package-local LobeHub SVG in the same neutral tile
+ *   - framework → official LobeHub React icon
+ *   - provider  → official LobeHub React icon in the same neutral tile
  *                 used by monogram fallbacks; ids without an official mark →
  *                 monogram
  *   - anything unresolved → neutral monogram tile
@@ -42,48 +26,11 @@ import { cn } from "@/lib/utils";
 const ICON_BASE = "https://assets.clawdi.ai/icons";
 
 /** Channels: full-color app-icon PNGs on Clawdi's CDN. */
-const CHANNEL_PNG: Record<string, string> = {
+const CHANNEL_PNG: Readonly<Record<string, string>> = {
 	telegram: `${ICON_BASE}/telegram.png`,
 	discord: `${ICON_BASE}/discord.png`,
 	whatsapp: `${ICON_BASE}/whatsapp.png`,
 	slack: `${ICON_BASE}/slack.png`,
-};
-
-type ProviderBrandIconMetadata = {
-	label: string;
-	monochrome?: boolean;
-	src: string;
-};
-
-/** Official LobeHub assets for every branded provider currently offered by the web app. */
-const PROVIDER_BRAND_ICONS: Readonly<Record<string, ProviderBrandIconMetadata>> = {
-	anthropic: { label: "Anthropic", monochrome: true, src: anthropicIcon },
-	deepseek: { label: "DeepSeek", src: deepSeekIcon },
-	gemini: { label: "Gemini", src: geminiIcon },
-	grok: { label: "Grok", monochrome: true, src: grokIcon },
-	groq: { label: "Groq", monochrome: true, src: groqIcon },
-	kimi: { label: "Kimi", monochrome: true, src: kimiIcon },
-	minimax: { label: "MiniMax", src: miniMaxIcon },
-	mistral: { label: "Mistral AI", src: mistralIcon },
-	openai: { label: "OpenAI", monochrome: true, src: openAiIcon },
-	openrouter: { label: "OpenRouter", src: openRouterIcon },
-	qwen: { label: "Qwen", src: qwenIcon },
-	stepfun: { label: "StepFun", src: stepFunIcon },
-	together: { label: "Together AI", src: togetherAiIcon },
-	xai: { label: "xAI", monochrome: true, src: xAiIcon },
-	zhipu: { label: "Zhipu", src: zhipuIcon },
-};
-
-const PROVIDER_ICON_ALIASES: Readonly<Record<string, string>> = {
-	"google-gemini-openai": "gemini",
-	google: "gemini",
-	"kimi-coding": "kimi",
-	moonshot: "kimi",
-	"openai-codex": "openai",
-	"qwen-dashscope": "qwen",
-	"together-ai": "together",
-	"xai-grok": "grok",
-	"zhipu-glm": "zhipu",
 };
 
 const SIZE = {
@@ -124,42 +71,6 @@ function NeutralMonogram({
 	);
 }
 
-function ProviderBrandIcon({
-	src,
-	label,
-	monochrome,
-	size,
-	className,
-}: {
-	src: string;
-	label: string;
-	monochrome?: boolean;
-	size: EntityIconSize;
-	className?: string;
-}) {
-	const [failed, setFailed] = useState(false);
-	if (failed) {
-		return <NeutralMonogram label={label} size={size} className={cn(PROVIDER_TILE, className)} />;
-	}
-
-	const s = SIZE[size];
-	return (
-		<span
-			className={cn(s.box, "flex shrink-0 items-center justify-center", PROVIDER_TILE, className)}
-		>
-			<img
-				src={src}
-				alt={label}
-				width={s.px}
-				height={s.px}
-				className={cn("size-[60%] object-contain", monochrome && "dark:invert")}
-				data-icon-source="lobehub"
-				onError={() => setFailed(true)}
-			/>
-		</span>
-	);
-}
-
 export function EntityIcon({
 	kind,
 	id,
@@ -177,8 +88,7 @@ export function EntityIcon({
 }) {
 	const s = SIZE[size];
 	const key = id?.toLowerCase?.() ?? "";
-	const providerBrand =
-		kind === "provider" ? PROVIDER_BRAND_ICONS[PROVIDER_ICON_ALIASES[key] ?? key] : undefined;
+	const providerBrand = kind === "provider" ? providerBrandIcon(key) : undefined;
 	const alt = label ?? providerBrand?.label ?? id ?? "";
 
 	if (kind === "framework") {
@@ -209,16 +119,14 @@ export function EntityIcon({
 		);
 	}
 
-	// Provider brand logo from the package-local official LobeHub asset set.
+	// Provider brand logo from the official LobeHub React package.
 	if (kind === "provider") {
 		if (providerBrand) {
 			return (
-				<ProviderBrandIcon
-					key={providerBrand.src}
-					src={providerBrand.src}
+				<BrandIconTile
+					icon={providerBrand.icon}
 					label={alt}
-					monochrome={providerBrand.monochrome}
-					size={size}
+					boxClassName={s.box}
 					className={className}
 				/>
 			);
