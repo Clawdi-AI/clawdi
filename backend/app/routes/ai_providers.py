@@ -81,6 +81,15 @@ from app.services.ai_provider_credentials import (
     environment_binds_provider,
     environment_matches_runtime,
 )
+from app.services.codex_oauth import (
+    CODEX_DEVICE_VERIFICATION_URL,
+    CODEX_OAUTH_CLIENT_ID,
+    CODEX_OAUTH_TOKEN_URL,
+    CodexOAuthUpstreamError,
+    exchange_device_code,
+    poll_device_authorization,
+    start_device_authorization,
+)
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_IDS,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
@@ -118,18 +127,12 @@ ALLOWED_API_MODES: dict[str, set[str]] = {
 OAUTH_STATE_TTL_SECONDS = 10 * 60
 OAUTH_DEVICE_STATE_TTL_SECONDS = 15 * 60
 CODEX_OAUTH_PROVIDER = "codex"
-CODEX_DEVICE_VERIFICATION_URL = "https://auth.openai.com/codex/device"
-CODEX_DEVICE_USER_CODE_URL = "https://auth.openai.com/api/accounts/deviceauth/usercode"
-CODEX_DEVICE_TOKEN_URL = "https://auth.openai.com/api/accounts/deviceauth/token"
-CODEX_DEVICE_CALLBACK_URL = "https://auth.openai.com/deviceauth/callback"
-CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
-CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_OPENAI_BASE_URL = "https://api.openai.com/v1"
 SUPPORTED_AGENT_PROFILE_TOOLS = {CODEX_OAUTH_PROVIDER}
 SUPPORTED_OAUTH_PROVIDERS = {CODEX_OAUTH_PROVIDER}
 CODEX_OAUTH_CONFIG = {
     "authorization_url": "https://auth.openai.com/oauth/authorize",
-    "token_url": "https://auth.openai.com/oauth/token",
+    "token_url": CODEX_OAUTH_TOKEN_URL,
     "client_id": CODEX_OAUTH_CLIENT_ID,
     "scope": "openid profile email offline_access api.connectors.read api.connectors.invoke",
     "extra_authorize_params": {
@@ -302,57 +305,53 @@ async def poll_ai_provider_oauth_device(
         )
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            poll_response = await client.post(
-                CODEX_DEVICE_TOKEN_URL,
-                headers=_codex_device_headers("application/json"),
-                json={
-                    "device_auth_id": str(oauth_state.get("device_auth_id") or ""),
-                    "user_code": str(oauth_state.get("user_code") or ""),
-                },
+            poll_result = await poll_device_authorization(
+                client,
+                device_auth_id=str(oauth_state.get("device_auth_id") or ""),
+                user_code=str(oauth_state.get("user_code") or ""),
             )
-            if poll_response.status_code in {
-                status.HTTP_403_FORBIDDEN,
-                status.HTTP_404_NOT_FOUND,
-            }:
+            if poll_result.pending:
                 return AiProviderOAuthDevicePendingResponse(
                     status="pending",
                     retry_after_seconds=retry_after_seconds,
                 )
-            if poll_response.status_code >= 400:
+            if poll_result.authorization_code is None or poll_result.code_verifier is None:
                 raise HTTPException(
                     status.HTTP_502_BAD_GATEWAY,
-                    "ChatGPT device authorization failed",
+                    "ChatGPT device authorization response was incomplete",
                 )
-            poll_data = _token_response_json(poll_response)
-            authorization_code = _required_token_field(poll_data, "authorization_code")
-            code_verifier = _required_token_field(poll_data, "code_verifier")
-            token_response = await client.post(
-                CODEX_OAUTH_TOKEN_URL,
-                headers=_codex_device_headers("application/x-www-form-urlencoded"),
-                data={
-                    "grant_type": "authorization_code",
-                    "code": authorization_code,
-                    "redirect_uri": CODEX_DEVICE_CALLBACK_URL,
-                    "client_id": client_id,
-                    "code_verifier": code_verifier,
-                },
+            token_response = await exchange_device_code(
+                client,
+                client_id=client_id,
+                authorization_code=poll_result.authorization_code,
+                code_verifier=poll_result.code_verifier,
             )
-            if token_response.status_code >= 400:
-                raise HTTPException(
-                    status.HTTP_502_BAD_GATEWAY,
-                    "ChatGPT device token exchange failed",
-                )
             payload_text, provider_auth_type, metadata = await _oauth_payload_from_token_response(
                 client,
                 oauth_provider,
                 config,
                 token_response,
                 profile,
+                source="device_code",
             )
-    except httpx.HTTPError as exc:
+    except CodexOAuthUpstreamError as exc:
+        if exc.pending_retry and exc.retry_after is not None:
+            return AiProviderOAuthDevicePendingResponse(
+                status="pending",
+                retry_after_seconds=exc.retry_after,
+            )
         raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "ChatGPT device sign-in is temporarily unavailable",
+            status.HTTP_429_TOO_MANY_REQUESTS
+            if exc.retry_after is not None
+            else (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if exc.unavailable
+                else status.HTTP_502_BAD_GATEWAY
+            ),
+            str(exc),
+            headers=(
+                {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
+            ),
         ) from exc
 
     async with async_session_factory() as db:
@@ -985,14 +984,6 @@ async def import_ai_provider_auth(
     return await _to_response(db, auth, provider)
 
 
-def _codex_device_headers(content_type: str) -> dict[str, str]:
-    return {
-        "Content-Type": content_type,
-        "User-Agent": "clawdi",
-        "originator": "clawdi",
-    }
-
-
 def _validate_codex_oauth_provider_shape(provider: AiProvider | AiProviderUpsert) -> None:
     if (
         provider.type != "openai"
@@ -1023,37 +1014,20 @@ async def _build_codex_device_authorization(
         )
     try:
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(
-                CODEX_DEVICE_USER_CODE_URL,
-                headers=_codex_device_headers("application/json"),
-                json={"client_id": client_id},
-            )
-    except httpx.HTTPError as exc:
+            authorization = await start_device_authorization(client, client_id)
+    except CodexOAuthUpstreamError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after is not None else None
         raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "ChatGPT device sign-in is temporarily unavailable",
+            status.HTTP_429_TOO_MANY_REQUESTS
+            if exc.retry_after is not None
+            else (
+                status.HTTP_503_SERVICE_UNAVAILABLE
+                if exc.unavailable
+                else status.HTTP_502_BAD_GATEWAY
+            ),
+            str(exc),
+            headers=headers,
         ) from exc
-    if response.status_code == status.HTTP_404_NOT_FOUND:
-        raise HTTPException(
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-            "ChatGPT device sign-in is not enabled for this account or workspace",
-        )
-    if response.status_code >= 400:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "ChatGPT device sign-in could not be started",
-        )
-    data = _token_response_json(response)
-    device_auth_id = _required_token_field(data, "device_auth_id")
-    user_code_value = data.get("user_code") or data.get("usercode")
-    if not isinstance(user_code_value, str) or not user_code_value:
-        raise HTTPException(
-            status.HTTP_502_BAD_GATEWAY,
-            "ChatGPT device sign-in response was incomplete",
-        )
-    interval_value = data.get("interval")
-    interval_seconds = interval_value if isinstance(interval_value, int) else 5
-    interval_seconds = min(max(interval_seconds, 1), 30)
     profile = "default"
     payload = await _find_auth_payload(db, auth, provider.provider_id, profile)
     base_revision = (
@@ -1067,9 +1041,9 @@ async def _build_codex_device_authorization(
             "owner_user_id": str(auth.user_id),
             "oauth_provider": oauth_provider,
             "profile": profile,
-            "device_auth_id": device_auth_id,
-            "user_code": user_code_value,
-            "poll_interval_seconds": interval_seconds,
+            "device_auth_id": authorization.device_auth_id,
+            "user_code": authorization.user_code,
+            "poll_interval_seconds": authorization.poll_interval_seconds,
             "base_credential_revision": base_revision,
             "expires_at": expires_at.isoformat(),
         }
@@ -1079,10 +1053,10 @@ async def _build_codex_device_authorization(
         oauth_provider=oauth_provider,
         profile=profile,
         verification_url=CODEX_DEVICE_VERIFICATION_URL,
-        user_code=user_code_value,
+        user_code=authorization.user_code,
         state=state_value,
         expires_at=expires_at,
-        poll_interval_seconds=interval_seconds,
+        poll_interval_seconds=authorization.poll_interval_seconds,
     )
 
 
@@ -1783,6 +1757,8 @@ async def _oauth_payload_from_token_response(
     config: dict,
     response: httpx.Response,
     profile: str,
+    *,
+    source: str = "oauth_pkce",
 ) -> tuple[str, str, dict]:
     if oauth_provider == CODEX_OAUTH_PROVIDER:
         payload = await _codex_auth_profile_payload(client, config, response, profile)
@@ -1792,7 +1768,7 @@ async def _oauth_payload_from_token_response(
             {
                 "tool": "codex",
                 "profile": profile,
-                "source": "oauth_pkce",
+                "source": source,
             },
         )
     return (
@@ -1801,7 +1777,7 @@ async def _oauth_payload_from_token_response(
         {
             "provider": oauth_provider,
             "profile": profile,
-            "source": "oauth_pkce",
+            "source": source,
         },
     )
 
@@ -1813,20 +1789,23 @@ async def _codex_auth_profile_payload(
     profile: str,
 ) -> str:
     token_data = _token_response_json(response)
-    id_token = _required_token_field(token_data, "id_token")
     access_token = _required_token_field(token_data, "access_token")
     refresh_token = _required_token_field(token_data, "refresh_token")
-    api_key = await _obtain_codex_api_key(client, config, id_token)
-    claims = _jwt_auth_claims(id_token)
+    id_token_value = token_data.get("id_token")
+    id_token = id_token_value if isinstance(id_token_value, str) and id_token_value else None
+    api_key = await _obtain_codex_api_key(client, config, id_token) if id_token else None
+    claims = _jwt_auth_claims(id_token or access_token)
     account_id = claims.get("chatgpt_account_id")
+    tokens = {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "account_id": account_id if isinstance(account_id, str) and account_id else None,
+    }
+    if id_token:
+        tokens["id_token"] = id_token
     auth_json = {
         "auth_mode": "chatgpt",
-        "tokens": {
-            "id_token": id_token,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "account_id": account_id if isinstance(account_id, str) and account_id else None,
-        },
+        "tokens": tokens,
         "last_refresh": datetime.now(UTC).isoformat(),
     }
     if api_key:
