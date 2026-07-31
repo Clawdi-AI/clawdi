@@ -22,12 +22,20 @@ import type { FrameworkBrandIconId, ProviderBrandIconId } from "@/components/ent
 
 export type BrandIconMetadata = {
 	icon: BrandIconComponent;
+	iconClassName?: string;
 	label: string;
+	tileClassName?: string;
 };
 
 const FRAMEWORK_BRAND_ICON_DEFINITIONS = {
 	openclaw: { icon: OpenClaw, label: "OpenClaw" },
-	hermes: { icon: HermesAgent, label: "Hermes Agent" },
+	hermes: {
+		icon: HermesAgent,
+		// LobeHub's Hermes avatar is intentionally a black mark on white.
+		iconClassName: "text-black",
+		label: "Hermes Agent",
+		tileClassName: "bg-white",
+	},
 	"claude-code": { icon: ClaudeCode, label: "Claude Code" },
 	codex: { icon: Codex, label: "Codex" },
 } satisfies Readonly<Record<FrameworkBrandIconId, BrandIconMetadata>>;

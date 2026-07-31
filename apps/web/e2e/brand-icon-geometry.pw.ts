@@ -8,7 +8,7 @@ test("keeps every shared LobeHub brand mark full and contained", async ({ page }
 	await page.setViewportSize({ width: 1440, height: 2400 });
 	await page.goto("/");
 	await page.setContent(`<!doctype html>
-		<html lang="en">
+		<html lang="en" class="dark">
 			<head><meta name="viewport" content="width=device-width, initial-scale=1" /></head>
 			<body><div id="brand-icon-gallery"></div><script type="module" src="/e2e/brand-icon-gallery.browser.tsx"></script></body>
 		</html>`);
@@ -26,6 +26,8 @@ test("keeps every shared LobeHub brand mark full and contained", async ({ page }
 			const icon = element.getBoundingClientRect();
 			const tile = element.parentElement.getBoundingClientRect();
 			const artwork = element.getBBox();
+			const iconStyle = getComputedStyle(element);
+			const tileStyle = getComputedStyle(element.parentElement);
 			const matrix = element.getScreenCTM();
 			if (!matrix) throw new Error("Expected the brand mark to have a screen transform.");
 			const artworkCorners = [
@@ -45,8 +47,10 @@ test("keeps every shared LobeHub brand mark full and contained", async ({ page }
 				surface: cell?.getAttribute("data-brand-surface"),
 				iconWidth: icon.width,
 				iconHeight: icon.height,
+				iconColor: iconStyle.color,
 				tileWidth: tile.width,
 				tileHeight: tile.height,
+				tileBackground: tileStyle.backgroundColor,
 				artworkWidth: artworkRight - artworkLeft,
 				artworkHeight: artworkBottom - artworkTop,
 				widthAttribute: element.getAttribute("width"),
@@ -96,7 +100,14 @@ test("keeps every shared LobeHub brand mark full and contained", async ({ page }
 	const frameworkMeasurements = measurements.filter(({ kind }) => kind === "framework");
 	const providerMeasurements = measurements.filter(({ kind }) => kind === "provider");
 	for (const id of FRAMEWORK_BRAND_ICON_IDS) {
-		expect(frameworkMeasurements.filter((measurement) => measurement.id === id)).toHaveLength(3);
+		const frameworkIcons = frameworkMeasurements.filter((measurement) => measurement.id === id);
+		expect(frameworkIcons).toHaveLength(3);
+		if (id === "hermes") {
+			for (const icon of frameworkIcons) {
+				expect(icon.iconColor).toBe("rgb(0, 0, 0)");
+				expect(icon.tileBackground).toBe("rgb(255, 255, 255)");
+			}
+		}
 	}
 	for (const id of PROVIDER_BRAND_ICON_IDS) {
 		expect(providerMeasurements.filter((measurement) => measurement.id === id)).toHaveLength(2);
