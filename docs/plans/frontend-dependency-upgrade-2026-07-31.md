@@ -38,6 +38,23 @@ below.
 No override, resolution, or package patch was added for these upgrades. The
 repository's pre-existing security overrides were not changed.
 
+## Stacked generated-schema baseline
+
+This branch is stacked on OSS parent PR #646 and its Hosted parent PR #1188.
+It preserves the parent's `packages/shared/src/api/deploy.generated.ts` byte
+for byte, including the generated Checkout discriminated union. Neither
+`openapi-typescript` nor the deploy generator changed in this dependency
+upgrade, so regenerating from the same parent schema has no necessary
+mechanical output difference.
+
+Hosted `main` did not yet contain #1188 on 2026-07-31. A strict drift check
+against the live `https://api.clawdi.ai/openapi.json` therefore reports the
+expected parent-stack drift. That failure must remain visible until #1188
+lands; generating this branch from the older live schema would regress the
+parent contract and must not be used to make the check green. Local validation
+uses the retained parent generated artifact (or the exact #1188 schema), not
+the older live Hosted schema.
+
 ## Non-stable or non-latest-looking selections
 
 ### Nitro 3 beta is the registry latest release
