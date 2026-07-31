@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
+import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -41,10 +41,19 @@ import {
 import { ApiClient } from "../lib/api-client";
 import {
 	decideChatGptOAuthCredentialReconciliation,
+	intentLedgerForDecision,
 	type NativeOAuthCredentialObservation,
+	type OAuthCredentialLedgerSnapshot,
 } from "../lib/chatgpt-oauth-reconciliation";
 import { oauthCredentialFingerprint } from "../lib/codex-oauth-native-store";
 import { getClawdiDir } from "../lib/config";
+import {
+	type OAuthCredentialLedger,
+	oauthCredentialLedgerPath,
+	oauthCredentialLedgerSnapshot,
+	readOAuthCredentialLedger,
+	writeOAuthCredentialLedger,
+} from "../lib/oauth-credential-ledger";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { getEnvIdByAgent } from "../lib/select-adapter";
 import {
@@ -176,59 +185,44 @@ interface AiProviderAuthResolveBackendResponse {
 	credential_revision?: string | null;
 }
 
-interface OAuthMaterializationReceipt {
-	schemaVersion: "clawdi.runtimeOAuthCredential.v1";
-	runtime: "codex";
-	providerId: string;
-	nativeProfileId: "default";
-	credentialRevision: string;
-	state: "seeded" | "adopted" | "revoked";
-	credentialFingerprint?: string;
-}
-
-function readOAuthMaterializationReceipt(path: string): OAuthMaterializationReceipt | null {
-	if (!existsSync(path)) return null;
-	const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<OAuthMaterializationReceipt>;
-	if (
-		parsed.schemaVersion !== "clawdi.runtimeOAuthCredential.v1" ||
-		parsed.runtime !== "codex" ||
-		typeof parsed.providerId !== "string" ||
-		parsed.nativeProfileId !== "default" ||
-		typeof parsed.credentialRevision !== "string" ||
-		!parsed.state ||
-		!["seeded", "adopted", "revoked"].includes(parsed.state) ||
-		(parsed.credentialFingerprint !== undefined &&
-			!/^sha256:[a-f0-9]{64}$/.test(parsed.credentialFingerprint))
-	) {
-		throw new Error(`Invalid OAuth materialization receipt: ${path}`);
-	}
-	return parsed as OAuthMaterializationReceipt;
-}
-
-function writeOAuthMaterializationReceipt(
-	path: string,
-	receipt: OAuthMaterializationReceipt,
-): void {
-	writePrivateFileAtomic(path, `${JSON.stringify(receipt, null, 2)}\n`);
-}
-
 function cleanupStaleCodexOAuthMaterializations(currentProviderId: string, authPath: string): void {
-	const receiptDir = join(getClawdiDir(), "oauth-credentials", "codex");
-	if (!existsSync(receiptDir)) return;
-	for (const filename of readdirSync(receiptDir).filter((name) => name.endsWith(".json"))) {
-		const path = join(receiptDir, filename);
-		const receipt = readOAuthMaterializationReceipt(path);
-		if (!receipt || receipt.providerId === currentProviderId) continue;
-		const native = observeCodexOAuthMaterialization(authPath, receipt);
+	const ledgerDir = join(getClawdiDir(), "oauth-credentials", "codex");
+	if (!existsSync(ledgerDir)) return;
+	for (const filename of readdirSync(ledgerDir).filter((name) => name.endsWith(".json"))) {
+		const path = join(ledgerDir, filename);
+		const ledger = readOAuthCredentialLedger(path);
+		if (!ledger || ledger.providerId === currentProviderId || ledger.state === "retired") continue;
+		const snapshot = oauthCredentialLedgerSnapshot(ledger);
+		const native = observeCodexOAuthMaterialization(authPath, ledger);
 		const decision = decideChatGptOAuthCredentialReconciliation({
 			desiredCredentialRevision: null,
 			desiredNativeProfileId: null,
-			receipt,
+			ledger: snapshot,
 			native,
 		});
+		if (decision.requiresWriteAheadIntent) {
+			writeCodexOAuthLedger(
+				path,
+				ledger.providerId,
+				intentLedgerForDecision({
+					decision,
+					current: snapshot,
+					desiredNativeProfileId: ledger.nativeProfileId,
+					desiredCredentialRevision: ledger.credentialRevision,
+				}),
+			);
+		}
 		if (decision.nativeAction === "remove") rmSync(authPath, { force: true });
-		rmSync(path, { force: true });
+		writeCodexOAuthLedger(path, ledger.providerId, decision.nextLedger);
 	}
+}
+
+function writeCodexOAuthLedger(
+	path: string,
+	providerId: string,
+	snapshot: OAuthCredentialLedgerSnapshot,
+): void {
+	writeOAuthCredentialLedger(path, { runtime: "codex", providerId }, snapshot);
 }
 
 function codexOAuthFingerprintFromAuthJson(
@@ -264,15 +258,15 @@ function resolvedCodexOAuthFingerprint(
 
 function observeCodexOAuthMaterialization(
 	authPath: string,
-	receipt: OAuthMaterializationReceipt | null,
+	ledger: OAuthCredentialLedger | null,
 ): NativeOAuthCredentialObservation {
 	if (existsSync(authPath)) {
-		if (receipt?.state === "seeded" && receipt.credentialFingerprint) {
+		if (ledger && ledger.state === "seeded" && ledger.credentialFingerprint) {
 			const fingerprint = codexOAuthFingerprintFromAuthJson(
 				readFileSync(authPath, "utf8"),
-				receipt.credentialRevision,
+				ledger.credentialRevision,
 			);
-			if (fingerprint === receipt.credentialFingerprint) return "managed";
+			if (fingerprint === ledger.credentialFingerprint) return "managed";
 		}
 		return "foreign";
 	}
@@ -594,30 +588,40 @@ export async function aiProviderMaterializeAuthCommand(
 	if (!resolved.credential_revision) {
 		throw new Error(`AI Provider ${providerId} auth resolve returned no credential revision.`);
 	}
-	const receiptPath = join(
-		getClawdiDir(),
-		"oauth-credentials",
+	const ledgerPath = oauthCredentialLedgerPath(
+		join(getClawdiDir(), "oauth-credentials"),
 		"codex",
-		`${createHash("sha256").update(providerId).digest("hex")}.json`,
+		providerId,
 	);
 	const authPath = join(getCodexHome(), "auth.json");
 	if (!opts.dryRun) cleanupStaleCodexOAuthMaterializations(providerId, authPath);
-	const existingReceipt = readOAuthMaterializationReceipt(receiptPath);
-	const native = observeCodexOAuthMaterialization(authPath, existingReceipt);
+	const existingLedger = readOAuthCredentialLedger(ledgerPath);
+	const existingSnapshot = oauthCredentialLedgerSnapshot(existingLedger);
+	const native = observeCodexOAuthMaterialization(authPath, existingLedger);
 	const decision = decideChatGptOAuthCredentialReconciliation({
 		desiredCredentialRevision: resolved.credential_revision,
 		desiredNativeProfileId: "default",
-		receipt: existingReceipt,
+		ledger: existingSnapshot,
 		native,
 	});
-	if (!decision.nextReceipt) {
-		throw new Error("Desired OAuth materialization did not produce a receipt.");
-	}
 	const desiredFingerprint = resolvedCodexOAuthFingerprint(
 		resolved.profile ?? profile,
 		resolved.payload,
 		resolved.credential_revision,
 	);
+	if (!opts.dryRun && decision.requiresWriteAheadIntent) {
+		writeCodexOAuthLedger(
+			ledgerPath,
+			providerId,
+			intentLedgerForDecision({
+				decision,
+				current: existingSnapshot,
+				desiredNativeProfileId: "default",
+				desiredCredentialRevision: resolved.credential_revision,
+				credentialFingerprint: desiredFingerprint,
+			}),
+		);
+	}
 	if (decision.nativeAction !== "preserve") {
 		const materialized = await materializeAgentCredentialProfilePayload(
 			resolved.tool ?? provider.auth.tool,
@@ -635,18 +639,13 @@ export async function aiProviderMaterializeAuthCommand(
 	}
 	if (opts.dryRun) return;
 	const credentialFingerprint =
-		decision.nextReceipt.state === "seeded"
+		decision.nextLedger.state === "seeded"
 			? decision.nativeAction === "seed" || decision.nativeAction === "upsert"
 				? desiredFingerprint
-				: existingReceipt?.credentialFingerprint
+				: existingLedger?.credentialFingerprint
 			: undefined;
-	writeOAuthMaterializationReceipt(receiptPath, {
-		schemaVersion: "clawdi.runtimeOAuthCredential.v1",
-		runtime: "codex",
-		providerId,
-		nativeProfileId: "default",
-		credentialRevision: decision.nextReceipt.credentialRevision,
-		state: decision.nextReceipt.state,
+	writeCodexOAuthLedger(ledgerPath, providerId, {
+		...decision.nextLedger,
 		...(credentialFingerprint ? { credentialFingerprint } : {}),
 	});
 }

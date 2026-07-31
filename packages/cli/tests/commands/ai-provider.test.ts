@@ -862,8 +862,8 @@ describe("ai-provider commands", () => {
 		}
 
 		expect(readFileSync(codexAuthPath, "utf-8")).toBe(expectedAuth);
-		let receipt = readOAuthReceipt("codex", "openai-codex");
-		expect(receipt).toMatchObject({
+		let ledger = readOAuthLedger("codex", "openai-codex");
+		expect(ledger).toMatchObject({
 			providerId: "openai-codex",
 			credentialRevision: "revision-materialize-1",
 			state: "seeded",
@@ -890,8 +890,8 @@ describe("ai-provider commands", () => {
 			restoreSecondFetch();
 		}
 		expect(readFileSync(codexAuthPath, "utf-8")).toBe(expectedAuth);
-		receipt = readOAuthReceipt("codex", "openai-codex");
-		expect(receipt).toMatchObject({
+		ledger = readOAuthLedger("codex", "openai-codex");
+		expect(ledger).toMatchObject({
 			credentialRevision: "revision-materialize-2",
 			state: "seeded",
 		});
@@ -940,22 +940,22 @@ describe("ai-provider commands", () => {
 			await aiProviderMaterializeAuthCommand("openai-codex", { yes: true });
 			expect(readFileSync(statusLog, "utf8")).toBe("login status");
 			expect(existsSync(join(codexHome, "auth.json"))).toBe(true);
-			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+			expect(readOAuthLedger("codex", "openai-codex")).toMatchObject({
 				credentialRevision: "revision-keyring-1",
 				state: "seeded",
 			});
 
-			const receiptPath = join(
+			const ledgerPath = join(
 				tmpHome,
 				".clawdi",
 				"oauth-credentials",
 				"codex",
 				`${createHash("sha256").update("openai-codex").digest("hex")}.json`,
 			);
-			rmSync(receiptPath);
+			rmSync(ledgerPath);
 			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
 			expect(existsSync(join(codexHome, "auth.json"))).toBe(true);
-			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+			expect(readOAuthLedger("codex", "openai-codex")).toMatchObject({
 				credentialRevision: "revision-keyring-1",
 				state: "seeded",
 			});
@@ -1554,7 +1554,7 @@ describe("ai-provider commands", () => {
 			rmSync(authPath);
 			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
 			expect(existsSync(authPath)).toBe(false);
-			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+			expect(readOAuthLedger("codex", "openai-codex")).toMatchObject({
 				credentialRevision: "credential-revision-1",
 				state: "revoked",
 			});
@@ -1572,7 +1572,7 @@ describe("ai-provider commands", () => {
 			writeFileSync(authPath, nativeReauthenticated);
 			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
 			expect(readFileSync(authPath, "utf8")).toBe(nativeReauthenticated);
-			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+			expect(readOAuthLedger("codex", "openai-codex")).toMatchObject({
 				credentialRevision: "credential-revision-1",
 				state: "adopted",
 			});
@@ -1584,7 +1584,7 @@ describe("ai-provider commands", () => {
 				access_token: "explicit-reconnect-access",
 				refresh_token: "explicit-reconnect-refresh",
 			});
-			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+			expect(readOAuthLedger("codex", "openai-codex")).toMatchObject({
 				credentialRevision: "credential-revision-2",
 				state: "seeded",
 			});
@@ -1601,7 +1601,7 @@ describe("ai-provider commands", () => {
 				access_token: "reconnected-access",
 				refresh_token: "reconnected-refresh",
 			});
-			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+			expect(readOAuthLedger("codex", "openai-codex")).toMatchObject({
 				credentialRevision: "credential-revision-3",
 				state: "seeded",
 			});
@@ -1615,8 +1615,9 @@ describe("ai-provider commands", () => {
 			});
 			await aiProviderApplyCommand({ source: "openai-main", target: "codex", json: true });
 			expect(existsSync(authPath)).toBe(false);
-			const receiptDir = join(tmpHome, ".clawdi", "oauth-credentials", "codex");
-			expect(existsSync(receiptDir) ? readdirSync(receiptDir) : []).toEqual([]);
+			const ledgerDir = join(tmpHome, ".clawdi", "oauth-credentials", "codex");
+			expect(existsSync(ledgerDir) ? readdirSync(ledgerDir) : []).toHaveLength(1);
+			expect(readOAuthLedger("codex", "openai-codex").state).toBe("retired");
 		} finally {
 			restore();
 			restoreFetch();
@@ -2775,7 +2776,7 @@ function registerAgent(agentType: "codex" | "hermes" | "openclaw", id: string): 
 	);
 }
 
-function readOAuthReceipt(
+function readOAuthLedger(
 	runtime: "codex" | "hermes" | "openclaw",
 	providerId: string,
 ): Record<string, unknown> {

@@ -1,5 +1,4 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { AiProvider, AiProviderCatalog } from "@clawdi/shared";
@@ -16,8 +15,10 @@ import {
 import { ApiClient } from "../lib/api-client";
 import {
 	decideChatGptOAuthCredentialReconciliation,
+	intentLedgerForDecision,
 	type NativeOAuthCredentialAction,
 	type NativeOAuthCredentialObservation,
+	type OAuthCredentialLedgerSnapshot,
 } from "../lib/chatgpt-oauth-reconciliation";
 import {
 	HERMES_CODEX_AUTH_HELPER,
@@ -31,6 +32,13 @@ import {
 } from "../lib/codex-oauth-native-store";
 import { getClawdiDir } from "../lib/config";
 import { mergeHermesConfig } from "../lib/hermes-config-merge";
+import {
+	type OAuthCredentialLedger,
+	oauthCredentialLedgerPath,
+	oauthCredentialLedgerSnapshot,
+	readOAuthCredentialLedger,
+	writeOAuthCredentialLedger,
+} from "../lib/oauth-credential-ledger";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
 import { getEnvIdByAgent } from "../lib/select-adapter";
 import { parseAgentCredentialProfilePayload } from "./agent-credentials";
@@ -576,10 +584,10 @@ function applyAiProviderPlan(
 		runAiProviderApplyCommand(command);
 	}
 	if (preparedSecrets.length === 0) {
-		cleanupStaleLocalOAuthReceipts(plan.target, new Set());
+		cleanupStaleLocalOAuthLedgers(plan.target, new Set());
 	}
 	for (const prepared of preparedSecrets) {
-		cleanupStaleLocalOAuthReceipts(prepared.target, new Set([prepared.providerId]));
+		cleanupStaleLocalOAuthLedgers(prepared.target, new Set([prepared.providerId]));
 		reconcileLocalOAuthCredential({
 			target: prepared.target,
 			providerId: prepared.providerId,
@@ -657,43 +665,8 @@ async function resolveProviderAuthPayload(
 	return { payload: response.payload, credentialRevision: response.credential_revision };
 }
 
-interface LocalOAuthReceipt {
-	schemaVersion: "clawdi.runtimeOAuthCredential.v1";
-	runtime: AgentTarget;
-	providerId: string;
-	nativeProfileId: string;
-	credentialRevision: string;
-	state: "seeded" | "adopted" | "revoked";
-	credentialFingerprint?: string;
-}
-
-function localOAuthReceiptPath(target: AgentTarget, providerId: string): string {
-	const providerKey = createHash("sha256").update(providerId).digest("hex");
-	return join(getClawdiDir(), "oauth-credentials", target, `${providerKey}.json`);
-}
-
-function readLocalOAuthReceipt(path: string): LocalOAuthReceipt | null {
-	if (!existsSync(path)) return null;
-	const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<LocalOAuthReceipt>;
-	if (
-		parsed.schemaVersion !== "clawdi.runtimeOAuthCredential.v1" ||
-		!parsed.runtime ||
-		!(["codex", "hermes", "openclaw"] as const).includes(parsed.runtime) ||
-		typeof parsed.providerId !== "string" ||
-		typeof parsed.nativeProfileId !== "string" ||
-		typeof parsed.credentialRevision !== "string" ||
-		!parsed.state ||
-		!(["seeded", "adopted", "revoked"] as const).includes(parsed.state) ||
-		(parsed.credentialFingerprint !== undefined &&
-			!/^sha256:[a-f0-9]{64}$/.test(parsed.credentialFingerprint))
-	) {
-		throw new Error(`Invalid local OAuth credential receipt: ${path}`);
-	}
-	return parsed as LocalOAuthReceipt;
-}
-
-function writeLocalOAuthReceipt(path: string, receipt: LocalOAuthReceipt): void {
-	writeAiProviderFile(path, `${JSON.stringify(receipt, null, 2)}\n`);
+function localOAuthLedgerPath(target: AgentTarget, providerId: string): string {
+	return oauthCredentialLedgerPath(join(getClawdiDir(), "oauth-credentials"), target, providerId);
 }
 
 function runLocalHermesCodexAuthCommand(
@@ -845,38 +818,48 @@ function removeLocalOpenClawCredential(
 	);
 }
 
-function cleanupStaleLocalOAuthReceipts(
+function cleanupStaleLocalOAuthLedgers(
 	target: AgentTarget,
 	desiredProviderIds: ReadonlySet<string>,
 ): void {
-	const receiptDir = join(getClawdiDir(), "oauth-credentials", target);
-	if (!existsSync(receiptDir)) return;
-	for (const filename of readdirSync(receiptDir).filter((name) => name.endsWith(".json"))) {
-		const path = join(receiptDir, filename);
-		const receipt = readLocalOAuthReceipt(path);
-		if (!receipt || desiredProviderIds.has(receipt.providerId)) continue;
-		const ownership = localOAuthReceiptOwnership(receipt);
+	const ledgerDir = join(getClawdiDir(), "oauth-credentials", target);
+	if (!existsSync(ledgerDir)) return;
+	for (const filename of readdirSync(ledgerDir).filter((name) => name.endsWith(".json"))) {
+		const path = join(ledgerDir, filename);
+		const ledger = readOAuthCredentialLedger(path);
+		if (!ledger || desiredProviderIds.has(ledger.providerId) || ledger.state === "retired")
+			continue;
+		const snapshot = oauthCredentialLedgerSnapshot(ledger);
+		const ownership = localOAuthLedgerOwnership(ledger);
 		const native = observeLocalOAuthCredential(
 			target,
 			targetAuthPath(target),
-			receipt.nativeProfileId,
+			ledger.nativeProfileId,
 			ownership,
 		);
 		const decision = decideChatGptOAuthCredentialReconciliation({
 			desiredCredentialRevision: null,
 			desiredNativeProfileId: null,
-			receipt,
+			ledger: snapshot,
 			native,
 		});
-		if (decision.nativeAction === "remove" && ownership) {
-			removeLocalOAuthCredential(
-				target,
-				targetAuthPath(target),
-				receipt.nativeProfileId,
-				ownership,
+		if (decision.requiresWriteAheadIntent) {
+			writeLocalOAuthLedger(
+				path,
+				ledger.runtime,
+				ledger.providerId,
+				intentLedgerForDecision({
+					decision,
+					current: snapshot,
+					desiredNativeProfileId: ledger.nativeProfileId,
+					desiredCredentialRevision: ledger.credentialRevision,
+				}),
 			);
 		}
-		rmSync(path, { force: true });
+		if (decision.nativeAction === "remove" && ownership) {
+			removeLocalOAuthCredential(target, targetAuthPath(target), ledger.nativeProfileId, ownership);
+		}
+		writeLocalOAuthLedger(path, ledger.runtime, ledger.providerId, decision.nextLedger);
 	}
 }
 
@@ -892,55 +875,79 @@ function reconcileLocalOAuthCredential(input: {
 	path: string;
 	material: CodexAuthMaterial;
 }): void {
-	const receiptPath = localOAuthReceiptPath(input.target, input.providerId);
-	const receipt = readLocalOAuthReceipt(receiptPath);
+	const ledgerPath = localOAuthLedgerPath(input.target, input.providerId);
+	const ledger = readOAuthCredentialLedger(ledgerPath);
+	const snapshot = oauthCredentialLedgerSnapshot(ledger);
 	const nativeProfileId = nativeOAuthProfileId(input.target, input.providerId);
+	const desiredFingerprint =
+		input.target === "codex"
+			? oauthCredentialFingerprint(
+					input.credentialRevision,
+					input.material.accessToken,
+					input.material.refreshToken,
+				)
+			: undefined;
 	const native = observeLocalOAuthCredential(
 		input.target,
 		input.path,
 		nativeProfileId,
-		localOAuthReceiptOwnership(receipt),
+		localOAuthLedgerOwnership(ledger),
 	);
 	const decision = decideChatGptOAuthCredentialReconciliation({
 		desiredCredentialRevision: input.credentialRevision,
 		desiredNativeProfileId: nativeProfileId,
-		receipt,
+		ledger: snapshot,
 		native,
 	});
-	executeLocalOAuthCredentialAction(decision.nativeAction, input, nativeProfileId);
-	if (!decision.nextReceipt) {
-		throw new Error("Desired OAuth credential reconciliation did not produce a receipt");
+	if (decision.requiresWriteAheadIntent) {
+		writeLocalOAuthLedger(
+			ledgerPath,
+			input.target,
+			input.providerId,
+			intentLedgerForDecision({
+				decision,
+				current: snapshot,
+				desiredNativeProfileId: nativeProfileId,
+				desiredCredentialRevision: input.credentialRevision,
+				...(desiredFingerprint ? { credentialFingerprint: desiredFingerprint } : {}),
+			}),
+		);
 	}
+	executeLocalOAuthCredentialAction(decision.nativeAction, input, nativeProfileId);
 	const credentialFingerprint =
-		input.target === "codex" && decision.nextReceipt.state === "seeded"
+		input.target === "codex" && decision.nextLedger.state === "seeded"
 			? decision.nativeAction === "seed" || decision.nativeAction === "upsert"
-				? oauthCredentialFingerprint(
-						input.credentialRevision,
-						input.material.accessToken,
-						input.material.refreshToken,
-					)
-				: receipt?.credentialFingerprint
+				? desiredFingerprint
+				: ledger?.credentialFingerprint
 			: undefined;
-	writeLocalOAuthReceipt(receiptPath, {
-		schemaVersion: "clawdi.runtimeOAuthCredential.v1",
-		runtime: input.target,
-		providerId: input.providerId,
-		...decision.nextReceipt,
+	writeLocalOAuthLedger(ledgerPath, input.target, input.providerId, {
+		...decision.nextLedger,
 		...(credentialFingerprint ? { credentialFingerprint } : {}),
 	});
 }
 
-function localOAuthReceiptOwnership(
-	receipt: LocalOAuthReceipt | null,
+function writeLocalOAuthLedger(
+	path: string,
+	runtime: AgentTarget,
+	providerId: string,
+	snapshot: OAuthCredentialLedgerSnapshot,
+): void {
+	writeOAuthCredentialLedger(path, { runtime, providerId }, snapshot);
+}
+
+function localOAuthLedgerOwnership(
+	ledger: OAuthCredentialLedger | null,
 ): OAuthCredentialOwnership | undefined {
-	if (receipt?.state !== "seeded") return undefined;
-	if (receipt.runtime === "codex" && !receipt.credentialFingerprint) return undefined;
+	if (ledger?.state !== "seeded") {
+		return undefined;
+	}
+	if (ledger.runtime === "codex" && !ledger.credentialFingerprint) return undefined;
 	return {
-		nativeProfileId: receipt.nativeProfileId,
-		...(receipt.credentialFingerprint
+		nativeProfileId: ledger.nativeProfileId,
+		...(ledger.credentialFingerprint
 			? {
-					credentialRevision: receipt.credentialRevision,
-					credentialFingerprint: receipt.credentialFingerprint,
+					credentialRevision: ledger.credentialRevision,
+					credentialFingerprint: ledger.credentialFingerprint,
 				}
 			: {}),
 	};

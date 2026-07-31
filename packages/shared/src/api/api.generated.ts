@@ -3239,6 +3239,12 @@ export interface components {
             status: "deleted";
             /** Provider Id */
             provider_id: string;
+            /**
+             * Remote Revoke Status
+             * @default not_required
+             * @enum {string}
+             */
+            remote_revoke_status: "pending" | "not_required";
         };
         /** AiProviderEnvApiKeyAuth */
         AiProviderEnvApiKeyAuth: {
@@ -3416,6 +3422,11 @@ export interface components {
              * @constant
              */
             flow: "device_code";
+            /**
+             * Flow Id
+             * Format: uuid
+             */
+            flow_id: string;
             /** Provider Id */
             provider_id: string;
             /** Oauth Provider */
@@ -3493,6 +3504,11 @@ export interface components {
              * @constant
              */
             flow: "authorization_code";
+            /**
+             * Flow Id
+             * Format: uuid
+             */
+            flow_id: string;
             /** Provider Id */
             provider_id: string;
             /** Oauth Provider */

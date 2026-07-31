@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from app.core.database import async_session_factory, engine
+from app.services.ai_provider_oauth_revoke_worker import AiProviderOAuthRevokeWorker
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
@@ -110,6 +111,7 @@ async def run_health_server(
 
 
 def build_channel_workers() -> tuple[
+    AiProviderOAuthRevokeWorker,
     ChannelDeliveryWorker,
     ChannelWebhookDeliveryWorker,
     DiscordGatewayWorker,
@@ -122,6 +124,7 @@ def build_channel_workers() -> tuple[
     legacy channel bridge process or own provider routing state.
     """
     return (
+        AiProviderOAuthRevokeWorker(async_session_factory),
         ChannelDeliveryWorker(async_session_factory),
         ChannelWebhookDeliveryWorker(async_session_factory),
         DiscordGatewayWorker(async_session_factory, lock_engine=engine),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 from app.schemas.ai_provider import (
     AiProviderReadiness,
@@ -109,6 +110,7 @@ def provider_readiness(
         credential_material == "available"
         and hosted_auth_delivery
         and any((compatibility.openclaw, compatibility.hermes))
+        and is_hosted_deployable_endpoint(provider.base_url)
     )
     return AiProviderReadiness(
         credential_material=credential_material,
@@ -119,9 +121,26 @@ def provider_readiness(
     )
 
 
+def is_hosted_deployable_endpoint(base_url: str) -> bool:
+    """Match Hosted's saved-provider URL admission without adding SSRF policy."""
+
+    try:
+        parsed = urlparse(base_url)
+        hostname = parsed.hostname
+    except ValueError:
+        return False
+    return (
+        parsed.scheme.lower() == "https"
+        and bool(hostname)
+        and parsed.username is None
+        and parsed.password is None
+    )
+
+
 __all__ = [
     "AiProviderCapabilityInput",
     "effective_provider_api_mode",
+    "is_hosted_deployable_endpoint",
     "provider_readiness",
     "provider_runtime_compatibility",
 ]

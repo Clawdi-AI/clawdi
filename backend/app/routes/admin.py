@@ -155,7 +155,6 @@ from app.services.runtime_manifest_resources import (
 )
 from app.services.sync_events import (
     queue_environment_runtime_manifest_changed,
-    queue_provider_runtime_manifest_changed,
     queue_runtime_manifest_changed,
 )
 from app.services.user_provisioning import (
@@ -808,11 +807,6 @@ async def admin_upsert_clawdi_managed_ai_provider(
         except ValueError as e:
             raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
 
-        await queue_provider_runtime_manifest_changed(
-            db,
-            target.id,
-            provider.provider_id,
-        )
         record_control_plane_audit(
             db,
             actor_type="admin",
@@ -891,11 +885,6 @@ async def admin_upsert_clawdi_managed_ai_provider(
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(e)) from e
 
     await db.flush()
-    await queue_provider_runtime_manifest_changed(
-        db,
-        target.id,
-        provider.provider_id,
-    )
     _record_deployment_managed_provider_audit(
         db,
         action="ai_provider.managed.upsert",
@@ -1003,7 +992,6 @@ async def admin_delete_clawdi_managed_ai_provider(
             owner_user_id=target.id,
             provider_id=provider_id,
         )
-    await queue_provider_runtime_manifest_changed(db, target.id, provider_id)
     _record_deployment_managed_provider_audit(
         db,
         action=action,

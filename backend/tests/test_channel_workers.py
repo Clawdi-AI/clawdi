@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from app.services.ai_provider_oauth_revoke_worker import AiProviderOAuthRevokeWorker
 from app.services.channel_delivery_worker import ChannelDeliveryWorker
 from app.services.channel_message_retention_worker import ChannelMessageRetentionWorker
 from app.services.channel_webhook_delivery_worker import ChannelWebhookDeliveryWorker
@@ -14,10 +15,11 @@ from app.workers.channels import ChannelWorkerHealth, _handle_health_request, bu
 pytestmark = pytest.mark.committed_db
 
 
-def test_channel_worker_stack_runs_delivery_webhook_gateway_and_retention_workers():
+def test_channel_worker_stack_runs_revoke_delivery_webhook_gateway_and_retention_workers():
     workers = build_channel_workers()
 
     assert tuple(type(worker) for worker in workers) == (
+        AiProviderOAuthRevokeWorker,
         ChannelDeliveryWorker,
         ChannelWebhookDeliveryWorker,
         DiscordGatewayWorker,
