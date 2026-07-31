@@ -124,8 +124,8 @@ export function ModelBindingPicker({
 						title="Couldn't load Clawdi AI models"
 					/>
 				) : isManaged && compactManagedModelChoices && hasCatalogModels ? (
-					<div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
-						<Label id={`${catalogInputId}-label`}>Model</Label>
+					<div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
+						<Label id={`${catalogInputId}-label`}>Main model</Label>
 						<ToggleGroup
 							id={catalogInputId}
 							value={
@@ -137,12 +137,17 @@ export function ModelBindingPicker({
 							}}
 							variant="outline"
 							size="sm"
+							spacing={1}
 							className="flex min-w-0 max-w-full flex-wrap justify-start"
 							aria-labelledby={`${catalogInputId}-label`}
 							data-testid="managed-model-choices"
 						>
 							{catalogModelItems.map((item) => (
-								<ToggleGroupItem key={item.value} value={item.value} className="min-w-0 max-w-full">
+								<ToggleGroupItem
+									key={item.value}
+									value={item.value}
+									className="min-w-0 max-w-full px-2"
+								>
 									<span className="truncate">{item.label}</span>
 								</ToggleGroupItem>
 							))}
@@ -150,7 +155,7 @@ export function ModelBindingPicker({
 					</div>
 				) : hasCatalogModels ? (
 					<div className="flex flex-col gap-1.5">
-						<Label htmlFor={catalogInputId}>Model</Label>
+						<Label htmlFor={catalogInputId}>Main model</Label>
 						<Select
 							items={catalogModelItems}
 							value={modelChoice}
@@ -177,9 +182,7 @@ export function ModelBindingPicker({
 			</div>
 			{!isManaged && modelChoice === CUSTOM_MODEL_CHOICE ? (
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor={customInputId}>
-						{hasCatalogModels ? "Custom model" : "Primary model"}
-					</Label>
+					<Label htmlFor={customInputId}>{hasCatalogModels ? "Custom model" : "Main model"}</Label>
 					<Input
 						id={customInputId}
 						value={primaryModel}

@@ -267,8 +267,14 @@ describe("managed model picker", () => {
 		expect(modelBindingPickerSource).toContain("catalogModelItems.map((item) =>");
 		expect(modelBindingPickerSource).toContain("aria-labelledby=");
 		expect(modelBindingPickerSource).toContain("<Label id=");
-		expect(modelBindingPickerSource).toContain(">Model</Label>");
-		expect(modelBindingPickerSource).toContain("<Label htmlFor={catalogInputId}>Model</Label>");
+		expect(modelBindingPickerSource).toContain(">Main model</Label>");
+		expect(modelBindingPickerSource).toContain(
+			"<Label htmlFor={catalogInputId}>Main model</Label>",
+		);
+		expect(modelBindingPickerSource).toContain(
+			'{hasCatalogModels ? "Custom model" : "Main model"}',
+		);
+		expect(modelBindingPickerSource).not.toContain("Primary model");
 		expect(modelBindingPickerSource).not.toContain("Catalog model");
 		expect(modelBindingPickerSource).not.toContain("More models");
 		expect(modelBindingPickerSource).toContain(
@@ -281,9 +287,9 @@ describe("managed model picker", () => {
 	test("does not blame the user while the Clawdi AI catalog is loading or unavailable", () => {
 		expect(wizardSource).toContain('return "Loading Clawdi AI models."');
 		expect(wizardSource).toContain('return "Retry loading Clawdi AI models above."');
-		expect(wizardSource).toContain('return "Choose an available primary model."');
+		expect(wizardSource).toContain('return "Choose an available main model."');
 		expect(wizardSource.indexOf('return "Loading Clawdi AI models."')).toBeLessThan(
-			wizardSource.indexOf('return "Choose an available primary model."'),
+			wizardSource.indexOf('return "Choose an available main model."'),
 		);
 	});
 });

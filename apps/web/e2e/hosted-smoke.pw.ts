@@ -2510,7 +2510,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		);
 
 		for (const [label, control, maxWidth] of [
-			["Model", metrics.catalogModel, 448],
+			["Main model", metrics.catalogModel, 448],
 			["Name", metrics.name, 448],
 			["Language", metrics.language, 160],
 			["Timezone", metrics.timezone, 384],
@@ -2554,14 +2554,14 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 			const firstModelChoiceCenter = metrics.firstModelChoice
 				? (metrics.firstModelChoice.top + metrics.firstModelChoice.bottom) / 2
 				: Number.POSITIVE_INFINITY;
-			expect(firstModelChoiceCenter, `${viewport.name} inline Model choices`).toBeCloseTo(
+			expect(firstModelChoiceCenter, `${viewport.name} inline Main model choices`).toBeCloseTo(
 				modelLabelCenter,
 				0,
 			);
 		} else {
 			expect(
 				metrics.firstModelChoice?.top,
-				`${viewport.name} wrapped Model choices`,
+				`${viewport.name} wrapped Main model choices`,
 			).toBeGreaterThanOrEqual(metrics.modelLabel?.bottom ?? Number.POSITIVE_INFINITY);
 		}
 
@@ -2958,7 +2958,7 @@ test("deploy managed model picker renders backend order and submits the selected
 	await page.goto("/deploy");
 
 	const managedModels = page.getByTestId("managed-model-choices");
-	await expect(managedModels).toHaveAccessibleName("Model");
+	await expect(managedModels).toHaveAccessibleName("Main model");
 	await expect(managedModels.getByRole("button")).toHaveText([
 		"Sol",
 		"Kimi K3",
@@ -3108,7 +3108,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await page.getByRole("button", { name: /Clawdi AI/ }).click();
 	const agentModelSelect = page.locator("#agent-catalog-model");
 	await expect(agentModelSelect).toHaveRole("combobox");
-	await expect(agentModelSelect).toHaveAccessibleName("Model");
+	await expect(agentModelSelect).toHaveAccessibleName("Main model");
 	await expect(agentModelSelect).toContainText("Luna");
 	await expect(page.getByTestId("managed-model-choices")).toHaveCount(0);
 	const agentModelFrame = await agentModelSelect.evaluate((element) => {
@@ -3122,6 +3122,22 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 			: null;
 	});
 	expect(agentModelFrame).toEqual({ borderTopWidth: 1, paddingTop: 12 });
+	for (const viewport of [
+		{ height: 900, width: 1280 },
+		{ height: 900, width: 800 },
+		{ height: 900, width: 700 },
+		{ height: 844, width: 390 },
+	]) {
+		await page.setViewportSize(viewport);
+		await expect(agentModelSelect).toHaveAccessibleName("Main model");
+		const documentWidth = await page.evaluate(() => ({
+			clientWidth: document.documentElement.clientWidth,
+			scrollWidth: document.documentElement.scrollWidth,
+		}));
+		expect(documentWidth.scrollWidth, `agent settings at ${viewport.width}px`).toBe(
+			documentWidth.clientWidth,
+		);
+	}
 	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({

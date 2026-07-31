@@ -141,7 +141,7 @@ export function buildAiBindingFields(
 					: error.code === "managed_model_unavailable"
 						? "Clawdi AI model unavailable"
 						: error.code === "model_required"
-							? "Primary model required"
+							? "Main model required"
 							: mode === "create"
 								? "Provider unavailable"
 								: "Provider configuration is invalid";
