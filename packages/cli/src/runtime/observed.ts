@@ -4,13 +4,9 @@ import { join } from "node:path";
 import type { components } from "@clawdi/shared/api";
 import { getCliVersion } from "../lib/version";
 import { type RuntimeAppliedState, readRuntimeAppliedState } from "./applied-state";
-import { readRuntimeApplyContext, resolveRuntimeApplyGeneration } from "./apply-identity";
+import { resolveRuntimeApplyGeneration } from "./apply-identity";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
-import {
-	projectedRuntimeEnvironment,
-	type RuntimeEnvironmentAuthority,
-	runtimeSecretValue,
-} from "./secret-values";
+import { runtimeSecretValue } from "./secret-values";
 import { type RuntimeBootStatus, readRuntimeBootStatus } from "./state";
 import {
 	isGeneratedRuntimeSystemdFile,
@@ -161,19 +157,16 @@ function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProvide
 	if (!providers || Object.keys(providers).length === 0) return null;
 
 	const secrets = {
-		...(readJsonRecord(paths.managedSecretFile) ?? {}),
+		...(readJsonRecord(paths.managedSecretCacheFile) ?? {}),
 		...(readJsonRecord(join(paths.managedSecretRoot, "egress-secrets.json")) ?? {}),
 	};
-	const runtimeEnvironment = observedFallbackRuntimeEnvironment();
 	const observed: HostedRuntimeObservedProviders = {};
 	for (const providerId of Object.keys(providers).sort()) {
 		const provider = recordValue(providers[providerId]);
 		if (!provider) continue;
 		const apiKeySecretRef = stringValue(provider.apiKeySecretRef);
 		const secretAvailable =
-			apiKeySecretRef === null
-				? null
-				: providerSecretAvailable(secrets, apiKeySecretRef, runtimeEnvironment);
+			apiKeySecretRef === null ? null : providerSecretAvailable(secrets, apiKeySecretRef);
 		const reasons = providerReasons(provider, secretAvailable);
 		observed[providerId] = {
 			status: reasons.length > 0 ? "error" : "ok",
@@ -189,21 +182,8 @@ function readProviderObserved(paths: RuntimePaths): HostedRuntimeObservedProvide
 	return Object.keys(observed).length > 0 ? observed : null;
 }
 
-function observedFallbackRuntimeEnvironment(): RuntimeEnvironmentAuthority {
-	try {
-		return readRuntimeApplyContext().runtimeEnvironment;
-	} catch {
-		// A configured but unreadable identity file must not fall back to ambient env.
-		return projectedRuntimeEnvironment({});
-	}
-}
-
-function providerSecretAvailable(
-	secrets: JsonRecord,
-	ref: string,
-	runtimeEnvironment: RuntimeEnvironmentAuthority,
-): boolean {
-	return runtimeSecretValue(secrets, ref, runtimeEnvironment) !== null;
+function providerSecretAvailable(secrets: JsonRecord, ref: string): boolean {
+	return runtimeSecretValue(secrets, ref) !== null;
 }
 
 function providerReasons(provider: JsonRecord, secretAvailable: boolean | null): string[] {

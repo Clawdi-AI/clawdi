@@ -1487,7 +1487,7 @@ async def test_runtime_observed_endpoint_surfaces_provider_errors(
                 "status": "error",
                 "baseUrl": "https://sub2api.test/v1",
                 "model": "gpt-5.5",
-                "apiKeySecretRef": "provider.clawdi-managed.apiKey",
+                "apiKeySecretRef": "secret://provider.clawdi-managed.apiKey",
                 "secretAvailable": False,
                 "reasons": ["secret_missing"],
             }
@@ -1594,7 +1594,7 @@ async def test_runtime_observed_summary_has_bounded_queries_without_secret_decry
         providers={
             "default": {
                 "status": "error",
-                "apiKeySecretRef": "provider.default.apiKey",
+                "apiKeySecretRef": "secret://provider.default.apiKey",
                 "secretAvailable": False,
             }
         },

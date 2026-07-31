@@ -61,10 +61,7 @@ Environment:
   CLAWDI_NO_UPDATE_CHECK   Suppress the non-blocking update check
   CLAWDI_NO_AUTO_UPDATE    Skip CLI/daemon background auto-update (also disables via \`config set autoUpdate false\`)
   CLAWDI_RUNTIME_MODE      Explicit runtime mode override for hosted tests/operators
-  CLAWDI_RUNTIME_MANIFEST_URL
-                           Hosted runtime manifest datasource URL
-  CLAWDI_RUNTIME_AUTH_ENV  Name of the env var containing the hosted bearer credential
-  CLAWDI_AUTH_TOKEN        Default deployment-selected hosted bearer credential
+  CLAWDI_AUTH_TOKEN        Authenticate non-interactive Cloud API requests
   CLAUDE_CONFIG_DIR        Custom Claude Code home (else ~/.claude)
   CODEX_HOME               Custom Codex home (else ~/.codex)
   HERMES_HOME              Custom Hermes home (else ~/.hermes)
@@ -755,8 +752,7 @@ runtimeCmd
 	.description("Converge a hosted runtime from controller desired state")
 	.option("--non-interactive", "Required for hosted boot; never prompt")
 	.option("--json", "Output as JSON")
-	.option("--manifest-file <path>", "Use a local runtime manifest fixture for simulation")
-	.action(async (opts: { nonInteractive?: boolean; json?: boolean; manifestFile?: string }) => {
+	.action(async (opts: { nonInteractive?: boolean; json?: boolean }) => {
 		const { runtimeInit } = await import("./commands/runtime.js");
 		await runtimeInit(opts);
 	});

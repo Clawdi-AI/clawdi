@@ -252,8 +252,8 @@ async def _create_hosted_runtime_graph(
                             "mode": "password",
                             "provider": "basic",
                             "username": "admin",
-                            "passwordSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-                            "sessionSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+                            "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
+                            "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
                             "sessionTtlSeconds": 43200,
                             "publicUrl": "https://hermes.dev-preview.local",
                             "activation": {

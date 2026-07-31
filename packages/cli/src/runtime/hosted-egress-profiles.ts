@@ -296,9 +296,7 @@ function managedProviderPathPrefix(pathname: string): string {
 
 export function normalizeSecretRef(value: string | null | undefined): string | null {
 	const trimmed = value?.trim();
-	if (!trimmed) return null;
-	if (trimmed.startsWith("env://")) return trimmed;
-	return trimmed.startsWith("secret://") ? trimmed : `secret://${trimmed}`;
+	return trimmed?.startsWith("secret://") && trimmed.length > "secret://".length ? trimmed : null;
 }
 
 export function isClawdiManagedProviderProjection(provider: { managed_by?: unknown }): boolean {

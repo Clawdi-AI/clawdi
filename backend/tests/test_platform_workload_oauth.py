@@ -283,6 +283,7 @@ def _runtime_body(owner: dict[str, str], agent_id: uuid.UUID) -> dict[str, Any]:
         },
         "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
         "tools": _TEST_TOOLS,
+        "secretValues": {},
     }
 
 

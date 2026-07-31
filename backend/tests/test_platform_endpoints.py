@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from collections.abc import AsyncIterator
 
@@ -15,15 +16,19 @@ from app.core.database import get_session
 from app.main import app
 from app.models.api_key import ApiKey
 from app.models.audit import ControlPlaneAuditEvent
-from app.models.hosted_runtime import HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
 from app.models.platform_idempotency import PlatformMutationIdempotency
 from app.models.session import AgentEnvironment
 from app.models.skill import SKILL_AUTHORITY_AGENT_SYNC, SKILL_AUTHORITY_CLOUD, Skill
 from app.models.user import PRINCIPAL_KIND_PARTNER_TENANT, User
 from app.schemas.platform import PLATFORM_RUNTIME_KEY_SCOPES, PlatformRuntimeStateUpsert
+from app.services.hosted_runtime_secrets import runtime_secret_values_idempotency_identity
 from app.services.platform_contract import platform_request_hash, store_platform_response
+from app.services.runtime_source import load_runtime_source_batch, render_runtime_source
 from app.services.user_provisioning import lazy_create_partner_user_with_personal_project
+from app.services.vault_crypto import decrypt
 from tests.conftest import create_env_with_project
+from tests.hosted_runtime_fixtures import ensure_canonical_codex_tool_provider
 
 _ADMIN_KEY = "test-platform-admin-secret"
 _ADMIN_AUTH = {"X-Admin-Key": _ADMIN_KEY}
@@ -31,12 +36,16 @@ _TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
 _TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
 _TEST_LOCALE = {"language": "en", "timezone": "America/Los_Angeles"}
 _TEST_SYSTEM = {}
+_TEST_SECRET_VALUES = {
+    "secret://clawdi/auth-token": "runtime-auth-token-test",
+    "secret://runtime/openclaw/gateway-token": "openclaw-gateway-token-test",
+}
 _TEST_HERMES_DASHBOARD_AUTH = {
     "mode": "password",
     "provider": "basic",
     "username": "admin",
-    "passwordSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-    "sessionSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+    "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
+    "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
     "sessionTtlSeconds": 43_200,
     "publicUrl": "https://agent.example.test/hermes",
     "activation": {
@@ -134,6 +143,7 @@ def _runtime_payload(agent_id: uuid.UUID) -> dict[str, object]:
         "mcp": {"servers": {"clawdi": {"command": "clawdi", "args": ["mcp"]}}},
         "skills": {"entries": {"clawdi": {"enabled": True, "version": 1}}},
         "tools": _TEST_TOOLS,
+        "secretValues": dict(_TEST_SECRET_VALUES),
     }
 
 
@@ -317,6 +327,22 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
     assert runtime_state.skills == {"entries": {"clawdi": {"enabled": True, "version": 1}}}
     assert runtime_state.tools == _TEST_TOOLS
 
+    secret_rows = list(
+        (
+            await db_session.execute(
+                select(HostedRuntimeSecret)
+                .where(HostedRuntimeSecret.environment_id == agent_id)
+                .order_by(HostedRuntimeSecret.secret_ref)
+            )
+        ).scalars()
+    )
+    assert [row.secret_ref for row in secret_rows] == sorted(_TEST_SECRET_VALUES)
+    for row in secret_rows:
+        plaintext = _TEST_SECRET_VALUES[row.secret_ref]
+        assert row.encrypted_value != plaintext.encode()
+        assert decrypt(row.encrypted_value, row.nonce) == plaintext
+        assert row.key_version == "vault.v1"
+
     minted = await platform_client.post(
         "/v1/platform/auth/keys",
         headers=_headers("lifecycle-key-mint", request_id=request_id),
@@ -379,14 +405,15 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         .scalars()
         .all()
     )
-    assert [event.action for event in events] == [
+    assert len(events) == 6
+    assert {event.action for event in events} == {
         "agent_environment.create",
         "hosted_runtime_state.upsert",
         "api_key.mint",
         "api_key.revoke",
         "hosted_runtime_state.delete",
         "agent_environment.delete",
-    ]
+    }
     for event in events:
         assert event.actor_type == "platform"
         assert event.details["owner"] == owner
@@ -395,6 +422,118 @@ async def test_platform_clerk_owner_full_lifecycle_and_audit(
         assert event.details["workload_sub"] is None
         assert event.details["credential_id"] is None
         assert event.details["token_jti"] is None
+        assert all(secret not in str(event.details) for secret in _TEST_SECRET_VALUES.values())
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_secret_upsert_preserves_ciphertext_and_source_revision(
+    platform_client,
+    db_session,
+    seed_user,
+):
+    owner = _clerk_owner(seed_user)
+    agent_id = uuid.uuid4()
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+    created = await _create_platform_agent(
+        platform_client,
+        owner,
+        agent_id,
+        key="stable-runtime-secret-agent",
+    )
+    assert created.status_code == 200, created.text
+    body = _runtime_body(owner, agent_id)
+    first = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("stable-runtime-secret-first"),
+        json=body,
+    )
+    assert first.status_code == 200, first.text
+    rows = list(
+        (
+            await db_session.execute(
+                select(HostedRuntimeSecret)
+                .where(HostedRuntimeSecret.environment_id == agent_id)
+                .order_by(HostedRuntimeSecret.secret_ref)
+            )
+        ).scalars()
+    )
+    stored_identity = {
+        row.secret_ref: (row.id, row.encrypted_value, row.nonce, row.key_version) for row in rows
+    }
+    batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
+    first_source = render_runtime_source(
+        batch,
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+
+    second = await platform_client.put(
+        f"/v1/platform/agents/{agent_id}/runtime-state",
+        headers=_headers("stable-runtime-secret-second"),
+        json=body,
+    )
+    assert second.status_code == 200, second.text
+    db_session.expire_all()
+    repeated_rows = list(
+        (
+            await db_session.execute(
+                select(HostedRuntimeSecret)
+                .where(HostedRuntimeSecret.environment_id == agent_id)
+                .order_by(HostedRuntimeSecret.secret_ref)
+            )
+        ).scalars()
+    )
+    assert {
+        row.secret_ref: (row.id, row.encrypted_value, row.nonce, row.key_version)
+        for row in repeated_rows
+    } == stored_identity
+    repeated_batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
+    repeated_source = render_runtime_source(
+        repeated_batch,
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+    assert repeated_source.secret_values == {}
+    assert repeated_source.source_revision == first_source.source_revision
+
+
+@pytest.mark.asyncio
+async def test_platform_runtime_secret_validation_redacts_plaintext(
+    platform_client,
+    db_session,
+    seed_user,
+    caplog,
+):
+    marker = "platform-secret-must-not-leak\n"
+    body = _runtime_body(_clerk_owner(seed_user), uuid.uuid4())
+    body["secretValues"] = {"secret://runtime/invalid": marker}
+    caplog.set_level(logging.WARNING, logger="app.main")
+    audit_count = await db_session.scalar(select(func.count(ControlPlaneAuditEvent.id)))
+    idempotency_count = await db_session.scalar(select(func.count(PlatformMutationIdempotency.id)))
+
+    response = await platform_client.put(
+        f"/v1/platform/agents/{uuid.uuid4()}/runtime-state",
+        headers=_headers("invalid-runtime-secret"),
+        json=body,
+    )
+
+    assert response.status_code == 422
+    assert marker.strip() not in response.text
+    assert marker.strip() not in caplog.text
+    assert await db_session.scalar(select(func.count(ControlPlaneAuditEvent.id))) == audit_count
+    assert (
+        await db_session.scalar(select(func.count(PlatformMutationIdempotency.id)))
+        == idempotency_count
+    )
+    audits = list((await db_session.scalars(select(ControlPlaneAuditEvent))).all())
+    idempotency_rows = list((await db_session.scalars(select(PlatformMutationIdempotency))).all())
+    assert all(marker.strip() not in str(event.details) for event in audits)
+    assert all(marker.strip() not in row.request_hash for row in idempotency_rows)
+    assert all(marker.strip().encode() not in row.encrypted_response for row in idempotency_rows)
 
 
 @pytest.mark.asyncio
@@ -676,7 +815,11 @@ async def test_platform_runtime_state_replays_pre_apply_generation_idempotency_s
     assert created.status_code == 200, created.text
     body = _runtime_body(owner, agent_id)
     parsed = PlatformRuntimeStateUpsert.model_validate(body)
-    legacy_payload = {"agent_id": str(agent_id), **parsed.model_dump(mode="json")}
+    legacy_payload = {
+        "agent_id": str(agent_id),
+        **parsed.model_dump(mode="json", exclude={"secret_values"}),
+        "secretValuesIdentity": runtime_secret_values_idempotency_identity(parsed.secret_values),
+    }
     legacy_payload.pop("apply_generation")
     idempotency_key = "runtime-state-before-apply-generation"
     replay_body = {

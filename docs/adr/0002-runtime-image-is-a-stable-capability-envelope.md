@@ -30,15 +30,21 @@ of them may be baked into the stable runtime image or its entrypoints.
 
 Hosted mode is an explicit CLI contract selected by
 `CLAWDI_RUNTIME_MODE=hosted`; it is not inferred from image files. The hosted
-command policy is built into the CLI. Deployment must provide
-`CLAWDI_RUNTIME_MANIFEST_URL` and `CLAWDI_RUNTIME_AUTH_ENV`, whose value names
-the environment variable containing the manifest bearer credential. The CLI
-validates both selectors and fails closed before datasource access. A hosted
-runtime does not read `host-policy.json` or `runtime-source.json`.
+command policy is built into the CLI. The image substrate supplies mode and
+runtime-user facts; the provisioner atomically delivers the complete
+root-owned `/etc/clawdi/runtime-context/` directory. Its only file is the
+strict `0400` `runtime-context.json`, containing the apply tuple, exact CLI
+package pin, and typed manifest URL plus bootstrap bearer. The CLI validates
+the context and fails closed before datasource access. It has no ambient
+manifest selector, auth selector, local-manifest path, or substrate-specific
+datasource branch.
 
 Hosted runtime manifests use the single canonical `/v1/runtime/manifest`
-datasource contract. `CLAWDI_RUNTIME_MANIFEST_URL` may carry normal query
-parameters, but its path must end with `/v1/runtime/manifest`.
+datasource contract. The typed context URL may carry normal query parameters,
+but its path must end with `/v1/runtime/manifest`. Business secrets live only
+in the fetched bundle's `secretValues` map and resolve through exact
+`secret://` references; runtime context and process environment are not
+business-secret authorities.
 
 For transparent egress:
 

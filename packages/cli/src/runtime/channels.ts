@@ -11,7 +11,7 @@ import type {
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
-import { type RuntimeEnvironmentAuthority, runtimeSecretValue } from "./secret-values";
+import { runtimeSecretValue } from "./secret-values";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 type EgressProfile = EgressProfileInputBundle["profiles"][number];
@@ -99,12 +99,8 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 ): RuntimeManifestLoad {
 	if (!load.channelBindings) return load;
 	const secretValues = load.secretValues ?? {};
-	const runtimeEnvironment = load.applyContext?.runtimeEnvironment;
-	if (!runtimeEnvironment) {
-		throw new Error("runtime bundle channel projection requires an explicit apply context");
-	}
 	const links: ManagedChannelLink[] = load.channelBindings.map((binding) =>
-		managedBundleChannelLink(binding, secretValues, runtimeEnvironment),
+		managedBundleChannelLink(binding, secretValues),
 	);
 	return {
 		...load,
@@ -116,18 +112,9 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 function managedBundleChannelLink(
 	binding: RuntimeBundleChannelBinding,
 	secretValues: Record<string, string>,
-	runtimeEnvironment: RuntimeEnvironmentAuthority,
 ): ManagedChannelLink {
-	const agentToken = runtimeSecretValue(
-		secretValues,
-		binding.agentTokenSecretRef,
-		runtimeEnvironment,
-	);
-	const placeholderToken = runtimeSecretValue(
-		secretValues,
-		binding.placeholderTokenSecretRef,
-		runtimeEnvironment,
-	);
+	const agentToken = runtimeSecretValue(secretValues, binding.agentTokenSecretRef);
+	const placeholderToken = runtimeSecretValue(secretValues, binding.placeholderTokenSecretRef);
 	if (!agentToken) throw new Error(`runtime bundle is missing ${binding.agentTokenSecretRef}`);
 	if (!placeholderToken) {
 		throw new Error(`runtime bundle is missing ${binding.placeholderTokenSecretRef}`);
@@ -661,7 +648,6 @@ function projectedWhatsAppCredentialSecretRefs(channelCredentials: unknown): Set
 
 function addSecretValue(values: Record<string, string>, ref: string, value: string): void {
 	values[ref] = value;
-	values[ref.replace(/^secret:\/\//, "")] = value;
 }
 
 function channelLinkSecretRef(

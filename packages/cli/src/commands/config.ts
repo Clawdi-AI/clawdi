@@ -110,7 +110,6 @@ export function configPaths(opts: { json?: boolean } = {}) {
 			serveState: paths.serveState,
 		},
 		hosted: {
-			imageShim: hostedPaths.imageShim,
 			hostPolicy: hostedPaths.hostPolicy,
 			shareRoot: hostedPaths.shareRoot,
 			serviceStateRoot: hostedPaths.serviceStateRoot,

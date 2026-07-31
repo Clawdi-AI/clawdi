@@ -16,4 +16,5 @@ export type ChannelCreated = Schemas["ChannelAccountCreatedResponse"];
 export type ChannelBotPoolItem = Schemas["ChannelBotPoolItem"];
 export type ChannelAgentLink = Schemas["ChannelAgentLinkResponse"];
 export type ChannelBinding = Schemas["ChannelBindingResponse"];
+export type ChannelPairCode = Schemas["ChannelPairCodeResponse"];
 export type ChannelActivityItem = Schemas["ChannelActivityItemResponse"];

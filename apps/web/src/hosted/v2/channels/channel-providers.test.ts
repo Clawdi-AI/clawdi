@@ -20,17 +20,9 @@ describe("channel provider registry", () => {
 		});
 	});
 
-	test("provides official setup links and complete bring-your-own steps", () => {
-		expect(providerMeta("telegram")).toMatchObject({
-			setupUrl: "https://t.me/BotFather",
-			setupLinkLabel: "Open @BotFather in Telegram",
-		});
-		expect(providerMeta("telegram").setupSteps).toHaveLength(3);
-		expect(providerMeta("discord")).toMatchObject({
-			setupUrl: "https://discord.com/developers/applications",
-			setupLinkLabel: "Open the Discord Developer Portal",
-		});
-		expect(providerMeta("discord").setupSteps).toHaveLength(3);
+	test("provides only the official setup links used by the compact connect form", () => {
+		expect(providerMeta("telegram").setupUrl).toBe("https://t.me/BotFather");
+		expect(providerMeta("discord").setupUrl).toBe("https://discord.com/developers/applications");
 	});
 
 	test("orders supported providers first and appends legacy providers from data", () => {

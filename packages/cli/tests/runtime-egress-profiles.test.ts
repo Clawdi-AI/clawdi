@@ -10,10 +10,17 @@ const providerProfiles = (profiles: ReturnType<typeof hostedManifestEgressProfil
 
 describe("runtime egress profile schema", () => {
 	it("shares canonical secretRef semantics with hosted MCP resources", () => {
-		for (const value of ["secret://provider.default.apiKey", "env://CLAWDI_AUTH_TOKEN"]) {
+		for (const value of ["secret://provider.default.apiKey", "secret://runtime/auth-token"]) {
 			expect(secretRefSchema.safeParse(value).success).toBe(true);
 		}
-		for (const value of ["secret://", "env://", "env://INVALID-NAME", "env://9TOKEN"]) {
+		for (const value of [
+			"secret://",
+			"env://CLAWDI_AUTH_TOKEN",
+			"provider.default.apiKey",
+			"secret://provider key",
+			"secret://provider\tkey",
+			"secret://provider\nkey",
+		]) {
 			expect(secretRefSchema.safeParse(value).success).toBe(false);
 		}
 	});
@@ -145,7 +152,7 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://ai-gateway.example.test/v1",
 					apiMode: "openai_chat",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.default.apiKey",
+					apiKeySecretRef: "secret://provider.default.apiKey",
 				},
 			},
 		});
@@ -193,7 +200,7 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://ai-gateway.example.test/v1",
 					apiMode: "openai_chat",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.clawdi-v2-deployment-42.apiKey",
+					apiKeySecretRef: "secret://provider.clawdi-v2-deployment-42.apiKey",
 				},
 			},
 		});
@@ -297,13 +304,13 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://openclaw-provider.example.test/v1",
 					apiMode: "openai_chat",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.openclaw.apiKey",
+					apiKeySecretRef: "secret://provider.openclaw.apiKey",
 				},
 				hermes: {
 					baseUrl: "https://hermes-provider.example.test/v1",
 					apiMode: "openai_responses",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.hermes.apiKey",
+					apiKeySecretRef: "secret://provider.hermes.apiKey",
 				},
 			},
 		});
@@ -333,7 +340,7 @@ describe("runtime egress profile schema", () => {
 						baseUrl: "https://ai-gateway.example.test/v1",
 						apiMode: "openai_responses",
 						managed_by: "clawdi",
-						apiKeySecretRef: "tool.codex.apiKey",
+						apiKeySecretRef: "secret://tool.codex.apiKey",
 					},
 				},
 			},
@@ -369,7 +376,7 @@ describe("runtime egress profile schema", () => {
 			baseUrl: "https://ai-gateway.example.test/v1",
 			apiMode: "openai_responses",
 			managed_by: "clawdi",
-			apiKeySecretRef: "tool.codex.apiKey",
+			apiKeySecretRef: "secret://tool.codex.apiKey",
 		};
 		const bundle = hostedManifestEgressProfiles({
 			providers: { shared: sharedProvider },
@@ -393,13 +400,13 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://ai-gateway.example.test/chat/v1",
 					apiMode: "openai_chat",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.shared.apiKey",
+					apiKeySecretRef: "secret://provider.shared.apiKey",
 				},
 				responses: {
 					baseUrl: "https://ai-gateway.example.test/responses/v1",
 					apiMode: "openai_responses",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.shared.apiKey",
+					apiKeySecretRef: "secret://provider.shared.apiKey",
 				},
 			},
 		});
@@ -433,7 +440,7 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://byok-provider.example.test/v1",
 					apiMode: "openai_chat",
 					managed_by: "user",
-					apiKeySecretRef: "provider.default.apiKey",
+					apiKeySecretRef: "secret://provider.default.apiKey",
 				},
 			},
 		});
@@ -449,7 +456,7 @@ describe("runtime egress profile schema", () => {
 					baseUrl: "https://anthropic.example.test/v1",
 					apiMode: "anthropic_messages",
 					managed_by: "clawdi",
-					apiKeySecretRef: "provider.default.apiKey",
+					apiKeySecretRef: "secret://provider.default.apiKey",
 				},
 			},
 		});

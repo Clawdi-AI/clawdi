@@ -4343,6 +4343,8 @@ export interface components {
             deep_link?: string | null;
             /** Qr Payload */
             qr_payload?: string | null;
+            /** Discord Install Url */
+            discord_install_url?: string | null;
         };
         /** ChannelRuntimeAccountResponse */
         ChannelRuntimeAccountResponse: {
@@ -5126,12 +5128,12 @@ export interface components {
              * Passwordsecretref
              * @constant
              */
-            passwordSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD";
+            passwordSecretRef: "secret://runtime/hermes/dashboard-password";
             /**
              * Sessionsecretref
              * @constant
              */
-            sessionSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET";
+            sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret";
             /**
              * Sessionttlseconds
              * @default 43200
@@ -5165,7 +5167,7 @@ export interface components {
              * Tokenref
              * @constant
              */
-            tokenRef: "env://OPENCLAW_GATEWAY_TOKEN";
+            tokenRef: "secret://runtime/openclaw/gateway-token";
             /**
              * Deviceauthrequired
              * @constant
@@ -5868,6 +5870,10 @@ export interface components {
             mcp?: components["schemas"]["HostedRuntimeMcp"] | null;
             skills?: components["schemas"]["HostedRuntimeSkills"] | null;
             tools: components["schemas"]["HostedRuntimeTools"];
+            /** Secretvalues */
+            secretValues: {
+                [key: string]: string;
+            };
         };
         /** ProjectCreate */
         ProjectCreate: {

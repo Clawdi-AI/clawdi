@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -21,7 +21,7 @@ from app.models.channel import (
     ChannelAccount,
     ChannelBotAgentLink,
 )
-from app.models.hosted_runtime import HostedRuntimeState
+from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
 from app.models.session import AgentEnvironment
 from app.schemas.ai_provider import AiProviderModel
 from app.schemas.runtime import (
@@ -36,6 +36,7 @@ from app.schemas.runtime import (
     HostedRuntimeSystem,
     HostedRuntimeTools,
     PersistedHostedRuntimeSkills,
+    is_canonical_secret_ref,
     validate_clawdi_cli_package_spec,
     validate_hosted_runtime_desired_state,
     validate_hosted_runtime_mcp_desired_state,
@@ -46,6 +47,7 @@ from app.services.channels import (
     channel_runtime_placeholder_token,
     hosted_agent_provider_link_limit_detail,
 )
+from app.services.hosted_runtime_secrets import validate_hosted_runtime_secret_key_version
 from app.services.managed_ai_provider import (
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
@@ -62,7 +64,7 @@ RUNTIME_BUNDLE_V2_MEDIA_TYPE = "application/vnd.clawdi.runtime-bundle.v2+json"
 RUNTIME_BUNDLE_V2_SCHEMA_VERSION = "clawdi.hosted-runtime.bundle.v2"
 _SUPPORTED_RUNTIMES = {"hermes", "openclaw"}
 _MANAGED_PROVIDER_RUNTIME_ENV = "OPENAI_API_KEY"
-_CODEX_TOOL_SECRET_REF = "tool.codex.apiKey"
+_CODEX_TOOL_SECRET_REF = "secret://tool.codex.apiKey"
 _CODEX_TOOL_API_MODE = "openai_responses"
 _CODEX_PROVIDER_SOURCE_API_MODES = {"openai_chat", "openai_responses"}
 
@@ -94,6 +96,7 @@ class RuntimeSourceBatch:
     providers: dict[tuple[UUID, str], AiProvider]
     auth_payloads: dict[tuple[UUID, str, str], AiProviderAuthPayload]
     channels: dict[UUID, tuple[tuple[ChannelAccount, ChannelBotAgentLink], ...]]
+    runtime_secrets: dict[UUID, tuple[HostedRuntimeSecret, ...]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -120,7 +123,7 @@ async def load_runtime_source_batch(
     owner_user_id: UUID | None = None,
 ) -> RuntimeSourceBatch:
     if not environment_ids:
-        return RuntimeSourceBatch({}, {}, {}, {})
+        return RuntimeSourceBatch({}, {}, {}, {}, {})
     env_filters = [AgentEnvironment.id.in_(environment_ids)]
     if owner_user_id is not None:
         env_filters.append(AgentEnvironment.user_id == owner_user_id)
@@ -134,7 +137,7 @@ async def load_runtime_source_batch(
     rows = {env.id: RuntimeSourceRow(environment=env, state=state) for env, state in env_rows}
     user_ids = sorted({row.environment.user_id for row in rows.values()}, key=str)
     if not user_ids:
-        return RuntimeSourceBatch(rows, {}, {}, {})
+        return RuntimeSourceBatch(rows, {}, {}, {}, {})
     providers = list(
         (
             await db.execute(
@@ -179,11 +182,24 @@ async def load_runtime_source_batch(
     channels: dict[UUID, list[tuple[ChannelAccount, ChannelBotAgentLink]]] = {}
     for environment_id, account, link in channel_rows:
         channels.setdefault(environment_id, []).append((account, link))
+    runtime_secret_rows = list(
+        (
+            await db.execute(
+                select(HostedRuntimeSecret)
+                .where(HostedRuntimeSecret.environment_id.in_(list(rows)))
+                .order_by(HostedRuntimeSecret.environment_id, HostedRuntimeSecret.secret_ref)
+            )
+        ).scalars()
+    )
+    runtime_secrets: dict[UUID, list[HostedRuntimeSecret]] = {}
+    for secret in runtime_secret_rows:
+        runtime_secrets.setdefault(secret.environment_id, []).append(secret)
     return RuntimeSourceBatch(
         rows,
         {(item.owner_user_id, item.provider_id): item for item in providers},
         {(item.owner_user_id, item.provider_id, item.auth_profile): item for item in auth_payloads},
         {key: tuple(value) for key, value in channels.items()},
+        {key: tuple(value) for key, value in runtime_secrets.items()},
     )
 
 
@@ -270,6 +286,33 @@ def render_runtime_source(
     secrets: dict[str, str] = {}
     secret_sources: dict[str, dict[str, str]] = {}
     secret_materials: list[RuntimeSecretMaterial] = []
+    for runtime_secret in batch.runtime_secrets.get(environment_id, ()):
+        if not is_canonical_secret_ref(runtime_secret.secret_ref):
+            raise RuntimeSourceError("Hosted runtime secret reference is invalid")
+        try:
+            validate_hosted_runtime_secret_key_version(runtime_secret.key_version)
+        except RuntimeError as exc:
+            raise RuntimeSourceError("Hosted runtime secret source is invalid") from exc
+        _add_secret_source(
+            secret_sources,
+            runtime_secret.secret_ref,
+            _secret_identity(
+                runtime_secret.id,
+                runtime_secret.encrypted_value,
+                runtime_secret.nonce,
+                vault_key_identity,
+                "runtime-state-secret",
+                key_version=runtime_secret.key_version,
+            ),
+        )
+        secret_materials.append(
+            RuntimeSecretMaterial(
+                secret_ref=runtime_secret.secret_ref,
+                ciphertext=runtime_secret.encrypted_value,
+                nonce=runtime_secret.nonce,
+                error_message="Hosted runtime secret source is invalid",
+            )
+        )
     codex_tool = tools.codex
     codex_agent_provider_id = runtime_managed_provider_id(codex_tool.provider_id)
     provider_sources: dict[str, str] = {}
@@ -711,17 +754,23 @@ def _unhealthy_provider(provider_id: str, consumer: str) -> dict[str, Any]:
 
 
 def _provider_secret_ref(value: str) -> str:
-    return f"provider.{value}.apiKey"
+    return f"secret://provider.{value}.apiKey"
 
 
 def _provider_oauth_secret_ref(value: str) -> str:
-    return f"provider.{value}.oauthProfile"
+    return f"secret://provider.{value}.oauthProfile"
 
 
 def _secret_identity(
-    row_id: UUID, ciphertext: bytes, nonce: bytes, key_identity: str, kind: str
+    row_id: UUID,
+    ciphertext: bytes,
+    nonce: bytes,
+    key_identity: str,
+    kind: str,
+    *,
+    key_version: str | None = None,
 ) -> dict[str, str]:
-    return {
+    identity = {
         "kind": kind,
         "codecVersion": "aes-256-gcm.v1",
         "keyIdentity": key_identity,
@@ -729,6 +778,9 @@ def _secret_identity(
         "ciphertextSha256": hashlib.sha256(ciphertext).hexdigest(),
         "nonceSha256": hashlib.sha256(nonce).hexdigest(),
     }
+    if key_version is not None:
+        identity["keyVersion"] = key_version
+    return identity
 
 
 def _add_secret_source(

@@ -47,6 +47,7 @@ from app.models.channel import (
     CHANNEL_PROVIDER_DISCORD,
     CHANNEL_PROVIDER_TELEGRAM,
     CHANNEL_PROVIDERS,
+    CHANNEL_VISIBILITY_PUBLIC,
     ChannelAccount,
     ChannelBotAgentLink,
 )
@@ -105,10 +106,15 @@ from app.services.app_setting_registry import (
 )
 from app.services.app_settings import stage_app_setting_upsert
 from app.services.audit import record_control_plane_audit
-from app.services.channel_config import validate_channel_account_config_urls
+from app.services.channel_config import (
+    discord_interactions_config_error,
+    validate_channel_account_config_urls,
+    validate_required_discord_interactions_config,
+)
 from app.services.channels import (
     archive_channel_account,
     channel_webhook_url,
+    configure_discord_application,
     configure_telegram_provider_webhook,
     encrypt_optional_token,
     generate_webhook_secret,
@@ -118,6 +124,11 @@ from app.services.channels import (
     store_channel_secrets,
     sync_channel_commands,
     upsert_channel_secrets,
+)
+from app.services.hosted_runtime_secrets import (
+    hosted_runtime_secret_values_changed,
+    load_hosted_runtime_secrets_for_update,
+    sync_hosted_runtime_secret_values,
 )
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_API_MODE,
@@ -1059,6 +1070,13 @@ async def admin_create_channel(
     db: AsyncSession = Depends(get_session),
 ) -> AdminChannelCreatedResponse:
     await validate_channel_account_config_urls(provider=body.provider, config=body.config)
+    if body.provider == CHANNEL_PROVIDER_DISCORD:
+        if body.provider_token is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Discord channels require a bot token.",
+            )
+        validate_required_discord_interactions_config(body.config)
     target = await _resolve_or_create_user(db, body.target_clerk_id)
     ciphertext, nonce = encrypt_optional_token(body.provider_token)
     webhook_secret = generate_webhook_secret()
@@ -1114,6 +1132,22 @@ async def admin_create_channel(
             status.HTTP_409_CONFLICT,
             "channel name already exists for this provider and owner",
         ) from exc
+    if (
+        account.provider == CHANNEL_PROVIDER_DISCORD
+        and account.visibility == CHANNEL_VISIBILITY_PUBLIC
+    ):
+        # Discord validates the PATCH with a signed PING, so the account and
+        # public key must be committed and webhook-visible first. Bot-pool
+        # eligibility remains false until the readiness marker commits below.
+        await configure_discord_application(account)
+        await sync_channel_commands(
+            account=account,
+            use_configured_discord_guild=False,
+        )
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        config["discord_interactions_configured"] = True
+        account.config = config
+        await db.commit()
     await db.refresh(account)
     logger.info(
         "admin_channel_created target_clerk_id=%s channel_id=%s provider=%s visibility=%s",
@@ -1192,6 +1226,23 @@ async def admin_update_channel(
         elif telegram_bot_username is not None:
             config["bot_username"] = telegram_bot_username
         account.config = config
+    reconcile_public_discord = bool(
+        account.provider == CHANNEL_PROVIDER_DISCORD
+        and account.visibility == CHANNEL_VISIBILITY_PUBLIC
+        and updates.intersection({"visibility", "provider_token", "config"})
+    )
+    if reconcile_public_discord:
+        if not account.encrypted_provider_token or not account.provider_token_nonce:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Public Discord channels require a bot token.",
+            )
+        config_error = discord_interactions_config_error(account.config)
+        if config_error is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=config_error)
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        config["discord_interactions_configured"] = False
+        account.config = config
     try:
         if "secrets" in updates:
             await upsert_channel_secrets(db, account=account, secrets_by_name=body.secrets)
@@ -1213,6 +1264,16 @@ async def admin_update_channel(
             status.HTTP_409_CONFLICT,
             "channel name already exists for this provider and owner",
         ) from exc
+    if reconcile_public_discord:
+        await configure_discord_application(account)
+        await sync_channel_commands(
+            account=account,
+            use_configured_discord_guild=False,
+        )
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        config["discord_interactions_configured"] = True
+        account.config = config
+        await db.commit()
     await db.refresh(account)
     return _admin_channel_response(account, owner)
 
@@ -1258,11 +1319,18 @@ async def admin_sync_channel_commands(
         if body.commands is not None
         else None
     )
+    if account.provider == CHANNEL_PROVIDER_DISCORD and commands is None:
+        await configure_discord_application(account)
     synced = await sync_channel_commands(
         account=account,
         commands=commands,
         guild_id=body.guild_id,
     )
+    if account.provider == CHANNEL_PROVIDER_DISCORD and commands is None:
+        config = dict(account.config) if isinstance(account.config, dict) else {}
+        config["discord_interactions_configured"] = True
+        account.config = config
+        await db.commit()
     return ChannelCommandSyncResponse(provider=account.provider, commands=synced)
 
 
@@ -1517,6 +1585,14 @@ async def _admin_upsert_runtime_state(
         )
     ).scalar_one_or_none()
     existing_state = state
+    secret_rows = await load_hosted_runtime_secrets_for_update(
+        db,
+        environment_id=environment_id,
+    )
+    secret_values_changed = hosted_runtime_secret_values_changed(
+        secret_rows,
+        body.secret_values,
+    )
     old_skill_ids = enabled_runtime_manifest_skill_ids(state.skills if state is not None else None)
     new_skill_ids = enabled_runtime_manifest_skill_ids(
         body.skills.model_dump(mode="json") if body.skills is not None else None
@@ -1566,6 +1642,8 @@ async def _admin_upsert_runtime_state(
     except OAuthCredentialClaimConflict as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if secret_values_changed:
+        changed_fields.append("secretValues")
     if existing_state is not None and body.generation == existing_state.generation:
         current_generation = existing_state.generation
         material_changes = [
@@ -1595,6 +1673,14 @@ async def _admin_upsert_runtime_state(
 
     for field, value in desired_state.items():
         setattr(state, field, value)
+    if secret_values_changed:
+        await db.flush()
+        await sync_hosted_runtime_secret_values(
+            db,
+            environment_id=environment_id,
+            rows=secret_rows,
+            desired=body.secret_values,
+        )
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -1617,6 +1703,8 @@ async def _admin_upsert_runtime_state(
             "has_mcp": body.mcp is not None,
             "has_skills": body.skills is not None,
             "has_tools": body.tools is not None,
+            "has_secret_values": bool(body.secret_values),
+            "secret_refs": sorted(body.secret_values),
             "changed_fields": changed_fields,
         },
     )

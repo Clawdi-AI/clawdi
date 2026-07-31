@@ -32,10 +32,12 @@ from app.schemas.runtime import (
     HostedRuntimeLocale,
     HostedRuntimeMcp,
     HostedRuntimeRecovery,
+    HostedRuntimeSecretValues,
     HostedRuntimeSkills,
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
+    validate_hosted_runtime_secret_values,
 )
 
 AdminChannelProvider = Literal["telegram", "discord", "whatsapp", "imessage"]
@@ -130,7 +132,7 @@ class AdminRuntimeStateUpsert(BaseModel):
     links are owned by `/v1/channels/*` and must not be embedded here.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     target_clerk_id: str | None = None
     deployment_id: str = Field(min_length=1, max_length=200)
@@ -148,11 +150,17 @@ class AdminRuntimeStateUpsert(BaseModel):
     mcp: HostedRuntimeMcp | None = None
     skills: HostedRuntimeSkills | None = None
     tools: HostedRuntimeTools
+    secret_values: HostedRuntimeSecretValues = Field(alias="secretValues")
 
     @field_validator("cli_package_spec")
     @classmethod
     def _validate_cli_package_spec(cls, value: str) -> str:
         return validate_clawdi_cli_package_spec(value)
+
+    @field_validator("secret_values")
+    @classmethod
+    def _validate_secret_values(cls, value: HostedRuntimeSecretValues) -> HostedRuntimeSecretValues:
+        return validate_hosted_runtime_secret_values(value)
 
     @field_validator("runtimes")
     @classmethod

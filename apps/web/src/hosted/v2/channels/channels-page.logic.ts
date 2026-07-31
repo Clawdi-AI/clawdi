@@ -3,7 +3,7 @@ import {
 	type ChannelProviderId,
 	orderedProviderIds,
 } from "@/hosted/v2/channels/channel-providers";
-import type { ChannelAccount } from "@/hosted/v2/channels/channel-types";
+import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
 
 export type ChannelProviderFilter = "all" | ChannelProviderId;
 
@@ -33,10 +33,19 @@ export function providerCounts(
 	return counts;
 }
 
-export function providersWithOwnedBots(
+export function providersWithBots(
 	counts: Readonly<Record<ChannelProviderId, number>>,
 ): ChannelProviderId[] {
 	return CHANNEL_PROVIDERS.filter((provider) => counts[provider] > 0);
+}
+
+export function sharedBotsFromPool(
+	providers: Readonly<Record<string, readonly ChannelBotPoolItem[]>> | undefined,
+): ChannelBotPoolItem[] {
+	if (!providers) return [];
+	return orderedProviderIds(Object.keys(providers)).flatMap((provider) =>
+		(providers[provider] ?? []).filter((item) => item.access === "public"),
+	);
 }
 
 function isKnownProvider(provider: string): provider is ChannelProviderId {
