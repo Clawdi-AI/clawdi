@@ -65,21 +65,22 @@ describe("deploy wizard personalization", () => {
 		expect(
 			validateHostedDeployPersona({ assistantName: "", language: "en", timezone: "Etc/UTC" }),
 		).toContainEqual({ field: "assistantName", message: "Enter a name for this agent." });
-		expect(wizardSource).toContain("Used to identify this agent in Clawdi.");
+		expect(wizardSource).not.toContain("Used to identify this agent in Clawdi.");
 		expect(wizardSource).toContain("runtimeDisplayName(DEFAULT_DEPLOY_RUNTIME)");
 		expect(wizardSource).toContain("assistantNameEditedRef");
 		expect(wizardSource).toContain("deployAssistantNameAfterRuntimeChange");
 		expect(wizardSource).toContain("required");
 		expect(wizardSource).toContain("aria-invalid={nameError ? true : undefined}");
 		expect(wizardSource).toContain('"agent-name-error agent-name-count"');
-		expect(wizardSource).toContain('"agent-name-help agent-name-count"');
+		expect(wizardSource).not.toContain("agent-name-help");
 		expect(wizardSource).toContain('id="agent-name-count"');
+		expect(wizardSource).toContain("showNameCount");
 		expect(wizardSource).toContain("nameLimitReached");
 		expect(wizardSource).toContain('className="sr-only" role="status" aria-live="polite"');
 		expect(wizardSource).toContain('aria-live="polite"');
 		expect(wizardSource).toContain('" — limit reached."');
 		expect(wizardSource).toContain("Name limit reached. You can enter up to");
-		expect(wizardSource).toContain('type="submit"');
+		expect(wizardSource).toContain('type={walletTopUpAction ? "button" : "submit"}');
 		expect(wizardSource).toContain("submitBlockingReason");
 	});
 });
@@ -109,8 +110,10 @@ describe("deploy wizard responsive layout", () => {
 		expect(wizardSource).not.toContain("sm:sticky sm:bottom-0");
 	});
 
-	test("hides wide payment badges before they would crowd card titles", () => {
-		expect(wizardSource.match(/hidden @3xl\/main:inline-flex/g)).toHaveLength(2);
+	test("removes redundant payment badges and keeps concise funding copy", () => {
+		expect(wizardSource).not.toContain("hidden @3xl/main:inline-flex");
+		expect(wizardSource).toContain("Recurring subscription via Stripe. Manage or cancel anytime.");
+		expect(wizardSource).toContain("Paid upfront from your Wallet balance. Renews from Wallet.");
 	});
 });
 
@@ -118,8 +121,13 @@ describe("deploy wizard product copy and flow", () => {
 	test("uses customer language and keeps channels out of the decision flow", () => {
 		expect(wizardSource).toContain('title="Agent software"');
 		expect(wizardSource).toContain("<DeploySectionSkeleton columns={2} />");
-		expect(wizardSource).toContain('description="Choose a compute plan and how paid plans renew."');
-		expect(wizardSource).toContain("After your agent is running, connect channels from its page.");
+		expect(wizardSource).not.toContain(
+			'description="Choose a compute plan and how paid plans renew."',
+		);
+		expect(wizardSource).not.toContain(
+			"After your agent is running, connect channels from its page.",
+		);
+		expect(wizardSource).not.toContain("No AI provider will be selected for you.");
 		expect(wizardSource).not.toContain('title="Runtimes"');
 		expect(wizardSource).not.toContain("execution engine");
 		expect(wizardSource).not.toContain("per-deployment funding");
@@ -188,9 +196,9 @@ describe("plan-change copy", () => {
 
 describe("first Basic agent copy", () => {
 	test("describes the first Basic agent as free instead of included", () => {
-		expect(wizardSource).toContain("First Basic agent — Free");
-		expect(wizardSource).toContain('message: "Your first Basic agent is free.');
-		expect(wizardSource).toContain('? "Free"');
+		expect(wizardSource).toContain('primary: "Free"');
+		expect(wizardSource).toContain('secondary: "First Basic agent"');
+		expect(wizardSource).not.toContain("Your first Basic agent is free.");
 		expect(wizardSource).not.toContain("included Basic slot");
 		expect(wizardSource).not.toContain("included Basic deployment");
 		expect(wizardSource).not.toContain("included slot");
@@ -252,7 +260,8 @@ describe("managed model picker", () => {
 
 describe("deploy provider choice", () => {
 	test("shows every provider choice in the expanded form", () => {
-		expect(wizardSource).toContain(
+		expect(wizardSource).toContain('<SettingsSection title="AI providers">');
+		expect(wizardSource).not.toContain(
 			'description="Choose how your agent accesses AI models and select its primary model."',
 		);
 		expect(wizardSource).toContain('title="Add a provider"');
@@ -303,8 +312,9 @@ describe("billing-read gates", () => {
 		expect(wizardSource).toContain('title="Couldn\'t check existing agents"');
 		expect(wizardSource).toContain("onRetry={() => void deployments.refetch()}");
 		expect(wizardSource).toContain('title="Couldn\'t load compute plans"');
-		expect(wizardSource).toContain('title="Couldn\'t load your Wallet balance"');
-		expect(wizardSource).toContain("onRetry={() => void wallet.refetch()}");
+		expect(wizardSource).toContain("async function retryWalletQuote()");
+		expect(wizardSource).toContain('toast.error("Couldn’t refresh Wallet quote"');
+		expect(wizardSource).toContain("onClick={() => void retryWalletQuote()}");
 	});
 });
 
@@ -318,7 +328,11 @@ describe("deploy acceptance", () => {
 		expect(wizardSource).toContain(
 			"submitting || lastSuccessfulSubscriptionQuote ? null : subscriptionCreateQuote.error;",
 		);
-		expect(wizardSource).not.toContain("await subscriptionCreateQuote.refetch()");
+		const onDeploySource = wizardSource.slice(
+			wizardSource.indexOf("async function onDeploy()"),
+			wizardSource.indexOf("const deployLabel"),
+		);
+		expect(onDeploySource).not.toContain("await subscriptionCreateQuote.refetch()");
 		expect(wizardSource).not.toContain("subscription-checkout-hosted-fallback");
 		expect(wizardSource).not.toContain("checkoutSessionId");
 		expect(wizardSource).not.toContain("subscriptionHostedFallbackRequest");

@@ -110,8 +110,10 @@ import type {
 	HostedDeployment,
 } from "@/hosted/billing/contracts";
 import {
+	fallbackTimezones,
 	LANGUAGE_OPTIONS,
 	LANGUAGE_SELECT_ITEMS,
+	mergeTimezoneOptions,
 	normalizeHostedLanguage,
 	supportedTimezones,
 	TimezoneCombobox,
@@ -2990,15 +2992,21 @@ function LanguageTimezoneSettingsSection({ deployment }: { deployment: HostedDep
 	const [syncedLocaleIdentity, setSyncedLocaleIdentity] = useState(localeIdentity);
 	const [language, setLanguage] = useState(configLanguage);
 	const [timezone, setTimezone] = useState(configTimezone);
+	const [runtimeTimezoneOptions, setRuntimeTimezoneOptions] = useState(() =>
+		fallbackTimezones(configTimezone ? [configTimezone] : []),
+	);
 	if (syncedLocaleIdentity !== localeIdentity) {
 		setSyncedLocaleIdentity(localeIdentity);
 		setLanguage(configLanguage);
 		setTimezone(configTimezone);
 	}
-	const timezoneOptions = useMemo(() => {
-		const options = supportedTimezones();
-		return timezone && !options.includes(timezone) ? [timezone, ...options] : options;
-	}, [timezone]);
+	useEffect(() => {
+		setRuntimeTimezoneOptions(supportedTimezones(configTimezone ? [configTimezone] : []));
+	}, [configTimezone]);
+	const timezoneOptions = useMemo(
+		() => mergeTimezoneOptions(runtimeTimezoneOptions, [configTimezone, timezone].filter(Boolean)),
+		[configTimezone, runtimeTimezoneOptions, timezone],
+	);
 	const dirty = language !== configLanguage || timezone !== configTimezone;
 
 	return (

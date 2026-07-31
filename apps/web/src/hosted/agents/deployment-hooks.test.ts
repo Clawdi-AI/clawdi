@@ -239,7 +239,7 @@ describe("hosted agent customer language", () => {
 		}
 		expect(detailSource).toContain("Starting your agent…");
 		expect(detailSource).toContain("Your agent is running");
-		expect(wizardSource).toContain("After your agent is running");
+		expect(wizardSource).not.toContain("After your agent is running");
 	});
 
 	test("keeps delayed and unavailable states honest without implementation vocabulary", () => {
