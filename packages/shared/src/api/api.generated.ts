@@ -114,6 +114,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ai-providers/{provider_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Saved Ai Provider
+         * @description Verify a saved managed API key without exposing it to the caller.
+         */
+        post: operations["test_saved_ai_provider_v1_ai_providers__provider_id__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/ai-providers/{provider_id}": {
         parameters: {
             query?: never;
@@ -3490,6 +3510,11 @@ export interface components {
             hermes: boolean;
             /** Codex */
             codex: boolean;
+        };
+        /** AiProviderSavedConnectionTestRequest */
+        AiProviderSavedConnectionTestRequest: {
+            /** Model */
+            model?: string | null;
         };
         /** AiProviderSecretRefAuth */
         AiProviderSecretRefAuth: {
@@ -7618,6 +7643,41 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["AiProviderConnectionTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderConnectionTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_saved_ai_provider_v1_ai_providers__provider_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderSavedConnectionTestRequest"];
             };
         };
         responses: {

@@ -40,6 +40,22 @@ from tests.conftest import create_env_with_project
 _TEST_SYSTEM = {}
 
 
+async def _use_db_session_for_short_ai_provider_sessions(
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = await db_session.connection()
+    session_factory = async_sessionmaker(
+        bind=connection,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+    monkeypatch.setattr(
+        "app.routes.ai_providers.async_session_factory",
+        session_factory,
+    )
+
+
 @pytest.mark.parametrize(
     "provider_id",
     [
@@ -611,6 +627,229 @@ async def test_ai_provider_connection_test_does_not_offer_unsafe_none_auth(
 
     assert response.status_code == 422, response.text
     assert "input_value" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_saved_ai_provider_connection_test_uses_active_managed_key_without_echo(
+    client: httpx.AsyncClient,
+    db_session,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    accepted = await client.post(
+        "/v1/ai-providers/accept",
+        headers={"Idempotency-Key": "saved-provider-connection-test"},
+        json=_api_key_accept_body("sk-saved-provider-only"),
+    )
+    assert accepted.status_code == 201, accepted.text
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
+    listing_before = await client.get("/v1/ai-providers")
+    captured: dict[str, str | None] = {}
+
+    async def fake_connection_test(**kwargs):
+        captured.update(kwargs)
+        return ConnectionProbeResult(ok=True)
+
+    monkeypatch.setattr(
+        "app.routes.ai_providers.test_ai_provider_connection",
+        fake_connection_test,
+    )
+    response = await client.post(
+        "/v1/ai-providers/openai-atomic/test",
+        json={"model": "gpt-5.2"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "ok": True,
+        "readiness": {
+            "credential_material": "available",
+            "runtime_compatibility": {
+                "openclaw": True,
+                "hermes": True,
+                "codex": True,
+            },
+            "deployable": True,
+            "endpoint_reachability": "verified",
+            "inference_verification": "verified",
+        },
+    }
+    assert captured == {
+        "provider_type": "openai",
+        "base_url": "https://api.openai.com/v1",
+        "api_mode": "openai_responses",
+        "model": "gpt-5.2",
+        "credential": "sk-saved-provider-only",
+    }
+    assert "sk-saved-provider-only" not in response.text
+
+    listing_after = await client.get("/v1/ai-providers")
+    assert listing_before.status_code == 200, listing_before.text
+    assert listing_after.status_code == 200, listing_after.text
+    assert listing_after.json() == listing_before.json()
+    listed_provider = listing_after.json()["providers"][0]
+    assert listed_provider["usable"] is True
+    assert listed_provider["readiness"]["endpoint_reachability"] == "not_tested"
+    assert listed_provider["readiness"]["inference_verification"] == "not_tested"
+
+
+@pytest.mark.asyncio
+async def test_saved_ai_provider_connection_test_rejects_non_managed_auth_safely(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db_session.add_all(
+        [
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="openai-env",
+                type="openai",
+                base_url="https://api.openai.com/v1",
+                api_mode="openai_responses",
+                models=[{"id": "gpt-5.2"}],
+                auth_type="api_key",
+                auth_ref="env:PRIVATE_OPENAI_API_KEY",
+                auth_metadata={"source": "env"},
+                managed_by="user",
+                runtime_env_name="PRIVATE_OPENAI_API_KEY",
+            ),
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="openai-vault",
+                type="openai",
+                base_url="https://api.openai.com/v1",
+                api_mode="openai_responses",
+                models=[{"id": "gpt-5.2"}],
+                auth_type="api_key",
+                auth_ref="clawdi://private/provider/key",
+                auth_metadata={"source": "vault"},
+                managed_by="user",
+            ),
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="openai-oauth",
+                type="openai",
+                base_url="https://api.openai.com/v1",
+                api_mode="openai_responses",
+                models=[{"id": "gpt-5.2"}],
+                auth_type="agent_profile",
+                auth_ref=None,
+                auth_metadata={
+                    "tool": "codex",
+                    "profile": "default",
+                    "source": "oauth_pkce",
+                },
+                managed_by="user",
+            ),
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="openai-secret-ref",
+                type="openai",
+                base_url="https://api.openai.com/v1",
+                api_mode="openai_responses",
+                models=[{"id": "gpt-5.2"}],
+                auth_type="secret_ref",
+                auth_ref="clawdi://private/provider/secret-ref",
+                auth_metadata=None,
+                managed_by="user",
+            ),
+            AiProvider(
+                owner_user_id=seed_user.id,
+                provider_id="local-none",
+                type="custom_openai_compatible",
+                base_url="http://127.0.0.1:11434/v1",
+                api_mode="openai_chat",
+                models=[{"id": "local-model"}],
+                auth_type="none",
+                auth_ref=None,
+                auth_metadata=None,
+                managed_by="user",
+            ),
+        ]
+    )
+    await db_session.commit()
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
+    probe_calls = 0
+
+    async def fail_if_probed(**kwargs):
+        nonlocal probe_calls
+        probe_calls += 1
+        raise AssertionError(f"non-managed auth invoked the network probe: {kwargs}")
+
+    monkeypatch.setattr(
+        "app.routes.ai_providers.test_ai_provider_connection",
+        fail_if_probed,
+    )
+
+    expected = {
+        "openai-env": ("env_credential_not_testable", "referenced"),
+        "openai-vault": ("vault_credential_not_testable", "referenced"),
+        "openai-secret-ref": ("vault_credential_not_testable", "referenced"),
+        "openai-oauth": ("oauth_credential_not_testable", "missing"),
+        "local-none": ("none_auth_not_testable", "not_required"),
+    }
+    for provider_id, (code, credential_material) in expected.items():
+        response = await client.post(
+            f"/v1/ai-providers/{provider_id}/test",
+            json={"model": "gpt-5.2"},
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["ok"] is False
+        assert body["error"]["category"] == "credential"
+        assert body["error"]["code"] == code
+        assert body["error"]["retryable"] is False
+        assert body["readiness"]["credential_material"] == credential_material
+        assert body["readiness"]["endpoint_reachability"] == "not_tested"
+        assert body["readiness"]["inference_verification"] == "not_tested"
+        assert "PRIVATE_OPENAI_API_KEY" not in response.text
+        assert "clawdi://private" not in response.text
+        assert "codex" not in body["error"]["message"].lower()
+    assert probe_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_saved_ai_provider_connection_test_redacts_unreadable_payload(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    accepted = await client.post(
+        "/v1/ai-providers/accept",
+        headers={"Idempotency-Key": "saved-provider-unreadable"},
+        json=_api_key_accept_body("sk-never-return-this"),
+    )
+    assert accepted.status_code == 201, accepted.text
+    payload = await db_session.scalar(
+        select(AiProviderAuthPayload).where(
+            AiProviderAuthPayload.owner_user_id == seed_user.id,
+            AiProviderAuthPayload.provider_id == "openai-atomic",
+        )
+    )
+    assert payload is not None
+    payload.encrypted_payload = b"corrupt-ciphertext"
+    payload.nonce = b"bad-nonce"
+    await db_session.commit()
+    await _use_db_session_for_short_ai_provider_sessions(db_session, monkeypatch)
+
+    response = await client.post(
+        "/v1/ai-providers/openai-atomic/test",
+        json={"model": "gpt-5.2"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["error"] == {
+        "category": "credential",
+        "code": "saved_credential_unreadable",
+        "message": "The saved API key could not be read. Save it again before testing.",
+        "retryable": False,
+    }
+    assert response.json()["readiness"]["credential_material"] == "missing"
+    assert "sk-never-return-this" not in response.text
+    assert "InvalidTag" not in response.text
+    assert "corrupt-ciphertext" not in response.text
 
 
 @pytest.mark.asyncio

@@ -294,9 +294,10 @@ def _build_probe_request(
         body = {
             "model": clean_model,
             "messages": [{"role": "user", "content": "Reply with OK."}],
-            "max_tokens": 1,
             "stream": False,
         }
+        token_limit_field = "max_completion_tokens" if provider_type == "openai" else "max_tokens"
+        body[token_limit_field] = 1
     elif api_mode == "openai_responses":
         path = _append_path(base.path, "responses")
         body = {
@@ -370,6 +371,8 @@ async def _send_to_public_addresses(
 async def _send_pinned_request(
     request: _ProbeRequest,
     address: str,
+    *,
+    ssl_context: ssl.SSLContext | None = None,
 ) -> _ProbeHttpResponse:
     original_host = request.url.host
     if not original_host:
@@ -382,7 +385,11 @@ async def _send_pinned_request(
         host_header = f"{host_header}:{request.url.port}"
     headers = {**request.headers, "host": host_header}
     pinned_url = request.url.copy_with(host=address)
-    transport = httpx.AsyncHTTPTransport(verify=True, trust_env=False, retries=0)
+    transport = httpx.AsyncHTTPTransport(
+        verify=ssl_context if ssl_context is not None else True,
+        trust_env=False,
+        retries=0,
+    )
     async with httpx.AsyncClient(
         transport=transport,
         timeout=_PROBE_TIMEOUT,

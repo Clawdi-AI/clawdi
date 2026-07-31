@@ -48,8 +48,10 @@ from app.schemas.ai_provider import (
     AiProviderOAuthStartRequest,
     AiProviderOAuthStartResponse,
     AiProviderPatch,
+    AiProviderReadiness,
     AiProviderReadyAcceptResponse,
     AiProviderResponse,
+    AiProviderSavedConnectionTestRequest,
     AiProviderUpsert,
     AiProviderValidationResponse,
     ConnectionErrorCategory,
@@ -332,6 +334,194 @@ async def test_ai_provider(
         return AiProviderConnectionTestResponse(ok=True, readiness=readiness)
     if result.error is None:  # pragma: no cover - service result invariant
         raise RuntimeError("failed connection test is missing an error")
+    return AiProviderConnectionTestResponse(
+        ok=False,
+        readiness=readiness,
+        error=AiProviderConnectionError(
+            category=result.error.category,
+            code=result.error.code,
+            message=result.error.message,
+            retryable=result.error.retryable,
+        ),
+    )
+
+
+@router.post(
+    "/{provider_id}/test",
+    response_model=AiProviderConnectionTestResponse,
+    response_model_exclude_none=True,
+)
+async def test_saved_ai_provider(
+    provider_id: str,
+    body: AiProviderSavedConnectionTestRequest,
+    auth: AuthContext = Depends(_require_ai_provider_accept_auth),
+) -> AiProviderConnectionTestResponse:
+    """Verify a saved managed API key without exposing it to the caller."""
+
+    async with async_session_factory() as db:
+        provider = await _get_provider_or_404(db, auth, provider_id)
+        active_profile = _active_auth_profile(provider)
+        payload = (
+            await _find_auth_payload(db, auth, provider.provider_id, active_profile)
+            if active_profile is not None
+            else None
+        )
+        payload_keys = (
+            {(payload.provider_id, payload.auth_profile, payload.kind)}
+            if payload is not None and payload.archived_at is None
+            else set()
+        )
+        credential_material = _provider_credential_material(provider, payload_keys)
+        readiness = provider_readiness(
+            _provider_capability_input(provider),
+            credential_material=credential_material,
+        )
+        metadata = provider.auth_metadata or {}
+        auth_source = metadata.get("source")
+        auth_ref = provider.auth_ref or ""
+        if auth_source == "env" or auth_ref.startswith("env:"):
+            return _connection_test_failure_with_readiness(
+                readiness,
+                category="credential",
+                code="env_credential_not_testable",
+                message=(
+                    "Environment credentials are resolved inside the target runtime. Test this "
+                    "provider there or replace the credential with a managed API key."
+                ),
+                retryable=False,
+            )
+        if auth_source == "vault" or auth_ref.startswith("clawdi://"):
+            return _connection_test_failure_with_readiness(
+                readiness,
+                category="credential",
+                code="vault_credential_not_testable",
+                message=(
+                    "Vault credentials are resolved inside the target runtime. Test this "
+                    "provider there or replace the credential with a managed API key."
+                ),
+                retryable=False,
+            )
+        if provider.auth_type in {"oauth_profile", "agent_profile"}:
+            return _connection_test_failure_with_readiness(
+                readiness,
+                category="credential",
+                code="oauth_credential_not_testable",
+                message=(
+                    "OAuth credentials cannot be used for this connection test. Use the provider "
+                    "sign-in flow or replace the credential with a managed API key."
+                ),
+                retryable=False,
+            )
+        if provider.auth_type == "none":
+            return _connection_test_failure_with_readiness(
+                readiness,
+                category="credential",
+                code="none_auth_not_testable",
+                message=(
+                    "Providers without authentication cannot be tested by the service. Test this "
+                    "provider from its target runtime."
+                ),
+                retryable=False,
+            )
+        if provider.auth_type != "api_key" or auth_source != "managed":
+            return _connection_test_failure_with_readiness(
+                readiness,
+                category="credential",
+                code="saved_auth_not_testable",
+                message=(
+                    "This saved authentication method cannot be tested by the service. Replace "
+                    "it with a managed API key to test it here."
+                ),
+                retryable=False,
+            )
+        if (
+            payload is None
+            or payload.archived_at is not None
+            or payload.kind != "api_key"
+            or payload.source != "managed"
+        ):
+            return _connection_test_failure_with_readiness(
+                readiness,
+                category="credential",
+                code="saved_credential_missing",
+                message="Save the managed API key again before testing this provider.",
+                retryable=False,
+            )
+        try:
+            credential = decrypt(payload.encrypted_payload, payload.nonce)
+        except Exception:
+            return _connection_test_failure_with_readiness(
+                provider_readiness(
+                    _provider_capability_input(provider),
+                    credential_material="missing",
+                ),
+                category="credential",
+                code="saved_credential_unreadable",
+                message="The saved API key could not be read. Save it again before testing.",
+                retryable=False,
+            )
+        if not credential.strip():
+            return _connection_test_failure_with_readiness(
+                provider_readiness(
+                    _provider_capability_input(provider),
+                    credential_material="missing",
+                ),
+                category="credential",
+                code="saved_credential_invalid",
+                message="The saved API key is empty. Save it again before testing.",
+                retryable=False,
+            )
+        model, model_api_mode = _connection_test_model(provider, body.model)
+        if not model:
+            return _connection_test_failure_with_readiness(
+                readiness,
+                category="validation",
+                code="model_required",
+                message="Choose a model before testing the provider.",
+                retryable=False,
+            )
+        api_mode = effective_provider_api_mode(
+            provider.type,
+            model_api_mode or provider.api_mode,
+        )
+        if api_mode is None:
+            return _connection_test_failure_with_readiness(
+                readiness,
+                category="validation",
+                code="protocol_required",
+                message="Choose a provider protocol before testing the provider.",
+                retryable=False,
+            )
+        provider_type = provider.type
+        base_url = provider.base_url
+        capability_input = _provider_capability_input(provider, effective_api_mode=api_mode)
+
+    result = await test_ai_provider_connection(
+        provider_type=provider_type,
+        base_url=base_url,
+        api_mode=api_mode,
+        model=model,
+        credential=credential,
+    )
+    endpoint_state = (
+        "verified" if result.ok or (result.error and result.error.endpoint_reachable) else "failed"
+    )
+    readiness = provider_readiness(
+        capability_input,
+        credential_material="available",
+        endpoint_reachability=endpoint_state,
+        inference_verification="verified" if result.ok else "failed",
+    )
+    if result.ok:
+        return AiProviderConnectionTestResponse(ok=True, readiness=readiness)
+    if result.error is None:  # pragma: no cover - service result invariant
+        return _connection_test_failure_with_readiness(
+            readiness,
+            category="network",
+            code="request_failed",
+            message="Provider request failed.",
+            retryable=True,
+        )
     return AiProviderConnectionTestResponse(
         ok=False,
         readiness=readiness,
@@ -1762,26 +1952,34 @@ def _provider_capability_input(
 
 
 def _connection_test_model(
-    provider: AiProviderUpsert,
+    provider: AiProvider | AiProviderUpsert,
     requested_model: str | None,
 ) -> tuple[str | None, str | None]:
+    models = provider.models or []
     model_id = requested_model.strip() if requested_model is not None else None
     if not model_id:
-        model_id = next(
-            (model.id.strip() for model in provider.models or [] if model.id.strip()),
-            None,
-        )
+        model_id = next((_model_id(model) for model in models if _model_id(model)), None)
     if model_id is None:
         return None, None
     model_api_mode = next(
         (
-            model.api_mode
-            for model in provider.models or []
-            if model.id.strip() == model_id and model.api_mode is not None
+            _model_api_mode(model)
+            for model in models
+            if _model_id(model) == model_id and _model_api_mode(model) is not None
         ),
         None,
     )
     return model_id, model_api_mode
+
+
+def _model_id(model: AiProviderModel | dict) -> str:
+    value = model.id if isinstance(model, AiProviderModel) else model.get("id")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _model_api_mode(model: AiProviderModel | dict) -> str | None:
+    value = model.api_mode if isinstance(model, AiProviderModel) else model.get("api_mode")
+    return value if isinstance(value, str) else None
 
 
 def _connection_test_failure(
@@ -1793,14 +1991,31 @@ def _connection_test_failure(
     message: str,
     retryable: bool,
 ) -> AiProviderConnectionTestResponse:
-    return AiProviderConnectionTestResponse(
-        ok=False,
-        readiness=provider_readiness(
+    return _connection_test_failure_with_readiness(
+        provider_readiness(
             _provider_capability_input(provider),
             credential_material=credential_material,
             endpoint_reachability="not_tested",
             inference_verification="not_tested",
         ),
+        category=category,
+        code=code,
+        message=message,
+        retryable=retryable,
+    )
+
+
+def _connection_test_failure_with_readiness(
+    readiness: AiProviderReadiness,
+    *,
+    category: ConnectionErrorCategory,
+    code: str,
+    message: str,
+    retryable: bool,
+) -> AiProviderConnectionTestResponse:
+    return AiProviderConnectionTestResponse(
+        ok=False,
+        readiness=readiness,
         error=AiProviderConnectionError(
             category=category,
             code=code,

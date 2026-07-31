@@ -544,6 +544,12 @@ class AiProviderConnectionTestResponse(BaseModel):
     error: AiProviderConnectionError | None = None
 
 
+class AiProviderSavedConnectionTestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    model: str | None = Field(default=None, min_length=1, max_length=300)
+
+
 class AiProviderOAuthStartResponse(BaseModel):
     provider_id: str
     oauth_provider: str
