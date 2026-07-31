@@ -29,7 +29,6 @@ export interface DerivedProviderFields {
 	apiMode: ApiMode;
 	runtimeEnv: string;
 	modelsText: string;
-	suggestedPrimaryModel?: string;
 }
 
 export function authFor(method: AuthMethod): AiProviderUpsertAuth {
@@ -94,7 +93,6 @@ export function derivedProviderFields(
 			apiMode: preset.api_mode,
 			runtimeEnv: presetRuntimeEnvName(preset),
 			modelsText: modelsToText(presetCatalogToProviderModels(preset)),
-			suggestedPrimaryModel: preset.suggested_primary_model,
 		};
 	}
 	return {

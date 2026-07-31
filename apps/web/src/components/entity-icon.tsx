@@ -1,7 +1,6 @@
-"use client";
-
-import { useState } from "react";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
+import { BrandIconTile } from "@/components/brand-icon-tile";
+import { providerBrandIcon } from "@/components/entity-brand-icons";
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,10 +13,10 @@ import { cn } from "@/lib/utils";
  *
  * Sources, in resolution order:
  *   - channel   → full-color app-icon PNG on Clawdi's CDN
- *   - framework → local app-icon PNG in /public/agents
- *   - provider  → colored brand logo from simpleicons (the CDN has no
- *                 provider PNGs) in the same neutral tile used by monogram
- *                 fallbacks; ids without a configured mark → monogram
+ *   - framework → official LobeHub React icon
+ *   - provider  → official LobeHub React icon in the same neutral tile
+ *                 used by monogram fallbacks; ids without an official mark →
+ *                 monogram
  *   - anything unresolved → neutral monogram tile
  *
  * Uses plain image rendering — these are tiny/vector brand assets that don't
@@ -25,30 +24,13 @@ import { cn } from "@/lib/utils";
  */
 
 const ICON_BASE = "https://assets.clawdi.ai/icons";
-const SIMPLEICON_BASE = "https://cdn.simpleicons.org";
 
 /** Channels: full-color app-icon PNGs on Clawdi's CDN. */
-const CHANNEL_PNG: Record<string, string> = {
+const CHANNEL_PNG: Readonly<Record<string, string>> = {
 	telegram: `${ICON_BASE}/telegram.png`,
 	discord: `${ICON_BASE}/discord.png`,
 	whatsapp: `${ICON_BASE}/whatsapp.png`,
 	slack: `${ICON_BASE}/slack.png`,
-};
-
-/**
- * AI providers: no CDN PNG (those 404) → colored simpleicons brand logo. The
- * hex is pinned to a vivid, mid-tone brand color so it reads in both themes.
- * `null` → neutral monogram (OpenAI isn't in simpleicons;
- * custom endpoints have no brand).
- */
-const PROVIDER_SIMPLEICON: Record<string, { slug: string; hex: string } | null> = {
-	openai: null,
-	anthropic: { slug: "anthropic", hex: "D97757" },
-	gemini: { slug: "googlegemini", hex: "1C69FF" },
-	google: { slug: "googlegemini", hex: "1C69FF" },
-	mistral: { slug: "mistralai", hex: "FA520F" },
-	openrouter: { slug: "openrouter", hex: "6566F1" },
-	custom_openai_compatible: null,
 };
 
 const SIZE = {
@@ -89,39 +71,6 @@ function NeutralMonogram({
 	);
 }
 
-function ProviderBrandIcon({
-	src,
-	label,
-	size,
-	className,
-}: {
-	src: string;
-	label: string;
-	size: EntityIconSize;
-	className?: string;
-}) {
-	const [failed, setFailed] = useState(false);
-	if (failed) {
-		return <NeutralMonogram label={label} size={size} className={cn(PROVIDER_TILE, className)} />;
-	}
-
-	const s = SIZE[size];
-	return (
-		<span
-			className={cn(s.box, "flex shrink-0 items-center justify-center", PROVIDER_TILE, className)}
-		>
-			<img
-				src={src}
-				alt={label}
-				width={s.px}
-				height={s.px}
-				className="size-[60%] object-contain"
-				onError={() => setFailed(true)}
-			/>
-		</span>
-	);
-}
-
 export function EntityIcon({
 	kind,
 	id,
@@ -139,7 +88,8 @@ export function EntityIcon({
 }) {
 	const s = SIZE[size];
 	const key = id?.toLowerCase?.() ?? "";
-	const alt = label ?? id ?? "";
+	const providerBrand = kind === "provider" ? providerBrandIcon(key) : undefined;
+	const alt = label ?? providerBrand?.label ?? id ?? "";
 
 	if (kind === "framework") {
 		return (
@@ -169,16 +119,14 @@ export function EntityIcon({
 		);
 	}
 
-	// Provider brand logo (colored simpleicon) on a white tile.
+	// Provider brand logo from the official LobeHub React package.
 	if (kind === "provider") {
-		const brand = PROVIDER_SIMPLEICON[key];
-		if (brand) {
+		if (providerBrand) {
 			return (
-				<ProviderBrandIcon
-					key={`${brand.slug}-${brand.hex}`}
-					src={`${SIMPLEICON_BASE}/${brand.slug}/${brand.hex}`}
+				<BrandIconTile
+					icon={providerBrand.icon}
 					label={alt}
-					size={size}
+					boxClassName={s.box}
 					className={className}
 				/>
 			);

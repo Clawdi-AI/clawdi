@@ -17,7 +17,6 @@ import { formatModelLabel } from "@/lib/format";
 export const MANAGED_AI_CHOICE = "__managed__";
 export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID;
 export const MANAGED_PROVIDER_LABEL = "Clawdi AI";
-export const CUSTOM_MODEL_CHOICE = "__custom__";
 
 type AiProviderModel = NonNullable<AiProvider["models"]>[number];
 export type ModelCatalogItem = ManagedModelCatalogItem | AiProviderModel;
@@ -25,11 +24,16 @@ export type ModelCatalogItem = ManagedModelCatalogItem | AiProviderModel;
 export type ModelBindingPickerItem = {
 	value: string;
 	label: string;
+	description?: string;
+};
+
+export type ManagedModelBindingPickerItem = ModelBindingPickerItem & {
+	providerId: string;
 };
 
 export type ManagedModelPickerItems = {
-	featured: ModelBindingPickerItem[];
-	overflow: ModelBindingPickerItem[];
+	featured: ManagedModelBindingPickerItem[];
+	overflow: ManagedModelBindingPickerItem[];
 };
 
 export type PrimaryModelRef = {
@@ -314,15 +318,14 @@ export function modelPickerItems(
 	managedModels: readonly ManagedModelCatalogItem[],
 ): ModelBindingPickerItem[] {
 	const models = modelOptionsForProvider(choice, providers, managedModels);
-	return [
-		...models.map((model) => ({
-			value: model.id,
-			label: modelDisplayName(model.id, [model]),
-		})),
-		...(choice === MANAGED_AI_CHOICE
-			? []
-			: [{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" }]),
-	];
+	const isManagedChoice = choice === MANAGED_AI_CHOICE || isManagedProviderId(choice);
+	return models.map((model) => ({
+		value: model.id,
+		label:
+			isManagedChoice && "display_name" in model
+				? model.display_name
+				: modelDisplayName(model.id, [model]),
+	}));
 }
 
 export function managedModelPickerItems(
@@ -336,7 +339,11 @@ export function managedModelPickerItems(
 		seen.add(modelId);
 		const item = {
 			value: modelId,
-			label: modelDisplayName(modelId, [model]),
+			providerId: model.provider_id,
+			// Managed display names are authoritative catalog data. Keep them
+			// verbatim instead of deriving a friendlier label from the model id.
+			label: model.display_name,
+			...(model.description?.trim() ? { description: model.description.trim() } : {}),
 		};
 		sections[model.is_featured ? "featured" : "overflow"].push(item);
 	}

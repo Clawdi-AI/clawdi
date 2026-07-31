@@ -1,5 +1,11 @@
 import type { DeploymentRead } from "@clawdi/shared/api";
 import { expect, type Page, type Route, test } from "@playwright/test";
+import type { ManagedModelCatalogItem } from "../src/hosted/billing/contracts";
+import {
+	presetCatalogToProviderModels,
+	providerPresetById,
+} from "../src/hosted/v2/ai-providers/provider-presets";
+import type { AiProvider } from "../src/hosted/v2/ai-providers/types";
 
 declare global {
 	interface Window {
@@ -31,6 +37,17 @@ const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 const CLOUD_API = "http://127.0.0.1:8000";
 const DEPLOY_API = "http://127.0.0.1:8001";
 
+const textModelCapabilities: ManagedModelCatalogItem["capabilities"] = {
+	context_window: 272_000,
+	max_context_window: null,
+	max_input_tokens: 272_000,
+	max_output_tokens: 128_000,
+	input_modalities: ["text", "image"],
+	supports_vision: true,
+	supports_reasoning: true,
+	supports_tools: true,
+};
+
 function deferred() {
 	let resolve = () => {};
 	const promise = new Promise<void>((nextResolve) => {
@@ -39,21 +56,137 @@ function deferred() {
 	return { promise, resolve };
 }
 
-const managedModelCatalog = {
+const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 	models: [
-		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true },
-		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: false },
-		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
+		{
+			id: "gpt-5.6-luna",
+			display_name: "GPT-5.6 Luna",
+			provider_id: "openai-codex",
+			is_default: true,
+			is_featured: true,
+			description: "Low cost for routine work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.6-sol",
+			display_name: "GPT-5.6 Sol",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: false,
+			description: "Higher cost for complex work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.6-terra",
+			display_name: "GPT-5.6 Terra",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: false,
+			description: "Balanced cost for everyday work.",
+			capabilities: textModelCapabilities,
+		},
 	],
 };
 
-const dynamicManagedModelCatalog = {
+const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 	models: [
-		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: true },
-		{ id: "k3", display_name: "Kimi K3", is_default: false, is_featured: true },
-		{ id: "future-model", display_name: "Future model", is_default: false, is_featured: false },
-		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: false },
-		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
+		{
+			id: "gpt-5.6-terra",
+			display_name: "GPT-5.6 Terra",
+			provider_id: "openai-codex",
+			is_default: true,
+			is_featured: true,
+			description: "Balanced cost for everyday work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.6-luna",
+			display_name: "GPT-5.6 Luna",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: true,
+			description: "Low cost for routine work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.6-sol",
+			display_name: "GPT-5.6 Sol",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: true,
+			description: "Higher cost for complex work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "k3",
+			display_name: "Kimi K3",
+			provider_id: "kimi-coding",
+			is_default: false,
+			is_featured: true,
+			description: "Variable cost for long, detailed work.",
+			capabilities: {
+				...textModelCapabilities,
+				context_window: 262_144,
+				max_context_window: 1_048_576,
+				max_input_tokens: 262_144,
+				max_output_tokens: null,
+				supports_tools: null,
+			},
+		},
+		{
+			id: "gpt-5.5",
+			display_name: "GPT-5.5",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: false,
+			description: "Higher cost for demanding work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.4",
+			display_name: "GPT-5.4",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: false,
+			description: "Balanced cost for coding and tools.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.4-mini",
+			display_name: "GPT-5.4 mini",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: false,
+			description: "Low cost for lighter coding work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "gpt-5.2",
+			display_name: "GPT-5.2",
+			provider_id: "openai-codex",
+			is_default: false,
+			is_featured: false,
+			description: "Variable cost for general work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "kimi-for-coding-highspeed",
+			display_name: "Kimi For Coding HighSpeed",
+			provider_id: "kimi-coding",
+			is_default: false,
+			is_featured: false,
+			description: "Variable cost for faster coding work.",
+			capabilities: textModelCapabilities,
+		},
+		{
+			id: "kimi-for-coding",
+			display_name: "Kimi K2.7 Code",
+			provider_id: "kimi-coding",
+			is_default: false,
+			is_featured: false,
+			description: "Variable cost for coding work.",
+			capabilities: textModelCapabilities,
+		},
 	],
 };
 
@@ -90,6 +223,33 @@ const deepSeekProxyProvider = {
 	base_url: "https://proxy.example.com/v1",
 };
 
+function userProvider(providerId: string, label: string, models: AiProvider["models"]): AiProvider {
+	return {
+		id: `row-${providerId}`,
+		provider_id: providerId,
+		scope: "user",
+		type: "custom_openai_compatible",
+		label,
+		base_url: `https://${providerId}.example.com/v1`,
+		models,
+		api_mode: "openai_chat",
+		auth: { type: "api_key", source: "managed" },
+		usable: true,
+		readiness: {
+			credential_material: "available",
+			runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+			deployable: true,
+			endpoint_reachability: "not_tested",
+			inference_verification: "not_tested",
+		},
+		managed_by: "user",
+		runtime_env_name: "CUSTOM_API_KEY",
+		capabilities: null,
+		created_at: "2026-01-01T00:00:00Z",
+		updated_at: "2026-01-01T00:00:00Z",
+	};
+}
+
 type DeploymentComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
 >;
@@ -117,6 +277,7 @@ type DeploymentMutationFixture = {
 		imessage_mux_enabled?: boolean;
 		kobb_available?: boolean;
 		public_ports?: number[];
+		runtime_configuration?: DeploymentRead["resource"]["spec"]["runtime_configuration"];
 	};
 	endpoints?: string[];
 	failure_reason?: string | null;
@@ -755,7 +916,7 @@ function mutationDeploymentReadFixture(deployment: DeploymentMutationFixture): D
 				},
 				agents: [],
 				ports: [],
-				runtime_configuration: { providers: [], features: [] },
+				runtime_configuration: config.runtime_configuration ?? { providers: [], features: [] },
 				rollout_nonce: 0,
 				secret_references: [],
 			},
@@ -2252,11 +2413,19 @@ test("deploy wizard Select opens without browser errors", async ({ page }) => {
 	expect(errors, `language select: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("deploy keeps AI providers expanded and provider selection exclusive", async ({ page }) => {
+test("deploy keeps AI providers expanded and provider selection exclusive", async ({
+	page,
+}, testInfo) => {
 	await stubHostedApi(page, { plans: [basicPlan], deployments: [] });
 	await page.goto("/deploy");
 
 	await expect(page.getByRole("button", { name: /^Hermes/ })).toContainText("Recommended");
+	for (const framework of ["Hermes", "OpenClaw"]) {
+		const icon = page.locator(`[role="img"][aria-label="${framework}"]`);
+		await expect(icon).toHaveCount(1);
+		await expect(icon.locator("svg")).toHaveAttribute("data-icon-source", "lobehub");
+		await expect(icon.locator("svg")).toHaveAttribute("viewBox", "0 0 24 24");
+	}
 	await expect(
 		page.getByText("Agent software can’t be changed later", { exact: true }),
 	).toHaveCount(0);
@@ -2276,6 +2445,17 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 	await expect(unmanaged).toHaveAttribute("aria-pressed", "false");
 	await expect(page.getByTestId("managed-model-choices")).toBeVisible();
 	await expect(page.getByRole("button", { name: "Change", exact: true })).toHaveCount(0);
+
+	for (const viewport of [
+		{ name: "1280", width: 1280, height: 900 },
+		{ name: "390", width: 390, height: 844 },
+	]) {
+		await page.setViewportSize(viewport);
+		await page.screenshot({
+			path: testInfo.outputPath(`deploy-framework-icons-${viewport.name}.png`),
+			fullPage: true,
+		});
+	}
 });
 
 test("AI Providers preserves provider identity and keeps technical details progressive", async ({
@@ -2333,6 +2513,9 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await expect(main.getByText("Clawdi", { exact: true })).toBeVisible();
 	await expect(main.getByText("Included", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("Research DeepSeek", { exact: true })).toBeVisible();
+	const deepSeekIcons = main.getByRole("img", { name: "DeepSeek", exact: true });
+	await expect(deepSeekIcons.first().locator("svg")).toHaveAttribute("data-icon-source", "lobehub");
+	await expect(deepSeekIcons.first().locator("svg")).toHaveAttribute("viewBox", "0 0 24 24");
 	await expect(main.getByText("DeepSeek · DeepSeek V4 Flash", { exact: true })).toBeVisible();
 	await expect(main.getByText("DeepSeek proxy", { exact: true })).toBeVisible();
 	await expect(
@@ -3126,9 +3309,20 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 				firstModelChoice: rect(firstModelChoice),
 				managedModelChoices: managedModelChoices
 					? {
+							cards: Array.from(managedModelChoices.querySelectorAll(":scope > label")).map(
+								(card) => rect(card),
+							),
 							clientWidth: managedModelChoices.clientWidth,
-							labels: Array.from(managedModelChoices.querySelectorAll("label")).map(
-								(label) => label.textContent?.trim() ?? "",
+							columns: getComputedStyle(managedModelChoices).gridTemplateColumns,
+							descriptions: Array.from(
+								managedModelChoices.querySelectorAll('[id$="-description"]'),
+							).map((description) => ({
+								...inlineTextMetrics(description),
+								clientWidth: description.clientWidth,
+								scrollWidth: description.scrollWidth,
+							})),
+							labels: Array.from(managedModelChoices.querySelectorAll('[id$="-title"]')).map(
+								(title) => title.textContent?.trim() ?? "",
 							),
 							rect: rect(managedModelChoices),
 							scrollWidth: managedModelChoices.scrollWidth,
@@ -3244,7 +3438,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		);
 
 		for (const [label, control, maxWidth] of [
-			["Primary model", metrics.catalogModel, 448],
+			["Main model", metrics.catalogModel, 448],
 			["Name", metrics.name, 448],
 			["Language", metrics.language, 160],
 			["Timezone", metrics.timezone, 384],
@@ -3267,9 +3461,35 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		});
 		expect(metrics.managedModelChoices, `${viewport.name} managed model choices`).not.toBeNull();
 		expect(metrics.managedModelChoices?.labels, `${viewport.name} featured model order`).toEqual([
-			"Sol",
+			"GPT-5.6 Sol",
 			"Kimi K3",
 		]);
+		expect(
+			metrics.managedModelChoices?.columns.split(/\s+/),
+			`${viewport.name} featured models use two deterministic columns`,
+		).toHaveLength(2);
+		const featuredCards = metrics.managedModelChoices?.cards ?? [];
+		expect(featuredCards, `${viewport.name} featured card count`).toHaveLength(2);
+		expect(featuredCards[0]?.top, `${viewport.name} featured cards stay on one row`).toBeCloseTo(
+			featuredCards[1]?.top ?? Number.POSITIVE_INFINITY,
+			0,
+		);
+		expect(featuredCards[0]?.width, `${viewport.name} featured cards stay equal width`).toBeCloseTo(
+			featuredCards[1]?.width ?? Number.POSITIVE_INFINITY,
+			0,
+		);
+		for (const description of metrics.managedModelChoices?.descriptions ?? []) {
+			expect(
+				description.scrollWidth,
+				`${viewport.name} featured description should not overflow`,
+			).toBeLessThanOrEqual(description.clientWidth);
+			if (viewport.width === 390) {
+				expect(
+					description.lineCount,
+					`${viewport.name} long featured description should wrap`,
+				).toBeGreaterThan(1);
+			}
+		}
 		expect(
 			metrics.managedModelControls?.scrollWidth,
 			`${viewport.name} managed model controls should not overflow`,
@@ -3285,7 +3505,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		).toBeLessThan(metrics.modelPickerFrameRect?.width ?? Number.POSITIVE_INFINITY);
 		expect(
 			metrics.firstModelChoice?.top,
-			`${viewport.name} Primary model choices follow the section title`,
+			`${viewport.name} Main model choices follow the section title`,
 		).toBeGreaterThanOrEqual(metrics.modelLabel?.bottom ?? Number.POSITIVE_INFINITY);
 
 		expect(metrics.action, `${viewport.name} sticky action`).not.toBeNull();
@@ -3681,23 +3901,91 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await page.goto("/deploy");
 
 	const managedModels = page.getByTestId("managed-model-choices");
-	await expect(managedModels).toHaveAccessibleName("Primary model");
+	await expect(managedModels).toHaveAccessibleName("Main model");
 	const featuredModels = managedModels.getByRole("radio");
-	await expect(featuredModels).toHaveCount(2);
-	await expect(featuredModels.nth(0)).toHaveAccessibleName("Sol");
-	await expect(featuredModels.nth(1)).toHaveAccessibleName("Kimi K3");
+	const featuredCards = managedModels.locator(":scope > label");
+	await expect(featuredModels).toHaveCount(4);
+	await expect(featuredCards).toHaveCount(4);
+	await expect(featuredModels.nth(0)).toHaveAccessibleName("GPT-5.6 Terra");
+	await expect(featuredModels.nth(1)).toHaveAccessibleName("GPT-5.6 Luna");
+	await expect(featuredModels.nth(2)).toHaveAccessibleName("GPT-5.6 Sol");
+	await expect(featuredModels.nth(3)).toHaveAccessibleName("Kimi K3");
+	const openAiIcon = featuredCards.nth(0).getByRole("img", { name: "OpenAI" });
+	const kimiIcon = featuredCards.nth(3).getByRole("img", { name: "Kimi" });
+	await expect(openAiIcon).toBeVisible();
+	await expect(kimiIcon).toBeVisible();
+	await expect(openAiIcon).toHaveAttribute("data-icon-source", "lobehub");
+	await expect(kimiIcon).toHaveAttribute("data-icon-source", "lobehub");
+	for (const icon of [openAiIcon, kimiIcon]) {
+		const src = await icon.getAttribute("src");
+		if (!src) throw new Error("Expected the LobeHub icon to have a local SVG source.");
+		if (src.startsWith("data:")) {
+			expect(src).toMatch(/^data:image\/svg\+xml[;,]/);
+		} else {
+			const iconUrl = new URL(src, page.url());
+			expect(iconUrl.origin).toBe(new URL(page.url()).origin);
+			expect(iconUrl.pathname).toMatch(/\.svg$/);
+		}
+		expect(src).not.toContain("cdn.simpleicons.org");
+	}
+	await expect(featuredCards.nth(0).getByText("O", { exact: true })).toHaveCount(0);
+	await expect(featuredCards.nth(0).getByText("S", { exact: true })).toHaveCount(0);
+	for (const radio of await featuredModels.all()) {
+		const visualControl = await radio.evaluate((element) => {
+			const style = getComputedStyle(element);
+			return {
+				height: element.getBoundingClientRect().height,
+				position: style.position,
+				width: element.getBoundingClientRect().width,
+			};
+		});
+		expect(visualControl.position).toBe("absolute");
+		expect(visualControl.height).toBeLessThanOrEqual(1);
+		expect(visualControl.width).toBeLessThanOrEqual(1);
+	}
 	const overflowModels = page.getByTestId("managed-model-overflow");
 	await expect(overflowModels).toHaveAccessibleName("More managed models");
-	await expect(overflowModels).toContainText("Luna");
-	await expect(featuredModels.nth(0)).not.toBeChecked();
+	await expect(overflowModels).toContainText("More models");
+	await expect(featuredModels.nth(0)).toBeChecked();
 	await expect(featuredModels.nth(1)).not.toBeChecked();
+	await expect(featuredModels.nth(2)).not.toBeChecked();
+	await expect(featuredModels.nth(3)).not.toBeChecked();
 	await expect(page.locator("#deploy-primary-model")).toHaveCount(0);
+	await expect(managedModels).toContainText("Higher cost for complex work.");
+	await expect(managedModels).toContainText("Variable cost for long, detailed work.");
+	await expect(managedModels).not.toContainText(/272K|256K|1M|Codex|context|eligible plans/i);
+	await expect(page.getByTestId("managed-model-details")).toHaveCount(0);
+	const cardBoxesBefore = await featuredCards.evaluateAll((cards) =>
+		cards.map((card) => {
+			const box = card.getBoundingClientRect();
+			return { height: box.height, width: box.width };
+		}),
+	);
+	await featuredCards.nth(2).click({ position: { x: 3, y: 3 } });
+	await expect(featuredModels.nth(2)).toBeChecked();
+	await expect(featuredModels.nth(0)).not.toBeChecked();
+	await expect(featuredCards.nth(0).locator("svg.lucide-check")).toHaveCSS("opacity", "0");
+	await expect(featuredCards.nth(2).locator("svg.lucide-check")).toHaveCSS("opacity", "1");
+	await featuredCards.nth(3).click({ position: { x: 3, y: 3 } });
+	await expect(featuredModels.nth(3)).toBeChecked();
+	await expect(featuredModels.nth(2)).not.toBeChecked();
+	expect(
+		await featuredCards.evaluateAll((cards) =>
+			cards.map((card) => {
+				const box = card.getBoundingClientRect();
+				return { height: box.height, width: box.width };
+			}),
+		),
+	).toEqual(cardBoxesBefore);
 
+	const screenshotStyle = await page.addStyleTag({
+		content: ".sticky.bottom-0 { display: none !important; }",
+	});
 	for (const viewport of [
-		{ width: 1280, height: 900 },
-		{ width: 800, height: 900 },
-		{ width: 700, height: 900 },
-		{ width: 390, height: 844 },
+		{ width: 1280, height: 800 },
+		{ width: 800, height: 800 },
+		{ width: 700, height: 800 },
+		{ width: 390, height: 800 },
 	]) {
 		await page.setViewportSize(viewport);
 		const documentWidth = await page.evaluate(() => ({
@@ -3709,24 +3997,100 @@ test("deploy managed model picker preserves featured and overflow order and subm
 		);
 		await expect(managedModels).toBeVisible();
 		await expect(overflowModels).toBeVisible();
+		const modelPicker = managedModels.locator("../..");
+		await modelPicker.screenshot({
+			path: `/tmp/managed-model-guidance-${viewport.width}.png`,
+		});
+		const pickerBox = await modelPicker.boundingBox();
+		expect(
+			pickerBox?.x ?? viewport.width,
+			`model picker at ${viewport.width}px`,
+		).toBeGreaterThanOrEqual(0);
+		expect(
+			(pickerBox?.x ?? 0) + (pickerBox?.width ?? viewport.width),
+			`model picker right edge at ${viewport.width}px`,
+		).toBeLessThanOrEqual(viewport.width);
 	}
+	await screenshotStyle.evaluate((element) => element.parentNode?.removeChild(element));
 
-	await featuredModels.nth(0).click();
-	await expect(featuredModels.nth(0)).toBeChecked();
 	await expect(overflowModels).toContainText("More models");
 	await overflowModels.click();
-	await expect(page.getByRole("option")).toHaveText(["Future model", "Luna", "Terra"]);
-	await page.getByRole("option", { name: "Terra" }).click();
-	await expect(overflowModels).toContainText("Terra");
+	await expect(page.getByRole("option")).toHaveCount(6);
+	await expect(page.getByRole("option").nth(0)).toContainText("GPT-5.5");
+	await expect(page.getByRole("option").nth(0).getByRole("img", { name: "OpenAI" })).toBeVisible();
+	await expect(page.getByRole("option").nth(0).getByText("O", { exact: true })).toHaveCount(0);
+	await expect(page.getByRole("option").nth(1)).toContainText("GPT-5.4");
+	await expect(page.getByRole("option").nth(1).getByRole("img", { name: "OpenAI" })).toBeVisible();
+	await expect(page.getByRole("option").nth(1).getByText("O", { exact: true })).toHaveCount(0);
+	await expect(page.getByRole("option").nth(1)).toContainText(
+		"Balanced cost for coding and tools.",
+	);
+	await expect(page.getByRole("option").nth(2)).toContainText("GPT-5.4 mini");
+	await expect(page.getByRole("option").nth(2)).toContainText("Low cost for lighter coding work.");
+	await page.getByRole("option").nth(1).click();
+	await expect(overflowModels.locator('[data-slot="select-value"]')).toHaveText("GPT-5.4");
 	await expect(featuredModels.nth(0)).not.toBeChecked();
 	await page.getByRole("button", { name: "Deploy", exact: true }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
 
 	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		primary_model: {
-			model: "gpt-5.6-terra",
+			model: "gpt-5.4",
 		},
 	});
+});
+
+test("deploy keeps every saved provider model editable and uses only catalog defaults", async ({
+	page,
+}) => {
+	const preset = providerPresetById("deepseek");
+	if (!preset) throw new Error("Expected the DeepSeek preset fixture.");
+	const savedPresetProvider = {
+		...userProvider(preset.id, preset.label, presetCatalogToProviderModels(preset)),
+		base_url: preset.base_url,
+	};
+	const catalogA = userProvider("owner-catalog-a", "Owner Catalog A", [
+		{ id: "owner-a-default", label: "Owner A default" },
+		{ id: "owner-a-alternate", label: "Owner A alternate" },
+	]);
+	const catalogB = userProvider("owner-catalog-b", "Owner Catalog B", [
+		{ id: "owner-b-default", label: "Owner B default" },
+	]);
+	const withoutCatalog = userProvider("owner-empty", "Owner Empty", null);
+	await stubHostedApi(page, {
+		plans: [basicPlan],
+		deployments: [],
+		aiProviders: [savedPresetProvider, catalogA, catalogB, withoutCatalog],
+	});
+	await page.goto("/deploy");
+
+	await page.getByRole("button", { name: /^DeepSeek/ }).click();
+	const modelInput = page.getByLabel("Main model");
+	await expect(modelInput).toHaveValue(preset.catalog[0].id);
+	await expect(modelInput).toHaveAttribute("list", "deploy-model-options");
+
+	await page.getByRole("button", { name: /^Owner Catalog A/ }).click();
+	await expect(modelInput).toHaveAttribute("id", "deploy-primary-model");
+	await expect(modelInput).toHaveAttribute("list", "deploy-model-options");
+	await expect(modelInput).toHaveValue("owner-a-default");
+	await expect(page.locator("#deploy-model-options option")).toHaveCount(2);
+
+	await page.getByRole("button", { name: /^Owner Catalog B/ }).click();
+	await expect(modelInput).toHaveValue("owner-b-default");
+	await page.getByRole("button", { name: /^Owner Catalog A/ }).click();
+	await expect(modelInput).toHaveValue("owner-a-default");
+
+	await modelInput.fill("owner/custom-model");
+	await page.getByRole("button", { name: /^Owner Catalog B/ }).click();
+	await expect(modelInput).toHaveValue("owner/custom-model");
+
+	await modelInput.fill("owner-b-default");
+	await page.getByRole("button", { name: /^Owner Empty/ }).click();
+	await expect(modelInput).toHaveValue("");
+	await expect(modelInput).not.toHaveAttribute("list");
+	await page.getByRole("button", { name: /^Owner Catalog A/ }).click();
+	await expect(modelInput).toHaveValue("owner-a-default");
+	await expect(page.getByTestId("managed-model-choices")).toHaveCount(0);
 });
 
 test("Basic paid checkout stays hidden until deployment inventory succeeds", async ({ page }) => {
@@ -3847,12 +4211,13 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await page.goto("/agents/hdep_unmanaged_model/model-provider?source=on-clawdi");
 
 	await page.getByRole("button", { name: /Clawdi AI/ }).click();
-	const agentModelSelect = page.locator("#agent-catalog-model");
-	await expect(agentModelSelect).toHaveRole("combobox");
-	await expect(agentModelSelect).toHaveAccessibleName("Primary model");
-	await expect(agentModelSelect).toContainText("Luna");
-	await expect(page.getByTestId("managed-model-choices")).toHaveCount(0);
-	const agentModelFrame = await agentModelSelect.evaluate((element) => {
+	const agentModels = page.getByTestId("managed-model-choices");
+	await expect(agentModels).toHaveAccessibleName("Main model");
+	const agentModelChoice = agentModels.getByRole("radio", { name: "GPT-5.6 Luna" });
+	await expect(agentModelChoice).toBeChecked();
+	await expect(agentModels).toContainText("Low cost for routine work.");
+	await expect(page.locator("#agent-primary-model")).toHaveCount(0);
+	const agentModelFrame = await agentModels.evaluate((element) => {
 		const frame = element.closest('div[data-hosted="true"][data-v2="true"]');
 		const style = frame ? getComputedStyle(frame) : null;
 		return style
@@ -3870,7 +4235,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 		{ height: 844, width: 390 },
 	]) {
 		await page.setViewportSize(viewport);
-		await expect(agentModelSelect).toHaveAccessibleName("Primary model");
+		await expect(agentModels).toHaveAccessibleName("Main model");
 		const documentWidth = await page.evaluate(() => ({
 			clientWidth: document.documentElement.clientWidth,
 			scrollWidth: document.documentElement.scrollWidth,
@@ -3889,6 +4254,64 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 			model: "gpt-5.6-luna",
 		},
 	});
+});
+
+test("agent settings preserves a persisted custom primary model outside the provider catalog", async ({
+	page,
+}) => {
+	const persistedProvider = userProvider("persisted-catalog", "Persisted Catalog", [
+		{ id: "persisted-default", label: "Persisted default" },
+		{ id: "persisted-alternate", label: "Persisted alternate" },
+	]);
+	const switchProvider = userProvider("switch-catalog", "Switch Catalog", [
+		{ id: "switch-default", label: "Switch default" },
+	]);
+	const persistedCustomModel = "owner/persisted-custom-model";
+	expect(persistedProvider.models?.some((model) => model.id === persistedCustomModel)).toBe(false);
+	const deployment: DeploymentMutationFixture = {
+		...includedBasicDeployment,
+		id: "hdep_persisted_custom_model",
+		config_info: {
+			...includedBasicDeployment.config_info,
+			ai_provider_auth_kind: "api_key",
+			runtime_configuration: {
+				providers: [
+					{
+						provider_id: persistedProvider.provider_id,
+						auth_kind: "secret_reference",
+						base_url: persistedProvider.base_url,
+						models: persistedProvider.models?.map((model) => model.id) ?? [],
+					},
+				],
+				primary_model: {
+					provider_id: persistedProvider.provider_id,
+					model: persistedCustomModel,
+				},
+				features: [],
+			},
+		},
+	};
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		aiProviders: [persistedProvider, switchProvider],
+	});
+	await page.goto("/agents/hdep_persisted_custom_model/model-provider?source=on-clawdi");
+
+	const modelInput = page.getByLabel("Main model");
+	await expect(modelInput).toHaveAttribute("id", "agent-primary-model");
+	await expect(modelInput).toHaveValue(persistedCustomModel);
+
+	await modelInput.fill("owner/edited-custom-model");
+	await expect(modelInput).toHaveValue("owner/edited-custom-model");
+	await page.getByRole("button", { name: /^Switch Catalog/ }).click();
+	await page.locator("#agent-primary-provider").click();
+	await page.getByRole("option", { name: "Switch Catalog" }).click();
+	await expect(modelInput).toHaveValue("owner/edited-custom-model");
+	await expect(modelInput).toHaveAttribute("list", "agent-model-options");
+	await expect(page.locator("#agent-model-options option")).toHaveAttribute(
+		"value",
+		"switch-default",
+	);
 });
 
 test("env-keyed agent route keeps failed deployment recovery available without its projection", async ({
@@ -6249,6 +6672,10 @@ test("Channels separates owned and shared bots with compact connect forms", asyn
 	await expect(page.getByRole("button", { name: /All\s+4/ })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Telegram\s+2/ })).toBeVisible();
 	await expect(page.getByRole("button", { name: /Discord\s+2/ })).toBeVisible();
+	for (const channel of ["telegram", "discord"]) {
+		const icons = page.locator(`img[src="https://assets.clawdi.ai/icons/${channel}.png"]`);
+		await expect(icons.first()).toBeVisible();
+	}
 	await expect(page.getByRole("button", { name: /WhatsApp/ })).toHaveCount(0);
 	await expect(page.locator("[data-ready-bots-section]")).toHaveCount(0);
 	await expect(page.locator("[data-pool-account-id]")).toHaveCount(0);

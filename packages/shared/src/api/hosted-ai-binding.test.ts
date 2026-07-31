@@ -15,7 +15,24 @@ import {
 } from "./hosted-ai-binding";
 
 const managedModels = [
-	{ id: "gpt-managed", display_name: "Managed", is_default: true, is_featured: true },
+	{
+		id: "gpt-managed",
+		display_name: "Managed",
+		provider_id: "openai-codex",
+		is_default: true,
+		is_featured: true,
+		description: null,
+		capabilities: {
+			context_window: 128_000,
+			max_context_window: null,
+			max_input_tokens: 128_000,
+			max_output_tokens: null,
+			input_modalities: ["text" as const],
+			supports_vision: false,
+			supports_reasoning: null,
+			supports_tools: null,
+		},
+	},
 ];
 
 const apiKeyProvider = {

@@ -17,7 +17,26 @@ import {
 	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
+import {
+	presetCatalogToProviderModels,
+	providerPresetById,
+} from "@/hosted/v2/ai-providers/provider-presets";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
+
+const managedMetadata = {
+	provider_id: "openai-codex",
+	description: null,
+	capabilities: {
+		context_window: 128_000,
+		max_context_window: null,
+		max_input_tokens: 128_000,
+		max_output_tokens: null,
+		input_modalities: ["text" as const],
+		supports_vision: false,
+		supports_reasoning: null,
+		supports_tools: null,
+	},
+};
 
 const savedOpenAiProvider = {
 	id: "row-openai",
@@ -57,9 +76,27 @@ describe("model binding", () => {
 
 	test("preserves backend catalog order while selecting its declared default", () => {
 		const managedModels = [
-			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: true },
-			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true },
-			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
+			{
+				...managedMetadata,
+				id: "gpt-5.6-sol",
+				display_name: "GPT-5.6 Sol",
+				is_default: false,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "gpt-5.6-luna",
+				display_name: "GPT-5.6 Luna",
+				is_default: true,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "gpt-5.6-terra",
+				display_name: "GPT-5.6 Terra",
+				is_default: false,
+				is_featured: false,
+			},
 		];
 
 		expect(
@@ -68,39 +105,134 @@ describe("model binding", () => {
 		expect(firstModelForProvider(MANAGED_AI_CHOICE, [], managedModels)).toBe("gpt-5.6-luna");
 		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [], managedModels)).toEqual(managedModels);
 		expect(modelPickerItems(MANAGED_AI_CHOICE, [], managedModels)).toEqual([
-			{ value: "gpt-5.6-sol", label: "Sol" },
-			{ value: "gpt-5.6-luna", label: "Luna" },
-			{ value: "gpt-5.6-terra", label: "Terra" },
+			{ value: "gpt-5.6-sol", label: "GPT-5.6 Sol" },
+			{ value: "gpt-5.6-luna", label: "GPT-5.6 Luna" },
+			{ value: "gpt-5.6-terra", label: "GPT-5.6 Terra" },
 		]);
-		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("Sol");
+		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("GPT-5.6 Sol");
 	});
 
 	test("splits featured and overflow models without changing backend order", () => {
 		const managedModels = [
-			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: true },
-			{ id: "k3", display_name: "Kimi K3", is_default: false, is_featured: true },
-			{ id: "future-model", display_name: "Future model", is_default: false, is_featured: false },
-			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: false },
-			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
+			{
+				...managedMetadata,
+				description: "Higher cost for complex work.",
+				id: "gpt-5.6-sol",
+				display_name: "GPT-5.6 Sol",
+				is_default: false,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				description: "Variable cost for long, detailed work.",
+				id: "k3",
+				display_name: "Kimi K3",
+				provider_id: "kimi-coding",
+				is_default: false,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "future-model",
+				display_name: "Future model",
+				is_default: false,
+				is_featured: false,
+			},
+			{
+				...managedMetadata,
+				description: "Low cost for routine work.",
+				id: "gpt-5.6-luna",
+				display_name: "GPT-5.6 Luna",
+				is_default: true,
+				is_featured: false,
+			},
+			{
+				...managedMetadata,
+				description: "Balanced cost for everyday work.",
+				id: "gpt-5.6-terra",
+				display_name: "GPT-5.6 Terra",
+				is_default: false,
+				is_featured: false,
+			},
 		];
 
 		expect(managedModelPickerItems(managedModels)).toEqual({
 			featured: [
-				{ value: "gpt-5.6-sol", label: "Sol" },
-				{ value: "k3", label: "Kimi K3" },
+				{
+					value: "gpt-5.6-sol",
+					label: "GPT-5.6 Sol",
+					providerId: "openai-codex",
+					description: "Higher cost for complex work.",
+				},
+				{
+					value: "k3",
+					label: "Kimi K3",
+					providerId: "kimi-coding",
+					description: "Variable cost for long, detailed work.",
+				},
 			],
 			overflow: [
-				{ value: "future-model", label: "Future model" },
-				{ value: "gpt-5.6-luna", label: "Luna" },
-				{ value: "gpt-5.6-terra", label: "Terra" },
+				{ value: "future-model", label: "Future model", providerId: "openai-codex" },
+				{
+					value: "gpt-5.6-luna",
+					label: "GPT-5.6 Luna",
+					providerId: "openai-codex",
+					description: "Low cost for routine work.",
+				},
+				{
+					value: "gpt-5.6-terra",
+					label: "GPT-5.6 Terra",
+					providerId: "openai-codex",
+					description: "Balanced cost for everyday work.",
+				},
 			],
 		});
+	});
+
+	test("keeps authoritative managed display names unchanged", () => {
+		const items = managedModelPickerItems([
+			{
+				...managedMetadata,
+				id: "provider-model-a",
+				display_name: "Provider Model A (Canonical)",
+				is_default: true,
+				is_featured: true,
+			},
+			{
+				...managedMetadata,
+				id: "provider-model-b",
+				display_name: "Provider Model B — Full Name",
+				is_default: false,
+				is_featured: false,
+			},
+		]);
+
+		expect(items.featured).toEqual([
+			{
+				value: "provider-model-a",
+				label: "Provider Model A (Canonical)",
+				providerId: "openai-codex",
+			},
+		]);
+		expect(items.overflow).toEqual([
+			{
+				value: "provider-model-b",
+				label: "Provider Model B — Full Name",
+				providerId: "openai-codex",
+			},
+		]);
 	});
 
 	test("uses catalog metadata before the shared formatter and raw id fallback", () => {
 		expect(
 			modelDisplayName("model", [
-				{ id: "model", display_name: "Display", is_default: false, is_featured: false },
+				{
+					...managedMetadata,
+					id: "model",
+					display_name: "Display",
+					is_default: false,
+					is_featured: false,
+				},
 			]),
 		).toBe("Display");
 		expect(modelDisplayName("model", [{ id: "model", label: "Label", alias: "Alias" }])).toBe(
@@ -153,6 +285,47 @@ describe("model binding", () => {
 			iconId: "custom_openai_compatible",
 			summary: "Custom (OpenAI-compatible) · DeepSeek V4 Flash",
 		});
+	});
+
+	test("uses persisted preset catalog order without a component model default", () => {
+		const preset = providerPresetById("deepseek");
+		if (!preset) throw new Error("Expected the DeepSeek preset fixture.");
+		const provider = {
+			...savedOpenAiProvider,
+			provider_id: preset.id,
+			type: "custom_openai_compatible",
+			base_url: preset.base_url,
+			models: presetCatalogToProviderModels(preset),
+		} satisfies AiProvider;
+		const persistedDefault = preset.catalog[0].id;
+
+		expect(provider.models?.[0]?.id).toBe(persistedDefault);
+		expect(firstModelForProvider(provider.provider_id, [provider])).toBe(persistedDefault);
+		expect(modelPickerItems(provider.provider_id, [provider], [])).toEqual(
+			provider.models?.map((model) => ({
+				value: model.id,
+				label: model.label ?? model.id,
+			})),
+		);
+	});
+
+	test("uses a custom provider catalog when present and no fallback when absent", () => {
+		const withCatalog = {
+			...savedOpenAiProvider,
+			provider_id: "custom-with-catalog",
+			type: "custom_openai_compatible",
+			models: [{ id: "owner-default" }, { id: "owner-alternate" }],
+		} satisfies AiProvider;
+		const withoutCatalog = {
+			...withCatalog,
+			provider_id: "custom-without-catalog",
+			models: null,
+		} satisfies AiProvider;
+
+		expect(firstModelForProvider(withCatalog.provider_id, [withCatalog])).toBe("owner-default");
+		expect(modelPickerItems(withCatalog.provider_id, [withCatalog], [])).toHaveLength(2);
+		expect(firstModelForProvider(withoutCatalog.provider_id, [withoutCatalog])).toBe("");
+		expect(modelPickerItems(withoutCatalog.provider_id, [withoutCatalog], [])).toEqual([]);
 	});
 
 	test("does not offer an unfinished provider as a deploy selection", () => {

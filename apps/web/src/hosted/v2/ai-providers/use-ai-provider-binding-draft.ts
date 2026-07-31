@@ -44,10 +44,8 @@ export function changeAiBindingPrimaryProvider(
 		choice === MANAGED_AI_CHOICE && !next.includes(trimmed)
 			? fallback
 			: !trimmed
-				? context.operationMode === "update"
-					? fallback || current
-					: fallback
-				: previous.includes(trimmed) && next.length > 0 && !next.includes(trimmed)
+				? fallback
+				: previous.includes(trimmed) && !next.includes(trimmed)
 					? fallback
 					: current;
 	return {

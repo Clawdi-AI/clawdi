@@ -1,7 +1,9 @@
 "use client";
 
+import { Check } from "lucide-react";
 import type { ApiErrorNormalizer } from "@/components/api-error-panel";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { EntityIcon } from "@/components/entity-icon";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -16,7 +18,6 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import type { ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import {
-	CUSTOM_MODEL_CHOICE,
 	MANAGED_AI_CHOICE,
 	type ModelBindingPickerItem,
 	managedModelPickerItems,
@@ -38,7 +39,6 @@ export function ModelBindingPicker({
 	customProviders,
 	additionalProviderItems = [],
 	showProviderSelect = true,
-	compactManagedModelChoices = false,
 	selectedProviderChoices,
 	primaryProviderChoice,
 	primaryModel,
@@ -56,7 +56,6 @@ export function ModelBindingPicker({
 	customProviders: readonly AiProvider[];
 	additionalProviderItems?: readonly ModelBindingPickerItem[];
 	showProviderSelect?: boolean;
-	compactManagedModelChoices?: boolean;
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
 	primaryModel: string;
@@ -65,14 +64,12 @@ export function ModelBindingPicker({
 }) {
 	const providerInputId = `${idPrefix}-primary-provider`;
 	const catalogInputId = `${idPrefix}-catalog-model`;
-	const customInputId = `${idPrefix}-primary-model`;
+	const modelInputId = `${idPrefix}-primary-model`;
+	const modelListId = `${idPrefix}-model-options`;
 	const isManaged = primaryProviderChoice === MANAGED_AI_CHOICE;
 	const catalogModelItems = modelPickerItems(primaryProviderChoice, providers, managedModels);
 	const compactManagedItems = managedModelPickerItems(managedModels);
-	const hasCatalogModels = catalogModelItems.some((item) => item.value !== CUSTOM_MODEL_CHOICE);
-	const modelChoice = catalogModelItems.some((item) => item.value === primaryModel)
-		? primaryModel
-		: CUSTOM_MODEL_CHOICE;
+	const hasCatalogModels = catalogModelItems.length > 0;
 	const managedCatalogUnavailableError =
 		isManaged && managedModels.length === 0 && !managedModelsLoading
 			? (managedModelsError ?? new Error("The Clawdi AI model catalog returned no models."))
@@ -88,146 +85,166 @@ export function ModelBindingPicker({
 			data-v2="true"
 			className={cn("flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3", className)}
 		>
-			<div className={cn("grid gap-3", showProviderSelect && "sm:grid-cols-2")}>
-				{showProviderSelect ? (
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor={providerInputId}>Primary provider</Label>
-						<Select
-							items={primaryProviderItems}
-							value={primaryProviderChoice}
-							onValueChange={(value) => {
-								if (value) onPrimaryProviderChange(value);
-							}}
-						>
-							<SelectTrigger id={providerInputId} className="w-full">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectGroup>
-									{primaryProviderItems.map((item) => (
-										<SelectItem key={item.value} value={item.value}>
-											{item.label}
-										</SelectItem>
-									))}
-								</SelectGroup>
-							</SelectContent>
-						</Select>
-					</div>
-				) : null}
-				{isManaged && managedModelsLoading ? (
-					<div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-						<Spinner className="size-3.5" /> Loading Clawdi AI models…
-					</div>
-				) : managedCatalogUnavailableError ? (
-					<ApiErrorPanel
-						normalizer={managedModelsErrorNormalizer}
-						error={managedCatalogUnavailableError}
-						onRetry={onManagedModelsRetry}
-						title="Couldn't load Clawdi AI models"
-					/>
-				) : isManaged && compactManagedModelChoices && hasCatalogModels ? (
-					<div className="flex min-w-0 flex-col gap-1.5">
-						<Label id={`${catalogInputId}-label`}>Primary model</Label>
-						<div
-							className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5"
-							data-testid="managed-model-controls"
-						>
-							{compactManagedItems.featured.length > 0 ? (
-								<RadioGroup
-									id={catalogInputId}
-									value={modelChoice}
-									onValueChange={(value) => {
-										if (typeof value === "string") onPrimaryModelChange(value);
-									}}
-									className="flex min-w-0 max-w-full flex-wrap gap-1.5"
-									aria-labelledby={`${catalogInputId}-label`}
-									data-testid="managed-model-choices"
-								>
-									{compactManagedItems.featured.map((item) => (
+			{showProviderSelect ? (
+				<div className="flex max-w-md flex-col gap-1.5">
+					<Label htmlFor={providerInputId}>Primary provider</Label>
+					<Select
+						items={primaryProviderItems}
+						value={primaryProviderChoice}
+						onValueChange={(value) => {
+							if (value) onPrimaryProviderChange(value);
+						}}
+					>
+						<SelectTrigger id={providerInputId} className="w-full">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectGroup>
+								{primaryProviderItems.map((item) => (
+									<SelectItem key={item.value} value={item.value}>
+										{item.label}
+									</SelectItem>
+								))}
+							</SelectGroup>
+						</SelectContent>
+					</Select>
+				</div>
+			) : null}
+			{isManaged && managedModelsLoading ? (
+				<div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+					<Spinner className="size-3.5" /> Loading Clawdi AI models…
+				</div>
+			) : managedCatalogUnavailableError ? (
+				<ApiErrorPanel
+					normalizer={managedModelsErrorNormalizer}
+					error={managedCatalogUnavailableError}
+					onRetry={onManagedModelsRetry}
+					title="Couldn't load Clawdi AI models"
+				/>
+			) : isManaged && hasCatalogModels ? (
+				<div className="flex min-w-0 max-w-4xl flex-col gap-2">
+					<Label id={`${catalogInputId}-label`}>Main model</Label>
+					<div
+						className="flex min-w-0 max-w-full flex-wrap items-start gap-2"
+						data-testid="managed-model-controls"
+					>
+						{compactManagedItems.featured.length > 0 ? (
+							<RadioGroup
+								id={catalogInputId}
+								value={primaryModel}
+								onValueChange={(value) => {
+									if (typeof value === "string") onPrimaryModelChange(value);
+								}}
+								className="grid w-full min-w-0 grid-cols-2 gap-2 @4xl/main:grid-cols-4"
+								aria-labelledby={`${catalogInputId}-label`}
+								data-testid="managed-model-choices"
+							>
+								{compactManagedItems.featured.map((item, index) => {
+									const radioId = `${catalogInputId}-featured-${index}`;
+									const titleId = `${catalogInputId}-featured-${index}-title`;
+									const descriptionId = `${catalogInputId}-featured-${index}-description`;
+									return (
 										<Label
 											key={item.value}
-											className="h-8 min-w-0 max-w-full cursor-pointer gap-1.5 rounded-md border border-input bg-transparent px-2 shadow-xs transition-[color,box-shadow] hover:bg-muted has-data-checked:bg-muted"
+											htmlFor={radioId}
+											className="w-full min-w-0 cursor-pointer items-start gap-2 rounded-md border border-border/70 bg-transparent px-2.5 py-2 shadow-xs transition-[color,box-shadow] hover:bg-muted/60 has-data-checked:border-primary/50 has-data-checked:bg-muted"
 										>
-											<RadioGroupItem value={item.value} />
-											<span className="truncate">{item.label}</span>
-										</Label>
-									))}
-								</RadioGroup>
-							) : null}
-							{compactManagedItems.overflow.length > 0 ? (
-								<Select
-									items={compactManagedItems.overflow}
-									value={
-										compactManagedItems.overflow.some((item) => item.value === modelChoice)
-											? modelChoice
-											: null
-									}
-									onValueChange={(value) => {
-										if (value) onPrimaryModelChange(value);
-									}}
-								>
-									<SelectTrigger
-										id={compactManagedItems.featured.length === 0 ? catalogInputId : undefined}
-										size="sm"
-										className="max-w-full"
-										aria-label="More managed models"
-										data-testid="managed-model-overflow"
-									>
-										<SelectValue className="min-w-0" placeholder="More models" />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectGroup>
-											{compactManagedItems.overflow.map((item) => (
-												<SelectItem key={item.value} value={item.value}>
+											<RadioGroupItem
+												id={radioId}
+												value={item.value}
+												aria-labelledby={titleId}
+												aria-describedby={item.description ? descriptionId : undefined}
+												className="sr-only !absolute !size-px !border-0 !p-0"
+											/>
+											<EntityIcon kind="provider" id={item.providerId} size="sm" />
+											<span className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
+												<span id={titleId} className="truncate">
 													{item.label}
-												</SelectItem>
-											))}
-										</SelectGroup>
-									</SelectContent>
-								</Select>
-							) : null}
-						</div>
+												</span>
+												{item.description ? (
+													<span
+														id={descriptionId}
+														className="min-w-0 break-words text-xs leading-snug font-normal text-muted-foreground"
+													>
+														{item.description}
+													</span>
+												) : null}
+											</span>
+											<Check
+												aria-hidden
+												className={cn(
+													"size-4 shrink-0 text-primary transition-opacity",
+													primaryModel === item.value ? "opacity-100" : "opacity-0",
+												)}
+											/>
+										</Label>
+									);
+								})}
+							</RadioGroup>
+						) : null}
+						{compactManagedItems.overflow.length > 0 ? (
+							<Select
+								items={compactManagedItems.overflow}
+								value={
+									compactManagedItems.overflow.some((item) => item.value === primaryModel)
+										? primaryModel
+										: null
+								}
+								onValueChange={(value) => {
+									if (value) onPrimaryModelChange(value);
+								}}
+							>
+								<SelectTrigger
+									id={compactManagedItems.featured.length === 0 ? catalogInputId : undefined}
+									size="sm"
+									className="max-w-full"
+									aria-label="More managed models"
+									data-testid="managed-model-overflow"
+								>
+									<SelectValue className="min-w-0" placeholder="More models" />
+								</SelectTrigger>
+								<SelectContent className="min-w-64">
+									<SelectGroup>
+										{compactManagedItems.overflow.map((item) => (
+											<SelectItem key={item.value} value={item.value} className="items-start py-2">
+												<span className="flex min-w-0 items-start gap-2 whitespace-normal">
+													<EntityIcon kind="provider" id={item.providerId} size="sm" />
+													<span className="flex min-w-0 flex-col items-start gap-0.5">
+														<span className="font-medium">{item.label}</span>
+														{item.description ? (
+															<span className="text-xs leading-snug text-muted-foreground">
+																{item.description}
+															</span>
+														) : null}
+													</span>
+												</span>
+											</SelectItem>
+										))}
+									</SelectGroup>
+								</SelectContent>
+							</Select>
+						) : null}
 					</div>
-				) : hasCatalogModels ? (
-					<div className="flex flex-col gap-1.5">
-						<Label htmlFor={catalogInputId}>Primary model</Label>
-						<Select
-							items={catalogModelItems}
-							value={modelChoice}
-							onValueChange={(value) => {
-								if (!value) return;
-								onPrimaryModelChange(value === CUSTOM_MODEL_CHOICE ? "" : value);
-							}}
-						>
-							<SelectTrigger id={catalogInputId} className="w-full">
-								<SelectValue />
-							</SelectTrigger>
-							<SelectContent>
-								<SelectGroup>
-									{catalogModelItems.map((item) => (
-										<SelectItem key={item.value} value={item.value}>
-											{item.label}
-										</SelectItem>
-									))}
-								</SelectGroup>
-							</SelectContent>
-						</Select>
-					</div>
-				) : null}
-			</div>
-			{!isManaged && modelChoice === CUSTOM_MODEL_CHOICE ? (
-				<div className="flex flex-col gap-1.5">
-					<Label htmlFor={customInputId}>
-						{hasCatalogModels ? "Custom model" : "Primary model"}
-					</Label>
+				</div>
+			) : !isManaged ? (
+				<div className="flex max-w-md flex-col gap-1.5">
+					<Label htmlFor={modelInputId}>Main model</Label>
 					<Input
-						id={customInputId}
+						id={modelInputId}
+						list={hasCatalogModels ? modelListId : undefined}
 						value={primaryModel}
 						onChange={(event) => onPrimaryModelChange(event.target.value)}
 						placeholder="model id"
 						autoComplete="off"
 						spellCheck={false}
 					/>
+					{hasCatalogModels ? (
+						<datalist id={modelListId}>
+							{catalogModelItems.map((item) => (
+								<option key={item.value} value={item.value} label={item.label} />
+							))}
+						</datalist>
+					) : null}
 				</div>
 			) : null}
 		</div>

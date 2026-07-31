@@ -33,6 +33,11 @@ export default defineConfig(({ mode }) => {
 		server: {
 			port: 3000,
 		},
+		ssr: {
+			// Published leaf components use extensionless internal ESM imports,
+			// so Vite must transform this package before Node evaluates SSR.
+			noExternal: ["@lobehub/icons"],
+		},
 		resolve: {
 			tsconfigPaths: true,
 		},
