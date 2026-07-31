@@ -28,6 +28,7 @@ describe("channel mutation feedback", () => {
 	test("keeps agent-page link, unlink, and pair-code feedback scoped to the acting control", () => {
 		const detail = source("../../agents/hosted-agent-detail.tsx");
 		const pairDialog = source("./telegram-pair-dialog.tsx");
+		const pairedChatRow = source("./paired-chat-row.tsx");
 
 		expectFeedbackBeforeRequest(
 			detail,
@@ -48,6 +49,9 @@ describe("channel mutation feedback", () => {
 		expect(detail).toContain('"Pair Telegram"');
 		expect(detail).toContain('"Pair chat"');
 		expect(pairDialog).toContain("Creating a secure Telegram link…");
+		expect(pairedChatRow).toContain("disabled={unpair.isPending}");
+		expect(pairedChatRow).toContain('unpair.isPending ? "Unpairing…"');
+		expect(pairedChatRow).toContain('unpair.error ? "Retry unpair"');
 	});
 
 	test("uses per-action feedback for detail-page mutations", () => {

@@ -1,6 +1,12 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	queryOptions,
+	useMutation,
+	useQueries,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useChannelEditApi } from "@/hosted/v2/channels/channel-edit-client";
 import { channelHealthQueryOptions } from "@/hosted/v2/channels/channel-health-query";
@@ -72,9 +78,8 @@ export function useChannelAgentLinks(id: string) {
 	});
 }
 
-export function useChannelBindings(id: string) {
-	const api = useApi();
-	return useQuery({
+function channelBindingsQueryOptions(api: ReturnType<typeof useApi>, id: string) {
+	return queryOptions({
 		queryKey: keys.bindings(id),
 		queryFn: async () =>
 			unwrap(
@@ -84,6 +89,17 @@ export function useChannelBindings(id: string) {
 			),
 		enabled: Boolean(id),
 		refetchInterval: 3_000,
+	});
+}
+
+export function useChannelBindings(id: string) {
+	return useQuery(channelBindingsQueryOptions(useApi(), id));
+}
+
+export function useChannelBindingsForAccounts(accountIds: readonly string[]) {
+	const api = useApi();
+	return useQueries({
+		queries: accountIds.map((accountId) => channelBindingsQueryOptions(api, accountId)),
 	});
 }
 

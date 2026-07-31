@@ -49,11 +49,7 @@ import { deploymentDisplayName } from "@/hosted/agent-identity";
 import { isHostedRuntime } from "@/hosted/runtimes";
 import { nativeTransportSummary } from "@/hosted/v2/channels/channel-detail-page.logic";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
-import type {
-	ChannelActivityItem,
-	ChannelAgentLink,
-	ChannelBinding,
-} from "@/hosted/v2/channels/channel-types";
+import type { ChannelActivityItem, ChannelAgentLink } from "@/hosted/v2/channels/channel-types";
 import {
 	ChannelStatusBadge,
 	CopyInline,
@@ -68,7 +64,6 @@ import {
 	useChannelHealth,
 	useCreateWhatsappTenantCred,
 	useDeleteChannel,
-	useDeleteChannelBinding,
 	useEnvironments,
 	useRevokeWhatsappTenantCred,
 	useSyncCommands,
@@ -80,6 +75,7 @@ import {
 	WHATSAPP_COMING_SOON_MESSAGE,
 	WHATSAPP_LINKING_READY,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
+import { PairedChatRow } from "@/hosted/v2/channels/paired-chat-row";
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import {
 	type AgentOwnership,
@@ -351,7 +347,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 				</section>
 				<section className="flex flex-col gap-3 border-t pt-6">
 					<SectionHeader label="Paired chats" />
-					<BindingsTab accountId={id} />
+					<BindingsTab accountId={id} provider={ch.provider} />
 				</section>
 			</div>
 
@@ -763,34 +759,11 @@ function WhatsAppDevicesTab({ accountId }: { accountId: string }) {
 
 // ── Bindings (paired chats) ──────────────────────────────────────────────────
 
-function BindingsTab({ accountId }: { accountId: string }) {
+function BindingsTab({ accountId, provider }: { accountId: string; provider: string }) {
 	const bindings = useChannelBindings(accountId);
 	const links = useChannelAgentLinks(accountId);
 	const envs = useEnvironments();
 	const ownership = useAgentOwnership();
-	const unpair = useDeleteChannelBinding(accountId);
-	const unpairingRef = useRef<Set<string>>(new Set());
-	const [unpairingIds, setUnpairingIds] = useState<ReadonlySet<string>>(() => new Set());
-
-	function unpairChat(bindingId: string) {
-		if (unpairingRef.current.has(bindingId)) return;
-		unpairingRef.current.add(bindingId);
-		setUnpairingIds((current) => new Set(current).add(bindingId));
-		void (async () => {
-			try {
-				await unpair.mutateAsync(bindingId);
-			} catch {
-				// useDeleteChannelBinding surfaces the recoverable error.
-			} finally {
-				unpairingRef.current.delete(bindingId);
-				setUnpairingIds((current) => {
-					const next = new Set(current);
-					next.delete(bindingId);
-					return next;
-				});
-			}
-		})();
-	}
 
 	if (bindings.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
 	if (bindings.error) {
@@ -816,57 +789,17 @@ function BindingsTab({ accountId }: { accountId: string }) {
 
 	return (
 		<div className={CHANNEL_RELATION_LIST_CLASS}>
-			{items.map((binding: ChannelBinding) => {
+			{items.map((binding) => {
 				const link = links.data?.find((candidate) => candidate.id === binding.agent_link_id);
-				const isUnpairing = unpairingIds.has(binding.id);
 				return (
-					<div
+					<PairedChatRow
 						key={binding.id}
-						data-channel-binding-id={binding.id}
-						className={CHANNEL_RELATION_ROW_CLASS}
-					>
-						<EntityHeader
-							className="min-w-0 flex-1"
-							icon={
-								<IconChip size="sm">
-									<MessageSquareDashed />
-								</IconChip>
-							}
-							title={binding.external_chat_name ?? "Telegram chat"}
-							meta={[
-								<span key="type" className="capitalize">
-									{binding.external_chat_type ?? "chat"}
-								</span>,
-								<ChannelStatusBadge key="status" status={binding.status} />,
-								...(link
-									? [
-											<span key="agent">
-												Agent: {envName(envs.data, link.agent_id, ownership, false)}
-											</span>,
-										]
-									: []),
-								<CopyInline key="chat-id" value={binding.external_chat_id} label="chat ID" />,
-							]}
-						/>
-						<div className={CHANNEL_RELATION_ACTIONS_CLASS}>
-							<ConfirmAction
-								title={`Unpair ${binding.external_chat_name ?? "this chat"}?`}
-								description="Only this chat will be disconnected. Other chats and the linked Agent stay active."
-								confirmLabel="Unpair chat"
-								destructive
-								onConfirm={() => unpairChat(binding.id)}
-							>
-								<Button variant="outline" size="sm" disabled={isUnpairing}>
-									{isUnpairing ? (
-										<Spinner className="size-3.5" />
-									) : (
-										<Link2Off className="size-3.5" />
-									)}
-									{isUnpairing ? "Unpairing…" : "Unpair"}
-								</Button>
-							</ConfirmAction>
-						</div>
-					</div>
+						accountId={accountId}
+						binding={binding}
+						provider={provider}
+						agentName={link ? envName(envs.data, link.agent_id, ownership, false) : undefined}
+						showChatId
+					/>
 				);
 			})}
 		</div>

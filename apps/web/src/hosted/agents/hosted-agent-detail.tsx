@@ -18,6 +18,7 @@ import {
 	Link2,
 	Link2Off,
 	type LucideIcon,
+	MessageSquareDashed,
 	MonitorPlay,
 	Plus,
 	QrCode,
@@ -218,6 +219,11 @@ import {
 } from "@/hosted/v2/ai-providers/model-binding";
 import { ModelBindingPicker } from "@/hosted/v2/ai-providers/model-binding-picker";
 import { useAiProviderBindingDraft } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
+import {
+	activeAgentChannelLinks,
+	type ChannelAccountSummary,
+	selectAgentPairedChats,
+} from "@/hosted/v2/channels/agent-channel-bindings.logic";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
 import { providerMeta } from "@/hosted/v2/channels/channel-providers";
@@ -230,6 +236,7 @@ import {
 import {
 	useAgentChannelLinks,
 	useBotPool,
+	useChannelBindingsForAccounts,
 	useChannelHealth,
 	useChannels,
 	useCreatePairCode,
@@ -241,6 +248,7 @@ import {
 	channelActivityAfterLink,
 	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
+import { PairedChatRow } from "@/hosted/v2/channels/paired-chat-row";
 import { TelegramPairDialog } from "@/hosted/v2/channels/telegram-pair-dialog";
 import {
 	type AgentRouteSearch,
@@ -2313,12 +2321,13 @@ function ChannelsSyncState({
 	);
 }
 
-type LinkableChannel = { id: string; provider: string; name: string };
+type LinkableChannel = { id: string } & ChannelAccountSummary;
 
 const AGENT_CHANNEL_LIST_CLASS = "divide-y overflow-hidden rounded-lg border bg-card";
 const AGENT_CHANNEL_ROW_CLASS =
-	"grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3";
-const AGENT_CHANNEL_ACTIONS_CLASS = "flex shrink-0 items-center justify-end gap-2";
+	"grid min-h-16 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 sm:grid-cols-[auto_minmax(0,1fr)_auto]";
+const AGENT_CHANNEL_ACTIONS_CLASS =
+	"col-span-2 flex min-w-0 items-center justify-end gap-2 sm:col-span-1 sm:col-start-3 sm:row-start-1";
 
 function ChannelsTab({
 	environmentId,
@@ -2356,8 +2365,9 @@ function ChannelsTab({
 			? [recentLink, ...items]
 			: items;
 	}, [linked.data, recentLink]);
+	const visibleActiveLinks = useMemo(() => activeAgentChannelLinks(visibleLinks), [visibleLinks]);
 	const accountSummaries = useMemo(() => {
-		const map = new Map<string, { provider: string; name: string }>();
+		const map = new Map<string, ChannelAccountSummary>();
 		for (const channel of channels.data ?? []) {
 			map.set(channel.id, { provider: channel.provider, name: channel.name });
 		}
@@ -2493,7 +2503,9 @@ function ChannelsTab({
 								<Skeleton className="h-4 w-40" />
 								<Skeleton className="h-3 w-64 max-w-full" />
 							</div>
-							<Skeleton className="h-8 w-28 rounded-md" />
+							<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
+								<Skeleton className="h-8 w-28 rounded-md" />
+							</div>
 						</div>
 					</div>
 				) : linked.error && visibleLinks.length === 0 ? (
@@ -2534,6 +2546,12 @@ function ChannelsTab({
 				) : null}
 			</section>
 
+			<AgentPairedChats
+				links={visibleActiveLinks}
+				accountSummaries={accountSummaries}
+				linksLoading={linked.isLoading}
+			/>
+
 			<section data-agent-add-channel className="flex flex-col gap-3 border-t pt-6">
 				<div className="space-y-1">
 					<SectionLabel>Add a channel</SectionLabel>
@@ -2546,7 +2564,9 @@ function ChannelsTab({
 						<div className={AGENT_CHANNEL_ROW_CLASS}>
 							<Skeleton className="size-8 shrink-0 rounded-md" />
 							<Skeleton className="h-4 min-w-0 flex-1 max-w-48" />
-							<Skeleton className="h-8 w-16 rounded-md" />
+							<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
+								<Skeleton className="h-8 w-16 rounded-md" />
+							</div>
 						</div>
 					</div>
 				) : botPool.error ? (
@@ -2612,10 +2632,12 @@ function ChannelsTab({
 									<div className="min-w-0 flex-1">
 										<p className="text-sm font-medium">No bot connected yet</p>
 									</div>
-									<Button size="sm" onClick={() => setConnectOpen(true)}>
-										<Plus className="size-3.5" />
-										Connect a bot
-									</Button>
+									<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
+										<Button size="sm" onClick={() => setConnectOpen(true)}>
+											<Plus className="size-3.5" />
+											Connect a bot
+										</Button>
+									</div>
 								</div>
 							</div>
 						)}
@@ -2649,6 +2671,92 @@ function ChannelsTab({
 	);
 }
 
+function AgentPairedChats({
+	links,
+	accountSummaries,
+	linksLoading,
+}: {
+	links: AgentChannelLink[];
+	accountSummaries: ReadonlyMap<string, ChannelAccountSummary>;
+	linksLoading: boolean;
+}) {
+	const accountIds = useMemo(
+		() => Array.from(new Set(links.map((link) => link.account_id))),
+		[links],
+	);
+	const bindingQueries = useChannelBindingsForAccounts(accountIds);
+	const items = selectAgentPairedChats({
+		visibleLinks: links,
+		bindingsByAccount: bindingQueries.flatMap((query, index) => {
+			const accountId = accountIds[index];
+			return accountId ? [{ accountId, bindings: query.data ?? [] }] : [];
+		}),
+		accountSummaries,
+	});
+
+	const bindingsLoading = linksLoading || bindingQueries.some((query) => query.isLoading);
+	const failedQueries = bindingQueries.filter((query) => query.error);
+
+	return (
+		<section data-agent-paired-chats className="flex flex-col gap-3 border-t pt-6">
+			<SectionLabel count={items.length}>Paired chats</SectionLabel>
+			{bindingsLoading && items.length === 0 ? (
+				<div className={AGENT_CHANNEL_LIST_CLASS}>
+					<div className={AGENT_CHANNEL_ROW_CLASS}>
+						<Skeleton className="size-8 shrink-0 rounded-md" />
+						<div className="min-w-0 space-y-2">
+							<Skeleton className="h-4 w-40" />
+							<Skeleton className="h-3 w-56 max-w-full" />
+						</div>
+					</div>
+				</div>
+			) : items.length === 0 && failedQueries.length === 0 ? (
+				<div className={AGENT_CHANNEL_LIST_CLASS}>
+					<div className={AGENT_CHANNEL_ROW_CLASS}>
+						<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+							<MessageSquareDashed className="size-4" />
+						</span>
+						<p className="min-w-0 text-sm text-muted-foreground">No paired chats yet.</p>
+					</div>
+				</div>
+			) : (
+				<div data-agent-paired-chats-list className={AGENT_CHANNEL_LIST_CLASS}>
+					{items.map((item) => (
+						<PairedChatRow
+							key={item.binding.id}
+							accountId={item.accountId}
+							binding={item.binding}
+							provider={item.provider}
+							channelName={item.channelName}
+						/>
+					))}
+					{failedQueries.length > 0 ? (
+						<div role="alert" className={AGENT_CHANNEL_ROW_CLASS}>
+							<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-destructive/10 text-destructive">
+								<AlertCircle className="size-4" />
+							</span>
+							<p className="min-w-0 text-sm font-medium">Couldn&apos;t load every paired chat</p>
+							<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									onClick={() => {
+										for (const query of failedQueries) void query.refetch();
+									}}
+								>
+									<RefreshCw className="size-3.5" />
+									Retry
+								</Button>
+							</div>
+						</div>
+					) : null}
+				</div>
+			)}
+		</section>
+	);
+}
+
 function AddChannelRow({
 	channel,
 	kind,
@@ -2673,16 +2781,18 @@ function AddChannelRow({
 					{providerMeta(channel.provider).label} · {kind}
 				</p>
 			</div>
-			<Button
-				type="button"
-				size="sm"
-				variant={secondary ? "outline" : "default"}
-				disabled={disabled}
-				onClick={onLink}
-			>
-				{linking ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
-				{linking ? "Linking…" : "Link"}
-			</Button>
+			<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
+				<Button
+					type="button"
+					size="sm"
+					variant={secondary ? "outline" : "default"}
+					disabled={disabled}
+					onClick={onLink}
+				>
+					{linking ? <Spinner className="size-3.5" /> : <Link2 className="size-3.5" />}
+					{linking ? "Linking…" : "Link"}
+				</Button>
+			</div>
 		</div>
 	);
 }

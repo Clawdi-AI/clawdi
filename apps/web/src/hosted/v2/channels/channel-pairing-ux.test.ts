@@ -11,6 +11,8 @@ const hooks = source("./channels-hooks.ts");
 const linkDialog = source("./link-agent-dialog.tsx");
 const connectDialog = source("./connect-bot-dialog.tsx");
 const agentDetail = source("../../agents/hosted-agent-detail.tsx");
+const pairedChatRow = source("./paired-chat-row.tsx");
+const agentBindingLogic = source("./agent-channel-bindings.logic.ts");
 
 describe("Telegram channel pairing UX", () => {
 	test("keeps a full-width, single-layer linked Agent and paired chat layout", () => {
@@ -71,13 +73,24 @@ describe("Telegram channel pairing UX", () => {
 	test("shows Agent identity and isolates Unpair to the selected chat with recovery", () => {
 		expect(detail).toContain("binding.agent_link_id");
 		expect(detail).toContain("<AgentName");
-		expect(detail).toContain("Only this chat will be disconnected");
-		expect(detail).toContain("await unpair.mutateAsync(bindingId)");
-		expect(detail).toContain("finally");
+		expect(detail).toContain("<PairedChatRow");
+		expect(agentDetail).toContain("<PairedChatRow");
+		expect(pairedChatRow).toContain("Only this chat will be disconnected");
+		expect(pairedChatRow).toContain("unpair.mutateAsync(binding.id)");
+		expect(pairedChatRow).toContain("unpair.isPending");
 		expect(hooks).toContain("export function useDeleteChannelBinding");
 		expect(hooks).toContain("keys.bindings(accountId)");
 		expect(hooks).toContain('toastApiError("Couldn\'t unpair chat")');
 		expect(hooks).toContain("refetchInterval: 3_000");
+	});
+
+	test("filters Agent-page chats by visible active agent link and matching account", () => {
+		expect(agentDetail).toContain("useChannelBindingsForAccounts(accountIds)");
+		expect(agentDetail).toContain("selectAgentPairedChats");
+		expect(agentBindingLogic).toContain("activeAgentChannelLinks(visibleLinks)");
+		expect(agentBindingLogic).toContain("binding.account_id !== accountId");
+		expect(agentBindingLogic).toContain("linksById.get(binding.agent_link_id)");
+		expect(agentBindingLogic).toContain("link.account_id !== accountId");
 	});
 
 	test("never renders returned runtime credentials in Link or Pair surfaces", () => {
