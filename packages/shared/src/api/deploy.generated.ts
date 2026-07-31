@@ -1819,6 +1819,11 @@ export interface components {
              * @description Authoritative full display name copied verbatim from the bundled Hosted model catalog.
              */
             display_name: string;
+            /**
+             * Provider Id
+             * @description Canonical provider identifier from the bundled Hosted model catalog.
+             */
+            provider_id: string;
             /** Is Default */
             is_default: boolean;
             /** Is Featured */

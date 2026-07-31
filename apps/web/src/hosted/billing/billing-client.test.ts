@@ -142,10 +142,10 @@ describe("managed model catalog", () => {
 					{
 						id: "gpt-5.6-luna",
 						display_name: "GPT-5.6-Luna",
+						provider_id: "openai-codex",
 						is_default: true,
 						is_featured: true,
-						description:
-							"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
+						description: "Fast and affordable for everyday tasks.",
 						capabilities: {
 							context_window: 272_000,
 							max_context_window: null,
@@ -166,10 +166,10 @@ describe("managed model catalog", () => {
 				{
 					id: "gpt-5.6-luna",
 					display_name: "GPT-5.6-Luna",
+					provider_id: "openai-codex",
 					is_default: true,
 					is_featured: true,
-					description:
-						"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
+					description: "Fast and affordable for everyday tasks.",
 					capabilities: {
 						context_window: 272_000,
 						max_context_window: null,

@@ -30,6 +30,7 @@ const unsupportedCheckoutMode: HostedDeployCheckoutUiMode = "elements";
 void unsupportedCheckoutMode;
 
 const managedModelMetadata = {
+	provider_id: "openai-codex",
 	description: null,
 	capabilities: {
 		context_window: 128_000,

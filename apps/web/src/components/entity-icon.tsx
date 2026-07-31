@@ -15,9 +15,9 @@ import { cn } from "@/lib/utils";
  * Sources, in resolution order:
  *   - channel   → full-color app-icon PNG on Clawdi's CDN
  *   - framework → local app-icon PNG in /public/agents
- *   - provider  → colored brand logo from simpleicons (the CDN has no
- *                 provider PNGs) on a white tile so the brand color reads in
- *                 both themes; ids without a configured mark → monogram
+ *   - provider  → centralized aliases, labels, and colored brand logos from
+ *                 simpleicons (the CDN has no provider PNGs) on a white tile;
+ *                 ids without a configured mark → provider-label monogram
  *   - anything unresolved → neutral monogram tile
  *
  * Uses plain image rendering — these are tiny/vector brand assets that don't
@@ -48,8 +48,33 @@ const PROVIDER_SIMPLEICON: Record<string, { slug: string; hex: string } | null> 
 	google: { slug: "googlegemini", hex: "1C69FF" },
 	mistral: { slug: "mistralai", hex: "FA520F" },
 	openrouter: { slug: "openrouter", hex: "6566F1" },
+	kimi: { slug: "kimi", hex: "000000" },
 	custom_openai_compatible: null,
 };
+
+const PROVIDER_ICON_ALIASES: Readonly<Record<string, string>> = {
+	"openai-codex": "openai",
+	"kimi-coding": "kimi",
+};
+
+const PROVIDER_ICON_LABELS: Readonly<Record<string, string>> = {
+	openai: "OpenAI",
+	kimi: "Kimi",
+};
+
+export function providerIconMetadata(id: string): {
+	id: string;
+	label: string;
+	simpleIcon: { slug: string; hex: string } | null | undefined;
+} {
+	const key = id.trim().toLowerCase();
+	const canonicalId = PROVIDER_ICON_ALIASES[key] ?? key;
+	return {
+		id: canonicalId,
+		label: PROVIDER_ICON_LABELS[canonicalId] ?? id,
+		simpleIcon: PROVIDER_SIMPLEICON[canonicalId],
+	};
+}
 
 const SIZE = {
 	sm: { px: 24, box: "size-6 rounded-md", mono: "text-3xs" },
@@ -141,7 +166,8 @@ export function EntityIcon({
 }) {
 	const s = SIZE[size];
 	const key = id?.toLowerCase?.() ?? "";
-	const alt = label ?? id ?? "";
+	const providerMetadata = kind === "provider" ? providerIconMetadata(key) : null;
+	const alt = label ?? providerMetadata?.label ?? id ?? "";
 
 	if (kind === "framework") {
 		return (
@@ -173,7 +199,7 @@ export function EntityIcon({
 
 	// Provider brand logo (colored simpleicon) on a white tile.
 	if (kind === "provider") {
-		const brand = PROVIDER_SIMPLEICON[key];
+		const brand = providerMetadata?.simpleIcon;
 		if (brand) {
 			return (
 				<ProviderBrandIcon

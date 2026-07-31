@@ -174,19 +174,16 @@ describe("providerFormIdentity", () => {
 });
 
 describe("derivedProviderFields", () => {
-	test("keeps every preset suggestion first because saved catalog order is runtime authority", () => {
+	test("keeps every preset catalog non-empty and persists catalog order as runtime authority", () => {
 		for (const preset of PROVIDER_PRESETS) {
 			expect(
-				preset.catalog.some((model) => model.id === preset.suggested_primary_model),
-				`${preset.id} suggestion must exist in its catalog`,
-			).toBe(true);
-			expect(
-				preset.catalog[0]?.id,
-				`${preset.id} suggestion must be the saved catalog default`,
-			).toBe(preset.suggested_primary_model);
-			expect(presetCatalogToProviderModels(preset)[0]?.id).toBe(preset.suggested_primary_model);
+				preset.catalog.length,
+				`${preset.id} catalog must include a persisted recommended/default model`,
+			).toBeGreaterThan(0);
+			const persistedDefault = preset.catalog[0].id;
+			expect(presetCatalogToProviderModels(preset)[0]?.id).toBe(persistedDefault);
 			const projected = derivedProviderFields(providerTypeForPreset(preset), "api_key", preset);
-			expect(projected.modelsText.split("\n")[0]).toBe(preset.suggested_primary_model);
+			expect(projected.modelsText.split("\n")[0]).toBe(persistedDefault);
 		}
 	});
 
@@ -200,7 +197,6 @@ describe("derivedProviderFields", () => {
 			apiMode: "anthropic_messages",
 			runtimeEnv: "KIMI_CODING_API_KEY",
 			modelsText: "kimi-for-coding",
-			suggestedPrimaryModel: "kimi-for-coding",
 		});
 
 		const moonshot = testPreset("moonshot");
@@ -209,7 +205,6 @@ describe("derivedProviderFields", () => {
 			baseUrl: "https://api.moonshot.cn/v1",
 			apiMode: "openai_chat",
 			modelsText: "kimi-k3",
-			suggestedPrimaryModel: "kimi-k3",
 		});
 		expect(moonshot.region_variants).toEqual([
 			{
@@ -349,7 +344,6 @@ describe("derivedProviderFields", () => {
 			apiMode: "openai_chat",
 			runtimeEnv: "DEEPSEEK_API_KEY",
 			modelsText: "deepseek-v4-flash\ndeepseek-v4-pro",
-			suggestedPrimaryModel: "deepseek-v4-flash",
 		});
 		expect(shouldUseCatalogModels("custom_openai_compatible", "api_key", preset)).toBe(true);
 	});

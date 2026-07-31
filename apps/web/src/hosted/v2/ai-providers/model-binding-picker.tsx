@@ -1,7 +1,9 @@
 "use client";
 
+import { Check } from "lucide-react";
 import type { ApiErrorNormalizer } from "@/components/api-error-panel";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { EntityIcon } from "@/components/entity-icon";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -138,19 +140,23 @@ export function ModelBindingPicker({
 								data-testid="managed-model-choices"
 							>
 								{compactManagedItems.featured.map((item, index) => {
+									const radioId = `${catalogInputId}-featured-${index}`;
 									const titleId = `${catalogInputId}-featured-${index}-title`;
 									const descriptionId = `${catalogInputId}-featured-${index}-description`;
 									return (
 										<Label
 											key={item.value}
+											htmlFor={radioId}
 											className="w-full min-w-0 cursor-pointer items-start gap-2 rounded-md border border-border/70 bg-transparent px-2.5 py-2 shadow-xs transition-[color,box-shadow] hover:bg-muted/60 has-data-checked:border-primary/50 has-data-checked:bg-muted"
 										>
 											<RadioGroupItem
+												id={radioId}
 												value={item.value}
 												aria-labelledby={titleId}
 												aria-describedby={item.description ? descriptionId : undefined}
-												className="mt-0.5"
+												className="sr-only !absolute !size-px !border-0 !p-0"
 											/>
+											<EntityIcon kind="provider" id={item.providerId} size="sm" />
 											<span className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
 												<span id={titleId} className="truncate">
 													{item.label}
@@ -164,6 +170,13 @@ export function ModelBindingPicker({
 													</span>
 												) : null}
 											</span>
+											<Check
+												aria-hidden
+												className={cn(
+													"size-4 shrink-0 text-primary transition-opacity",
+													primaryModel === item.value ? "opacity-100" : "opacity-0",
+												)}
+											/>
 										</Label>
 									);
 								})}
@@ -194,13 +207,16 @@ export function ModelBindingPicker({
 									<SelectGroup>
 										{compactManagedItems.overflow.map((item) => (
 											<SelectItem key={item.value} value={item.value} className="items-start py-2">
-												<span className="flex min-w-0 flex-col items-start gap-0.5 whitespace-normal">
-													<span className="font-medium">{item.label}</span>
-													{item.description ? (
-														<span className="text-xs leading-snug text-muted-foreground">
-															{item.description}
-														</span>
-													) : null}
+												<span className="flex min-w-0 items-start gap-2 whitespace-normal">
+													<EntityIcon kind="provider" id={item.providerId} size="sm" />
+													<span className="flex min-w-0 flex-col items-start gap-0.5">
+														<span className="font-medium">{item.label}</span>
+														{item.description ? (
+															<span className="text-xs leading-snug text-muted-foreground">
+																{item.description}
+															</span>
+														) : null}
+													</span>
 												</span>
 											</SelectItem>
 										))}

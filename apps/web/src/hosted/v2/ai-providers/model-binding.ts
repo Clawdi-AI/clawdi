@@ -27,9 +27,13 @@ export type ModelBindingPickerItem = {
 	description?: string;
 };
 
+export type ManagedModelBindingPickerItem = ModelBindingPickerItem & {
+	providerId: string;
+};
+
 export type ManagedModelPickerItems = {
-	featured: ModelBindingPickerItem[];
-	overflow: ModelBindingPickerItem[];
+	featured: ManagedModelBindingPickerItem[];
+	overflow: ManagedModelBindingPickerItem[];
 };
 
 export type PrimaryModelRef = {
@@ -335,6 +339,7 @@ export function managedModelPickerItems(
 		seen.add(modelId);
 		const item = {
 			value: modelId,
+			providerId: model.provider_id,
 			// Managed display names are authoritative catalog data. Keep them
 			// verbatim instead of deriving a friendlier label from the model id.
 			label: model.display_name,

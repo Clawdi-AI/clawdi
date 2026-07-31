@@ -61,28 +61,28 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		{
 			id: "gpt-5.6-luna",
 			display_name: "GPT-5.6-Luna",
+			provider_id: "openai-codex",
 			is_default: true,
 			is_featured: true,
-			description:
-				"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
+			description: "Fast and affordable for everyday tasks.",
 			capabilities: textModelCapabilities,
 		},
 		{
 			id: "gpt-5.6-sol",
 			display_name: "GPT-5.6-Sol",
+			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description:
-				"Higher-cost, most capable Codex choice for complex work, with a 272K context window.",
+			description: "Best for complex tasks; costs more.",
 			capabilities: textModelCapabilities,
 		},
 		{
 			id: "gpt-5.6-terra",
 			display_name: "GPT-5.6-Terra",
+			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description:
-				"Balanced-cost Codex choice for capable everyday work, with a 272K context window.",
+			description: "Balanced for most work.",
 			capabilities: textModelCapabilities,
 		},
 	],
@@ -93,19 +93,19 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		{
 			id: "gpt-5.6-sol",
 			display_name: "GPT-5.6-Sol",
+			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: true,
-			description:
-				"Higher-cost, most capable Codex choice for complex work, with a 272K context window.",
+			description: "Best for complex tasks; costs more.",
 			capabilities: textModelCapabilities,
 		},
 		{
 			id: "k3",
 			display_name: "Kimi K3",
+			provider_id: "kimi-coding",
 			is_default: false,
 			is_featured: true,
-			description:
-				"Pricing varies; K3 targets long-context work with a 256K baseline and up to 1M only on eligible plans.",
+			description: "Great for long or detailed work; pricing varies.",
 			capabilities: {
 				...textModelCapabilities,
 				context_window: 262_144,
@@ -118,6 +118,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		{
 			id: "future-model",
 			display_name: "Future model",
+			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
 			description: null,
@@ -131,19 +132,19 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 		{
 			id: "gpt-5.6-luna",
 			display_name: "GPT-5.6-Luna",
+			provider_id: "openai-codex",
 			is_default: true,
 			is_featured: false,
-			description:
-				"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
+			description: "Fast and affordable for everyday tasks.",
 			capabilities: textModelCapabilities,
 		},
 		{
 			id: "gpt-5.6-terra",
 			display_name: "GPT-5.6-Terra",
+			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description:
-				"Balanced-cost Codex choice for capable everyday work, with a 272K context window.",
+			description: "Balanced for most work.",
 			capabilities: textModelCapabilities,
 		},
 	],
@@ -3317,26 +3318,59 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	const managedModels = page.getByTestId("managed-model-choices");
 	await expect(managedModels).toHaveAccessibleName("Main model");
 	const featuredModels = managedModels.getByRole("radio");
+	const featuredCards = managedModels.locator(":scope > label");
 	await expect(featuredModels).toHaveCount(2);
+	await expect(featuredCards).toHaveCount(2);
 	await expect(featuredModels.nth(0)).toHaveAccessibleName("GPT-5.6-Sol");
 	await expect(featuredModels.nth(1)).toHaveAccessibleName("Kimi K3");
+	await expect(featuredCards.nth(0).getByText("O", { exact: true })).toBeVisible();
+	await expect(featuredCards.nth(0).getByText("S", { exact: true })).toHaveCount(0);
+	await expect(featuredCards.nth(1).getByRole("img", { name: "Kimi" })).toBeVisible();
+	for (const radio of await featuredModels.all()) {
+		const visualControl = await radio.evaluate((element) => {
+			const style = getComputedStyle(element);
+			return {
+				height: element.getBoundingClientRect().height,
+				position: style.position,
+				width: element.getBoundingClientRect().width,
+			};
+		});
+		expect(visualControl.position).toBe("absolute");
+		expect(visualControl.height).toBeLessThanOrEqual(1);
+		expect(visualControl.width).toBeLessThanOrEqual(1);
+	}
 	const overflowModels = page.getByTestId("managed-model-overflow");
 	await expect(overflowModels).toHaveAccessibleName("More managed models");
 	await expect(overflowModels).toContainText("GPT-5.6-Luna");
 	await expect(featuredModels.nth(0)).not.toBeChecked();
 	await expect(featuredModels.nth(1)).not.toBeChecked();
 	await expect(page.locator("#deploy-primary-model")).toHaveCount(0);
-	await expect(managedModels).toContainText(
-		"Higher-cost, most capable Codex choice for complex work, with a 272K context window.",
-	);
-	await expect(managedModels).toContainText(
-		"Pricing varies; K3 targets long-context work with a 256K baseline and up to 1M only on eligible plans.",
-	);
+	await expect(managedModels).toContainText("Best for complex tasks; costs more.");
+	await expect(managedModels).toContainText("Great for long or detailed work; pricing varies.");
+	await expect(managedModels).not.toContainText(/272K|256K|1M|Codex|context|eligible plans/i);
 	await expect(page.getByTestId("managed-model-details")).toHaveCount(0);
-	await featuredModels.nth(0).click();
+	const cardBoxesBefore = await featuredCards.evaluateAll((cards) =>
+		cards.map((card) => {
+			const box = card.getBoundingClientRect();
+			return { height: box.height, width: box.width };
+		}),
+	);
+	await featuredCards.nth(0).click({ position: { x: 3, y: 3 } });
 	await expect(featuredModels.nth(0)).toBeChecked();
-	await featuredModels.nth(1).click();
+	await expect(featuredCards.nth(0).locator("svg.lucide-check")).toHaveCSS("opacity", "1");
+	await featuredCards.nth(1).click({ position: { x: 3, y: 3 } });
 	await expect(featuredModels.nth(1)).toBeChecked();
+	await expect(featuredModels.nth(0)).not.toBeChecked();
+	await expect(featuredCards.nth(0).locator("svg.lucide-check")).toHaveCSS("opacity", "0");
+	await expect(featuredCards.nth(1).locator("svg.lucide-check")).toHaveCSS("opacity", "1");
+	expect(
+		await featuredCards.evaluateAll((cards) =>
+			cards.map((card) => {
+				const box = card.getBoundingClientRect();
+				return { height: box.height, width: box.width };
+			}),
+		),
+	).toEqual(cardBoxesBefore);
 
 	const screenshotStyle = await page.addStyleTag({
 		content: ".sticky.bottom-0 { display: none !important; }",
@@ -3376,19 +3410,19 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(overflowModels).toContainText("More models");
 	await overflowModels.click();
 	await expect(page.getByRole("option")).toHaveCount(3);
-	await expect(page.getByRole("option").nth(0)).toHaveText("Future model");
+	await expect(page.getByRole("option").nth(0)).toContainText("Future model");
+	await expect(page.getByRole("option").nth(0).getByText("O", { exact: true })).toBeVisible();
 	await expect(page.getByRole("option").nth(1)).toContainText("GPT-5.6-Luna");
+	await expect(page.getByRole("option").nth(1).getByText("O", { exact: true })).toBeVisible();
 	await expect(page.getByRole("option").nth(1)).toContainText(
-		"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
+		"Fast and affordable for everyday tasks.",
 	);
 	await expect(page.getByRole("option").nth(2)).toContainText("GPT-5.6-Terra");
-	await expect(page.getByRole("option").nth(2)).toContainText(
-		"Balanced-cost Codex choice for capable everyday work, with a 272K context window.",
-	);
+	await expect(page.getByRole("option").nth(2)).toContainText("Balanced for most work.");
 	await page.getByRole("option", { name: "Future model" }).click();
 	await overflowModels.click();
 	await page.getByRole("option", { name: /GPT-5.6-Terra/ }).click();
-	await expect(overflowModels).toContainText("GPT-5.6-Terra");
+	await expect(overflowModels.locator('[data-slot="select-value"]')).toHaveText("GPT-5.6-Terra");
 	await expect(featuredModels.nth(0)).not.toBeChecked();
 	await page.getByRole("button", { name: "Deploy", exact: true }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
@@ -3426,7 +3460,7 @@ test("deploy keeps every saved provider model editable and uses only catalog def
 
 	await page.getByRole("button", { name: /^DeepSeek/ }).click();
 	const modelInput = page.getByLabel("Main model");
-	await expect(modelInput).toHaveValue(preset.suggested_primary_model);
+	await expect(modelInput).toHaveValue(preset.catalog[0].id);
 	await expect(modelInput).toHaveAttribute("list", "deploy-model-options");
 
 	await page.getByRole("button", { name: /^Owner Catalog A/ }).click();
@@ -3575,9 +3609,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await expect(agentModels).toHaveAccessibleName("Main model");
 	const agentModelChoice = agentModels.getByRole("radio", { name: "GPT-5.6-Luna" });
 	await expect(agentModelChoice).toBeChecked();
-	await expect(agentModels).toContainText(
-		"Lowest-cost Codex choice for fast, high-volume work, with a 272K context window.",
-	);
+	await expect(agentModels).toContainText("Fast and affordable for everyday tasks.");
 	await expect(page.locator("#agent-primary-model")).toHaveCount(0);
 	const agentModelFrame = await agentModels.evaluate((element) => {
 		const frame = element.closest('div[data-hosted="true"][data-v2="true"]');

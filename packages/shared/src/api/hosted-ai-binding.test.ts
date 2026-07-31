@@ -18,6 +18,7 @@ const managedModels = [
 	{
 		id: "gpt-managed",
 		display_name: "Managed",
+		provider_id: "openai-codex",
 		is_default: true,
 		is_featured: true,
 		description: null,
