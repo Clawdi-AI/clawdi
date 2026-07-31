@@ -38,6 +38,7 @@ import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
@@ -48,7 +49,7 @@ from app.core.database import async_session_factory
 from app.core.project import project_ids_visible_to
 from app.core.skill_sync_protocol import (
     SKILL_SYNC_PROTOCOL_HEADER,
-    require_agent_authoritative_skill_sync,
+    resolve_skill_sync_protocol,
 )
 from app.services import sync_events
 
@@ -135,8 +136,9 @@ async def _stream(
         )
         for task in pending:
             task.cancel()
-        if pending:
-            await asyncio.gather(*pending, return_exceptions=True)
+        for task in pending:
+            with suppress(asyncio.CancelledError):
+                await task
         if revoked_task in done or revoked.is_set():
             return
         if event_task not in done:
@@ -195,7 +197,7 @@ async def events(
     query returns. With many connected daemons this keeps the
     pool free for normal request traffic.
     """
-    require_agent_authoritative_skill_sync(skill_sync_protocol)
+    resolve_skill_sync_protocol(skill_sync_protocol)
     user_id = auth.user_id
     if _oauth_cli_access_expired(auth):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "OAuth access token has expired")

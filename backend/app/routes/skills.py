@@ -40,7 +40,8 @@ from app.core.skill_key import (
 )
 from app.core.skill_sync_protocol import (
     SKILL_SYNC_PROTOCOL_HEADER,
-    require_agent_authoritative_skill_sync,
+    SkillSyncProtocol,
+    resolve_skill_sync_protocol,
 )
 from app.models.project import PROJECT_KIND_ENVIRONMENT, Project
 from app.models.project_membership import ProjectMembership
@@ -53,6 +54,8 @@ from app.models.skill import (
 from app.models.user import User
 from app.schemas.common import Paginated
 from app.schemas.skill import (
+    PersistedProjectKind,
+    PersistedSkillAuthority,
     SkillContentUpdateRequest,
     SkillDeleteResponse,
     SkillDetailResponse,
@@ -113,6 +116,24 @@ log = logging.getLogger(__name__)
 file_store = get_file_store()
 _SKILLS_LIST_CACHE_CONTROL = "no-transform"
 _SKILLS_ETAG_VERSION = "skills-v2"
+
+
+def _persisted_skill_authority(value: str) -> PersistedSkillAuthority:
+    if value == SKILL_AUTHORITY_AGENT_SYNC:
+        return "agent_sync"
+    if value == SKILL_AUTHORITY_CLOUD:
+        return "cloud"
+    raise ValueError(f"Unsupported persisted Skill authority: {value}")
+
+
+def _persisted_project_kind(value: str) -> PersistedProjectKind:
+    if value == "environment":
+        return "environment"
+    if value == "personal":
+        return "personal"
+    if value == "workspace":
+        return "workspace"
+    raise ValueError(f"Unsupported persisted Project kind: {value}")
 
 
 def _file_key(user_id, project_id, skill_key: str) -> str:
@@ -239,7 +260,7 @@ def _compute_file_tree_hash(tar_bytes: bytes, skill_key: str | None = None) -> s
 # ---------------------------------------------------------------------------
 
 
-@router.get("")
+@router.get("", response_model=Paginated[SkillSummaryResponse])
 async def list_skills(
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     q: str | None = Query(default=None, description="Search name / description / skill_key"),
@@ -259,13 +280,13 @@ async def list_skills(
     ),
     if_none_match: str | None = Header(default=None, alias="If-None-Match"),
     skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
-) -> Paginated[SkillSummaryResponse]:
+) -> Paginated[SkillSummaryResponse] | Response:
     if (
         (auth.is_cli or auth.oauth_cli)
         and auth.api_key is not None
         and auth.api_key.environment_id is not None
     ):
-        require_agent_authoritative_skill_sync(skill_sync_protocol)
+        resolve_skill_sync_protocol(skill_sync_protocol)
     async with async_session_factory() as db:
         return await _list_skills_with_db(
             auth=auth,
@@ -291,7 +312,7 @@ async def _list_skills_with_db(
     project_id: UUID | None,
     if_none_match: str | None,
     skill_sync_protocol: str | None,
-) -> Paginated[SkillSummaryResponse]:
+) -> Paginated[SkillSummaryResponse] | Response:
     # Keep every query that contributes to the strong collection ETag and its
     # response body in one snapshot. Cross-page consistency remains fenced by
     # the shared collection revision because released CLI 0.13.13 performs a
@@ -363,7 +384,7 @@ async def _list_skills_with_db(
             meta["kind"] == PROJECT_KIND_ENVIRONMENT for meta in project_meta.values()
         )
         if has_agent_project:
-            require_agent_authoritative_skill_sync(skill_sync_protocol)
+            resolve_skill_sync_protocol(skill_sync_protocol)
     etag = _skills_collection_etag(
         revision=revision,
         selected_project_id=selected_project_id,
@@ -425,7 +446,7 @@ async def _list_skills_with_db(
                 description=s.description,
                 version=s.version,
                 source=s.source,
-                authority=s.authority,
+                authority=_persisted_skill_authority(s.authority),
                 source_repo=s.source_repo,
                 agent_types=s.agent_types,
                 file_count=s.file_count,
@@ -678,7 +699,7 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
     description = skill.description
     version = skill.version
     source = skill.source
-    authority = skill.authority
+    authority = _persisted_skill_authority(skill.authority)
     source_repo = skill.source_repo
     file_count = skill.file_count
     agent_types = skill.agent_types
@@ -708,7 +729,7 @@ async def _build_skill_detail(skill: Skill, db: AsyncSession | None = None) -> S
         ).first()
         if project_row is not None:
             project_name = project_row.name
-            project_kind = project_row.kind
+            project_kind = _persisted_project_kind(project_row.kind)
             if project_row.origin_environment_id is not None:
                 environment_id = str(project_row.origin_environment_id)
                 env_row = (
@@ -795,7 +816,8 @@ async def upload_skill_legacy(
     route. New CLIs and the dashboard call
     `POST /v1/projects/{project_id}/skills/upload` directly.
 
-    Asymmetric with `delete_skill_legacy` (which 410s) by design:
+    Asymmetric with `delete_skill_legacy` (which only accepts an env-bound
+    API key) by design:
     a wrong-project upload creates a stray row visible in the
     dashboard listing, recoverable in 30s by re-uploading to the
     correct project. A wrong-project DELETE is permanent data loss.
@@ -947,7 +969,7 @@ async def _project_upload_authority(
                 "message": "Change this Skill in the Agent filesystem and sync it.",
             },
         )
-    require_agent_authoritative_skill_sync(skill_sync_protocol)
+    resolve_skill_sync_protocol(skill_sync_protocol)
     agent_id = project.origin_environment_id
     if agent_id is None:
         raise HTTPException(
@@ -1418,6 +1440,7 @@ async def _do_upload_skill(
 @router.get("/{skill_key:path}/download")
 async def download_skill_legacy(
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
@@ -1426,7 +1449,12 @@ async def download_skill_legacy(
     `/v1/projects/{project_id}/skills/{skill_key}/download`."""
     visible_project_ids = await project_ids_visible_to(db, auth)
     skill = await _resolve_legacy_skill(db, auth, visible_project_ids, skill_key)
-    await _assert_cli_agent_project_download_blocked(db, auth, skill.project_id)
+    await _enforce_agent_project_download_protocol(
+        db,
+        auth,
+        skill.project_id,
+        skill_sync_protocol,
+    )
     return await _build_skill_download(skill, skill_key, db)
 
 
@@ -1434,6 +1462,7 @@ async def download_skill_legacy(
 async def download_skill_project(
     project_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
@@ -1453,6 +1482,7 @@ async def download_skill_project(
         auth=auth,
         project_id=project_id,
         skill_key=skill_key,
+        skill_sync_protocol=skill_sync_protocol,
     )
 
 
@@ -1460,6 +1490,7 @@ async def download_skill_project(
 async def download_skill_scope_compat(
     scope_id: UUID = Path(...),
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:read")),
     db: AsyncSession = Depends(get_session),
 ):
@@ -1468,6 +1499,7 @@ async def download_skill_scope_compat(
         auth=auth,
         project_id=scope_id,
         skill_key=skill_key,
+        skill_sync_protocol=skill_sync_protocol,
     )
 
 
@@ -1537,8 +1569,14 @@ async def _get_project_skill_download(
     auth: AuthContext,
     project_id: UUID,
     skill_key: str,
+    skill_sync_protocol: str | None,
 ) -> Response:
-    await _assert_cli_agent_project_download_blocked(db, auth, project_id)
+    await _enforce_agent_project_download_protocol(
+        db,
+        auth,
+        project_id,
+        skill_sync_protocol,
+    )
     skill = await _get_project_skill(
         db=db,
         auth=auth,
@@ -1548,17 +1586,22 @@ async def _get_project_skill_download(
     return await _build_skill_download(skill, skill_key, db)
 
 
-async def _assert_cli_agent_project_download_blocked(
+async def _enforce_agent_project_download_protocol(
     db: AsyncSession,
     auth: AuthContext,
     project_id: UUID,
+    skill_sync_protocol: str | None,
 ) -> None:
     if not auth.is_cli and not auth.oauth_cli:
         return
     project_kind = (
         await db.execute(select(Project.kind).where(Project.id == project_id))
     ).scalar_one_or_none()
-    if project_kind == PROJECT_KIND_ENVIRONMENT:
+    if (
+        project_kind == PROJECT_KIND_ENVIRONMENT
+        and resolve_skill_sync_protocol(skill_sync_protocol)
+        == SkillSyncProtocol.AGENT_AUTHORITATIVE_V1
+    ):
         raise HTTPException(
             status.HTTP_409_CONFLICT,
             detail={
@@ -1741,36 +1784,37 @@ async def _do_delete_agent_synced_skill(
 @router.delete("/{skill_key:path}")
 async def delete_skill_legacy(
     skill_key: str = Path(..., pattern=SKILL_KEY_PATTERN, max_length=MAX_SKILL_KEY_LEN),
+    skill_sync_protocol: str | None = Header(default=None, alias=SKILL_SYNC_PROTOCOL_HEADER),
     auth: AuthContext = Depends(require_scope_short_session("skills:write")),
     db: AsyncSession = Depends(get_session),
 ) -> SkillDeleteResponse:
-    """Legacy delete by slug-only is gone in phase 2. Resolving
-    via `resolve_default_write_project` would silently delete
-    the wrong project's copy when the caller's account holds the
-    same `skill_key` in multiple projects (which the cross-project
-    listing now exposes), or 404 with no useful hint when
-    their default project doesn't have that key. The CLI and
-    dashboard both migrated to
-    `DELETE /v1/projects/{project_id}/skills/{skill_key}` and
-    pass the row's own project_id; force any stale client onto
-    that path with 410 instead of guessing.
+    """Safely serve released slug-only clients with an Agent-bound identity.
 
-    Argument unused — kept so FastAPI still parses the path
-    param uniformly with sibling routes.
+    Only an env-bound API key identifies exactly one Agent and its current
+    Agent Project. User-level API keys, OAuth CLI sessions, and browser sessions
+    remain ambiguous and receive the historical 410 instead of resolving a
+    most-recently-active Project.
     """
-    del skill_key
-    del auth
-    del db
-    raise HTTPException(
-        status.HTTP_410_GONE,
-        detail={
-            "code": "project_explicit_route_required",
-            "message": (
-                "Use DELETE /v1/projects/{project_id}/skills/{skill_key} — "
-                "call GET /v1/skills to find the project_id of the row "
-                "you want to delete."
-            ),
-        },
+    key = auth.api_key
+    if not auth.is_cli or key is None or key.environment_id is None:
+        raise HTTPException(
+            status.HTTP_410_GONE,
+            detail={
+                "code": "project_explicit_route_required",
+                "message": (
+                    "Use DELETE /v1/projects/{project_id}/skills/{skill_key} — "
+                    "call GET /v1/skills to find the project_id of the row "
+                    "you want to delete."
+                ),
+            },
+        )
+    resolve_skill_sync_protocol(skill_sync_protocol)
+    return await _do_delete_agent_synced_skill(
+        db=db,
+        auth=auth,
+        agent_id=key.environment_id,
+        project_id=None,
+        skill_key=skill_key,
     )
 
 

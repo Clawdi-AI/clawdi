@@ -551,10 +551,13 @@ export class ApiClient {
 		return await readJson<T>(res, path);
 	}
 
-	async getBytes(path: string): Promise<Buffer> {
+	async getBytes(path: string, extraHeaders?: Record<string, string>): Promise<Buffer> {
 		const accessToken = await this.getAccessToken();
 		const req = new Request(`${this.baseUrl}${path}`, {
-			headers: { Authorization: `Bearer ${accessToken}` },
+			headers: {
+				Authorization: `Bearer ${accessToken}`,
+				...(extraHeaders ?? {}),
+			},
 		});
 		const res = await retryingFetch(req, DEFAULT_TIMEOUT_MS, this.abortSignal);
 		if (!res.ok) {

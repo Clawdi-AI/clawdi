@@ -166,23 +166,24 @@ old environment metadata are not ownership evidence. A live authenticated
 Agent upload may atomically claim the matching row as `agent_sync`, including
 when its bytes are unchanged. Current CLIs use only the dedicated Agent sync
 boundary; a missing dedicated route or an unproven Agent identity fails closed
-without issuing a generic Project mutation. Browser writes, old clients without
-the explicit capability, and orphan Agent Projects also fail closed.
+without issuing a generic Project mutation. Compatibility writes still require
+a proven CLI Agent and Agent Project; browser writes and orphan Agent Projects
+fail closed. Slug-only delete is accepted only for an environment-bound API key,
+whose bound Agent resolves exactly one current Agent Project.
 
-Mixed-version safety uses the explicit
-`X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` capability, never a
-User-Agent guess. Every Clawdi backend worker must serve the gate and dedicated
-endpoints and old SSE connections must be drained before CLI 0.13.13 is rolled
-out; Web follows the CLI. An old CLI reaching a current backend receives 426
-on Agent-Project sync surfaces. A current CLI reaching an old backend receives
-a dedicated-route 404, retains its local operation, and does not create a Cloud
-mutation. Projection may pause during that window, but the Agent filesystem
-remains unchanged. Additive
+Mixed-version behavior is selected by `X-Clawdi-Skill-Sync-Protocol`, never a
+User-Agent guess. A missing header or explicit `agent-authoritative-v0` selects
+the released legacy listing, SSE, upload, delete, and download behavior;
+`agent-authoritative-v1` selects the current one-way behavior. Malformed and
+unknown values return 400. Current CLIs use the dedicated Agent routes and do
+not download Agent Project projections; an explicit v1 download remains
+blocked. A current CLI reaching an old backend receives a dedicated-route 404,
+retains its local operation, and does not create a generic Project mutation.
+Additive
 `agent_skill_changed`/`agent_skill_deleted` invalidations protect mutations
 created by current backend workers from already-connected released parsers;
-they do not make an old mutation worker safe. Current daemons treat both event
-families as rescan hints. Cloud-owned Project events retain their released
-names.
+current daemons treat both event families as rescan hints. Cloud-owned Project
+events retain their released names.
 
 The bundled `clawdi` Skill is private platform infrastructure, not a third
 inventory authority and not a user Skill. Its private runtime entry reserves
