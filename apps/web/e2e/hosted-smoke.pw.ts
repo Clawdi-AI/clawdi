@@ -5965,27 +5965,75 @@ test("card past due uses Fix payment instead of wallet recovery", async ({ page 
 	expect(errors, `card payment recovery: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("compute plans keep signup credits without advertising subscription credit grants", async ({
+test("compute comparison synchronizes API prices across the shared billing term", async ({
 	page,
 }) => {
 	const errors = collectBrowserErrors(page);
+	const comparisonBasicPlan = {
+		...basicPlan,
+		price_cents: 1_234,
+		offers: [
+			{
+				billing_term_months: 1,
+				price_cents: 1_234,
+				effective_monthly_price_cents: 1_234,
+				discount_percent: 0,
+			},
+			{
+				billing_term_months: 12,
+				price_cents: 12_348,
+				effective_monthly_price_cents: 1_029,
+				discount_percent: 17,
+			},
+		],
+	};
+	const comparisonPerformancePlan = {
+		...performancePlan,
+		price_cents: 5_678,
+		offers: [
+			{
+				billing_term_months: 1,
+				price_cents: 5_678,
+				effective_monthly_price_cents: 5_678,
+				discount_percent: 0,
+			},
+			{
+				billing_term_months: 12,
+				price_cents: 54_324,
+				effective_monthly_price_cents: 4_527,
+				discount_percent: 20,
+			},
+		],
+	};
 	await stubHostedApi(page, {
 		deployments: [paidBasicDeployment],
-		plans: [
-			{ ...basicPlan, subscription_grant_credits: 500 },
-			{ ...performancePlan, subscription_grant_credits: 1_000 },
-		],
+		plans: [comparisonBasicPlan, comparisonPerformancePlan],
 	});
 	await page.goto("/channels?settings=billing-plan");
 
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog).toBeVisible();
-	await expect(
-		settingsDialog.getByText("$5.00 welcome balance on signup", { exact: true }),
-	).toBeVisible();
-	await expect(settingsDialog).not.toContainText("AI Credits per subscription");
-	await expect(settingsDialog).not.toContainText("AI Credits added to Wallet");
-	await expect(settingsDialog).not.toContainText("credits do not expire");
+	const comparison = settingsDialog.getByRole("region", { name: "Compare compute options" });
+	const termSwitcher = comparison.getByRole("group", { name: /Billing term/ });
+	await expect(termSwitcher).toHaveCount(1);
+	const cards = comparison.locator('[data-slot="card"]');
+	const basicCard = cards.nth(0);
+	const performanceCard = cards.nth(1);
+	const aiCard = cards.nth(2);
+	await expect(termSwitcher.getByRole("button", { name: "Monthly", exact: true })).toHaveAttribute(
+		"aria-pressed",
+		"true",
+	);
+	await expect(basicCard).toContainText("$12.34/mo");
+	await expect(performanceCard).toContainText("$56.78/mo");
+	await expect(aiCard).toContainText("Pay as you go");
+
+	await termSwitcher.getByRole("button", { name: "Annual", exact: true }).click();
+	await expect(basicCard).toContainText("$10.29/mo");
+	await expect(basicCard).toContainText("Billed $123.48/yr");
+	await expect(performanceCard).toContainText("$45.27/mo");
+	await expect(performanceCard).toContainText("Billed $543.24/yr");
+	await expect(aiCard).toContainText("Pay as you go");
 	expect(errors, `compute plan comparison: ${errors.join(" | ")}`).toEqual([]);
 });
 

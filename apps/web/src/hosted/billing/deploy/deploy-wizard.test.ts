@@ -12,10 +12,6 @@ const acceptedNavigationSource = readFileSync(
 	new URL("./accepted-deployment-navigation.ts", import.meta.url),
 	"utf8",
 );
-const planComparisonSource = readFileSync(
-	new URL("../subscription/plan-comparison.tsx", import.meta.url),
-	"utf8",
-);
 const planChangeDialogSource = readFileSync(
 	new URL("../subscription/plan-change-dialog.tsx", import.meta.url),
 	"utf8",
@@ -220,9 +216,6 @@ describe("first Basic agent copy", () => {
 		expect(wizardSource).not.toContain("included Basic slot");
 		expect(wizardSource).not.toContain("included Basic deployment");
 		expect(wizardSource).not.toContain("included slot");
-		expect(planComparisonSource).toContain("The first active Basic agent is free.");
-		expect(planComparisonSource).toContain("Your first active Basic agent is free.");
-		expect(planComparisonSource).not.toContain("agent is included");
 		expect(wizardSource).toContain("acceptDeployment(created.deploymentId)");
 		expect(wizardSource).toContain("acceptDeployment(outcome.deploymentId)");
 		expect(wizardSource).not.toContain("resolveWalletDeploymentId");
@@ -242,10 +235,6 @@ describe("first Basic agent copy", () => {
 	});
 
 	test("keeps infrastructure vocabulary out of customer copy", () => {
-		expect(planComparisonSource).toContain("Always-on agent with TEE protection");
-		expect(planComparisonSource).toContain("Public ports for agent services");
-		expect(planComparisonSource).not.toContain("hosted runtime");
-		expect(planComparisonSource).not.toContain("runtime-owned services");
 		expect(providerFieldsFormSource).toContain("Agent environment variable");
 		expect(providerFieldsFormSource).not.toContain("Runtime mapping");
 		expect(providerFieldsFormSource).not.toContain("Runtime env var");

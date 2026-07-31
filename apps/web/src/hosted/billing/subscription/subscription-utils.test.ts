@@ -3,6 +3,7 @@ import type { BillingOffer, HostedComputeSubscription, Plan } from "@/hosted/bil
 import {
 	COMPUTE_BASIC_SLUG,
 	COMPUTE_PERFORMANCE_SLUG,
+	commonExplicitBillingOffers,
 	computeFundingMode,
 	computeFundingSource,
 	computeSubscriptionId,
@@ -282,6 +283,44 @@ describe("selectExplicitOfferForTerm", () => {
 				1,
 			),
 		).toBeNull();
+	});
+});
+
+describe("commonExplicitBillingOffers", () => {
+	test("keeps only terms explicitly offered by both compute plans", () => {
+		const monthly = offer(1, 1_234);
+		const annual = offer(12, 12_345);
+		const shared = commonExplicitBillingOffers([
+			plan({
+				slug: COMPUTE_BASIC_SLUG,
+				price_cents: 1_234,
+				offers: [annual, monthly],
+			}),
+			plan({
+				slug: COMPUTE_PERFORMANCE_SLUG,
+				price_cents: 5_678,
+				offers: [offer(1, 5_678)],
+			}),
+		]);
+
+		expect(shared).toEqual([monthly]);
+	});
+
+	test("returns no shared term for disjoint non-empty explicit offer sets", () => {
+		expect(
+			commonExplicitBillingOffers([
+				plan({
+					slug: COMPUTE_BASIC_SLUG,
+					price_cents: 1_234,
+					offers: [offer(1, 1_234)],
+				}),
+				plan({
+					slug: COMPUTE_PERFORMANCE_SLUG,
+					price_cents: 5_678,
+					offers: [offer(12, 54_324)],
+				}),
+			]),
+		).toEqual([]);
 	});
 });
 
