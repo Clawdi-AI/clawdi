@@ -15,11 +15,9 @@ import {
 	readlinkSync,
 	rmSync,
 	statSync,
-	symlinkSync,
-	writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
 	AiProviderApiMode,
@@ -86,6 +84,7 @@ import {
 	readRuntimeInstallReceipts,
 	writeRuntimeInstallReceipts,
 } from "./install-receipts";
+import { captureRuntimeLiveSnapshot, restoreRuntimeLiveSnapshot } from "./live-state-snapshot";
 import {
 	buildManagedModelsEndpoint,
 	extractManagedLiveModels,
@@ -106,7 +105,7 @@ import {
 import {
 	isEnvSecretRef,
 	normalizeSecretValues,
-	processRuntimeEnvironment,
+	projectedRuntimeEnvironment,
 	type RuntimeEnvironmentAuthority,
 	runtimeSecretValue as resolveRuntimeSecretValue,
 } from "./secret-values";
@@ -232,24 +231,6 @@ export interface RuntimePrivateAppliedAuthority {
 	// root-owned 0600 applied-state authority.
 	daemonAuthTokenRevision?: string;
 	egressSidecarSecretRevision?: string;
-}
-
-type RuntimeLiveSnapshotNode =
-	| { kind: "missing" }
-	| { kind: "metadata"; existed: false }
-	| { kind: "metadata"; existed: true; mode: number; uid: number; gid: number }
-	| { kind: "file"; content: Buffer; mode: number; uid: number; gid: number }
-	| { kind: "symlink"; target: string; uid: number; gid: number }
-	| {
-			kind: "directory";
-			mode: number;
-			uid: number;
-			gid: number;
-			entries: Map<string, RuntimeLiveSnapshotNode>;
-	  };
-
-interface RuntimeLiveSnapshot {
-	entries: Map<string, RuntimeLiveSnapshotNode>;
 }
 
 interface RuntimeInstallObservation {
@@ -808,7 +789,7 @@ function scopedSecretValues(
 		if (isEnvSecretRef(ref) && !options.resolveEnv) continue;
 		const value = options.resolver
 			? options.resolver.resolve(ref)
-			: resolveRuntimeSecretValue(normalizedValues, ref, processRuntimeEnvironment());
+			: resolveRuntimeSecretValue(normalizedValues, ref, projectedRuntimeEnvironment({}));
 		if (!value) {
 			if (options.require?.(ref)) throw new Error(`Runtime secret ${ref} is unavailable.`);
 			continue;
@@ -2245,11 +2226,12 @@ function verifiedCommittedEgressSecretMaterial(
 		const committed = loadCommittedRuntimeManifest(paths);
 		if ("errors" in committed) return null;
 		if (egressSecretRefs(committed.manifest).some(isEnvSecretRef)) return null;
+		if (!committed.applyContext) return null;
 		return egressSecretMaterial(
 			committed.manifest,
 			committed.secretValues,
 			paths,
-			committed.applyContext?.runtimeEnvironment ?? processRuntimeEnvironment(),
+			committed.applyContext.runtimeEnvironment,
 		);
 	} catch {
 		return null;
@@ -4488,7 +4470,7 @@ export function runtimeProgramRevision(
 	runtime: string,
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevision: string | null = null,
-	runtimeEnvironment: RuntimeEnvironmentAuthority = processRuntimeEnvironment(),
+	runtimeEnvironment: RuntimeEnvironmentAuthority = projectedRuntimeEnvironment({}),
 ): string {
 	const desiredRuntime = manifest.runtimes[runtime];
 	const desiredProgram = desiredRuntime
@@ -4736,7 +4718,7 @@ function runtimeSystemdProgramRevision(
 	program: RuntimeSystemdUserProgram,
 	secretValues: Record<string, string> | undefined,
 	providerProjectionRevisions: Partial<Record<string, string | null>> = {},
-	runtimeEnvironment: RuntimeEnvironmentAuthority = processRuntimeEnvironment(),
+	runtimeEnvironment: RuntimeEnvironmentAuthority = projectedRuntimeEnvironment({}),
 ): string {
 	if (program.service) return runtimeServiceProgramRevision(program);
 	return runtimeProgramRevision(
@@ -5806,227 +5788,6 @@ function runtimeConvergenceWithoutApply(input: {
 	};
 }
 
-function addExistingManagedSystemdSystemPaths(paths: RuntimePaths, result: Set<string>): void {
-	if (!existsSync(paths.systemdSystemRoot)) return;
-	for (const entry of readdirSync(paths.systemdSystemRoot)) {
-		const path = join(paths.systemdSystemRoot, entry);
-		if (
-			entry.endsWith(".service") &&
-			(entry.startsWith("clawdi-") || isGeneratedSystemdFile(path))
-		) {
-			result.add(path);
-		}
-		if (!entry.endsWith(".service.d")) continue;
-		const dropIn = join(path, "10-clawdi-hosted.conf");
-		if (isGeneratedSystemdFile(dropIn)) result.add(dropIn);
-	}
-}
-
-export function runtimeLiveSnapshotPaths(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	_workspaceRoot: string,
-): string[] {
-	const result = new Set<string>([
-		paths.managedConfig,
-		paths.syncState,
-		paths.providerHealthStatus,
-		paths.egressEngineStatus,
-		paths.manifestLastGood,
-		paths.managedSecretCacheFile,
-		paths.appliedState,
-		paths.egressProfileRoot,
-		paths.installInventory,
-		paths.projectionRoot,
-		join(paths.instanceRoot, manifest.instanceId),
-		paths.managedSecretFile,
-		paths.daemonAuthToken,
-		egressSecretFilePath(paths),
-		paths.instanceData,
-		paths.sensitiveInstanceData,
-		paths.egressAddon,
-		paths.egressTransparentEnv,
-		paths.egressSystemCaFile,
-		liveSyncEnvironmentIndexPath(paths),
-	]);
-	for (const name of ["clawdi-runtime-watch", "clawdi-daemon", "clawdi-runtime-sidecar"]) {
-		result.add(join(paths.systemdSystemRoot, systemdUnitFileName(name)));
-		result.add(systemdEnvironmentFilePath(paths, name));
-	}
-	addExistingManagedSystemdSystemPaths(paths, result);
-	return [...result].sort();
-}
-
-function runtimeManagedDirectoryPaths(manifest: RuntimeManifest, paths: RuntimePaths): string[] {
-	return [
-		paths.runConfigRoot,
-		paths.systemdEnvRoot,
-		paths.egressProfileRoot,
-		paths.installInventory,
-		paths.projectionRoot,
-		join(paths.instanceRoot, manifest.instanceId),
-	];
-}
-
-function assertRuntimeManagedDirectoryTrusted(path: string): void {
-	let stat: ReturnType<typeof lstatSync>;
-	try {
-		stat = lstatSync(path);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-		throw error;
-	}
-	if (!stat.isDirectory() || stat.isSymbolicLink()) {
-		throw new Error(`runtime managed directory is not a real directory: ${path}`);
-	}
-	if ((stat.mode & 0o022) !== 0) {
-		throw new Error(`runtime managed directory is group/world writable: ${path}`);
-	}
-	if (runningAsRoot() && stat.uid !== 0) {
-		throw new Error(`runtime managed directory is not root-owned: ${path}`);
-	}
-}
-
-function runtimeLiveSnapshotMetadataPaths(snapshotPaths: readonly string[]): string[] {
-	return [
-		...new Set(
-			snapshotPaths
-				.filter((path) => basename(path) === "10-clawdi-hosted.conf")
-				.map((path) => dirname(path)),
-		),
-	].sort();
-}
-
-function captureRuntimeLiveNode(path: string): RuntimeLiveSnapshotNode {
-	let stat: ReturnType<typeof lstatSync>;
-	try {
-		stat = lstatSync(path);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "missing" };
-		throw error;
-	}
-	if (stat.isSymbolicLink()) {
-		return { kind: "symlink", target: readlinkSync(path), uid: stat.uid, gid: stat.gid };
-	}
-	if (stat.isFile()) {
-		return {
-			kind: "file",
-			content: readFileSync(path),
-			mode: stat.mode & 0o777,
-			uid: stat.uid,
-			gid: stat.gid,
-		};
-	}
-	if (!stat.isDirectory()) throw new Error(`unsupported runtime live-state path: ${path}`);
-	const mode = stat.mode & 0o777;
-	if ((mode & 0o022) !== 0) {
-		throw new Error(`runtime live-state snapshot directory is group/world writable: ${path}`);
-	}
-	if (runningAsRoot() && stat.uid !== 0) {
-		throw new Error(`runtime live-state snapshot directory is not root-owned: ${path}`);
-	}
-	return {
-		kind: "directory",
-		mode,
-		uid: stat.uid,
-		gid: stat.gid,
-		entries: new Map(
-			readdirSync(path)
-				.sort()
-				.map((entry) => [entry, captureRuntimeLiveNode(join(path, entry))]),
-		),
-	};
-}
-
-function captureRuntimeLiveMetadata(path: string): RuntimeLiveSnapshotNode {
-	try {
-		const stat = lstatSync(path);
-		return {
-			kind: "metadata",
-			existed: true,
-			mode: stat.mode & 0o777,
-			uid: stat.uid,
-			gid: stat.gid,
-		};
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-			return { kind: "metadata", existed: false };
-		}
-		throw error;
-	}
-}
-
-function restoreRuntimeLiveOwnership(
-	path: string,
-	uid: number,
-	gid: number,
-	symlink: boolean,
-): void {
-	const restored = lstatSync(path);
-	if (restored.uid === uid && restored.gid === gid) return;
-	if (symlink) lchownSync(path, uid, gid);
-	else chownSync(path, uid, gid);
-}
-
-function captureRuntimeLiveSnapshot(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	workspaceRoot: string,
-): RuntimeLiveSnapshot {
-	for (const path of runtimeManagedDirectoryPaths(manifest, paths)) {
-		assertRuntimeManagedDirectoryTrusted(path);
-	}
-	const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths, workspaceRoot);
-	return {
-		entries: new Map([
-			...snapshotPaths.map((path) => [path, captureRuntimeLiveNode(path)] as const),
-			...runtimeLiveSnapshotMetadataPaths(snapshotPaths).map(
-				(path) => [path, captureRuntimeLiveMetadata(path)] as const,
-			),
-		]),
-	};
-}
-
-function restoreRuntimeLiveNode(path: string, node: RuntimeLiveSnapshotNode): void {
-	if (node.kind === "metadata") {
-		if (!node.existed) {
-			if (existsSync(path) && readdirSync(path).length === 0) rmSync(path, { recursive: true });
-			return;
-		}
-		if (!existsSync(path)) mkdirSync(path, { recursive: true, mode: node.mode });
-		chmodSync(path, node.mode);
-		restoreRuntimeLiveOwnership(path, node.uid, node.gid, false);
-		return;
-	}
-	rmSync(path, { recursive: true, force: true });
-	if (node.kind === "missing") return;
-	mkdirSync(dirname(path), { recursive: true });
-	if (node.kind === "symlink") {
-		symlinkSync(node.target, path);
-		restoreRuntimeLiveOwnership(path, node.uid, node.gid, true);
-		return;
-	}
-	if (node.kind === "file") {
-		writeFileSync(path, node.content, { mode: node.mode });
-		chmodSync(path, node.mode);
-		restoreRuntimeLiveOwnership(path, node.uid, node.gid, false);
-		return;
-	}
-	mkdirSync(path, { recursive: true, mode: node.mode });
-	chmodSync(path, node.mode);
-	for (const [entry, child] of node.entries) restoreRuntimeLiveNode(join(path, entry), child);
-	restoreRuntimeLiveOwnership(path, node.uid, node.gid, false);
-}
-
-function restoreRuntimeLiveSnapshot(snapshot: RuntimeLiveSnapshot): void {
-	for (const [path, node] of snapshot.entries) {
-		if (node.kind !== "metadata") restoreRuntimeLiveNode(path, node);
-	}
-	for (const [path, node] of snapshot.entries) {
-		if (node.kind === "metadata") restoreRuntimeLiveNode(path, node);
-	}
-}
-
 function validateRuntimeProjectionPlan(input: {
 	manifest: RuntimeManifest;
 	paths: RuntimePaths;
@@ -6178,7 +5939,10 @@ export function convergeRuntimeManifest(
 ): RuntimeConvergenceResult {
 	const { manifest } = load;
 	const secretValues = runtimeSecretValues(load);
-	const runtimeEnvironment = load.applyContext?.runtimeEnvironment ?? processRuntimeEnvironment();
+	const runtimeEnvironment = load.applyContext?.runtimeEnvironment;
+	if (!runtimeEnvironment) {
+		throw new Error("runtime manifest convergence requires an explicit apply context");
+	}
 	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
 	const workspaceRoot = runtimeWorkspaceRoot(manifest, paths);
 	const enabledRuntimes = Object.entries(manifest.runtimes)
@@ -6353,7 +6117,7 @@ export function convergeRuntimeManifest(
 	});
 
 	const workspaceExistedBeforeApply = existsSync(workspaceRoot);
-	const liveSnapshot = captureRuntimeLiveSnapshot(manifest, paths, workspaceRoot);
+	const liveSnapshot = captureRuntimeLiveSnapshot(manifest, paths);
 	let systemdActivationAttempted = false;
 	let systemdActivationApplied = false;
 	let restartDaemon = false;

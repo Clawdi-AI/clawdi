@@ -18,7 +18,7 @@ import { z } from "zod";
 import { commitRuntimeAppliedState, runtimeAppliedContentIdentity } from "../commands/runtime";
 import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
 import { resolveRuntimeApplyGeneration } from "./apply-identity";
-import { applyRuntimeBundleChannelsToManifestLoad } from "./channels";
+import { applyRuntimeBundleChannelsToManifestLoad as applyRuntimeBundleChannelsToManifestLoadWithContext } from "./channels";
 import {
 	hostedManifestEgressProfiles,
 	managedMcpHeaderPlaceholder,
@@ -29,8 +29,10 @@ import {
 	loadRemoteRuntimeManifest,
 	loadRuntimeManifest,
 	normalizeHostedRuntimeBundleV2,
+	type RuntimeManifestLoad,
 } from "./manifest-source";
 import { getRuntimePaths } from "./paths";
+import { processRuntimeEnvironment, projectedRuntimeEnvironment } from "./secret-values";
 
 const goldenPath = resolve(
 	import.meta.dir,
@@ -39,6 +41,29 @@ const goldenPath = resolve(
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];
+
+function applyRuntimeBundleChannelsToManifestLoad(load: RuntimeManifestLoad): RuntimeManifestLoad {
+	return applyRuntimeBundleChannelsToManifestLoadWithContext({
+		...load,
+		applyContext: {
+			kind: "identity-file",
+			identity: {
+				generation: load.manifest.applyGeneration ?? load.manifest.generation,
+				manifestETag: `"test-${load.manifest.generation}"`,
+				applyReceiptId: "test-apply-receipt",
+				bootNonce: "test-boot-nonce",
+			},
+			sourcePath: "/test/runtime-apply-identity.json",
+			runtimeEnvironment: projectedRuntimeEnvironment(
+				Object.fromEntries(
+					Object.entries(process.env).filter(
+						(entry): entry is [string, string] => entry[1] !== undefined,
+					),
+				),
+			),
+		},
+	});
+}
 
 function readFileTree(root: string): string {
 	if (!existsSync(root)) return "";
@@ -532,13 +557,24 @@ describe("hosted runtime bundle v2", () => {
 		expect(initialSidecarRevision).toBeTruthy();
 		writeFileSync(paths.daemonAuthToken, "deployment-auth-token-rotated\n", { mode: 0o600 });
 		delete process.env.CLAWDI_BOOTSTRAP_AUTH_TOKEN;
-		const watched = convergeRuntimeManifest(load, paths, {
-			managedGatewayModelListFetcher: ({ baseUrl }) => ({
-				status: "ok",
-				endpoint: `${baseUrl}/models`,
-				models: [{ id: "gpt-test" }],
-			}),
-		});
+		const watched = convergeRuntimeManifest(
+			{
+				...load,
+				applyContext: {
+					kind: "legacy-hosted-bootstrap-bridge",
+					identity: null,
+					runtimeEnvironment: processRuntimeEnvironment({ ...process.env }),
+				},
+			},
+			paths,
+			{
+				managedGatewayModelListFetcher: ({ baseUrl }) => ({
+					status: "ok",
+					endpoint: `${baseUrl}/models`,
+					models: [{ id: "gpt-test" }],
+				}),
+			},
+		);
 		expect(watched.installErrors).toEqual([]);
 		const reconciledEgressSecrets = JSON.parse(readFileSync(egressSecretPath, "utf-8")) as Record<
 			string,

@@ -232,7 +232,7 @@ describe("runtime apply identity file", () => {
 			readRuntimeApplyIdentityFromEnv(completeEnvironment),
 		);
 		expect(readRuntimeApplyContext(completeEnvironment, missingDiscoveryPath)).toMatchObject({
-			kind: "process-environment",
+			kind: "legacy-hosted-bootstrap-bridge",
 			runtimeEnvironment: {
 				kind: "process-environment",
 				values: completeEnvironment,

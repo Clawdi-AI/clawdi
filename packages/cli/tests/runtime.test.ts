@@ -32,9 +32,10 @@ import {
 	runtimeContentSha256,
 	writeRuntimeAppliedState,
 } from "../src/runtime/applied-state";
+import { readRuntimeApplyIdentityFromEnv } from "../src/runtime/apply-identity";
 import { runtimeAuthEnvName } from "../src/runtime/auth-token";
 import {
-	applyRuntimeBundleChannelsToManifestLoad,
+	applyRuntimeBundleChannelsToManifestLoad as applyRuntimeBundleChannelsToManifestLoadWithContext,
 	applyRuntimeChannelsToManifestLoad,
 } from "../src/runtime/channels";
 import {
@@ -55,7 +56,7 @@ import {
 import { releaseManagedSkill, reserveManagedSkill } from "../src/runtime/managed-skill-reservation";
 import {
 	buildOpenClawHostedProviderPatch,
-	convergeRuntimeManifest,
+	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
 	hostedAiProviderCatalog,
 	loadRuntimeManifest,
 	type RuntimeConvergenceResult,
@@ -73,7 +74,7 @@ import {
 import { readHostedRuntimeObserved } from "../src/runtime/observed";
 import { detectRuntimeMode, getRuntimePaths, type RuntimePaths } from "../src/runtime/paths";
 import { buildRuntimeRunConfig } from "../src/runtime/run-config";
-import { normalizeSecretValues } from "../src/runtime/secret-values";
+import { normalizeSecretValues, processRuntimeEnvironment } from "../src/runtime/secret-values";
 import {
 	buildRuntimeBootStatus,
 	writeRuntimeBootStatus,
@@ -81,6 +82,36 @@ import {
 } from "../src/runtime/state";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "../src/runtime/systemd-user";
 import { mockFetch } from "./commands/helpers";
+
+function explicitTestApplyContext() {
+	return {
+		kind: "legacy-hosted-bootstrap-bridge" as const,
+		identity: readRuntimeApplyIdentityFromEnv(),
+		runtimeEnvironment: processRuntimeEnvironment({ ...process.env }),
+	};
+}
+
+function convergeRuntimeManifest(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+	opts?: Parameters<typeof convergeRuntimeManifestWithContext>[2],
+) {
+	return convergeRuntimeManifestWithContext(
+		{ ...load, applyContext: load.applyContext ?? explicitTestApplyContext() },
+		paths,
+		opts,
+	);
+}
+
+function applyRuntimeBundleChannelsToManifestLoad(
+	load: RuntimeManifestLoad,
+	paths?: RuntimePaths,
+): RuntimeManifestLoad {
+	return applyRuntimeBundleChannelsToManifestLoadWithContext(
+		{ ...load, applyContext: load.applyContext ?? explicitTestApplyContext() },
+		paths,
+	);
+}
 
 const ENV_KEYS = [
 	"HOME",

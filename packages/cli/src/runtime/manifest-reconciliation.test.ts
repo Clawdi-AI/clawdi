@@ -24,13 +24,13 @@ import {
 	writeRuntimeAppliedState,
 } from "./applied-state";
 import { loadHostedBundledSkill } from "./hosted-bundled-skill";
+import { runtimeLiveSnapshotPaths } from "./live-state-snapshot";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	daemonProgramRevision,
 	hostedAiProviderCatalog,
 	type RuntimeManifest,
-	runtimeLiveSnapshotPaths,
 	runtimeProgramRevision,
 	runtimeRecoverableSecretValues,
 	runtimeSecretValue,
@@ -147,6 +147,23 @@ function manifestLoad(
 		sourcePath,
 		offline: false,
 		secretValues,
+		applyContext: {
+			kind: "identity-file",
+			identity: {
+				generation: manifest.applyGeneration ?? manifest.generation,
+				manifestETag: `"test-${manifest.generation}"`,
+				applyReceiptId: "test-apply-receipt",
+				bootNonce: "test-boot-nonce",
+			},
+			sourcePath: "/test/runtime-apply-identity.json",
+			runtimeEnvironment: projectedRuntimeEnvironment(
+				Object.fromEntries(
+					Object.entries(process.env).filter(
+						(entry): entry is [string, string] => entry[1] !== undefined,
+					),
+				),
+			),
+		},
 	};
 }
 
@@ -4054,7 +4071,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			existingSystemDropIn,
 			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nexisting managed drop-in\n`,
 		);
-		const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths, workspaceRoot);
+		const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths);
 
 		expect(snapshotPaths).toEqual(
 			[
@@ -4309,5 +4326,18 @@ describe("runtime manifest reconciliation invariants", () => {
 			"projected-file-token",
 		);
 		expect(runtimeSecretValue(projected, "env://MISSING_TOKEN", runtimeEnvironment)).toBeNull();
+	});
+
+	test("rejects direct convergence without an explicit apply context", () => {
+		const paths = tempRuntimePaths();
+		const load = manifestLoad(
+			baseManifest(paths, {
+				openclaw: { enabled: false, run: runSettings("openclaw", []), services: {} },
+			}),
+			"inline-missing-apply-context",
+		);
+		expect(() => convergeRuntimeManifest({ ...load, applyContext: undefined }, paths)).toThrow(
+			"runtime manifest convergence requires an explicit apply context",
+		);
 	});
 });

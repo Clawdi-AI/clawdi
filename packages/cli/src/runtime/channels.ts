@@ -11,11 +11,7 @@ import type {
 } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { hostedRuntimeProjectionHome } from "./projection-home";
-import {
-	processRuntimeEnvironment,
-	type RuntimeEnvironmentAuthority,
-	runtimeSecretValue,
-} from "./secret-values";
+import { type RuntimeEnvironmentAuthority, runtimeSecretValue } from "./secret-values";
 import { WHATSAPP_UPSTREAM_READY } from "./whatsapp-gate";
 
 type EgressProfile = EgressProfileInputBundle["profiles"][number];
@@ -103,7 +99,10 @@ export function applyRuntimeBundleChannelsToManifestLoad(
 ): RuntimeManifestLoad {
 	if (!load.channelBindings) return load;
 	const secretValues = load.secretValues ?? {};
-	const runtimeEnvironment = load.applyContext?.runtimeEnvironment ?? processRuntimeEnvironment();
+	const runtimeEnvironment = load.applyContext?.runtimeEnvironment;
+	if (!runtimeEnvironment) {
+		throw new Error("runtime bundle channel projection requires an explicit apply context");
+	}
 	const links: ManagedChannelLink[] = load.channelBindings.map((binding) =>
 		managedBundleChannelLink(binding, secretValues, runtimeEnvironment),
 	);

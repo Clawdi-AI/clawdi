@@ -819,12 +819,18 @@ bundle's HTTP ETag, which remains the strong validator derived from
 `sourceRevision`; the two values are intentionally independent. This lets one
 atomic projected-file swap advance config, secrets, and apply identity in
 place; `bootNonce` remains a workload-boot identity rather than a
-config-generation identity. The legacy process environment is accepted only
-when no identity-file path was configured and the canonical hosted mount
+config-generation identity. The legacy Hosted bootstrap bridge reads process
+environment only when no identity-file path was configured and the canonical hosted mount
 `/etc/clawdi/runtime-identity/runtime-apply-identity.json` does not
 exist. This one-boot discovery rule lets a CLI installed by an older bootstrap
 unit acquire the file contract; newly rendered units then pass the discovered
 path explicitly. An existing but malformed canonical file fails closed.
+This bridge is not a direct, local, or non-Hosted runtime mode: `runtime init`,
+`runtime watch`, and `runtime sidecar` reject non-Hosted execution, and manifest
+convergence or bundle-channel projection invoked as a library requires an
+explicit apply context. The current strict-v2 image contract supplies the
+canonical mount; the bridge remains solely for the documented one-boot upgrade
+from an older Hosted bootstrap unit.
 
 The CLI writes durable non-secret state under the service state root. Important
 outputs include:

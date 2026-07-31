@@ -72,7 +72,7 @@ type RuntimeApplyIdentityFile = z.infer<typeof runtimeApplyIdentityFileSchema>;
 
 export type RuntimeApplyContext =
 	| {
-			kind: "process-environment";
+			kind: "legacy-hosted-bootstrap-bridge";
 			identity: RuntimeApplyIdentity | null;
 			runtimeEnvironment: ProcessRuntimeEnvironment;
 	  }
@@ -141,7 +141,7 @@ export function readRuntimeApplyContext(
 	const configuredPath = configuredRuntimeApplyIdentityPath(env, discoveryPath);
 	if (configuredPath === null) {
 		return {
-			kind: "process-environment",
+			kind: "legacy-hosted-bootstrap-bridge",
 			identity: readRuntimeApplyIdentityFromEnv(env),
 			runtimeEnvironment: processRuntimeEnvironment(env),
 		};

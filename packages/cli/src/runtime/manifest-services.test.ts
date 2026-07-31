@@ -13,7 +13,10 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readRuntimeInstallReceipts } from "./install-receipts";
-import { convergeRuntimeManifest, type RuntimeManifest } from "./manifest";
+import {
+	convergeRuntimeManifest as convergeRuntimeManifestWithContext,
+	type RuntimeManifest,
+} from "./manifest";
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
@@ -22,6 +25,38 @@ import { projectedRuntimeEnvironment } from "./secret-values";
 const originalEnv = { ...process.env };
 const originalConsoleWarn = console.warn;
 const tempRoots: string[] = [];
+
+function convergeRuntimeManifest(
+	load: RuntimeManifestLoad,
+	paths: RuntimePaths,
+	opts?: Parameters<typeof convergeRuntimeManifestWithContext>[2],
+) {
+	const runtimeEnvironment = projectedRuntimeEnvironment(
+		Object.fromEntries(
+			Object.entries(process.env).filter(
+				(entry): entry is [string, string] => entry[1] !== undefined,
+			),
+		),
+	);
+	return convergeRuntimeManifestWithContext(
+		{
+			...load,
+			applyContext: load.applyContext ?? {
+				kind: "identity-file",
+				identity: {
+					generation: load.manifest.applyGeneration ?? load.manifest.generation,
+					manifestETag: `"test-${load.manifest.generation}"`,
+					applyReceiptId: "test-apply-receipt",
+					bootNonce: "test-boot-nonce",
+				},
+				sourcePath: "/test/runtime-apply-identity.json",
+				runtimeEnvironment,
+			},
+		},
+		paths,
+		opts,
+	);
+}
 
 function tempRuntimePaths(): RuntimePaths {
 	const root = mkdtempSync(join(tmpdir(), "clawdi-manifest-service-test-"));
