@@ -2153,15 +2153,14 @@ test("deploy cards and CTA-adjacent amount distinguish free, monthly, and annual
 	const computePrice = page.getByTestId("performance-compute-price");
 	await expect(computePrice).toContainText("$20.00/mo");
 	await expect(computePrice).toContainText("Billed monthly");
-	await expect(performanceChoice).toContainText("4 vCPU / 8 GB");
+	await expect(performanceChoice).toContainText("4 vCPU · 8 GB RAM");
 	await expect(amount).toContainText("$20.00/mo");
 	await expect(amount).toContainText("Billed monthly");
 	await expect(actionBar.getByRole("button", { name: "Continue to checkout" })).toBeVisible();
 
 	await page.getByRole("button", { name: /Annual.*%/ }).click();
 	await expect(computePrice).toContainText("$16.66/mo");
-	await expect(computePrice.locator(".line-through")).toHaveText("$20.00/mo");
-	await expect(computePrice).toContainText("Billed $200.00 yearly · save $40.00");
+	await expect(computePrice).toContainText("Billed $200.00/yr · save $40.00");
 	await expect(amount).toContainText("$200.00/yr");
 	await expect(amount).toContainText("$16.66/mo, billed annually");
 
@@ -2180,6 +2179,7 @@ test("deploy cards and CTA-adjacent amount distinguish free, monthly, and annual
 test("deploy CTA-adjacent Wallet amount handles loading, retry, and insufficient balance", async ({
 	page,
 }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
 	const delayedQuote = walletSubscriptionQuote({
 		planSlug: "compute_basic",
 		billingTermMonths: 1,
@@ -2233,8 +2233,12 @@ test("deploy CTA-adjacent Wallet amount handles loading, retry, and insufficient
 	const topUp = page.getByRole("button", { name: "Top up Wallet", exact: true });
 	await expect(topUp).toHaveCount(1);
 	await expect(topUp).toBeEnabled();
+	await page.screenshot({ path: "/tmp/deploy-wallet-insufficient-390.png" });
 	await topUp.click();
-	await expect(page.getByRole("dialog").filter({ hasText: "Top up Wallet" })).toBeVisible();
+	const topUpDialog = page.getByRole("dialog").filter({ hasText: "Top up Wallet" });
+	await expect(topUpDialog).toBeVisible();
+	await expect(topUpDialog.getByRole("spinbutton", { name: "Amount (USD)" })).toHaveValue("10");
+	await expect(topUpDialog.getByRole("button", { name: "Continue with $10.00" })).toBeVisible();
 });
 
 test("deploy form stays readable without stretching compact controls", async ({ page }) => {
@@ -2300,6 +2304,25 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 					label: title.textContent?.trim() ?? "",
 					scrollWidth: title.scrollWidth,
 				}));
+			const computePlans = ["Basic", "Performance"].map((label) => {
+				const title = Array.from(
+					document.querySelectorAll<HTMLSpanElement>("button span.font-medium"),
+				).find((candidate) => candidate.textContent?.trim() === label);
+				const card = title?.closest("button");
+				const resources = card?.querySelector("p");
+				const price = card?.querySelector(
+					`[data-testid="${label === "Basic" ? "basic" : "performance"}-compute-price"]`,
+				);
+				const primaryPrice = price?.querySelector("span.font-semibold");
+				return {
+					card: rect(card),
+					label,
+					price: rect(price),
+					primaryPrice: rect(primaryPrice),
+					resources: rect(resources),
+					title: rect(title),
+				};
+			});
 			return {
 				document: {
 					clientWidth: document.documentElement.clientWidth,
@@ -2329,6 +2352,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 							}
 						: null;
 				})(),
+				computePlans,
 				titleWidths,
 			};
 		});
@@ -2365,6 +2389,19 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 			expect(title.scrollWidth, `${viewport.name} ${title.label} title`).toBeLessThanOrEqual(
 				title.clientWidth,
 			);
+		}
+		for (const plan of metrics.computePlans) {
+			expect(plan.card, `${viewport.name} ${plan.label} card`).not.toBeNull();
+			const cardHeight = plan.card ? plan.card.bottom - plan.card.top : Number.POSITIVE_INFINITY;
+			expect(cardHeight, `${viewport.name} ${plan.label} height`).toBeLessThanOrEqual(96);
+			expect(plan.primaryPrice?.top, `${viewport.name} ${plan.label} price top`).toBeCloseTo(
+				plan.title?.top ?? 0,
+				0,
+			);
+			expect(
+				plan.price?.top,
+				`${viewport.name} ${plan.label} price should stay with title and resources`,
+			).toBeLessThanOrEqual(plan.resources?.bottom ?? 0);
 		}
 
 		for (const [label, control, maxWidth] of [
@@ -2413,13 +2450,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 				metrics.action?.left ?? 0,
 			);
 		}
-		if (viewport.width === 1_280 || viewport.width === 390) {
-			await page.getByRole("button", { name: /^Performance/ }).scrollIntoViewIfNeeded();
-			await page.waitForTimeout(100);
-			await page.screenshot({
-				path: `/tmp/deploy-pricing-${viewport.width}.png`,
-			});
-		}
+		await capturePricingScreenshot(page, `/tmp/deploy-compute-card-${viewport.width}.png`);
 	}
 });
 
@@ -3534,7 +3565,7 @@ test("Basic create always follows the wizard-selected funding path", async ({ pa
 	await page.waitForLoadState("networkidle");
 
 	await expect(page.getByTestId("basic-compute-price")).toContainText("$10.00/mo");
-	await expect(page.getByRole("button", { name: /^Basic/ })).toContainText("2 vCPU / 4 GB");
+	await expect(page.getByRole("button", { name: /^Basic/ })).toContainText("2 vCPU · 4 GB RAM");
 	await expectNoQuarterlyCopy(page);
 	await capturePricingScreenshot(page, "/tmp/basic-paid-funded-slot-available-final.png");
 
@@ -3613,8 +3644,7 @@ test("free-funded Basic uses annual compute_basic checkout when the included slo
 	await expect(page.getByRole("button", { name: /Wallet balance/ })).toBeVisible();
 	const basicPrice = page.getByTestId("basic-compute-price");
 	await expect(basicPrice).toContainText("$8.33/mo");
-	await expect(basicPrice.locator(".line-through")).toHaveText("$10.00/mo");
-	await expect(basicPrice).toContainText("Billed $100.00 yearly · save $20.00");
+	await expect(basicPrice).toContainText("Billed $100.00/yr · save $20.00");
 	await expect(page.getByTestId("deploy-amount")).toContainText("$100.00/yr");
 	await capturePricingScreenshot(page, "/tmp/basic-free-funded-slot-occupied-final.png");
 

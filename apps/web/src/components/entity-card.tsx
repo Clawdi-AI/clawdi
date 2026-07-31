@@ -371,6 +371,7 @@ export function EntityChoiceCard({
 	title,
 	description,
 	details,
+	detailsPlacement = "stacked",
 	badge,
 	selected,
 	onClick,
@@ -382,6 +383,8 @@ export function EntityChoiceCard({
 	description?: ReactNode;
 	/** Optional detail block below the description (for example, pricing). */
 	details?: ReactNode;
+	/** Keep dense, comparable details beside the main copy when space allows. */
+	detailsPlacement?: "stacked" | "trailing";
 	/** Trailing badge in the title row (e.g. "Default", an auth chip). */
 	badge?: ReactNode;
 	selected?: boolean;
@@ -392,17 +395,37 @@ export function EntityChoiceCard({
 	const content = (
 		<>
 			{icon}
-			<div className="min-w-0 flex-1">
-				<div className="flex min-w-0 items-center gap-2">
-					<span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
-					{badge ? <span className="shrink-0">{badge}</span> : null}
+			<div
+				className={cn(
+					"min-w-0 flex-1",
+					details && detailsPlacement === "trailing" && "flex items-start gap-3",
+				)}
+			>
+				<div className="min-w-0 flex-1">
+					<div className="flex min-w-0 items-center gap-2">
+						<span className="min-w-0 flex-1 truncate text-sm font-medium">{title}</span>
+						{badge ? <span className="shrink-0">{badge}</span> : null}
+					</div>
+					{description ? (
+						<p className="mt-0.5 break-words text-sm text-muted-foreground">{description}</p>
+					) : null}
 				</div>
-				{description ? (
-					<p className="mt-0.5 break-words text-sm text-muted-foreground">{description}</p>
+				{details ? (
+					<div
+						className={cn(
+							"min-w-0",
+							detailsPlacement === "trailing" ? "max-w-[50%] shrink-0" : "mt-2",
+						)}
+					>
+						{details}
+					</div>
 				) : null}
-				{details ? <div className="mt-2">{details}</div> : null}
 			</div>
-			{selected ? <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden /> : null}
+			{selected ? (
+				<Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden />
+			) : detailsPlacement === "trailing" ? (
+				<span className="size-4 shrink-0" aria-hidden />
+			) : null}
 		</>
 	);
 	const cardClass = cn(

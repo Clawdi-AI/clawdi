@@ -11,7 +11,6 @@ import { walletDebitShortfallUsd } from "@/hosted/billing/wallet/wallet-debit-su
 
 export type ComputePricePresentation = {
 	primary: string;
-	comparison: string | null;
 	secondary: string;
 };
 
@@ -32,7 +31,6 @@ export function computePricePresentation(
 	if (offer.billing_term_months === 1) {
 		return {
 			primary: monthlyPrice(offer),
-			comparison: null,
 			secondary: "Billed monthly",
 		};
 	}
@@ -50,12 +48,11 @@ export function computePricePresentation(
 			: 0;
 	const billed =
 		offer.billing_term_months === 12
-			? `Billed ${formatCents(offer.price_cents)} yearly`
+			? `Billed ${formatCents(offer.price_cents)}/yr`
 			: `Billed ${formatCents(offer.price_cents)} every ${offer.billing_term_months} months`;
 
 	return {
 		primary: monthlyPrice(offer),
-		comparison: comparisonIsCheaper ? monthlyPrice(monthlyOffer) : null,
 		secondary: savingsCents > 0 ? `${billed} · save ${formatCents(savingsCents)}` : billed,
 	};
 }

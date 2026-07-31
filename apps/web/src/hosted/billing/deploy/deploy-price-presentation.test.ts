@@ -23,21 +23,18 @@ describe("computePricePresentation", () => {
 	test("makes monthly and annual pricing visibly distinct", () => {
 		expect(computePricePresentation(monthly, [monthly, annual])).toEqual({
 			primary: "$20.00/mo",
-			comparison: null,
 			secondary: "Billed monthly",
 		});
 		expect(computePricePresentation(annual, [monthly, annual])).toEqual({
 			primary: "$16.66/mo",
-			comparison: "$20.00/mo",
-			secondary: "Billed $200.00 yearly · save $40.00",
+			secondary: "Billed $200.00/yr · save $40.00",
 		});
 	});
 
-	test("omits comparison and savings when a monthly offer is missing", () => {
+	test("omits savings when a monthly offer is missing", () => {
 		expect(computePricePresentation(annual, [annual])).toEqual({
 			primary: "$16.66/mo",
-			comparison: null,
-			secondary: "Billed $200.00 yearly",
+			secondary: "Billed $200.00/yr",
 		});
 	});
 });
