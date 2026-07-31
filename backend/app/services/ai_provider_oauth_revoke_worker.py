@@ -10,17 +10,14 @@ from uuid import UUID
 
 import httpx
 from cryptography.exceptions import InvalidTag
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.models.ai_provider import (
-    AiProvider,
-    AiProviderOAuthAttempt,
-    AiProviderOAuthRevokeTombstone,
-)
-from app.services.ai_provider_oauth_lifecycle import (
+from app.models.ai_provider import AiProviderOAuthRevokeTombstone
+from app.services.ai_provider_oauth_attempt import (
+    fence_oauth_attempt_for_revoke,
+    oauth_revoke_candidate_ids,
     purge_expired_oauth_records,
-    terminal_oauth_attempt,
 )
 from app.services.codex_oauth import CODEX_OAUTH_CLIENT_ID
 from app.services.vault_crypto import decrypt
@@ -58,47 +55,11 @@ async def claim_oauth_revoke_tombstone(
     claimed_at = now or datetime.now(UTC)
     stale_before = claimed_at - timedelta(seconds=lease_seconds)
     attempt_stale_before = claimed_at - timedelta(seconds=attempt_stale_seconds)
-    attempt_eligible = or_(
-        AiProviderOAuthRevokeTombstone.oauth_attempt_id.is_(None),
-        AiProviderOAuthAttempt.id.is_(None),
-        AiProviderOAuthAttempt.status == "failed",
-        and_(
-            AiProviderOAuthAttempt.status == "exchanging",
-            AiProviderOAuthAttempt.exchange_started_at <= attempt_stale_before,
-        ),
-    )
-    candidate_ids = list(
-        (
-            await db.execute(
-                select(AiProviderOAuthRevokeTombstone.id)
-                .outerjoin(
-                    AiProviderOAuthAttempt,
-                    AiProviderOAuthAttempt.id == AiProviderOAuthRevokeTombstone.oauth_attempt_id,
-                )
-                .where(
-                    or_(
-                        and_(
-                            AiProviderOAuthRevokeTombstone.status == "pending",
-                            or_(
-                                AiProviderOAuthRevokeTombstone.next_attempt_at.is_(None),
-                                AiProviderOAuthRevokeTombstone.next_attempt_at <= claimed_at,
-                            ),
-                            attempt_eligible,
-                        ),
-                        and_(
-                            AiProviderOAuthRevokeTombstone.status == "processing",
-                            AiProviderOAuthRevokeTombstone.claimed_at <= stale_before,
-                        ),
-                    )
-                )
-                .order_by(
-                    AiProviderOAuthRevokeTombstone.next_attempt_at.asc().nullsfirst(),
-                    AiProviderOAuthRevokeTombstone.created_at,
-                    AiProviderOAuthRevokeTombstone.id,
-                )
-                .limit(32)
-            )
-        ).scalars()
+    candidate_ids = await oauth_revoke_candidate_ids(
+        db,
+        claimed_at=claimed_at,
+        tombstone_stale_before=stale_before,
+        attempt_stale_before=attempt_stale_before,
     )
     for candidate_id in candidate_ids:
         claim = await _claim_oauth_revoke_candidate(
@@ -125,24 +86,24 @@ async def _claim_oauth_revoke_candidate(
     if identity is None:
         return None
     attempt_id = identity.oauth_attempt_id
-    attempt: AiProviderOAuthAttempt | None = None
-    if attempt_id is not None:
-        attempt_identity = await db.get(AiProviderOAuthAttempt, attempt_id)
-        if attempt_identity is not None:
-            # Match the OAuth completion lock order: provider -> attempt -> payload/tombstone.
-            await db.execute(
-                select(AiProvider.id)
-                .where(AiProvider.id == attempt_identity.provider_row_id)
-                .with_for_update()
-            )
-            attempt = (
-                await db.execute(
-                    select(AiProviderOAuthAttempt)
-                    .where(AiProviderOAuthAttempt.id == attempt_id)
-                    .with_for_update()
-                    .execution_options(populate_existing=True)
-                )
-            ).scalar_one_or_none()
+    identity_pending_due = identity.status == "pending" and (
+        identity.next_attempt_at is None or identity.next_attempt_at <= claimed_at
+    )
+    identity_processing_stale = (
+        identity.status == "processing"
+        and identity.claimed_at is not None
+        and identity.claimed_at <= stale_before
+    )
+    if not await fence_oauth_attempt_for_revoke(
+        db,
+        owner_user_id=identity.owner_user_id,
+        attempt_id=attempt_id,
+        pending_due=identity_pending_due,
+        processing_stale=identity_processing_stale,
+        claimed_at=claimed_at,
+        attempt_stale_before=attempt_stale_before,
+    ):
+        return None
 
     tombstone = (
         await db.execute(
@@ -167,21 +128,6 @@ async def _claim_oauth_revoke_candidate(
     if tombstone.oauth_attempt_id != attempt_id:
         return None
 
-    if attempt is not None:
-        if processing_stale and attempt.status == "exchanging":
-            terminal_oauth_attempt("failed", completed_at=claimed_at).apply(attempt)
-        elif pending_due:
-            if attempt.status == "exchanging":
-                if (
-                    attempt.exchange_started_at is None
-                    or attempt.exchange_started_at > attempt_stale_before
-                ):
-                    return None
-                # Fence the stale exchange in the same transaction as the revoke claim.
-                # The original completion must observe failed before it can commit.
-                terminal_oauth_attempt("failed", completed_at=claimed_at).apply(attempt)
-            elif attempt.status != "failed":
-                return None
     if tombstone.encrypted_token is None or tombstone.token_nonce is None:
         _quarantine_oauth_revoke_tombstone(tombstone, "revoke_material_missing")
         return None

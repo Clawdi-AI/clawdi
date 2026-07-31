@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from urllib.parse import urlparse
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -13,6 +12,8 @@ from app.services.ai_provider_auth_transition import (
     AuthCredentialWrite,
     transition_ai_provider_auth,
 )
+from app.services.ai_provider_credentials import lock_ai_provider_owner
+from app.services.url_security import UnsafePublicHttpsUrlError, validate_public_https_url
 
 CLAWDI_MANAGED_PROVIDER_ID = "clawdi"
 V1_MANAGED_AI_PROVIDER_ID = "clawdi-managed"
@@ -97,9 +98,10 @@ def managed_provider_api_mode(provider_id: str) -> str | None:
 
 
 def validate_managed_provider_base_url(base_url: str) -> None:
-    parsed = urlparse(base_url.strip())
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise ValueError("base_url must be an http(s) URL")
+    try:
+        validate_public_https_url(base_url, label="base_url")
+    except UnsafePublicHttpsUrlError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 async def lock_deployment_managed_provider_mutation(
@@ -116,6 +118,7 @@ async def lock_deployment_managed_provider_mutation(
 
     if not is_v2_deployment_managed_provider_id(provider_id):
         raise ValueError("unsupported deployment managed provider id")
+    await lock_ai_provider_owner(db, owner_user_id)
     lock_name = f"managed-ai-provider:{owner_user_id}:{provider_id}"
     await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
 
@@ -136,6 +139,7 @@ async def upsert_clawdi_managed_provider(
     # TODO(#425): Remove legacy v2 upsert acceptance after the compatibility window closes.
     if not is_v2_managed_provider_id(provider_id):
         raise ValueError("unsupported managed provider id")
+    await lock_ai_provider_owner(db, user.id)
     validate_managed_provider_base_url(base_url)
     normalized_base_url = base_url.strip()
     if not api_key.strip():
@@ -217,6 +221,7 @@ async def archive_clawdi_managed_provider(
 ) -> AiProvider | None:
     """Archive managed provider metadata and encrypted auth for one owner."""
 
+    await lock_ai_provider_owner(db, owner_user_id)
     provider = (
         await db.execute(
             select(AiProvider)

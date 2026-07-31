@@ -16,11 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ai_provider import (
     AiProvider,
     AiProviderAuthPayload,
-    AiProviderOAuthAttempt,
     AiProviderOAuthRevokeTombstone,
 )
-from app.services.ai_provider_credentials import claim_unique_bound_runtime
-from app.services.ai_provider_oauth_lifecycle import terminal_oauth_attempt
+from app.services.ai_provider_credentials import (
+    claim_unique_bound_runtime,
+    lock_ai_provider_owner,
+    validate_prospective_bound_runtime_auth,
+)
+from app.services.ai_provider_oauth_attempt import fail_active_oauth_attempts
 from app.services.vault_crypto import decrypt, encrypt
 
 OAuthRevokeStatus = Literal["pending", "not_required"]
@@ -157,13 +160,6 @@ def extract_oauth_token_from_envelope(payload_text: str) -> OAuthTokenExtraction
             revocable=(access_token, "access_token"),
         )
     return OAuthTokenExtraction(state="corrupt")
-
-
-def extract_oauth_token(payload: AiProviderAuthPayload) -> OAuthTokenExtraction:
-    try:
-        return extract_oauth_token_from_envelope(decrypt(payload.encrypted_payload, payload.nonce))
-    except (InvalidTag, RuntimeError, TypeError, ValueError):
-        return OAuthTokenExtraction(state="corrupt")
 
 
 def _preflight_active_oauth_payload(
@@ -337,6 +333,14 @@ async def transition_ai_provider_auth(
 ) -> AuthTransitionResult:
     """Apply one auth identity/material transition inside the caller's transaction."""
 
+    await lock_ai_provider_owner(db, owner_user_id)
+    if auth_type != provider.auth_type:
+        await validate_prospective_bound_runtime_auth(
+            db,
+            owner_user_id=owner_user_id,
+            provider_id=provider.provider_id,
+            prospective_auth_type=auth_type,
+        )
     now = datetime.now(UTC)
     old_identity = _auth_identity(provider.auth_type, provider.auth_ref, provider.auth_metadata)
     new_identity = _auth_identity(auth_type, auth_ref, auth_metadata)
@@ -365,16 +369,11 @@ async def transition_ai_provider_auth(
                 if extraction is not None:
                     active_oauth_revocables[payload.id] = _revocable_or_raise(extraction)
 
-        attempt_filter = [
-            AiProviderOAuthAttempt.provider_row_id == provider.id,
-            AiProviderOAuthAttempt.status.in_(("pending", "exchanging")),
-        ]
-        if keep_oauth_attempt_id is not None:
-            attempt_filter.append(AiProviderOAuthAttempt.id != keep_oauth_attempt_id)
-        await db.execute(
-            update(AiProviderOAuthAttempt)
-            .where(*attempt_filter)
-            .values(**terminal_oauth_attempt("failed", completed_at=now).update_values())
+        await fail_active_oauth_attempts(
+            db,
+            provider_row_id=provider.id,
+            completed_at=now,
+            exclude_attempt_id=keep_oauth_attempt_id,
         )
     remote_revoke_pending = False
     if archive_active:
@@ -495,7 +494,6 @@ __all__ = [
     "OAuthTokenExtraction",
     "cancel_oauth_revoke_tombstone",
     "enqueue_oauth_revoke_tombstone",
-    "extract_oauth_token",
     "extract_oauth_token_from_envelope",
     "transition_ai_provider_auth",
 ]

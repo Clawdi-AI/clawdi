@@ -20,9 +20,9 @@ from app.services.ai_provider_auth_transition import (
     enqueue_oauth_revoke_tombstone,
     extract_oauth_token_from_envelope,
 )
+from app.services.ai_provider_oauth_attempt import purge_expired_oauth_records
 from app.services.ai_provider_oauth_lifecycle import (
     OAUTH_TERMINAL_RETENTION,
-    purge_expired_oauth_records,
     terminal_oauth_attempt,
 )
 from app.services.ai_provider_oauth_revoke_worker import (
@@ -583,6 +583,41 @@ async def test_revoke_tombstone_provider_and_owner_fk_contract(db_session, seed_
     )
     assert surviving_tombstone is not None
     assert surviving_tombstone.owner_user_id == owner_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_revoke_worker_processes_tombstone_after_owner_deletion(db_session, engine):
+    owner = User(clerk_id=f"oauth-revoke-deleted-owner-{uuid.uuid4().hex}")
+    db_session.add(owner)
+    await db_session.flush()
+    owner_id = owner.id
+    tombstone = await _enqueue(
+        db_session,
+        owner_user_id=owner_id,
+        provider_id="oauth-revoke-deleted-owner",
+        token="refresh-deleted-owner",
+    )
+    await db_session.delete(owner)
+    await db_session.commit()
+
+    revoked_tokens: list[str] = []
+
+    async def revoke(claim):
+        revoked_tokens.append(claim.token)
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=True)
+    worker = AiProviderOAuthRevokeWorker(session_factory, revoke=revoke)
+
+    assert await worker.run_once() == tombstone.id
+    assert revoked_tokens == ["refresh-deleted-owner"]
+    async with session_factory() as verification:
+        row = await verification.get(AiProviderOAuthRevokeTombstone, tombstone.id)
+        assert row is not None
+        assert row.owner_user_id == owner_id
+        assert row.status == "revoked"
+        assert row.encrypted_token is None
+        assert row.token_nonce is None
 
 
 @pytest.mark.asyncio

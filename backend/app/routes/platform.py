@@ -42,6 +42,7 @@ from app.services.agent_skill_projection import (
 )
 from app.services.ai_provider_credentials import (
     OAuthCredentialClaimConflict,
+    lock_ai_provider_owner,
     reconcile_runtime_oauth_claims,
     release_runtime_oauth_claims,
 )
@@ -536,6 +537,7 @@ async def platform_create_agent(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
         operation="agents.create",
@@ -628,6 +630,7 @@ async def platform_delete_agent(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
         operation="agents.delete",
@@ -719,6 +722,7 @@ async def platform_upsert_runtime_state(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
         operation="runtime_state.upsert",
@@ -943,6 +947,7 @@ async def platform_delete_runtime_state(
         request=request,
         idempotency_key=idempotency_key,
     )
+    await lock_ai_provider_owner(db, owner.id)
     request_hash, replay = await _begin_mutation(
         db,
         operation="runtime_state.delete",
