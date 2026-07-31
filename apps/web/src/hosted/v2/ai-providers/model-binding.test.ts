@@ -4,6 +4,7 @@ import {
 	isManagedProviderId,
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_LABEL,
+	managedModelPickerItems,
 	modelBindingDisplayName,
 	modelDisplayName,
 	modelOptionsForProvider,
@@ -28,9 +29,9 @@ describe("model binding", () => {
 
 	test("preserves backend catalog order while selecting its declared default", () => {
 		const managedModels = [
-			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false },
-			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
-			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false },
+			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: true },
+			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true },
+			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
 		];
 
 		expect(
@@ -46,9 +47,33 @@ describe("model binding", () => {
 		expect(modelDisplayName("gpt-5.6-sol", managedModels)).toBe("Sol");
 	});
 
+	test("splits featured and overflow models without changing backend order", () => {
+		const managedModels = [
+			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: true },
+			{ id: "k3", display_name: "Kimi K3", is_default: false, is_featured: true },
+			{ id: "future-model", display_name: "Future model", is_default: false, is_featured: false },
+			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: false },
+			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
+		];
+
+		expect(managedModelPickerItems(managedModels)).toEqual({
+			featured: [
+				{ value: "gpt-5.6-sol", label: "Sol" },
+				{ value: "k3", label: "Kimi K3" },
+			],
+			overflow: [
+				{ value: "future-model", label: "Future model" },
+				{ value: "gpt-5.6-luna", label: "Luna" },
+				{ value: "gpt-5.6-terra", label: "Terra" },
+			],
+		});
+	});
+
 	test("uses catalog metadata before the shared formatter and raw id fallback", () => {
 		expect(
-			modelDisplayName("model", [{ id: "model", display_name: "Display", is_default: false }]),
+			modelDisplayName("model", [
+				{ id: "model", display_name: "Display", is_default: false, is_featured: false },
+			]),
 		).toBe("Display");
 		expect(modelDisplayName("model", [{ id: "model", label: "Label", alias: "Alias" }])).toBe(
 			"Label",

@@ -548,7 +548,7 @@ export function DeployWizard() {
 		if (!managedPrimaryModelReady) {
 			if (managedModelsNeedRetry) return "Retry loading Clawdi AI models above.";
 			if (managedModelsLoading) return "Loading Clawdi AI models.";
-			return "Choose an available primary model.";
+			return "Choose an available main model.";
 		}
 		if (paidSelection && paymentMethod === "wallet") {
 			if (!wallet.isSuccess || !wallet.data) {

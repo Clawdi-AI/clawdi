@@ -14,7 +14,9 @@ import {
 	toggleAiBindingProvider,
 } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 
-const managedModels = [{ id: "gpt-managed", display_name: "Managed", is_default: true }];
+const managedModels = [
+	{ id: "gpt-managed", display_name: "Managed", is_default: true, is_featured: true },
+];
 
 const apiKeyProvider: AiProvider = {
 	id: "row-api-key",
@@ -75,6 +77,27 @@ describe("AI provider binding fields", () => {
 			primary_model: null,
 			ai_provider_bootstrap: null,
 		});
+	});
+
+	test("names a missing configured selection as the main model", () => {
+		let thrown: unknown;
+		try {
+			buildAiBindingFields(
+				{
+					bindingMode: "configured",
+					providerChoices: [MANAGED_AI_CHOICE],
+					primaryProviderChoice: MANAGED_AI_CHOICE,
+					primaryModel: "",
+				},
+				{ managedModels, mode: "create", providers: [] },
+			);
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(AiBindingBuildError);
+		if (!(thrown instanceof AiBindingBuildError)) throw thrown;
+		expect(thrown.title).toBe("Main model required");
 	});
 
 	test("create omits an empty bootstrap while update clears it", () => {
