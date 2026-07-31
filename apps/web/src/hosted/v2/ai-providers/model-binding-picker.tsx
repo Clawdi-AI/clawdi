@@ -1,5 +1,6 @@
 "use client";
 
+import type { ManagedModelCatalogItem } from "@clawdi/shared/api";
 import type { ApiErrorNormalizer } from "@/components/api-error-panel";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { Input } from "@/components/ui/input";
@@ -14,7 +15,6 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
-import type { ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import {
 	CUSTOM_MODEL_CHOICE,
 	MANAGED_AI_CHOICE,

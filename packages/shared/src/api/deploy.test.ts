@@ -8,6 +8,7 @@ import {
 	isDeploymentEventStreamSnapshotHandoff,
 	isRuntimeUiCredentials,
 	isRuntimeUiEndpointInfo,
+	projectManagedModelCatalog,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "./deploy";
@@ -69,6 +70,53 @@ describe("deployment list response split", () => {
 				read_only: false,
 			}),
 		).toBe(false);
+	});
+});
+
+describe("managed model catalog contract", () => {
+	test("projects only the public fields without inventing catalog entries", () => {
+		expect(projectManagedModelCatalog({ models: [], internal_version: "private" })).toEqual({
+			models: [],
+		});
+		expect(
+			projectManagedModelCatalog({
+				models: [
+					{
+						id: "model-from-hosted",
+						display_name: "Hosted model",
+						is_default: true,
+						is_featured: false,
+						internal_route: "private-provider/model-from-hosted",
+					},
+				],
+			}),
+		).toEqual({
+			models: [
+				{
+					id: "model-from-hosted",
+					display_name: "Hosted model",
+					is_default: true,
+					is_featured: false,
+				},
+			],
+		});
+	});
+
+	test("rejects responses that do not satisfy the generated public contract", () => {
+		expect(() => projectManagedModelCatalog({ models: null })).toThrow(
+			"The managed model catalog response is invalid.",
+		);
+		expect(() =>
+			projectManagedModelCatalog({
+				models: [
+					{
+						id: "model-from-hosted",
+						display_name: "Hosted model",
+						is_default: true,
+					},
+				],
+			}),
+		).toThrow("The managed model catalog response is invalid.");
 	});
 });
 

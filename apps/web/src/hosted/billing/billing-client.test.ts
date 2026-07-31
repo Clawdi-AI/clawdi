@@ -133,6 +133,12 @@ describe("unwrapDeploy", () => {
 });
 
 describe("managed model catalog", () => {
+	it("preserves an empty hosted catalog instead of inventing a client fallback", async () => {
+		const client = testClient(async () => jsonResponse({ models: [] }));
+
+		await expect(client.getManagedModelCatalog()).resolves.toEqual({ models: [] });
+	});
+
 	it("fetches the authenticated v2 managed-model endpoint", async () => {
 		const requests: Request[] = [];
 		const client = testClient(async (request) => {

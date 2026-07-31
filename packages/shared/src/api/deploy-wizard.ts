@@ -1,4 +1,5 @@
 import { CLAWDI_MANAGED_PROVIDER_ID } from "../ai-provider";
+import type { ManagedModelCatalogItem } from "./deploy";
 import type { components as DeployComponents } from "./deploy.generated";
 
 type Schemas = DeployComponents["schemas"];
@@ -17,7 +18,6 @@ export type HostedDeployLanguage = NonNullable<HostedDeployRequest["language"]>;
 export type HostedDeployPlan = Schemas["V2PlanResponse"];
 export type HostedDeployBillingOffer = Schemas["V2BillingOfferResponse"];
 export type HostedDeployDeployment = Schemas["V2HostedDeploymentReadResponse"];
-export type HostedDeployManagedModel = Schemas["V2ManagedModelCatalogItem"];
 export type HostedDeploySubscriptionQuote = Schemas["V2ComputeSubscriptionQuoteResponse-Output"];
 export type HostedDeploySubscriptionQuoteRequest = Schemas["V2ComputeSubscriptionQuoteRequest"];
 export type HostedDeployCheckoutRequest = Schemas["V2ComputeCheckoutRequest"];
@@ -200,7 +200,7 @@ export function validateHostedDeployPersona(
 /** Validate the CLI/Web wizard boundary and build the generated request type. */
 export function validateAndBuildHostedDeployRequest(
 	draft: HostedDeployWizardDraft,
-	managedModels: readonly HostedDeployManagedModel[] = [],
+	managedModels: readonly ManagedModelCatalogItem[] = [],
 ): HostedDeployValidationResult {
 	const assistantName = draft.assistantName.trim();
 	const issues = validateHostedDeployPersona({

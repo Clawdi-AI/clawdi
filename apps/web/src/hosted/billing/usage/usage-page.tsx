@@ -1,5 +1,6 @@
 "use client";
 
+import type { ManagedModelCatalogItem } from "@clawdi/shared/api";
 import { Activity, AlertCircle, RefreshCw } from "lucide-react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
@@ -10,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Spinner } from "@/components/ui/spinner";
 import { UsageSkeleton } from "@/hosted/billing/components/state-views";
-import type { HostedUsageSummary, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
+import type { HostedUsageSummary } from "@/hosted/billing/contracts";
 import { billingErrorNormalizer } from "@/hosted/billing/errors";
 import { formatUsdExact } from "@/hosted/billing/format";
 import { useManagedModelCatalog, useUsage } from "@/hosted/billing/hooks";

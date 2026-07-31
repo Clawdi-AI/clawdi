@@ -27,6 +27,8 @@ export type DeploymentRead = S["V2HostedDeploymentReadResponse"];
 export type Deployment = DeploymentRead;
 export type DeployRequestRead = S["V2HostedDeployRequestReadResponse"];
 export type DeploymentEventStreamSnapshotHandoff = S["EventStreamSnapshotHandoff"];
+export type ManagedModelCatalog = S["V2ManagedModelCatalogResponse"];
+export type ManagedModelCatalogItem = S["V2ManagedModelCatalogItem"];
 export type RuntimeUiCredentials =
 	| S["V2HermesRuntimeUiCredentials"]
 	| S["V2OpenClawRuntimeUiCredentials"];
@@ -37,6 +39,32 @@ export type RuntimeUiAuthMode = RuntimeUiEndpointInfo["auth_mode"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function projectManagedModelCatalog(value: unknown): ManagedModelCatalog {
+	if (!isRecord(value) || !Array.isArray(value.models)) {
+		throw new Error("The managed model catalog response is invalid.");
+	}
+
+	return {
+		models: value.models.map((model) => {
+			if (
+				!isRecord(model) ||
+				typeof model.id !== "string" ||
+				typeof model.display_name !== "string" ||
+				typeof model.is_default !== "boolean" ||
+				typeof model.is_featured !== "boolean"
+			) {
+				throw new Error("The managed model catalog response is invalid.");
+			}
+			return {
+				id: model.id,
+				display_name: model.display_name,
+				is_default: model.is_default,
+				is_featured: model.is_featured,
+			};
+		}),
+	};
 }
 
 export function isRuntimeUiEndpointInfo(value: unknown): value is RuntimeUiEndpointInfo {

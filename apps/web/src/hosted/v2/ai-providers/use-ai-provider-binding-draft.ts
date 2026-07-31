@@ -1,5 +1,5 @@
+import type { ManagedModelCatalogItem } from "@clawdi/shared/api";
 import { useEffect, useRef, useState } from "react";
-import type { ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import type {
 	AiBindingMode,
 	AiBindingOperationMode,

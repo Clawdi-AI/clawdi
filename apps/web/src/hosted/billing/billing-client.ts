@@ -4,6 +4,7 @@ import {
 	type DeployPaths,
 	extractApiDetail,
 	projectHostedDeployRequest,
+	projectManagedModelCatalog,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
@@ -379,7 +380,7 @@ export function createBillingClient(
 
 	return {
 		getManagedModelCatalog: async () =>
-			unwrapDeploy(await api.GET("/v2/ai-providers/managed/models")),
+			projectManagedModelCatalog(unwrapDeploy(await api.GET("/v2/ai-providers/managed/models"))),
 		getWallet: async () => unwrapDeploy(await api.GET("/v2/wallet")),
 		getLedger: async (limit = 50) =>
 			unwrapDeploy(

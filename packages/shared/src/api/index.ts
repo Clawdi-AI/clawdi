@@ -6,6 +6,8 @@ export type {
 	DeploymentRead,
 	DeployPaths,
 	DeployRequestRead,
+	ManagedModelCatalog,
+	ManagedModelCatalogItem,
 	RuntimeUiAuthMode,
 	RuntimeUiCredentials,
 	RuntimeUiEndpointInfo,
@@ -14,6 +16,7 @@ export {
 	isDeploymentEventStreamSnapshotHandoff,
 	isRuntimeUiCredentials,
 	isRuntimeUiEndpointInfo,
+	projectManagedModelCatalog,
 	unwrapDeploymentEventStreamSnapshotHandoff,
 	unwrapDeploymentList,
 } from "./deploy";

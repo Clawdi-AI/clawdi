@@ -6,7 +6,6 @@ import {
 	type HostedDeployCheckoutRequest,
 	type HostedDeployCheckoutResult,
 	type HostedDeployDeployment,
-	type HostedDeployManagedModel,
 	type HostedDeployOperation,
 	type HostedDeployPlan,
 	type HostedDeployRequest,
@@ -15,7 +14,9 @@ import {
 	type HostedDeploySubscriptionQuoteRequest,
 	type HostedDeployWallet,
 	type HostedSavedAiProvider,
+	type ManagedModelCatalogItem,
 	type paths,
+	projectManagedModelCatalog,
 	unwrapDeploymentList,
 } from "@clawdi/shared/api";
 import createClient, { type Client, type Middleware } from "openapi-fetch";
@@ -157,8 +158,10 @@ export class HostedDeployClient {
 		return unwrapDeploymentList(unwrapHosted(await this.client.GET("/v2/deployments")));
 	}
 
-	async getManagedModels(): Promise<HostedDeployManagedModel[]> {
-		return unwrapHosted(await this.client.GET("/v2/ai-providers/managed/models")).models;
+	async getManagedModels(): Promise<ManagedModelCatalogItem[]> {
+		return projectManagedModelCatalog(
+			unwrapHosted(await this.client.GET("/v2/ai-providers/managed/models")),
+		).models;
 	}
 
 	async getSavedAiProviders(): Promise<HostedSavedAiProvider[]> {

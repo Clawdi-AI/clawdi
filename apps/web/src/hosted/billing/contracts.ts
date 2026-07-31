@@ -43,7 +43,6 @@ export type HostedEventStreamSnapshotHandoff = Schemas["EventStreamSnapshotHando
 export type HostedFundingFact = Schemas["V2HostedCommercialFundingFactInfo"];
 export type HostedUsageSummary = Schemas["V2HostedUsageSummaryResponse"];
 export type HostedRuntimeConfiguration = Schemas["RuntimeConfiguration"];
-export type ManagedModelCatalogItem = Schemas["V2ManagedModelCatalogItem"];
 export type HostedUser = Schemas["V1UserResponse"];
 export type HostedConfigRequest = Schemas["V2HostedConfigRequest"];
 export type Plan = Schemas["V2PlanResponse"];

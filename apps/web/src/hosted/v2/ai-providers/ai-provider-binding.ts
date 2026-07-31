@@ -2,8 +2,9 @@ import {
 	buildHostedAiBindingFields,
 	HostedAiBindingError,
 	type HostedAiProviderBootstrap,
+	type ManagedModelCatalogItem,
 } from "@clawdi/shared";
-import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
+import type { AiProviderAuthKind } from "@/hosted/billing/contracts";
 import {
 	MANAGED_AI_CHOICE,
 	MANAGED_PROVIDER_LABEL,

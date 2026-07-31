@@ -9,7 +9,8 @@ import {
 	validateAiProviderCatalog,
 } from "../ai-provider";
 import type { components } from "./api.generated";
-import type { HostedDeployAiFields, HostedDeployManagedModel } from "./deploy-wizard";
+import type { ManagedModelCatalogItem } from "./deploy";
+import type { HostedDeployAiFields } from "./deploy-wizard";
 
 type Schemas = components["schemas"];
 
@@ -131,7 +132,7 @@ export function buildHostedAiBindingFields({
 	providers,
 	selection,
 }: {
-	managedModels: readonly HostedDeployManagedModel[];
+	managedModels: readonly ManagedModelCatalogItem[];
 	mode: HostedAiBindingOperationMode;
 	providers: readonly HostedSavedAiProvider[];
 	selection: HostedAiBindingSelection;

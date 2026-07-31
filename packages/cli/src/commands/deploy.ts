@@ -14,7 +14,6 @@ import {
 	type HostedDeployCheckoutResult,
 	type HostedDeployComputePlanSlug,
 	type HostedDeployDeployment,
-	type HostedDeployManagedModel,
 	type HostedDeployOperation,
 	type HostedDeployPlan,
 	type HostedDeployRequest,
@@ -28,6 +27,7 @@ import {
 	isHostedDeployComputePlan,
 	isHostedDeployRuntime,
 	isValidHostedDeployTimezone,
+	type ManagedModelCatalogItem,
 	projectHostedDeployRequest,
 	resolveHostedDeployIncludedBasicSelection,
 	selectHostedDeployOfferForTerm,
@@ -213,7 +213,7 @@ export interface HostedDeployGateway {
 	supportsPaidCheckout(): boolean;
 	getPlans(): Promise<HostedDeployPlan[]>;
 	listDeployments(): Promise<HostedDeployDeployment[]>;
-	getManagedModels(): Promise<HostedDeployManagedModel[]>;
+	getManagedModels(): Promise<ManagedModelCatalogItem[]>;
 	getSavedAiProviders(): Promise<HostedSavedAiProvider[]>;
 	quoteSubscription(
 		body: HostedDeploySubscriptionQuoteRequest,
@@ -358,7 +358,7 @@ function defaultTimezone(): string {
 	}
 }
 
-function defaultManagedModel(models: readonly HostedDeployManagedModel[]): string {
+function defaultManagedModel(models: readonly ManagedModelCatalogItem[]): string {
 	return models.find((model) => model.is_default)?.id ?? models[0]?.id ?? "";
 }
 

@@ -3,7 +3,8 @@ import {
 	isClawdiManagedProviderId,
 	isFirstPartyManagedAiProvider,
 } from "@clawdi/shared";
-import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
+import type { ManagedModelCatalogItem } from "@clawdi/shared/api";
+import type { AiProviderAuthKind } from "@/hosted/billing/contracts";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatModelLabel } from "@/lib/format";
