@@ -29,8 +29,10 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0,
     SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
-    require_agent_authoritative_skill_sync,
+    SkillSyncProtocol,
+    resolve_skill_sync_protocol,
 )
 from app.models.api_key import ApiKey
 from app.models.hosted_runtime import HostedRuntimeState
@@ -47,20 +49,38 @@ pytestmark = pytest.mark.committed_db
 
 
 @pytest.mark.parametrize(
-    ("protocol", "expected_status"),
-    [(None, 426), ("agent-authoritative-v0", 426), ("Agent authoritative", 400)],
+    ("protocol", "expected"),
+    [
+        (None, SkillSyncProtocol.LEGACY),
+        (SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0, SkillSyncProtocol.LEGACY),
+        (
+            SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+            SkillSyncProtocol.AGENT_AUTHORITATIVE_V1,
+        ),
+    ],
 )
-def test_sse_protocol_gate_pauses_old_or_malformed_daemons(
+def test_skill_sync_protocol_accepts_legacy_and_current_clients(
     protocol: str | None,
-    expected_status: int,
+    expected: SkillSyncProtocol,
+) -> None:
+    assert resolve_skill_sync_protocol(protocol) is expected
+
+
+@pytest.mark.parametrize(
+    ("protocol", "expected_code"),
+    [
+        ("Agent authoritative", "invalid_skill_sync_protocol"),
+        ("agent-authoritative-v2", "unsupported_skill_sync_protocol"),
+    ],
+)
+def test_skill_sync_protocol_rejects_malformed_and_unknown_values(
+    protocol: str,
+    expected_code: str,
 ) -> None:
     with pytest.raises(HTTPException) as rejected:
-        require_agent_authoritative_skill_sync(protocol)
-    assert rejected.value.status_code == expected_status
-
-
-def test_sse_protocol_gate_accepts_current_one_way_daemon() -> None:
-    require_agent_authoritative_skill_sync(SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1)
+        resolve_skill_sync_protocol(protocol)
+    assert rejected.value.status_code == 400
+    assert rejected.value.detail["code"] == expected_code
 
 
 def test_oauth_cli_sse_handshake_uses_verified_utc_expiry_only():
@@ -156,7 +176,7 @@ async def test_oauth_cli_sse_expiry_rechecks_clock_at_heartbeat_cadence():
 
 
 @pytest.mark.asyncio
-async def test_oauth_cli_events_route_subscribes_then_closes_at_verified_expiry(
+async def test_oauth_cli_sse_without_protocol_header_subscribes_then_closes_at_expiry(
     monkeypatch: pytest.MonkeyPatch,
 ):
     from unittest.mock import Mock
@@ -209,7 +229,7 @@ async def test_oauth_cli_events_route_subscribes_then_closes_at_verified_expiry(
     response = await sync_route.events(
         request,
         oauth,
-        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+        None,
     )
     assert response.media_type == "text/event-stream"
     assert response.headers["x-accel-buffering"] == "no"

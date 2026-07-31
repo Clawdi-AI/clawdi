@@ -153,10 +153,12 @@ reflects the new content_hash on refresh.
 
 ### Verify a Cloud event cannot overwrite local state
 
-The backend's protocol-gated generic Agent-Project route remains a direct
+The backend's protocol-aware generic Agent-Project route remains a direct
 compatibility-boundary test surface, but the current CLI uses only the
-dedicated Agent sync route. A current daemon uses its SSE event only to rescan
-the local filesystem and project the local bytes back; it never downloads the
+dedicated Agent sync route. Missing protocol and `agent-authoritative-v0`
+requests retain legacy download behavior; the explicit v1 request below keeps
+the one-way boundary. A current daemon uses its SSE event only to rescan the
+local filesystem and project the local bytes back; it never downloads the
 uploaded bytes. `PROJECT_ID` is the Agent's `default_project_id`:
 
 ```sh

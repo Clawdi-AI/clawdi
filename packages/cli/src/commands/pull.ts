@@ -12,6 +12,10 @@ import { parseModules } from "../lib/prompts";
 import { sanitizeMetadata } from "../lib/sanitize";
 import { adapterForType, resolveTargetAgentTypes } from "../lib/select-adapter";
 import {
+	SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+	SKILL_SYNC_PROTOCOL_HEADER,
+} from "../lib/skill-sync-protocol";
+import {
 	readSkillsLock,
 	type SkillsLock,
 	skillCacheKey,
@@ -311,6 +315,9 @@ async function applyOneAgentPull(
 					// The explicit Cloud-owned source Project selects the import bytes.
 					const tarBytes = await api.getBytes(
 						`/v1/projects/${encodeURIComponent(scan.skillProjectId)}/skills/${encodeURIComponent(skill.skill_key)}/download`,
+						{
+							[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+						},
 					);
 					if (scan.sharedOwnerHandle) {
 						await adapter.writeSharedSkillArchive(

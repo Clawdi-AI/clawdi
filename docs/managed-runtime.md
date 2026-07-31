@@ -556,20 +556,21 @@ an upload baseline but cannot authorize deletion. The current CLI uses only
 the dedicated Agent sync boundary. A 404 from that boundary is ambiguous
 between a backend without the route and an identity the caller cannot prove,
 so both cases fail closed: the durable operation and exact claim remain, and
-no generic Project mutation is attempted. Dashboard writes, old clients
-without the explicit capability, and orphan projects also fail closed.
+no generic Project mutation is attempted. Dashboard writes and orphan projects
+also fail closed. Compatibility writes still prove CLI Agent and Agent Project
+identity; slug-only delete additionally requires an environment-bound API key.
 
 The CLI declares `X-Clawdi-Skill-Sync-Protocol: agent-authoritative-v1` on
-Agent-Project listing, SSE, and writes. Every Clawdi backend worker plus
-drainage of old SSE connections precedes CLI 0.13.13, then Web. Old CLIs
-receive 426 from a current backend; a current CLI receives a dedicated 404
-from an old backend and leaves its filesystem and durable projection state
-intact. Additive
+Agent-Project listing, SSE, and writes. A missing header or explicit
+`agent-authoritative-v0` selects the supported legacy behavior, including
+Agent Project downloads; malformed and unknown values return 400. Explicit v1
+keeps the one-way boundary and rejects Agent Project downloads. A current CLI
+receives a dedicated 404 from an old backend and leaves its filesystem and
+durable projection state intact. Additive
 `agent_skill_changed`/`agent_skill_deleted` events protect only mutations
 created by current backend workers from released parsers on older connections;
-they do not make an old mutation worker safe. Current daemons treat both event
-families only as local-rescan hints. Workspace and personal Project events keep
-their released Cloud-owned behavior.
+current daemons treat both event families only as local-rescan hints. Workspace
+and personal Project events keep their released Cloud-owned behavior.
 
 An enabled private bundled-Skill entry reserves its key ahead of managed target
 installation. Conforming CLI/daemon uploads fail closed at that reservation

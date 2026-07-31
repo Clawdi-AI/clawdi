@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth, get_auth_short_session
 from app.core.skill_sync_protocol import (
+    SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0,
     SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
     SKILL_SYNC_PROTOCOL_HEADER,
 )
@@ -241,35 +242,56 @@ async def test_agent_sync_mutations_emit_additive_rolling_safe_events(
 
 
 @pytest.mark.asyncio
-async def test_generic_agent_project_upload_is_cli_compatibility_alias(
+@pytest.mark.parametrize(
+    "protocol",
+    [
+        None,
+        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0,
+        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    ],
+)
+@pytest.mark.parametrize("route_kind", ["legacy", "project_explicit"])
+async def test_generic_agent_project_upload_and_delete_support_mixed_cli_versions(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
     environment_project,
+    protocol: str | None,
+    route_kind: str,
 ):
-    data, files = _skill_upload("legacy-cli-upload")
+    protocol_label = protocol or "missing"
+    skill_key = f"{route_kind}-{protocol_label}"
+    upload_path = (
+        "/v1/skills/upload"
+        if route_kind == "legacy"
+        else f"/v1/projects/{environment_project.id}/skills/upload"
+    )
+    headers = {} if protocol is None else {SKILL_SYNC_PROTOCOL_HEADER: protocol}
+
+    data, files = _skill_upload(skill_key)
     browser = await client.post(
-        f"/v1/projects/{environment_project.id}/skills/upload",
+        upload_path,
         data=data,
         files=files,
+        headers=headers,
     )
     assert browser.status_code == 409, browser.text
     assert browser.json()["detail"]["code"] == "agent_project_skills_read_only"
 
     _set_auth(_api_key_auth(seed_user))
-    data, files = _skill_upload("legacy-cli-upload")
+    data, files = _skill_upload(skill_key)
     cli = await client.post(
-        f"/v1/projects/{environment_project.id}/skills/upload",
+        upload_path,
         data=data,
         files=files,
-        headers=_AGENT_SYNC_HEADERS,
+        headers=headers,
     )
     assert cli.status_code == 200, cli.text
     row = (
         await db_session.execute(
             select(Skill).where(
                 Skill.project_id == environment_project.id,
-                Skill.skill_key == "legacy-cli-upload",
+                Skill.skill_key == skill_key,
                 Skill.is_active,
             )
         )
@@ -277,17 +299,24 @@ async def test_generic_agent_project_upload_is_cli_compatibility_alias(
     assert row.authority == SKILL_AUTHORITY_AGENT_SYNC
     assert row.authority_agent_id == environment_project.origin_environment_id
 
+    deleted = await client.delete(
+        f"/v1/projects/{environment_project.id}/skills/{skill_key}",
+        headers=headers,
+    )
+    assert deleted.status_code == 200, deleted.text
+    await db_session.refresh(row)
+    assert row.is_active is False
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("protocol", "expected_status", "expected_code"),
     [
-        (None, 426, "agent_skill_sync_upgrade_required"),
-        ("agent-authoritative-v0", 426, "agent_skill_sync_upgrade_required"),
+        ("agent-authoritative-v2", 400, "unsupported_skill_sync_protocol"),
         ("Agent authoritative", 400, "invalid_skill_sync_protocol"),
     ],
 )
-async def test_generic_agent_project_upload_pauses_old_or_malformed_cli(
+async def test_generic_agent_project_upload_rejects_unknown_or_malformed_protocol(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
@@ -319,10 +348,19 @@ async def test_generic_agent_project_upload_pauses_old_or_malformed_cli(
 
 
 @pytest.mark.asyncio
-async def test_agent_project_listing_gates_old_daemon_before_conditional_304(
+@pytest.mark.parametrize(
+    "protocol",
+    [
+        None,
+        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0,
+        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    ],
+)
+async def test_agent_project_listing_supports_mixed_cli_versions_and_conditional_304(
     client: httpx.AsyncClient,
     seed_user: User,
     environment_project,
+    protocol: str | None,
 ):
     agent_id = environment_project.origin_environment_id
     _set_auth(
@@ -333,24 +371,15 @@ async def test_agent_project_listing_gates_old_daemon_before_conditional_304(
         )
     )
     params = {"project_id": str(environment_project.id)}
-    old = await client.get("/v1/skills", params=params)
-    assert old.status_code == 426, old.text
-    assert old.json()["detail"]["code"] == "agent_skill_sync_upgrade_required"
-
-    current = await client.get("/v1/skills", params=params, headers=_AGENT_SYNC_HEADERS)
-    assert current.status_code == 200, current.text
-    conditional_old = await client.get(
+    headers = {} if protocol is None else {SKILL_SYNC_PROTOCOL_HEADER: protocol}
+    listing = await client.get("/v1/skills", params=params, headers=headers)
+    assert listing.status_code == 200, listing.text
+    conditional = await client.get(
         "/v1/skills",
         params=params,
-        headers={"If-None-Match": current.headers["etag"]},
+        headers={**headers, "If-None-Match": listing.headers["etag"]},
     )
-    assert conditional_old.status_code == 426, conditional_old.text
-    conditional_current = await client.get(
-        "/v1/skills",
-        params=params,
-        headers={**_AGENT_SYNC_HEADERS, "If-None-Match": current.headers["etag"]},
-    )
-    assert conditional_current.status_code == 304, conditional_current.text
+    assert conditional.status_code == 304, conditional.text
 
 
 @pytest.mark.asyncio
@@ -415,11 +444,20 @@ async def test_agent_project_cloud_content_and_install_mutations_fail_closed(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "protocol",
+    [
+        None,
+        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0,
+        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    ],
+)
 async def test_generic_agent_project_delete_treats_local_absence_as_legacy_migration_evidence(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user: User,
     environment_project,
+    protocol: str | None,
 ):
     legacy = Skill(
         user_id=seed_user.id,
@@ -433,19 +471,157 @@ async def test_generic_agent_project_delete_treats_local_absence_as_legacy_migra
     db_session.add(legacy)
     await db_session.commit()
     _set_auth(_api_key_auth(seed_user))
+    headers = {} if protocol is None else {SKILL_SYNC_PROTOCOL_HEADER: protocol}
 
     deleted = await client.delete(
         f"/v1/projects/{environment_project.id}/skills/legacy-absence",
-        headers=_AGENT_SYNC_HEADERS,
+        headers=headers,
     )
     assert deleted.status_code == 200, deleted.text
     replay = await client.delete(
         f"/v1/projects/{environment_project.id}/skills/legacy-absence",
-        headers=_AGENT_SYNC_HEADERS,
+        headers=headers,
     )
     assert replay.status_code == 200, replay.text
     await db_session.refresh(legacy)
     assert legacy.is_active is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "protocol",
+    [
+        None,
+        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0,
+        SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+    ],
+)
+async def test_slug_only_delete_uses_bound_agent_project_for_mixed_cli_versions(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    environment_project,
+    protocol: str | None,
+):
+    skill = Skill(
+        user_id=seed_user.id,
+        project_id=environment_project.id,
+        skill_key="bound-legacy-delete",
+        name="Bound legacy delete",
+        description="Released slug-only compatibility",
+        content_hash="e" * 64,
+        authority=SKILL_AUTHORITY_CLOUD,
+    )
+    db_session.add(skill)
+    await db_session.commit()
+    _set_auth(
+        _api_key_auth(
+            seed_user,
+            environment_id=environment_project.origin_environment_id,
+            scopes=["skills:write"],
+        )
+    )
+    headers = {} if protocol is None else {SKILL_SYNC_PROTOCOL_HEADER: protocol}
+
+    response = await client.delete(
+        "/v1/skills/bound-legacy-delete",
+        headers=headers,
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "deleted"}
+    await db_session.refresh(skill)
+    assert skill.is_active is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("principal", ["browser", "unbound_api_key", "oauth_cli"])
+async def test_slug_only_delete_keeps_ambiguous_callers_on_410(
+    client: httpx.AsyncClient,
+    db_session: AsyncSession,
+    seed_user: User,
+    environment_project,
+    principal: str,
+):
+    skill = Skill(
+        user_id=seed_user.id,
+        project_id=environment_project.id,
+        skill_key="ambiguous-legacy-delete",
+        name="Ambiguous legacy delete",
+        description="Must remain project-explicit",
+        content_hash="f" * 64,
+        authority=SKILL_AUTHORITY_CLOUD,
+    )
+    db_session.add(skill)
+    await db_session.commit()
+    if principal == "unbound_api_key":
+        _set_auth(_api_key_auth(seed_user))
+    elif principal == "oauth_cli":
+        _set_auth(_oauth_auth(seed_user))
+
+    response = await client.delete("/v1/skills/ambiguous-legacy-delete")
+
+    assert response.status_code == 410, response.text
+    assert response.json()["detail"]["code"] == "project_explicit_route_required"
+    await db_session.refresh(skill)
+    assert skill.is_active is True
+
+
+@pytest.mark.asyncio
+async def test_agent_project_download_preserves_legacy_access_and_current_cli_protection(
+    client: httpx.AsyncClient,
+    seed_user: User,
+    environment_project,
+    channel_agent,
+):
+    agent_id = environment_project.origin_environment_id
+    _set_auth(_api_key_auth(seed_user))
+    data, files = _skill_upload("download-compat")
+    uploaded = await client.post(
+        f"/v1/agents/{agent_id}/skills/sync/upload",
+        data=data,
+        files=files,
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    project_download = f"/v1/projects/{environment_project.id}/skills/download-compat/download"
+    for protocol in (None, SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V0):
+        headers = {} if protocol is None else {SKILL_SYNC_PROTOCOL_HEADER: protocol}
+        legacy = await client.get(project_download, headers=headers)
+        assert legacy.status_code == 200, legacy.text
+        assert legacy.headers["content-type"].startswith("application/gzip")
+
+    legacy_route = await client.get("/v1/skills/download-compat/download")
+    assert legacy_route.status_code == 200, legacy_route.text
+
+    current = await client.get(project_download, headers=_AGENT_SYNC_HEADERS)
+    assert current.status_code == 409, current.text
+    assert current.json()["detail"]["code"] == "agent_project_download_forbidden"
+
+    for protocol, expected_code in (
+        ("agent-authoritative-v2", "unsupported_skill_sync_protocol"),
+        ("Agent authoritative", "invalid_skill_sync_protocol"),
+    ):
+        rejected = await client.get(
+            project_download,
+            headers={SKILL_SYNC_PROTOCOL_HEADER: protocol},
+        )
+        assert rejected.status_code == 400, rejected.text
+        assert rejected.json()["detail"]["code"] == expected_code
+
+    _set_auth(AuthContext(user=seed_user))
+    dashboard = await client.get(project_download, headers=_AGENT_SYNC_HEADERS)
+    assert dashboard.status_code == 200, dashboard.text
+
+    _set_auth(
+        _api_key_auth(
+            seed_user,
+            environment_id=channel_agent.id,
+            scopes=["skills:read", "skills:write"],
+        )
+    )
+    fenced = await client.get(project_download)
+    assert fenced.status_code == 404, fenced.text
 
 
 @pytest.mark.asyncio

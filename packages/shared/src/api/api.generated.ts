@@ -1539,7 +1539,8 @@ export interface paths {
          *     route. New CLIs and the dashboard call
          *     `POST /v1/projects/{project_id}/skills/upload` directly.
          *
-         *     Asymmetric with `delete_skill_legacy` (which 410s) by design:
+         *     Asymmetric with `delete_skill_legacy` (which only accepts an env-bound
+         *     API key) by design:
          *     a wrong-project upload creates a stray row visible in the
          *     dashboard listing, recoverable in 30s by re-uploading to the
          *     correct project. A wrong-project DELETE is permanent data loss.
@@ -1592,19 +1593,12 @@ export interface paths {
         post?: never;
         /**
          * Delete Skill Legacy
-         * @description Legacy delete by slug-only is gone in phase 2. Resolving
-         *     via `resolve_default_write_project` would silently delete
-         *     the wrong project's copy when the caller's account holds the
-         *     same `skill_key` in multiple projects (which the cross-project
-         *     listing now exposes), or 404 with no useful hint when
-         *     their default project doesn't have that key. The CLI and
-         *     dashboard both migrated to
-         *     `DELETE /v1/projects/{project_id}/skills/{skill_key}` and
-         *     pass the row's own project_id; force any stale client onto
-         *     that path with 410 instead of guessing.
+         * @description Safely serve released slug-only clients with an Agent-bound identity.
          *
-         *     Argument unused — kept so FastAPI still parses the path
-         *     param uniformly with sibling routes.
+         *     Only an env-bound API key identifies exactly one Agent and its current
+         *     Agent Project. User-level API keys, OAuth CLI sessions, and browser sessions
+         *     remain ambiguous and receive the historical 410 instead of resolving a
+         *     most-recently-active Project.
          */
         delete: operations["delete_skill_legacy_v1_skills__skill_key__delete"];
         options?: never;
@@ -10610,7 +10604,9 @@ export interface operations {
     download_skill_legacy_v1_skills__skill_key__download_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 skill_key: string;
             };
@@ -10672,7 +10668,9 @@ export interface operations {
     delete_skill_legacy_v1_skills__skill_key__delete: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 skill_key: string;
             };
@@ -10809,7 +10807,9 @@ export interface operations {
     download_skill_project_v1_projects__project_id__skills__skill_key__download_get: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                "X-Clawdi-Skill-Sync-Protocol"?: string | null;
+            };
             path: {
                 project_id: string;
                 skill_key: string;

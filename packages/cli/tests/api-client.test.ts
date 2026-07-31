@@ -307,6 +307,28 @@ describe("ApiClient error classification", () => {
 });
 
 describe("Agent-authoritative Skill sync rollout", () => {
+	it("marks binary downloads with the current Skill sync protocol", async () => {
+		fakeLogin("http://127.0.0.1:0");
+		const originalFetch = globalThis.fetch;
+		let request: Request | undefined;
+		globalThis.fetch = async (input, init) => {
+			request = input instanceof Request ? input : new Request(input, init);
+			return new Response("archive");
+		};
+		try {
+			const { ApiClient } = await import("../src/lib/api-client");
+			await new ApiClient().getBytes("/v1/projects/project-1/skills/demo/download", {
+				[SKILL_SYNC_PROTOCOL_HEADER]: SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+			});
+		} finally {
+			globalThis.fetch = originalFetch;
+		}
+
+		expect(request?.headers.get(SKILL_SYNC_PROTOCOL_HEADER)).toBe(
+			SKILL_SYNC_PROTOCOL_AGENT_AUTHORITATIVE_V1,
+		);
+	});
+
 	const notFoundCases = [
 		{
 			name: "route-not-found from an older backend",

@@ -1218,10 +1218,10 @@ async def test_legacy_upload_resolves_default_project_with_deprecation_header(
     legacy `POST /api/skills/upload` route. Round-3 originally
     410'd it for safety, but every user has a deterministic
     default project after the migration (`resolve_default_write_project`
-    never returns None). Asymmetric with DELETE: a wrong-project
-    upload creates a stray row that's recoverable in 30s; a
-    wrong-project DELETE is permanent loss. So upload soft-
-    deprecates and continues to function — old CLIs keep
+    never returns None). A wrong-project upload creates a stray row
+    that's recoverable in 30s, while slug-only DELETE remains restricted
+    to env-bound keys that identify exactly one Agent Project. Upload
+    therefore soft-deprecates and continues to function so old CLIs keep
     pushing skills.
 
     Pinned by: legacy upload returns 200 with the skill landed
@@ -1258,14 +1258,11 @@ async def test_legacy_upload_resolves_default_project_with_deprecation_header(
 
 
 @pytest.mark.asyncio
-async def test_legacy_delete_still_410s(client: httpx.AsyncClient, project_id: str):
-    """Round-r6: round-3's 410-on-DELETE design preserved.
-    DELETE remains hard-410 (not soft-deprecated like upload)
-    because a wrong-project delete is permanent data loss — the
-    asymmetry that justifies the back-compat split. Clients
-    must use the project-explicit `DELETE /api/projects/{sid}/
-    skills/{key}` so they pick which row to delete on multi-
-    project accounts.
+async def test_legacy_delete_still_410s_for_browser(client: httpx.AsyncClient, project_id: str):
+    """Slug-only DELETE remains ambiguous for browser sessions.
+
+    Only an env-bound API key can identify one Agent Project without guessing;
+    dashboard and other user-level callers must use the project-explicit route.
     """
     # Upload via the new route to make sure there's a row to
     # potentially-delete; the 410 must fire BEFORE we look up
