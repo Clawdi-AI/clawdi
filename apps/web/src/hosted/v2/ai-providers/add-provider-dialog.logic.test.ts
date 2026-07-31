@@ -193,11 +193,7 @@ describe("derivedProviderFields", () => {
 		expect(kimi.label).toBe("Kimi Code");
 		expect(kimi.catalog.map((model) => model.id)).toEqual(["kimi-for-coding", "k3-256k", "k3"]);
 		expect(kimi.catalog[0]?.alias).toBe("Kimi Code");
-		expect(kimi.catalog.map((model) => model.context_window)).toEqual([
-			undefined,
-			262_144,
-			undefined,
-		]);
+		expect(kimi.catalog.every((model) => model.context_window === undefined)).toBe(true);
 		expect(providerPresetSummary(kimi)).toBe("Kimi Code +2 more");
 		expect(providerTypeForPreset(kimi)).toBe("anthropic");
 		expect(derivedProviderFields("anthropic", "api_key", kimi)).toEqual({
@@ -209,7 +205,7 @@ describe("derivedProviderFields", () => {
 
 		const moonshot = testPreset("moonshot");
 		expect(moonshot.label).toBe("Kimi API");
-		expect(moonshot.catalog[0]?.context_window).toBe(1_048_576);
+		expect(moonshot.catalog[0]?.context_window).toBeUndefined();
 		expect(derivedProviderFields("custom_openai_compatible", "api_key", moonshot)).toMatchObject({
 			baseUrl: "https://api.moonshot.cn/v1",
 			apiMode: "openai_chat",

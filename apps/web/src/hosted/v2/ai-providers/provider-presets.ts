@@ -52,7 +52,7 @@ export const PROVIDER_PRESETS = [
 		api_mode: "anthropic_messages",
 		catalog: [
 			{ id: "kimi-for-coding", alias: "Kimi Code" },
-			{ id: "k3-256k", context_window: 262_144, alias: "Kimi K3 (256K)" },
+			{ id: "k3-256k", alias: "Kimi K3 (256K)" },
 			{ id: "k3", alias: "Kimi K3" },
 		],
 		api_key_url: "https://www.kimi.com/code/console",
@@ -63,7 +63,7 @@ export const PROVIDER_PRESETS = [
 		label: "Kimi API",
 		base_url: "https://api.moonshot.cn/v1",
 		api_mode: "openai_chat",
-		catalog: [{ id: "kimi-k3", context_window: 1_048_576, alias: "Kimi K3" }],
+		catalog: [{ id: "kimi-k3", alias: "Kimi K3" }],
 		api_key_url: "https://platform.kimi.com/console/api-keys",
 		region_variants: [
 			{
