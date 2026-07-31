@@ -47,6 +47,10 @@ async function expectVisibleLobeHubIconsContained(page: Page, minimumCount: numb
 			return {
 				width: element.getAttribute("width"),
 				height: element.getAttribute("height"),
+				iconWidth: icon.width,
+				iconHeight: icon.height,
+				tileWidth: tile?.width ?? 0,
+				tileHeight: tile?.height ?? 0,
 				contained: Boolean(
 					tile &&
 						icon.left >= tile.left &&
@@ -54,11 +58,23 @@ async function expectVisibleLobeHubIconsContained(page: Page, minimumCount: numb
 						icon.right <= tile.right &&
 						icon.bottom <= tile.bottom,
 				),
+				noOverflow: Boolean(
+					element.parentElement &&
+						element.parentElement.scrollWidth <= element.parentElement.clientWidth &&
+						element.parentElement.scrollHeight <= element.parentElement.clientHeight,
+				),
 			};
 		}),
 	);
 	for (const measurement of measurements) {
-		expect(measurement).toEqual({ width: "72%", height: "72%", contained: true });
+		expect(measurement.width).toBe("84%");
+		expect(measurement.height).toBe("84%");
+		expect(measurement.contained).toBe(true);
+		expect(measurement.noOverflow).toBe(true);
+		expect(measurement.iconWidth).toBeGreaterThan(measurement.tileWidth * 0.75);
+		expect(measurement.iconHeight).toBeGreaterThan(measurement.tileHeight * 0.75);
+		expect(measurement.iconWidth).toBeLessThan(measurement.tileWidth * 0.81);
+		expect(measurement.iconHeight).toBeLessThan(measurement.tileHeight * 0.81);
 	}
 }
 
@@ -4163,7 +4179,7 @@ test("rejected detail delete stays on the current agent without accepted cleanup
 
 test("deploy managed model picker preserves featured and overflow order and submits overflow", async ({
 	page,
-}) => {
+}, testInfo) => {
 	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
 	await stubHostedApi(page, {
 		plans: [basicPlan],
@@ -4193,8 +4209,8 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(kimiBrand).toBeVisible();
 	for (const icon of [openAiIcon, kimiIcon]) {
 		await expect(icon.locator("svg")).toHaveCount(1);
-		await expect(icon.locator('[data-icon-source="lobehub"]')).toHaveAttribute("width", "72%");
-		await expect(icon.locator('[data-icon-source="lobehub"]')).toHaveAttribute("height", "72%");
+		await expect(icon.locator('[data-icon-source="lobehub"]')).toHaveAttribute("width", "84%");
+		await expect(icon.locator('[data-icon-source="lobehub"]')).toHaveAttribute("height", "84%");
 	}
 	await expect(featuredCards.nth(0).getByText("O", { exact: true })).toHaveCount(0);
 	await expect(featuredCards.nth(0).getByText("S", { exact: true })).toHaveCount(0);
@@ -4249,21 +4265,25 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	const screenshotStyle = await page.addStyleTag({
 		content: ".sticky.bottom-0 { display: none !important; }",
 	});
-	await expectResponsiveAiChoiceLayout(
-		page,
-		"deploy",
-		(width) => `/tmp/deploy-ai-provider-layout-${width}.png`,
+	await expectResponsiveAiChoiceLayout(page, "deploy", (width) =>
+		testInfo.outputPath(`deploy-ai-provider-layout-${width}.png`),
 	);
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.locator("html").evaluate((element) => element.classList.add("dark"));
 	await expect(page.locator("html")).toHaveClass(/dark/);
-	await page.getByTestId("provider-choice-grid").locator("..").screenshot({
-		path: "/tmp/deploy-ai-provider-layout-dark-1280.png",
-	});
+	await page
+		.getByTestId("provider-choice-grid")
+		.locator("..")
+		.screenshot({
+			path: testInfo.outputPath("deploy-ai-provider-layout-dark-1280.png"),
+		});
 	await page.setViewportSize({ width: 390, height: 844 });
-	await page.getByTestId("provider-choice-grid").locator("..").screenshot({
-		path: "/tmp/deploy-ai-provider-layout-dark-390.png",
-	});
+	await page
+		.getByTestId("provider-choice-grid")
+		.locator("..")
+		.screenshot({
+			path: testInfo.outputPath("deploy-ai-provider-layout-dark-390.png"),
+		});
 	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 	await screenshotStyle.evaluate((element) => element.parentNode?.removeChild(element));
 
@@ -4446,7 +4466,7 @@ test("hosted AI provider Apply submits canonical deployment PATCH", async ({ pag
 
 test("agent settings shares the responsive managed model layout and accepts its catalog default", async ({
 	page,
-}) => {
+}, testInfo) => {
 	const updateDeploymentRequests: Array<{
 		body: string;
 		idempotencyKey: string | null;
@@ -4477,21 +4497,25 @@ test("agent settings shares the responsive managed model layout and accepts its 
 	await expect(page.locator("#agent-primary-model")).toHaveCount(0);
 	await expect(page.locator("#agent-primary-provider")).toHaveCount(0);
 	await expect(page.getByText("Primary provider", { exact: true })).toHaveCount(0);
-	await expectResponsiveAiChoiceLayout(
-		page,
-		"agent",
-		(width) => `/tmp/agent-ai-provider-layout-${width}.png`,
+	await expectResponsiveAiChoiceLayout(page, "agent", (width) =>
+		testInfo.outputPath(`agent-ai-provider-layout-${width}.png`),
 	);
 	await page.setViewportSize({ width: 1280, height: 900 });
 	await page.locator("html").evaluate((element) => element.classList.add("dark"));
 	await expect(page.locator("html")).toHaveClass(/dark/);
-	await page.getByTestId("provider-choice-grid").locator("..").screenshot({
-		path: "/tmp/agent-ai-provider-layout-dark-1280.png",
-	});
+	await page
+		.getByTestId("provider-choice-grid")
+		.locator("..")
+		.screenshot({
+			path: testInfo.outputPath("agent-ai-provider-layout-dark-1280.png"),
+		});
 	await page.setViewportSize({ width: 390, height: 844 });
-	await page.getByTestId("provider-choice-grid").locator("..").screenshot({
-		path: "/tmp/agent-ai-provider-layout-dark-390.png",
-	});
+	await page
+		.getByTestId("provider-choice-grid")
+		.locator("..")
+		.screenshot({
+			path: testInfo.outputPath("agent-ai-provider-layout-dark-390.png"),
+		});
 	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);

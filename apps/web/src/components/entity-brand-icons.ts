@@ -18,21 +18,26 @@ import Together from "@lobehub/icons/es/Together/components/Color.js";
 import XAI from "@lobehub/icons/es/XAI/components/Mono.js";
 import Zhipu from "@lobehub/icons/es/Zhipu/components/Color.js";
 import type { BrandIconComponent } from "@/components/brand-icon-tile";
+import type { FrameworkBrandIconId, ProviderBrandIconId } from "@/components/entity-brand-icon-ids";
 
 export type BrandIconMetadata = {
 	icon: BrandIconComponent;
 	label: string;
 };
 
-const FRAMEWORK_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {
+const FRAMEWORK_BRAND_ICON_DEFINITIONS = {
 	openclaw: { icon: OpenClaw, label: "OpenClaw" },
 	hermes: { icon: HermesAgent, label: "Hermes Agent" },
 	"claude-code": { icon: ClaudeCode, label: "Claude Code" },
-	claude_code: { icon: ClaudeCode, label: "Claude Code" },
 	codex: { icon: Codex, label: "Codex" },
+} satisfies Readonly<Record<FrameworkBrandIconId, BrandIconMetadata>>;
+
+const FRAMEWORK_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {
+	...FRAMEWORK_BRAND_ICON_DEFINITIONS,
+	claude_code: FRAMEWORK_BRAND_ICON_DEFINITIONS["claude-code"],
 };
 
-const PROVIDER_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {
+const PROVIDER_BRAND_ICON_DEFINITIONS = {
 	anthropic: { icon: Anthropic, label: "Anthropic" },
 	deepseek: { icon: DeepSeek, label: "DeepSeek" },
 	gemini: { icon: Gemini, label: "Gemini" },
@@ -48,7 +53,10 @@ const PROVIDER_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> = {
 	together: { icon: Together, label: "Together AI" },
 	xai: { icon: XAI, label: "xAI" },
 	zhipu: { icon: Zhipu, label: "Zhipu" },
-};
+} satisfies Readonly<Record<ProviderBrandIconId, BrandIconMetadata>>;
+
+const PROVIDER_BRAND_ICONS: Readonly<Record<string, BrandIconMetadata>> =
+	PROVIDER_BRAND_ICON_DEFINITIONS;
 
 const PROVIDER_ICON_ALIASES: Readonly<Record<string, string>> = {
 	"google-gemini-openai": "gemini",
