@@ -3958,6 +3958,18 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 		expect(installedUserTargets).toContain(join(home, ".openclaw", "extensions", "discord"));
 		expect(installedUserTargets).not.toContain(largeInstalledTree);
+		manifest.runtimes.hermes.services.dashboard = runSettings("hermes", ["dashboard"]);
+		const dashboardTargets = runtimeUserMutationTargets(
+			manifest,
+			paths,
+			join(home, "clawdi"),
+			new Map([
+				["openclaw", { status: "present" as const }],
+				["hermes", { status: "present" as const }],
+			]),
+		);
+		expect(dashboardTargets).toContain(join(largeInstalledTree, "hermes_cli", "web_dist"));
+		expect(dashboardTargets).not.toContain(largeInstalledTree);
 		expect(
 			captureRuntimeLiveSnapshot({
 				rootTargets: [],
