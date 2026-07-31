@@ -11695,11 +11695,19 @@ async def test_discord_gateway_early_heartbeat_does_not_ack_undispatched_low_inb
                 await db_session.commit()
 
                 websocket.send_json({"op": 1, "d": highest_guild_sequence})
-                assert websocket.receive_json() == {"op": 11, "d": None}
+                first_frame = websocket.receive_json()
+                if first_frame == {"op": 11, "d": None}:
+                    dispatch = websocket.receive_json()
+                else:
+                    # The gateway poll may observe the newly committed inbox row
+                    # before it processes the heartbeat. Frame ordering is not
+                    # the invariant under test: the stale heartbeat still must
+                    # not acknowledge this later dispatch sequence.
+                    dispatch = first_frame
+                    assert websocket.receive_json() == {"op": 11, "d": None}
                 await db_session.refresh(message)
                 assert message.delivered_at is None
 
-                dispatch = websocket.receive_json()
                 assert dispatch["t"] == "MESSAGE_CREATE"
                 assert dispatch["s"] > highest_guild_sequence
                 assert dispatch["d"]["content"] == "low inbox after guild create"
