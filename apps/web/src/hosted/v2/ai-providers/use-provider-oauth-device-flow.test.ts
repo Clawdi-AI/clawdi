@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { ProviderOAuthFlow } from "./provider-oauth-flow";
 import {
 	cancelOAuthSessionLifecycle,
 	isCurrentOAuthGeneration,
@@ -107,9 +109,27 @@ describe("provider OAuth device flow lifecycle", () => {
 		expect(started.map((session) => session.state)).toEqual(["replacement"]);
 	});
 
-	test("allows an explicit new code while the current session is polling", () => {
-		const source = readFileSync(new URL("./provider-oauth-flow.tsx", import.meta.url), "utf8");
-		expect(source).toContain("onClick={onRestart} disabled={starting}");
-		expect(source).not.toContain("disabled={starting || polling}");
+	test("only offers a new code after the current code expires or fails", () => {
+		const props = {
+			verificationUrl: "https://auth.openai.com/codex/device",
+			userCode: "ABCD-EFGH",
+			starting: false,
+			polling: true,
+			onRestart: () => {},
+		};
+		const waiting = renderToStaticMarkup(
+			createElement(ProviderOAuthFlow, { ...props, issue: null }),
+		);
+		const expired = renderToStaticMarkup(
+			createElement(ProviderOAuthFlow, { ...props, issue: "expired" }),
+		);
+		const failed = renderToStaticMarkup(
+			createElement(ProviderOAuthFlow, { ...props, issue: "failed" }),
+		);
+
+		expect(waiting).toContain("Waiting for ChatGPT authorization");
+		expect(waiting).not.toContain("Get a new code");
+		expect(expired).toContain("Get a new code");
+		expect(failed).toContain("Get a new code");
 	});
 });

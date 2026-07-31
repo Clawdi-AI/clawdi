@@ -1,6 +1,14 @@
 "use client";
 
-import { CircleAlert, ExternalLink, KeyRound, RefreshCw, UserRound } from "lucide-react";
+import {
+	ChevronDown,
+	CircleAlert,
+	ExternalLink,
+	KeyRound,
+	RefreshCw,
+	UserRound,
+} from "lucide-react";
+import { useCallback } from "react";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
@@ -75,6 +83,15 @@ export function ProviderFieldsForm({
 	const showPrimaryName = meta.custom === true;
 	const showAdvancedName = !showPrimaryName && isEdit;
 	const showRuntimeEnv = !isOAuthEdit && form.authMethod === "api_key";
+	const defaultAdvancedOpen = meta.custom || isEdit;
+	// React has no defaultOpen prop for native details. Initialize once through a
+	// stable ref so later renders leave the user's disclosure state untouched.
+	const initializeAdvancedDetails = useCallback(
+		(details: HTMLDetailsElement | null) => {
+			if (details) details.open = defaultAdvancedOpen;
+		},
+		[defaultAdvancedOpen],
+	);
 
 	return (
 		<div data-hosted="true" data-v2="true" className="flex flex-col gap-4">
@@ -214,12 +231,13 @@ export function ProviderFieldsForm({
 			)}
 
 			{form.authMethod === "api_key" ? (
-				<details className="group rounded-lg border bg-muted/20" open={meta.custom || isEdit}>
-					<summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium marker:hidden">
+				<details ref={initializeAdvancedDetails} className="group rounded-lg border bg-muted/20">
+					<summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-sm font-medium marker:hidden">
 						Advanced
-						<span className="float-right text-muted-foreground transition-transform group-open:rotate-180">
-							⌄
-						</span>
+						<ChevronDown
+							className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+							aria-hidden
+						/>
 					</summary>
 					<div className="flex flex-col gap-3 border-t p-3">
 						{showAdvancedName ? (
