@@ -22,10 +22,16 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Literal
+from typing import Literal
 
 from openai import AsyncOpenAI
-from pydantic import BaseModel, Field
+from openai.types.chat import (
+    ChatCompletionMessageParam,
+    ChatCompletionSystemMessageParam,
+    ChatCompletionUserMessageParam,
+)
+from openai.types.shared_params import ResponseFormatJSONSchema
+from pydantic import BaseModel, Field, JsonValue
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +56,11 @@ class ExtractionResult(BaseModel):
     # for selectivity ("most sessions yield 0-5"). 20 only catches a
     # model that's gone off the rails (one memory per message, etc.).
     memories: list[ExtractedMemory] = Field(default_factory=list, max_length=20)
+
+
+class _SessionMessage(BaseModel):
+    role: str = "?"
+    content: JsonValue = ""
 
 
 # json_schema for OpenAI structured output. Mirrored from `ExtractionResult`
@@ -161,7 +172,7 @@ Return JSON only. Do not explain why the array is empty. Do not narrate your rea
 
 
 def _format_messages_for_prompt(
-    messages: list[dict[str, Any]],
+    messages: list[object],
     project_path: str | None,
     total: int,
 ) -> str:
@@ -169,9 +180,10 @@ def _format_messages_for_prompt(
     header = f"project: {project_path or 'unknown'}\nmessages: {len(messages)} of {total} (tail-truncated, oldest dropped)"
     lines.append(header)
     lines.append("")
-    for m in messages:
-        role = str(m.get("role", "?"))
-        content = m.get("content", "")
+    for raw_message in messages:
+        message = _SessionMessage.model_validate(raw_message)
+        role = str(message.role)
+        content = message.content
         # Some messages may have non-string content (tool_use blocks etc).
         # Stringify defensively — the LLM is fine with JSON snippets in-line.
         if not isinstance(content, str):
@@ -184,7 +196,7 @@ def _format_messages_for_prompt(
 
 
 async def extract_memories_from_session(
-    messages: list[dict[str, Any]],
+    messages: list[object],
     *,
     project_path: str | None,
     client: AsyncOpenAI,
@@ -194,33 +206,37 @@ async def extract_memories_from_session(
 
     Tail-truncates to `MAX_MESSAGES` and asks the LLM for a JSON-schema
     constrained `ExtractionResult`. Returns the parsed list, possibly
-    empty. Any LLM/network/parsing error propagates to the caller.
+    empty. This function takes ownership of `client` and closes it before
+    returning. Any LLM/network/parsing error propagates to the caller.
     """
-    if not messages:
-        return []
+    async with client:
+        if not messages:
+            return []
 
-    total = len(messages)
-    truncated = messages[-MAX_MESSAGES:] if total > MAX_MESSAGES else messages
+        total = len(messages)
+        truncated = messages[-MAX_MESSAGES:] if total > MAX_MESSAGES else messages
 
-    user_content = _format_messages_for_prompt(truncated, project_path, total)
+        user_content = _format_messages_for_prompt(truncated, project_path, total)
 
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ],
-        response_format={
-            "type": "json_schema",
-            "json_schema": {
+        request_messages: list[ChatCompletionMessageParam] = [
+            ChatCompletionSystemMessageParam(role="system", content=_SYSTEM_PROMPT),
+            ChatCompletionUserMessageParam(role="user", content=user_content),
+        ]
+        response_format = ResponseFormatJSONSchema(
+            type="json_schema",
+            json_schema={
                 "name": "ExtractionResult",
                 "strict": True,
                 "schema": _RESPONSE_SCHEMA,
             },
-        },
-        temperature=0.2,
-    )
+        )
+        response = await client.chat.completions.create(
+            model=model,
+            messages=request_messages,
+            response_format=response_format,
+            temperature=0.2,
+        )
 
-    raw = response.choices[0].message.content or "{}"
-    parsed = ExtractionResult.model_validate_json(raw)
-    return parsed.memories
+        raw = response.choices[0].message.content or "{}"
+        parsed = ExtractionResult.model_validate_json(raw)
+        return parsed.memories

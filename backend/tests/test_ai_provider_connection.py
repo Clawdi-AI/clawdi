@@ -122,12 +122,17 @@ async def test_connection_probe_verifies_protocol_model_and_credential_shape(
     base_url: str,
     expected_path: str,
     header_name: str,
-):
-    captured: dict[str, object] = {}
+) -> None:
+    captured_request: ai_provider_connection._ProbeRequest | None = None
+    captured_address: str | None = None
 
-    async def fake_send(request, address: str) -> ai_provider_connection._ProbeHttpResponse:
-        captured["request"] = request
-        captured["address"] = address
+    async def fake_send(
+        request: ai_provider_connection._ProbeRequest,
+        address: str,
+    ) -> ai_provider_connection._ProbeHttpResponse:
+        nonlocal captured_request, captured_address
+        captured_request = request
+        captured_address = address
         return _successful_inference_response(api_mode)
 
     _mock_public_dns(monkeypatch)
@@ -142,10 +147,11 @@ async def test_connection_probe_verifies_protocol_model_and_credential_shape(
 
     assert result.ok is True
     assert result.error is None
-    request = captured["request"]
+    request = captured_request
+    assert request is not None
     assert request.url.path == expected_path
     assert header_name in request.headers
-    assert captured["address"] == "8.8.8.8"
+    assert captured_address == "8.8.8.8"
     if api_mode == "openai_responses":
         assert request.body["max_output_tokens"] == 16
         assert request.body["store"] is False
