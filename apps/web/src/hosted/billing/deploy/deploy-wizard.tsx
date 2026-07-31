@@ -10,7 +10,6 @@ import {
 	RefreshCw,
 	Rocket,
 	Settings2,
-	Sparkles,
 	TriangleAlert,
 	WalletCards,
 	Zap,
@@ -149,10 +148,11 @@ import {
 	buildAiBindingFields,
 } from "@/hosted/v2/ai-providers/ai-provider-binding";
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
-import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import { AuthBadge, ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
 	MANAGED_AI_CHOICE,
+	MANAGED_PROVIDER_ID,
 	MANAGED_PROVIDER_LABEL,
 	modelDisplayName,
 	modelOptionsForProvider,
@@ -552,7 +552,7 @@ export function DeployWizard() {
 		if (!managedPrimaryModelReady) {
 			if (managedModelsNeedRetry) return "Retry loading Clawdi AI models above.";
 			if (managedModelsLoading) return "Loading Clawdi AI models.";
-			return "Choose an available main model.";
+			return "Choose an available primary model.";
 		}
 		if (paidSelection && paymentMethod === "wallet") {
 			if (!wallet.isSuccess || !wallet.data) {
@@ -1064,11 +1064,7 @@ export function DeployWizard() {
 							<EntityChoiceCard
 								selected={managedProviderSelected}
 								onClick={() => selectAiProviderChoice(MANAGED_AI_CHOICE)}
-								icon={
-									<IconChip tint="bg-primary/10 text-primary">
-										<Sparkles />
-									</IconChip>
-								}
+								icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
 								title={MANAGED_PROVIDER_LABEL}
 								description="No setup required. Usage draws from your Wallet."
 								badge={<Badge variant="secondary">Default</Badge>}
@@ -1111,7 +1107,7 @@ export function DeployWizard() {
 										}
 										onClick={() => selectAiProviderChoice(provider.provider_id)}
 										disabled={Boolean(issue)}
-										icon={<ProviderTypeChip type={provider.type} />}
+										icon={<ProviderIcon provider={provider} />}
 										title={providerDisplayLabel(provider)}
 										description={issue?.message ?? providerCatalogDescription(provider)}
 										badge={

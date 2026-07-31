@@ -5,17 +5,9 @@ import { useMemo, useState } from "react";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { SearchInput } from "@/components/ui/search-input";
-import {
-	PROVIDER_PRESET_CATEGORIES,
-	PROVIDER_PRESET_CATEGORY_LABEL,
-	PROVIDER_PRESETS,
-	type ProviderPreset,
-} from "@/hosted/v2/ai-providers/provider-presets";
-import {
-	API_MODE_LABEL,
-	type ProviderTypeId,
-	providerTypeMeta,
-} from "@/hosted/v2/ai-providers/provider-types";
+import { providerPresetSummary } from "@/hosted/v2/ai-providers/model-binding";
+import { PROVIDER_PRESETS, type ProviderPreset } from "@/hosted/v2/ai-providers/provider-presets";
+import { type ProviderTypeId, providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 
 export type ProviderChoice =
 	| { kind: "type"; type: ProviderTypeId }
@@ -31,7 +23,7 @@ interface ChoiceEntry {
 }
 
 const FIRST_CLASS_TYPES: readonly ProviderTypeId[] = ["openai", "anthropic", "gemini"];
-const POPULAR_IDS = new Set([
+const INITIAL_PROVIDER_IDS = new Set([
 	"type:openai",
 	"type:anthropic",
 	"preset:openrouter",
@@ -43,8 +35,8 @@ const POPULAR_IDS = new Set([
 
 function typeDescription(type: ProviderTypeId): string {
 	if (type === "openai") return "API key or ChatGPT sign-in";
-	if (type === "anthropic") return "Claude models";
-	if (type === "gemini") return "Google GenerateContent";
+	if (type === "anthropic") return "Claude model access";
+	if (type === "gemini") return "Gemini model access";
 	return "Bring any OpenAI-compatible endpoint";
 }
 
@@ -61,13 +53,12 @@ function typeEntry(type: ProviderTypeId): ChoiceEntry {
 }
 
 function presetEntry(preset: ProviderPreset): ChoiceEntry {
-	const category = PROVIDER_PRESET_CATEGORY_LABEL[preset.category];
 	return {
 		id: `preset:${preset.id}`,
 		label: preset.label,
-		description: `${API_MODE_LABEL[preset.api_mode]} · ${preset.catalog.length} models`,
+		description: providerPresetSummary(preset),
 		iconId: preset.id,
-		searchText: `${preset.label} ${preset.id} ${category} ${preset.api_mode}`.toLowerCase(),
+		searchText: `${preset.label} ${preset.id} ${preset.api_mode}`.toLowerCase(),
 		choice: { kind: "preset", preset },
 	};
 }
@@ -110,7 +101,8 @@ export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoic
 				: [],
 		[normalizedQuery],
 	);
-	const popular = ALL_ENTRIES.filter((entry) => POPULAR_IDS.has(entry.id));
+	const initialProviders = ALL_ENTRIES.filter((entry) => INITIAL_PROVIDER_IDS.has(entry.id));
+	const moreProviders = ALL_ENTRIES.filter((entry) => !INITIAL_PROVIDER_IDS.has(entry.id));
 
 	return (
 		<div data-hosted="true" data-v2="true" className="flex flex-col gap-4">
@@ -148,33 +140,19 @@ export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoic
 			) : (
 				<>
 					<div className="flex flex-col gap-2">
-						<p className="text-xs font-medium text-muted-foreground">Popular</p>
-						<ChoiceGrid entries={popular} onSelect={onSelect} />
+						<p className="text-xs font-medium text-muted-foreground">Providers</p>
+						<ChoiceGrid entries={initialProviders} onSelect={onSelect} />
 					</div>
 					<details className="group rounded-lg border bg-muted/20">
 						<summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-sm font-medium marker:hidden">
-							Browse all providers
+							More providers
 							<ChevronDown
 								className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
 								aria-hidden
 							/>
 						</summary>
-						<div className="flex flex-col gap-4 border-t px-3 py-3">
-							{PROVIDER_PRESET_CATEGORIES.map((category) => {
-								const entries = ALL_ENTRIES.filter(
-									(entry) =>
-										entry.choice.kind === "preset" && entry.choice.preset.category === category,
-								);
-								if (entries.length === 0) return null;
-								return (
-									<div key={category} className="flex flex-col gap-1.5">
-										<p className="text-xs font-medium text-muted-foreground">
-											{PROVIDER_PRESET_CATEGORY_LABEL[category]}
-										</p>
-										<ChoiceGrid entries={entries} onSelect={onSelect} />
-									</div>
-								);
-							})}
+						<div className="border-t px-3 py-3">
+							<ChoiceGrid entries={moreProviders} onSelect={onSelect} />
 						</div>
 					</details>
 				</>

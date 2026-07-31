@@ -38,7 +38,8 @@ import { AgentSettingsPanel } from "@/components/dashboard/agent-settings-panel"
 import { AgentSkillsTab } from "@/components/dashboard/agent-skills-tab";
 import type { DetailSectionMeta } from "@/components/detail/layout";
 import { EmptyState } from "@/components/empty-state";
-import { EntityCardSkeleton } from "@/components/entity-card";
+import { EntityCardSkeleton, EntityChoiceCard } from "@/components/entity-card";
+import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
@@ -200,7 +201,7 @@ import {
 	updateProviderChoiceFromRef,
 } from "@/hosted/v2/ai-providers/ai-provider-binding";
 import { useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
-import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
+import { AuthBadge, ProviderIcon } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
 	firstModelForProvider,
@@ -312,7 +313,7 @@ const HOSTED_AGENT_NAV_META: Record<HostedAgentTab, DetailSectionMeta> = {
 		icon: Sparkles,
 	},
 	ai: {
-		description: "AI provider and model used by this agent.",
+		description: "AI providers and the primary model used by this agent.",
 		icon: Zap,
 	},
 	channels: {
@@ -1981,15 +1982,7 @@ function TerminalTab({ deployment }: { deployment: HostedDeployment }) {
 	);
 }
 
-// ── AI Provider ──────────────────────────────────────────────────────────────
-
-function selectableCard(active: boolean): string {
-	return `w-full rounded-lg border p-4 text-left transition-colors ${
-		active
-			? "border-primary bg-primary/5 ring-1 ring-primary/30"
-			: "border-border hover:bg-muted/50"
-	}`;
-}
+// ── AI Providers ─────────────────────────────────────────────────────────────
 
 function AiProviderTab({
 	deployment,
@@ -2131,38 +2124,32 @@ function AiProviderTab({
 	return (
 		<div className="flex flex-col gap-4">
 			<div className="flex flex-col gap-2">
-				<button
-					type="button"
+				<EntityChoiceCard
 					onClick={() => setBindingMode("unmanaged")}
-					className={selectableCard(bindingMode === "unmanaged")}
-				>
-					<div className="flex items-center justify-between gap-2">
-						<span className="text-sm font-medium">{authCardLabel("unmanaged")}</span>
-						{bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
-					</div>
-					<p className="mt-0.5 text-sm text-muted-foreground">
-						Use provider settings inside the agent instead of connecting them through Clawdi.
-					</p>
-				</button>
-				<button
-					type="button"
+					selected={bindingMode === "unmanaged"}
+					icon={
+						<IconChip tint="bg-muted text-muted-foreground">
+							<Settings />
+						</IconChip>
+					}
+					title={authCardLabel("unmanaged")}
+					description="Configure model access inside the agent."
+					badge={bindingMode === "unmanaged" ? <Badge variant="secondary">Current</Badge> : null}
+				/>
+				<EntityChoiceCard
 					onClick={() => toggleProvider(MANAGED_AI_CHOICE)}
-					className={selectableCard(
-						bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE),
-					)}
-				>
-					<div className="flex items-center justify-between gap-2">
-						<span className="text-sm font-medium">{MANAGED_PROVIDER_LABEL}</span>
-						{bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE ? (
+					selected={bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE)}
+					icon={<ProviderIcon provider={MANAGED_PROVIDER_ID} />}
+					title={MANAGED_PROVIDER_LABEL}
+					description="No setup required. Usage draws from your Wallet."
+					badge={
+						bindingMode === "configured" && primaryProviderChoice === MANAGED_AI_CHOICE ? (
 							<Badge variant="secondary">Primary</Badge>
 						) : bindingMode === "configured" && selectedProviders.includes(MANAGED_AI_CHOICE) ? (
 							<Badge variant="outline">Bound</Badge>
-						) : null}
-					</div>
-					<p className="mt-0.5 text-sm text-muted-foreground">
-						Clawdi AI models, billed from your Wallet.
-					</p>
-				</button>
+						) : null
+					}
+				/>
 				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
 				{providers.error ? (
 					<ApiErrorPanel
@@ -2173,20 +2160,19 @@ function AiProviderTab({
 					/>
 				) : null}
 				{bindingMode === "configured"
-					? selectedProviders.filter(isUnresolvedProviderChoice).map((choice) => (
-							<button key={choice} type="button" disabled className={selectableCard(true)}>
-								<div className="flex items-center justify-between gap-2">
-									<span className="text-sm font-medium">
-										Using {providerDisplayLabel(unresolvedProviderRef(choice), list)}
-									</span>
-									<Badge variant="secondary">In use</Badge>
-								</div>
-								<p className="mt-0.5 text-sm text-muted-foreground">
-									Its saved connection details couldn’t be loaded. Choose {MANAGED_PROVIDER_LABEL}{" "}
-									to replace it.
-								</p>
-							</button>
-						))
+					? selectedProviders
+							.filter(isUnresolvedProviderChoice)
+							.map((choice) => (
+								<EntityChoiceCard
+									key={choice}
+									selected
+									disabled
+									icon={<ProviderIcon provider={unresolvedProviderRef(choice)} />}
+									title={`Using ${providerDisplayLabel(unresolvedProviderRef(choice), list)}`}
+									description={`Saved connection details couldn't be loaded. Choose ${MANAGED_PROVIDER_LABEL} to replace it.`}
+									badge={<Badge variant="secondary">In use</Badge>}
+								/>
+							))
 					: null}
 				{list.map((p) => {
 					const selected =
@@ -2194,31 +2180,26 @@ function AiProviderTab({
 					const issue = providerAvailabilityIssue(p, availabilityContext);
 					const disabled = Boolean(issue) && !selected;
 					return (
-						<button
+						<EntityChoiceCard
 							key={p.provider_id}
-							type="button"
 							onClick={() => toggleProvider(p.provider_id)}
 							disabled={disabled}
-							className={`flex items-center gap-3 ${selectableCard(selected)}`}
-						>
-							<ProviderTypeChip type={p.type} />
-							<span className="min-w-0 flex-1">
-								<span className="flex items-center gap-2">
-									<span className="truncate text-sm font-medium">{providerDisplayLabel(p)}</span>
+							selected={selected}
+							icon={<ProviderIcon provider={p} />}
+							title={providerDisplayLabel(p)}
+							description={issue?.message ?? providerCatalogDescription(p)}
+							badge={
+								bindingMode === "configured" && primaryProviderChoice === p.provider_id ? (
+									<Badge variant="secondary">Primary</Badge>
+								) : selected ? (
+									<Badge variant="outline">Bound</Badge>
+								) : issue ? (
+									<Badge variant="secondary">Unavailable</Badge>
+								) : (
 									<AuthBadge auth={p.auth} />
-								</span>
-								<span className="block text-xs text-muted-foreground">
-									{issue?.message ?? providerCatalogDescription(p)}
-								</span>
-							</span>
-							{bindingMode === "configured" && primaryProviderChoice === p.provider_id ? (
-								<Badge variant="secondary">Primary</Badge>
-							) : selected ? (
-								<Badge variant="outline">Bound</Badge>
-							) : issue ? (
-								<Badge variant="secondary">Unavailable</Badge>
-							) : null}
-						</button>
+								)
+							}
+						/>
 					);
 				})}
 				<Button
@@ -2277,7 +2258,7 @@ function AiProviderTab({
 			<p className="text-xs text-muted-foreground">
 				Add, validate, or remove providers on{" "}
 				<Link to="/ai-providers" className="underline">
-					Model Providers
+					AI Providers
 				</Link>
 				.
 			</p>

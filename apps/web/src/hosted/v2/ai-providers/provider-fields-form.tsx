@@ -1,16 +1,8 @@
 "use client";
 
-import {
-	ChevronDown,
-	CircleAlert,
-	ExternalLink,
-	KeyRound,
-	RefreshCw,
-	UserRound,
-} from "lucide-react";
+import { ChevronDown, ExternalLink, KeyRound, RefreshCw, UserRound } from "lucide-react";
 import { useCallback } from "react";
 import { EntityChoiceCard } from "@/components/entity-card";
-import { EntityIcon } from "@/components/entity-icon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -24,7 +16,6 @@ import {
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import type { AuthMethod } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
-import { ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import type {
 	ProviderPreset,
 	ProviderPresetRegionVariant,
@@ -77,13 +68,13 @@ export function ProviderFieldsForm({
 	const isEdit = editing !== null;
 	const isOAuthEdit =
 		editing?.auth.type === "agent_profile" || editing?.auth.type === "oauth_profile";
-	const editingReady = editing ? (editing.readiness?.deployable ?? editing.usable) : false;
 	const apiModes = meta.apiModes;
 	const regions = preset?.region_variants ?? [];
-	const showPrimaryName = meta.custom === true;
-	const showAdvancedName = !showPrimaryName && isEdit;
+	const isCustomEndpoint = meta.custom === true && preset === null;
+	const showPrimaryName = isCustomEndpoint;
+	const showAdvancedName = preset !== null || (!showPrimaryName && isEdit);
 	const showRuntimeEnv = !isOAuthEdit && form.authMethod === "api_key";
-	const defaultAdvancedOpen = meta.custom || isEdit;
+	const defaultAdvancedOpen = isCustomEndpoint;
 	// React has no defaultOpen prop for native details. Initialize once through a
 	// stable ref so later renders leave the user's disclosure state untouched.
 	const initializeAdvancedDetails = useCallback(
@@ -95,20 +86,6 @@ export function ProviderFieldsForm({
 
 	return (
 		<div data-hosted="true" data-v2="true" className="flex flex-col gap-4">
-			<div className="flex items-center gap-3 rounded-lg border bg-muted/30 p-3">
-				{preset ? (
-					<EntityIcon kind="provider" id={preset.id} label={preset.label} size="md" />
-				) : (
-					<ProviderTypeChip type={form.type} />
-				)}
-				<div className="min-w-0 flex-1">
-					<p className="text-sm font-medium text-foreground">{providerLabel}</p>
-					<p className="truncate text-xs text-muted-foreground">
-						Provider ID <code className="font-mono">{providerId || "—"}</code>
-					</p>
-				</div>
-			</div>
-
 			{showPrimaryName ? (
 				<div className="flex flex-col gap-1.5">
 					<Label htmlFor="provider-label">Name</Label>
@@ -116,8 +93,9 @@ export function ProviderFieldsForm({
 						id="provider-label"
 						value={form.label}
 						onChange={(event) => onUpdate({ label: event.target.value })}
-						placeholder={preset?.label ?? "Custom endpoint"}
+						placeholder="Custom endpoint"
 						autoComplete="off"
+						required
 					/>
 				</div>
 			) : null}
@@ -143,7 +121,6 @@ export function ProviderFieldsForm({
 							))}
 						</SelectContent>
 					</Select>
-					<p className="break-all text-xs text-muted-foreground">{region?.base_url}</p>
 				</div>
 			) : null}
 
@@ -155,15 +132,15 @@ export function ProviderFieldsForm({
 							selected={form.authMethod === "api_key"}
 							onClick={() => onAuthMethodChange("api_key")}
 							icon={<KeyRound className="size-4" />}
-							title="API key"
-							description="Use metered API billing"
+							title="Sign in with an API key"
+							description="For usage-based access"
 						/>
 						<EntityChoiceCard
 							selected={form.authMethod === "oauth"}
 							onClick={() => onAuthMethodChange("oauth")}
 							icon={<UserRound className="size-4" />}
 							title="Sign in with ChatGPT"
-							description="Use your Codex subscription"
+							description="For subscription access"
 						/>
 					</div>
 				</fieldset>
@@ -175,7 +152,7 @@ export function ProviderFieldsForm({
 					<div className="min-w-0 flex-1">
 						<p className="text-sm font-medium">ChatGPT sign-in</p>
 						<p className="text-xs text-muted-foreground">
-							Reconnect only when you want to change or repair the account.
+							Subscription access. Reconnect only to change or repair the account.
 						</p>
 					</div>
 					<Button variant="outline" size="sm" onClick={onReconnectOAuth} disabled={startingOAuth}>
@@ -185,9 +162,7 @@ export function ProviderFieldsForm({
 				</div>
 			) : form.authMethod === "api_key" ? (
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor="provider-key">
-						API key{isEdit && editingReady ? " (leave blank to keep)" : ""}
-					</Label>
+					<Label htmlFor="provider-key">API key</Label>
 					<div>
 						<Input
 							id="provider-key"
@@ -201,9 +176,16 @@ export function ProviderFieldsForm({
 					</div>
 					<p className="text-xs text-muted-foreground">
 						{isEdit
-							? "Leave blank to keep the current key. A new key and settings are committed together."
+							? editing?.auth.type === "none"
+								? "Enter an API key to finish setup."
+								: "Leave blank to keep the current key."
 							: "Encrypted at rest and never shown again."}
 					</p>
+					{meta.oauth ? (
+						<p className="text-xs text-muted-foreground">
+							OpenAI bills API key usage through your Platform account at standard API rates.
+						</p>
+					) : null}
 					<p className="text-xs text-muted-foreground">
 						Testing sends one minimal inference request and may incur a small provider charge.
 					</p>
@@ -216,12 +198,6 @@ export function ProviderFieldsForm({
 						>
 							Get API key <ExternalLink className="size-3" />
 						</a>
-					) : null}
-					{isEdit && editing?.auth.type === "none" ? (
-						<p className="flex items-start gap-1.5 text-xs text-warning-muted-foreground">
-							<CircleAlert className="mt-0.5 size-3.5 shrink-0" /> This legacy provider has no
-							credential. Save a key before assigning it to a hosted agent.
-						</p>
 					) : null}
 				</div>
 			) : (
@@ -252,6 +228,12 @@ export function ProviderFieldsForm({
 								/>
 							</div>
 						) : null}
+						<div className="flex flex-col gap-1.5">
+							<p className="text-sm font-medium">Provider ID</p>
+							<code className="w-fit max-w-full break-all rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
+								{providerId || "—"}
+							</code>
+						</div>
 						<div className="flex flex-col gap-1.5">
 							<Label htmlFor="provider-base">Base URL</Label>
 							<Input

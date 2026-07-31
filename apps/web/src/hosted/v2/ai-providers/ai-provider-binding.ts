@@ -137,11 +137,11 @@ export function buildAiBindingFields(
 		if (error instanceof HostedAiBindingError) {
 			const title =
 				error.code === "provider_unusable"
-					? "Provider needs setup"
+					? "Provider setup required"
 					: error.code === "managed_model_unavailable"
 						? "Clawdi AI model unavailable"
 						: error.code === "model_required"
-							? "Main model required"
+							? "Primary model required"
 							: mode === "create"
 								? "Provider unavailable"
 								: "Provider configuration is invalid";

@@ -214,7 +214,7 @@ const HOSTED_AGENT_SECTIONS: {
 	{
 		id: "ai",
 		icon: Zap,
-		tooltip: "AI provider and model",
+		tooltip: "AI providers and primary model",
 	},
 	{
 		id: "channels",
@@ -453,11 +453,11 @@ function ConsoleResourcesSection({
 			},
 			{
 				id: "model-providers",
-				label: "Model Providers",
+				label: "AI Providers",
 				href: "/ai-providers",
 				icon: Sparkles,
 				tint: "bg-identity-2-bg text-identity-2-fg",
-				tooltip: "Model Providers - Account resources",
+				tooltip: "AI Providers - Account resources",
 				active: pathname === "/ai-providers" || pathname.startsWith("/ai-providers/"),
 			},
 		);

@@ -127,11 +127,15 @@ export function AddProviderDialog({
 	const runtimeEnv = form.runtimeEnv.trim() || meta.defaultRuntimeEnv;
 	const presetCatalog = selectedPreset ? presetCatalogToProviderModels(selectedPreset) : [];
 	const providerListReady = providerListAllowsSubmit(isEdit, providers.isSuccess);
+	const savedCredentialAvailable = editing != null && editing.auth.type !== "none";
+	const customNameProvided =
+		meta.custom !== true || selectedPreset !== null || Boolean(form.label.trim());
 	const canSubmit =
 		providerListReady &&
 		Boolean(providerId) &&
+		customNameProvided &&
 		Boolean(form.baseUrl.trim()) &&
-		(isEdit || form.authMethod === "oauth" || Boolean(form.apiKey.trim()));
+		(form.authMethod === "oauth" || savedCredentialAvailable || Boolean(form.apiKey.trim()));
 
 	useEffect(() => {
 		cancelOAuth();
@@ -146,7 +150,6 @@ export function AddProviderDialog({
 					? "oauth"
 					: "api_key";
 			const preset = providerPresetForSavedProvider({
-				providerId: editing.provider_id,
 				baseUrl: editing.base_url,
 			});
 			const defaults = derivedProviderFields(type, authMethod, preset);
@@ -461,12 +464,16 @@ export function AddProviderDialog({
 						{oauth
 							? "Open ChatGPT, enter the one-time code, and this page will finish automatically."
 							: isOAuthEdit
-								? "Your ChatGPT connection is ready. Reconnect only to change or repair the account."
+								? "Subscription access is ready. Reconnect only to change or repair the account."
 								: isEdit
-									? "Update settings and, if entered, the API key in one atomic save."
+									? editing?.auth.type === "none"
+										? "Enter an API key to finish setup. Optional provider details are in Advanced."
+										: "Update this provider. Enter a new API key only if you want to replace it."
 									: step === "choose"
 										? "Choose a common provider or bring a custom endpoint."
-										: "Only the credential is required. Provider details stay in Advanced."}
+										: meta.custom && selectedPreset === null
+											? "Enter the credential and connection details for this custom endpoint."
+											: "Enter a credential. Optional provider details are in Advanced."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -499,7 +506,12 @@ export function AddProviderDialog({
 								region={selectedRegion}
 								providerId={providerId}
 								providerLabel={providerLabel}
-								apiKeyUrl={selectedRegion?.api_key_url ?? selectedPreset?.api_key_url ?? null}
+								apiKeyUrl={
+									selectedRegion?.api_key_url ??
+									selectedPreset?.api_key_url ??
+									meta.apiKeyUrl ??
+									null
+								}
 								onUpdate={(value) => {
 									acceptAttemptRef.current = null;
 									setDraftTestResult(null);
@@ -520,7 +532,7 @@ export function AddProviderDialog({
 									}
 								>
 									{draftTestResult.ok
-										? "Credential, endpoint, protocol, and model verified."
+										? "Connection verified. The provider accepted the test request."
 										: (draftTestResult.error?.message ?? "Connection test failed.")}
 								</div>
 							) : null}
