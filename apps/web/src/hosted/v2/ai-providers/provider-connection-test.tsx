@@ -10,30 +10,15 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
+	DialogTrigger,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { useTestProviderConnection } from "@/hosted/v2/ai-providers/ai-providers-hooks";
-import type { AiProvider, AiProviderConnectionTestResponse } from "@/hosted/v2/ai-providers/types";
-
-const CATEGORY_LABEL: Record<
-	NonNullable<AiProviderConnectionTestResponse["error"]>["category"],
-	string
-> = {
-	validation: "Provider setup",
-	credential: "Credential",
-	ssrf: "Endpoint safety",
-	dns: "DNS",
-	timeout: "Timeout",
-	tls: "TLS",
-	network: "Network",
-	authentication: "Authentication",
-	authorization: "Authorization",
-	rate_limit: "Rate limit",
-	redirect: "Redirect",
-	endpoint: "Endpoint",
-	protocol_model: "Protocol or model",
-	upstream: "Provider",
-};
+import {
+	providerConnectionIssueMessage,
+	providerConnectionIssueTitle,
+} from "@/hosted/v2/ai-providers/provider-connection-feedback";
+import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 export function ProviderConnectionTest({
 	provider,
@@ -63,15 +48,14 @@ export function ProviderConnectionTest({
 	const result = testConnection.data;
 	return (
 		<Dialog open={open} onOpenChange={changeOpen}>
-			<Button
-				variant="ghost"
-				size="sm"
-				onClick={() => changeOpen(true)}
-				aria-label={`Test connection for ${providerLabel}`}
+			<DialogTrigger
+				render={
+					<Button variant="ghost" size="sm" aria-label={`Test connection for ${providerLabel}`} />
+				}
 			>
 				<FlaskConical />
 				Test connection
-			</Button>
+			</DialogTrigger>
 			<DialogContent data-hosted="true" data-v2="true" className="sm:max-w-md">
 				<DialogHeader>
 					<DialogTitle>Test connection</DialogTitle>
@@ -112,11 +96,10 @@ export function ProviderConnectionTest({
 							<CircleAlert className="mt-0.5 size-5 shrink-0 text-warning-muted-foreground" />
 							<div>
 								<p className="text-sm font-medium">
-									{result.error ? CATEGORY_LABEL[result.error.category] : "Connection"} needs
-									attention
+									{providerConnectionIssueTitle(result.error)} needs attention
 								</p>
 								<p className="mt-1 text-xs text-muted-foreground">
-									{result.error?.message ?? "The provider did not accept the test request."}
+									{providerConnectionIssueMessage(result.error)}
 								</p>
 							</div>
 						</div>
