@@ -1,18 +1,19 @@
 "use client";
 
-import { Link2Off } from "lucide-react";
+import { Link2Off, MessageCircle, MessagesSquare } from "lucide-react";
 import { EntityHeader } from "@/components/entity-card";
+import { IconChip } from "@/components/icon-chip";
 import { Button } from "@/components/ui/button";
 import { ConfirmAction } from "@/components/ui/confirm-action";
 import { Spinner } from "@/components/ui/spinner";
-import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import type { ChannelBinding } from "@/hosted/v2/channels/channel-types";
-import { ChannelStatusBadge, CopyInline, ProviderChip } from "@/hosted/v2/channels/channel-ui";
+import { ChannelStatusBadge, isNormalChannelStatus } from "@/hosted/v2/channels/channel-ui";
 import { useDeleteChannelBinding } from "@/hosted/v2/channels/channels-hooks";
+import { pairedChatTitle } from "@/hosted/v2/channels/paired-chat-row.logic";
 import { cn } from "@/lib/utils";
 
 export const PAIRED_CHAT_ROW_CLASS =
-	"grid min-h-16 grid-cols-[minmax(0,1fr)] items-center gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-3";
+	"ml-4 grid min-h-12 grid-cols-[minmax(0,1fr)] items-center gap-2 border-l-2 border-muted py-2 pr-0 pl-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-3";
 
 export function PairedChatRow({
 	accountId,
@@ -20,7 +21,6 @@ export function PairedChatRow({
 	provider,
 	channelName,
 	agentName,
-	showChatId = false,
 	className,
 }: {
 	accountId: string;
@@ -28,12 +28,17 @@ export function PairedChatRow({
 	provider: string;
 	channelName?: string;
 	agentName?: string;
-	showChatId?: boolean;
 	className?: string;
 }) {
 	const unpair = useDeleteChannelBinding(accountId);
-	const fallbackName = `${providerMeta(provider).label} chat`;
-	const chatName = binding.external_chat_name ?? fallbackName;
+	const chatType = binding.external_chat_type?.toLowerCase();
+	const privateChat = chatType === "private";
+	const chatName = pairedChatTitle(binding);
+	const relationship = agentName
+		? `Paired to ${agentName}`
+		: channelName
+			? `Through ${channelName}`
+			: null;
 
 	return (
 		<div
@@ -42,23 +47,18 @@ export function PairedChatRow({
 			data-channel-binding-id={binding.id}
 			data-channel-binding-account-id={accountId}
 			data-channel-binding-agent-link-id={binding.agent_link_id ?? undefined}
+			data-channel-binding-provider={provider}
 			className={cn(PAIRED_CHAT_ROW_CLASS, className)}
 		>
 			<EntityHeader
 				className="min-w-0"
-				icon={<ProviderChip provider={provider} size="sm" />}
+				icon={<IconChip size="sm">{privateChat ? <MessageCircle /> : <MessagesSquare />}</IconChip>}
 				title={chatName}
 				meta={[
-					<span key="provider">{providerMeta(provider).label}</span>,
-					...(channelName ? [<span key="channel">{channelName}</span>] : []),
-					<span key="type" className="capitalize">
-						{binding.external_chat_type ?? "chat"}
-					</span>,
-					<ChannelStatusBadge key="status" status={binding.status} />,
-					...(agentName ? [<span key="agent">Agent: {agentName}</span>] : []),
-					...(showChatId
-						? [<CopyInline key="chat-id" value={binding.external_chat_id} label="chat ID" />]
-						: []),
+					...(relationship ? [<span key="relationship">{relationship}</span>] : []),
+					...(isNormalChannelStatus(binding.status)
+						? []
+						: [<ChannelStatusBadge key="status" status={binding.status} />]),
 					...(unpair.error
 						? [
 								<span key="error" className="font-medium text-destructive">

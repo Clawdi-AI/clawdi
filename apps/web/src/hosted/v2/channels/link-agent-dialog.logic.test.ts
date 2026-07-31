@@ -5,9 +5,49 @@ import {
 	linkAgentBlockReason,
 	pairCodeExpired,
 	pairingCommand,
+	selectCloudAgentCandidates,
 	shouldMintWhatsappTenantCredential,
 	WHATSAPP_COMING_SOON_MESSAGE,
 } from "./link-agent-dialog.logic";
+
+describe("selectCloudAgentCandidates", () => {
+	const agents = [
+		{ id: "cloud-hermes", agent_type: "hermes" },
+		{ id: "cloud-openclaw", agent_type: "openclaw" },
+		{ id: "local-codex", agent_type: "codex" },
+		{ id: "legacy-openclaw", agent_type: "openclaw" },
+		{ id: "unknown-openclaw", agent_type: "openclaw" },
+	];
+
+	test("admits only known Cloud Agents and excludes ids already linked to the account", () => {
+		const candidates = selectCloudAgentCandidates(
+			agents,
+			{
+				cloudEnvIds: new Set(["cloud-hermes", "cloud-openclaw"]),
+				legacyEnvIds: new Set(["legacy-openclaw"]),
+				isResolved: false,
+			},
+			[{ agent_id: "cloud-hermes" }],
+		);
+
+		expect(candidates.map((agent) => agent.id)).toEqual(["cloud-openclaw"]);
+	});
+
+	test("fails closed while ownership is unavailable or an id remains unresolved", () => {
+		expect(selectCloudAgentCandidates(agents, null, [])).toEqual([]);
+		expect(
+			selectCloudAgentCandidates(
+				agents,
+				{
+					cloudEnvIds: new Set(),
+					legacyEnvIds: new Set(),
+					isResolved: false,
+				},
+				[],
+			),
+		).toEqual([]);
+	});
+});
 
 describe("hosted channel instructions and gates", () => {
 	test("renders the exact command accepted by the channel backend", () => {

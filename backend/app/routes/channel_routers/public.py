@@ -98,10 +98,12 @@ from app.services.channels import (
     get_or_create_bot_agent_link,
     get_owned_bot_agent_link,
     get_owned_private_channel_account,
+    get_strict_v2_hosted_channel_agent_or_409,
     get_usable_channel_account,
     hash_token,
     list_owned_active_bot_agent_links,
     list_owned_active_bot_agent_links_for_agent,
+    list_strict_v2_hosted_channel_agent_ids,
     normalize_telegram_bot_username,
     rotate_bot_agent_link_token,
     store_channel_secrets,
@@ -541,6 +543,7 @@ async def create_channel(
         db,
         auth=auth,
         requested_agent_id=body.agent_id,
+        provider=body.provider,
     )
 
     ciphertext, nonce = encrypt_optional_token(body.provider_token)
@@ -802,6 +805,7 @@ async def list_channel_agent_links(
         .where(
             ChannelBotAgentLink.account_id == account.id,
             ChannelBotAgentLink.user_id == auth.user_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
         )
         .order_by(ChannelBotAgentLink.created_at)
@@ -1144,9 +1148,19 @@ async def _resolve_agent_id_for_link(
 ) -> UUID:
     if requested_agent_id is not None:
         await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=requested_agent_id)
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db,
+            user_id=auth.user_id,
+            agent_id=requested_agent_id,
+        )
         return requested_agent_id
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         await get_owned_agent_or_404(
+            db,
+            user_id=auth.user_id,
+            agent_id=auth.api_key.environment_id,
+        )
+        await get_strict_v2_hosted_channel_agent_or_409(
             db,
             user_id=auth.user_id,
             agent_id=auth.api_key.environment_id,
@@ -1160,9 +1174,15 @@ async def _resolve_initial_agent_id(
     *,
     auth: AuthContext,
     requested_agent_id: UUID | None,
+    provider: str,
 ) -> UUID | None:
     if requested_agent_id is not None:
         await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=requested_agent_id)
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db,
+            user_id=auth.user_id,
+            agent_id=requested_agent_id,
+        )
         return requested_agent_id
     if auth.is_cli and auth.api_key is not None and auth.api_key.environment_id is not None:
         await get_owned_agent_or_404(
@@ -1170,13 +1190,17 @@ async def _resolve_initial_agent_id(
             user_id=auth.user_id,
             agent_id=auth.api_key.environment_id,
         )
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db,
+            user_id=auth.user_id,
+            agent_id=auth.api_key.environment_id,
+        )
         return auth.api_key.environment_id
-    result = await db.execute(
-        select(AgentEnvironment.id)
-        .where(AgentEnvironment.user_id == auth.user_id)
-        .order_by(AgentEnvironment.created_at)
+    agent_ids = await list_strict_v2_hosted_channel_agent_ids(
+        db,
+        user_id=auth.user_id,
+        provider=provider,
     )
-    agent_ids = list(result.scalars().all())
     if len(agent_ids) == 1:
         return agent_ids[0]
     return None
@@ -1190,15 +1214,18 @@ async def _resolve_pair_code_link(
     body: ChannelPairCodeCreate,
 ) -> tuple[ChannelBotAgentLink, str | None]:
     if body.agent_link_id is not None:
-        return (
-            await get_owned_bot_agent_link(
-                db,
-                account=account,
-                link_id=body.agent_link_id,
-                user_id=auth.user_id,
-            ),
-            None,
+        link = await get_owned_bot_agent_link(
+            db,
+            account=account,
+            link_id=body.agent_link_id,
+            user_id=auth.user_id,
         )
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db,
+            user_id=auth.user_id,
+            agent_id=link.agent_id,
+        )
+        return link, None
     if body.agent_id is not None:
         await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=body.agent_id)
         link, agent_token = await get_or_create_bot_agent_link(
@@ -1207,9 +1234,19 @@ async def _resolve_pair_code_link(
             agent_id=body.agent_id,
             user_id=auth.user_id,
         )
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db,
+            user_id=auth.user_id,
+            agent_id=link.agent_id,
+        )
         return link, agent_token
     links = await list_owned_active_bot_agent_links(db, account=account, user_id=auth.user_id)
     if len(links) == 1:
+        await get_strict_v2_hosted_channel_agent_or_409(
+            db,
+            user_id=auth.user_id,
+            agent_id=links[0].agent_id,
+        )
         return links[0], None
     detail = "agent_id or agent_link_id is required"
     if len(links) > 1:

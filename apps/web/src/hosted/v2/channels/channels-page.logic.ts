@@ -1,5 +1,32 @@
-import { CHANNEL_PROVIDERS, type ChannelProviderId } from "@/hosted/v2/channels/channel-providers";
+import {
+	CHANNEL_PROVIDERS,
+	type ChannelProviderId,
+	orderedProviderIds,
+} from "@/hosted/v2/channels/channel-providers";
 import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
+
+export type ChannelProviderFilter = "all" | ChannelProviderId;
+
+/** Flatten provider groups in canonical provider order while preserving item order within each provider. */
+export function orderedChannelsForFilter<T extends Pick<ChannelAccount, "provider">>(
+	channels: readonly T[],
+	filter: ChannelProviderFilter,
+): T[] {
+	const providerIds =
+		filter === "all" ? orderedProviderIds(channels.map((channel) => channel.provider)) : [filter];
+	return providerIds.flatMap((provider) =>
+		channels.filter((channel) => channel.provider === provider),
+	);
+}
+
+/** Flatten the ready-bot pool with the same ordering semantics as personal channels. */
+export function orderedPoolItemsForFilter<T extends Pick<ChannelBotPoolItem, "provider">>(
+	providers: Readonly<Record<string, readonly T[]>>,
+	filter: ChannelProviderFilter,
+): T[] {
+	const providerIds = filter === "all" ? orderedProviderIds(Object.keys(providers)) : [filter];
+	return providerIds.flatMap((provider) => providers[provider] ?? []);
+}
 
 export function dedupeBotPoolProviders(
 	channels: readonly Pick<ChannelAccount, "id">[],

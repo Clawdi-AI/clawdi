@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { ChannelBotPoolItem } from "./channel-types";
-import { dedupeBotPoolProviders, providerCounts } from "./channels-page.logic";
+import {
+	dedupeBotPoolProviders,
+	orderedChannelsForFilter,
+	orderedPoolItemsForFilter,
+	providerCounts,
+} from "./channels-page.logic";
 
 function poolItem(id: string, provider: string): ChannelBotPoolItem {
 	return {
@@ -45,5 +50,48 @@ describe("channel list deduplication", () => {
 			discord: 1,
 			whatsapp: 0,
 		});
+	});
+});
+
+describe("flat channel sections", () => {
+	test("keeps canonical provider order and stable order within each provider", () => {
+		const channels = [
+			{ id: "discord-1", provider: "discord" },
+			{ id: "telegram-1", provider: "telegram" },
+			{ id: "discord-2", provider: "discord" },
+			{ id: "legacy-1", provider: "imessage" },
+			{ id: "telegram-2", provider: "telegram" },
+			{ id: "whatsapp-1", provider: "whatsapp" },
+		];
+
+		expect(orderedChannelsForFilter(channels, "all").map((item) => item.id)).toEqual([
+			"telegram-1",
+			"telegram-2",
+			"discord-1",
+			"discord-2",
+			"whatsapp-1",
+			"legacy-1",
+		]);
+		expect(orderedChannelsForFilter(channels, "discord").map((item) => item.id)).toEqual([
+			"discord-1",
+			"discord-2",
+		]);
+	});
+
+	test("flattens ready bots without provider subgroups and keeps filter counts exact", () => {
+		const providers = {
+			discord: [poolItem("discord-1", "discord"), poolItem("discord-2", "discord")],
+			telegram: [poolItem("telegram-1", "telegram")],
+			imessage: [poolItem("legacy-1", "imessage")],
+		};
+
+		expect(orderedPoolItemsForFilter(providers, "all").map((item) => item.id)).toEqual([
+			"telegram-1",
+			"discord-1",
+			"discord-2",
+			"legacy-1",
+		]);
+		expect(orderedPoolItemsForFilter(providers, "telegram")).toHaveLength(1);
+		expect(orderedPoolItemsForFilter(providers, "whatsapp")).toEqual([]);
 	});
 });

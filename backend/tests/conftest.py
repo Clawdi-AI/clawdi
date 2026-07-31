@@ -242,6 +242,46 @@ async def create_env_with_project(
     return env
 
 
+async def create_test_hosted_runtime_state(db_session, env, *, runtime_name: str):
+    """Give a test Agent the same strict-v2 authority used by Channel links."""
+    from app.models.hosted_runtime import HostedRuntimeState
+    from app.models.runtime_observation import V2RuntimeEnvironmentFence
+
+    deployment_id = f"dep-{uuid.uuid4().hex}"
+    state = HostedRuntimeState(
+        environment_id=env.id,
+        deployment_id=deployment_id,
+        instance_id=f"instance-{uuid.uuid4().hex}",
+        generation=1,
+        cli_package_spec="clawdi@0.12.10-beta.57",
+        locale={"language": "en", "timezone": "UTC"},
+        system={},
+        runtimes={
+            runtime_name: {
+                "enabled": True,
+                "providerMode": "unmanaged",
+                "provider_ids": [],
+                "install": {"source": "official"},
+            }
+        },
+        live_sync={
+            "enabled": True,
+            "agents": [{"agentType": runtime_name, "environmentId": str(env.id)}],
+        },
+        recovery={"cacheManifest": True, "allowOfflineBoot": True},
+        tools={},
+    )
+    fence = V2RuntimeEnvironmentFence(
+        environment_id=env.id,
+        owner_id=env.user_id,
+        deployment_id=deployment_id,
+    )
+    db_session.add_all([state, fence])
+    await db_session.commit()
+    await db_session.refresh(state)
+    return state
+
+
 @pytest_asyncio.fixture
 async def seed_user(
     db_session: AsyncSession, test_identity: str, request: pytest.FixtureRequest
@@ -355,22 +395,28 @@ async def environment_project(db_session: AsyncSession, seed_user: User):
 
 @pytest_asyncio.fixture
 async def channel_agent(db_session: AsyncSession, seed_user: User):
-    return await create_env_with_project(
+    agent = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id=f"channel-agent-{uuid.uuid4().hex[:8]}",
         machine_name="Channel Test Agent",
+        agent_type="openclaw",
     )
+    await create_test_hosted_runtime_state(db_session, agent, runtime_name="openclaw")
+    return agent
 
 
 @pytest_asyncio.fixture
 async def second_channel_agent(db_session: AsyncSession, seed_user: User):
-    return await create_env_with_project(
+    agent = await create_env_with_project(
         db_session,
         user_id=seed_user.id,
         machine_id=f"channel-agent-2-{uuid.uuid4().hex[:8]}",
         machine_name="Second Channel Test Agent",
+        agent_type="openclaw",
     )
+    await create_test_hosted_runtime_state(db_session, agent, runtime_name="openclaw")
+    return agent
 
 
 @pytest_asyncio.fixture

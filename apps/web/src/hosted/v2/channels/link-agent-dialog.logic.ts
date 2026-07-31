@@ -1,6 +1,9 @@
 import type { components } from "@clawdi/shared/api";
+import { type AgentOwnership, agentOwnershipKindFromId } from "@/lib/agent-ownership";
 
-type Agent = Pick<components["schemas"]["AgentResponse"], "agent_type"> | null | undefined;
+type Agent = Pick<components["schemas"]["AgentResponse"], "id" | "agent_type">;
+type SelectedAgent = Pick<components["schemas"]["AgentResponse"], "agent_type"> | null | undefined;
+type AccountAgentLink = { agent_id: string };
 type AgentChannelLink = {
 	account_id: string;
 	status: string;
@@ -33,6 +36,20 @@ export function agentProviderHasSingleLinkLimit(
 	return Boolean(agentType && SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE[agentType]?.has(provider));
 }
 
+/** Cloud membership is authoritative; connected, legacy, and unresolved ids fail closed. */
+export function selectCloudAgentCandidates<T extends Agent>(
+	agents: readonly T[],
+	ownership: AgentOwnership | null,
+	accountLinks: readonly AccountAgentLink[],
+): T[] {
+	const linkedAgentIds = new Set(accountLinks.map((link) => link.agent_id.toLowerCase()));
+	return agents.filter(
+		(agent) =>
+			agentOwnershipKindFromId(agent.id, ownership) === "cloud" &&
+			!linkedAgentIds.has(agent.id.toLowerCase()),
+	);
+}
+
 export function pairingCommand(code: string): string {
 	return `/bot_pair ${code}`;
 }
@@ -53,7 +70,10 @@ export function channelActivityAfterLink(
 	return Number.isFinite(messageTime) && Number.isFinite(linkTime) && messageTime >= linkTime;
 }
 
-export function shouldMintWhatsappTenantCredential(provider: string, agent: Agent): boolean {
+export function shouldMintWhatsappTenantCredential(
+	provider: string,
+	agent: SelectedAgent,
+): boolean {
 	return WHATSAPP_LINKING_READY && provider === "whatsapp" && agent !== null && agent !== undefined;
 }
 
@@ -64,7 +84,7 @@ export function linkAgentBlockReason({
 	accountId,
 }: {
 	provider: string;
-	selectedAgent: Agent;
+	selectedAgent: SelectedAgent;
 	existingAgentLinks: AgentChannelLink[];
 	accountId: string;
 }): string | null {

@@ -1,10 +1,11 @@
 "use client";
 
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRight, Link2, MessagesSquare, Plus, Users } from "lucide-react";
+import { ArrowUpRight, Bot, Link2, MessagesSquare, Plus, Users } from "lucide-react";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
+import { AgentLabel } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import {
 	ENTITY_CARD_BASE,
@@ -15,35 +16,59 @@ import {
 } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { FilterChip } from "@/components/filter-chip";
+import { IconChip } from "@/components/icon-chip";
 import { ListToolbar } from "@/components/list-toolbar";
 import { PageHeader } from "@/components/page-header";
 import { CENTERED_PAGE_WIDTH_CLASS } from "@/components/page-width";
 import { SectionLabel } from "@/components/section-label";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { deploymentDisplayName } from "@/hosted/agent-identity";
+import { isHostedRuntime } from "@/hosted/runtimes";
+import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
+import { CHANNEL_PROVIDERS, providerMeta } from "@/hosted/v2/channels/channel-providers";
+import type {
+	ChannelAccount,
+	ChannelAgentLink,
+	ChannelBotPoolItem,
+} from "@/hosted/v2/channels/channel-types";
 import {
-	CHANNEL_PROVIDERS,
-	type ChannelProviderId,
-	orderedProviderIds,
-	providerMeta,
-} from "@/hosted/v2/channels/channel-providers";
-import type { ChannelAccount, ChannelBotPoolItem } from "@/hosted/v2/channels/channel-types";
-import { AccessBadge, ChannelStatusBadge, HealthBadge } from "@/hosted/v2/channels/channel-ui";
-import { useBotPool, useChannelHealth, useChannels } from "@/hosted/v2/channels/channels-hooks";
-import { dedupeBotPoolProviders, providerCounts } from "@/hosted/v2/channels/channels-page.logic";
+	ChannelStatusBadge,
+	HealthBadge,
+	isNormalChannelHealth,
+	isNormalChannelStatus,
+} from "@/hosted/v2/channels/channel-ui";
+import {
+	useBotPool,
+	useChannelAgentLinks,
+	useChannelHealth,
+	useChannels,
+	useEnvironments,
+} from "@/hosted/v2/channels/channels-hooks";
+import {
+	type ChannelProviderFilter,
+	dedupeBotPoolProviders,
+	orderedChannelsForFilter,
+	orderedPoolItemsForFilter,
+	providerCounts,
+} from "@/hosted/v2/channels/channels-page.logic";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import { LinkAgentDialog } from "@/hosted/v2/channels/link-agent-dialog";
-import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/link-agent-dialog.logic";
+import {
+	selectCloudAgentCandidates,
+	WHATSAPP_LINKING_READY,
+} from "@/hosted/v2/channels/link-agent-dialog.logic";
+import { useAgentOwnership } from "@/lib/agent-ownership";
 import { cn } from "@/lib/utils";
 
 const DESCRIPTION =
 	"Start instantly with a ready-to-go bot, or connect your own Telegram or Discord bot for full control.";
 const PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
 const CHANNEL_GRID_CLASS = ENTITY_GRID_CLASS;
-type ProviderFilter = "all" | ChannelProviderId;
 
 export function ChannelsPage() {
 	const [connectOpen, setConnectOpen] = useState(false);
-	const [filter, setFilter] = useState<ProviderFilter>("all");
+	const [filter, setFilter] = useState<ChannelProviderFilter>("all");
 	const channels = useChannels();
 	const botPool = useBotPool();
 	const health = useChannelHealth();
@@ -51,7 +76,9 @@ export function ChannelsPage() {
 	const channelItems = channels.data ?? [];
 	const poolProviders = dedupeBotPoolProviders(channelItems, botPool.data?.providers ?? {});
 	const counts = providerCounts(channelItems, poolProviders);
-	const totalCount = CHANNEL_PROVIDERS.reduce((sum, provider) => sum + counts[provider], 0);
+	const totalCount =
+		channelItems.length +
+		Object.values(poolProviders).reduce((sum, items) => sum + items.length, 0);
 
 	return (
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
@@ -110,26 +137,8 @@ export function ChannelsPage() {
 	);
 }
 
-function providerLabel(filter: ProviderFilter): string {
+function providerLabel(filter: ChannelProviderFilter): string {
 	return filter === "all" ? "selected providers" : providerMeta(filter).label;
-}
-
-function channelGroups(channels: ChannelAccount[], filter: ProviderFilter) {
-	const visible = filter === "all" ? channels : channels.filter((c) => c.provider === filter);
-	return orderedProviderIds(visible.map((channel) => channel.provider)).map((provider) => ({
-		provider,
-		items: visible.filter((channel) => channel.provider === provider),
-	}));
-}
-
-function poolGroups(providers: Record<string, ChannelBotPoolItem[]>, filter: ProviderFilter) {
-	const providerIds = filter === "all" ? orderedProviderIds(Object.keys(providers)) : [filter];
-	return providerIds
-		.map((provider) => ({
-			provider,
-			items: providers[provider] ?? [],
-		}))
-		.filter((section) => section.items.length > 0);
 }
 
 function YourChannelsSection({
@@ -150,11 +159,11 @@ function YourChannelsSection({
 	healthItems: { account_id: string; health_status: string }[];
 	healthError: Error | null;
 	onRetryHealth: () => void;
-	filter: ProviderFilter;
+	filter: ChannelProviderFilter;
 	onConnect: () => void;
 }) {
-	const groups = channelGroups(channels, filter);
-	const visibleCount = groups.reduce((sum, group) => sum + group.items.length, 0);
+	const visibleChannels = orderedChannelsForFilter(channels, filter);
+	const visibleCount = visibleChannels.length;
 
 	let content: ReactNode;
 
@@ -199,13 +208,12 @@ function YourChannelsSection({
 	} else {
 		const healthByAccount = new Map(healthItems.map((h) => [h.account_id, h.health_status]));
 		content = (
-			<div className="flex flex-col gap-5">
-				{groups.map((group) => (
-					<ProviderChannelGroup
-						key={group.provider}
-						provider={group.provider}
-						items={group.items}
-						healthByAccount={healthByAccount}
+			<div className={CHANNEL_GRID_CLASS}>
+				{visibleChannels.map((channel) => (
+					<ChannelCard
+						key={channel.id}
+						channel={channel}
+						health={healthByAccount.get(channel.id)}
 					/>
 				))}
 			</div>
@@ -213,7 +221,7 @@ function YourChannelsSection({
 	}
 
 	return (
-		<section className="flex flex-col gap-3">
+		<section data-your-bots-section className="flex flex-col gap-3">
 			<SectionLabel count={!isLoading ? visibleCount : undefined}>Your bots</SectionLabel>
 			{healthError ? (
 				<ApiErrorPanel
@@ -227,36 +235,11 @@ function YourChannelsSection({
 	);
 }
 
-function ProviderChannelGroup({
-	provider,
-	items,
-	healthByAccount,
-}: {
-	provider: string;
-	items: ChannelAccount[];
-	healthByAccount: Map<string, string>;
-}) {
-	return (
-		<div className="flex flex-col gap-2">
-			<SectionLabel count={items.length}>{providerMeta(provider).label}</SectionLabel>
-			<div className={CHANNEL_GRID_CLASS}>
-				{items.map((channel) => (
-					<ChannelCard
-						key={channel.id}
-						channel={channel}
-						health={healthByAccount.get(channel.id)}
-					/>
-				))}
-			</div>
-		</div>
-	);
-}
-
 function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: string }) {
 	const meta = providerMeta(channel.provider);
 
 	return (
-		<div className="group relative z-0 h-full min-w-0">
+		<div data-channel-account-id={channel.id} className="group relative z-0 h-full min-w-0">
 			<div
 				className={cn(
 					ENTITY_CARD_BASE,
@@ -268,8 +251,14 @@ function ChannelCard({ channel, health }: { channel: ChannelAccount; health?: st
 					align="start"
 					icon={<EntityIcon kind="channel" id={channel.provider} label={meta.label} />}
 					title={channel.name}
-					titleAdornment={health ? <HealthBadge status={health} /> : undefined}
-					meta={[meta.label, <ChannelStatusBadge key="status" status={channel.status} />]}
+					titleAdornment={
+						health && !isNormalChannelHealth(health) ? <HealthBadge status={health} /> : undefined
+					}
+					meta={
+						isNormalChannelStatus(channel.status) ? undefined : (
+							<ChannelStatusBadge status={channel.status} />
+						)
+					}
 				/>
 			</div>
 			<Link to="/channels/$id" params={{ id: channel.id }} className={ENTITY_STRETCHED_LINK_CLASS}>
@@ -290,15 +279,21 @@ function ReadyBotsSection({
 	isLoading: boolean;
 	error: Error | null;
 	onRetry: () => void;
-	filter: ProviderFilter;
+	filter: ChannelProviderFilter;
 }) {
+	const envs = useEnvironments();
+	const ownership = useAgentOwnership();
+	const inventory = useHostedDeploymentInventory();
 	const [linkTarget, setLinkTarget] = useState<{
 		id: string;
 		name: string;
 		provider: string;
 	} | null>(null);
-	const groups = poolGroups(providers, filter);
-	const visibleCount = groups.reduce((sum, group) => sum + group.items.length, 0);
+	const visibleItems = orderedPoolItemsForFilter(providers, filter);
+	const visibleCount = visibleItems.length;
+	const candidateGuardLoading =
+		envs.isLoading || ownership === null || inventory.status === "loading";
+	const candidateGuardError = envs.error ?? inventory.error;
 
 	let content: ReactNode;
 	if (isLoading) {
@@ -313,7 +308,7 @@ function ReadyBotsSection({
 		content = (
 			<ApiErrorPanel error={error} onRetry={onRetry} title="Couldn't load ready-to-go bots" />
 		);
-	} else if (groups.length === 0) {
+	} else if (visibleItems.length === 0) {
 		content = (
 			<EmptyState
 				icon={Users}
@@ -331,37 +326,41 @@ function ReadyBotsSection({
 		);
 	} else {
 		content = (
-			<div className="flex flex-col gap-5">
-				{groups.map((group) => {
-					const meta = providerMeta(group.provider);
-					return (
-						<div key={group.provider} className="flex flex-col gap-2">
-							<SectionLabel count={group.items.length}>{meta.label}</SectionLabel>
-							<div className={CHANNEL_GRID_CLASS}>
-								{group.items.map((item) => (
-									<PoolCard
-										key={item.id}
-										item={item}
-										onLink={() =>
-											setLinkTarget({
-												id: item.id,
-												name: item.name,
-												provider: item.provider,
-											})
-										}
-									/>
-								))}
-							</div>
-						</div>
-					);
-				})}
+			<div className={CHANNEL_GRID_CLASS}>
+				{visibleItems.map((item) => (
+					<PoolCard
+						key={item.id}
+						item={item}
+						agents={envs.data ?? []}
+						ownership={ownership}
+						candidateGuardLoading={candidateGuardLoading}
+						candidateGuardError={candidateGuardError}
+						onLink={() =>
+							setLinkTarget({
+								id: item.id,
+								name: item.name,
+								provider: item.provider,
+							})
+						}
+					/>
+				))}
 			</div>
 		);
 	}
 
 	return (
-		<section className="flex flex-col gap-3">
+		<section data-ready-bots-section className="flex flex-col gap-3">
 			<SectionLabel count={!isLoading ? visibleCount : undefined}>Ready-to-go bots</SectionLabel>
+			{visibleItems.length > 0 && candidateGuardError ? (
+				<ApiErrorPanel
+					error={candidateGuardError}
+					onRetry={() => {
+						void envs.refetch();
+						void inventory.refetch();
+					}}
+					title="Couldn't verify Cloud Agents"
+				/>
+			) : null}
 			{content}
 			{linkTarget ? (
 				<LinkAgentDialog
@@ -376,50 +375,136 @@ function ReadyBotsSection({
 	);
 }
 
-function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => void }) {
-	const owner = item.access === "owner";
-	const capacity =
-		item.max_links == null
-			? `${item.link_count} linked · unlimited`
-			: `${item.link_count} of ${item.max_links} linked`;
+type Environment = NonNullable<ReturnType<typeof useEnvironments>["data"]>[number];
 
+function poolAgentNameFormatter(env: { agent_type?: string | null }) {
+	const runtime = env.agent_type;
+	return runtime && isHostedRuntime(runtime)
+		? (name: string) => deploymentDisplayName(name, runtime)
+		: undefined;
+}
+
+function PoolAgentRow({ link, env }: { link: ChannelAgentLink; env: Environment | null }) {
+	const abnormalStatus = isNormalChannelStatus(link.status) ? undefined : (
+		<ChannelStatusBadge status={link.status} />
+	);
+	if (!env) {
+		return (
+			<EntityHeader
+				className="min-w-0"
+				icon={
+					<IconChip size="sm">
+						<Bot />
+					</IconChip>
+				}
+				title={deploymentDisplayName(link.agent_id)}
+				meta={abnormalStatus}
+			/>
+		);
+	}
+	return (
+		<AgentLabel
+			machineName={env.machine_name}
+			displayName={env.display_name}
+			defaultName={env.default_name}
+			type={env.agent_type}
+			avatarUrl={env.avatar_url}
+			size="sm"
+			formatName={poolAgentNameFormatter(env)}
+			meta={abnormalStatus ? [abnormalStatus] : undefined}
+		/>
+	);
+}
+
+function PoolCard({
+	item,
+	onLink,
+	agents,
+	ownership,
+	candidateGuardLoading,
+	candidateGuardError,
+}: {
+	item: ChannelBotPoolItem;
+	onLink: () => void;
+	agents: readonly Environment[];
+	ownership: ReturnType<typeof useAgentOwnership>;
+	candidateGuardLoading: boolean;
+	candidateGuardError: Error | null;
+}) {
+	const owner = item.access === "owner";
+	const links = useChannelAgentLinks(item.id);
+	const ownLinks = links.data ?? [];
+	const candidates = selectCloudAgentCandidates(agents, ownership, ownLinks);
 	const meta = providerMeta(item.provider);
 	const whatsappLinkingGated = item.provider === "whatsapp" && !WHATSAPP_LINKING_READY;
 	const linkable =
-		!whatsappLinkingGated && !meta.unavailable && item.available && item.capabilities.link_agent;
+		!candidateGuardLoading &&
+		!candidateGuardError &&
+		!links.isLoading &&
+		!links.error &&
+		candidates.length > 0 &&
+		!whatsappLinkingGated &&
+		!meta.unavailable &&
+		item.available &&
+		item.capabilities.link_agent;
 
 	return (
-		<div className={cn(ENTITY_CARD_BASE, "flex flex-col gap-3")}>
+		<div data-pool-account-id={item.id} className={cn(ENTITY_CARD_BASE, "flex flex-col gap-3")}>
 			<EntityHeader
 				align="start"
 				icon={<EntityIcon kind="channel" id={item.provider} label={meta.label} />}
 				title={item.name}
-				titleAdornment={<AccessBadge access={item.access} />}
-				meta={
-					<span className="inline-flex items-center gap-1.5">
-						<Users className="size-3" />
-						{capacity}
-					</span>
-				}
 			/>
 
-			{owner ? (
-				<Button
-					render={<Link to="/channels/$id" params={{ id: item.id }} />}
-					nativeButton={false}
-					variant="outline"
-					size="sm"
-					className="w-full"
-				>
-					Manage
-					<ArrowUpRight />
-				</Button>
-			) : linkable ? (
-				<Button size="sm" className="w-full" onClick={onLink}>
-					<Link2 />
-					Link to an agent
-				</Button>
-			) : (
+			{links.isLoading ? (
+				<div className="space-y-2 border-t pt-3">
+					<Skeleton className="h-8 w-full" />
+				</div>
+			) : links.error ? (
+				<ApiErrorPanel
+					error={links.error}
+					onRetry={() => links.refetch()}
+					title="Couldn't load linked agents"
+				/>
+			) : ownLinks.length > 0 ? (
+				<div data-pool-linked-agents className="space-y-2 border-t pt-3">
+					{ownLinks.map((link) => (
+						<PoolAgentRow
+							key={link.id}
+							link={link}
+							env={agents.find((agent) => agent.id === link.agent_id) ?? null}
+						/>
+					))}
+				</div>
+			) : null}
+
+			<div className="flex flex-wrap gap-2">
+				{linkable ? (
+					<Button size="sm" className="min-w-0 flex-1" onClick={onLink}>
+						<Link2 />
+						Link an agent
+					</Button>
+				) : null}
+				{owner || ownLinks.length > 0 ? (
+					<Button
+						render={<Link to="/channels/$id" params={{ id: item.id }} />}
+						nativeButton={false}
+						variant="outline"
+						size="sm"
+						className="min-w-0 flex-1"
+					>
+						Manage
+						<ArrowUpRight />
+					</Button>
+				) : null}
+			</div>
+
+			{!owner &&
+			ownLinks.length === 0 &&
+			!linkable &&
+			!candidateGuardLoading &&
+			!candidateGuardError &&
+			!links.error ? (
 				<Button size="sm" variant="outline" className="w-full" disabled>
 					{whatsappLinkingGated
 						? "Coming soon"
@@ -429,7 +514,7 @@ function PoolCard({ item, onLink }: { item: ChannelBotPoolItem; onLink: () => vo
 								? "Not linkable"
 								: "At capacity"}
 				</Button>
-			)}
+			) : null}
 		</div>
 	);
 }

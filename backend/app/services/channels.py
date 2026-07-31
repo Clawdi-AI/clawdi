@@ -55,7 +55,13 @@ from app.models.channel import (
     ChannelPairCode,
     ChannelSecret,
 )
+from app.models.hosted_runtime import HostedRuntimeState
+from app.models.runtime_observation import (
+    RUNTIME_ENVIRONMENT_ACTIVE,
+    V2RuntimeEnvironmentFence,
+)
 from app.models.session import AgentEnvironment
+from app.schemas.runtime import validate_hosted_runtime_desired_state
 from app.services.channel_debug_events import record_channel_debug_event
 from app.services.discord_rate_limiter import discord_rate_limiter
 from app.services.imessage_routing import (
@@ -109,6 +115,7 @@ SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE = {
     OPENCLAW_AGENT_TYPE: frozenset({CHANNEL_PROVIDER_TELEGRAM}),
 }
 HOSTED_AGENT_TYPE_LABELS = {HERMES_AGENT_TYPE: "Hermes", OPENCLAW_AGENT_TYPE: "OpenClaw"}
+STRICT_V2_AGENT_LINK_DETAIL = "Only Cloud Agents can be linked or paired with channels."
 WHATSAPP_COMING_SOON_DETAIL = (
     "WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now."
 )
@@ -398,10 +405,61 @@ async def get_or_create_bot_agent_link(
             ChannelBotAgentLink.account_id == account.id,
             ChannelBotAgentLink.agent_id == agent_id,
             ChannelBotAgentLink.user_id == link_user_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
             ChannelBotAgentLink.archived_at.is_(None),
         )
     )
     link = result.scalar_one_or_none()
+    if link is not None:
+        await ensure_hosted_agent_provider_link_available(
+            db,
+            account=account,
+            agent_id=agent_id,
+            user_id=link_user_id,
+            existing_same_account_link=True,
+        )
+        return link, None
+
+    # Serialize by Agent before creating. Besides enforcing strict-v2 authority,
+    # this closes the same-account double-submit race and makes provider-level
+    # single-link checks deterministic across concurrent requests.
+    row = (
+        await db.execute(
+            select(AgentEnvironment, HostedRuntimeState, V2RuntimeEnvironmentFence)
+            .outerjoin(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .outerjoin(
+                V2RuntimeEnvironmentFence,
+                V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
+            )
+            .where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.user_id == link_user_id,
+            )
+            .with_for_update(of=AgentEnvironment)
+        )
+    ).one_or_none()
+    if row is None or not is_strict_v2_hosted_channel_agent(*row):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=STRICT_V2_AGENT_LINK_DETAIL,
+        )
+
+    # A competing request may have created the same Link while this request
+    # waited for the Agent lock. Return that active Link idempotently.
+    link = (
+        await db.execute(
+            select(ChannelBotAgentLink).where(
+                ChannelBotAgentLink.account_id == account.id,
+                ChannelBotAgentLink.agent_id == agent_id,
+                ChannelBotAgentLink.user_id == link_user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+            )
+        )
+    ).scalar_one_or_none()
     if link is not None:
         await ensure_hosted_agent_provider_link_available(
             db,
@@ -430,6 +488,153 @@ async def get_or_create_bot_agent_link(
     db.add(link)
     await db.flush()
     return link, raw_token
+
+
+def is_strict_v2_hosted_channel_agent(
+    agent: AgentEnvironment,
+    state: HostedRuntimeState | None,
+    fence: V2RuntimeEnvironmentFence | None,
+) -> bool:
+    if (
+        state is None
+        or fence is None
+        or fence.owner_id != agent.user_id
+        or fence.deployment_id != state.deployment_id
+        or fence.state != RUNTIME_ENVIRONMENT_ACTIVE
+        or agent.agent_type not in HOSTED_RUNTIME_AGENT_TYPES
+    ):
+        return False
+    runtimes = state.runtimes
+    if not isinstance(runtimes, dict) or list(runtimes) != [agent.agent_type]:
+        return False
+    try:
+        validate_hosted_runtime_desired_state(runtimes[agent.agent_type])
+    except ValueError:
+        return False
+    return True
+
+
+async def get_strict_v2_hosted_channel_agent_or_409(
+    db: AsyncSession,
+    *,
+    agent_id: UUID,
+    user_id: UUID,
+) -> AgentEnvironment:
+    row = (
+        await db.execute(
+            select(AgentEnvironment, HostedRuntimeState, V2RuntimeEnvironmentFence)
+            .outerjoin(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .outerjoin(
+                V2RuntimeEnvironmentFence,
+                V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
+            )
+            .where(
+                AgentEnvironment.id == agent_id,
+                AgentEnvironment.user_id == user_id,
+            )
+        )
+    ).one_or_none()
+    if row is None or not is_strict_v2_hosted_channel_agent(*row):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=STRICT_V2_AGENT_LINK_DETAIL,
+        )
+    agent, _state, _fence = row
+    return agent
+
+
+async def bot_agent_link_allows_new_pairing(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    link_id: UUID,
+    user_id: UUID,
+) -> bool:
+    row = (
+        await db.execute(
+            select(
+                ChannelBotAgentLink,
+                AgentEnvironment,
+                HostedRuntimeState,
+                V2RuntimeEnvironmentFence,
+            )
+            .join(AgentEnvironment, AgentEnvironment.id == ChannelBotAgentLink.agent_id)
+            .outerjoin(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .outerjoin(
+                V2RuntimeEnvironmentFence,
+                V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
+            )
+            .where(
+                ChannelBotAgentLink.id == link_id,
+                ChannelBotAgentLink.account_id == account_id,
+                ChannelBotAgentLink.user_id == user_id,
+                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                ChannelBotAgentLink.archived_at.is_(None),
+                AgentEnvironment.user_id == user_id,
+            )
+        )
+    ).one_or_none()
+    if row is None:
+        return False
+    _link, agent, state, fence = row
+    return is_strict_v2_hosted_channel_agent(agent, state, fence)
+
+
+async def list_strict_v2_hosted_channel_agent_ids(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    provider: str,
+) -> list[UUID]:
+    rows = (
+        await db.execute(
+            select(AgentEnvironment, HostedRuntimeState, V2RuntimeEnvironmentFence)
+            .join(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .join(
+                V2RuntimeEnvironmentFence,
+                V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
+            )
+            .where(AgentEnvironment.user_id == user_id)
+            .order_by(AgentEnvironment.created_at, AgentEnvironment.id)
+        )
+    ).all()
+    eligible: list[UUID] = []
+    for agent, state, fence in rows:
+        if not is_strict_v2_hosted_channel_agent(agent, state, fence):
+            continue
+        if provider == CHANNEL_PROVIDER_WHATSAPP:
+            continue
+        limited_providers = SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE.get(agent.agent_type)
+        if limited_providers is not None and provider in limited_providers:
+            existing_link = (
+                await db.execute(
+                    select(ChannelBotAgentLink.id)
+                    .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+                    .where(
+                        ChannelBotAgentLink.agent_id == agent.id,
+                        ChannelBotAgentLink.user_id == user_id,
+                        ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                        ChannelBotAgentLink.archived_at.is_(None),
+                        ChannelAccount.provider == provider,
+                        ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                        ChannelAccount.archived_at.is_(None),
+                    )
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if existing_link is not None:
+                continue
+        eligible.append(agent.id)
+    return eligible
 
 
 async def ensure_hosted_agent_provider_link_available(
@@ -942,6 +1147,17 @@ async def claim_pair_code(
         return PairCodeClaimResult(reason="already_used")
     if pair_code.expires_at <= datetime.now(UTC):
         return PairCodeClaimResult(reason="expired")
+    if not await bot_agent_link_allows_new_pairing(
+        db,
+        account_id=account.id,
+        link_id=pair_code.bot_agent_link_id,
+        user_id=pair_code.user_id,
+    ):
+        # Historical pair codes must not let an ineligible Link expand into a
+        # new chat binding. Revoke the code while preserving list/unpair/unlink
+        # cleanup for any state that already exists.
+        pair_code.status = PAIR_CODE_STATUS_REVOKED
+        return PairCodeClaimResult(reason="invalid")
 
     try:
         async with db.begin_nested():

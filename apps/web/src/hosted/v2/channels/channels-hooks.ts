@@ -210,6 +210,11 @@ export function useLinkAgent(accountId: string) {
 				created_at: result.created_at,
 			};
 		} catch (error) {
+			await Promise.all([
+				qc.invalidateQueries({ queryKey: keys.agentLinks(accountId) }),
+				qc.invalidateQueries({ queryKey: ["agent-channel-links", agentId] }),
+				qc.invalidateQueries({ queryKey: keys.pool }),
+			]);
 			toastApiError("Couldn't link agent")(error);
 			throw error;
 		}

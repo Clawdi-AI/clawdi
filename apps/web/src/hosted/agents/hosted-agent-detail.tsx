@@ -5,7 +5,6 @@ import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-quer
 import { Link, useRouter } from "@tanstack/react-router";
 import {
 	AlertCircle,
-	Bot,
 	Check,
 	CircleCheck,
 	Copy,
@@ -18,7 +17,6 @@ import {
 	Link2,
 	Link2Off,
 	type LucideIcon,
-	MessageSquareDashed,
 	MonitorPlay,
 	Plus,
 	QrCode,
@@ -182,7 +180,6 @@ import {
 } from "@/hosted/deployment-status";
 import { DeploymentStatusUnavailableState } from "@/hosted/deployment-status-unavailable";
 import {
-	canOpenHostedRuntimeUi,
 	type HostedProjectionResolution,
 	missingProjectionRefetchInterval,
 	resolveHostedAgentProjection,
@@ -230,11 +227,12 @@ import {
 } from "@/hosted/v2/channels/agent-channel-bindings.logic";
 import { pairCodeExpiryLabel } from "@/hosted/v2/channels/channel-detail-page.logic";
 import type { AgentChannelLink } from "@/hosted/v2/channels/channel-edit-client";
-import { providerMeta } from "@/hosted/v2/channels/channel-providers";
 import {
 	ChannelStatusBadge,
 	CopyInline,
 	HealthBadge,
+	isNormalChannelHealth,
+	isNormalChannelStatus,
 	ProviderChip,
 } from "@/hosted/v2/channels/channel-ui";
 import {
@@ -523,7 +521,6 @@ export function HostedAgentDetail({
 	});
 
 	const isPerformance = deployment.current_plan_slug === COMPUTE_PERFORMANCE_SLUG;
-	const consoleUrl = runtimeConsoleUrl(deployment, runtime);
 	const terminalHref = agentSectionHref(environmentId, "terminal", routeSearch);
 	const planChangeHref = `${agentSectionHref(environmentId, "settings", routeSearch)}#compute-plan-controls`;
 	const providerSettingsHref = agentSectionHref(environmentId, "ai", routeSearch);
@@ -541,21 +538,6 @@ export function HostedAgentDetail({
 	const activeTabLabel = agentSectionLabel(activeTab);
 	const ActiveTabIcon = activeNavItem.icon;
 	const isLiveToolTab = activeTab === "console" || activeTab === "terminal";
-	const headerActions =
-		activeTab !== "console" &&
-		consoleUrl &&
-		canOpenHostedRuntimeUi(deploymentStatus, consoleUrl) ? (
-			<Button
-				render={<Link to={agentSectionHref(environmentId, "console", routeSearch)} />}
-				nativeButton={false}
-				variant="outline"
-				size="sm"
-			>
-				Access {runtimeBrowserUiLabel(runtime)}
-				<MonitorPlay className="size-3.5" />
-			</Button>
-		) : null;
-
 	return (
 		<div
 			data-hosted="true"
@@ -573,7 +555,6 @@ export function HostedAgentDetail({
 						title={activeTabLabel}
 						description={activeNavItem.description}
 						icon={ActiveTabIcon ? <ActiveTabIcon className="size-4 text-muted-foreground" /> : null}
-						actions={headerActions}
 					/>
 				)}
 				{isLiveToolTab ? null : <ComputeDunningBanner deployment={deployment} />}
@@ -2362,7 +2343,6 @@ function ChannelsTab({
 	const unlink = useUnlinkAgentChannel(environmentId);
 	const [recentLink, setRecentLink] = useState<AgentChannelLink | null>(null);
 	const [connectOpen, setConnectOpen] = useState(false);
-	const [advancedOpen, setAdvancedOpen] = useState(false);
 	const [linkingAccountId, setLinkingAccountId] = useState<string | null>(null);
 	const linkInFlightRef = useRef(false);
 	const unlinkingLinkIdsRef = useRef<Set<string>>(new Set());
@@ -2435,10 +2415,6 @@ function ChannelsTab({
 				.map((bot) => ({ id: bot.id, provider: bot.provider, name: bot.name })),
 		[botPool.data, linkedIds, linkedProviders, agentType],
 	);
-	useEffect(() => {
-		if (!botPool.isLoading && !botPool.error && readyBots.length === 0) setAdvancedOpen(true);
-	}, [botPool.error, botPool.isLoading, readyBots.length]);
-
 	const healthByAccount = useMemo(
 		() => new Map((health.data?.items ?? []).map((item) => [item.account_id, item])),
 		[health.data],
@@ -2567,6 +2543,8 @@ function ChannelsTab({
 				links={visibleActiveLinks}
 				accountSummaries={accountSummaries}
 				linksLoading={linked.isLoading}
+				linksError={linked.error}
+				onLinksRetry={() => void linked.refetch()}
 			/>
 
 			<section data-agent-add-channel className="flex flex-col gap-3 border-t pt-6">
@@ -2605,17 +2583,9 @@ function ChannelsTab({
 							/>
 						))}
 					</div>
-				) : (
-					<p className="px-0.5 text-sm text-muted-foreground">
-						No ready-to-go bots are available right now.
-					</p>
-				)}
+				) : null}
 
-				<details
-					open={advancedOpen}
-					onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
-					className="group border-t pt-4"
-				>
+				<details className="group border-t pt-4">
 					<summary className="cursor-pointer text-sm font-medium">Use your own bot</summary>
 					<div className="mt-3 space-y-3">
 						{channels.isLoading ? (
@@ -2641,25 +2611,13 @@ function ChannelsTab({
 								))}
 							</div>
 						) : (
-							<div className={AGENT_CHANNEL_LIST_CLASS}>
-								<div className={AGENT_CHANNEL_ROW_CLASS}>
-									<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-										<Bot className="size-4" />
-									</span>
-									<div className="min-w-0 flex-1">
-										<p className="text-sm font-medium">No bot connected yet</p>
-									</div>
-									<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
-										<Button size="sm" onClick={() => setConnectOpen(true)}>
-											<Plus className="size-3.5" />
-											Connect a bot
-										</Button>
-									</div>
-								</div>
-							</div>
+							<Button size="sm" onClick={() => setConnectOpen(true)}>
+								<Plus className="size-3.5" />
+								Connect a bot
+							</Button>
 						)}
-						<div className="flex flex-wrap gap-2">
-							{ownedChannels.length > 0 ? (
+						{ownedChannels.length > 0 ? (
+							<div className="flex flex-wrap gap-2">
 								<Button
 									type="button"
 									variant="outline"
@@ -2669,16 +2627,8 @@ function ChannelsTab({
 									<Plus className="size-3.5" />
 									Connect a bot
 								</Button>
-							) : null}
-							<Button
-								render={<Link to="/channels" />}
-								nativeButton={false}
-								variant="ghost"
-								size="sm"
-							>
-								View all channels
-							</Button>
-						</div>
+							</div>
+						) : null}
 					</div>
 				</details>
 			</section>
@@ -2692,10 +2642,14 @@ function AgentPairedChats({
 	links,
 	accountSummaries,
 	linksLoading,
+	linksError,
+	onLinksRetry,
 }: {
 	links: AgentChannelLink[];
 	accountSummaries: ReadonlyMap<string, ChannelAccountSummary>;
 	linksLoading: boolean;
+	linksError: Error | null;
+	onLinksRetry: () => void;
 }) {
 	const accountIds = useMemo(
 		() => Array.from(new Set(links.map((link) => link.account_id))),
@@ -2713,31 +2667,31 @@ function AgentPairedChats({
 
 	const bindingsLoading = linksLoading || bindingQueries.some((query) => query.isLoading);
 	const failedQueries = bindingQueries.filter((query) => query.error);
+	if (links.length === 0 && !linksLoading && !linksError) return null;
 
 	return (
 		<section data-agent-paired-chats className="flex flex-col gap-3 border-t pt-6">
 			<SectionLabel count={items.length}>Paired chats</SectionLabel>
-			{bindingsLoading && items.length === 0 ? (
-				<div className={AGENT_CHANNEL_LIST_CLASS}>
-					<div className={AGENT_CHANNEL_ROW_CLASS}>
-						<Skeleton className="size-8 shrink-0 rounded-md" />
-						<div className="min-w-0 space-y-2">
-							<Skeleton className="h-4 w-40" />
-							<Skeleton className="h-3 w-56 max-w-full" />
-						</div>
+			{linksError && links.length === 0 ? (
+				<ApiErrorPanel
+					error={linksError}
+					onRetry={onLinksRetry}
+					title="Couldn't verify paired chats"
+				/>
+			) : bindingsLoading && items.length === 0 ? (
+				<div className="ml-4 flex items-center gap-3 border-l-2 border-muted py-2 pl-3">
+					<Skeleton className="size-8 shrink-0 rounded-md" />
+					<div className="min-w-0 flex-1 space-y-2">
+						<Skeleton className="h-4 w-40" />
+						<Skeleton className="h-3 w-56 max-w-full" />
 					</div>
 				</div>
 			) : items.length === 0 && failedQueries.length === 0 ? (
-				<div className={AGENT_CHANNEL_LIST_CLASS}>
-					<div className={AGENT_CHANNEL_ROW_CLASS}>
-						<span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-							<MessageSquareDashed className="size-4" />
-						</span>
-						<p className="min-w-0 text-sm text-muted-foreground">No paired chats yet.</p>
-					</div>
-				</div>
+				<p className="ml-4 border-l-2 border-muted py-2 pl-3 text-sm text-muted-foreground">
+					No chats paired yet.
+				</p>
 			) : (
-				<div data-agent-paired-chats-list className={AGENT_CHANNEL_LIST_CLASS}>
+				<div data-agent-paired-chats-list className="flex flex-col gap-1">
 					{items.map((item) => (
 						<PairedChatRow
 							key={item.binding.id}
@@ -2794,9 +2748,7 @@ function AddChannelRow({
 			<ProviderChip provider={channel.provider} size="sm" />
 			<div className="min-w-0">
 				<p className="truncate text-sm font-medium">{channel.name}</p>
-				<p className="truncate text-xs text-muted-foreground">
-					{providerMeta(channel.provider).label} · {kind}
-				</p>
+				<p className="truncate text-xs text-muted-foreground">{kind}</p>
 			</div>
 			<div className={AGENT_CHANNEL_ACTIONS_CLASS}>
 				<Button
@@ -2882,9 +2834,10 @@ function LinkedChannelRow({
 			<div className="min-w-0">
 				<p className="truncate text-sm font-medium">{name}</p>
 				<div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-					{provider ? <span>{providerMeta(provider).label}</span> : null}
-					<ChannelStatusBadge status={link.status} />
-					{health ? <HealthBadge status={health.health_status} /> : null}
+					{isNormalChannelStatus(link.status) ? null : <ChannelStatusBadge status={link.status} />}
+					{health && !isNormalChannelHealth(health.health_status) ? (
+						<HealthBadge status={health.health_status} />
+					) : null}
 					{healthLoading ? (
 						<span className="inline-flex items-center gap-1">
 							<Spinner className="size-3" /> Checking activity…

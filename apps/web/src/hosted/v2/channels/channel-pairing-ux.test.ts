@@ -12,7 +12,11 @@ const linkDialog = source("./link-agent-dialog.tsx");
 const connectDialog = source("./connect-bot-dialog.tsx");
 const agentDetail = source("../../agents/hosted-agent-detail.tsx");
 const pairedChatRow = source("./paired-chat-row.tsx");
+const pairedChatRowLogic = source("./paired-chat-row.logic.ts");
+const confirmAction = source("../../../components/ui/confirm-action.tsx");
 const agentBindingLogic = source("./agent-channel-bindings.logic.ts");
+const channelsPage = source("./channels-page.tsx");
+const linkLogic = source("./link-agent-dialog.logic.ts");
 
 describe("Telegram channel pairing UX", () => {
 	test("keeps a full-width, single-layer linked Agent and paired chat layout", () => {
@@ -78,10 +82,46 @@ describe("Telegram channel pairing UX", () => {
 		expect(pairedChatRow).toContain("Only this chat will be disconnected");
 		expect(pairedChatRow).toContain("unpair.mutateAsync(binding.id)");
 		expect(pairedChatRow).toContain("unpair.isPending");
+		expect(confirmAction).toContain("void runConfirm().catch");
 		expect(hooks).toContain("export function useDeleteChannelBinding");
 		expect(hooks).toContain("keys.bindings(accountId)");
 		expect(hooks).toContain('toastApiError("Couldn\'t unpair chat")');
 		expect(hooks).toContain("refetchInterval: 3_000");
+	});
+
+	test("uses strict Cloud candidates and current-user AgentLink rows", () => {
+		expect(linkLogic).toContain('agentOwnershipKindFromId(agent.id, ownership) === "cloud"');
+		expect(linkLogic).toContain("linkedAgentIds.has(agent.id.toLowerCase())");
+		expect(linkDialog).toContain("useChannelAgentLinks(accountId)");
+		expect(linkDialog).toContain("selectCloudAgentCandidates");
+		expect(linkDialog).toContain("No Cloud Agents available");
+		expect(linkDialog).toContain('className="w-full min-w-0"');
+		expect(linkDialog).toContain('align="start"');
+		expect(linkDialog).not.toContain("AgentSourceBadgeForEnvironment");
+		expect(channelsPage).toContain("useChannelAgentLinks(item.id)");
+		expect(channelsPage).toContain("data-pool-linked-agents");
+		expect(channelsPage).toContain("<PoolAgentRow");
+		expect(channelsPage).not.toContain("item.link_count");
+	});
+
+	test("keeps historical links cleanable while hiding Pair unless ownership is Cloud", () => {
+		expect(detail).toContain('ownershipKind === "cloud"');
+		expect(detail).toContain("const canPair");
+		expect(detail).toContain("{canPair ? (");
+		expect(detail).toContain('{isUnlinking ? "Unlinking…" : "Unlink"}');
+	});
+
+	test("renders chats as subordinate icon rows instead of channel-provider rows", () => {
+		expect(pairedChatRow).toContain("<IconChip");
+		expect(pairedChatRow).toContain("<MessageCircle");
+		expect(pairedChatRow).toContain("<MessagesSquare");
+		expect(pairedChatRow).toContain("Paired to");
+		expect(pairedChatRow).toContain("Through");
+		expect(pairedChatRow).toContain("pairedChatTitle(binding)");
+		expect(pairedChatRowLogic).toContain("external_chat_name?.trim()");
+		expect(pairedChatRowLogic).toContain("binding.external_chat_id");
+		expect(pairedChatRow).not.toContain("<ProviderChip");
+		expect(pairedChatRow).not.toContain("CopyInline");
 	});
 
 	test("filters Agent-page chats by visible active agent link and matching account", () => {

@@ -58,8 +58,11 @@ describe("hosted-agent channel finish line", () => {
 		expect(channelsTab).toContain("Paired chats");
 		expect(channelsTab).toContain("data-agent-add-channel");
 		expect(channelsTab).toContain("data-add-channel-id");
-		expect(channelsTab).toContain("No bot connected yet");
+		expect(channelsTab).not.toContain("No bot connected yet");
 		expect(channelsTab).toContain("Connect a bot");
+		expect(channelsTab).not.toContain("View all channels");
+		expect(channelsTab).not.toContain("setAdvancedOpen");
+		expect(channelsTab).toContain('<details className="group border-t pt-4">');
 		expect(channelsTab).not.toContain("Fastest: use a ready-to-go bot");
 		expect(channelsTab).not.toContain("Use your own bot (advanced)");
 	});

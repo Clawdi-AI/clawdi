@@ -20,11 +20,7 @@ import {
 import { type ReactNode, useMemo, useRef, useState } from "react";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { useSetBreadcrumbTitle } from "@/components/breadcrumb-title";
-import {
-	AgentLabel,
-	AgentSourceBadgeForEnvironment,
-	agentTextLabel,
-} from "@/components/dashboard/agent-label";
+import { AgentLabel, agentTextLabel } from "@/components/dashboard/agent-label";
 import { EmptyState } from "@/components/empty-state";
 import { ENTITY_CARD_BASE, EntityHeader } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
@@ -55,6 +51,8 @@ import {
 	CopyInline,
 	DeliveryBadge,
 	HealthBadge,
+	isNormalChannelHealth,
+	isNormalChannelStatus,
 } from "@/hosted/v2/channels/channel-ui";
 import {
 	useChannel,
@@ -131,7 +129,6 @@ function AgentName({
 	fallback: string;
 	meta?: ReactNode[];
 }) {
-	const ownership = useAgentOwnership();
 	if (!env) {
 		return (
 			<EntityHeader
@@ -146,7 +143,6 @@ function AgentName({
 			/>
 		);
 	}
-	const ownershipKind = agentOwnershipKindFromId(env.id, ownership);
 	return (
 		<AgentLabel
 			machineName={env.machine_name}
@@ -156,9 +152,6 @@ function AgentName({
 			avatarUrl={env.avatar_url}
 			size="sm"
 			formatName={runtimeNameFormatter(env)}
-			titleAdornment={
-				<AgentSourceBadgeForEnvironment env={env} ownershipKind={ownershipKind} compact />
-			}
 			className="min-w-0 flex-1"
 			meta={meta}
 		/>
@@ -294,13 +287,18 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 		<div data-hosted="true" data-v2="true" className={PAGE_CLASS}>
 			<PageHeader
 				title={ch.name}
-				description={`${meta.label} · ${ch.visibility === "public" ? "Ready-to-go bot" : "Your bot"}`}
+				description={meta.label}
 				icon={<EntityIcon kind="channel" id={ch.provider} label={meta.label} size="lg" />}
 				status={
-					<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-						<ChannelStatusBadge status={ch.status} />
-						{healthItem ? <HealthBadge status={healthItem.health_status} /> : null}
-					</div>
+					!isNormalChannelStatus(ch.status) ||
+					(healthItem && !isNormalChannelHealth(healthItem.health_status)) ? (
+						<div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+							{isNormalChannelStatus(ch.status) ? null : <ChannelStatusBadge status={ch.status} />}
+							{healthItem && !isNormalChannelHealth(healthItem.health_status) ? (
+								<HealthBadge status={healthItem.health_status} />
+							) : null}
+						</div>
+					) : undefined
 				}
 				actions={
 					<ConfirmAction
@@ -345,10 +343,7 @@ export function ChannelDetailPage({ channelId: id }: { channelId: string }) {
 						readOnly={providerUnavailable}
 					/>
 				</section>
-				<section className="flex flex-col gap-3 border-t pt-6">
-					<SectionHeader label="Paired chats" />
-					<BindingsTab accountId={id} provider={ch.provider} />
-				</section>
+				<BindingsTab accountId={id} provider={ch.provider} />
 			</div>
 
 			<Tabs
@@ -475,6 +470,8 @@ function AgentsTab({
 					{items.map((link: ChannelAgentLink) => {
 						const isUnlinking = unlinkingLinks.has(link.id);
 						const env = findEnv(envs.data, link.agent_id);
+						const ownershipKind = agentOwnershipKindFromId(link.agent_id, ownership);
+						const canPair = provider === "telegram" && ownershipKind === "cloud";
 						return (
 							<div
 								key={link.id}
@@ -485,13 +482,15 @@ function AgentsTab({
 									env={env}
 									fallback={link.agent_id}
 									meta={[
-										<ChannelStatusBadge key="status" status={link.status} />,
+										...(isNormalChannelStatus(link.status)
+											? []
+											: [<ChannelStatusBadge key="status" status={link.status} />]),
 										<span key="linked">Linked {relativeTime(link.created_at)}</span>,
 									]}
 								/>
 								{readOnly ? null : (
 									<div className={CHANNEL_RELATION_ACTIONS_CLASS}>
-										{provider === "telegram" ? (
+										{canPair ? (
 											<Button size="sm" onClick={() => setPairingLink(link)}>
 												<QrCode className="size-3.5" />
 												Pair Telegram
@@ -506,16 +505,16 @@ function AgentsTab({
 										>
 											<Button
 												variant="ghost"
-												size="icon-sm"
+												size="sm"
 												className="text-muted-foreground hover:text-destructive"
 												disabled={isUnlinking}
-												aria-label="Unlink agent"
 											>
 												{isUnlinking ? (
-													<Spinner className="size-4" />
+													<Spinner className="size-3.5" />
 												) : (
-													<Link2Off className="size-4" />
+													<Link2Off className="size-3.5" />
 												)}
+												{isUnlinking ? "Unlinking…" : "Unlink"}
 											</Button>
 										</ConfirmAction>
 									</div>
@@ -765,44 +764,56 @@ function BindingsTab({ accountId, provider }: { accountId: string; provider: str
 	const envs = useEnvironments();
 	const ownership = useAgentOwnership();
 
-	if (bindings.isLoading) return <Skeleton className="h-24 w-full rounded-lg" />;
-	if (bindings.error) {
-		return (
-			<ApiErrorPanel
-				error={bindings.error}
-				onRetry={() => bindings.refetch()}
-				title="Couldn't load paired chats"
-			/>
-		);
-	}
 	const items = bindings.data ?? [];
-
-	if (items.length === 0) {
-		return (
-			<EmptyState
-				icon={MessageSquareDashed}
-				title="No paired chats"
-				description="Choose Pair Telegram on a linked Agent to connect a chat."
-			/>
-		);
+	const hasActiveLinks = (links.data ?? []).length > 0;
+	if (
+		!bindings.isLoading &&
+		!bindings.error &&
+		!links.isLoading &&
+		!links.error &&
+		!hasActiveLinks
+	) {
+		return null;
 	}
 
 	return (
-		<div className={CHANNEL_RELATION_LIST_CLASS}>
-			{items.map((binding) => {
-				const link = links.data?.find((candidate) => candidate.id === binding.agent_link_id);
-				return (
-					<PairedChatRow
-						key={binding.id}
-						accountId={accountId}
-						binding={binding}
-						provider={provider}
-						agentName={link ? envName(envs.data, link.agent_id, ownership, false) : undefined}
-						showChatId
-					/>
-				);
-			})}
-		</div>
+		<section className="flex flex-col gap-3 border-t pt-6">
+			<SectionHeader label="Paired chats" count={items.length} />
+			{bindings.isLoading || links.isLoading ? (
+				<Skeleton className="h-16 w-full rounded-lg" />
+			) : bindings.error ? (
+				<ApiErrorPanel
+					error={bindings.error}
+					onRetry={() => bindings.refetch()}
+					title="Couldn't load paired chats"
+				/>
+			) : links.error ? (
+				<ApiErrorPanel
+					error={links.error}
+					onRetry={() => links.refetch()}
+					title="Couldn't match paired chats to agents"
+				/>
+			) : items.length === 0 ? (
+				<p className="ml-4 border-l-2 border-muted py-2 pl-3 text-sm text-muted-foreground">
+					No chats paired yet.
+				</p>
+			) : (
+				<div className="flex flex-col gap-1">
+					{items.map((binding) => {
+						const link = links.data?.find((candidate) => candidate.id === binding.agent_link_id);
+						return (
+							<PairedChatRow
+								key={binding.id}
+								accountId={accountId}
+								binding={binding}
+								provider={provider}
+								agentName={link ? envName(envs.data, link.agent_id, ownership, false) : undefined}
+							/>
+						);
+					})}
+				</div>
+			)}
+		</section>
 	);
 }
 
