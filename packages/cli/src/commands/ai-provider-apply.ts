@@ -16,13 +16,15 @@ import { ApiClient } from "../lib/api-client";
 import {
 	decideChatGptOAuthCredentialReconciliation,
 	intentLedgerForDecision,
-	type NativeOAuthCredentialAction,
 	type NativeOAuthCredentialObservation,
 	type OAuthCredentialLedgerSnapshot,
 } from "../lib/chatgpt-oauth-reconciliation";
 import {
 	HERMES_CODEX_AUTH_HELPER,
 	type HermesCodexAuthAction,
+	type NativeOAuthCredentialMutationResult,
+	nativeOAuthCredentialEvidenceFingerprint,
+	nativeOAuthMutationResult,
 	nativeOAuthObservation,
 	nativeOAuthProfileId,
 	type OAuthCredentialOwnership,
@@ -673,8 +675,10 @@ function runLocalHermesCodexAuthCommand(
 	path: string,
 	action: HermesCodexAuthAction,
 	profileId: string,
+	credentialRevision: string,
 	material?: CodexAuthMaterial,
 	ownership?: OAuthCredentialOwnership,
+	expectedFingerprint?: string,
 ): JsonRecord {
 	const nodeArgs = [
 		"--input-type=module",
@@ -684,6 +688,8 @@ function runLocalHermesCodexAuthCommand(
 		action,
 		profileId,
 		ownership?.nativeProfileId ?? "",
+		credentialRevision,
+		expectedFingerprint ?? "",
 	];
 	const command = process.platform === "win32" ? "node" : "flock";
 	const args =
@@ -701,10 +707,18 @@ function runLocalHermesCodexAuthCommand(
 function observeLocalHermesCodexAuth(
 	path: string,
 	profileId: string,
+	credentialRevision: string,
 	ownership?: OAuthCredentialOwnership,
 ): NativeOAuthCredentialObservation {
 	return nativeOAuthObservation(
-		runLocalHermesCodexAuthCommand(path, "inspect", profileId, undefined, ownership).observation,
+		runLocalHermesCodexAuthCommand(
+			path,
+			"inspect",
+			profileId,
+			credentialRevision,
+			undefined,
+			ownership,
+		),
 	);
 }
 
@@ -712,11 +726,21 @@ function runLocalHermesCodexAuth(
 	path: string,
 	action: Exclude<HermesCodexAuthAction, "inspect">,
 	profileId: string,
+	credentialRevision: string,
 	material?: CodexAuthMaterial,
 	ownership?: OAuthCredentialOwnership,
-): boolean {
-	return (
-		runLocalHermesCodexAuthCommand(path, action, profileId, material, ownership).updated === true
+	expectedFingerprint?: string,
+): NativeOAuthCredentialMutationResult {
+	return nativeOAuthMutationResult(
+		runLocalHermesCodexAuthCommand(
+			path,
+			action,
+			profileId,
+			credentialRevision,
+			material,
+			ownership,
+			expectedFingerprint,
+		),
 	);
 }
 
@@ -745,6 +769,7 @@ function localOpenClawProviderAuthSdkPath(): string {
 function localOpenClawCredentialObservation(
 	agentDir: string,
 	profileId: string,
+	credentialRevision: string,
 	ownership?: OAuthCredentialOwnership,
 ): NativeOAuthCredentialObservation {
 	const output = execFileSync(
@@ -758,18 +783,22 @@ function localOpenClawCredentialObservation(
 			"inspect",
 			profileId,
 			ownership?.nativeProfileId ?? "",
+			credentialRevision,
+			"",
 		],
 		{ encoding: "utf8", input: "null", stdio: ["pipe", "pipe", "pipe"] },
 	);
-	return nativeOAuthObservation(readJsonText(output, "OpenClaw provider-auth inspect").observation);
+	return nativeOAuthObservation(readJsonText(output, "OpenClaw provider-auth inspect"));
 }
 
 function writeLocalOpenClawCredential(
 	agentDir: string,
 	profileId: string,
+	credentialRevision: string,
 	material: CodexAuthMaterial,
 	action: "seed-if-missing" | "upsert",
-): void {
+	expectedFingerprint: string,
+): NativeOAuthCredentialMutationResult {
 	const credential = JSON.stringify(
 		compactObject({
 			type: "oauth",
@@ -782,7 +811,7 @@ function writeLocalOpenClawCredential(
 			copyToAgents: false,
 		}),
 	);
-	execFileSync(
+	const output = execFileSync(
 		"node",
 		[
 			"--input-type=module",
@@ -792,17 +821,25 @@ function writeLocalOpenClawCredential(
 			agentDir,
 			action,
 			profileId,
+			"",
+			credentialRevision,
+			expectedFingerprint,
 		],
-		{ input: credential, stdio: "pipe" },
+		{ encoding: "utf8", input: credential, stdio: ["pipe", "pipe", "pipe"] },
+	);
+	return nativeOAuthMutationResult(
+		readJsonText(output, "OpenClaw provider-auth credential mutation"),
 	);
 }
 
 function removeLocalOpenClawCredential(
 	agentDir: string,
 	profileId: string,
+	credentialRevision: string,
 	ownership: OAuthCredentialOwnership,
-): void {
-	execFileSync(
+	expectedFingerprint: string,
+): NativeOAuthCredentialMutationResult {
+	const output = execFileSync(
 		"node",
 		[
 			"--input-type=module",
@@ -813,8 +850,13 @@ function removeLocalOpenClawCredential(
 			"remove",
 			profileId,
 			ownership.nativeProfileId,
+			credentialRevision,
+			expectedFingerprint,
 		],
-		{ input: "null", stdio: "pipe" },
+		{ encoding: "utf8", input: "null", stdio: ["pipe", "pipe", "pipe"] },
+	);
+	return nativeOAuthMutationResult(
+		readJsonText(output, "OpenClaw provider-auth credential removal"),
 	);
 }
 
@@ -826,7 +868,7 @@ function cleanupStaleLocalOAuthLedgers(
 	if (!existsSync(ledgerDir)) return;
 	for (const filename of readdirSync(ledgerDir).filter((name) => name.endsWith(".json"))) {
 		const path = join(ledgerDir, filename);
-		const ledger = readOAuthCredentialLedger(path);
+		const ledger = readOAuthCredentialLedger(path, { migrateLegacy: true });
 		if (!ledger || desiredProviderIds.has(ledger.providerId) || ledger.state === "retired")
 			continue;
 		const snapshot = oauthCredentialLedgerSnapshot(ledger);
@@ -835,11 +877,13 @@ function cleanupStaleLocalOAuthLedgers(
 			target,
 			targetAuthPath(target),
 			ledger.nativeProfileId,
+			ledger.credentialRevision,
 			ownership,
 		);
 		const decision = decideChatGptOAuthCredentialReconciliation({
 			desiredCredentialRevision: null,
 			desiredNativeProfileId: null,
+			desiredCredentialFingerprint: null,
 			ledger: snapshot,
 			native,
 		});
@@ -848,16 +892,24 @@ function cleanupStaleLocalOAuthLedgers(
 				path,
 				ledger.runtime,
 				ledger.providerId,
-				intentLedgerForDecision({
-					decision,
-					current: snapshot,
-					desiredNativeProfileId: ledger.nativeProfileId,
-					desiredCredentialRevision: ledger.credentialRevision,
-				}),
+				intentLedgerForDecision(decision),
 			);
 		}
-		if (decision.nativeAction === "remove" && ownership) {
-			removeLocalOAuthCredential(target, targetAuthPath(target), ledger.nativeProfileId, ownership);
+		if (decision.nativeAction === "remove") {
+			const expectedFingerprint = requireDecisionExpectedFingerprint(decision);
+			const removalOwnership = ownership ?? {
+				nativeProfileId: ledger.nativeProfileId,
+				credentialRevision: ledger.credentialRevision,
+				credentialFingerprint: expectedFingerprint,
+			};
+			removeLocalOAuthCredential(
+				target,
+				targetAuthPath(target),
+				ledger.nativeProfileId,
+				ledger.credentialRevision,
+				removalOwnership,
+				expectedFingerprint,
+			);
 		}
 		writeLocalOAuthLedger(path, ledger.runtime, ledger.providerId, decision.nextLedger);
 	}
@@ -876,26 +928,25 @@ function reconcileLocalOAuthCredential(input: {
 	material: CodexAuthMaterial;
 }): void {
 	const ledgerPath = localOAuthLedgerPath(input.target, input.providerId);
-	const ledger = readOAuthCredentialLedger(ledgerPath);
+	const ledger = readOAuthCredentialLedger(ledgerPath, { migrateLegacy: true });
 	const snapshot = oauthCredentialLedgerSnapshot(ledger);
 	const nativeProfileId = nativeOAuthProfileId(input.target, input.providerId);
-	const desiredFingerprint =
-		input.target === "codex"
-			? oauthCredentialFingerprint(
-					input.credentialRevision,
-					input.material.accessToken,
-					input.material.refreshToken,
-				)
-			: undefined;
+	const desiredFingerprint = oauthCredentialFingerprint(
+		input.credentialRevision,
+		input.material.accessToken,
+		input.material.refreshToken,
+	);
 	const native = observeLocalOAuthCredential(
 		input.target,
 		input.path,
 		nativeProfileId,
+		input.credentialRevision,
 		localOAuthLedgerOwnership(ledger),
 	);
 	const decision = decideChatGptOAuthCredentialReconciliation({
 		desiredCredentialRevision: input.credentialRevision,
 		desiredNativeProfileId: nativeProfileId,
+		desiredCredentialFingerprint: desiredFingerprint,
 		ledger: snapshot,
 		native,
 	});
@@ -904,26 +955,16 @@ function reconcileLocalOAuthCredential(input: {
 			ledgerPath,
 			input.target,
 			input.providerId,
-			intentLedgerForDecision({
-				decision,
-				current: snapshot,
-				desiredNativeProfileId: nativeProfileId,
-				desiredCredentialRevision: input.credentialRevision,
-				...(desiredFingerprint ? { credentialFingerprint: desiredFingerprint } : {}),
-			}),
+			intentLedgerForDecision(decision),
 		);
 	}
-	executeLocalOAuthCredentialAction(decision.nativeAction, input, nativeProfileId);
-	const credentialFingerprint =
-		input.target === "codex" && decision.nextLedger.state === "seeded"
-			? decision.nativeAction === "seed" || decision.nativeAction === "upsert"
-				? desiredFingerprint
-				: ledger?.credentialFingerprint
-			: undefined;
-	writeLocalOAuthLedger(ledgerPath, input.target, input.providerId, {
-		...decision.nextLedger,
-		...(credentialFingerprint ? { credentialFingerprint } : {}),
-	});
+	executeLocalOAuthCredentialAction(
+		decision,
+		input,
+		nativeProfileId,
+		localOAuthLedgerOwnership(ledger),
+	);
+	writeLocalOAuthLedger(ledgerPath, input.target, input.providerId, decision.nextLedger);
 }
 
 function writeLocalOAuthLedger(
@@ -938,16 +979,23 @@ function writeLocalOAuthLedger(
 function localOAuthLedgerOwnership(
 	ledger: OAuthCredentialLedger | null,
 ): OAuthCredentialOwnership | undefined {
-	if (ledger?.state !== "seeded") {
+	if (!ledger) return undefined;
+	const credentialFingerprint =
+		ledger.state === "seeded"
+			? ledger.credentialFingerprint
+			: ledger.state === "intent" && ledger.operation === "remove"
+				? ledger.beforeCredentialFingerprint
+				: undefined;
+	if (ledger.state !== "seeded" && !(ledger.state === "intent" && ledger.operation === "remove")) {
 		return undefined;
 	}
-	if (ledger.runtime === "codex" && !ledger.credentialFingerprint) return undefined;
+	if (ledger.runtime === "codex" && !credentialFingerprint) return undefined;
 	return {
 		nativeProfileId: ledger.nativeProfileId,
-		...(ledger.credentialFingerprint
+		...(credentialFingerprint
 			? {
 					credentialRevision: ledger.credentialRevision,
-					credentialFingerprint: ledger.credentialFingerprint,
+					credentialFingerprint,
 				}
 			: {}),
 	};
@@ -955,67 +1003,109 @@ function localOAuthLedgerOwnership(
 
 function localCodexCredentialObservation(
 	authPath: string,
+	credentialRevision: string,
 	ownership?: OAuthCredentialOwnership,
 ): NativeOAuthCredentialObservation {
 	if (existsSync(authPath)) {
+		const content = readFileSync(authPath, "utf8");
 		try {
-			const auth = parseJsonText(readFileSync(authPath, "utf8"), "Codex auth.json");
+			const auth = parseJsonText(content, "Codex auth.json");
 			const tokens = isPlainRecord(auth.tokens) ? auth.tokens : undefined;
 			const accessToken = readOptionalString(tokens?.access_token);
 			const refreshToken = readOptionalString(tokens?.refresh_token);
-			if (
-				ownership &&
-				accessToken &&
-				refreshToken &&
-				ownership.credentialRevision &&
-				ownership.credentialFingerprint &&
-				oauthCredentialFingerprint(ownership.credentialRevision, accessToken, refreshToken) ===
-					ownership.credentialFingerprint
-			) {
-				return "managed";
+			if (accessToken && refreshToken) {
+				const credentialFingerprint = oauthCredentialFingerprint(
+					credentialRevision,
+					accessToken,
+					refreshToken,
+				);
+				const managed =
+					ownership?.credentialRevision &&
+					ownership.credentialFingerprint &&
+					oauthCredentialFingerprint(ownership.credentialRevision, accessToken, refreshToken) ===
+						ownership.credentialFingerprint;
+				return { state: managed ? "managed" : "foreign", credentialFingerprint };
 			}
 		} catch {
-			// An unreadable native credential is foreign and must not be replaced or removed.
+			// Raw file evidence still fences a later replacement from racing another writer.
 		}
-		return "foreign";
+		return {
+			state: "foreign",
+			credentialFingerprint: nativeOAuthCredentialEvidenceFingerprint(["codex-auth-json", content]),
+		};
 	}
+	if (ownership) return { state: "missing" };
 	return spawnSync("codex", ["login", "status"], { env: process.env, stdio: "ignore" }).status === 0
-		? "foreign"
-		: "missing";
+		? {
+				state: "foreign",
+				credentialFingerprint: nativeOAuthCredentialEvidenceFingerprint(
+					"codex-keyring-login-present",
+				),
+			}
+		: { state: "missing" };
 }
 
 function observeLocalOAuthCredential(
 	target: AgentTarget,
 	authPath: string,
 	nativeProfileId: string,
+	credentialRevision: string,
 	ownership?: OAuthCredentialOwnership,
 ): NativeOAuthCredentialObservation {
-	if (target === "codex") return localCodexCredentialObservation(authPath, ownership);
-	if (target === "hermes") return observeLocalHermesCodexAuth(authPath, nativeProfileId, ownership);
+	if (target === "codex") {
+		return localCodexCredentialObservation(authPath, credentialRevision, ownership);
+	}
+	if (target === "hermes") {
+		return observeLocalHermesCodexAuth(authPath, nativeProfileId, credentialRevision, ownership);
+	}
 	return localOpenClawCredentialObservation(
 		resolveOpenClawDefaultAgentDir(),
 		nativeProfileId,
+		credentialRevision,
 		ownership,
 	);
 }
 
 function executeLocalOAuthCredentialAction(
-	action: NativeOAuthCredentialAction,
+	decision: ReturnType<typeof decideChatGptOAuthCredentialReconciliation>,
 	input: {
 		target: AgentTarget;
 		path: string;
+		credentialRevision: string;
 		material: CodexAuthMaterial;
 	},
 	nativeProfileId: string,
+	ownership?: OAuthCredentialOwnership,
 ): void {
+	const action = decision.nativeAction;
 	if (action === "preserve") return;
 	if (action === "remove") {
 		throw new Error("Desired OAuth credential reconciliation cannot remove a credential");
 	}
-	seedLocalOAuthCredential(
+	const expectedFingerprint =
+		action === "seed" ? "missing" : requireDecisionExpectedFingerprint(decision);
+	const targetFingerprint = requireDecisionTargetFingerprint(decision);
+	if (input.target === "codex") {
+		const before = localCodexCredentialObservation(input.path, input.credentialRevision, ownership);
+		assertExpectedNativeCredential(before, expectedFingerprint);
+		writeAiProviderFile(input.path, input.material.rawContent);
+		const after = localCodexCredentialObservation(input.path, input.credentialRevision);
+		if (after.credentialFingerprint !== targetFingerprint) {
+			throw new Error("Codex OAuth credential mutation did not produce the intended fingerprint");
+		}
+		return;
+	}
+	const result = seedLocalOAuthCredential(
 		input,
 		nativeProfileId,
 		action === "seed" ? "seed-if-missing" : "upsert",
+		expectedFingerprint,
+	);
+	assertNativeMutationCompleted(
+		result,
+		expectedFingerprint,
+		targetFingerprint,
+		`${input.target} OAuth credential`,
 	);
 }
 
@@ -1023,44 +1113,146 @@ function removeLocalOAuthCredential(
 	target: AgentTarget,
 	authPath: string,
 	nativeProfileId: string,
+	credentialRevision: string,
 	ownership: OAuthCredentialOwnership,
+	expectedFingerprint: string,
 ): void {
 	if (target === "codex") {
-		if (localCodexCredentialObservation(authPath, ownership) === "managed") {
-			rmSync(authPath, { force: true });
+		const before = localCodexCredentialObservation(authPath, credentialRevision, ownership);
+		assertExpectedNativeCredential(before, expectedFingerprint);
+		if (before.state !== "managed") {
+			throw new Error("Codex OAuth credential removal lost ownership evidence");
+		}
+		rmSync(authPath, { force: true });
+		if (
+			localCodexCredentialObservation(authPath, credentialRevision, ownership).state !== "missing"
+		) {
+			throw new Error("Codex OAuth credential removal could not verify absence");
 		}
 		return;
 	}
 	if (target === "hermes") {
-		runLocalHermesCodexAuth(authPath, "remove", nativeProfileId, undefined, ownership);
+		const result = runLocalHermesCodexAuth(
+			authPath,
+			"remove",
+			nativeProfileId,
+			credentialRevision,
+			undefined,
+			ownership,
+			expectedFingerprint,
+		);
+		assertNativeRemovalCompleted(result, expectedFingerprint, "Hermes OAuth credential");
 		return;
 	}
-	removeLocalOpenClawCredential(resolveOpenClawDefaultAgentDir(), nativeProfileId, ownership);
+	const result = removeLocalOpenClawCredential(
+		resolveOpenClawDefaultAgentDir(),
+		nativeProfileId,
+		credentialRevision,
+		ownership,
+		expectedFingerprint,
+	);
+	assertNativeRemovalCompleted(result, expectedFingerprint, "OpenClaw OAuth credential");
 }
 
 function seedLocalOAuthCredential(
 	input: {
 		target: AgentTarget;
 		path: string;
+		credentialRevision: string;
 		material: CodexAuthMaterial;
 	},
 	nativeProfileId: string,
 	action: "seed-if-missing" | "upsert",
-): void {
-	if (input.target === "codex") {
-		writeAiProviderFile(input.path, input.material.rawContent);
-		return;
-	}
+	expectedFingerprint: string,
+): NativeOAuthCredentialMutationResult {
+	if (input.target === "codex") throw new Error("Codex mutation uses local fingerprint fencing");
 	if (input.target === "hermes") {
-		runLocalHermesCodexAuth(input.path, action, nativeProfileId, input.material);
-		return;
+		return runLocalHermesCodexAuth(
+			input.path,
+			action,
+			nativeProfileId,
+			input.credentialRevision,
+			input.material,
+			undefined,
+			expectedFingerprint,
+		);
 	}
-	writeLocalOpenClawCredential(
+	return writeLocalOpenClawCredential(
 		resolveOpenClawDefaultAgentDir(),
 		nativeProfileId,
+		input.credentialRevision,
 		input.material,
 		action,
+		expectedFingerprint,
 	);
+}
+
+function requireDecisionExpectedFingerprint(
+	decision: ReturnType<typeof decideChatGptOAuthCredentialReconciliation>,
+): string {
+	if (!decision.expectedCredentialFingerprint) {
+		throw new Error("OAuth credential mutation is missing before-credential evidence");
+	}
+	return decision.expectedCredentialFingerprint;
+}
+
+function requireDecisionTargetFingerprint(
+	decision: ReturnType<typeof decideChatGptOAuthCredentialReconciliation>,
+): string {
+	if (!decision.targetCredentialFingerprint) {
+		throw new Error("OAuth credential mutation is missing target-credential evidence");
+	}
+	return decision.targetCredentialFingerprint;
+}
+
+function assertExpectedNativeCredential(
+	observation: NativeOAuthCredentialObservation,
+	expectedFingerprint: string,
+): void {
+	const matches =
+		expectedFingerprint === "missing"
+			? observation.state === "missing"
+			: observation.credentialFingerprint === expectedFingerprint;
+	if (!matches) {
+		throw new Error("Native OAuth credential changed after the ownership intent was recorded");
+	}
+}
+
+function assertNativeMutationCompleted(
+	result: NativeOAuthCredentialMutationResult,
+	expectedFingerprint: string,
+	targetFingerprint: string,
+	label: string,
+): void {
+	if (!result.casMatched) throw new Error(`${label} changed before the mutation could be applied`);
+	assertNativeMutationBeforeEvidence(result, expectedFingerprint, label);
+	if (!result.updated || result.afterCredentialFingerprint !== targetFingerprint) {
+		throw new Error(`${label} mutation did not produce the intended fingerprint`);
+	}
+}
+
+function assertNativeRemovalCompleted(
+	result: NativeOAuthCredentialMutationResult,
+	expectedFingerprint: string,
+	label: string,
+): void {
+	if (!result.casMatched) throw new Error(`${label} changed before removal could be applied`);
+	assertNativeMutationBeforeEvidence(result, expectedFingerprint, label);
+	if (!result.updated || result.afterCredentialFingerprint) {
+		throw new Error(`${label} removal could not verify absence`);
+	}
+}
+
+function assertNativeMutationBeforeEvidence(
+	result: NativeOAuthCredentialMutationResult,
+	expectedFingerprint: string,
+	label: string,
+): void {
+	const matches =
+		expectedFingerprint === "missing"
+			? result.beforeCredentialFingerprint === undefined
+			: result.beforeCredentialFingerprint === expectedFingerprint;
+	if (!matches) throw new Error(`${label} mutation returned inconsistent before evidence`);
 }
 
 function parseCodexAuthMaterial(profile: string, payload: string): CodexAuthMaterial {

@@ -17,6 +17,13 @@ export interface OAuthCredentialOwnership {
 	credentialFingerprint?: string;
 }
 
+export interface NativeOAuthCredentialMutationResult {
+	updated: boolean;
+	casMatched: boolean;
+	beforeCredentialFingerprint?: string;
+	afterCredentialFingerprint?: string;
+}
+
 export function nativeOAuthProfileId(
 	runtime: "codex" | "hermes" | "openclaw",
 	providerId: string,
@@ -40,6 +47,12 @@ export function oauthCredentialFingerprint(
 				refreshToken,
 			]),
 		)
+		.digest("hex")}`;
+}
+
+export function nativeOAuthCredentialEvidenceFingerprint(value: unknown): string {
+	return `sha256:${createHash("sha256")
+		.update(JSON.stringify(["clawdi.nativeOAuthCredentialEvidence.v1", value]))
 		.digest("hex")}`;
 }
 
@@ -87,13 +100,64 @@ export function resolveOpenClawProviderAuthSdkExport(
 }
 
 export function nativeOAuthObservation(value: unknown): NativeOAuthCredentialObservation {
-	if (value === "missing" || value === "managed" || value === "foreign") return value;
-	throw new Error("Native OAuth credential observation is invalid");
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error("Native OAuth credential observation is invalid");
+	}
+	const observation = "observation" in value ? value.observation : undefined;
+	const credentialFingerprint =
+		"credentialFingerprint" in value ? value.credentialFingerprint : undefined;
+	if (observation !== "missing" && observation !== "managed" && observation !== "foreign") {
+		throw new Error("Native OAuth credential observation is invalid");
+	}
+	if (
+		credentialFingerprint !== undefined &&
+		(typeof credentialFingerprint !== "string" ||
+			!/^sha256:[a-f0-9]{64}$/.test(credentialFingerprint))
+	) {
+		throw new Error("Native OAuth credential fingerprint is invalid");
+	}
+	if (observation !== "missing" && !credentialFingerprint) {
+		throw new Error("Present native OAuth credential requires fingerprint evidence");
+	}
+	return {
+		state: observation,
+		...(credentialFingerprint ? { credentialFingerprint } : {}),
+	};
+}
+
+export function nativeOAuthMutationResult(value: unknown): NativeOAuthCredentialMutationResult {
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		throw new Error("Native OAuth credential mutation evidence is invalid");
+	}
+	const updated = "updated" in value ? value.updated : undefined;
+	const casMatched = "casMatched" in value ? value.casMatched : undefined;
+	const beforeCredentialFingerprint =
+		"beforeCredentialFingerprint" in value ? value.beforeCredentialFingerprint : undefined;
+	const afterCredentialFingerprint =
+		"afterCredentialFingerprint" in value ? value.afterCredentialFingerprint : undefined;
+	if (typeof updated !== "boolean" || typeof casMatched !== "boolean") {
+		throw new Error("Native OAuth credential mutation evidence is invalid");
+	}
+	for (const fingerprint of [beforeCredentialFingerprint, afterCredentialFingerprint]) {
+		if (
+			fingerprint !== undefined &&
+			(typeof fingerprint !== "string" || !/^sha256:[a-f0-9]{64}$/.test(fingerprint))
+		) {
+			throw new Error("Native OAuth credential mutation fingerprint is invalid");
+		}
+	}
+	return {
+		updated,
+		casMatched,
+		...(typeof beforeCredentialFingerprint === "string" ? { beforeCredentialFingerprint } : {}),
+		...(typeof afterCredentialFingerprint === "string" ? { afterCredentialFingerprint } : {}),
+	};
 }
 
 export const HERMES_CODEX_AUTH_HELPER = String.raw`
+import { createHash } from "node:crypto";
 import { closeSync, existsSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-const [authPath, action, profileId, ownedProfileId = ""] = process.argv.slice(1);
+const [authPath, action, profileId, ownedProfileId = "", credentialRevision = "", expectedFingerprint = ""] = process.argv.slice(1);
 const material = process.stdin.isTTY ? null : JSON.parse(readFileSync(0, "utf8") || "null");
 const storeExists = existsSync(authPath);
 const store = storeExists ? JSON.parse(readFileSync(authPath, "utf8")) : {};
@@ -113,18 +177,32 @@ if (pool["openai-codex"] !== undefined && !Array.isArray(pool["openai-codex"])) 
 const rawEntries = Array.isArray(pool["openai-codex"]) ? pool["openai-codex"] : [];
 const entries = rawEntries.filter((entry) => entry && typeof entry === "object");
 const valid = (entry) => typeof entry.access_token === "string" && entry.access_token.length > 0 && typeof entry.refresh_token === "string" && entry.refresh_token.length > 0;
+const digest = (value) => "sha256:" + createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const fingerprint = (entry, revision) => valid(entry)
+  ? digest(["clawdi.runtimeOAuthCredential.v1", revision, entry.access_token, entry.refresh_token])
+  : digest(["clawdi.nativeOAuthCredentialEvidence.v1", entry]);
 const reservedEntry = entries.find((entry) => entry.id === profileId);
 const present = Boolean(reservedEntry);
+const beforeCredentialFingerprint = present ? fingerprint(reservedEntry, credentialRevision) : undefined;
 const managed = present && valid(reservedEntry) && reservedEntry.auth_type === "oauth" && reservedEntry.source === "manual:device_code" && ownedProfileId === profileId;
 if (action === "inspect") {
-  process.stdout.write(JSON.stringify({ observation: !present ? "missing" : managed ? "managed" : "foreign" }));
+  process.stdout.write(JSON.stringify({
+    observation: !present ? "missing" : managed ? "managed" : "foreign",
+    ...(beforeCredentialFingerprint ? { credentialFingerprint: beforeCredentialFingerprint } : {}),
+  }));
 } else {
   let updated = false;
-  if ((action === "seed-if-missing" && !present) || action === "upsert") {
+  let afterCredentialFingerprint = beforeCredentialFingerprint;
+  const casMatched = expectedFingerprint === "missing"
+    ? !present
+    : Boolean(expectedFingerprint) && beforeCredentialFingerprint === expectedFingerprint;
+  if (!casMatched) {
+    process.stdout.write(JSON.stringify({ updated, casMatched, ...(beforeCredentialFingerprint ? { beforeCredentialFingerprint } : {}), ...(afterCredentialFingerprint ? { afterCredentialFingerprint } : {}) }));
+  } else if (action === "seed-if-missing" || action === "upsert") {
     if (!material || typeof material.accessToken !== "string" || typeof material.refreshToken !== "string") {
       throw new Error("Hermes Codex credential material is invalid");
     }
-    pool["openai-codex"] = [{
+    const targetEntry = {
       id: profileId,
       label: "Clawdi managed connection",
       auth_type: "oauth",
@@ -140,14 +218,17 @@ if (action === "inspect") {
       last_error_reason: null,
       last_error_message: null,
       last_error_reset_at: null,
-    }, ...entries.filter((entry) => entry.id !== profileId)];
+    };
+    pool["openai-codex"] = [targetEntry, ...entries.filter((entry) => entry.id !== profileId)];
+    afterCredentialFingerprint = fingerprint(targetEntry, credentialRevision);
     updated = true;
   } else if (action === "remove" && managed) {
     const remaining = entries.filter((entry) => entry.id !== profileId);
     if (remaining.length > 0) pool["openai-codex"] = remaining;
     else delete pool["openai-codex"];
+    afterCredentialFingerprint = undefined;
     updated = true;
-  } else if (action !== "seed-if-missing" && action !== "remove") {
+  } else if (action !== "remove") {
     throw new Error("unsupported Hermes Codex auth action");
   }
   if (updated) {
@@ -159,29 +240,47 @@ if (action === "inspect") {
     try { writeFileSync(fd, JSON.stringify(store, null, 2) + "\n"); } finally { closeSync(fd); }
     renameSync(tempPath, authPath);
   }
-  process.stdout.write(JSON.stringify({ updated }));
+  if (casMatched) {
+    process.stdout.write(JSON.stringify({ updated, casMatched: action !== "remove" || managed, ...(beforeCredentialFingerprint ? { beforeCredentialFingerprint } : {}), ...(afterCredentialFingerprint ? { afterCredentialFingerprint } : {}) }));
+  }
 }
 `;
 
 export const OPENCLAW_PROVIDER_AUTH_HELPER = `
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { readFileSync } from "node:fs";
-const [sdkPath, agentDir, action, profileId, ownedProfileId = ""] = process.argv.slice(1);
+const [sdkPath, agentDir, action, profileId, ownedProfileId = "", credentialRevision = "", expectedFingerprint = ""] = process.argv.slice(1);
 const sdk = await import(pathToFileURL(sdkPath).href);
+const valid = (credential) => credential?.type === "oauth" && credential.provider === "openai" && typeof credential.access === "string" && credential.access.length > 0 && typeof credential.refresh === "string" && credential.refresh.length > 0;
+const digest = (value) => "sha256:" + createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const fingerprint = (credential, revision) => valid(credential)
+  ? digest(["clawdi.runtimeOAuthCredential.v1", revision, credential.access, credential.refresh])
+  : digest(["clawdi.nativeOAuthCredentialEvidence.v1", credential]);
 if (action === "inspect") {
   const store = sdk.ensureAuthProfileStoreForLocalUpdate(agentDir);
   const present = Object.prototype.hasOwnProperty.call(store.profiles, profileId);
   const credential = present ? store.profiles[profileId] : undefined;
-  const managed = credential?.type === "oauth" && credential.provider === "openai" && typeof credential.access === "string" && typeof credential.refresh === "string" && ownedProfileId === profileId;
-  process.stdout.write(JSON.stringify({ observation: !present ? "missing" : managed ? "managed" : "foreign" }));
+  const credentialFingerprint = present ? fingerprint(credential, credentialRevision) : undefined;
+  const managed = valid(credential) && ownedProfileId === profileId;
+  process.stdout.write(JSON.stringify({ observation: !present ? "missing" : managed ? "managed" : "foreign", ...(credentialFingerprint ? { credentialFingerprint } : {}) }));
 } else {
   const credential = JSON.parse(readFileSync(0, "utf8") || "null");
   let changed = false;
+  let casMatched = false;
+  let beforeCredentialFingerprint;
+  let afterCredentialFingerprint;
   const result = await sdk.updateAuthProfileStoreWithLock({
     agentDir,
     updater: (store) => {
       const present = Object.prototype.hasOwnProperty.call(store.profiles, profileId);
-      if (action === "seed-if-missing" && present) return false;
+      const current = present ? store.profiles[profileId] : undefined;
+      beforeCredentialFingerprint = present ? fingerprint(current, credentialRevision) : undefined;
+      afterCredentialFingerprint = beforeCredentialFingerprint;
+      casMatched = expectedFingerprint === "missing"
+        ? !present
+        : Boolean(expectedFingerprint) && beforeCredentialFingerprint === expectedFingerprint;
+      if (!casMatched) return false;
       if (action === "seed-if-missing" || action === "upsert") {
         store.profiles[profileId] = credential;
         const existingOrder = Array.isArray(store.order?.openai) ? store.order.openai : [];
@@ -189,18 +288,22 @@ if (action === "inspect") {
           ...(store.order ?? {}),
           openai: [profileId, ...existingOrder.filter((id) => id !== profileId)],
         };
+        afterCredentialFingerprint = fingerprint(credential, credentialRevision);
         changed = true;
         return true;
       }
       if (action === "remove") {
-        const current = present ? store.profiles[profileId] : undefined;
-        const owned = current?.type === "oauth" && current.provider === "openai" && typeof current.access === "string" && typeof current.refresh === "string" && ownedProfileId === profileId;
-        if (!owned) return false;
+        const owned = valid(current) && ownedProfileId === profileId;
+        if (!owned) {
+          casMatched = false;
+          return false;
+        }
         delete store.profiles[profileId];
         if (store.order?.openai) store.order.openai = store.order.openai.filter((id) => id !== profileId);
         if (store.order?.openai?.length === 0) delete store.order.openai;
         if (store.lastGood?.openai === profileId) delete store.lastGood.openai;
         if (store.usageStats) delete store.usageStats[profileId];
+        afterCredentialFingerprint = undefined;
         changed = true;
         return true;
       }
@@ -208,6 +311,6 @@ if (action === "inspect") {
     },
   });
   if (result === null) throw new Error("OpenClaw provider-auth SQLite update failed");
-  process.stdout.write(JSON.stringify({ updated: changed }));
+  process.stdout.write(JSON.stringify({ updated: changed, casMatched, ...(beforeCredentialFingerprint ? { beforeCredentialFingerprint } : {}), ...(afterCredentialFingerprint ? { afterCredentialFingerprint } : {}) }));
 }
 `;

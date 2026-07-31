@@ -2,219 +2,258 @@ import { describe, expect, it } from "bun:test";
 import {
 	decideChatGptOAuthCredentialReconciliation,
 	intentLedgerForDecision,
+	type NativeOAuthCredentialObservation,
 	type OAuthCredentialLedgerSnapshot,
 } from "./chatgpt-oauth-reconciliation";
+
+const BEFORE_FINGERPRINT = `sha256:${"a".repeat(64)}`;
+const TARGET_FINGERPRINT = `sha256:${"b".repeat(64)}`;
+const AMBIGUOUS_FINGERPRINT = `sha256:${"c".repeat(64)}`;
+
+const missing: NativeOAuthCredentialObservation = { state: "missing" };
+const before: NativeOAuthCredentialObservation = {
+	state: "foreign",
+	credentialFingerprint: BEFORE_FINGERPRINT,
+};
+const target: NativeOAuthCredentialObservation = {
+	state: "foreign",
+	credentialFingerprint: TARGET_FINGERPRINT,
+};
+const ambiguous: NativeOAuthCredentialObservation = {
+	state: "foreign",
+	credentialFingerprint: AMBIGUOUS_FINGERPRINT,
+};
 
 const seeded: OAuthCredentialLedgerSnapshot = {
 	nativeProfileId: "native:provider-1",
 	credentialRevision: "revision-1",
 	state: "seeded",
+	credentialFingerprint: TARGET_FINGERPRINT,
 };
 
+function decide(input: {
+	desiredCredentialRevision?: string | null;
+	desiredNativeProfileId?: string | null;
+	desiredCredentialFingerprint?: string | null;
+	ledger: OAuthCredentialLedgerSnapshot | null;
+	native: NativeOAuthCredentialObservation;
+}) {
+	return decideChatGptOAuthCredentialReconciliation({
+		desiredCredentialRevision:
+			input.desiredCredentialRevision === undefined
+				? "revision-1"
+				: input.desiredCredentialRevision,
+		desiredNativeProfileId:
+			input.desiredNativeProfileId === undefined
+				? "native:provider-1"
+				: input.desiredNativeProfileId,
+		desiredCredentialFingerprint:
+			input.desiredCredentialFingerprint === undefined
+				? TARGET_FINGERPRINT
+				: input.desiredCredentialFingerprint,
+		ledger: input.ledger,
+		native: input.native,
+	});
+}
+
 describe("ChatGPT OAuth ownership ledger", () => {
-	it("writes intent before the first native seed", () => {
-		const decision = decideChatGptOAuthCredentialReconciliation({
-			desiredCredentialRevision: "revision-1",
-			desiredNativeProfileId: "native:provider-1",
-			ledger: null,
-			native: "missing",
-		});
+	it("records target evidence before the first native seed", () => {
+		const decision = decide({ ledger: null, native: missing });
 		expect(decision).toMatchObject({
 			nativeAction: "seed",
 			requiresWriteAheadIntent: true,
+			targetCredentialFingerprint: TARGET_FINGERPRINT,
 			nextLedger: seeded,
 		});
-		expect(
-			intentLedgerForDecision({
-				decision,
-				current: null,
-				desiredNativeProfileId: "native:provider-1",
-				desiredCredentialRevision: "revision-1",
-			}),
-		).toEqual({
+		expect(intentLedgerForDecision(decision)).toEqual({
 			nativeProfileId: "native:provider-1",
 			credentialRevision: "revision-1",
 			state: "intent",
 			operation: "seed",
+			targetCredentialFingerprint: TARGET_FINGERPRINT,
 		});
 	});
 
-	it("adopts native rotation while recovering a same-revision seed intent", () => {
+	it("retries a seed only while the namespaced native entry is still missing", () => {
 		const intent: OAuthCredentialLedgerSnapshot = {
 			...seeded,
 			state: "intent",
 			operation: "seed",
+			credentialFingerprint: undefined,
+			targetCredentialFingerprint: TARGET_FINGERPRINT,
 		};
-		expect(
-			decideChatGptOAuthCredentialReconciliation({
-				desiredCredentialRevision: "revision-1",
-				desiredNativeProfileId: "native:provider-1",
-				ledger: intent,
-				native: "foreign",
-			}),
-		).toEqual({
-			nativeAction: "preserve",
-			requiresWriteAheadIntent: false,
-			nextLedger: { ...seeded, state: "adopted" },
-		});
-	});
-
-	it("adopts even an exact native match after a seed intent because intent is not ownership", () => {
-		const intent: OAuthCredentialLedgerSnapshot = {
-			...seeded,
-			state: "intent",
-			operation: "seed",
-			credentialFingerprint: `sha256:${"a".repeat(64)}`,
-		};
-		expect(
-			decideChatGptOAuthCredentialReconciliation({
-				desiredCredentialRevision: "revision-1",
-				desiredNativeProfileId: "native:provider-1",
-				ledger: intent,
-				native: "managed",
-			}),
-		).toEqual({
-			nativeAction: "preserve",
-			requiresWriteAheadIntent: false,
-			nextLedger: { ...seeded, state: "adopted" },
-		});
-	});
-
-	it("retries a seed after a kill when the namespaced native entry is still absent", () => {
-		const intent: OAuthCredentialLedgerSnapshot = {
-			...seeded,
-			state: "intent",
-			operation: "seed",
-		};
-		expect(
-			decideChatGptOAuthCredentialReconciliation({
-				desiredCredentialRevision: "revision-1",
-				desiredNativeProfileId: seeded.nativeProfileId,
-				ledger: intent,
-				native: "missing",
-			}),
-		).toEqual({
+		expect(decide({ ledger: intent, native: missing })).toMatchObject({
 			nativeAction: "seed",
-			requiresWriteAheadIntent: true,
+			requiresWriteAheadIntent: false,
 			nextLedger: seeded,
 		});
+		expect(decide({ ledger: intent, native: target })).toEqual({
+			nativeAction: "preserve",
+			requiresWriteAheadIntent: false,
+			nextLedger: seeded,
+		});
+		expect(decide({ ledger: intent, native: ambiguous })).toEqual({
+			nativeAction: "preserve",
+			requiresWriteAheadIntent: false,
+			nextLedger: intent,
+		});
 	});
 
-	it("does not retain removal authority after a kill following remove intent", () => {
-		const firstDecision = decideChatGptOAuthCredentialReconciliation({
+	it("turns a completed seed intent into an evidenced remove when it is no longer desired", () => {
+		const seedIntent: OAuthCredentialLedgerSnapshot = {
+			nativeProfileId: "native:provider-1",
+			credentialRevision: "revision-1",
+			state: "intent",
+			operation: "seed",
+			targetCredentialFingerprint: TARGET_FINGERPRINT,
+		};
+		const decision = decide({
 			desiredCredentialRevision: null,
 			desiredNativeProfileId: null,
-			ledger: seeded,
-			native: "managed",
-		});
-		const persistedIntent = intentLedgerForDecision({
-			decision: firstDecision,
-			current: seeded,
-			desiredNativeProfileId: seeded.nativeProfileId,
-			desiredCredentialRevision: seeded.credentialRevision,
+			desiredCredentialFingerprint: null,
+			ledger: seedIntent,
+			native: target,
 		});
 
-		// Simulate process death before the native adapter executes, then restart.
-		expect(persistedIntent).toEqual({
-			...seeded,
+		expect(decision).toMatchObject({
+			nativeAction: "remove",
+			requiresWriteAheadIntent: true,
+			expectedCredentialFingerprint: TARGET_FINGERPRINT,
+		});
+		expect(intentLedgerForDecision(decision)).toEqual({
+			nativeProfileId: "native:provider-1",
+			credentialRevision: "revision-1",
 			state: "intent",
 			operation: "remove",
+			beforeCredentialFingerprint: TARGET_FINGERPRINT,
+		});
+	});
+
+	it("distinguishes upsert intent and retries only from the proven before credential", () => {
+		const firstDecision = decide({ ledger: null, native: before });
+		expect(firstDecision.nativeAction).toBe("upsert");
+		const intent = intentLedgerForDecision(firstDecision);
+		expect(intent).toEqual({
+			nativeProfileId: "native:provider-1",
+			credentialRevision: "revision-1",
+			state: "intent",
+			operation: "upsert",
+			beforeCredentialFingerprint: BEFORE_FINGERPRINT,
+			targetCredentialFingerprint: TARGET_FINGERPRINT,
+		});
+		expect(decide({ ledger: intent, native: before })).toMatchObject({
+			nativeAction: "upsert",
+			requiresWriteAheadIntent: false,
+			expectedCredentialFingerprint: BEFORE_FINGERPRINT,
+			targetCredentialFingerprint: TARGET_FINGERPRINT,
+		});
+		expect(decide({ ledger: intent, native: target })).toEqual({
+			nativeAction: "preserve",
+			requiresWriteAheadIntent: false,
+			nextLedger: seeded,
+		});
+		expect(decide({ ledger: intent, native: ambiguous })).toEqual({
+			nativeAction: "preserve",
+			requiresWriteAheadIntent: false,
+			nextLedger: intent,
+		});
+	});
+
+	it("retries remove from before evidence and retires only after absence is proven", () => {
+		const firstDecision = decide({
+			desiredCredentialRevision: null,
+			desiredNativeProfileId: null,
+			desiredCredentialFingerprint: null,
+			ledger: seeded,
+			native: { state: "managed", credentialFingerprint: TARGET_FINGERPRINT },
+		});
+		const intent = intentLedgerForDecision(firstDecision);
+		expect(intent).toEqual({
+			nativeProfileId: "native:provider-1",
+			credentialRevision: "revision-1",
+			state: "intent",
+			operation: "remove",
+			beforeCredentialFingerprint: TARGET_FINGERPRINT,
 		});
 		expect(
-			decideChatGptOAuthCredentialReconciliation({
+			decide({
 				desiredCredentialRevision: null,
 				desiredNativeProfileId: null,
-				ledger: persistedIntent,
-				native: "managed",
+				desiredCredentialFingerprint: null,
+				ledger: intent,
+				native: target,
+			}),
+		).toMatchObject({
+			nativeAction: "remove",
+			requiresWriteAheadIntent: false,
+			expectedCredentialFingerprint: TARGET_FINGERPRINT,
+		});
+		expect(
+			decide({
+				desiredCredentialRevision: null,
+				desiredNativeProfileId: null,
+				desiredCredentialFingerprint: null,
+				ledger: intent,
+				native: missing,
 			}),
 		).toEqual({
 			nativeAction: "preserve",
 			requiresWriteAheadIntent: false,
 			nextLedger: {
-				nativeProfileId: seeded.nativeProfileId,
-				credentialRevision: seeded.credentialRevision,
+				nativeProfileId: "native:provider-1",
+				credentialRevision: "revision-1",
 				state: "retired",
 			},
 		});
-	});
-
-	it("retires adopted foreign material without claiming removal authority", () => {
 		expect(
-			decideChatGptOAuthCredentialReconciliation({
+			decide({
 				desiredCredentialRevision: null,
 				desiredNativeProfileId: null,
-				ledger: { ...seeded, state: "adopted" },
-				native: "foreign",
+				desiredCredentialFingerprint: null,
+				ledger: intent,
+				native: ambiguous,
 			}),
 		).toEqual({
 			nativeAction: "preserve",
 			requiresWriteAheadIntent: false,
-			nextLedger: { ...seeded, state: "retired" },
+			nextLedger: intent,
 		});
 	});
 
 	it("never resurrects logout material at the same revision", () => {
-		const revoked = { ...seeded, state: "revoked" as const };
-		expect(
-			decideChatGptOAuthCredentialReconciliation({
-				desiredCredentialRevision: "revision-1",
-				desiredNativeProfileId: seeded.nativeProfileId,
-				ledger: revoked,
-				native: "missing",
-			}),
-		).toEqual({
+		const revoked = { ...seeded, state: "revoked" as const, credentialFingerprint: undefined };
+		expect(decide({ ledger: revoked, native: missing })).toEqual({
 			nativeAction: "preserve",
 			requiresWriteAheadIntent: false,
 			nextLedger: revoked,
 		});
 	});
 
-	it("preserves native refresh when a retired binding returns at the same revision", () => {
-		expect(
-			decideChatGptOAuthCredentialReconciliation({
-				desiredCredentialRevision: "revision-1",
-				desiredNativeProfileId: seeded.nativeProfileId,
-				ledger: { ...seeded, state: "retired" },
-				native: "foreign",
-			}),
-		).toEqual({
+	it("preserves a runtime refresh while relinquishing removal ownership", () => {
+		expect(decide({ ledger: seeded, native: ambiguous })).toEqual({
 			nativeAction: "preserve",
 			requiresWriteAheadIntent: false,
-			nextLedger: { ...seeded, state: "adopted" },
-		});
-	});
-
-	it("reseeds a retired binding at the same revision only when native material is absent", () => {
-		expect(
-			decideChatGptOAuthCredentialReconciliation({
-				desiredCredentialRevision: "revision-1",
-				desiredNativeProfileId: seeded.nativeProfileId,
-				ledger: { ...seeded, state: "retired" },
-				native: "missing",
-			}),
-		).toEqual({
-			nativeAction: "seed",
-			requiresWriteAheadIntent: true,
-			nextLedger: seeded,
-		});
-	});
-
-	it("allows only a new credential revision to replace native material", () => {
-		expect(
-			decideChatGptOAuthCredentialReconciliation({
-				desiredCredentialRevision: "revision-2",
-				desiredNativeProfileId: seeded.nativeProfileId,
-				ledger: { ...seeded, state: "adopted" },
-				native: "foreign",
-			}),
-		).toEqual({
-			nativeAction: "upsert",
-			requiresWriteAheadIntent: true,
 			nextLedger: {
 				nativeProfileId: seeded.nativeProfileId,
-				credentialRevision: "revision-2",
-				state: "seeded",
+				credentialRevision: seeded.credentialRevision,
+				state: "adopted",
 			},
+		});
+	});
+
+	it("uses an evidenced upsert for a new credential revision", () => {
+		expect(
+			decide({
+				desiredCredentialRevision: "revision-2",
+				desiredCredentialFingerprint: TARGET_FINGERPRINT,
+				ledger: { ...seeded, state: "adopted", credentialFingerprint: undefined },
+				native: before,
+			}),
+		).toMatchObject({
+			nativeAction: "upsert",
+			requiresWriteAheadIntent: true,
+			expectedCredentialFingerprint: BEFORE_FINGERPRINT,
+			targetCredentialFingerprint: TARGET_FINGERPRINT,
 		});
 	});
 });

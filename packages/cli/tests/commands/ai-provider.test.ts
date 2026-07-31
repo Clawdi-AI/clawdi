@@ -821,6 +821,66 @@ describe("ai-provider commands", () => {
 		}
 	});
 
+	it("dry-runs OAuth materialization without resolving auth or touching native and ledger state", async () => {
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		mkdirSync(codexHome, { recursive: true });
+		const authPath = join(codexHome, "auth.json");
+		const authBytes = `${JSON.stringify({ tokens: { access_token: "native-access" } })}\n`;
+		writeFileSync(authPath, authBytes);
+		const binDir = join(tmpHome, "bin");
+		const nativeObservationMarker = join(tmpHome, "native-observed");
+		mkdirSync(binDir, { recursive: true });
+		writeFileSync(
+			join(binDir, "codex"),
+			`#!/bin/sh\nprintf observed > "${nativeObservationMarker}"\nexit 0\n`,
+		);
+		chmodSync(join(binDir, "codex"), 0o755);
+		process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+
+		const ledgerDir = join(tmpHome, ".clawdi", "oauth-credentials", "codex");
+		mkdirSync(ledgerDir, { recursive: true });
+		const ledgerPath = join(
+			ledgerDir,
+			`${createHash("sha256").update("openai-codex").digest("hex")}.json`,
+		);
+		const legacyLedgerBytes = `${JSON.stringify({
+			schemaVersion: "clawdi.runtimeOAuthCredential.v1",
+			runtime: "codex",
+			providerId: "openai-codex",
+			nativeProfileId: "default",
+			credentialRevision: "legacy-revision",
+			state: "seeded",
+			credentialFingerprint: `sha256:${"a".repeat(64)}`,
+		})}\n`;
+		writeFileSync(ledgerPath, legacyLedgerBytes);
+
+		const { captured, restore: restoreFetch } = mockFetch([]);
+		const output = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+			await aiProviderMaterializeAuthCommand("openai-codex", {
+				dryRun: true,
+				json: true,
+			});
+		} finally {
+			output.restore();
+			restoreFetch();
+		}
+
+		expect(captured).toEqual([]);
+		expect(readFileSync(authPath, "utf8")).toBe(authBytes);
+		expect(readFileSync(ledgerPath, "utf8")).toBe(legacyLedgerBytes);
+		expect(readdirSync(codexHome)).toEqual(["auth.json"]);
+		expect(existsSync(nativeObservationMarker)).toBe(false);
+		expect(output.output()).toContain('"credential_material": "not_fetched"');
+	});
+
 	it("materializes a provider-bound Codex auth profile", async () => {
 		registerAgent("codex", "env-codex-materialize");
 		mkdirSync(join(tmpHome, ".codex"), { recursive: true });

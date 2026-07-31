@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	HERMES_CODEX_AUTH_HELPER,
+	oauthCredentialFingerprint,
 	resolveOpenClawProviderAuthSdkExport,
 } from "./codex-oauth-native-store";
 
@@ -71,6 +72,9 @@ describe("native OAuth store contracts", () => {
 				authPath,
 				"upsert",
 				"clawdi:reserved",
+				"",
+				"revision-1",
+				"missing",
 			],
 			{
 				encoding: "utf8",
@@ -116,5 +120,86 @@ describe("native OAuth store contracts", () => {
 		);
 		expect(result.status).not.toBe(0);
 		expect(readFileSync(authPath, "utf8")).toBe(original);
+	});
+
+	test("fences Hermes mutations with before and target credential fingerprints", () => {
+		const root = tempRoot();
+		const authPath = join(root, "auth.json");
+		const profileId = "clawdi:reserved";
+		writeFileSync(
+			authPath,
+			`${JSON.stringify({
+				version: 1,
+				credential_pool: {
+					"openai-codex": [
+						{
+							id: profileId,
+							auth_type: "oauth",
+							source: "manual:device_code",
+							access_token: "before-access",
+							refresh_token: "before-refresh",
+						},
+					],
+				},
+			})}\n`,
+		);
+		const original = readFileSync(authPath, "utf8");
+		const revision = "revision-2";
+		const targetMaterial = {
+			accessToken: "target-access",
+			refreshToken: "target-refresh",
+			lastRefresh: "2026-07-31T00:00:00Z",
+		};
+		const wrongBefore = `sha256:${"f".repeat(64)}`;
+		const rejected = spawnSync(
+			"node",
+			[
+				"--input-type=module",
+				"--eval",
+				HERMES_CODEX_AUTH_HELPER,
+				authPath,
+				"upsert",
+				profileId,
+				profileId,
+				revision,
+				wrongBefore,
+			],
+			{ encoding: "utf8", input: JSON.stringify(targetMaterial) },
+		);
+		expect(rejected.status).toBe(0);
+		expect(JSON.parse(rejected.stdout)).toMatchObject({ updated: false, casMatched: false });
+		expect(readFileSync(authPath, "utf8")).toBe(original);
+
+		const beforeFingerprint = oauthCredentialFingerprint(
+			revision,
+			"before-access",
+			"before-refresh",
+		);
+		const applied = spawnSync(
+			"node",
+			[
+				"--input-type=module",
+				"--eval",
+				HERMES_CODEX_AUTH_HELPER,
+				authPath,
+				"upsert",
+				profileId,
+				profileId,
+				revision,
+				beforeFingerprint,
+			],
+			{ encoding: "utf8", input: JSON.stringify(targetMaterial) },
+		);
+		expect(applied.status).toBe(0);
+		expect(JSON.parse(applied.stdout)).toMatchObject({
+			updated: true,
+			casMatched: true,
+			beforeCredentialFingerprint: beforeFingerprint,
+			afterCredentialFingerprint: oauthCredentialFingerprint(
+				revision,
+				targetMaterial.accessToken,
+				targetMaterial.refreshToken,
+			),
+		});
 	});
 });
