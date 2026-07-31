@@ -9,7 +9,6 @@ import {
 } from "@clawdi/shared";
 import type {
 	HostedDeployCheckoutRequest,
-	HostedDeployCheckoutResult,
 	HostedDeployDeployment,
 	HostedDeployOperation,
 	HostedDeployPlan,
@@ -30,7 +29,10 @@ import {
 	runDeployFlow,
 	safeDeployError,
 } from "../../src/commands/deploy";
-import { HostedDeployApiError } from "../../src/lib/hosted-deploy-client";
+import {
+	HostedDeployApiError,
+	type HostedDeployCheckoutOperationResult,
+} from "../../src/lib/hosted-deploy-client";
 
 function plan(slug: "compute_basic" | "compute_performance", priceCents: number): HostedDeployPlan {
 	return {
@@ -120,23 +122,30 @@ class FakeDeployGateway implements HostedDeployGateway {
 	checkoutFactory: (
 		body: HostedDeployCheckoutRequest,
 		idempotencyKey: string,
-	) => HostedDeployCheckoutResult = (body, idempotencyKey) =>
+	) => HostedDeployCheckoutOperationResult = (body, idempotencyKey) =>
 		body.funding_source === "stripe"
 			? {
 					flow_type: "checkout_session",
 					funding_source: "stripe",
 					action_url: "https://checkout.stripe.test/session/stable",
 					checkout_url: "https://checkout.stripe.test/session/stable",
-					deploy_request_id: idempotencyKey,
+					client_secret: null,
 				}
 			: {
 					flow_type: "subscription_activation",
 					funding_source: "wallet",
 					checkout_url: "",
+					subscription_id: "csub_paid",
+					invoice_id: null,
 					deployment_id: "hdep_paid",
+					deployment_name: null,
+					metadata_generation: null,
 					deploy_request_id: idempotencyKey,
 					debited_usd: "290.000000",
 					balance_after_usd: "10.000000",
+					current_period_start: null,
+					current_period_end: null,
+					entitled_until: null,
 				};
 	operationPolls = 0;
 	requestPolls = 0;
@@ -903,12 +912,12 @@ describe("deploy orchestration", () => {
 			yes: true,
 		});
 		const secretClient = new FakeDeployGateway();
-		secretClient.checkoutFactory = (_body, idempotencyKey) => ({
+		secretClient.checkoutFactory = (_body, _idempotencyKey) => ({
 			flow_type: "checkout_session",
 			funding_source: "stripe",
+			action_url: null,
 			checkout_url: "https://checkout.stripe.test/session/secret",
 			client_secret: "must-not-leak",
-			deploy_request_id: idempotencyKey,
 		});
 		let secretError: unknown;
 		try {
@@ -924,10 +933,20 @@ describe("deploy orchestration", () => {
 
 		const mismatchClient = new FakeDeployGateway();
 		mismatchClient.checkoutFactory = () => ({
-			flow_type: "checkout_session",
+			flow_type: "subscription_activation",
 			funding_source: "stripe",
-			checkout_url: "https://checkout.stripe.test/session/mismatch",
+			checkout_url: "",
+			subscription_id: "csub_paid",
+			invoice_id: null,
+			deployment_id: "hdep_paid",
+			deployment_name: null,
+			metadata_generation: null,
 			deploy_request_id: "different-request-id",
+			debited_usd: null,
+			balance_after_usd: null,
+			current_period_start: null,
+			current_period_end: null,
+			entitled_until: null,
 		});
 		await expect(
 			runDeployFlow(options, { client: mismatchClient, interactive: false }),
@@ -1335,8 +1354,10 @@ describe("deploy orchestration", () => {
 		const base = {
 			flow_type: "checkout_session",
 			funding_source: "stripe",
+			action_url: null,
 			checkout_url: "https://checkout.stripe.test/session/stable",
-		} satisfies HostedDeployCheckoutResult;
+			client_secret: null,
+		} satisfies HostedDeployCheckoutOperationResult;
 		expect(() => hostedCheckoutUrl({ ...base, checkout_url: "http://stripe.test/x" })).toThrow(
 			"valid secure",
 		);

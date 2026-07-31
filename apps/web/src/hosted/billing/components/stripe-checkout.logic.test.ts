@@ -1,37 +1,43 @@
 import { describe, expect, test } from "bun:test";
+import type { CheckoutOperationResult } from "@/hosted/billing/billing-client";
 import {
 	CHECKOUT_ELEMENTS_UI_MODE,
 	checkoutRedirectUrl,
+	checkoutSessionClientSecret,
 	checkoutUiModeForPublishableKey,
 	findNewDeploymentId,
-	hasCheckoutClientSecret,
 } from "@/hosted/billing/components/stripe-checkout.logic";
-import type { CheckoutResult } from "@/hosted/billing/contracts";
 import { hostedDeploymentFixture } from "@/hosted/hosted-deployment.test-fixture";
 
 describe("stripe checkout logic", () => {
-	test("prefers the action_url for hosted Checkout redirects", () => {
-		const result: CheckoutResult = {
+	function checkoutResult(
+		overrides: Partial<Extract<CheckoutOperationResult, { flow_type: "checkout_session" }>>,
+	): CheckoutOperationResult {
+		return {
 			flow_type: "checkout_session",
 			funding_source: "stripe",
+			action_url: null,
+			checkout_url: "",
+			client_secret: null,
+			...overrides,
+		};
+	}
+
+	test("prefers the action_url for hosted Checkout redirects", () => {
+		const result = checkoutResult({
 			action_url: "https://checkout.stripe.com/primary",
 			checkout_url: "https://checkout.stripe.com/secondary",
-			client_secret: null,
-		};
+		});
 
 		expect(checkoutRedirectUrl(result)).toBe("https://checkout.stripe.com/primary");
 	});
 
 	test("detects elements checkout responses from a client secret", () => {
-		const result: CheckoutResult = {
-			flow_type: "checkout_session",
-			funding_source: "stripe",
-			action_url: null,
-			checkout_url: "",
+		const result = checkoutResult({
 			client_secret: "cs_test_elements",
-		};
+		});
 
-		expect(hasCheckoutClientSecret(result)).toBe(true);
+		expect(checkoutSessionClientSecret(result) === "cs_test_elements").toBe(true);
 	});
 
 	test("documents the checkout elements ui mode for the installed Stripe SDK", () => {
