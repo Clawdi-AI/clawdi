@@ -236,9 +236,13 @@ export function applyRuntimeCliDesiredState(
 	} = {},
 ): RuntimeCliUpdateResult {
 	const rootBootstrapRequired = requiresHostedV2RootBootstrap(manifest, paths);
-	if (rootBootstrapRequired) supersedeCliUpgradeStateWithRootBootstrap(paths);
+	const rootBinding = rootBootstrapRequired
+		? supersedeCliUpgradeStateWithRootBootstrap(paths)
+		: null;
 	const reconciliation = rootBootstrapRequired
-		? cliReconciliationResult(paths, "unchanged", opts.runningVersion)
+		? rootBinding
+			? cliReconciliationResult(paths, "unchanged", opts.runningVersion)
+			: { status: "unchanged" as const, selfReexec: false }
 		: reconcileCliUpgradeTransaction(paths, opts);
 	if (reconciliation.selfReexec) {
 		const status = readBootstrapStatus(paths.cliBootstrapStatus);
@@ -272,14 +276,19 @@ export function applyRuntimeCliDesiredState(
 		? hardenRootBootstrappedCliInstall(paths, bootstrapStatus)
 		: migrateAndHardenCurrentCliInstall(paths, bootstrapStatus, packageSpec, registry);
 	if (rootBootstrapRequired) {
-		const binding = requireHostedV2CliBootstrapBinding(paths, current);
-		if (binding.identity.packageSpec !== packageSpec || binding.identity.registry !== registry) {
+		const promotedBinding =
+			current?.cliIntegrity === undefined
+				? null
+				: requireHostedV2CliBootstrapBinding(paths, current);
+		const identity =
+			promotedBinding?.identity ?? requireHostedV2CliBootstrapIdentity(paths, current);
+		if (identity.packageSpec !== packageSpec || identity.registry !== registry) {
 			return baseResult("deferred", paths, {
 				packageSpec,
 				registry,
-				npmPrefix: binding.identity.npmPrefix,
-				activeTarget: binding.identity.activeTarget,
-				version: binding.identity.version,
+				npmPrefix: identity.npmPrefix,
+				activeTarget: identity.activeTarget,
+				version: identity.version,
 				error:
 					"Hosted v2 CLI replacement is deferred until the root bootstrap installs the promoted artifact",
 			});
@@ -287,13 +296,16 @@ export function applyRuntimeCliDesiredState(
 		if (!isCurrentCliInstall(current, paths, packageSpec, registry)) {
 			throw new Error("Hosted v2 CLI bootstrap status did not verify; root bootstrap is required");
 		}
-		requireHostedV2CliBootstrapBinding(paths, readBootstrapStatus(paths.cliBootstrapStatus));
+		const verifiedStatus = readBootstrapStatus(paths.cliBootstrapStatus);
+		if (promotedBinding && verifiedStatus?.cliIntegrity !== undefined) {
+			requireHostedV2CliBootstrapBinding(paths, verifiedStatus);
+		}
 		return baseResult("current", paths, {
 			packageSpec,
 			registry,
-			npmPrefix: binding.identity.npmPrefix,
-			activeTarget: binding.identity.activeTarget,
-			version: binding.identity.version,
+			npmPrefix: identity.npmPrefix,
+			activeTarget: identity.activeTarget,
+			version: identity.version,
 		});
 	}
 	if (isCurrentCliInstall(current, paths, packageSpec, registry)) {
@@ -499,21 +511,7 @@ function requireHostedV2CliBootstrapBinding(
 	paths: RuntimePaths,
 	status: RuntimeCliBootstrapStatus | null,
 ): { identity: RuntimeCliInstallIdentity; cliIntegrity: string } {
-	const identity = bootstrapStatusInstallIdentity(status, paths);
-	if (
-		!identity ||
-		!hostedCliPackageSpecSchema.safeParse(identity.packageSpec).success ||
-		identity.registry !== "https://registry.npmjs.org" ||
-		!isManagedCliTarget(paths, identity.activeTarget) ||
-		!isManagedCliPrefix(paths, identity.npmPrefix) ||
-		resolve(prefixForActiveTarget(identity.activeTarget)) !== resolve(identity.npmPrefix) ||
-		exactNpmPackageVersion(identity.packageSpec) !== identity.version ||
-		activeLinkTarget(paths.cliManagedBin) !== identity.activeTarget ||
-		!isExecutable(identity.activeTarget) ||
-		!isExecutable(paths.cliManagedBin)
-	) {
-		throw new Error("Hosted v2 CLI bootstrap status has no valid promoted install identity");
-	}
+	const identity = requireHostedV2CliBootstrapIdentity(paths, status);
 	const integrity = cliBootstrapIntegritySchema.safeParse(status?.cliIntegrity);
 	if (!integrity.success) {
 		throw new Error(
@@ -532,6 +530,28 @@ function requireHostedV2CliBootstrapBinding(
 		);
 	}
 	return { identity, cliIntegrity: integrity.data };
+}
+
+function requireHostedV2CliBootstrapIdentity(
+	paths: RuntimePaths,
+	status: RuntimeCliBootstrapStatus | null,
+): RuntimeCliInstallIdentity {
+	const identity = bootstrapStatusInstallIdentity(status, paths);
+	if (
+		!identity ||
+		!hostedCliPackageSpecSchema.safeParse(identity.packageSpec).success ||
+		identity.registry !== "https://registry.npmjs.org" ||
+		!isManagedCliTarget(paths, identity.activeTarget) ||
+		!isManagedCliPrefix(paths, identity.npmPrefix) ||
+		resolve(prefixForActiveTarget(identity.activeTarget)) !== resolve(identity.npmPrefix) ||
+		exactNpmPackageVersion(identity.packageSpec) !== identity.version ||
+		activeLinkTarget(paths.cliManagedBin) !== identity.activeTarget ||
+		!isExecutable(identity.activeTarget) ||
+		!isExecutable(paths.cliManagedBin)
+	) {
+		throw new Error("Hosted v2 CLI bootstrap status has no valid promoted install identity");
+	}
+	return identity;
 }
 
 function migrateAndHardenCurrentCliInstall(
@@ -1212,6 +1232,15 @@ export function rollbackPendingRuntimeCliUpgrade(
 			previousActiveTarget: null,
 		};
 	}
+	if (hasHostedRootBootstrapStatus(paths)) {
+		return {
+			status: "not_pending",
+			version: null,
+			previousVersion: null,
+			activeTarget: activeLinkTarget(paths.cliManagedBin),
+			previousActiveTarget: null,
+		};
+	}
 	let transaction: RuntimeCliUpgradeTransaction | null = null;
 	try {
 		transaction = readCliUpgradeState(paths).transaction ?? null;
@@ -1286,6 +1315,9 @@ export function completePendingRuntimeCliUpgrade(
 	if (supersedeCliUpgradeStateWithRootBootstrap(paths)) {
 		return cliReconciliationResult(paths, "unchanged", currentVersion);
 	}
+	if (hasHostedRootBootstrapStatus(paths)) {
+		return { status: "unchanged", selfReexec: false };
+	}
 	const reconciliation = reconcileCliUpgradeTransaction(paths, {
 		runningVersion: currentVersion,
 	});
@@ -1312,7 +1344,24 @@ export function reconcilePendingRuntimeCliUpgrade(
 	if (supersedeCliUpgradeStateWithRootBootstrap(paths)) {
 		return cliReconciliationResult(paths, "unchanged", runningVersion);
 	}
+	if (hasHostedRootBootstrapStatus(paths)) {
+		return { status: "unchanged", selfReexec: false };
+	}
 	return reconcileCliUpgradeTransaction(paths, { runningVersion });
+}
+
+function hasHostedRootBootstrapStatus(paths: RuntimePaths): boolean {
+	if (paths.mode !== "hosted") return false;
+	const status = readBootstrapStatus(paths.cliBootstrapStatus);
+	return (
+		status?.schemaVersion === "clawdi.cliNpmBootstrapStatus.v1" &&
+		status.status === "installed" &&
+		status.source === "npm" &&
+		status.registry === "https://registry.npmjs.org" &&
+		status.activePath === paths.cliManagedBin &&
+		typeof status.packageSpec === "string" &&
+		hostedCliPackageSpecSchema.safeParse(status.packageSpec).success
+	);
 }
 
 function promotedRootBootstrapBinding(
