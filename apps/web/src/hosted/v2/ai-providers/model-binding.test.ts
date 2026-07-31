@@ -23,6 +23,7 @@ const managedMetadata = {
 	cost_hint: null,
 	capabilities: {
 		context_window: 128_000,
+		max_context_window: null,
 		max_input_tokens: 128_000,
 		max_output_tokens: null,
 		input_modalities: ["text" as const],

@@ -1789,6 +1789,8 @@ export interface components {
         V2ManagedModelCapabilities: {
             /** Context Window */
             context_window: number;
+            /** Max Context Window */
+            max_context_window: number | null;
             /** Max Input Tokens */
             max_input_tokens: number;
             /** Max Output Tokens */

@@ -148,6 +148,7 @@ describe("managed model catalog", () => {
 						cost_hint: "Low cost",
 						capabilities: {
 							context_window: 272_000,
+							max_context_window: null,
 							max_input_tokens: 272_000,
 							max_output_tokens: 128_000,
 							input_modalities: ["text", "image"],
@@ -171,6 +172,7 @@ describe("managed model catalog", () => {
 					cost_hint: "Low cost",
 					capabilities: {
 						context_window: 272_000,
+						max_context_window: null,
 						max_input_tokens: 272_000,
 						max_output_tokens: 128_000,
 						input_modalities: ["text", "image"],

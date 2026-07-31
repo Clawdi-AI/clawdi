@@ -26,16 +26,28 @@ import {
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { cn } from "@/lib/utils";
 
-function formatContextWindow(tokens: number): string {
-	return `${new Intl.NumberFormat("en", {
+function formatTokenCount(tokens: number): string {
+	if (tokens >= 1_048_576 && tokens % 1_048_576 === 0) {
+		return `${tokens / 1_048_576}M`;
+	}
+	if (tokens >= 1_024 && tokens % 1_024 === 0) {
+		return `${tokens / 1_024}K`;
+	}
+	return new Intl.NumberFormat("en", {
 		notation: "compact",
 		maximumFractionDigits: tokens >= 1_000_000 ? 1 : 0,
-	}).format(tokens)} context`;
+	}).format(tokens);
 }
 
 function ManagedModelDetails({ model }: { model: ManagedModelCatalogItem }) {
+	const conditionalContextLimit =
+		model.capabilities.max_context_window !== null &&
+		model.capabilities.max_context_window > model.capabilities.context_window
+			? `Up to ${formatTokenCount(model.capabilities.max_context_window)}`
+			: null;
 	const capabilities = [
-		formatContextWindow(model.capabilities.context_window),
+		`${formatTokenCount(model.capabilities.context_window)} context`,
+		conditionalContextLimit,
 		model.capabilities.supports_vision || model.capabilities.input_modalities.includes("image")
 			? "Vision"
 			: null,
@@ -45,26 +57,38 @@ function ManagedModelDetails({ model }: { model: ManagedModelCatalogItem }) {
 
 	return (
 		<section
-			className="mt-1 grid gap-1 border-l border-primary/30 py-0.5 pl-3 text-xs"
+			className="mt-1 grid min-w-0 gap-0.5 border-l border-primary/30 py-0.5 pl-3 text-xs"
 			data-testid="managed-model-details"
 			aria-label="Selected model details"
 			aria-live="polite"
 		>
 			{model.summary ? (
-				<p data-testid="managed-model-summary">
-					<span className="mr-1.5 font-medium text-muted-foreground">Best for</span> {model.summary}
+				<p
+					className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
+					data-testid="managed-model-summary"
+				>
+					<span className="font-medium text-muted-foreground">Best for</span>
+					<span className="min-w-0 break-words">{model.summary}</span>
 				</p>
 			) : null}
-			<p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+			<p
+				className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
+				data-testid="managed-model-capabilities"
+			>
 				<span className="font-medium text-muted-foreground">Capabilities</span>
 				{capabilities.map((capability) => (
 					<span key={capability}>{capability}</span>
 				))}
 			</p>
-			<p data-testid="managed-model-cost-hint">
-				<span className="mr-1.5 font-medium text-muted-foreground">Cost guide</span>{" "}
-				{model.cost_hint ?? "Info unavailable"}
-			</p>
+			{model.cost_hint ? (
+				<p
+					className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5"
+					data-testid="managed-model-cost-hint"
+				>
+					<span className="font-medium text-muted-foreground">Cost guide</span>
+					<span className="min-w-0 break-words">{model.cost_hint}</span>
+				</p>
+			) : null}
 		</section>
 	);
 }

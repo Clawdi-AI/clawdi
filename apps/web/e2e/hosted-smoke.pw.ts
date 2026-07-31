@@ -34,6 +34,7 @@ const DEPLOY_API = "http://127.0.0.1:8001";
 
 const textModelCapabilities: ManagedModelCatalogItem["capabilities"] = {
 	context_window: 272_000,
+	max_context_window: null,
 	max_input_tokens: 272_000,
 	max_output_tokens: 128_000,
 	input_modalities: ["text", "image"],
@@ -103,6 +104,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			capabilities: {
 				...textModelCapabilities,
 				context_window: 262_144,
+				max_context_window: 1_048_576,
 				max_input_tokens: 262_144,
 				max_output_tokens: null,
 				supports_tools: null,
@@ -115,7 +117,12 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			is_featured: false,
 			summary: null,
 			cost_hint: null,
-			capabilities: { ...textModelCapabilities, supports_reasoning: null, supports_tools: null },
+			capabilities: {
+				...textModelCapabilities,
+				max_context_window: 272_000,
+				supports_reasoning: null,
+				supports_tools: null,
+			},
 		},
 		{
 			id: "gpt-5.6-luna",
@@ -3083,14 +3090,27 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(featuredModels.nth(0)).toBeChecked();
 	const selectedModelDetails = page.getByTestId("managed-model-details");
 	await expect(selectedModelDetails).toHaveAccessibleName("Selected model details");
-	await expect(page.getByTestId("managed-model-summary")).toHaveText(
-		"Best for Complex coding and agentic work",
-	);
-	await expect(selectedModelDetails).toContainText("272K context");
-	await expect(selectedModelDetails).toContainText("Vision");
-	await expect(page.getByTestId("managed-model-cost-hint")).toHaveText("Cost guide High cost");
+	await expect(page.getByTestId("managed-model-summary").locator("span")).toHaveText([
+		"Best for",
+		"Complex coding and agentic work",
+	]);
+	const selectedModelCapabilities = page.getByTestId("managed-model-capabilities");
+	await expect(selectedModelCapabilities).toContainText("272K context");
+	await expect(selectedModelCapabilities).toContainText("Vision");
+	await expect(selectedModelCapabilities).not.toContainText("Up to");
+	await expect(page.getByTestId("managed-model-cost-hint").locator("span")).toHaveText([
+		"Cost guide",
+		"High cost",
+	]);
 	await expect(selectedModelDetails).not.toContainText("GPT-5.6-Sol");
+	await featuredModels.nth(1).click();
+	await expect(featuredModels.nth(1)).toBeChecked();
+	await expect(selectedModelCapabilities).toContainText("256K context");
+	await expect(selectedModelCapabilities).toContainText("Up to 1M");
 
+	const screenshotStyle = await page.addStyleTag({
+		content: ".sticky.bottom-0 { display: none !important; }",
+	});
 	for (const viewport of [
 		{ width: 1280, height: 900 },
 		{ width: 800, height: 900 },
@@ -3108,19 +3128,9 @@ test("deploy managed model picker preserves featured and overflow order and subm
 		await expect(managedModels).toBeVisible();
 		await expect(overflowModels).toBeVisible();
 		await expect(selectedModelDetails).toBeVisible();
-		if (viewport.width === 1280) {
-			await selectedModelDetails.locator("..").screenshot({
-				path: `/tmp/managed-model-guidance-${viewport.width}.png`,
-			});
-		} else if (viewport.width === 390) {
-			const screenshotStyle = await page.addStyleTag({
-				content: ".sticky.bottom-0 { display: none !important; }",
-			});
-			await selectedModelDetails.locator("..").screenshot({
-				path: `/tmp/managed-model-guidance-${viewport.width}.png`,
-			});
-			await screenshotStyle.evaluate((element) => element.parentNode?.removeChild(element));
-		}
+		await selectedModelDetails.locator("..").screenshot({
+			path: `/tmp/managed-model-guidance-${viewport.width}.png`,
+		});
 		const detailsBox = await selectedModelDetails.boundingBox();
 		expect(
 			detailsBox?.x ?? viewport.width,
@@ -3131,6 +3141,7 @@ test("deploy managed model picker preserves featured and overflow order and subm
 			`model details right edge at ${viewport.width}px`,
 		).toBeLessThanOrEqual(viewport.width);
 	}
+	await screenshotStyle.evaluate((element) => element.parentNode?.removeChild(element));
 
 	await expect(overflowModels).toContainText("More models");
 	await overflowModels.click();
@@ -3141,9 +3152,9 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	]);
 	await page.getByRole("option", { name: "Future model" }).click();
 	await expect(page.getByTestId("managed-model-summary")).toHaveCount(0);
-	await expect(page.getByTestId("managed-model-cost-hint")).toHaveText(
-		"Cost guide Info unavailable",
-	);
+	await expect(page.getByTestId("managed-model-cost-hint")).toHaveCount(0);
+	await expect(selectedModelCapabilities).toContainText("272K context");
+	await expect(selectedModelCapabilities).not.toContainText("Up to");
 	await overflowModels.click();
 	await page.getByRole("option", { name: "GPT-5.6-Terra" }).click();
 	await expect(overflowModels).toContainText("GPT-5.6-Terra");
