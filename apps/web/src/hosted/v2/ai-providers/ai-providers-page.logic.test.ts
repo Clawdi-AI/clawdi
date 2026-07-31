@@ -54,16 +54,16 @@ describe("providerRemovalImpact", () => {
 	});
 
 	test("requires acknowledgement when usage could not be checked", () => {
-		expect(providerRemovalImpact({ known: false, agentCount: 0 }).acknowledgementRequired).toBe(
-			true,
-		);
+		const impact = providerRemovalImpact({ known: false, agentCount: 0 });
+		expect(impact.acknowledgementRequired).toBe(true);
+		expect(impact.warning).toContain("couldn't check whether any agents use this provider");
+		expect(impact.warning).toContain("may interrupt model access");
+		expect(impact.warning).toContain("no automatic fallback");
 	});
 
 	test("does not require extra acknowledgement for a known-unused provider", () => {
 		const impact = providerRemovalImpact({ known: true, agentCount: 0 });
 		expect(impact.acknowledgementRequired).toBe(false);
 		expect(impact.warning).toBe("No hosted agents currently use this provider.");
-		expect(impact.warning).not.toContain("archive");
-		expect(impact.warning).not.toContain("undone");
 	});
 });

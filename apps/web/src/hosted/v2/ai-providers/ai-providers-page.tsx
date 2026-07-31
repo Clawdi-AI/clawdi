@@ -234,6 +234,7 @@ function RemoveProviderAction({ provider, usage }: { provider: AiProvider; usage
 				<AlertDialogHeader>
 					<AlertDialogTitle>Remove {providerLabel}?</AlertDialogTitle>
 					<AlertDialogDescription render={<div className="space-y-3" />}>
+						<p>This provider will be removed from your account and cannot be restored.</p>
 						<p>{impact.warning}</p>
 						{impact.acknowledgementRequired ? (
 							<div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3">

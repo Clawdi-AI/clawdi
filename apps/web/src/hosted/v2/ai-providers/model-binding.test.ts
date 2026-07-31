@@ -205,6 +205,26 @@ describe("model binding", () => {
 		} satisfies AiProvider;
 
 		expect(usableProviders([localProvider])).toEqual([]);
+		expect(
+			providerAvailabilityIssue(localProvider, {
+				runtime: "openclaw",
+				environmentId: null,
+			})?.message,
+		).toBe("This credential source is local-only and cannot be delivered to a Hosted agent.");
+	});
+
+	test("preserves shared guidance when readiness metadata is missing", () => {
+		const provider = {
+			...savedOpenAiProvider,
+			readiness: undefined,
+		} satisfies AiProvider;
+
+		expect(
+			providerAvailabilityIssue(provider, {
+				runtime: "openclaw",
+				environmentId: null,
+			})?.message,
+		).toBe("Provider readiness metadata is unavailable. Refresh providers before selecting it.");
 	});
 
 	test("disables incompatible Gemini providers for Hermes with actionable guidance", () => {
@@ -233,7 +253,7 @@ describe("model binding", () => {
 		);
 	});
 
-	test("uses backend runtime compatibility for non-Gemini providers", () => {
+	test("preserves shared runtime compatibility guidance for non-Gemini providers", () => {
 		const provider = {
 			...savedOpenAiProvider,
 			readiness: {
@@ -249,7 +269,7 @@ describe("model binding", () => {
 		expect(providerRuntimeIncompatibility(provider, "hermes")).toContain("Hermes cannot use");
 		expect(
 			providerAvailabilityIssue(provider, { runtime: "hermes", environmentId: null })?.message,
-		).toBe("Hermes cannot use this provider's current setup.");
+		).toBe("Hermes cannot use this provider's authentication or API protocol.");
 		expect(usableProviders([provider], { runtime: "hermes", environmentId: null })).toEqual([]);
 	});
 

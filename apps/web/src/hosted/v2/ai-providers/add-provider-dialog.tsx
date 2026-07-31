@@ -128,9 +128,12 @@ export function AddProviderDialog({
 	const presetCatalog = selectedPreset ? presetCatalogToProviderModels(selectedPreset) : [];
 	const providerListReady = providerListAllowsSubmit(isEdit, providers.isSuccess);
 	const savedCredentialAvailable = editing != null && editing.auth.type !== "none";
+	const customNameProvided =
+		meta.custom !== true || selectedPreset !== null || Boolean(form.label.trim());
 	const canSubmit =
 		providerListReady &&
 		Boolean(providerId) &&
+		customNameProvided &&
 		Boolean(form.baseUrl.trim()) &&
 		(form.authMethod === "oauth" || savedCredentialAvailable || Boolean(form.apiKey.trim()));
 

@@ -136,6 +136,40 @@ describe("providerFormIdentity", () => {
 			label: "DeepSeek 2",
 		});
 	});
+
+	test("uses optional names without changing preset-derived provider ids", () => {
+		expect(
+			providerFormIdentity({
+				type: "custom_openai_compatible",
+				authMethod: "api_key",
+				labelInput: "Research DeepSeek",
+				existingProviderIds: [],
+				preset: testPreset("deepseek"),
+			}),
+		).toEqual({ providerId: "deepseek", label: "Research DeepSeek" });
+
+		const kimi = testPreset("kimi-coding");
+		expect(
+			providerFormIdentity({
+				type: providerTypeForPreset(kimi),
+				authMethod: "api_key",
+				labelInput: "Work Kimi",
+				existingProviderIds: [],
+				preset: kimi,
+			}),
+		).toEqual({ providerId: "kimi-coding", label: "Work Kimi" });
+
+		const openrouter = testPreset("openrouter");
+		expect(
+			providerFormIdentity({
+				type: providerTypeForPreset(openrouter),
+				authMethod: "api_key",
+				labelInput: "Team Router",
+				existingProviderIds: ["openrouter"],
+				preset: openrouter,
+			}),
+		).toEqual({ providerId: "openrouter-2", label: "Team Router" });
+	});
 });
 
 describe("derivedProviderFields", () => {
@@ -253,7 +287,7 @@ describe("derivedProviderFields", () => {
 		expect(zhipu.catalog.find((model) => model.id === "glm-4.7")?.context_window).toBeUndefined();
 		expect(
 			testPreset("minimax").catalog.find((model) => model.id === "MiniMax-M2")?.context_window,
-		).toBe(204_800);
+		).toBeUndefined();
 
 		const mistral = testPreset("mistral");
 		expect(mistral.label).toBe("Mistral AI");

@@ -150,7 +150,7 @@ export const PROVIDER_PRESETS = [
 		suggested_primary_model: "MiniMax-M3",
 		catalog: [
 			{ id: "MiniMax-M3", context_window: 1_000_000, alias: "MiniMax M3" },
-			{ id: "MiniMax-M2", context_window: 204_800, alias: "MiniMax M2" },
+			{ id: "MiniMax-M2", alias: "MiniMax M2" },
 		],
 		api_key_url: "https://platform.minimax.io/user-center/basic-information/interface-key",
 	},

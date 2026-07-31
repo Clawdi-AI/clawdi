@@ -72,7 +72,7 @@ export function ProviderFieldsForm({
 	const regions = preset?.region_variants ?? [];
 	const isCustomEndpoint = meta.custom === true && preset === null;
 	const showPrimaryName = isCustomEndpoint;
-	const showAdvancedName = !showPrimaryName && isEdit;
+	const showAdvancedName = preset !== null || (!showPrimaryName && isEdit);
 	const showRuntimeEnv = !isOAuthEdit && form.authMethod === "api_key";
 	const defaultAdvancedOpen = isCustomEndpoint;
 	// React has no defaultOpen prop for native details. Initialize once through a
@@ -95,6 +95,7 @@ export function ProviderFieldsForm({
 						onChange={(event) => onUpdate({ label: event.target.value })}
 						placeholder="Custom endpoint"
 						autoComplete="off"
+						required
 					/>
 				</div>
 			) : null}
@@ -215,12 +216,6 @@ export function ProviderFieldsForm({
 						/>
 					</summary>
 					<div className="flex flex-col gap-3 border-t p-3">
-						<div className="flex flex-col gap-1.5">
-							<p className="text-sm font-medium">Provider ID</p>
-							<code className="w-fit max-w-full break-all rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
-								{providerId || "—"}
-							</code>
-						</div>
 						{showAdvancedName ? (
 							<div className="flex flex-col gap-1.5">
 								<Label htmlFor="provider-label">Name</Label>
@@ -233,6 +228,12 @@ export function ProviderFieldsForm({
 								/>
 							</div>
 						) : null}
+						<div className="flex flex-col gap-1.5">
+							<p className="text-sm font-medium">Provider ID</p>
+							<code className="w-fit max-w-full break-all rounded bg-muted px-2 py-1 font-mono text-xs text-muted-foreground">
+								{providerId || "—"}
+							</code>
+						</div>
 						<div className="flex flex-col gap-1.5">
 							<Label htmlFor="provider-base">Base URL</Label>
 							<Input

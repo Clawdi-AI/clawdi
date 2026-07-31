@@ -116,23 +116,17 @@ export function providerAvailabilityIssue(
 	context: ProviderAvailabilityContext,
 ): ProviderAvailabilityIssue {
 	const issue = hostedAiProviderAvailabilityIssue(provider, context);
-	if (!issue || issue.kind === "claimed") return issue;
-	if (issue.kind === "delivery") {
+	if (
+		issue?.kind === "runtime" &&
+		context.runtime === "hermes" &&
+		provider.api_mode === "google_generate_content"
+	) {
 		return {
 			...issue,
-			message:
-				provider.auth.type === "none" || provider.readiness?.credential_material === "missing"
-					? "Finish this provider's setup before assigning it to an agent."
-					: "This provider isn't available for hosted agents. Choose another provider.",
+			message: "Hermes cannot use this Gemini connection yet. Choose OpenClaw or another provider.",
 		};
 	}
-	return {
-		...issue,
-		message:
-			context.runtime === "hermes" && provider.api_mode === "google_generate_content"
-				? "Hermes cannot use this Gemini connection yet. Choose OpenClaw or another provider."
-				: `${runtimeDisplayName(context.runtime)} cannot use this provider's current setup.`,
-	};
+	return issue;
 }
 
 export function usableProviders(

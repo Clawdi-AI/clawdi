@@ -2260,6 +2260,19 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await expect(main.getByText("DEEPSEEK_API_KEY", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("OpenAI Chat Completions", { exact: true })).toHaveCount(0);
 
+	await main.getByRole("button", { name: "Remove Research DeepSeek" }).click();
+	const removeDialog = page.getByRole("alertdialog", { name: "Remove Research DeepSeek?" });
+	await expect(
+		removeDialog.getByText(
+			"This provider will be removed from your account and cannot be restored.",
+			{ exact: true },
+		),
+	).toBeVisible();
+	await expect(
+		removeDialog.getByText("No hosted agents currently use this provider.", { exact: true }),
+	).toBeVisible();
+	await removeDialog.getByRole("button", { name: "Cancel" }).click();
+
 	await main.getByRole("button", { name: "Test connection for Research DeepSeek" }).click();
 	const testDialog = page.getByRole("dialog", { name: "Test connection" });
 	await expect(testDialog.getByText(/may incur a small provider charge/)).toBeVisible();
@@ -2280,6 +2293,7 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await expect(advanced).not.toHaveAttribute("open", "");
 	await expect(editDialog.getByLabel("Base URL")).not.toBeVisible();
 	await advanced.locator("summary").click();
+	await expect(editDialog.getByLabel("Name")).toHaveValue("Research DeepSeek");
 	await expect(editDialog.getByLabel("Base URL")).toHaveValue("https://api.deepseek.com/v1");
 	await expect(editDialog.getByText("deepseek-primary", { exact: true })).toBeVisible();
 	await editDialog.getByRole("button", { name: "Cancel" }).click();
@@ -2300,8 +2314,21 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await providerSearch.fill("Moonshot");
 	await expect(chooserDialog.getByRole("button", { name: /^Kimi API/ })).toBeVisible();
 	await providerSearch.fill("");
+	await chooserDialog.getByRole("button", { name: /^DeepSeek/ }).click();
+	const presetDialog = page.getByRole("dialog");
+	await expect(presetDialog).toHaveAccessibleName("Set up DeepSeek");
+	const presetAdvanced = presetDialog.locator("details");
+	await expect(presetAdvanced).not.toHaveAttribute("open", "");
+	await expect(presetDialog.getByLabel("Name")).not.toBeVisible();
+	await presetAdvanced.locator("summary").click();
+	await presetDialog.getByLabel("Name").fill("Research DeepSeek East");
+	await expect(presetDialog).toHaveAccessibleName("Set up Research DeepSeek East");
+	await expect(presetDialog.getByText("deepseek", { exact: true })).toBeVisible();
+	await presetDialog.getByRole("button", { name: "Back" }).click();
+	await expect(chooserDialog).toBeVisible();
 	await chooserDialog.getByRole("button", { name: /^Custom endpoint/ }).click();
-	const customDialog = page.getByRole("dialog", { name: "Set up Custom endpoint" });
+	const customDialog = page.getByRole("dialog");
+	await expect(customDialog).toHaveAccessibleName("Set up Custom endpoint");
 	await expect(
 		customDialog.getByText(
 			"Enter the credential and connection details for this custom endpoint.",
@@ -2309,6 +2336,18 @@ test("AI Providers preserves provider identity and keeps technical details progr
 		),
 	).toBeVisible();
 	await expect(customDialog.locator("details")).toHaveAttribute("open", "");
+	const customName = customDialog.getByLabel("Name");
+	await expect(customName).toHaveAttribute("required", "");
+	await customDialog.getByLabel("API key").fill("test-api-key");
+	await customDialog.getByLabel("Base URL").fill("https://proxy.example.com/v1");
+	await expect(
+		customDialog.getByRole("button", { name: "Add provider", exact: true }),
+	).toBeDisabled();
+	await customName.fill("Team proxy");
+	await expect(customDialog).toHaveAccessibleName("Set up Team proxy");
+	await expect(
+		customDialog.getByRole("button", { name: "Add provider", exact: true }),
+	).toBeEnabled();
 
 	const documentWidth = await page.evaluate(() => ({
 		clientWidth: document.documentElement.clientWidth,
