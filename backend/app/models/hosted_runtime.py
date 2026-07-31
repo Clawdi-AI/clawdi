@@ -2,7 +2,15 @@ import uuid
 from datetime import datetime
 
 from pydantic import JsonValue
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Integer, String
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,6 +47,31 @@ class HostedRuntimeState(Base, TimestampMixin):
     mcp: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     skills: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     tools: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+
+
+class HostedRuntimeSecret(Base, TimestampMixin):
+    __tablename__ = "hosted_runtime_secrets"
+    __table_args__ = (
+        UniqueConstraint(
+            "environment_id",
+            "secret_ref",
+            name="uq_hosted_runtime_secrets_environment_ref",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    environment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hosted_runtime_states.environment_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    secret_ref: Mapped[str] = mapped_column(String(1000), nullable=False)
+    encrypted_value: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    key_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="vault.v1", server_default="vault.v1"
+    )
 
 
 class HostedRuntimeConfigObservation(Base, TimestampMixin):

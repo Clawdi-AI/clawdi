@@ -464,14 +464,14 @@ class AddonProfileInterpreterTest(unittest.TestCase):
                         "setHeaders": {
                             "authorization": {
                                 "type": "secretRef",
-                                "secretRef": "env://CLAWDI_AUTH_TOKEN",
+                                "secretRef": "secret://clawdi/auth-token",
                                 "prefix": "Bearer ",
                             }
                         },
                     },
                 }
             ],
-            {"env://CLAWDI_AUTH_TOKEN": "deployment-token"},
+            {"secret://clawdi/auth-token": "deployment-token"},
         )
         wrong_port = Flow(
             scheme="http",

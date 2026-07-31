@@ -17,7 +17,11 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { commitRuntimeAppliedState, runtimeAppliedContentIdentity } from "../commands/runtime";
 import { readRuntimeAppliedState, runtimeContentSha256 } from "./applied-state";
-import { resolveRuntimeApplyGeneration } from "./apply-identity";
+import {
+	type RuntimeApplyContext,
+	readRuntimeApplyContext,
+	resolveRuntimeApplyGeneration,
+} from "./apply-identity";
 import { applyRuntimeBundleChannelsToManifestLoad as applyRuntimeBundleChannelsToManifestLoadWithContext } from "./channels";
 import {
 	hostedManifestEgressProfiles,
@@ -32,38 +36,35 @@ import {
 	type RuntimeManifestLoad,
 } from "./manifest-source";
 import { getRuntimePaths } from "./paths";
-import { projectedRuntimeEnvironment } from "./secret-values";
 
 const goldenPath = resolve(
 	import.meta.dir,
 	"../../../../test-fixtures/runtime-bundle-v2.golden.json",
 );
 const EXPECTED_GOLDEN_SOURCE_REVISION =
-	"da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1";
+	"92ce3dc53e711aacac6a09f9e58b937cae51e093ff39c50c7fcc7dc749236d49";
 const originalEnv = { ...process.env };
 const originalFetch = globalThis.fetch;
 const roots: string[] = [];
 
-function testRuntimeEnvironmentValues(): Record<string, string> {
-	return Object.fromEntries(
-		Object.entries(process.env).filter(
-			(entry): entry is [string, string] => entry[1] !== undefined && entry[1].length > 0,
-		),
-	);
-}
-
 function applyRuntimeBundleChannelsToManifestLoad(load: RuntimeManifestLoad): RuntimeManifestLoad {
+	const authToken = process.env.CLAWDI_BOOTSTRAP_AUTH_TOKEN ?? "test-token";
 	return applyRuntimeBundleChannelsToManifestLoadWithContext({
 		...load,
 		applyContext: {
-			kind: "identity-file",
+			kind: "context-file",
 			identity: {
 				generation: load.manifest.applyGeneration ?? load.manifest.generation,
 				manifestETag: `"test-${load.manifest.generation}"`,
 				applyReceiptId: "test-apply-receipt",
 				bootNonce: "test-boot-nonce",
 			},
-			runtimeEnvironment: projectedRuntimeEnvironment(testRuntimeEnvironmentValues()),
+			cliPackageSpec: "clawdi@1.2.3",
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
+				auth: { type: "bearer", token: authToken },
+			},
 		},
 	});
 }
@@ -83,18 +84,25 @@ function readFileTree(root: string): string {
 function setRuntimeApplyIdentityFile(
 	root: string,
 	identity: { generation: number; manifestETag: string; applyReceiptId: string; bootNonce: string },
-): string {
-	const path = join(root, "runtime-apply-identity.json");
+): RuntimeApplyContext {
+	const path = join(root, "runtime-context.json");
 	writeFileSync(
 		path,
 		JSON.stringify({
-			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
-			...identity,
-			runtimeEnv: testRuntimeEnvironmentValues(),
+			schemaVersion: "clawdi.runtimeContext.v2",
+			apply: identity,
+			cliPackageSpec: "clawdi@1.2.3",
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
+				auth: {
+					type: "bearer",
+					token: "clawdi_test",
+				},
+			},
 		}),
 	);
-	process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE = path;
-	return path;
+	return readRuntimeApplyContext(path);
 }
 
 function validateGeneratedEgressConfig(addonPath: string, envFilePath: string): void {
@@ -141,13 +149,13 @@ describe("hosted runtime bundle v2", () => {
 		const raw = JSON.parse(readFileSync(goldenPath, "utf-8")) as unknown;
 		const load = normalizeHostedRuntimeBundleV2(raw);
 		expect(load.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
-			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
 		const projected = applyRuntimeBundleChannelsToManifestLoad(load);
 
 		expect(projected.sourceRevision).toBe(EXPECTED_GOLDEN_SOURCE_REVISION);
 		expect(projected.manifest.runtimes.openclaw.run?.secretEnv).toMatchObject({
-			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
 		expect(projected.secretValues).toMatchObject(
 			(raw as { secretValues: Record<string, string> }).secretValues,
@@ -190,7 +198,7 @@ describe("hosted runtime bundle v2", () => {
 							transport: "streamable-http",
 							headers: {
 								Authorization: {
-									secretRef: "env://CLAWDI_AUTH_TOKEN",
+									secretRef: "secret://clawdi/auth-token",
 									prefix: "Bearer ",
 								},
 							},
@@ -208,7 +216,7 @@ describe("hosted runtime bundle v2", () => {
 					transport: "streamable-http",
 					headers: {
 						Authorization: {
-							secretRef: "env://CLAWDI_AUTH_TOKEN",
+							secretRef: "secret://clawdi/auth-token",
 							prefix: "Bearer ",
 						},
 					},
@@ -239,7 +247,7 @@ describe("hosted runtime bundle v2", () => {
 					setHeaders: {
 						Authorization: {
 							type: "secretRef",
-							secretRef: "env://CLAWDI_AUTH_TOKEN",
+							secretRef: "secret://clawdi/auth-token",
 							prefix: "Bearer ",
 						},
 					},
@@ -322,7 +330,7 @@ describe("hosted runtime bundle v2", () => {
 						url: "https://cloud-api.test/v1/mcp/shared",
 						transport: "streamable-http",
 						headers: {
-							Authorization: { secretRef: "env://ALPHA_TOKEN", prefix: "Bearer " },
+							Authorization: { secretRef: "secret://mcp/alpha-token", prefix: "Bearer " },
 							"X-Client-Token": { secretRef: "secret://alpha.client", prefix: "" },
 						},
 					},
@@ -330,7 +338,7 @@ describe("hosted runtime bundle v2", () => {
 						url: "https://cloud-api.test/v1/mcp/shared",
 						transport: "streamable-http",
 						headers: {
-							Authorization: { secretRef: "env://BETA_TOKEN", prefix: "Bearer " },
+							Authorization: { secretRef: "secret://mcp/beta-token", prefix: "Bearer " },
 						},
 					},
 				},
@@ -367,12 +375,7 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 		process.env.CLAWDI_HOME = join(root, "clawdi-home");
 		process.env.HOME = process.env.CLAWDI_RUNTIME_HOME;
-		process.env.CLAWDI_AUTH_TOKEN = "";
-		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_BOOTSTRAP_AUTH_TOKEN";
-		process.env.CLAWDI_BOOTSTRAP_AUTH_TOKEN = "deployment-auth-token";
 		process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
-		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
 		const paths = getRuntimePaths({ mode: "hosted" });
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const openclawConfigPath = join(paths.userHome, ".openclaw", "openclaw.json");
@@ -438,7 +441,7 @@ describe("hosted runtime bundle v2", () => {
 						transport: "streamable-http",
 						headers: {
 							Authorization: {
-								secretRef: "env://CLAWDI_AUTH_TOKEN",
+								secretRef: "secret://clawdi/auth-token",
 								prefix: "Bearer ",
 							},
 						},
@@ -493,12 +496,12 @@ describe("hosted runtime bundle v2", () => {
 		);
 		const managedClawdiSecretRef =
 			managedClawdiProfile?.rewrite?.setHeaders?.Authorization?.secretRef;
-		expect(managedClawdiSecretRef).toBe("env://CLAWDI_AUTH_TOKEN");
+		expect(managedClawdiSecretRef).toBe("secret://clawdi/auth-token");
 		const initialEgressSecrets = JSON.parse(readFileSync(egressSecretPath, "utf-8")) as Record<
 			string,
 			string
 		>;
-		expect(initialEgressSecrets[managedClawdiSecretRef ?? ""]).toBe("deployment-auth-token");
+		expect(initialEgressSecrets[managedClawdiSecretRef ?? ""]).toBe("runtime-auth-token-golden");
 		validateGeneratedEgressConfig(paths.egressAddon, paths.egressTransparentEnv);
 		const nativeMcpConfig = JSON.parse(readFileSync(openclawConfigPath, "utf-8")) as {
 			mcp: { servers: Record<string, unknown> };
@@ -510,19 +513,19 @@ describe("hosted runtime bundle v2", () => {
 				Authorization: `Bearer ${managedMcpHeaderPlaceholder("clawdi", "Authorization")}`,
 			},
 		});
-		expect(JSON.stringify(nativeMcpConfig)).not.toContain("deployment-auth-token");
+		expect(JSON.stringify(nativeMcpConfig)).not.toContain("runtime-auth-token-golden");
 		const watchUnit = readFileSync(
 			join(paths.systemdSystemRoot, "clawdi-runtime-watch.service"),
 			"utf-8",
 		);
 		const watchEnvPath = join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env");
 		expect(watchUnit).toContain(`EnvironmentFile=${watchEnvPath}`);
-		const gatewayTokenLine = 'OPENCLAW_GATEWAY_TOKEN="gateway-token"';
+		const gatewayTokenLine = 'OPENCLAW_GATEWAY_TOKEN="openclaw-gateway-token-golden"';
 		const watchEnv = readFileSync(watchEnvPath, "utf-8");
 		expect(watchEnv).toContain(gatewayTokenLine);
 		expect(statSync(watchEnvPath).mode & 0o777).toBe(0o600);
 		const sidecarOnlySecrets = [
-			"deployment-auth-token",
+			"runtime-auth-token-golden",
 			"sk-provider-golden",
 			"123456789:telegram-agent-golden",
 			mcpSecret,
@@ -574,17 +577,20 @@ describe("hosted runtime bundle v2", () => {
 		const initialSidecarRevision = initialSidecarEnv.match(/^CLAWDI_RUNTIME_REV="([^"]+)"$/m)?.[1];
 		expect(initialSidecarRevision).toBeTruthy();
 		writeFileSync(paths.daemonAuthToken, "deployment-auth-token-rotated\n", { mode: 0o600 });
-		delete process.env.CLAWDI_BOOTSTRAP_AUTH_TOKEN;
 		if (!load.applyContext) throw new Error("expected runtime apply context");
 		const watched = convergeRuntimeManifest(
 			{
 				...load,
+				secretValues: {
+					...load.secretValues,
+					"secret://clawdi/auth-token": "deployment-auth-token-rotated",
+				},
 				applyContext: {
 					...load.applyContext,
-					runtimeEnvironment: projectedRuntimeEnvironment({
-						...load.applyContext.runtimeEnvironment.values,
-						CLAWDI_BOOTSTRAP_AUTH_TOKEN: "deployment-auth-token-rotated",
-					}),
+					manifestSource: {
+						...load.applyContext.manifestSource,
+						auth: { type: "bearer", token: "deployment-auth-token-rotated" },
+					},
 				},
 			},
 			paths,
@@ -601,7 +607,7 @@ describe("hosted runtime bundle v2", () => {
 			string,
 			string
 		>;
-		expect(reconciledEgressSecrets["env://CLAWDI_AUTH_TOKEN"]).toBe(
+		expect(reconciledEgressSecrets["secret://clawdi/auth-token"]).toBe(
 			"deployment-auth-token-rotated",
 		);
 		validateGeneratedEgressConfig(paths.egressAddon, paths.egressTransparentEnv);
@@ -816,7 +822,7 @@ describe("hosted runtime bundle v2", () => {
 		).not.toThrow();
 	});
 
-	test("resolves bundle channel secret aliases in both directions and rejects empty values", () => {
+	test("rejects noncanonical channel secret aliases and empty canonical values", () => {
 		const raw = z
 			.record(z.string(), z.unknown())
 			.parse(JSON.parse(readFileSync(goldenPath, "utf-8")));
@@ -828,40 +834,24 @@ describe("hosted runtime bundle v2", () => {
 		const canonicalPlaceholderRef = z.string().parse(binding.placeholderTokenSecretRef);
 		const rawAgentRef = canonicalAgentRef.slice("secret://".length);
 		const rawPlaceholderRef = canonicalPlaceholderRef.slice("secret://".length);
-		const agentValue = secretValues[canonicalAgentRef];
 		const placeholderValue = secretValues[canonicalPlaceholderRef];
-		if (!agentValue) throw new Error("golden bundle has no agent secret value");
 		if (!placeholderValue) throw new Error("golden bundle has no placeholder secret value");
-		secretValues[rawAgentRef] = agentValue;
-		delete secretValues[canonicalPlaceholderRef];
-		secretValues[rawPlaceholderRef] = placeholderValue;
-
-		const aliased = normalizeHostedRuntimeBundleV2({
-			...raw,
-			channelBindings: [
-				{
-					...binding,
-					agentTokenSecretRef: rawAgentRef,
-					placeholderTokenSecretRef: canonicalPlaceholderRef,
-				},
-			],
-			secretValues,
-		});
-		expect(() => applyRuntimeBundleChannelsToManifestLoad(aliased)).not.toThrow();
-		for (const agentTokenSecretRef of [canonicalAgentRef, rawAgentRef]) {
-			expect(() =>
-				normalizeHostedRuntimeBundleV2({
-					...raw,
-					channelBindings: [{ ...binding, agentTokenSecretRef }],
-					secretValues: { ...secretValues, [rawAgentRef]: "conflicting-agent-token" },
-				}),
-			).toThrow(`conflicting secret values for ${canonicalAgentRef}`);
-		}
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				channelBindings: [{ ...binding, agentTokenSecretRef: rawAgentRef }],
+			}),
+		).toThrow("must be a canonical non-empty secret:// reference");
+		expect(() =>
+			normalizeHostedRuntimeBundleV2({
+				...raw,
+				secretValues: { ...secretValues, [rawPlaceholderRef]: placeholderValue },
+			}),
+		).toThrow("must be a canonical non-empty secret:// reference");
 
 		const emptyAgentValues = {
 			...secretValues,
 			[canonicalAgentRef]: "",
-			[rawAgentRef]: "",
 		};
 		expect(() =>
 			applyRuntimeBundleChannelsToManifestLoad(
@@ -871,7 +861,7 @@ describe("hosted runtime bundle v2", () => {
 					secretValues: emptyAgentValues,
 				}),
 			),
-		).toThrow(`runtime bundle is missing ${canonicalAgentRef}`);
+		).toThrow(`runtime secret value must be non-empty: ${canonicalAgentRef}`);
 	});
 
 	test("accepts root apply generation while keeping the inner manifest v1-only and strict", () => {
@@ -913,10 +903,7 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
-		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
-		setRuntimeApplyIdentityFile(root, {
+		const applyContext = setRuntimeApplyIdentityFile(root, {
 			generation: 7,
 			manifestETag: '"manifest-7"',
 			applyReceiptId: "apply-receipt-0007",
@@ -939,7 +926,10 @@ describe("hosted runtime bundle v2", () => {
 			{ preconnect: () => undefined },
 		);
 
-		const loaded = await loadRemoteRuntimeManifest(paths, { ifNoneMatch: '"bundle-1"' });
+		const loaded = await loadRemoteRuntimeManifest(paths, {
+			ifNoneMatch: '"bundle-1"',
+			applyContext,
+		});
 		expect(requests).toBe(1);
 		expect(loaded).toMatchObject({ notModified: true, etag: '"bundle-1"' });
 	});
@@ -950,10 +940,7 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
-		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
-		setRuntimeApplyIdentityFile(root, {
+		const applyContext = setRuntimeApplyIdentityFile(root, {
 			generation: 1,
 			manifestETag: '"bundle-golden"',
 			applyReceiptId: "apply-receipt-golden-0001",
@@ -969,7 +956,7 @@ describe("hosted runtime bundle v2", () => {
 			{ preconnect: () => undefined },
 		);
 
-		const loaded = await loadRemoteRuntimeManifest(paths);
+		const loaded = await loadRemoteRuntimeManifest(paths, { applyContext });
 		expect(loaded).toMatchObject({ mode: "repair", stage: "network" });
 		expect("errors" in loaded ? loaded.errors[0] : "").toContain(
 			`content-type must be ${HOSTED_RUNTIME_BUNDLE_V2_MEDIA_TYPE}`,
@@ -982,10 +969,7 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
-		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
-		setRuntimeApplyIdentityFile(root, {
+		const applyContext = setRuntimeApplyIdentityFile(root, {
 			generation: 1,
 			manifestETag: '"bundle-golden"',
 			applyReceiptId: "apply-receipt-golden-0001",
@@ -1004,7 +988,7 @@ describe("hosted runtime bundle v2", () => {
 			{ preconnect: () => undefined },
 		);
 
-		const loaded = await loadRemoteRuntimeManifest(paths);
+		const loaded = await loadRemoteRuntimeManifest(paths, { applyContext });
 		if (!("manifest" in loaded)) throw new Error(JSON.stringify(loaded));
 		expect(loaded.etag).toBe(`"sha256:${EXPECTED_GOLDEN_SOURCE_REVISION}"`);
 		expect(loaded.sourceRevision).toBe(EXPECTED_GOLDEN_SOURCE_REVISION);
@@ -1017,10 +1001,7 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_SERVICE_STATE_DIR = join(root, "state");
 		process.env.CLAWDI_RUN_DIR = join(root, "run");
 		process.env.CLAWDI_RUNTIME_HOME = "/home/clawdi";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
-		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
-		process.env.CLAWDI_TEST_TOKEN = "clawdi_test";
-		setRuntimeApplyIdentityFile(root, {
+		const applyContext = setRuntimeApplyIdentityFile(root, {
 			generation: 1,
 			manifestETag: '"bundle-golden"',
 			applyReceiptId: "apply-receipt-golden-0001",
@@ -1038,7 +1019,9 @@ describe("hosted runtime bundle v2", () => {
 			{ preconnect: () => undefined },
 		);
 
-		const loaded = await loadRemoteRuntimeManifest(getRuntimePaths({ mode: "hosted" }));
+		const loaded = await loadRemoteRuntimeManifest(getRuntimePaths({ mode: "hosted" }), {
+			applyContext,
+		});
 		expect(loaded).toMatchObject({ mode: "manifest-rejected", stage: "network" });
 		expect("errors" in loaded ? loaded.errors.join("\n") : "").toContain(
 			"does not match its sourceRevision validator",
@@ -1085,15 +1068,11 @@ describe("hosted runtime bundle v2", () => {
 		process.env.CLAWDI_HOME = join(root, "clawdi-home");
 		process.env.HOME = process.env.CLAWDI_RUNTIME_HOME;
 		process.env.CLAWDI_AUTH_TOKEN = "test-token";
-		process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_TEST_TOKEN";
-		process.env.CLAWDI_TEST_TOKEN = "test-token";
-		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
 		process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		process.env.CLAWDI_EGRESS_UID = "10002";
 		process.env.CLAWDI_EGRESS_GID = "10002";
 		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
-		setRuntimeApplyIdentityFile(root, {
+		const applyContext = setRuntimeApplyIdentityFile(root, {
 			generation: 1,
 			manifestETag: '"bundle-golden"',
 			applyReceiptId: "apply-receipt-golden-0001",
@@ -1144,7 +1123,7 @@ describe("hosted runtime bundle v2", () => {
 				}),
 			});
 
-		const remote = await loadRemoteRuntimeManifest(paths);
+		const remote = await loadRemoteRuntimeManifest(paths, { applyContext });
 		if (!("manifest" in remote)) throw new Error(JSON.stringify(remote));
 		const onlineLoad = applyRuntimeBundleChannelsToManifestLoad(remote);
 		const onlineConvergence = converge(onlineLoad);
@@ -1174,10 +1153,9 @@ describe("hosted runtime bundle v2", () => {
 		const providerRef = "secret://tool.codex.apiKey";
 		expect(cachedSecrets).toMatchObject({
 			[agentRef]: "123456789:telegram-agent-golden",
-			[agentRef.slice("secret://".length)]: "123456789:telegram-agent-golden",
 			[placeholderRef]: "999999999:9ded1453047ec0a48ec3b735075f7448",
 			[providerRef]: "sk-provider-golden",
-			"tool.codex.apiKey": "sk-provider-golden",
+			"secret://runtime/openclaw/gateway-token": "openclaw-gateway-token-golden",
 		});
 		expect(cachedSecrets).not.toHaveProperty("unused.secret");
 		const cacheStat = statSync(paths.managedSecretCacheFile);
@@ -1214,10 +1192,6 @@ describe("hosted runtime bundle v2", () => {
 			expect(onlineEgressSecretStat.uid).toBe(10002);
 			expect(onlineEgressSecretStat.gid).toBe(10002);
 		}
-		const runtimeAggregateText = readFileSync(paths.managedSecretFile, "utf-8");
-		expect(runtimeAggregateText).toContain("999999999:9ded1453047ec0a48ec3b735075f7448");
-		expect(runtimeAggregateText).not.toContain("telegram-agent-golden");
-		expect(runtimeAggregateText).not.toContain("sk-provider-golden");
 		const manifestCacheText = readFileSync(paths.manifestLastGood, "utf-8");
 		const generatedUnitPaths = [...onlineConvergence.outputs.systemdSystemUnits];
 		for (const unitPath of onlineConvergence.outputs.systemdUserUnits) {
@@ -1255,7 +1229,7 @@ describe("hosted runtime bundle v2", () => {
 			applyReceiptId: "apply-receipt-golden-0001",
 			bootNonce: "boot-nonce-golden-000001",
 		});
-		const offlineLoad = await loadRuntimeManifest(paths);
+		const offlineLoad = await loadRuntimeManifest(paths, { applyContext });
 		if (!("manifest" in offlineLoad)) throw new Error(JSON.stringify(offlineLoad));
 		expect(offlineLoad.source).toBe("last-good-cache");
 		expect(offlineLoad.offline).toBe(true);
@@ -1274,7 +1248,7 @@ describe("hosted runtime bundle v2", () => {
 		}
 
 		rmSync(paths.appliedState);
-		const uncommittedCacheLoad = await loadRuntimeManifest(paths);
+		const uncommittedCacheLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in uncommittedCacheLoad).toBe(true);
 		if (!("errors" in uncommittedCacheLoad)) {
 			throw new Error("expected uncommitted strict-v2 cache failure");
@@ -1300,7 +1274,7 @@ describe("hosted runtime bundle v2", () => {
 				generation: onlineLoad.manifest.generation + 1,
 			})}\n`,
 		);
-		const manifestOnlyCrashLoad = await loadRuntimeManifest(paths);
+		const manifestOnlyCrashLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in manifestOnlyCrashLoad).toBe(true);
 		if (!("errors" in manifestOnlyCrashLoad)) {
 			throw new Error("expected manifest-only mixed snapshot failure");
@@ -1312,7 +1286,7 @@ describe("hosted runtime bundle v2", () => {
 			paths.manifestLastGood,
 			`${JSON.stringify({ ...committedManifest, applyGeneration: 2 })}\n`,
 		);
-		const applyOnlyCrashLoad = await loadRuntimeManifest(paths);
+		const applyOnlyCrashLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in applyOnlyCrashLoad).toBe(true);
 		if (!("errors" in applyOnlyCrashLoad)) {
 			throw new Error("expected apply-generation mixed snapshot failure");
@@ -1326,10 +1300,9 @@ describe("hosted runtime bundle v2", () => {
 			`${JSON.stringify({
 				...cachedSecrets,
 				[agentRef]: "123456789:telegram-agent-next",
-				[agentRef.slice("secret://".length)]: "123456789:telegram-agent-next",
 			})}\n`,
 		);
-		const manifestAndSecretsCrashLoad = await loadRuntimeManifest(paths);
+		const manifestAndSecretsCrashLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in manifestAndSecretsCrashLoad).toBe(true);
 		if (!("errors" in manifestAndSecretsCrashLoad)) {
 			throw new Error("expected manifest-plus-secret mixed snapshot failure");
@@ -1339,14 +1312,13 @@ describe("hosted runtime bundle v2", () => {
 		);
 		writeFileSync(paths.manifestLastGood, manifestCacheText);
 		writeFileSync(paths.managedSecretCacheFile, cacheText);
-		const restoredCommittedLoad = await loadRuntimeManifest(paths);
+		const restoredCommittedLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("manifest" in restoredCommittedLoad).toBe(true);
 
 		const missingSecrets = { ...cachedSecrets };
 		delete missingSecrets[agentRef];
-		delete missingSecrets[agentRef.slice("secret://".length)];
 		writeFileSync(paths.managedSecretCacheFile, `${JSON.stringify(missingSecrets)}\n`);
-		const missingLoad = await loadRuntimeManifest(paths);
+		const missingLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in missingLoad).toBe(true);
 		if (!("errors" in missingLoad)) throw new Error("expected missing cache failure");
 		expect(missingLoad.errors.join("\n")).toContain("cached secret values are missing");
@@ -1354,10 +1326,9 @@ describe("hosted runtime bundle v2", () => {
 		const staleSecrets = {
 			...cachedSecrets,
 			[providerRef]: "sk-provider-stale",
-			"tool.codex.apiKey": "sk-provider-stale",
 		};
 		writeFileSync(paths.managedSecretCacheFile, `${JSON.stringify(staleSecrets)}\n`);
-		const staleLoad = await loadRuntimeManifest(paths);
+		const staleLoad = await loadRuntimeManifest(paths, { applyContext });
 		expect("errors" in staleLoad).toBe(true);
 		if (!("errors" in staleLoad)) throw new Error("expected stale cache failure");
 		expect(staleLoad.errors.join("\n")).toContain(

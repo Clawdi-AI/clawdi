@@ -23,9 +23,12 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --gid 1000 clawdi-test \
-	&& useradd --uid 1000 --gid 1000 --home-dir /tmp/clawdi-home --no-create-home clawdi-test
+	&& useradd --uid 1000 --gid 1000 --home-dir /tmp/clawdi-home --no-create-home clawdi-test \
+	&& install -d -m 0755 -o clawdi-test -g clawdi-test /etc/clawdi/runtime-context
 
 ENV HOME=/tmp/clawdi-home \
+	USER=clawdi-test \
+	LOGNAME=clawdi-test \
 	CLAWDI_NO_AUTO_UPDATE=1 \
 	CLAWDI_NO_UPDATE_CHECK=1 \
 	BUN_INSTALL_CACHE_DIR=/var/cache/bun \

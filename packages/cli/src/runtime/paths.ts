@@ -13,16 +13,12 @@ export interface RuntimePaths {
 	localPendingAuth: string;
 	localEnvironments: string;
 	serveState: string;
-	imageShim: string;
-	legacyImageShim: string | null;
 	hostPolicy: string;
-	runtimeSource: string;
 	shareRoot: string;
 	serviceStateRoot: string;
 	oauthCredentialRoot: string;
 	managedConfig: string;
 	syncState: string;
-	cliShim: string;
 	cliManagedBin: string;
 	cliNpmPrefix: string;
 	cliNpmCache: string;
@@ -53,8 +49,6 @@ export interface RuntimePaths {
 	projectionRoot: string;
 	runRoot: string;
 	managedSecretRoot: string;
-	managedSecretFile: string;
-	runtimeSecretFileRoot: string;
 	egressRoot: string;
 	egressScratchRoot: string;
 	egressTransparentEnv: string;
@@ -93,10 +87,6 @@ export function getHostPolicyPath(): string {
 	return envPath("CLAWDI_HOST_POLICY_PATH") ?? "/etc/clawdi/host-policy.json";
 }
 
-export function getRuntimeSourcePath(): string {
-	return envPath("CLAWDI_RUNTIME_SOURCE_PATH") ?? "/etc/clawdi/runtime-source.json";
-}
-
 export function detectRuntimeMode(): RuntimeMode {
 	const explicit = process.env.CLAWDI_RUNTIME_MODE?.trim().toLowerCase();
 	if (explicit === "hosted") return "hosted";
@@ -110,12 +100,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 	const clawdiHome = getClawdiDir();
 	const serviceStateRoot = envPath("CLAWDI_SERVICE_STATE_DIR") ?? "/var/lib/clawdi";
 	const runRoot = envPath("CLAWDI_RUN_DIR") ?? "/run/clawdi";
-	const configuredImageShim = envPath("CLAWDI_IMAGE_SHIM_PATH");
-	const imageShim =
-		configuredImageShim ??
-		(mode === "hosted" ? "/usr/local/lib/clawdi/bootstrap/clawdi" : "/usr/local/bin/clawdi");
-	const legacyImageShim =
-		mode === "hosted" && configuredImageShim === undefined ? "/usr/local/bin/clawdi" : null;
 	const shareRoot = envPath("CLAWDI_SHARE_DIR") ?? "/usr/share/clawdi";
 	const managedCliRoot = join(serviceStateRoot, "managed-cli");
 	const npmRoot = join(serviceStateRoot, "npm");
@@ -132,16 +116,12 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		localPendingAuth: join(clawdiHome, "pending-auth.json"),
 		localEnvironments: join(clawdiHome, "environments"),
 		serveState: join(clawdiHome, "serve"),
-		imageShim,
-		legacyImageShim,
 		hostPolicy: getHostPolicyPath(),
-		runtimeSource: getRuntimeSourcePath(),
 		shareRoot,
 		serviceStateRoot,
 		oauthCredentialRoot: join(serviceStateRoot, "oauth-credentials"),
 		managedConfig: join(serviceStateRoot, "config", "clawdi.json"),
 		syncState: join(serviceStateRoot, "sync", "runtimes.json"),
-		cliShim: imageShim,
 		cliManagedBin: join(managedCliRoot, "bin", "clawdi"),
 		cliNpmPrefix: npmRoot,
 		cliNpmCache: join(serviceStateRoot, "npm-cache"),
@@ -173,8 +153,6 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		projectionRoot: join(serviceStateRoot, "config", "projections"),
 		runRoot,
 		managedSecretRoot: join(runRoot, "secrets"),
-		managedSecretFile: join(runRoot, "secrets", "runtime-secrets.json"),
-		runtimeSecretFileRoot: join(runRoot, "secrets", "runtimes"),
 		egressRoot: join(runRoot, "egress"),
 		egressScratchRoot: join(runRoot, "egress-scratch"),
 		egressTransparentEnv: join(runRoot, "egress", "transparent-egress.env"),

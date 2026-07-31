@@ -49,22 +49,28 @@ function appliedState(generation: number): RuntimeAppliedStateV2 {
 	};
 }
 
+function runtimeContextPath(paths: RuntimePaths): string {
+	return join(paths.runRoot, "secrets", "runtime-context.json");
+}
+
 function writeApplyIdentityFile(paths: RuntimePaths, generation: number): void {
-	const path = join(paths.runRoot, "secrets", "runtime-apply-identity.json");
+	const path = runtimeContextPath(paths);
 	mkdirSync(dirname(path), { recursive: true });
-	process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE = path;
 	writeFileSync(
 		path,
 		JSON.stringify({
-			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
-			generation,
-			manifestETag: `"manifest-${generation}"`,
-			applyReceiptId: `apply-receipt-000${generation}`,
-			bootNonce: "boot-nonce-000001",
-			runtimeEnv: {
-				CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-				CLAWDI_RUNTIME_MANIFEST_URL: "https://runtime.test/v1/runtime/manifest",
-				CLAWDI_AUTH_TOKEN: "runtime-auth-token",
+			schemaVersion: "clawdi.runtimeContext.v2",
+			apply: {
+				generation,
+				manifestETag: `"manifest-${generation}"`,
+				applyReceiptId: `apply-receipt-000${generation}`,
+				bootNonce: "boot-nonce-000001",
+			},
+			cliPackageSpec: "clawdi@1.2.3",
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env_producer",
+				auth: { type: "bearer", token: "runtime-auth-token" },
 			},
 		}),
 	);
@@ -94,6 +100,7 @@ async function observationSchedule(
 	await runRuntimeObservationProducer({
 		abort: abort.signal,
 		paths,
+		contextPath: runtimeContextPath(paths),
 		submit: async (_environmentId, event) => {
 			attempts.push({ at: clock, status: event.status });
 			return "accepted";
@@ -128,6 +135,7 @@ describe("hosted runtime observation producer", () => {
 		const producer = new HostedRuntimeObservationProducer({
 			abort: new AbortController().signal,
 			paths,
+			contextPath: runtimeContextPath(paths),
 			submit: async (_environmentId, event) => {
 				submitted = event;
 				return "accepted";
@@ -167,6 +175,7 @@ describe("hosted runtime observation producer", () => {
 		const producer = new HostedRuntimeObservationProducer({
 			abort: new AbortController().signal,
 			paths,
+			contextPath: runtimeContextPath(paths),
 			submit: async (environmentId, event) => {
 				expect(environmentId).toBe("env_producer");
 				events.push(event);
@@ -220,6 +229,7 @@ describe("hosted runtime observation producer", () => {
 		const producer = new HostedRuntimeObservationProducer({
 			abort: new AbortController().signal,
 			paths,
+			contextPath: runtimeContextPath(paths),
 			submit: async () => {
 				submits += 1;
 				return "accepted";
@@ -238,6 +248,7 @@ describe("hosted runtime observation producer", () => {
 		const producer = new HostedRuntimeObservationProducer({
 			abort: new AbortController().signal,
 			paths,
+			contextPath: runtimeContextPath(paths),
 			submit: async () => {
 				submits += 1;
 				return "accepted";
@@ -257,6 +268,7 @@ describe("hosted runtime observation producer", () => {
 		const producer = new HostedRuntimeObservationProducer({
 			abort: new AbortController().signal,
 			paths,
+			contextPath: runtimeContextPath(paths),
 			submit: async (_environmentId, event) => {
 				submitted.push(event);
 				if (submitted.length === 1) throw new Error("temporary old-tuple failure");
@@ -303,6 +315,7 @@ describe("hosted runtime observation producer", () => {
 		await runRuntimeObservationProducer({
 			abort: abort.signal,
 			paths,
+			contextPath: runtimeContextPath(paths),
 			submit: async (_environmentId, event) => {
 				submitted.push(event);
 				if (event.applied.generation === 1) {

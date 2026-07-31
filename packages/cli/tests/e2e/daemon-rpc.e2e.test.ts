@@ -28,6 +28,7 @@ interface Fixture {
 	serviceStateDir: string;
 	runDir: string;
 	codexHome: string;
+	contextPath: string;
 }
 
 let server: ReturnType<typeof Bun.serve>;
@@ -277,6 +278,7 @@ function createFixture(): Fixture {
 	const serviceStateDir = join(root, "service-state");
 	const runDir = join(root, "run");
 	const codexHome = join(home, ".codex");
+	const contextPath = join(root, "runtime-context", "runtime-context.json");
 	mkdirSync(join(clawdiHome, "environments"), { recursive: true });
 	mkdirSync(join(codexHome, "skills"), { recursive: true });
 	mkdirSync(join(codexHome, "sessions"), { recursive: true });
@@ -305,7 +307,7 @@ function createFixture(): Fixture {
 			projectedProviderIds: { codex: ["managed"] },
 		})}\n`,
 	);
-	return { root, home, clawdiHome, stateDir, serviceStateDir, runDir, codexHome };
+	return { root, home, clawdiHome, stateDir, serviceStateDir, runDir, codexHome, contextPath };
 }
 
 function startDaemon(fixture: Fixture): ReturnType<typeof Bun.spawn> {
@@ -339,17 +341,23 @@ async function runCli(
 }
 
 function cliEnv(fixture: Fixture): Record<string, string> {
-	const applyIdentityPath = join(fixture.runDir, "secrets", "runtime-apply-identity.json");
-	mkdirSync(dirname(applyIdentityPath), { recursive: true });
+	mkdirSync(dirname(fixture.contextPath), { recursive: true });
 	writeFileSync(
-		applyIdentityPath,
+		fixture.contextPath,
 		`${JSON.stringify({
-			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
-			generation: 1,
-			manifestETag: '"frozen-manifest"',
-			applyReceiptId: "apply-receipt-daemon-rpc",
-			bootNonce: "boot-nonce-daemon-rpc-01",
-			runtimeEnv: {},
+			schemaVersion: "clawdi.runtimeContext.v2",
+			apply: {
+				generation: 1,
+				manifestETag: '"frozen-manifest"',
+				applyReceiptId: "apply-receipt-daemon-rpc",
+				bootNonce: "boot-nonce-daemon-rpc-01",
+			},
+			cliPackageSpec: "clawdi@0.13.0-test",
+			manifestSource: {
+				type: "http",
+				url: `${server.url.origin}/v1/runtime/manifest`,
+				auth: { type: "bearer", token: API_KEY },
+			},
 		})}\n`,
 	);
 	return {
@@ -362,8 +370,9 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 		CLAWDI_NO_UPDATE_CHECK: "1",
 		CLAWDI_SERVE_MODE: "container",
 		CLAWDI_RUNTIME_MODE: "hosted",
+		CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS: "1",
+		CLAWDI_RUNTIME_TEST_CONTEXT_FILE: fixture.contextPath,
 		CLAWDI_RUNTIME_HOME: fixture.home,
-		CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: applyIdentityPath,
 		CLAWDI_RUN_DIR: fixture.runDir,
 		CLAWDI_SERVICE_STATE_DIR: fixture.serviceStateDir,
 		CLAWDI_STATE_DIR: fixture.stateDir,

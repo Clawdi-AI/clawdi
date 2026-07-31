@@ -20,6 +20,7 @@ import {
 	runtimePlanCommand,
 	runtimeStatusCommand,
 } from "../../src/commands/runtime";
+import { runtimeUserUid } from "../../src/runtime/runtime-user-command";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -27,6 +28,17 @@ let origHome: string | undefined;
 let origApiUrl: string | undefined;
 
 describe("runtime sidecar egress privilege drop", () => {
+	it("accepts the current numeric uid without a passwd entry", () => {
+		const previousRuntimeUid = process.env.CLAWDI_RUNTIME_UID;
+		delete process.env.CLAWDI_RUNTIME_UID;
+		try {
+			expect(runtimeUserUid("2147483646")).toBe(2_147_483_646);
+		} finally {
+			if (previousRuntimeUid === undefined) delete process.env.CLAWDI_RUNTIME_UID;
+			else process.env.CLAWDI_RUNTIME_UID = previousRuntimeUid;
+		}
+	});
+
 	it("checks the CA as the runtime user when convergence runs as root", () => {
 		expect(buildRuntimeUserReadCommand(0, 10001, "clawdi", "/run/clawdi/egress/ca.pem")).toEqual({
 			command: "gosu",

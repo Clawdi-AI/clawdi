@@ -5,7 +5,7 @@ import { writePrivateFileAtomic } from "../lib/private-file";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
 import type { RuntimePaths } from "./paths";
 import { getRuntimePaths } from "./paths";
-import { processRuntimeEnvironment, runtimeSecretValue } from "./secret-values";
+import { canonicalSecretRefSchema, runtimeSecretValue } from "./secret-values";
 
 export const runtimeNameSchema = z
 	.string()
@@ -28,7 +28,7 @@ export const runtimeRunSettingsSchema = z.object({
 	command: z.string().min(1).optional(),
 	args: z.array(z.string()).optional(),
 	env: z.record(envKeySchema, z.string()).default({}),
-	secretEnv: z.record(envKeySchema, z.string().min(1)).optional(),
+	secretEnv: z.record(envKeySchema, canonicalSecretRefSchema).optional(),
 	cwd: z.string().min(1).optional(),
 	prependPath: z.array(z.string().min(1)).default([]),
 });
@@ -47,7 +47,7 @@ const runtimeRunConfigSchema = z
 		command: z.string().min(1),
 		defaultArgs: z.array(z.string()).default([]),
 		env: z.record(envKeySchema, z.string()).default({}),
-		secretEnv: z.record(envKeySchema, z.string().min(1)).default({}),
+		secretEnv: z.record(envKeySchema, canonicalSecretRefSchema).default({}),
 		secretFilePath: z.string().min(1).nullable().default(null),
 		prependPath: z.array(z.string().min(1)).default([]),
 		cwd: z.string().min(1).optional(),
@@ -227,11 +227,7 @@ export function buildRuntimeRunInvocation(
 	const env = {
 		...baseEnv,
 		...read.config.env,
-		...runtimeSecretEnv(
-			read.config.secretFilePath,
-			read.config.secretEnv,
-			processRuntimeEnvironment(baseEnv),
-		),
+		...runtimeSecretEnv(read.config.secretFilePath, read.config.secretEnv),
 		...(read.config.secretFilePath && read.config.egressProfileBundlePath
 			? { CLAWDI_EGRESS_SECRET_FILE: read.config.secretFilePath }
 			: {}),
@@ -274,16 +270,14 @@ function defaultRuntimeArgs(runtime: RuntimeName): string[] {
 function runtimeSecretEnv(
 	secretFilePath: string | null,
 	secretEnv: Record<string, string>,
-	runtimeEnvironment: ReturnType<typeof processRuntimeEnvironment>,
 ): Record<string, string> {
 	const entries = Object.entries(secretEnv);
 	if (entries.length === 0) return {};
-	const fileBackedEntries = entries.filter(([, ref]) => !ref.startsWith("env://"));
-	if (fileBackedEntries.length > 0 && !secretFilePath) {
+	if (!secretFilePath) {
 		throw new Error("Runtime run config references secrets but has no secret file.");
 	}
 	let secrets: Record<string, unknown> = {};
-	if (fileBackedEntries.length > 0 && secretFilePath) {
+	if (secretFilePath) {
 		let rawSecrets: unknown;
 		try {
 			rawSecrets = JSON.parse(readFileSync(secretFilePath, "utf-8"));
@@ -299,7 +293,7 @@ function runtimeSecretEnv(
 	}
 	const env: Record<string, string> = {};
 	for (const [envName, ref] of entries) {
-		const value = runtimeSecretValue(secrets, ref, runtimeEnvironment);
+		const value = runtimeSecretValue(secrets, ref);
 		if (!value) {
 			throw new Error(`Runtime secret ${ref} for ${envName} is unavailable.`);
 		}

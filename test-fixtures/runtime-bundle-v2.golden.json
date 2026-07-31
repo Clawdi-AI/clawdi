@@ -44,7 +44,7 @@
 		"minimumCliVersion": "0.12.10-beta.57",
 		"providers": {
 			"managed": {
-				"apiKeySecretRef": "tool.codex.apiKey",
+				"apiKeySecretRef": "secret://tool.codex.apiKey",
 				"apiMode": "openai_chat",
 				"baseUrl": "https://provider.test/v1",
 				"kind": "openai-compatible",
@@ -82,7 +82,7 @@
 						"--force"
 					],
 					"secretEnv": {
-						"OPENCLAW_GATEWAY_TOKEN": "env://OPENCLAW_GATEWAY_TOKEN"
+						"OPENCLAW_GATEWAY_TOKEN": "secret://runtime/openclaw/gateway-token"
 					}
 				},
 				"services": {}
@@ -101,7 +101,7 @@
 			"openclawControlUiAllowedOrigins": ["https://agent.example.test"],
 			"openclawGatewayAuth": {
 				"mode": "token",
-				"tokenRef": "env://OPENCLAW_GATEWAY_TOKEN",
+				"tokenRef": "secret://runtime/openclaw/gateway-token",
 				"deviceAuthRequired": false,
 				"activation": {
 					"enabled": true,
@@ -117,7 +117,7 @@
 					"provider_id": "managed"
 				},
 				"provider": {
-					"apiKeySecretRef": "tool.codex.apiKey",
+					"apiKeySecretRef": "secret://tool.codex.apiKey",
 					"apiMode": "openai_responses",
 					"baseUrl": "https://provider.test/v1",
 					"kind": "openai-compatible",
@@ -131,9 +131,11 @@
 	},
 	"schemaVersion": "clawdi.hosted-runtime.bundle.v2",
 	"secretValues": {
-		"tool.codex.apiKey": "sk-provider-golden",
+		"secret://clawdi/auth-token": "runtime-auth-token-golden",
+		"secret://runtime/openclaw/gateway-token": "openclaw-gateway-token-golden",
+		"secret://tool.codex.apiKey": "sk-provider-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/agent-token": "123456789:telegram-agent-golden",
 		"secret://channels/telegram/clawdi_50000000000000000000000000000005/placeholder-token": "999999999:9ded1453047ec0a48ec3b735075f7448"
 	},
-	"sourceRevision": "da635b29601dbb9543e936faacd7864b6ff300651b452bd861181f06419edbd1"
+	"sourceRevision": "92ce3dc53e711aacac6a09f9e58b937cae51e093ff39c50c7fcc7dc749236d49"
 }

@@ -7,7 +7,7 @@ import {
 	runtimeRunSettingsSchema,
 	runtimeServiceNameSchema,
 } from "./run-config";
-import { canonicalSecretRefName } from "./secret-values";
+import { canonicalSecretRefName, canonicalSecretRefSchema } from "./secret-values";
 
 export const RUNTIME_DESIRED_STATE_SCHEMA_VERSION = "clawdi.runtimeDesiredState.v1";
 
@@ -18,7 +18,7 @@ export const OFFICIAL_INSTALL_URLS: Record<string, string> = {
 
 export const OFFICIAL_INSTALL_ARGS: Record<string, string[]> = {
 	openclaw: ["--json", "--no-onboard"],
-	hermes: ["--skip-setup", "--skip-browser", "--non-interactive"],
+	hermes: ["--skip-setup", "--skip-browser", "--no-skills", "--non-interactive"],
 };
 
 const hostedRuntimeChoiceSchema = z.enum(["openclaw", "hermes"]);
@@ -40,8 +40,8 @@ const hermesDashboardAuthSchema = z
 		mode: z.literal("password"),
 		provider: z.literal("basic"),
 		username: z.string().trim().min(1).max(128),
-		passwordSecretRef: z.literal("env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"),
-		sessionSecretRef: z.literal("env://HERMES_DASHBOARD_BASIC_AUTH_SECRET"),
+		passwordSecretRef: z.literal("secret://runtime/hermes/dashboard-password"),
+		sessionSecretRef: z.literal("secret://runtime/hermes/dashboard-session-secret"),
 		sessionTtlSeconds: z.number().int().min(60).max(604_800).default(43_200),
 		publicUrl: z.string().url(),
 		activation: z
@@ -65,7 +65,7 @@ const hermesDashboardAuthSchema = z
 const openclawGatewayAuthSchema = z
 	.object({
 		mode: z.literal("token"),
-		tokenRef: z.literal("env://OPENCLAW_GATEWAY_TOKEN"),
+		tokenRef: z.literal("secret://runtime/openclaw/gateway-token"),
 		deviceAuthRequired: z.literal(false),
 		activation: z
 			.object({
@@ -137,6 +137,7 @@ const cliPayloadPolicySchema = z.object({
 });
 
 const HOSTED_BOOTSTRAP_PACKAGE_ROOT = "/usr/local/share/clawdi/bootstrap/";
+export const HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE = `${HOSTED_BOOTSTRAP_PACKAGE_ROOT}clawdi-local.tgz`;
 
 function isHostedExactCliPackageSpec(value: string): boolean {
 	const npmVersion = /^clawdi@(.+)$/.exec(value)?.[1];
@@ -460,7 +461,7 @@ const hostedProviderAuthSchema = z
 		profile: z.string().min(1).optional(),
 		source: z.string().min(1).optional(),
 		ref: z.string().min(1).optional(),
-		credentialSecretRef: z.string().min(1).optional(),
+		credentialSecretRef: canonicalSecretRefSchema.optional(),
 		credentialRevision: z.string().min(1).max(64).optional(),
 	})
 	.strict()
@@ -485,7 +486,7 @@ const hostedProviderSchema = z
 		apiMode: z.string().min(1).optional(),
 		managed_by: z.string().min(1).optional(),
 		runtimeEnvName: z.string().min(1).optional(),
-		apiKeySecretRef: z.string().min(1).nullable().optional(),
+		apiKeySecretRef: canonicalSecretRefSchema.nullable().optional(),
 		apiKeyRequired: z.boolean().optional(),
 		status: z.literal("error").optional(),
 		error: z
@@ -843,7 +844,7 @@ export const hostedRuntimeBundleV2ManifestSchema = hostedRuntimeManifestBaseSche
 export const hostedRuntimeManifestResponseSchema = z
 	.object({
 		manifest: hostedRuntimeManifestSchema,
-		secretValues: z.record(z.string().min(1), z.string()).default({}),
+		secretValues: z.record(canonicalSecretRefSchema, z.string()).default({}),
 	})
 	.strict()
 	.superRefine((response, ctx) => {
@@ -874,7 +875,7 @@ const hostedRuntimeManifestFixtureSchema = hostedRuntimeManifestBaseSchema
 export const hostedRuntimeManifestFixtureResponseSchema = z
 	.object({
 		manifest: hostedRuntimeManifestFixtureSchema,
-		secretValues: z.record(z.string().min(1), z.string()).default({}),
+		secretValues: z.record(canonicalSecretRefSchema, z.string()).default({}),
 	})
 	.strict();
 

@@ -125,6 +125,11 @@ from app.services.channels import (
     sync_channel_commands,
     upsert_channel_secrets,
 )
+from app.services.hosted_runtime_secrets import (
+    hosted_runtime_secret_values_changed,
+    load_hosted_runtime_secrets_for_update,
+    sync_hosted_runtime_secret_values,
+)
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_API_MODE,
     MANAGED_AI_PROVIDER_LABEL,
@@ -1580,6 +1585,14 @@ async def _admin_upsert_runtime_state(
         )
     ).scalar_one_or_none()
     existing_state = state
+    secret_rows = await load_hosted_runtime_secrets_for_update(
+        db,
+        environment_id=environment_id,
+    )
+    secret_values_changed = hosted_runtime_secret_values_changed(
+        secret_rows,
+        body.secret_values,
+    )
     old_skill_ids = enabled_runtime_manifest_skill_ids(state.skills if state is not None else None)
     new_skill_ids = enabled_runtime_manifest_skill_ids(
         body.skills.model_dump(mode="json") if body.skills is not None else None
@@ -1629,6 +1642,8 @@ async def _admin_upsert_runtime_state(
     except OAuthCredentialClaimConflict as exc:
         await db.rollback()
         raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    if secret_values_changed:
+        changed_fields.append("secretValues")
     if existing_state is not None and body.generation == existing_state.generation:
         current_generation = existing_state.generation
         material_changes = [
@@ -1658,6 +1673,14 @@ async def _admin_upsert_runtime_state(
 
     for field, value in desired_state.items():
         setattr(state, field, value)
+    if secret_values_changed:
+        await db.flush()
+        await sync_hosted_runtime_secret_values(
+            db,
+            environment_id=environment_id,
+            rows=secret_rows,
+            desired=body.secret_values,
+        )
     record_control_plane_audit(
         db,
         actor_type="admin",
@@ -1680,6 +1703,8 @@ async def _admin_upsert_runtime_state(
             "has_mcp": body.mcp is not None,
             "has_skills": body.skills is not None,
             "has_tools": body.tools is not None,
+            "has_secret_values": bool(body.secret_values),
+            "secret_refs": sorted(body.secret_values),
             "changed_fields": changed_fields,
         },
     )

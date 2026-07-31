@@ -1,91 +1,34 @@
-import { normalizeSecretRef } from "./hosted-egress-profiles";
+import { z } from "zod";
 
-const ENV_SECRET_REF_PREFIX = "env://";
-const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SECRET_REF_PREFIX = "secret://";
+const SECRET_REF_PATTERN = /^secret:\/\/\S+$/;
 
-export interface ProcessRuntimeEnvironment {
-	kind: "process-environment";
-	values: Readonly<Record<string, string | undefined>>;
-}
-
-export interface ProjectedRuntimeEnvironment {
-	kind: "projected-environment";
-	values: Readonly<Record<string, string>>;
-}
-
-export type RuntimeEnvironmentAuthority = ProcessRuntimeEnvironment | ProjectedRuntimeEnvironment;
-
-export function processRuntimeEnvironment(
-	values: Readonly<Record<string, string | undefined>> = process.env,
-): ProcessRuntimeEnvironment {
-	return { kind: "process-environment", values };
-}
-
-export function projectedRuntimeEnvironment(
-	values: Readonly<Record<string, string>>,
-): ProjectedRuntimeEnvironment {
-	return { kind: "projected-environment", values: { ...values } };
-}
-
-export function envSecretRefName(ref: string): string | null {
-	if (!ref.startsWith(ENV_SECRET_REF_PREFIX)) return null;
-	const envName = ref.slice(ENV_SECRET_REF_PREFIX.length);
-	return ENV_KEY_RE.test(envName) ? envName : null;
-}
-
-export function isEnvSecretRef(ref: string): boolean {
-	return envSecretRefName(ref) !== null;
-}
+export const canonicalSecretRefSchema = z
+	.string()
+	.regex(SECRET_REF_PATTERN, "must be a canonical non-empty secret:// reference");
 
 export function normalizeSecretValues(
 	secretValues: Record<string, string> | undefined,
 ): Record<string, string> {
-	const canonicalValues = new Map<string, string>();
-	for (const [ref, value] of Object.entries(secretValues ?? {})) {
-		if (isEnvSecretRef(ref)) continue;
-		const secretRef = normalizeSecretRef(ref);
-		if (!secretRef) continue;
-		const existing = canonicalValues.get(secretRef);
-		if (existing !== undefined && existing !== value) {
-			throw new Error(`conflicting secret values for ${secretRef}`);
-		}
-		canonicalValues.set(secretRef, value);
-	}
-
 	const normalized: Record<string, string> = {};
 	for (const [ref, value] of Object.entries(secretValues ?? {})) {
+		if (canonicalSecretRefName(ref) === null) {
+			throw new Error(`runtime secret value key must be a canonical secret:// reference: ${ref}`);
+		}
+		if (!value) throw new Error(`runtime secret value must be non-empty: ${ref}`);
 		normalized[ref] = value;
-	}
-	for (const [secretRef, value] of canonicalValues) {
-		normalized[secretRef] = value;
 	}
 	return normalized;
 }
 
 export function canonicalSecretRefName(ref: string | null | undefined): string | null {
-	const normalized = normalizeSecretRef(ref ?? undefined);
-	return normalized?.startsWith("secret://") ? normalized.slice("secret://".length) : null;
+	if (!ref || !SECRET_REF_PATTERN.test(ref)) return null;
+	const name = ref.slice(SECRET_REF_PREFIX.length);
+	return name;
 }
 
-export function runtimeSecretValue(
-	secrets: Record<string, unknown>,
-	ref: string,
-	runtimeEnvironment: RuntimeEnvironmentAuthority,
-): string | null {
-	const envName = envSecretRefName(ref);
-	if (envName) {
-		const value = runtimeEnvironment.values[envName]?.trim();
-		return value ? value : null;
-	}
-	const normalized = normalizeSecretRef(ref);
-	const raw = ref.startsWith("secret://") ? ref.slice("secret://".length) : null;
-	const candidates = [ref, normalized, raw].filter(
-		(candidate, index, values): candidate is string =>
-			Boolean(candidate) && values.indexOf(candidate) === index,
-	);
-	for (const candidate of candidates) {
-		const value = secrets[candidate];
-		if (typeof value === "string" && value.length > 0) return value;
-	}
-	return null;
+export function runtimeSecretValue(secrets: Record<string, unknown>, ref: string): string | null {
+	if (canonicalSecretRefName(ref) === null) return null;
+	const value = secrets[ref];
+	return typeof value === "string" && value.length > 0 ? value : null;
 }

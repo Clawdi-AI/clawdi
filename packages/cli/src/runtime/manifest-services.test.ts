@@ -20,7 +20,6 @@ import {
 import { manifestSecretRefs, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
-import { projectedRuntimeEnvironment } from "./secret-values";
 
 const originalEnv = { ...process.env };
 const originalConsoleWarn = console.warn;
@@ -31,25 +30,23 @@ function convergeRuntimeManifest(
 	paths: RuntimePaths,
 	opts?: Parameters<typeof convergeRuntimeManifestWithContext>[2],
 ) {
-	const runtimeEnvironment = projectedRuntimeEnvironment(
-		Object.fromEntries(
-			Object.entries(process.env).filter(
-				(entry): entry is [string, string] => entry[1] !== undefined,
-			),
-		),
-	);
 	return convergeRuntimeManifestWithContext(
 		{
 			...load,
 			applyContext: load.applyContext ?? {
-				kind: "identity-file",
+				kind: "context-file",
 				identity: {
 					generation: load.manifest.applyGeneration ?? load.manifest.generation,
 					manifestETag: `"test-${load.manifest.generation}"`,
 					applyReceiptId: "test-apply-receipt",
 					bootNonce: "test-boot-nonce",
 				},
-				runtimeEnvironment,
+				cliPackageSpec: "clawdi@1.2.3",
+				manifestSource: {
+					type: "http",
+					url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
+					auth: { type: "bearer", token: "test-token" },
+				},
 			},
 		},
 		paths,
@@ -67,7 +64,6 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 	process.env.CLAWDI_HOME = join(root, "clawdi-home");
 	process.env.CLAWDI_AUTH_TOKEN = "test-token";
-	process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
 	return getRuntimePaths({ mode: "hosted" });
 }
 
@@ -253,7 +249,6 @@ function officialServiceHarness(): InstallGateHarness {
 	const command = join(paths.userHome, ".local", "bin", "hermes");
 	const unitPath = join(paths.systemdUserRoot, "hermes-gateway.service");
 	const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
-	process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 	process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
 	writeFakeSystemctl({ path: systemctlCommand, logPath });
 	const writeCli = (failInstall = false) =>
@@ -268,13 +263,16 @@ function officialServiceHarness(): InstallGateHarness {
 	writeCli();
 	const load: RuntimeManifestLoad = {
 		manifest: installGateManifest(paths, "hermes", command),
-		source: "fixture-file",
+		source: "remote-datasource",
 		sourcePath: "inline-service-receipt",
 		offline: false,
 	};
 	return {
 		converge: (commitAuthority) =>
-			convergeRuntimeManifest(load, paths, commitAuthority ? { commitAuthority } : {}),
+			convergeRuntimeManifest(load, paths, {
+				...(commitAuthority ? { commitAuthority } : {}),
+				executeOfficialServiceInstallers: true,
+			}),
 		drift: () => chmodSync(unitPath, 0o600),
 		failNextInstall: () => writeCli(true),
 		restoreInstaller: () => writeCli(),
@@ -300,7 +298,7 @@ function channelPluginHarness(): InstallGateHarness {
 	});
 	const load: RuntimeManifestLoad = {
 		manifest: installGateManifest(paths, "openclaw", command),
-		source: "fixture-file",
+		source: "remote-datasource",
 		sourcePath: "inline-plugin-receipt",
 		offline: false,
 		secretValues: {},
@@ -394,10 +392,11 @@ describe("runtime manifest services", () => {
 		};
 		const load: RuntimeManifestLoad = {
 			manifest,
-			source: "fixture-file",
+			source: "remote-datasource",
 			sourcePath: "inline-test",
 			offline: false,
 			secretValues: {
+				"secret://clawdi/auth-token": "test-token",
 				"secret://runtime/openclaw": "runtime-byok-value",
 				"secret://service/hermes-dashboard": "service-byok-value",
 			},
@@ -517,7 +516,6 @@ describe("runtime manifest services", () => {
 		process.env.HERMES_DASHBOARD_BASIC_AUTH_SECRET = "stale-dashboard-session-secret";
 		process.env.RUNTIME_SOURCE_TOKEN = "stale-runtime-source-token";
 		process.env.UNRELATED_RUNTIME_SECRET = "must-not-be-exposed";
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const warnings: string[] = [];
 		console.warn = (...values: unknown[]) => {
 			warnings.push(values.map(String).join(" "));
@@ -536,8 +534,8 @@ describe("runtime manifest services", () => {
 				mode: "password",
 				provider: "basic",
 				username: "admin",
-				passwordSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-				sessionSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+				passwordSecretRef: "secret://runtime/hermes/dashboard-password",
+				sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret",
 				sessionTtlSeconds: 43_200,
 				publicUrl: "https://agent.example.test/hermes",
 				activation: {
@@ -551,7 +549,7 @@ describe("runtime manifest services", () => {
 					run: {
 						...runSettings("hermes", ["gateway", "run", "--replace"]),
 						secretEnv: {
-							RUNTIME_TARGET_TOKEN: "env://RUNTIME_SOURCE_TOKEN",
+							RUNTIME_TARGET_TOKEN: "secret://runtime/source-token",
 							RUNTIME_BUNDLE_TOKEN: "secret://runtime/token",
 						},
 					},
@@ -569,30 +567,32 @@ describe("runtime manifest services", () => {
 			},
 			recovery: {},
 		};
-		const projectedValues = {
-			CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-			CLAWDI_AUTH_TOKEN: "test-token",
-			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "dashboard-password",
-			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "dashboard-session-secret",
-			RUNTIME_SOURCE_TOKEN: "runtime-source-token",
-		};
 		const applyContext = {
-			kind: "identity-file" as const,
+			kind: "context-file" as const,
 			identity: {
 				generation: 1,
 				manifestETag: '"manifest-1"',
 				applyReceiptId: "apply-receipt-0001",
 				bootNonce: "boot-nonce-000001",
 			},
-			runtimeEnvironment: projectedRuntimeEnvironment(projectedValues),
+			cliPackageSpec: "clawdi@1.2.3",
+			manifestSource: {
+				type: "http" as const,
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
+				auth: { type: "bearer" as const, token: "test-token" },
+			},
 		};
 		const load: RuntimeManifestLoad = {
 			manifest,
-			source: "fixture-file",
+			source: "remote-datasource",
 			sourcePath: "inline-hermes-single",
 			offline: false,
 			applyContext,
 			secretValues: {
+				"secret://clawdi/auth-token": "test-token",
+				"secret://runtime/hermes/dashboard-password": "opaque-password-value",
+				"secret://runtime/hermes/dashboard-session-secret": "opaque-session-value",
+				"secret://runtime/source-token": "runtime-source-token",
 				"secret://runtime/token": "bundle-runtime-token",
 				"secret://unrelated": "unrelated-inline-secret",
 			},
@@ -642,8 +642,8 @@ describe("runtime manifest services", () => {
 		const watchEnvPath = join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env");
 		const watchEnvStat = statSync(watchEnvPath);
 		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_USERNAME="admin"');
-		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"');
-		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"');
+		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="opaque-password-value"');
+		expect(dashboardEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="opaque-session-value"');
 		expect(dashboardEnv).toContain(
 			'HERMES_DASHBOARD_PUBLIC_URL="https://agent.example.test/hermes"',
 		);
@@ -656,13 +656,13 @@ describe("runtime manifest services", () => {
 			HERMES_DASHBOARD_PUBLIC_URL: "https://agent.example.test/hermes",
 		});
 		expect(dashboardRunConfig.secretEnv).toMatchObject({
-			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+			HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "secret://runtime/hermes/dashboard-password",
+			HERMES_DASHBOARD_BASIC_AUTH_SECRET: "secret://runtime/hermes/dashboard-session-secret",
 		});
 		expect(gatewayEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
 		expect(gatewayEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
-		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="dashboard-password"');
-		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="dashboard-session-secret"');
+		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_PASSWORD="opaque-password-value"');
+		expect(watchEnv).toContain('HERMES_DASHBOARD_BASIC_AUTH_SECRET="opaque-session-value"');
 		expect(watchEnv).toContain('RUNTIME_TARGET_TOKEN="runtime-source-token"');
 		expect(watchEnv).toContain('RUNTIME_BUNDLE_TOKEN="bundle-runtime-token"');
 		expect(watchEnv).not.toContain("RUNTIME_SOURCE_TOKEN");
@@ -671,8 +671,8 @@ describe("runtime manifest services", () => {
 		expect(watchEnv).not.toContain("unrelated-inline-secret");
 		expect(watchUnit).toContain(`EnvironmentFile=${watchEnvPath}`);
 		for (const secret of [
-			"dashboard-password",
-			"dashboard-session-secret",
+			"opaque-password-value",
+			"opaque-session-value",
 			"runtime-source-token",
 			"bundle-runtime-token",
 		]) {
@@ -691,13 +691,13 @@ describe("runtime manifest services", () => {
 						{ encoding: "utf8" },
 					);
 					expect(nonRootRead.status).not.toBe(0);
-					expect(nonRootRead.stdout).not.toContain("dashboard-password");
+					expect(nonRootRead.stdout).not.toContain("opaque-password-value");
 				}
 			}
 		}
 		const convergenceDiagnostics = JSON.stringify(result);
-		expect(convergenceDiagnostics).not.toContain("dashboard-password");
-		expect(convergenceDiagnostics).not.toContain("dashboard-session-secret");
+		expect(convergenceDiagnostics).not.toContain("opaque-password-value");
+		expect(convergenceDiagnostics).not.toContain("opaque-session-value");
 		expect(convergenceDiagnostics).not.toContain("runtime-source-token");
 		expect(convergenceDiagnostics).not.toContain("bundle-runtime-token");
 		const hermesConfig = readFileSync(join(paths.userHome, ".hermes", "config.yaml"), "utf8");
@@ -707,20 +707,17 @@ describe("runtime manifest services", () => {
 		expect(hermesConfig).toContain("dashboard_auth/nous");
 		expect(hermesConfig).toContain("dashboard_auth/self_hosted");
 		expect(hermesConfig).not.toContain("dashboard_auth/basic\n");
-		expect(hermesConfig).not.toContain("dashboard-password");
+		expect(hermesConfig).not.toContain("opaque-password-value");
 		expect(hermesConfig).not.toContain("dashboard-session-secret");
 		expect(existsSync(runtimeRunConfigPath("openclaw", paths))).toBe(false);
 
 		const rotated = convergeRuntimeManifest(
 			{
 				...load,
-				applyContext: {
-					...applyContext,
-					runtimeEnvironment: projectedRuntimeEnvironment({
-						...projectedValues,
-						HERMES_DASHBOARD_BASIC_AUTH_PASSWORD: "rotated-dashboard-password",
-						HERMES_DASHBOARD_BASIC_AUTH_SECRET: "rotated-dashboard-session-secret",
-					}),
+				secretValues: {
+					...load.secretValues,
+					"secret://runtime/hermes/dashboard-password": "rotated-dashboard-password",
+					"secret://runtime/hermes/dashboard-session-secret": "rotated-dashboard-session-secret",
 				},
 			},
 			paths,
@@ -764,18 +761,14 @@ describe("runtime manifest services", () => {
 		const sourceChangedManifest = structuredClone(manifest);
 		const sourceChangedRun = sourceChangedManifest.runtimes.hermes?.run;
 		if (!sourceChangedRun?.secretEnv) throw new Error("expected Hermes secret env");
-		process.env.NEXT_RUNTIME_SOURCE_TOKEN = "next-runtime-source-value";
-		sourceChangedRun.secretEnv.RUNTIME_TARGET_TOKEN = "env://NEXT_RUNTIME_SOURCE_TOKEN";
+		sourceChangedRun.secretEnv.RUNTIME_TARGET_TOKEN = "secret://runtime/next-source-token";
 		const sourceChanged = convergeRuntimeManifest(
 			{
 				...load,
 				manifest: sourceChangedManifest,
-				applyContext: {
-					...applyContext,
-					runtimeEnvironment: projectedRuntimeEnvironment({
-						...projectedValues,
-						NEXT_RUNTIME_SOURCE_TOKEN: "next-runtime-source-value",
-					}),
+				secretValues: {
+					...load.secretValues,
+					"secret://runtime/next-source-token": "next-runtime-source-value",
 				},
 			},
 			paths,
@@ -805,8 +798,8 @@ describe("runtime manifest services", () => {
 				mode: "password",
 				provider: "basic",
 				username: "admin",
-				passwordSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-				sessionSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+				passwordSecretRef: "secret://runtime/hermes/dashboard-password",
+				sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret",
 				sessionTtlSeconds: 43_200,
 				publicUrl: "https://agent.example.test/hermes",
 				activation: { enabled: true, capability: "hermes-basic-auth-v1" },
@@ -819,12 +812,12 @@ describe("runtime manifest services", () => {
 					primary_model: { provider_id: "selected", model: "model-1" },
 					run: {
 						...runSettings("hermes", ["gateway", "run"]),
-						secretEnv: { ACTIVE: "env://ACTIVE_RUNTIME_SECRET" },
+						secretEnv: { ACTIVE: "secret://runtime/active" },
 					},
 					services: {
 						dashboard: {
 							...runSettings("hermes", ["dashboard"]),
-							secretEnv: { SERVICE: "env://ACTIVE_SERVICE_SECRET" },
+							secretEnv: { SERVICE: "secret://runtime/active-service" },
 						},
 					},
 				},
@@ -832,7 +825,7 @@ describe("runtime manifest services", () => {
 					enabled: false,
 					run: {
 						...runSettings("openclaw", ["gateway", "run"]),
-						secretEnv: { DISABLED: "env://DISABLED_RUNTIME_SECRET" },
+						secretEnv: { DISABLED: "secret://runtime/disabled" },
 					},
 					services: {},
 				},
@@ -842,11 +835,11 @@ describe("runtime manifest services", () => {
 					selected: {
 						baseUrl: "https://provider.example.test/v1",
 						managed_by: "user",
-						apiKeySecretRef: "env://SELECTED_PROVIDER_SECRET",
+						apiKeySecretRef: "secret://providers/selected/api-key",
 					},
-					unselected: { apiKeySecretRef: "env://UNSELECTED_PROVIDER_SECRET" },
+					unselected: { apiKeySecretRef: "secret://providers/unselected/api-key" },
 				},
-				tools: { opaqueSecretRef: "env://OPAQUE_PROJECTION_SECRET" },
+				tools: { opaqueSecretRef: "secret://tools/opaque" },
 			},
 			egressProfiles: {
 				profiles: [
@@ -894,12 +887,12 @@ describe("runtime manifest services", () => {
 		};
 
 		expect(manifestSecretRefs(manifest)).toEqual([
-			"env://ACTIVE_RUNTIME_SECRET",
-			"env://ACTIVE_SERVICE_SECRET",
-			"env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-			"env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
-			"env://SELECTED_PROVIDER_SECRET",
 			"secret://active/profile",
+			"secret://providers/selected/api-key",
+			"secret://runtime/active",
+			"secret://runtime/active-service",
+			"secret://runtime/hermes/dashboard-password",
+			"secret://runtime/hermes/dashboard-session-secret",
 		]);
 
 		const inactiveManifest = structuredClone(manifest);
@@ -909,9 +902,8 @@ describe("runtime manifest services", () => {
 		expect(manifestSecretRefs(inactiveManifest)).toEqual([]);
 	});
 
-	test("fails closed when an enabled consumer's env secret source is missing", () => {
+	test("fails closed when an enabled consumer's canonical bundle secret is missing", () => {
 		const paths = tempRuntimePaths();
-		delete process.env.RUNTIME_WATCH_REQUIRED_SECRET;
 		const manifest: RuntimeManifest = {
 			schemaVersion: "clawdi.runtimeDesiredState.v1",
 			deploymentId: "hdep_watch_missing_secret",
@@ -926,7 +918,7 @@ describe("runtime manifest services", () => {
 					run: {
 						...runSettings("openclaw", ["gateway", "run"]),
 						secretEnv: {
-							RUNTIME_TARGET_SECRET: "env://RUNTIME_WATCH_REQUIRED_SECRET",
+							RUNTIME_TARGET_SECRET: "secret://runtime/watch-required",
 						},
 					},
 					services: {},
@@ -939,18 +931,14 @@ describe("runtime manifest services", () => {
 			convergeRuntimeManifest(
 				{
 					manifest,
-					source: "fixture-file",
+					source: "remote-datasource",
 					sourcePath: "inline-watch-missing-secret",
 					offline: false,
-					secretValues: {
-						"env://RUNTIME_WATCH_REQUIRED_SECRET": "must-not-substitute-bundle-value",
-					},
+					secretValues: {},
 				},
 				paths,
 			),
-		).toThrow(
-			"Runtime secret env://RUNTIME_WATCH_REQUIRED_SECRET for RUNTIME_TARGET_SECRET is unavailable.",
-		);
+		).toThrow("Runtime secret secret://runtime/watch-required is unavailable.");
 		expect(existsSync(join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"))).toBe(false);
 	});
 
@@ -960,7 +948,6 @@ describe("runtime manifest services", () => {
 			secretValues: Record<string, string>,
 		) => {
 			const paths = tempRuntimePaths();
-			process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 			const runtimeSettings: RuntimeManifest["runtimes"] = {
 				hermes: {
 					enabled: true,
@@ -999,7 +986,7 @@ describe("runtime manifest services", () => {
 				result: convergeRuntimeManifest(
 					{
 						manifest,
-						source: "fixture-file",
+						source: "remote-datasource",
 						sourcePath: "inline-conflicting-watch-secrets",
 						offline: false,
 						secretValues,
@@ -1010,6 +997,7 @@ describe("runtime manifest services", () => {
 		};
 
 		const conflictingValues = {
+			"secret://clawdi/auth-token": "test-token",
 			"secret://runtime/hermes": "hermes-secret",
 			"secret://runtime/openclaw": "openclaw-secret",
 		};
@@ -1026,6 +1014,7 @@ describe("runtime manifest services", () => {
 		expect(expectedError).not.toContain("openclaw-secret");
 
 		const deduplicated = converge(["openclaw", "hermes"], {
+			"secret://clawdi/auth-token": "test-token",
 			"secret://runtime/hermes": "shared-secret",
 			"secret://runtime/openclaw": "shared-secret",
 		});
@@ -1043,7 +1032,6 @@ describe("runtime manifest services", () => {
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
 		writeFakeSystemctl({ path: systemctlCommand, logPath });
 		for (const [runtime, command] of [
@@ -1096,7 +1084,7 @@ describe("runtime manifest services", () => {
 		const result = convergeRuntimeManifest(
 			{
 				manifest,
-				source: "fixture-file",
+				source: "remote-datasource",
 				sourcePath: "inline-installer-order",
 				offline: false,
 			},
@@ -1185,7 +1173,6 @@ describe("runtime manifest services", () => {
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
 		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
 		writeFakeSystemctl({ path: systemctlCommand, logPath, resetFailedExitCode: 37 });
 		writeFakeGatewayCli({
@@ -1235,20 +1222,22 @@ describe("runtime manifest services", () => {
 		const enabled = convergeRuntimeManifest(
 			{
 				manifest: enabledManifest,
-				source: "fixture-file",
+				source: "remote-datasource",
 				sourcePath: "inline-enabled",
 				offline: false,
 			},
 			paths,
+			{ executeOfficialServiceInstallers: true },
 		);
 		const disabled = convergeRuntimeManifest(
 			{
 				manifest: disabledManifest,
-				source: "fixture-file",
+				source: "remote-datasource",
 				sourcePath: "inline-disabled",
 				offline: false,
 			},
 			paths,
+			{ executeOfficialServiceInstallers: true },
 		);
 
 		expect(enabled.installErrors).toEqual([]);
@@ -1260,6 +1249,7 @@ describe("runtime manifest services", () => {
 			"systemctl --user daemon-reload",
 			"systemctl --user reset-failed openclaw-gateway.service",
 			"openclaw gateway install --force --json",
+			"systemctl --user daemon-reload",
 			"hermes gateway uninstall",
 			"openclaw gateway uninstall",
 		]);
@@ -1283,7 +1273,6 @@ describe("runtime manifest services", () => {
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const hermesCommand = join(paths.userHome, ".local", "bin", "hermes");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 		process.env.CLAWDI_SYSTEMD_APPLY = "0";
 		writeFakeGatewayCli({
 			path: openclawCommand,
@@ -1324,7 +1313,7 @@ describe("runtime manifest services", () => {
 		const result = convergeRuntimeManifest(
 			{
 				manifest,
-				source: "fixture-file",
+				source: "remote-datasource",
 				sourcePath: "inline-no-systemd",
 				offline: false,
 			},
@@ -1391,7 +1380,7 @@ cat > '${logPath}'
 		const result = convergeRuntimeManifest(
 			{
 				manifest,
-				source: "fixture-file",
+				source: "remote-datasource",
 				sourcePath: "inline-locale-no-systemd",
 				offline: false,
 			},
@@ -1416,7 +1405,6 @@ cat > '${logPath}'
 			"openclaw-gateway.service.d",
 			"10-clawdi-hosted.conf",
 		);
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
 		writeFakeSystemctl({ path: systemctlCommand, logPath });
 		const manifest: RuntimeManifest = {
@@ -1439,7 +1427,7 @@ cat > '${logPath}'
 		};
 		const load = (sourcePath: string, generation: number): RuntimeManifestLoad => ({
 			manifest: { ...manifest, generation },
-			source: "fixture-file",
+			source: "remote-datasource",
 			sourcePath,
 			offline: false,
 		});
@@ -1454,6 +1442,7 @@ cat > '${logPath}'
 		let authorityCommits = 0;
 		let finalActivations = 0;
 		const failedFirstInstall = convergeRuntimeManifest(load("inline-install-failure", 1), paths, {
+			executeOfficialServiceInstallers: true,
 			commitAuthority: () => {
 				authorityCommits += 1;
 			},
@@ -1475,7 +1464,7 @@ cat > '${logPath}'
 		);
 		expect(existsSync(paths.managedConfig)).toBe(false);
 		expect(existsSync(manifest.workspaceRoot ?? "")).toBe(false);
-		expect(existsSync(dropInPath)).toBe(true);
+		expect(existsSync(dropInPath)).toBe(false);
 		expect(authorityCommits).toBe(0);
 		expect(finalActivations).toBe(0);
 		expect(
@@ -1488,7 +1477,9 @@ cat > '${logPath}'
 			runtime: "openclaw",
 			unitPath,
 		});
-		const installed = convergeRuntimeManifest(load("inline-install-recovered", 2), paths);
+		const installed = convergeRuntimeManifest(load("inline-install-recovered", 2), paths, {
+			executeOfficialServiceInstallers: true,
+		});
 		expect(installed.installErrors).toEqual([]);
 		expect(existsSync(unitPath)).toBe(true);
 		expect(existsSync(dropInPath)).toBe(true);
@@ -1501,7 +1492,9 @@ cat > '${logPath}'
 			unitPath,
 			failInstall: true,
 		});
-		const failedReinstall = convergeRuntimeManifest(load("inline-reinstall-failure", 3), paths);
+		const failedReinstall = convergeRuntimeManifest(load("inline-reinstall-failure", 3), paths, {
+			executeOfficialServiceInstallers: true,
+		});
 		expect(failedReinstall.installErrors.join("\n")).toContain(
 			"official openclaw-gateway service install failed",
 		);
@@ -1511,12 +1504,11 @@ cat > '${logPath}'
 		expect(failedReinstall.outputs.systemdUserUnits).toEqual([]);
 	});
 
-	test("keeps stale official gateway drop-ins when official uninstall fails", () => {
+	test("commits disabled authority before deferring a failed official uninstall", () => {
 		const paths = tempRuntimePaths();
 		const logPath = join(paths.runRoot, "official-service-commands.log");
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const systemctlCommand = join(paths.runRoot, "bin", "systemctl");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 		process.env.CLAWDI_SYSTEMCTL_PATH = systemctlCommand;
 		writeFakeSystemctl({ path: systemctlCommand, logPath });
 		writeFakeGatewayCli({
@@ -1555,35 +1547,44 @@ cat > '${logPath}'
 		const enabled = convergeRuntimeManifest(
 			{
 				manifest: enabledManifest,
-				source: "fixture-file",
+				source: "remote-datasource",
 				sourcePath: "inline-enabled-failure",
 				offline: false,
 			},
 			paths,
+			{ executeOfficialServiceInstallers: true },
 		);
-		const previousManagedConfig = readFileSync(paths.managedConfig, "utf-8");
+		const warnings: string[] = [];
+		console.warn = (message?: unknown) => warnings.push(String(message));
+		let disabledCommits = 0;
 		const disabled = convergeRuntimeManifest(
 			{
 				manifest: disabledManifest,
-				source: "fixture-file",
+				source: "remote-datasource",
 				sourcePath: "inline-disabled-failure",
 				offline: false,
 			},
 			paths,
+			{
+				commitAuthority: () => disabledCommits++,
+				executeOfficialServiceInstallers: true,
+			},
 		);
 
 		expect(enabled.installErrors).toEqual([]);
-		expect(disabled.installErrors.join("\n")).toContain(
-			"official openclaw-gateway.service uninstall failed",
-		);
-		expect(readFileSync(paths.managedConfig, "utf-8")).toBe(previousManagedConfig);
+		expect(disabled.installErrors).toEqual([]);
+		expect(disabledCommits).toBe(1);
+		expect(JSON.parse(readFileSync(paths.managedConfig, "utf-8"))).toMatchObject({
+			generation: 2,
+		});
+		expect(warnings.join("\n")).toContain("post-commit official runtime service cleanup deferred");
 		expect(disabled.outputs.systemdUserUnits).toEqual([]);
 		expect(existsSync(join(paths.systemdUserRoot, "openclaw-gateway.service"))).toBe(true);
 		expect(
 			existsSync(
 				join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
 			),
-		).toBe(true);
-		expect(existsSync(join(paths.systemdEnvRoot, "openclaw-gateway.service.env"))).toBe(true);
+		).toBe(false);
+		expect(existsSync(join(paths.systemdEnvRoot, "openclaw-gateway.service.env"))).toBe(false);
 	});
 });
