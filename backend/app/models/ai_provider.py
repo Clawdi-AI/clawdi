@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -118,8 +119,8 @@ class AiProviderOAuthAttempt(Base, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="pending")
     base_credential_revision: Mapped[str | None] = mapped_column(String(64))
     state_sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
-    encrypted_flow_payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    flow_payload_nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    encrypted_flow_payload: Mapped[bytes | None] = mapped_column(LargeBinary)
+    flow_payload_nonce: Mapped[bytes | None] = mapped_column(LargeBinary)
     receipt: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     exchange_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -134,6 +135,17 @@ class AiProviderOAuthAttempt(Base, TimestampMixin):
             "status IN ('pending', 'exchanging', 'committed', 'failed')",
             name="ck_ai_provider_oauth_attempts_status",
         ),
+        CheckConstraint(
+            "((status IN ('pending', 'exchanging')) AND encrypted_flow_payload IS NOT NULL AND "
+            "flow_payload_nonce IS NOT NULL) OR ((status IN ('committed', 'failed')) AND "
+            "encrypted_flow_payload IS NULL AND flow_payload_nonce IS NULL)",
+            name="ck_ai_provider_oauth_attempts_material",
+        ),
+        Index(
+            "ix_ai_provider_oauth_attempts_terminal_completed_at",
+            "completed_at",
+            postgresql_where="status IN ('committed', 'failed')",
+        ),
     )
 
 
@@ -141,9 +153,9 @@ class AiProviderOAuthRevokeTombstone(Base, TimestampMixin):
     __tablename__ = "ai_provider_oauth_revoke_tombstones"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # Audit identity only: revocation obligations must survive User deletion.
     owner_user_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -178,13 +190,18 @@ class AiProviderOAuthRevokeTombstone(Base, TimestampMixin):
             name="ck_ai_provider_oauth_revoke_token_type",
         ),
         CheckConstraint(
-            "status IN ('pending', 'processing', 'revoked', 'cancelled')",
+            "status IN ('pending', 'processing', 'revoked', 'cancelled', 'quarantined')",
             name="ck_ai_provider_oauth_revoke_status",
         ),
         CheckConstraint(
             "((status IN ('pending', 'processing')) AND encrypted_token IS NOT NULL AND "
-            "token_nonce IS NOT NULL) OR ((status IN ('revoked', 'cancelled')) AND "
+            "token_nonce IS NOT NULL) OR ((status IN ('revoked', 'cancelled', 'quarantined')) AND "
             "encrypted_token IS NULL AND token_nonce IS NULL)",
             name="ck_ai_provider_oauth_revoke_material",
+        ),
+        Index(
+            "ix_ai_provider_oauth_revoke_tombstones_terminal_updated_at",
+            "updated_at",
+            postgresql_where="status IN ('cancelled', 'revoked', 'quarantined')",
         ),
     )

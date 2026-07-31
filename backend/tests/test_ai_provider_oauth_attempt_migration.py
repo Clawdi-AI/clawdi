@@ -48,6 +48,21 @@ async def test_ai_provider_oauth_attempt_migration_preserves_revoke_compensation
             )
             migration.op = Operations(MigrationContext.configure(sync_conn))
             migration.upgrade()
+            terminal_indexes = set(
+                sync_conn.scalars(
+                    sa.text(
+                        "SELECT indexname FROM pg_indexes "
+                        "WHERE schemaname = :schema AND indexname IN ("
+                        "'ix_ai_provider_oauth_attempts_terminal_completed_at', "
+                        "'ix_ai_provider_oauth_revoke_tombstones_terminal_updated_at')"
+                    ),
+                    {"schema": schema},
+                )
+            )
+            assert terminal_indexes == {
+                "ix_ai_provider_oauth_attempts_terminal_completed_at",
+                "ix_ai_provider_oauth_revoke_tombstones_terminal_updated_at",
+            }
             sync_conn.execute(sa.text("INSERT INTO users (id) VALUES (:id)"), {"id": user_id})
             sync_conn.execute(
                 sa.text(
@@ -61,13 +76,11 @@ async def test_ai_provider_oauth_attempt_migration_preserves_revoke_compensation
                     INSERT INTO ai_provider_oauth_attempts (
                         id, flow_id, owner_user_id, provider_row_id, provider_id,
                         oauth_provider, auth_profile, flow_kind, status,
-                        state_sha256, encrypted_flow_payload, flow_payload_nonce,
-                        expires_at
+                        state_sha256, expires_at, completed_at
                     ) VALUES (
                         :id, :flow_id, :owner_user_id, :provider_row_id, 'openai-codex',
                         'codex', 'default', 'authorization_code', 'failed',
-                        :state_sha256, :encrypted_flow_payload, :flow_payload_nonce,
-                        now() + interval '5 minutes'
+                        :state_sha256, now() + interval '5 minutes', now()
                     )
                     """
                 ),
@@ -77,8 +90,6 @@ async def test_ai_provider_oauth_attempt_migration_preserves_revoke_compensation
                     "owner_user_id": user_id,
                     "provider_row_id": provider_row_id,
                     "state_sha256": "a" * 64,
-                    "encrypted_flow_payload": b"flow",
-                    "flow_payload_nonce": b"nonce",
                 },
             )
             sync_conn.execute(
@@ -122,7 +133,13 @@ async def test_ai_provider_oauth_attempt_migration_preserves_revoke_compensation
                 sync_conn.scalar(
                     sa.text("SELECT count(*) FROM ai_provider_oauth_revoke_tombstones")
                 )
-                == 0
+                == 1
+            )
+            assert (
+                sync_conn.scalar(
+                    sa.text("SELECT owner_user_id FROM ai_provider_oauth_revoke_tombstones")
+                )
+                == user_id
             )
             migration.downgrade()
         finally:

@@ -61,6 +61,7 @@ from app.routes.skills import router as skills_router
 from app.routes.skills import scope_router as skills_scope_router
 from app.routes.sync import router as sync_router
 from app.routes.vault import router as vault_router
+from app.services.ai_provider_auth_transition import OAuthCredentialPayloadCorruptError
 from app.services.composio import close_composio_client
 from app.services.embedding import LocalEmbedder
 from app.services.sync_events import start_postgres_listener, stop_postgres_listener
@@ -323,6 +324,18 @@ app.include_router(runtime_observation_v2_router)
 # exist for old binaries; legacy /api alias only.
 app.include_router(skills_scope_router, prefix="/api", include_in_schema=False)
 app.include_router(metrics_router)
+
+
+@app.exception_handler(OAuthCredentialPayloadCorruptError)
+async def oauth_credential_payload_corrupt_exception_handler(
+    request: Request,
+    exc: OAuthCredentialPayloadCorruptError,
+) -> Response:
+    response = JSONResponse(
+        status_code=409,
+        content={"detail": str(exc)},
+    )
+    return _apply_public_session_export_cache_policy(request, response)
 
 
 @app.exception_handler(StarletteHTTPException)

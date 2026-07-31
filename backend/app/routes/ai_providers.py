@@ -91,6 +91,7 @@ from app.services.ai_provider_credentials import (
     environment_binds_provider,
     environment_matches_runtime,
 )
+from app.services.ai_provider_oauth_lifecycle import terminal_oauth_attempt
 from app.services.codex_oauth import (
     CODEX_DEVICE_VERIFICATION_URL,
     CODEX_OAUTH_CLIENT_ID,
@@ -1105,7 +1106,7 @@ async def _persist_oauth_attempt(
             AiProviderOAuthAttempt.provider_row_id == locked_provider.id,
             AiProviderOAuthAttempt.status.in_(("pending", "exchanging")),
         )
-        .values(status="failed", completed_at=now)
+        .values(**terminal_oauth_attempt("failed", completed_at=now).update_values())
     )
     payload = (
         await db.execute(
@@ -1204,6 +1205,8 @@ async def _load_oauth_attempt(
 
 
 def _oauth_attempt_flow_payload(attempt: AiProviderOAuthAttempt) -> dict:
+    if attempt.encrypted_flow_payload is None or attempt.flow_payload_nonce is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Stored OAuth attempt is invalid")
     try:
         payload = json.loads(decrypt(attempt.encrypted_flow_payload, attempt.flow_payload_nonce))
     except Exception as exc:
@@ -1273,8 +1276,7 @@ async def _begin_oauth_attempt_exchange(
             await db.rollback()
             return attempt_id, replay
         if provider is None or provider.archived_at is not None:
-            attempt.status = "failed"
-            attempt.completed_at = datetime.now(UTC)
+            terminal_oauth_attempt("failed").apply(attempt)
             await db.commit()
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -1282,8 +1284,7 @@ async def _begin_oauth_attempt_exchange(
             )
         if attempt.status != "pending":
             if _oauth_attempt_exchange_is_stale(attempt):
-                attempt.status = "failed"
-                attempt.completed_at = datetime.now(UTC)
+                terminal_oauth_attempt("failed").apply(attempt)
                 await db.commit()
                 raise HTTPException(
                     status.HTTP_409_CONFLICT,
@@ -1308,8 +1309,7 @@ async def _begin_oauth_attempt_exchange(
             current_payload.credential_revision if current_payload is not None else None
         )
         if current_revision != attempt.base_credential_revision:
-            attempt.status = "failed"
-            attempt.completed_at = datetime.now(UTC)
+            terminal_oauth_attempt("failed").apply(attempt)
             await db.commit()
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -1501,8 +1501,7 @@ async def _commit_oauth_attempt(
             await db.rollback()
             return replay
         if provider is None or provider.archived_at is not None:
-            attempt.status = "failed"
-            attempt.completed_at = datetime.now(UTC)
+            terminal_oauth_attempt("failed").apply(attempt)
             await db.commit()
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -1513,8 +1512,7 @@ async def _commit_oauth_attempt(
         try:
             _validate_codex_oauth_provider_shape(provider)
         except HTTPException as exc:
-            attempt.status = "failed"
-            attempt.completed_at = datetime.now(UTC)
+            terminal_oauth_attempt("failed").apply(attempt)
             await db.commit()
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -1536,8 +1534,7 @@ async def _commit_oauth_attempt(
             current_payload.credential_revision if current_payload is not None else None
         )
         if current_revision != attempt.base_credential_revision:
-            attempt.status = "failed"
-            attempt.completed_at = datetime.now(UTC)
+            terminal_oauth_attempt("failed").apply(attempt)
             await db.commit()
             raise HTTPException(
                 status.HTTP_409_CONFLICT,
@@ -1573,9 +1570,10 @@ async def _commit_oauth_attempt(
         await db.flush()
         await db.refresh(provider)
         response = await _to_response(db, auth, provider)
-        attempt.status = "committed"
-        attempt.receipt = response.model_dump(mode="json", exclude_none=True)
-        attempt.completed_at = datetime.now(UTC)
+        terminal_oauth_attempt(
+            "committed",
+            receipt=response.model_dump(mode="json", exclude_none=True),
+        ).apply(attempt)
         await db.commit()
         return response
 
@@ -1598,7 +1596,7 @@ async def _fail_oauth_attempt(attempt_id: UUID) -> None:
                     AiProviderOAuthAttempt.id == attempt_id,
                     AiProviderOAuthAttempt.status == "exchanging",
                 )
-                .values(status="failed", completed_at=datetime.now(UTC))
+                .values(**terminal_oauth_attempt("failed").update_values())
             )
             await db.commit()
     except Exception:

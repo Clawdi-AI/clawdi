@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
@@ -20,9 +20,17 @@ from app.models.ai_provider import (
     AiProviderOAuthRevokeTombstone,
 )
 from app.services.ai_provider_credentials import claim_unique_bound_runtime
+from app.services.ai_provider_oauth_lifecycle import terminal_oauth_attempt
 from app.services.vault_crypto import decrypt, encrypt
 
 OAuthRevokeStatus = Literal["pending", "not_required"]
+OAuthTokenExtractionState = Literal["revocable", "not_revocable", "corrupt"]
+OAUTH_CREDENTIAL_SOURCES = frozenset({"device_code", "oauth_pkce"})
+
+
+class OAuthCredentialPayloadCorruptError(RuntimeError):
+    def __init__(self) -> None:
+        super().__init__("OAuth credential payload is corrupt")
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +52,16 @@ class OAuthRevokeTombstoneRef:
     id: UUID
 
 
+@dataclass(frozen=True, slots=True)
+class OAuthTokenExtraction:
+    state: OAuthTokenExtractionState
+    revocable: tuple[str, str] | None = field(default=None, repr=False)
+
+    def __post_init__(self) -> None:
+        if (self.state == "revocable") != (self.revocable is not None):
+            raise ValueError("OAuth token extraction state is inconsistent")
+
+
 async def queue_provider_runtime_manifest_changed(
     db: AsyncSession,
     owner_user_id: UUID,
@@ -58,53 +76,146 @@ async def queue_provider_runtime_manifest_changed(
     await queue_manifest_change(db, owner_user_id, provider_id)
 
 
-def revocable_oauth_token_from_envelope(payload_text: str) -> tuple[str, str] | None:
+def extract_oauth_token_from_envelope(payload_text: str) -> OAuthTokenExtraction:
     try:
         envelope = json.loads(payload_text)
-        files = envelope.get("files") if isinstance(envelope, dict) else None
-        if not isinstance(files, list):
-            return None
-        auth_file = next(
-            (
-                item
-                for item in files
-                if isinstance(item, dict)
-                and item.get("logicalName") == "auth.json"
-                and isinstance(item.get("content"), str)
-            ),
-            None,
-        )
-        if auth_file is None:
-            return None
-        auth_json = json.loads(auth_file["content"])
-        if not isinstance(auth_json, dict):
-            return None
-        auth_mode = auth_json.get("auth_mode")
-        if auth_mode is not None and auth_mode != "chatgpt":
-            return None
-        if auth_mode is None and auth_json.get("OPENAI_API_KEY") is not None:
-            return None
-        tokens = auth_json.get("tokens")
-        if not isinstance(tokens, dict):
-            return None
-        refresh_token = tokens.get("refresh_token")
-        if isinstance(refresh_token, str) and refresh_token:
-            return refresh_token, "refresh_token"
-        access_token = tokens.get("access_token")
-        if isinstance(access_token, str) and access_token:
-            return access_token, "access_token"
     except (TypeError, ValueError):
-        return None
-    return None
-
-
-def revocable_oauth_token(payload: AiProviderAuthPayload) -> tuple[str, str] | None:
+        return OAuthTokenExtraction(state="corrupt")
+    if not isinstance(envelope, dict):
+        return OAuthTokenExtraction(state="corrupt")
+    if (
+        envelope.get("schemaVersion") != 1
+        or envelope.get("kind") != "local_agent_profile"
+        or not isinstance(envelope.get("tool"), str)
+        or not envelope["tool"]
+        or not isinstance(envelope.get("profile"), str)
+        or not envelope["profile"]
+    ):
+        return OAuthTokenExtraction(state="corrupt")
+    files = envelope.get("files")
+    if not isinstance(files, list) or not files:
+        return OAuthTokenExtraction(state="corrupt")
+    auth_files: list[dict] = []
+    for item in files:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("logicalName"), str)
+            or not item["logicalName"]
+            or not isinstance(item.get("sourcePath"), str)
+            or item.get("targetStrategy") not in {"adapter_default", "explicit"}
+            or not isinstance(item.get("content"), str)
+            or not isinstance(item.get("mode"), int)
+            or isinstance(item.get("mode"), bool)
+            or not isinstance(item.get("size"), int)
+            or isinstance(item.get("size"), bool)
+            or item["size"] < 0
+        ):
+            return OAuthTokenExtraction(state="corrupt")
+        if item["logicalName"] == "auth.json":
+            auth_files.append(item)
+    if not auth_files:
+        return OAuthTokenExtraction(state="not_revocable")
+    if len(auth_files) != 1:
+        return OAuthTokenExtraction(state="corrupt")
     try:
-        return revocable_oauth_token_from_envelope(
-            decrypt(payload.encrypted_payload, payload.nonce)
+        auth_file = auth_files[0]
+        auth_json = json.loads(auth_file["content"])
+    except (TypeError, ValueError):
+        return OAuthTokenExtraction(state="corrupt")
+    if not isinstance(auth_json, dict):
+        return OAuthTokenExtraction(state="corrupt")
+    auth_mode = auth_json.get("auth_mode")
+    if auth_mode is not None:
+        if not isinstance(auth_mode, str) or not auth_mode:
+            return OAuthTokenExtraction(state="corrupt")
+        if auth_mode != "chatgpt":
+            return OAuthTokenExtraction(state="not_revocable")
+    elif "OPENAI_API_KEY" in auth_json:
+        api_key = auth_json["OPENAI_API_KEY"]
+        if not isinstance(api_key, str) or not api_key:
+            return OAuthTokenExtraction(state="corrupt")
+        return OAuthTokenExtraction(state="not_revocable")
+
+    tokens = auth_json.get("tokens")
+    if not isinstance(tokens, dict):
+        return OAuthTokenExtraction(state="corrupt")
+    for token_name in ("refresh_token", "access_token"):
+        if token_name in tokens and (
+            not isinstance(tokens[token_name], str) or not tokens[token_name]
+        ):
+            return OAuthTokenExtraction(state="corrupt")
+    refresh_token = tokens.get("refresh_token")
+    if isinstance(refresh_token, str):
+        return OAuthTokenExtraction(
+            state="revocable",
+            revocable=(refresh_token, "refresh_token"),
         )
+    access_token = tokens.get("access_token")
+    if isinstance(access_token, str):
+        return OAuthTokenExtraction(
+            state="revocable",
+            revocable=(access_token, "access_token"),
+        )
+    return OAuthTokenExtraction(state="corrupt")
+
+
+def extract_oauth_token(payload: AiProviderAuthPayload) -> OAuthTokenExtraction:
+    try:
+        return extract_oauth_token_from_envelope(decrypt(payload.encrypted_payload, payload.nonce))
     except (InvalidTag, RuntimeError, TypeError, ValueError):
+        return OAuthTokenExtraction(state="corrupt")
+
+
+def _preflight_active_oauth_payload(
+    payload: AiProviderAuthPayload,
+) -> OAuthTokenExtraction | None:
+    """Validate active OAuth material without treating generic profiles as OAuth."""
+
+    try:
+        plaintext = decrypt(payload.encrypted_payload, payload.nonce)
+    except (InvalidTag, RuntimeError, TypeError, UnicodeError, ValueError):
+        # A ciphertext failure cannot prove that a stored agent profile is
+        # non-OAuth, so fail closed before its archive/revoke state can change.
+        return OAuthTokenExtraction(state="corrupt")
+    if not _is_oauth_credential_payload(
+        kind=payload.kind,
+        metadata=payload.payload_metadata,
+        plaintext=plaintext,
+    ):
         return None
+    return extract_oauth_token_from_envelope(plaintext)
+
+
+def _preflight_incoming_oauth_credential(
+    credential: AuthCredentialWrite | None,
+) -> OAuthTokenExtraction | None:
+    if credential is None or not _is_oauth_credential_payload(
+        kind=credential.kind,
+        metadata=credential.metadata,
+        plaintext=credential.plaintext,
+    ):
+        return None
+    return extract_oauth_token_from_envelope(credential.plaintext)
+
+
+def _is_oauth_credential_payload(
+    *,
+    kind: str,
+    metadata: dict | None,
+    plaintext: str,
+) -> bool:
+    if kind == "oauth_profile":
+        return True
+    if kind != "agent_profile":
+        return False
+    source = (metadata or {}).get("source")
+    if source in OAUTH_CREDENTIAL_SOURCES:
+        return True
+    try:
+        envelope = json.loads(plaintext)
+    except (TypeError, ValueError):
+        return False
+    return isinstance(envelope, dict) and "files" in envelope
 
 
 async def enqueue_oauth_revoke_tombstone(
@@ -192,7 +303,7 @@ async def cancel_oauth_revoke_tombstone(
     *,
     oauth_attempt_id: UUID,
 ) -> bool:
-    result = await db.execute(
+    updated_id = await db.scalar(
         update(AiProviderOAuthRevokeTombstone)
         .where(
             AiProviderOAuthRevokeTombstone.id == tombstone_id,
@@ -207,8 +318,9 @@ async def cancel_oauth_revoke_tombstone(
             encrypted_token=None,
             token_nonce=None,
         )
+        .returning(AiProviderOAuthRevokeTombstone.id)
     )
-    return result.rowcount == 1
+    return updated_id is not None
 
 
 async def transition_ai_provider_auth(
@@ -229,20 +341,9 @@ async def transition_ai_provider_auth(
     old_identity = _auth_identity(provider.auth_type, provider.auth_ref, provider.auth_metadata)
     new_identity = _auth_identity(auth_type, auth_ref, auth_metadata)
     archive_active = archive_provider or credential is not None or old_identity != new_identity
-    preserved_token_sha256 = _credential_revocable_token_sha256(credential)
+    incoming_oauth = _preflight_incoming_oauth_credential(credential)
+    preserved_token_sha256 = _credential_revocable_token_sha256(incoming_oauth)
     await db.execute(select(AiProvider.id).where(AiProvider.id == provider.id).with_for_update())
-    if archive_active:
-        attempt_filter = [
-            AiProviderOAuthAttempt.provider_row_id == provider.id,
-            AiProviderOAuthAttempt.status.in_(("pending", "exchanging")),
-        ]
-        if keep_oauth_attempt_id is not None:
-            attempt_filter.append(AiProviderOAuthAttempt.id != keep_oauth_attempt_id)
-        await db.execute(
-            update(AiProviderOAuthAttempt)
-            .where(*attempt_filter)
-            .values(status="failed", completed_at=now)
-        )
     payloads = list(
         (
             await db.execute(
@@ -256,13 +357,32 @@ async def transition_ai_provider_auth(
             )
         ).scalars()
     )
+    active_oauth_revocables: dict[UUID, tuple[str, str] | None] = {}
+    if archive_active:
+        for payload in payloads:
+            if payload.archived_at is None and payload.kind in {"agent_profile", "oauth_profile"}:
+                extraction = _preflight_active_oauth_payload(payload)
+                if extraction is not None:
+                    active_oauth_revocables[payload.id] = _revocable_or_raise(extraction)
+
+        attempt_filter = [
+            AiProviderOAuthAttempt.provider_row_id == provider.id,
+            AiProviderOAuthAttempt.status.in_(("pending", "exchanging")),
+        ]
+        if keep_oauth_attempt_id is not None:
+            attempt_filter.append(AiProviderOAuthAttempt.id != keep_oauth_attempt_id)
+        await db.execute(
+            update(AiProviderOAuthAttempt)
+            .where(*attempt_filter)
+            .values(**terminal_oauth_attempt("failed", completed_at=now).update_values())
+        )
     remote_revoke_pending = False
     if archive_active:
         for payload in payloads:
             if payload.archived_at is not None:
                 continue
             if payload.kind in {"agent_profile", "oauth_profile"}:
-                revocable = revocable_oauth_token(payload)
+                revocable = active_oauth_revocables.get(payload.id)
                 if revocable is not None:
                     token_sha256 = hashlib.sha256(revocable[0].encode()).hexdigest()
                     if token_sha256 != preserved_token_sha256:
@@ -315,6 +435,7 @@ async def transition_ai_provider_auth(
                 owner_user_id=owner_user_id,
                 provider_id=provider.provider_id,
                 payload=payload,
+                prospective_auth_type=auth_type,
             )
 
     provider.auth_type = auth_type
@@ -345,11 +466,19 @@ def _auth_identity(auth_type: str, auth_ref: str | None, metadata: dict | None) 
     return auth_type, auth_ref
 
 
-def _credential_revocable_token_sha256(credential: AuthCredentialWrite | None) -> str | None:
-    if credential is None or credential.kind not in {"agent_profile", "oauth_profile"}:
+def _credential_revocable_token_sha256(
+    extraction: OAuthTokenExtraction | None,
+) -> str | None:
+    if extraction is None:
         return None
-    revocable = revocable_oauth_token_from_envelope(credential.plaintext)
+    revocable = _revocable_or_raise(extraction)
     return hashlib.sha256(revocable[0].encode()).hexdigest() if revocable is not None else None
+
+
+def _revocable_or_raise(extraction: OAuthTokenExtraction) -> tuple[str, str] | None:
+    if extraction.state == "corrupt":
+        raise OAuthCredentialPayloadCorruptError()
+    return extraction.revocable
 
 
 def _oauth_provider(metadata: dict | None) -> str:
@@ -361,10 +490,12 @@ def _oauth_provider(metadata: dict | None) -> str:
 __all__ = [
     "AuthCredentialWrite",
     "AuthTransitionResult",
+    "OAuthCredentialPayloadCorruptError",
     "OAuthRevokeTombstoneRef",
+    "OAuthTokenExtraction",
     "cancel_oauth_revoke_tombstone",
     "enqueue_oauth_revoke_tombstone",
-    "revocable_oauth_token",
-    "revocable_oauth_token_from_envelope",
+    "extract_oauth_token",
+    "extract_oauth_token_from_envelope",
     "transition_ai_provider_auth",
 ]
