@@ -22,6 +22,10 @@ import { Switch } from "@/components/ui/switch";
 import { formatCents } from "@/hosted/billing/format";
 import { billingKeys } from "@/hosted/billing/query-keys";
 import { useSensitiveSetAutoReload } from "@/hosted/billing/sensitive-actions";
+import {
+	type PaymentIntentClientSecret,
+	walletAutoReloadPaymentIntentClientSecret,
+} from "@/hosted/billing/stripe-client-secret";
 import { useActionLock } from "@/hosted/billing/use-action-lock";
 import { AutoReloadActionConfirm } from "@/hosted/billing/wallet/auto-reload-action";
 import {
@@ -62,7 +66,9 @@ export function AutoReloadCard({
 	const [draft, setDraft] = useState<AutoReloadDraft>(initialDraft);
 	const [blurred, setBlurred] = useState<BlurredFields>(PRISTINE_FIELDS);
 	const [requestError, setRequestError] = useState<AutoReloadSaveError | null>(null);
-	const [actionClientSecret, setActionClientSecret] = useState<string | null>(null);
+	const [actionClientSecret, setActionClientSecret] = useState<PaymentIntentClientSecret | null>(
+		null,
+	);
 	const draftRef = useRef(draft);
 	const baselineRef = useRef(baseline);
 	const pendingRef = useRef(save.isPending);
@@ -120,7 +126,9 @@ export function AutoReloadCard({
 		setRequestError(null);
 		try {
 			const nextWallet = await save.execute(request);
-			setActionClientSecret(nextWallet.auto_reload_action?.client_secret ?? null);
+			setActionClientSecret(
+				walletAutoReloadPaymentIntentClientSecret(nextWallet.auto_reload_action),
+			);
 			queryClient.invalidateQueries({ queryKey: billingKeys.wallet });
 			const next = autoReloadDraftFromWallet(nextWallet);
 			setBaseline(next);

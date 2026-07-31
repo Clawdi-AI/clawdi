@@ -141,7 +141,14 @@ describe("hosted deploy request contract", () => {
 				timezone: "Etc/UTC",
 				ai: { mode: "managed", model: "gpt-test" },
 			},
-			[{ id: "gpt-test", display_name: "GPT Test", is_default: true }],
+			[
+				{
+					id: "gpt-test",
+					display_name: "GPT Test",
+					is_default: true,
+					is_featured: false,
+				},
+			],
 		);
 
 		expect(result).toEqual({
@@ -176,7 +183,14 @@ describe("hosted deploy request contract", () => {
 				timezone: "Etc/UTC",
 				ai: { mode: "managed", model: "missing" },
 			},
-			[{ id: "available", display_name: "Available", is_default: true }],
+			[
+				{
+					id: "available",
+					display_name: "Available",
+					is_default: true,
+					is_featured: false,
+				},
+			],
 		);
 
 		expect(result.ok).toBe(false);

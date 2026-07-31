@@ -27,9 +27,9 @@ describe("model binding", () => {
 
 	test("puts the catalog default first and exposes real managed model names", () => {
 		const managedModels = [
-			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false },
-			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
-			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false },
+			{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: false },
+			{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: false },
+			{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
 		];
 
 		expect(
@@ -46,7 +46,9 @@ describe("model binding", () => {
 
 	test("uses catalog metadata before the shared formatter and raw id fallback", () => {
 		expect(
-			modelDisplayName("model", [{ id: "model", display_name: "Display", is_default: false }]),
+			modelDisplayName("model", [
+				{ id: "model", display_name: "Display", is_default: false, is_featured: false },
+			]),
 		).toBe("Display");
 		expect(modelDisplayName("model", [{ id: "model", label: "Label", alias: "Alias" }])).toBe(
 			"Label",

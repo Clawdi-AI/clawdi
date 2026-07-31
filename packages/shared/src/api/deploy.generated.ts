@@ -1062,51 +1062,47 @@ export interface components {
             /** Discount Percent */
             discount_percent: number;
         };
-        /** V2CheckoutResponse */
-        V2CheckoutResponse: {
+        V2CheckoutResponse: components["schemas"]["V2CheckoutSessionResponse"] | components["schemas"]["V2SubscriptionActivationResponse"];
+        /** V2CheckoutSessionResponse */
+        V2CheckoutSessionResponse: {
             /**
-             * Flow Type
-             * @default checkout_session
+             * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
-            flow_type: "checkout_session" | "subscription_activation";
+            flow_type: "checkout_session";
             /**
              * Funding Source
-             * @default stripe
-             * @enum {string}
+             * @constant
              */
-            funding_source: "stripe" | "wallet";
+            funding_source: "stripe";
             /** Action Url */
-            action_url?: string | null;
-            /**
-             * Checkout Url
-             * @default
-             */
+            action_url: string | null;
+            /** Checkout Url */
             checkout_url: string;
             /** Client Secret */
-            client_secret?: string | null;
+            client_secret: string | null;
             /** Subscription Id */
-            subscription_id?: string | null;
+            subscription_id: null;
             /** Invoice Id */
-            invoice_id?: string | null;
+            invoice_id: null;
             /** Deployment Id */
-            deployment_id?: string | null;
+            deployment_id: null;
             /** Deployment Name */
-            deployment_name?: string | null;
+            deployment_name: null;
             /** Metadata Generation */
-            metadata_generation?: number | null;
+            metadata_generation: null;
             /** Deploy Request Id */
-            deploy_request_id?: string | null;
+            deploy_request_id: null;
             /** Debited Usd */
-            debited_usd?: string | null;
+            debited_usd: null;
             /** Balance After Usd */
-            balance_after_usd?: string | null;
+            balance_after_usd: null;
             /** Current Period Start */
-            current_period_start?: string | null;
+            current_period_start: null;
             /** Current Period End */
-            current_period_end?: string | null;
+            current_period_end: null;
             /** Entitled Until */
-            entitled_until?: string | null;
+            entitled_until: null;
         };
         /** V2ComputeBillingHistoryItem */
         V2ComputeBillingHistoryItem: {
@@ -1797,6 +1793,8 @@ export interface components {
             display_name: string;
             /** Is Default */
             is_default: boolean;
+            /** Is Featured */
+            is_featured: boolean;
         };
         /** V2ManagedModelCatalogResponse */
         V2ManagedModelCatalogResponse: {
@@ -1895,6 +1893,54 @@ export interface components {
             effective_at?: string | null;
             /** Amount Due Usd */
             amount_due_usd?: number | null;
+        };
+        /** V2SubscriptionActivationResponse */
+        V2SubscriptionActivationResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            flow_type: "subscription_activation";
+            /**
+             * Funding Source
+             * @enum {string}
+             */
+            funding_source: "stripe" | "wallet";
+            /** Action Url */
+            action_url: null;
+            /**
+             * Checkout Url
+             * @constant
+             */
+            checkout_url: "";
+            /** Client Secret */
+            client_secret: null;
+            /**
+             * Subscription Id
+             * Format: sqid
+             * @example csub_K8fJ3pQm
+             */
+            subscription_id: string;
+            /** Invoice Id */
+            invoice_id: string | null;
+            /** Deployment Id */
+            deployment_id: string | null;
+            /** Deployment Name */
+            deployment_name: string | null;
+            /** Metadata Generation */
+            metadata_generation: number | null;
+            /** Deploy Request Id */
+            deploy_request_id: string | null;
+            /** Debited Usd */
+            debited_usd: string | null;
+            /** Balance After Usd */
+            balance_after_usd: string | null;
+            /** Current Period Start */
+            current_period_start: string | null;
+            /** Current Period End */
+            current_period_end: string | null;
+            /** Entitled Until */
+            entitled_until: string | null;
         };
         /** V2UpdateDeploymentRequest */
         V2UpdateDeploymentRequest: {
@@ -3226,8 +3272,8 @@ export interface operations {
     create_wallet_topup_v2_wallet_topup_post: {
         parameters: {
             query?: never;
-            header?: {
-                "Idempotency-Key"?: string | null;
+            header: {
+                "Idempotency-Key": string;
             };
             path?: never;
             cookie?: never;

@@ -14,7 +14,9 @@ import {
 	toggleAiBindingProvider,
 } from "@/hosted/v2/ai-providers/use-ai-provider-binding-draft";
 
-const managedModels = [{ id: "gpt-managed", display_name: "Managed", is_default: true }];
+const managedModels = [
+	{ id: "gpt-managed", display_name: "Managed", is_default: true, is_featured: false },
+];
 
 const apiKeyProvider: AiProvider = {
 	id: "row-api-key",

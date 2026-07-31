@@ -14,7 +14,14 @@ import {
 	toHostedRuntimeAiProvider,
 } from "./hosted-ai-binding";
 
-const managedModels = [{ id: "gpt-managed", display_name: "Managed", is_default: true }];
+const managedModels = [
+	{
+		id: "gpt-managed",
+		display_name: "Managed",
+		is_default: true,
+		is_featured: false,
+	},
+];
 
 const apiKeyProvider = {
 	id: "row-api",

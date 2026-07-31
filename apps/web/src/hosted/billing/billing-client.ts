@@ -391,7 +391,7 @@ export function createBillingClient(
 			unwrapDeploy(
 				await api.POST("/v2/wallet/topup", {
 					body,
-					headers: { "Idempotency-Key": idempotencyKey },
+					params: { header: { "Idempotency-Key": idempotencyKey } },
 				}),
 			),
 		setAutoReload: async (body: WalletAutoReloadRequest) =>
@@ -529,6 +529,9 @@ export function createBillingClient(
 			),
 	};
 }
+
+export type BillingClient = ReturnType<typeof createBillingClient>;
+export type CheckoutOperationResult = Awaited<ReturnType<BillingClient["checkout"]>>;
 
 export function useBillingClient() {
 	const { getToken } = useAuthToken();

@@ -138,12 +138,14 @@ describe("managed model catalog", () => {
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
 			return jsonResponse({
-				models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true }],
+				models: [
+					{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: false },
+				],
 			});
 		});
 
 		await expect(client.getManagedModelCatalog()).resolves.toEqual({
-			models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true }],
+			models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: false }],
 		});
 		expect(new URL(requests[0]?.url ?? "https://invalid").pathname).toBe(
 			"/v2/ai-providers/managed/models",
@@ -197,8 +199,20 @@ describe("declarative deployment mutations", () => {
 				return jsonResponse({
 					flow_type: "checkout_session",
 					funding_source: "stripe",
+					action_url: "https://checkout.example.com/session",
 					checkout_url: "https://checkout.example.com/session",
-					deploy_request_id: intentKey,
+					client_secret: null,
+					subscription_id: null,
+					invoice_id: null,
+					deployment_id: null,
+					deployment_name: null,
+					metadata_generation: null,
+					deploy_request_id: null,
+					debited_usd: null,
+					balance_after_usd: null,
+					current_period_start: null,
+					current_period_end: null,
+					entitled_until: null,
 				});
 			}
 			if (path === `/v2/deployments/by-request/${intentKey}`) {
@@ -247,7 +261,8 @@ describe("declarative deployment mutations", () => {
 			},
 			intentKey,
 		);
-		expect(checkout.deploy_request_id).toBe(intentKey);
+		expect(checkout.flow_type).toBe("checkout_session");
+		expect(checkout.checkout_url).toBe("https://checkout.example.com/session");
 		expect(await client.waitForDeploymentRequest(intentKey)).toMatchObject({
 			deploymentId: "hdep_test",
 			operation: { done: false, name: "operations/create-happy" },
