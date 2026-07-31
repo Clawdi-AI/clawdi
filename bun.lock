@@ -25,8 +25,8 @@
         "@fontsource/geist-mono": "^5.3.0",
         "@fontsource/geist-sans": "^5.3.0",
         "@sentry/tanstackstart-react": "^10.69.0",
-        "@stripe/react-stripe-js": "^6.7.0",
-        "@stripe/stripe-js": "^9.9.0",
+        "@stripe/react-stripe-js": "^6.8.0",
+        "@stripe/stripe-js": "^9.12.1",
         "@t3-oss/env-core": "^0.13.11",
         "@tanstack/react-query": "catalog:",
         "@tanstack/react-router": "^1.170.18",
@@ -38,7 +38,7 @@
         "class-variance-authority": "^0.7.1",
         "clsx": "catalog:",
         "cmdk": "^1.1.1",
-        "lucide-react": "^1.28.0",
+        "lucide-react": "catalog:",
         "next-themes": "^0.4.6",
         "nitro": "^3.0.260610-beta",
         "nuqs": "^2.9.3",
@@ -555,9 +555,9 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
-    "@stripe/react-stripe-js": ["@stripe/react-stripe-js@6.7.0", "", { "dependencies": { "prop-types": "^15.7.2" }, "peerDependencies": { "@stripe/stripe-js": ">=9.5.0 <10.0.0", "react": ">=16.8.0 <20.0.0", "react-dom": ">=16.8.0 <20.0.0" } }, "sha512-KSWTQHcDlAOlxcOz+uq0pTA/k9G4+IBF/X8mtSFkkBX+nb74buMTIFcCUCHWNhjuPqfD+yJm7NWDan1EaxSyzQ=="],
+    "@stripe/react-stripe-js": ["@stripe/react-stripe-js@6.8.0", "", { "dependencies": { "prop-types": "^15.7.2" }, "peerDependencies": { "@stripe/stripe-js": ">=9.5.0 <10.0.0", "react": ">=16.8.0 <20.0.0", "react-dom": ">=16.8.0 <20.0.0" } }, "sha512-nRrPkos00CmUeqXHxtJkXmSbl9/6ybGI4jVebzsiA6QaE5A4iw9dn1C4hUx2tBmQQV2e6pm2aLkPYov4hdta2w=="],
 
-    "@stripe/stripe-js": ["@stripe/stripe-js@9.9.0", "", {}, "sha512-Vwqe6Q5cU4i82tPyAv2BpaW/fQSNdOSO4/J8EeDLPp5/oIZiMmdB+Hgh863zFH+rtoxpuWGvD1L7QPh8k1Rdvw=="],
+    "@stripe/stripe-js": ["@stripe/stripe-js@9.12.1", "", {}, "sha512-KLXPvjA0BfS4dQnW+ddHjwtIXMnIfKYxqmeNMmQCfKjvYog0cSG+Z7ZvK4RH1+bV90GC07nUztWDRWmJLi5HZQ=="],
 
     "@t3-oss/env-core": ["@t3-oss/env-core@0.13.11", "", { "peerDependencies": { "arktype": "^2.1.0", "typescript": ">=5.0.0", "valibot": "^1.0.0-beta.7 || ^1.0.0", "zod": "^3.24.0 || ^4.0.0" }, "optionalPeers": ["arktype", "typescript", "valibot", "zod"] }, "sha512-sM7GYY+KL7H/Hl0BE0inWfk3nRHZOLhmVn7sHGxaZt9FAR6KqREXAE+6TqKfiavfXmpRxO/OZ2QgKRd+oiBYRQ=="],
 
