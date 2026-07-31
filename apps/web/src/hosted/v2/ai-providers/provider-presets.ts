@@ -58,24 +58,24 @@ export const PROVIDER_PRESETS = [
 	},
 	{
 		id: "moonshot",
-		label: "Moonshot",
+		label: "Kimi API",
 		base_url: "https://api.moonshot.cn/v1",
 		api_mode: "openai_chat",
 		suggested_primary_model: "kimi-k3",
 		catalog: [{ id: "kimi-k3", alias: "Kimi K3" }],
-		api_key_url: "https://platform.moonshot.cn/console/api-keys",
+		api_key_url: "https://platform.kimi.com/console/api-keys",
 		region_variants: [
 			{
 				id: "cn",
 				label: "China",
 				base_url: "https://api.moonshot.cn/v1",
-				api_key_url: "https://platform.moonshot.cn/console/api-keys",
+				api_key_url: "https://platform.kimi.com/console/api-keys",
 			},
 			{
 				id: "global",
 				label: "Global",
 				base_url: "https://api.moonshot.ai/v1",
-				api_key_url: "https://platform.moonshot.ai/console/api-keys",
+				api_key_url: "https://platform.kimi.ai/console/api-keys",
 			},
 		],
 	},
@@ -125,7 +125,7 @@ export const PROVIDER_PRESETS = [
 		base_url: "https://api.stepfun.ai/v1",
 		api_mode: "openai_chat",
 		suggested_primary_model: "step-3.7-flash",
-		catalog: [{ id: "step-3.7-flash", context_window: 262_144, alias: "Step 3.7 Flash" }],
+		catalog: [{ id: "step-3.7-flash", alias: "Step 3.7 Flash" }],
 		api_key_url: "https://platform.stepfun.ai/interface-key",
 		region_variants: [
 			{
@@ -247,17 +247,14 @@ export function providerPresetRegion(
 }
 
 export function providerPresetForSavedProvider({
-	providerId,
 	baseUrl,
 }: {
-	providerId: string;
 	baseUrl: string;
 }): ProviderPreset | null {
 	const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
 	const presets: readonly ProviderPreset[] = PROVIDER_PRESETS;
 	return (
 		presets.find((preset) => {
-			if (providerId === preset.id || providerId.startsWith(`${preset.id}-`)) return true;
 			const endpoints = [
 				preset.base_url,
 				...(preset.region_variants ?? []).map((item) => item.base_url),

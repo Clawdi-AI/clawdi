@@ -23,7 +23,7 @@ interface ChoiceEntry {
 }
 
 const FIRST_CLASS_TYPES: readonly ProviderTypeId[] = ["openai", "anthropic", "gemini"];
-const POPULAR_IDS = new Set([
+const INITIAL_PROVIDER_IDS = new Set([
 	"type:openai",
 	"type:anthropic",
 	"preset:openrouter",
@@ -101,8 +101,8 @@ export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoic
 				: [],
 		[normalizedQuery],
 	);
-	const popular = ALL_ENTRIES.filter((entry) => POPULAR_IDS.has(entry.id));
-	const moreProviders = ALL_ENTRIES.filter((entry) => !POPULAR_IDS.has(entry.id));
+	const initialProviders = ALL_ENTRIES.filter((entry) => INITIAL_PROVIDER_IDS.has(entry.id));
+	const moreProviders = ALL_ENTRIES.filter((entry) => !INITIAL_PROVIDER_IDS.has(entry.id));
 
 	return (
 		<div data-hosted="true" data-v2="true" className="flex flex-col gap-4">
@@ -140,8 +140,8 @@ export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoic
 			) : (
 				<>
 					<div className="flex flex-col gap-2">
-						<p className="text-xs font-medium text-muted-foreground">Popular</p>
-						<ChoiceGrid entries={popular} onSelect={onSelect} />
+						<p className="text-xs font-medium text-muted-foreground">Providers</p>
+						<ChoiceGrid entries={initialProviders} onSelect={onSelect} />
 					</div>
 					<details className="group rounded-lg border bg-muted/20">
 						<summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-sm font-medium marker:hidden">

@@ -147,7 +147,6 @@ export function AddProviderDialog({
 					? "oauth"
 					: "api_key";
 			const preset = providerPresetForSavedProvider({
-				providerId: editing.provider_id,
 				baseUrl: editing.base_url,
 			});
 			const defaults = derivedProviderFields(type, authMethod, preset);
@@ -530,7 +529,7 @@ export function AddProviderDialog({
 									}
 								>
 									{draftTestResult.ok
-										? "Connection verified. The credentials and selected model are working."
+										? "Connection verified. The provider accepted the test request."
 										: (draftTestResult.error?.message ?? "Connection test failed.")}
 								</div>
 							) : null}

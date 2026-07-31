@@ -138,8 +138,20 @@ describe("model binding", () => {
 			label: "Research DeepSeek",
 			brandLabel: "DeepSeek",
 			iconId: "deepseek",
-			catalogSummary: "DeepSeek V4 Flash",
 			summary: "DeepSeek · DeepSeek V4 Flash",
+		});
+
+		const proxy = {
+			...deepSeek,
+			provider_id: "deepseek-team",
+			label: "DeepSeek proxy",
+			base_url: "https://proxy.example.com/v1",
+		} satisfies AiProvider;
+		expect(providerPresentation(proxy)).toMatchObject({
+			label: "DeepSeek proxy",
+			brandLabel: "Custom (OpenAI-compatible)",
+			iconId: "custom_openai_compatible",
+			summary: "Custom (OpenAI-compatible) · DeepSeek V4 Flash",
 		});
 	});
 

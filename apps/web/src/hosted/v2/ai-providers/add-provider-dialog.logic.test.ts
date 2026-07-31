@@ -139,7 +139,7 @@ describe("providerFormIdentity", () => {
 });
 
 describe("derivedProviderFields", () => {
-	test("uses explicit protocol contracts for Kimi Code and Moonshot products", () => {
+	test("uses explicit protocol contracts for Kimi Code and Kimi API products", () => {
 		const kimi = testPreset("kimi-coding");
 		expect(kimi.label).toBe("Kimi Code");
 		expect(kimi.catalog[0]?.alias).toBe("Kimi K2.7 Code");
@@ -153,6 +153,7 @@ describe("derivedProviderFields", () => {
 		});
 
 		const moonshot = testPreset("moonshot");
+		expect(moonshot.label).toBe("Kimi API");
 		expect(derivedProviderFields("custom_openai_compatible", "api_key", moonshot)).toMatchObject({
 			baseUrl: "https://api.moonshot.cn/v1",
 			apiMode: "openai_chat",
@@ -164,32 +165,41 @@ describe("derivedProviderFields", () => {
 				id: "cn",
 				label: "China",
 				base_url: "https://api.moonshot.cn/v1",
-				api_key_url: "https://platform.moonshot.cn/console/api-keys",
+				api_key_url: "https://platform.kimi.com/console/api-keys",
 			},
 			{
 				id: "global",
 				label: "Global",
 				base_url: "https://api.moonshot.ai/v1",
-				api_key_url: "https://platform.moonshot.ai/console/api-keys",
+				api_key_url: "https://platform.kimi.ai/console/api-keys",
 			},
 		]);
 		expect(providerPresetById("moonshot-cn")).toBeNull();
 		expect(providerPresetById("moonshot-global")).toBeNull();
 	});
 
-	test("resolves saved providers and region-specific endpoint links", () => {
+	test("resolves saved providers only from canonical endpoints", () => {
 		const moonshot = testPreset("moonshot");
 		expect(providerPresetRegion(moonshot, "global")).toMatchObject({
 			id: "global",
 			base_url: "https://api.moonshot.ai/v1",
-			api_key_url: "https://platform.moonshot.ai/console/api-keys",
+			api_key_url: "https://platform.kimi.ai/console/api-keys",
 		});
 		expect(
 			providerPresetForSavedProvider({
-				providerId: "moonshot-2",
 				baseUrl: "https://api.moonshot.ai/v1",
 			}),
 		).toBe(moonshot);
+		expect(
+			providerPresetForSavedProvider({
+				baseUrl: "https://api.deepseek.com/v1/",
+			}),
+		).toBe(testPreset("deepseek"));
+		expect(
+			providerPresetForSavedProvider({
+				baseUrl: "https://proxy.example.com/v1",
+			}),
+		).toBeNull();
 		expect(providerPresetRegion(testPreset("zhipu-glm"), "global")?.api_key_url).toBe(
 			"https://z.ai/manage-apikey/apikey-list",
 		);
@@ -226,6 +236,7 @@ describe("derivedProviderFields", () => {
 			"deepseek-v4-pro",
 		]);
 		expect(testPreset("stepfun").catalog.map((model) => model.id)).toEqual(["step-3.7-flash"]);
+		expect(testPreset("stepfun").catalog[0]?.context_window).toBeUndefined();
 		expect(testPreset("openrouter").catalog.map((model) => model.id)).toEqual([
 			"openrouter/auto-beta",
 			"~openai/gpt-latest",

@@ -59,7 +59,7 @@ const dynamicManagedModelCatalog = {
 
 const deepSeekProvider = {
 	id: "row-deepseek-team",
-	provider_id: "deepseek-team",
+	provider_id: "deepseek-primary",
 	scope: "account_global",
 	type: "custom_openai_compatible",
 	label: "Research DeepSeek",
@@ -80,6 +80,14 @@ const deepSeekProvider = {
 	capabilities: null,
 	created_at: "2026-07-15T00:00:00Z",
 	updated_at: "2026-07-15T00:00:00Z",
+};
+
+const deepSeekProxyProvider = {
+	...deepSeekProvider,
+	id: "row-deepseek-proxy",
+	provider_id: "deepseek-team",
+	label: "DeepSeek proxy",
+	base_url: "https://proxy.example.com/v1",
 };
 
 type DeploymentComputeSubscription = NonNullable<
@@ -2232,7 +2240,7 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	const providerTestRequests: string[] = [];
 	await page.setViewportSize({ width: 390, height: 844 });
 	await stubHostedApi(page, {
-		aiProviders: [deepSeekProvider],
+		aiProviders: [deepSeekProvider, deepSeekProxyProvider],
 		deployments: [],
 		providerTestRequests,
 	});
@@ -2240,8 +2248,14 @@ test("AI Providers preserves provider identity and keeps technical details progr
 
 	const main = page.locator("main");
 	await expect(main.getByRole("heading", { name: "AI Providers", level: 1 })).toBeVisible();
+	await expect(main.getByText("Clawdi", { exact: true })).toBeVisible();
+	await expect(main.getByText("Included", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("Research DeepSeek", { exact: true })).toBeVisible();
 	await expect(main.getByText("DeepSeek · DeepSeek V4 Flash", { exact: true })).toBeVisible();
+	await expect(main.getByText("DeepSeek proxy", { exact: true })).toBeVisible();
+	await expect(
+		main.getByText("Custom (OpenAI-compatible) · DeepSeek V4 Flash", { exact: true }),
+	).toBeVisible();
 	await expect(main.getByText("https://api.deepseek.com/v1", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("DEEPSEEK_API_KEY", { exact: true })).toHaveCount(0);
 	await expect(main.getByText("OpenAI Chat Completions", { exact: true })).toHaveCount(0);
@@ -2253,6 +2267,11 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await testDialog.getByRole("button", { name: "Run test" }).click();
 	await expect.poll(() => providerTestRequests.length).toBe(1);
 	await expect(testDialog.getByText("Connection verified", { exact: true })).toBeVisible();
+	await expect(
+		testDialog.getByText("The saved credentials and first configured model are working.", {
+			exact: true,
+		}),
+	).toBeVisible();
 	await testDialog.getByRole("button", { name: "Close" }).first().click();
 
 	await main.getByRole("button", { name: "Edit Research DeepSeek" }).click();
@@ -2262,16 +2281,26 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	await expect(editDialog.getByLabel("Base URL")).not.toBeVisible();
 	await advanced.locator("summary").click();
 	await expect(editDialog.getByLabel("Base URL")).toHaveValue("https://api.deepseek.com/v1");
-	await expect(editDialog.getByText("deepseek-team", { exact: true })).toBeVisible();
+	await expect(editDialog.getByText("deepseek-primary", { exact: true })).toBeVisible();
 	await editDialog.getByRole("button", { name: "Cancel" }).click();
 
+	await main.getByRole("button", { name: "Edit DeepSeek proxy" }).click();
+	const proxyEditDialog = page.getByRole("dialog", { name: "Edit provider" });
+	await expect(proxyEditDialog.locator("details")).toHaveAttribute("open", "");
+	await expect(proxyEditDialog.getByLabel("Base URL")).toHaveValue("https://proxy.example.com/v1");
+	await expect(proxyEditDialog.getByText("deepseek-team", { exact: true })).toBeVisible();
+	await proxyEditDialog.getByRole("button", { name: "Cancel" }).click();
+
 	await main.getByRole("button", { name: "Add provider", exact: true }).click();
-	await page
-		.getByRole("dialog", { name: "Add a provider" })
-		.getByRole("button", {
-			name: /^Custom endpoint/,
-		})
-		.click();
+	const chooserDialog = page.getByRole("dialog", { name: "Add a provider" });
+	await expect(chooserDialog.getByText("Providers", { exact: true })).toBeVisible();
+	await expect(chooserDialog.getByText("Popular", { exact: true })).toHaveCount(0);
+	await expect(chooserDialog.getByText("More providers", { exact: true })).toBeVisible();
+	const providerSearch = chooserDialog.getByRole("textbox", { name: "Search providers" });
+	await providerSearch.fill("Moonshot");
+	await expect(chooserDialog.getByRole("button", { name: /^Kimi API/ })).toBeVisible();
+	await providerSearch.fill("");
+	await chooserDialog.getByRole("button", { name: /^Custom endpoint/ }).click();
 	const customDialog = page.getByRole("dialog", { name: "Set up Custom endpoint" });
 	await expect(
 		customDialog.getByText(

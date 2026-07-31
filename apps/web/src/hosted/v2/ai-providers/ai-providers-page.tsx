@@ -80,7 +80,7 @@ export function AiProvidersPage() {
 			/>
 
 			<div className="flex flex-col gap-2">
-				<SectionLabel>Included</SectionLabel>
+				<SectionLabel>Clawdi</SectionLabel>
 				<ManagedProviderCard />
 			</div>
 

@@ -50,7 +50,6 @@ export interface ProviderPresentation {
 	label: string;
 	brandLabel: string;
 	iconId: string;
-	catalogSummary: string;
 	summary: string;
 	managed: boolean;
 }
@@ -161,7 +160,6 @@ export function providerPresentation(
 					label: "Custom provider",
 					brandLabel: "Custom provider",
 					iconId: "custom_openai_compatible",
-					catalogSummary: "Saved connection details unavailable",
 					summary: "Saved connection details unavailable",
 					managed: false,
 				};
@@ -169,7 +167,6 @@ export function providerPresentation(
 	if (isFirstPartyManagedAiProvider(provider)) return managedProviderPresentation();
 
 	const preset = providerPresetForSavedProvider({
-		providerId: provider.provider_id,
 		baseUrl: provider.base_url,
 	});
 	const typeMeta = providerTypeMeta(provider.type);
@@ -180,7 +177,6 @@ export function providerPresentation(
 		label,
 		brandLabel,
 		iconId: preset?.id ?? provider.type,
-		catalogSummary,
 		summary: labelsMatch(label, brandLabel) ? catalogSummary : `${brandLabel} · ${catalogSummary}`,
 		managed: false,
 	};
@@ -278,7 +274,6 @@ function managedProviderPresentation(): ProviderPresentation {
 		label: MANAGED_PROVIDER_LABEL,
 		brandLabel: MANAGED_PROVIDER_LABEL,
 		iconId: MANAGED_AI_CHOICE,
-		catalogSummary: "No setup required",
 		summary: "No setup required",
 		managed: true,
 	};

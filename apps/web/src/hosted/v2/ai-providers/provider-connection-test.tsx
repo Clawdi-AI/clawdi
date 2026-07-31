@@ -45,11 +45,14 @@ export function ProviderConnectionTest({
 	const testConnection = useTestProviderConnection();
 	const [open, setOpen] = useState(false);
 	const testable = provider.auth.type === "api_key" && provider.auth.source === "managed";
+	const testedModel = provider.models?.[0]?.id;
 	if (!testable) return null;
 
 	function runTest() {
-		const model = provider.models?.[0]?.id;
-		testConnection.mutate({ providerId: provider.provider_id, ...(model ? { model } : {}) });
+		testConnection.mutate({
+			providerId: provider.provider_id,
+			...(testedModel ? { model: testedModel } : {}),
+		});
 	}
 
 	function changeOpen(next: boolean) {
@@ -98,7 +101,9 @@ export function ProviderConnectionTest({
 							<div>
 								<p className="text-sm font-medium">Connection verified</p>
 								<p className="mt-1 text-xs text-muted-foreground">
-									The saved credentials and selected model are working.
+									{testedModel
+										? "The saved credentials and first configured model are working."
+										: "The saved credentials and provider connection are working."}
 								</p>
 							</div>
 						</div>
