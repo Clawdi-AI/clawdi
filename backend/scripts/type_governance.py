@@ -21,6 +21,8 @@ EXPECTED_CONFIG = {
         "app/core/query_utils.py",
         "app/core/skill_key.py",
         "app/services/composio.py",
+        "app/services/embedding.py",
+        "app/services/memory_extraction.py",
     ],
 }
 EXPECTED_VERSION = "1.39.9"

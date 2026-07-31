@@ -73,20 +73,25 @@ class ApiEmbedder:
         base_url: str | None = None,
         model: str = "text-embedding-3-small",
     ) -> None:
-        from openai import AsyncOpenAI
-
-        self.client = AsyncOpenAI(api_key=api_key, base_url=base_url or None)
+        self.api_key = api_key
+        self.base_url = base_url
         self.model = model
 
     async def embed(self, text: str) -> list[float]:
+        from openai import AsyncOpenAI
+
         # `dimensions=768` truncates via Matryoshka (supported by
         # text-embedding-3-*). Providers that don't support it will
         # surface an explicit error rather than silently mismatch dims.
-        resp = await self.client.embeddings.create(
-            input=text,
-            model=self.model,
-            dimensions=EMBEDDING_DIM,
-        )
+        async with AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url or None,
+        ) as client:
+            resp = await client.embeddings.create(
+                input=text,
+                model=self.model,
+                dimensions=EMBEDDING_DIM,
+            )
         return list(resp.data[0].embedding)
 
 
