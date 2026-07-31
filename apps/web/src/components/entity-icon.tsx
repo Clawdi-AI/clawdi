@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { AgentFrameworkIcon } from "@/components/agent-framework-icon";
 import { cn } from "@/lib/utils";
 
@@ -14,7 +17,7 @@ import { cn } from "@/lib/utils";
  *   - framework → local app-icon PNG in /public/agents
  *   - provider  → colored brand logo from simpleicons (the CDN has no
  *                 provider PNGs) on a white tile so the brand color reads in
- *                 both themes; OpenAI / custom have no brand mark → monogram
+ *                 both themes; ids without a configured mark → monogram
  *   - anything unresolved → neutral monogram tile
  *
  * Uses plain image rendering — these are tiny/vector brand assets that don't
@@ -58,6 +61,68 @@ export type EntityIconSize = keyof typeof SIZE;
 export type EntityKind = "channel" | "provider" | "framework";
 
 const SHADOW = "shadow-[0_2px_6px_rgba(0,0,0,0.1)] dark:shadow-none";
+
+function NeutralMonogram({
+	label,
+	size,
+	className,
+}: {
+	label: string;
+	size: EntityIconSize;
+	className?: string;
+}) {
+	const s = SIZE[size];
+	const mono = label.trim().charAt(0).toUpperCase() || "?";
+	return (
+		<span
+			aria-hidden
+			className={cn(
+				s.box,
+				"flex shrink-0 items-center justify-center bg-muted font-semibold text-muted-foreground",
+				s.mono,
+				className,
+			)}
+		>
+			{mono}
+		</span>
+	);
+}
+
+function ProviderBrandIcon({
+	src,
+	label,
+	size,
+	className,
+}: {
+	src: string;
+	label: string;
+	size: EntityIconSize;
+	className?: string;
+}) {
+	const [failed, setFailed] = useState(false);
+	if (failed) return <NeutralMonogram label={label} size={size} className={className} />;
+
+	const s = SIZE[size];
+	return (
+		<span
+			className={cn(
+				s.box,
+				"flex shrink-0 items-center justify-center border border-border bg-white",
+				SHADOW,
+				className,
+			)}
+		>
+			<img
+				src={src}
+				alt={label}
+				width={s.px}
+				height={s.px}
+				className="size-[60%] object-contain"
+				onError={() => setFailed(true)}
+			/>
+		</span>
+	);
+}
 
 export function EntityIcon({
 	kind,
@@ -111,39 +176,17 @@ export function EntityIcon({
 		const brand = PROVIDER_SIMPLEICON[key];
 		if (brand) {
 			return (
-				<span
-					className={cn(
-						s.box,
-						"flex shrink-0 items-center justify-center border border-border bg-white",
-						SHADOW,
-						className,
-					)}
-				>
-					<img
-						src={`${SIMPLEICON_BASE}/${brand.slug}/${brand.hex}`}
-						alt={alt}
-						width={s.px}
-						height={s.px}
-						className="size-[60%] object-contain"
-					/>
-				</span>
+				<ProviderBrandIcon
+					key={`${brand.slug}-${brand.hex}`}
+					src={`${SIMPLEICON_BASE}/${brand.slug}/${brand.hex}`}
+					label={alt}
+					size={size}
+					className={className}
+				/>
 			);
 		}
 	}
 
 	// Neutral fallback: a monogram tile (OpenAI, custom endpoints, unknown ids).
-	const mono = alt.trim().charAt(0).toUpperCase() || "?";
-	return (
-		<span
-			aria-hidden
-			className={cn(
-				s.box,
-				"flex shrink-0 items-center justify-center bg-muted font-semibold text-muted-foreground",
-				s.mono,
-				className,
-			)}
-		>
-			{mono}
-		</span>
-	);
+	return <NeutralMonogram label={alt} size={size} className={className} />;
 }

@@ -57,6 +57,31 @@ const dynamicManagedModelCatalog = {
 	],
 };
 
+const deepSeekProvider = {
+	id: "row-deepseek-team",
+	provider_id: "deepseek-team",
+	scope: "account_global",
+	type: "custom_openai_compatible",
+	label: "Research DeepSeek",
+	base_url: "https://api.deepseek.com/v1",
+	models: [{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" }],
+	api_mode: "openai_chat",
+	auth: { type: "api_key", source: "managed" },
+	usable: true,
+	readiness: {
+		credential_material: "available",
+		runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+		deployable: true,
+		endpoint_reachability: "not_tested",
+		inference_verification: "not_tested",
+	},
+	managed_by: "user",
+	runtime_env_name: "DEEPSEEK_API_KEY",
+	capabilities: null,
+	created_at: "2026-07-15T00:00:00Z",
+	updated_at: "2026-07-15T00:00:00Z",
+};
+
 type DeploymentComputeSubscription = NonNullable<
 	NonNullable<DeploymentRead["commercial_display"]>["compute_subscription"]
 >;
@@ -867,6 +892,7 @@ function isStubResponse(value: unknown): value is StubResponse {
 }
 
 type HostedApiStubOptions = {
+	aiProviders?: readonly unknown[];
 	agentOrderRequests?: string[];
 	autoReloadRequests?: string[];
 	autoReloadResponses?: StubResponse[];
@@ -930,6 +956,7 @@ type HostedApiStubOptions = {
 	planChangeResponses?: unknown[];
 	planQuoteRequests?: string[];
 	planQuoteResponses?: unknown[];
+	providerTestRequests?: string[];
 	restartRequests?: string[];
 	runtimeUiRedemptionRequests?: string[];
 	runtimeUiRedemptionResponses?: StubResponse[];
@@ -1596,7 +1623,21 @@ async function stubHostedApi(page: Page, options: HostedApiStubOptions = {}) {
 				...options.cloudAgentOverrides,
 			});
 		}
-		if (p === "/v1/ai-providers") return fulfillJson(r, { providers: [] });
+		if (p === "/v1/ai-providers") {
+			return fulfillJson(r, { providers: options.aiProviders ?? [] });
+		}
+		if (p.match(/^\/v1\/ai-providers\/[^/]+\/test$/) && r.request().method() === "POST") {
+			options.providerTestRequests?.push(r.request().url());
+			return fulfillJson(r, {
+				ok: true,
+				readiness: {
+					...deepSeekProvider.readiness,
+					endpoint_reachability: "reachable",
+					inference_verification: "verified",
+				},
+				error: null,
+			});
+		}
 		if (p === "/v1/channels" && r.request().method() === "GET") {
 			return fulfillJson(
 				r,
@@ -2185,6 +2226,68 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 	await expect(page.getByRole("button", { name: "Change", exact: true })).toHaveCount(0);
 });
 
+test("AI Providers preserves provider identity and keeps technical details progressive", async ({
+	page,
+}) => {
+	const providerTestRequests: string[] = [];
+	await page.setViewportSize({ width: 390, height: 844 });
+	await stubHostedApi(page, {
+		aiProviders: [deepSeekProvider],
+		deployments: [],
+		providerTestRequests,
+	});
+	await page.goto("/ai-providers");
+
+	const main = page.locator("main");
+	await expect(main.getByRole("heading", { name: "AI Providers", level: 1 })).toBeVisible();
+	await expect(main.getByText("Research DeepSeek", { exact: true })).toBeVisible();
+	await expect(main.getByText("DeepSeek · DeepSeek V4 Flash", { exact: true })).toBeVisible();
+	await expect(main.getByText("https://api.deepseek.com/v1", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("DEEPSEEK_API_KEY", { exact: true })).toHaveCount(0);
+	await expect(main.getByText("OpenAI Chat Completions", { exact: true })).toHaveCount(0);
+
+	await main.getByRole("button", { name: "Test connection for Research DeepSeek" }).click();
+	const testDialog = page.getByRole("dialog", { name: "Test connection" });
+	await expect(testDialog.getByText(/may incur a small provider charge/)).toBeVisible();
+	expect(providerTestRequests).toHaveLength(0);
+	await testDialog.getByRole("button", { name: "Run test" }).click();
+	await expect.poll(() => providerTestRequests.length).toBe(1);
+	await expect(testDialog.getByText("Connection verified", { exact: true })).toBeVisible();
+	await testDialog.getByRole("button", { name: "Close" }).first().click();
+
+	await main.getByRole("button", { name: "Edit Research DeepSeek" }).click();
+	const editDialog = page.getByRole("dialog", { name: "Edit provider" });
+	const advanced = editDialog.locator("details");
+	await expect(advanced).not.toHaveAttribute("open", "");
+	await expect(editDialog.getByLabel("Base URL")).not.toBeVisible();
+	await advanced.locator("summary").click();
+	await expect(editDialog.getByLabel("Base URL")).toHaveValue("https://api.deepseek.com/v1");
+	await expect(editDialog.getByText("deepseek-team", { exact: true })).toBeVisible();
+	await editDialog.getByRole("button", { name: "Cancel" }).click();
+
+	await main.getByRole("button", { name: "Add provider", exact: true }).click();
+	await page
+		.getByRole("dialog", { name: "Add a provider" })
+		.getByRole("button", {
+			name: /^Custom endpoint/,
+		})
+		.click();
+	const customDialog = page.getByRole("dialog", { name: "Set up Custom endpoint" });
+	await expect(
+		customDialog.getByText(
+			"Enter the credential and connection details for this custom endpoint.",
+			{ exact: true },
+		),
+	).toBeVisible();
+	await expect(customDialog.locator("details")).toHaveAttribute("open", "");
+
+	const documentWidth = await page.evaluate(() => ({
+		clientWidth: document.documentElement.clientWidth,
+		scrollWidth: document.documentElement.scrollWidth,
+	}));
+	expect(documentWidth.scrollWidth).toBe(documentWidth.clientWidth);
+});
+
 test("deploy cards and CTA-adjacent amount distinguish free, monthly, and annual prices", async ({
 	page,
 }) => {
@@ -2550,7 +2653,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		);
 
 		for (const [label, control, maxWidth] of [
-			["Main model", metrics.catalogModel, 448],
+			["Primary model", metrics.catalogModel, 448],
 			["Name", metrics.name, 448],
 			["Language", metrics.language, 160],
 			["Timezone", metrics.timezone, 384],
@@ -2591,7 +2694,7 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		).toBeLessThan(metrics.modelPickerFrameRect?.width ?? Number.POSITIVE_INFINITY);
 		expect(
 			metrics.firstModelChoice?.top,
-			`${viewport.name} Main model choices follow the section title`,
+			`${viewport.name} Primary model choices follow the section title`,
 		).toBeGreaterThanOrEqual(metrics.modelLabel?.bottom ?? Number.POSITIVE_INFINITY);
 
 		expect(metrics.action, `${viewport.name} sticky action`).not.toBeNull();
@@ -2987,7 +3090,7 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await page.goto("/deploy");
 
 	const managedModels = page.getByTestId("managed-model-choices");
-	await expect(managedModels).toHaveAccessibleName("Main model");
+	await expect(managedModels).toHaveAccessibleName("Primary model");
 	const featuredModels = managedModels.getByRole("radio");
 	await expect(featuredModels).toHaveCount(2);
 	await expect(featuredModels.nth(0)).toHaveAccessibleName("Sol");
@@ -3155,7 +3258,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await page.getByRole("button", { name: /Clawdi AI/ }).click();
 	const agentModelSelect = page.locator("#agent-catalog-model");
 	await expect(agentModelSelect).toHaveRole("combobox");
-	await expect(agentModelSelect).toHaveAccessibleName("Main model");
+	await expect(agentModelSelect).toHaveAccessibleName("Primary model");
 	await expect(agentModelSelect).toContainText("Luna");
 	await expect(page.getByTestId("managed-model-choices")).toHaveCount(0);
 	const agentModelFrame = await agentModelSelect.evaluate((element) => {
@@ -3176,7 +3279,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 		{ height: 844, width: 390 },
 	]) {
 		await page.setViewportSize(viewport);
-		await expect(agentModelSelect).toHaveAccessibleName("Main model");
+		await expect(agentModelSelect).toHaveAccessibleName("Primary model");
 		const documentWidth = await page.evaluate(() => ({
 			clientWidth: document.documentElement.clientWidth,
 			scrollWidth: document.documentElement.scrollWidth,

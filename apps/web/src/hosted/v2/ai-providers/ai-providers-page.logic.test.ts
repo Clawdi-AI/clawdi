@@ -49,7 +49,7 @@ describe("providerRemovalImpact", () => {
 		const impact = providerRemovalImpact({ known: true, agentCount: 2 });
 
 		expect(impact.acknowledgementRequired).toBe(true);
-		expect(impact.warning).toContain("2 agents currently use it");
+		expect(impact.warning).toContain("2 agents currently use this provider");
 		expect(impact.warning).toContain("no automatic fallback");
 	});
 
@@ -60,8 +60,10 @@ describe("providerRemovalImpact", () => {
 	});
 
 	test("does not require extra acknowledgement for a known-unused provider", () => {
-		expect(providerRemovalImpact({ known: true, agentCount: 0 }).acknowledgementRequired).toBe(
-			false,
-		);
+		const impact = providerRemovalImpact({ known: true, agentCount: 0 });
+		expect(impact.acknowledgementRequired).toBe(false);
+		expect(impact.warning).toBe("No hosted agents currently use this provider.");
+		expect(impact.warning).not.toContain("archive");
+		expect(impact.warning).not.toContain("undone");
 	});
 });

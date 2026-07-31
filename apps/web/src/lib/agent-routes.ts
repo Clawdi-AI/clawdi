@@ -66,7 +66,7 @@ const AGENT_SECTION_LABELS = {
 	projects: "Project Access",
 	console: "Agent Interface",
 	terminal: "Terminal",
-	ai: "Model Provider",
+	ai: "AI Providers",
 	channels: "Channels",
 	settings: "Settings",
 } as const satisfies Record<AgentSectionId, string>;

@@ -155,7 +155,7 @@ describe("agent routes", () => {
 		expect(agentSectionLabel("channels")).toBe("Channels");
 		expect(agentSectionLabelFromSegment("project-access")).toBe("Project Access");
 		expect(agentSectionLabelFromSegment("console")).toBe("Agent Interface");
-		expect(agentSectionLabelFromSegment("model-provider")).toBe("Model Provider");
+		expect(agentSectionLabelFromSegment("model-provider")).toBe("AI Providers");
 		expect(agentSectionLabelFromSegment("settings")).toBe("Settings");
 		expect(agentSectionLabelFromSegment("bad")).toBeNull();
 	});

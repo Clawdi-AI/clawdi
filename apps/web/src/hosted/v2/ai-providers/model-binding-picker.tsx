@@ -127,7 +127,7 @@ export function ModelBindingPicker({
 					/>
 				) : isManaged && compactManagedModelChoices && hasCatalogModels ? (
 					<div className="flex min-w-0 flex-col gap-1.5">
-						<Label id={`${catalogInputId}-label`}>Main model</Label>
+						<Label id={`${catalogInputId}-label`}>Primary model</Label>
 						<div
 							className="flex min-w-0 max-w-full flex-wrap items-center gap-1.5"
 							data-testid="managed-model-controls"
@@ -190,7 +190,7 @@ export function ModelBindingPicker({
 					</div>
 				) : hasCatalogModels ? (
 					<div className="flex flex-col gap-1.5">
-						<Label htmlFor={catalogInputId}>Main model</Label>
+						<Label htmlFor={catalogInputId}>Primary model</Label>
 						<Select
 							items={catalogModelItems}
 							value={modelChoice}
@@ -217,7 +217,9 @@ export function ModelBindingPicker({
 			</div>
 			{!isManaged && modelChoice === CUSTOM_MODEL_CHOICE ? (
 				<div className="flex flex-col gap-1.5">
-					<Label htmlFor={customInputId}>{hasCatalogModels ? "Custom model" : "Main model"}</Label>
+					<Label htmlFor={customInputId}>
+						{hasCatalogModels ? "Custom model" : "Primary model"}
+					</Label>
 					<Input
 						id={customInputId}
 						value={primaryModel}

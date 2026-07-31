@@ -139,8 +139,10 @@ describe("providerFormIdentity", () => {
 });
 
 describe("derivedProviderFields", () => {
-	test("uses explicit protocol contracts for Kimi Coding and Moonshot products", () => {
+	test("uses explicit protocol contracts for Kimi Code and Moonshot products", () => {
 		const kimi = testPreset("kimi-coding");
+		expect(kimi.label).toBe("Kimi Code");
+		expect(kimi.catalog[0]?.alias).toBe("Kimi K2.7 Code");
 		expect(providerTypeForPreset(kimi)).toBe("anthropic");
 		expect(derivedProviderFields("anthropic", "api_key", kimi)).toEqual({
 			baseUrl: "https://api.kimi.com/coding",
@@ -154,7 +156,8 @@ describe("derivedProviderFields", () => {
 		expect(derivedProviderFields("custom_openai_compatible", "api_key", moonshot)).toMatchObject({
 			baseUrl: "https://api.moonshot.cn/v1",
 			apiMode: "openai_chat",
-			modelsText: "moonshot-v1-128k",
+			modelsText: "kimi-k3",
+			suggestedPrimaryModel: "kimi-k3",
 		});
 		expect(moonshot.region_variants).toEqual([
 			{
@@ -162,14 +165,12 @@ describe("derivedProviderFields", () => {
 				label: "China",
 				base_url: "https://api.moonshot.cn/v1",
 				api_key_url: "https://platform.moonshot.cn/console/api-keys",
-				website_url: "https://platform.moonshot.cn",
 			},
 			{
 				id: "global",
 				label: "Global",
 				base_url: "https://api.moonshot.ai/v1",
 				api_key_url: "https://platform.moonshot.ai/console/api-keys",
-				website_url: "https://platform.moonshot.ai",
 			},
 		]);
 		expect(providerPresetById("moonshot-cn")).toBeNull();
@@ -195,6 +196,12 @@ describe("derivedProviderFields", () => {
 		expect(providerPresetRegion(testPreset("stepfun"), "cn")?.base_url).toBe(
 			"https://api.stepfun.com/v1",
 		);
+		expect(providerPresetRegion(testPreset("stepfun"), "global")?.api_key_url).toBe(
+			"https://platform.stepfun.ai/interface-key",
+		);
+		expect(providerPresetRegion(testPreset("stepfun"), "cn")?.api_key_url).toBe(
+			"https://platform.stepfun.com/interface-key",
+		);
 	});
 
 	test("uses shared defaults for known providers", () => {
@@ -205,6 +212,51 @@ describe("derivedProviderFields", () => {
 			modelsText: "gpt-5.5\ngpt-5.4\ngpt-5.4-mini",
 		});
 		expect(shouldUseCatalogModels("openai", "api_key")).toBe(true);
+	});
+
+	test("keeps officially documented xAI model context metadata", () => {
+		const grok = testPreset("xai-grok");
+		expect(grok.catalog.map((model) => model.id)).toEqual(["grok-4.5"]);
+		expect(grok.catalog.find((model) => model.id === "grok-4.5")?.context_window).toBe(500_000);
+	});
+
+	test("keeps audited provider catalogs current", () => {
+		expect(testPreset("deepseek").catalog.map((model) => model.id)).toEqual([
+			"deepseek-v4-flash",
+			"deepseek-v4-pro",
+		]);
+		expect(testPreset("stepfun").catalog.map((model) => model.id)).toEqual(["step-3.7-flash"]);
+		expect(testPreset("openrouter").catalog.map((model) => model.id)).toEqual([
+			"openrouter/auto-beta",
+			"~openai/gpt-latest",
+			"anthropic/claude-sonnet-5",
+		]);
+		expect(testPreset("together-ai").catalog.map((model) => model.id)).toEqual([
+			"MiniMaxAI/MiniMax-M3",
+			"zai-org/GLM-5.2",
+		]);
+		expect(testPreset("groq").catalog.map((model) => model.id)).toEqual(["openai/gpt-oss-120b"]);
+
+		const zhipu = testPreset("zhipu-glm");
+		expect(zhipu.catalog.find((model) => model.id === "glm-5.1")?.context_window).toBeUndefined();
+		expect(zhipu.catalog.find((model) => model.id === "glm-4.7")?.context_window).toBeUndefined();
+		expect(
+			testPreset("minimax").catalog.find((model) => model.id === "MiniMax-M2")?.context_window,
+		).toBe(204_800);
+
+		const mistral = testPreset("mistral");
+		expect(mistral.label).toBe("Mistral AI");
+		expect(mistral.catalog.map((model) => [model.id, model.context_window])).toEqual([
+			["mistral-large-latest", 256_000],
+			["mistral-medium-latest", 256_000],
+			["codestral-latest", 128_000],
+		]);
+
+		const gemini = testPreset("google-gemini-openai");
+		expect(gemini.catalog.map((model) => [model.id, model.context_window])).toEqual([
+			["gemini-3.5-flash", 1_048_576],
+			["gemini-2.5-pro", 1_048_576],
+		]);
 	});
 
 	test("uses the Codex catalog for ChatGPT sign-in", () => {
@@ -234,7 +286,7 @@ describe("derivedProviderFields", () => {
 			baseUrl: "https://api.deepseek.com/v1",
 			apiMode: "openai_chat",
 			runtimeEnv: "DEEPSEEK_API_KEY",
-			modelsText: "deepseek-v4-flash\ndeepseek-v4",
+			modelsText: "deepseek-v4-flash\ndeepseek-v4-pro",
 			suggestedPrimaryModel: "deepseek-v4-flash",
 		});
 		expect(shouldUseCatalogModels("custom_openai_compatible", "api_key", preset)).toBe(true);

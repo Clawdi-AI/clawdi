@@ -13,6 +13,7 @@ import {
 	providerAvailabilityIssue,
 	providerChoiceFromRef,
 	providerDisplayLabel,
+	providerPresentation,
 	providerRuntimeIncompatibility,
 	usableProviders,
 } from "@/hosted/v2/ai-providers/model-binding";
@@ -121,6 +122,27 @@ describe("model binding", () => {
 		expect(providerDisplayLabel({ ...providers[0], label: null })).toBe("OpenAI");
 	});
 
+	test("preserves preset brand identity for saved compatible providers", () => {
+		const deepSeek = {
+			...savedOpenAiProvider,
+			provider_id: "deepseek-2",
+			type: "custom_openai_compatible",
+			label: "Research DeepSeek",
+			base_url: "https://api.deepseek.com/v1",
+			models: [{ id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" }],
+			api_mode: "openai_chat",
+			runtime_env_name: "DEEPSEEK_API_KEY",
+		} satisfies AiProvider;
+
+		expect(providerPresentation(deepSeek)).toMatchObject({
+			label: "Research DeepSeek",
+			brandLabel: "DeepSeek",
+			iconId: "deepseek",
+			catalogSummary: "DeepSeek V4 Flash",
+			summary: "DeepSeek · DeepSeek V4 Flash",
+		});
+	});
+
 	test("does not offer an unfinished provider as a deploy selection", () => {
 		const unfinishedProvider = {
 			id: "row-codex",
@@ -173,7 +195,7 @@ describe("model binding", () => {
 		expect(usableProviders([localProvider])).toEqual([]);
 	});
 
-	test("disables Gemini GenerateContent for Hermes with actionable guidance", () => {
+	test("disables incompatible Gemini providers for Hermes with actionable guidance", () => {
 		const geminiProvider = {
 			...savedOpenAiProvider,
 			provider_id: "gemini-main",
@@ -188,6 +210,12 @@ describe("model binding", () => {
 
 		expect(providerRuntimeIncompatibility(geminiProvider, "openclaw")).toBeNull();
 		expect(providerRuntimeIncompatibility(geminiProvider, "hermes")).toContain("Choose OpenClaw");
+		const issue = providerAvailabilityIssue(geminiProvider, {
+			runtime: "hermes",
+			environmentId: null,
+		});
+		expect(issue?.message).toContain("this Gemini connection");
+		expect(issue?.message).not.toContain("GenerateContent");
 		expect(usableProviders([geminiProvider], { runtime: "hermes", environmentId: null })).toEqual(
 			[],
 		);
@@ -207,6 +235,9 @@ describe("model binding", () => {
 
 		expect(providerRuntimeIncompatibility(provider, "openclaw")).toBeNull();
 		expect(providerRuntimeIncompatibility(provider, "hermes")).toContain("Hermes cannot use");
+		expect(
+			providerAvailabilityIssue(provider, { runtime: "hermes", environmentId: null })?.message,
+		).toBe("Hermes cannot use this provider's current setup.");
 		expect(usableProviders([provider], { runtime: "hermes", environmentId: null })).toEqual([]);
 	});
 
