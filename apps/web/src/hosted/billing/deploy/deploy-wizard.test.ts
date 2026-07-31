@@ -341,10 +341,10 @@ describe("deploy provider choice", () => {
 describe("AI provider usability gate", () => {
 	test("keeps local-only providers out and disables runtime-incompatible choices", () => {
 		expect(wizardSource).toContain("usableProviders(aiProviders.data ?? [])");
-		expect(wizardSource).toContain("usableProviders(savedProviderList, runtime)");
+		expect(wizardSource).toContain("usableProviders(savedProviderList, availabilityContext)");
 		expect(wizardSource).toContain("{savedProviderList.map((provider) => {");
-		expect(wizardSource).toContain("providerRuntimeIncompatibility(provider, runtime)");
-		expect(wizardSource).toContain("disabled={Boolean(incompatibility)}");
+		expect(wizardSource).toContain("providerAvailabilityIssue(provider, availabilityContext)");
+		expect(wizardSource).toContain("disabled={Boolean(issue)}");
 		expect(wizardSource).not.toContain("{aiProviders.data?.map((provider) => (");
 	});
 });
