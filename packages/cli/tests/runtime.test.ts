@@ -1020,12 +1020,15 @@ function seedRuntimeWatchLocaleBaseline(home: string, state: string, run: string
 		offline: false,
 		secretValues: {},
 	};
-	load.applyContext = readRuntimeApplyContext();
+	const applyContext = readRuntimeApplyContext();
+	load.applyContext = applyContext;
 	const convergence = convergeRuntimeManifest(load, paths);
 	if (convergence.installErrors.length > 0) throw new Error(convergence.installErrors.join("; "));
+	cacheRuntimeLastGoodManifest(load.manifest, paths, load.secretValues);
 	writeTestRuntimeAppliedState(paths, load, convergence, {
 		etag: testBundleEtag("manifest-locale-1"),
 	});
+	writeCanonicalApplyContext(applyContext.identity, applyContext.runtimeEnvironment.values);
 	return paths;
 }
 
@@ -7656,6 +7659,7 @@ exit 64
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
 		process.env.CLAWDI_RUN_DIR = run;
 		process.env.CLAWDI_RUNTIME_MANIFEST_URL = "https://runtime.test/v1/runtime/manifest";
+		setRuntimeApplyGeneration(1, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		writeFileSync(join(run, "secrets", "auth-token"), "file-runtime-token\n");
 		seedCurrentCliInstall(state, packageSpec, currentVersion, "https://registry.npmjs.org");
 		const paths = getRuntimePaths();
@@ -10553,6 +10557,7 @@ chmod +x "$prefix/bin/clawdi"
 		};
 		const bundleEtag = `"sha256:${"a".repeat(64)}"`;
 		const normalizedManifest = normalizeManifestPayload(manifestPayload).manifest;
+		const committedApplyContext = readRuntimeApplyContext();
 		const committedLoad: RuntimeManifestLoad = {
 			manifest: {
 				...normalizedManifest,
@@ -10567,6 +10572,7 @@ chmod +x "$prefix/bin/clawdi"
 			secretValues: TEST_HOSTED_CODEX_SECRET_VALUES,
 			etag: bundleEtag,
 			sourceRevision: "a".repeat(64),
+			applyContext: committedApplyContext,
 		};
 		cacheRuntimeLastGoodManifest(committedLoad.manifest, paths, committedLoad.secretValues);
 		writeRuntimeAppliedState(
@@ -10577,6 +10583,10 @@ chmod +x "$prefix/bin/clawdi"
 				etag: bundleEtag,
 				sourceRevision: "a".repeat(64),
 				generation: 30,
+				applyGeneration: committedApplyContext.identity.generation,
+				manifestETag: committedApplyContext.identity.manifestETag,
+				applyReceiptId: committedApplyContext.identity.applyReceiptId,
+				bootNonce: committedApplyContext.identity.bootNonce,
 				contentIdentity: runtimeAppliedContentIdentity(committedLoad),
 				providerIds: ["default"],
 				projectedProviderIds: {},
@@ -10971,6 +10981,7 @@ chmod +x "$prefix/bin/clawdi"
 	});
 
 	it("keeps an old no-integrity same-package current and changed-package deferred", async () => {
+		installSuccessfulSystemctlFixture();
 		setRuntimeApplyGeneration(17, HOSTED_OPENCLAW_TEST_RUNTIME_ENV);
 		const home = join(root, "home", "clawdi");
 		const state = join(root, "var", "lib", "clawdi");
