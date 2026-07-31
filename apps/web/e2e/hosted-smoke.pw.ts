@@ -2547,10 +2547,23 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 			metrics.managedModelChoices?.rect?.right,
 			`${viewport.name} managed model choices right edge`,
 		).toBeLessThanOrEqual(viewport.width);
-		expect(
-			metrics.firstModelChoice?.top,
-			`${viewport.name} wrapped Main model choices`,
-		).toBeGreaterThanOrEqual(metrics.modelLabel?.bottom ?? Number.POSITIVE_INFINITY);
+		if (viewport.width >= 700) {
+			const modelLabelCenter = metrics.modelLabel
+				? (metrics.modelLabel.top + metrics.modelLabel.bottom) / 2
+				: 0;
+			const firstModelChoiceCenter = metrics.firstModelChoice
+				? (metrics.firstModelChoice.top + metrics.firstModelChoice.bottom) / 2
+				: Number.POSITIVE_INFINITY;
+			expect(firstModelChoiceCenter, `${viewport.name} inline Main model choices`).toBeCloseTo(
+				modelLabelCenter,
+				0,
+			);
+		} else {
+			expect(
+				metrics.firstModelChoice?.top,
+				`${viewport.name} wrapped Main model choices`,
+			).toBeGreaterThanOrEqual(metrics.modelLabel?.bottom ?? Number.POSITIVE_INFINITY);
+		}
 
 		expect(metrics.action, `${viewport.name} sticky action`).not.toBeNull();
 		expect(metrics.action?.top, `${viewport.name} sticky action top`).toBeGreaterThanOrEqual(0);
