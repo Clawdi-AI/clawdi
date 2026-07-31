@@ -20,6 +20,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Spinner } from "@/components/ui/spinner";
 import { getStripe, resetStripeCache } from "@/hosted/billing/stripe";
+import type { CheckoutSessionClientSecret } from "@/hosted/billing/stripe-client-secret";
 import { env } from "@/lib/env";
 
 export type StripeCheckoutSummary = {
@@ -30,7 +31,7 @@ export type StripeCheckoutSummary = {
 };
 
 type StripeCheckoutDialogProps = {
-	clientSecret: string | null;
+	clientSecret: CheckoutSessionClientSecret | null;
 	description: string;
 	onComplete: () => void;
 	onOpenChange: (open: boolean) => void;

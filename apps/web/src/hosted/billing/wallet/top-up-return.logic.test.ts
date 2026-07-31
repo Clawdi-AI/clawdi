@@ -14,11 +14,10 @@ describe("wallet top-up return URL helpers", () => {
 	});
 
 	test("reads only marked Stripe PaymentIntent returns", () => {
-		expect(
-			readWalletTopupReturn(
-				"?settings=billing-wallet&topup_return=1&payment_intent_client_secret=pi_secret",
-			),
-		).toEqual({ clientSecret: "pi_secret" });
+		const result = readWalletTopupReturn(
+			"?settings=billing-wallet&topup_return=1&payment_intent_client_secret=pi_secret",
+		);
+		expect(result?.clientSecret === "pi_secret").toBe(true);
 		expect(
 			readWalletTopupReturn("?settings=billing-wallet&payment_intent_client_secret=pi_secret"),
 		).toBe(null);

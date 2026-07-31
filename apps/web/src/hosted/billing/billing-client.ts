@@ -530,6 +530,9 @@ export function createBillingClient(
 	};
 }
 
+export type BillingClient = ReturnType<typeof createBillingClient>;
+export type CheckoutOperationResult = Awaited<ReturnType<BillingClient["checkout"]>>;
+
 export function useBillingClient() {
 	const { getToken } = useAuthToken();
 	return useMemo(() => createBillingClient(getToken), [getToken]);

@@ -3,10 +3,12 @@ import {
 	buildHostedDeploySubscriptionQuoteRequest,
 	type HostedDeployCheckoutUiMode,
 } from "@clawdi/shared/api";
-import { acceptDeclarativeOperation } from "@/hosted/billing/billing-client";
+import {
+	acceptDeclarativeOperation,
+	type CheckoutOperationResult,
+} from "@/hosted/billing/billing-client";
 import type {
 	CheckoutRequest,
-	CheckoutResult,
 	ComputePlanSlug,
 	ComputeSubscriptionQuoteRequest,
 	ComputeSubscriptionQuoteResponse,
@@ -56,7 +58,7 @@ export type SubscriptionCreateRequestView = {
 export type SubscriptionCreateOutcomeView =
 	| {
 			flowType: "checkout";
-			checkout: CheckoutResult;
+			checkout: CheckoutOperationResult;
 	  }
 	| {
 			flowType: "subscription_activation";
@@ -121,7 +123,9 @@ export function subscriptionCreateRequest(request: SubscriptionCreateRequestView
 	return { body, idempotencyKey: request.idempotencyKey };
 }
 
-export function subscriptionCreateOutcome(result: CheckoutResult): SubscriptionCreateOutcomeView {
+export function subscriptionCreateOutcome(
+	result: CheckoutOperationResult,
+): SubscriptionCreateOutcomeView {
 	if (result.flow_type !== "subscription_activation") {
 		return { flowType: "checkout", checkout: result };
 	}
