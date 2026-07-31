@@ -1642,31 +1642,39 @@ async def test_public_bot_pool_capacity_rejects_new_agent_links(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", [CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD])
-async def test_hermes_agent_rejects_second_active_link_for_single_token_provider(
+@pytest.mark.parametrize(
+    ("agent_type", "provider"),
+    [
+        ("hermes", CHANNEL_PROVIDER_TELEGRAM),
+        ("hermes", CHANNEL_PROVIDER_DISCORD),
+        ("openclaw", CHANNEL_PROVIDER_TELEGRAM),
+    ],
+)
+async def test_hosted_agent_rejects_second_link_when_provider_session_is_not_account_aware(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
+    agent_type: str,
     provider: str,
 ):
     first_account = await _create_admin_channel(
         client,
         target_clerk_id=seed_user.clerk_id,
         provider=provider,
-        name=f"hermes-{provider}-first-{uuid4().hex}",
+        name=f"{agent_type}-{provider}-first-{uuid4().hex}",
     )
     second_account = await _create_admin_channel(
         client,
         target_clerk_id=seed_user.clerk_id,
         provider=provider,
-        name=f"hermes-{provider}-second-{uuid4().hex}",
+        name=f"{agent_type}-{provider}-second-{uuid4().hex}",
     )
     assert first_account.status_code == 201, first_account.text
     assert second_account.status_code == 201, second_account.text
     user, agent = await _create_user_with_channel_agent(
         db_session,
-        label=f"hermes-{provider}",
-        agent_type="hermes",
+        label=f"{agent_type}-{provider}",
+        agent_type=agent_type,
     )
 
     async with _client_for_user(db_session, user) as user_client:
@@ -1681,7 +1689,7 @@ async def test_hermes_agent_rejects_second_active_link_for_single_token_provider
 
     assert first_link.status_code == 201, first_link.text
     assert second_link.status_code == 409
-    assert second_link.json()["detail"].startswith(f"one-{provider}-link-per-Hermes-agent")
+    assert second_link.json()["detail"].startswith(f"one-{provider}-link-per-{agent_type}-agent")
 
 
 @pytest.mark.asyncio
@@ -1770,13 +1778,12 @@ async def test_hosted_runtime_agent_rejects_whatsapp_links_and_tenant_credential
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", [CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD])
-async def test_openclaw_agent_keeps_multi_link_behavior_for_telegram_and_discord(
+async def test_openclaw_agent_keeps_multi_link_behavior_for_account_aware_provider(
     client: httpx.AsyncClient,
     db_session: AsyncSession,
     seed_user,
-    provider: str,
 ):
+    provider = CHANNEL_PROVIDER_DISCORD
     first_account = await _create_admin_channel(
         client,
         target_clerk_id=seed_user.clerk_id,

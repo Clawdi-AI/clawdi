@@ -102,7 +102,13 @@ DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
 HERMES_AGENT_TYPE = "hermes"
 OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
-HERMES_SINGLE_LINK_PROVIDERS = frozenset({CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD})
+SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE = {
+    HERMES_AGENT_TYPE: frozenset({CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}),
+    # OpenClaw's group session key does not yet include the Telegram account.
+    # Keep one account per Agent until upstream makes group sessions account-aware.
+    OPENCLAW_AGENT_TYPE: frozenset({CHANNEL_PROVIDER_TELEGRAM}),
+}
+HOSTED_AGENT_TYPE_LABELS = {HERMES_AGENT_TYPE: "Hermes", OPENCLAW_AGENT_TYPE: "OpenClaw"}
 WHATSAPP_COMING_SOON_DETAIL = (
     "WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now."
 )
@@ -455,9 +461,12 @@ async def ensure_hosted_agent_provider_link_available(
             status_code=status.HTTP_409_CONFLICT,
             detail=WHATSAPP_COMING_SOON_DETAIL,
         )
-    if agent.agent_type != HERMES_AGENT_TYPE:
-        return
-    if existing_same_account_link or account.provider not in HERMES_SINGLE_LINK_PROVIDERS:
+    single_link_providers = SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE.get(agent.agent_type)
+    if (
+        existing_same_account_link
+        or single_link_providers is None
+        or account.provider not in single_link_providers
+    ):
         return
 
     existing_link = (
@@ -482,7 +491,8 @@ async def ensure_hosted_agent_provider_link_available(
     raise HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail=(
-            f"one-{account.provider}-link-per-Hermes-agent: Hermes agents support one "
+            f"one-{account.provider}-link-per-{agent.agent_type}-agent: "
+            f"{HOSTED_AGENT_TYPE_LABELS[agent.agent_type]} agents support one "
             f"active {account.provider} link. Unlink the existing {account.provider} "
             "channel before linking another."
         ),

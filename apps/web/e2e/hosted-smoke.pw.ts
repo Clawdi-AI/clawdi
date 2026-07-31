@@ -5047,6 +5047,15 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	const ownedId = "75555555-5555-4555-8555-555555555555";
 	const readyId = "76666666-6666-4666-8666-666666666666";
 	const validExpiry = new Date(Date.now() + 15 * 60_000).toISOString();
+	const agentChannelsDeployment = {
+		...runningMissingProjectionDeployment,
+		openclaw_control_ui_url: "https://runtime.example/openclaw",
+		config_info: {
+			...runningMissingProjectionDeployment.config_info,
+			runtime: "openclaw",
+			clawdi_cloud_environments: { openclaw: agentId },
+		},
+	};
 	const telegramAccount = {
 		id: telegramId,
 		provider: "telegram",
@@ -5079,7 +5088,7 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	};
 	const pairCodeRequests: string[] = [];
 	await stubHostedApi(page, {
-		deployments: [runningMissingProjectionDeployment],
+		deployments: [agentChannelsDeployment],
 		cloudAgents: [
 			{
 				...sharedLegacyCloudAgent,
@@ -5088,6 +5097,7 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 				default_name: "Support Agent",
 				machine_name: "support.local",
 				display_name: "Support Agent",
+				agent_type: "openclaw",
 			},
 		],
 		channelAccounts: [telegramAccount, discordAccount, ownedAccount],
@@ -5111,10 +5121,10 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 		],
 		channelBotPool: {
 			providers: {
-				telegram: [
+				discord: [
 					{
 						id: readyId,
-						provider: "telegram",
+						provider: "discord",
 						name: "Clawdi Ready Bot",
 						status: "active",
 						visibility: "public",
@@ -5185,7 +5195,7 @@ test("Agent Channels uses compact task-ordered rows and the shared Telegram pair
 	});
 
 	await page.goto(
-		`/agents/${agentId}/channel-links?source=on-clawdi&d=${runningMissingProjectionDeployment.id}`,
+		`/agents/${agentId}/channel-links?source=on-clawdi&d=${agentChannelsDeployment.id}`,
 	);
 	const connectedSection = page.locator("[data-agent-connected-channels]");
 	const addSection = page.locator("[data-agent-add-channel]");

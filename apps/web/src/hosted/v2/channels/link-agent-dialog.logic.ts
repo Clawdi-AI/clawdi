@@ -13,10 +13,24 @@ export const WHATSAPP_LINKING_READY = false;
 export const WHATSAPP_COMING_SOON_MESSAGE =
 	"WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now.";
 
-const HERMES_SINGLE_LINK_PROVIDERS = new Set(["telegram", "discord"]);
+const SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE: Readonly<Record<string, ReadonlySet<string>>> = {
+	hermes: new Set(["telegram", "discord"]),
+	openclaw: new Set(["telegram"]),
+};
+const AGENT_TYPE_LABELS: Readonly<Record<string, string>> = {
+	hermes: "Hermes",
+	openclaw: "OpenClaw",
+};
 
 export function channelProviderLinkingReady(provider: string): boolean {
 	return provider !== "whatsapp" || WHATSAPP_LINKING_READY;
+}
+
+export function agentProviderHasSingleLinkLimit(
+	agentType: string | null | undefined,
+	provider: string,
+): boolean {
+	return Boolean(agentType && SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE[agentType]?.has(provider));
 }
 
 export function pairingCommand(code: string): string {
@@ -55,8 +69,8 @@ export function linkAgentBlockReason({
 	accountId: string;
 }): string | null {
 	if (!channelProviderLinkingReady(provider)) return WHATSAPP_COMING_SOON_MESSAGE;
-	if (selectedAgent?.agent_type !== "hermes") return null;
-	if (!HERMES_SINGLE_LINK_PROVIDERS.has(provider)) return null;
+	const agentType = selectedAgent?.agent_type;
+	if (!agentType || !agentProviderHasSingleLinkLimit(agentType, provider)) return null;
 
 	const hasExistingProviderLink = existingAgentLinks.some(
 		(link) =>
@@ -65,7 +79,7 @@ export function linkAgentBlockReason({
 			link.account.provider === provider,
 	);
 	if (!hasExistingProviderLink) return null;
-	return `Hermes agents can use one active ${providerMetaLabel(provider)} bot at a time. Unlink the current ${providerMetaLabel(provider)} bot before linking another.`;
+	return `${AGENT_TYPE_LABELS[agentType] ?? agentType} agents can use one active ${providerMetaLabel(provider)} bot at a time. Unlink the current ${providerMetaLabel(provider)} bot before linking another.`;
 }
 
 function providerMetaLabel(provider: string): string {

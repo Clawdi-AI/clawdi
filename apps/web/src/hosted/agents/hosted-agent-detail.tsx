@@ -237,6 +237,7 @@ import {
 } from "@/hosted/v2/channels/channels-hooks";
 import { ConnectBotDialog } from "@/hosted/v2/channels/connect-bot-dialog";
 import {
+	agentProviderHasSingleLinkLimit,
 	channelActivityAfterLink,
 	channelProviderLinkingReady,
 } from "@/hosted/v2/channels/link-agent-dialog.logic";
@@ -650,7 +651,7 @@ export function HostedAgentDetail({
 						!deploymentProjectionQueryable ? (
 							<StoppedAgentState deployment={deployment} />
 						) : projection.status === "resolved" ? (
-							<ChannelsTab environmentId={environmentId} />
+							<ChannelsTab environmentId={environmentId} agentType={runtime} />
 						) : (
 							<ChannelsSyncState
 								isChecking={isCheckingDeployment || agentQuery.isFetching}
@@ -2319,7 +2320,13 @@ const AGENT_CHANNEL_ROW_CLASS =
 	"grid min-h-16 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 px-4 py-3";
 const AGENT_CHANNEL_ACTIONS_CLASS = "flex shrink-0 items-center justify-end gap-2";
 
-function ChannelsTab({ environmentId }: { environmentId: string }) {
+function ChannelsTab({
+	environmentId,
+	agentType,
+}: {
+	environmentId: string;
+	agentType: HostedRuntime;
+}) {
 	const api = useApi();
 	const qc = useQueryClient();
 	const channels = useChannels();
@@ -2349,6 +2356,25 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 			? [recentLink, ...items]
 			: items;
 	}, [linked.data, recentLink]);
+	const accountSummaries = useMemo(() => {
+		const map = new Map<string, { provider: string; name: string }>();
+		for (const channel of channels.data ?? []) {
+			map.set(channel.id, { provider: channel.provider, name: channel.name });
+		}
+		for (const list of Object.values(botPool.data?.providers ?? {})) {
+			for (const bot of list) map.set(bot.id, { provider: bot.provider, name: bot.name });
+		}
+		return map;
+	}, [channels.data, botPool.data]);
+	const linkedProviders = useMemo(
+		() =>
+			new Set(
+				visibleLinks
+					.map((link) => link.account?.provider ?? accountSummaries.get(link.account_id)?.provider)
+					.filter((provider): provider is string => Boolean(provider)),
+			),
+		[accountSummaries, visibleLinks],
+	);
 	const ownedChannels = useMemo(
 		() =>
 			(channels.data ?? [])
@@ -2358,9 +2384,13 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 					name: channel.name,
 				}))
 				.filter(
-					(channel) => channelProviderLinkingReady(channel.provider) && !linkedIds.has(channel.id),
+					(channel) =>
+						channelProviderLinkingReady(channel.provider) &&
+						(!agentProviderHasSingleLinkLimit(agentType, channel.provider) ||
+							!linkedProviders.has(channel.provider)) &&
+						!linkedIds.has(channel.id),
 				),
-		[channels.data, linkedIds],
+		[channels.data, linkedIds, linkedProviders, agentType],
 	);
 	const readyBots = useMemo(
 		() =>
@@ -2371,25 +2401,17 @@ function ChannelsTab({ environmentId }: { environmentId: string }) {
 						bot.access === "public" &&
 						bot.available &&
 						channelProviderLinkingReady(bot.provider) &&
+						(!agentProviderHasSingleLinkLimit(agentType, bot.provider) ||
+							!linkedProviders.has(bot.provider)) &&
 						!linkedIds.has(bot.id),
 				)
 				.map((bot) => ({ id: bot.id, provider: bot.provider, name: bot.name })),
-		[botPool.data, linkedIds],
+		[botPool.data, linkedIds, linkedProviders, agentType],
 	);
 	useEffect(() => {
 		if (!botPool.isLoading && !botPool.error && readyBots.length === 0) setAdvancedOpen(true);
 	}, [botPool.error, botPool.isLoading, readyBots.length]);
 
-	// Provider/name labels for linked rows whose API payload omits the nested
-	// `account` (the list-by-agent endpoint isn't guaranteed to embed it).
-	// Resolved from the already-loaded channels + shared bot-pool by account id.
-	const accountSummaries = useMemo(() => {
-		const map = new Map<string, { provider: string; name: string }>();
-		for (const c of channels.data ?? []) map.set(c.id, { provider: c.provider, name: c.name });
-		for (const list of Object.values(botPool.data?.providers ?? {}))
-			for (const b of list) map.set(b.id, { provider: b.provider, name: b.name });
-		return map;
-	}, [channels.data, botPool.data]);
 	const healthByAccount = useMemo(
 		() => new Map((health.data?.items ?? []).map((item) => [item.account_id, item])),
 		[health.data],
