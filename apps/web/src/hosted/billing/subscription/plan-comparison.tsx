@@ -153,7 +153,7 @@ export function PlanComparison({
 							<FeatureRow>One free active Basic agent per user</FeatureRow>
 							<FeatureRow>Paid additional Basic agents</FeatureRow>
 							<FeatureRow>Single agent engine (OpenClaw or Hermes)</FeatureRow>
-							<FeatureRow>BYOK avoids managed-AI usage charges</FeatureRow>
+							<FeatureRow>BYOK avoids Clawdi AI usage charges</FeatureRow>
 							{signupGrantUsd ? (
 								<FeatureRow>{formatUsdExact(signupGrantUsd)} welcome balance on signup</FeatureRow>
 							) : null}
@@ -250,17 +250,17 @@ export function PlanComparison({
 					</CardFooter>
 				</Card>
 
-				{/* Managed AI */}
+				{/* Clawdi AI */}
 				<Card className="flex flex-col bg-muted/30">
 					<CardHeader>
 						<CardTitle className="flex items-center gap-2">
-							<WalletCards className="size-5 text-muted-foreground" aria-hidden /> Managed AI
+							<WalletCards className="size-5 text-muted-foreground" aria-hidden /> Clawdi AI
 						</CardTitle>
 						<div className="mt-2 flex items-baseline gap-1">
 							<span className="text-3xl font-semibold tracking-tight">Pay as you go</span>
 						</div>
 						<CardDescription className="mt-2">
-							Managed AI billed by usage. Top up your wallet and spend only what your agents use.
+							Clawdi AI is billed by usage. Top up your wallet and spend only what your agents use.
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="flex-1">
@@ -269,8 +269,8 @@ export function PlanComparison({
 							<FeatureRow>Whole-dollar top-ups from {TOPUP_AMOUNT_RANGE_LABEL}</FeatureRow>
 							<FeatureRow>Optional auto-reload so agents never stall</FeatureRow>
 							<FeatureRow>
-								<span className="font-medium">No managed-AI charge with BYOK</span> — your own key
-								bypasses managed AI
+								<span className="font-medium">No Clawdi AI charge with BYOK</span> — your own key
+								bypasses Clawdi AI
 							</FeatureRow>
 						</ul>
 						<Separator className="my-4" />

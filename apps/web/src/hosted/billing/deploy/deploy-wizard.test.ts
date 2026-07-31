@@ -4,6 +4,10 @@ import { validateHostedDeployPersona } from "@clawdi/shared/api";
 import { DEPLOY_ASSISTANT_NAME_MAX_LENGTH } from "@/hosted/billing/deploy/deploy-request";
 
 const wizardSource = readFileSync(new URL("./deploy-wizard.tsx", import.meta.url), "utf8");
+const deployPageSource = readFileSync(
+	new URL("../../../pages/dashboard/deploy/page.tsx", import.meta.url),
+	"utf8",
+);
 const acceptedNavigationSource = readFileSync(
 	new URL("./accepted-deployment-navigation.ts", import.meta.url),
 	"utf8",
@@ -43,6 +47,15 @@ const aiProviderHooksSource = readFileSync(
 );
 
 describe("deploy wizard personalization", () => {
+	test("keeps deploy-specific controls proportionate to their content", () => {
+		expect(wizardSource).toContain('className="w-full max-w-md"');
+		expect(wizardSource).toContain('<div className="flex max-w-2xl flex-col gap-4">');
+		expect(wizardSource).toContain('className="flex w-full max-w-md flex-col gap-1.5"');
+		expect(wizardSource).toContain('<SelectTrigger id="agent-language" type="button">');
+		expect(wizardSource).toContain('className="flex w-full max-w-sm min-w-0 flex-col gap-1.5"');
+		expect(wizardSource).toContain('className="flex max-w-xs flex-col gap-1.5"');
+	});
+
 	test("uses a stable dashboard name within the strictest backend limit", () => {
 		expect(wizardSource).toContain('htmlFor="agent-name"');
 		expect(wizardSource).toContain('<Label htmlFor="agent-name">Name in Clawdi</Label>');
@@ -68,6 +81,36 @@ describe("deploy wizard personalization", () => {
 		expect(wizardSource).toContain("Name limit reached. You can enter up to");
 		expect(wizardSource).toContain('type="submit"');
 		expect(wizardSource).toContain("submitBlockingReason");
+	});
+});
+
+describe("deploy wizard responsive layout", () => {
+	test("keeps the shared page width while sizing card grids from the main pane", () => {
+		expect(wizardSource).toContain("CENTERED_PAGE_WIDTH_CLASS.page");
+		expect(wizardSource).toContain(
+			'const TWO_TILE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";',
+		);
+		expect(wizardSource).toContain("@5xl/main:grid-cols-3");
+		expect(wizardSource).not.toContain('className="grid gap-2 sm:grid-cols-2"');
+		expect(wizardSource).not.toContain("sm:flex-row sm:items-center sm:justify-between");
+		expect(deployPageSource).toContain('className="grid gap-2 @2xl/main:grid-cols-2"');
+	});
+
+	test("keeps the action bar sticky across the full form and adapts it to the main pane", () => {
+		const formIndex = wizardSource.indexOf("<form");
+		const agentSoftwareIndex = wizardSource.indexOf('title="Agent software"');
+		const actionBarIndex = wizardSource.indexOf('data-testid="deploy-action-bar"');
+		expect(formIndex).toBeGreaterThan(-1);
+		expect(formIndex).toBeLessThan(agentSoftwareIndex);
+		expect(actionBarIndex).toBeGreaterThan(wizardSource.indexOf('title="Personalize"'));
+		expect(wizardSource).toContain("sticky bottom-0 z-10");
+		expect(wizardSource).toContain("@2xl/main:flex-row");
+		expect(wizardSource).toContain("@2xl/main:w-auto");
+		expect(wizardSource).not.toContain("sm:sticky sm:bottom-0");
+	});
+
+	test("hides wide payment badges before they would crowd card titles", () => {
+		expect(wizardSource.match(/hidden @3xl\/main:inline-flex/g)).toHaveLength(2);
 	});
 });
 
@@ -193,15 +236,15 @@ describe("managed model picker", () => {
 			expect(source).not.toContain("Hosted default (Luna)");
 		}
 		expect(modelBindingPickerSource).toContain("modelPickerItems(");
-		expect(modelBindingPickerSource).toContain("Loading managed models…");
-		expect(modelBindingPickerSource).toContain('title="Couldn\'t load managed models"');
+		expect(modelBindingPickerSource).toContain("Loading Clawdi AI models…");
+		expect(modelBindingPickerSource).toContain('title="Couldn\'t load Clawdi AI models"');
 	});
 
-	test("does not blame the user while the Managed AI catalog is loading or unavailable", () => {
-		expect(wizardSource).toContain('return "Loading Managed AI models."');
-		expect(wizardSource).toContain('return "Retry loading Managed AI models above."');
+	test("does not blame the user while the Clawdi AI catalog is loading or unavailable", () => {
+		expect(wizardSource).toContain('return "Loading Clawdi AI models."');
+		expect(wizardSource).toContain('return "Retry loading Clawdi AI models above."');
 		expect(wizardSource).toContain('return "Choose an available primary model."');
-		expect(wizardSource.indexOf('return "Loading Managed AI models."')).toBeLessThan(
+		expect(wizardSource.indexOf('return "Loading Clawdi AI models."')).toBeLessThan(
 			wizardSource.indexOf('return "Choose an available primary model."'),
 		);
 	});
@@ -216,14 +259,20 @@ describe("deploy provider choice", () => {
 		expect(wizardSource).toContain('title={authCardLabel("unmanaged")}');
 		expect(wizardSource).not.toContain("aiProviderEditorOpen");
 		expect(wizardSource).not.toContain("aiProviderSummaryTitle");
-		expect(wizardSource).not.toContain("Using Managed AI");
+		expect(wizardSource).not.toContain("Using Clawdi AI");
 	});
 
-	test("explains that the welcome balance is used before added Wallet funds", () => {
-		expect(wizardSource).toContain(
+	test("puts Clawdi AI before configuring AI inside the agent", () => {
+		expect(wizardSource.indexOf("selected={managedProviderSelected}")).toBeLessThan(
+			wizardSource.indexOf('selected={aiAccessMode === "unmanaged"}'),
+		);
+	});
+
+	test("contrasts Clawdi AI with provider setup without implying free usage", () => {
+		expect(wizardSource).toContain("No setup required. Usage draws from your Wallet.");
+		expect(wizardSource).not.toContain(
 			"Your welcome balance covers usage first; after that, it draws from your Wallet.",
 		);
-		expect(wizardSource).not.toContain("Managed-AI usage paid directly from your Wallet");
 	});
 
 	test("uses an exclusive provider selection and hides the redundant provider picker", () => {

@@ -12,7 +12,7 @@ import type { WalletCacheSnapshot } from "@/hosted/billing/wallet/wallet-cache";
  *
  * Shows when the managed-AI balance is low, or an auto-reload attempt needs
  * action (SCA) or was declined. Copy accounts for the shared balance funding
- * both managed AI and wallet compute, and offers top-up / auto-reload links.
+ * both Clawdi AI and wallet compute, and offers top-up / auto-reload links.
  *
  * Returns null when there's nothing to surface, so callers can render it
  * unconditionally at the top of any page.
@@ -38,8 +38,8 @@ export function LowBalanceBanner({
 			: "Your Wallet balance is running low";
 
 	const consequence = hasWalletCompute
-		? "Managed AI and wallet-funded compute can be interrupted if the balance stays low."
-		: "Managed AI can pause if the balance stays low.";
+		? "Clawdi AI and wallet-funded compute can be interrupted if the balance stays low."
+		: "Clawdi AI can pause if the balance stays low.";
 	const body = declined
 		? `We couldn’t charge your saved card. Top up manually or update your payment method. ${consequence}`
 		: needsAction

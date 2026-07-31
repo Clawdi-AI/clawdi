@@ -149,6 +149,7 @@ import { AuthBadge, ProviderTypeChip } from "@/hosted/v2/ai-providers/ai-provide
 import { authCardLabel } from "@/hosted/v2/ai-providers/auth-card-label";
 import {
 	MANAGED_AI_CHOICE,
+	MANAGED_PROVIDER_LABEL,
 	modelDisplayName,
 	modelOptionsForProvider,
 	providerCatalogDescription,
@@ -178,11 +179,8 @@ type PaidDeploySelection = {
 	tierLabel: "Basic" | "Performance";
 };
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
-const THREE_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3";
-const TWO_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
-const RUNTIME_TILE_GRID_CLASS = "grid gap-2 sm:grid-cols-2";
-const DEPLOY_MANAGED_AI_LABEL = "Managed AI";
-
+const THREE_TILE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2 @5xl/main:grid-cols-3";
+const TWO_TILE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";
 const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";
 const WALLET_PAYMENT_TOAST_DURATION_MS = 8_000;
 
@@ -200,7 +198,7 @@ function showWalletPaymentConfirmation(amount: string) {
 
 const aiProviderErrorNormalizer: ApiErrorNormalizer = {
 	isAuthError: isApiAuthError,
-	normalizeError: (error) => `${normalizeApiError(error)} Managed AI still works.`,
+	normalizeError: (error) => `${normalizeApiError(error)} Clawdi AI still works.`,
 };
 
 function AddTile({
@@ -568,8 +566,8 @@ export function DeployWizard() {
 		}
 		if (!computePlanReady) return "Choose an available compute plan.";
 		if (!managedPrimaryModelReady) {
-			if (managedModelsNeedRetry) return "Retry loading Managed AI models above.";
-			if (managedModelsLoading) return "Loading Managed AI models.";
+			if (managedModelsNeedRetry) return "Retry loading Clawdi AI models above.";
+			if (managedModelsLoading) return "Loading Clawdi AI models.";
 			return "Choose an available primary model.";
 		}
 		if (paidSelection && paymentMethod === "wallet") {
@@ -949,7 +947,7 @@ export function DeployWizard() {
 	);
 	const primaryProviderLabel =
 		primaryProviderChoice === MANAGED_AI_CHOICE
-			? DEPLOY_MANAGED_AI_LABEL
+			? MANAGED_PROVIDER_LABEL
 			: providerDisplayLabel(primaryProvider ?? primaryProviderChoice);
 	const aiSummary =
 		aiAccessMode === "unmanaged"
@@ -966,6 +964,12 @@ export function DeployWizard() {
 					.filter(Boolean)
 					.join(" · ");
 	const runtimeSummary = runtimeDisplayName(runtime);
+	const deployPriceLabel =
+		compute === "basic" && basicSelection.mode === "included"
+			? "Free"
+			: paidSelection
+				? recurringOfferLabel(paidSelection.offer)
+				: null;
 	const summaryLine = [
 		`${compute === "performance" ? "Performance" : "Basic"} compute`,
 		aiSummary,
@@ -1010,7 +1014,13 @@ export function DeployWizard() {
 
 	return (
 		<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
-			<div className="flex flex-col gap-6">
+			<form
+				className="flex flex-col gap-6"
+				onSubmit={(event) => {
+					event.preventDefault();
+					if (canSubmit) void runAction(onDeploy);
+				}}
+			>
 				<PageHeader
 					title="Deploy an Agent"
 					description="Choose how your agent runs and which AI model it will use."
@@ -1019,7 +1029,7 @@ export function DeployWizard() {
 					title="Agent software"
 					description="Choose the software that will power your agent."
 				>
-					<div className={RUNTIME_TILE_GRID_CLASS}>
+					<div className={TWO_TILE_GRID_CLASS}>
 						<EntityChoiceCard
 							selected={runtime === "hermes"}
 							onClick={() => selectRuntime("hermes")}
@@ -1049,6 +1059,18 @@ export function DeployWizard() {
 					<div className="flex flex-col gap-4">
 						<div className={TWO_TILE_GRID_CLASS}>
 							<EntityChoiceCard
+								selected={managedProviderSelected}
+								onClick={() => selectAiProviderChoice(MANAGED_AI_CHOICE)}
+								icon={
+									<IconChip tint="bg-primary/10 text-primary">
+										<Sparkles />
+									</IconChip>
+								}
+								title={MANAGED_PROVIDER_LABEL}
+								description="No setup required. Usage draws from your Wallet."
+								badge={<Badge variant="secondary">Default</Badge>}
+							/>
+							<EntityChoiceCard
 								selected={aiAccessMode === "unmanaged"}
 								onClick={() => setAiAccessMode("unmanaged")}
 								icon={
@@ -1062,22 +1084,10 @@ export function DeployWizard() {
 									aiAccessMode === "unmanaged" ? <Badge variant="secondary">Selected</Badge> : null
 								}
 							/>
-							<EntityChoiceCard
-								selected={managedProviderSelected}
-								onClick={() => selectAiProviderChoice(MANAGED_AI_CHOICE)}
-								icon={
-									<IconChip tint="bg-primary/10 text-primary">
-										<Sparkles />
-									</IconChip>
-								}
-								title={DEPLOY_MANAGED_AI_LABEL}
-								description="Your welcome balance covers usage first; after that, it draws from your Wallet."
-								badge={<Badge variant="secondary">Default</Badge>}
-							/>
 							{aiProviders.isLoading ? (
 								<Skeleton className="h-[74px] w-full rounded-lg" />
 							) : aiProviders.error ? (
-								<div className="sm:col-span-2">
+								<div className="@2xl/main:col-span-2">
 									<ApiErrorPanel
 										title="Couldn't load providers"
 										error={aiProviders.error}
@@ -1118,6 +1128,7 @@ export function DeployWizard() {
 						) : (
 							<ModelBindingPicker
 								idPrefix="deploy"
+								className="w-full max-w-md"
 								providers={providerList}
 								managedModels={managedModels}
 								managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
@@ -1159,7 +1170,7 @@ export function DeployWizard() {
 							<Alert data-hosted="true">
 								<TriangleAlert />
 								<AlertTitle>Free Basic agent availability is unknown</AlertTitle>
-								<AlertDescription className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+								<AlertDescription className="flex flex-col gap-3 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-between">
 									<span>
 										We can’t determine whether an existing agent is already using your free Basic
 										allowance. No free agent is assumed.
@@ -1181,7 +1192,7 @@ export function DeployWizard() {
 								</AlertDescription>
 							</Alert>
 						) : null}
-						<div className="grid gap-2 sm:grid-cols-2">
+						<div className={TWO_TILE_GRID_CLASS}>
 							<EntityChoiceCard
 								selected={compute === "basic"}
 								onClick={
@@ -1236,7 +1247,9 @@ export function DeployWizard() {
 								title="Performance"
 								description={
 									perfPlan
-										? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB · per-agent subscription`
+										? `${perfPlan.vcpu} vCPU / ${perfPlan.ram_gb} GB${
+												perfOffer ? ` · ${recurringOfferLabel(perfOffer)}` : ""
+											}`
 										: "Performance plan unavailable"
 								}
 								badge={
@@ -1252,7 +1265,7 @@ export function DeployWizard() {
 							/>
 						</div>
 						{paidSelection && (compute === "performance" ? perfOffers : basicOffers).length > 1 ? (
-							<div className="flex flex-col gap-1.5 sm:max-w-xs">
+							<div className="flex max-w-xs flex-col gap-1.5">
 								<span className="text-xs text-muted-foreground">Billing term</span>
 								<TermSwitcher
 									offers={compute === "performance" ? perfOffers : basicOffers}
@@ -1269,7 +1282,7 @@ export function DeployWizard() {
 										Choose how this agent’s compute renews. You can review the charge before paying.
 									</p>
 								</div>
-								<div className="grid gap-2 sm:grid-cols-2">
+								<div className={TWO_TILE_GRID_CLASS}>
 									<EntityChoiceCard
 										selected={paymentMethod === "card"}
 										onClick={() => setPaymentMethod("card")}
@@ -1280,7 +1293,11 @@ export function DeployWizard() {
 										}
 										title="Card subscription"
 										description="Pay securely with Stripe and manage the subscription from billing settings."
-										badge={<Badge variant="secondary">Monthly or Annual</Badge>}
+										badge={
+											<Badge variant="secondary" className="hidden @3xl/main:inline-flex">
+												Monthly or Annual
+											</Badge>
+										}
 									/>
 									<EntityChoiceCard
 										selected={paymentMethod === "wallet"}
@@ -1295,7 +1312,11 @@ export function DeployWizard() {
 											walletDisabledReason ??
 											"Debit the exact quoted USD amount from Wallet, then renew on the selected term."
 										}
-										badge={<Badge variant="outline">Monthly or Annual</Badge>}
+										badge={
+											<Badge variant="outline" className="hidden @3xl/main:inline-flex">
+												Monthly or Annual
+											</Badge>
+										}
 										disabled={walletDisabledReason !== null}
 									/>
 								</div>
@@ -1367,22 +1388,13 @@ export function DeployWizard() {
 						</p>
 					</div>
 				</SettingsSection>
-			</div>
-
-			<form
-				className="flex flex-col gap-6"
-				onSubmit={(event) => {
-					event.preventDefault();
-					if (canSubmit) void runAction(onDeploy);
-				}}
-			>
-				<div className="sm:pb-24">
+				<div className="pb-32 @2xl/main:pb-24">
 					<SettingsSection
 						title="Personalize"
 						description="Choose how this agent appears in Clawdi, plus its language and timezone."
 					>
-						<div className="grid max-w-2xl gap-4 sm:grid-cols-2">
-							<div className="flex flex-col gap-1.5 sm:col-span-2">
+						<div className="flex max-w-2xl flex-col gap-4">
+							<div className="flex w-full max-w-md flex-col gap-1.5">
 								<Label htmlFor="agent-name">Name in Clawdi</Label>
 								<Input
 									id="agent-name"
@@ -1429,63 +1441,81 @@ export function DeployWizard() {
 									</span>
 								) : null}
 							</div>
-							<div className="flex flex-col gap-1.5">
-								<label htmlFor="agent-language" className="text-sm text-muted-foreground">
-									Language
-								</label>
-								<Select
-									items={LANGUAGE_SELECT_ITEMS}
-									value={language || "default"}
-									onValueChange={(v) => {
-										setLanguage(v === null || v === "default" ? "" : v);
-									}}
-								>
-									<SelectTrigger id="agent-language" type="button">
-										<SelectValue />
-									</SelectTrigger>
-									<SelectContent>
-										<SelectGroup>
-											<SelectItem value="default">Default</SelectItem>
-											{LANGUAGE_OPTIONS.map((l) => (
-												<SelectItem key={l.code} value={l.code}>
-													{l.label}
-												</SelectItem>
-											))}
-										</SelectGroup>
-									</SelectContent>
-								</Select>
-							</div>
-							{tzOptions.length > 0 ? (
+							<div className="flex flex-wrap items-start gap-4">
 								<div className="flex flex-col gap-1.5">
-									<label htmlFor="agent-timezone" className="text-sm text-muted-foreground">
-										Timezone
+									<label htmlFor="agent-language" className="text-sm text-muted-foreground">
+										Language
 									</label>
-									<TimezoneCombobox
-										id="agent-timezone"
-										value={timezone}
-										onValueChange={setTimezone}
-										options={tzOptions}
-									/>
+									<Select
+										items={LANGUAGE_SELECT_ITEMS}
+										value={language || "default"}
+										onValueChange={(v) => {
+											setLanguage(v === null || v === "default" ? "" : v);
+										}}
+									>
+										<SelectTrigger id="agent-language" type="button">
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent>
+											<SelectGroup>
+												<SelectItem value="default">Default</SelectItem>
+												{LANGUAGE_OPTIONS.map((l) => (
+													<SelectItem key={l.code} value={l.code}>
+														{l.label}
+													</SelectItem>
+												))}
+											</SelectGroup>
+										</SelectContent>
+									</Select>
 								</div>
-							) : null}
+								{tzOptions.length > 0 ? (
+									<div className="flex w-full max-w-sm min-w-0 flex-col gap-1.5">
+										<label htmlFor="agent-timezone" className="text-sm text-muted-foreground">
+											Timezone
+										</label>
+										<TimezoneCombobox
+											id="agent-timezone"
+											value={timezone}
+											onValueChange={setTimezone}
+											options={tzOptions}
+										/>
+									</div>
+								) : null}
+							</div>
 						</div>
 					</SettingsSection>
 				</div>
 
 				{/* Sticky action bar */}
-				<div className="-mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur sm:sticky sm:bottom-0 lg:-mx-6 lg:px-6">
-					<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-						<p className="min-w-0 max-w-full truncate text-xs text-muted-foreground sm:text-sm">
-							{summaryLine}
-						</p>
-						<div className="flex min-w-0 flex-col gap-1 sm:items-end">
-							<div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+				<div
+					data-testid="deploy-action-bar"
+					className="sticky bottom-0 z-10 -mx-4 border-t bg-background/90 px-4 pt-3 pb-[calc(--spacing(3)+env(safe-area-inset-bottom))] backdrop-blur lg:-mx-6 lg:px-6"
+				>
+					<div className="flex flex-col gap-2 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-between">
+						<div className="flex min-w-0 max-w-full items-center gap-2 text-xs sm:text-sm">
+							{deployPriceLabel ? (
+								<>
+									<span
+										data-testid="deploy-price-label"
+										className="shrink-0 whitespace-nowrap font-medium text-foreground"
+									>
+										{deployPriceLabel}
+									</span>
+									<span aria-hidden="true" className="shrink-0 text-muted-foreground">
+										·
+									</span>
+								</>
+							) : null}
+							<span className="min-w-0 truncate text-muted-foreground">{summaryLine}</span>
+						</div>
+						<div className="flex min-w-0 flex-col gap-1 @2xl/main:items-end">
+							<div className="flex flex-col gap-2 @2xl/main:flex-row @2xl/main:items-center @2xl/main:justify-end">
 								<Button
 									type="submit"
 									size="lg"
 									disabled={!canSubmit}
 									aria-describedby={submitBlockingReason ? "deploy-blocking-reason" : undefined}
-									className="w-full shrink-0 sm:w-auto"
+									className="w-full shrink-0 @2xl/main:w-auto"
 								>
 									{submitting ? (
 										<Spinner data-icon="inline-start" />
@@ -1496,14 +1526,17 @@ export function DeployWizard() {
 								</Button>
 							</div>
 							{submitTakingLong ? (
-								<p className="max-w-sm text-xs text-muted-foreground sm:text-right" role="status">
+								<p
+									className="max-w-sm text-xs text-muted-foreground @2xl/main:text-right"
+									role="status"
+								>
 									{submitTakingLongCopy}
 								</p>
 							) : submitBlockingReason ? (
 								<p
 									id="deploy-blocking-reason"
 									className={cn(
-										"max-w-sm text-xs sm:text-right",
+										"max-w-sm text-xs @2xl/main:text-right",
 										nameError ? "text-destructive" : "text-muted-foreground",
 									)}
 									role="status"

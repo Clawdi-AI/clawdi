@@ -10,7 +10,7 @@ import { formatModelLabel } from "@/lib/format";
 
 export const MANAGED_AI_CHOICE = "__managed__";
 export const MANAGED_PROVIDER_ID = CLAWDI_MANAGED_PROVIDER_ID;
-export const MANAGED_PROVIDER_LABEL = "Managed by Clawdi";
+export const MANAGED_PROVIDER_LABEL = "Clawdi AI";
 export const CUSTOM_MODEL_CHOICE = "__custom__";
 
 type AiProviderModel = NonNullable<AiProvider["models"]>[number];
@@ -164,7 +164,7 @@ export function modelBindingDisplayName(
 ): string {
 	const modelId = primaryModelValue(primaryModel);
 	if (modelId) return modelDisplayName(modelId, catalog);
-	if (authKind === "managed") return "Managed default";
+	if (authKind === "managed") return "Clawdi AI default";
 	if (authKind === "unmanaged") return "Configured in agent";
 	return "Not set";
 }

@@ -61,7 +61,7 @@ export function X402Card() {
 					</Alert>
 				) : (
 					<p className="text-sm text-muted-foreground">
-						An on-chain deposit address is provisioned with your first managed-AI agent.
+						An on-chain deposit address is provisioned with your first Clawdi AI agent.
 					</p>
 				)}
 			</CardContent>

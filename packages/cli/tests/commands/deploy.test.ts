@@ -480,7 +480,7 @@ describe("deploy orchestration", () => {
 		expect(notes).toContainEqual({
 			title: "Saved providers unavailable",
 			message:
-				"Saved AI providers could not be loaded. Continue with Managed by Clawdi or Configure inside agent.",
+				"Saved AI providers could not be loaded. Continue with Clawdi AI or Configure inside agent.",
 		});
 		expect(JSON.stringify(notes)).not.toContain("secret upstream detail");
 	});

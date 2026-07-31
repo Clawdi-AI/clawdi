@@ -136,8 +136,8 @@ export function AutoReloadActionConfirm({
 				<AlertDescription className="flex flex-col items-start gap-3">
 					<span>
 						{declined
-							? "Update your card or top up manually. Auto-reload pauses after repeated declines; managed AI and wallet-funded compute still use the remaining balance."
-							: "Your bank is still confirming the last auto-reload. Managed AI and wallet-funded compute still use the remaining balance until it clears."}
+							? "Update your card or top up manually. Auto-reload pauses after repeated declines; Clawdi AI and wallet-funded compute still use the remaining balance."
+							: "Your bank is still confirming the last auto-reload. Clawdi AI and wallet-funded compute still use the remaining balance until it clears."}
 					</span>
 					{onTopUp ? (
 						<Button type="button" size="sm" onClick={onTopUp}>

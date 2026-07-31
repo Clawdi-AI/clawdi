@@ -115,7 +115,7 @@ const SETTINGS_NAV: SettingsNavItem[] = [
 	{
 		id: "billing-usage",
 		label: "Usage",
-		description: "Managed-AI spend in USD",
+		description: "Clawdi AI spend in USD",
 		icon: BarChart3,
 		cloudOnly: true,
 	},

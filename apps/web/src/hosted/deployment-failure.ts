@@ -14,7 +14,7 @@ const DEFAULT_SERVICE_FAILURE_REASON = "The Clawdi service could not complete th
 
 const CUSTOMER_FAILURE_REASONS_BY_CODE = new Map<string, string>([
 	["provider_not_found", "The selected provider is no longer available in your Clawdi account."],
-	["invalid_managed_provider_id", "Managed by Clawdi cannot be combined with a saved provider."],
+	["invalid_managed_provider_id", "Clawdi AI cannot be combined with a saved provider."],
 	[
 		"insufficient_balance",
 		"Your Wallet balance was too low for the Clawdi service to complete this request.",
@@ -73,10 +73,10 @@ export function deploymentMutationErrorMessage(error: unknown): string {
 			return "Your free Basic compute slot is already in use. Stop that agent or choose paid compute, then try again.";
 		}
 		if (code === "provider_not_found") {
-			return "The selected provider is no longer available in your Clawdi account. Choose Managed by Clawdi or save the provider again, then retry.";
+			return "The selected provider is no longer available in your Clawdi account. Choose Clawdi AI or save the provider again, then retry.";
 		}
 		if (code === "invalid_managed_provider_id") {
-			return "Managed by Clawdi can’t be combined with a saved provider. Choose Managed alone or choose a saved provider, then retry.";
+			return "Clawdi AI can’t be combined with a saved provider. Choose Clawdi AI alone or choose a saved provider, then retry.";
 		}
 		if (error.status === 401) {
 			return "Your session has expired. Sign in again before changing this agent.";

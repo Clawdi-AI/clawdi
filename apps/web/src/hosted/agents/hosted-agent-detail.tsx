@@ -2155,7 +2155,7 @@ function AiProviderTab({
 						) : null}
 					</div>
 					<p className="mt-0.5 text-sm text-muted-foreground">
-						Clawdi-managed models, billed from your wallet.
+						Clawdi AI models, billed from your Wallet.
 					</p>
 				</button>
 				{providers.isLoading ? <EntityCardSkeleton titleBadge trailingBadge /> : null}
