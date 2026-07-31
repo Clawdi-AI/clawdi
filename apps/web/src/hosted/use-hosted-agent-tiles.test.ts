@@ -1,6 +1,5 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import type { components } from "@clawdi/shared/api";
-import { isValidElement } from "react";
 import type {
 	DeploymentOperation,
 	HostedComputeSubscription,
@@ -60,6 +59,7 @@ function expectHostedTileStatus(
 	expect(tile).toBeDefined();
 	expect(tile?.cardStatus?.visual.label).toBe(label);
 	expect(tile?.cardStatus?.labels[0]).toBe(label);
+	expect((tile as { action?: unknown } | undefined)?.action).toBeUndefined();
 }
 
 function resolveAgentDeployment(
@@ -244,11 +244,10 @@ describe("deploymentToTiles", () => {
 		});
 		expect(tile?.env).toBeNull();
 		expectHostedTileStatus(tile, "Failed");
-		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 
-	test("gives a failed plan change its own status and confirmed-flow remediation", () => {
+	test("keeps a failed plan change on a summary-only tile", () => {
 		const environmentId = "env-failed-plan-change";
 		const reason = "Top up your Wallet and retry the plan change.";
 		const [tile] = hostedDeploymentToTiles(
@@ -261,13 +260,10 @@ describe("deploymentToTiles", () => {
 		);
 
 		expectHostedTileStatus(tile, "Failed");
-		expect(
-			isValidElement<{ remediationHref?: string }>(tile?.action) &&
-				tile.action.props.remediationHref,
-		).toBe(`/agents/${environmentId}/settings?source=on-clawdi&d=dep_123#compute-plan-controls`);
+		expect(tile?.href).toBe(`/agents/${environmentId}?source=on-clawdi&d=dep_123`);
 	});
 
-	test("keeps Start and Delete actions on a stopped tile with a retained env identity", () => {
+	test("keeps stopped status and navigation on a summary-only tile", () => {
 		const environmentId = "env-stopped-openclaw";
 		const [tile] = hostedDeploymentToTiles(
 			deployment({
@@ -282,7 +278,31 @@ describe("deploymentToTiles", () => {
 			href: `/agents/${environmentId}?source=on-clawdi&d=dep_123`,
 		});
 		expectHostedTileStatus(tile, "Stopped");
-		expect(tile?.action).toBeDefined();
+	});
+
+	test("never projects card actions for any deployment lifecycle state", () => {
+		const lifecycleStates = [
+			"creating",
+			"starting",
+			"running",
+			"stopping",
+			"stopped",
+			"restarting",
+			"updating",
+			"deleting",
+			"deleted",
+			"failed",
+			null,
+		] satisfies readonly (HostedDeploymentStatus["summary_state"] | null)[];
+
+		for (const status of lifecycleStates) {
+			const tiles = hostedDeploymentToTiles(deployment({ status }));
+			if (status === "deleting" || status === "deleted") {
+				expect(tiles).toEqual([]);
+				continue;
+			}
+			expect((tiles[0] as { action?: unknown } | undefined)?.action).toBeUndefined();
+		}
 	});
 
 	test("keeps non-running compute primary when the joined environment has fresh sync", () => {
@@ -321,7 +341,7 @@ describe("deploymentToTiles", () => {
 		expect(resolveAgentDeployment([deleting], environmentId).match).toBeNull();
 	});
 
-	test("keeps a deployment without an env identity non-navigable but exposes delete", () => {
+	test("keeps a deployment without an env identity non-navigable and summary-only", () => {
 		const hostedDeployment = deployment({
 			status: "failed",
 			failureReason: "creation_interrupted",
@@ -336,7 +356,6 @@ describe("deploymentToTiles", () => {
 			env: null,
 		});
 		expectHostedTileStatus(tile, "Failed");
-		expect(tile?.action).toBeDefined();
 		expect(JSON.stringify(tile)).not.toContain("/agents/dep_123");
 	});
 });

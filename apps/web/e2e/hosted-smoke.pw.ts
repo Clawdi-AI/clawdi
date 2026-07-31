@@ -37,6 +37,31 @@ const emptyPage = { items: [], total: 0, page: 1, page_size: 25 };
 const CLOUD_API = "http://127.0.0.1:8000";
 const DEPLOY_API = "http://127.0.0.1:8001";
 
+async function expectVisibleLobeHubIconsContained(page: Page, minimumCount: number) {
+	const icons = page.locator('[data-icon-source="lobehub"]:visible');
+	await expect.poll(() => icons.count()).toBeGreaterThanOrEqual(minimumCount);
+	const measurements = await icons.evaluateAll((elements) =>
+		elements.map((element) => {
+			const icon = element.getBoundingClientRect();
+			const tile = element.parentElement?.getBoundingClientRect();
+			return {
+				width: element.getAttribute("width"),
+				height: element.getAttribute("height"),
+				contained: Boolean(
+					tile &&
+						icon.left >= tile.left &&
+						icon.top >= tile.top &&
+						icon.right <= tile.right &&
+						icon.bottom <= tile.bottom,
+				),
+			};
+		}),
+	);
+	for (const measurement of measurements) {
+		expect(measurement).toEqual({ width: "72%", height: "72%", contained: true });
+	}
+}
+
 const textModelCapabilities: ManagedModelCatalogItem["capabilities"] = {
 	context_window: 272_000,
 	max_context_window: null,
@@ -2245,6 +2270,101 @@ test("hosted mixed agent rail uses whole semantic buttons for context switching"
 	expect(touchOrderRequests).toEqual([]);
 });
 
+test("agent cards stay action-free and brand marks fill their tiles", async ({
+	page,
+}, testInfo) => {
+	const visualAgents = [
+		{
+			...railHostedCloudAgent,
+			id: retainedProjectionEnvironmentId,
+			name: "visual-hermes",
+			default_name: "Visual Hermes",
+			machine_name: "visual-hermes.local",
+			display_name: "Visual Hermes",
+			agent_type: "hermes",
+			sort_order: 0,
+		},
+		{
+			...railConnectedCloudAgent,
+			id: "10101010-1010-4010-8010-101010101010",
+			name: "visual-openclaw",
+			default_name: "Visual OpenClaw",
+			machine_name: "visual-openclaw.local",
+			display_name: "Visual OpenClaw",
+			agent_type: "openclaw",
+			sort_order: 1,
+		},
+		{
+			...railConnectedCloudAgent,
+			id: "20202020-2020-4020-8020-202020202020",
+			name: "visual-claude-code",
+			default_name: "Visual Claude Code",
+			machine_name: "visual-claude-code.local",
+			display_name: "Visual Claude Code",
+			agent_type: "claude-code",
+			sort_order: 2,
+		},
+		{
+			...railConnectedCloudAgent,
+			id: "30303030-3030-4030-8030-303030303030",
+			name: "visual-codex",
+			default_name: "Visual Codex",
+			machine_name: "visual-codex.local",
+			display_name: "Visual Codex",
+			agent_type: "codex",
+			sort_order: 3,
+		},
+	];
+	await stubHostedApi(page, {
+		deployments: [failedRetainedProjectionDeployment],
+		cloudAgents: visualAgents,
+	});
+
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto("/");
+	const main = page.locator("main");
+	await expect(
+		main.getByRole("link", {
+			name: "Open Failed retained projection agent. Status: Failed",
+			exact: true,
+		}),
+	).toBeVisible();
+	await expect(
+		main.getByRole("button", {
+			name: /^(Retry restart|Retry startup|Start(?: |$)|Delete(?: |$)|Open Wallet|Review plan|Check status)/,
+		}),
+	).toHaveCount(0);
+	await expect(
+		main.getByRole("link", { name: /^(Open Wallet|Review plan|Check status)/ }),
+	).toHaveCount(0);
+	await expectVisibleLobeHubIconsContained(page, 8);
+	await page.screenshot({
+		path: testInfo.outputPath("agent-card-action-hierarchy-desktop.png"),
+		fullPage: true,
+	});
+
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect(
+		main.getByRole("link", {
+			name: "Open Failed retained projection agent. Status: Failed",
+			exact: true,
+		}),
+	).toBeVisible();
+	await expectVisibleLobeHubIconsContained(page, 4);
+	await page.screenshot({
+		path: testInfo.outputPath("agent-card-action-hierarchy-mobile-card.png"),
+		fullPage: true,
+	});
+
+	await page.getByRole("button", { name: "Toggle Sidebar", exact: true }).click();
+	await expect(page.getByRole("dialog")).toBeVisible();
+	await expectVisibleLobeHubIconsContained(page, 8);
+	await page.screenshot({
+		path: testInfo.outputPath("agent-card-action-hierarchy-mobile-sidebar.png"),
+		fullPage: true,
+	});
+});
+
 test("hosted Skills hide private platform resources", async ({ page }) => {
 	await stubHostedApi(page, {
 		deployments: [railHostedDeployment],
@@ -2426,6 +2546,7 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 		await expect(icon.locator("svg")).toHaveAttribute("data-icon-source", "lobehub");
 		await expect(icon.locator("svg")).toHaveAttribute("viewBox", "0 0 24 24");
 	}
+	await expectVisibleLobeHubIconsContained(page, 2);
 	await expect(
 		page.getByText("Agent software can’t be changed later", { exact: true }),
 	).toHaveCount(0);
@@ -2451,6 +2572,7 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 		{ name: "390", width: 390, height: 844 },
 	]) {
 		await page.setViewportSize(viewport);
+		await expectVisibleLobeHubIconsContained(page, 2);
 		await page.screenshot({
 			path: testInfo.outputPath(`deploy-framework-icons-${viewport.name}.png`),
 			fullPage: true,
@@ -2516,6 +2638,7 @@ test("AI Providers preserves provider identity and keeps technical details progr
 	const deepSeekIcons = main.getByRole("img", { name: "DeepSeek", exact: true });
 	await expect(deepSeekIcons.first().locator("svg")).toHaveAttribute("data-icon-source", "lobehub");
 	await expect(deepSeekIcons.first().locator("svg")).toHaveAttribute("viewBox", "0 0 24 24");
+	await expectVisibleLobeHubIconsContained(page, 1);
 	await expect(main.getByText("DeepSeek · DeepSeek V4 Flash", { exact: true })).toBeVisible();
 	await expect(main.getByText("DeepSeek proxy", { exact: true })).toBeVisible();
 	await expect(
@@ -4354,7 +4477,7 @@ test("env-keyed agent route keeps failed deployment recovery available without i
 	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_failed_projection"]);
 });
 
-test("stopped deployment tiles expose Start and friendly Delete actions", async ({ page }) => {
+test("stopped deployment tiles stay action-free and preserve honest status", async ({ page }) => {
 	const startRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments: [stoppedProjectionGoneDeployment],
@@ -4364,15 +4487,17 @@ test("stopped deployment tiles expose Start and friendly Delete actions", async 
 	for (const path of ["/", "/agents"]) {
 		await page.goto(path);
 		const main = page.locator("main");
-		await expect(main.getByRole("button", { name: "Start Hermes", exact: true })).toBeVisible();
-		await expect(main.getByRole("button", { name: "Delete Hermes", exact: true })).toBeVisible();
+		await expect(main.getByText("Hermes", { exact: true })).toBeVisible();
+		await expect(
+			main.locator("span.min-w-0.truncate").filter({ hasText: /^Stopped$/ }),
+		).toBeVisible();
+		await expect(main.getByRole("button", { name: "Start Hermes", exact: true })).toHaveCount(0);
+		await expect(main.getByRole("button", { name: "Delete Hermes", exact: true })).toHaveCount(0);
 		await expect(
 			main.getByText("deployment-create-browser-generated", { exact: true }),
 		).toHaveCount(0);
 	}
-
-	await page.locator("main").getByRole("button", { name: "Start Hermes", exact: true }).click();
-	await expect.poll(() => startRequests.length).toBe(1);
+	expect(startRequests).toEqual([]);
 });
 
 test("stopped detail stays recoverable without querying its removed projection", async ({
@@ -4869,38 +4994,27 @@ test("shared legacy environment direct route asks the user to choose an agent", 
 	await expect(main.getByRole("heading", { name: "Overview" })).toBeVisible();
 });
 
-test("identity-less interrupted deployment tile exposes delete", async ({ page }) => {
+test("identity-less interrupted deployment stays non-navigable and action-free", async ({
+	page,
+}) => {
 	const deleteRequests: string[] = [];
-	const failedDeleteRetryability = new Map<string, boolean>();
 	await stubHostedApi(page, {
 		deployments: [interruptedIdentitylessDeployment],
 		deleteRequests,
-		failedDeleteRetryability,
 	});
 
 	await page.goto("/agents");
+	const main = page.locator("main");
 	const historyLengthBeforeDelete = await page.evaluate(() => window.history.length);
 	const deleteAction = page.getByRole("button", { name: "Delete Interrupted deployment" });
-	await expect(deleteAction).toBeVisible();
-	await deleteAction.click();
-	await page
-		.getByRole("alertdialog")
-		.getByRole("button", { name: "Delete agent", exact: true })
-		.click();
-	await expect.poll(() => deleteRequests).toEqual(["/v2/deployments/hdep_creation_interrupted"]);
-	await expect.poll(() => new URL(page.url()).pathname).toBe("/");
+	await expect(main.getByText("Interrupted deployment", { exact: true })).toBeVisible();
+	await expect(main.locator("span.min-w-0.truncate").filter({ hasText: /^Failed$/ })).toBeVisible();
+	await expect(deleteAction).toHaveCount(0);
+	await expect(page.getByRole("link", { name: /Open Interrupted deployment/ })).toHaveCount(0);
+	expect(deleteRequests).toEqual([]);
 	await expect
 		.poll(() => page.evaluate(() => window.history.length))
 		.toBe(historyLengthBeforeDelete);
-	await expect(deleteAction).toHaveCount(0);
-
-	failedDeleteRetryability.set("hdep_creation_interrupted", false);
-	await expect(
-		page.getByText("Cleanup for Interrupted deployment needs attention", { exact: true }),
-	).toBeVisible();
-	await expect(page.getByRole("button", { name: "Contact support", exact: true })).toBeVisible();
-	await expect(page.getByRole("button", { name: "Retry cleanup", exact: true })).toHaveCount(0);
-	await expect(deleteAction).toHaveCount(0);
 });
 
 test("Basic create always follows the wizard-selected funding path", async ({ page }) => {
