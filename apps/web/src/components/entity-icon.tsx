@@ -125,9 +125,10 @@ export function EntityIcon({
 			return (
 				<BrandIconTile
 					icon={providerBrand.icon}
+					iconClassName={providerBrand.iconClassName}
 					label={alt}
 					boxClassName={s.box}
-					className={className}
+					className={cn(providerBrand.tileClassName, className)}
 				/>
 			);
 		}

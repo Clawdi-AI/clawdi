@@ -28,6 +28,14 @@ describe("EntityIcon LobeHub brands", () => {
 		expect(markup).not.toContain("<svg");
 		expect(markup).not.toContain("<img");
 	});
+
+	test("uses the official Hermes black-on-white treatment at every entity size", () => {
+		for (const size of SIZES) {
+			const markup = renderToStaticMarkup(<EntityIcon kind="framework" id="hermes" size={size} />);
+			expect(markup).toContain("bg-white");
+			expect(markup).toContain("text-black");
+		}
+	});
 });
 
 describe("EntityIcon channels", () => {

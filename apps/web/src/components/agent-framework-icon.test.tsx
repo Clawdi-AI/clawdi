@@ -36,6 +36,14 @@ describe("AgentFrameworkIcon", () => {
 		expect(frameworkBrandIcon("claude_code")?.icon).toBe(frameworkBrandIcon("claude-code")?.icon);
 	});
 
+	test("keeps the official Hermes black mark on white instead of theme-inverting it", () => {
+		const markup = renderToStaticMarkup(
+			<AgentFrameworkIcon agent="hermes" pixelSize={40} boxClassName="size-10" />,
+		);
+		expect(markup).toContain("bg-white");
+		expect(markup).toContain("text-black");
+	});
+
 	test("keeps custom avatars as object-cover images instead of scaling them like brand marks", () => {
 		const markup = renderToStaticMarkup(
 			<AgentFrameworkIcon
