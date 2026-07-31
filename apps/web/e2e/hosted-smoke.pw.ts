@@ -5965,12 +5965,14 @@ test("card past due uses Fix payment instead of wallet recovery", async ({ page 
 	expect(errors, `card payment recovery: ${errors.join(" | ")}`).toEqual([]);
 });
 
-test("compute plans keep signup credits without advertising subscription credit grants", async ({
+test("compute comparison uses API prices without stale signup or subscription credit claims", async ({
 	page,
 }) => {
 	const errors = collectBrowserErrors(page);
+	const planRequests: string[] = [];
 	await stubHostedApi(page, {
 		deployments: [paidBasicDeployment],
+		planRequests,
 		plans: [
 			{ ...basicPlan, subscription_grant_credits: 500 },
 			{ ...performancePlan, subscription_grant_credits: 1_000 },
@@ -5980,9 +5982,13 @@ test("compute plans keep signup credits without advertising subscription credit 
 
 	const settingsDialog = page.getByTestId("settings-dialog");
 	await expect(settingsDialog).toBeVisible();
-	await expect(
-		settingsDialog.getByText("$5.00 welcome balance on signup", { exact: true }),
-	).toBeVisible();
+	await expect(settingsDialog.getByText("then $10.00/mo", { exact: true })).toBeVisible();
+	await expect(settingsDialog.getByText("$20.00", { exact: true })).toBeVisible();
+	await expect(settingsDialog).toContainText(
+		"Wallet top-ups from $10.00–$2,000.00 in whole-dollar amounts",
+	);
+	expect(planRequests).toEqual([`${DEPLOY_API}/v2/subscription/plans`]);
+	await expect(settingsDialog).not.toContainText("welcome balance on signup");
 	await expect(settingsDialog).not.toContainText("AI Credits per subscription");
 	await expect(settingsDialog).not.toContainText("AI Credits added to Wallet");
 	await expect(settingsDialog).not.toContainText("credits do not expire");

@@ -270,7 +270,9 @@ export function PlanComparison({
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
 							<FeatureRow>Usage billed directly in USD</FeatureRow>
-							<FeatureRow>Whole-dollar top-ups from {TOPUP_AMOUNT_RANGE_LABEL}</FeatureRow>
+							<FeatureRow>
+								Wallet top-ups from {TOPUP_AMOUNT_RANGE_LABEL} in whole-dollar amounts
+							</FeatureRow>
 							<FeatureRow>Optional auto-reload</FeatureRow>
 							<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
 						</ul>
