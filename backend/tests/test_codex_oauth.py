@@ -4,7 +4,7 @@ import json
 import httpx
 import pytest
 
-from app.routes.ai_providers import _codex_auth_profile_payload
+from app.services.ai_provider_oauth_attempt import _codex_auth_profile_payload
 from app.services.codex_oauth import (
     CODEX_DEVICE_RESPONSE_LIMIT_BYTES,
     CODEX_DEVICE_TOKEN_URL,
