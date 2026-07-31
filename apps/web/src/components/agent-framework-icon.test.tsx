@@ -44,7 +44,7 @@ describe("AgentFrameworkIcon", () => {
 		expect(markup).toContain("text-black");
 	});
 
-	test("uses LobeHub's lightweight official avatar presentation for every framework", () => {
+	test("keeps colored framework marks on the shared neutral tile without forced dark backplates", () => {
 		const openClaw = renderToStaticMarkup(
 			<AgentFrameworkIcon agent="openclaw" pixelSize={40} boxClassName="size-10" />,
 		);
@@ -54,9 +54,8 @@ describe("AgentFrameworkIcon", () => {
 		const codex = renderToStaticMarkup(
 			<AgentFrameworkIcon agent="codex" pixelSize={40} boxClassName="size-10" />,
 		);
-		expect(openClaw).toContain("bg-black");
-		expect(claudeCode).toContain("bg-[#09090B]");
-		expect(claudeCode).toContain("text-[#D97757]");
+		expect(openClaw).not.toContain("bg-black");
+		expect(claudeCode).not.toContain("bg-[#09090B]");
 		expect(codex).toContain("bg-white");
 	});
 
