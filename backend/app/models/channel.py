@@ -51,6 +51,8 @@ PAIR_CODE_STATUS_REVOKED = "revoked"
 
 MESSAGE_DIRECTION_INBOUND = "inbound"
 MESSAGE_DIRECTION_OUTBOUND = "outbound"
+PROVIDER_EVENT_SCOPE_ACCOUNT = "account"
+PROVIDER_EVENT_SCOPE_CHAT = "chat"
 
 DELIVERY_STATUS_PENDING = "pending"
 DELIVERY_STATUS_IN_PROGRESS = "in_progress"
@@ -336,6 +338,12 @@ class ChannelMessage(Base, TimestampMixin):
     external_chat_id: Mapped[str] = mapped_column(String(300), nullable=False, index=True)
     provider_message_id: Mapped[str | None] = mapped_column(String(300))
     provider_event_id: Mapped[str | None] = mapped_column(String(300))
+    provider_event_scope: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default=PROVIDER_EVENT_SCOPE_CHAT,
+        server_default=PROVIDER_EVENT_SCOPE_CHAT,
+    )
     text: Mapped[str | None] = mapped_column(String(4096))
     payload: Mapped[dict[str, Any] | None] = mapped_column(JSONB(none_as_null=True))
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
@@ -351,10 +359,23 @@ class ChannelMessage(Base, TimestampMixin):
         Index(
             "ux_channel_messages_inbound_provider_event_account",
             "account_id",
+            "provider_event_id",
+            unique=True,
+            postgresql_where=sql_text(
+                "direction = 'inbound' AND provider_event_id IS NOT NULL "
+                "AND provider_event_scope = 'account'"
+            ),
+        ),
+        Index(
+            "ux_channel_messages_inbound_provider_event_chat",
+            "account_id",
             "external_chat_id",
             "provider_event_id",
             unique=True,
-            postgresql_where=sql_text("direction = 'inbound' AND provider_event_id IS NOT NULL"),
+            postgresql_where=sql_text(
+                "direction = 'inbound' AND provider_event_id IS NOT NULL "
+                "AND provider_event_scope = 'chat'"
+            ),
         ),
     )
 

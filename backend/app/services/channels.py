@@ -16,7 +16,7 @@ import httpx
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import HTTPException, status
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -44,6 +44,8 @@ from app.models.channel import (
     PAIR_CODE_STATUS_CLAIMED,
     PAIR_CODE_STATUS_PENDING,
     PAIR_CODE_STATUS_REVOKED,
+    PROVIDER_EVENT_SCOPE_ACCOUNT,
+    PROVIDER_EVENT_SCOPE_CHAT,
     ChannelAccount,
     ChannelAgentCredential,
     ChannelAgentReference,
@@ -110,9 +112,9 @@ OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
 SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE = {
     HERMES_AGENT_TYPE: frozenset({CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}),
-    # OpenClaw's group session key does not yet include the Telegram account.
-    # Keep one account per Agent until upstream makes group sessions account-aware.
-    OPENCLAW_AGENT_TYPE: frozenset({CHANNEL_PROVIDER_TELEGRAM}),
+    # OpenClaw's non-DM session keys do not include the physical account for
+    # either adapter. Keep one account per provider until upstream does.
+    OPENCLAW_AGENT_TYPE: frozenset({CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}),
 }
 HOSTED_AGENT_TYPE_LABELS = {HERMES_AGENT_TYPE: "Hermes", OPENCLAW_AGENT_TYPE: "OpenClaw"}
 STRICT_V2_AGENT_LINK_DETAIL = "Only Cloud Agents can be linked or paired with channels."
@@ -274,23 +276,8 @@ async def configure_telegram_provider_webhook(
     # localhost URL and can still exercise inbound routes directly.
     if not webhook_url.lower().startswith("https://"):
         return None
+    username = await get_telegram_bot_username(provider_token)
     base_url = settings.channel_telegram_api_base_url.strip().rstrip("/")
-    identity = await _post_provider_json(
-        channel=CHANNEL_PROVIDER_TELEGRAM,
-        method="getMe",
-        url=f"{base_url}/bot{provider_token}/getMe",
-        json_payload={},
-        timeout_seconds=20.0,
-        unreachable_detail="telegram api unreachable",
-        rejected_detail="telegram bot token was rejected",
-    )
-    if identity.get("ok") is not True:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="telegram bot token was rejected",
-        )
-    identity_result = identity.get("result")
-    username = identity_result.get("username") if isinstance(identity_result, dict) else None
     payload = await _post_provider_json(
         channel=CHANNEL_PROVIDER_TELEGRAM,
         method="setWebhook",
@@ -308,7 +295,34 @@ async def configure_telegram_provider_webhook(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="telegram bot token or webhook was rejected",
         )
-    return normalize_telegram_bot_username(username)
+    return username
+
+
+async def get_telegram_bot_username(provider_token: str) -> str:
+    base_url = settings.channel_telegram_api_base_url.strip().rstrip("/")
+    identity = await _post_provider_json(
+        channel=CHANNEL_PROVIDER_TELEGRAM,
+        method="getMe",
+        url=f"{base_url}/bot{provider_token}/getMe",
+        json_payload={},
+        timeout_seconds=20.0,
+        unreachable_detail="telegram api unreachable",
+        rejected_detail="telegram bot token was rejected",
+    )
+    if identity.get("ok") is not True:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="telegram bot token was rejected",
+        )
+    identity_result = identity.get("result")
+    username = identity_result.get("username") if isinstance(identity_result, dict) else None
+    normalized = normalize_telegram_bot_username(username)
+    if normalized is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="telegram bot identity has no valid bot username",
+        )
+    return normalized
 
 
 def normalize_telegram_bot_username(value: Any) -> str | None:
@@ -400,37 +414,17 @@ async def get_or_create_bot_agent_link(
     agent_token: str | None = None,
 ) -> tuple[ChannelBotAgentLink, str | None]:
     link_user_id = user_id or account.user_id
-    result = await db.execute(
-        select(ChannelBotAgentLink).where(
-            ChannelBotAgentLink.account_id == account.id,
-            ChannelBotAgentLink.agent_id == agent_id,
-            ChannelBotAgentLink.user_id == link_user_id,
-            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
-            ChannelBotAgentLink.archived_at.is_(None),
-        )
-    )
-    link = result.scalar_one_or_none()
-    if link is not None:
-        await ensure_hosted_agent_provider_link_available(
-            db,
-            account=account,
-            agent_id=agent_id,
-            user_id=link_user_id,
-            existing_same_account_link=True,
-        )
-        return link, None
-
-    # Serialize by Agent before creating. Besides enforcing strict-v2 authority,
-    # this closes the same-account double-submit race and makes provider-level
-    # single-link checks deterministic across concurrent requests.
+    # Serialize against both Link creation and runtime retirement. The fence is
+    # the retirement authority; locking only AgentEnvironment leaves a window
+    # where retirement can commit before this transaction creates a Link.
     row = (
         await db.execute(
             select(AgentEnvironment, HostedRuntimeState, V2RuntimeEnvironmentFence)
-            .outerjoin(
+            .join(
                 HostedRuntimeState,
                 HostedRuntimeState.environment_id == AgentEnvironment.id,
             )
-            .outerjoin(
+            .join(
                 V2RuntimeEnvironmentFence,
                 V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
             )
@@ -438,7 +432,8 @@ async def get_or_create_bot_agent_link(
                 AgentEnvironment.id == agent_id,
                 AgentEnvironment.user_id == link_user_id,
             )
-            .with_for_update(of=AgentEnvironment)
+            .execution_options(populate_existing=True)
+            .with_for_update(of=(AgentEnvironment, V2RuntimeEnvironmentFence))
         )
     ).one_or_none()
     if row is None or not is_strict_v2_hosted_channel_agent(*row):
@@ -448,27 +443,39 @@ async def get_or_create_bot_agent_link(
         )
 
     # A competing request may have created the same Link while this request
-    # waited for the Agent lock. Return that active Link idempotently.
+    # waited for the authority locks. Return that active Link idempotently.
     link = (
         await db.execute(
-            select(ChannelBotAgentLink).where(
+            select(ChannelBotAgentLink)
+            .where(
                 ChannelBotAgentLink.account_id == account.id,
                 ChannelBotAgentLink.agent_id == agent_id,
                 ChannelBotAgentLink.user_id == link_user_id,
-                ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
                 ChannelBotAgentLink.archived_at.is_(None),
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if link is not None:
-        await ensure_hosted_agent_provider_link_available(
-            db,
-            account=account,
-            agent_id=agent_id,
-            user_id=link_user_id,
-            existing_same_account_link=True,
-        )
-        return link, None
+        if link.status != BOT_AGENT_LINK_STATUS_ACTIVE:
+            # Older rows can carry an archived status without archived_at even
+            # though the partial unique index keys only on archived_at. Finish
+            # that interrupted archive before inserting its replacement.
+            await archive_bot_agent_link(db, link=link)
+        else:
+            if not await bot_agent_link_has_strict_v2_authority(db, link=link):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=_single_link_authority_detail(account.provider, row[0].agent_type),
+                )
+            await ensure_hosted_agent_provider_link_available(
+                db,
+                account=account,
+                agent_id=agent_id,
+                user_id=link_user_id,
+                existing_same_account_link=True,
+            )
+            return link, None
 
     await ensure_hosted_agent_provider_link_available(
         db,
@@ -519,24 +526,30 @@ async def get_strict_v2_hosted_channel_agent_or_409(
     *,
     agent_id: UUID,
     user_id: UUID,
+    lock_runtime_fence: bool = False,
 ) -> AgentEnvironment:
-    row = (
-        await db.execute(
-            select(AgentEnvironment, HostedRuntimeState, V2RuntimeEnvironmentFence)
-            .outerjoin(
-                HostedRuntimeState,
-                HostedRuntimeState.environment_id == AgentEnvironment.id,
-            )
-            .outerjoin(
-                V2RuntimeEnvironmentFence,
-                V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
-            )
-            .where(
-                AgentEnvironment.id == agent_id,
-                AgentEnvironment.user_id == user_id,
-            )
+    query = (
+        select(AgentEnvironment, HostedRuntimeState, V2RuntimeEnvironmentFence)
+        .join(
+            HostedRuntimeState,
+            HostedRuntimeState.environment_id == AgentEnvironment.id,
         )
-    ).one_or_none()
+        .join(
+            V2RuntimeEnvironmentFence,
+            V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
+        )
+        .where(
+            AgentEnvironment.id == agent_id,
+            AgentEnvironment.user_id == user_id,
+        )
+        .execution_options(populate_existing=True)
+    )
+    if lock_runtime_fence:
+        # Match get_or_create_bot_agent_link's lock set so provider preflight,
+        # Link admission, and retirement cannot acquire Agent/fence rows in
+        # conflicting orders.
+        query = query.with_for_update(of=(AgentEnvironment, V2RuntimeEnvironmentFence))
+    row = (await db.execute(query)).one_or_none()
     if row is None or not is_strict_v2_hosted_channel_agent(*row):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -562,11 +575,11 @@ async def bot_agent_link_allows_new_pairing(
                 V2RuntimeEnvironmentFence,
             )
             .join(AgentEnvironment, AgentEnvironment.id == ChannelBotAgentLink.agent_id)
-            .outerjoin(
+            .join(
                 HostedRuntimeState,
                 HostedRuntimeState.environment_id == AgentEnvironment.id,
             )
-            .outerjoin(
+            .join(
                 V2RuntimeEnvironmentFence,
                 V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
             )
@@ -578,12 +591,88 @@ async def bot_agent_link_allows_new_pairing(
                 ChannelBotAgentLink.archived_at.is_(None),
                 AgentEnvironment.user_id == user_id,
             )
+            .execution_options(populate_existing=True)
+            .with_for_update(of=V2RuntimeEnvironmentFence)
         )
     ).one_or_none()
     if row is None:
         return False
-    _link, agent, state, fence = row
-    return is_strict_v2_hosted_channel_agent(agent, state, fence)
+    link, agent, state, fence = row
+    if not is_strict_v2_hosted_channel_agent(agent, state, fence):
+        return False
+    return await bot_agent_link_has_strict_v2_authority(db, link=link)
+
+
+async def bot_agent_link_has_strict_v2_authority(
+    db: AsyncSession,
+    *,
+    link: ChannelBotAgentLink | None,
+) -> bool:
+    if link is None or link.status != BOT_AGENT_LINK_STATUS_ACTIVE or link.archived_at is not None:
+        return False
+    row = (
+        await db.execute(
+            select(
+                ChannelAccount,
+                AgentEnvironment,
+                HostedRuntimeState,
+                V2RuntimeEnvironmentFence,
+            )
+            .select_from(ChannelBotAgentLink)
+            .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+            .join(AgentEnvironment, AgentEnvironment.id == ChannelBotAgentLink.agent_id)
+            .join(
+                HostedRuntimeState,
+                HostedRuntimeState.environment_id == AgentEnvironment.id,
+            )
+            .join(
+                V2RuntimeEnvironmentFence,
+                V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
+            )
+            .where(
+                ChannelBotAgentLink.id == link.id,
+                ChannelBotAgentLink.user_id == link.user_id,
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
+            )
+            .execution_options(populate_existing=True)
+        )
+    ).one_or_none()
+    if row is None:
+        return False
+    account, agent, state, fence = row
+    if not is_strict_v2_hosted_channel_agent(agent, state, fence):
+        return False
+    limited_providers = SINGLE_LINK_PROVIDERS_BY_HOSTED_AGENT_TYPE.get(agent.agent_type)
+    if limited_providers is None or account.provider not in limited_providers:
+        return True
+    active_link_ids = list(
+        (
+            await db.execute(
+                select(ChannelBotAgentLink.id)
+                .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+                .where(
+                    ChannelBotAgentLink.agent_id == agent.id,
+                    ChannelBotAgentLink.user_id == link.user_id,
+                    ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+                    ChannelBotAgentLink.archived_at.is_(None),
+                    ChannelAccount.provider == account.provider,
+                    ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                    ChannelAccount.archived_at.is_(None),
+                )
+                .order_by(ChannelBotAgentLink.created_at, ChannelBotAgentLink.id)
+            )
+        ).scalars()
+    )
+    return active_link_ids == [link.id]
+
+
+def _single_link_authority_detail(provider: str, agent_type: str) -> str:
+    label = HOSTED_AGENT_TYPE_LABELS.get(agent_type, agent_type)
+    return (
+        f"one-{provider}-link-per-{agent_type}-agent: "
+        f"{label} agents support one active {provider} bot."
+    )
 
 
 async def list_strict_v2_hosted_channel_agent_ids(
@@ -853,6 +942,18 @@ async def rotate_bot_agent_link_token(
     account: ChannelAccount,
     link: ChannelBotAgentLink,
 ) -> str:
+    await get_strict_v2_hosted_channel_agent_or_409(
+        db,
+        agent_id=link.agent_id,
+        user_id=link.user_id,
+        lock_runtime_fence=True,
+    )
+    await db.refresh(link, with_for_update=True)
+    if not await bot_agent_link_has_strict_v2_authority(db, link=link):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=STRICT_V2_AGENT_LINK_DETAIL,
+        )
     raw_token = generate_agent_token(account.provider)
     store_agent_link_token(link, raw_token)
     await db.flush()
@@ -1011,6 +1112,9 @@ async def archive_channel_account(db: AsyncSession, *, account: ChannelAccount) 
     now = datetime.now(UTC)
     account.archived_at = now
     account.status = CHANNEL_STATUS_DISABLED
+    account.encrypted_provider_token = None
+    account.provider_token_nonce = None
+    await db.execute(delete(ChannelSecret).where(ChannelSecret.account_id == account.id))
 
     links_result = await db.execute(
         select(ChannelBotAgentLink).where(
@@ -1075,8 +1179,20 @@ async def resolve_channel_agent_by_token(
     token: str,
 ) -> ChannelAgentContext:
     result = await db.execute(
-        select(ChannelAccount, ChannelBotAgentLink)
+        select(
+            ChannelAccount,
+            ChannelBotAgentLink,
+            AgentEnvironment,
+            HostedRuntimeState,
+            V2RuntimeEnvironmentFence,
+        )
         .join(ChannelBotAgentLink, ChannelBotAgentLink.account_id == ChannelAccount.id)
+        .join(AgentEnvironment, AgentEnvironment.id == ChannelBotAgentLink.agent_id)
+        .join(HostedRuntimeState, HostedRuntimeState.environment_id == AgentEnvironment.id)
+        .join(
+            V2RuntimeEnvironmentFence,
+            V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
+        )
         .where(
             ChannelAccount.provider == provider,
             ChannelBotAgentLink.agent_token_hash == hash_token(token),
@@ -1084,12 +1200,16 @@ async def resolve_channel_agent_by_token(
             ChannelBotAgentLink.archived_at.is_(None),
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            AgentEnvironment.user_id == ChannelBotAgentLink.user_id,
         )
+        .execution_options(populate_existing=True)
     )
     row = result.one_or_none()
-    if row is None:
+    if row is None or not is_strict_v2_hosted_channel_agent(*row[2:]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bot token")
-    account, link = row
+    account, link, _agent, _state, _fence = row
+    if not await bot_agent_link_has_strict_v2_authority(db, link=link):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bot token")
     return ChannelAgentContext(account=account, link=link)
 
 
@@ -1102,8 +1222,20 @@ async def resolve_channel_agent_by_identity(
     agent_token_hash: str,
 ) -> ChannelAgentContext:
     result = await db.execute(
-        select(ChannelAccount, ChannelBotAgentLink)
+        select(
+            ChannelAccount,
+            ChannelBotAgentLink,
+            AgentEnvironment,
+            HostedRuntimeState,
+            V2RuntimeEnvironmentFence,
+        )
         .join(ChannelBotAgentLink, ChannelBotAgentLink.account_id == ChannelAccount.id)
+        .join(AgentEnvironment, AgentEnvironment.id == ChannelBotAgentLink.agent_id)
+        .join(HostedRuntimeState, HostedRuntimeState.environment_id == AgentEnvironment.id)
+        .join(
+            V2RuntimeEnvironmentFence,
+            V2RuntimeEnvironmentFence.environment_id == AgentEnvironment.id,
+        )
         .where(
             ChannelAccount.id == account_id,
             ChannelAccount.provider == provider,
@@ -1113,12 +1245,16 @@ async def resolve_channel_agent_by_identity(
             ChannelBotAgentLink.archived_at.is_(None),
             ChannelAccount.archived_at.is_(None),
             ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            AgentEnvironment.user_id == ChannelBotAgentLink.user_id,
         )
+        .execution_options(populate_existing=True)
     )
     row = result.one_or_none()
-    if row is None:
+    if row is None or not is_strict_v2_hosted_channel_agent(*row[2:]):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bot identity")
-    account, link = row
+    account, link, _agent, _state, _fence = row
+    if not await bot_agent_link_has_strict_v2_authority(db, link=link):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bot identity")
     return ChannelAgentContext(account=account, link=link)
 
 
@@ -1132,6 +1268,11 @@ async def claim_pair_code(
     external_chat_name: str | None,
     external_user_id: str | None,
 ) -> PairCodeClaimResult:
+    await lock_channel_binding_identity(
+        db,
+        account_id=account.id,
+        external_chat_id=external_chat_id,
+    )
     result = await db.execute(
         select(ChannelPairCode)
         .where(
@@ -1191,6 +1332,11 @@ async def get_or_create_binding(
     external_chat_name: str | None,
     external_user_id: str | None,
 ) -> ChannelBinding:
+    await lock_channel_binding_identity(
+        db,
+        account_id=account.id,
+        external_chat_id=external_chat_id,
+    )
     result = await db.execute(
         select(ChannelBinding)
         .where(
@@ -1202,6 +1348,8 @@ async def get_or_create_binding(
             ChannelBinding.created_at.desc(),
         )
         .limit(1)
+        .execution_options(populate_existing=True)
+        .with_for_update()
     )
     binding = result.scalars().first()
     if binding is not None:
@@ -1230,6 +1378,20 @@ async def get_or_create_binding(
     db.add(binding)
     await db.flush()
     return binding
+
+
+async def lock_channel_binding_identity(
+    db: AsyncSession,
+    *,
+    account_id: UUID,
+    external_chat_id: str,
+) -> None:
+    """Serialize mutations and provider cleanup for one physical chat."""
+    # The binding row is not a stable lock target: it can be absent on first
+    # pair and an archived row can change visibility while another transaction
+    # waits. Use the same transaction lock for pair, unpair, and unlink cleanup.
+    lock_name = f"channel-binding:{account_id}:{external_chat_id}"
+    await db.execute(select(func.pg_advisory_xact_lock(func.hashtextextended(lock_name, 0))))
 
 
 def binding_is_controlled_by_actor(
@@ -1383,11 +1545,38 @@ async def resolve_inbound_binding(
     text: str | None,
     command: ChannelPairCommand | None = None,
 ) -> InboundBindingResult:
+    parsed = command if command is not None else parse_pair_command(text)
+    if parsed is not None and parsed.kind in {"pair", "unpair"}:
+        await lock_channel_binding_identity(
+            db,
+            account_id=account.id,
+            external_chat_id=external_chat_id,
+        )
     bindings = await find_bindings(db, account=account, external_chat_id=external_chat_id)
     binding = bindings[0] if bindings else None
-    parsed = command if command is not None else parse_pair_command(text)
     if parsed is None:
-        return InboundBindingResult(binding=binding, bindings=tuple(bindings))
+        authorized_bindings: list[ChannelBinding] = []
+        for active_binding in bindings:
+            if external_chat_type == "direct_messages" and not binding_is_controlled_by_actor(
+                active_binding,
+                external_user_id=external_user_id,
+            ):
+                continue
+            link = await db.get(ChannelBotAgentLink, active_binding.bot_agent_link_id)
+            if (
+                link is None
+                or link.status != BOT_AGENT_LINK_STATUS_ACTIVE
+                or link.archived_at is not None
+                or await bot_agent_link_has_strict_v2_authority(db, link=link)
+            ):
+                # Preserve the binding for inactive-link health reporting. An
+                # active historical Link without strict-v2 authority remains
+                # unbound and cannot reach a runtime.
+                authorized_bindings.append(active_binding)
+        return InboundBindingResult(
+            binding=authorized_bindings[0] if authorized_bindings else None,
+            bindings=tuple(authorized_bindings),
+        )
     if external_user_id is None and pairing_command_requires_actor(external_chat_type):
         return InboundBindingResult(
             binding=binding,
@@ -1531,6 +1720,7 @@ async def send_pairing_command_reply(
     external_chat_id: str,
     send_external_chat_id: str | None = None,
     telegram_message_thread_id: int | None = None,
+    telegram_direct_messages_topic_id: int | None = None,
     command: ChannelPairCommand | None,
     binding_result: InboundBindingResult,
 ) -> ChannelMessage | None:
@@ -1552,6 +1742,7 @@ async def send_pairing_command_reply(
             bot_agent_link_id=reply_link_id,
             bind_to_existing=bind_reply_to_existing,
             telegram_message_thread_id=telegram_message_thread_id,
+            telegram_direct_messages_topic_id=telegram_direct_messages_topic_id,
         )
     except HTTPException as exc:
         log.warning(
@@ -1579,7 +1770,10 @@ def telegram_chat_from_update(payload: dict[str, Any]) -> tuple[str, str | None,
         if chat_id is None:
             return None
         title = chat.get("title") or chat.get("username") or chat.get("first_name")
-        return str(chat_id), _read_optional_str(chat.get("type")), _read_optional_str(title)
+        chat_type = _read_optional_str(chat.get("type"))
+        if chat_type == "supergroup" and chat.get("is_direct_messages") is True:
+            chat_type = "direct_messages"
+        return str(chat_id), chat_type, _read_optional_str(title)
 
     business_connection = payload.get("business_connection")
     if isinstance(business_connection, dict):
@@ -1631,19 +1825,60 @@ def telegram_message_thread_id_from_update(payload: dict[str, Any]) -> int | Non
     return None
 
 
+def telegram_direct_messages_topic_id_from_update(payload: dict[str, Any]) -> int | None:
+    """Return a channel direct-message topic for replies, never as binding identity."""
+    message = _telegram_message_from_update(payload)
+    if not isinstance(message, dict):
+        return None
+    chat = message.get("chat")
+    if (
+        not isinstance(chat, dict)
+        or _read_optional_str(chat.get("type")) != "supergroup"
+        or chat.get("is_direct_messages") is not True
+    ):
+        return None
+    topic = message.get("direct_messages_topic")
+    if not isinstance(topic, dict):
+        return None
+    topic_id = topic.get("topic_id")
+    if isinstance(topic_id, bool) or not isinstance(topic_id, int) or topic_id <= 0:
+        return None
+    return topic_id
+
+
 def telegram_event_id_from_update(payload: dict[str, Any]) -> str | None:
     update_id = payload.get("update_id")
     if isinstance(update_id, (int, str)) and str(update_id).strip():
-        return str(update_id).strip()
+        return f"update:{str(update_id).strip()}"
     callback_query = payload.get("callback_query")
     if isinstance(callback_query, dict):
         callback_id = callback_query.get("id")
-        if callback_id is not None:
-            return str(callback_id)
-    return telegram_message_id_from_update(payload)
+        if isinstance(callback_id, (int, str)) and str(callback_id).strip():
+            return f"callback:{str(callback_id).strip()}"
+    message_id = telegram_message_id_from_update(payload)
+    return f"message:{message_id}" if message_id is not None else None
+
+
+def telegram_event_scope_from_update(payload: dict[str, Any]) -> str:
+    update_id = payload.get("update_id")
+    if isinstance(update_id, (int, str)) and str(update_id).strip():
+        return PROVIDER_EVENT_SCOPE_ACCOUNT
+    callback_query = payload.get("callback_query")
+    if isinstance(callback_query, dict):
+        callback_id = callback_query.get("id")
+        if isinstance(callback_id, (int, str)) and str(callback_id).strip():
+            return PROVIDER_EVENT_SCOPE_ACCOUNT
+    return PROVIDER_EVENT_SCOPE_CHAT
 
 
 def telegram_external_user_id_from_update(payload: dict[str, Any]) -> str | None:
+    # The Bot API server defines a channel direct-message topic id as the
+    # topic user's id. Use that stable topic owner instead of the immediate
+    # message sender so one chat-level Binding cannot cross DM actors.
+    direct_messages_topic_id = telegram_direct_messages_topic_id_from_update(payload)
+    if direct_messages_topic_id is not None:
+        return str(direct_messages_topic_id)
+
     callback_query = payload.get("callback_query")
     if isinstance(callback_query, dict):
         actor_id = _dict_identifier(callback_query.get("from"), "id")
@@ -1730,7 +1965,34 @@ async def record_inbound_message(
     text: str | None,
     payload: dict[str, Any],
     provider_event_id: str | None = None,
+    provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
 ) -> ChannelMessage:
+    message, _created = await _record_inbound_message_with_status(
+        db,
+        account=account,
+        binding=binding,
+        external_chat_id=external_chat_id,
+        provider_message_id=provider_message_id,
+        text=text,
+        payload=payload,
+        provider_event_id=provider_event_id,
+        provider_event_scope=provider_event_scope,
+    )
+    return message
+
+
+async def _record_inbound_message_with_status(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    binding: ChannelBinding | None,
+    external_chat_id: str,
+    provider_message_id: str | None,
+    text: str | None,
+    payload: dict[str, Any],
+    provider_event_id: str | None = None,
+    provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
+) -> tuple[ChannelMessage, bool]:
     event_id = provider_event_id or provider_message_id
     if event_id is not None:
         existing = await _find_existing_inbound_message(
@@ -1738,9 +2000,10 @@ async def record_inbound_message(
             account=account,
             external_chat_id=external_chat_id,
             provider_event_id=event_id,
+            provider_event_scope=provider_event_scope,
         )
         if existing is not None:
-            return existing
+            return existing, False
     owner_user_id = binding.user_id if binding is not None else account.user_id
     message = ChannelMessage(
         account_id=account.id,
@@ -1751,6 +2014,7 @@ async def record_inbound_message(
         external_chat_id=external_chat_id,
         provider_message_id=provider_message_id,
         provider_event_id=event_id,
+        provider_event_scope=provider_event_scope,
         text=text,
         payload=payload,
     )
@@ -1764,12 +2028,13 @@ async def record_inbound_message(
             account=account,
             external_chat_id=external_chat_id,
             provider_event_id=event_id,
+            provider_event_scope=provider_event_scope,
         )
         if existing is not None:
-            return existing
+            return existing, False
         raise
     inbound_messages.labels(channel=account.provider).inc()
-    return message
+    return message, True
 
 
 async def _find_existing_inbound_message(
@@ -1778,17 +2043,21 @@ async def _find_existing_inbound_message(
     account: ChannelAccount,
     external_chat_id: str,
     provider_event_id: str | None,
+    provider_event_scope: str,
 ) -> ChannelMessage | None:
     if provider_event_id is None:
         return None
+    filters = [
+        ChannelMessage.account_id == account.id,
+        ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+        ChannelMessage.provider_event_scope == provider_event_scope,
+        ChannelMessage.provider_event_id == provider_event_id,
+    ]
+    if provider_event_scope == PROVIDER_EVENT_SCOPE_CHAT:
+        filters.append(ChannelMessage.external_chat_id == external_chat_id)
     result = await db.execute(
         select(ChannelMessage)
-        .where(
-            ChannelMessage.account_id == account.id,
-            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
-            ChannelMessage.external_chat_id == external_chat_id,
-            ChannelMessage.provider_event_id == provider_event_id,
-        )
+        .where(*filters)
         .order_by(ChannelMessage.created_at.asc(), ChannelMessage.id.asc())
         .limit(1)
     )
@@ -1801,17 +2070,21 @@ async def find_existing_inbound_provider_event(
     account: ChannelAccount,
     external_chat_id: str,
     provider_event_id: str | None,
+    provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
 ) -> ChannelMessage | None:
     if provider_event_id is None:
         return None
+    filters = [
+        ChannelMessage.account_id == account.id,
+        ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
+        ChannelMessage.provider_event_scope == provider_event_scope,
+        ChannelMessage.provider_event_id == provider_event_id,
+    ]
+    if provider_event_scope == PROVIDER_EVENT_SCOPE_CHAT:
+        filters.append(ChannelMessage.external_chat_id == external_chat_id)
     result = await db.execute(
         select(ChannelMessage)
-        .where(
-            ChannelMessage.account_id == account.id,
-            ChannelMessage.direction == MESSAGE_DIRECTION_INBOUND,
-            ChannelMessage.external_chat_id == external_chat_id,
-            ChannelMessage.provider_event_id == provider_event_id,
-        )
+        .where(*filters)
         .order_by(ChannelMessage.created_at.asc(), ChannelMessage.id.asc())
         .limit(1)
     )
@@ -1828,6 +2101,8 @@ async def record_inbound_messages_for_bindings(
     text: str | None,
     payload: dict[str, Any],
     provider_event_id: str | None = None,
+    provider_event_scope: str = PROVIDER_EVENT_SCOPE_CHAT,
+    suppress_duplicate_event: bool = False,
 ) -> list[tuple[ChannelMessage, ChannelBinding | None]]:
     target_bindings: tuple[ChannelBinding | None, ...]
     if binding_result.bindings:
@@ -1839,7 +2114,7 @@ async def record_inbound_messages_for_bindings(
 
     messages: list[tuple[ChannelMessage, ChannelBinding | None]] = []
     for binding in target_bindings:
-        message = await record_inbound_message(
+        message, created = await _record_inbound_message_with_status(
             db,
             account=account,
             binding=binding,
@@ -1848,7 +2123,10 @@ async def record_inbound_messages_for_bindings(
             text=text,
             payload=payload,
             provider_event_id=provider_event_id,
+            provider_event_scope=provider_event_scope,
         )
+        if suppress_duplicate_event and not created:
+            return []
         messages.append((message, binding))
     if binding_result.command_handled:
         _mark_inbound_messages_delivered(messages)
@@ -2212,7 +2490,39 @@ def telegram_update_id(message: ChannelMessage) -> int:
 def telegram_update_payload(message: ChannelMessage) -> dict[str, Any]:
     payload = dict(message.payload) if isinstance(message.payload, dict) else {}
     payload.setdefault("update_id", telegram_update_id(message))
+    _virtualize_telegram_direct_message_topics(payload)
     return payload
+
+
+def _virtualize_telegram_direct_message_topics(payload: dict[str, Any]) -> None:
+    for container_key in ("message", "edited_message"):
+        value = payload.get(container_key)
+        if isinstance(value, dict):
+            payload[container_key] = _virtualized_telegram_direct_message(value)
+    callback_query = payload.get("callback_query")
+    if isinstance(callback_query, dict) and isinstance(callback_query.get("message"), dict):
+        callback_copy = dict(callback_query)
+        callback_copy["message"] = _virtualized_telegram_direct_message(callback_query["message"])
+        payload["callback_query"] = callback_copy
+
+
+def _virtualized_telegram_direct_message(message: dict[str, Any]) -> dict[str, Any]:
+    chat = message.get("chat")
+    topic = message.get("direct_messages_topic")
+    if (
+        not isinstance(chat, dict)
+        or chat.get("type") != "supergroup"
+        or chat.get("is_direct_messages") is not True
+        or not isinstance(topic, dict)
+    ):
+        return message
+    topic_id = topic.get("topic_id")
+    if isinstance(topic_id, bool) or not isinstance(topic_id, int) or topic_id <= 0:
+        return message
+    projected = dict(message)
+    projected.setdefault("message_thread_id", topic_id)
+    projected["is_topic_message"] = True
+    return projected
 
 
 async def dequeue_telegram_updates(
@@ -2611,8 +2921,14 @@ async def deliver_channel_delivery(
 ) -> ChannelDelivery:
     try:
         account = await _delivery_account(db, delivery)
-        await _lock_active_delivery_link(db, delivery)
+        link = await _lock_active_delivery_link(db, delivery)
+        if link is not None and not await bot_agent_link_has_strict_v2_authority(db, link=link):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="channel agent link has no managed runtime authority",
+            )
         message = await _delivery_message(db, delivery)
+        await _lock_active_delivery_binding(db, delivery=delivery, message=message)
         provider_message_id, provider_response = await send_provider_outbound_payload(
             account=account,
             external_chat_id=message.external_chat_id,
@@ -2712,6 +3028,7 @@ async def send_channel_outbound_message(
     bot_agent_link_id: UUID | None = None,
     bind_to_existing: bool = True,
     telegram_message_thread_id: int | None = None,
+    telegram_direct_messages_topic_id: int | None = None,
 ) -> ChannelMessage:
     if account.provider == CHANNEL_PROVIDER_TELEGRAM:
         return await send_telegram_message(
@@ -2722,6 +3039,7 @@ async def send_channel_outbound_message(
             bot_agent_link_id=bot_agent_link_id,
             bind_to_existing=bind_to_existing,
             message_thread_id=telegram_message_thread_id,
+            direct_messages_topic_id=telegram_direct_messages_topic_id,
         )
     if account.provider == CHANNEL_PROVIDER_DISCORD:
         return await send_discord_message(
@@ -2786,6 +3104,7 @@ async def send_telegram_message(
     bot_agent_link_id: UUID | None = None,
     bind_to_existing: bool = True,
     message_thread_id: int | None = None,
+    direct_messages_topic_id: int | None = None,
 ) -> ChannelMessage:
     _require_channel_provider(account, CHANNEL_PROVIDER_TELEGRAM)
     provider_message_id, payload = await _send_telegram_provider_payload(
@@ -2793,6 +3112,7 @@ async def send_telegram_message(
         external_chat_id=external_chat_id,
         text=text,
         message_thread_id=message_thread_id,
+        direct_messages_topic_id=direct_messages_topic_id,
     )
     binding = (
         await find_binding(
@@ -2821,6 +3141,7 @@ async def _send_telegram_provider_payload(
     external_chat_id: str,
     text: str,
     message_thread_id: int | None = None,
+    direct_messages_topic_id: int | None = None,
 ) -> tuple[str | None, dict[str, Any]]:
     token = decrypt_provider_token(account)
     base_url = settings.channel_telegram_api_base_url.strip()
@@ -2828,6 +3149,8 @@ async def _send_telegram_provider_payload(
     request_payload: dict[str, Any] = {"chat_id": external_chat_id, "text": text}
     if message_thread_id is not None:
         request_payload["message_thread_id"] = message_thread_id
+    if direct_messages_topic_id is not None:
+        request_payload["direct_messages_topic_id"] = direct_messages_topic_id
     payload = await _post_provider_json(
         channel=CHANNEL_PROVIDER_TELEGRAM,
         method="sendMessage",
@@ -4015,6 +4338,40 @@ async def _lock_active_delivery_link(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail="channel agent link archived",
     )
+
+
+async def _lock_active_delivery_binding(
+    db: AsyncSession,
+    *,
+    delivery: ChannelDelivery,
+    message: ChannelMessage,
+) -> ChannelBinding | None:
+    if delivery.bot_agent_link_id is None:
+        return None
+    if message.binding_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="channel delivery has no active binding",
+        )
+    binding = (
+        await db.execute(
+            select(ChannelBinding)
+            .where(
+                ChannelBinding.id == message.binding_id,
+                ChannelBinding.account_id == delivery.account_id,
+                ChannelBinding.bot_agent_link_id == delivery.bot_agent_link_id,
+                ChannelBinding.external_chat_id == message.external_chat_id,
+            )
+            .execution_options(populate_existing=True)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if binding is None or binding.status != BINDING_STATUS_ACTIVE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="channel binding archived",
+        )
+    return binding
 
 
 def _schedule_delivery_retry(delivery: ChannelDelivery, error: str) -> None:

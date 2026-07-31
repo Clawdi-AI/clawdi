@@ -11968,6 +11968,7 @@ chmod +x "$prefix/bin/clawdi"
 		const policyPath = join(root, "etc", "clawdi", "host-policy.json");
 		const openclawBin = join(home, ".openclaw", "bin", "openclaw");
 		const openclawPatch = join(root, "openclaw-channel-patch.json");
+		const openclawPatchArgs = join(root, "openclaw-channel-patch-args.txt");
 		const openclawPluginInstalls = join(root, "openclaw-plugin-installs.txt");
 		const previousExitCode = process.exitCode;
 		const previousLog = console.log;
@@ -11980,6 +11981,7 @@ chmod +x "$prefix/bin/clawdi"
 			`#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "config" ] && [ "\${2:-}" = "patch" ] && [ "\${3:-}" = "--stdin" ]; then
+  printf '%s\n' "$*" >> '${openclawPatchArgs}'
   cat >> '${openclawPatch}'
   printf '\\n---\\n' >> '${openclawPatch}'
   exit 0
@@ -12112,6 +12114,9 @@ exit 64
 			expect(patchText).toContain('"plugins"');
 			expect(patchText).toContain('"dmScope": "per-account-channel-peer"');
 			expect(patchText).not.toContain('"streaming"');
+			expect(readFileSync(openclawPatchArgs, "utf-8")).toContain(
+				"config patch --stdin --replace-path channels.telegram.accounts --replace-path channels.discord.accounts",
+			);
 			const isolationPatch = patchText
 				.split("\n---\n")
 				.filter((entry) => entry.trim().length > 0)
@@ -12438,10 +12443,9 @@ exit 64
 		expect(hermesConfig).not.toContain("discord-agent-token");
 		const parsedHermesConfig = readHermesConfigYaml(home);
 		expect(parsedHermesConfig.streaming).toEqual({ enabled: false });
+		expect(parsedHermesConfig.group_sessions_per_user).toBe(false);
+		expect(parsedHermesConfig.thread_sessions_per_user).toBe(false);
 		expect(parsedHermesConfig).not.toHaveProperty("streaming.transport");
-		expect(parsedHermesConfig).not.toHaveProperty(
-			"platforms.telegram.extra.thread_sessions_per_user",
-		);
 		expect(parsedHermesConfig).toMatchObject({
 			custom_root: "keep",
 			display: {
@@ -12454,7 +12458,11 @@ exit 64
 			platforms: {
 				telegram: {
 					custom: "keep-telegram",
-					extra: { custom_extra: "keep-extra", group_sessions_per_user: false },
+					extra: {
+						custom_extra: "keep-extra",
+						group_sessions_per_user: false,
+						thread_sessions_per_user: false,
+					},
 				},
 				discord: { custom: "keep-discord" },
 			},
@@ -12501,6 +12509,8 @@ exit 64
 		expect(removed.installErrors).toEqual([]);
 		const clearedHermesConfig = readHermesConfigYaml(home);
 		expect(clearedHermesConfig.streaming).toEqual({ enabled: false });
+		expect(clearedHermesConfig).not.toHaveProperty("group_sessions_per_user");
+		expect(clearedHermesConfig).not.toHaveProperty("thread_sessions_per_user");
 		expect(clearedHermesConfig).not.toHaveProperty("streaming.transport");
 		expect(clearedHermesConfig).not.toHaveProperty(
 			"platforms.telegram.extra.thread_sessions_per_user",
@@ -12800,6 +12810,8 @@ exit 64
 		expect(hermesConfig).not.toContain("/stale/session");
 		const clearedChannelsConfig = readHermesConfigYaml(home);
 		expect(clearedChannelsConfig).not.toHaveProperty("display");
+		expect(clearedChannelsConfig).not.toHaveProperty("group_sessions_per_user");
+		expect(clearedChannelsConfig).not.toHaveProperty("thread_sessions_per_user");
 		expect(clearedChannelsConfig).not.toHaveProperty("platforms.telegram");
 		expect(clearedChannelsConfig).not.toHaveProperty(
 			"platforms.telegram.extra.thread_sessions_per_user",

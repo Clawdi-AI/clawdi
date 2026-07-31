@@ -218,6 +218,7 @@ async def _resolve_whatsapp_tenant_link(
             db,
             user_id=auth.user_id,
             agent_id=link.agent_id,
+            lock_runtime_fence=True,
         )
         return link
     if body.agent_id is not None:
@@ -232,6 +233,7 @@ async def _resolve_whatsapp_tenant_link(
             db,
             user_id=auth.user_id,
             agent_id=link.agent_id,
+            lock_runtime_fence=True,
         )
         return link
     links = await list_owned_active_bot_agent_links(db, account=account, user_id=auth.user_id)
@@ -240,6 +242,7 @@ async def _resolve_whatsapp_tenant_link(
             db,
             user_id=auth.user_id,
             agent_id=links[0].agent_id,
+            lock_runtime_fence=True,
         )
         return links[0]
     detail = "agent_id or agent_link_id is required"
