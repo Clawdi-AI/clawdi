@@ -12113,7 +12113,7 @@ exit 0
 		expect(patchText).not.toContain("bluebubbles");
 		expect(patchText).not.toContain('"$patch"');
 		expect(patchText).not.toContain('"botToken"');
-		expect(patchText).not.toContain('"session"');
+		expect(patchText).toContain('"dmScope": null');
 	});
 
 	it("does not mutate live config when an OpenClaw channel plugin install fails", () => {
