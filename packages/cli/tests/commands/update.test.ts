@@ -258,35 +258,35 @@ describe("installCommand", () => {
 });
 
 describe("installer process lifetime", () => {
-	it.each([
-		"timeout",
-		"abort",
-	] as const)("terminates the entire installer process group after %s", async (trigger) => {
-		if (process.platform === "win32") return;
-		const script = join(tmpHome, `installer-tree-${trigger}.sh`);
-		const descendantPidPath = join(tmpHome, `installer-descendant-${trigger}.pid`);
-		writeFileSync(
-			script,
-			[
-				"trap '' TERM",
-				'sh -c \'trap "" TERM; echo $$ > "$1"; while :; do sleep 1; done\' child "$1" &',
-				"wait",
-			].join("\n"),
-		);
-		const abort = new AbortController();
-		const running = runInstallerProcess("/bin/sh", [script, descendantPidPath], {
-			signal: abort.signal,
-			timeoutMs: trigger === "timeout" ? 200 : 5_000,
-			termGraceMs: 20,
-		});
-		await waitForPath(descendantPidPath);
-		if (trigger === "abort") abort.abort();
-		expect(await running).toBeNull();
-		const descendantPid = Number(readFileSync(descendantPidPath, "utf8").trim());
-		expect(Number.isInteger(descendantPid)).toBe(true);
-		await waitForProcessExit(descendantPid);
-		expect(processIsAlive(descendantPid)).toBe(false);
-	});
+	it.each(["timeout", "abort"] as const)(
+		"terminates the entire installer process group after %s",
+		async (trigger) => {
+			if (process.platform === "win32") return;
+			const script = join(tmpHome, `installer-tree-${trigger}.sh`);
+			const descendantPidPath = join(tmpHome, `installer-descendant-${trigger}.pid`);
+			writeFileSync(
+				script,
+				[
+					"trap '' TERM",
+					'sh -c \'trap "" TERM; echo $$ > "$1"; while :; do sleep 1; done\' child "$1" &',
+					"wait",
+				].join("\n"),
+			);
+			const abort = new AbortController();
+			const running = runInstallerProcess("/bin/sh", [script, descendantPidPath], {
+				signal: abort.signal,
+				timeoutMs: trigger === "timeout" ? 200 : 5_000,
+				termGraceMs: 20,
+			});
+			await waitForPath(descendantPidPath);
+			if (trigger === "abort") abort.abort();
+			expect(await running).toBeNull();
+			const descendantPid = Number(readFileSync(descendantPidPath, "utf8").trim());
+			expect(Number.isInteger(descendantPid)).toBe(true);
+			await waitForProcessExit(descendantPid);
+			expect(processIsAlive(descendantPid)).toBe(false);
+		},
+	);
 });
 
 describe("update --json", () => {
