@@ -818,7 +818,6 @@ function BindingsTab({ accountId }: { accountId: string }) {
 		<div className={CHANNEL_RELATION_LIST_CLASS}>
 			{items.map((binding: ChannelBinding) => {
 				const link = links.data?.find((candidate) => candidate.id === binding.agent_link_id);
-				const threadLabel = bindingThreadLabel(binding);
 				const isUnpairing = unpairingIds.has(binding.id);
 				return (
 					<div
@@ -847,7 +846,6 @@ function BindingsTab({ accountId }: { accountId: string }) {
 										]
 									: []),
 								<CopyInline key="chat-id" value={binding.external_chat_id} label="chat ID" />,
-								...(threadLabel ? [<span key="thread">Thread: {threadLabel}</span>] : []),
 							]}
 						/>
 						<div className={CHANNEL_RELATION_ACTIONS_CLASS}>
@@ -873,11 +871,6 @@ function BindingsTab({ accountId }: { accountId: string }) {
 			})}
 		</div>
 	);
-}
-
-function bindingThreadLabel(binding: ChannelBinding): string | null {
-	if (!("thread_label" in binding) || typeof binding.thread_label !== "string") return null;
-	return binding.thread_label.trim() || null;
 }
 
 // ── Activity ─────────────────────────────────────────────────────────────────
