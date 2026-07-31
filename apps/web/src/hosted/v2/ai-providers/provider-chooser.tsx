@@ -1,11 +1,10 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 import { useMemo, useState } from "react";
 import { EntityChoiceCard } from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SearchInput } from "@/components/ui/search-input";
 import {
 	PROVIDER_PRESET_CATEGORIES,
 	PROVIDER_PRESET_CATEGORY_LABEL,
@@ -115,20 +114,13 @@ export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoic
 
 	return (
 		<div data-hosted="true" data-v2="true" className="flex flex-col gap-4">
-			<div className="flex flex-col gap-1.5">
-				<Label htmlFor="provider-search">Search providers</Label>
-				<div className="relative">
-					<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-					<Input
-						id="provider-search"
-						value={query}
-						onChange={(event) => setQuery(event.target.value)}
-						placeholder="OpenAI, DeepSeek, Moonshot…"
-						className="pl-9"
-						autoComplete="off"
-					/>
-				</div>
-			</div>
+			<SearchInput
+				name="provider-search"
+				ariaLabel="Search providers"
+				value={query}
+				onChange={setQuery}
+				placeholder="OpenAI, DeepSeek, Moonshot…"
+			/>
 
 			{normalizedQuery ? (
 				<div className="flex flex-col gap-2">
@@ -138,13 +130,19 @@ export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoic
 					{searchResults.length > 0 ? (
 						<ChoiceGrid entries={searchResults} onSelect={onSelect} />
 					) : (
-						<button
-							type="button"
+						<EntityChoiceCard
 							onClick={() => onSelect({ kind: "type", type: "custom_openai_compatible" })}
-							className="rounded-lg border border-dashed p-4 text-left text-sm transition-colors hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-						>
-							Use a custom endpoint for “{query.trim()}”
-						</button>
+							icon={
+								<EntityIcon
+									kind="provider"
+									id="custom_openai_compatible"
+									label="Custom endpoint"
+									size="sm"
+								/>
+							}
+							title="Use a custom endpoint"
+							description={`No matches for “${query.trim()}”. Configure it manually.`}
+						/>
 					)}
 				</div>
 			) : (
@@ -154,11 +152,12 @@ export function ProviderChooser({ onSelect }: { onSelect: (choice: ProviderChoic
 						<ChoiceGrid entries={popular} onSelect={onSelect} />
 					</div>
 					<details className="group rounded-lg border bg-muted/20">
-						<summary className="cursor-pointer list-none px-3 py-2.5 text-sm font-medium marker:hidden">
+						<summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-sm font-medium marker:hidden">
 							Browse all providers
-							<span className="float-right text-muted-foreground transition-transform group-open:rotate-180">
-								⌄
-							</span>
+							<ChevronDown
+								className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-180"
+								aria-hidden
+							/>
 						</summary>
 						<div className="flex flex-col gap-4 border-t px-3 py-3">
 							{PROVIDER_PRESET_CATEGORIES.map((category) => {
