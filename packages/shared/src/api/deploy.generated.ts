@@ -1899,21 +1899,21 @@ export interface components {
             name: string;
             /** Price Cents */
             price_cents: number;
-            /**
-             * Signup Grant Usd
-             * @default 0
-             */
-            signup_grant_usd: string;
             /** Vcpu */
             vcpu: number;
             /** Ram Gb */
             ram_gb: number;
             /** Disk Size */
             disk_size: number;
-            /** Instance Type */
-            instance_type?: string | null;
             /** Offers */
             offers?: components["schemas"]["V2BillingOfferResponse"][];
+            /**
+             * Signup Grant Usd
+             * @default 0
+             */
+            signup_grant_usd: string;
+            /** Instance Type */
+            instance_type?: string | null;
         };
         /** V2PortalResponse */
         V2PortalResponse: {
