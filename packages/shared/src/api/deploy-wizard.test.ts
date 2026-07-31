@@ -29,6 +29,20 @@ const checkoutModeIsExact: CheckoutModeIsExact = true;
 const unsupportedCheckoutMode: HostedDeployCheckoutUiMode = "elements";
 void unsupportedCheckoutMode;
 
+const managedModelMetadata = {
+	summary: null,
+	cost_hint: null,
+	capabilities: {
+		context_window: 128_000,
+		max_input_tokens: 128_000,
+		max_output_tokens: null,
+		input_modalities: ["text" as const],
+		supports_vision: false,
+		supports_reasoning: null,
+		supports_tools: null,
+	},
+};
+
 function plan(
 	slug: HostedDeployPlan["slug"],
 	priceCents: number,
@@ -141,7 +155,15 @@ describe("hosted deploy request contract", () => {
 				timezone: "Etc/UTC",
 				ai: { mode: "managed", model: "gpt-test" },
 			},
-			[{ id: "gpt-test", display_name: "GPT Test", is_default: true, is_featured: true }],
+			[
+				{
+					...managedModelMetadata,
+					id: "gpt-test",
+					display_name: "GPT Test",
+					is_default: true,
+					is_featured: true,
+				},
+			],
 		);
 
 		expect(result).toEqual({
@@ -176,7 +198,15 @@ describe("hosted deploy request contract", () => {
 				timezone: "Etc/UTC",
 				ai: { mode: "managed", model: "missing" },
 			},
-			[{ id: "available", display_name: "Available", is_default: true, is_featured: true }],
+			[
+				{
+					...managedModelMetadata,
+					id: "available",
+					display_name: "Available",
+					is_default: true,
+					is_featured: true,
+				},
+			],
 		);
 
 		expect(result.ok).toBe(false);
