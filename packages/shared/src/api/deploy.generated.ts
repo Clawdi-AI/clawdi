@@ -1797,6 +1797,8 @@ export interface components {
             display_name: string;
             /** Is Default */
             is_default: boolean;
+            /** Is Featured */
+            is_featured: boolean;
         };
         /** V2ManagedModelCatalogResponse */
         V2ManagedModelCatalogResponse: {

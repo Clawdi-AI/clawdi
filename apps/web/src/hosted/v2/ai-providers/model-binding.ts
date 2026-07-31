@@ -21,6 +21,11 @@ export type ModelBindingPickerItem = {
 	label: string;
 };
 
+export type ManagedModelPickerItems = {
+	featured: ModelBindingPickerItem[];
+	overflow: ModelBindingPickerItem[];
+};
+
 export type PrimaryModelRef = {
 	provider_id: string;
 	model: string;
@@ -200,6 +205,24 @@ export function modelPickerItems(
 			? []
 			: [{ value: CUSTOM_MODEL_CHOICE, label: "Custom model" }]),
 	];
+}
+
+export function managedModelPickerItems(
+	managedModels: readonly ManagedModelCatalogItem[],
+): ManagedModelPickerItems {
+	const sections: ManagedModelPickerItems = { featured: [], overflow: [] };
+	const seen = new Set<string>();
+	for (const model of managedModels) {
+		const modelId = model.id.trim();
+		if (!modelId || seen.has(modelId)) continue;
+		seen.add(modelId);
+		const item = {
+			value: modelId,
+			label: modelDisplayName(modelId, [model]),
+		};
+		sections[model.is_featured ? "featured" : "overflow"].push(item);
+	}
+	return sections;
 }
 
 export function firstModelForProvider(

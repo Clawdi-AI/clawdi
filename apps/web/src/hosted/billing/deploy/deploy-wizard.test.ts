@@ -264,7 +264,11 @@ describe("managed model picker", () => {
 		);
 		expect(wizardSource).toContain("compactManagedModelChoices");
 		expect(agentDetailSource).not.toContain("compactManagedModelChoices");
-		expect(modelBindingPickerSource).toContain("catalogModelItems.map((item) =>");
+		expect(modelBindingPickerSource).toContain("compactManagedItems.featured.map((item) =>");
+		expect(modelBindingPickerSource).toContain("compactManagedItems.overflow.map((item) =>");
+		expect(modelBindingPickerSource).toContain("<RadioGroup");
+		expect(modelBindingPickerSource).toContain('data-testid="managed-model-overflow"');
+		expect(modelBindingPickerSource).toContain('placeholder="More models"');
 		expect(modelBindingPickerSource).toContain("aria-labelledby=");
 		expect(modelBindingPickerSource).toContain("<Label id=");
 		expect(modelBindingPickerSource).toContain(">Main model</Label>");
@@ -276,7 +280,6 @@ describe("managed model picker", () => {
 		);
 		expect(modelBindingPickerSource).not.toContain("Primary model");
 		expect(modelBindingPickerSource).not.toContain("Catalog model");
-		expect(modelBindingPickerSource).not.toContain("More models");
 		expect(modelBindingPickerSource).toContain(
 			'"flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3"',
 		);

@@ -41,19 +41,19 @@ function deferred() {
 
 const managedModelCatalog = {
 	models: [
-		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
-		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false },
-		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false },
+		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true },
+		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: false },
+		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
 	],
 };
 
 const dynamicManagedModelCatalog = {
 	models: [
-		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false },
-		{ id: "k3", display_name: "Kimi K3", is_default: false },
-		{ id: "future-model", display_name: "Future model", is_default: false },
-		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true },
-		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false },
+		{ id: "gpt-5.6-sol", display_name: "Sol", is_default: false, is_featured: true },
+		{ id: "k3", display_name: "Kimi K3", is_default: false, is_featured: true },
+		{ id: "future-model", display_name: "Future model", is_default: false, is_featured: false },
+		{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: false },
+		{ id: "gpt-5.6-terra", display_name: "Terra", is_default: false, is_featured: false },
 	],
 };
 
@@ -2385,8 +2385,10 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 			const modelPickerFrame = catalogModel?.closest('div[data-hosted="true"][data-v2="true"]');
 			const modelPickerFrameStyle = modelPickerFrame ? getComputedStyle(modelPickerFrame) : null;
 			const managedModelChoices = document.querySelector('[data-testid="managed-model-choices"]');
+			const managedModelControls = document.querySelector('[data-testid="managed-model-controls"]');
+			const managedModelOverflow = document.querySelector('[data-testid="managed-model-overflow"]');
 			const modelLabel = document.querySelector("#deploy-catalog-model-label");
-			const firstModelChoice = managedModelChoices?.querySelector("button");
+			const firstModelChoice = managedModelChoices?.querySelector("label");
 			return {
 				document: {
 					clientWidth: document.documentElement.clientWidth,
@@ -2402,14 +2404,23 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 				managedModelChoices: managedModelChoices
 					? {
 							clientWidth: managedModelChoices.clientWidth,
-							labels: Array.from(managedModelChoices.querySelectorAll("button")).map(
-								(button) => button.textContent?.trim() ?? "",
+							labels: Array.from(managedModelChoices.querySelectorAll("label")).map(
+								(label) => label.textContent?.trim() ?? "",
 							),
 							rect: rect(managedModelChoices),
 							scrollWidth: managedModelChoices.scrollWidth,
 						}
 					: null,
+				managedModelControls: managedModelControls
+					? {
+							clientWidth: managedModelControls.clientWidth,
+							rect: rect(managedModelControls),
+							scrollWidth: managedModelControls.scrollWidth,
+						}
+					: null,
+				managedModelOverflow: rect(managedModelOverflow),
 				modelLabel: rect(modelLabel),
+				modelPickerFrameRect: rect(modelPickerFrame),
 				modelPickerFrame: modelPickerFrameStyle
 					? {
 							borderTopWidth: Number.parseFloat(modelPickerFrameStyle.borderTopWidth),
@@ -2532,38 +2543,27 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 			paddingTop: 0,
 		});
 		expect(metrics.managedModelChoices, `${viewport.name} managed model choices`).not.toBeNull();
-		expect(metrics.managedModelChoices?.labels, `${viewport.name} backend model order`).toEqual([
+		expect(metrics.managedModelChoices?.labels, `${viewport.name} featured model order`).toEqual([
 			"Sol",
 			"Kimi K3",
-			"Future model",
-			"Luna",
-			"Terra",
 		]);
 		expect(
-			metrics.managedModelChoices?.scrollWidth,
-			`${viewport.name} managed model choices should not overflow`,
-		).toBeLessThanOrEqual(metrics.managedModelChoices?.clientWidth ?? 0);
+			metrics.managedModelControls?.scrollWidth,
+			`${viewport.name} managed model controls should not overflow`,
+		).toBeLessThanOrEqual(metrics.managedModelControls?.clientWidth ?? 0);
 		expect(
-			metrics.managedModelChoices?.rect?.right,
-			`${viewport.name} managed model choices right edge`,
+			metrics.managedModelControls?.rect?.right,
+			`${viewport.name} managed model controls right edge`,
 		).toBeLessThanOrEqual(viewport.width);
-		if (viewport.width >= 700) {
-			const modelLabelCenter = metrics.modelLabel
-				? (metrics.modelLabel.top + metrics.modelLabel.bottom) / 2
-				: 0;
-			const firstModelChoiceCenter = metrics.firstModelChoice
-				? (metrics.firstModelChoice.top + metrics.firstModelChoice.bottom) / 2
-				: Number.POSITIVE_INFINITY;
-			expect(firstModelChoiceCenter, `${viewport.name} inline Main model choices`).toBeCloseTo(
-				modelLabelCenter,
-				0,
-			);
-		} else {
-			expect(
-				metrics.firstModelChoice?.top,
-				`${viewport.name} wrapped Main model choices`,
-			).toBeGreaterThanOrEqual(metrics.modelLabel?.bottom ?? Number.POSITIVE_INFINITY);
-		}
+		expect(metrics.managedModelOverflow, `${viewport.name} overflow model select`).not.toBeNull();
+		expect(
+			metrics.managedModelOverflow?.width,
+			`${viewport.name} overflow model select stays content-sized`,
+		).toBeLessThan(metrics.modelPickerFrameRect?.width ?? Number.POSITIVE_INFINITY);
+		expect(
+			metrics.firstModelChoice?.top,
+			`${viewport.name} Main model choices follow the section title`,
+		).toBeGreaterThanOrEqual(metrics.modelLabel?.bottom ?? Number.POSITIVE_INFINITY);
 
 		expect(metrics.action, `${viewport.name} sticky action`).not.toBeNull();
 		expect(metrics.action?.top, `${viewport.name} sticky action top`).toBeGreaterThanOrEqual(0);
@@ -2945,7 +2945,7 @@ test("rejected detail delete stays on the current agent without accepted cleanup
 	await expect(page.getByText("internal delete coordinator", { exact: false })).toHaveCount(0);
 });
 
-test("deploy managed model picker renders backend order and submits the selected model", async ({
+test("deploy managed model picker preserves featured and overflow order and submits overflow", async ({
 	page,
 }) => {
 	const createDeploymentRequests: Array<{ body: string; idempotencyKey: string | null }> = [];
@@ -2959,31 +2959,49 @@ test("deploy managed model picker renders backend order and submits the selected
 
 	const managedModels = page.getByTestId("managed-model-choices");
 	await expect(managedModels).toHaveAccessibleName("Main model");
-	await expect(managedModels.getByRole("button")).toHaveText([
-		"Sol",
-		"Kimi K3",
-		"Future model",
-		"Luna",
-		"Terra",
-	]);
-	await expect(managedModels.getByRole("button", { name: "Luna" })).toHaveAttribute(
-		"aria-pressed",
-		"true",
-	);
-	await expect(managedModels.getByRole("button", { name: "Kimi K3" })).toBeVisible();
+	const featuredModels = managedModels.getByRole("radio");
+	await expect(featuredModels).toHaveCount(2);
+	await expect(featuredModels.nth(0)).toHaveAccessibleName("Sol");
+	await expect(featuredModels.nth(1)).toHaveAccessibleName("Kimi K3");
+	const overflowModels = page.getByTestId("managed-model-overflow");
+	await expect(overflowModels).toHaveAccessibleName("More managed models");
+	await expect(overflowModels).toContainText("Luna");
+	await expect(featuredModels.nth(0)).not.toBeChecked();
+	await expect(featuredModels.nth(1)).not.toBeChecked();
 	await expect(page.locator("#deploy-primary-model")).toHaveCount(0);
 
-	await managedModels.getByRole("button", { name: "Sol" }).click();
-	await expect(managedModels.getByRole("button", { name: "Sol" })).toHaveAttribute(
-		"aria-pressed",
-		"true",
-	);
+	for (const viewport of [
+		{ width: 1280, height: 900 },
+		{ width: 800, height: 900 },
+		{ width: 700, height: 900 },
+		{ width: 390, height: 844 },
+	]) {
+		await page.setViewportSize(viewport);
+		const documentWidth = await page.evaluate(() => ({
+			clientWidth: document.documentElement.clientWidth,
+			scrollWidth: document.documentElement.scrollWidth,
+		}));
+		expect(documentWidth.scrollWidth, `model picker at ${viewport.width}px`).toBe(
+			documentWidth.clientWidth,
+		);
+		await expect(managedModels).toBeVisible();
+		await expect(overflowModels).toBeVisible();
+	}
+
+	await featuredModels.nth(0).click();
+	await expect(featuredModels.nth(0)).toBeChecked();
+	await expect(overflowModels).toContainText("More models");
+	await overflowModels.click();
+	await expect(page.getByRole("option")).toHaveText(["Future model", "Luna", "Terra"]);
+	await page.getByRole("option", { name: "Terra" }).click();
+	await expect(overflowModels).toContainText("Terra");
+	await expect(featuredModels.nth(0)).not.toBeChecked();
 	await page.getByRole("button", { name: "Deploy", exact: true }).click();
 	await expect(page).toHaveURL(/\/agents\/hdep_included_created/);
 
 	expect(JSON.parse(createDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
 		primary_model: {
-			model: "gpt-5.6-sol",
+			model: "gpt-5.6-terra",
 		},
 	});
 });

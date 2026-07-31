@@ -138,12 +138,12 @@ describe("managed model catalog", () => {
 		const client = testClient(async (request) => {
 			requests.push(request.clone());
 			return jsonResponse({
-				models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true }],
+				models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true }],
 			});
 		});
 
 		await expect(client.getManagedModelCatalog()).resolves.toEqual({
-			models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true }],
+			models: [{ id: "gpt-5.6-luna", display_name: "Luna", is_default: true, is_featured: true }],
 		});
 		expect(new URL(requests[0]?.url ?? "https://invalid").pathname).toBe(
 			"/v2/ai-providers/managed/models",
