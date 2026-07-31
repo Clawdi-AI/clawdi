@@ -8041,6 +8041,7 @@ exit 64
 			}),
 		);
 		const paths = getRuntimePaths();
+		seedMitmproxyCache(paths);
 		const initial = mockFetch([
 			{ method: "GET", path: "/v1/runtime/manifest", response: () => manifestResponse() },
 		]);
