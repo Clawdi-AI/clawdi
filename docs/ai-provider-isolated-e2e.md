@@ -156,11 +156,17 @@ package caches:
   apply no longer uses the historical default profile; it uses the namespaced
   database-first profile described above.
 
-Latest source/package audit recorded on 2026-07-27:
+Latest source/package audit recorded on 2026-07-31:
 
-- Codex: `@openai/codex@0.142.4` still exposes profile-v2 config files,
-  `model_providers`, `wire_api = "responses"`, `env_key`, and
-  `requires_openai_auth`.
+- Codex: the official `@openai/codex@0.146.0` package still declares the
+  `codex` command at `bin/codex.js` with exact `0.146.0` platform packages.
+  Official `rust-v0.146.0` source at
+  `e363b08c9175ac1cbe5893615dd2cb9ddf95043b` and the Codex manual retain
+  `$CODEX_HOME/config.toml`, `model_providers`, `wire_api = "responses"`,
+  `env_key`, and the default `requires_openai_auth = false` environment-backed
+  auth path. A production-equivalent exact npm install created
+  `<prefix>/bin/codex`, and `codex --version` reported `codex-cli 0.146.0`.
+- The Hermes and OpenClaw baselines below were last audited on 2026-07-27.
 - Hermes: the Docker smoke installed `hermes-agent==0.18.2` and called its real
   `resolve_runtime_provider()` for keyed OpenAI Responses, Kimi Coding, and
   native `openai-codex`. A read-only source cross-check used
