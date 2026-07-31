@@ -81,7 +81,13 @@ export function toggleAiBindingProvider(
 						choice !== MANAGED_AI_CHOICE
 					? [choice]
 					: [...draft.providerChoices, choice];
-	if (choices.length === 0) choices = [choice];
+	if (selected && choices.length === 0) {
+		return {
+			...draft,
+			bindingMode: "unmanaged",
+			providerChoices: [],
+		};
+	}
 	choices = dedupeProviderIds(choices);
 	const next = { ...draft, bindingMode: "configured" as const, providerChoices: choices };
 	return choices.includes(draft.primaryProviderChoice)
@@ -177,10 +183,10 @@ export function useAiProviderBindingDraft({
 		providers,
 	]);
 
-	const selectedProviderChoices = normalizeSelectedProviderIds(
-		draft.providerChoices,
-		draft.primaryProviderChoice,
-	);
+	const selectedProviderChoices =
+		draft.bindingMode === "unmanaged"
+			? []
+			: normalizeSelectedProviderIds(draft.providerChoices, draft.primaryProviderChoice);
 	return {
 		draft,
 		selectedProviderChoices,

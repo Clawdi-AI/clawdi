@@ -3797,6 +3797,14 @@ describe("runtime manifest reconciliation invariants", () => {
 			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nexisting managed drop-in\n`,
 		);
 		const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths);
+		const openClawDatabase = join(
+			paths.userHome,
+			".openclaw",
+			"agents",
+			"main",
+			"agent",
+			"openclaw-agent.sqlite",
+		);
 
 		expect(snapshotPaths).toEqual(
 			[
@@ -3807,6 +3815,11 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths.manifestLastGood,
 				paths.managedSecretCacheFile,
 				paths.appliedState,
+				paths.oauthCredentialRoot,
+				join(paths.userHome, ".hermes", "auth.json"),
+				openClawDatabase,
+				`${openClawDatabase}-wal`,
+				`${openClawDatabase}-shm`,
 				paths.egressProfileRoot,
 				paths.installInventory,
 				paths.projectionRoot,

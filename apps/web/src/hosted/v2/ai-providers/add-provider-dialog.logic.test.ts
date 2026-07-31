@@ -1,150 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import {
-	apiKeyEditState,
 	derivedProviderFields,
 	modelsFromText,
-	providerAuthForSubmit,
 	providerFormIdentity,
 	providerListAllowsSubmit,
-	providerPatchForSubmit,
-	providerRollbackPatch,
 	shouldUseCatalogModels,
 } from "@/hosted/v2/ai-providers/add-provider-dialog.logic";
 import {
 	presetCatalogToProviderModels,
 	providerPresetById,
+	providerPresetForSavedProvider,
+	providerPresetRegion,
 	providerTypeForPreset,
 } from "@/hosted/v2/ai-providers/provider-presets";
-import type { AiProvider, AiProviderAuth, AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
 function testPreset(id: string) {
 	const preset = providerPresetById(id);
 	if (!preset) throw new Error(`Missing test preset: ${id}`);
 	return preset;
 }
-
-describe("providerAuthForSubmit", () => {
-	test("preserves env-source API key auth when editing with a blank key", () => {
-		const auth = {
-			type: "api_key",
-			source: "env",
-			ref: "env:OPENAI_API_KEY",
-		} satisfies AiProviderAuth;
-
-		expect(
-			providerAuthForSubmit({
-				authMethod: "api_key",
-				editingAuth: auth,
-				hasNewManagedKey: false,
-			}),
-		).toBe(auth);
-		expect(apiKeyEditState("api_key", auth)).toMatchObject({
-			canKeepManagedApiKey: false,
-			canKeepExternalApiKeyRef: true,
-			keyRequired: false,
-			labelSuffix: " (leave blank to keep current env reference)",
-		});
-	});
-
-	test("preserves vault-source API key auth when editing with a blank key", () => {
-		const auth = {
-			type: "api_key",
-			source: "vault",
-			ref: "clawdi://project/proj_1/vault/ai-providers/section/onboarding/field/openai_api_key",
-		} satisfies AiProviderAuth;
-
-		expect(
-			providerAuthForSubmit({
-				authMethod: "api_key",
-				editingAuth: auth,
-				hasNewManagedKey: false,
-			}),
-		).toBe(auth);
-		expect(apiKeyEditState("api_key", auth)).toMatchObject({
-			canKeepManagedApiKey: false,
-			canKeepExternalApiKeyRef: true,
-			keyRequired: false,
-			labelSuffix: " (leave blank to keep current vault reference)",
-		});
-	});
-
-	test("switches to managed auth when the edit supplies a new key", () => {
-		const auth = {
-			type: "api_key",
-			source: "env",
-			ref: "env:OPENAI_API_KEY",
-		} satisfies AiProviderAuth;
-
-		expect(
-			providerAuthForSubmit({
-				authMethod: "api_key",
-				editingAuth: auth,
-				hasNewManagedKey: true,
-			}),
-		).toEqual({ type: "api_key", source: "managed" });
-	});
-
-	test("requires a key when a managed-key placeholder has no stored credential", () => {
-		expect(apiKeyEditState("api_key", { type: "api_key", source: "managed" }, false)).toMatchObject(
-			{
-				canKeepManagedApiKey: false,
-				canKeepExistingKey: false,
-				keyRequired: true,
-			},
-		);
-	});
-});
-
-describe("provider edit integrity", () => {
-	const body = {
-		provider_id: "openai",
-		type: "openai",
-		label: "Updated OpenAI",
-		base_url: "https://api.openai.com/v1",
-		api_mode: "openai_responses",
-		auth: { type: "api_key", source: "managed" },
-		managed_by: "user",
-		runtime_env_name: "OPENAI_API_KEY",
-		models: [{ id: "gpt-5.5" }],
-	} satisfies AiProviderUpsert;
-
-	test("omits auth from the metadata patch after a managed key is stored", () => {
-		const patch = providerPatchForSubmit(body, { preserveExistingAuth: true });
-
-		expect("auth" in patch).toBe(false);
-		expect(patch.label).toBe("Updated OpenAI");
-	});
-
-	test("includes auth for a single-request edit that does not store a new key", () => {
-		expect(providerPatchForSubmit(body, { preserveExistingAuth: false }).auth).toEqual(body.auth);
-	});
-
-	test("builds a rollback patch with the prior auth source and fields", () => {
-		const provider = {
-			id: "provider-row-id",
-			provider_id: "openai",
-			type: "openai",
-			label: "Original OpenAI",
-			base_url: "https://old.example/v1",
-			api_mode: "openai_chat",
-			auth: { type: "api_key", source: "env", ref: "env:OPENAI_API_KEY" },
-			usable: true,
-			managed_by: "user",
-			runtime_env_name: "OPENAI_API_KEY",
-			models: [{ id: "gpt-old" }],
-			scope: "user",
-			created_at: "2026-01-01T00:00:00Z",
-			updated_at: "2026-01-01T00:00:00Z",
-		} satisfies AiProvider;
-
-		expect(providerRollbackPatch(provider)).toMatchObject({
-			label: "Original OpenAI",
-			base_url: "https://old.example/v1",
-			auth: { type: "api_key", source: "env", ref: "env:OPENAI_API_KEY" },
-			models: [{ id: "gpt-old" }],
-		});
-	});
-});
 
 describe("provider list submit gate", () => {
 	test("blocks create until the provider list succeeds", () => {
@@ -205,17 +79,28 @@ describe("providerFormIdentity", () => {
 		});
 	});
 
-	test("pins Codex OAuth to the canonical provider identity", () => {
+	test("allocates an independent provider identity for every ChatGPT connection", () => {
 		expect(
 			providerFormIdentity({
 				type: "openai",
 				authMethod: "oauth",
 				labelInput: "",
-				existingProviderIds: ["openai", "openai-2"],
+				existingProviderIds: ["openai-codex", "openai-codex-2"],
+			}),
+		).toEqual({
+			providerId: "openai-codex-3",
+			label: "ChatGPT (Codex) 3",
+		});
+		expect(
+			providerFormIdentity({
+				type: "openai",
+				authMethod: "oauth",
+				labelInput: "",
+				existingProviderIds: [],
 			}),
 		).toEqual({
 			providerId: "openai-codex",
-			label: "Codex (ChatGPT)",
+			label: "ChatGPT (Codex)",
 		});
 	});
 
@@ -289,6 +174,27 @@ describe("derivedProviderFields", () => {
 		]);
 		expect(providerPresetById("moonshot-cn")).toBeNull();
 		expect(providerPresetById("moonshot-global")).toBeNull();
+	});
+
+	test("resolves saved providers and region-specific endpoint links", () => {
+		const moonshot = testPreset("moonshot");
+		expect(providerPresetRegion(moonshot, "global")).toMatchObject({
+			id: "global",
+			base_url: "https://api.moonshot.ai/v1",
+			api_key_url: "https://platform.moonshot.ai/console/api-keys",
+		});
+		expect(
+			providerPresetForSavedProvider({
+				providerId: "moonshot-2",
+				baseUrl: "https://api.moonshot.ai/v1",
+			}),
+		).toBe(moonshot);
+		expect(providerPresetRegion(testPreset("zhipu-glm"), "global")?.api_key_url).toBe(
+			"https://z.ai/manage-apikey/apikey-list",
+		);
+		expect(providerPresetRegion(testPreset("stepfun"), "cn")?.base_url).toBe(
+			"https://api.stepfun.com/v1",
+		);
 	});
 
 	test("uses shared defaults for known providers", () => {

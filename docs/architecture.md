@@ -269,8 +269,9 @@ The current apply targets are Codex, Hermes, and OpenClaw. Claude Code OAuth is
 not supported in AI Provider v1. BYOK model traffic goes directly from the
 agent/runtime to the configured provider; Clawdi does not proxy those calls.
 
-User docs live in [`ai-providers.md`](ai-providers.md); pinned target contracts
-live in [`ai-provider-agent-contract-audit.md`](ai-provider-agent-contract-audit.md).
+User docs live in [`ai-providers.md`](ai-providers.md); verified target contract
+baselines live in
+[`ai-provider-agent-contract-audit.md`](ai-provider-agent-contract-audit.md).
 
 ## Managed Runtime
 

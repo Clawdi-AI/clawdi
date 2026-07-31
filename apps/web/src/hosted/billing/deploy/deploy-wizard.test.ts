@@ -37,6 +37,10 @@ const addProviderDialogSource = readFileSync(
 	new URL("../../v2/ai-providers/add-provider-dialog.tsx", import.meta.url),
 	"utf8",
 );
+const providerFieldsFormSource = readFileSync(
+	new URL("../../v2/ai-providers/provider-fields-form.tsx", import.meta.url),
+	"utf8",
+);
 const addProviderDialogLogicSource = readFileSync(
 	new URL("../../v2/ai-providers/add-provider-dialog.logic.ts", import.meta.url),
 	"utf8",
@@ -242,9 +246,9 @@ describe("first Basic agent copy", () => {
 		expect(planComparisonSource).toContain("Public ports for agent services");
 		expect(planComparisonSource).not.toContain("hosted runtime");
 		expect(planComparisonSource).not.toContain("runtime-owned services");
-		expect(addProviderDialogSource).toContain("Agent environment variable");
-		expect(addProviderDialogSource).not.toContain("Runtime mapping");
-		expect(addProviderDialogSource).not.toContain("Runtime env var");
+		expect(providerFieldsFormSource).toContain("Agent environment variable");
+		expect(providerFieldsFormSource).not.toContain("Runtime mapping");
+		expect(providerFieldsFormSource).not.toContain("Runtime env var");
 		expect(addProviderDialogLogicSource).not.toContain("manifest secret");
 		expect(addProviderDialogLogicSource).not.toContain("hosted runtime");
 	});
@@ -335,9 +339,12 @@ describe("deploy provider choice", () => {
 });
 
 describe("AI provider usability gate", () => {
-	test("builds every deploy-provider choice from the usable subset", () => {
+	test("keeps local-only providers out and disables runtime-incompatible choices", () => {
 		expect(wizardSource).toContain("usableProviders(aiProviders.data ?? [])");
-		expect(wizardSource).toContain("{providerList.map((provider) => (");
+		expect(wizardSource).toContain("usableProviders(savedProviderList, availabilityContext)");
+		expect(wizardSource).toContain("{savedProviderList.map((provider) => {");
+		expect(wizardSource).toContain("providerAvailabilityIssue(provider, availabilityContext)");
+		expect(wizardSource).toContain("disabled={Boolean(issue)}");
 		expect(wizardSource).not.toContain("{aiProviders.data?.map((provider) => (");
 	});
 });
@@ -422,7 +429,7 @@ describe("deploy acceptance", () => {
 		expect(addProviderDialogSource).toContain('<Spinner data-icon="inline-start" />');
 		expect(addProviderDialogSource).toContain('"Opening sign-in…"');
 		expect(addProviderDialogSource).toContain('"Adding provider…"');
-		expect(addProviderDialogSource).toContain('"Saving provider…"');
+		expect(addProviderDialogSource).toContain('"Saving settings…"');
 		expect(aiProviderHooksSource).toContain("void qc.invalidateQueries({ queryKey: KEY })");
 	});
 });

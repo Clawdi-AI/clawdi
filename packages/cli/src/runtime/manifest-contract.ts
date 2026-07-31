@@ -460,8 +460,21 @@ const hostedProviderAuthSchema = z
 		profile: z.string().min(1).optional(),
 		source: z.string().min(1).optional(),
 		ref: z.string().min(1).optional(),
+		credentialSecretRef: z.string().min(1).optional(),
+		credentialRevision: z.string().min(1).max(64).optional(),
 	})
-	.strict();
+	.strict()
+	.superRefine((auth, ctx) => {
+		const hasSecretRef = auth.credentialSecretRef !== undefined;
+		const hasRevision = auth.credentialRevision !== undefined;
+		if (hasSecretRef !== hasRevision) {
+			ctx.addIssue({
+				code: "custom",
+				message: "OAuth credential secret ref and revision must be supplied together",
+				path: [hasSecretRef ? "credentialRevision" : "credentialSecretRef"],
+			});
+		}
+	});
 
 const hostedProviderSchema = z
 	.object({

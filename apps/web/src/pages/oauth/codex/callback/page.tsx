@@ -3,13 +3,11 @@
 import { lazy, Suspense } from "react";
 import { HostedRouteSkeleton } from "@/components/hosted-route-skeleton";
 
-// Codex "Sign in with ChatGPT" OAuth callback for the hosted AI Providers surface.
 const IS_HOSTED_BUILD = import.meta.env.VITE_CLAWDI_HOSTED === "true";
-
 const CodexOAuthCallback = IS_HOSTED_BUILD
 	? lazy(() =>
-			import("@/hosted/v2/ai-providers/codex-oauth-callback").then((m) => ({
-				default: m.CodexOAuthCallback,
+			import("@/hosted/v2/ai-providers/codex-oauth-callback").then((module) => ({
+				default: module.CodexOAuthCallback,
 			})),
 		)
 	: null;

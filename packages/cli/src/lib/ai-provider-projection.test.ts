@@ -262,6 +262,45 @@ describe("AI provider projection", () => {
 		expect(codex.files[0]?.content).toContain('env_key = "OPENAI_API_KEY"');
 	});
 
+	test("projects Gemini only to the runtime with a verified transport", () => {
+		const catalog: AiProviderCatalog = {
+			schema_version: 1,
+			providers: [
+				{
+					id: "gemini-main",
+					type: "gemini",
+					base_url: "https://generativelanguage.googleapis.com/v1beta",
+					api_mode: "google_generate_content",
+					auth: { type: "api_key", source: "managed" },
+					runtime_env_name: "GEMINI_API_KEY",
+					models: [{ id: "gemini-2.5-pro" }],
+				},
+			],
+			defaults: { chat_provider_id: "gemini-main" },
+		};
+
+		expect(buildAgentTargetProjection("openclaw", catalog).provider_ids).toEqual(["gemini-main"]);
+		expect(() => buildAgentTargetProjection("hermes", catalog)).toThrow(
+			"does not map to a verified Hermes custom-provider transport",
+		);
+	});
+
+	test("rejects non-canonical Codex auth profiles from Codex projection", () => {
+		const catalog: AiProviderCatalog = {
+			...codexOAuthCatalog,
+			providers: [
+				{
+					...codexOAuthCatalog.providers[0],
+					base_url: "https://openai-proxy.example.test/v1",
+				},
+			],
+		};
+
+		expect(() => buildAgentTargetProjection("codex", catalog)).toThrow(
+			"provider protocol and auth shape are not runtime-compatible",
+		);
+	});
+
 	test("keeps native Codex OAuth projections on the verified OpenAI/Codex path", () => {
 		const openclaw = buildAgentTargetProjection("openclaw", codexOAuthCatalog);
 		expect(openclaw.files[0]?.content).toContain('"plugins": {');

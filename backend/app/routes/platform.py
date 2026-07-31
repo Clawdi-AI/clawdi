@@ -40,6 +40,11 @@ from app.services.agent_skill_projection import (
     delete_agent_project_skill_rows,
     delete_agent_skill_files_best_effort,
 )
+from app.services.ai_provider_credentials import (
+    OAuthCredentialClaimConflict,
+    reconcile_runtime_oauth_claims,
+    release_runtime_oauth_claims,
+)
 from app.services.api_key import mint_api_key
 from app.services.audit import record_control_plane_audit
 from app.services.platform_contract import (
@@ -657,6 +662,11 @@ async def platform_delete_agent(
                 ),
             },
         ) from None
+    await release_runtime_oauth_claims(
+        db,
+        owner_user_id=owner.id,
+        environment_id=agent_id,
+    )
     await queue_environment_runtime_manifest_changed(db, owner.id, agent_id)
     await db.delete(agent)
     await _complete_mutation(
@@ -832,6 +842,18 @@ async def platform_upsert_runtime_state(
                 environment_id=agent_id,
             )
             raise AssertionError("unreachable")
+    try:
+        await reconcile_runtime_oauth_claims(
+            db,
+            owner_user_id=owner.id,
+            environment_id=agent_id,
+            runtimes={
+                name: runtime.model_dump(exclude_none=True, mode="json")
+                for name, runtime in body.runtimes.items()
+            },
+        )
+    except OAuthCredentialClaimConflict as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if runtime_state is None:
         runtime_state = HostedRuntimeState(environment_id=agent_id)
         db.add(runtime_state)
@@ -934,6 +956,11 @@ async def platform_delete_runtime_state(
     ).scalar_one_or_none()
     existed = runtime_state is not None
     if runtime_state is not None:
+        await release_runtime_oauth_claims(
+            db,
+            owner_user_id=agent.user_id,
+            environment_id=agent_id,
+        )
         await db.delete(runtime_state)
         queue_runtime_manifest_changed(db, agent.user_id, agent_id)
     await _complete_mutation(

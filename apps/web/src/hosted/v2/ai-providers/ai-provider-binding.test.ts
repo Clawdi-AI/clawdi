@@ -29,6 +29,13 @@ const apiKeyProvider: AiProvider = {
 	api_mode: "openai_responses",
 	auth: { type: "api_key", source: "managed" },
 	usable: true,
+	readiness: {
+		credential_material: "available",
+		runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+		deployable: true,
+		endpoint_reachability: "not_tested",
+		inference_verification: "not_tested",
+	},
 	managed_by: "user",
 	runtime_env_name: "OPENAI_API_KEY",
 	capabilities: null,
@@ -210,7 +217,17 @@ describe("AI provider binding fields", () => {
 	});
 
 	test("rejects an unusable provider even if stale UI state selects it", () => {
-		const unfinishedProvider = { ...oauthProvider, usable: false };
+		const unfinishedProvider = {
+			...oauthProvider,
+			usable: false,
+			readiness: {
+				credential_material: "missing" as const,
+				runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+				deployable: false,
+				endpoint_reachability: "not_tested" as const,
+				inference_verification: "not_tested" as const,
+			},
+		};
 		const draft = {
 			bindingMode: "configured" as const,
 			providerChoices: [unfinishedProvider.provider_id],
@@ -224,11 +241,31 @@ describe("AI provider binding fields", () => {
 				mode: "create",
 				providers: [unfinishedProvider],
 			}),
-		).toThrow("has no usable credential");
+		).toThrow("cannot deliver its credential");
 	});
 });
 
 describe("AI provider binding draft transitions", () => {
+	test("removes the only selected provider by switching to unmanaged", () => {
+		const removed = toggleAiBindingProvider(
+			{
+				bindingMode: "configured",
+				providerChoices: [oauthProvider.provider_id],
+				primaryProviderChoice: oauthProvider.provider_id,
+				primaryModel: "gpt-custom",
+			},
+			oauthProvider.provider_id,
+			{
+				managedModels,
+				operationMode: "update",
+				providers: [oauthProvider],
+			},
+		);
+
+		expect(removed.bindingMode).toBe("unmanaged");
+		expect(removed.providerChoices).toEqual([]);
+	});
+
 	test("selects exactly one provider for the deploy flow", () => {
 		const selected = selectAiBindingProvider(
 			{

@@ -22,6 +22,7 @@ import {
 	type HostedDeploySubscriptionQuote,
 	type HostedDeploySubscriptionQuoteRequest,
 	type HostedSavedAiProvider,
+	hostedAiProviderAvailabilityIssue,
 	hostedDeployRuntimeLabel,
 	isHostedDeployBillingTerm,
 	isHostedDeployComputePlan,
@@ -666,16 +667,25 @@ export async function runDeployFlow(
 
 	let aiMode = parsed.aiMode ?? "managed";
 	let providerId = parsed.providerId;
-	const unusableProviders = savedProviders.filter((provider) => !provider.usable);
+	const unavailableProviders = savedProviders
+		.map((provider) => ({
+			provider,
+			issue: hostedAiProviderAvailabilityIssue(provider, { runtime, environmentId: null }),
+		}))
+		.filter((entry) => entry.issue !== null);
+	const selectableSavedProviders = savedProviders.filter(
+		(provider) =>
+			hostedAiProviderAvailabilityIssue(provider, { runtime, environmentId: null }) === null,
+	);
 	if (interactive && !parsed.aiMode) {
-		if (unusableProviders.length > 0) {
+		if (unavailableProviders.length > 0) {
 			prompts.note(
-				unusableProviders
-					.map((provider) => {
+				unavailableProviders
+					.map(({ provider, issue }) => {
 						const label = savedProviderLabel(provider);
 						const identity =
 							label === provider.provider_id ? label : `${label} (${provider.provider_id})`;
-						return `${identity}\n  Fix: clawdi ai-provider test ${provider.provider_id}`;
+						return `${identity}\n  ${issue?.message ?? "Unavailable for Hosted deployment."}`;
 					})
 					.join("\n"),
 				"Saved providers needing setup",
@@ -685,13 +695,11 @@ export async function runDeployFlow(
 			"AI provider",
 			[
 				{ value: "managed", label: "Clawdi AI", hint: "Ready when the agent starts" },
-				...savedProviders
-					.filter((provider) => provider.usable)
-					.map((provider) => ({
-						value: provider.provider_id,
-						label: savedProviderLabel(provider),
-						hint: `Saved provider · ${provider.provider_id}`,
-					})),
+				...selectableSavedProviders.map((provider) => ({
+					value: provider.provider_id,
+					label: savedProviderLabel(provider),
+					hint: `Saved provider · ${provider.provider_id}`,
+				})),
 				{
 					value: "unmanaged",
 					label: "Configure inside agent",
@@ -703,9 +711,7 @@ export async function runDeployFlow(
 		if (selected === "managed" || selected === "unmanaged") {
 			aiMode = selected;
 			providerId = undefined;
-		} else if (
-			savedProviders.some((provider) => provider.usable && provider.provider_id === selected)
-		) {
+		} else if (selectableSavedProviders.some((provider) => provider.provider_id === selected)) {
 			aiMode = "saved";
 			providerId = selected;
 		} else {
@@ -723,10 +729,16 @@ export async function runDeployFlow(
 			`Saved AI provider ${providerId ?? ""} was not found. Pass its exact provider id or run \`clawdi ai-provider list\`.`,
 		);
 	}
-	if (selectedSavedProvider && !selectedSavedProvider.usable) {
+	const selectedProviderIssue = selectedSavedProvider
+		? hostedAiProviderAvailabilityIssue(selectedSavedProvider, {
+				runtime,
+				environmentId: null,
+			})
+		: null;
+	if (selectedSavedProvider && selectedProviderIssue) {
 		throw new DeployInputError(
-			"provider_unusable",
-			`${savedProviderLabel(selectedSavedProvider)} (${selectedSavedProvider.provider_id}) has no usable credential. Run \`clawdi ai-provider test ${selectedSavedProvider.provider_id}\` and finish its setup.`,
+			"provider_not_deployable",
+			`${savedProviderLabel(selectedSavedProvider)} (${selectedSavedProvider.provider_id}) cannot be deployed to ${hostedDeployRuntimeLabel(runtime)}. ${selectedProviderIssue.message}`,
 		);
 	}
 

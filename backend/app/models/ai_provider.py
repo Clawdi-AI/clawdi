@@ -1,11 +1,13 @@
+import secrets
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, LargeBinary, String, UniqueConstraint
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, LargeBinary, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin
+from app.models.session import AgentEnvironment  # noqa: F401 - register FK target
 from app.models.user import User  # noqa: F401 - register users table for FK resolution
 
 
@@ -55,6 +57,15 @@ class AiProviderAuthPayload(Base, TimestampMixin):
     encrypted_payload: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     nonce: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     payload_metadata: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    credential_revision: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=lambda: secrets.token_hex(16)
+    )
+    consumer_environment_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("agent_environments.id", ondelete="RESTRICT"),
+        index=True,
+    )
+    consumer_runtime: Mapped[str | None] = mapped_column(String(32))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
@@ -63,5 +74,11 @@ class AiProviderAuthPayload(Base, TimestampMixin):
             "provider_id",
             "auth_profile",
             name="uq_ai_provider_auth_payloads_owner_provider_profile",
+        ),
+        CheckConstraint(
+            "(consumer_environment_id IS NULL AND consumer_runtime IS NULL) OR "
+            "(consumer_environment_id IS NOT NULL AND consumer_runtime IS NOT NULL AND "
+            "consumer_runtime IN ('codex', 'hermes', 'openclaw'))",
+            name="ck_ai_provider_auth_payloads_consumer",
         ),
     )

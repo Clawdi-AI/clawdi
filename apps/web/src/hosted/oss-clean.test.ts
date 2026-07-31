@@ -347,7 +347,7 @@ describe("hosted product route exposure", () => {
 			"utf8",
 		);
 		expect(route).not.toContain("HostedProductGate");
-		expect(callback).toContain("ch.postMessage(result)");
+		expect(callback).toContain("channel.postMessage(result)");
 		expect(callback).toContain("window.opener?.postMessage(");
 		expect(callback).toContain("window.history.replaceState(");
 		expect(callback).not.toContain("localStorage");

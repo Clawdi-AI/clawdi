@@ -1504,7 +1504,7 @@ async def test_session_batch_rejects_malformed_uuid_with_422_not_500(client: htt
 
 @pytest.mark.asyncio
 async def test_delete_environment_orphans_sessions_via_fk(
-    client: httpx.AsyncClient, db_session: AsyncSession
+    client: httpx.AsyncClient, db_session: AsyncSession, seed_user
 ):
     """Deleting an environment must keep historical sessions but null out
     the FK so the list query renders them as unlabeled — never 500.
@@ -1518,7 +1518,29 @@ async def test_delete_environment_orphans_sessions_via_fk(
       2. Raw SQL — `sessions.environment_id IS NULL` after delete. This
          is what proves `ON DELETE SET NULL` actually fired; without the
          FK the column would still hold the deleted UUID."""
-    env_id = await _register_env(client)
+    env_id = await _register_env_named(
+        client,
+        f"delete-oauth-claim-{uuid.uuid4().hex}",
+        agent_type="codex",
+    )
+
+    from app.models.ai_provider import AiProviderAuthPayload
+    from app.services.vault_crypto import encrypt
+
+    encrypted, nonce = encrypt('{"kind":"oauth-test"}')
+    claimed_payload = AiProviderAuthPayload(
+        owner_user_id=seed_user.id,
+        provider_id=f"delete-session-{uuid.uuid4().hex}",
+        auth_profile="default",
+        kind="agent_profile",
+        source="test",
+        encrypted_payload=encrypted,
+        nonce=nonce,
+        consumer_environment_id=uuid.UUID(env_id),
+        consumer_runtime="codex",
+    )
+    db_session.add(claimed_payload)
+    await db_session.commit()
     started = datetime.now(UTC).isoformat()
     await client.post(
         "/v1/sessions/batch",
@@ -1565,6 +1587,9 @@ async def test_delete_environment_orphans_sessions_via_fk(
         )
     ).one()
     assert row.environment_id is None
+    await db_session.refresh(claimed_payload)
+    assert claimed_payload.consumer_environment_id is None
+    assert claimed_payload.consumer_runtime is None
 
 
 @pytest.mark.asyncio

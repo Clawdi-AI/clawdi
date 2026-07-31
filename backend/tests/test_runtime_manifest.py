@@ -5048,6 +5048,30 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
         machine_name="Runtime Codex OAuth Provider",
         agent_type="openclaw",
     )
+    oauth_envelope = json.dumps(
+        {
+            "kind": "local_agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "files": [
+                {
+                    "logicalName": "auth.json",
+                    "relativePath": "auth.json",
+                    "mode": "0600",
+                    "content": json.dumps(
+                        {
+                            "auth_mode": "chatgpt",
+                            "tokens": {
+                                "access_token": "oauth-access",
+                                "refresh_token": "oauth-refresh",
+                            },
+                        }
+                    ),
+                }
+            ],
+        }
+    )
+    ciphertext, nonce = encrypt(oauth_envelope)
     db_session.add(
         AiProvider(
             owner_user_id=seed_user.id,
@@ -5060,6 +5084,20 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
             auth_metadata={"tool": "codex", "profile": "default"},
             managed_by="user",
             runtime_env_name=None,
+        )
+    )
+    db_session.add(
+        AiProviderAuthPayload(
+            owner_user_id=seed_user.id,
+            provider_id="openai-codex",
+            auth_profile="default",
+            kind="agent_profile",
+            source="managed",
+            encrypted_payload=ciphertext,
+            nonce=nonce,
+            credential_revision="oauth-revision-1",
+            consumer_environment_id=env.id,
+            consumer_runtime="openclaw",
         )
     )
     await db_session.commit()
@@ -5092,13 +5130,18 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
             "type": "agent_profile",
             "tool": "codex",
             "profile": "default",
+            "credentialSecretRef": "provider.openai-codex.oauthProfile",
+            "credentialRevision": "oauth-revision-1",
         },
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "openai-codex",
         "model": "gpt-5.5",
     }
-    assert response.json()["secretValues"] == {"tool.codex.apiKey": "sk-codex-tool"}
+    assert response.json()["secretValues"] == {
+        "provider.openai-codex.oauthProfile": oauth_envelope,
+        "tool.codex.apiKey": "sk-codex-tool",
+    }
 
 
 @pytest.mark.asyncio

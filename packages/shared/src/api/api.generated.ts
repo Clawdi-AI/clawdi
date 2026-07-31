@@ -74,6 +74,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ai-providers/{provider_id}/auth/oauth/device/poll": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Poll Ai Provider Oauth Device */
+        post: operations["poll_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_poll_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/ai-providers/accept": {
         parameters: {
             query?: never;
@@ -85,9 +102,49 @@ export interface paths {
         put?: never;
         /**
          * Accept Ai Provider
-         * @description Atomically create a provider and its first usable auth state.
+         * @description Atomically create or explicitly replace a provider and credential.
          */
         post: operations["accept_ai_provider_v1_ai_providers_accept_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai-providers/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Ai Provider
+         * @description Verify a draft credential, endpoint, protocol, and model without persisting it.
+         */
+        post: operations["test_ai_provider_v1_ai_providers_test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/ai-providers/{provider_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Test Saved Ai Provider
+         * @description Verify a saved managed API key without exposing it to the caller.
+         */
+        post: operations["test_saved_ai_provider_v1_ai_providers__provider_id__test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -164,6 +221,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/ai-providers/{provider_id}/auth/oauth/device/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start Ai Provider Oauth Device */
+        post: operations["start_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/ai-providers/{provider_id}/auth/oauth/start": {
         parameters: {
             query?: never;
@@ -192,26 +266,6 @@ export interface paths {
         put?: never;
         /** Complete Ai Provider Oauth */
         post: operations["complete_ai_provider_oauth_v1_ai_providers__provider_id__auth_oauth_complete_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/v1/ai-providers/{provider_id}/accept": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Complete Ai Provider Accept
-         * @description Complete an OAuth-pending provider without spanning remote I/O with a DB session.
-         */
-        post: operations["complete_ai_provider_accept_v1_ai_providers__provider_id__accept_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3031,6 +3085,11 @@ export interface components {
             provider: components["schemas"]["AiProviderUpsert"];
             /** Credential */
             credential: components["schemas"]["AiProviderApiKeyAcceptCredential"] | components["schemas"]["AiProviderOAuthAcceptCredential"];
+            /**
+             * Replace
+             * @default false
+             */
+            replace: boolean;
         };
         AiProviderAcceptResponse: components["schemas"]["AiProviderReadyAcceptResponse"] | components["schemas"]["AiProviderOAuthPendingAcceptResponse"];
         /** AiProviderAgentProfileAuth */
@@ -3089,6 +3148,10 @@ export interface components {
              * @default default
              */
             profile: string;
+            /** Environment Id */
+            environment_id?: string | null;
+            /** Consumer Runtime */
+            consumer_runtime?: ("codex" | "hermes" | "openclaw") | null;
         };
         /** AiProviderAuthResolveResponse */
         AiProviderAuthResolveResponse: {
@@ -3109,6 +3172,49 @@ export interface components {
             provider?: string | null;
             /** Profile */
             profile?: string | null;
+            /** Credential Revision */
+            credential_revision?: string | null;
+        };
+        /** AiProviderConnectionError */
+        AiProviderConnectionError: {
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "validation" | "credential" | "ssrf" | "dns" | "timeout" | "tls" | "network" | "authentication" | "authorization" | "rate_limit" | "redirect" | "endpoint" | "protocol_model" | "upstream";
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Retryable */
+            retryable: boolean;
+        };
+        /** AiProviderConnectionTestRequest */
+        AiProviderConnectionTestRequest: {
+            provider: components["schemas"]["AiProviderUpsert"];
+            credential: components["schemas"]["AiProviderApiKeyAcceptCredential"];
+            /** Model */
+            model?: string | null;
+        };
+        /** AiProviderConnectionTestResponse */
+        AiProviderConnectionTestResponse: {
+            /** Ok */
+            ok: boolean;
+            readiness: components["schemas"]["AiProviderReadiness"];
+            error?: components["schemas"]["AiProviderConnectionError"] | null;
+        };
+        /** AiProviderConsumer */
+        AiProviderConsumer: {
+            /**
+             * Environment Id
+             * Format: uuid
+             */
+            environment_id: string;
+            /**
+             * Runtime
+             * @enum {string}
+             */
+            runtime: "codex" | "hermes" | "openclaw";
         };
         /** AiProviderDeleteResponse */
         AiProviderDeleteResponse: {
@@ -3190,6 +3296,8 @@ export interface components {
             supports_reasoning?: boolean;
             /** Context Window */
             context_window?: number;
+            /** Max Input Tokens */
+            max_input_tokens?: number;
             /** Max Tokens */
             max_tokens?: number;
             /** Cost */
@@ -3233,15 +3341,19 @@ export interface components {
         };
         /** AiProviderOAuthAcceptCredential */
         AiProviderOAuthAcceptCredential: {
-            /** Provider */
-            provider: string;
-            /** Redirect Uri */
-            redirect_uri?: string | null;
             /**
              * @description discriminator enum property added by openapi-typescript
              * @enum {string}
              */
             type: "oauth";
+            /** Provider */
+            provider: string;
+            /**
+             * Flow
+             * @default device_code
+             * @constant
+             */
+            flow: "device_code";
         };
         /** AiProviderOAuthCompleteRequest */
         AiProviderOAuthCompleteRequest: {
@@ -3252,6 +3364,64 @@ export interface components {
             /** Redirect Uri */
             redirect_uri?: string | null;
         };
+        /** AiProviderOAuthDevicePendingResponse */
+        AiProviderOAuthDevicePendingResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "pending";
+            /** Retry After Seconds */
+            retry_after_seconds: number;
+        };
+        /** AiProviderOAuthDevicePollRequest */
+        AiProviderOAuthDevicePollRequest: {
+            /** State */
+            state: string;
+        };
+        AiProviderOAuthDevicePollResponse: components["schemas"]["AiProviderOAuthDevicePendingResponse"] | components["schemas"]["AiProviderOAuthDeviceReadyResponse"];
+        /** AiProviderOAuthDeviceReadyResponse */
+        AiProviderOAuthDeviceReadyResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            status: "ready";
+            provider: components["schemas"]["AiProviderResponse"];
+        };
+        /** AiProviderOAuthDeviceStartRequest */
+        AiProviderOAuthDeviceStartRequest: {
+            /** Provider */
+            provider: string;
+        };
+        /** AiProviderOAuthDeviceStartResponse */
+        AiProviderOAuthDeviceStartResponse: {
+            /**
+             * Flow
+             * @default device_code
+             * @constant
+             */
+            flow: "device_code";
+            /** Provider Id */
+            provider_id: string;
+            /** Oauth Provider */
+            oauth_provider: string;
+            /** Profile */
+            profile: string;
+            /** Verification Url */
+            verification_url: string;
+            /** User Code */
+            user_code: string;
+            /** State */
+            state: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /** Poll Interval Seconds */
+            poll_interval_seconds: number;
+        };
         /** AiProviderOAuthPendingAcceptResponse */
         AiProviderOAuthPendingAcceptResponse: {
             /**
@@ -3260,7 +3430,7 @@ export interface components {
              */
             status: "pending";
             provider: components["schemas"]["AiProviderResponse"];
-            authorization: components["schemas"]["AiProviderOAuthStartResponse"];
+            authorization: components["schemas"]["AiProviderOAuthDeviceStartResponse"];
         };
         /** AiProviderOAuthProfileAuth */
         AiProviderOAuthProfileAuth: {
@@ -3303,6 +3473,12 @@ export interface components {
         };
         /** AiProviderOAuthStartResponse */
         AiProviderOAuthStartResponse: {
+            /**
+             * Flow
+             * @default authorization_code
+             * @constant
+             */
+            flow: "authorization_code";
             /** Provider Id */
             provider_id: string;
             /** Oauth Provider */
@@ -3342,6 +3518,29 @@ export interface components {
             } | null;
             /** Models */
             models?: components["schemas"]["AiProviderModel"][] | null;
+        };
+        /** AiProviderReadiness */
+        AiProviderReadiness: {
+            /**
+             * Credential Material
+             * @enum {string}
+             */
+            credential_material: "available" | "referenced" | "not_required" | "missing";
+            runtime_compatibility: components["schemas"]["AiProviderRuntimeCompatibility"];
+            /** Deployable */
+            deployable: boolean;
+            /**
+             * Endpoint Reachability
+             * @default not_tested
+             * @enum {string}
+             */
+            endpoint_reachability: "not_tested" | "verified" | "failed";
+            /**
+             * Inference Verification
+             * @default not_tested
+             * @enum {string}
+             */
+            inference_verification: "not_tested" | "verified" | "failed";
         };
         /** AiProviderReadyAcceptResponse */
         AiProviderReadyAcceptResponse: {
@@ -3391,6 +3590,10 @@ export interface components {
              * @description Whether the provider has the credential material required for runtime use. This does not validate the credential or test endpoint connectivity.
              */
             usable: boolean;
+            /** @description Structured readiness dimensions used for Hosted runtime admission. */
+            readiness?: components["schemas"]["AiProviderReadiness"] | null;
+            /** @description Non-secret hosted runtime claim for single-consumer credentials; omitted when the connection is unclaimed. */
+            consumer?: components["schemas"]["AiProviderConsumer"] | null;
             /**
              * Created At
              * Format: date-time
@@ -3401,6 +3604,20 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** AiProviderRuntimeCompatibility */
+        AiProviderRuntimeCompatibility: {
+            /** Openclaw */
+            openclaw: boolean;
+            /** Hermes */
+            hermes: boolean;
+            /** Codex */
+            codex: boolean;
+        };
+        /** AiProviderSavedConnectionTestRequest */
+        AiProviderSavedConnectionTestRequest: {
+            /** Model */
+            model?: string | null;
         };
         /** AiProviderSecretRefAuth */
         AiProviderSecretRefAuth: {
@@ -7484,6 +7701,41 @@ export interface operations {
             };
         };
     };
+    poll_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_poll_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderOAuthDevicePollRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderOAuthDevicePollResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     accept_ai_provider_v1_ai_providers_accept_post: {
         parameters: {
             query?: never;
@@ -7506,6 +7758,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiProviderAcceptResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_ai_provider_v1_ai_providers_test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderConnectionTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderConnectionTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_saved_ai_provider_v1_ai_providers__provider_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderSavedConnectionTestRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderConnectionTestResponse"];
                 };
             };
             /** @description Validation Error */
@@ -7717,6 +8037,41 @@ export interface operations {
             };
         };
     };
+    start_ai_provider_oauth_device_v1_ai_providers__provider_id__auth_oauth_device_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiProviderOAuthDeviceStartRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiProviderOAuthDeviceStartResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     start_ai_provider_oauth_v1_ai_providers__provider_id__auth_oauth_start_post: {
         parameters: {
             query?: never;
@@ -7774,43 +8129,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AiProviderResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    complete_ai_provider_accept_v1_ai_providers__provider_id__accept_post: {
-        parameters: {
-            query?: never;
-            header: {
-                "Idempotency-Key": string;
-            };
-            path: {
-                provider_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AiProviderOAuthCompleteRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AiProviderReadyAcceptResponse"];
                 };
             };
             /** @description Validation Error */
