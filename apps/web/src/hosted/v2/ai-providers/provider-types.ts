@@ -78,10 +78,11 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("openrouter") ?? "",
 		modelPlaceholder: defaultAiProviderModels("openrouter")[0]?.id ?? "",
 		defaultModels: toProviderCatalogModels(defaultAiProviderModels("openrouter")),
+		apiKeyUrl: "https://openrouter.ai/keys",
 	},
 	gemini: {
 		id: "gemini",
-		label: "Gemini",
+		label: "Google Gemini",
 		defaultBaseUrl: defaultAiProviderBaseUrl("gemini") ?? "",
 		apiModes: ["google_generate_content"],
 		defaultApiMode: defaultAiProviderApiMode("gemini") ?? "google_generate_content",
@@ -99,6 +100,7 @@ export const PROVIDER_TYPE_META: Record<ProviderTypeId, ProviderTypeMeta> = {
 		defaultRuntimeEnv: defaultAiProviderRuntimeEnvName("mistral") ?? "",
 		modelPlaceholder: defaultAiProviderModels("mistral")[0]?.id ?? "",
 		defaultModels: toProviderCatalogModels(defaultAiProviderModels("mistral")),
+		apiKeyUrl: "https://console.mistral.ai/api-keys",
 	},
 	custom_openai_compatible: {
 		id: "custom_openai_compatible",
