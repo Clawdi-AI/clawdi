@@ -12,6 +12,8 @@ services:
     pids_limit: ${CLAWDI_TEST_RUNNER_PIDS_LIMIT:-512}
     environment:
       HOME: /tmp/clawdi-home
+      USER: clawdi-test
+      LOGNAME: clawdi-test
       CLAWDI_NO_AUTO_UPDATE: "1"
       CLAWDI_NO_UPDATE_CHECK: "1"
       BUN_INSTALL_CACHE_DIR: /var/cache/bun

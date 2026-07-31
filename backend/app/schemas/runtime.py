@@ -3,7 +3,15 @@ from typing import Annotated, Literal
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SecretStr,
+    TypeAdapter,
+    field_validator,
+    model_validator,
+)
 
 HostedRuntimeLanguage = Literal[
     "en",
@@ -23,7 +31,7 @@ _EGRESS_HEADER_NAME_PATTERN = re.compile(r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")
 _EGRESS_PROFILE_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-_.]*$")
 _RUNTIME_SERVICE_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 _MANAGED_ENTRY_NAME_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
-_SECRET_REF_PATTERN = re.compile(r"^(?:secret://.+|env://[A-Za-z_][A-Za-z0-9_]*)$")
+_SECRET_REF_PATTERN = re.compile(r"^secret://\S+$")
 _SHA256_PATTERN = re.compile(r"^[0-9A-Fa-f]{64}$")
 _SEMVER_CORE_IDENTIFIER = r"(?:0|[1-9][0-9]*)"
 _SEMVER_PRERELEASE_IDENTIFIER = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -48,6 +56,34 @@ _FORBIDDEN_TOOL_SECRET_KEYS = {
 }
 _UNMANAGED_PROVIDER_ENV_NAMES = {"CLAWDI_MANAGED_OPENAI_API_KEY", "OPENAI_API_KEY"}
 _MANAGED_EGRESS_PLACEHOLDER_VALUE = "clawdi-egress-placeholder"
+
+HostedRuntimeSecretValues = dict[str, SecretStr]
+_HOSTED_RUNTIME_SECRET_VALUE_LIMIT = 128
+_HOSTED_RUNTIME_SECRET_TOTAL_PLAINTEXT_LIMIT = 262_144
+
+
+def is_canonical_secret_ref(value: str) -> bool:
+    return value == value.strip() and _SECRET_REF_PATTERN.fullmatch(value) is not None
+
+
+def validate_hosted_runtime_secret_values(
+    value: HostedRuntimeSecretValues,
+) -> HostedRuntimeSecretValues:
+    if len(value) > _HOSTED_RUNTIME_SECRET_VALUE_LIMIT:
+        raise ValueError("secretValues must contain at most 128 entries")
+    total_plaintext_size = 0
+    for secret_ref, secret in value.items():
+        if len(secret_ref) > 1000 or not is_canonical_secret_ref(secret_ref):
+            raise ValueError("secretValues keys must be canonical secret:// references")
+        plaintext = secret.get_secret_value()
+        if not plaintext or len(plaintext) > 65_536:
+            raise ValueError("secretValues values must be non-empty and at most 65536 characters")
+        if any(ord(character) <= 0x1F or ord(character) == 0x7F for character in plaintext):
+            raise ValueError("secretValues values must not contain control characters")
+        total_plaintext_size += len(plaintext.encode("utf-8"))
+        if total_plaintext_size > _HOSTED_RUNTIME_SECRET_TOTAL_PLAINTEXT_LIMIT:
+            raise ValueError("secretValues plaintext must total at most 262144 bytes")
+    return value
 
 
 def validate_no_plaintext_tool_secrets(value: object, path: str = "") -> None:
@@ -412,8 +448,8 @@ class HostedHermesDashboardAuth(BaseModel):
     mode: Literal["password"]
     provider: Literal["basic"]
     username: str = Field(min_length=1, max_length=128)
-    passwordSecretRef: Literal["env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD"]
-    sessionSecretRef: Literal["env://HERMES_DASHBOARD_BASIC_AUTH_SECRET"]
+    passwordSecretRef: Literal["secret://runtime/hermes/dashboard-password"]
+    sessionSecretRef: Literal["secret://runtime/hermes/dashboard-session-secret"]
     sessionTtlSeconds: int = Field(default=43_200, ge=60, le=604_800)
     publicUrl: str = Field(min_length=1)
     activation: HostedHermesDashboardActivation
@@ -449,7 +485,7 @@ class HostedOpenClawGatewayAuth(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     mode: Literal["token"]
-    tokenRef: Literal["env://OPENCLAW_GATEWAY_TOKEN"]
+    tokenRef: Literal["secret://runtime/openclaw/gateway-token"]
     deviceAuthRequired: Literal[False]
     activation: HostedOpenClawGatewayActivation
 
@@ -567,7 +603,7 @@ class HostedCodexProviderProjection(BaseModel):
     apiMode: Literal["openai_responses"]
     managed_by: Literal["clawdi"]
     runtimeEnvName: Literal["OPENAI_API_KEY"]
-    apiKeySecretRef: Literal["tool.codex.apiKey"]
+    apiKeySecretRef: Literal["secret://tool.codex.apiKey"]
 
 
 class HostedRuntimeTools(BaseModel):

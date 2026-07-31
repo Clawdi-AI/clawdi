@@ -5,6 +5,7 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { HOSTED_RUNTIME_CONTEXT_FILE } from "../../src/runtime/apply-identity";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const cliRoot = join(here, "..", "..");
@@ -339,17 +340,23 @@ async function runCli(
 }
 
 function cliEnv(fixture: Fixture): Record<string, string> {
-	const applyIdentityPath = join(fixture.runDir, "secrets", "runtime-apply-identity.json");
-	mkdirSync(dirname(applyIdentityPath), { recursive: true });
+	mkdirSync(dirname(HOSTED_RUNTIME_CONTEXT_FILE), { recursive: true });
 	writeFileSync(
-		applyIdentityPath,
+		HOSTED_RUNTIME_CONTEXT_FILE,
 		`${JSON.stringify({
-			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
-			generation: 1,
-			manifestETag: '"frozen-manifest"',
-			applyReceiptId: "apply-receipt-daemon-rpc",
-			bootNonce: "boot-nonce-daemon-rpc-01",
-			runtimeEnv: {},
+			schemaVersion: "clawdi.runtimeContext.v2",
+			apply: {
+				generation: 1,
+				manifestETag: '"frozen-manifest"',
+				applyReceiptId: "apply-receipt-daemon-rpc",
+				bootNonce: "boot-nonce-daemon-rpc-01",
+			},
+			cliPackageSpec: "clawdi@0.13.0-test",
+			manifestSource: {
+				type: "http",
+				url: `${server.url.origin}/v1/runtime/manifest`,
+				auth: { type: "bearer", token: API_KEY },
+			},
 		})}\n`,
 	);
 	return {
@@ -363,7 +370,6 @@ function cliEnv(fixture: Fixture): Record<string, string> {
 		CLAWDI_SERVE_MODE: "container",
 		CLAWDI_RUNTIME_MODE: "hosted",
 		CLAWDI_RUNTIME_HOME: fixture.home,
-		CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: applyIdentityPath,
 		CLAWDI_RUN_DIR: fixture.runDir,
 		CLAWDI_SERVICE_STATE_DIR: fixture.serviceStateDir,
 		CLAWDI_STATE_DIR: fixture.stateDir,

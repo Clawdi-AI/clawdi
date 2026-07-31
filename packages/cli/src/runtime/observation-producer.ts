@@ -34,6 +34,7 @@ type ObservationSendResult =
 interface RuntimeObservationProducerOptions {
 	abort: AbortSignal;
 	paths?: RuntimePaths;
+	contextPath?: string;
 	submit?: (
 		environmentId: string,
 		event: HostedRuntimeObservedEvent,
@@ -56,6 +57,7 @@ interface ObservationSchedule {
 
 export class HostedRuntimeObservationProducer {
 	private readonly paths: RuntimePaths;
+	private readonly contextPath: string | undefined;
 	private readonly submit: NonNullable<RuntimeObservationProducerOptions["submit"]>;
 	private readonly sessionFactory: NonNullable<RuntimeObservationProducerOptions["sessionFactory"]>;
 	private session: HostedRuntimeHeartbeatSession | null = null;
@@ -63,6 +65,7 @@ export class HostedRuntimeObservationProducer {
 
 	constructor(options: RuntimeObservationProducerOptions) {
 		this.paths = options.paths ?? getRuntimePaths();
+		this.contextPath = options.contextPath;
 		this.sessionFactory =
 			options.sessionFactory ??
 			((environmentId, paths) => new HostedRuntimeHeartbeatSession({ environmentId, paths }));
@@ -132,7 +135,7 @@ export class HostedRuntimeObservationProducer {
 	}
 
 	private readAttestedContext(): AttestedRuntimeObservationContext | null {
-		const expectedApplyIdentity = readRuntimeApplyIdentity();
+		const expectedApplyIdentity = readRuntimeApplyIdentity(this.contextPath);
 		const appliedState = readRuntimeAppliedState(this.paths);
 		const appliedIdentity = appliedState ? runtimeAppliedApplyIdentity(appliedState) : null;
 		if (!appliedIdentity || !sameApplyIdentity(appliedIdentity, expectedApplyIdentity)) {

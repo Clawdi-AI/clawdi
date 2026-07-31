@@ -47,6 +47,12 @@ from app.services.ai_provider_credentials import (
 )
 from app.services.api_key import mint_api_key
 from app.services.audit import record_control_plane_audit
+from app.services.hosted_runtime_secrets import (
+    hosted_runtime_secret_values_changed,
+    load_hosted_runtime_secrets_for_update,
+    runtime_secret_values_idempotency_identity,
+    sync_hosted_runtime_secret_values,
+)
 from app.services.platform_contract import (
     PlatformReplay,
     lock_platform_idempotency,
@@ -753,6 +759,14 @@ async def platform_upsert_runtime_state(
             .with_for_update()
         )
     ).scalar_one_or_none()
+    secret_rows = await load_hosted_runtime_secrets_for_update(
+        db,
+        environment_id=agent_id,
+    )
+    secret_values_changed = hosted_runtime_secret_values_changed(
+        secret_rows,
+        body.secret_values,
+    )
     old_skill_ids = enabled_runtime_manifest_skill_ids(
         runtime_state.skills if runtime_state is not None else None
     )
@@ -819,6 +833,8 @@ async def platform_upsert_runtime_state(
         body,
         apply_generation=apply_generation,
     )
+    if secret_values_changed:
+        changed_fields.append("secretValues")
     if runtime_state is not None and body.generation == runtime_state.generation:
         material_changes = [
             field for field in changed_fields if field not in {"generation", "apply_generation"}
@@ -858,6 +874,14 @@ async def platform_upsert_runtime_state(
         runtime_state = HostedRuntimeState(environment_id=agent_id)
         db.add(runtime_state)
     _assign_runtime_state(runtime_state, body, apply_generation=apply_generation)
+    if secret_values_changed:
+        await db.flush()
+        await sync_hosted_runtime_secret_values(
+            db,
+            environment_id=agent_id,
+            rows=secret_rows,
+            desired=body.secret_values,
+        )
     if changed_fields:
         queue_runtime_manifest_changed(db, agent.user_id, agent_id)
     response = PlatformRuntimeStateResponse(
@@ -887,6 +911,8 @@ async def platform_upsert_runtime_state(
             "previous_generation": previous_generation,
             "apply_generation": apply_generation,
             "previous_apply_generation": previous_apply_generation,
+            "has_secret_values": bool(body.secret_values),
+            "secret_refs": sorted(body.secret_values),
             "changed_fields": changed_fields,
         },
     )
@@ -1161,7 +1187,8 @@ def _assign_runtime_state(
 
 
 def _runtime_state_idempotency_payload(body: PlatformRuntimeStateUpsert) -> dict[str, Any]:
-    payload = body.model_dump(mode="json")
+    payload = body.model_dump(mode="json", exclude={"secret_values"})
+    payload["secretValuesIdentity"] = runtime_secret_values_idempotency_identity(body.secret_values)
     if "apply_generation" not in body.model_fields_set:
         payload.pop("apply_generation", None)
     return payload

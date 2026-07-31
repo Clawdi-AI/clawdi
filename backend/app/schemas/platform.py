@@ -14,10 +14,12 @@ from app.schemas.runtime import (
     HostedRuntimeLocale,
     HostedRuntimeMcp,
     HostedRuntimeRecovery,
+    HostedRuntimeSecretValues,
     HostedRuntimeSkills,
     HostedRuntimeSystem,
     HostedRuntimeTools,
     validate_clawdi_cli_package_spec,
+    validate_hosted_runtime_secret_values,
 )
 
 PlatformOwnerKind = Literal["clerk", "partner_tenant"]
@@ -82,6 +84,8 @@ class PlatformApiKeyCreate(PlatformMutationBody):
 
 
 class PlatformRuntimeStateUpsert(PlatformMutationBody):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
     deployment_id: str = Field(min_length=1, max_length=200)
     instance_id: str = Field(min_length=1, max_length=200)
     generation: int = Field(ge=0)
@@ -97,11 +101,17 @@ class PlatformRuntimeStateUpsert(PlatformMutationBody):
     mcp: HostedRuntimeMcp | None = None
     skills: HostedRuntimeSkills | None = None
     tools: HostedRuntimeTools
+    secret_values: HostedRuntimeSecretValues = Field(alias="secretValues")
 
     @field_validator("cli_package_spec")
     @classmethod
     def _validate_cli_package_spec(cls, value: str) -> str:
         return validate_clawdi_cli_package_spec(value)
+
+    @field_validator("secret_values")
+    @classmethod
+    def _validate_secret_values(cls, value: HostedRuntimeSecretValues) -> HostedRuntimeSecretValues:
+        return validate_hosted_runtime_secret_values(value)
 
     @field_validator("runtimes")
     @classmethod

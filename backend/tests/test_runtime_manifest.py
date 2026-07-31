@@ -122,8 +122,8 @@ TEST_HERMES_DASHBOARD_AUTH = {
     "mode": "password",
     "provider": "basic",
     "username": "admin",
-    "passwordSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-    "sessionSecretRef": "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+    "passwordSecretRef": "secret://runtime/hermes/dashboard-password",
+    "sessionSecretRef": "secret://runtime/hermes/dashboard-session-secret",
     "sessionTtlSeconds": 43_200,
     "publicUrl": "https://agent.example.test/hermes",
     "activation": {
@@ -140,7 +140,7 @@ TEST_HOSTED_INTEGRATIONS_CLI_PACKAGE_SPEC = "clawdi@0.13.2-test"
     ("secret_ref", "accepted"),
     [
         ("secret://provider.default.apiKey", True),
-        ("env://CLAWDI_AUTH_TOKEN", True),
+        ("secret://clawdi/auth-token", True),
         ("secret://", False),
         ("env://", False),
         ("env://INVALID-NAME", False),
@@ -438,6 +438,7 @@ def _runtime_state_body(environment_id: str, **overrides) -> dict:
         "live_sync": _live_sync(environment_id),
         "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
         "tools": TEST_CODEX_TOOLS,
+        "secretValues": {},
     }
     body.update(overrides)
     if set(body["runtimes"]) == {"hermes"} and "system" not in overrides:
@@ -486,7 +487,7 @@ async def test_runtime_only_bundle_is_explicitly_unmanaged(
         CLAWDI_MANAGED_PROVIDER_ID
     )
     assert bundle["channelBindings"] == []
-    assert bundle["secretValues"] == {"tool.codex.apiKey": "sk-codex-tool"}
+    assert bundle["secretValues"] == {"secret://tool.codex.apiKey": "sk-codex-tool"}
 
 
 @pytest.mark.parametrize(
@@ -511,7 +512,7 @@ async def test_runtime_only_bundle_is_explicitly_unmanaged(
         },
         {
             **next(iter(_runtime_state(provider_mode="unmanaged").values())),
-            "run": {"secretEnv": {"OPENAI_API_KEY": "provider.clawdi-managed-v2.apiKey"}},
+            "run": {"secretEnv": {"OPENAI_API_KEY": "secret://provider.clawdi-managed-v2.apiKey"}},
         },
         {
             **next(iter(_runtime_state(provider_mode="unmanaged").values())),
@@ -713,6 +714,7 @@ async def test_dashboard_dev_seed_runtime_state_validates_and_serves_manifest(
             "egress_profiles": state.egress_profiles,
             "mcp": state.mcp,
             "tools": state.tools,
+            "secretValues": {},
         }
     )
     assert validated.live_sync.model_dump(mode="json") == {
@@ -985,7 +987,7 @@ async def test_admin_upsert_runtime_state_and_manifest_omit_channels(
     ]
     assert "appId" not in manifest
     assert "channels" not in manifest
-    assert payload["secretValues"] == {"tool.codex.apiKey": "sk-codex-tool"}
+    assert payload["secretValues"] == {"secret://tool.codex.apiKey": "sk-codex-tool"}
     assert etag == expected_runtime_bundle_v2_etag(payload["sourceRevision"])
 
     async with await _runtime_client(db_session, seed_user, api_key) as client:
@@ -2427,8 +2429,8 @@ async def test_admin_runtime_state_upsert_writes_redacted_audit_event(
     assert latest["details"]["cli_package_spec"] == TEST_CLI_PACKAGE_SPEC
     assert latest["details"]["enabled_runtimes"] == ["openclaw"]
     assert latest["details"]["changed_fields"] == ["generation"]
-    assert "secret" not in json.dumps(payload).lower()
-    assert "token" not in json.dumps(payload).lower()
+    assert latest["details"]["has_secret_values"] is False
+    assert latest["details"]["secret_refs"] == "[REDACTED]"
 
 
 @pytest.mark.asyncio
@@ -2537,8 +2539,9 @@ async def test_admin_delete_runtime_state_clears_existing_state_and_writes_audit
     assert latest["details"]["deployment_id"] == expected["deployment_id"]
     assert latest["details"]["generation"] == expected["generation"]
     assert latest["details"]["enabled_runtimes"] == ["openclaw"]
-    assert "secret" not in json.dumps(payload).lower()
-    assert "token" not in json.dumps(payload).lower()
+    upsert = payload["items"][1]
+    assert upsert["details"]["has_secret_values"] is False
+    assert upsert["details"]["secret_refs"] == "[REDACTED]"
 
 
 @pytest.mark.asyncio
@@ -3134,7 +3137,7 @@ async def test_runtime_manifest_projects_selected_runtime_provider_pool(
         "apiMode": "openai_responses",
         "models": [{"id": "gpt-5.5"}],
         "runtimeEnvName": "OPENCLAW_PROVIDER_API_KEY",
-        "apiKeySecretRef": "provider.openai-managed.apiKey",
+        "apiKeySecretRef": "secret://provider.openai-managed.apiKey",
     }
     assert payload["manifest"]["providers"]["anthropic-managed"] == {
         "kind": "openai-compatible",
@@ -3143,7 +3146,7 @@ async def test_runtime_manifest_projects_selected_runtime_provider_pool(
         "apiMode": "openai_chat",
         "models": [{"id": "claude-opus-4-6"}],
         "runtimeEnvName": "HERMES_PROVIDER_API_KEY",
-        "apiKeySecretRef": "provider.anthropic-managed.apiKey",
+        "apiKeySecretRef": "secret://provider.anthropic-managed.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
         "openai-managed",
@@ -3154,9 +3157,9 @@ async def test_runtime_manifest_projects_selected_runtime_provider_pool(
         "model": "gpt-5.5",
     }
     assert payload["secretValues"] == {
-        "provider.anthropic-managed.apiKey": "sk-hermes-provider",
-        "provider.openai-managed.apiKey": "sk-openclaw-provider",
-        "tool.codex.apiKey": "sk-codex-tool",
+        "secret://provider.anthropic-managed.apiKey": "sk-hermes-provider",
+        "secret://provider.openai-managed.apiKey": "sk-openclaw-provider",
+        "secret://tool.codex.apiKey": "sk-codex-tool",
     }
 
 
@@ -3248,7 +3251,7 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
         "apiMode": "anthropic_messages",
         "models": [{"id": "claude-opus-4-6"}],
         "runtimeEnvName": "ANTHROPIC_API_KEY",
-        "apiKeySecretRef": "provider.anthropic-byok.apiKey",
+        "apiKeySecretRef": "secret://provider.anthropic-byok.apiKey",
     }
     assert payload["manifest"]["providers"]["gemini-byok"] == {
         "kind": "openai-compatible",
@@ -3257,7 +3260,7 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
         "apiMode": "google_generate_content",
         "models": [{"id": "gemini-2.5-pro"}],
         "runtimeEnvName": "GEMINI_API_KEY",
-        "apiKeySecretRef": "provider.gemini-byok.apiKey",
+        "apiKeySecretRef": "secret://provider.gemini-byok.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "anthropic-byok",
@@ -3268,9 +3271,9 @@ async def test_runtime_manifest_preserves_non_openai_provider_protocols(
         "gemini-byok",
     ]
     assert payload["secretValues"] == {
-        "provider.gemini-byok.apiKey": "sk-gemini-provider",
-        "provider.anthropic-byok.apiKey": "sk-anthropic-provider",
-        "tool.codex.apiKey": "sk-codex-tool",
+        "secret://provider.gemini-byok.apiKey": "sk-gemini-provider",
+        "secret://provider.anthropic-byok.apiKey": "sk-anthropic-provider",
+        "secret://tool.codex.apiKey": "sk-codex-tool",
     }
 
 
@@ -3342,7 +3345,7 @@ async def test_runtime_manifest_marks_key_required_provider_unhealthy_without_se
         "provider_id": "missing-key-provider",
         "model": "claude-opus-4-6",
     }
-    assert body["secretValues"] == {"tool.codex.apiKey": "sk-codex-tool"}
+    assert body["secretValues"] == {"secret://tool.codex.apiKey": "sk-codex-tool"}
 
 
 @pytest.mark.asyncio
@@ -3400,7 +3403,7 @@ async def test_runtime_manifest_does_not_select_secret_without_managed_source(
     provider = response.json()["manifest"]["providers"]["missing-source-provider"]
     assert provider["status"] == "error"
     assert provider["error"]["code"] == "provider_secret_unavailable"
-    assert response.json()["secretValues"] == {"tool.codex.apiKey": "sk-codex-tool"}
+    assert response.json()["secretValues"] == {"secret://tool.codex.apiKey": "sk-codex-tool"}
 
 
 @pytest.mark.asyncio
@@ -3484,7 +3487,7 @@ async def test_runtime_manifest_marks_explicit_archived_provider_binding_unhealt
         "provider_id": "deleted-custom-provider",
         "model": "gpt-5.5",
     }
-    assert payload["secretValues"] == {"tool.codex.apiKey": "sk-managed-provider"}
+    assert payload["secretValues"] == {"secret://tool.codex.apiKey": "sk-managed-provider"}
 
 
 @pytest.mark.asyncio
@@ -3526,7 +3529,6 @@ async def test_admin_runtime_state_rejects_top_level_provider_binding(
         ("app_id", "app-test"),
         ("channels", {}),
         ("providers", {}),
-        ("secretValues", {}),
     ],
 )
 async def test_admin_runtime_state_rejects_legacy_top_level_fields(
@@ -4187,7 +4189,7 @@ async def test_runtime_bundle_missing_token_fails_closed_and_query_count_is_cons
         event.remove(engine, "before_cursor_execute", count_selects)
         app.dependency_overrides.clear()
     assert healthy.status_code == 200
-    assert healthy_query_count == 4
+    assert healthy_query_count == 5
     assert missing.status_code == 409
     assert missing.json() == {"detail": "Active runtime channel link has no token material"}
     assert wrong_media_type.status_code == 406
@@ -4546,7 +4548,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         "managed_by": "clawdi",
         "models": managed_models,
         "runtimeEnvName": "OPENAI_API_KEY",
-        "apiKeySecretRef": "tool.codex.apiKey",
+        "apiKeySecretRef": "secret://tool.codex.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["provider_ids"] == [
         CLAWDI_MANAGED_PROVIDER_ID
@@ -4555,7 +4557,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         "provider_id": CLAWDI_MANAGED_PROVIDER_ID,
         "model": "gpt-5.5",
     }
-    assert payload["secretValues"] == {"tool.codex.apiKey": "sk-test-provider"}
+    assert payload["secretValues"] == {"secret://tool.codex.apiKey": "sk-test-provider"}
     etag = response.headers["etag"]
 
     provider.label = "Presentation-only label"
@@ -4606,7 +4608,7 @@ async def test_runtime_manifest_projects_provider_secret_values_for_managed_acco
         rotated.json()["sourceRevision"]
     )
     assert rotated.json()["manifest"]["issuedAt"] == issued_at
-    assert rotated.json()["secretValues"] == {"tool.codex.apiKey": "sk-rotated-provider"}
+    assert rotated.json()["secretValues"] == {"secret://tool.codex.apiKey": "sk-rotated-provider"}
 
 
 @pytest.mark.asyncio
@@ -4686,7 +4688,7 @@ async def test_runtime_manifest_resolves_bare_managed_alias_to_deployment_catalo
     assert manifest["providers"][CLAWDI_MANAGED_PROVIDER_ID]["models"] == models
     assert manifest["terminalTooling"]["codex"]["provider_id"] == (CLAWDI_MANAGED_PROVIDER_ID)
     assert internal_provider_id not in json.dumps(manifest)
-    assert payload["secretValues"] == {"tool.codex.apiKey": "sk-deployment-managed"}
+    assert payload["secretValues"] == {"secret://tool.codex.apiKey": "sk-deployment-managed"}
 
 
 @pytest.mark.asyncio
@@ -4756,8 +4758,8 @@ async def test_runtime_manifest_selects_managed_provider_secret_by_auth_profile(
     assert response.status_code == 200, response.text
     expected_secret = "sk-default-profile" if active_profile == "default" else "sk-work-profile"
     assert response.json()["secretValues"] == {
-        f"provider.{provider_id}.apiKey": expected_secret,
-        "tool.codex.apiKey": "sk-codex-tool",
+        f"secret://provider.{provider_id}.apiKey": expected_secret,
+        "secret://tool.codex.apiKey": "sk-codex-tool",
     }
 
 
@@ -4959,15 +4961,15 @@ async def test_runtime_manifest_projects_legacy_managed_provider_as_responses(
         "managed_by": "clawdi",
         "models": [{"id": "openai-codex/gpt-5.5"}],
         "runtimeEnvName": "OPENAI_API_KEY",
-        "apiKeySecretRef": "provider.clawdi-managed.apiKey",
+        "apiKeySecretRef": "secret://provider.clawdi-managed.apiKey",
     }
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
         "provider_id": "clawdi-managed",
         "model": "openai-codex/gpt-5.5",
     }
     assert payload["secretValues"] == {
-        "provider.clawdi-managed.apiKey": "sk-test-legacy-provider",
-        "tool.codex.apiKey": "sk-codex-tool",
+        "secret://provider.clawdi-managed.apiKey": "sk-test-legacy-provider",
+        "secret://tool.codex.apiKey": "sk-codex-tool",
     }
 
 
@@ -5035,7 +5037,7 @@ async def test_runtime_manifest_uses_structured_primary_model_without_catalog_mo
         "baseUrl": "https://provider.test/v1",
         "apiMode": "openai_responses",
         "runtimeEnvName": "CUSTOM_OPENAI_API_KEY",
-        "apiKeySecretRef": "provider.custom-openai.apiKey",
+        "apiKeySecretRef": "secret://provider.custom-openai.apiKey",
     }
     assert "models" not in payload["manifest"]["providers"]["custom-openai"]
     assert payload["manifest"]["runtimes"]["openclaw"]["primary_model"] == {
@@ -5139,7 +5141,7 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
             "type": "agent_profile",
             "tool": "codex",
             "profile": "default",
-            "credentialSecretRef": "provider.openai-codex.oauthProfile",
+            "credentialSecretRef": "secret://provider.openai-codex.oauthProfile",
             "credentialRevision": "oauth-revision-1",
         },
     }
@@ -5148,8 +5150,8 @@ async def test_runtime_manifest_projects_codex_agent_profile_auth(
         "model": "gpt-5.5",
     }
     assert response.json()["secretValues"] == {
-        "provider.openai-codex.oauthProfile": oauth_envelope,
-        "tool.codex.apiKey": "sk-codex-tool",
+        "secret://provider.openai-codex.oauthProfile": oauth_envelope,
+        "secret://tool.codex.apiKey": "sk-codex-tool",
     }
 
 

@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { accessSync, chownSync, constants, existsSync } from "node:fs";
+import { accessSync, chownSync, constants } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { withEffectiveFilesystemIdentity } from "./effective-identity";
 import { applyEgressTransparentRuntimeEnv } from "./egress-env";
@@ -125,48 +125,6 @@ export function withRuntimeUserFileAccess<T>(
 		throw new Error(`runtime user ${runtimeUser} resolved to a root filesystem identity`);
 	}
 	return withEffectiveFilesystemIdentity({ uid, gid }, operation);
-}
-
-function userManagerControlSocketExists(runtimeDir: string): boolean {
-	return existsSync(join(runtimeDir, "bus")) || existsSync(join(runtimeDir, "systemd", "private"));
-}
-
-function waitForUserManagerControlSocket(runtimeDir: string): boolean {
-	const waitUntil = Date.now() + 120_000;
-	const waitBuffer = new SharedArrayBuffer(4);
-	const waitView = new Int32Array(waitBuffer);
-	while (Date.now() < waitUntil) {
-		if (userManagerControlSocketExists(runtimeDir)) return true;
-		Atomics.wait(waitView, 0, 0, 200);
-	}
-	return userManagerControlSocketExists(runtimeDir);
-}
-
-function ensureRuntimeUserManagerReady(runtimeUser: string): void {
-	if (!runningAsRoot() || runtimeUser === "root" || !commandExists("systemctl")) return;
-	const uid = runtimeUserUid(runtimeUser);
-	const gid = runtimeUserGid(runtimeUser);
-	const runtimeDir = `/run/user/${uid}`;
-	execFileSync("install", ["-d", "-m", "0755", "-o", "root", "-g", "root", "/run/user"]);
-	execFileSync("install", ["-d", "-m", "0700", "-o", String(uid), "-g", String(gid), runtimeDir]);
-	if (userManagerControlSocketExists(runtimeDir)) return;
-	const unit = `user@${uid}.service`;
-	let result = spawnSync("systemctl", ["restart", unit], { stdio: "ignore" });
-	if (result.status !== 0) {
-		result = spawnSync("systemctl", ["start", unit], { stdio: "ignore" });
-	}
-	if (result.status !== 0 || !waitForUserManagerControlSocket(runtimeDir)) {
-		throw new Error(
-			`runtime user systemd manager did not publish a control socket under ${runtimeDir}`,
-		);
-	}
-}
-
-// Only official service installers may invoke systemctl --user. Config,
-// projection, plugin, and installer commands need privilege drop but not a manager.
-export function ensureConfiguredRuntimeUserManagerReady(): void {
-	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
-	if (runtimeUser) ensureRuntimeUserManagerReady(runtimeUser);
 }
 
 export function spawnRuntimeUserCommand(

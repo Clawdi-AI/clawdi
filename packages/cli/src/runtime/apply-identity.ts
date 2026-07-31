@@ -1,7 +1,9 @@
-import { existsSync, readFileSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { type ProjectedRuntimeEnvironment, projectedRuntimeEnvironment } from "./secret-values";
+import {
+	HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE,
+	hostedCliPackageSpecSchema,
+} from "./manifest-contract";
 
 export const runtimeApplyIdentitySchema = z
 	.object({
@@ -36,98 +38,111 @@ export function runtimeApplyIdentitiesEqual(
 	);
 }
 
-const RUNTIME_APPLY_IDENTITY_FILE_ENV = "CLAWDI_RUNTIME_APPLY_IDENTITY_FILE";
-const HOSTED_RUNTIME_APPLY_IDENTITY_FILE =
-	"/etc/clawdi/runtime-identity/runtime-apply-identity.json";
+export const HOSTED_RUNTIME_CONTEXT_FILE = "/etc/clawdi/runtime-context/runtime-context.json";
 
-const runtimeProjectedEnvironmentSchema = z.record(
-	z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/),
-	z
-		.string()
-		.min(1)
-		.refine((value) => value === value.trim(), "must not have surrounding whitespace")
-		.refine(
-			(value) =>
-				[...value].every((character) => {
-					const code = character.charCodeAt(0);
-					return code > 0x1f && code !== 0x7f;
-				}),
-			"must not contain control characters",
-		),
-);
+const runtimeBootstrapSecretSchema = z
+	.string()
+	.min(1)
+	.refine((value) => value === value.trim(), "must not have surrounding whitespace")
+	.refine(
+		(value) =>
+			[...value].every((character) => {
+				const code = character.charCodeAt(0);
+				return code > 0x1f && code !== 0x7f;
+			}),
+		"must not contain control characters",
+	);
 
-const runtimeApplyIdentityFileSchema = runtimeApplyIdentitySchema
-	.safeExtend({
-		schemaVersion: z.literal("clawdi.runtimeApplyIdentity.v1"),
-		runtimeEnv: runtimeProjectedEnvironmentSchema,
+export const runtimeManifestSourceSchema = z
+	.object({
+		type: z.literal("http"),
+		url: z.url().refine((value) => {
+			const url = new URL(value);
+			return (
+				(url.protocol === "https:" || url.protocol === "http:") &&
+				!url.username &&
+				!url.password &&
+				!url.hash &&
+				url.pathname.endsWith("/v1/runtime/manifest")
+			);
+		}, "must be an HTTP(S) /v1/runtime/manifest URL without credentials or a fragment"),
+		auth: z
+			.object({
+				type: z.literal("bearer"),
+				token: runtimeBootstrapSecretSchema,
+			})
+			.strict(),
 	})
 	.strict();
 
-type RuntimeApplyIdentityFile = z.infer<typeof runtimeApplyIdentityFileSchema>;
+export type RuntimeManifestSource = z.infer<typeof runtimeManifestSourceSchema>;
+
+const runtimeContextFileSchema = z
+	.object({
+		schemaVersion: z.literal("clawdi.runtimeContext.v2"),
+		apply: runtimeApplyIdentitySchema,
+		cliPackageSpec: hostedCliPackageSpecSchema.or(
+			z.literal(HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE),
+		),
+		manifestSource: runtimeManifestSourceSchema,
+	})
+	.strict();
+
+type RuntimeContextFile = z.infer<typeof runtimeContextFileSchema>;
 
 export interface RuntimeApplyContext {
-	kind: "identity-file";
+	kind: "context-file";
 	identity: RuntimeApplyIdentity;
-	runtimeEnvironment: ProjectedRuntimeEnvironment;
+	cliPackageSpec: string;
+	manifestSource: RuntimeManifestSource;
 }
 
 export function readRuntimeApplyIdentity(
-	env: Readonly<Record<string, string | undefined>> = process.env,
-	discoveryPath: string = HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
+	contextPath: string = HOSTED_RUNTIME_CONTEXT_FILE,
 ): RuntimeApplyIdentity {
-	return readRuntimeApplyContext(env, discoveryPath).identity;
+	return readRuntimeApplyContext(contextPath).identity;
 }
 
 export function readRuntimeApplyContext(
-	env: Readonly<Record<string, string | undefined>> = process.env,
-	discoveryPath: string = HOSTED_RUNTIME_APPLY_IDENTITY_FILE,
+	contextPath: string = HOSTED_RUNTIME_CONTEXT_FILE,
 ): RuntimeApplyContext {
-	const configuredPath = configuredRuntimeApplyIdentityPath(env, discoveryPath);
-	const parsed = readRuntimeApplyIdentityFile(configuredPath);
-	const { schemaVersion: _schemaVersion, runtimeEnv, ...identity } = parsed;
+	const parsed = readRuntimeContextFile(contextPath);
 	return {
-		kind: "identity-file",
-		identity,
-		runtimeEnvironment: projectedRuntimeEnvironment(runtimeEnv),
+		kind: "context-file",
+		identity: parsed.apply,
+		cliPackageSpec: parsed.cliPackageSpec,
+		manifestSource: parsed.manifestSource,
 	};
 }
 
-function readRuntimeApplyIdentityFile(configuredPath: string): RuntimeApplyIdentityFile {
+function readRuntimeContextFile(contextPath: string): RuntimeContextFile {
 	let raw: unknown;
 	try {
-		raw = JSON.parse(readFileSync(configuredPath, "utf-8")) as unknown;
+		raw = JSON.parse(readFileSync(contextPath, "utf-8"));
 	} catch (error) {
 		throw new Error(
-			`could not read runtime apply identity file ${configuredPath}: ${
+			`could not read runtime context file ${contextPath}: ${
 				error instanceof Error ? error.message : String(error)
 			}`,
 		);
 	}
-	const parsed = runtimeApplyIdentityFileSchema.safeParse(raw);
+	const parsed = runtimeContextFileSchema.safeParse(raw);
 	if (!parsed.success) {
 		throw new Error(
-			`invalid runtime apply identity file ${configuredPath}: ${parsed.error.issues
+			`invalid runtime context file ${contextPath}: ${parsed.error.issues
 				.map((issue) => `${issue.path.join(".")}: ${issue.message}`)
 				.join("; ")}`,
 		);
 	}
+	if (
+		parsed.data.cliPackageSpec === HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE &&
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1"
+	) {
+		throw new Error(
+			`invalid runtime context file ${contextPath}: cliPackageSpec: ${HOSTED_RUNTIME_PAIRED_FIXTURE_CLI_PACKAGE} requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1`,
+		);
+	}
 	return parsed.data;
-}
-
-function configuredRuntimeApplyIdentityPath(
-	env: Readonly<Record<string, string | undefined>>,
-	discoveryPath: string,
-): string {
-	const explicitPath = env[RUNTIME_APPLY_IDENTITY_FILE_ENV];
-	const configuredPath =
-		explicitPath !== undefined ? explicitPath : existsSync(discoveryPath) ? discoveryPath : null;
-	if (configuredPath === null) {
-		throw new Error(`missing runtime apply identity file ${discoveryPath}`);
-	}
-	if (!configuredPath || configuredPath !== configuredPath.trim() || !isAbsolute(configuredPath)) {
-		throw new Error(`${RUNTIME_APPLY_IDENTITY_FILE_ENV} must be a canonical absolute path`);
-	}
-	return configuredPath;
 }
 
 function canonicalIdentityValue(min: number, max: number): z.ZodString {

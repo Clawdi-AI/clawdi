@@ -81,8 +81,6 @@ def _validation_errors_for_log(exc: RequestValidationError) -> list[dict[str, ob
             "loc": err.get("loc"),
             "msg": err.get("msg"),
         }
-        if "ctx" in err:
-            item["ctx"] = err["ctx"]
         errors.append(item)
     return errors
 
@@ -245,6 +243,15 @@ async def request_validation_exception_handler(
     exc: RequestValidationError,
 ) -> JSONResponse:
     path = request.url.path
+    if path.endswith("/runtime-state"):
+        errors = _validation_errors_for_log(exc)
+        log.warning(
+            "request_validation_failed method=%s path=%s errors=%s",
+            request.method,
+            path,
+            errors,
+        )
+        return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
     if path.endswith("/skills/upload") or path.endswith("/sessions/batch"):
         log.warning(
             (

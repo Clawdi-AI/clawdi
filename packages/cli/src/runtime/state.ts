@@ -21,7 +21,7 @@ export interface RuntimeBootStatus {
 	instanceId?: string | null;
 	enabledRuntimes: string[];
 	manifestSource?: {
-		type: "fixture-file" | "remote-datasource" | "last-good-cache";
+		type: "remote-datasource" | "last-good-cache";
 		path: string;
 		offline: boolean;
 	};
@@ -66,7 +66,6 @@ export interface RuntimeBootStatus {
 	};
 	paths: {
 		hostPolicy: string;
-		runtimeSource: string;
 		serviceStateRoot: string;
 		managedConfig: string;
 		syncState: string;
@@ -89,8 +88,6 @@ export interface RuntimeBootStatus {
 		cloudResult: string;
 		runRoot: string;
 		managedSecretRoot: string;
-		managedSecretFile: string;
-		runtimeSecretFileRoot: string;
 		daemonAuthToken: string;
 		instanceData: string;
 		sensitiveInstanceData: string;
@@ -112,7 +109,6 @@ export interface RuntimeStatusRead {
 function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 	return {
 		hostPolicy: paths.hostPolicy,
-		runtimeSource: paths.runtimeSource,
 		serviceStateRoot: paths.serviceStateRoot,
 		managedConfig: paths.managedConfig,
 		syncState: paths.syncState,
@@ -135,8 +131,6 @@ function pathSummary(paths: RuntimePaths): RuntimeBootStatus["paths"] {
 		cloudResult: paths.cloudResult,
 		runRoot: paths.runRoot,
 		managedSecretRoot: paths.managedSecretRoot,
-		managedSecretFile: paths.managedSecretFile,
-		runtimeSecretFileRoot: paths.runtimeSecretFileRoot,
 		daemonAuthToken: paths.daemonAuthToken,
 		instanceData: paths.instanceData,
 		sensitiveInstanceData: paths.sensitiveInstanceData,
@@ -199,7 +193,6 @@ export function ensureRuntimeStateDirs(paths = getRuntimePaths()): void {
 		dirname(paths.syncState),
 		paths.runRoot,
 		paths.managedSecretRoot,
-		paths.runtimeSecretFileRoot,
 	]) {
 		mkdirSync(dir, { recursive: true });
 	}

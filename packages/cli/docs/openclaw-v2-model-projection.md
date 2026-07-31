@@ -131,7 +131,7 @@ the contract shape: provider `openclaw` has `baseUrl`, `model`, `apiMode`,
 | `maxTokens` / max output | Present only if catalog model has numeric `max_tokens`. | Present for static Codex and Kimi definitions as `maxTokens` (`/home/kingsley/clawdi-hosted/backend/app/services/openclaw_config.py:86`). | Absent with the current single-model contract. |
 | `reasoning` | Not projected from catalog `supports_reasoning`. | Present in static Codex/Kimi definitions as `reasoning` (`/home/kingsley/clawdi-hosted/backend/app/services/openclaw_config.py:83`). | Absent. |
 | `cost` | Not projected by the CLI. | Present in static Codex/Kimi definitions (`/home/kingsley/clawdi-hosted/backend/app/services/openclaw_config.py:85`). | Absent. |
-| provider `apiKey` | Present when env/runtime env auth is available. | Present as literal key or env secret ref depending migration gate. | Present as env secret ref derived from `runtimeEnvName`/`apiKeySecretRef`. |
+| provider `apiKey` | Present when the v1 provider-auth record resolves a key. | Present as a literal key or the v1 provider-auth reference, depending on its migration gate. | Resolved only from the bundle `secretValues` entry named by the exact `apiKeySecretRef`; `runtimeEnvName` names the target process variable and is not a secret source. |
 
 ## Hosted cross-reference
 

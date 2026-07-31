@@ -27,16 +27,12 @@ import {
 	writeRuntimeAppliedState,
 } from "../runtime/applied-state";
 import {
+	type RuntimeApplyContext,
 	type RuntimeApplyIdentity,
-	readRuntimeApplyContext,
 	resolveRuntimeApplyGeneration,
 	runtimeApplyIdentitiesEqual,
 } from "../runtime/apply-identity";
-import {
-	readRuntimeAuthToken,
-	readRuntimeCredential,
-	runtimeAuthTokenFileLabel,
-} from "../runtime/auth-token";
+import { readRuntimeAuthToken } from "../runtime/auth-token";
 import { applyRuntimeBundleChannelsToManifestLoad } from "../runtime/channels";
 import {
 	applyRuntimeCliDesiredState,
@@ -1178,7 +1174,7 @@ function collectWarnings(value: unknown): string[] {
 interface RuntimeInitOptions {
 	nonInteractive?: boolean;
 	json?: boolean;
-	manifestFile?: string;
+	applyContext?: RuntimeApplyContext;
 }
 
 interface RuntimeWatchOptions {
@@ -1189,6 +1185,7 @@ interface RuntimeWatchOptions {
 	abort?: AbortSignal;
 	notifications?: boolean;
 	notificationConsumer?: typeof consumeSse;
+	applyContext?: RuntimeApplyContext;
 }
 
 interface RuntimeVerifyOptions {
@@ -1261,21 +1258,6 @@ interface RuntimeManifestIdentity {
 	generation?: number | null;
 	etag?: string | null;
 	previouslyApplied?: boolean;
-}
-
-function hasRuntimeCredential(input: {
-	manifestPath?: string;
-	paths?: ReturnType<typeof getRuntimePaths>;
-}): boolean {
-	if (input.manifestPath) return true;
-	const paths = input.paths ?? getRuntimePaths();
-	if (existsSync(paths.manifestLastGood)) return true;
-	const applyContext = readRuntimeApplyContext();
-	return readRuntimeCredential(paths, applyContext.runtimeEnvironment) !== null;
-}
-
-function runtimeCredentialName(paths: ReturnType<typeof getRuntimePaths>): string {
-	return runtimeAuthTokenFileLabel(paths);
 }
 
 function writable(path: string): boolean {
@@ -1610,12 +1592,26 @@ function changedSystemdUnits(
 	};
 }
 
+function withoutStaleSystemdUnits(
+	snapshot: SystemdUnitSnapshot,
+	staleSystemUnits: readonly string[],
+	staleUserUnits: readonly string[],
+): SystemdUnitSnapshot {
+	const system = new Map(snapshot.system);
+	const user = new Map(snapshot.user);
+	for (const unit of staleSystemUnits) system.delete(unit);
+	for (const unit of staleUserUnits) user.delete(unit);
+	return { system, user };
+}
+
 export function applySystemdRuntimeUpdate(
 	paths: ReturnType<typeof getRuntimePaths>,
 	before: SystemdUnitSnapshot,
 	after: SystemdUnitSnapshot,
 	opts: {
 		forceRestartSystemUnits?: readonly string[];
+		forceStopSystemUnits?: readonly string[];
+		forceRestartUserUnits?: readonly string[];
 		recoverFailedUnits?: boolean;
 		activationScope?: {
 			systemUnits: readonly string[];
@@ -1650,6 +1646,12 @@ export function applySystemdRuntimeUpdate(
 	const forcedSystemRestarts = (opts.forceRestartSystemUnits ?? []).filter(
 		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
 	);
+	const forcedSystemStops = (opts.forceStopSystemUnits ?? []).filter(
+		(unit) => after.system.has(unit) && (!scopedSystemUnits || scopedSystemUnits.has(unit)),
+	);
+	const forcedUserRestarts = (opts.forceRestartUserUnits ?? []).filter((unit) =>
+		after.user.has(unit),
+	);
 	const recoverFailedUnits = opts.recoverFailedUnits !== false;
 	const activationChanged =
 		system.added.length > 0 ||
@@ -1658,7 +1660,9 @@ export function applySystemdRuntimeUpdate(
 		user.added.length > 0 ||
 		user.changed.length > 0 ||
 		user.removed.length > 0 ||
-		forcedSystemRestarts.length > 0;
+		forcedSystemRestarts.length > 0 ||
+		forcedSystemStops.length > 0 ||
+		forcedUserRestarts.length > 0;
 	if (!shouldApplySystemdRuntimeUpdate(paths)) {
 		return { applied: !activationChanged, systemUnitsChanged, userUnitsChanged };
 	}
@@ -1673,6 +1677,10 @@ export function applySystemdRuntimeUpdate(
 		if (!systemdUnitAbsentOrInactive(state)) runtimeUserSystemctl(paths, ["stop", unit]);
 		if (!systemdUnitAbsentOrDisabled(state)) runtimeUserSystemctl(paths, ["disable", unit]);
 	}
+	for (const unit of forcedSystemStops) {
+		const state = systemdUnitManagerState(paths, "system", unit);
+		if (!systemdUnitAbsentOrInactive(state)) systemctl(["stop", unit]);
+	}
 
 	if (system.added.length > 0 || system.changed.length > 0 || system.removed.length > 0) {
 		systemctl(["daemon-reload"]);
@@ -1684,12 +1692,14 @@ export function applySystemdRuntimeUpdate(
 	const addedSystemUnits = new Set(system.added);
 	const changedSystemUnits = new Set(system.changed);
 	const forcedRestartUnits = new Set(forcedSystemRestarts);
+	const forcedStopUnits = new Set(forcedSystemStops);
 	const skipActivatedSystemUnits = new Set(opts.skipActivatedSystemUnits ?? []);
 	const resetFailedSystemUnits: string[] = [];
 	const startSystemUnits: string[] = [];
 	const restartSystemUnits: string[] = [];
 	for (const unit of system.present) {
 		const state = systemdUnitManagerState(paths, "system", unit);
+		if (forcedStopUnits.has(unit)) continue;
 		if (skipActivatedSystemUnits.has(unit)) continue;
 		if (state.activeState === "failed" && recoverFailedUnits) {
 			resetFailedSystemUnits.push(unit);
@@ -1717,6 +1727,7 @@ export function applySystemdRuntimeUpdate(
 	if (restartSystemUnits.length > 0) systemctl(["restart", ...restartSystemUnits]);
 
 	const changedUserUnits = new Set(user.changed);
+	const forcedRestartUserUnits = new Set(forcedUserRestarts);
 	const resetFailedUserUnits: string[] = [];
 	const startUserUnits: string[] = [];
 	const enableUserUnits: string[] = [];
@@ -1738,7 +1749,9 @@ export function applySystemdRuntimeUpdate(
 		}
 		if (state.activeState !== "active") continue;
 		if (!enabled) enableUserUnits.push(unit);
-		if (changedUserUnits.has(unit)) restartUserUnits.push(unit);
+		if (changedUserUnits.has(unit) || forcedRestartUserUnits.has(unit)) {
+			restartUserUnits.push(unit);
+		}
 	}
 	if (resetFailedUserUnits.length > 0) {
 		runtimeUserSystemctl(paths, ["reset-failed", ...resetFailedUserUnits]);
@@ -1752,6 +1765,7 @@ export function applySystemdRuntimeUpdate(
 
 	const systemConverged = system.present.every((unit) => {
 		const state = systemdUnitManagerState(paths, "system", unit);
+		if (forcedStopUnits.has(unit)) return systemdUnitAbsentOrInactive(state);
 		return state.loadState !== "not-found" && state.activeState === "active";
 	});
 	const userConverged = user.present.every((unit) => {
@@ -2184,7 +2198,6 @@ async function runtimeInitLocked(
 		return;
 	}
 
-	const credentialAvailable = hasRuntimeCredential({ manifestPath: opts.manifestFile, paths });
 	const nonInteractiveOk = opts.nonInteractive === true;
 	const errors: string[] = [];
 	let stage: RuntimeBootStage = "detect";
@@ -2199,12 +2212,9 @@ async function runtimeInitLocked(
 			`invalid hosted runtime policy at ${hostPolicy.path}: ${hostPolicy.error ?? "parse failed"}`,
 		);
 	}
-	if (!credentialAvailable) {
-		errors.push(`missing ${runtimeCredentialName(paths)} and no last-good runtime manifest cache`);
-	}
 	if (errors.length === 0) {
 		stage = "local";
-		const loaded = await loadRuntimeManifest(paths, { manifestPath: opts.manifestFile });
+		const loaded = await loadRuntimeManifest(paths, { applyContext: opts.applyContext });
 		if ("errors" in loaded) {
 			stage = loaded.stage;
 			exitCode = loaded.mode === "manifest-rejected" ? 22 : 21;
@@ -2465,6 +2475,7 @@ async function runtimeWatchTick(
 		deferCliInstall?: boolean;
 		deferCliInstallReason?: string;
 		recoverFailedSystemdUnits?: boolean;
+		applyContext?: RuntimeApplyContext;
 	},
 ): Promise<Record<string, unknown>> {
 	return withRuntimeConvergeLockAsync(paths, () => runtimeWatchTickLocked(paths, opts));
@@ -2477,6 +2488,7 @@ async function runtimeWatchTickLocked(
 		deferCliInstall?: boolean;
 		deferCliInstallReason?: string;
 		recoverFailedSystemdUnits?: boolean;
+		applyContext?: RuntimeApplyContext;
 	},
 ): Promise<Record<string, unknown>> {
 	let reconciliation: RuntimeCliReconciliationResult;
@@ -2517,11 +2529,15 @@ async function runtimeWatchTickAfterCliReconciliation(
 		deferCliInstall?: boolean;
 		deferCliInstallReason?: string;
 		recoverFailedSystemdUnits?: boolean;
+		applyContext?: RuntimeApplyContext;
 	},
 ): Promise<Record<string, unknown>> {
 	const activeAppliedState = readRuntimeAppliedState(paths);
 	const manifestEtag = opts.forceRefresh ? undefined : (activeAppliedState?.etag ?? undefined);
-	const manifestLoad = await loadRemoteRuntimeManifest(paths, { ifNoneMatch: manifestEtag });
+	const manifestLoad = await loadRemoteRuntimeManifest(paths, {
+		ifNoneMatch: manifestEtag,
+		applyContext: opts.applyContext,
+	});
 	if ("errors" in manifestLoad) {
 		return {
 			schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2559,7 +2575,9 @@ async function runtimeWatchTickAfterCliReconciliation(
 
 	try {
 		const fresh =
-			"notModified" in manifestLoad ? await loadFullRuntimeManifestForWatch(paths) : manifestLoad;
+			"notModified" in manifestLoad
+				? await loadFullRuntimeManifestForWatch(paths, opts.applyContext)
+				: manifestLoad;
 		if ("errors" in fresh) {
 			return {
 				schemaVersion: "clawdi.runtimeWatchEvent.v1",
@@ -2795,26 +2813,26 @@ function applyRuntimeDesiredState(
 					);
 				}
 			},
-			activate: ({ restartDaemon, restartEgressSidecar }) => {
+			activate: ({ restartDaemon, restartEgressSidecar, staleSystemUnits, staleUserUnits }) => {
 				// Official installers run after the prerequisite phase and add their
 				// base units, so final reconciliation must observe a fresh rendered state.
 				failedSystemdUnits = readSystemdUnitSnapshot(paths);
 				try {
-					systemdApply = applySystemdRuntimeUpdate(
-						paths,
-						previousSystemdUnits,
+					const activationTarget = withoutStaleSystemdUnits(
 						failedSystemdUnits,
-						{
-							forceRestartSystemUnits: [
-								...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
-								...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
-							],
-							recoverFailedUnits: opts.recoverFailedSystemdUnits,
-							skipActivatedSystemUnits: egressPrerequisiteActivated
-								? [RUNTIME_SIDECAR_SYSTEM_UNIT]
-								: [],
-						},
+						staleSystemUnits,
+						staleUserUnits,
 					);
+					systemdApply = applySystemdRuntimeUpdate(paths, previousSystemdUnits, activationTarget, {
+						forceRestartSystemUnits: [
+							...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
+							...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
+						],
+						recoverFailedUnits: opts.recoverFailedSystemdUnits,
+						skipActivatedSystemUnits: egressPrerequisiteActivated
+							? [RUNTIME_SIDECAR_SYSTEM_UNIT]
+							: [],
+					});
 					return systemdApply;
 				} catch (error) {
 					throw new Error(
@@ -2822,13 +2840,31 @@ function applyRuntimeDesiredState(
 					);
 				}
 			},
-			rollback: ({ restartDaemon, restartEgressSidecar }) => {
-				if (!failedSystemdUnits) return;
-				applySystemdRuntimeUpdate(paths, failedSystemdUnits, readSystemdUnitSnapshot(paths), {
+			rollback: ({
+				restartDaemon,
+				restartEgressSidecar,
+				stopEgressSidecar,
+				reconcileUserUnits,
+				staleSystemUnits,
+			}) => {
+				const restoredSystemdUnits = readSystemdUnitSnapshot(paths);
+				const rollbackSource = failedSystemdUnits ?? {
+					system: new Map(previousSystemdUnits.system),
+					user: new Map(previousSystemdUnits.user),
+				};
+				for (const unit of reconcileUserUnits) {
+					if (!rollbackSource.user.has(unit)) {
+						rollbackSource.user.set(unit, "# failed runtime apply candidate\n");
+					}
+				}
+				applySystemdRuntimeUpdate(paths, rollbackSource, restoredSystemdUnits, {
 					forceRestartSystemUnits: [
 						...(restartDaemon ? [RUNTIME_DAEMON_SYSTEM_UNIT] : []),
 						...(restartEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : []),
+						...staleSystemUnits,
 					],
+					forceStopSystemUnits: stopEgressSidecar ? [RUNTIME_SIDECAR_SYSTEM_UNIT] : [],
+					forceRestartUserUnits: [...previousSystemdUnits.user.keys()],
 					recoverFailedUnits: false,
 				});
 			},
@@ -2907,8 +2943,9 @@ function maybeRollbackFailedCliUpgrade(
 
 async function loadFullRuntimeManifestForWatch(
 	paths: ReturnType<typeof getRuntimePaths>,
+	applyContext?: RuntimeApplyContext,
 ): Promise<RuntimeManifestLoad | RuntimeManifestFailure> {
-	const loaded = await loadRemoteRuntimeManifest(paths);
+	const loaded = await loadRemoteRuntimeManifest(paths, { applyContext });
 	if ("notModified" in loaded) {
 		throw new Error("runtime manifest datasource returned 304 without If-None-Match");
 	}
@@ -2977,6 +3014,7 @@ export async function runtimeWatch(opts: RuntimeWatchOptions = {}) {
 			const forceRefresh = now - lastFullFetchAt >= selfHealMs || cliInstallRetryDue;
 			const event = await runtimeWatchTick(paths, {
 				forceRefresh,
+				applyContext: opts.applyContext,
 				deferCliInstall,
 				// Conditional retries run every 15 seconds. Recover failed units
 				// only on the five-minute full refresh, or once in one-shot mode.

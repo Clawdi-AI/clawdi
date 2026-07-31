@@ -10,25 +10,34 @@ import {
 } from "./apply-identity";
 
 const roots: string[] = [];
+const originalAllowTestInstallers = process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS;
 
 afterEach(() => {
 	for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+	if (originalAllowTestInstallers === undefined) {
+		delete process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS;
+	} else {
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = originalAllowTestInstallers;
+	}
 });
 
-function identityFile(root: string): string {
-	const path = join(root, "runtime-apply-identity.json");
+function contextFile(root: string): string {
+	const path = join(root, "runtime-context.json");
 	writeFileSync(
 		path,
 		JSON.stringify({
-			schemaVersion: "clawdi.runtimeApplyIdentity.v1",
-			generation: 8,
-			manifestETag: '"manifest-8"',
-			applyReceiptId: "apply-receipt-0008",
-			bootNonce: "boot-nonce-000008",
-			runtimeEnv: {
-				CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-				CLAWDI_AUTH_TOKEN: "runtime-auth-token-0008",
-				OPENCLAW_GATEWAY_TOKEN: "gateway-token-0008",
+			schemaVersion: "clawdi.runtimeContext.v2",
+			apply: {
+				generation: 8,
+				manifestETag: '"manifest-8"',
+				applyReceiptId: "apply-receipt-0008",
+				bootNonce: "boot-nonce-000008",
+			},
+			cliPackageSpec: "clawdi@1.2.3",
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
+				auth: { type: "bearer", token: "runtime-auth-token-0008" },
 			},
 		}),
 	);
@@ -58,70 +67,105 @@ describe("runtime apply identity", () => {
 		expect(runtimeApplyIdentitiesEqual(identity, null)).toBe(false);
 	});
 
-	test("reads identity and projected environment from an explicit file", () => {
+	test("reads the complete typed context from the supplied canonical file", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-apply-identity-"));
 		roots.push(root);
-		const path = identityFile(root);
-		const context = readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path });
+		const path = contextFile(root);
+		const context = readRuntimeApplyContext(path);
 		expect(context).toEqual({
-			kind: "identity-file",
+			kind: "context-file",
 			identity: {
 				generation: 8,
 				manifestETag: '"manifest-8"',
 				applyReceiptId: "apply-receipt-0008",
 				bootNonce: "boot-nonce-000008",
 			},
-			runtimeEnvironment: {
-				kind: "projected-environment",
-				values: {
-					CLAWDI_RUNTIME_AUTH_ENV: "CLAWDI_AUTH_TOKEN",
-					CLAWDI_AUTH_TOKEN: "runtime-auth-token-0008",
-					OPENCLAW_GATEWAY_TOKEN: "gateway-token-0008",
-				},
+			cliPackageSpec: "clawdi@1.2.3",
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
+				auth: { type: "bearer", token: "runtime-auth-token-0008" },
 			},
 		});
-		expect(readRuntimeApplyIdentity({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path })).toEqual(
-			context.identity,
-		);
+		expect(readRuntimeApplyIdentity(path)).toEqual(context.identity);
 	});
 
-	test("discovers a supplied canonical mount path", () => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-discovered-apply-identity-"));
+	test("accepts the fixed paired-image CLI fixture path only behind the test gate", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-paired-cli-fixture-"));
 		roots.push(root);
-		const path = identityFile(root);
-		expect(readRuntimeApplyContext({}, path).identity.generation).toBe(8);
+		const path = contextFile(root);
+		const parsed: Record<string, unknown> = JSON.parse(readFileSync(path, "utf-8"));
+		parsed.cliPackageSpec = "/usr/local/share/clawdi/bootstrap/clawdi-local.tgz";
+		writeFileSync(path, JSON.stringify(parsed));
+		expect(() => readRuntimeApplyContext(path)).toThrow(/CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1/);
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		expect(readRuntimeApplyContext(path).cliPackageSpec).toBe(
+			"/usr/local/share/clawdi/bootstrap/clawdi-local.tgz",
+		);
+
+		parsed.cliPackageSpec = "/tmp/clawdi-local.tgz";
+		writeFileSync(path, JSON.stringify(parsed));
+		expect(() => readRuntimeApplyContext(path)).toThrow(/invalid runtime context file/);
 	});
 
-	test("fails closed for missing, malformed, or non-canonical files", () => {
+	test("fails closed for missing, malformed, or legacy context files", () => {
 		const root = mkdtempSync(join(tmpdir(), "clawdi-invalid-apply-identity-"));
 		roots.push(root);
 		const missing = join(root, "missing.json");
-		expect(() => readRuntimeApplyContext({}, missing)).toThrow(
-			/missing runtime apply identity file/,
-		);
-		expect(() => readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: missing })).toThrow(
-			/could not read runtime apply identity file/,
-		);
+		expect(() => readRuntimeApplyContext(missing)).toThrow(/could not read runtime context file/);
 
 		const invalid = join(root, "invalid.json");
 		writeFileSync(invalid, JSON.stringify({ generation: 8 }));
-		expect(() => readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: invalid })).toThrow(
-			/invalid runtime apply identity file/,
-		);
-		expect(() =>
-			readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: "relative.json" }),
-		).toThrow(/canonical absolute path/);
+		expect(() => readRuntimeApplyContext(invalid)).toThrow(/invalid runtime context file/);
+
+		const legacy = join(root, "legacy.json");
+		writeFileSync(legacy, JSON.stringify({ schemaVersion: "clawdi.runtimeApplyIdentity.v1" }));
+		expect(() => readRuntimeApplyContext(legacy)).toThrow(/invalid runtime context file/);
 	});
 
-	test("rejects invalid projected runtime environment values", () => {
-		const root = mkdtempSync(join(tmpdir(), "clawdi-invalid-runtime-env-"));
+	test("rejects the removed runtimeEnv parallel secret authority", () => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-removed-runtime-env-"));
 		roots.push(root);
-		const path = identityFile(root);
-		const parsed = JSON.parse(readFileSync(path, "utf-8")) as Record<string, unknown>;
-		parsed.runtimeEnv = { "INVALID-NAME": " secret" };
+		const path = contextFile(root);
+		const parsed: Record<string, unknown> = JSON.parse(readFileSync(path, "utf-8"));
+		parsed.runtimeEnv = { OPENCLAW_GATEWAY_TOKEN: "legacy-token" };
 		writeFileSync(path, JSON.stringify(parsed));
-		expect(() => readRuntimeApplyContext({ CLAWDI_RUNTIME_APPLY_IDENTITY_FILE: path })).toThrow(
-			/invalid runtime apply identity file/,
-		);
+		expect(() => readRuntimeApplyContext(path)).toThrow(/invalid runtime context file/);
+	});
+
+	test.each([
+		["source", "/etc/clawdi/runtime-source.json"],
+		["sourcePath", "/etc/clawdi/runtime-source.json"],
+		["manifestUrl", "https://runtime.test/v1/runtime/manifest"],
+		["authTokenEnv", "CLAWDI_AUTH_TOKEN"],
+		["runtimeMode", "hosted"],
+	])("rejects removed top-level runtime context field %s", (field, value) => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-removed-runtime-context-field-"));
+		roots.push(root);
+		const path = contextFile(root);
+		const parsed: Record<string, unknown> = JSON.parse(readFileSync(path, "utf-8"));
+		parsed[field] = value;
+		writeFileSync(path, JSON.stringify(parsed));
+		expect(() => readRuntimeApplyContext(path)).toThrow(/invalid runtime context file/);
+	});
+
+	test.each([
+		["env", "CLAWDI_AUTH_TOKEN"],
+		["path", "/run/secrets/clawdi-auth-token"],
+		["tokenRef", "secret://clawdi/auth-token"],
+	])("rejects removed manifest source auth field %s", (field, value) => {
+		const root = mkdtempSync(join(tmpdir(), "clawdi-removed-manifest-auth-field-"));
+		roots.push(root);
+		const path = contextFile(root);
+		const parsed: Record<string, unknown> = JSON.parse(readFileSync(path, "utf-8"));
+		const manifestSource = parsed.manifestSource;
+		if (typeof manifestSource !== "object" || manifestSource === null) {
+			throw new Error("expected manifestSource fixture");
+		}
+		const auth = Reflect.get(manifestSource, "auth");
+		if (typeof auth !== "object" || auth === null) throw new Error("expected auth fixture");
+		Reflect.set(auth, field, value);
+		writeFileSync(path, JSON.stringify(parsed));
+		expect(() => readRuntimeApplyContext(path)).toThrow(/invalid runtime context file/);
 	});
 });

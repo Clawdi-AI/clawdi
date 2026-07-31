@@ -12,10 +12,10 @@ import {
 	symlinkSync,
 	writeFileSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { runtimeInstallReceiptsPath } from "./install-receipts";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
-import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runningAsRoot } from "./runtime-user-command";
 import { isGeneratedRuntimeSystemdFile } from "./systemd-user";
 
@@ -37,16 +37,19 @@ export interface RuntimeLiveSnapshot {
 	entries: Map<string, RuntimeLiveSnapshotNode>;
 }
 
-export function runtimeLiveSnapshotPaths(manifest: RuntimeManifest, paths: RuntimePaths): string[] {
-	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
-	const openClawDatabase = join(
-		projectionHome,
-		".openclaw",
-		"agents",
-		"main",
-		"agent",
-		"openclaw-agent.sqlite",
-	);
+export interface RuntimeManagedMutationPlan {
+	rootTargets: string[];
+	trustedRootDirectories: string[];
+	runtimeUserTargets: string[];
+	runtimeUserTrustedRoots: string[];
+	runtimeUserSymlinkTargets: string[];
+	metadataTargets: string[];
+}
+
+export function runtimeRootLiveMutationTargets(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+): string[] {
 	const result = new Set<string>([
 		paths.managedConfig,
 		paths.syncState,
@@ -56,15 +59,12 @@ export function runtimeLiveSnapshotPaths(manifest: RuntimeManifest, paths: Runti
 		paths.managedSecretCacheFile,
 		paths.appliedState,
 		paths.oauthCredentialRoot,
-		join(projectionHome, ".hermes", "auth.json"),
-		openClawDatabase,
-		`${openClawDatabase}-wal`,
-		`${openClawDatabase}-shm`,
+		runtimeInstallReceiptsPath(paths),
+		paths.runConfigRoot,
 		paths.egressProfileRoot,
 		paths.installInventory,
 		paths.projectionRoot,
 		join(paths.instanceRoot, manifest.instanceId),
-		paths.managedSecretFile,
 		paths.daemonAuthToken,
 		join(paths.managedSecretRoot, "egress-secrets.json"),
 		paths.instanceData,
@@ -83,30 +83,141 @@ export function runtimeLiveSnapshotPaths(manifest: RuntimeManifest, paths: Runti
 	return [...result].sort();
 }
 
-export function captureRuntimeLiveSnapshot(
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-): RuntimeLiveSnapshot {
-	for (const path of runtimeManagedDirectoryPaths(manifest, paths)) {
-		assertRuntimeManagedDirectoryTrusted(path);
+export function runtimeLiveSnapshotPaths(plan: RuntimeManagedMutationPlan): string[] {
+	return [...new Set([...plan.rootTargets, ...plan.runtimeUserTargets])].sort();
+}
+
+export function captureRuntimeLiveSnapshot(plan: RuntimeManagedMutationPlan): RuntimeLiveSnapshot {
+	assertRuntimeUserMutationPathsTrusted(
+		plan.runtimeUserTargets,
+		plan.runtimeUserTrustedRoots,
+		plan.runtimeUserSymlinkTargets,
+	);
+	const rootTargets = [...new Set(plan.rootTargets)].sort();
+	for (const path of plan.trustedRootDirectories) assertRuntimeManagedDirectoryTrusted(path);
+	const runtimeUserTargets = [...new Set(plan.runtimeUserTargets)].sort();
+	const duplicate = rootTargets.find((path) => runtimeUserTargets.includes(path));
+	if (duplicate) throw new Error(`runtime mutation target has multiple owners: ${duplicate}`);
+	const snapshotPaths = [...rootTargets, ...runtimeUserTargets].sort();
+	for (const [index, path] of snapshotPaths.entries()) {
+		const nested = snapshotPaths
+			.slice(index + 1)
+			.find((candidate) => candidate.startsWith(`${path}/`));
+		if (nested) throw new Error(`runtime mutation targets overlap: ${path} and ${nested}`);
 	}
-	const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths);
+	const metadataTargets = [
+		...new Set([...plan.metadataTargets, ...runtimeLiveSnapshotMetadataPaths(snapshotPaths)]),
+	].sort();
+	const metadataOverlap = metadataTargets.find((path) => snapshotPaths.includes(path));
+	if (metadataOverlap) {
+		throw new Error(`runtime mutation target also used as metadata target: ${metadataOverlap}`);
+	}
 	return {
 		entries: new Map([
-			...snapshotPaths.map((path) => [path, captureRuntimeLiveNode(path)] as const),
-			...runtimeLiveSnapshotMetadataPaths(snapshotPaths).map(
-				(path) => [path, captureRuntimeLiveMetadata(path)] as const,
-			),
+			...rootTargets.map((path) => [path, captureRuntimeLiveNode(path, true)] as const),
+			...runtimeUserTargets.map((path) => [path, captureRuntimeLiveNode(path, false)] as const),
+			...metadataTargets.map((path) => [path, captureRuntimeLiveMetadata(path)] as const),
 		]),
 	};
+}
+
+function assertRuntimeUserMutationPathsTrusted(
+	targets: string[],
+	roots: string[],
+	symlinkTargets: string[],
+): void {
+	const trustedRoots = [...new Set(roots.map((root) => resolve(root)))].sort(
+		(left, right) => right.length - left.length,
+	);
+	const resolvedTargets = [...new Set(targets.map((path) => resolve(path)))].sort();
+	const allowedSymlinkTargets = new Set(symlinkTargets.map((path) => resolve(path)));
+	for (const target of allowedSymlinkTargets) {
+		if (!resolvedTargets.includes(target)) {
+			throw new Error(`runtime-user symlink target is not a mutation target: ${target}`);
+		}
+	}
+	for (const target of resolvedTargets) {
+		const boundary = trustedRoots.find((root) => {
+			const candidate = relative(root, target);
+			return candidate === "" || (!candidate.startsWith("..") && !isAbsolute(candidate));
+		});
+		if (!boundary) {
+			throw new Error(`runtime-user mutation target is outside trusted roots: ${target}`);
+		}
+		let current = target;
+		while (true) {
+			try {
+				const stat = lstatSync(current);
+				if (stat.isSymbolicLink() && (current !== target || !allowedSymlinkTargets.has(target))) {
+					throw new Error(`runtime-user mutation path contains a symlink: ${current}`);
+				}
+				if (current !== target && !stat.isDirectory()) {
+					throw new Error(`runtime-user mutation ancestor is not a directory: ${current}`);
+				}
+			} catch (error) {
+				if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+			}
+			if (current === boundary) break;
+			const parent = dirname(current);
+			if (parent === current) {
+				throw new Error(`runtime-user mutation target has no trusted boundary: ${target}`);
+			}
+			current = parent;
+		}
+	}
+}
+
+export function runtimeRootLiveMutationDirectories(
+	manifest: RuntimeManifest,
+	paths: RuntimePaths,
+): string[] {
+	return [
+		paths.runConfigRoot,
+		paths.systemdEnvRoot,
+		paths.egressProfileRoot,
+		paths.installInventory,
+		paths.oauthCredentialRoot,
+		paths.projectionRoot,
+		join(paths.instanceRoot, manifest.instanceId),
+	];
+}
+
+function assertRuntimeManagedDirectoryTrusted(path: string): void {
+	let stat: ReturnType<typeof lstatSync>;
+	try {
+		stat = lstatSync(path);
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw error;
+	}
+	if (!stat.isDirectory() || stat.isSymbolicLink()) {
+		throw new Error(`runtime managed directory is not a real directory: ${path}`);
+	}
+	if ((stat.mode & 0o022) !== 0) {
+		throw new Error(`runtime managed directory is group/world writable: ${path}`);
+	}
+	if (runningAsRoot() && stat.uid !== 0) {
+		throw new Error(`runtime managed directory is not root-owned: ${path}`);
+	}
 }
 
 export function restoreRuntimeLiveSnapshot(snapshot: RuntimeLiveSnapshot): void {
 	for (const [path, node] of snapshot.entries) {
 		if (node.kind !== "metadata") restoreRuntimeLiveNode(path, node);
 	}
-	for (const [path, node] of snapshot.entries) {
-		if (node.kind === "metadata") restoreRuntimeLiveNode(path, node);
+	const metadataEntries = [...snapshot.entries].filter(
+		(entry): entry is [string, Extract<RuntimeLiveSnapshotNode, { kind: "metadata" }>] =>
+			entry[1].kind === "metadata",
+	);
+	for (const [path, node] of metadataEntries
+		.filter(([, node]) => node.existed)
+		.sort(([left], [right]) => left.length - right.length)) {
+		restoreRuntimeLiveNode(path, node);
+	}
+	for (const [path, node] of metadataEntries
+		.filter(([, node]) => !node.existed)
+		.sort(([left], [right]) => right.length - left.length)) {
+		restoreRuntimeLiveNode(path, node);
 	}
 }
 
@@ -134,36 +245,6 @@ function isGeneratedSystemdFile(path: string): boolean {
 	}
 }
 
-function runtimeManagedDirectoryPaths(manifest: RuntimeManifest, paths: RuntimePaths): string[] {
-	return [
-		paths.runConfigRoot,
-		paths.systemdEnvRoot,
-		paths.egressProfileRoot,
-		paths.installInventory,
-		paths.projectionRoot,
-		join(paths.instanceRoot, manifest.instanceId),
-	];
-}
-
-function assertRuntimeManagedDirectoryTrusted(path: string): void {
-	let stat: ReturnType<typeof lstatSync>;
-	try {
-		stat = lstatSync(path);
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
-		throw error;
-	}
-	if (!stat.isDirectory() || stat.isSymbolicLink()) {
-		throw new Error(`runtime managed directory is not a real directory: ${path}`);
-	}
-	if ((stat.mode & 0o022) !== 0) {
-		throw new Error(`runtime managed directory is group/world writable: ${path}`);
-	}
-	if (runningAsRoot() && stat.uid !== 0) {
-		throw new Error(`runtime managed directory is not root-owned: ${path}`);
-	}
-}
-
 function runtimeLiveSnapshotMetadataPaths(snapshotPaths: readonly string[]): string[] {
 	return [
 		...new Set(
@@ -174,7 +255,7 @@ function runtimeLiveSnapshotMetadataPaths(snapshotPaths: readonly string[]): str
 	].sort();
 }
 
-function captureRuntimeLiveNode(path: string): RuntimeLiveSnapshotNode {
+function captureRuntimeLiveNode(path: string, requireRootOwner: boolean): RuntimeLiveSnapshotNode {
 	let stat: ReturnType<typeof lstatSync>;
 	try {
 		stat = lstatSync(path);
@@ -196,10 +277,10 @@ function captureRuntimeLiveNode(path: string): RuntimeLiveSnapshotNode {
 	}
 	if (!stat.isDirectory()) throw new Error(`unsupported runtime live-state path: ${path}`);
 	const mode = stat.mode & 0o777;
-	if ((mode & 0o022) !== 0) {
+	if (requireRootOwner && (mode & 0o022) !== 0) {
 		throw new Error(`runtime live-state snapshot directory is group/world writable: ${path}`);
 	}
-	if (runningAsRoot() && stat.uid !== 0) {
+	if (requireRootOwner && runningAsRoot() && stat.uid !== 0) {
 		throw new Error(`runtime live-state snapshot directory is not root-owned: ${path}`);
 	}
 	return {
@@ -210,7 +291,7 @@ function captureRuntimeLiveNode(path: string): RuntimeLiveSnapshotNode {
 		entries: new Map(
 			readdirSync(path)
 				.sort()
-				.map((entry) => [entry, captureRuntimeLiveNode(join(path, entry))]),
+				.map((entry) => [entry, captureRuntimeLiveNode(join(path, entry), requireRootOwner)]),
 		),
 	};
 }
@@ -218,6 +299,9 @@ function captureRuntimeLiveNode(path: string): RuntimeLiveSnapshotNode {
 function captureRuntimeLiveMetadata(path: string): RuntimeLiveSnapshotNode {
 	try {
 		const stat = lstatSync(path);
+		if (!stat.isDirectory() || stat.isSymbolicLink()) {
+			throw new Error(`runtime mutation metadata target is not a real directory: ${path}`);
+		}
 		return {
 			kind: "metadata",
 			existed: true,

@@ -7,6 +7,7 @@ we verify the gate as part of test surface, not bypass it.
 
 import asyncio
 import json
+import logging
 import uuid
 from collections import Counter
 from collections.abc import AsyncIterator
@@ -798,6 +799,7 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
     from sqlalchemy import select
 
     from app.models.ai_provider import AiProvider, AiProviderAuthPayload
+    from app.models.audit import ControlPlaneAuditEvent
     from app.services.managed_ai_provider import (
         MANAGED_AI_PROVIDER_API_MODE,
         MANAGED_AI_PROVIDER_RUNTIME_ENV,
@@ -827,6 +829,16 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
             "supports_reasoning": True,
         }
     ]
+    previous_audit_ids = set(
+        (
+            await db_session.scalars(
+                select(ControlPlaneAuditEvent.id).where(
+                    ControlPlaneAuditEvent.action == "ai_provider.managed.upsert",
+                    ControlPlaneAuditEvent.resource_id == V2_MANAGED_AI_PROVIDER_ID,
+                )
+            )
+        ).all()
+    )
     r = await admin_client.put(
         f"/v1/admin/ai-providers/{route_provider_id}",
         headers=_AUTH,
@@ -894,13 +906,12 @@ async def test_admin_upsert_managed_ai_provider_writes_fixed_contract(
         assert unchanged_method_response.headers["allow"] == "PUT"
         assert unchanged_method_response.content == b'{"detail":"Method Not Allowed"}'
 
-    from app.models.audit import ControlPlaneAuditEvent
-
     event = (
         await db_session.execute(
             select(ControlPlaneAuditEvent).where(
                 ControlPlaneAuditEvent.action == "ai_provider.managed.upsert",
                 ControlPlaneAuditEvent.resource_id == V2_MANAGED_AI_PROVIDER_ID,
+                ControlPlaneAuditEvent.id.not_in(previous_audit_ids),
             )
         )
     ).scalar_one()
@@ -2032,8 +2043,11 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
 
     from sqlalchemy import select
 
-    from app.models.hosted_runtime import HostedRuntimeState
+    from app.models.hosted_runtime import HostedRuntimeSecret, HostedRuntimeState
     from app.models.session import AgentEnvironment
+    from app.services.runtime_source import load_runtime_source_batch, render_runtime_source
+    from app.services.vault_crypto import decrypt
+    from tests.hosted_runtime_fixtures import ensure_canonical_codex_tool_provider
 
     agent_id = uuid.uuid4()
     created = await admin_client.post(
@@ -2059,41 +2073,47 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     assert env.default_name == "Codex"
     assert env.registration_key is None
 
+    await ensure_canonical_codex_tool_provider(db_session, seed_user)
+    runtime_body = {
+        "deployment_id": "dep-admin-agent-alias",
+        "instance_id": "iid-admin-agent-alias",
+        "generation": 7,
+        "cli_package_spec": "clawdi@0.12.10-beta.57",
+        "locale": {"language": "en", "timezone": "America/Los_Angeles"},
+        "system": {},
+        "live_sync": {"enabled": False, "agents": []},
+        "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
+        "tools": {
+            "codex": {
+                "enabled": True,
+                "provider_id": "clawdi-managed-v2",
+                "primary_model": {
+                    "provider_id": "clawdi-managed-v2",
+                    "model": "gpt-5.5",
+                },
+            }
+        },
+        "secretValues": {
+            "secret://clawdi/auth-token": "admin-runtime-auth-token",
+            "secret://runtime/openclaw/gateway-token": "admin-openclaw-gateway-token",
+        },
+        "runtimes": {
+            "openclaw": {
+                "enabled": True,
+                "providerMode": "configured",
+                "provider_ids": ["clawdi-managed-v2"],
+                "primary_model": {
+                    "provider_id": "clawdi-managed-v2",
+                    "model": "gpt-5.5",
+                },
+                "install": {"source": "official"},
+            }
+        },
+    }
     runtime = await admin_client.put(
         f"/v1/admin/agents/{agent_id}/runtime-state",
         headers=_AUTH,
-        json={
-            "deployment_id": "dep-admin-agent-alias",
-            "instance_id": "iid-admin-agent-alias",
-            "generation": 7,
-            "cli_package_spec": "clawdi@0.12.10-beta.57",
-            "locale": {"language": "en", "timezone": "America/Los_Angeles"},
-            "system": {},
-            "live_sync": {"enabled": False, "agents": []},
-            "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
-            "tools": {
-                "codex": {
-                    "enabled": True,
-                    "provider_id": "clawdi-managed",
-                    "primary_model": {
-                        "provider_id": "clawdi-managed",
-                        "model": "gpt-5.5",
-                    },
-                }
-            },
-            "runtimes": {
-                "openclaw": {
-                    "enabled": True,
-                    "providerMode": "configured",
-                    "provider_ids": ["clawdi-managed"],
-                    "primary_model": {
-                        "provider_id": "clawdi-managed",
-                        "model": "gpt-5.5",
-                    },
-                    "install": {"source": "official"},
-                }
-            },
-        },
+        json=runtime_body,
     )
     assert runtime.status_code == 200, runtime.text
     assert runtime.json()["environment_id"] == str(agent_id)
@@ -2105,6 +2125,68 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
     ).scalar_one_or_none()
     assert state is not None
     assert state.deployment_id == "dep-admin-agent-alias"
+    secret_rows = list(
+        (
+            await db_session.execute(
+                select(HostedRuntimeSecret)
+                .where(HostedRuntimeSecret.environment_id == agent_id)
+                .order_by(HostedRuntimeSecret.secret_ref)
+            )
+        ).scalars()
+    )
+    expected_secrets = {
+        "secret://clawdi/auth-token": "admin-runtime-auth-token",
+        "secret://runtime/openclaw/gateway-token": "admin-openclaw-gateway-token",
+    }
+    assert [row.secret_ref for row in secret_rows] == sorted(expected_secrets)
+    for row in secret_rows:
+        plaintext = expected_secrets[row.secret_ref]
+        assert row.encrypted_value != plaintext.encode()
+        assert decrypt(row.encrypted_value, row.nonce) == plaintext
+        assert row.key_version == "vault.v1"
+    stored_identity = {
+        row.secret_ref: (row.id, row.encrypted_value, row.nonce, row.key_version)
+        for row in secret_rows
+    }
+    first_batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
+    first_source = render_runtime_source(
+        first_batch,
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+
+    repeated = await admin_client.put(
+        f"/v1/admin/agents/{agent_id}/runtime-state",
+        headers=_AUTH,
+        json=runtime_body,
+    )
+    assert repeated.status_code == 200, repeated.text
+    db_session.expire_all()
+    repeated_rows = list(
+        (
+            await db_session.execute(
+                select(HostedRuntimeSecret)
+                .where(HostedRuntimeSecret.environment_id == agent_id)
+                .order_by(HostedRuntimeSecret.secret_ref)
+            )
+        ).scalars()
+    )
+    assert {
+        row.secret_ref: (row.id, row.encrypted_value, row.nonce, row.key_version)
+        for row in repeated_rows
+    } == stored_identity
+    repeated_batch = await load_runtime_source_batch(db_session, environment_ids=[agent_id])
+    repeated_source = render_runtime_source(
+        repeated_batch,
+        environment_id=agent_id,
+        public_api_url="https://cloud.test",
+        vault_key_identity="test-key-version",
+        decrypt_secrets=False,
+    )
+    assert repeated_source.secret_values == {}
+    assert repeated_source.source_revision == first_source.source_revision
 
     deleted_state = await admin_client.delete(
         f"/v1/admin/agents/{agent_id}/runtime-state",
@@ -2126,6 +2208,71 @@ async def test_admin_agents_alias_registers_with_agent_id_and_runtime_state(
         await db_session.execute(select(AgentEnvironment).where(AgentEnvironment.id == agent_id))
     ).scalar_one_or_none()
     assert env is None
+
+
+@pytest.mark.asyncio
+async def test_admin_runtime_secret_validation_redacts_plaintext(
+    admin_client,
+    db_session,
+    caplog,
+):
+    from sqlalchemy import func, select
+
+    from app.models.audit import ControlPlaneAuditEvent
+    from app.models.platform_idempotency import PlatformMutationIdempotency
+
+    marker = "admin-secret-must-not-leak\n"
+    caplog.set_level(logging.WARNING, logger="app.main")
+    audit_count = await db_session.scalar(select(func.count(ControlPlaneAuditEvent.id)))
+    idempotency_count = await db_session.scalar(select(func.count(PlatformMutationIdempotency.id)))
+    response = await admin_client.put(
+        f"/v1/admin/agents/{uuid.uuid4()}/runtime-state",
+        headers=_AUTH,
+        json={
+            "deployment_id": "invalid-secret",
+            "instance_id": "invalid-secret",
+            "generation": 1,
+            "cli_package_spec": "clawdi@0.12.10-beta.57",
+            "locale": {"language": "en", "timezone": "UTC"},
+            "system": {},
+            "runtimes": {
+                "openclaw": {
+                    "enabled": True,
+                    "providerMode": "configured",
+                    "provider_ids": ["clawdi-managed"],
+                    "primary_model": {
+                        "provider_id": "clawdi-managed",
+                        "model": "gpt-5.5",
+                    },
+                    "install": {"source": "official"},
+                }
+            },
+            "live_sync": {"enabled": False, "agents": []},
+            "recovery": {"cacheManifest": True, "allowOfflineBoot": True},
+            "tools": {
+                "codex": {
+                    "enabled": True,
+                    "provider_id": "clawdi-managed",
+                    "primary_model": {
+                        "provider_id": "clawdi-managed",
+                        "model": "gpt-5.5",
+                    },
+                }
+            },
+            "secretValues": {"secret://runtime/invalid": marker},
+        },
+    )
+
+    assert response.status_code == 422
+    assert marker.strip() not in response.text
+    assert marker.strip() not in caplog.text
+    assert await db_session.scalar(select(func.count(ControlPlaneAuditEvent.id))) == audit_count
+    assert (
+        await db_session.scalar(select(func.count(PlatformMutationIdempotency.id)))
+        == idempotency_count
+    )
+    audits = list((await db_session.scalars(select(ControlPlaneAuditEvent))).all())
+    assert all(marker.strip() not in str(event.details) for event in audits)
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	readlinkSync,
 	rmSync,
 	statSync,
 	symlinkSync,
@@ -25,12 +26,18 @@ import {
 } from "./applied-state";
 import { loadHostedBundledSkill } from "./hosted-bundled-skill";
 import { hostedAiProviderCatalog } from "./hosted-provider-resolution";
-import { runtimeLiveSnapshotPaths } from "./live-state-snapshot";
+import {
+	captureRuntimeLiveSnapshot,
+	restoreRuntimeLiveSnapshot,
+	runtimeRootLiveMutationTargets,
+} from "./live-state-snapshot";
 import {
 	cacheRuntimeLastGoodManifest,
 	convergeRuntimeManifest,
 	type RuntimeManifest,
+	runtimeInstallerMutationTargets,
 	runtimeRecoverableSecretValues,
+	runtimeUserMutationTargets,
 } from "./manifest";
 import {
 	hostedRuntimeBundleV2ManifestSchema,
@@ -41,19 +48,10 @@ import {
 	OFFICIAL_INSTALL_ARGS,
 	OFFICIAL_INSTALL_URLS,
 } from "./manifest-contract";
-import {
-	hostedManifestToRuntimeManifest,
-	normalizeManifestPayload,
-	type RuntimeManifestLoad,
-} from "./manifest-source";
+import { hostedManifestToRuntimeManifest, type RuntimeManifestLoad } from "./manifest-source";
 import { getRuntimePaths, type RuntimePaths } from "./paths";
 import { type RuntimeRunSettings, runtimeRunConfigPath } from "./run-config";
-import {
-	normalizeSecretValues,
-	processRuntimeEnvironment,
-	projectedRuntimeEnvironment,
-	runtimeSecretValue,
-} from "./secret-values";
+import { normalizeSecretValues, runtimeSecretValue } from "./secret-values";
 import { GENERATED_RUNTIME_SYSTEMD_FILE_HEADER } from "./systemd-user";
 
 const successfulPrerequisiteActivation = () => ({
@@ -67,6 +65,11 @@ const tempRoots: string[] = [];
 const TEST_HOSTED_LOCALE = { language: "en" as const, timezone: "UTC" };
 const TEST_HOSTED_MINIMUM_CLI_VERSION = "0.12.10-beta.57";
 const TEST_HOSTED_HOME = "/home/clawdi";
+const TEST_HOSTED_SECRET_VALUES = {
+	"secret://clawdi/auth-token": "test-auth-token",
+	"secret://runtime/openclaw/gateway-token": "gateway-token",
+	"secret://tool.codex.apiKey": "test-codex-provider-key",
+};
 const TEST_HOSTED_CODEX_TOOLING = {
 	codex: {
 		enabled: true,
@@ -79,7 +82,7 @@ const TEST_HOSTED_CODEX_TOOLING = {
 			apiMode: "openai_responses",
 			managed_by: "clawdi",
 			runtimeEnvName: "OPENAI_API_KEY",
-			apiKeySecretRef: "tool.codex.apiKey",
+			apiKeySecretRef: "secret://tool.codex.apiKey",
 		},
 	},
 };
@@ -99,7 +102,7 @@ function hostedOpenClawNativeAuth(
 	void publicUrl;
 	return {
 		mode: "token",
-		tokenRef: "env://OPENCLAW_GATEWAY_TOKEN",
+		tokenRef: "secret://runtime/openclaw/gateway-token",
 		deviceAuthRequired: false,
 		activation: {
 			enabled: true,
@@ -116,8 +119,6 @@ function tempRuntimePaths(): RuntimePaths {
 	process.env.CLAWDI_SYSTEMD_SYSTEM_ROOT = join(root, "run", "systemd", "system");
 	process.env.CLAWDI_RUNTIME_HOME = join(root, "home");
 	process.env.CLAWDI_HOME = join(root, "clawdi-home");
-	process.env.CLAWDI_AUTH_TOKEN = "test-token";
-	process.env.CLAWDI_RUNTIME_AUTH_ENV = "CLAWDI_AUTH_TOKEN";
 	process.env.CLAWDI_CODEX_INSTALL_DISABLED = "1";
 	return getRuntimePaths({ mode: "hosted" });
 }
@@ -129,29 +130,28 @@ function runSettings(command: string, args: string[]): RuntimeRunSettings {
 function manifestLoad(
 	manifest: RuntimeManifest,
 	sourcePath: string,
-	secretValues?: Record<string, string>,
+	secretValues: Record<string, string> = TEST_HOSTED_SECRET_VALUES,
 ): RuntimeManifestLoad {
 	return {
 		manifest,
-		source: "fixture-file",
+		source: "remote-datasource",
 		sourcePath,
 		offline: false,
 		secretValues,
 		applyContext: {
-			kind: "identity-file",
+			kind: "context-file",
 			identity: {
 				generation: manifest.applyGeneration ?? manifest.generation,
 				manifestETag: `"test-${manifest.generation}"`,
 				applyReceiptId: "test-apply-receipt",
 				bootNonce: "test-boot-nonce",
 			},
-			runtimeEnvironment: projectedRuntimeEnvironment(
-				Object.fromEntries(
-					Object.entries(process.env).filter(
-						(entry): entry is [string, string] => entry[1] !== undefined,
-					),
-				),
-			),
+			cliPackageSpec: "clawdi@1.2.3",
+			manifestSource: {
+				type: "http",
+				url: "https://runtime.test/v1/runtime/manifest?environment_id=env-test",
+				auth: { type: "bearer", token: "test-token" },
+			},
 		},
 	};
 }
@@ -381,7 +381,7 @@ function hostedManifestFixture(overrides: Record<string, unknown> = {}): Record<
 						"--force",
 					],
 					secretEnv: {
-						OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 					},
 				},
 			},
@@ -409,7 +409,7 @@ function hostedRuntimeFixture(overrides: Record<string, unknown> = {}): Record<s
 				"--force",
 			],
 			secretEnv: {
-				OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+				OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 			},
 		},
 		...overrides,
@@ -426,8 +426,8 @@ function hostedHermesManifestFixture(
 				mode: "password",
 				provider: "basic",
 				username: "admin",
-				passwordSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_PASSWORD",
-				sessionSecretRef: "env://HERMES_DASHBOARD_BASIC_AUTH_SECRET",
+				passwordSecretRef: "secret://runtime/hermes/dashboard-password",
+				sessionSecretRef: "secret://runtime/hermes/dashboard-session-secret",
 				sessionTtlSeconds: 43_200,
 				publicUrl: "https://agent.example.test/hermes",
 				activation: {
@@ -477,7 +477,7 @@ function hostedOpenClawV2ManifestFixture(
 					],
 					env: {},
 					secretEnv: {
-						OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+						OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 					},
 					prependPath: [],
 				},
@@ -573,7 +573,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			}
 		).openclaw.services = {
 			helper: {
-				secretEnv: { OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN" },
+				secretEnv: { OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token" },
 			},
 		};
 		expect(
@@ -821,7 +821,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		["run placeholder", { run: { env: { TOKEN: "clawdi-egress-placeholder" } } }],
 		[
 			"run provider secret ref",
-			{ run: { secretEnv: { OPENAI_API_KEY: "provider.clawdi-managed-v2.apiKey" } } },
+			{ run: { secretEnv: { OPENAI_API_KEY: "secret://provider.clawdi-managed-v2.apiKey" } } },
 		],
 		[
 			"service provider secret ref",
@@ -845,7 +845,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const runtime = hostedRuntimeFixture({
 			providerMode: "unmanaged",
 			provider_ids: [],
-			services: { helper: { secretEnv: { TOKEN: "clawdi://default/key" } } },
+			services: { helper: { secretEnv: { TOKEN: "secret://vault/default/key" } } },
 		});
 		delete runtime.primary_model;
 
@@ -867,7 +867,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		const provider = {
 			...TEST_HOSTED_CODEX_TOOLING.codex.provider,
 			runtimeEnvName: "CLAWDI_MANAGED_OPENAI_API_KEY",
-			apiKeySecretRef: "provider.default.apiKey",
+			apiKeySecretRef: "secret://provider.default.apiKey",
 		};
 		const manifest = hostedManifestFixture({ providers: { default: provider } });
 
@@ -876,7 +876,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("rejects terminal Codex with a runtime-provider secret ref", () => {
 		const terminalTooling = structuredClone(TEST_HOSTED_CODEX_TOOLING);
-		terminalTooling.codex.provider.apiKeySecretRef = "provider.codex-managed.apiKey";
+		terminalTooling.codex.provider.apiKeySecretRef = "secret://provider.codex-managed.apiKey";
 		const manifest = hostedManifestFixture({ terminalTooling });
 		expect(hostedRuntimeManifestSchema.safeParse(manifest).success).toBe(false);
 	});
@@ -902,7 +902,7 @@ describe("runtime manifest reconciliation invariants", () => {
 	});
 
 	test.each([
-		"provider.stale.apiKey",
+		"secret://provider.stale.apiKey",
 		"secret://provider.stale.apiKey",
 	])("rejects provider secret value %s in unmanaged mode", (secretRef) => {
 		const runtime = hostedRuntimeFixture({
@@ -1064,7 +1064,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		["base_url", { base_url: "https://provider.example.test/v1" }],
 		["api_mode", { api_mode: "openai_chat" }],
 		["runtime_env_name", { runtime_env_name: "OPENAI_API_KEY" }],
-		["api_key_secret_ref", { api_key_secret_ref: "provider.default.apiKey" }],
+		["api_key_secret_ref", { api_key_secret_ref: "secret://provider.default.apiKey" }],
 	])("rejects noncanonical hosted provider field %s", (_name, provider) => {
 		expect(
 			hostedRuntimeManifestSchema.safeParse(
@@ -1193,7 +1193,7 @@ describe("runtime manifest reconciliation invariants", () => {
 				baseUrl: "https://provider.example.test/v1",
 				apiMode: "openai_chat",
 				models: [{ id: "gpt-test" }],
-				apiKeySecretRef: "provider.default.apiKey",
+				apiKeySecretRef: "secret://provider.default.apiKey",
 			},
 		],
 	])("accepts Cloud %s", (_name, provider) => {
@@ -1226,7 +1226,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const patchPath = join(paths.serviceStateRoot, "openclaw-gateway-patch.json");
 		const allowedOrigins = ["https://app-v2-18789.k3s.example.test"];
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
@@ -1284,7 +1283,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		const paths = tempRuntimePaths();
 		const openclawBin = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const patchPath = join(paths.serviceStateRoot, "openclaw-native-auth-patch.json");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		mkdirSync(dirname(openclawBin), { recursive: true });
 		writeFileSync(
 			openclawBin,
@@ -1312,15 +1310,16 @@ describe("runtime manifest reconciliation invariants", () => {
 		};
 		expect(() =>
 			convergeRuntimeManifest(
-				manifestLoad(normalized, "inline-hosted-openclaw-native-auth-missing-token"),
+				manifestLoad(normalized, "inline-hosted-openclaw-native-auth-missing-token", {}),
 				paths,
 			),
-		).toThrow("OpenClaw native gateway token is unavailable");
+		).toThrow("Runtime secret secret://runtime/openclaw/gateway-token is unavailable");
 		expect(existsSync(patchPath)).toBe(false);
-		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
-
 		const result = convergeRuntimeManifest(
-			manifestLoad(normalized, "inline-hosted-openclaw-native-auth"),
+			manifestLoad(normalized, "inline-hosted-openclaw-native-auth", {
+				"secret://runtime/openclaw/gateway-token": "gateway-token",
+				"secret://tool.codex.apiKey": "test-codex-provider-key",
+			}),
 			paths,
 		);
 
@@ -1356,7 +1355,7 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("rejects hosted manifests without an explicit CLI package policy", () => {
 		expect(() =>
-			normalizeManifestPayload({
+			hostedRuntimeManifestResponseSchema.parse({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -1457,7 +1456,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		},
 	])("rejects hosted CLI policy with $name", ({ clawdiCli }) => {
 		expect(() =>
-			normalizeManifestPayload({
+			hostedRuntimeManifestResponseSchema.parse({
 				manifest: {
 					schemaVersion: "clawdi.hosted-runtime.manifest.v1",
 					minimumCliVersion: TEST_HOSTED_MINIMUM_CLI_VERSION,
@@ -1518,6 +1517,15 @@ describe("runtime manifest reconciliation invariants", () => {
 				}).success,
 			).toBe(expected);
 		}
+	});
+
+	test("rejects raw secretValues keys in the Hosted fixture contract", () => {
+		expect(
+			hostedRuntimeManifestFixtureResponseSchema.safeParse({
+				manifest: hostedManifestFixture(),
+				secretValues: { "tool.codex.apiKey": "must-be-rejected" },
+			}).success,
+		).toBe(false);
 	});
 
 	test.each([
@@ -1594,7 +1602,7 @@ describe("runtime manifest reconciliation invariants", () => {
 							],
 							env: { OPENCLAW_TEST: "1" },
 							secretEnv: {
-								OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+								OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 							},
 							prependPath: [],
 						},
@@ -1647,13 +1655,16 @@ describe("runtime manifest reconciliation invariants", () => {
 				recovery: { cacheManifest: true, allowOfflineBoot: true },
 			},
 			secretValues: {
-				"providers/default/api-key": "sk-normalized",
+				"secret://providers/default/api-key": "sk-normalized",
 			},
 		};
 
-		const normalized = normalizeManifestPayload(hostedResponse);
-		const hostedManifest = hostedRuntimeManifestSchema.parse(hostedResponse.manifest);
-		expect(normalized.manifest).toEqual(hostedManifestToRuntimeManifest(hostedManifest));
+		const parsedResponse = hostedRuntimeManifestResponseSchema.parse(hostedResponse);
+		const hostedManifest = hostedRuntimeManifestSchema.parse(parsedResponse.manifest);
+		const normalized = {
+			manifest: hostedManifestToRuntimeManifest(hostedManifest),
+			secretValues: normalizeSecretValues(parsedResponse.secretValues),
+		};
 		expect(normalized.manifest.schemaVersion).toBe("clawdi.runtimeDesiredState.v1");
 		expect(normalized.manifest.runtime).toBe("openclaw");
 		expect(Object.keys(normalized.manifest.runtimes)).toEqual(["openclaw"]);
@@ -1674,7 +1685,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			"--force",
 		]);
 		expect(normalized.manifest.runtimes.openclaw.run?.secretEnv).toEqual({
-			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
 		expect(normalized.manifest.projection?.providers).toEqual(hostedResponse.manifest.providers);
 		expect(normalized.manifest.egressProfiles?.profiles.map((profile) => profile.id)).toContain(
@@ -1683,7 +1694,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(normalized.manifest.liveSync).toEqual(hostedResponse.manifest.liveSync);
 		expect("secretValues" in normalized.manifest).toBe(false);
 		expect(normalized.secretValues).toEqual({
-			"providers/default/api-key": "sk-normalized",
 			"secret://providers/default/api-key": "sk-normalized",
 		});
 	});
@@ -1864,10 +1874,8 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toThrow("hosted runtime manifests must declare exactly one selected runtime");
 	});
 
-	test("converges OpenClaw native token auth from env secret refs", () => {
+	test("converges OpenClaw native token auth from canonical bundle secret refs", () => {
 		const paths = tempRuntimePaths();
-		process.env.OPENCLAW_GATEWAY_TOKEN = "gateway-token";
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const manifest = baseManifest(
 			paths,
 			{
@@ -1887,7 +1895,7 @@ describe("runtime manifest reconciliation invariants", () => {
 						],
 						env: {},
 						secretEnv: {
-							OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+							OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 						},
 						prependPath: [],
 					},
@@ -1897,7 +1905,13 @@ describe("runtime manifest reconciliation invariants", () => {
 			{ runtime: "openclaw" },
 		);
 
-		const result = convergeRuntimeManifest(manifestLoad(manifest, "inline-openclaw"), paths);
+		const secretValues = {
+			"secret://runtime/openclaw/gateway-token": "gateway-token",
+		};
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "inline-openclaw", secretValues),
+			paths,
+		);
 
 		expect(result.installErrors).toEqual([]);
 		expect(result.enabledRuntimes).toEqual(["openclaw"]);
@@ -1920,12 +1934,12 @@ describe("runtime manifest reconciliation invariants", () => {
 			"--force",
 		]);
 		expect(runConfig.secretEnv).toEqual({
-			OPENCLAW_GATEWAY_TOKEN: "env://OPENCLAW_GATEWAY_TOKEN",
+			OPENCLAW_GATEWAY_TOKEN: "secret://runtime/openclaw/gateway-token",
 		});
 		expect(runConfig.secretFilePath).toBeNull();
-		expect(
-			runtimeSecretValue({}, "env://OPENCLAW_GATEWAY_TOKEN", processRuntimeEnvironment()),
-		).toBe("gateway-token");
+		expect(runtimeSecretValue(secretValues, "secret://runtime/openclaw/gateway-token")).toBe(
+			"gateway-token",
+		);
 		const unit = readFileSync(
 			join(paths.systemdUserRoot, "openclaw-gateway.service.d", "10-clawdi-hosted.conf"),
 			"utf8",
@@ -1942,7 +1956,6 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("keeps hosted managed provider key out of the agent env", () => {
 		const paths = tempRuntimePaths();
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const manifest = baseManifest(
 			paths,
 			{
@@ -2012,7 +2025,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 		const responsesKey = "sentinel-responses-runtime";
 		const anthropicKey = "sentinel-anthropic-runtime";
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		mkdirSync(dirname(hermesCommand), { recursive: true });
 		mkdirSync(dirname(legacyPlugin), { recursive: true });
 		writeFileSync(hermesCommand, "#!/bin/sh\nexit 0\n");
@@ -2445,7 +2457,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		["missing-mitmdump", "archive did not contain mitmdump"],
 		["activation", "injected egress activation failure"],
 	] as const)("fails closed and preserves authority on first-install and upgrade %s failure", (failure, expectedError) => {
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const prepareFailure = (paths: RuntimePaths, phase: "first" | "upgrade") => {
 			const version = `12.2.3-test-${failure}-${phase}`;
 			if (failure === "network") {
@@ -2532,13 +2543,7 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(firstErrors).not.toContain("test-token");
 		expect(firstCommits).toBe(0);
 		expectSnapshot(firstSnapshot);
-		if (failure === "activation") {
-			expect(
-				JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", firstPaths), "utf-8")),
-			).toMatchObject({
-				generation: 1,
-			});
-		}
+		expect(existsSync(runtimeRunConfigPath("openclaw", firstPaths))).toBe(false);
 		expect(existsSync(firstPaths.manifestLastGood)).toBe(false);
 		expect(existsSync(firstPaths.appliedState)).toBe(false);
 
@@ -2597,11 +2602,11 @@ describe("runtime manifest reconciliation invariants", () => {
 		}
 		expect(upgradeErrors).not.toContain("test-token");
 		expect(upgradeCommits).toBe(0);
-		expect(rollbackCalls).toBe(failure === "activation" ? 1 : 0);
+		expect(rollbackCalls).toBe(1);
 		expectSnapshot(previous);
 		expect(
 			JSON.parse(readFileSync(runtimeRunConfigPath("openclaw", upgradePaths), "utf-8")),
-		).toMatchObject({ generation: failure === "activation" ? 2 : 1 });
+		).toMatchObject({ generation: 1 });
 		expect(readRuntimeAppliedState(upgradePaths)?.generation).toBe(1);
 		expect(JSON.parse(readFileSync(upgradePaths.manifestLastGood, "utf-8"))).toMatchObject({
 			generation: 1,
@@ -2610,7 +2615,6 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("converges enabled egress when the pinned engine is ready", () => {
 		const paths = tempRuntimePaths();
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const artifact = writeTestMitmproxyArchive(paths, "ready-success", "ready");
 		const curl = installTestMitmproxyCurl(paths, artifact.path);
 		const manifest = egressRuntimeManifest(paths, {
@@ -2647,7 +2651,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		"absent",
 	] as const)("does not require the egress engine when profiles are %s", (profile) => {
 		const paths = tempRuntimePaths();
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const curl = installTestMitmproxyCurl(paths, null);
 		const manifest = egressRuntimeManifest(paths, {
 			generation: 1,
@@ -2695,7 +2698,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		mkdirSync(dirname(engineBinary), { recursive: true });
 		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
 		chmodSync(engineBinary, 0o700);
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const secretRef = "secret://providers/default/api-key";
 		const activeManifest = baseManifest(
 			paths,
@@ -2873,7 +2875,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		mkdirSync(dirname(engineBinary), { recursive: true });
 		writeFileSync(engineBinary, "#!/usr/bin/env sh\nexit 0\n");
 		chmodSync(engineBinary, 0o700);
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const secretRef = "secret://providers/default/api-key";
 		const manifest = manifestSchema.parse(
 			baseManifest(
@@ -2945,7 +2946,9 @@ describe("runtime manifest reconciliation invariants", () => {
 			);
 		};
 		const overwriteLiveSecret = (value: string) => {
-			const current = JSON.parse(readFileSync(secretFile, "utf-8")) as Record<string, string>;
+			const current = existsSync(secretFile)
+				? (JSON.parse(readFileSync(secretFile, "utf-8")) as Record<string, string>)
+				: { [secretRef]: value };
 			writeFileSync(
 				secretFile,
 				`${JSON.stringify(
@@ -3097,12 +3100,17 @@ describe("runtime manifest reconciliation invariants", () => {
 
 		// If the restart from a mixed D/cache-D/applied-C snapshot fails, only
 		// the failure path attempts to recover C. The unverifiable cache then
-		// fails closed without a rollback restart or an authority commit.
+		// fails closed by removing the sidecar secret while the remaining units
+		// still reconcile to the restored filesystem authority.
 		overwriteLiveSecret("000003");
 		cacheRuntimeLastGoodManifest(manifest, paths, secrets("000003"));
 		const committedC = readFileSync(paths.appliedState, "utf-8");
 		let mixedFailureCommits = 0;
 		let mixedFailureRollbacks = 0;
+		let mixedFailureRollbackSignal: {
+			restartEgressSidecar: boolean;
+			stopEgressSidecar: boolean;
+		} | null = null;
 		const mixedFailure = convergeRuntimeManifest(load("000003"), paths, {
 			cacheLastGood: false,
 			commitAuthority: () => {
@@ -3114,8 +3122,9 @@ describe("runtime manifest reconciliation invariants", () => {
 					expect(restartEgressSidecar).toBe(true);
 					throw new Error("injected mixed-snapshot restart failure");
 				},
-				rollback: () => {
+				rollback: (signal) => {
 					mixedFailureRollbacks++;
+					mixedFailureRollbackSignal = signal;
 				},
 			},
 		});
@@ -3123,16 +3132,17 @@ describe("runtime manifest reconciliation invariants", () => {
 			"injected mixed-snapshot restart failure",
 		);
 		expect(mixedFailure.installErrors.join("\n")).toContain(
-			"could not verify committed egress secret rollback authority",
-		);
-		expect(mixedFailure.installErrors.join("\n")).toContain(
-			"runtime systemd rollback skipped because filesystem authority restoration failed",
+			"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
 		);
 		expect(mixedFailureCommits).toBe(0);
-		expect(mixedFailureRollbacks).toBe(0);
+		expect(mixedFailureRollbacks).toBe(1);
+		expect(mixedFailureRollbackSignal).toMatchObject({
+			restartEgressSidecar: false,
+			stopEgressSidecar: true,
+		});
 		expect(readFileSync(paths.appliedState, "utf-8")).toBe(committedC);
 		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBe(revisionC);
-		expect(readFileSync(secretFile, "utf-8")).toContain("000003");
+		expect(existsSync(secretFile)).toBe(false);
 
 		// Legacy applied state can recover A from an exact content-identity
 		// match even when an interrupted write left unrelated live B bytes. A
@@ -3177,8 +3187,8 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(JSON.stringify(legacyRestartFailure)).not.toContain("egressSidecarSecretRevision");
 
 		// A legacy cache without its active egress secret cannot prove A. The
-		// desired restart still runs, but its failure must not restart the
-		// sidecar with the unverified snapshot B or attempt an authority commit.
+		// desired restart still runs, but its failure must remove the unverified
+		// snapshot B, stop the sidecar, and reconcile every independent unit.
 		cacheRuntimeLastGoodManifest(manifest, paths, secrets(legacyCommitted));
 		rmSync(paths.managedSecretCacheFile);
 		writeAuthority(legacyCommitted);
@@ -3186,6 +3196,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		const legacyMissingCacheApplied = readFileSync(paths.appliedState, "utf-8");
 		let legacyMissingCacheRestartCommits = 0;
 		let legacyMissingCacheRestartRollbacks = 0;
+		let legacyMissingCacheRestartSignal: {
+			restartEgressSidecar: boolean;
+			stopEgressSidecar: boolean;
+		} | null = null;
 		const legacyMissingCacheRestartFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
 			cacheLastGood: false,
 			commitAuthority: () => {
@@ -3198,8 +3212,9 @@ describe("runtime manifest reconciliation invariants", () => {
 					expect(readFileSync(secretFile, "utf-8")).toContain(legacyDesired);
 					throw new Error("injected legacy missing-cache restart failure");
 				},
-				rollback: () => {
+				rollback: (signal) => {
 					legacyMissingCacheRestartRollbacks++;
+					legacyMissingCacheRestartSignal = signal;
 				},
 			},
 		});
@@ -3210,18 +3225,26 @@ describe("runtime manifest reconciliation invariants", () => {
 			"injected legacy missing-cache restart failure",
 		);
 		expect(legacyMissingCacheRestartFailure.installErrors.join("\n")).toContain(
-			"runtime systemd rollback skipped because committed egress secret rollback authority could not be verified",
+			"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
 		);
 		expect(legacyMissingCacheRestartCommits).toBe(0);
-		expect(legacyMissingCacheRestartRollbacks).toBe(0);
+		expect(legacyMissingCacheRestartRollbacks).toBe(1);
+		expect(legacyMissingCacheRestartSignal).toMatchObject({
+			restartEgressSidecar: false,
+			stopEgressSidecar: true,
+		});
 		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyMissingCacheApplied);
 		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
-		expect(readFileSync(secretFile, "utf-8")).toContain(legacyInterrupted);
+		expect(existsSync(secretFile)).toBe(false);
 
-		// The same unverified legacy state also skips rollback if desired
-		// activation succeeds but the following authority commit fails.
+		// The same unverified legacy state also fails the sidecar closed if
+		// desired activation succeeds but the following authority commit fails.
 		let legacyMissingCacheCommits = 0;
 		let legacyMissingCacheRollbacks = 0;
+		let legacyMissingCacheSignal: {
+			restartEgressSidecar: boolean;
+			stopEgressSidecar: boolean;
+		} | null = null;
 		const legacyMissingCacheActivationSecrets: string[] = [];
 		const legacyMissingCacheFailure = convergeRuntimeManifest(load(legacyDesired), paths, {
 			cacheLastGood: false,
@@ -3237,8 +3260,9 @@ describe("runtime manifest reconciliation invariants", () => {
 					legacyMissingCacheActivationSecrets.push(readFileSync(secretFile, "utf-8"));
 					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
 				},
-				rollback: () => {
+				rollback: (signal) => {
 					legacyMissingCacheRollbacks++;
+					legacyMissingCacheSignal = signal;
 				},
 			},
 		});
@@ -3249,143 +3273,21 @@ describe("runtime manifest reconciliation invariants", () => {
 			"injected legacy authority commit failure",
 		);
 		expect(legacyMissingCacheFailure.installErrors.join("\n")).toContain(
-			"runtime systemd rollback skipped because committed egress secret rollback authority could not be verified",
+			"runtime egress sidecar stopped because committed secret rollback authority could not be verified",
 		);
 		expect(legacyMissingCacheCommits).toBe(1);
-		expect(legacyMissingCacheRollbacks).toBe(0);
+		expect(legacyMissingCacheRollbacks).toBe(1);
+		expect(legacyMissingCacheSignal).toMatchObject({
+			restartEgressSidecar: false,
+			stopEgressSidecar: true,
+		});
 		expect(legacyMissingCacheActivationSecrets).toHaveLength(1);
 		expect(legacyMissingCacheActivationSecrets[0]).toContain(legacyDesired);
 		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyMissingCacheApplied);
 		expect(readRuntimeAppliedState(paths)?.egressSidecarSecretRevision).toBeUndefined();
 		expect(existsSync(paths.managedSecretCacheFile)).toBe(false);
-		expect(readFileSync(secretFile, "utf-8")).toContain(legacyInterrupted);
+		expect(existsSync(secretFile)).toBe(false);
 		expect(JSON.stringify(legacyMissingCacheFailure)).not.toContain("egressSidecarSecretRevision");
-
-		// A legacy content identity deliberately excludes env:// values, so it
-		// cannot prove which env-backed material the sidecar last loaded. Current
-		// env C may be activated, but neither failure path may restart the sidecar
-		// with material reconstructed from C while authority still describes A.
-		const legacyEnvRef = "env://CLAWDI_TEST_LEGACY_EGRESS_SECRET";
-		const legacyEnvManifest = manifestSchema.parse({
-			...manifest,
-			egressProfiles: {
-				profiles: (manifest.egressProfiles?.profiles ?? []).map((profile) => ({
-					...profile,
-					rewrite: {
-						...profile.rewrite,
-						setHeaders: {
-							authorization: {
-								type: "secretRef",
-								secretRef: legacyEnvRef,
-								prefix: "Bearer ",
-							},
-						},
-					},
-				})),
-			},
-		});
-		const legacyEnvLoad = () => manifestLoad(legacyEnvManifest, "inline-legacy-env-egress", {});
-		const writeLegacyEnvAuthority = (egressSidecarSecretRevision?: string) => {
-			writeRuntimeAppliedState(
-				{
-					schemaVersion: "clawdi.runtimeAppliedState.v2",
-					appliedAt: "2026-07-28T00:00:00.000Z",
-					instanceId: legacyEnvManifest.instanceId,
-					etag: '"legacy-env-a"',
-					sourceRevision: "e".repeat(64),
-					generation: legacyEnvManifest.generation,
-					contentIdentity: {
-						sourcePath: "inline-legacy-env-egress",
-						sha256: runtimeContentSha256({
-							manifest: legacyEnvManifest,
-							secretValues: runtimeRecoverableSecretValues(legacyEnvManifest, {}),
-						}),
-					},
-					...(egressSidecarSecretRevision ? { egressSidecarSecretRevision } : {}),
-					providerIds: [],
-					projectedProviderIds: {},
-				},
-				paths,
-			);
-		};
-		process.env.CLAWDI_TEST_LEGACY_EGRESS_SECRET = "legacy-env-a";
-		const legacyEnvBaseline = convergeRuntimeManifest(legacyEnvLoad(), paths, {
-			cacheLastGood: false,
-			systemdApply: {
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: () => ({ applied: true, systemUnitsChanged: [], userUnitsChanged: [] }),
-				rollback: () => {},
-			},
-		});
-		expect(legacyEnvBaseline.installErrors).toEqual([]);
-		cacheRuntimeLastGoodManifest(legacyEnvManifest, paths, {});
-		writeLegacyEnvAuthority();
-		const legacyEnvAppliedA = readFileSync(paths.appliedState, "utf-8");
-		expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-a");
-
-		process.env.CLAWDI_TEST_LEGACY_EGRESS_SECRET = "legacy-env-c";
-		let legacyEnvRestartFailureCommits = 0;
-		let legacyEnvRestartFailureRollbacks = 0;
-		const legacyEnvRestartFailure = convergeRuntimeManifest(legacyEnvLoad(), paths, {
-			cacheLastGood: false,
-			commitAuthority: () => {
-				legacyEnvRestartFailureCommits++;
-			},
-			systemdApply: {
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-c");
-					throw new Error("injected legacy env restart failure");
-				},
-				rollback: () => {
-					legacyEnvRestartFailureRollbacks++;
-				},
-			},
-		});
-		expect(legacyEnvRestartFailure.installErrors.join("\n")).toContain(
-			"injected legacy env restart failure",
-		);
-		expect(legacyEnvRestartFailure.installErrors.join("\n")).toContain(
-			"committed egress secret rollback authority could not be verified",
-		);
-		expect(legacyEnvRestartFailureCommits).toBe(0);
-		expect(legacyEnvRestartFailureRollbacks).toBe(0);
-		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyEnvAppliedA);
-		expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-a");
-
-		let legacyEnvCommitFailureCommits = 0;
-		let legacyEnvCommitFailureRollbacks = 0;
-		const legacyEnvCommitFailure = convergeRuntimeManifest(legacyEnvLoad(), paths, {
-			cacheLastGood: false,
-			commitAuthority: (_convergence, authority) => {
-				legacyEnvCommitFailureCommits++;
-				writeLegacyEnvAuthority(authority.egressSidecarSecretRevision);
-				throw new Error("injected legacy env authority commit failure");
-			},
-			systemdApply: {
-				activateEgressPrerequisite: successfulPrerequisiteActivation,
-				activate: ({ restartEgressSidecar }) => {
-					expect(restartEgressSidecar).toBe(true);
-					expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-c");
-					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
-				},
-				rollback: () => {
-					legacyEnvCommitFailureRollbacks++;
-				},
-			},
-		});
-		expect(legacyEnvCommitFailure.installErrors.join("\n")).toContain(
-			"injected legacy env authority commit failure",
-		);
-		expect(legacyEnvCommitFailure.installErrors.join("\n")).toContain(
-			"committed egress secret rollback authority could not be verified",
-		);
-		expect(legacyEnvCommitFailureCommits).toBe(1);
-		expect(legacyEnvCommitFailureRollbacks).toBe(0);
-		expect(readFileSync(paths.appliedState, "utf-8")).toBe(legacyEnvAppliedA);
-		expect(readFileSync(secretFile, "utf-8")).toContain("legacy-env-a");
-		expect(JSON.stringify(legacyEnvCommitFailure)).not.toContain("legacy-env-c");
 
 		// Legacy v2 authority has no private revision. An active sidecar restarts
 		// once, commits it, and then an identical apply no longer forces restart.
@@ -3417,7 +3319,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		const paths = tempRuntimePaths();
 		const openclawCommand = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const unitPath = join(paths.systemdUserRoot, "openclaw-gateway.service");
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "1";
 		const manifest = baseManifest(paths, {
 			openclaw: {
 				enabled: true,
@@ -3451,7 +3352,10 @@ describe("runtime manifest reconciliation invariants", () => {
 		const failed = convergeRuntimeManifest(
 			manifestLoad(failedManifest, "inline-install-error"),
 			paths,
-			{ commitAuthority: () => authorityCommits++ },
+			{
+				commitAuthority: () => authorityCommits++,
+				executeOfficialServiceInstallers: true,
+			},
 		);
 
 		expect(failed.installErrors.join("\n")).toContain(
@@ -3469,8 +3373,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		const workspaceRoot = join(paths.userHome, "clawdi");
 		const soulPath = join(workspaceRoot, "SOUL.md");
 		const staleRunConfig = join(paths.runConfigRoot, "stale-runtime.json");
-		const runtimeSecret = join(paths.runtimeSecretFileRoot, "openclaw.json");
-		const staleSecret = join(paths.runtimeSecretFileRoot, "stale-runtime.json");
 		const systemdUnit = join(paths.systemdUserRoot, "clawdi-openclaw.service");
 		const installerPath = join(dirname(paths.userHome), "openclaw-installer.sh");
 		const installerLog = join(dirname(paths.userHome), "openclaw-installer.log");
@@ -3481,15 +3383,12 @@ describe("runtime manifest reconciliation invariants", () => {
 		mkdirSync(workspaceRoot, { recursive: true });
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
-		mkdirSync(paths.runtimeSecretFileRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		mkdirSync(dirname(paths.manifestLastGood), { recursive: true });
 		mkdirSync(dirname(paths.appliedState), { recursive: true });
 		writeFileSync(soulPath, "<!-- >>> clawdi managed locale >>>\nmalformed\n");
 		writeFileSync(paths.managedConfig, '{"generation":1}\n');
 		writeFileSync(staleRunConfig, '{"generation":1}\n');
-		writeFileSync(runtimeSecret, '{"secret":"old"}\n');
-		writeFileSync(staleSecret, '{"secret":"stale"}\n');
 		writeFileSync(systemdUnit, "old unit\n");
 		writeFileSync(paths.manifestLastGood, '{"generation":1}\n');
 		writeFileSync(paths.appliedState, '{"generation":1}\n');
@@ -3497,8 +3396,6 @@ describe("runtime manifest reconciliation invariants", () => {
 			soulPath,
 			paths.managedConfig,
 			staleRunConfig,
-			runtimeSecret,
-			staleSecret,
 			systemdUnit,
 			paths.manifestLastGood,
 			paths.appliedState,
@@ -3566,7 +3463,6 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 		process.env.CLAWDI_RUNTIME_USER = "nobody";
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 
 		chmodSync(fixtureRoot, 0o755);
 		mkdirSync(paths.projectionRoot, { recursive: true });
@@ -3648,13 +3544,11 @@ describe("runtime manifest reconciliation invariants", () => {
 		}
 	});
 
-	test("rolls back root managed state and leaves user projections for forward convergence", () => {
+	test("restores exact root and runtime-user targets before systemd rollback reconciliation", () => {
 		const paths = tempRuntimePaths();
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const workspaceRoot = join(paths.userHome, "clawdi");
 		const commandPath = join(paths.userHome, ".openclaw", "bin", "openclaw");
 		const targetConfig = join(paths.userHome, ".openclaw", "openclaw.json");
-		const forwardConfig = '{"forward-converged":true}\n';
 		const dropInRoot = join(paths.systemdUserRoot, "clawdi-stale.service.d");
 		const managedUserDropIn = join(dropInRoot, "10-clawdi-hosted.conf");
 		const siblingUserDropIn = join(dropInRoot, "50-user.conf");
@@ -3667,13 +3561,12 @@ describe("runtime manifest reconciliation invariants", () => {
 		mkdirSync(workspaceRoot, { recursive: true });
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(paths.runConfigRoot, { recursive: true });
-		mkdirSync(paths.runtimeSecretFileRoot, { recursive: true });
 		mkdirSync(paths.systemdEnvRoot, { recursive: true });
+		mkdirSync(paths.managedSecretRoot, { recursive: true });
 		mkdirSync(paths.systemdUserRoot, { recursive: true });
 		chmodSync(paths.runConfigRoot, 0o755);
 		chmodSync(paths.systemdEnvRoot, 0o755);
 		chmodSync(paths.managedSecretRoot, 0o711);
-		chmodSync(paths.runtimeSecretFileRoot, 0o700);
 		writeFileSync(
 			commandPath,
 			[
@@ -3691,6 +3584,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nstale managed drop-in\n`,
 		);
 		writeFileSync(siblingUserDropIn, "user-owned\n");
+		const previousManagedUserDropIn = readFileSync(managedUserDropIn);
 		const previousSiblingUserDropIn = readFileSync(siblingUserDropIn);
 		for (const path of [unmanagedState, unmanagedRun, unmanagedOpenClaw, unmanagedHermes]) {
 			mkdirSync(dirname(path), { recursive: true });
@@ -3705,14 +3599,12 @@ describe("runtime manifest reconciliation invariants", () => {
 		);
 		const rootManagedPaths = [paths.managedConfig];
 		const forwardRunConfig = join(paths.runConfigRoot, "openclaw.json");
-		const forwardRuntimeSecret = join(paths.runtimeSecretFileRoot, "stale.json");
 		const staleUserUnit = join(paths.systemdUserRoot, "clawdi-old.service");
 		const userEnvironment = join(paths.systemdEnvRoot, "openclaw-gateway.service.env");
 		const systemEnvironment = join(paths.systemdEnvRoot, "clawdi-daemon.service.env");
 		for (const [index, path] of [
 			...rootManagedPaths,
 			forwardRunConfig,
-			forwardRuntimeSecret,
 			staleUserUnit,
 			targetConfig,
 			userEnvironment,
@@ -3757,13 +3649,12 @@ describe("runtime manifest reconciliation invariants", () => {
 			if (!expected) throw new Error(`missing preserved fixture for ${path}`);
 			expect(readFileSync(path)).toEqual(expected);
 		}
-		expect(existsSync(forwardRuntimeSecret)).toBe(false);
-		expect(readFileSync(forwardRunConfig, "utf-8")).not.toContain("old-");
-		expect(readFileSync(targetConfig, "utf-8")).toBe(forwardConfig);
-		expect(readFileSync(userEnvironment, "utf-8")).not.toContain("old-");
+		expect(readFileSync(forwardRunConfig, "utf-8")).toContain("old-");
+		expect(readFileSync(targetConfig, "utf-8")).toBe('{"mcp":{"servers":{}}}\n');
+		expect(readFileSync(userEnvironment, "utf-8")).toContain("old-");
 		expect(readFileSync(systemEnvironment)).toEqual(previousSystemEnvironment);
-		expect(existsSync(staleUserUnit)).toBe(false);
-		expect(existsSync(managedUserDropIn)).toBe(false);
+		expect(readFileSync(staleUserUnit, "utf-8")).toContain("old-");
+		expect(readFileSync(managedUserDropIn)).toEqual(previousManagedUserDropIn);
 		expect(readFileSync(siblingUserDropIn)).toEqual(previousSiblingUserDropIn);
 		const restoredManagedStat = statSync(paths.managedConfig);
 		expect(restoredManagedStat.mode & 0o777).toBe(previousManagedStat.mode & 0o777);
@@ -3775,6 +3666,87 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(statSync(unmanagedFifo).isFIFO()).toBe(true);
 		expect(activateCalls).toBe(1);
 		expect(rollbackCalls).toBe(1);
+	});
+
+	test("keeps stale systemd files through authority commit and removes them afterward", () => {
+		const paths = tempRuntimePaths();
+		const staleSystemUnit = join(paths.systemdSystemRoot, "clawdi-runtime-sidecar.service");
+		const staleUserUnit = join(paths.systemdUserRoot, "clawdi-old.service");
+		const staleDropIn = join(
+			paths.systemdUserRoot,
+			"openclaw-gateway.service.d",
+			"10-clawdi-hosted.conf",
+		);
+		const staleUserWant = join(paths.systemdUserRoot, "default.target.wants", "clawdi-old.service");
+		const staleDropInWant = join(
+			paths.systemdUserRoot,
+			"default.target.wants",
+			"openclaw-gateway.service",
+		);
+		const staleUserEnvironment = join(paths.systemdEnvRoot, "clawdi-old.service.env");
+		const staleDropInEnvironment = join(paths.systemdEnvRoot, "openclaw-gateway.service.env");
+		const staleFiles = [
+			staleSystemUnit,
+			staleUserUnit,
+			staleDropIn,
+			staleUserWant,
+			staleDropInWant,
+			staleUserEnvironment,
+			staleDropInEnvironment,
+		];
+		for (const path of staleFiles) {
+			mkdirSync(dirname(path), { recursive: true });
+			writeFileSync(path, `${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nstale\n`);
+		}
+		for (const path of [
+			paths.systemdSystemRoot,
+			paths.systemdUserRoot,
+			paths.systemdEnvRoot,
+			dirname(staleDropIn),
+			dirname(staleUserWant),
+		]) {
+			chmodSync(path, 0o755);
+		}
+		const systemctl = join(dirname(paths.serviceStateRoot), "systemctl-success.sh");
+		writeFileSync(systemctl, "#!/bin/sh\nexit 0\n");
+		chmodSync(systemctl, 0o755);
+		process.env.CLAWDI_SYSTEMCTL_PATH = systemctl;
+		const manifest = baseManifest(paths, {});
+		let activated = false;
+		let committed = false;
+
+		const result = convergeRuntimeManifest(
+			manifestLoad(manifest, "systemd-post-commit-gc"),
+			paths,
+			{
+				cacheLastGood: false,
+				commitAuthority: () => {
+					expect(activated).toBe(true);
+					for (const path of staleFiles) expect(existsSync(path)).toBe(true);
+					committed = true;
+				},
+				systemdApply: {
+					activateEgressPrerequisite: successfulPrerequisiteActivation,
+					activate: (signal) => {
+						expect(signal.staleSystemUnits).toEqual(["clawdi-runtime-sidecar.service"]);
+						expect(signal.staleUserUnits).toEqual([
+							"clawdi-old.service",
+							"openclaw-gateway.service",
+						]);
+						for (const path of staleFiles) expect(existsSync(path)).toBe(true);
+						activated = true;
+						return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+					},
+					rollback: () => {
+						throw new Error("rollback must not run after a successful authority commit");
+					},
+				},
+			},
+		);
+
+		expect(result.installErrors).toEqual([]);
+		expect(committed).toBe(true);
+		for (const path of staleFiles) expect(existsSync(path)).toBe(false);
 	});
 
 	test("uses an explicit managed snapshot allowlist without broad runtime roots", () => {
@@ -3796,7 +3768,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			existingSystemDropIn,
 			`${GENERATED_RUNTIME_SYSTEMD_FILE_HEADER}\nexisting managed drop-in\n`,
 		);
-		const snapshotPaths = runtimeLiveSnapshotPaths(manifest, paths);
+		const snapshotPaths = runtimeRootLiveMutationTargets(manifest, paths);
 		const openClawDatabase = join(
 			paths.userHome,
 			".openclaw",
@@ -3816,15 +3788,12 @@ describe("runtime manifest reconciliation invariants", () => {
 				paths.managedSecretCacheFile,
 				paths.appliedState,
 				paths.oauthCredentialRoot,
-				join(paths.userHome, ".hermes", "auth.json"),
-				openClawDatabase,
-				`${openClawDatabase}-wal`,
-				`${openClawDatabase}-shm`,
+				join(paths.serviceStateRoot, "status", "runtime-install-receipts.json"),
+				paths.runConfigRoot,
 				paths.egressProfileRoot,
 				paths.installInventory,
 				paths.projectionRoot,
 				join(paths.instanceRoot, manifest.instanceId),
-				paths.managedSecretFile,
 				paths.daemonAuthToken,
 				join(paths.managedSecretRoot, "egress-secrets.json"),
 				join(paths.systemdEnvRoot, "clawdi-runtime-watch.service.env"),
@@ -3842,6 +3811,15 @@ describe("runtime manifest reconciliation invariants", () => {
 				existingSystemUnit,
 				existingSystemDropIn,
 			].sort(),
+		);
+		expect(runtimeUserMutationTargets(manifest, paths, workspaceRoot, new Map())).toEqual(
+			expect.arrayContaining([
+				join(paths.userHome, ".hermes", "auth.json"),
+				join(paths.userHome, ".hermes", "auth.lock"),
+				openClawDatabase,
+				`${openClawDatabase}-wal`,
+				`${openClawDatabase}-shm`,
+			]),
 		);
 		for (const userWritablePath of [
 			paths.serviceStateRoot,
@@ -3864,9 +3842,7 @@ describe("runtime manifest reconciliation invariants", () => {
 			paths.egressRoot,
 			paths.egressScratchRoot,
 			paths.egressCaDir,
-			paths.runtimeSecretFileRoot,
 			paths.systemdEnvRoot,
-			paths.runConfigRoot,
 		]) {
 			expect(snapshotPaths).not.toContain(userWritablePath);
 		}
@@ -3907,6 +3883,265 @@ describe("runtime manifest reconciliation invariants", () => {
 		).toThrow(`runtime managed directory is not a real directory: ${symlinkPaths.runConfigRoot}`);
 	});
 
+	test("snapshots exact installer targets only when the planned executable is missing", () => {
+		const paths = tempRuntimePaths();
+		const home = paths.userHome;
+		const install = (runtime: "openclaw" | "hermes") => ({
+			authority: "official" as const,
+			method: "official-installer" as const,
+			url: OFFICIAL_INSTALL_URLS[runtime],
+			home,
+			args: OFFICIAL_INSTALL_ARGS[runtime] ?? [],
+		});
+		const manifest = baseManifest(
+			paths,
+			{
+				openclaw: { enabled: true, install: install("openclaw"), services: {} },
+				hermes: { enabled: true, install: install("hermes"), services: {} },
+			},
+			{ projection: { channels: { discord: {} } } },
+		);
+		const expectedHermesTargets = [
+			join(home, ".hermes", "hermes-agent"),
+			join(home, ".hermes", "bin"),
+			join(home, ".hermes", "node"),
+			join(home, ".hermes", "uv"),
+			join(home, ".hermes", ".env"),
+			join(home, ".hermes", ".no-bundled-skills"),
+			join(home, ".local", "bin", "hermes"),
+			join(home, ".local", "bin", "hermes-acp"),
+			join(home, ".local", "bin", "node"),
+			join(home, ".local", "bin", "npm"),
+			join(home, ".local", "bin", "npx"),
+		].sort();
+		const missingTargets = runtimeInstallerMutationTargets(
+			manifest,
+			home,
+			new Map([
+				["openclaw", { status: "present" as const }],
+				["hermes", { status: "configured" as const }],
+			]),
+		).sort();
+		expect(missingTargets).toEqual(expectedHermesTargets);
+		const missingSnapshot = captureRuntimeLiveSnapshot({
+			rootTargets: [],
+			trustedRootDirectories: [],
+			runtimeUserTargets: missingTargets,
+			runtimeUserTrustedRoots: [home],
+			runtimeUserSymlinkTargets: [],
+			metadataTargets: [],
+		});
+		for (const target of expectedHermesTargets) {
+			expect(missingSnapshot.entries.has(target)).toBe(true);
+		}
+
+		const largeInstalledTree = join(home, ".hermes", "hermes-agent");
+		mkdirSync(largeInstalledTree, { recursive: true });
+		writeFileSync(join(largeInstalledTree, "large-artifact.bin"), Buffer.alloc(4 * 1024 * 1024));
+		const installedTargets = runtimeInstallerMutationTargets(
+			manifest,
+			home,
+			new Map([
+				["openclaw", { status: "present" as const }],
+				["hermes", { status: "present" as const }],
+			]),
+		);
+		expect(installedTargets).toEqual([]);
+		const installedUserTargets = runtimeUserMutationTargets(
+			manifest,
+			paths,
+			join(home, "clawdi"),
+			new Map([
+				["openclaw", { status: "present" as const }],
+				["hermes", { status: "present" as const }],
+			]),
+		);
+		expect(installedUserTargets).toContain(join(home, ".openclaw", "extensions", "discord"));
+		expect(installedUserTargets).not.toContain(largeInstalledTree);
+		expect(
+			captureRuntimeLiveSnapshot({
+				rootTargets: [],
+				trustedRootDirectories: [],
+				runtimeUserTargets: installedTargets,
+				runtimeUserTrustedRoots: [home],
+				runtimeUserSymlinkTargets: [],
+				metadataTargets: [],
+			}).entries.size,
+		).toBe(0);
+
+		manifest.runtimes.openclaw.provider_ids = ["openai-codex"];
+		manifest.projection = {
+			...manifest.projection,
+			providers: {
+				"openai-codex": {
+					kind: "openai-compatible",
+					auth: {
+						type: "agent_profile",
+						tool: "codex",
+						profile: "default",
+						credentialSecretRef: "secret://provider.openai-codex.oauthProfile",
+						credentialRevision: "oauth-revision-1",
+					},
+				},
+			},
+		};
+		expect(
+			runtimeInstallerMutationTargets(
+				manifest,
+				home,
+				new Map([
+					["openclaw", { status: "present" as const }],
+					["hermes", { status: "present" as const }],
+				]),
+			).sort(),
+		).toEqual([join(home, ".openclaw", "bin"), join(home, ".openclaw", "tools")].sort());
+	});
+
+	test("restores exact installer targets and reconciles the planned units after installer failure", () => {
+		const paths = tempRuntimePaths();
+		const home = paths.userHome;
+		const binDir = join(home, ".openclaw", "bin");
+		const toolsDir = join(home, ".openclaw", "tools");
+		const existingBinFile = join(binDir, "keep.txt");
+		const existingToolFile = join(toolsDir, "cache", "keep.txt");
+		const commandPath = join(binDir, "openclaw");
+		const installerPath = join(dirname(home), "openclaw-failing-installer.sh");
+		const installerLog = join(dirname(home), "openclaw-failing-installer.log");
+		mkdirSync(binDir, { recursive: true });
+		mkdirSync(dirname(existingToolFile), { recursive: true });
+		writeFileSync(existingBinFile, "original-bin\n");
+		writeFileSync(existingToolFile, "original-tool\n");
+		chmodSync(binDir, 0o750);
+		chmodSync(toolsDir, 0o700);
+		chmodSync(existingBinFile, 0o640);
+		chmodSync(existingToolFile, 0o600);
+		writeFileSync(
+			installerPath,
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf 'ran\n' > '${installerLog}'
+chmod 0777 '${binDir}' '${toolsDir}'
+printf 'mutated-bin\n' > '${existingBinFile}'
+rm -f '${existingToolFile}'
+printf '#!/bin/sh\nexit 0\n' > '${commandPath}'
+chmod 0755 '${commandPath}'
+printf 'new-tool\n' > '${join(toolsDir, "new.txt")}'
+exit 42
+`,
+		);
+		chmodSync(installerPath, 0o700);
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = installerPath;
+		const manifest = baseManifest(paths, {
+			openclaw: {
+				enabled: true,
+				install: {
+					authority: "official",
+					method: "official-installer",
+					url: OFFICIAL_INSTALL_URLS.openclaw,
+					home,
+					args: OFFICIAL_INSTALL_ARGS.openclaw ?? [],
+				},
+				run: runSettings(commandPath, ["gateway", "run"]),
+				services: {},
+			},
+		});
+		let activateCalls = 0;
+		let rollbackSignal: {
+			reconcileUserUnits: string[];
+			staleSystemUnits: string[];
+			staleUserUnits: string[];
+		} | null = null;
+		const result = convergeRuntimeManifest(manifestLoad(manifest, "installer-failure"), paths, {
+			systemdApply: {
+				activateEgressPrerequisite: successfulPrerequisiteActivation,
+				activate: () => {
+					activateCalls += 1;
+					return { applied: true, systemUnitsChanged: [], userUnitsChanged: [] };
+				},
+				rollback: (signal) => {
+					rollbackSignal = signal;
+				},
+			},
+		});
+
+		expect(result.installErrors.join("\n")).toContain("runtime openclaw installer exited 42");
+		expect(readFileSync(installerLog, "utf8")).toBe("ran\n");
+		expect(activateCalls).toBe(0);
+		expect(rollbackSignal).toMatchObject({
+			reconcileUserUnits: ["openclaw-gateway.service"],
+			staleSystemUnits: [],
+			staleUserUnits: [],
+		});
+		expect(readFileSync(existingBinFile, "utf8")).toBe("original-bin\n");
+		expect(readFileSync(existingToolFile, "utf8")).toBe("original-tool\n");
+		expect(existsSync(commandPath)).toBe(false);
+		expect(existsSync(join(toolsDir, "new.txt"))).toBe(false);
+		expect(statSync(binDir).mode & 0o777).toBe(0o750);
+		expect(statSync(toolsDir).mode & 0o777).toBe(0o700);
+		expect(statSync(existingBinFile).mode & 0o777).toBe(0o640);
+		expect(statSync(existingToolFile).mode & 0o777).toBe(0o600);
+	});
+
+	test("captures and restores declared systemd enablement symlink targets", () => {
+		const paths = tempRuntimePaths();
+		const unitName = "openclaw-gateway.service";
+		const unitPath = join(paths.systemdUserRoot, unitName);
+		const enablementPath = join(paths.systemdUserRoot, "default.target.wants", unitName);
+		mkdirSync(dirname(enablementPath), { recursive: true });
+		writeFileSync(unitPath, "[Service]\nExecStart=/bin/true\n");
+		symlinkSync(`../${unitName}`, enablementPath);
+
+		const snapshot = captureRuntimeLiveSnapshot({
+			rootTargets: [],
+			trustedRootDirectories: [],
+			runtimeUserTargets: [enablementPath],
+			runtimeUserTrustedRoots: [paths.userHome],
+			runtimeUserSymlinkTargets: [enablementPath],
+			metadataTargets: [],
+		});
+		rmSync(enablementPath);
+		symlinkSync("../unexpected.service", enablementPath);
+
+		restoreRuntimeLiveSnapshot(snapshot);
+		expect(readlinkSync(enablementPath)).toBe(`../${unitName}`);
+	});
+
+	test("rejects symlinked installer targets before running the external installer", () => {
+		const paths = tempRuntimePaths();
+		const home = paths.userHome;
+		const openclawRoot = join(home, ".openclaw");
+		const redirectedTools = join(dirname(home), "redirected-openclaw-tools");
+		const installerPath = join(dirname(home), "must-not-run-installer.sh");
+		const installerLog = join(dirname(home), "must-not-run-installer.log");
+		mkdirSync(openclawRoot, { recursive: true });
+		mkdirSync(redirectedTools, { recursive: true });
+		symlinkSync(redirectedTools, join(openclawRoot, "tools"));
+		writeFileSync(installerPath, `#!/bin/sh\nprintf ran > '${installerLog}'\nexit 0\n`);
+		chmodSync(installerPath, 0o700);
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = installerPath;
+		const manifest = baseManifest(paths, {
+			openclaw: {
+				enabled: true,
+				install: {
+					authority: "official",
+					method: "official-installer",
+					url: OFFICIAL_INSTALL_URLS.openclaw,
+					home,
+					args: OFFICIAL_INSTALL_ARGS.openclaw ?? [],
+				},
+				run: runSettings(join(openclawRoot, "bin", "openclaw"), ["gateway", "run"]),
+				services: {},
+			},
+		});
+
+		expect(() =>
+			convergeRuntimeManifest(manifestLoad(manifest, "symlinked-installer-target"), paths),
+		).toThrow(`runtime-user mutation path contains a symlink: ${join(openclawRoot, "tools")}`);
+		expect(existsSync(installerLog)).toBe(false);
+	});
+
 	test("rejects a malformed Hermes MCP patch before Apply", () => {
 		const paths = tempRuntimePaths();
 		const hermesConfig = join(paths.userHome, ".hermes", "config.yaml");
@@ -3941,7 +4176,6 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("rolls back managed state when the authority commit fails", () => {
 		const paths = tempRuntimePaths();
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		mkdirSync(dirname(paths.managedConfig), { recursive: true });
 		mkdirSync(dirname(paths.appliedState), { recursive: true });
 		writeFileSync(paths.managedConfig, "old-managed\n");
@@ -3981,7 +4215,6 @@ describe("runtime manifest reconciliation invariants", () => {
 
 	test("garbage collects stale run configs when a runtime is removed", () => {
 		const paths = tempRuntimePaths();
-		process.env.CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES = "0";
 		const initialManifest = baseManifest(paths, {
 			hermes: {
 				enabled: true,
@@ -4020,50 +4253,32 @@ describe("runtime manifest reconciliation invariants", () => {
 		expect(existsSync(hermesRunConfig)).toBe(true);
 	});
 
-	test("resolves runtime secret refs by exact, normalized, and stripped forms", () => {
-		expect(normalizeSecretValues({ "env://CLAWDI_AUTH_TOKEN": "deployment-token" })).toEqual({
-			"env://CLAWDI_AUTH_TOKEN": "deployment-token",
-		});
+	test("resolves runtime secret refs only by exact canonical secret:// keys", () => {
 		expect(
 			runtimeSecretValue(
 				{ "secret://providers/default/api-key": "sk-exact" },
 				"secret://providers/default/api-key",
-				processRuntimeEnvironment(),
 			),
 		).toBe("sk-exact");
-		expect(
-			runtimeSecretValue(
-				{ "secret://providers/default/api-key": "sk-normalized" },
-				"providers/default/api-key",
-				processRuntimeEnvironment(),
-			),
-		).toBe("sk-normalized");
-		expect(
-			runtimeSecretValue(
-				{ "providers/default/api-key": "sk-stripped" },
-				"secret://providers/default/api-key",
-				processRuntimeEnvironment(),
-			),
-		).toBe("sk-stripped");
-		expect(
-			runtimeSecretValue({}, "secret://providers/default/api-key", processRuntimeEnvironment()),
-		).toBeNull();
+		expect(runtimeSecretValue({}, "secret://providers/default/api-key")).toBeNull();
+		expect(runtimeSecretValue({}, "providers/default/api-key")).toBeNull();
+		expect(() => normalizeSecretValues({ "env://CLAWDI_AUTH_TOKEN": "deployment-token" })).toThrow(
+			"runtime secret value key must be a canonical secret:// reference",
+		);
+		expect(() => normalizeSecretValues({ "providers/default/api-key": "sk-alias" })).toThrow(
+			"runtime secret value key must be a canonical secret:// reference",
+		);
 	});
 
-	test("uses a discovered apply-context snapshot instead of stale process env", () => {
-		delete process.env.CLAWDI_RUNTIME_APPLY_IDENTITY_FILE;
+	test("uses bundle secretValues instead of stale process env", () => {
 		process.env.OPENCLAW_GATEWAY_TOKEN = "stale-process-token";
 		const projected = normalizeSecretValues({
-			"env://OPENCLAW_GATEWAY_TOKEN": "projected-file-token",
+			"secret://runtime/openclaw/gateway-token": "bundle-token",
 		});
-		const runtimeEnvironment = projectedRuntimeEnvironment({
-			OPENCLAW_GATEWAY_TOKEN: "projected-file-token",
-		});
-
-		expect(runtimeSecretValue(projected, "env://OPENCLAW_GATEWAY_TOKEN", runtimeEnvironment)).toBe(
-			"projected-file-token",
+		expect(runtimeSecretValue(projected, "secret://runtime/openclaw/gateway-token")).toBe(
+			"bundle-token",
 		);
-		expect(runtimeSecretValue(projected, "env://MISSING_TOKEN", runtimeEnvironment)).toBeNull();
+		expect(runtimeSecretValue(projected, "env://OPENCLAW_GATEWAY_TOKEN")).toBeNull();
 	});
 
 	test("rejects direct convergence without an explicit apply context", () => {
