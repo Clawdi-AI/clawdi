@@ -228,7 +228,7 @@ describe("deploymentMutationErrorMessage", () => {
 		const message = deploymentMutationErrorMessage(error);
 
 		expect(message).toContain("selected provider is no longer available");
-		expect(message).toContain("Choose Managed by Clawdi");
+		expect(message).toContain("Choose Clawdi AI");
 		expect(message).not.toContain("billing");
 	});
 

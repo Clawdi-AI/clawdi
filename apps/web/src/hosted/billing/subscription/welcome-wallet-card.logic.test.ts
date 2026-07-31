@@ -12,7 +12,7 @@ describe("welcomeWalletDescription", () => {
 				showDeployAction: true,
 			}),
 		).toContain(
-			"welcome balance covers Managed AI first; after that, usage draws from your Wallet.",
+			"welcome balance covers Clawdi AI first; after that, usage draws from your Wallet.",
 		);
 	});
 

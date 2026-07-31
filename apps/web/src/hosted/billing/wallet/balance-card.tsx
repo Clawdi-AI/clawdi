@@ -11,7 +11,7 @@ import { isLowBalance } from "@/hosted/billing/wallet/wallet-constants";
 
 /**
  * Balance hero. When the balance trips the low threshold the figure goes
- * warning-toned and an inline chip explains the consequence for managed AI
+ * warning-toned and an inline chip explains the consequence for Clawdi AI
  * and wallet-funded compute.
  */
 export function BalanceCard({
@@ -48,7 +48,7 @@ export function BalanceCard({
 								<Info className="size-3.5" />
 							</TooltipTrigger>
 							<TooltipContent className="max-w-xs">
-								One USD balance shared by managed AI and wallet-funded compute.
+								One USD balance shared by Clawdi AI and wallet-funded compute.
 							</TooltipContent>
 						</Tooltip>
 					</div>
@@ -64,11 +64,11 @@ export function BalanceCard({
 						</span>
 					</div>
 					<div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-						<span>Shared across managed AI and wallet-funded compute.</span>
+						<span>Shared across Clawdi AI and wallet-funded compute.</span>
 						{low ? (
 							<span className="inline-flex items-center gap-1 font-medium text-warning-muted-foreground">
 								<TriangleAlert className="size-3.5" aria-hidden /> Low — top up before
-								{hasWalletCompute ? " AI or compute is interrupted" : " managed AI pauses"}
+								{hasWalletCompute ? " AI or compute is interrupted" : " Clawdi AI pauses"}
 							</span>
 						) : null}
 					</div>

@@ -25,7 +25,7 @@ import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatShortDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "Managed-AI usage in USD for the current reporting window across your agents.";
+const DESCRIPTION = "Clawdi AI usage in USD for the current reporting window across your agents.";
 const USAGE_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 type UnavailableUsageSection = HostedUsageSummary["unavailable_sections"][number];
@@ -160,7 +160,7 @@ export function UsageSummaryView({
 				<EmptyState
 					icon={Activity}
 					title="No usage yet"
-					description="Once your agents start running, managed-AI spend shows up here."
+					description="Once your agents start running, Clawdi AI spend shows up here."
 				/>
 			</div>
 		);
@@ -201,7 +201,7 @@ export function UsageSummaryView({
 							<div className="text-3xl font-semibold tabular-nums">
 								{formatUsdExact(totals.usd)}
 							</div>
-							<div className="text-sm text-muted-foreground">Managed-AI spend in window</div>
+							<div className="text-sm text-muted-foreground">Clawdi AI spend in window</div>
 						</CardContent>
 					</Card>
 					<Card data-hosted="true">

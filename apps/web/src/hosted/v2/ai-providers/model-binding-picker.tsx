@@ -70,7 +70,7 @@ export function ModelBindingPicker({
 		: CUSTOM_MODEL_CHOICE;
 	const managedCatalogUnavailableError =
 		isManaged && managedModels.length === 0 && !managedModelsLoading
-			? (managedModelsError ?? new Error("The managed model catalog returned no models."))
+			? (managedModelsError ?? new Error("The Clawdi AI model catalog returned no models."))
 			: null;
 	const primaryProviderItems = primaryProviderPickerItems(
 		selectedProviderChoices,
@@ -111,14 +111,14 @@ export function ModelBindingPicker({
 				) : null}
 				{isManaged && managedModelsLoading ? (
 					<div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
-						<Spinner className="size-3.5" /> Loading managed models…
+						<Spinner className="size-3.5" /> Loading Clawdi AI models…
 					</div>
 				) : managedCatalogUnavailableError ? (
 					<ApiErrorPanel
 						normalizer={managedModelsErrorNormalizer}
 						error={managedCatalogUnavailableError}
 						onRetry={onManagedModelsRetry}
-						title="Couldn't load managed models"
+						title="Couldn't load Clawdi AI models"
 					/>
 				) : hasCatalogModels ? (
 					<div className="flex flex-col gap-1.5">

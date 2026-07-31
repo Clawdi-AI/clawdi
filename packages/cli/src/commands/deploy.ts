@@ -624,7 +624,7 @@ export async function runDeployFlow(
 					);
 				}
 				prompts.note(
-					"Saved AI providers could not be loaded. Continue with Managed by Clawdi or Configure inside agent.",
+					"Saved AI providers could not be loaded. Continue with Clawdi AI or Configure inside agent.",
 					"Saved providers unavailable",
 				);
 				return [];
@@ -676,7 +676,7 @@ export async function runDeployFlow(
 		const selected = await prompts.select(
 			"AI provider",
 			[
-				{ value: "managed", label: "Managed by Clawdi", hint: "Ready when the agent starts" },
+				{ value: "managed", label: "Clawdi AI", hint: "Ready when the agent starts" },
 				...savedProviders
 					.filter((provider) => provider.usable)
 					.map((provider) => ({
@@ -726,7 +726,7 @@ export async function runDeployFlow(
 	if (aiMode === "managed") {
 		if (managedModels.length === 0) {
 			throw new Error(
-				"The Hosted managed model catalog is empty. Retry later or use unmanaged AI.",
+				"The Clawdi AI model catalog is empty. Retry later or configure AI inside the agent.",
 			);
 		}
 		if (interactive && !parsed.model) {
@@ -1054,7 +1054,7 @@ export async function runDeployFlow(
 		`Runtime: ${hostedDeployRuntimeLabel(runtime)}`,
 		`AI: ${
 			aiMode === "managed"
-				? `Managed by Clawdi · ${model}`
+				? `Clawdi AI · ${model}`
 				: aiMode === "saved"
 					? `${selectedSavedProvider ? savedProviderLabel(selectedSavedProvider) : providerId} · ${model}`
 					: "Configure inside agent"

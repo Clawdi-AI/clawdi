@@ -90,7 +90,7 @@ export function SubscriptionPage() {
 				<CardContent className="space-y-4">
 					<p className="text-sm text-muted-foreground">
 						Upgrade, lifecycle, and delete controls live in that agent’s Settings page. Wallet
-						balance and managed-AI usage stay account-wide.
+						balance and Clawdi AI usage stay account-wide.
 					</p>
 					<div className="flex flex-wrap gap-2">
 						{hostedAccess.canCreateCloudAgents ? (

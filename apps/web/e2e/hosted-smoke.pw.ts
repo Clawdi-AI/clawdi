@@ -2000,7 +2000,7 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 	).toHaveCount(0);
 	const addProvider = page.getByRole("button", { name: /^Add a provider/ });
 	await expect(addProvider).toBeVisible();
-	const managed = page.getByRole("button", { name: /^Managed AI/ });
+	const managed = page.getByRole("button", { name: /^Clawdi AI/ });
 	const unmanaged = page.getByRole("button", { name: /^Configure inside agent/ });
 	await expect(managed).toHaveAttribute("aria-pressed", "true");
 	await expect(unmanaged).toHaveAttribute("aria-pressed", "false");
@@ -2012,6 +2012,202 @@ test("deploy keeps AI providers expanded and provider selection exclusive", asyn
 	await expect(managed).toHaveAttribute("aria-pressed", "true");
 	await expect(unmanaged).toHaveAttribute("aria-pressed", "false");
 	await expect(page.getByRole("button", { name: "Change", exact: true })).toHaveCount(0);
+});
+
+test("deploy sticky action shows free, monthly, and annual offer prices", async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await stubHostedApi(page, { plans: [basicPlan, performancePlan], deployments: [] });
+	await page.goto("/deploy");
+	await page.waitForLoadState("networkidle");
+
+	const actionBar = page.getByTestId("deploy-action-bar");
+	const priceLabel = actionBar.getByTestId("deploy-price-label");
+	await expect(priceLabel).toHaveText("Free");
+
+	const performanceChoice = page.getByRole("button", { name: /^Performance/ });
+	await performanceChoice.click();
+	await expect(priceLabel).toHaveText("$20.00/mo");
+	await expect(performanceChoice).toContainText("4 vCPU / 8 GB · $20.00/mo");
+
+	await page.getByRole("button", { name: /Annual.*%/ }).click();
+	await expect(priceLabel).toHaveText("$16.66/mo, billed $200.00/yr");
+	await expect(performanceChoice).toContainText("4 vCPU / 8 GB · $16.66/mo, billed $200.00/yr");
+
+	const priceMetrics = await priceLabel.evaluate((element) => ({
+		clientWidth: element.clientWidth,
+		scrollWidth: element.scrollWidth,
+	}));
+	expect(priceMetrics.scrollWidth).toBeLessThanOrEqual(priceMetrics.clientWidth);
+	const pageMetrics = await page.evaluate(() => ({
+		clientWidth: document.documentElement.clientWidth,
+		scrollWidth: document.documentElement.scrollWidth,
+	}));
+	expect(pageMetrics.scrollWidth).toBe(pageMetrics.clientWidth);
+});
+
+test("deploy form stays readable without stretching compact controls", async ({ page }) => {
+	await stubHostedApi(page, { plans: [basicPlan, performancePlan], deployments: [] });
+	await page.goto("/deploy");
+	await page.getByRole("button", { name: /^Performance/ }).click();
+	await page.getByRole("button", { name: /Annual.*%/ }).click();
+
+	for (const viewport of [
+		{ columns: 2, name: "desktop", width: 1280, height: 900 },
+		{ columns: 2, name: "tablet without sidebar", width: 700, height: 900 },
+		{ columns: 1, name: "tablet with sidebar", width: 800, height: 900 },
+		{ columns: 1, name: "mobile", width: 390, height: 844 },
+	]) {
+		await page.setViewportSize({ width: viewport.width, height: viewport.height });
+		await page.evaluate(() => {
+			window.scrollTo(0, 0);
+			document.querySelector("#dashboard-scroll-container")?.scrollTo(0, 0);
+		});
+		await page.waitForTimeout(100);
+		const metrics = await page.evaluate(() => {
+			const sectionFor = (title: string) =>
+				Array.from(document.querySelectorAll("section")).find(
+					(section) =>
+						section.querySelector(":scope > div:nth-child(2) > div")?.textContent?.trim() === title,
+				);
+			const rect = (element: Element | null | undefined) => {
+				const box = element?.getBoundingClientRect();
+				return box
+					? { bottom: box.bottom, left: box.left, right: box.right, top: box.top, width: box.width }
+					: null;
+			};
+			const gridMetrics = (element: Element | null | undefined) =>
+				element
+					? {
+							columns: getComputedStyle(element).gridTemplateColumns,
+							rect: rect(element),
+						}
+					: null;
+			const sectionGrid = (title: string) => {
+				const section = sectionFor(title);
+				return gridMetrics(section?.querySelector(":scope > div:nth-child(3) .grid"));
+			};
+			const paymentButton = Array.from(document.querySelectorAll("button")).find((button) =>
+				button.textContent?.includes("Card subscription"),
+			);
+			const coreTitleLabels = [
+				"Hermes",
+				"OpenClaw",
+				"Clawdi AI",
+				"Configure inside agent",
+				"Basic",
+				"Performance",
+				"Card subscription",
+				"Wallet balance",
+			];
+			const titleWidths = Array.from(
+				document.querySelectorAll<HTMLSpanElement>("button span.font-medium"),
+			)
+				.filter((title) => coreTitleLabels.includes(title.textContent?.trim() ?? ""))
+				.map((title) => ({
+					clientWidth: title.clientWidth,
+					label: title.textContent?.trim() ?? "",
+					scrollWidth: title.scrollWidth,
+				}));
+			return {
+				document: {
+					clientWidth: document.documentElement.clientWidth,
+					scrollWidth: document.documentElement.scrollWidth,
+				},
+				main: rect(document.querySelector("main")),
+				agentSoftware: sectionGrid("Agent software"),
+				aiProviders: sectionGrid("AI providers"),
+				compute: sectionGrid("Compute"),
+				payment: gridMetrics(paymentButton?.parentElement),
+				catalogModel: rect(document.querySelector("#deploy-catalog-model")),
+				name: rect(document.querySelector("#agent-name")),
+				language: rect(document.querySelector("#agent-language")),
+				timezone: rect(document.querySelector("#agent-timezone")),
+				billingTerm: rect(document.querySelector('[aria-label="Billing term"]')),
+				action: rect(document.querySelector('button[type="submit"]')),
+				price: (() => {
+					const element = document.querySelector('[data-testid="deploy-price-label"]');
+					return element
+						? {
+								clientWidth: element.clientWidth,
+								scrollWidth: element.scrollWidth,
+								text: element.textContent,
+							}
+						: null;
+				})(),
+				titleWidths,
+			};
+		});
+
+		expect(metrics.document.scrollWidth, `${viewport.name} should not horizontally overflow`).toBe(
+			metrics.document.clientWidth,
+		);
+		expect(metrics.main, `${viewport.name} main bounds`).not.toBeNull();
+		expect(metrics.main?.right, `${viewport.name} main right edge`).toBeLessThanOrEqual(
+			viewport.width,
+		);
+
+		for (const [label, grid] of [
+			["Agent software", metrics.agentSoftware],
+			["AI providers", metrics.aiProviders],
+			["Compute", metrics.compute],
+			["Payment method", metrics.payment],
+		] as const) {
+			expect(grid, `${viewport.name} ${label} grid`).not.toBeNull();
+			if (!grid) continue;
+			const columnWidths = grid.columns.split(/\s+/).map(Number.parseFloat);
+			expect(columnWidths, `${viewport.name} ${label} column count`).toHaveLength(viewport.columns);
+			expect(
+				Math.min(...columnWidths),
+				`${viewport.name} ${label} cards should remain readable`,
+			).toBeGreaterThanOrEqual(300);
+			expect(grid.rect?.right, `${viewport.name} ${label} right edge`).toBeLessThanOrEqual(
+				viewport.width,
+			);
+		}
+
+		expect(metrics.titleWidths, `${viewport.name} core card titles`).toHaveLength(8);
+		for (const title of metrics.titleWidths) {
+			expect(title.scrollWidth, `${viewport.name} ${title.label} title`).toBeLessThanOrEqual(
+				title.clientWidth,
+			);
+		}
+
+		for (const [label, control, maxWidth] of [
+			["Catalog model", metrics.catalogModel, 448],
+			["Name", metrics.name, 448],
+			["Language", metrics.language, 160],
+			["Timezone", metrics.timezone, 384],
+			["Billing term", metrics.billingTerm, 320],
+		] as const) {
+			expect(control, `${viewport.name} ${label} bounds`).not.toBeNull();
+			expect(control?.width, `${viewport.name} ${label} width`).toBeLessThanOrEqual(maxWidth);
+			expect(control?.right, `${viewport.name} ${label} right edge`).toBeLessThanOrEqual(
+				viewport.width,
+			);
+		}
+		expect(metrics.language?.width, `${viewport.name} compact Language select`).toBeLessThan(
+			metrics.name?.width ?? 0,
+		);
+
+		expect(metrics.action, `${viewport.name} sticky action`).not.toBeNull();
+		expect(metrics.action?.top, `${viewport.name} sticky action top`).toBeGreaterThanOrEqual(0);
+		expect(metrics.action?.bottom, `${viewport.name} sticky action bottom`).toBeLessThanOrEqual(
+			viewport.height,
+		);
+		expect(metrics.price?.text, `${viewport.name} sticky annual price`).toBe(
+			"$16.66/mo, billed $200.00/yr",
+		);
+		expect(
+			metrics.price?.scrollWidth,
+			`${viewport.name} sticky price should not truncate`,
+		).toBeLessThanOrEqual(metrics.price?.clientWidth ?? 0);
+		if (viewport.columns === 1) {
+			expect(metrics.action?.width, `${viewport.name} full-width action`).toBeCloseTo(
+				metrics.compute?.rect?.width ?? 0,
+				0,
+			);
+		}
+	}
 });
 
 test("free Basic Deploy submits the declarative create contract", async ({ page }) => {
@@ -2418,7 +2614,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	});
 	await page.goto("/agents/hdep_unmanaged_model/model-provider?source=on-clawdi");
 
-	await page.getByRole("button", { name: /Managed by Clawdi/ }).click();
+	await page.getByRole("button", { name: /Clawdi AI/ }).click();
 	await expect(page.locator("#agent-catalog-model")).toContainText("Luna");
 	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);

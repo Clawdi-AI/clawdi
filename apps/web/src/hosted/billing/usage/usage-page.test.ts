@@ -71,7 +71,7 @@ describe("usage availability rendering", () => {
 		expect(markup).toContain("Retry");
 		expect(markup).not.toContain("No usage yet");
 		expect(markup).not.toContain("$0.00");
-		expect(markup).not.toContain("Managed-AI spend in window");
+		expect(markup).not.toContain("Clawdi AI spend in window");
 	});
 
 	test("names a missing daily section while preserving read totals and model usage", () => {
@@ -115,7 +115,7 @@ describe("usage availability rendering", () => {
 		expect(markup).toContain("Usage totals unavailable");
 		expect(markup).toContain("Model breakdown unavailable");
 		expect(markup).toContain("$9.25");
-		expect(markup).not.toContain("Managed-AI spend in window");
+		expect(markup).not.toContain("Clawdi AI spend in window");
 		expect(markup).not.toContain("Requests in window");
 		expect(markup).not.toContain("No usage yet");
 	});

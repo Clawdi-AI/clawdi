@@ -15,6 +15,11 @@ import {
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 
 describe("model binding", () => {
+	test("uses the canonical Clawdi AI product label", () => {
+		expect(MANAGED_PROVIDER_LABEL).toBe("Clawdi AI");
+		expect(primaryProviderPickerItems([MANAGED_AI_CHOICE], [])[0]?.label).toBe("Clawdi AI");
+	});
+
 	test("does not invent a managed model before the catalog loads", () => {
 		expect(firstModelForProvider(MANAGED_AI_CHOICE, [])).toBe("");
 		expect(modelOptionsForProvider(MANAGED_AI_CHOICE, [])).toEqual([]);
@@ -110,7 +115,7 @@ describe("model binding", () => {
 	});
 
 	test("labels empty bindings from their actual auth mode", () => {
-		expect(modelBindingDisplayName(null, "managed", [])).toBe("Managed default");
+		expect(modelBindingDisplayName(null, "managed", [])).toBe("Clawdi AI default");
 		expect(modelBindingDisplayName(null, "unmanaged", [])).toBe("Configured in agent");
 		expect(modelBindingDisplayName(null, "api_key", [])).toBe("Not set");
 	});

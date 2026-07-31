@@ -30,7 +30,7 @@ import { X402Card } from "@/hosted/billing/wallet/x402-card";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
-const DESCRIPTION = "One balance for managed AI, wallet-funded compute, top-ups, and auto-reload.";
+const DESCRIPTION = "One balance for Clawdi AI, wallet-funded compute, top-ups, and auto-reload.";
 const WALLET_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "space-y-6 px-4 lg:px-6");
 
 function scrollToAutoReload() {

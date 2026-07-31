@@ -90,7 +90,7 @@ export function AiProvidersPage() {
 			/>
 
 			<div className="flex flex-col gap-2">
-				<SectionLabel>Managed default</SectionLabel>
+				<SectionLabel>Clawdi AI</SectionLabel>
 				<ManagedProviderCard />
 			</div>
 

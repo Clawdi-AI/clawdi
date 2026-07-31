@@ -18,8 +18,8 @@ export function welcomeWalletDescription({
 				: "Your welcome balance is available in your Wallet.";
 		}
 		return grantAmount
-			? `Your free Basic compute is ready. Your ${grantAmount} welcome balance covers Managed AI first; after that, usage draws from your Wallet.`
-			: "Your free Basic compute is ready. Managed AI usage draws from your Wallet.";
+			? `Your free Basic compute is ready. Your ${grantAmount} welcome balance covers Clawdi AI first; after that, usage draws from your Wallet.`
+			: "Your free Basic compute is ready. Clawdi AI usage draws from your Wallet.";
 	}
 	if (grantPending) {
 		if (grantCheckTimedOut) return "It hasn’t appeared yet. Refresh to check again.";
