@@ -283,7 +283,7 @@ describe("AI provider binding draft transitions", () => {
 		expect(removed.providerChoices).toEqual([]);
 	});
 
-	test("selects exactly one provider for the deploy flow", () => {
+	test("selects exactly one provider from an existing multi-provider draft", () => {
 		const selected = selectAiBindingProvider(
 			{
 				bindingMode: "configured",
@@ -294,7 +294,7 @@ describe("AI provider binding draft transitions", () => {
 			apiKeyProvider.provider_id,
 			{
 				managedModels,
-				operationMode: "create",
+				operationMode: "update",
 				providers: [apiKeyProvider, oauthProvider],
 			},
 		);
@@ -305,7 +305,7 @@ describe("AI provider binding draft transitions", () => {
 		expect(
 			buildAiBindingFields(selected, {
 				managedModels,
-				mode: "create",
+				mode: "update",
 				providers: [apiKeyProvider, oauthProvider],
 			}).provider_ids,
 		).toEqual([apiKeyProvider.provider_id]);

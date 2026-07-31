@@ -2014,6 +2014,145 @@ async function captureModelScreenshot(page: Page, path: string) {
 	await modelPicker.locator("xpath=ancestor::section[1]").screenshot({ path });
 }
 
+const AI_CHOICE_VIEWPORTS = [
+	{ height: 900, modelColumns: 4, providerColumns: 2, width: 1280 },
+	{ height: 900, modelColumns: 2, providerColumns: 1, width: 800 },
+	{ height: 900, modelColumns: 2, providerColumns: 2, width: 700 },
+	{ height: 844, modelColumns: 1, providerColumns: 1, width: 390 },
+] as const;
+
+async function aiChoiceLayoutMetrics(page: Page) {
+	return page.evaluate(() => {
+		const rect = (element: Element) => {
+			const box = element.getBoundingClientRect();
+			return { left: box.left, right: box.right, top: box.top, width: box.width };
+		};
+		const lineCount = (element: Element) => {
+			const range = document.createRange();
+			range.selectNodeContents(element);
+			return new Set(Array.from(range.getClientRects()).map((box) => Math.round(box.top * 10)))
+				.size;
+		};
+		const providerGrid = document.querySelector('[data-testid="provider-choice-grid"]');
+		const modelGrid = document.querySelector('[data-testid="managed-model-choices"]');
+		const modelPicker = document.querySelector('[data-testid="model-binding-picker"]');
+		if (!providerGrid || !modelGrid || !modelPicker) return null;
+		const modelPickerStyle = getComputedStyle(modelPicker);
+		return {
+			document: {
+				clientWidth: document.documentElement.clientWidth,
+				scrollWidth: document.documentElement.scrollWidth,
+			},
+			model: {
+				cards: Array.from(modelGrid.querySelectorAll(":scope > label")).map(rect),
+				columns: getComputedStyle(modelGrid).gridTemplateColumns.split(/\s+/).filter(Boolean)
+					.length,
+				descriptions: Array.from(modelGrid.querySelectorAll('[id$="-description"]')).map(
+					(description) => ({
+						clientWidth: description.clientWidth,
+						lineClamp: getComputedStyle(description).webkitLineClamp,
+						lines: lineCount(description),
+						scrollWidth: description.scrollWidth,
+					}),
+				),
+				grid: rect(modelGrid),
+				scrollWidth: modelGrid.scrollWidth,
+				titles: Array.from(modelGrid.querySelectorAll('[id$="-title"]')).map((title) => ({
+					clientWidth: title.clientWidth,
+					lines: lineCount(title),
+					overflow: getComputedStyle(title).overflow,
+					scrollWidth: title.scrollWidth,
+					text: title.textContent?.trim() ?? "",
+					textOverflow: getComputedStyle(title).textOverflow,
+				})),
+			},
+			picker: {
+				backgroundColor: modelPickerStyle.backgroundColor,
+				borderTopWidth: Number.parseFloat(modelPickerStyle.borderTopWidth),
+				paddingTop: Number.parseFloat(modelPickerStyle.paddingTop),
+				rect: rect(modelPicker),
+			},
+			provider: {
+				cards: Array.from(providerGrid.querySelectorAll(":scope > button, :scope > a")).map(rect),
+				columns: getComputedStyle(providerGrid).gridTemplateColumns.split(/\s+/).filter(Boolean)
+					.length,
+				grid: rect(providerGrid),
+				scrollWidth: providerGrid.scrollWidth,
+			},
+		};
+	});
+}
+
+async function expectResponsiveAiChoiceLayout(
+	page: Page,
+	surface: "agent" | "deploy",
+	screenshotPath: (width: number) => string,
+) {
+	for (const viewport of AI_CHOICE_VIEWPORTS) {
+		await page.setViewportSize({ width: viewport.width, height: viewport.height });
+		await expect(page.getByTestId("managed-model-choices")).toBeVisible();
+		const metrics = await aiChoiceLayoutMetrics(page);
+		expect(metrics, `${surface} layout at ${viewport.width}px`).not.toBeNull();
+		if (!metrics) continue;
+		expect(metrics.document.scrollWidth, `${surface} document at ${viewport.width}px`).toBe(
+			metrics.document.clientWidth,
+		);
+		expect(metrics.provider.columns, `${surface} provider columns at ${viewport.width}px`).toBe(
+			viewport.providerColumns,
+		);
+		expect(metrics.model.columns, `${surface} model columns at ${viewport.width}px`).toBe(
+			viewport.modelColumns,
+		);
+		expect(metrics.provider.scrollWidth, `${surface} provider grid overflow`).toBeLessThanOrEqual(
+			metrics.provider.grid.width,
+		);
+		expect(metrics.model.scrollWidth, `${surface} model grid overflow`).toBeLessThanOrEqual(
+			metrics.model.grid.width,
+		);
+		expect(metrics.provider.grid.right, `${surface} provider grid right edge`).toBeLessThanOrEqual(
+			viewport.width,
+		);
+		expect(metrics.model.grid.right, `${surface} model grid right edge`).toBeLessThanOrEqual(
+			viewport.width,
+		);
+		expect(metrics.picker.rect.right, `${surface} picker right edge`).toBeLessThanOrEqual(
+			viewport.width,
+		);
+		expect(metrics.picker).toMatchObject({
+			backgroundColor: "rgba(0, 0, 0, 0)",
+			borderTopWidth: 0,
+			paddingTop: 0,
+		});
+		for (const card of metrics.model.cards) {
+			expect(
+				card.width,
+				`${surface} model card width at ${viewport.width}px`,
+			).toBeGreaterThanOrEqual(200);
+		}
+		for (const title of metrics.model.titles) {
+			expect(
+				title.scrollWidth,
+				`${surface} ${title.text} title at ${viewport.width}px`,
+			).toBeLessThanOrEqual(title.clientWidth);
+			expect(title.textOverflow, `${surface} ${title.text} title ellipsis`).not.toBe("ellipsis");
+			expect(title.overflow, `${surface} ${title.text} title clipping`).not.toBe("hidden");
+			if (viewport.width === 1280) {
+				expect(title.lines, `${surface} ${title.text} desktop title`).toBe(1);
+			}
+		}
+		for (const description of metrics.model.descriptions) {
+			expect(description.scrollWidth, `${surface} model description overflow`).toBeLessThanOrEqual(
+				description.clientWidth,
+			);
+			expect(description.lineClamp, `${surface} model description clamp`).toBe("2");
+			expect(description.lines, `${surface} model description lines`).toBeLessThanOrEqual(2);
+		}
+		const providerGrid = page.getByTestId("provider-choice-grid");
+		await providerGrid.evaluate((element) => element.scrollIntoView({ block: "center" }));
+		await providerGrid.locator("..").screenshot({ path: screenshotPath(viewport.width) });
+	}
+}
+
 function collectBrowserErrors(page: Page): string[] {
 	const errors: string[] = [];
 	page.on("console", (m) => {
@@ -3302,10 +3441,10 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 	await page.getByRole("button", { name: /Annual.*%/ }).click();
 
 	for (const viewport of [
-		{ columns: 2, name: "desktop", width: 1280, height: 900 },
-		{ columns: 2, name: "tablet without sidebar", width: 700, height: 900 },
-		{ columns: 1, name: "tablet with sidebar", width: 800, height: 900 },
-		{ columns: 1, name: "mobile", width: 390, height: 844 },
+		{ columns: 2, modelColumns: 4, name: "desktop", width: 1280, height: 900 },
+		{ columns: 2, modelColumns: 2, name: "tablet without sidebar", width: 700, height: 900 },
+		{ columns: 1, modelColumns: 2, name: "tablet with sidebar", width: 800, height: 900 },
+		{ columns: 1, modelColumns: 1, name: "mobile", width: 390, height: 844 },
 	]) {
 		await page.setViewportSize({ width: viewport.width, height: viewport.height });
 		await page.evaluate(() => {
@@ -3561,7 +3700,6 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		);
 
 		for (const [label, control, maxWidth] of [
-			["Main model", metrics.catalogModel, 448],
 			["Name", metrics.name, 448],
 			["Language", metrics.language, 160],
 			["Timezone", metrics.timezone, 384],
@@ -3584,34 +3722,46 @@ test("deploy form stays readable without stretching compact controls", async ({ 
 		});
 		expect(metrics.managedModelChoices, `${viewport.name} managed model choices`).not.toBeNull();
 		expect(metrics.managedModelChoices?.labels, `${viewport.name} featured model order`).toEqual([
+			"GPT-5.6 Terra",
+			"GPT-5.6 Luna",
 			"GPT-5.6 Sol",
 			"Kimi K3",
 		]);
 		expect(
 			metrics.managedModelChoices?.columns.split(/\s+/),
-			`${viewport.name} featured models use two deterministic columns`,
-		).toHaveLength(2);
+			`${viewport.name} featured model columns`,
+		).toHaveLength(viewport.modelColumns);
 		const featuredCards = metrics.managedModelChoices?.cards ?? [];
-		expect(featuredCards, `${viewport.name} featured card count`).toHaveLength(2);
-		expect(featuredCards[0]?.top, `${viewport.name} featured cards stay on one row`).toBeCloseTo(
-			featuredCards[1]?.top ?? Number.POSITIVE_INFINITY,
-			0,
-		);
+		expect(featuredCards, `${viewport.name} featured card count`).toHaveLength(4);
+		if (viewport.modelColumns > 1) {
+			expect(featuredCards[0]?.top, `${viewport.name} first model row`).toBeCloseTo(
+				featuredCards[1]?.top ?? Number.POSITIVE_INFINITY,
+				0,
+			);
+		}
+		if (viewport.modelColumns === 4) {
+			expect(featuredCards[0]?.top, `${viewport.name} four models stay on one row`).toBeCloseTo(
+				featuredCards[3]?.top ?? Number.POSITIVE_INFINITY,
+				0,
+			);
+		}
 		expect(featuredCards[0]?.width, `${viewport.name} featured cards stay equal width`).toBeCloseTo(
 			featuredCards[1]?.width ?? Number.POSITIVE_INFINITY,
 			0,
 		);
+		expect(
+			metrics.catalogModel?.width,
+			`${viewport.name} model choices use the full AI provider width`,
+		).toBeCloseTo(metrics.aiProviders?.rect?.width ?? 0, 0);
 		for (const description of metrics.managedModelChoices?.descriptions ?? []) {
 			expect(
 				description.scrollWidth,
 				`${viewport.name} featured description should not overflow`,
 			).toBeLessThanOrEqual(description.clientWidth);
-			if (viewport.width === 390) {
-				expect(
-					description.lineCount,
-					`${viewport.name} long featured description should wrap`,
-				).toBeGreaterThan(1);
-			}
+			expect(
+				description.lineCount,
+				`${viewport.name} featured description stays concise`,
+			).toBeLessThanOrEqual(2);
 		}
 		expect(
 			metrics.managedModelControls?.scrollWidth,
@@ -4037,19 +4187,14 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	const kimiIcon = featuredCards.nth(3).getByRole("img", { name: "Kimi" });
 	await expect(openAiIcon).toBeVisible();
 	await expect(kimiIcon).toBeVisible();
-	await expect(openAiIcon).toHaveAttribute("data-icon-source", "lobehub");
-	await expect(kimiIcon).toHaveAttribute("data-icon-source", "lobehub");
+	const openAiBrand = openAiIcon.locator('[data-icon-source="lobehub"]');
+	const kimiBrand = kimiIcon.locator('[data-icon-source="lobehub"]');
+	await expect(openAiBrand).toBeVisible();
+	await expect(kimiBrand).toBeVisible();
 	for (const icon of [openAiIcon, kimiIcon]) {
-		const src = await icon.getAttribute("src");
-		if (!src) throw new Error("Expected the LobeHub icon to have a local SVG source.");
-		if (src.startsWith("data:")) {
-			expect(src).toMatch(/^data:image\/svg\+xml[;,]/);
-		} else {
-			const iconUrl = new URL(src, page.url());
-			expect(iconUrl.origin).toBe(new URL(page.url()).origin);
-			expect(iconUrl.pathname).toMatch(/\.svg$/);
-		}
-		expect(src).not.toContain("cdn.simpleicons.org");
+		await expect(icon.locator("svg")).toHaveCount(1);
+		await expect(icon.locator('[data-icon-source="lobehub"]')).toHaveAttribute("width", "72%");
+		await expect(icon.locator('[data-icon-source="lobehub"]')).toHaveAttribute("height", "72%");
 	}
 	await expect(featuredCards.nth(0).getByText("O", { exact: true })).toHaveCount(0);
 	await expect(featuredCards.nth(0).getByText("S", { exact: true })).toHaveCount(0);
@@ -4104,36 +4249,22 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	const screenshotStyle = await page.addStyleTag({
 		content: ".sticky.bottom-0 { display: none !important; }",
 	});
-	for (const viewport of [
-		{ width: 1280, height: 800 },
-		{ width: 800, height: 800 },
-		{ width: 700, height: 800 },
-		{ width: 390, height: 800 },
-	]) {
-		await page.setViewportSize(viewport);
-		const documentWidth = await page.evaluate(() => ({
-			clientWidth: document.documentElement.clientWidth,
-			scrollWidth: document.documentElement.scrollWidth,
-		}));
-		expect(documentWidth.scrollWidth, `model picker at ${viewport.width}px`).toBe(
-			documentWidth.clientWidth,
-		);
-		await expect(managedModels).toBeVisible();
-		await expect(overflowModels).toBeVisible();
-		const modelPicker = managedModels.locator("../..");
-		await modelPicker.screenshot({
-			path: `/tmp/managed-model-guidance-${viewport.width}.png`,
-		});
-		const pickerBox = await modelPicker.boundingBox();
-		expect(
-			pickerBox?.x ?? viewport.width,
-			`model picker at ${viewport.width}px`,
-		).toBeGreaterThanOrEqual(0);
-		expect(
-			(pickerBox?.x ?? 0) + (pickerBox?.width ?? viewport.width),
-			`model picker right edge at ${viewport.width}px`,
-		).toBeLessThanOrEqual(viewport.width);
-	}
+	await expectResponsiveAiChoiceLayout(
+		page,
+		"deploy",
+		(width) => `/tmp/deploy-ai-provider-layout-${width}.png`,
+	);
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await page.getByTestId("provider-choice-grid").locator("..").screenshot({
+		path: "/tmp/deploy-ai-provider-layout-dark-1280.png",
+	});
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.getByTestId("provider-choice-grid").locator("..").screenshot({
+		path: "/tmp/deploy-ai-provider-layout-dark-390.png",
+	});
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 	await screenshotStyle.evaluate((element) => element.parentNode?.removeChild(element));
 
 	await expect(overflowModels).toContainText("More models");
@@ -4313,7 +4444,9 @@ test("hosted AI provider Apply submits canonical deployment PATCH", async ({ pag
 	});
 });
 
-test("hosted AI provider Apply accepts the managed Luna default", async ({ page }) => {
+test("agent settings shares the responsive managed model layout and accepts its catalog default", async ({
+	page,
+}) => {
 	const updateDeploymentRequests: Array<{
 		body: string;
 		idempotencyKey: string | null;
@@ -4330,43 +4463,36 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await stubHostedApi(page, {
 		deployments: [unmanagedDeployment],
 		updateDeploymentRequests,
+		managedModels: dynamicManagedModelCatalog,
 	});
 	await page.goto("/agents/hdep_unmanaged_model/model-provider?source=on-clawdi");
 
 	await page.getByRole("button", { name: /Clawdi AI/ }).click();
 	const agentModels = page.getByTestId("managed-model-choices");
 	await expect(agentModels).toHaveAccessibleName("Main model");
-	const agentModelChoice = agentModels.getByRole("radio", { name: "GPT-5.6 Luna" });
+	await expect(agentModels.getByRole("radio")).toHaveCount(4);
+	const agentModelChoice = agentModels.getByRole("radio", { name: "GPT-5.6 Terra" });
 	await expect(agentModelChoice).toBeChecked();
-	await expect(agentModels).toContainText("Low cost for routine work.");
+	await expect(agentModels).toContainText("Balanced cost for everyday work.");
 	await expect(page.locator("#agent-primary-model")).toHaveCount(0);
-	const agentModelFrame = await agentModels.evaluate((element) => {
-		const frame = element.closest('div[data-hosted="true"][data-v2="true"]');
-		const style = frame ? getComputedStyle(frame) : null;
-		return style
-			? {
-					borderTopWidth: Number.parseFloat(style.borderTopWidth),
-					paddingTop: Number.parseFloat(style.paddingTop),
-				}
-			: null;
+	await expect(page.locator("#agent-primary-provider")).toHaveCount(0);
+	await expect(page.getByText("Primary provider", { exact: true })).toHaveCount(0);
+	await expectResponsiveAiChoiceLayout(
+		page,
+		"agent",
+		(width) => `/tmp/agent-ai-provider-layout-${width}.png`,
+	);
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.locator("html").evaluate((element) => element.classList.add("dark"));
+	await expect(page.locator("html")).toHaveClass(/dark/);
+	await page.getByTestId("provider-choice-grid").locator("..").screenshot({
+		path: "/tmp/agent-ai-provider-layout-dark-1280.png",
 	});
-	expect(agentModelFrame).toEqual({ borderTopWidth: 1, paddingTop: 12 });
-	for (const viewport of [
-		{ height: 900, width: 1280 },
-		{ height: 900, width: 800 },
-		{ height: 900, width: 700 },
-		{ height: 844, width: 390 },
-	]) {
-		await page.setViewportSize(viewport);
-		await expect(agentModels).toHaveAccessibleName("Main model");
-		const documentWidth = await page.evaluate(() => ({
-			clientWidth: document.documentElement.clientWidth,
-			scrollWidth: document.documentElement.scrollWidth,
-		}));
-		expect(documentWidth.scrollWidth, `agent settings at ${viewport.width}px`).toBe(
-			documentWidth.clientWidth,
-		);
-	}
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.getByTestId("provider-choice-grid").locator("..").screenshot({
+		path: "/tmp/agent-ai-provider-layout-dark-390.png",
+	});
+	await page.locator("html").evaluate((element) => element.classList.remove("dark"));
 	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
 	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
 	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
@@ -4374,7 +4500,90 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 		provider_ids: ["clawdi"],
 		primary_model: {
 			provider_id: "clawdi",
-			model: "gpt-5.6-luna",
+			model: "gpt-5.6-terra",
+		},
+	});
+});
+
+test("agent settings preserves multi-provider server truth until a provider card is selected", async ({
+	page,
+}) => {
+	const alphaProvider = userProvider("alpha-connection", "Alpha Connection", [
+		{ id: "alpha-default", label: "Alpha default" },
+	]);
+	const betaProvider = userProvider("beta-connection", "Beta Connection", [
+		{ id: "beta-default", label: "Beta default" },
+	]);
+	const deployment: DeploymentMutationFixture = {
+		...includedBasicDeployment,
+		id: "hdep_multi_provider",
+		config_info: {
+			...includedBasicDeployment.config_info,
+			ai_provider_auth_kind: "api_key",
+			runtime_configuration: {
+				providers: [
+					{
+						provider_id: alphaProvider.provider_id,
+						auth_kind: "secret_reference",
+						base_url: alphaProvider.base_url,
+						models: ["alpha-default"],
+					},
+					{
+						provider_id: betaProvider.provider_id,
+						auth_kind: "secret_reference",
+						base_url: betaProvider.base_url,
+						models: ["beta-default"],
+					},
+				],
+				primary_model: {
+					provider_id: betaProvider.provider_id,
+					model: "beta-default",
+				},
+				features: [],
+			},
+		},
+	};
+	const updateDeploymentRequests: Array<{
+		body: string;
+		idempotencyKey: string | null;
+		ifMatch: string | null;
+	}> = [];
+	await stubHostedApi(page, {
+		deployments: [deployment],
+		aiProviders: [alphaProvider, betaProvider],
+		updateDeploymentRequests,
+	});
+	await page.goto("/agents/hdep_multi_provider/model-provider?source=on-clawdi");
+
+	const alphaCard = page.getByRole("button", { name: /Alpha Connection/ });
+	const betaCard = page.getByRole("button", { name: /Beta Connection/ });
+	await page.getByTestId("provider-choice-grid").locator("..").screenshot({
+		path: "/tmp/agent-multi-provider-initial.png",
+	});
+	await expect(alphaCard).toHaveAttribute("aria-pressed", "true");
+	await expect(betaCard).toHaveAttribute("aria-pressed", "true");
+	await expect(alphaCard.getByText("Bound", { exact: true })).toBeVisible();
+	await expect(betaCard.getByText("Primary", { exact: true })).toBeVisible();
+	await expect(page.getByLabel("Main model")).toHaveValue("beta-default");
+	await expect(page.locator("main").getByRole("button", { name: "Save changes" })).toBeDisabled();
+	expect(updateDeploymentRequests).toHaveLength(0);
+
+	await alphaCard.click();
+	await expect(alphaCard).toHaveAttribute("aria-pressed", "true");
+	await expect(betaCard).toHaveAttribute("aria-pressed", "false");
+	await expect(alphaCard.getByText("Primary", { exact: true })).toBeVisible();
+	await expect(betaCard.getByText("Primary", { exact: true })).toHaveCount(0);
+	await expect(betaCard.getByText("Bound", { exact: true })).toHaveCount(0);
+	await expect(page.getByLabel("Main model")).toHaveValue("alpha-default");
+
+	await page.locator("main").getByRole("button", { name: "Save changes" }).click();
+	await expect.poll(() => updateDeploymentRequests.length).toBe(1);
+	expect(JSON.parse(updateDeploymentRequests[0]?.body ?? "{}")).toMatchObject({
+		ai_provider_auth_kind: "api_key",
+		provider_ids: [alphaProvider.provider_id],
+		primary_model: {
+			provider_id: alphaProvider.provider_id,
+			model: "alpha-default",
 		},
 	});
 });
@@ -4427,8 +4636,6 @@ test("agent settings preserves a persisted custom primary model outside the prov
 	await modelInput.fill("owner/edited-custom-model");
 	await expect(modelInput).toHaveValue("owner/edited-custom-model");
 	await page.getByRole("button", { name: /^Switch Catalog/ }).click();
-	await page.locator("#agent-primary-provider").click();
-	await page.getByRole("option", { name: "Switch Catalog" }).click();
 	await expect(modelInput).toHaveValue("owner/edited-custom-model");
 	await expect(modelInput).toHaveAttribute("list", "agent-model-options");
 	await expect(page.locator("#agent-model-options option")).toHaveAttribute(

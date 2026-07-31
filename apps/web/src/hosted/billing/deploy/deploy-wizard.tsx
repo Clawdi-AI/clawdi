@@ -6,7 +6,6 @@ import { useRouter } from "@tanstack/react-router";
 import {
 	Cpu,
 	CreditCard,
-	Plus,
 	RefreshCw,
 	Rocket,
 	Settings2,
@@ -17,7 +16,11 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { type ApiErrorNormalizer, ApiErrorPanel } from "@/components/api-error-panel";
-import { EntityChoiceCard } from "@/components/entity-card";
+import {
+	ENTITY_CHOICE_GRID_CLASS,
+	EntityAddCard,
+	EntityChoiceCard,
+} from "@/components/entity-card";
 import { EntityIcon } from "@/components/entity-icon";
 import { IconChip } from "@/components/icon-chip";
 import { PageHeader } from "@/components/page-header";
@@ -184,7 +187,6 @@ type PaidDeploySelection = {
 	tierLabel: "Basic" | "Performance";
 };
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
-const TWO_TILE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";
 const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";
 const WALLET_PAYMENT_TOAST_DURATION_MS = 8_000;
 
@@ -204,31 +206,6 @@ const aiProviderErrorNormalizer: ApiErrorNormalizer = {
 	isAuthError: isApiAuthError,
 	normalizeError: (error) => `${normalizeApiError(error)} Clawdi AI still works.`,
 };
-
-function AddTile({
-	title,
-	description,
-	onClick,
-}: {
-	title: string;
-	description: string;
-	onClick: () => void;
-}) {
-	return (
-		<EntityChoiceCard
-			selected={false}
-			onClick={onClick}
-			icon={
-				<IconChip tint="bg-muted text-muted-foreground">
-					<Plus />
-				</IconChip>
-			}
-			title={title}
-			description={description}
-			className="h-full border-dashed bg-card"
-		/>
-	);
-}
 
 function computeCheckoutSummary({
 	offer,
@@ -313,7 +290,7 @@ function DeploySectionSkeleton() {
 				<Skeleton className="h-3.5 w-80 max-w-full" />
 				<Skeleton className="h-3.5 w-56 max-w-full" />
 			</div>
-			<div className={TWO_TILE_GRID_CLASS}>
+			<div className={ENTITY_CHOICE_GRID_CLASS}>
 				{Array.from({ length: 2 }).map((_, index) => (
 					<Skeleton key={index} className="h-[86px] w-full rounded-lg" />
 				))}
@@ -489,7 +466,6 @@ export function DeployWizard() {
 	const {
 		draft: aiBindingDraft,
 		managedPrimaryModelReady,
-		selectedProviderChoices,
 		selectCreatedProvider: selectCreatedAiProvider,
 		selectProvider: selectAiProviderChoice,
 		setBindingMode: setAiAccessMode,
@@ -1035,7 +1011,7 @@ export function DeployWizard() {
 			>
 				<PageHeader title="Deploy an Agent" />
 				<SettingsSection title="Agent software">
-					<div className={TWO_TILE_GRID_CLASS}>
+					<div className={ENTITY_CHOICE_GRID_CLASS}>
 						<EntityChoiceCard
 							selected={runtime === "hermes"}
 							onClick={() => selectRuntime("hermes")}
@@ -1060,7 +1036,7 @@ export function DeployWizard() {
 
 				<SettingsSection title="AI providers">
 					<div className="flex flex-col gap-4">
-						<div className={TWO_TILE_GRID_CLASS}>
+						<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">
 							<EntityChoiceCard
 								selected={managedProviderSelected}
 								onClick={() => selectAiProviderChoice(MANAGED_AI_CHOICE)}
@@ -1122,7 +1098,7 @@ export function DeployWizard() {
 									/>
 								);
 							})}
-							<AddTile
+							<EntityAddCard
 								title="Add a provider"
 								description="Connect OpenAI, Anthropic, or another endpoint."
 								onClick={() => setAddProviderOpen(true)}
@@ -1131,19 +1107,14 @@ export function DeployWizard() {
 						{aiAccessMode !== "unmanaged" ? (
 							<ModelBindingPicker
 								idPrefix="deploy"
-								className="w-full max-w-4xl rounded-none border-0 bg-transparent p-0"
 								providers={providerList}
 								managedModels={managedModels}
 								managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
 								managedModelsError={managedModelCatalog.error}
 								managedModelsErrorNormalizer={billingErrorNormalizer}
 								onManagedModelsRetry={() => void managedModelCatalog.refetch()}
-								customProviders={providerList}
-								showProviderSelect={false}
-								selectedProviderChoices={selectedProviderChoices}
 								primaryProviderChoice={primaryProviderChoice}
 								primaryModel={primaryModel}
-								onPrimaryProviderChange={selectAiProviderChoice}
 								onPrimaryModelChange={setPrimaryModel}
 							/>
 						) : null}
@@ -1202,7 +1173,7 @@ export function DeployWizard() {
 								/>
 							</div>
 						) : null}
-						<div className={TWO_TILE_GRID_CLASS}>
+						<div className={ENTITY_CHOICE_GRID_CLASS}>
 							<EntityChoiceCard
 								selected={compute === "basic"}
 								onClick={
@@ -1302,7 +1273,7 @@ export function DeployWizard() {
 						{paidSelection ? (
 							<div className="flex flex-col gap-3">
 								<div className="text-sm font-medium">Payment method</div>
-								<div className={TWO_TILE_GRID_CLASS}>
+								<div className={ENTITY_CHOICE_GRID_CLASS}>
 									<EntityChoiceCard
 										selected={paymentMethod === "card"}
 										onClick={() => setPaymentMethod("card")}

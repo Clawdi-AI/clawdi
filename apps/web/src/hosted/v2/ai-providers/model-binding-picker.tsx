@@ -19,50 +19,35 @@ import { Spinner } from "@/components/ui/spinner";
 import type { ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import {
 	MANAGED_AI_CHOICE,
-	type ModelBindingPickerItem,
 	managedModelPickerItems,
 	modelPickerItems,
-	primaryProviderPickerItems,
 } from "@/hosted/v2/ai-providers/model-binding";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { cn } from "@/lib/utils";
 
 export function ModelBindingPicker({
 	idPrefix,
-	className,
 	providers,
 	managedModels,
 	managedModelsLoading,
 	managedModelsError,
 	managedModelsErrorNormalizer,
 	onManagedModelsRetry,
-	customProviders,
-	additionalProviderItems = [],
-	showProviderSelect = true,
-	selectedProviderChoices,
 	primaryProviderChoice,
 	primaryModel,
-	onPrimaryProviderChange,
 	onPrimaryModelChange,
 }: {
 	idPrefix: string;
-	className?: string;
 	providers: readonly AiProvider[];
 	managedModels: readonly ManagedModelCatalogItem[];
 	managedModelsLoading: boolean;
 	managedModelsError: unknown;
 	managedModelsErrorNormalizer: ApiErrorNormalizer;
 	onManagedModelsRetry: () => void;
-	customProviders: readonly AiProvider[];
-	additionalProviderItems?: readonly ModelBindingPickerItem[];
-	showProviderSelect?: boolean;
-	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
 	primaryModel: string;
-	onPrimaryProviderChange: (choice: string) => void;
 	onPrimaryModelChange: (model: string) => void;
 }) {
-	const providerInputId = `${idPrefix}-primary-provider`;
 	const catalogInputId = `${idPrefix}-catalog-model`;
 	const modelInputId = `${idPrefix}-primary-model`;
 	const modelListId = `${idPrefix}-model-options`;
@@ -74,42 +59,13 @@ export function ModelBindingPicker({
 		isManaged && managedModels.length === 0 && !managedModelsLoading
 			? (managedModelsError ?? new Error("The Clawdi AI model catalog returned no models."))
 			: null;
-	const primaryProviderItems = primaryProviderPickerItems(
-		selectedProviderChoices,
-		customProviders,
-		additionalProviderItems,
-	);
 	return (
 		<div
 			data-hosted="true"
 			data-v2="true"
-			className={cn("flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3", className)}
+			data-testid="model-binding-picker"
+			className="flex w-full min-w-0 flex-col gap-3"
 		>
-			{showProviderSelect ? (
-				<div className="flex max-w-md flex-col gap-1.5">
-					<Label htmlFor={providerInputId}>Primary provider</Label>
-					<Select
-						items={primaryProviderItems}
-						value={primaryProviderChoice}
-						onValueChange={(value) => {
-							if (value) onPrimaryProviderChange(value);
-						}}
-					>
-						<SelectTrigger id={providerInputId} className="w-full">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectGroup>
-								{primaryProviderItems.map((item) => (
-									<SelectItem key={item.value} value={item.value}>
-										{item.label}
-									</SelectItem>
-								))}
-							</SelectGroup>
-						</SelectContent>
-					</Select>
-				</div>
-			) : null}
 			{isManaged && managedModelsLoading ? (
 				<div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
 					<Spinner className="size-3.5" /> Loading Clawdi AI models…
@@ -122,7 +78,7 @@ export function ModelBindingPicker({
 					title="Couldn't load Clawdi AI models"
 				/>
 			) : isManaged && hasCatalogModels ? (
-				<div className="flex min-w-0 max-w-4xl flex-col gap-2">
+				<div className="flex min-w-0 flex-col gap-2">
 					<Label id={`${catalogInputId}-label`}>Main model</Label>
 					<div
 						className="flex min-w-0 max-w-full flex-wrap items-start gap-2"
@@ -135,7 +91,7 @@ export function ModelBindingPicker({
 								onValueChange={(value) => {
 									if (typeof value === "string") onPrimaryModelChange(value);
 								}}
-								className="grid w-full min-w-0 grid-cols-2 gap-2 @4xl/main:grid-cols-4"
+								className="grid w-full min-w-0 grid-cols-1 gap-2 @md/main:grid-cols-2 @4xl/main:grid-cols-4"
 								aria-labelledby={`${catalogInputId}-label`}
 								data-testid="managed-model-choices"
 							>
@@ -158,13 +114,16 @@ export function ModelBindingPicker({
 											/>
 											<EntityIcon kind="provider" id={item.providerId} size="sm" />
 											<span className="flex min-w-0 flex-1 flex-col gap-0.5 leading-tight">
-												<span id={titleId} className="truncate">
+												<span
+													id={titleId}
+													className="min-w-0 break-words text-sm font-medium leading-snug"
+												>
 													{item.label}
 												</span>
 												{item.description ? (
 													<span
 														id={descriptionId}
-														className="min-w-0 break-words text-xs leading-snug font-normal text-muted-foreground"
+														className="line-clamp-2 min-w-0 break-words text-xs leading-snug font-normal text-muted-foreground"
 													>
 														{item.description}
 													</span>

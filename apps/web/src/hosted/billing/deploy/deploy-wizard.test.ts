@@ -28,6 +28,10 @@ const modelBindingPickerSource = readFileSync(
 	new URL("../../v2/ai-providers/model-binding-picker.tsx", import.meta.url),
 	"utf8",
 );
+const entityCardSource = readFileSync(
+	new URL("../../../components/entity-card.tsx", import.meta.url),
+	"utf8",
+);
 const runtimesSource = readFileSync(new URL("../../runtimes.ts", import.meta.url), "utf8");
 const addProviderDialogSource = readFileSync(
 	new URL("../../v2/ai-providers/add-provider-dialog.tsx", import.meta.url),
@@ -48,9 +52,8 @@ const aiProviderHooksSource = readFileSync(
 
 describe("deploy wizard personalization", () => {
 	test("keeps deploy-specific controls proportionate to their content", () => {
-		expect(wizardSource).toContain(
-			'className="w-full max-w-4xl rounded-none border-0 bg-transparent p-0"',
-		);
+		expect(modelBindingPickerSource).toContain('className="flex w-full min-w-0 flex-col gap-3"');
+		expect(wizardSource).not.toContain("max-w-4xl rounded-none border-0");
 		expect(wizardSource).toContain('<div className="flex max-w-2xl flex-col gap-4">');
 		expect(wizardSource).toContain('className="flex w-full max-w-md flex-col gap-1.5"');
 		expect(wizardSource).toContain('<Label htmlFor="agent-language">Language</Label>');
@@ -93,8 +96,16 @@ describe("deploy wizard responsive layout", () => {
 	test("keeps the shared page width while sizing card grids from the main pane", () => {
 		expect(wizardSource).toContain("CENTERED_PAGE_WIDTH_CLASS.page");
 		expect(wizardSource).toContain(
-			'const TWO_TILE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";',
+			'<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">',
 		);
+		expect(agentDetailSource).toContain(
+			'<div className={ENTITY_CHOICE_GRID_CLASS} data-testid="provider-choice-grid">',
+		);
+		expect(entityCardSource).toContain(
+			'export const ENTITY_CHOICE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";',
+		);
+		expect(entityCardSource).toContain("export function EntityAddCard(");
+		expect(wizardSource).not.toContain("TWO_TILE_GRID_CLASS");
 		expect(wizardSource).not.toContain("THREE_TILE_GRID_CLASS");
 		expect(wizardSource).not.toContain("@5xl/main:grid-cols-3");
 		expect(wizardSource).not.toContain('className="grid gap-2 sm:grid-cols-2"');
@@ -271,9 +282,14 @@ describe("managed model picker", () => {
 		expect(modelBindingPickerSource).not.toContain("managed-model-cost-hint");
 		expect(modelBindingPickerSource).not.toContain("Primary model");
 		expect(modelBindingPickerSource).not.toContain("Catalog model");
+		expect(modelBindingPickerSource).toContain('className="flex w-full min-w-0 flex-col gap-3"');
 		expect(modelBindingPickerSource).toContain(
-			'"flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3"',
+			"grid-cols-1 gap-2 @md/main:grid-cols-2 @4xl/main:grid-cols-4",
 		);
+		expect(modelBindingPickerSource).not.toContain("max-w-2xl");
+		expect(modelBindingPickerSource).not.toContain("bg-muted/20");
+		expect(modelBindingPickerSource).not.toContain("Primary provider");
+		expect(modelBindingPickerSource).not.toContain("showProviderSelect");
 		expect(modelBindingPickerSource).toContain("Loading Clawdi AI models…");
 		expect(modelBindingPickerSource).toContain('title="Couldn\'t load Clawdi AI models"');
 	});
@@ -314,11 +330,12 @@ describe("deploy provider choice", () => {
 		);
 	});
 
-	test("uses an exclusive provider selection and hides the redundant provider picker", () => {
+	test("uses provider cards as the only exclusive provider selection", () => {
 		expect(wizardSource).toContain("selectProvider: selectAiProviderChoice");
 		expect(wizardSource).toContain("selectAiProviderChoice(MANAGED_AI_CHOICE)");
 		expect(wizardSource).toContain("selectAiProviderChoice(provider.provider_id)");
-		expect(wizardSource).toContain("showProviderSelect={false}");
+		expect(wizardSource).not.toContain("showProviderSelect");
+		expect(wizardSource).not.toContain("onPrimaryProviderChange");
 		expect(wizardSource).not.toContain("toggleAiProviderChoice");
 		expect(wizardSource).not.toContain("selectedProviderCount");
 		expect(wizardSource).not.toContain("aiProviderChoices.includes");
