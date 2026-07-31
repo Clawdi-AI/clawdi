@@ -11,9 +11,12 @@ scrub a conservative set of sensitive keys before events are sent.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
+
+if TYPE_CHECKING:
+    from sentry_sdk.types import Event, Hint
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +68,13 @@ def init_sentry() -> None:
     )
 
 
-def _scrub_event(event: dict[str, Any], _hint: dict[str, Any]) -> dict[str, Any]:
+def _scrub_event(event: Event, _hint: Hint) -> Event:
     """Walk the event and redact anything that looks like a credential."""
     _scrub(event)
     return event
 
 
-def _scrub(obj: Any) -> None:
+def _scrub(obj: object) -> None:
     if isinstance(obj, dict):
         for key, value in list(obj.items()):
             if _is_sensitive_key(key):
@@ -83,7 +86,7 @@ def _scrub(obj: Any) -> None:
             _scrub(item)
 
 
-def _is_sensitive_key(key: Any) -> bool:
+def _is_sensitive_key(key: object) -> bool:
     if not isinstance(key, str):
         return False
     lowered = key.lower()
