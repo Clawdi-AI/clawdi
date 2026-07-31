@@ -93,6 +93,7 @@ from app.services.channels import (
     decrypt_agent_link_token,
     encrypt_optional_token,
     enqueue_channel_outbound_message,
+    ensure_bot_agent_link_provider_cardinality_or_409,
     ensure_hosted_agent_provider_link_available,
     generate_agent_token,
     generate_webhook_secret,
@@ -426,6 +427,11 @@ async def list_channels(
         for account, link in runtime_rows:
             if not await bot_agent_link_has_strict_v2_authority(db, link=link):
                 continue
+            await ensure_bot_agent_link_provider_cardinality_or_409(
+                db,
+                account=account,
+                link=link,
+            )
             payload.append(
                 (await _runtime_account_response(db, account, link)).model_dump(mode="json")
             )
@@ -1340,6 +1346,11 @@ async def _resolve_pair_code_link(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This Agent Link has no managed runtime authority.",
             )
+        await ensure_bot_agent_link_provider_cardinality_or_409(
+            db,
+            account=account,
+            link=link,
+        )
         return link, None
     if body.agent_id is not None:
         await get_owned_agent_or_404(db, user_id=auth.user_id, agent_id=body.agent_id)
@@ -1360,6 +1371,11 @@ async def _resolve_pair_code_link(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This Agent Link has no managed runtime authority.",
             )
+        await ensure_bot_agent_link_provider_cardinality_or_409(
+            db,
+            account=account,
+            link=link,
+        )
         return link, agent_token
     links = await list_owned_active_bot_agent_links(db, account=account, user_id=auth.user_id)
     if len(links) == 1:
@@ -1374,6 +1390,11 @@ async def _resolve_pair_code_link(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This Agent Link has no managed runtime authority.",
             )
+        await ensure_bot_agent_link_provider_cardinality_or_409(
+            db,
+            account=account,
+            link=links[0],
+        )
         return links[0], None
     detail = "agent_id or agent_link_id is required"
     if len(links) > 1:

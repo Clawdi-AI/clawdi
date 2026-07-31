@@ -280,6 +280,7 @@ function applyOpenClawRuntimeChannelSettings(
 ): RuntimeManifest {
 	const openclaw = manifest.runtimes.openclaw;
 	if (!openclaw?.enabled) return manifest;
+	assertSingleManagedLinkPerProvider(links);
 
 	const existingRun = openclaw.run ?? { env: {}, prependPath: [] };
 	const secretEnv = omitOpenClawManagedChannelSecretEnv(existingRun.secretEnv ?? {});
@@ -313,12 +314,9 @@ function applyHermesRuntimeChannelSettings(
 	const hermes = manifest.runtimes.hermes;
 	if (!hermes?.enabled) return manifest;
 
-	// Hermes 0.19.1 exposes one native adapter token per provider. Keep every
-	// link in the shared channel projection, credentials, and egress state; this
-	// native selection is not a control-plane admission or authority boundary.
-	const telegram = firstLinkForProvider(links, "telegram");
-	const discord = firstLinkForProvider(links, "discord");
-	const whatsapp = WHATSAPP_UPSTREAM_READY ? firstLinkForProvider(links, "whatsapp") : null;
+	const telegram = singleLinkForProvider(links, "telegram");
+	const discord = singleLinkForProvider(links, "discord");
+	const whatsapp = WHATSAPP_UPSTREAM_READY ? singleLinkForProvider(links, "whatsapp") : null;
 	const whatsappCredentials = whatsapp ? whatsappBaileysCredentials(whatsapp) : [];
 	const whatsappCredential = whatsappCredentials.find(
 		(credential) => whatsappCredentialCreds(credential) !== null,
@@ -362,11 +360,27 @@ function applyHermesRuntimeChannelSettings(
 	};
 }
 
-function firstLinkForProvider(
+function singleLinkForProvider(
 	links: ManagedChannelLink[],
 	provider: ChannelProvider,
 ): ManagedChannelLink | null {
-	return links.find((link) => link.account.provider === provider) ?? null;
+	const matching = links.filter((link) => link.account.provider === provider);
+	if (matching.length > 1) {
+		throw new Error(runtimeProviderLinkLimitDetail(provider));
+	}
+	return matching[0] ?? null;
+}
+
+function assertSingleManagedLinkPerProvider(links: ManagedChannelLink[]): void {
+	for (const provider of ["telegram", "discord"] as const) {
+		singleLinkForProvider(links, provider);
+	}
+}
+
+function runtimeProviderLinkLimitDetail(provider: ChannelProvider): string {
+	const label =
+		provider === "telegram" ? "Telegram" : provider === "discord" ? "Discord" : provider;
+	return `This Agent has multiple active ${label} bots. Unlink the extras until only one remains.`;
 }
 
 function openClawChannelPlaceholderTokenSecretRef(link: ManagedChannelLink): OpenClawEnvSecretRef {

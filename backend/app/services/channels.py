@@ -111,10 +111,27 @@ DELIVERY_LINK_LOCK_CONTENTION_MAX_DELAY_SECONDS = 30
 HERMES_AGENT_TYPE = "hermes"
 OPENCLAW_AGENT_TYPE = "openclaw"
 HOSTED_RUNTIME_AGENT_TYPES = frozenset({HERMES_AGENT_TYPE, OPENCLAW_AGENT_TYPE})
+HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS = frozenset(
+    {CHANNEL_PROVIDER_TELEGRAM, CHANNEL_PROVIDER_DISCORD}
+)
 STRICT_V2_AGENT_LINK_DETAIL = "Only Cloud Agents can be linked or paired with channels."
 WHATSAPP_COMING_SOON_DETAIL = (
     "WhatsApp channels are coming soon for hosted agents. Telegram and Discord are available now."
 )
+
+
+def hosted_agent_provider_link_limit_detail(provider: str, *, duplicate: bool = False) -> str:
+    label = {
+        CHANNEL_PROVIDER_TELEGRAM: "Telegram",
+        CHANNEL_PROVIDER_DISCORD: "Discord",
+    }.get(provider, provider.title())
+    if duplicate:
+        return (
+            f"This Agent has multiple active {label} bots. "
+            "Unlink the extras until only one remains."
+        )
+    return f"This Agent already has a {label} bot. Unlink it before connecting another."
+
 
 TELEGRAM_REF_CALLBACK_QUERY_ID = "telegram_callback_query_id"
 TELEGRAM_REF_FILE_ID = "telegram_file_id"
@@ -463,12 +480,8 @@ async def get_or_create_bot_agent_link(
                     status_code=status.HTTP_409_CONFLICT,
                     detail=STRICT_V2_AGENT_LINK_DETAIL,
                 )
-            await ensure_hosted_agent_provider_link_available(
-                db,
-                account=account,
-                agent_id=agent_id,
-                user_id=link_user_id,
-            )
+            # Ensuring the exact same Bot -> Agent Link is idempotent, even for
+            # historical duplicate state that must remain visible for cleanup.
             return link, None
 
     await ensure_hosted_agent_provider_link_available(
@@ -562,11 +575,13 @@ async def bot_agent_link_allows_new_pairing(
     row = (
         await db.execute(
             select(
+                ChannelAccount,
                 ChannelBotAgentLink,
                 AgentEnvironment,
                 HostedRuntimeState,
                 V2RuntimeEnvironmentFence,
             )
+            .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
             .join(AgentEnvironment, AgentEnvironment.id == ChannelBotAgentLink.agent_id)
             .join(
                 HostedRuntimeState,
@@ -582,6 +597,8 @@ async def bot_agent_link_allows_new_pairing(
                 ChannelBotAgentLink.user_id == user_id,
                 ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
                 ChannelBotAgentLink.archived_at.is_(None),
+                ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+                ChannelAccount.archived_at.is_(None),
                 AgentEnvironment.user_id == user_id,
             )
             .execution_options(populate_existing=True)
@@ -590,10 +607,16 @@ async def bot_agent_link_allows_new_pairing(
     ).one_or_none()
     if row is None:
         return False
-    link, agent, state, fence = row
+    account, link, agent, state, fence = row
     if not is_strict_v2_hosted_channel_agent(agent, state, fence):
         return False
-    return await bot_agent_link_has_strict_v2_authority(db, link=link)
+    if not await bot_agent_link_has_strict_v2_authority(db, link=link):
+        return False
+    return await bot_agent_link_has_provider_cardinality_capability(
+        db,
+        account=account,
+        link=link,
+    )
 
 
 async def bot_agent_link_has_strict_v2_authority(
@@ -636,6 +659,66 @@ async def bot_agent_link_has_strict_v2_authority(
     return is_strict_v2_hosted_channel_agent(agent, state, fence)
 
 
+async def bot_agent_link_has_provider_cardinality_capability(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+) -> bool:
+    """Return whether this Link is the Agent's sole active account for its provider."""
+    if account.provider not in HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS:
+        return True
+    active_link_ids = await _active_bot_agent_link_ids_for_provider(
+        db,
+        agent_id=link.agent_id,
+        user_id=link.user_id,
+        provider=account.provider,
+    )
+    return active_link_ids == [link.id]
+
+
+async def _active_bot_agent_link_ids_for_provider(
+    db: AsyncSession,
+    *,
+    agent_id: UUID,
+    user_id: UUID,
+    provider: str,
+) -> list[UUID]:
+    result = await db.execute(
+        select(ChannelBotAgentLink.id)
+        .join(ChannelAccount, ChannelAccount.id == ChannelBotAgentLink.account_id)
+        .where(
+            ChannelBotAgentLink.agent_id == agent_id,
+            ChannelBotAgentLink.user_id == user_id,
+            ChannelBotAgentLink.status == BOT_AGENT_LINK_STATUS_ACTIVE,
+            ChannelBotAgentLink.archived_at.is_(None),
+            ChannelAccount.provider == provider,
+            ChannelAccount.status == CHANNEL_STATUS_ACTIVE,
+            ChannelAccount.archived_at.is_(None),
+        )
+        .order_by(ChannelBotAgentLink.id)
+    )
+    return list(result.scalars())
+
+
+async def ensure_bot_agent_link_provider_cardinality_or_409(
+    db: AsyncSession,
+    *,
+    account: ChannelAccount,
+    link: ChannelBotAgentLink,
+) -> None:
+    if await bot_agent_link_has_provider_cardinality_capability(
+        db,
+        account=account,
+        link=link,
+    ):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=hosted_agent_provider_link_limit_detail(account.provider, duplicate=True),
+    )
+
+
 async def list_strict_v2_hosted_channel_agent_ids(
     db: AsyncSession,
     *,
@@ -663,6 +746,15 @@ async def list_strict_v2_hosted_channel_agent_ids(
             continue
         if provider == CHANNEL_PROVIDER_WHATSAPP:
             continue
+        if provider in HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS:
+            existing_link_ids = await _active_bot_agent_link_ids_for_provider(
+                db,
+                agent_id=agent.id,
+                user_id=user_id,
+                provider=provider,
+            )
+            if existing_link_ids:
+                continue
         eligible.append(agent.id)
     return eligible
 
@@ -695,6 +787,24 @@ async def ensure_hosted_agent_provider_link_available(
             status_code=status.HTTP_409_CONFLICT,
             detail=WHATSAPP_COMING_SOON_DETAIL,
         )
+
+    if (
+        agent.agent_type not in HOSTED_RUNTIME_AGENT_TYPES
+        or account.provider not in HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS
+    ):
+        return
+    existing_link_ids = await _active_bot_agent_link_ids_for_provider(
+        db,
+        agent_id=agent_id,
+        user_id=user_id,
+        provider=account.provider,
+    )
+    if not existing_link_ids:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=hosted_agent_provider_link_limit_detail(account.provider),
+    )
 
 
 def channel_bot_link_limit(account: ChannelAccount) -> int | None:
@@ -858,6 +968,7 @@ async def rotate_bot_agent_link_token(
             status_code=status.HTTP_409_CONFLICT,
             detail=STRICT_V2_AGENT_LINK_DETAIL,
         )
+    await ensure_bot_agent_link_provider_cardinality_or_409(db, account=account, link=link)
     raw_token = generate_agent_token(account.provider)
     store_agent_link_token(link, raw_token)
     await db.flush()
@@ -1114,6 +1225,7 @@ async def resolve_channel_agent_by_token(
     account, link, _agent, _state, _fence = row
     if not await bot_agent_link_has_strict_v2_authority(db, link=link):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bot token")
+    await ensure_bot_agent_link_provider_cardinality_or_409(db, account=account, link=link)
     return ChannelAgentContext(account=account, link=link)
 
 
@@ -1159,6 +1271,7 @@ async def resolve_channel_agent_by_identity(
     account, link, _agent, _state, _fence = row
     if not await bot_agent_link_has_strict_v2_authority(db, link=link):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid bot identity")
+    await ensure_bot_agent_link_provider_cardinality_or_409(db, account=account, link=link)
     return ChannelAgentContext(account=account, link=link)
 
 
@@ -1467,14 +1580,24 @@ async def resolve_inbound_binding(
             ):
                 continue
             link = await db.get(ChannelBotAgentLink, active_binding.bot_agent_link_id)
-            if (
+            inactive = (
                 link is None
                 or link.status != BOT_AGENT_LINK_STATUS_ACTIVE
                 or link.archived_at is not None
-                or await bot_agent_link_has_strict_v2_authority(db, link=link)
-            ):
+            )
+            authorized = False
+            if link is not None and not inactive:
+                authorized = await bot_agent_link_has_strict_v2_authority(
+                    db,
+                    link=link,
+                ) and await bot_agent_link_has_provider_cardinality_capability(
+                    db,
+                    account=account,
+                    link=link,
+                )
+            if inactive or authorized:
                 # Preserve the binding for inactive-link health reporting. An
-                # active historical Link without strict-v2 authority remains
+                # active historical Link without runtime authority remains
                 # unbound and cannot reach a runtime.
                 authorized_bindings.append(active_binding)
         return InboundBindingResult(
@@ -2842,11 +2965,24 @@ async def deliver_channel_delivery(
     try:
         account = await _delivery_account(db, delivery)
         link = await _lock_active_delivery_link(db, delivery)
-        if link is not None and not await bot_agent_link_has_strict_v2_authority(db, link=link):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="channel agent link has no managed runtime authority",
-            )
+        if link is not None:
+            if not await bot_agent_link_has_strict_v2_authority(db, link=link):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="channel agent link has no managed runtime authority",
+                )
+            if not await bot_agent_link_has_provider_cardinality_capability(
+                db,
+                account=account,
+                link=link,
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=hosted_agent_provider_link_limit_detail(
+                        account.provider,
+                        duplicate=True,
+                    ),
+                )
         message = await _delivery_message(db, delivery)
         await _lock_active_delivery_binding(db, delivery=delivery, message=message)
         provider_message_id, provider_response = await send_provider_outbound_payload(

@@ -40,7 +40,12 @@ from app.schemas.runtime import (
     validate_hosted_runtime_desired_state,
     validate_hosted_runtime_mcp_desired_state,
 )
-from app.services.channels import channel_runtime_account_key, channel_runtime_placeholder_token
+from app.services.channels import (
+    HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS,
+    channel_runtime_account_key,
+    channel_runtime_placeholder_token,
+    hosted_agent_provider_link_limit_detail,
+)
 from app.services.managed_ai_provider import (
     V2_LEGACY_MANAGED_AI_PROVIDER_ID,
     V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
@@ -434,7 +439,16 @@ def render_runtime_source(
 
     bindings: list[dict[str, str]] = []
     channel_rows = batch.channels.get(environment_id, ())
+    projected_providers: set[str] = set()
     for account, link in channel_rows:
+        if (
+            account.provider in HOSTED_RUNTIME_SINGLE_ACCOUNT_PROVIDERS
+            and account.provider in projected_providers
+        ):
+            raise RuntimeSourceError(
+                hosted_agent_provider_link_limit_detail(account.provider, duplicate=True)
+            )
+        projected_providers.add(account.provider)
         if not link.encrypted_agent_token or not link.agent_token_nonce:
             raise RuntimeSourceError("Active runtime channel link has no token material")
         account_key = channel_runtime_account_key(account.id)

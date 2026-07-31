@@ -17,7 +17,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { WHATSAPP_LINKING_READY } from "@/hosted/v2/channels/channel-linking.logic";
+import {
+	agentProviderHasSingleLinkLimit,
+	agentProviderLinkLimitDescription,
+	WHATSAPP_LINKING_READY,
+} from "@/hosted/v2/channels/channel-linking.logic";
 import {
 	CHANNEL_PROVIDERS,
 	type ChannelProviderId,
@@ -43,11 +47,15 @@ export function ConnectBotDialog({
 	open,
 	onOpenChange,
 	agentId,
+	agentType,
+	linkedProviders,
 	onAgentConnected,
 }: {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 	agentId?: string;
+	agentType?: string;
+	linkedProviders?: ReadonlySet<string>;
 	onAgentConnected?: (bot: {
 		id: string;
 		name: string;
@@ -86,6 +94,11 @@ export function ConnectBotDialog({
 	}, [open]);
 
 	const meta = PROVIDER_META[provider];
+	const providerAlreadyLinked = Boolean(
+		agentId &&
+			agentProviderHasSingleLinkLimit(agentType, provider) &&
+			linkedProviders?.has(provider),
+	);
 	const discordSelected = meta.connect === "discord";
 	const tokenError = discordSelected ? discordBotTokenError(token) : null;
 	const applicationIdError = discordSelected ? discordApplicationIdError(applicationId) : null;
@@ -103,6 +116,7 @@ export function ConnectBotDialog({
 	}
 
 	const canSubmit =
+		!providerAlreadyLinked &&
 		name.trim().length > 0 &&
 		(meta.connect === "whatsapp"
 			? WHATSAPP_LINKING_READY
@@ -243,14 +257,21 @@ export function ConnectBotDialog({
 								<div className="grid grid-cols-2 gap-2">
 									{CHANNEL_PROVIDERS.map((p) => {
 										const comingSoon = p === "whatsapp" && !WHATSAPP_LINKING_READY;
+										const alreadyLinked = Boolean(
+											agentId &&
+												agentProviderHasSingleLinkLimit(agentType, p) &&
+												linkedProviders?.has(p),
+										);
 										return (
 											<EntityChoiceCard
 												key={p}
 												selected={provider === p}
 												onClick={() => changeProvider(p)}
-												disabled={comingSoon}
+												disabled={comingSoon || alreadyLinked}
 												badge={
-													comingSoon ? (
+													alreadyLinked ? (
+														<span className="text-xs text-muted-foreground">Already linked</span>
+													) : comingSoon ? (
 														<span className="text-xs text-muted-foreground">Coming soon</span>
 													) : undefined
 												}
@@ -264,7 +285,11 @@ export function ConnectBotDialog({
 												}
 												title={PROVIDER_META[p].label}
 												description={
-													comingSoon ? "Hosted agent linking is not ready yet." : undefined
+													alreadyLinked
+														? agentProviderLinkLimitDescription(p)
+														: comingSoon
+															? "Hosted agent linking is not ready yet."
+															: undefined
 												}
 											/>
 										);

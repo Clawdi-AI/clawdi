@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+	agentProviderHasSingleLinkLimit,
+	agentProviderLinkLimitDescription,
 	channelActivityAfterLink,
 	channelProviderLinkingReady,
 	pairCodeExpired,
@@ -23,6 +25,21 @@ describe("hosted channel instructions and gates", () => {
 		expect(channelProviderLinkingReady("telegram")).toBe(true);
 		expect(channelProviderLinkingReady("discord")).toBe(true);
 		expect(channelProviderLinkingReady("whatsapp")).toBe(false);
+	});
+
+	test("describes the single-account runtime capability for both hosted runtimes", () => {
+		for (const agentType of ["openclaw", "hermes"]) {
+			expect(agentProviderHasSingleLinkLimit(agentType, "telegram")).toBe(true);
+			expect(agentProviderHasSingleLinkLimit(agentType, "discord")).toBe(true);
+		}
+		expect(agentProviderHasSingleLinkLimit("openclaw", "whatsapp")).toBe(false);
+		expect(agentProviderHasSingleLinkLimit("codex", "telegram")).toBe(false);
+		expect(agentProviderLinkLimitDescription("telegram")).toBe(
+			"This Agent already has a Telegram bot. Unlink it before connecting another.",
+		);
+		expect(agentProviderLinkLimitDescription("discord")).toBe(
+			"This Agent already has a Discord bot. Unlink it before connecting another.",
+		);
 	});
 
 	test("only treats real account activity after linking as new channel activity", () => {

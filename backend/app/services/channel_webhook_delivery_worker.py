@@ -19,7 +19,11 @@ from app.models.channel import (
     ChannelMessage,
 )
 from app.services.channel_webhooks import deliver_telegram_agent_webhook
-from app.services.channels import bot_agent_link_has_strict_v2_authority, telegram_update_payload
+from app.services.channels import (
+    bot_agent_link_has_provider_cardinality_capability,
+    bot_agent_link_has_strict_v2_authority,
+    telegram_update_payload,
+)
 from app.services.metrics import webhook_ttl_drops
 
 log = logging.getLogger(__name__)
@@ -140,7 +144,14 @@ class ChannelWebhookDeliveryWorker:
                 message_id=message.id, delivered=False, expired=True
             )
 
-        if not await bot_agent_link_has_strict_v2_authority(db, link=link):
+        if not await bot_agent_link_has_strict_v2_authority(
+            db,
+            link=link,
+        ) or not await bot_agent_link_has_provider_cardinality_capability(
+            db,
+            account=account,
+            link=link,
+        ):
             # Historical or retired Links stay listable for cleanup but have no
             # data-plane authority. Consume old queued work without delivering it.
             message.delivered_at = now

@@ -2,7 +2,7 @@ export const WHATSAPP_LINKING_READY = false;
 
 const SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE: Readonly<Record<string, ReadonlySet<string>>> = {
 	hermes: new Set(["telegram", "discord"]),
-	openclaw: new Set(["telegram"]),
+	openclaw: new Set(["telegram", "discord"]),
 };
 
 export function channelProviderLinkingReady(provider: string): boolean {
@@ -14,6 +14,12 @@ export function agentProviderHasSingleLinkLimit(
 	provider: string,
 ): boolean {
 	return Boolean(agentType && SINGLE_LINK_PROVIDERS_BY_AGENT_TYPE[agentType]?.has(provider));
+}
+
+export function agentProviderLinkLimitDescription(provider: string): string {
+	const label =
+		provider === "telegram" ? "Telegram" : provider === "discord" ? "Discord" : provider;
+	return `This Agent already has a ${label} bot. Unlink it before connecting another.`;
 }
 
 export function pairingCommand(code: string): string {

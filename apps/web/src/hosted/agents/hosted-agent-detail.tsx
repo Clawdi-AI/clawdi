@@ -2672,6 +2672,8 @@ function ChannelsTab({
 				open={connectOpen}
 				onOpenChange={setConnectOpen}
 				agentId={environmentId}
+				agentType={agentType}
+				linkedProviders={linkedProviders}
 				onAgentConnected={(bot) => {
 					if (bot.provider === "telegram") {
 						setTelegramPair({

@@ -6385,67 +6385,51 @@ exit 64
 		expect(projected.secretValues).toEqual({ "provider.default.apiKey": "sk-provider" });
 	});
 
-	it("projects multiple Telegram accounts into one hosted runtime", () => {
-		const firstAccount = "clawdi_00000000000000000000000000000001";
-		const secondAccount = "clawdi_00000000000000000000000000000002";
-		const agentRef = (account: string) => `secret://channels/telegram/${account}/agent-token`;
-		const placeholderRef = (account: string) =>
-			`secret://channels/telegram/${account}/placeholder-token`;
-		const bindings: RuntimeBundleChannelBinding[] = [firstAccount, secondAccount].map(
-			(accountKey) => ({
-				provider: "telegram",
-				accountKey,
-				agentTokenSecretRef: agentRef(accountKey),
-				placeholderTokenSecretRef: placeholderRef(accountKey),
-			}),
-		);
-		const loaded: RuntimeManifestLoad = {
-			manifest: {
-				schemaVersion: "clawdi.runtimeDesiredState.v1",
-				deploymentId: "dep_multi_telegram",
-				environmentId: "env_multi_telegram",
-				instanceId: "iid_multi_telegram",
-				generation: 1,
-				issuedAt: "2026-07-30T00:00:00Z",
-				controlPlane: { apiUrl: "https://cloud-api.test" },
-				runtimes: { openclaw: { enabled: true } },
-			},
-			source: "remote-datasource",
-			sourcePath: "https://cloud-api.test/v1/runtime/manifest",
-			channelBindings: bindings,
-			secretValues: Object.fromEntries(
-				bindings.flatMap((binding, index) => [
-					[binding.agentTokenSecretRef, `agent-token-${index}`],
-					[binding.placeholderTokenSecretRef, `99999999${index}:${"a".repeat(32)}`],
-				]),
-			),
-		};
+	it("fails closed instead of selecting a historical duplicate runtime account", () => {
+		for (const runtime of ["openclaw", "hermes"] as const) {
+			for (const provider of ["telegram", "discord"] as const) {
+				const firstAccount = "clawdi_00000000000000000000000000000001";
+				const secondAccount = "clawdi_00000000000000000000000000000002";
+				const agentRef = (account: string) =>
+					`secret://channels/${provider}/${account}/agent-token`;
+				const placeholderRef = (account: string) =>
+					`secret://channels/${provider}/${account}/placeholder-token`;
+				const bindings: RuntimeBundleChannelBinding[] = [firstAccount, secondAccount].map(
+					(accountKey) => ({
+						provider,
+						accountKey,
+						agentTokenSecretRef: agentRef(accountKey),
+						placeholderTokenSecretRef: placeholderRef(accountKey),
+					}),
+				);
+				const loaded: RuntimeManifestLoad = {
+					manifest: {
+						schemaVersion: "clawdi.runtimeDesiredState.v1",
+						deploymentId: `dep_duplicate_${runtime}_${provider}`,
+						environmentId: `env_duplicate_${runtime}_${provider}`,
+						instanceId: `iid_duplicate_${runtime}_${provider}`,
+						generation: 1,
+						issuedAt: "2026-07-30T00:00:00Z",
+						controlPlane: { apiUrl: "https://cloud-api.test" },
+						runtimes: { [runtime]: { enabled: true } },
+					},
+					source: "remote-datasource",
+					sourcePath: "https://cloud-api.test/v1/runtime/manifest",
+					channelBindings: bindings,
+					secretValues: Object.fromEntries(
+						bindings.flatMap((binding, index) => [
+							[binding.agentTokenSecretRef, `agent-token-${index}`],
+							[binding.placeholderTokenSecretRef, `99999999${index}:${"a".repeat(32)}`],
+						]),
+					),
+				};
+				const label = provider === "telegram" ? "Telegram" : "Discord";
 
-		const projected = applyRuntimeBundleChannelsToManifestLoad(loaded);
-		const hermesProjected = applyRuntimeBundleChannelsToManifestLoad({
-			...loaded,
-			manifest: {
-				...loaded.manifest,
-				runtimes: { hermes: { enabled: true } },
-			},
-		});
-
-		expect(projected.manifest.projection?.channels).toMatchObject({
-			telegram: {
-				accounts: {
-					[firstAccount]: { enabled: true },
-					[secondAccount]: { enabled: true },
-				},
-			},
-		});
-		expect(hermesProjected.manifest.projection?.channels).toMatchObject({
-			telegram: {
-				accounts: {
-					[firstAccount]: { enabled: true },
-					[secondAccount]: { enabled: true },
-				},
-			},
-		});
+				expect(() => applyRuntimeBundleChannelsToManifestLoad(loaded)).toThrow(
+					`This Agent has multiple active ${label} bots. Unlink the extras until only one remains.`,
+				);
+			}
+		}
 	});
 
 	it("reconciles environment-scoped hosted bundle channel create, rotation, and removal", () => {

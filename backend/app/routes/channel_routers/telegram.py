@@ -56,6 +56,7 @@ from app.services.channels import (
     TELEGRAM_REF_FILE_PATH,
     TELEGRAM_REF_MESSAGE_ID,
     ChannelAgentContext,
+    bot_agent_link_has_provider_cardinality_capability,
     bot_agent_link_has_strict_v2_authority,
     channel_agent_reference_exists,
     channel_runtime_account_key,
@@ -913,7 +914,14 @@ async def _deliver_telegram_agent_webhook_for_binding(
             link=link,
         )
         return False
-    if not await bot_agent_link_has_strict_v2_authority(db, link=link):
+    if not await bot_agent_link_has_strict_v2_authority(
+        db,
+        link=link,
+    ) or not await bot_agent_link_has_provider_cardinality_capability(
+        db,
+        account=account,
+        link=link,
+    ):
         return False
     return await _deliver_telegram_agent_webhook(account, link, payload)
 

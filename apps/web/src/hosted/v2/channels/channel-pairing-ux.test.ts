@@ -45,6 +45,9 @@ describe("channel IA boundary", () => {
 		expect(pairedChatRow).toContain("Unpair");
 		expect(agentDetail).toContain("body: { agent_id: environmentId }");
 		expect(agentDetail).toContain("agentProviderHasSingleLinkLimit");
+		expect(agentDetail).toContain("linkedProviders={linkedProviders}");
+		expect(connectDialog).toContain("Already linked");
+		expect(connectDialog).toContain("agentProviderLinkLimitDescription");
 		expect(agentDetail).toContain('<details className="group border-t pt-4">');
 	});
 
