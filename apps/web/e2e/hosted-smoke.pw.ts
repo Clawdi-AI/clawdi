@@ -5984,9 +5984,7 @@ test("compute comparison uses API prices without stale signup or subscription cr
 	await expect(settingsDialog).toBeVisible();
 	await expect(settingsDialog.getByText("then $10.00/mo", { exact: true })).toBeVisible();
 	await expect(settingsDialog.getByText("$20.00", { exact: true })).toBeVisible();
-	await expect(settingsDialog).toContainText(
-		"Wallet top-ups from $10.00–$2,000.00 in whole-dollar amounts",
-	);
+	await expect(settingsDialog).toContainText("Whole-dollar wallet top-ups");
 	expect(planRequests).toEqual([`${DEPLOY_API}/v2/subscription/plans`]);
 	await expect(settingsDialog).not.toContainText("welcome balance on signup");
 	await expect(settingsDialog).not.toContainText("AI Credits per subscription");

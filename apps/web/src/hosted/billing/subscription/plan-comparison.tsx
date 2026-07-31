@@ -26,7 +26,6 @@ import {
 	selectExplicitOfferForTerm,
 	selectOfferForTerm,
 } from "@/hosted/billing/subscription/subscription-utils";
-import { TOPUP_AMOUNT_RANGE_LABEL } from "@/hosted/billing/wallet/wallet-constants";
 import { settingsQueryHref } from "@/lib/settings-routes";
 
 function partitionPlans(plans: Plan[]): { basic?: Plan; performance?: Plan } {
@@ -270,9 +269,7 @@ export function PlanComparison({
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
 							<FeatureRow>Usage billed directly in USD</FeatureRow>
-							<FeatureRow>
-								Wallet top-ups from {TOPUP_AMOUNT_RANGE_LABEL} in whole-dollar amounts
-							</FeatureRow>
+							<FeatureRow>Whole-dollar wallet top-ups</FeatureRow>
 							<FeatureRow>Optional auto-reload</FeatureRow>
 							<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
 						</ul>
