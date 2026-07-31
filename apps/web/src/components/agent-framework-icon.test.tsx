@@ -5,17 +5,17 @@ import { FRAMEWORK_BRAND_ICON_IDS } from "@/components/entity-brand-icon-ids";
 import { frameworkBrandIcon } from "@/components/entity-brand-icons";
 
 const FRAMEWORKS = {
-	openclaw: "OpenClaw",
-	hermes: "Hermes Agent",
-	"claude-code": "Claude Code",
-	codex: "Codex",
+	openclaw: { label: "OpenClaw", size: "75%" },
+	hermes: { label: "Hermes Agent", size: "75%" },
+	"claude-code": { label: "Claude Code", size: "70%" },
+	codex: { label: "Codex", size: "70%" },
 } as const;
 
 describe("AgentFrameworkIcon", () => {
 	test("renders all supported framework IDs as accessible official LobeHub SVG components", () => {
 		expect(Object.keys(FRAMEWORKS)).toEqual([...FRAMEWORK_BRAND_ICON_IDS]);
 		for (const id of FRAMEWORK_BRAND_ICON_IDS) {
-			const label = FRAMEWORKS[id];
+			const { label, size } = FRAMEWORKS[id];
 			expect(frameworkBrandIcon(id)?.label).toBe(label);
 			const markup = renderToStaticMarkup(
 				<AgentFrameworkIcon agent={id} pixelSize={40} boxClassName="size-10" />,
@@ -25,9 +25,9 @@ describe("AgentFrameworkIcon", () => {
 			expect(markup).toContain(`aria-label="${label}"`);
 			expect(markup).toContain(`<title>${label}</title>`);
 			expect(markup).toContain('data-icon-source="lobehub"');
-			expect(markup).toContain('width="84%"');
-			expect(markup).toContain('height="84%"');
-			expect(markup).toContain("width:84%;height:84%");
+			expect(markup).toContain(`width="${size}"`);
+			expect(markup).toContain(`height="${size}"`);
+			expect(markup).toContain(`width:${size};height:${size}`);
 			expect(markup).not.toContain("<img");
 		}
 	});
@@ -42,6 +42,22 @@ describe("AgentFrameworkIcon", () => {
 		);
 		expect(markup).toContain("bg-white");
 		expect(markup).toContain("text-black");
+	});
+
+	test("uses LobeHub's lightweight official avatar presentation for every framework", () => {
+		const openClaw = renderToStaticMarkup(
+			<AgentFrameworkIcon agent="openclaw" pixelSize={40} boxClassName="size-10" />,
+		);
+		const claudeCode = renderToStaticMarkup(
+			<AgentFrameworkIcon agent="claude-code" pixelSize={40} boxClassName="size-10" />,
+		);
+		const codex = renderToStaticMarkup(
+			<AgentFrameworkIcon agent="codex" pixelSize={40} boxClassName="size-10" />,
+		);
+		expect(openClaw).toContain("bg-black");
+		expect(claudeCode).toContain("bg-[#09090B]");
+		expect(claudeCode).toContain("text-[#D97757]");
+		expect(codex).toContain("bg-white");
 	});
 
 	test("keeps custom avatars as object-cover images instead of scaling them like brand marks", () => {

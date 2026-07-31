@@ -76,24 +76,20 @@ test("keeps every shared LobeHub brand mark full and contained", async ({ page }
 			};
 		}),
 	);
-
 	for (const measurement of measurements) {
-		expect(measurement.widthAttribute, `${measurement.id} width`).toBe("84%");
-		expect(measurement.heightAttribute, `${measurement.id} height`).toBe("84%");
+		const expectedSize =
+			measurement.kind === "framework"
+				? measurement.id === "openclaw" || measurement.id === "hermes"
+					? "75%"
+					: "70%"
+				: "84%";
+		expect(measurement.widthAttribute, `${measurement.id} width`).toBe(expectedSize);
+		expect(measurement.heightAttribute, `${measurement.id} height`).toBe(expectedSize);
 		expect(measurement.contained, `${measurement.id} artwork containment`).toBe(true);
 		expect(measurement.noOverflow, `${measurement.id} tile overflow`).toBe(true);
-		expect(measurement.iconWidth, `${measurement.id} visible fill`).toBeGreaterThan(
-			measurement.tileWidth * 0.75,
-		);
-		expect(measurement.iconHeight, `${measurement.id} visible fill`).toBeGreaterThan(
-			measurement.tileHeight * 0.75,
-		);
-		expect(measurement.iconWidth, `${measurement.id} safety space`).toBeLessThan(
-			measurement.tileWidth * 0.81,
-		);
-		expect(measurement.iconHeight, `${measurement.id} safety space`).toBeLessThan(
-			measurement.tileHeight * 0.81,
-		);
+		const expectedRatio = Number.parseInt(expectedSize, 10) / 100;
+		expect(measurement.iconWidth).toBeCloseTo((measurement.tileWidth - 2) * expectedRatio, 1);
+		expect(measurement.iconHeight).toBeCloseTo((measurement.tileHeight - 2) * expectedRatio, 1);
 		expect(measurement.minimumMargin, `${measurement.id} edge margin`).toBeGreaterThan(2.5);
 	}
 
@@ -114,7 +110,7 @@ test("keeps every shared LobeHub brand mark full and contained", async ({ page }
 	}
 
 	await page.screenshot({
-		path: testInfo.outputPath("brand-icon-geometry-84.png"),
+		path: testInfo.outputPath("brand-icon-geometry.png"),
 		fullPage: true,
 	});
 });
