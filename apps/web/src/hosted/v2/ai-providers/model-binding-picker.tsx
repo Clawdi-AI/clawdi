@@ -122,7 +122,7 @@ export function ModelBindingPicker({
 					title="Couldn't load Clawdi AI models"
 				/>
 			) : isManaged && hasCatalogModels ? (
-				<div className="flex min-w-0 max-w-md flex-col gap-2">
+				<div className="flex min-w-0 max-w-xl flex-col gap-2">
 					<Label id={`${catalogInputId}-label`}>Main model</Label>
 					<div
 						className="flex min-w-0 max-w-full flex-wrap items-start gap-2"

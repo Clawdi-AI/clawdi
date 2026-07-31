@@ -64,7 +64,7 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "openai-codex",
 			is_default: true,
 			is_featured: true,
-			description: "Fast and affordable for everyday tasks.",
+			description: "Fast and affordable.",
 			capabilities: textModelCapabilities,
 		},
 		{
@@ -73,7 +73,7 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description: "Best for complex tasks; costs more.",
+			description: "Best for complex work.",
 			capabilities: textModelCapabilities,
 		},
 		{
@@ -82,7 +82,7 @@ const managedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description: "Balanced for most work.",
+			description: "Balanced for everyday work.",
 			capabilities: textModelCapabilities,
 		},
 	],
@@ -96,7 +96,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: true,
-			description: "Best for complex tasks; costs more.",
+			description: "Best for complex work.",
 			capabilities: textModelCapabilities,
 		},
 		{
@@ -105,7 +105,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "kimi-coding",
 			is_default: false,
 			is_featured: true,
-			description: "Great for long or detailed work; pricing varies.",
+			description: "Best for long, detailed work.",
 			capabilities: {
 				...textModelCapabilities,
 				context_window: 262_144,
@@ -135,7 +135,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "openai-codex",
 			is_default: true,
 			is_featured: false,
-			description: "Fast and affordable for everyday tasks.",
+			description: "Fast and affordable.",
 			capabilities: textModelCapabilities,
 		},
 		{
@@ -144,7 +144,7 @@ const dynamicManagedModelCatalog: { models: ManagedModelCatalogItem[] } = {
 			provider_id: "openai-codex",
 			is_default: false,
 			is_featured: false,
-			description: "Balanced for most work.",
+			description: "Balanced for everyday work.",
 			capabilities: textModelCapabilities,
 		},
 	],
@@ -3868,8 +3868,8 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(featuredModels.nth(0)).not.toBeChecked();
 	await expect(featuredModels.nth(1)).not.toBeChecked();
 	await expect(page.locator("#deploy-primary-model")).toHaveCount(0);
-	await expect(managedModels).toContainText("Best for complex tasks; costs more.");
-	await expect(managedModels).toContainText("Great for long or detailed work; pricing varies.");
+	await expect(managedModels).toContainText("Best for complex work.");
+	await expect(managedModels).toContainText("Best for long, detailed work.");
 	await expect(managedModels).not.toContainText(/272K|256K|1M|Codex|context|eligible plans/i);
 	await expect(page.getByTestId("managed-model-details")).toHaveCount(0);
 	const cardBoxesBefore = await featuredCards.evaluateAll((cards) =>
@@ -3937,11 +3937,9 @@ test("deploy managed model picker preserves featured and overflow order and subm
 	await expect(page.getByRole("option").nth(0).getByText("O", { exact: true })).toBeVisible();
 	await expect(page.getByRole("option").nth(1)).toContainText("GPT-5.6-Luna");
 	await expect(page.getByRole("option").nth(1).getByText("O", { exact: true })).toBeVisible();
-	await expect(page.getByRole("option").nth(1)).toContainText(
-		"Fast and affordable for everyday tasks.",
-	);
+	await expect(page.getByRole("option").nth(1)).toContainText("Fast and affordable.");
 	await expect(page.getByRole("option").nth(2)).toContainText("GPT-5.6-Terra");
-	await expect(page.getByRole("option").nth(2)).toContainText("Balanced for most work.");
+	await expect(page.getByRole("option").nth(2)).toContainText("Balanced for everyday work.");
 	await page.getByRole("option", { name: "Future model" }).click();
 	await overflowModels.click();
 	await page.getByRole("option", { name: /GPT-5.6-Terra/ }).click();
@@ -4132,7 +4130,7 @@ test("hosted AI provider Apply accepts the managed Luna default", async ({ page 
 	await expect(agentModels).toHaveAccessibleName("Main model");
 	const agentModelChoice = agentModels.getByRole("radio", { name: "GPT-5.6-Luna" });
 	await expect(agentModelChoice).toBeChecked();
-	await expect(agentModels).toContainText("Fast and affordable for everyday tasks.");
+	await expect(agentModels).toContainText("Fast and affordable.");
 	await expect(page.locator("#agent-primary-model")).toHaveCount(0);
 	const agentModelFrame = await agentModels.evaluate((element) => {
 		const frame = element.closest('div[data-hosted="true"][data-v2="true"]');
