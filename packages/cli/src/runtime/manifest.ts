@@ -1920,7 +1920,7 @@ interface HostedAiProviderProjectionResult {
 const CODEX_MANAGED_PROVIDER_ID = "clawdi-managed";
 const CODEX_MANAGED_PROVIDER_CONFIG_FILE = "config.toml";
 const CODEX_MANAGED_ENV_KEY = "OPENAI_API_KEY";
-const CODEX_NPM_PACKAGE_VERSION = "0.142.4";
+const CODEX_NPM_PACKAGE_VERSION = "0.146.0";
 const CODEX_NPM_PACKAGE_SPEC = `@openai/codex@${CODEX_NPM_PACKAGE_VERSION}`;
 
 interface HostedCodexManagedProvider {

@@ -3609,7 +3609,7 @@ exit 0
 				"  esac",
 				"done",
 				'mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@openai/codex"',
-				`printf '%s\\n' '{"version":"0.142.4"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
+				`printf '%s\\n' '{"version":"0.146.0"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
 				"cat > \"$prefix/bin/codex\" <<'SH'",
 				"#!/usr/bin/env sh",
 				"printf 'env=<%s>\\n' \"$" + '{OPENAI_API_KEY-unset}"',
@@ -3680,7 +3680,7 @@ exit 0
 		}
 
 		const npmArgs = readFileSync(npmArgsPath, "utf-8");
-		expect(npmArgs).toContain("@openai/codex@0.142.4");
+		expect(npmArgs).toContain("@openai/codex@0.146.0");
 		expect(npmArgs).toContain(`${join(state, "codex", "npm")}\n`);
 		const realBin = join(state, "codex", "npm", "bin", "codex");
 		const packageJson = join(state, "codex", "npm", "lib/node_modules/@openai/codex/package.json");
@@ -3726,8 +3726,8 @@ exit 0
 		const installMarker = join(root, "codex-exact", "npm-install.txt");
 		const previousPath = process.env.PATH;
 		seedOpenClawBinary(home);
-		seedHostedCodexPackage(state, "0.142.4");
-		writeHostedCodexNpmInstaller(binDir, installMarker, "0.142.4");
+		seedHostedCodexPackage(state, "0.146.0");
+		writeHostedCodexNpmInstaller(binDir, installMarker, "0.146.0");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3759,9 +3759,9 @@ exit 0
 		const previousPath = process.env.PATH;
 		const cases = [
 			{ name: "missing" },
-			{ name: "old", version: "0.142.3" },
-			{ name: "damaged", version: "0.142.4", validPackageJson: false },
-			{ name: "non-executable", version: "0.142.4", executable: false },
+			{ name: "old", version: "0.145.0" },
+			{ name: "damaged", version: "0.146.0", validPackageJson: false },
+			{ name: "non-executable", version: "0.146.0", executable: false },
 		] as const;
 
 		try {
@@ -3780,7 +3780,7 @@ exit 0
 							"validPackageJson" in packageCase ? packageCase.validPackageJson : undefined,
 					});
 				}
-				writeHostedCodexNpmInstaller(binDir, installMarker, "0.142.4");
+				writeHostedCodexNpmInstaller(binDir, installMarker, "0.146.0");
 				process.env.HOME = home;
 				process.env.CLAWDI_RUNTIME_MODE = "hosted";
 				process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3802,7 +3802,7 @@ exit 0
 							"utf8",
 						),
 					).version,
-				).toBe("0.142.4");
+				).toBe("0.146.0");
 			}
 		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
@@ -3819,7 +3819,7 @@ exit 0
 		const installMarker = join(root, "codex-wrong-version", "npm-install.txt");
 		const previousPath = process.env.PATH;
 		seedOpenClawBinary(home);
-		writeHostedCodexNpmInstaller(binDir, installMarker, "0.142.3");
+		writeHostedCodexNpmInstaller(binDir, installMarker, "0.145.0");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3834,7 +3834,7 @@ exit 0
 				getRuntimePaths(),
 			);
 			expect(convergence.installErrors.join("\n")).toContain(
-				"Codex npm install produced version 0.142.3; expected 0.142.4",
+				"Codex npm install produced version 0.145.0; expected 0.146.0",
 			);
 			expect(existsSync(join(home, ".codex", "config.toml"))).toBe(false);
 		} finally {
