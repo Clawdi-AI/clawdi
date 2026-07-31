@@ -110,7 +110,7 @@ export function PlanComparison({
 					<CardHeader>
 						<div className="flex items-center justify-between">
 							<CardTitle className="flex items-center gap-2">
-								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Basic
+								<Cpu className="size-5 text-muted-foreground" aria-hidden /> Compute Basic
 							</CardTitle>
 						</div>
 						<div className="mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -143,7 +143,7 @@ export function PlanComparison({
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>Always-on agent with TEE protection</FeatureRow>
+							<FeatureRow>Managed confidential-compute infrastructure</FeatureRow>
 							<FeatureRow>
 								Burstable compute
 								{basicResources
@@ -167,11 +167,11 @@ export function PlanComparison({
 								className="w-full"
 								variant="outline"
 							>
-								<Rocket /> Deploy Basic agent
+								<Rocket /> Deploy Compute Basic
 							</Button>
 						) : (
 							<Button className="w-full" variant="outline" disabled>
-								<Rocket /> Deploy Basic agent
+								<Rocket /> Deploy Compute Basic
 							</Button>
 						)}
 					</CardFooter>
@@ -183,7 +183,7 @@ export function PlanComparison({
 					<CardHeader>
 						<div className="flex items-center justify-between">
 							<CardTitle className="flex items-center gap-2">
-								<Zap className="size-5 text-primary" aria-hidden /> Performance
+								<Zap className="size-5 text-primary" aria-hidden /> Compute Performance
 							</CardTitle>
 						</div>
 						<div className="mt-2 flex items-baseline gap-1">
@@ -220,7 +220,7 @@ export function PlanComparison({
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>Everything in Basic, plus:</FeatureRow>
+							<FeatureRow>Everything in Compute Basic, plus:</FeatureRow>
 							<FeatureRow>
 								Higher burst
 								{performance ? ` (${performance.vcpu} vCPU / ${performance.ram_gb} GB)` : ""}
@@ -240,11 +240,11 @@ export function PlanComparison({
 								className="w-full"
 								disabled={!performance}
 							>
-								Deploy Performance agent
+								Deploy Compute Performance
 							</Button>
 						) : (
 							<Button className="w-full" disabled>
-								Deploy Performance agent
+								Deploy Compute Performance
 							</Button>
 						)}
 					</CardFooter>
@@ -260,18 +260,21 @@ export function PlanComparison({
 							<span className="text-3xl font-semibold tracking-tight">Pay as you go</span>
 						</div>
 						<CardDescription className="mt-2">
-							Clawdi AI is billed by usage. Top up your wallet and spend only what your agents use.
+							Top up your Wallet and pay only for the AI usage your agents consume.
 						</CardDescription>
+						<div className="mt-3 rounded-lg border bg-background/70 px-3 py-2">
+							<p className="text-sm font-medium">
+								30% cheaper than direct API pricing on supported models
+							</p>
+							<p className="mt-0.5 text-xs text-muted-foreground">Actual savings vary by model.</p>
+						</div>
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
 							<FeatureRow>Usage billed directly in USD</FeatureRow>
 							<FeatureRow>Whole-dollar top-ups from {TOPUP_AMOUNT_RANGE_LABEL}</FeatureRow>
-							<FeatureRow>Optional auto-reload so agents never stall</FeatureRow>
-							<FeatureRow>
-								<span className="font-medium">No Clawdi AI charge with BYOK</span> — your own key
-								bypasses Clawdi AI
-							</FeatureRow>
+							<FeatureRow>Optional auto-reload</FeatureRow>
+							<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
 						</ul>
 						<Separator className="my-4" />
 						<p className="text-xs text-muted-foreground">

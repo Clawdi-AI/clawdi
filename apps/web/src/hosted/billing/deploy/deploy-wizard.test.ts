@@ -242,7 +242,7 @@ describe("first Basic agent copy", () => {
 	});
 
 	test("keeps infrastructure vocabulary out of customer copy", () => {
-		expect(planComparisonSource).toContain("Always-on agent with TEE protection");
+		expect(planComparisonSource).toContain("Managed confidential-compute infrastructure");
 		expect(planComparisonSource).toContain("Public ports for agent services");
 		expect(planComparisonSource).not.toContain("hosted runtime");
 		expect(planComparisonSource).not.toContain("runtime-owned services");
