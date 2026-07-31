@@ -116,10 +116,7 @@ export function modelOptionsForProvider(
 ): ModelCatalogItem[] {
 	let models: readonly ModelCatalogItem[];
 	if (choice === MANAGED_AI_CHOICE || isManagedProviderId(choice)) {
-		const defaultModel = managedModels.find((model) => model.is_default);
-		models = defaultModel
-			? [defaultModel, ...managedModels.filter((model) => model !== defaultModel)]
-			: managedModels;
+		models = managedModels;
 	} else {
 		models =
 			providers.find((item) => item.id === choice || item.provider_id === choice)?.models ?? [];
@@ -210,7 +207,13 @@ export function firstModelForProvider(
 	providers: readonly AiProvider[],
 	managedModels: readonly ManagedModelCatalogItem[] = [],
 ): string {
-	return modelOptionsForProvider(choice, providers, managedModels)[0]?.id ?? "";
+	const models = modelOptionsForProvider(choice, providers, managedModels);
+	if (choice === MANAGED_AI_CHOICE || isManagedProviderId(choice)) {
+		return (
+			models.find((model) => "is_default" in model && model.is_default)?.id ?? models[0]?.id ?? ""
+		);
+	}
+	return models[0]?.id ?? "";
 }
 
 export function normalizeSelectedProviderIds(

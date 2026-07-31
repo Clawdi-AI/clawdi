@@ -13,6 +13,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import type { ManagedModelCatalogItem } from "@/hosted/billing/contracts";
 import {
 	CUSTOM_MODEL_CHOICE,
@@ -36,6 +37,7 @@ export function ModelBindingPicker({
 	customProviders,
 	additionalProviderItems = [],
 	showProviderSelect = true,
+	compactManagedModelChoices = false,
 	selectedProviderChoices,
 	primaryProviderChoice,
 	primaryModel,
@@ -53,6 +55,7 @@ export function ModelBindingPicker({
 	customProviders: readonly AiProvider[];
 	additionalProviderItems?: readonly ModelBindingPickerItem[];
 	showProviderSelect?: boolean;
+	compactManagedModelChoices?: boolean;
 	selectedProviderChoices: readonly string[];
 	primaryProviderChoice: string;
 	primaryModel: string;
@@ -120,9 +123,34 @@ export function ModelBindingPicker({
 						onRetry={onManagedModelsRetry}
 						title="Couldn't load Clawdi AI models"
 					/>
+				) : isManaged && compactManagedModelChoices && hasCatalogModels ? (
+					<div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+						<Label id={`${catalogInputId}-label`}>Model</Label>
+						<ToggleGroup
+							id={catalogInputId}
+							value={
+								catalogModelItems.some((item) => item.value === modelChoice) ? [modelChoice] : []
+							}
+							onValueChange={(values) => {
+								const value = values[0];
+								if (value) onPrimaryModelChange(value);
+							}}
+							variant="outline"
+							size="sm"
+							className="flex min-w-0 max-w-full flex-wrap justify-start"
+							aria-labelledby={`${catalogInputId}-label`}
+							data-testid="managed-model-choices"
+						>
+							{catalogModelItems.map((item) => (
+								<ToggleGroupItem key={item.value} value={item.value} className="min-w-0 max-w-full">
+									<span className="truncate">{item.label}</span>
+								</ToggleGroupItem>
+							))}
+						</ToggleGroup>
+					</div>
 				) : hasCatalogModels ? (
 					<div className="flex flex-col gap-1.5">
-						<Label htmlFor={catalogInputId}>Catalog model</Label>
+						<Label htmlFor={catalogInputId}>Model</Label>
 						<Select
 							items={catalogModelItems}
 							value={modelChoice}

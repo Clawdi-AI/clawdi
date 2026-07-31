@@ -24,10 +24,12 @@ describe("computePricePresentation", () => {
 		expect(computePricePresentation(monthly, [monthly, annual])).toEqual({
 			primary: "$20.00/mo",
 			secondary: "Billed monthly",
+			savings: null,
 		});
 		expect(computePricePresentation(annual, [monthly, annual])).toEqual({
 			primary: "$16.66/mo",
-			secondary: "Billed $200.00/yr · save $40.00",
+			secondary: "Billed $200.00/yr",
+			savings: "save $40.00",
 		});
 	});
 
@@ -35,6 +37,7 @@ describe("computePricePresentation", () => {
 		expect(computePricePresentation(annual, [annual])).toEqual({
 			primary: "$16.66/mo",
 			secondary: "Billed $200.00/yr",
+			savings: null,
 		});
 	});
 });

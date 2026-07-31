@@ -182,7 +182,6 @@ type PaidDeploySelection = {
 	tierLabel: "Basic" | "Performance";
 };
 const DEPLOY_PAGE_CLASS = cn(CENTERED_PAGE_WIDTH_CLASS.page, "flex flex-col gap-6 px-4 lg:px-6");
-const THREE_TILE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2 @5xl/main:grid-cols-3";
 const TWO_TILE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";
 const WALLET_PAYMENT_TOAST_ID = "agent-create-wallet-payment";
 const WALLET_PAYMENT_TOAST_DURATION_MS = 8_000;
@@ -268,14 +267,42 @@ function ComputePriceBlock({
 					{presentation.primary}
 				</span>
 			</div>
-			<span className="text-xs leading-4 font-normal text-muted-foreground">
+			<div className="text-xs leading-4 font-normal text-muted-foreground">
 				{presentation.secondary}
-			</span>
+				{presentation.savings ? (
+					<>
+						{" "}
+						<span className="whitespace-nowrap" data-testid={`${testId}-savings`}>
+							· {presentation.savings}
+						</span>
+					</>
+				) : null}
+			</div>
 		</div>
 	);
 }
 
-function DeploySectionSkeleton({ columns = 2 }: { columns?: 2 | 3 }) {
+function ComputeResources({
+	testId,
+	vcpu,
+	ramGb,
+}: {
+	testId: string;
+	vcpu: number;
+	ramGb: number;
+}) {
+	return (
+		<span className="text-xs">
+			<span className="whitespace-nowrap">{vcpu} vCPU</span>
+			{" · "}
+			<span className="whitespace-nowrap" data-testid={testId}>
+				{ramGb} GB RAM
+			</span>
+		</span>
+	);
+}
+
+function DeploySectionSkeleton() {
 	return (
 		<section className="flex flex-col gap-4">
 			<Separator />
@@ -284,8 +311,8 @@ function DeploySectionSkeleton({ columns = 2 }: { columns?: 2 | 3 }) {
 				<Skeleton className="h-3.5 w-80 max-w-full" />
 				<Skeleton className="h-3.5 w-56 max-w-full" />
 			</div>
-			<div className={columns === 3 ? THREE_TILE_GRID_CLASS : TWO_TILE_GRID_CLASS}>
-				{Array.from({ length: columns }).map((_, index) => (
+			<div className={TWO_TILE_GRID_CLASS}>
+				{Array.from({ length: 2 }).map((_, index) => (
 					<Skeleton key={index} className="h-[86px] w-full rounded-lg" />
 				))}
 			</div>
@@ -984,7 +1011,7 @@ export function DeployWizard() {
 		return (
 			<div data-hosted="true" data-v2="true" className={DEPLOY_PAGE_CLASS}>
 				<PageHeader title="Deploy an Agent" description="Preparing your compute options…" />
-				<DeploySectionSkeleton columns={2} />
+				<DeploySectionSkeleton />
 				<DeploySectionSkeleton />
 				<DeploySectionSkeleton />
 				<DeploySectionSkeleton />
@@ -1095,7 +1122,7 @@ export function DeployWizard() {
 						{aiAccessMode !== "unmanaged" ? (
 							<ModelBindingPicker
 								idPrefix="deploy"
-								className="w-full max-w-md"
+								className="w-full max-w-md rounded-none border-0 bg-transparent p-0"
 								providers={providerList}
 								managedModels={managedModels}
 								managedModelsLoading={managedModels.length === 0 && managedModelCatalog.isFetching}
@@ -1104,6 +1131,7 @@ export function DeployWizard() {
 								onManagedModelsRetry={() => void managedModelCatalog.refetch()}
 								customProviders={providerList}
 								showProviderSelect={false}
+								compactManagedModelChoices
 								selectedProviderChoices={selectedProviderChoices}
 								primaryProviderChoice={primaryProviderChoice}
 								primaryModel={primaryModel}
@@ -1181,13 +1209,19 @@ export function DeployWizard() {
 								}
 								title="Basic"
 								description={
-									<span className="text-xs">
-										{!deployments.isSuccess
-											? deployments.error
+									!deployments.isSuccess ? (
+										<span className="text-xs">
+											{deployments.error
 												? "Basic availability couldn't be checked"
-												: "Checking free Basic slot availability"
-											: `${basicPlan?.vcpu ?? 2} vCPU · ${basicPlan?.ram_gb ?? 4} GB RAM`}
-									</span>
+												: "Checking free Basic slot availability"}
+										</span>
+									) : (
+										<ComputeResources
+											testId="basic-ram-resource"
+											vcpu={basicPlan?.vcpu ?? 2}
+											ramGb={basicPlan?.ram_gb ?? 4}
+										/>
+									)
 								}
 								detailsPlacement="trailing"
 								details={
@@ -1197,6 +1231,7 @@ export function DeployWizard() {
 											presentation={{
 												primary: "Free",
 												secondary: "First Basic agent",
+												savings: null,
 											}}
 										/>
 									) : deployments.isSuccess && basicPricePresentation ? (
@@ -1232,11 +1267,15 @@ export function DeployWizard() {
 								}
 								title="Performance"
 								description={
-									<span className="text-xs">
-										{perfPlan
-											? `${perfPlan.vcpu} vCPU · ${perfPlan.ram_gb} GB RAM`
-											: "Performance plan unavailable"}
-									</span>
+									perfPlan ? (
+										<ComputeResources
+											testId="performance-ram-resource"
+											vcpu={perfPlan.vcpu}
+											ramGb={perfPlan.ram_gb}
+										/>
+									) : (
+										<span className="text-xs">Performance plan unavailable</span>
+									)
 								}
 								detailsPlacement="trailing"
 								details={
@@ -1347,9 +1386,7 @@ export function DeployWizard() {
 							</div>
 							<div className="flex flex-wrap items-start gap-4">
 								<div className="flex flex-col gap-1.5">
-									<label htmlFor="agent-language" className="text-sm text-muted-foreground">
-										Language
-									</label>
+									<Label htmlFor="agent-language">Language</Label>
 									<Select
 										items={LANGUAGE_SELECT_ITEMS}
 										value={language || "default"}
@@ -1374,9 +1411,7 @@ export function DeployWizard() {
 								</div>
 								{tzOptions.length > 0 ? (
 									<div className="flex w-full max-w-sm min-w-0 flex-col gap-1.5">
-										<label htmlFor="agent-timezone" className="text-sm text-muted-foreground">
-											Timezone
-										</label>
+										<Label htmlFor="agent-timezone">Timezone</Label>
 										<TimezoneCombobox
 											id="agent-timezone"
 											value={timezone}

@@ -48,9 +48,13 @@ const aiProviderHooksSource = readFileSync(
 
 describe("deploy wizard personalization", () => {
 	test("keeps deploy-specific controls proportionate to their content", () => {
-		expect(wizardSource).toContain('className="w-full max-w-md"');
+		expect(wizardSource).toContain(
+			'className="w-full max-w-md rounded-none border-0 bg-transparent p-0"',
+		);
 		expect(wizardSource).toContain('<div className="flex max-w-2xl flex-col gap-4">');
 		expect(wizardSource).toContain('className="flex w-full max-w-md flex-col gap-1.5"');
+		expect(wizardSource).toContain('<Label htmlFor="agent-language">Language</Label>');
+		expect(wizardSource).toContain('<Label htmlFor="agent-timezone">Timezone</Label>');
 		expect(wizardSource).toContain('<SelectTrigger id="agent-language" type="button">');
 		expect(wizardSource).toContain('className="flex w-full max-w-sm min-w-0 flex-col gap-1.5"');
 		expect(wizardSource).toContain('className="flex max-w-xs flex-col gap-1.5"');
@@ -91,7 +95,8 @@ describe("deploy wizard responsive layout", () => {
 		expect(wizardSource).toContain(
 			'const TWO_TILE_GRID_CLASS = "grid gap-2 @2xl/main:grid-cols-2";',
 		);
-		expect(wizardSource).toContain("@5xl/main:grid-cols-3");
+		expect(wizardSource).not.toContain("THREE_TILE_GRID_CLASS");
+		expect(wizardSource).not.toContain("@5xl/main:grid-cols-3");
 		expect(wizardSource).not.toContain('className="grid gap-2 sm:grid-cols-2"');
 		expect(wizardSource).not.toContain("sm:flex-row sm:items-center sm:justify-between");
 		expect(deployPageSource).toContain('className="grid gap-2 @2xl/main:grid-cols-2"');
@@ -100,7 +105,10 @@ describe("deploy wizard responsive layout", () => {
 	test("keeps compute identity, resources, and recurring price in one compact hierarchy", () => {
 		expect(wizardSource.match(/detailsPlacement="trailing"/g)).toHaveLength(2);
 		expect(wizardSource.match(/className="items-center p-3"/g)).toHaveLength(2);
-		expect(wizardSource.match(/vCPU · .* GB RAM/g)).toHaveLength(2);
+		expect(wizardSource).toContain('testId="basic-ram-resource"');
+		expect(wizardSource).toContain('testId="performance-ram-resource"');
+		expect(wizardSource).toContain('className="whitespace-nowrap" data-testid={testId}');
+		expect(wizardSource).toMatch(/data-testid=\{`\$\{testId\}-savings`\}/);
 	});
 
 	test("keeps the action bar sticky across the full form and adapts it to the main pane", () => {
@@ -126,7 +134,7 @@ describe("deploy wizard responsive layout", () => {
 describe("deploy wizard product copy and flow", () => {
 	test("uses customer language and keeps channels out of the decision flow", () => {
 		expect(wizardSource).toContain('title="Agent software"');
-		expect(wizardSource).toContain("<DeploySectionSkeleton columns={2} />");
+		expect(wizardSource.match(/<DeploySectionSkeleton \/>/g)).toHaveLength(4);
 		expect(wizardSource).not.toContain(
 			'description="Choose a compute plan and how paid plans renew."',
 		);
@@ -250,6 +258,22 @@ describe("managed model picker", () => {
 			expect(source).not.toContain("Hosted default (Luna)");
 		}
 		expect(modelBindingPickerSource).toContain("modelPickerItems(");
+		expect(modelBindingPickerSource).toContain("compactManagedModelChoices = false");
+		expect(modelBindingPickerSource).toContain(
+			"isManaged && compactManagedModelChoices && hasCatalogModels",
+		);
+		expect(wizardSource).toContain("compactManagedModelChoices");
+		expect(agentDetailSource).not.toContain("compactManagedModelChoices");
+		expect(modelBindingPickerSource).toContain("catalogModelItems.map((item) =>");
+		expect(modelBindingPickerSource).toContain("aria-labelledby=");
+		expect(modelBindingPickerSource).toContain("<Label id=");
+		expect(modelBindingPickerSource).toContain(">Model</Label>");
+		expect(modelBindingPickerSource).toContain("<Label htmlFor={catalogInputId}>Model</Label>");
+		expect(modelBindingPickerSource).not.toContain("Catalog model");
+		expect(modelBindingPickerSource).not.toContain("More models");
+		expect(modelBindingPickerSource).toContain(
+			'"flex max-w-2xl flex-col gap-3 rounded-lg border bg-muted/20 p-3"',
+		);
 		expect(modelBindingPickerSource).toContain("Loading Clawdi AI models…");
 		expect(modelBindingPickerSource).toContain('title="Couldn\'t load Clawdi AI models"');
 	});
