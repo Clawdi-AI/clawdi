@@ -312,7 +312,10 @@ async def _runtime_client(db_session, seed_user, api_key: ApiKey | None):
     if provider is None:
         provider, payload = _managed_codex_provider_graph(seed_user)
         db_session.add_all([provider, payload])
-        await db_session.flush()
+        # This module uses the committed-db lane because runtime requests may
+        # open independent sessions. Commit the fixture graph so its User FK
+        # lock cannot block a later User-first runtime-state mutation.
+        await db_session.commit()
 
     async def _override_get_session():
         yield db_session
