@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 
 // Fixed upstream contracts are used because this repository does not vendor or
 // execute either runtime. Keep these fixtures aligned with the audited sources:
-// OpenClaw main (50771abc6aae8c9c4b95aa8c5a2b1b7a37eb80ef)
+// OpenClaw artifact (0790d9f593ad30c940ed93b5872a8cf6d6f3cf8c)
 //   src/routing/session-key.ts::buildAgentPeerSessionKey
 //   extensions/discord/src/monitor/route-resolution.ts::buildDiscordRoutePeer
-// Hermes main (126ff7071b6b755055879648f4e859b3187d0fac)
+// Hermes 0.19.1 (f3cda0ceb18d8ba7465a6d223098ef0e56c8fee1)
 //   gateway/session.py::build_session_key
 //   plugins/platforms/telegram/adapter.py::TelegramAdapter._build_message_event
 //   plugins/platforms/discord/adapter.py (effective_channel.id source routing)
