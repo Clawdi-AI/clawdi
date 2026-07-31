@@ -21,7 +21,8 @@ dependencies = [
     "openai>=2.52.0",
     "fastembed>=0.3",
     "sentry-sdk[fastapi]>=2.23",
-    "websockets>=16.0",
+    # https://pypi.org/pypi/websockets/17.0.1/json
+    "websockets==17.0.1",
     "pyyaml>=6.0",
     # Keep the published pair exact: PyPI composio 0.18.1 metadata pins
     # composio-client 1.43.0. https://pypi.org/pypi/composio/0.18.1/json
@@ -68,6 +69,7 @@ include = [
     "app/core/query_utils.py",
     "app/core/skill_key.py",
     "app/services/composio.py",
+    "app/services/discord_gateway_worker.py",
     "app/services/embedding.py",
     "app/services/file_store.py",
     "app/services/memory_extraction.py",
