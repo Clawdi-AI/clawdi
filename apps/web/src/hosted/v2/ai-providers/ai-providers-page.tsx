@@ -1,8 +1,7 @@
 "use client";
 
-import { CircleAlert, ListChecks, Pencil, Plus, Trash2 } from "lucide-react";
+import { CircleAlert, Pencil, Plus, Trash2 } from "lucide-react";
 import { useState } from "react";
-import { toast } from "sonner";
 import { ApiErrorPanel } from "@/components/api-error-panel";
 import { EmptyState } from "@/components/empty-state";
 import {
@@ -33,11 +32,7 @@ import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
 import { useHostedDeploymentInventory } from "@/hosted/use-hosted-deployment-inventory";
 import { AddProviderDialog } from "@/hosted/v2/ai-providers/add-provider-dialog";
-import {
-	useCheckProviderFields,
-	useDeleteProvider,
-	useUserAiProviders,
-} from "@/hosted/v2/ai-providers/ai-providers-hooks";
+import { useDeleteProvider, useUserAiProviders } from "@/hosted/v2/ai-providers/ai-providers-hooks";
 import {
 	type ProviderUsage,
 	providerRemovalImpact,
@@ -46,9 +41,10 @@ import {
 import {
 	AuthBadge,
 	ManagedProviderCard,
-	ProviderUsabilityBadge,
+	ProviderReadinessBadge,
 } from "@/hosted/v2/ai-providers/ai-providers-ui";
 import { modelDisplayName, providerDisplayLabel } from "@/hosted/v2/ai-providers/model-binding";
+import { ProviderConnectionTest } from "@/hosted/v2/ai-providers/provider-connection-test";
 import {
 	API_MODE_LABEL,
 	type ApiMode,
@@ -145,23 +141,10 @@ function ProviderCard({
 	onEdit: () => void;
 }) {
 	const meta = providerTypeMeta(provider.type);
-	const checkFields = useCheckProviderFields();
 	const providerLabel = providerDisplayLabel(provider);
 	const modelSummary = modelCatalogSummary(provider);
-
-	function runCheckFields() {
-		checkFields.mutate(provider.provider_id, {
-			onSuccess: (result) => {
-				if (result.valid) {
-					toast.success("Saved fields are valid", {
-						description: "This does not test endpoint connectivity or credentials.",
-					});
-				} else {
-					toast.warning("Field check found issues", { description: result.errors.join(" · ") });
-				}
-			},
-		});
-	}
+	const deployable =
+		(provider.readiness?.deployable ?? provider.usable) && provider.auth.type !== "none";
 
 	return (
 		<div className={cn(ENTITY_CARD_BASE, "flex h-full flex-col")}>
@@ -172,7 +155,7 @@ function ProviderCard({
 				titleAdornment={
 					<span className="inline-flex items-center gap-1.5">
 						<AuthBadge auth={provider.auth} />
-						<ProviderUsabilityBadge usable={provider.usable} />
+						<ProviderReadinessBadge deployable={deployable} />
 					</span>
 				}
 				meta={[
@@ -185,30 +168,25 @@ function ProviderCard({
 						{provider.base_url}
 						{provider.runtime_env_name ? ` · ${provider.runtime_env_name}` : ""}
 					</span>,
-					provider.usable
-						? null
-						: "Credential setup is incomplete. Finish setup before using this provider.",
+					provider.auth.type === "none"
+						? "Legacy provider without a credential. It is excluded from hosted deployment choices; add a hosted-reachable endpoint and API key."
+						: deployable
+							? null
+							: provider.usable
+								? "This provider is not compatible with a hosted runtime. Review its API mode and authentication."
+								: "Credential setup is incomplete. Finish setup before using this provider.",
 				]}
 			/>
 			<div className="mt-auto flex flex-wrap items-center gap-2 pt-3">
-				<Button
-					variant="ghost"
-					size="sm"
-					onClick={runCheckFields}
-					disabled={checkFields.isPending}
-					aria-label={`Check saved fields for ${providerLabel}`}
-				>
-					<ListChecks />
-					Check fields
-				</Button>
+				<ProviderConnectionTest provider={provider} providerLabel={providerLabel} />
 				<Button
 					variant="outline"
 					size="sm"
 					onClick={onEdit}
-					aria-label={`${provider.usable ? "Edit" : "Finish setup for"} ${providerLabel}`}
+					aria-label={`${deployable ? "Edit" : "Finish setup for"} ${providerLabel}`}
 				>
-					{provider.usable ? <Pencil /> : <CircleAlert />}
-					{provider.usable ? "Edit" : "Finish setup"}
+					{deployable ? <Pencil /> : <CircleAlert />}
+					{deployable ? "Edit" : "Finish setup"}
 				</Button>
 				<RemoveProviderAction provider={provider} usage={usage} />
 			</div>

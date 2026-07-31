@@ -89,6 +89,7 @@ from app.services.agent_skill_projection import (
     delete_agent_project_skill_rows,
     delete_agent_skill_files_best_effort,
 )
+from app.services.ai_provider_credentials import release_runtime_oauth_claims
 from app.services.file_store import get_file_store
 from app.services.http_cache import if_none_match_contains, strong_json_etag
 from app.services.memory_extraction import extract_memories_from_session
@@ -1538,6 +1539,11 @@ async def _delete_agent_identity(
             status.HTTP_409_CONFLICT,
             "Agent Project ownership could not be proven; no resources were deleted.",
         ) from None
+    await release_runtime_oauth_claims(
+        db,
+        owner_user_id=auth.user_id,
+        environment_id=agent_id,
+    )
     await queue_environment_runtime_manifest_changed(db, auth.user_id, agent_id)
     await db.delete(env)
     await db.commit()

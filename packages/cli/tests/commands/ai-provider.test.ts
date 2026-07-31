@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
 	mkdirSync,
+	readdirSync,
 	readFileSync,
 	rmSync,
 	statSync,
@@ -32,6 +34,7 @@ import {
 } from "../../src/commands/ai-provider-apply";
 import { aiProviderCatalogPath } from "../../src/lib/ai-provider-catalog";
 import { buildAgentTargetProjection } from "../../src/lib/ai-provider-projection";
+import { nativeOAuthProfileId } from "../../src/lib/codex-oauth-native-store";
 import { jsonResponse, mockFetch } from "./helpers";
 
 let tmpHome: string;
@@ -40,6 +43,7 @@ let origClawdiHome: string | undefined;
 let origApiUrl: string | undefined;
 let origPath: string | undefined;
 let origCodexHome: string | undefined;
+let origOpenClawProviderAuthSdk: string | undefined;
 
 beforeEach(() => {
 	origHome = process.env.HOME;
@@ -47,6 +51,7 @@ beforeEach(() => {
 	origApiUrl = process.env.CLAWDI_API_URL;
 	origPath = process.env.PATH;
 	origCodexHome = process.env.CODEX_HOME;
+	origOpenClawProviderAuthSdk = process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK;
 	tmpHome = join(tmpdir(), `clawdi-ai-provider-${Date.now()}-${Math.random().toString(36)}`);
 	mkdirSync(tmpHome, { recursive: true });
 	mkdirSync(join(tmpHome, ".clawdi"), { recursive: true });
@@ -73,6 +78,11 @@ afterEach(() => {
 	else delete process.env.PATH;
 	if (origCodexHome) process.env.CODEX_HOME = origCodexHome;
 	else delete process.env.CODEX_HOME;
+	if (origOpenClawProviderAuthSdk) {
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = origOpenClawProviderAuthSdk;
+	} else {
+		delete process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK;
+	}
 	rmSync(tmpHome, { recursive: true, force: true });
 });
 
@@ -812,30 +822,17 @@ describe("ai-provider commands", () => {
 	});
 
 	it("materializes a provider-bound Codex auth profile", async () => {
+		registerAgent("codex", "env-codex-materialize");
 		mkdirSync(join(tmpHome, ".codex"), { recursive: true });
 		const codexAuthPath = join(tmpHome, ".codex", "auth.json");
 		writeFileSync(codexAuthPath, "old-auth");
 		if (process.platform !== "win32") {
 			chmodSync(codexAuthPath, 0o644);
 		}
-		const payload = {
-			schemaVersion: 1,
-			kind: "local_agent_profile",
-			tool: "codex",
-			profile: "default",
-			importedAt: new Date().toISOString(),
-			files: [
-				{
-					logicalName: "auth.json",
-					sourcePath: "/source/.codex/auth.json",
-					targetStrategy: "adapter_default",
-					content: "new-auth",
-					mode: 0o644,
-					size: 8,
-				},
-			],
-		};
-		const { restore: restoreFetch } = mockFetch([
+		const payload = JSON.parse(codexAuthEnvelope());
+		const expectedAuth = payload.files[0].content;
+		let revision = "revision-materialize-1";
+		const { captured, restore: restoreFetch } = mockFetch([
 			{
 				method: "POST",
 				path: "/v1/ai-providers/openai-codex/auth/resolve",
@@ -846,6 +843,7 @@ describe("ai-provider commands", () => {
 						payload: JSON.stringify(payload),
 						profile: "default",
 						tool: "codex",
+						credential_revision: revision,
 					}),
 			},
 		]);
@@ -863,7 +861,108 @@ describe("ai-provider commands", () => {
 			restoreFetch();
 		}
 
-		expect(readFileSync(codexAuthPath, "utf-8")).toBe("new-auth");
+		expect(readFileSync(codexAuthPath, "utf-8")).toBe(expectedAuth);
+		let receipt = readOAuthReceipt("codex", "openai-codex");
+		expect(receipt).toMatchObject({
+			providerId: "openai-codex",
+			credentialRevision: "revision-materialize-1",
+			state: "seeded",
+		});
+		revision = "revision-materialize-2";
+		const { restore: restoreSecondFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/ai-providers/openai-codex/auth/resolve",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth_type: "agent_profile",
+						payload: JSON.stringify(payload),
+						profile: "default",
+						tool: "codex",
+						credential_revision: revision,
+					}),
+			},
+		]);
+		try {
+			await aiProviderMaterializeAuthCommand("openai-codex", { yes: true });
+		} finally {
+			restoreSecondFetch();
+		}
+		expect(readFileSync(codexAuthPath, "utf-8")).toBe(expectedAuth);
+		receipt = readOAuthReceipt("codex", "openai-codex");
+		expect(receipt).toMatchObject({
+			credentialRevision: "revision-materialize-2",
+			state: "seeded",
+		});
+		expect(captured[0]?.body).toEqual({
+			profile: "default",
+			environment_id: "env-codex-materialize",
+			consumer_runtime: "codex",
+		});
+	});
+
+	it("lets explicit first binding replace Codex keyring auth with the selected connection", async () => {
+		registerAgent("codex", "env-codex-keyring");
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		const binDir = join(tmpHome, "bin");
+		mkdirSync(binDir, { recursive: true });
+		const codexPath = join(binDir, "codex");
+		const statusLog = join(tmpHome, "codex-status.log");
+		writeFileSync(codexPath, `#!/bin/sh\nprintf '%s' "$*" > "${statusLog}"\nexit 0\n`);
+		chmodSync(codexPath, 0o755);
+		process.env.PATH = `${binDir}:${process.env.PATH ?? ""}`;
+		const { restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/ai-providers/openai-codex/auth/resolve",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth_type: "agent_profile",
+						payload: codexAuthEnvelope(),
+						profile: "default",
+						tool: "codex",
+						credential_revision: "revision-keyring-1",
+					}),
+			},
+		]);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+			expect(existsSync(join(codexHome, "auth.json"))).toBe(false);
+			await aiProviderMaterializeAuthCommand("openai-codex", { yes: true });
+			expect(readFileSync(statusLog, "utf8")).toBe("login status");
+			expect(existsSync(join(codexHome, "auth.json"))).toBe(true);
+			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+				credentialRevision: "revision-keyring-1",
+				state: "seeded",
+			});
+
+			const receiptPath = join(
+				tmpHome,
+				".clawdi",
+				"oauth-credentials",
+				"codex",
+				`${createHash("sha256").update("openai-codex").digest("hex")}.json`,
+			);
+			rmSync(receiptPath);
+			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
+			expect(existsSync(join(codexHome, "auth.json"))).toBe(true);
+			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+				credentialRevision: "revision-keyring-1",
+				state: "seeded",
+			});
+		} finally {
+			restore();
+			restoreFetch();
+		}
 	});
 
 	it("projects Codex auth profiles to native Hermes config without key env", () => {
@@ -890,6 +989,7 @@ describe("ai-provider commands", () => {
 	});
 
 	it("applies Hermes Codex OAuth through the native provider selector", async () => {
+		registerAgent("hermes", "env-hermes-oauth");
 		const hermesDir = join(tmpHome, ".hermes");
 		mkdirSync(hermesDir, { recursive: true });
 		const hermesConfig = join(hermesDir, "config.yaml");
@@ -906,7 +1006,31 @@ describe("ai-provider commands", () => {
 				"",
 			].join("\n"),
 		);
-		const { restore: restoreFetch } = mockFetch([codexAuthResolveHandler()]);
+		const authPath = join(hermesDir, "auth.json");
+		writeFileSync(
+			authPath,
+			`${JSON.stringify({
+				version: 1,
+				providers: {
+					"openai-codex": {
+						tokens: { access_token: "user-access", refresh_token: "user-refresh" },
+					},
+				},
+				credential_pool: {
+					"openai-codex": [
+						{
+							id: "user-native",
+							source: "manual:device_code",
+							auth_type: "oauth",
+							priority: 0,
+							access_token: "user-access",
+							refresh_token: "user-refresh",
+						},
+					],
+				},
+			})}\n`,
+		);
+		const { captured, restore: restoreFetch } = mockFetch([codexAuthResolveHandler()]);
 		const { restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-codex", {
@@ -929,32 +1053,75 @@ describe("ai-provider commands", () => {
 		});
 		expect(parsed.model.api_key).toBeUndefined();
 		expect(parsed.providers["local-legacy"]).toMatchObject({ keep_me: true });
-		const authStore = JSON.parse(readFileSync(join(hermesDir, "auth.json"), "utf-8"));
-		expect(authStore.providers["openai-codex"].tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
+		const authStore = JSON.parse(readFileSync(authPath, "utf-8"));
+		expect(authStore.providers["openai-codex"].tokens.access_token).toBe("user-access");
 		expect(authStore.credential_pool["openai-codex"][0]).toMatchObject({
-			source: "device_code",
+			id: nativeOAuthProfileId("hermes", "openai-codex"),
+			label: "Clawdi managed connection",
+			source: "manual:device_code",
 			auth_type: "oauth",
 			access_token: FAKE_CODEX_ACCESS_TOKEN,
 			refresh_token: FAKE_CODEX_REFRESH_TOKEN,
 			base_url: "https://chatgpt.com/backend-api/codex",
 		});
+		expect(authStore.credential_pool["openai-codex"][1]).toMatchObject({
+			id: "user-native",
+			access_token: "user-access",
+		});
+		expect(existsSync(join(hermesDir, "auth.lock"))).toBe(true);
+		expect(captured[0]?.body).toEqual({
+			profile: "default",
+			environment_id: "env-hermes-oauth",
+			consumer_runtime: "hermes",
+		});
 	});
 
-	it("applies one Codex OAuth source to all matching targets by default", async () => {
-		const codexHome = join(tmpHome, ".codex");
-		process.env.CODEX_HOME = codexHome;
+	it("resolves and validates OAuth credentials before mutating Hermes config", async () => {
+		registerAgent("hermes", "env-hermes-oauth-invalid");
 		const hermesDir = join(tmpHome, ".hermes");
 		mkdirSync(hermesDir, { recursive: true });
-		const stubDir = join(tmpHome, "bin");
-		const openClawArgs = join(tmpHome, "openclaw-args");
-		const openClawStdin = join(tmpHome, "openclaw-stdin.json");
-		mkdirSync(stubDir, { recursive: true });
-		writeFileSync(
-			join(stubDir, "openclaw"),
-			`#!/bin/sh\nprintf "%s\\n" "$@" > "${openClawArgs}"\ncat > "${openClawStdin}"\nexit 0\n`,
-		);
-		chmodSync(join(stubDir, "openclaw"), 0o755);
-		process.env.PATH = `${stubDir}:${process.env.PATH ?? ""}`;
+		const hermesConfig = join(hermesDir, "config.yaml");
+		const originalConfig = "model:\n  provider: custom:user-owned\nproviders:\n";
+		writeFileSync(hermesConfig, originalConfig);
+		const setup = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+		} finally {
+			setup.restore();
+		}
+		const { restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/ai-providers/openai-codex/auth/resolve",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth_type: "agent_profile",
+						payload: "{}",
+						profile: "default",
+						tool: "codex",
+						credential_revision: "invalid-revision",
+					}),
+			},
+		]);
+		const output = captureConsole();
+		try {
+			await expect(aiProviderApplyCommand({ target: "hermes", json: true })).rejects.toThrow();
+		} finally {
+			output.restore();
+			restoreFetch();
+		}
+
+		expect(readFileSync(hermesConfig, "utf-8")).toBe(originalConfig);
+		expect(existsSync(join(hermesDir, "auth.json"))).toBe(false);
+	});
+
+	it("rejects copying one Codex OAuth family to multiple runtimes", async () => {
 		const { captured, restore: restoreFetch } = mockFetch([codexAuthResolveHandler()]);
 		const setup = captureConsole();
 		try {
@@ -973,62 +1140,135 @@ describe("ai-provider commands", () => {
 		} finally {
 			setup.restore();
 		}
-		const { output, restore } = captureConsole();
+		const { restore } = captureConsole();
 		try {
-			await aiProviderApplyCommand({ source: "openai-codex", json: true });
+			await expect(aiProviderApplyCommand({ source: "openai-codex", json: true })).rejects.toThrow(
+				"single runtime owner; choose exactly one --target",
+			);
 		} finally {
 			restore();
 			restoreFetch();
 		}
 
-		expect(output()).toContain('"source": "openai-codex"');
-		expect(output()).toContain('"target": "codex"');
-		expect(output()).toContain('"target": "hermes"');
-		expect(output()).toContain('"target": "openclaw"');
-		expect(output()).toContain('"secret_writes"');
-		expect(output()).toContain("Hermes openai-codex auth store");
-		expect(output()).toContain("OpenClaw OpenAI auth profile");
-		expect(output()).not.toContain(FAKE_CODEX_ACCESS_TOKEN);
-		expect(output()).not.toContain(FAKE_CODEX_REFRESH_TOKEN);
-		expect(output()).not.toContain("anthropic-main");
 		expect(
 			captured.filter((request) => request.path === "/v1/ai-providers/openai-codex/auth/resolve"),
-		).toHaveLength(3);
-		const codexProfile = readFileSync(join(codexHome, "clawdi-ai-provider.config.toml"), "utf-8");
-		expect(codexProfile).toContain('model_provider = "openai"');
-		expect(codexProfile).toContain('model = "gpt-5.2"');
-		const codexAuth = JSON.parse(readFileSync(join(codexHome, "auth.json"), "utf-8"));
-		expect(codexAuth.tokens.access_token).toBe(FAKE_CODEX_ACCESS_TOKEN);
-		const hermesConfig = parseYaml(readFileSync(join(hermesDir, "config.yaml"), "utf-8"));
-		expect(hermesConfig.model.provider).toBe("openai-codex");
-		const hermesAuth = JSON.parse(readFileSync(join(hermesDir, "auth.json"), "utf-8"));
-		expect(hermesAuth.active_provider).toBe("openai-codex");
-		expect(hermesAuth.providers["openai-codex"].tokens.refresh_token).toBe(
-			FAKE_CODEX_REFRESH_TOKEN,
+		).toHaveLength(0);
+	});
+
+	it("uses the OpenClaw provider-auth SQLite contract and removes only Clawdi ownership", async () => {
+		registerAgent("openclaw", "env-openclaw-oauth");
+		const stubDir = join(tmpHome, "bin");
+		mkdirSync(stubDir, { recursive: true });
+		writeFileSync(join(stubDir, "openclaw"), "#!/bin/sh\ncat >/dev/null\nexit 0\n");
+		chmodSync(join(stubDir, "openclaw"), 0o755);
+		process.env.PATH = `${stubDir}:${process.env.PATH ?? ""}`;
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK =
+			writeFakeOpenClawProviderAuthSdk(tmpHome);
+		const nativeProfileId = nativeOAuthProfileId("openclaw", "openai-codex");
+		const storePath = join(
+			tmpHome,
+			".openclaw",
+			"agents",
+			"main",
+			"agent",
+			"openclaw-agent.sqlite",
 		);
-		const openClawPatch = JSON.parse(readFileSync(openClawStdin, "utf-8"));
-		expect(readFileSync(openClawArgs, "utf-8").trim().split("\n")).toEqual([
-			"config",
-			"patch",
-			"--stdin",
+		mkdirSync(join(tmpHome, ".openclaw", "agents", "main", "agent"), { recursive: true });
+		writeFileSync(
+			storePath,
+			`${JSON.stringify({
+				profiles: {
+					"openai:default": {
+						type: "oauth",
+						provider: "openai",
+						access: "user-access",
+						refresh: "user-refresh",
+					},
+				},
+				order: { openai: ["openai:default"] },
+				lastGood: {},
+				usageStats: {},
+			})}\n`,
+		);
+		const revision = "openclaw-revision-1";
+		const { restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/ai-providers/openai-codex/auth/resolve",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth_type: "agent_profile",
+						payload: codexAuthEnvelope(),
+						profile: "default",
+						tool: "codex",
+						credential_revision: revision,
+					}),
+			},
 		]);
-		expect(openClawPatch.plugins.entries.codex.enabled).toBe(true);
-		expect(openClawPatch.agents.defaults.model.primary).toBe("openai/gpt-5.2");
-		expect(openClawPatch.models).toBeUndefined();
-		const openClawAuth = JSON.parse(
-			readFileSync(
-				join(tmpHome, ".openclaw", "agents", "main", "agent", "auth-profiles.json"),
-				"utf-8",
-			),
-		);
-		expect(openClawAuth.profiles["openai:default"]).toMatchObject({
-			type: "oauth",
-			provider: "openai",
-			access: FAKE_CODEX_ACCESS_TOKEN,
-			refresh: FAKE_CODEX_REFRESH_TOKEN,
-			accountId: "acct-test",
-		});
-		expect(openClawAuth.order.openai[0]).toBe("openai:default");
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+			await aiProviderApplyCommand({
+				source: "openai-codex",
+				target: "openclaw",
+				json: true,
+			});
+			const firstStore = JSON.parse(readFileSync(storePath, "utf8"));
+			expect(firstStore.profiles[nativeProfileId]).toMatchObject({
+				type: "oauth",
+				provider: "openai",
+				access: FAKE_CODEX_ACCESS_TOKEN,
+				refresh: FAKE_CODEX_REFRESH_TOKEN,
+				copyToAgents: false,
+			});
+			expect(firstStore.profiles["openai:default"]).toMatchObject({
+				access: "user-access",
+				refresh: "user-refresh",
+			});
+			expect(firstStore.order.openai).toEqual([nativeProfileId, "openai:default"]);
+			expect(
+				existsSync(join(tmpHome, ".openclaw", "agents", "main", "agent", "auth-profiles.json")),
+			).toBe(false);
+
+			firstStore.profiles[nativeProfileId].access = "runtime-rotated-access";
+			firstStore.profiles[nativeProfileId].refresh = "runtime-rotated-refresh";
+			firstStore.lastGood = { openai: nativeProfileId };
+			firstStore.usageStats = { [nativeProfileId]: { lastUsed: 123 } };
+			writeFileSync(storePath, `${JSON.stringify(firstStore, null, 2)}\n`);
+			await aiProviderApplyCommand({
+				source: "openai-codex",
+				target: "openclaw",
+				json: true,
+			});
+			expect(JSON.parse(readFileSync(storePath, "utf8")).profiles[nativeProfileId].access).toBe(
+				"runtime-rotated-access",
+			);
+
+			await aiProviderRemoveCommand("openai-codex", { force: true, json: true });
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderApplyCommand({ source: "openai-main", target: "openclaw", json: true });
+			const removedStore = JSON.parse(readFileSync(storePath, "utf8"));
+			expect(removedStore.profiles[nativeProfileId]).toBeUndefined();
+			expect(removedStore.profiles["openai:default"]).toMatchObject({ access: "user-access" });
+			expect(removedStore.order?.openai ?? []).not.toContain(nativeProfileId);
+			expect(removedStore.order?.openai ?? []).toEqual(["openai:default"]);
+			expect(removedStore.lastGood?.openai).toBeUndefined();
+			expect(removedStore.usageStats?.[nativeProfileId]).toBeUndefined();
+		} finally {
+			restore();
+			restoreFetch();
+		}
 	});
 
 	it("dry-runs Codex apply without writing the Codex profile", async () => {
@@ -1082,7 +1322,9 @@ describe("ai-provider commands", () => {
 		expect(readFileSync(profilePath, "utf-8")).toContain('[model_providers."openai-main"]');
 		expect(readFileSync(profilePath, "utf-8")).toContain('wire_api = "responses"');
 		expect(readFileSync(profilePath, "utf-8")).toContain('env_key = "OPENAI_API_KEY"');
-		expect(readFileSync(profilePath, "utf-8")).toContain("@openai/codex 0.134.0 through 0.142.4");
+		expect(readFileSync(profilePath, "utf-8")).toContain(
+			"Codex profile config with model_providers and responses wire_api capabilities",
+		);
 		expect(output()).toContain("clawdi-ai-provider.config.toml");
 		expect(output()).toContain('"dry_run": false');
 		expect(output()).toContain("codex --profile clawdi-ai-provider");
@@ -1221,9 +1463,17 @@ describe("ai-provider commands", () => {
 	});
 
 	it("applies a Codex auth source to the Codex profile and auth store", async () => {
+		registerAgent("codex", "env-codex-apply");
 		const codexHome = join(tmpHome, ".codex");
 		process.env.CODEX_HOME = codexHome;
-		const { restore: restoreFetch } = mockFetch([codexAuthResolveHandler()]);
+		mkdirSync(codexHome, { recursive: true });
+		writeFileSync(
+			join(codexHome, "auth.json"),
+			`${JSON.stringify({
+				tokens: { access_token: "native-user-access", refresh_token: "native-user-refresh" },
+			})}\n`,
+		);
+		const { captured, restore: restoreFetch } = mockFetch([codexAuthResolveHandler()]);
 		const { output, restore } = captureConsole();
 		try {
 			await aiProviderAddCommand("openai-codex", {
@@ -1247,6 +1497,130 @@ describe("ai-provider commands", () => {
 		expect(output()).toContain("Codex auth.json from agent:codex profile");
 		expect(output()).not.toContain(FAKE_CODEX_ACCESS_TOKEN);
 		expect(output()).not.toContain(FAKE_CODEX_REFRESH_TOKEN);
+		expect(captured[0]?.body).toEqual({
+			profile: "default",
+			environment_id: "env-codex-apply",
+			consumer_runtime: "codex",
+		});
+	});
+
+	it("preserves runtime OAuth rotation, tombstones logout, and seeds only a new revision", async () => {
+		registerAgent("codex", "env-codex-lifecycle");
+		const codexHome = join(tmpHome, ".codex");
+		process.env.CODEX_HOME = codexHome;
+		let revision = "credential-revision-1";
+		let payload = codexAuthEnvelope();
+		const { restore: restoreFetch } = mockFetch([
+			{
+				method: "POST",
+				path: "/v1/ai-providers/openai-codex/auth/resolve",
+				response: () =>
+					jsonResponse({
+						provider_id: "openai-codex",
+						auth_type: "agent_profile",
+						payload,
+						profile: "default",
+						tool: "codex",
+						credential_revision: revision,
+					}),
+			},
+		]);
+		const { restore } = captureConsole();
+		try {
+			await aiProviderAddCommand("openai-codex", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "agent:codex/default",
+				json: true,
+			});
+			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
+			const authPath = join(codexHome, "auth.json");
+			const runtimeRotated = `${JSON.stringify(
+				{
+					tokens: {
+						access_token: "runtime-rotated-access",
+						refresh_token: "runtime-rotated-refresh",
+					},
+					last_refresh: "2026-07-31T00:00:00Z",
+				},
+				null,
+				2,
+			)}\n`;
+			writeFileSync(authPath, runtimeRotated);
+
+			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
+			expect(readFileSync(authPath, "utf8")).toBe(runtimeRotated);
+
+			rmSync(authPath);
+			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
+			expect(existsSync(authPath)).toBe(false);
+			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+				credentialRevision: "credential-revision-1",
+				state: "revoked",
+			});
+
+			const nativeReauthenticated = `${JSON.stringify(
+				{
+					tokens: {
+						access_token: "native-reauth-access",
+						refresh_token: "native-reauth-refresh",
+					},
+				},
+				null,
+				2,
+			)}\n`;
+			writeFileSync(authPath, nativeReauthenticated);
+			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
+			expect(readFileSync(authPath, "utf8")).toBe(nativeReauthenticated);
+			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+				credentialRevision: "credential-revision-1",
+				state: "adopted",
+			});
+
+			revision = "credential-revision-2";
+			payload = codexAuthEnvelope("explicit-reconnect-access", "explicit-reconnect-refresh");
+			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
+			expect(JSON.parse(readFileSync(authPath, "utf8")).tokens).toMatchObject({
+				access_token: "explicit-reconnect-access",
+				refresh_token: "explicit-reconnect-refresh",
+			});
+			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+				credentialRevision: "credential-revision-2",
+				state: "seeded",
+			});
+
+			rmSync(authPath);
+			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
+			expect(existsSync(authPath)).toBe(false);
+
+			revision = "credential-revision-3";
+			payload = codexAuthEnvelope("reconnected-access", "reconnected-refresh");
+			await aiProviderApplyCommand({ source: "openai-codex", target: "codex", json: true });
+			const reconnected = JSON.parse(readFileSync(authPath, "utf8"));
+			expect(reconnected.tokens).toMatchObject({
+				access_token: "reconnected-access",
+				refresh_token: "reconnected-refresh",
+			});
+			expect(readOAuthReceipt("codex", "openai-codex")).toMatchObject({
+				credentialRevision: "credential-revision-3",
+				state: "seeded",
+			});
+
+			await aiProviderRemoveCommand("openai-codex", { force: true, json: true });
+			await aiProviderAddCommand("openai-main", {
+				type: "openai",
+				defaultModel: "gpt-5.2",
+				auth: "env:OPENAI_API_KEY",
+				json: true,
+			});
+			await aiProviderApplyCommand({ source: "openai-main", target: "codex", json: true });
+			expect(existsSync(authPath)).toBe(false);
+			const receiptDir = join(tmpHome, ".clawdi", "oauth-credentials", "codex");
+			expect(existsSync(receiptDir) ? readdirSync(receiptDir) : []).toEqual([]);
+		} finally {
+			restore();
+			restoreFetch();
+		}
 	});
 
 	it("rejects Codex apply for chat-only providers", async () => {
@@ -2373,7 +2747,10 @@ const FAKE_CODEX_ACCESS_TOKEN = "codex-access-secret";
 const FAKE_CODEX_REFRESH_TOKEN = "codex-refresh-secret";
 const FAKE_CODEX_ID_TOKEN = "codex-id-secret";
 
-function codexAuthResolveHandler() {
+function codexAuthResolveHandler(
+	credentialRevision = "credential-revision-1",
+	payload = codexAuthEnvelope(),
+) {
 	return {
 		method: "POST",
 		path: "/v1/ai-providers/openai-codex/auth/resolve",
@@ -2381,19 +2758,77 @@ function codexAuthResolveHandler() {
 			jsonResponse({
 				provider_id: "openai-codex",
 				auth_type: "agent_profile",
-				payload: codexAuthEnvelope(),
+				payload,
 				profile: "default",
 				tool: "codex",
+				credential_revision: credentialRevision,
 			}),
 	};
 }
 
-function codexAuthEnvelope(): string {
+function registerAgent(agentType: "codex" | "hermes" | "openclaw", id: string): void {
+	const environmentDir = join(tmpHome, ".clawdi", "environments");
+	mkdirSync(environmentDir, { recursive: true });
+	writeFileSync(
+		join(environmentDir, `${agentType}.json`),
+		`${JSON.stringify({ id, agentType }, null, 2)}\n`,
+	);
+}
+
+function readOAuthReceipt(
+	runtime: "codex" | "hermes" | "openclaw",
+	providerId: string,
+): Record<string, unknown> {
+	const key = createHash("sha256").update(providerId).digest("hex");
+	return JSON.parse(
+		readFileSync(join(tmpHome, ".clawdi", "oauth-credentials", runtime, `${key}.json`), "utf8"),
+	);
+}
+
+function writeFakeOpenClawProviderAuthSdk(home: string): string {
+	const sdkPath = join(home, "fake-openclaw-provider-auth.mjs");
+	writeFileSync(
+		sdkPath,
+		`import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const storePath = (agentDir) => join(agentDir, "openclaw-agent.sqlite");
+const readStore = (agentDir) => {
+  const path = storePath(agentDir);
+  return existsSync(path)
+    ? JSON.parse(readFileSync(path, "utf8"))
+    : { profiles: {}, order: {}, lastGood: {}, usageStats: {} };
+};
+export function ensureAuthProfileStoreForLocalUpdate(agentDir) {
+  return readStore(agentDir);
+}
+export function listProfilesForProvider(store, provider) {
+  return Object.entries(store.profiles)
+    .filter(([, credential]) => credential?.provider === provider)
+    .map(([profileId]) => profileId);
+}
+export async function updateAuthProfileStoreWithLock({ agentDir, updater }) {
+  const store = readStore(agentDir);
+  const changed = await updater(store);
+  if (changed) {
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(storePath(agentDir), JSON.stringify(store, null, 2) + "\\n", { mode: 0o600 });
+  }
+  return store;
+}
+`,
+	);
+	return sdkPath;
+}
+
+function codexAuthEnvelope(
+	accessToken = FAKE_CODEX_ACCESS_TOKEN,
+	refreshToken = FAKE_CODEX_REFRESH_TOKEN,
+): string {
 	const content = JSON.stringify(
 		{
 			tokens: {
-				access_token: FAKE_CODEX_ACCESS_TOKEN,
-				refresh_token: FAKE_CODEX_REFRESH_TOKEN,
+				access_token: accessToken,
+				refresh_token: refreshToken,
 				id_token: FAKE_CODEX_ID_TOKEN,
 				account_id: "acct-test",
 			},

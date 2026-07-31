@@ -174,7 +174,7 @@ export function spawnRuntimeUserCommand(
 	args: string[],
 	home: string,
 	cwd: string,
-	options: { egressSystemCaFile?: string } = {},
+	options: { egressSystemCaFile?: string; input?: string } = {},
 ): ReturnType<typeof spawnSync> {
 	const env = runtimeUserCommandEnv(home, options);
 	const runtimeUser = process.env.CLAWDI_RUNTIME_USER?.trim();
@@ -184,20 +184,21 @@ export function spawnRuntimeUserCommand(
 				env: { ...env, USER: runtimeUser, LOGNAME: runtimeUser },
 				cwd,
 				encoding: "utf8",
+				input: options.input,
 			});
 		}
 		if (commandExists("runuser")) {
 			return spawnSync(
 				"runuser",
 				["-u", runtimeUser, "--", "env", `HOME=${home}`, `PATH=${env.PATH}`, command, ...args],
-				{ env, cwd, encoding: "utf8" },
+				{ env, cwd, encoding: "utf8", input: options.input },
 			);
 		}
 		throw new Error(
 			`runtime init is running as root but cannot drop to CLAWDI_RUNTIME_USER=${runtimeUser}; install gosu or runuser`,
 		);
 	}
-	return spawnSync(command, args, { env, cwd, encoding: "utf8" });
+	return spawnSync(command, args, { env, cwd, encoding: "utf8", input: options.input });
 }
 
 export function runRuntimeUserCommand(

@@ -3,7 +3,7 @@
 > HISTORICAL - recorded smoke evidence for the 2026-06 AI Provider slice. Use
 > [`ai-providers.md`](ai-providers.md) for current user behavior and
 > [`ai-provider-agent-contract-audit.md`](ai-provider-agent-contract-audit.md)
-> for pinned target contracts.
+> for verified target contract baselines.
 
 This document records the Docker-isolated smoke test for the first non-UI AI
 Provider slice.
@@ -67,8 +67,10 @@ or Python packages on the host machine.
 11. Add a Codex OAuth source backed by a fake Clawdi auth-resolve endpoint, then
     run `clawdi ai-provider apply openai-codex` with the default target set.
 12. Verify target-native Codex OAuth auth stores are written for Codex, Hermes,
-    and OpenClaw. The OpenClaw auth profile is the canonical
-    `openai:default` entry with `order.openai`.
+    and OpenClaw. Current apply uses a deterministic Hermes
+    `clawdi:<provider-hash>` pool entry and OpenClaw
+    `openai:clawdi-<provider-hash>` SQLite profile; user singleton/default
+    credentials remain separate.
 13. Resolve Hermes' native `openai-codex` runtime with the real 0.18.2 resolver
     and assert its auth-store token, backend URL, Responses transport, and model.
 14. Assert fake env secrets and fake OAuth tokens are not present in Clawdi CLI
@@ -83,7 +85,7 @@ browser authorization and real token exchange remain outside the smoke.
 
 Covered by automated tests:
 
-- Backend-generated Codex authorization URL with the pinned OpenAI OAuth
+- Backend-generated Codex authorization URL with the verified OpenAI OAuth
   client ID, scopes, PKCE challenge, loopback redirect, and extra Codex
   authorize parameters.
 - Backend token completion path with state validation, redirect URI validation,
@@ -150,14 +152,21 @@ package caches:
   `2026.5.28` each accepted the AI Provider patch shape through
   `openclaw config patch --stdin --dry-run --json`.
 - OpenClaw: `openclaw@2026.6.1` accepted the env-backed AI Provider patch shape
-  through the real `openclaw config patch --stdin` path and used the canonical
-  `openai:default` auth profile for Codex OAuth target-native apply.
+  through the real `openclaw config patch --stdin` path. Current Codex OAuth
+  apply no longer uses the historical default profile; it uses the namespaced
+  database-first profile described above.
 
-Latest source/package audit recorded on 2026-07-27:
+Latest source/package audit recorded on 2026-07-31:
 
-- Codex: `@openai/codex@0.142.4` still exposes profile-v2 config files,
-  `model_providers`, `wire_api = "responses"`, `env_key`, and
-  `requires_openai_auth`.
+- Codex: the official `@openai/codex@0.146.0` package still declares the
+  `codex` command at `bin/codex.js` with exact `0.146.0` platform packages.
+  Official `rust-v0.146.0` source at
+  `e363b08c9175ac1cbe5893615dd2cb9ddf95043b` and the Codex manual retain
+  `$CODEX_HOME/config.toml`, `model_providers`, `wire_api = "responses"`,
+  `env_key`, and the default `requires_openai_auth = false` environment-backed
+  auth path. A production-equivalent exact npm install created
+  `<prefix>/bin/codex`, and `codex --version` reported `codex-cli 0.146.0`.
+- The Hermes and OpenClaw baselines below were last audited on 2026-07-27.
 - Hermes: the Docker smoke installed `hermes-agent==0.18.2` and called its real
   `resolve_runtime_provider()` for keyed OpenAI Responses, Kimi Coding, and
   native `openai-codex`. A read-only source cross-check used
@@ -214,7 +223,7 @@ The recorded isolated run exited with code `0` and printed:
   "codexOauthProfileUsesBuiltInOpenAI": true,
   "codexOauthAuthStoresWritten": ["codex", "hermes", "openclaw"],
   "hermesCodexOauthResolvedByHermes": true,
-  "openclawOauthProfile": "openai:default",
+  "openclawOauthProfile": "openai:clawdi-<provider-hash>",
   "openclawOauthDefaultModel": "openai/gpt-5.2",
   "backendAuthResolveCalls": 3,
   "fakeProviderRequests": [

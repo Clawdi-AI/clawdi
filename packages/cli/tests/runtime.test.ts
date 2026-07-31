@@ -26,6 +26,7 @@ import {
 	runtimePublicContentRevision,
 	runtimeWatch,
 } from "../src/commands/runtime";
+import { nativeOAuthProfileId } from "../src/lib/codex-oauth-native-store";
 import { getCliVersion } from "../src/lib/version";
 import {
 	readRuntimeAppliedState,
@@ -143,6 +144,7 @@ const ENV_KEYS = [
 	"CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS",
 	"CLAWDI_RUNTIME_INSTALL_TIMEOUT",
 	"CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER",
+	"CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK",
 	"CLAWDI_RUNTIME_TEST_HERMES_INSTALLER",
 	"CLAWDI_RUNTIME_INSTALL_OFFICIAL_SERVICES",
 	"CODEX_HOME",
@@ -1115,6 +1117,112 @@ function hostedHermesRuntime(
 	};
 }
 
+function hostedOAuthEnvelope(accessToken: string, refreshToken: string): string {
+	const auth = JSON.stringify({
+		tokens: {
+			access_token: accessToken,
+			refresh_token: refreshToken,
+			id_token: "hosted-id-token",
+			account_id: "hosted-account",
+		},
+		last_refresh: "2026-07-31T00:00:00Z",
+	});
+	return JSON.stringify({
+		schemaVersion: 1,
+		kind: "local_agent_profile",
+		tool: "codex",
+		profile: "default",
+		files: [{ logicalName: "auth.json", content: auth }],
+	});
+}
+
+function hostedOAuthRuntimeLoad(input: {
+	home: string;
+	runtime: "hermes" | "openclaw";
+	generation: number;
+	credentialRevision: string;
+	accessToken: string;
+	refreshToken: string;
+}): RuntimeManifestLoad {
+	const providerId = "openai-codex";
+	const secretRef = `provider.${providerId}.oauthProfile`;
+	const runtime =
+		input.runtime === "hermes"
+			? {
+					...hostedHermesRuntime({
+						provider_ids: [providerId],
+						primary_model: { provider_id: providerId, model: "gpt-5.2-codex" },
+					}),
+					install: {
+						authority: "official" as const,
+						method: "official-installer" as const,
+						url: "https://hermes-agent.nousresearch.com/install.sh",
+						home: input.home,
+						args: ["--skip-setup", "--skip-browser", "--non-interactive"],
+					},
+				}
+			: {
+					...hostedOpenClawRuntime({
+						provider_ids: [providerId],
+						primary_model: { provider_id: providerId, model: "gpt-5.2-codex" },
+					}),
+					install: {
+						authority: "official" as const,
+						method: "official-installer" as const,
+						url: "https://openclaw.ai/install-cli.sh",
+						home: input.home,
+						args: ["--json", "--no-onboard"],
+					},
+				};
+	return {
+		source: "remote-datasource",
+		sourcePath: "https://runtime-source.test/desired-state",
+		offline: false,
+		secretValues: {
+			[secretRef]: hostedOAuthEnvelope(input.accessToken, input.refreshToken),
+		},
+		manifest: {
+			schemaVersion: "clawdi.runtimeDesiredState.v1",
+			deploymentId: "dep_hosted_oauth",
+			environmentId: "env_hosted_oauth",
+			instanceId: "iid_hosted_oauth",
+			generation: input.generation,
+			issuedAt: "2026-07-31T00:00:00Z",
+			workspaceRoot: join(input.home, "clawdi"),
+			controlPlane: { apiUrl: "https://cloud-api.test" },
+			runtimes: { [input.runtime]: runtime },
+			projection: {
+				sourceSchemaVersion: "clawdi.hosted-runtime.manifest.v1",
+				system:
+					input.runtime === "hermes"
+						? hostedHermesSystemFixture(input.home)
+						: hostedSystemFixture(input.home),
+				providers: {
+					[providerId]: {
+						kind: "openai-compatible",
+						type: "openai",
+						baseUrl: "https://api.openai.com/v1",
+						model: "gpt-5.2-codex",
+						models: [{ id: "gpt-5.2-codex" }],
+						apiMode: "openai_responses",
+						managed_by: "user",
+						auth: {
+							type: "agent_profile",
+							tool: "codex",
+							profile: "default",
+							credentialSecretRef: secretRef,
+							credentialRevision: input.credentialRevision,
+						},
+					},
+				},
+				terminalTooling: TEST_HOSTED_CODEX_TERMINAL_TOOLING,
+			},
+			egressProfiles: { profiles: [] },
+			recovery: { cacheManifest: true, allowOfflineBoot: true },
+		},
+	};
+}
+
 function systemdUnitFileName(name: string): string {
 	return `${name}.service`;
 }
@@ -1326,6 +1434,46 @@ function writeHermesVersionBinary(home: string, version: string): string {
 	);
 	chmodSync(hermesBin, 0o700);
 	return hermesBin;
+}
+
+function writeFakeOpenClawProviderAuthSdk(directory: string, callsPath: string): string {
+	const sdkPath = join(directory, "fake-openclaw-provider-auth.mjs");
+	mkdirSync(directory, { recursive: true });
+	writeFileSync(
+		sdkPath,
+		`import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const callsPath = ${JSON.stringify(callsPath)};
+const storePath = (agentDir) => join(agentDir, "openclaw-agent.sqlite");
+const readStore = (agentDir) => {
+  const path = storePath(agentDir);
+  return existsSync(path)
+    ? JSON.parse(readFileSync(path, "utf8"))
+    : { profiles: {}, order: {}, lastGood: {}, usageStats: {} };
+};
+export function ensureAuthProfileStoreForLocalUpdate(agentDir) {
+  appendFileSync(callsPath, "ensure " + agentDir + "\\n");
+  return readStore(agentDir);
+}
+export function listProfilesForProvider(store, provider) {
+  appendFileSync(callsPath, "list " + provider + "\\n");
+  return Object.entries(store.profiles)
+    .filter(([, credential]) => credential?.provider === provider)
+    .map(([profileId]) => profileId);
+}
+export async function updateAuthProfileStoreWithLock({ agentDir, updater }) {
+  appendFileSync(callsPath, "update " + agentDir + "\\n");
+  const store = readStore(agentDir);
+  const changed = await updater(store);
+  if (changed) {
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(storePath(agentDir), JSON.stringify(store, null, 2) + "\\n", { mode: 0o600 });
+  }
+  return store;
+}
+`,
+	);
+	return sdkPath;
 }
 
 function hostedHermesProviderLoad(home: string): RuntimeManifestLoad {
@@ -3459,7 +3607,7 @@ exit 0
 				"  esac",
 				"done",
 				'mkdir -p "$prefix/bin" "$prefix/lib/node_modules/@openai/codex"',
-				`printf '%s\\n' '{"version":"0.142.4"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
+				`printf '%s\\n' '{"version":"0.146.0"}' > "$prefix/lib/node_modules/@openai/codex/package.json"`,
 				"cat > \"$prefix/bin/codex\" <<'SH'",
 				"#!/usr/bin/env sh",
 				"printf 'env=<%s>\\n' \"$" + '{OPENAI_API_KEY-unset}"',
@@ -3530,7 +3678,7 @@ exit 0
 		}
 
 		const npmArgs = readFileSync(npmArgsPath, "utf-8");
-		expect(npmArgs).toContain("@openai/codex@0.142.4");
+		expect(npmArgs).toContain("@openai/codex@0.146.0");
 		expect(npmArgs).toContain(`${join(state, "codex", "npm")}\n`);
 		const realBin = join(state, "codex", "npm", "bin", "codex");
 		const packageJson = join(state, "codex", "npm", "lib/node_modules/@openai/codex/package.json");
@@ -3576,8 +3724,8 @@ exit 0
 		const installMarker = join(root, "codex-exact", "npm-install.txt");
 		const previousPath = process.env.PATH;
 		seedOpenClawBinary(home);
-		seedHostedCodexPackage(state, "0.142.4");
-		writeHostedCodexNpmInstaller(binDir, installMarker, "0.142.4");
+		seedHostedCodexPackage(state, "0.146.0");
+		writeHostedCodexNpmInstaller(binDir, installMarker, "0.146.0");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3609,9 +3757,9 @@ exit 0
 		const previousPath = process.env.PATH;
 		const cases = [
 			{ name: "missing" },
-			{ name: "old", version: "0.142.3" },
-			{ name: "damaged", version: "0.142.4", validPackageJson: false },
-			{ name: "non-executable", version: "0.142.4", executable: false },
+			{ name: "old", version: "0.145.0" },
+			{ name: "damaged", version: "0.146.0", validPackageJson: false },
+			{ name: "non-executable", version: "0.146.0", executable: false },
 		] as const;
 
 		try {
@@ -3630,7 +3778,7 @@ exit 0
 							"validPackageJson" in packageCase ? packageCase.validPackageJson : undefined,
 					});
 				}
-				writeHostedCodexNpmInstaller(binDir, installMarker, "0.142.4");
+				writeHostedCodexNpmInstaller(binDir, installMarker, "0.146.0");
 				process.env.HOME = home;
 				process.env.CLAWDI_RUNTIME_MODE = "hosted";
 				process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3652,7 +3800,7 @@ exit 0
 							"utf8",
 						),
 					).version,
-				).toBe("0.142.4");
+				).toBe("0.146.0");
 			}
 		} finally {
 			if (previousPath === undefined) delete process.env.PATH;
@@ -3669,7 +3817,7 @@ exit 0
 		const installMarker = join(root, "codex-wrong-version", "npm-install.txt");
 		const previousPath = process.env.PATH;
 		seedOpenClawBinary(home);
-		writeHostedCodexNpmInstaller(binDir, installMarker, "0.142.3");
+		writeHostedCodexNpmInstaller(binDir, installMarker, "0.145.0");
 		process.env.HOME = home;
 		process.env.CLAWDI_RUNTIME_MODE = "hosted";
 		process.env.CLAWDI_SERVICE_STATE_DIR = state;
@@ -3684,7 +3832,7 @@ exit 0
 				getRuntimePaths(),
 			);
 			expect(convergence.installErrors.join("\n")).toContain(
-				"Codex npm install produced version 0.142.3; expected 0.142.4",
+				"Codex npm install produced version 0.145.0; expected 0.146.0",
 			);
 			expect(existsSync(join(home, ".codex", "config.toml"))).toBe(false);
 		} finally {
@@ -4655,6 +4803,398 @@ exit 0
 		expect(JSON.stringify(hermesRunConfig)).not.toContain("sk-hermes-provider");
 		expect(JSON.stringify(openclawRunConfig)).not.toContain("provider.hermes.apiKey");
 		expect(JSON.stringify(hermesRunConfig)).not.toContain("provider.openclaw.apiKey");
+	});
+
+	it("owns one hosted Hermes OAuth family across rotation, logout, reconnect, and removal", () => {
+		const home = join(root, "oauth-hermes", "home", "clawdi");
+		const state = join(root, "oauth-hermes", "var", "lib", "clawdi");
+		const run = join(root, "oauth-hermes", "run", "clawdi");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		writeHermesVersionBinary(home, "0.19.0");
+		const paths = getRuntimePaths();
+		const authPath = join(home, ".hermes", "auth.json");
+		const nativeProfileId = nativeOAuthProfileId("hermes", "openai-codex");
+		mkdirSync(dirname(authPath), { recursive: true });
+		writeFileSync(
+			authPath,
+			`${JSON.stringify({
+				version: 1,
+				providers: {
+					"openai-codex": {
+						tokens: { access_token: "user-access", refresh_token: "user-refresh" },
+					},
+				},
+				credential_pool: {
+					"openai-codex": [
+						{
+							id: "user-independent",
+							label: "user-independent",
+							auth_type: "oauth",
+							priority: 0,
+							source: "manual:device_code",
+							access_token: "user-independent-access",
+							refresh_token: "user-independent-refresh",
+						},
+					],
+				},
+			})}\n`,
+		);
+		const firstLoad = hostedOAuthRuntimeLoad({
+			home,
+			runtime: "hermes",
+			generation: 1,
+			credentialRevision: "hermes-revision-1",
+			accessToken: "hermes-seed-access",
+			refreshToken: "hermes-seed-refresh",
+		});
+
+		const first = convergeRuntimeManifest(firstLoad, paths);
+		expect(first.installErrors).toEqual([]);
+		let auth = JSON.parse(readFileSync(authPath, "utf8"));
+		expect(auth.providers["openai-codex"].tokens.access_token).toBe("user-access");
+		expect(auth.credential_pool["openai-codex"][0]).toMatchObject({
+			id: nativeProfileId,
+			label: "Clawdi managed connection",
+			source: "manual:device_code",
+			access_token: "hermes-seed-access",
+			refresh_token: "hermes-seed-refresh",
+		});
+		expect(auth.credential_pool["openai-codex"][1].id).toBe("user-independent");
+		expect(existsSync(join(home, ".hermes", "auth.lock"))).toBe(true);
+
+		auth.credential_pool["openai-codex"][0].access_token = "hermes-runtime-rotated";
+		auth.credential_pool["openai-codex"][0].refresh_token = "hermes-runtime-rotated-refresh";
+		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
+		convergeRuntimeManifest(firstLoad, paths);
+		auth = JSON.parse(readFileSync(authPath, "utf8"));
+		expect(auth.credential_pool["openai-codex"][0].access_token).toBe("hermes-runtime-rotated");
+
+		auth.credential_pool["openai-codex"] = auth.credential_pool["openai-codex"].filter(
+			(entry: { id?: string }) => entry.id !== nativeProfileId,
+		);
+		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
+		convergeRuntimeManifest(firstLoad, paths);
+		const receiptKey = createHash("sha256").update("openai-codex").digest("hex");
+		const receiptPath = join(paths.oauthCredentialRoot, "hermes", `${receiptKey}.json`);
+		expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({
+			nativeProfileId,
+			credentialRevision: "hermes-revision-1",
+			state: "revoked",
+		});
+		auth = JSON.parse(readFileSync(authPath, "utf8"));
+		expect(auth.credential_pool["openai-codex"][0].id).toBe("user-independent");
+		convergeRuntimeManifest(firstLoad, paths);
+		expect(JSON.parse(readFileSync(receiptPath, "utf8")).state).toBe("revoked");
+
+		const nativeReauthenticatedLoad = hostedOAuthRuntimeLoad({
+			home,
+			runtime: "hermes",
+			generation: 2,
+			credentialRevision: "hermes-revision-2",
+			accessToken: "explicit-reconnect-access",
+			refreshToken: "explicit-reconnect-refresh",
+		});
+		convergeRuntimeManifest(nativeReauthenticatedLoad, paths);
+		auth = JSON.parse(readFileSync(authPath, "utf8"));
+		expect(auth.providers["openai-codex"].tokens.access_token).toBe("user-access");
+		expect(auth.credential_pool["openai-codex"][0]).toMatchObject({
+			id: nativeProfileId,
+			access_token: "explicit-reconnect-access",
+			refresh_token: "explicit-reconnect-refresh",
+		});
+		expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({
+			credentialRevision: "hermes-revision-2",
+			state: "seeded",
+		});
+
+		auth.credential_pool["openai-codex"][0].access_token = "post-reconnect-rotated-access";
+		auth.credential_pool["openai-codex"][0].refresh_token = "post-reconnect-rotated-refresh";
+		writeFileSync(authPath, `${JSON.stringify(auth, null, 2)}\n`);
+		convergeRuntimeManifest(nativeReauthenticatedLoad, paths);
+		auth = JSON.parse(readFileSync(authPath, "utf8"));
+		expect(auth.credential_pool["openai-codex"][0].access_token).toBe(
+			"post-reconnect-rotated-access",
+		);
+
+		const removedLoad: RuntimeManifestLoad = {
+			...nativeReauthenticatedLoad,
+			secretValues: {},
+			manifest: {
+				...nativeReauthenticatedLoad.manifest,
+				generation: 3,
+				runtimes: {},
+				projection: {
+					...nativeReauthenticatedLoad.manifest.projection,
+					providers: {},
+				},
+			},
+		};
+		convergeRuntimeManifest(removedLoad, paths);
+		auth = JSON.parse(readFileSync(authPath, "utf8"));
+		expect(auth.providers["openai-codex"].tokens.access_token).toBe("user-access");
+		expect(auth.credential_pool?.["openai-codex"]).toEqual([
+			expect.objectContaining({
+				id: "user-independent",
+				access_token: "user-independent-access",
+				refresh_token: "user-independent-refresh",
+			}),
+		]);
+		expect(existsSync(receiptPath)).toBe(false);
+	});
+
+	it("uses OpenClaw provider-auth SQLite ownership without reviving logout", () => {
+		const home = join(root, "oauth-openclaw", "home", "clawdi");
+		const state = join(root, "oauth-openclaw", "var", "lib", "clawdi");
+		const run = join(root, "oauth-openclaw", "run", "clawdi");
+		const sdkCalls = join(root, "oauth-openclaw", "provider-auth-calls.log");
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = writeFakeOpenClawProviderAuthSdk(
+			join(root, "oauth-openclaw"),
+			sdkCalls,
+		);
+		seedOpenClawBinary(home);
+		const paths = getRuntimePaths();
+		const nativeProfileId = nativeOAuthProfileId("openclaw", "openai-codex");
+		const storePath = join(home, ".openclaw", "agents", "main", "agent", "openclaw-agent.sqlite");
+		mkdirSync(dirname(storePath), { recursive: true });
+		writeFileSync(
+			storePath,
+			`${JSON.stringify({
+				profiles: {
+					"openai:default": {
+						type: "oauth",
+						provider: "openai",
+						access: "user-access",
+						refresh: "user-refresh",
+					},
+				},
+				order: { openai: ["openai:default"] },
+				lastGood: {},
+				usageStats: {},
+			})}\n`,
+		);
+		const firstLoad = hostedOAuthRuntimeLoad({
+			home,
+			runtime: "openclaw",
+			generation: 1,
+			credentialRevision: "openclaw-revision-1",
+			accessToken: "openclaw-seed-access",
+			refreshToken: "openclaw-seed-refresh",
+		});
+
+		const first = convergeRuntimeManifest(firstLoad, paths);
+		expect(first.installErrors).toEqual([]);
+		let store = JSON.parse(readFileSync(storePath, "utf8"));
+		expect(store.profiles[nativeProfileId]).toMatchObject({
+			type: "oauth",
+			provider: "openai",
+			access: "openclaw-seed-access",
+			refresh: "openclaw-seed-refresh",
+			copyToAgents: false,
+		});
+		expect(store.profiles["openai:default"]).toMatchObject({
+			access: "user-access",
+			refresh: "user-refresh",
+		});
+		expect(store.order.openai).toEqual([nativeProfileId, "openai:default"]);
+		expect(existsSync(join(dirname(storePath), "auth-profiles.json"))).toBe(false);
+
+		store.profiles[nativeProfileId].access = "openclaw-runtime-rotated";
+		store.profiles[nativeProfileId].refresh = "openclaw-runtime-rotated-refresh";
+		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
+		convergeRuntimeManifest(firstLoad, paths);
+		expect(JSON.parse(readFileSync(storePath, "utf8")).profiles[nativeProfileId].access).toBe(
+			"openclaw-runtime-rotated",
+		);
+
+		store = JSON.parse(readFileSync(storePath, "utf8"));
+		delete store.profiles[nativeProfileId];
+		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
+		convergeRuntimeManifest(firstLoad, paths);
+		expect(JSON.parse(readFileSync(storePath, "utf8")).profiles[nativeProfileId]).toBeUndefined();
+		const receiptKey = createHash("sha256").update("openai-codex").digest("hex");
+		const receiptPath = join(paths.oauthCredentialRoot, "openclaw", `${receiptKey}.json`);
+		expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({
+			nativeProfileId,
+			credentialRevision: "openclaw-revision-1",
+			state: "revoked",
+		});
+
+		store = JSON.parse(readFileSync(storePath, "utf8"));
+		store.profiles["openai:default"].access = "native-reauth-access";
+		store.profiles["openai:default"].refresh = "native-reauth-refresh";
+		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
+		convergeRuntimeManifest(firstLoad, paths);
+		expect(JSON.parse(readFileSync(receiptPath, "utf8")).state).toBe("revoked");
+
+		const nativeReauthenticatedLoad = hostedOAuthRuntimeLoad({
+			home,
+			runtime: "openclaw",
+			generation: 2,
+			credentialRevision: "openclaw-revision-2",
+			accessToken: "explicit-reconnect-access",
+			refreshToken: "explicit-reconnect-refresh",
+		});
+		convergeRuntimeManifest(nativeReauthenticatedLoad, paths);
+		store = JSON.parse(readFileSync(storePath, "utf8"));
+		expect(store.profiles["openai:default"].access).toBe("native-reauth-access");
+		expect(store.profiles[nativeProfileId]).toMatchObject({
+			access: "explicit-reconnect-access",
+			refresh: "explicit-reconnect-refresh",
+		});
+		expect(JSON.parse(readFileSync(receiptPath, "utf8"))).toMatchObject({
+			credentialRevision: "openclaw-revision-2",
+			state: "seeded",
+		});
+
+		store.profiles[nativeProfileId].access = "post-reconnect-rotated-access";
+		store.profiles[nativeProfileId].refresh = "post-reconnect-rotated-refresh";
+		store.lastGood = { openai: nativeProfileId };
+		store.usageStats = { [nativeProfileId]: { lastUsed: 123 } };
+		writeFileSync(storePath, `${JSON.stringify(store, null, 2)}\n`);
+		convergeRuntimeManifest(nativeReauthenticatedLoad, paths);
+		expect(JSON.parse(readFileSync(storePath, "utf8")).profiles[nativeProfileId].access).toBe(
+			"post-reconnect-rotated-access",
+		);
+
+		const removedLoad: RuntimeManifestLoad = {
+			...nativeReauthenticatedLoad,
+			secretValues: {},
+			manifest: {
+				...nativeReauthenticatedLoad.manifest,
+				generation: 3,
+				runtimes: {},
+				projection: {
+					...nativeReauthenticatedLoad.manifest.projection,
+					providers: {},
+				},
+			},
+		};
+		convergeRuntimeManifest(removedLoad, paths);
+		store = JSON.parse(readFileSync(storePath, "utf8"));
+		expect(store.profiles[nativeProfileId]).toBeUndefined();
+		expect(store.profiles["openai:default"]).toMatchObject({
+			access: "native-reauth-access",
+			refresh: "native-reauth-refresh",
+		});
+		expect(store.order?.openai ?? []).not.toContain(nativeProfileId);
+		expect(store.order?.openai ?? []).toEqual(["openai:default"]);
+		expect(store.lastGood?.openai).toBeUndefined();
+		expect(store.usageStats?.[nativeProfileId]).toBeUndefined();
+		expect(existsSync(receiptPath)).toBe(false);
+		const calls = readFileSync(sdkCalls, "utf8");
+		expect(calls).toContain("ensure ");
+		expect(calls).toContain("update ");
+	});
+
+	it("repairs an installed OpenClaw missing provider-auth capability before OAuth apply", () => {
+		const testRoot = join(root, "oauth-openclaw-capability-repair");
+		const home = join(testRoot, "home", "clawdi");
+		const state = join(testRoot, "var", "lib", "clawdi");
+		const run = join(testRoot, "run", "clawdi");
+		const installer = join(testRoot, "install-openclaw.sh");
+		const installerLog = join(testRoot, "installer.log");
+		const sdkTarget = join(testRoot, "installed-provider-auth.mjs");
+		const sdkSource = writeFakeOpenClawProviderAuthSdk(
+			join(testRoot, "repair-source"),
+			join(testRoot, "provider-auth-calls.log"),
+		);
+		mkdirSync(testRoot, { recursive: true });
+		writeFileSync(
+			installer,
+			`#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> '${installerLog}'
+cp '${sdkSource}' '${sdkTarget}'
+`,
+		);
+		chmodSync(installer, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = `file://${installer}`;
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = sdkTarget;
+		seedOpenClawBinary(home);
+
+		const loaded = hostedOAuthRuntimeLoad({
+			home,
+			runtime: "openclaw",
+			generation: 1,
+			credentialRevision: "repair-revision-1",
+			accessToken: "repair-access",
+			refreshToken: "repair-refresh",
+		});
+		const result = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(result.installErrors).toEqual([]);
+		expect(readFileSync(installerLog, "utf8").trim()).toBe("--json --no-onboard");
+		expect(readFileSync(installerLog, "utf8")).not.toContain("--version");
+		const profileId = nativeOAuthProfileId("openclaw", "openai-codex");
+		const storePath = join(home, ".openclaw", "agents", "main", "agent", "openclaw-agent.sqlite");
+		expect(JSON.parse(readFileSync(storePath, "utf8")).profiles[profileId]).toMatchObject({
+			access: "repair-access",
+			refresh: "repair-refresh",
+		});
+	});
+
+	it("fails closed before config or credential mutation when OpenClaw capability repair fails", () => {
+		const testRoot = join(root, "oauth-openclaw-capability-repair-failure");
+		const home = join(testRoot, "home", "clawdi");
+		const state = join(testRoot, "var", "lib", "clawdi");
+		const run = join(testRoot, "run", "clawdi");
+		const installer = join(testRoot, "install-openclaw-fail.sh");
+		const sdkTarget = join(testRoot, "missing-provider-auth.mjs");
+		mkdirSync(testRoot, { recursive: true });
+		writeFileSync(installer, "#!/usr/bin/env bash\nexit 42\n");
+		chmodSync(installer, 0o700);
+		process.env.HOME = home;
+		process.env.CLAWDI_RUNTIME_MODE = "hosted";
+		process.env.CLAWDI_SERVICE_STATE_DIR = state;
+		process.env.CLAWDI_RUN_DIR = run;
+		process.env.CLAWDI_SYSTEMD_APPLY = "0";
+		process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS = "1";
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_INSTALLER = `file://${installer}`;
+		process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK = sdkTarget;
+		seedOpenClawBinary(home);
+		const configPath = join(home, ".openclaw", "openclaw.json");
+		const storePath = join(home, ".openclaw", "agents", "main", "agent", "openclaw-agent.sqlite");
+		mkdirSync(dirname(storePath), { recursive: true });
+		writeFileSync(configPath, '{"original":true}\n');
+		writeFileSync(
+			storePath,
+			'{"profiles":{"openai:default":{"type":"oauth","provider":"openai","access":"user-access","refresh":"user-refresh"}},"order":{"openai":["openai:default"]}}\n',
+		);
+		const originalConfig = readFileSync(configPath, "utf8");
+		const originalStore = readFileSync(storePath, "utf8");
+		const loaded = hostedOAuthRuntimeLoad({
+			home,
+			runtime: "openclaw",
+			generation: 1,
+			credentialRevision: "repair-failure-revision",
+			accessToken: "must-not-write-access",
+			refreshToken: "must-not-write-refresh",
+		});
+
+		const result = convergeRuntimeManifest(loaded, getRuntimePaths());
+
+		expect(result.installErrors.join("\n")).toContain(
+			"OpenClaw provider-auth capability repair failed",
+		);
+		expect(readFileSync(configPath, "utf8")).toBe(originalConfig);
+		expect(readFileSync(storePath, "utf8")).toBe(originalStore);
+		expect(existsSync(join(getRuntimePaths().oauthCredentialRoot, "openclaw"))).toBe(false);
 	});
 
 	it("reconverges the native Hermes provider projection idempotently", () => {
@@ -7501,6 +8041,7 @@ exit 64
 			}),
 		);
 		const paths = getRuntimePaths();
+		seedMitmproxyCache(paths);
 		const initial = mockFetch([
 			{ method: "GET", path: "/v1/runtime/manifest", response: () => manifestResponse() },
 		]);

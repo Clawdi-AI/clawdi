@@ -178,14 +178,14 @@ clawdi ai-provider add openai-codex \
   --default-model gpt-5-codex \
   --auth agent:codex/default
 clawdi ai-provider connect openai-codex --tool codex
-clawdi ai-provider apply openai-codex
+clawdi ai-provider apply openai-codex --target codex
 ```
 
-`apply openai-codex` writes compatible target config and materializes the Codex
-OAuth profile into each selected target's native auth store. For the default
-target set, that means `$CODEX_HOME/auth.json`, `$HERMES_HOME/auth.json`, and
-OpenClaw's `agents/<agentId>/agent/auth-profiles.json`. Those projections do
-not write API key refs for OAuth-backed providers.
+Each Codex OAuth credential family has one owner. Choose exactly one target:
+Codex uses `$CODEX_HOME/auth.json`, Hermes uses `$HERMES_HOME/auth.json`, and
+OpenClaw uses its database-first `openclaw-agent.sqlite` credential store via
+the official provider-auth SDK. Clawdi seeds a missing store but does not
+overwrite tokens rotated by the target runtime.
 
 Use `clawdi ai-provider connect ... --callback manual` in headless environments. Export/import is metadata-only by default; `--include-secrets` requires passphrase-encrypted secret export.
 

@@ -313,6 +313,36 @@ export function providerPresetById(id: string | null | undefined): ProviderPrese
 	return PROVIDER_PRESET_BY_ID.get(id) ?? null;
 }
 
+export function providerPresetRegion(
+	preset: ProviderPreset,
+	regionId: string | null | undefined,
+): ProviderPresetRegionVariant | null {
+	const regions = preset.region_variants ?? [];
+	if (regions.length === 0) return null;
+	return regions.find((region) => region.id === regionId) ?? regions[0] ?? null;
+}
+
+export function providerPresetForSavedProvider({
+	providerId,
+	baseUrl,
+}: {
+	providerId: string;
+	baseUrl: string;
+}): ProviderPreset | null {
+	const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
+	const presets: readonly ProviderPreset[] = PROVIDER_PRESETS;
+	return (
+		presets.find((preset) => {
+			if (providerId === preset.id || providerId.startsWith(`${preset.id}-`)) return true;
+			const endpoints = [
+				preset.base_url,
+				...(preset.region_variants ?? []).map((item) => item.base_url),
+			];
+			return endpoints.some((endpoint) => endpoint.replace(/\/+$/, "") === normalizedBaseUrl);
+		}) ?? null
+	);
+}
+
 export function providerTypeForPreset(preset: ProviderPreset): ProviderTypeId {
 	return preset.provider_type ?? "custom_openai_compatible";
 }

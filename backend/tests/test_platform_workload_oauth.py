@@ -19,6 +19,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.core.config import settings
 from app.core.database import get_runtime_observation_session, get_session
 from app.main import app
+from app.models.ai_provider import AiProviderAuthPayload
 from app.models.api_key import RUNTIME_DEPLOYMENT_KEY_SCOPES, ApiKey
 from app.models.audit import ControlPlaneAuditEvent
 from app.models.platform_workload_auth import (
@@ -44,6 +45,7 @@ from app.services.platform_workload_auth import (
     canonical_platform_workload_token_endpoint,
     get_platform_workload_key_resolver,
 )
+from app.services.vault_crypto import encrypt
 
 _ADMIN_KEY = "test-platform-admin-secret"
 _TEST_CLI_PACKAGE_SPEC = "clawdi@0.12.10-beta.57"
@@ -1094,6 +1096,52 @@ async def test_workload_owner_is_still_mandatory_and_mismatch_is_forbidden(
     await db_session.execute(delete(AgentEnvironment).where(AgentEnvironment.id == agent_id))
     await db_session.delete(other_user)
     await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_platform_agent_delete_releases_runtime_oauth_claim_in_same_transaction(
+    workload_harness,
+    seed_user,
+    db_session,
+):
+    owner = _owner(seed_user)
+    agent_id = uuid.uuid4()
+    create_token = await _access_token(workload_harness, "platform:agents:create")
+    created = await workload_harness.client.post(
+        "/v1/platform/agents",
+        headers=_workload_headers(create_token, "oauth-claim-agent-create"),
+        json=_agent_body(owner, agent_id),
+    )
+    assert created.status_code == 200, created.text
+
+    encrypted, nonce = encrypt('{"kind":"oauth-test"}')
+    payload = AiProviderAuthPayload(
+        owner_user_id=seed_user.id,
+        provider_id=f"delete-platform-{uuid.uuid4().hex}",
+        auth_profile="default",
+        kind="agent_profile",
+        source="test",
+        encrypted_payload=encrypted,
+        nonce=nonce,
+        consumer_environment_id=agent_id,
+        consumer_runtime="openclaw",
+    )
+    db_session.add(payload)
+    await db_session.commit()
+
+    delete_token = await _access_token(workload_harness, "platform:agents:delete")
+    deleted = await workload_harness.client.request(
+        "DELETE",
+        f"/v1/platform/agents/{agent_id}",
+        headers=_workload_headers(delete_token, "oauth-claim-agent-delete"),
+        json={"owner": owner},
+    )
+
+    assert deleted.status_code == 204, deleted.text
+    assert await db_session.get(AgentEnvironment, agent_id) is None
+    await db_session.refresh(payload)
+    assert payload.consumer_environment_id is None
+    assert payload.consumer_runtime is None
 
 
 @pytest.mark.asyncio

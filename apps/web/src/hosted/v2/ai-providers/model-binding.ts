@@ -1,9 +1,11 @@
 import {
 	CLAWDI_MANAGED_PROVIDER_ID,
+	hostedAiProviderAvailabilityIssue,
 	isClawdiManagedProviderId,
 	isFirstPartyManagedAiProvider,
 } from "@clawdi/shared";
 import type { AiProviderAuthKind, ManagedModelCatalogItem } from "@/hosted/billing/contracts";
+import { type HostedRuntime, runtimeDisplayName } from "@/hosted/runtimes";
 import { providerTypeMeta } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProvider } from "@/hosted/v2/ai-providers/types";
 import { formatModelLabel } from "@/lib/format";
@@ -32,6 +34,13 @@ export type PrimaryModelRef = {
 };
 
 export type PrimaryModelInput = string | PrimaryModelRef | null | undefined;
+
+export type ProviderAvailabilityContext = {
+	runtime: HostedRuntime;
+	environmentId: string | null;
+};
+
+export type ProviderAvailabilityIssue = ReturnType<typeof hostedAiProviderAvailabilityIssue>;
 
 export function isPrimaryModelRef(value: PrimaryModelInput): value is PrimaryModelRef {
 	return (
@@ -75,8 +84,38 @@ export function isManagedProviderId(providerId: string | null | undefined): bool
 	return typeof providerId === "string" && isClawdiManagedProviderId(providerId);
 }
 
-export function usableProviders(providers: readonly AiProvider[]): AiProvider[] {
-	return providers.filter((provider) => provider.usable);
+export function providerRuntimeIncompatibility(
+	provider: AiProvider,
+	runtime: HostedRuntime,
+): string | null {
+	const compatible = provider.readiness?.runtime_compatibility[runtime];
+	if (compatible === true) return null;
+	if (runtime === "hermes" && provider.api_mode === "google_generate_content") {
+		return "Hermes cannot use Gemini GenerateContent yet. Choose OpenClaw, or use an OpenAI- or Anthropic-compatible provider.";
+	}
+	if (compatible === false) {
+		return `${runtimeDisplayName(runtime)} cannot use this provider's authentication or API protocol.`;
+	}
+	return null;
+}
+
+export function providerAvailabilityIssue(
+	provider: AiProvider,
+	context: ProviderAvailabilityContext,
+): ProviderAvailabilityIssue {
+	return hostedAiProviderAvailabilityIssue(provider, context);
+}
+
+export function usableProviders(
+	providers: readonly AiProvider[],
+	context?: ProviderAvailabilityContext,
+): AiProvider[] {
+	return providers.filter(
+		(provider) =>
+			provider.readiness?.deployable === true &&
+			provider.auth.type !== "none" &&
+			(!context || providerAvailabilityIssue(provider, context) === null),
+	);
 }
 
 export function providerDisplayLabel(

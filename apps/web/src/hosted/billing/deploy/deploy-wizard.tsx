@@ -156,6 +156,7 @@ import {
 	MANAGED_PROVIDER_LABEL,
 	modelDisplayName,
 	modelOptionsForProvider,
+	providerAvailabilityIssue,
 	providerCatalogDescription,
 	providerDisplayLabel,
 	usableProviders,
@@ -481,7 +482,9 @@ export function DeployWizard() {
 				: "loading";
 	const basicUnavailable = basicSelection.mode === "unavailable";
 
-	const providerList = usableProviders(aiProviders.data ?? []);
+	const savedProviderList = usableProviders(aiProviders.data ?? []);
+	const availabilityContext = { runtime, environmentId: null };
+	const providerList = usableProviders(savedProviderList, availabilityContext);
 	const managedModels = managedModelCatalog.data?.models ?? [];
 	const {
 		draft: aiBindingDraft,
@@ -1096,25 +1099,33 @@ export function DeployWizard() {
 									/>
 								</div>
 							) : null}
-							{providerList.map((provider) => (
-								<EntityChoiceCard
-									key={provider.provider_id}
-									selected={
-										aiAccessMode === "configured" && primaryProviderChoice === provider.provider_id
-									}
-									onClick={() => selectAiProviderChoice(provider.provider_id)}
-									icon={<ProviderTypeChip type={provider.type} />}
-									title={providerDisplayLabel(provider)}
-									description={providerCatalogDescription(provider)}
-									badge={
-										primaryProviderChoice === provider.provider_id ? (
-											<Badge variant="secondary">Selected</Badge>
-										) : (
-											<AuthBadge auth={provider.auth} />
-										)
-									}
-								/>
-							))}
+							{savedProviderList.map((provider) => {
+								const issue = providerAvailabilityIssue(provider, availabilityContext);
+								return (
+									<EntityChoiceCard
+										key={provider.provider_id}
+										selected={
+											!issue &&
+											aiAccessMode === "configured" &&
+											primaryProviderChoice === provider.provider_id
+										}
+										onClick={() => selectAiProviderChoice(provider.provider_id)}
+										disabled={Boolean(issue)}
+										icon={<ProviderTypeChip type={provider.type} />}
+										title={providerDisplayLabel(provider)}
+										description={issue?.message ?? providerCatalogDescription(provider)}
+										badge={
+											issue ? (
+												<Badge variant="secondary">Unavailable</Badge>
+											) : primaryProviderChoice === provider.provider_id ? (
+												<Badge variant="secondary">Selected</Badge>
+											) : (
+												<AuthBadge auth={provider.auth} />
+											)
+										}
+									/>
+								);
+							})}
 							<AddTile
 								title="Add a provider"
 								description="Connect OpenAI, Anthropic, or another endpoint."

@@ -148,8 +148,8 @@ releases.
    and executable before activating Hosted:
 
    ```bash
-   test "$(npm view @openai/codex@0.142.4 version)" = "0.142.4"
-   npx --yes @openai/codex@0.142.4 --version | grep -F '0.142.4'
+   test "$(npm view @openai/codex@0.146.0 version)" = "0.146.0"
+   npx --yes @openai/codex@0.146.0 --version | grep -F '0.146.0'
    ```
 
    A Hosted Codex version change therefore requires a new exact Clawdi CLI

@@ -19,6 +19,7 @@ export interface RuntimePaths {
 	runtimeSource: string;
 	shareRoot: string;
 	serviceStateRoot: string;
+	oauthCredentialRoot: string;
 	managedConfig: string;
 	syncState: string;
 	cliShim: string;
@@ -137,6 +138,7 @@ export function getRuntimePaths(opts: { mode?: RuntimeMode } = {}): RuntimePaths
 		runtimeSource: getRuntimeSourcePath(),
 		shareRoot,
 		serviceStateRoot,
+		oauthCredentialRoot: join(serviceStateRoot, "oauth-credentials"),
 		managedConfig: join(serviceStateRoot, "config", "clawdi.json"),
 		syncState: join(serviceStateRoot, "sync", "runtimes.json"),
 		cliShim: imageShim,

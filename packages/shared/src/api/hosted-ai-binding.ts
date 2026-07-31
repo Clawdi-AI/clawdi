@@ -52,6 +52,60 @@ export class HostedAiBindingError extends Error {
 	}
 }
 
+export type HostedAiProviderRuntime = "hermes" | "openclaw";
+
+export type HostedAiProviderAvailabilityIssue = {
+	kind: "claimed" | "delivery" | "runtime";
+	message: string;
+};
+
+export function hostedAiProviderAvailabilityIssue(
+	provider: HostedSavedAiProvider,
+	context: { runtime: HostedAiProviderRuntime; environmentId: string | null },
+): HostedAiProviderAvailabilityIssue | null {
+	if (
+		provider.consumer &&
+		(context.environmentId === null ||
+			provider.consumer.environment_id !== context.environmentId ||
+			provider.consumer.runtime !== context.runtime)
+	) {
+		return {
+			kind: "claimed",
+			message:
+				context.environmentId === provider.consumer.environment_id &&
+				provider.consumer.runtime !== context.runtime
+					? `Used by this agent's ${provider.consumer.runtime} runtime. Add another ChatGPT connection.`
+					: "Used by another agent. Add another ChatGPT connection.",
+		};
+	}
+	const readiness = provider.readiness;
+	if (!readiness) {
+		return {
+			kind: "delivery",
+			message: "Provider readiness metadata is unavailable. Refresh providers before selecting it.",
+		};
+	}
+	if (!readiness.deployable || provider.auth.type === "none") {
+		return {
+			kind: "delivery",
+			message:
+				readiness.credential_material === "missing"
+					? "This provider has no Hosted-deliverable credential. Finish its setup or choose another provider."
+					: "This credential source is local-only and cannot be delivered to a Hosted agent.",
+		};
+	}
+	if (!readiness.runtime_compatibility[context.runtime]) {
+		return {
+			kind: "runtime",
+			message:
+				context.runtime === "hermes" && provider.api_mode === "google_generate_content"
+					? "Hermes cannot use Gemini GenerateContent yet. Choose OpenClaw, or use an OpenAI- or Anthropic-compatible provider."
+					: `${context.runtime === "hermes" ? "Hermes" : "OpenClaw"} cannot use this provider's authentication or API protocol.`,
+		};
+	}
+	return null;
+}
+
 const CAPABILITY_KEYS = [
 	"chat",
 	"responses",
@@ -247,10 +301,16 @@ function savedProvidersForIds(
 		if (isFirstPartyManagedAiProvider(provider)) {
 			throw firstPartyManagedProviderError(providerId);
 		}
-		if (!provider.usable) {
+		if (!provider.readiness) {
 			throw new HostedAiBindingError(
 				"provider_unusable",
-				`${provider.label?.trim() || provider.provider_id} has no usable credential. Finish its setup or choose another provider.`,
+				`${provider.label?.trim() || provider.provider_id} has no Hosted readiness metadata. Refresh providers and try again.`,
+			);
+		}
+		if (!provider.readiness.deployable || provider.auth.type === "none") {
+			throw new HostedAiBindingError(
+				"provider_unusable",
+				`${provider.label?.trim() || provider.provider_id} cannot deliver its credential to a Hosted agent.`,
 			);
 		}
 		selectedProviders.push(provider);

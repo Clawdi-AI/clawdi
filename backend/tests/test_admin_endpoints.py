@@ -2308,9 +2308,25 @@ async def test_admin_delete_env_removes_environment_and_orphans_sessions(
     )
     environment = await db_session.get(AgentEnvironment, env_id)
     assert environment is not None
+    from app.models.ai_provider import AiProviderAuthPayload
+    from app.services.vault_crypto import encrypt
+
+    encrypted, nonce = encrypt('{"kind":"oauth-test"}')
+    claimed_payload = AiProviderAuthPayload(
+        owner_user_id=seed_user.id,
+        provider_id=f"delete-admin-{uuid.uuid4().hex}",
+        auth_profile="default",
+        kind="agent_profile",
+        source="test",
+        encrypted_payload=encrypted,
+        nonce=nonce,
+        consumer_environment_id=env_id,
+        consumer_runtime="codex",
+    )
     db_session.add_all(
         [
             session_row,
+            claimed_payload,
             Skill(
                 user_id=seed_user.id,
                 project_id=environment.default_project_id,
@@ -2353,6 +2369,9 @@ async def test_admin_delete_env_removes_environment_and_orphans_sessions(
     assert seed_user.skills_revision == revision_before + 2
     await db_session.refresh(session_row)
     assert session_row.environment_id is None
+    await db_session.refresh(claimed_payload)
+    assert claimed_payload.consumer_environment_id is None
+    assert claimed_payload.consumer_runtime is None
     event = (
         await db_session.execute(
             select(ControlPlaneAuditEvent).where(

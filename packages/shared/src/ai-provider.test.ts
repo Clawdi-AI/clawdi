@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	type AiProviderAuth,
+	aiProviderRuntimeCompatibility,
 	CLAWDI_MANAGED_PROVIDER_ID,
 	CLAWDI_MANAGED_PROVIDER_IDS,
 	CLAWDI_MANAGED_V1_PROVIDER_ID,
@@ -158,6 +159,56 @@ describe("validateAiProviderCatalog", () => {
 							cost: { input: 5, output: 30, cache_read: 0.5, cache_write: 0 },
 						},
 					],
+				},
+			],
+		});
+
+		expect(result.valid).toBe(true);
+	});
+
+	test("rejects runtime env collisions across a provider pool", () => {
+		const result = validateAiProviderCatalog({
+			schema_version: 1,
+			providers: [
+				{
+					id: "openai-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					auth: { type: "api_key", source: "managed" },
+					runtime_env_name: "SHARED_PROVIDER_KEY",
+				},
+				{
+					id: "openai-alt",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					auth: { type: "secret_ref", ref: "env:SHARED_PROVIDER_KEY" },
+				},
+			],
+		});
+
+		expect(result.valid).toBe(false);
+		expect(result.errors).toContain(
+			"Provider openai-alt runtime env SHARED_PROVIDER_KEY collides with provider openai-main.",
+		);
+	});
+
+	test("ignores stale runtime env metadata for native agent profiles", () => {
+		const result = validateAiProviderCatalog({
+			schema_version: 1,
+			providers: [
+				{
+					id: "codex-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					auth: { type: "agent_profile", tool: "codex", profile: "default" },
+					runtime_env_name: "OPENAI_API_KEY",
+				},
+				{
+					id: "openai-main",
+					type: "openai",
+					base_url: "https://api.openai.com/v1",
+					auth: { type: "api_key", source: "managed" },
+					runtime_env_name: "OPENAI_API_KEY",
 				},
 			],
 		});
@@ -380,6 +431,31 @@ describe("validateAiProviderCatalog", () => {
 		expect(result.errors).toContain(
 			"Provider clawdi managed_by clawdi must use api_mode openai_chat.",
 		);
+	});
+});
+
+describe("aiProviderRuntimeCompatibility", () => {
+	test("keeps Gemini selectable only for OpenClaw", () => {
+		expect(
+			aiProviderRuntimeCompatibility({
+				type: "gemini",
+				base_url: "https://generativelanguage.googleapis.com/v1beta",
+				api_mode: "google_generate_content",
+				auth: { type: "api_key", source: "managed" },
+				runtime_env_name: "GEMINI_API_KEY",
+			}),
+		).toEqual({ openclaw: true, hermes: false, codex: false });
+	});
+
+	test("marks managed auth without runtime material binding incompatible", () => {
+		expect(
+			aiProviderRuntimeCompatibility({
+				type: "openai",
+				base_url: "https://api.openai.com/v1",
+				api_mode: "openai_responses",
+				auth: { type: "api_key", source: "managed" },
+			}),
+		).toEqual({ openclaw: false, hermes: false, codex: false });
 	});
 });
 

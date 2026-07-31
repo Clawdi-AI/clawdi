@@ -32,7 +32,7 @@ const AUTH_LABEL: Record<string, string> = {
 	agent_profile: "ChatGPT",
 	oauth_profile: "ChatGPT",
 	secret_ref: "Vault key",
-	none: "No auth",
+	none: "Legacy · no credential",
 };
 
 /** Auth-method pill for a provider. */
@@ -50,10 +50,10 @@ export function AuthBadge({ auth }: { auth: AiProviderAuth }) {
 	);
 }
 
-export function ProviderUsabilityBadge({ usable }: { usable: boolean }) {
+export function ProviderReadinessBadge({ deployable }: { deployable: boolean }) {
 	return (
-		<StatusBadge status={usable ? "success" : "warning"} withDot>
-			{usable ? "Saved" : "Needs setup"}
+		<StatusBadge status={deployable ? "success" : "warning"} withDot>
+			{deployable ? "Ready" : "Needs setup"}
 		</StatusBadge>
 	);
 }

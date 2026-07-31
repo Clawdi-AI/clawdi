@@ -1,5 +1,3 @@
-"use client";
-
 import {
 	CODEX_OAUTH_MODEL_CATALOG,
 	defaultAiProviderBaseUrl,
@@ -8,64 +6,45 @@ import {
 import { toProviderCatalogModels } from "@/hosted/v2/ai-providers/provider-types";
 import type { AiProviderUpsert } from "@/hosted/v2/ai-providers/types";
 
-/**
- * Codex "Sign in with ChatGPT" OAuth — v2 parity with the monorepo v1 flow
- * (lib/cloud-ai-providers.ts). The canonical provider id is `openai-codex`;
- * a successful sign-in lands `auth: {type:"agent_profile", tool:"codex",
- * profile}` (NOT oauth_profile).
- *
- * Flow: create the openai-codex provider → POST .../auth/oauth/start
- * {provider:"codex", redirect_uri} → open auth_url (ChatGPT) → the v2 callback
- * route captures code+state → POST .../auth/oauth/complete {code, state,
- * redirect_uri}. The redirect_uri is the SAME app callback route across
- * start + complete + the callback page.
- */
-
 export const CLAWDI_CODEX_OAUTH_PROVIDER_ID = "openai-codex";
 
-/** In-memory cross-window channel used to hand code+state back to the opener. */
+/**
+ * Compatibility-only relay for authorization-code flows started by the previous
+ * Web release. Keep the route for at least the 10-minute backend state TTL after
+ * the device-flow release is fully deployed; new connections never use it.
+ */
+export const CODEX_OAUTH_CALLBACK_COMPATIBILITY_TTL_SECONDS = 10 * 60;
 export const CODEX_OAUTH_CHANNEL = "clawdi-codex-oauth";
 
-export interface CodexOAuthResult {
+export type CodexOAuthResult = {
 	code: string;
 	state: string;
 	error?: string;
+};
+
+const CODEX_OAUTH_CALLBACK_SENSITIVE_PARAMS = [
+	"code",
+	"state",
+	"provider_oauth",
+	"error",
+	"error_code",
+	"error_description",
+	"error_uri",
+] as const;
+
+export function sanitizeCodexCallbackHistoryUrl(input: string): string {
+	const url = new URL(input);
+	for (const key of CODEX_OAUTH_CALLBACK_SENSITIVE_PARAMS) url.searchParams.delete(key);
+	const fragmentText = url.hash.replace(/^#/, "");
+	if (fragmentText.includes("=") || fragmentText.includes("&")) {
+		const fragment = new URLSearchParams(fragmentText);
+		for (const key of CODEX_OAUTH_CALLBACK_SENSITIVE_PARAMS) fragment.delete(key);
+		const nextFragment = fragment.toString();
+		url.hash = nextFragment ? `#${nextFragment}` : "";
+	}
+	return `${url.pathname}${url.search}${url.hash}`;
 }
 
-export function codexOAuthStateMatches(expectedState: string, result: CodexOAuthResult): boolean {
-	return result.state.length > 0 && result.state === expectedState;
-}
-
-/** The v2 app's own OAuth callback route — the redirect_uri the flow uses. */
-export function codexRedirectUri(): string {
-	if (typeof window === "undefined") return "";
-	return `${window.location.origin}/oauth/codex/callback`;
-}
-
-/** Catalog seed for a fresh Codex provider (OpenAI Responses / GPT-5). */
-export const CODEX_DEFAULT_MODEL =
-	CODEX_OAUTH_MODEL_CATALOG[0]?.id ?? defaultAiProviderModels("openai")[0]?.id;
-
-/** Upsert body for the canonical Codex provider (pre-sign-in placeholder auth). */
-export function codexProviderBody(): AiProviderUpsert {
-	return {
-		provider_id: CLAWDI_CODEX_OAUTH_PROVIDER_ID,
-		type: "openai",
-		label: "Codex (ChatGPT)",
-		base_url: defaultAiProviderBaseUrl("openai") ?? "https://api.openai.com/v1",
-		models: toProviderCatalogModels(CODEX_OAUTH_MODEL_CATALOG),
-		api_mode: "openai_responses",
-		auth: { type: "agent_profile", tool: "codex", profile: "default" },
-		managed_by: "user",
-		runtime_env_name: null,
-	};
-}
-
-/**
- * Parse a pasted OAuth callback URL (or raw `?code=…&state=…` query) — the
- * manual completion path for when the redirect can't reach the app automatically
- * (e.g. the backend hasn't whitelisted the app redirect_uri yet).
- */
 export function parseCodexCallback(input: string): CodexOAuthResult | null {
 	const trimmed = input.trim();
 	if (!trimmed) return null;
@@ -76,15 +55,35 @@ export function parseCodexCallback(input: string): CodexOAuthResult | null {
 		search = url.search;
 		hash = url.hash.replace(/^#/, "");
 	} catch {
-		// Not a full URL — treat the whole string as a query fragment.
 		search = trimmed.replace(/^[?#]/, "");
 	}
-	const q = new URLSearchParams(search);
-	const h = new URLSearchParams(hash);
-	const code = q.get("code") || h.get("code") || "";
-	const state = q.get("state") || h.get("state") || "";
-	const error = q.get("error") || h.get("error") || undefined;
+	const query = new URLSearchParams(search);
+	const fragment = new URLSearchParams(hash);
+	const code = query.get("code") || fragment.get("code") || "";
+	const state = query.get("state") || fragment.get("state") || "";
+	const error = query.get("error") || fragment.get("error") || undefined;
 	if (error) return { code: "", state: "", error };
-	if (!code || !state) return null;
-	return { code, state };
+	return code && state ? { code, state } : null;
+}
+
+/** Catalog seed for a fresh Codex provider (OpenAI Responses / GPT-5). */
+export const CODEX_DEFAULT_MODEL =
+	CODEX_OAUTH_MODEL_CATALOG[0]?.id ?? defaultAiProviderModels("openai")[0]?.id;
+
+/** Provider accepted by one independent ChatGPT device-code flow. */
+export function codexProviderBody(identity: {
+	providerId: string;
+	label: string | null;
+}): AiProviderUpsert {
+	return {
+		provider_id: identity.providerId,
+		type: "openai",
+		label: identity.label,
+		base_url: defaultAiProviderBaseUrl("openai") ?? "https://api.openai.com/v1",
+		models: toProviderCatalogModels(CODEX_OAUTH_MODEL_CATALOG),
+		api_mode: "openai_responses",
+		auth: { type: "agent_profile", tool: "codex", profile: "default" },
+		managed_by: "user",
+		runtime_env_name: null,
+	};
 }

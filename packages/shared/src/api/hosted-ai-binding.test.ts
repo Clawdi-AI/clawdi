@@ -32,6 +32,13 @@ const apiKeyProvider = {
 	models: [{ id: "gpt-catalog" }],
 	auth: { type: "api_key", source: "managed", profile: "work" },
 	usable: true,
+	readiness: {
+		credential_material: "available",
+		runtime_compatibility: { openclaw: true, hermes: true, codex: true },
+		deployable: true,
+		endpoint_reachability: "not_tested",
+		inference_verification: "not_tested",
+	},
 	created_at: "2026-01-01T00:00:00Z",
 	updated_at: "2026-01-01T00:00:00Z",
 } satisfies HostedSavedAiProvider;
@@ -348,8 +355,17 @@ describe("shared Hosted AI provider binding", () => {
 				},
 			});
 		expect(() => buildSaved([])).toThrow("is unavailable");
-		expect(() => buildSaved([{ ...apiKeyProvider, usable: false }])).toThrow(
-			"has no usable credential",
+		expect(() =>
+			buildSaved([
+				{
+					...apiKeyProvider,
+					usable: false,
+					readiness: { ...apiKeyProvider.readiness, deployable: false },
+				},
+			]),
+		).toThrow("cannot deliver its credential");
+		expect(() => buildSaved([{ ...apiKeyProvider, readiness: undefined }])).toThrow(
+			"has no Hosted readiness metadata",
 		);
 		expect(() =>
 			buildHostedAiBindingFields({
