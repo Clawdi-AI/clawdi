@@ -16,11 +16,10 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { TermSwitcher } from "@/hosted/billing/components/term-switcher";
 import type { Plan } from "@/hosted/billing/contracts";
-import { billingTermSuffix, formatCents, formatUsdExact } from "@/hosted/billing/format";
+import { billingTermSuffix, formatCents } from "@/hosted/billing/format";
 import { usePlans } from "@/hosted/billing/hooks";
 import {
 	explicitPlanOffers,
-	largestSignupGrantUsd,
 	planOffers,
 	resolveBasicPlan,
 	resolvePerformancePlan,
@@ -89,7 +88,6 @@ export function PlanComparison({
 
 	if (!plansQuery.data) return null;
 
-	const signupGrantUsd = largestSignupGrantUsd(plansQuery.data);
 	const basicOffers = basic ? explicitPlanOffers(basic) : [];
 	const basicResources = basic;
 	const performanceOffers = performance ? planOffers(performance) : [];
@@ -147,16 +145,16 @@ export function PlanComparison({
 							<FeatureRow>
 								Burstable compute
 								{basicResources
-									? ` (${basicResources.vcpu} vCPU / ${basicResources.ram_gb} GB burst)`
+									? ` (${basicResources.vcpu} vCPU / ${basicResources.ram_gb} GB)`
 									: ""}
+							</FeatureRow>
+							<FeatureRow>
+								Disk{basicResources ? ` (${basicResources.disk_size} GB)` : ""}
 							</FeatureRow>
 							<FeatureRow>One free active Basic agent per user</FeatureRow>
 							<FeatureRow>Paid additional Basic agents</FeatureRow>
 							<FeatureRow>Single agent engine (OpenClaw or Hermes)</FeatureRow>
 							<FeatureRow>BYOK avoids Clawdi AI usage charges</FeatureRow>
-							{signupGrantUsd ? (
-								<FeatureRow>{formatUsdExact(signupGrantUsd)} welcome balance on signup</FeatureRow>
-							) : null}
 						</ul>
 					</CardContent>
 					<CardFooter>
