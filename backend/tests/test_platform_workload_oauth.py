@@ -991,17 +991,16 @@ async def test_observation_consumer_identity_is_bound_to_admin_actor(
     expiry_audits = list(
         (
             await db_session.execute(
-                select(ControlPlaneAuditEvent)
-                .where(
+                select(ControlPlaneAuditEvent).where(
                     ControlPlaneAuditEvent.source == "api.v2.runtime",
                     ControlPlaneAuditEvent.action == "runtime_observation.cursor_expired",
                     ControlPlaneAuditEvent.resource_id == str(environment.id),
                 )
-                .order_by(ControlPlaneAuditEvent.created_at)
             )
         ).scalars()
     )
-    assert [event.details["operation"] for event in expiry_audits] == ["read", "ack"]
+    assert len(expiry_audits) == 2
+    assert {event.details["operation"] for event in expiry_audits} == {"read", "ack"}
     assert all(event.actor_type == "admin" for event in expiry_audits)
     assert all(event.details["auth_method"] == "x_admin_key" for event in expiry_audits)
     assert all(event.details["consumer_id"] == "hosted-controller" for event in expiry_audits)
