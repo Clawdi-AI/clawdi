@@ -22,6 +22,7 @@ EXPECTED_CONFIG = {
         "app/core/skill_key.py",
         "app/services/composio.py",
         "app/services/embedding.py",
+        "app/services/file_store.py",
         "app/services/memory_extraction.py",
     ],
 }
