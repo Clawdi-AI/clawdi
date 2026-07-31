@@ -293,7 +293,13 @@ def render_runtime_source(
             consumer = runtime_name if agent_provider_id in runtime_provider_ids else "codex tool"
             provider_material[agent_provider_id] = _unhealthy_provider(agent_provider_id, consumer)
             continue
-        payload = _selected_auth_payload(batch, provider)
+        payload = _selected_auth_payload(
+            batch,
+            provider,
+            environment_id=environment_id,
+            runtime_name=runtime_name,
+            allow_oauth=agent_provider_id in runtime_provider_ids and not is_codex_provider,
+        )
         if is_codex_provider and (
             provider.managed_by != "clawdi"
             or payload is None
@@ -303,14 +309,24 @@ def render_runtime_source(
             raise RuntimeSourceError(
                 "Hosted Codex tool provider must use a Clawdi-managed provider auth payload"
             )
-        secret_ref = (
-            _CODEX_TOOL_SECRET_REF
-            if payload is not None and is_codex_provider
-            else _provider_secret_ref(source_provider_id)
-            if payload is not None
-            else None
+        secret_ref = None
+        if payload is not None:
+            secret_ref = (
+                _CODEX_TOOL_SECRET_REF
+                if is_codex_provider
+                else _provider_oauth_secret_ref(source_provider_id)
+                if payload.kind in {"agent_profile", "oauth_profile"}
+                else _provider_secret_ref(source_provider_id)
+            )
+        provider_entry = _provider_entry(
+            provider,
+            secret_ref=secret_ref,
+            credential_revision=(
+                payload.credential_revision
+                if payload is not None and payload.kind in {"agent_profile", "oauth_profile"}
+                else None
+            ),
         )
-        provider_entry = _provider_entry(provider, secret_ref=secret_ref)
         if is_codex_provider and (
             provider_entry.get("apiMode") not in _CODEX_PROVIDER_SOURCE_API_MODES
             or provider_entry.get("runtimeEnvName") != _MANAGED_PROVIDER_RUNTIME_ENV
@@ -328,7 +344,13 @@ def render_runtime_source(
                     payload.encrypted_payload,
                     payload.nonce,
                     vault_key_identity,
-                    ("tool-codex-api-key" if is_codex_provider else "provider-api-key"),
+                    (
+                        "tool-codex-api-key"
+                        if is_codex_provider
+                        else "provider-oauth-profile"
+                        if payload.kind in {"agent_profile", "oauth_profile"}
+                        else "provider-api-key"
+                    ),
                 ),
             )
             secret_materials.append(
@@ -566,16 +588,39 @@ def _provider_source_id(
 
 
 def _selected_auth_payload(
-    batch: RuntimeSourceBatch, provider: AiProvider
+    batch: RuntimeSourceBatch,
+    provider: AiProvider,
+    *,
+    environment_id: UUID,
+    runtime_name: HostedRuntimeName,
+    allow_oauth: bool,
 ) -> AiProviderAuthPayload | None:
-    if provider.auth_type != "api_key" or (provider.auth_metadata or {}).get("source") != "managed":
+    metadata = provider.auth_metadata or {}
+    is_managed_api_key = provider.auth_type == "api_key" and metadata.get("source") == "managed"
+    is_managed_oauth = provider.auth_type in {"agent_profile", "oauth_profile"}
+    if not is_managed_api_key and not is_managed_oauth:
         return None
-    raw = (provider.auth_metadata or {}).get("profile")
+    if is_managed_oauth and not allow_oauth:
+        return None
+    raw = metadata.get("profile")
     profile = raw if isinstance(raw, str) else "default"
-    return batch.auth_payloads.get((provider.owner_user_id, provider.provider_id, profile))
+    payload = batch.auth_payloads.get((provider.owner_user_id, provider.provider_id, profile))
+    if payload is None:
+        return None
+    if is_managed_oauth and (
+        payload.consumer_environment_id != environment_id
+        or payload.consumer_runtime != runtime_name
+    ):
+        return None
+    return payload
 
 
-def _provider_entry(provider: AiProvider, *, secret_ref: str | None) -> dict[str, Any]:
+def _provider_entry(
+    provider: AiProvider,
+    *,
+    secret_ref: str | None,
+    credential_revision: str | None,
+) -> dict[str, Any]:
     result: dict[str, Any] = {
         "kind": "openai-compatible",
         "type": provider.type,
@@ -623,7 +668,20 @@ def _provider_entry(provider: AiProvider, *, secret_ref: str | None) -> dict[str
     if provider.auth_type == "agent_profile" and metadata.get("tool") == "codex":
         profile = metadata.get("profile")
         if isinstance(profile, str) and profile.strip():
-            result["auth"] = {"type": "agent_profile", "tool": "codex", "profile": profile.strip()}
+            result["auth"] = {
+                "type": "agent_profile",
+                "tool": "codex",
+                "profile": profile.strip(),
+            }
+            if secret_ref and credential_revision:
+                result["auth"]["credentialSecretRef"] = secret_ref
+                result["auth"]["credentialRevision"] = credential_revision
+            else:
+                result["status"] = "error"
+                result["error"] = {
+                    "code": "provider_oauth_credential_unavailable",
+                    "message": "provider OAuth credential is not owned by this runtime",
+                }
     return result
 
 
@@ -640,6 +698,10 @@ def _unhealthy_provider(provider_id: str, consumer: str) -> dict[str, Any]:
 
 def _provider_secret_ref(value: str) -> str:
     return f"provider.{value}.apiKey"
+
+
+def _provider_oauth_secret_ref(value: str) -> str:
+    return f"provider.{value}.oauthProfile"
 
 
 def _secret_identity(

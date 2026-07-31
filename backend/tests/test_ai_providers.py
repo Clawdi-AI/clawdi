@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import json
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.auth import AuthContext, get_auth
 from app.core.config import settings
+from app.core.database import get_session
 from app.main import app
 from app.models.ai_provider import AiProvider, AiProviderAuthPayload
 from app.models.api_key import ApiKey
@@ -28,9 +30,11 @@ from app.services.managed_ai_provider import (
     V2_LEGACY_PUBLIC_MANAGED_AI_PROVIDER_ID,
     V2_MANAGED_AI_PROVIDER_API_MODE,
     V2_MANAGED_AI_PROVIDER_ID,
+    archive_clawdi_managed_provider,
     is_v2_managed_provider_id,
     managed_provider_api_mode,
     runtime_managed_provider_id,
+    upsert_clawdi_managed_provider,
     v2_deployment_managed_provider_id,
 )
 from app.services.platform_contract import platform_request_hash
@@ -2232,8 +2236,16 @@ async def test_ai_provider_auth_import_variants_reject_cross_fields_without_echo
 @pytest.mark.asyncio
 async def test_ai_provider_resolve_uses_only_active_auth_profile(
     client: httpx.AsyncClient,
+    db_session,
     seed_user,
 ):
+    consumer = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="codex-active-profile-consumer",
+        machine_name="Codex active profile consumer",
+        agent_type="codex",
+    )
     created = await client.post(
         "/v1/ai-providers",
         json={
@@ -2287,13 +2299,21 @@ async def test_ai_provider_resolve_uses_only_active_auth_profile(
     try:
         old_profile = await client.post(
             "/v1/ai-providers/openai-codex/auth/resolve",
-            json={"profile": "default"},
+            json={
+                "profile": "default",
+                "environment_id": str(consumer.id),
+                "consumer_runtime": "codex",
+            },
         )
         assert old_profile.status_code == 404, old_profile.text
 
         active_profile = await client.post(
             "/v1/ai-providers/openai-codex/auth/resolve",
-            json={"profile": "work_team"},
+            json={
+                "profile": "work_team",
+                "environment_id": str(consumer.id),
+                "consumer_runtime": "codex",
+            },
         )
         assert active_profile.status_code == 200, active_profile.text
         assert active_profile.json()["payload"] == '{"token":"active"}'
@@ -2304,8 +2324,16 @@ async def test_ai_provider_resolve_uses_only_active_auth_profile(
 @pytest.mark.asyncio
 async def test_ai_provider_codex_profiles_are_scoped_by_provider_id(
     client: httpx.AsyncClient,
+    db_session,
     seed_user,
 ):
+    consumer = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="codex-provider-profile-consumer",
+        machine_name="Codex provider profile consumer",
+        agent_type="codex",
+    )
     for provider_id, label, payload in [
         ("openai-codex-work", "Work Codex", '{"token":"work"}'),
         ("openai-codex-personal", "Personal Codex", '{"token":"personal"}'),
@@ -2354,11 +2382,19 @@ async def test_ai_provider_codex_profiles_are_scoped_by_provider_id(
     try:
         work = await client.post(
             "/v1/ai-providers/openai-codex-work/auth/resolve",
-            json={"profile": "default"},
+            json={
+                "profile": "default",
+                "environment_id": str(consumer.id),
+                "consumer_runtime": "codex",
+            },
         )
         personal = await client.post(
             "/v1/ai-providers/openai-codex-personal/auth/resolve",
-            json={"profile": "default"},
+            json={
+                "profile": "default",
+                "environment_id": str(consumer.id),
+                "consumer_runtime": "codex",
+            },
         )
     finally:
         app.dependency_overrides[get_auth] = original_get_auth
@@ -2729,9 +2765,17 @@ async def test_oauth_accept_persists_pending_then_completes_same_provider_idempo
 @pytest.mark.asyncio
 async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
     client: httpx.AsyncClient,
+    db_session,
     monkeypatch: pytest.MonkeyPatch,
     seed_user,
 ):
+    consumer = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="codex-oauth-consumer",
+        machine_name="Codex OAuth consumer",
+        agent_type="codex",
+    )
     created = await client.post(
         "/v1/ai-providers",
         json={
@@ -2859,7 +2903,11 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
     try:
         resolved = await client.post(
             "/v1/ai-providers/openai-codex/auth/resolve",
-            json={"profile": "default"},
+            json={
+                "profile": "default",
+                "environment_id": str(consumer.id),
+                "consumer_runtime": "codex",
+            },
         )
     finally:
         app.dependency_overrides[get_auth] = original_get_auth
@@ -2878,9 +2926,17 @@ async def test_ai_provider_oauth_complete_exchanges_and_redacts_token(
 @pytest.mark.asyncio
 async def test_ai_provider_oauth_complete_omits_missing_codex_api_key(
     client: httpx.AsyncClient,
+    db_session,
     monkeypatch: pytest.MonkeyPatch,
     seed_user,
 ):
+    consumer = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id="codex-oauth-no-api-key-consumer",
+        machine_name="Codex OAuth no API key consumer",
+        agent_type="codex",
+    )
     created = await client.post(
         "/v1/ai-providers",
         json={
@@ -2967,7 +3023,11 @@ async def test_ai_provider_oauth_complete_omits_missing_codex_api_key(
     try:
         resolved = await client.post(
             "/v1/ai-providers/openai-codex/auth/resolve",
-            json={"profile": "default"},
+            json={
+                "profile": "default",
+                "environment_id": str(consumer.id),
+                "consumer_runtime": "codex",
+            },
         )
     finally:
         app.dependency_overrides[get_auth] = original_get_auth
@@ -3060,7 +3120,9 @@ async def test_ai_provider_resolve_managed_auth_requires_cli(
         json={"profile": "default"},
     )
     assert resolved.status_code == 200, resolved.text
-    assert resolved.json() == {
+    resolved_body = resolved.json()
+    assert isinstance(resolved_body.pop("credential_revision"), str)
+    assert resolved_body == {
         "provider_id": "openai-main",
         "auth_type": "api_key",
         "value": "sk-managed-secret",
@@ -3092,3 +3154,507 @@ async def test_ai_provider_resolve_managed_auth_requires_cli(
         json={"profile": "default"},
     )
     assert stale_resolve.status_code == 404, stale_resolve.text
+
+
+@pytest.mark.asyncio
+async def test_environment_bound_legacy_key_resolves_only_actual_provider_binding(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    bound = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "bound-provider",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert bound.status_code == 200, bound.text
+    assert (
+        await client.post(
+            "/v1/ai-providers/bound-provider/auth/api-key",
+            json={"value": "sk-bound"},
+        )
+    ).status_code == 200
+    unbound = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "other-provider",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert unbound.status_code == 200, unbound.text
+    assert (
+        await client.post(
+            "/v1/ai-providers/other-provider/auth/api-key",
+            json={"value": "sk-other"},
+        )
+    ).status_code == 200
+    hosted = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"bound-{uuid.uuid4().hex}",
+        machine_name="Bound runtime",
+        agent_type="openclaw",
+    )
+    other = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"other-{uuid.uuid4().hex}",
+        machine_name="Other runtime",
+        agent_type="openclaw",
+    )
+    self_managed = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"self-{uuid.uuid4().hex}",
+        machine_name="Self-managed runtime",
+        agent_type="openclaw",
+    )
+    db_session.add(
+        HostedRuntimeState(
+            environment_id=hosted.id,
+            deployment_id="dep-bound",
+            instance_id="hri-bound",
+            generation=1,
+            cli_package_spec="clawdi@0.13.0",
+            locale={"language": "en", "timezone": "UTC"},
+            system=_TEST_SYSTEM,
+            live_sync={"enabled": False, "agents": []},
+            recovery={"cacheManifest": True, "allowOfflineBoot": True},
+            runtimes={
+                "openclaw": {
+                    "enabled": True,
+                    "providerMode": "configured",
+                    "provider_ids": ["bound-provider"],
+                    "primary_model": {
+                        "provider_id": "bound-provider",
+                        "model": "gpt-test",
+                    },
+                    "install": {"source": "official"},
+                }
+            },
+        )
+    )
+    await db_session.commit()
+
+    async def resolve_with_environment_key(environment_id: uuid.UUID, provider_id: str):
+        key = ApiKey(
+            user_id=seed_user.id,
+            key_hash="unused",
+            key_prefix="clawdi_env",
+            label="legacy-agent",
+            environment_id=environment_id,
+            scopes=None,
+        )
+
+        async def _override_get_auth() -> AuthContext:
+            return AuthContext(user=seed_user, api_key=key)
+
+        app.dependency_overrides[get_auth] = _override_get_auth
+        return await client.post(
+            f"/v1/ai-providers/{provider_id}/auth/resolve",
+            json={
+                "profile": "default",
+                "environment_id": str(environment_id),
+                "consumer_runtime": "openclaw",
+            },
+        )
+
+    original_get_auth = app.dependency_overrides[get_auth]
+    try:
+        allowed = await resolve_with_environment_key(hosted.id, "bound-provider")
+        wrong_provider = await resolve_with_environment_key(hosted.id, "other-provider")
+        self_managed_result = await resolve_with_environment_key(self_managed.id, "bound-provider")
+        wrong_environment_key = ApiKey(
+            user_id=seed_user.id,
+            key_hash="unused-other",
+            key_prefix="clawdi_other",
+            label="other-agent",
+            environment_id=other.id,
+            scopes=None,
+        )
+
+        async def _override_other_auth() -> AuthContext:
+            return AuthContext(user=seed_user, api_key=wrong_environment_key)
+
+        app.dependency_overrides[get_auth] = _override_other_auth
+        horizontal = await client.post(
+            "/v1/ai-providers/bound-provider/auth/resolve",
+            json={
+                "profile": "default",
+                "environment_id": str(hosted.id),
+                "consumer_runtime": "openclaw",
+            },
+        )
+    finally:
+        app.dependency_overrides[get_auth] = original_get_auth
+
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["value"] == "sk-bound"
+    assert wrong_provider.status_code == 403, wrong_provider.text
+    assert self_managed_result.status_code == 403, self_managed_result.text
+    assert horizontal.status_code == 403, horizontal.text
+
+
+@pytest.mark.asyncio
+async def test_oauth_payload_has_one_runtime_owner_and_reconnect_rotates_revision(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-codex-owner",
+            "type": "openai",
+            "base_url": "https://chatgpt.com/backend-api/codex",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    imported = await client.post(
+        "/v1/ai-providers/openai-codex-owner/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": '{"kind":"local_agent_profile","generation":1}',
+        },
+    )
+    assert imported.status_code == 200, imported.text
+    codex = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"codex-{uuid.uuid4().hex}",
+        machine_name="Codex owner",
+        agent_type="codex",
+    )
+    other_codex = await create_env_with_project(
+        db_session,
+        user_id=seed_user.id,
+        machine_id=f"codex-other-{uuid.uuid4().hex}",
+        machine_name="Other Codex",
+        agent_type="codex",
+    )
+    await db_session.commit()
+    api_key = ApiKey(
+        user_id=seed_user.id,
+        key_hash="unused",
+        key_prefix="clawdi_personal",
+        label="personal-cli",
+        scopes=None,
+    )
+
+    async def _override_get_auth() -> AuthContext:
+        return AuthContext(user=seed_user, api_key=api_key)
+
+    original_get_auth = app.dependency_overrides[get_auth]
+    app.dependency_overrides[get_auth] = _override_get_auth
+    try:
+        first = await client.post(
+            "/v1/ai-providers/openai-codex-owner/auth/resolve",
+            json={
+                "profile": "default",
+                "environment_id": str(codex.id),
+                "consumer_runtime": "codex",
+            },
+        )
+        conflict = await client.post(
+            "/v1/ai-providers/openai-codex-owner/auth/resolve",
+            json={
+                "profile": "default",
+                "environment_id": str(other_codex.id),
+                "consumer_runtime": "codex",
+            },
+        )
+        reconnected = await client.post(
+            "/v1/ai-providers/openai-codex-owner/auth/import",
+            json={
+                "type": "agent_profile",
+                "tool": "codex",
+                "profile": "default",
+                "payload": '{"kind":"local_agent_profile","generation":2}',
+            },
+        )
+        second = await client.post(
+            "/v1/ai-providers/openai-codex-owner/auth/resolve",
+            json={
+                "profile": "default",
+                "environment_id": str(codex.id),
+                "consumer_runtime": "codex",
+            },
+        )
+    finally:
+        app.dependency_overrides[get_auth] = original_get_auth
+
+    assert first.status_code == 200, first.text
+    assert conflict.status_code == 409, conflict.text
+    assert reconnected.status_code == 200, reconnected.text
+    assert second.status_code == 200, second.text
+    assert first.json()["credential_revision"] != second.json()["credential_revision"]
+    assert json.loads(second.json()["payload"])["generation"] == 2
+
+
+@pytest.mark.asyncio
+async def test_oauth_import_rejects_multiple_hosted_runtime_bindings(
+    client: httpx.AsyncClient,
+    db_session,
+    seed_user,
+):
+    provider_id = "openai-codex-shared-family"
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": provider_id,
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    for runtime in ("hermes", "openclaw"):
+        environment = await create_env_with_project(
+            db_session,
+            user_id=seed_user.id,
+            machine_id=f"oauth-shared-{runtime}-{uuid.uuid4().hex}",
+            machine_name=f"OAuth shared {runtime}",
+            agent_type=runtime,
+        )
+        db_session.add(
+            HostedRuntimeState(
+                environment_id=environment.id,
+                deployment_id=f"dep-oauth-shared-{runtime}",
+                instance_id=f"hri-oauth-shared-{runtime}",
+                generation=1,
+                cli_package_spec="clawdi@0.13.0",
+                locale={"language": "en", "timezone": "UTC"},
+                system=_TEST_SYSTEM,
+                live_sync={"enabled": False, "agents": []},
+                recovery={"cacheManifest": True, "allowOfflineBoot": True},
+                runtimes={
+                    runtime: {
+                        "enabled": True,
+                        "providerMode": "configured",
+                        "provider_ids": [provider_id],
+                        "primary_model": {
+                            "provider_id": provider_id,
+                            "model": "gpt-test",
+                        },
+                        "install": {"source": "official"},
+                    }
+                },
+            )
+        )
+    await db_session.commit()
+
+    imported = await client.post(
+        f"/v1/ai-providers/{provider_id}/auth/import",
+        json={
+            "type": "agent_profile",
+            "tool": "codex",
+            "profile": "default",
+            "payload": '{"kind":"local_agent_profile","files":[]}',
+        },
+    )
+
+    assert imported.status_code == 409, imported.text
+    assert imported.json()["detail"] == (
+        "OAuth credential cannot be bound to multiple Agent runtimes"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_oauth_complete_cannot_revive_a_concurrently_deleted_provider(
+    client: httpx.AsyncClient,
+    engine,
+    seed_user,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    created = await client.post(
+        "/v1/ai-providers",
+        json={
+            "provider_id": "openai-codex-delete-race",
+            "type": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "auth": {"type": "secret_ref", "ref": "env:OPENAI_API_KEY"},
+        },
+    )
+    assert created.status_code == 200, created.text
+    previous_config = settings.ai_provider_oauth_config_json
+    settings.ai_provider_oauth_config_json = json.dumps(
+        {
+            "codex": {
+                "authorization_url": "https://oauth.example/authorize",
+                "token_url": "https://oauth.example/token",
+                "client_id": "clawdi-client",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            }
+        }
+    )
+    started = await client.post(
+        "/v1/ai-providers/openai-codex-delete-race/auth/oauth/start",
+        json={"provider": "codex"},
+    )
+    assert started.status_code == 200, started.text
+
+    exchange_started = asyncio.Event()
+    release_exchange = asyncio.Event()
+
+    class BlockingOAuthClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            if data["grant_type"] == "authorization_code":
+                exchange_started.set()
+                await release_exchange.wait()
+                return httpx.Response(
+                    200,
+                    json={
+                        "id_token": _test_jwt(),
+                        "access_token": "oauth-access-race",
+                        "refresh_token": "oauth-refresh-race",
+                    },
+                )
+            return httpx.Response(200, json={"access_token": "sk-codex-api-key-race"})
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    async def _independent_session():
+        async with session_factory() as session:
+            yield session
+
+    previous_get_session = app.dependency_overrides[get_session]
+    app.dependency_overrides[get_session] = _independent_session
+    monkeypatch.setattr("app.routes.ai_providers.httpx.AsyncClient", BlockingOAuthClient)
+    completion_task = asyncio.create_task(
+        client.post(
+            "/v1/ai-providers/openai-codex-delete-race/auth/oauth/complete",
+            json={
+                "state": started.json()["state"],
+                "code": "oauth-code-race",
+                "redirect_uri": "https://cloud.example/oauth/callback",
+            },
+        )
+    )
+    try:
+        await asyncio.wait_for(exchange_started.wait(), timeout=2)
+        deleted = await client.delete("/v1/ai-providers/openai-codex-delete-race")
+        assert deleted.status_code == 200, deleted.text
+        release_exchange.set()
+        completed = await asyncio.wait_for(completion_task, timeout=2)
+    finally:
+        release_exchange.set()
+        if not completion_task.done():
+            completion_task.cancel()
+        app.dependency_overrides[get_session] = previous_get_session
+        settings.ai_provider_oauth_config_json = previous_config
+
+    assert completed.status_code == 404, completed.text
+    async with session_factory() as verification:
+        provider = await verification.scalar(
+            select(AiProvider).where(
+                AiProvider.owner_user_id == seed_user.id,
+                AiProvider.provider_id == "openai-codex-delete-race",
+            )
+        )
+        active_payload_count = await verification.scalar(
+            select(func.count())
+            .select_from(AiProviderAuthPayload)
+            .where(
+                AiProviderAuthPayload.owner_user_id == seed_user.id,
+                AiProviderAuthPayload.provider_id == "openai-codex-delete-race",
+                AiProviderAuthPayload.archived_at.is_(None),
+            )
+        )
+    assert provider is not None
+    assert provider.archived_at is not None
+    assert active_payload_count == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.committed_db
+async def test_managed_provider_rotate_and_archive_are_serialized_and_consistent(
+    db_session,
+    engine,
+    seed_user,
+):
+    provider_id = v2_deployment_managed_provider_id("424242")
+    assert provider_id is not None
+    await upsert_clawdi_managed_provider(
+        db_session,
+        user=seed_user,
+        provider_id=provider_id,
+        base_url="https://managed.example.test/v1",
+        api_key="sk-initial",
+        default_model="gpt-test",
+    )
+    await db_session.commit()
+
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    rotate_holds_locks = asyncio.Event()
+    allow_rotate_commit = asyncio.Event()
+
+    async def rotate():
+        async with session_factory() as session:
+            await upsert_clawdi_managed_provider(
+                session,
+                user=seed_user,
+                provider_id=provider_id,
+                base_url="https://managed.example.test/v1",
+                api_key="sk-rotated",
+                default_model="gpt-test",
+            )
+            rotate_holds_locks.set()
+            await allow_rotate_commit.wait()
+            await session.commit()
+
+    async def archive():
+        async with session_factory() as session:
+            archived = await archive_clawdi_managed_provider(
+                session,
+                owner_user_id=seed_user.id,
+                provider_id=provider_id,
+            )
+            assert archived is not None
+            await session.commit()
+
+    rotate_task = asyncio.create_task(rotate())
+    await asyncio.wait_for(rotate_holds_locks.wait(), timeout=2)
+    archive_task = asyncio.create_task(archive())
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(asyncio.shield(archive_task), timeout=0.05)
+    allow_rotate_commit.set()
+    await asyncio.wait_for(asyncio.gather(rotate_task, archive_task), timeout=2)
+
+    async with session_factory() as verification:
+        provider = await verification.scalar(
+            select(AiProvider).where(
+                AiProvider.owner_user_id == seed_user.id,
+                AiProvider.provider_id == provider_id,
+            )
+        )
+        payload = await verification.scalar(
+            select(AiProviderAuthPayload).where(
+                AiProviderAuthPayload.owner_user_id == seed_user.id,
+                AiProviderAuthPayload.provider_id == provider_id,
+                AiProviderAuthPayload.auth_profile == "default",
+            )
+        )
+    assert provider is not None
+    assert payload is not None
+    assert provider.archived_at is not None
+    assert payload.archived_at is not None

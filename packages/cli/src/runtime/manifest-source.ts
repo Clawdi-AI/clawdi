@@ -1197,6 +1197,10 @@ export function manifestSecretRefs(manifest: RuntimeManifest): string[] {
 			if (typeof provider.apiKeySecretRef === "string") {
 				refs.add(provider.apiKeySecretRef);
 			}
+			const auth = plainRecord(provider.auth);
+			if (typeof auth?.credentialSecretRef === "string") {
+				refs.add(auth.credentialSecretRef);
+			}
 		}
 	}
 	if (hasEnabledRuntime) {

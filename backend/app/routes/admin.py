@@ -92,6 +92,11 @@ from app.services.agent_skill_projection import (
     delete_agent_project_skill_rows,
     delete_agent_skill_files_best_effort,
 )
+from app.services.ai_provider_credentials import (
+    OAuthCredentialClaimConflict,
+    reconcile_runtime_oauth_claims,
+    release_runtime_oauth_claims,
+)
 from app.services.api_key import mint_api_key
 from app.services.app_setting_registry import (
     APP_SETTING_SPEC_BY_KEY,
@@ -1512,6 +1517,16 @@ async def _admin_upsert_runtime_state(
         ) from exc
     desired_state = _runtime_state_values(body, apply_generation=apply_generation)
     changed_fields = _runtime_state_changed_fields(existing_state, desired_state)
+    try:
+        await reconcile_runtime_oauth_claims(
+            db,
+            owner_user_id=target_user_id,
+            environment_id=environment_id,
+            runtimes=desired_state["runtimes"],
+        )
+    except OAuthCredentialClaimConflict as exc:
+        await db.rollback()
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     if existing_state is not None and body.generation == existing_state.generation:
         current_generation = existing_state.generation
         material_changes = [
@@ -1649,6 +1664,11 @@ async def _admin_delete_runtime_state(
                 "has_skills": state.skills is not None,
                 "has_tools": state.tools is not None,
             }
+        )
+        await release_runtime_oauth_claims(
+            db,
+            owner_user_id=env.user_id,
+            environment_id=environment_id,
         )
         await db.delete(state)
         queue_runtime_manifest_changed(db, env.user_id, environment_id)

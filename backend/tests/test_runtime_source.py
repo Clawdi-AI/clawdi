@@ -294,6 +294,121 @@ def test_runtime_source_revision_uses_only_projected_descriptor_and_secret_sourc
     ]
 
 
+def test_runtime_source_delivers_owned_oauth_only_to_selected_runtime(monkeypatch) -> None:
+    from app.services import runtime_source
+
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = ["openai-codex"]
+    runtime["primary_model"] = {
+        "provider_id": "openai-codex",
+        "model": "gpt-test",
+    }
+    state.runtimes = {"openclaw": runtime}
+    provider = AiProvider(
+        id=uuid4(),
+        owner_user_id=USER_ID,
+        provider_id="openai-codex",
+        type="openai",
+        label="ChatGPT",
+        base_url="https://api.openai.com/v1",
+        api_mode="openai_responses",
+        auth_type="agent_profile",
+        auth_metadata={"tool": "codex", "profile": "default"},
+        managed_by="user",
+    )
+    payload = AiProviderAuthPayload(
+        id=uuid4(),
+        owner_user_id=USER_ID,
+        provider_id="openai-codex",
+        auth_profile="default",
+        kind="agent_profile",
+        source="managed",
+        encrypted_payload=b"oauth-ciphertext",
+        nonce=b"oauth-nonce",
+        credential_revision="oauth-revision-1",
+        consumer_environment_id=ENV_ID,
+        consumer_runtime="openclaw",
+    )
+    batch.providers[(USER_ID, provider.provider_id)] = provider
+    batch.auth_payloads[(USER_ID, provider.provider_id, "default")] = payload
+
+    def record_decrypt(ciphertext: bytes, nonce: bytes) -> str:
+        if ciphertext == b"oauth-ciphertext" and nonce == b"oauth-nonce":
+            return '{"kind":"local_agent_profile","files":[]}'
+        return "managed-tool-key"
+
+    monkeypatch.setattr(runtime_source, "decrypt", record_decrypt)
+    source = render_runtime_source(
+        batch,
+        environment_id=ENV_ID,
+        public_api_url="https://cloud.test/",
+        vault_key_identity="vault-key-generation-1",
+        decrypt_secrets=True,
+    )
+
+    auth = source.manifest["providers"]["openai-codex"]["auth"]
+    assert auth == {
+        "type": "agent_profile",
+        "tool": "codex",
+        "profile": "default",
+        "credentialSecretRef": "provider.openai-codex.oauthProfile",
+        "credentialRevision": "oauth-revision-1",
+    }
+    assert source.secret_values["provider.openai-codex.oauthProfile"] == (
+        '{"kind":"local_agent_profile","files":[]}'
+    )
+    terminal_provider = source.manifest["terminalTooling"]["codex"]["provider"]
+    assert terminal_provider["apiKeySecretRef"] == "tool.codex.apiKey"
+    assert "auth" not in terminal_provider
+
+
+def test_runtime_source_refuses_oauth_owned_by_another_runtime() -> None:
+    batch = _batch()
+    state = batch.rows[ENV_ID].state
+    assert state is not None
+    runtime = dict(state.runtimes["openclaw"])
+    runtime["provider_ids"] = ["openai-codex"]
+    runtime["primary_model"] = {
+        "provider_id": "openai-codex",
+        "model": "gpt-test",
+    }
+    state.runtimes = {"openclaw": runtime}
+    batch.providers[(USER_ID, "openai-codex")] = AiProvider(
+        id=uuid4(),
+        owner_user_id=USER_ID,
+        provider_id="openai-codex",
+        type="openai",
+        base_url="https://api.openai.com/v1",
+        api_mode="openai_responses",
+        auth_type="agent_profile",
+        auth_metadata={"tool": "codex", "profile": "default"},
+        managed_by="user",
+    )
+    batch.auth_payloads[(USER_ID, "openai-codex", "default")] = AiProviderAuthPayload(
+        id=uuid4(),
+        owner_user_id=USER_ID,
+        provider_id="openai-codex",
+        auth_profile="default",
+        kind="agent_profile",
+        source="managed",
+        encrypted_payload=b"oauth-ciphertext",
+        nonce=b"oauth-nonce",
+        credential_revision="oauth-revision-1",
+        consumer_environment_id=uuid4(),
+        consumer_runtime="hermes",
+    )
+
+    source = _render(batch)
+
+    projected = source.manifest["providers"]["openai-codex"]
+    assert projected["status"] == "error"
+    assert projected["error"]["code"] == "provider_oauth_credential_unavailable"
+    assert "credentialSecretRef" not in projected["auth"]
+
+
 def test_runtime_source_never_decrypts_or_projects_channel_provider_token(monkeypatch) -> None:
     from app.services import runtime_source
 

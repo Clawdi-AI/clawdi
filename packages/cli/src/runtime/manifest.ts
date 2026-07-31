@@ -11,6 +11,7 @@ import {
 	readdirSync,
 	readFileSync,
 	readlinkSync,
+	realpathSync,
 	rmSync,
 	statSync,
 } from "node:fs";
@@ -254,6 +255,38 @@ interface RuntimeInstallObservation {
 	stdoutTail: string | null;
 	stderrTail: string | null;
 	error: string | null;
+}
+
+const RUNTIME_OAUTH_RECEIPT_SCHEMA_VERSION = "clawdi.runtimeOAuthCredential.v1";
+const OPENCLAW_CODEX_PROVIDER_ID = "openai";
+
+const runtimeOAuthReceiptSchema = z
+	.object({
+		schemaVersion: z.literal(RUNTIME_OAUTH_RECEIPT_SCHEMA_VERSION),
+		runtime: z.enum(["hermes", "openclaw"]),
+		providerId: z.string().min(1),
+		nativeProfileId: z.string().min(1),
+		credentialRevision: z.string().min(1).max(64),
+		state: z.enum(["seeded", "adopted", "revoked"]),
+	})
+	.strict();
+
+type RuntimeOAuthReceipt = z.infer<typeof runtimeOAuthReceiptSchema>;
+
+interface RuntimeOAuthMaterial {
+	accessToken: string;
+	refreshToken: string;
+	idToken?: string;
+	accountId?: string;
+	lastRefresh: string;
+	expires: number;
+}
+
+interface HostedRuntimeOAuthCredential {
+	providerId: string;
+	profile: string;
+	credentialRevision: string;
+	material: RuntimeOAuthMaterial;
 }
 
 interface RuntimeInstallReceiptTarget {
@@ -1910,6 +1943,491 @@ function agentTargetProjectionInput(
 		},
 		primaryModel: { ...input.primaryModel, provider_id: primaryProviderId },
 	};
+}
+
+function runtimeOAuthReceiptPath(
+	paths: RuntimePaths,
+	runtime: "hermes" | "openclaw",
+	providerId: string,
+): string {
+	const key = createHash("sha256").update(providerId).digest("hex");
+	return join(paths.oauthCredentialRoot, runtime, `${key}.json`);
+}
+
+function readRuntimeOAuthReceipt(path: string): RuntimeOAuthReceipt | null {
+	if (!existsSync(path)) return null;
+	return runtimeOAuthReceiptSchema.parse(JSON.parse(readFileSync(path, "utf8")) as unknown);
+}
+
+function writeRuntimeOAuthReceipt(path: string, receipt: RuntimeOAuthReceipt): void {
+	writePrivateFileAtomic(path, `${JSON.stringify(receipt, null, 2)}\n`, {
+		mode: 0o600,
+		dirMode: 0o700,
+	});
+	makeRootOwned(path);
+	makeRootOwned(dirname(path));
+}
+
+function decodeJwtExpiryMs(token: string): number | null {
+	const encoded = token.split(".")[1];
+	if (!encoded) return null;
+	try {
+		const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as unknown;
+		const exp = recordValue(payload)?.exp;
+		return typeof exp === "number" && Number.isFinite(exp) ? Math.trunc(exp * 1000) : null;
+	} catch {
+		return null;
+	}
+}
+
+function parseHostedRuntimeOAuthMaterial(payload: string): RuntimeOAuthMaterial {
+	const envelope = recordValue(JSON.parse(payload) as unknown);
+	if (envelope?.kind !== "local_agent_profile" || !Array.isArray(envelope.files)) {
+		throw new Error("hosted OAuth secret is not a local Agent credential profile");
+	}
+	const authFile = envelope.files
+		.map(recordValue)
+		.find((file) => file?.logicalName === "auth.json");
+	if (!authFile || typeof authFile.content !== "string") {
+		throw new Error("hosted OAuth credential profile is missing auth.json");
+	}
+	const auth = recordValue(JSON.parse(authFile.content) as unknown);
+	const tokens = recordValue(auth?.tokens);
+	const accessToken = stringValue(tokens?.access_token);
+	const refreshToken = stringValue(tokens?.refresh_token);
+	if (!accessToken || !refreshToken) {
+		throw new Error("hosted OAuth credential profile is missing access or refresh token");
+	}
+	return {
+		accessToken,
+		refreshToken,
+		...(stringValue(tokens?.id_token)
+			? { idToken: stringValue(tokens?.id_token) ?? undefined }
+			: {}),
+		...(stringValue(tokens?.account_id)
+			? { accountId: stringValue(tokens?.account_id) ?? undefined }
+			: {}),
+		lastRefresh: stringValue(auth?.last_refresh) ?? new Date().toISOString(),
+		expires: decodeJwtExpiryMs(accessToken) ?? Date.now() + 60 * 60 * 1000,
+	};
+}
+
+function hostedRuntimeOAuthCredentials(
+	manifest: RuntimeManifest,
+	runtime: "hermes" | "openclaw",
+	secretValues: Record<string, string> | undefined,
+	runtimeEnvironment: RuntimeEnvironmentAuthority,
+): HostedRuntimeOAuthCredential[] {
+	if (manifest.runtimes[runtime]?.enabled !== true) return [];
+	const providers = recordValue(manifest.projection?.providers);
+	if (!providers) return [];
+	return (manifest.runtimes[runtime]?.provider_ids ?? []).flatMap((providerId) => {
+		const raw = providers[providerId];
+		const provider = recordValue(raw);
+		const auth = recordValue(provider?.auth);
+		if (
+			auth?.type !== "agent_profile" ||
+			auth.tool !== "codex" ||
+			typeof auth.profile !== "string" ||
+			typeof auth.credentialSecretRef !== "string" ||
+			typeof auth.credentialRevision !== "string"
+		) {
+			return [];
+		}
+		const payload = runtimeSecretValue(
+			secretValues ?? {},
+			auth.credentialSecretRef,
+			runtimeEnvironment,
+		);
+		if (!payload) throw new Error(`hosted OAuth secret is unavailable for ${providerId}`);
+		return [
+			{
+				providerId,
+				profile: auth.profile,
+				credentialRevision: auth.credentialRevision,
+				material: parseHostedRuntimeOAuthMaterial(payload),
+			},
+		];
+	});
+}
+
+function hermesAuthPath(home: string): string {
+	return join(home, ".hermes", "auth.json");
+}
+
+const HERMES_CODEX_AUTH_HELPER = String.raw`
+import { closeSync, existsSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+const [authPath, action] = process.argv.slice(1);
+const material = process.stdin.isTTY ? null : JSON.parse(readFileSync(0, "utf8") || "null");
+const store = existsSync(authPath) ? JSON.parse(readFileSync(authPath, "utf8")) : {};
+const providers = store.providers && typeof store.providers === "object" ? { ...store.providers } : {};
+const pool = store.credential_pool && typeof store.credential_pool === "object" ? { ...store.credential_pool } : {};
+const providerState = providers["openai-codex"] && typeof providers["openai-codex"] === "object" ? providers["openai-codex"] : {};
+const providerTokens = providerState.tokens && typeof providerState.tokens === "object" ? providerState.tokens : {};
+const rawEntries = Array.isArray(pool["openai-codex"]) ? pool["openai-codex"] : [];
+const entries = rawEntries.filter((entry) => entry && typeof entry === "object");
+const valid = (entry) => typeof entry.access_token === "string" && entry.access_token.length > 0 && typeof entry.refresh_token === "string" && entry.refresh_token.length > 0;
+const presentAny = valid(providerTokens) || entries.some(valid);
+const presentClawdi = entries.some((entry) => entry.id === "clawdi" && valid(entry));
+const clawdiEntry = entries.find((entry) => entry.id === "clawdi" && valid(entry));
+const ownsProviderState = Boolean(clawdiEntry) && valid(providerTokens) && providerTokens.access_token === clawdiEntry.access_token && providerTokens.refresh_token === clawdiEntry.refresh_token;
+if (action === "inspect-any" || action === "inspect-clawdi") {
+  process.stdout.write(JSON.stringify({ present: action === "inspect-any" ? presentAny : presentClawdi }));
+} else {
+  let updated = false;
+  if (action === "seed-if-missing" && !presentAny || action === "upsert") {
+    if (!material || typeof material.accessToken !== "string" || typeof material.refreshToken !== "string") {
+      throw new Error("Hermes Codex credential material is invalid");
+    }
+    providers["openai-codex"] = {
+      label: "clawdi",
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: material.accessToken,
+        refresh_token: material.refreshToken,
+        ...(material.idToken ? { id_token: material.idToken } : {}),
+        ...(material.accountId ? { account_id: material.accountId } : {}),
+      },
+      last_refresh: material.lastRefresh,
+    };
+    pool["openai-codex"] = [{
+      id: "clawdi",
+      label: "clawdi",
+      auth_type: "oauth",
+      priority: 0,
+      source: "device_code",
+      access_token: material.accessToken,
+      refresh_token: material.refreshToken,
+      base_url: "https://chatgpt.com/backend-api/codex",
+      last_refresh: material.lastRefresh,
+      last_status: null,
+      last_status_at: null,
+      last_error_code: null,
+      last_error_reason: null,
+      last_error_message: null,
+      last_error_reset_at: null,
+    }, ...entries.filter((entry) => entry.id !== "clawdi")];
+    const suppressed = store.suppressed_sources && typeof store.suppressed_sources === "object" ? { ...store.suppressed_sources } : {};
+    const nextSuppressed = Array.isArray(suppressed["openai-codex"]) ? suppressed["openai-codex"].filter((source) => source !== "device_code") : [];
+    if (nextSuppressed.length > 0) suppressed["openai-codex"] = nextSuppressed;
+    else delete suppressed["openai-codex"];
+    store.suppressed_sources = suppressed;
+    store.active_provider = "openai-codex";
+    updated = true;
+  } else if (action === "remove" && presentClawdi) {
+    const remaining = entries.filter((entry) => entry.id !== "clawdi");
+    if (remaining.length > 0) pool["openai-codex"] = remaining;
+    else delete pool["openai-codex"];
+    if (ownsProviderState) delete providers["openai-codex"];
+    if (store.active_provider === "openai-codex" && !providers["openai-codex"] && remaining.length === 0) delete store.active_provider;
+    updated = true;
+  } else if (action !== "seed-if-missing" && action !== "remove") {
+    throw new Error("unsupported Hermes Codex auth action");
+  }
+  if (updated) {
+    store.version = 1;
+    store.providers = providers;
+    store.credential_pool = pool;
+    if (store.suppressed_sources && Object.keys(store.suppressed_sources).length === 0) delete store.suppressed_sources;
+    store.updated_at = new Date().toISOString();
+    const tempPath = authPath + ".tmp." + process.pid + "." + Math.random().toString(16).slice(2);
+    const fd = openSync(tempPath, "wx", 0o600);
+    try { writeFileSync(fd, JSON.stringify(store, null, 2) + "\n"); } finally { closeSync(fd); }
+    renameSync(tempPath, authPath);
+  }
+  process.stdout.write(JSON.stringify({ updated, present: action === "seed-if-missing" ? !updated : presentClawdi }));
+}
+`;
+
+function runHermesCodexAuth(
+	home: string,
+	workspaceRoot: string,
+	action: "inspect-any" | "inspect-clawdi" | "seed-if-missing" | "upsert" | "remove",
+	material?: RuntimeOAuthMaterial,
+): boolean {
+	const authPath = hermesAuthPath(home);
+	makeRuntimeUserPrivateDir(dirname(authPath), home);
+	const result = spawnRuntimeUserCommand(
+		"flock",
+		[
+			"--timeout",
+			"10",
+			join(dirname(authPath), "auth.lock"),
+			"node",
+			"--input-type=module",
+			"--eval",
+			HERMES_CODEX_AUTH_HELPER,
+			authPath,
+			action,
+		],
+		home,
+		workspaceRoot,
+		{ input: material ? JSON.stringify(material) : "null" },
+	);
+	if (result.status !== 0) {
+		throw new Error(
+			`Hermes Codex auth ${action} failed: ${tail(String(result.stderr ?? "")) ?? "unknown"}`,
+		);
+	}
+	const output = recordValue(JSON.parse(String(result.stdout || "{}")) as unknown);
+	return action.startsWith("inspect-") ? output?.present === true : output?.updated === true;
+}
+
+function openClawAgentDir(home: string): string {
+	return join(home, ".openclaw", "agents", "main", "agent");
+}
+
+function openClawProviderAuthSdkPath(
+	observation: RuntimeInstallObservation | undefined,
+	home: string,
+): string {
+	const testOverride = process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK?.trim();
+	if (testOverride) {
+		if (process.env.CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS !== "1") {
+			throw new Error(
+				"CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK requires CLAWDI_RUNTIME_ALLOW_TEST_INSTALLERS=1",
+			);
+		}
+		return testOverride;
+	}
+	const candidates = new Set<string>();
+	const commandPath = observation?.commandPath;
+	if (commandPath && existsSync(commandPath)) {
+		let current = dirname(realpathSync(commandPath));
+		for (let index = 0; index < 8; index += 1) {
+			candidates.add(join(current, "dist", "plugin-sdk", "provider-auth.js"));
+			const parent = dirname(current);
+			if (parent === current) break;
+			current = parent;
+		}
+	}
+	for (const root of [
+		observation?.appRoot,
+		join(home, ".openclaw", "lib", "node_modules", "openclaw"),
+		join(home, ".openclaw", "node_modules", "openclaw"),
+		join(home, ".local", "lib", "node_modules", "openclaw"),
+	]) {
+		if (root) candidates.add(join(root, "dist", "plugin-sdk", "provider-auth.js"));
+	}
+	const resolved = [...candidates].find(existsSync);
+	if (!resolved) throw new Error("installed OpenClaw provider-auth SDK export is unavailable");
+	return resolved;
+}
+
+const OPENCLAW_PROVIDER_AUTH_HELPER = `
+import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
+const [sdkPath, agentDir, action, profileId] = process.argv.slice(1);
+const sdk = await import(pathToFileURL(sdkPath).href);
+if (action === "inspect") {
+  const store = sdk.ensureAuthProfileStoreForLocalUpdate(agentDir);
+  process.stdout.write(JSON.stringify({ present: sdk.listProfilesForProvider(store, "openai").includes(profileId) }));
+} else {
+  const credential = JSON.parse(readFileSync(0, "utf8") || "null");
+  let changed = false;
+  const result = await sdk.updateAuthProfileStoreWithLock({
+    agentDir,
+    updater: (store) => {
+      const present = Object.prototype.hasOwnProperty.call(store.profiles, profileId);
+      if (action === "seed-if-missing" && present) return false;
+      if (action === "upsert") {
+        store.profiles[profileId] = credential;
+        store.order = { ...(store.order ?? {}), openai: [profileId, ...(store.order?.openai ?? []).filter((id) => id !== profileId)] };
+        changed = true;
+        return true;
+      }
+      if (action === "seed-if-missing") {
+        store.profiles[profileId] = credential;
+        store.order = { ...(store.order ?? {}), openai: [profileId, ...(store.order?.openai ?? []).filter((id) => id !== profileId)] };
+        changed = true;
+        return true;
+      }
+      if (action === "remove") {
+        if (!present) return false;
+        delete store.profiles[profileId];
+        if (store.order?.openai) store.order.openai = store.order.openai.filter((id) => id !== profileId);
+        if (store.order?.openai?.length === 0) delete store.order.openai;
+        if (store.lastGood?.openai === profileId) delete store.lastGood.openai;
+        if (store.usageStats) delete store.usageStats[profileId];
+        changed = true;
+        return true;
+      }
+      throw new Error("unsupported OpenClaw provider-auth action");
+    },
+  });
+  if (result === null) throw new Error("OpenClaw provider-auth SQLite update failed");
+  process.stdout.write(JSON.stringify({ updated: changed }));
+}
+`;
+
+function runOpenClawProviderAuth(
+	observation: RuntimeInstallObservation | undefined,
+	home: string,
+	workspaceRoot: string,
+	action: "inspect" | "seed-if-missing" | "upsert" | "remove",
+	profileId: string,
+	material?: RuntimeOAuthMaterial,
+): boolean {
+	const credential = material
+		? JSON.stringify({
+				type: "oauth",
+				provider: OPENCLAW_CODEX_PROVIDER_ID,
+				access: material.accessToken,
+				refresh: material.refreshToken,
+				expires: material.expires,
+				...(material.idToken ? { idToken: material.idToken } : {}),
+				...(material.accountId ? { accountId: material.accountId } : {}),
+				copyToAgents: false,
+			})
+		: "";
+	const result = spawnRuntimeUserCommand(
+		"node",
+		[
+			"--input-type=module",
+			"--eval",
+			OPENCLAW_PROVIDER_AUTH_HELPER,
+			openClawProviderAuthSdkPath(observation, home),
+			openClawAgentDir(home),
+			action,
+			profileId,
+		],
+		home,
+		workspaceRoot,
+		{ input: credential || "null" },
+	);
+	if (result.status !== 0) {
+		throw new Error(
+			`OpenClaw provider-auth ${action} failed: ${tail(String(result.stderr ?? "")) ?? "unknown"}`,
+		);
+	}
+	const output = recordValue(JSON.parse(String(result.stdout || "{}")) as unknown);
+	return action === "inspect" ? output?.present === true : output?.updated === true;
+}
+
+function reconcileHostedRuntimeOAuthCredentials(input: {
+	runtime: "hermes" | "openclaw";
+	observation?: RuntimeInstallObservation;
+	manifest: RuntimeManifest;
+	secretValues: Record<string, string> | undefined;
+	runtimeEnvironment: RuntimeEnvironmentAuthority;
+	paths: RuntimePaths;
+	home: string;
+	workspaceRoot: string;
+}): void {
+	const desired = hostedRuntimeOAuthCredentials(
+		input.manifest,
+		input.runtime,
+		input.secretValues,
+		input.runtimeEnvironment,
+	);
+	if (desired.length > 1) {
+		throw new Error(`${input.runtime} cannot consume more than one Codex OAuth credential family`);
+	}
+	const desiredProviderIds = new Set(desired.map((credential) => credential.providerId));
+	const receiptDir = join(input.paths.oauthCredentialRoot, input.runtime);
+	if (existsSync(receiptDir)) {
+		for (const filename of readdirSync(receiptDir).filter((name) => name.endsWith(".json"))) {
+			const path = join(receiptDir, filename);
+			const receipt = readRuntimeOAuthReceipt(path);
+			if (!receipt || desiredProviderIds.has(receipt.providerId)) continue;
+			if (receipt.state === "seeded") {
+				if (input.runtime === "hermes") {
+					runHermesCodexAuth(input.home, input.workspaceRoot, "remove");
+				} else {
+					runOpenClawProviderAuth(
+						input.observation,
+						input.home,
+						input.workspaceRoot,
+						"remove",
+						receipt.nativeProfileId,
+					);
+				}
+			}
+			rmSync(path, { force: true });
+		}
+	}
+	for (const credential of desired) {
+		const receiptPath = runtimeOAuthReceiptPath(input.paths, input.runtime, credential.providerId);
+		const receipt = readRuntimeOAuthReceipt(receiptPath);
+		const nativeProfileId =
+			input.runtime === "hermes" ? "clawdi" : `${OPENCLAW_CODEX_PROVIDER_ID}:${credential.profile}`;
+		const nativePresent =
+			input.runtime === "hermes"
+				? runHermesCodexAuth(
+						input.home,
+						input.workspaceRoot,
+						receipt?.state === "seeded" ? "inspect-clawdi" : "inspect-any",
+					)
+				: runOpenClawProviderAuth(
+						input.observation,
+						input.home,
+						input.workspaceRoot,
+						"inspect",
+						nativeProfileId,
+					);
+		if (!receipt) {
+			const seeded = nativePresent
+				? false
+				: input.runtime === "hermes"
+					? runHermesCodexAuth(
+							input.home,
+							input.workspaceRoot,
+							"seed-if-missing",
+							credential.material,
+						)
+					: runOpenClawProviderAuth(
+							input.observation,
+							input.home,
+							input.workspaceRoot,
+							"seed-if-missing",
+							nativeProfileId,
+							credential.material,
+						);
+			writeRuntimeOAuthReceipt(receiptPath, {
+				schemaVersion: RUNTIME_OAUTH_RECEIPT_SCHEMA_VERSION,
+				runtime: input.runtime,
+				providerId: credential.providerId,
+				nativeProfileId,
+				credentialRevision: credential.credentialRevision,
+				state: seeded ? "seeded" : "adopted",
+			});
+			continue;
+		}
+		if (receipt.credentialRevision === credential.credentialRevision) {
+			if (!nativePresent && receipt.state === "seeded") {
+				writeRuntimeOAuthReceipt(receiptPath, { ...receipt, state: "revoked" });
+			} else if (nativePresent && receipt.state === "revoked") {
+				writeRuntimeOAuthReceipt(receiptPath, { ...receipt, state: "adopted" });
+			}
+			continue;
+		}
+		if ((receipt.state === "adopted" || receipt.state === "revoked") && nativePresent) {
+			writeRuntimeOAuthReceipt(receiptPath, {
+				...receipt,
+				credentialRevision: credential.credentialRevision,
+				state: "adopted",
+			});
+			continue;
+		}
+		if (input.runtime === "hermes") {
+			runHermesCodexAuth(input.home, input.workspaceRoot, "upsert", credential.material);
+		} else {
+			runOpenClawProviderAuth(
+				input.observation,
+				input.home,
+				input.workspaceRoot,
+				"upsert",
+				nativeProfileId,
+				credential.material,
+			);
+		}
+		writeRuntimeOAuthReceipt(receiptPath, {
+			...receipt,
+			nativeProfileId,
+			credentialRevision: credential.credentialRevision,
+			state: "seeded",
+		});
+	}
 }
 
 function applyHostedAiProviderProjection(
@@ -4151,6 +4669,19 @@ function validateRuntimeProjectionPlan(input: {
 		const observation = observations.get(name);
 		if (!observation) throw new Error(`runtime ${name} install observation is missing`);
 		const runtimeName = runtimeNameSchema.parse(name);
+		if (runtimeName === "hermes" || runtimeName === "openclaw") {
+			const oauthCredentials = hostedRuntimeOAuthCredentials(
+				manifest,
+				runtimeName,
+				secretValues,
+				runtimeEnvironment,
+			);
+			if (oauthCredentials.length > 1) {
+				throw new Error(
+					`${runtimeName} cannot consume more than one Codex OAuth credential family`,
+				);
+			}
+		}
 		const providerEnvironment = runtime.enabled
 			? hostedProviderEnvironment(manifest, name, { validateOverlap: true })
 			: { placeholderEnv: {}, secretEnv: {} };
@@ -4667,6 +5198,30 @@ export function convergeRuntimeManifest(
 			throw new Error(installErrors.join("; "));
 		}
 
+		for (const runtime of ["hermes", "openclaw"] as const) {
+			if (Object.hasOwn(manifest.runtimes, runtime)) continue;
+			try {
+				reconcileHostedRuntimeOAuthCredentials({
+					runtime,
+					manifest,
+					secretValues,
+					runtimeEnvironment,
+					paths,
+					home: projectionHome,
+					workspaceRoot,
+				});
+			} catch (error) {
+				installErrors.push(
+					`stale ${runtime} OAuth credential reconciliation failed: ${
+						error instanceof Error ? error.message : String(error)
+					}`,
+				);
+			}
+		}
+		if (installErrors.length > 0) {
+			throw new Error(installErrors.join("; "));
+		}
+
 		for (const [name, runtime] of runtimeEntries) {
 			const observation = observations.get(name);
 			if (!observation) throw new Error(`runtime ${name} install observation is missing`);
@@ -4700,6 +5255,26 @@ export function convergeRuntimeManifest(
 			const projectionPath = join(paths.projectionRoot, `${name}.json`);
 			writeJsonFile(projectionPath, projectionPayload(name, manifest));
 			projections.push(projectionPath);
+			if (name === "hermes" || name === "openclaw") {
+				try {
+					reconcileHostedRuntimeOAuthCredentials({
+						runtime: name,
+						observation,
+						manifest,
+						secretValues,
+						runtimeEnvironment,
+						paths,
+						home: projectionHome,
+						workspaceRoot,
+					});
+				} catch (error) {
+					installErrors.push(
+						`runtime ${name} OAuth credential reconciliation failed: ${
+							error instanceof Error ? error.message : String(error)
+						}`,
+					);
+				}
+			}
 			try {
 				const localeFile = withRuntimeUserFileAccess(() =>
 					applyHostedLocaleProjection(name, manifest, projectionHome, workspaceRoot),

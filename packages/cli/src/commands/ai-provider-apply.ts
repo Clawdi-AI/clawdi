@@ -1,6 +1,7 @@
-import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import type { AiProvider, AiProviderCatalog } from "@clawdi/shared";
 import chalk from "chalk";
 import { getCodexHome, getHermesHome, getOpenClawHome } from "../adapters/paths";
@@ -13,8 +14,10 @@ import {
 	CODEX_PROFILE_NAME,
 } from "../lib/ai-provider-projection";
 import { ApiClient } from "../lib/api-client";
+import { getClawdiDir } from "../lib/config";
 import { mergeHermesConfig } from "../lib/hermes-config-merge";
 import { PRIVATE_DIR_MODE, PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { getEnvIdByAgent } from "../lib/select-adapter";
 import { parseAgentCredentialProfilePayload } from "./agent-credentials";
 
 interface AiProviderApplyOptions {
@@ -72,7 +75,21 @@ interface AiProviderApplyPlan {
 
 interface PreparedAiProviderApplyPlan {
 	plan: AiProviderApplyPlan;
-	secrets: Array<{ path: string; content: string }>;
+	secrets: PreparedAiProviderSecretMaterial[];
+}
+
+interface PreparedAiProviderSecretMaterial {
+	target: AgentTarget;
+	providerId: string;
+	profile: string;
+	credentialRevision: string;
+	path: string;
+	material: CodexAuthMaterial;
+}
+
+interface ResolvedCodexAuthMaterial {
+	credentialRevision: string;
+	material: CodexAuthMaterial;
 }
 
 type AiProviderApplyPlanBody = Omit<AiProviderApplyPlan, "source">;
@@ -93,6 +110,7 @@ interface AiProviderAuthResolveBackendResponse {
 	payload?: string;
 	profile?: string;
 	tool?: string;
+	credential_revision?: string;
 }
 
 interface CodexAuthMaterial {
@@ -109,8 +127,6 @@ type JsonRecord = Record<string, unknown>;
 
 const DEFAULT_APPLY_TARGETS = ["codex", "hermes", "openclaw"] as const;
 const CODEX_AUTH_LOGICAL_NAME = "auth.json";
-const HERMES_CODEX_PROVIDER_ID = "openai-codex";
-const HERMES_CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex";
 const OPENCLAW_OPENAI_AUTH_PROFILE_PROVIDER = "openai";
 
 export async function aiProviderApplyCommand(opts: AiProviderApplyOptions = {}): Promise<void> {
@@ -120,6 +136,16 @@ export async function aiProviderApplyCommand(opts: AiProviderApplyOptions = {}):
 		readAiProviderCatalog({ allowNoAuthPublic: true }),
 		opts.source,
 	);
+	if (
+		targets.length !== 1 &&
+		selection.catalog.providers.some(
+			(provider) => provider.auth.type === "agent_profile" && provider.auth.tool === "codex",
+		)
+	) {
+		throw new Error(
+			"Codex OAuth credentials have a single runtime owner; choose exactly one --target.",
+		);
+	}
 	const plans: AiProviderApplyPlan[] = [];
 	const skipped: AiProviderApplySkippedTarget[] = [];
 	for (const target of targets) {
@@ -442,7 +468,7 @@ function selectSingleCodexAuthSource(
 function targetAuthPath(target: AgentTarget): string {
 	if (target === "codex") return join(getCodexHome(), "auth.json");
 	if (target === "hermes") return join(getHermesHome(), "auth.json");
-	return join(resolveOpenClawDefaultAgentDir(), "auth-profiles.json");
+	return join(resolveOpenClawDefaultAgentDir(), "openclaw-agent.sqlite");
 }
 
 function modelsSummary(provider: AiProvider): string {
@@ -508,7 +534,7 @@ async function prepareAiProviderApplyPlans(
 	plans: AiProviderApplyPlan[],
 	catalog: AiProviderCatalog,
 ): Promise<PreparedAiProviderApplyPlan[]> {
-	const materialCache = new Map<string, Promise<CodexAuthMaterial>>();
+	const materialCache = new Map<string, Promise<ResolvedCodexAuthMaterial>>();
 	return Promise.all(
 		plans.map(async (plan) => ({
 			plan,
@@ -523,7 +549,7 @@ async function prepareAiProviderApplyPlans(
 
 function applyAiProviderPlan(
 	plan: AiProviderApplyPlan,
-	preparedSecrets: Array<{ path: string; content: string }>,
+	preparedSecrets: PreparedAiProviderSecretMaterial[],
 ): void {
 	for (const write of plan.writes) {
 		writeAiProviderFile(write.path, write.content);
@@ -534,8 +560,19 @@ function applyAiProviderPlan(
 	for (const command of plan.commands) {
 		runAiProviderApplyCommand(command);
 	}
+	if (preparedSecrets.length === 0) {
+		cleanupStaleLocalOAuthReceipts(plan.target, new Set());
+	}
 	for (const prepared of preparedSecrets) {
-		writeAiProviderFile(prepared.path, prepared.content);
+		cleanupStaleLocalOAuthReceipts(prepared.target, new Set([prepared.providerId]));
+		reconcileLocalOAuthCredential({
+			target: prepared.target,
+			providerId: prepared.providerId,
+			profile: prepared.profile,
+			credentialRevision: prepared.credentialRevision,
+			path: prepared.path,
+			material: prepared.material,
+		});
 	}
 }
 
@@ -543,8 +580,8 @@ async function prepareAiProviderSecretMaterial(
 	target: AgentTarget,
 	secretWrite: AiProviderApplySecretWrite,
 	catalog: AiProviderCatalog,
-	materialCache: Map<string, Promise<CodexAuthMaterial>>,
-): Promise<{ path: string; content: string }> {
+	materialCache: Map<string, Promise<ResolvedCodexAuthMaterial>>,
+): Promise<PreparedAiProviderSecretMaterial> {
 	const source = catalog.providers.find(
 		(provider) => provider.id === secretWrite.source_provider_id,
 	);
@@ -557,39 +594,448 @@ async function prepareAiProviderSecretMaterial(
 		throw new Error(`AI Provider ${source.id} auth profile changed while preparing apply.`);
 	}
 	const sourceProfile = source.auth.profile;
-	const cacheKey = `${source.id}\u0000${sourceProfile}`;
+	const environmentId = getEnvIdByAgent(target);
+	if (!environmentId) {
+		throw new Error(`${target} must be registered before applying provider OAuth auth.`);
+	}
+	const cacheKey = `${source.id}\u0000${sourceProfile}\u0000${environmentId}\u0000${target}`;
 	let materialPromise = materialCache.get(cacheKey);
 	if (!materialPromise) {
-		materialPromise = resolveProviderAuthPayload(source.id, sourceProfile).then((payload) =>
-			parseCodexAuthMaterial(sourceProfile, payload),
-		);
+		materialPromise = resolveProviderAuthPayload(
+			source.id,
+			sourceProfile,
+			environmentId,
+			target,
+		).then((resolved) => ({
+			credentialRevision: resolved.credentialRevision,
+			material: parseCodexAuthMaterial(sourceProfile, resolved.payload),
+		}));
 		materialCache.set(cacheKey, materialPromise);
 	}
-	const material = await materialPromise;
-	if (target === "codex") {
-		return { path: secretWrite.path, content: material.rawContent };
-	}
-	if (target === "hermes") {
-		return {
-			path: secretWrite.path,
-			content: buildHermesCodexAuthStore(secretWrite.path, material),
-		};
-	}
+	const resolved = await materialPromise;
 	return {
+		target,
+		providerId: source.id,
+		profile: sourceProfile,
+		credentialRevision: resolved.credentialRevision,
 		path: secretWrite.path,
-		content: buildOpenClawCodexAuthProfileStore(secretWrite.path, material, sourceProfile),
+		material: resolved.material,
 	};
 }
 
-async function resolveProviderAuthPayload(providerId: string, profile: string): Promise<string> {
+async function resolveProviderAuthPayload(
+	providerId: string,
+	profile: string,
+	environmentId: string,
+	consumerRuntime: AgentTarget,
+): Promise<{ payload: string; credentialRevision: string }> {
 	const response = await new ApiClient().postJsonBody<AiProviderAuthResolveBackendResponse>(
 		`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
-		{ profile },
+		{ profile, environment_id: environmentId, consumer_runtime: consumerRuntime },
 	);
 	if (!response.payload) {
 		throw new Error(`AI Provider ${providerId} auth resolve returned no credential payload.`);
 	}
-	return response.payload;
+	if (!response.credential_revision) {
+		throw new Error(`AI Provider ${providerId} auth resolve returned no credential revision.`);
+	}
+	return { payload: response.payload, credentialRevision: response.credential_revision };
+}
+
+interface LocalOAuthReceipt {
+	schemaVersion: "clawdi.runtimeOAuthCredential.v1";
+	runtime: AgentTarget;
+	providerId: string;
+	nativeProfileId: string;
+	credentialRevision: string;
+	state: "seeded" | "adopted" | "revoked";
+}
+
+function localOAuthReceiptPath(target: AgentTarget, providerId: string): string {
+	const providerKey = createHash("sha256").update(providerId).digest("hex");
+	return join(getClawdiDir(), "oauth-credentials", target, `${providerKey}.json`);
+}
+
+function readLocalOAuthReceipt(path: string): LocalOAuthReceipt | null {
+	if (!existsSync(path)) return null;
+	const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<LocalOAuthReceipt>;
+	if (
+		parsed.schemaVersion !== "clawdi.runtimeOAuthCredential.v1" ||
+		!parsed.runtime ||
+		!(["codex", "hermes", "openclaw"] as const).includes(parsed.runtime) ||
+		typeof parsed.providerId !== "string" ||
+		typeof parsed.nativeProfileId !== "string" ||
+		typeof parsed.credentialRevision !== "string" ||
+		!parsed.state ||
+		!(["seeded", "adopted", "revoked"] as const).includes(parsed.state)
+	) {
+		throw new Error(`Invalid local OAuth credential receipt: ${path}`);
+	}
+	return parsed as LocalOAuthReceipt;
+}
+
+function writeLocalOAuthReceipt(path: string, receipt: LocalOAuthReceipt): void {
+	writeAiProviderFile(path, `${JSON.stringify(receipt, null, 2)}\n`);
+}
+
+const LOCAL_HERMES_CODEX_AUTH_HELPER = String.raw`
+import { closeSync, existsSync, openSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+const [authPath, action] = process.argv.slice(1);
+const material = process.stdin.isTTY ? null : JSON.parse(readFileSync(0, "utf8") || "null");
+const store = existsSync(authPath) ? JSON.parse(readFileSync(authPath, "utf8")) : {};
+const providers = store.providers && typeof store.providers === "object" ? { ...store.providers } : {};
+const pool = store.credential_pool && typeof store.credential_pool === "object" ? { ...store.credential_pool } : {};
+const providerState = providers["openai-codex"] && typeof providers["openai-codex"] === "object" ? providers["openai-codex"] : {};
+const providerTokens = providerState.tokens && typeof providerState.tokens === "object" ? providerState.tokens : {};
+const rawEntries = Array.isArray(pool["openai-codex"]) ? pool["openai-codex"] : [];
+const entries = rawEntries.filter((entry) => entry && typeof entry === "object");
+const valid = (entry) => typeof entry.access_token === "string" && entry.access_token.length > 0 && typeof entry.refresh_token === "string" && entry.refresh_token.length > 0;
+const presentAny = valid(providerTokens) || entries.some(valid);
+const presentClawdi = entries.some((entry) => entry.id === "clawdi" && valid(entry));
+const clawdiEntry = entries.find((entry) => entry.id === "clawdi" && valid(entry));
+const ownsProviderState = Boolean(clawdiEntry) && valid(providerTokens) && providerTokens.access_token === clawdiEntry.access_token && providerTokens.refresh_token === clawdiEntry.refresh_token;
+if (action === "inspect-any" || action === "inspect-clawdi") {
+  process.stdout.write(JSON.stringify({ present: action === "inspect-any" ? presentAny : presentClawdi }));
+} else {
+  let updated = false;
+  if ((action === "seed-if-missing" && !presentAny) || action === "upsert") {
+    if (!material || typeof material.accessToken !== "string" || typeof material.refreshToken !== "string") {
+      throw new Error("Hermes Codex credential material is invalid");
+    }
+    providers["openai-codex"] = {
+      ...providerState,
+      label: "clawdi",
+      auth_mode: "chatgpt",
+      tokens: {
+        access_token: material.accessToken,
+        refresh_token: material.refreshToken,
+        ...(material.idToken ? { id_token: material.idToken } : {}),
+        ...(material.accountId ? { account_id: material.accountId } : {}),
+      },
+      last_refresh: material.lastRefresh,
+    };
+    pool["openai-codex"] = [{
+      id: "clawdi",
+      label: "clawdi",
+      auth_type: "oauth",
+      priority: 0,
+      source: "device_code",
+      access_token: material.accessToken,
+      refresh_token: material.refreshToken,
+      base_url: "https://chatgpt.com/backend-api/codex",
+      last_refresh: material.lastRefresh,
+      last_status: null,
+      last_status_at: null,
+      last_error_code: null,
+      last_error_reason: null,
+      last_error_message: null,
+      last_error_reset_at: null,
+    }, ...entries.filter((entry) => entry.id !== "clawdi")];
+    const suppressed = store.suppressed_sources && typeof store.suppressed_sources === "object" ? { ...store.suppressed_sources } : {};
+    const nextSuppressed = Array.isArray(suppressed["openai-codex"]) ? suppressed["openai-codex"].filter((source) => source !== "device_code") : [];
+    if (nextSuppressed.length > 0) suppressed["openai-codex"] = nextSuppressed;
+    else delete suppressed["openai-codex"];
+    store.suppressed_sources = suppressed;
+    store.active_provider = "openai-codex";
+    updated = true;
+  } else if (action === "remove" && presentClawdi) {
+    const remaining = entries.filter((entry) => entry.id !== "clawdi");
+    if (remaining.length > 0) pool["openai-codex"] = remaining;
+    else delete pool["openai-codex"];
+    if (ownsProviderState) delete providers["openai-codex"];
+    if (store.active_provider === "openai-codex" && !providers["openai-codex"] && remaining.length === 0) delete store.active_provider;
+    updated = true;
+  } else if (action !== "seed-if-missing" && action !== "remove") {
+    throw new Error("unsupported Hermes Codex auth action");
+  }
+  if (updated) {
+    store.version = 1;
+    store.providers = providers;
+    store.credential_pool = pool;
+    if (store.suppressed_sources && Object.keys(store.suppressed_sources).length === 0) delete store.suppressed_sources;
+    store.updated_at = new Date().toISOString();
+    const tempPath = authPath + ".tmp." + process.pid + "." + Math.random().toString(16).slice(2);
+    const fd = openSync(tempPath, "wx", 0o600);
+    try { writeFileSync(fd, JSON.stringify(store, null, 2) + "\n"); } finally { closeSync(fd); }
+    renameSync(tempPath, authPath);
+  }
+  process.stdout.write(JSON.stringify({ updated }));
+}
+`;
+
+function runLocalHermesCodexAuth(
+	path: string,
+	action: "inspect-any" | "inspect-clawdi" | "seed-if-missing" | "upsert" | "remove",
+	material?: CodexAuthMaterial,
+): boolean {
+	const nodeArgs = ["--input-type=module", "--eval", LOCAL_HERMES_CODEX_AUTH_HELPER, path, action];
+	const command = process.platform === "win32" ? "node" : "flock";
+	const args =
+		process.platform === "win32"
+			? nodeArgs
+			: ["--timeout", "10", join(dirname(path), "auth.lock"), "node", ...nodeArgs];
+	const output = execFileSync(command, args, {
+		encoding: "utf8",
+		input: JSON.stringify(material ?? null),
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const result = readJsonText(output, `Hermes Codex auth ${action}`);
+	return action.startsWith("inspect-") ? result.present === true : result.updated === true;
+}
+
+const LOCAL_OPENCLAW_PROVIDER_AUTH_HELPER = `
+import { pathToFileURL } from "node:url";
+import { readFileSync } from "node:fs";
+const [sdkPath, agentDir, action, profileId] = process.argv.slice(1);
+const sdk = await import(pathToFileURL(sdkPath).href);
+if (action === "inspect") {
+  const store = sdk.ensureAuthProfileStoreForLocalUpdate(agentDir);
+  process.stdout.write(JSON.stringify({ present: sdk.listProfilesForProvider(store, "openai").includes(profileId) }));
+} else {
+  const credential = JSON.parse(readFileSync(0, "utf8") || "null");
+  let changed = false;
+  const result = await sdk.updateAuthProfileStoreWithLock({ agentDir, updater: (store) => {
+    const present = Object.prototype.hasOwnProperty.call(store.profiles, profileId);
+    if (action === "seed-if-missing" && present) return false;
+    if (action === "seed-if-missing" || action === "upsert") {
+      store.profiles[profileId] = credential;
+      store.order = { ...(store.order ?? {}), openai: [profileId, ...(store.order?.openai ?? []).filter((id) => id !== profileId)] };
+      changed = true;
+      return true;
+    }
+    if (action === "remove") {
+      if (!present) return false;
+      delete store.profiles[profileId];
+      if (store.order?.openai) store.order.openai = store.order.openai.filter((id) => id !== profileId);
+      if (store.order?.openai?.length === 0) delete store.order.openai;
+      if (store.lastGood?.openai === profileId) delete store.lastGood.openai;
+      if (store.usageStats) delete store.usageStats[profileId];
+      changed = true;
+      return true;
+    }
+    throw new Error("unsupported OpenClaw provider-auth action");
+  }});
+  if (result === null) throw new Error("OpenClaw provider-auth SQLite update failed");
+  process.stdout.write(JSON.stringify({ updated: changed }));
+}
+`;
+
+function localOpenClawProviderAuthSdkPath(): string {
+	const override = process.env.CLAWDI_RUNTIME_TEST_OPENCLAW_PROVIDER_AUTH_SDK?.trim();
+	if (override) return override;
+	let commandPath: string | null = null;
+	try {
+		commandPath = execFileSync("which", ["openclaw"], { encoding: "utf8" }).trim();
+	} catch {
+		// Candidate paths below still cover official local installations.
+	}
+	const candidates = new Set<string>();
+	if (commandPath && existsSync(commandPath)) {
+		let current = dirname(realpathSync(commandPath));
+		for (let index = 0; index < 8; index += 1) {
+			candidates.add(join(current, "dist", "plugin-sdk", "provider-auth.js"));
+			const parent = dirname(current);
+			if (parent === current) break;
+			current = parent;
+		}
+	}
+	for (const root of [
+		join(getOpenClawHome(), "lib", "node_modules", "openclaw"),
+		join(getOpenClawHome(), "node_modules", "openclaw"),
+	]) {
+		candidates.add(join(root, "dist", "plugin-sdk", "provider-auth.js"));
+	}
+	const sdkPath = [...candidates].find(existsSync);
+	if (!sdkPath) throw new Error("installed OpenClaw provider-auth SDK export is unavailable");
+	return sdkPath;
+}
+
+function localOpenClawCredentialPresent(agentDir: string, profileId: string): boolean {
+	const output = execFileSync(
+		"node",
+		[
+			"--input-type=module",
+			"--eval",
+			LOCAL_OPENCLAW_PROVIDER_AUTH_HELPER,
+			localOpenClawProviderAuthSdkPath(),
+			agentDir,
+			"inspect",
+			profileId,
+		],
+		{ encoding: "utf8", input: "null", stdio: ["pipe", "pipe", "pipe"] },
+	);
+	return readJsonText(output, "OpenClaw provider-auth inspect").present === true;
+}
+
+function writeLocalOpenClawCredential(
+	agentDir: string,
+	profileId: string,
+	material: CodexAuthMaterial,
+	action: "seed-if-missing" | "upsert",
+): void {
+	const credential = JSON.stringify(
+		compactObject({
+			type: "oauth",
+			provider: OPENCLAW_OPENAI_AUTH_PROFILE_PROVIDER,
+			access: material.accessToken,
+			refresh: material.refreshToken,
+			expires: material.expires,
+			accountId: material.accountId,
+			idToken: material.idToken,
+			copyToAgents: false,
+		}),
+	);
+	execFileSync(
+		"node",
+		[
+			"--input-type=module",
+			"--eval",
+			LOCAL_OPENCLAW_PROVIDER_AUTH_HELPER,
+			localOpenClawProviderAuthSdkPath(),
+			agentDir,
+			action,
+			profileId,
+		],
+		{ input: credential, stdio: "pipe" },
+	);
+}
+
+function removeLocalOpenClawCredential(agentDir: string, profileId: string): void {
+	execFileSync(
+		"node",
+		[
+			"--input-type=module",
+			"--eval",
+			LOCAL_OPENCLAW_PROVIDER_AUTH_HELPER,
+			localOpenClawProviderAuthSdkPath(),
+			agentDir,
+			"remove",
+			profileId,
+		],
+		{ input: "null", stdio: "pipe" },
+	);
+}
+
+function cleanupStaleLocalOAuthReceipts(
+	target: AgentTarget,
+	desiredProviderIds: ReadonlySet<string>,
+): void {
+	const receiptDir = join(getClawdiDir(), "oauth-credentials", target);
+	if (!existsSync(receiptDir)) return;
+	for (const filename of readdirSync(receiptDir).filter((name) => name.endsWith(".json"))) {
+		const path = join(receiptDir, filename);
+		const receipt = readLocalOAuthReceipt(path);
+		if (!receipt || desiredProviderIds.has(receipt.providerId)) continue;
+		if (receipt.state === "seeded") {
+			if (target === "codex") {
+				rmSync(targetAuthPath(target), { force: true });
+			} else if (target === "hermes") {
+				runLocalHermesCodexAuth(targetAuthPath(target), "remove");
+			} else {
+				removeLocalOpenClawCredential(resolveOpenClawDefaultAgentDir(), receipt.nativeProfileId);
+			}
+		}
+		rmSync(path, { force: true });
+	}
+}
+
+function readJsonText(content: string, label: string): JsonRecord {
+	return parseJsonText(content, label);
+}
+
+function reconcileLocalOAuthCredential(input: {
+	target: AgentTarget;
+	providerId: string;
+	profile: string;
+	credentialRevision: string;
+	path: string;
+	material: CodexAuthMaterial;
+}): void {
+	const receiptPath = localOAuthReceiptPath(input.target, input.providerId);
+	const receipt = readLocalOAuthReceipt(receiptPath);
+	const nativeProfileId =
+		input.target === "openclaw"
+			? `${OPENCLAW_OPENAI_AUTH_PROFILE_PROVIDER}:${input.profile}`
+			: input.target === "hermes"
+				? "clawdi"
+				: "default";
+	const nativePresent =
+		input.target === "openclaw"
+			? localOpenClawCredentialPresent(resolveOpenClawDefaultAgentDir(), nativeProfileId)
+			: input.target === "hermes"
+				? runLocalHermesCodexAuth(
+						input.path,
+						receipt?.state === "seeded" ? "inspect-clawdi" : "inspect-any",
+					)
+				: localCodexCredentialPresent(input.path, receipt?.state === "seeded");
+	if (!receipt) {
+		if (!nativePresent) seedLocalOAuthCredential(input, nativeProfileId, "seed-if-missing");
+		writeLocalOAuthReceipt(receiptPath, {
+			schemaVersion: "clawdi.runtimeOAuthCredential.v1",
+			runtime: input.target,
+			providerId: input.providerId,
+			nativeProfileId,
+			credentialRevision: input.credentialRevision,
+			state: nativePresent ? "adopted" : "seeded",
+		});
+		return;
+	}
+	if (receipt.credentialRevision === input.credentialRevision) {
+		if (!nativePresent && receipt.state === "seeded") {
+			writeLocalOAuthReceipt(receiptPath, { ...receipt, state: "revoked" });
+		} else if (nativePresent && receipt.state === "revoked") {
+			writeLocalOAuthReceipt(receiptPath, { ...receipt, state: "adopted" });
+		}
+		return;
+	}
+	if ((receipt.state === "adopted" || receipt.state === "revoked") && nativePresent) {
+		writeLocalOAuthReceipt(receiptPath, {
+			...receipt,
+			credentialRevision: input.credentialRevision,
+			state: "adopted",
+		});
+		return;
+	}
+	seedLocalOAuthCredential(input, nativeProfileId, "upsert");
+	writeLocalOAuthReceipt(receiptPath, {
+		...receipt,
+		nativeProfileId,
+		credentialRevision: input.credentialRevision,
+		state: "seeded",
+	});
+}
+
+function localCodexCredentialPresent(authPath: string, requireManagedFile: boolean): boolean {
+	if (existsSync(authPath)) return true;
+	if (requireManagedFile) return false;
+	return (
+		spawnSync("codex", ["login", "status"], { env: process.env, stdio: "ignore" }).status === 0
+	);
+}
+
+function seedLocalOAuthCredential(
+	input: {
+		target: AgentTarget;
+		path: string;
+		material: CodexAuthMaterial;
+	},
+	nativeProfileId: string,
+	action: "seed-if-missing" | "upsert",
+): void {
+	if (input.target === "codex") {
+		writeAiProviderFile(input.path, input.material.rawContent);
+		return;
+	}
+	if (input.target === "hermes") {
+		runLocalHermesCodexAuth(input.path, action, input.material);
+		return;
+	}
+	writeLocalOpenClawCredential(
+		resolveOpenClawDefaultAgentDir(),
+		nativeProfileId,
+		input.material,
+		action,
+	);
 }
 
 function parseCodexAuthMaterial(profile: string, payload: string): CodexAuthMaterial {
@@ -615,125 +1061,6 @@ function parseCodexAuthMaterial(profile: string, payload: string): CodexAuthMate
 		lastRefresh,
 		expires: decodeJwtExpiryMs(accessToken) ?? Date.now() + 60 * 60 * 1000,
 	};
-}
-
-function buildHermesCodexAuthStore(path: string, material: CodexAuthMaterial): string {
-	const store = existsSync(path) ? readJsonFile(path) : {};
-	const providers = isPlainRecord(store.providers) ? { ...store.providers } : {};
-	const existingState = isPlainRecord(providers[HERMES_CODEX_PROVIDER_ID])
-		? providers[HERMES_CODEX_PROVIDER_ID]
-		: {};
-	providers[HERMES_CODEX_PROVIDER_ID] = {
-		...existingState,
-		tokens: compactObject({
-			access_token: material.accessToken,
-			refresh_token: material.refreshToken,
-			id_token: material.idToken,
-			account_id: material.accountId,
-		}),
-		last_refresh: material.lastRefresh,
-		auth_mode: "chatgpt",
-	};
-
-	const credentialPool = isPlainRecord(store.credential_pool) ? { ...store.credential_pool } : {};
-	credentialPool[HERMES_CODEX_PROVIDER_ID] = mergeHermesCodexPoolEntries(
-		credentialPool[HERMES_CODEX_PROVIDER_ID],
-		material,
-	);
-
-	const nextStore: JsonRecord = {
-		...store,
-		version: 1,
-		providers,
-		credential_pool: credentialPool,
-		active_provider: HERMES_CODEX_PROVIDER_ID,
-		updated_at: new Date().toISOString(),
-	};
-	removeSuppressedSource(nextStore, HERMES_CODEX_PROVIDER_ID, "device_code");
-	return stringifyJson(nextStore);
-}
-
-function mergeHermesCodexPoolEntries(
-	rawEntries: unknown,
-	material: CodexAuthMaterial,
-): JsonRecord[] {
-	const entries = Array.isArray(rawEntries)
-		? rawEntries.filter(isPlainRecord).map((entry) => ({ ...entry }))
-		: [];
-	const existingIndex = entries.findIndex((entry) => entry.source === "device_code");
-	const existing = existingIndex >= 0 ? entries[existingIndex] : undefined;
-	const nextEntry = {
-		...(existing ?? {}),
-		id: readOptionalString(existing?.id) ?? "clawdi",
-		label: readOptionalString(existing?.label) ?? "device_code",
-		auth_type: "oauth",
-		priority: typeof existing?.priority === "number" ? existing.priority : 0,
-		source: "device_code",
-		access_token: material.accessToken,
-		refresh_token: material.refreshToken,
-		base_url: HERMES_CODEX_BASE_URL,
-		last_refresh: material.lastRefresh,
-		last_status: null,
-		last_status_at: null,
-		last_error_code: null,
-		last_error_reason: null,
-		last_error_message: null,
-		last_error_reset_at: null,
-	};
-	if (existingIndex >= 0) {
-		entries[existingIndex] = nextEntry;
-		return entries;
-	}
-	return [nextEntry, ...entries];
-}
-
-function removeSuppressedSource(store: JsonRecord, providerId: string, source: string): void {
-	if (!isPlainRecord(store.suppressed_sources)) return;
-	const suppressed = { ...store.suppressed_sources };
-	const providerSources = suppressed[providerId];
-	if (!Array.isArray(providerSources)) return;
-	const nextSources = providerSources.filter((entry) => entry !== source);
-	if (nextSources.length > 0) suppressed[providerId] = nextSources;
-	else delete suppressed[providerId];
-	if (Object.keys(suppressed).length > 0) store.suppressed_sources = suppressed;
-	else delete store.suppressed_sources;
-}
-
-function buildOpenClawCodexAuthProfileStore(
-	path: string,
-	material: CodexAuthMaterial,
-	sourceProfile: string,
-): string {
-	const store = existsSync(path) ? readJsonFile(path) : {};
-	const profiles = isPlainRecord(store.profiles) ? { ...store.profiles } : {};
-	const profileId = `${OPENCLAW_OPENAI_AUTH_PROFILE_PROVIDER}:${sourceProfile}`;
-	const existingProfile = isPlainRecord(profiles[profileId]) ? profiles[profileId] : {};
-	profiles[profileId] = compactObject({
-		...existingProfile,
-		type: "oauth",
-		provider: OPENCLAW_OPENAI_AUTH_PROFILE_PROVIDER,
-		access: material.accessToken,
-		refresh: material.refreshToken,
-		expires: material.expires,
-		accountId: material.accountId,
-		idToken: material.idToken,
-	});
-	const order = isPlainRecord(store.order) ? { ...store.order } : {};
-	const existingOrder = Array.isArray(order[OPENCLAW_OPENAI_AUTH_PROFILE_PROVIDER])
-		? order[OPENCLAW_OPENAI_AUTH_PROFILE_PROVIDER].filter(
-				(entry): entry is string => typeof entry === "string",
-			)
-		: [];
-	order[OPENCLAW_OPENAI_AUTH_PROFILE_PROVIDER] = [
-		profileId,
-		...existingOrder.filter((entry) => entry !== profileId),
-	];
-	return stringifyJson({
-		...store,
-		version: 1,
-		profiles,
-		order,
-	});
 }
 
 function printAiProviderApplyPlan(plan: AiProviderApplyPlan, dryRun: boolean, json: boolean): void {

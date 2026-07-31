@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
+from uuid import UUID
 
 from pydantic import (
     BaseModel,
@@ -484,7 +485,17 @@ class AiProviderAuthImportRequest(
 
 
 class AiProviderAuthResolveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     profile: str = Field(default="default", min_length=1, max_length=120)
+    environment_id: UUID | None = None
+    consumer_runtime: Literal["codex", "hermes", "openclaw"] | None = None
+
+    @model_validator(mode="after")
+    def _validate_consumer_identity(self) -> "AiProviderAuthResolveRequest":
+        if (self.environment_id is None) != (self.consumer_runtime is None):
+            raise ValueError("environment_id and consumer_runtime must be provided together")
+        return self
 
 
 class AiProviderAuthResolveResponse(BaseModel):
@@ -495,6 +506,7 @@ class AiProviderAuthResolveResponse(BaseModel):
     tool: str | None = None
     provider: str | None = None
     profile: str | None = None
+    credential_revision: str | None = None
 
 
 class AiProviderOAuthStartRequest(BaseModel):

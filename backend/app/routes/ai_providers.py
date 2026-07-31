@@ -64,6 +64,14 @@ from app.services.ai_provider_capabilities import (
     provider_readiness,
 )
 from app.services.ai_provider_connection import test_ai_provider_connection
+from app.services.ai_provider_credentials import (
+    OAuthCredentialClaimConflict,
+    OAuthCredentialConsumer,
+    claim_oauth_payload,
+    claim_unique_bound_runtime,
+    environment_binds_provider,
+    environment_matches_runtime,
+)
 from app.services.managed_ai_provider import (
     MANAGED_AI_PROVIDER_IDS,
     MANAGED_AI_PROVIDER_RUNTIME_ENV,
@@ -580,17 +588,20 @@ async def delete_ai_provider(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderDeleteResponse:
     await _lock_provider_pool(db, auth.user_id)
-    provider = await _get_provider_or_404(db, auth, provider_id)
+    provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     archived_at = datetime.now(UTC)
     provider.archived_at = archived_at
     payloads = (
         (
             await db.execute(
-                select(AiProviderAuthPayload).where(
+                select(AiProviderAuthPayload)
+                .where(
                     AiProviderAuthPayload.owner_user_id == auth.user_id,
                     AiProviderAuthPayload.provider_id == provider.provider_id,
                     AiProviderAuthPayload.archived_at.is_(None),
                 )
+                .order_by(AiProviderAuthPayload.auth_profile)
+                .with_for_update()
             )
         )
         .scalars()
@@ -598,6 +609,8 @@ async def delete_ai_provider(
     )
     for payload in payloads:
         payload.archived_at = archived_at
+        payload.consumer_environment_id = None
+        payload.consumer_runtime = None
     await queue_provider_runtime_manifest_changed(db, auth.user_id, provider.provider_id)
     await db.commit()
     return AiProviderDeleteResponse(
@@ -630,7 +643,7 @@ async def set_ai_provider_api_key(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     await _lock_provider_pool(db, auth.user_id)
-    provider = await _get_provider_or_404(db, auth, provider_id)
+    provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     profile = "default"
     runtime_env_name = body.runtime_env_name
     if runtime_env_name is not None and not _is_runtime_env_name(runtime_env_name):
@@ -674,7 +687,7 @@ async def import_ai_provider_auth(
     auth: AuthContext = Depends(require_user_auth_unbound),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
-    provider = await _get_provider_or_404(db, auth, provider_id)
+    provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     previous_signature = _runtime_manifest_provider_signature(provider)
     auth_import = body.root
     profile = _normalize_profile(auth_import.profile)
@@ -798,7 +811,6 @@ async def complete_ai_provider_oauth(
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderResponse:
     provider = await _get_provider_or_404(db, auth, provider_id)
-    previous_signature = _runtime_manifest_provider_signature(provider)
     state = _decode_oauth_state(body.state)
     if state.get("provider_id") != provider.provider_id or state.get("owner_user_id") != str(
         auth.user_id
@@ -841,6 +853,15 @@ async def complete_ai_provider_oauth(
             profile,
         )
 
+    # The token exchange deliberately happens without a row lock. Re-lock and
+    # revalidate before writing so a concurrent delete or reconnect wins
+    # cleanly instead of reviving archived credential state.
+    provider = await _get_provider_or_404_for_update(db, auth, provider_id)
+    if state.get("provider_id") != provider.provider_id or state.get("owner_user_id") != str(
+        auth.user_id
+    ):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "OAuth state does not match this user")
+    previous_signature = _runtime_manifest_provider_signature(provider)
     await _store_auth_payload(
         db,
         auth,
@@ -1335,7 +1356,9 @@ async def _get_provider_or_404_for_update(
                     AiProvider.provider_id.in_(provider_ids),
                     AiProvider.archived_at.is_(None),
                 )
+                .order_by(AiProvider.provider_id)
                 .with_for_update()
+                .execution_options(populate_existing=True)
             )
         )
         .scalars()
@@ -1500,7 +1523,7 @@ async def resolve_ai_provider_auth(
     auth: AuthContext = Depends(require_user_cli),
     db: AsyncSession = Depends(get_session),
 ) -> AiProviderAuthResolveResponse:
-    provider = await _get_provider_or_404(db, auth, provider_id)
+    provider = await _get_provider_or_404_for_update(db, auth, provider_id)
     metadata = provider.auth_metadata or {}
     if provider.auth_type == "api_key" and metadata.get("source") != "managed":
         raise HTTPException(
@@ -1511,16 +1534,71 @@ async def resolve_ai_provider_auth(
     active_profile = _active_auth_profile(provider)
     if active_profile is not None and profile != active_profile:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider auth payload not found")
-    payload = await _find_auth_payload(db, auth, provider.provider_id, profile)
+    payload = await _find_auth_payload(
+        db,
+        auth,
+        provider.provider_id,
+        profile,
+        for_update=True,
+    )
     if payload is None or payload.archived_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "AI Provider auth payload not found")
-    plaintext = decrypt(payload.encrypted_payload, payload.nonce)
+    consumer: OAuthCredentialConsumer | None = None
+    key_environment_id = auth.api_key.environment_id if auth.api_key is not None else None
+    if key_environment_id is not None and body.environment_id is None:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Agent-bound auth resolve requires an explicit runtime consumer",
+        )
+    if body.environment_id is not None and body.consumer_runtime is not None:
+        if key_environment_id is not None and key_environment_id != body.environment_id:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Agent API key cannot resolve credentials for another Agent",
+            )
+        if not await environment_matches_runtime(
+            db,
+            owner_user_id=auth.user_id,
+            environment_id=body.environment_id,
+            runtime=body.consumer_runtime,
+        ):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "OAuth consumer does not match an owned Agent runtime",
+            )
+        if key_environment_id is not None and not await environment_binds_provider(
+            db,
+            owner_user_id=auth.user_id,
+            environment_id=body.environment_id,
+            runtime=body.consumer_runtime,
+            provider_id=provider.provider_id,
+        ):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Agent is not bound to this AI Provider",
+            )
+        consumer = OAuthCredentialConsumer(body.environment_id, body.consumer_runtime)
+    if provider.auth_type in {"agent_profile", "oauth_profile"}:
+        if consumer is None:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "OAuth auth resolve requires an explicit Agent runtime consumer",
+            )
+        try:
+            await claim_oauth_payload(db, payload=payload, consumer=consumer)
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+        plaintext = decrypt(payload.encrypted_payload, payload.nonce)
+        await db.commit()
+    else:
+        plaintext = decrypt(payload.encrypted_payload, payload.nonce)
     if provider.auth_type == "api_key":
         return AiProviderAuthResolveResponse(
             provider_id=runtime_managed_provider_id(provider.provider_id),
             auth_type="api_key",
             value=plaintext,
             profile=profile,
+            credential_revision=payload.credential_revision,
         )
     if provider.auth_type in {"agent_profile", "oauth_profile"}:
         return AiProviderAuthResolveResponse(
@@ -1530,6 +1608,7 @@ async def resolve_ai_provider_auth(
             tool=metadata.get("tool"),
             provider=metadata.get("provider"),
             profile=profile,
+            credential_revision=payload.credential_revision,
         )
     raise HTTPException(
         status.HTTP_409_CONFLICT,
@@ -2171,16 +2250,17 @@ async def _find_auth_payload(
     auth: AuthContext,
     provider_id: str,
     profile: str,
+    *,
+    for_update: bool = False,
 ) -> AiProviderAuthPayload | None:
-    return (
-        await db.execute(
-            select(AiProviderAuthPayload).where(
-                AiProviderAuthPayload.owner_user_id == auth.user_id,
-                AiProviderAuthPayload.provider_id == provider_id,
-                AiProviderAuthPayload.auth_profile == profile,
-            )
-        )
-    ).scalar_one_or_none()
+    statement = select(AiProviderAuthPayload).where(
+        AiProviderAuthPayload.owner_user_id == auth.user_id,
+        AiProviderAuthPayload.provider_id == provider_id,
+        AiProviderAuthPayload.auth_profile == profile,
+    )
+    if for_update:
+        statement = statement.with_for_update().execution_options(populate_existing=True)
+    return (await db.execute(statement)).scalar_one_or_none()
 
 
 async def _store_auth_payload(
@@ -2193,7 +2273,7 @@ async def _store_auth_payload(
     metadata: dict | None,
 ) -> None:
     ciphertext, nonce = encrypt(plaintext)
-    payload = await _find_auth_payload(db, auth, provider_id, profile)
+    payload = await _find_auth_payload(db, auth, provider_id, profile, for_update=True)
     if payload is None:
         payload = AiProviderAuthPayload(
             owner_user_id=auth.user_id,
@@ -2204,6 +2284,7 @@ async def _store_auth_payload(
             encrypted_payload=ciphertext,
             nonce=nonce,
             payload_metadata=metadata,
+            credential_revision=secrets.token_hex(16),
         )
         db.add(payload)
     else:
@@ -2212,7 +2293,21 @@ async def _store_auth_payload(
         payload.encrypted_payload = ciphertext
         payload.nonce = nonce
         payload.payload_metadata = metadata
+        payload.credential_revision = secrets.token_hex(16)
         payload.archived_at = None
+    if kind not in {"agent_profile", "oauth_profile"}:
+        payload.consumer_environment_id = None
+        payload.consumer_runtime = None
+    else:
+        try:
+            await claim_unique_bound_runtime(
+                db,
+                owner_user_id=auth.user_id,
+                provider_id=provider_id,
+                payload=payload,
+            )
+        except OAuthCredentialClaimConflict as exc:
+            raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
     await _archive_other_auth_payloads(db, auth, provider_id, profile)
 
 
@@ -2230,7 +2325,11 @@ async def _archive_other_auth_payloads(
             AiProviderAuthPayload.auth_profile != active_profile,
             AiProviderAuthPayload.archived_at.is_(None),
         )
-        .values(archived_at=datetime.now(UTC))
+        .values(
+            archived_at=datetime.now(UTC),
+            consumer_environment_id=None,
+            consumer_runtime=None,
+        )
     )
 
 

@@ -3134,6 +3134,10 @@ export interface components {
              * @default default
              */
             profile: string;
+            /** Environment Id */
+            environment_id?: string | null;
+            /** Consumer Runtime */
+            consumer_runtime?: ("codex" | "hermes" | "openclaw") | null;
         };
         /** AiProviderAuthResolveResponse */
         AiProviderAuthResolveResponse: {
@@ -3154,6 +3158,8 @@ export interface components {
             provider?: string | null;
             /** Profile */
             profile?: string | null;
+            /** Credential Revision */
+            credential_revision?: string | null;
         };
         /** AiProviderConnectionError */
         AiProviderConnectionError: {

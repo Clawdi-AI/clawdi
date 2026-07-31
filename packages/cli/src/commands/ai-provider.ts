@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { createCipheriv, createDecipheriv, createHash, randomBytes, scryptSync } from "node:crypto";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createServer, type RequestListener, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { join } from "node:path";
 import {
 	type AiProvider,
 	type AiProviderApiMode,
@@ -22,6 +23,7 @@ import {
 } from "@clawdi/shared";
 import chalk from "chalk";
 import { parse as parseYaml } from "yaml";
+import { getCodexHome } from "../adapters/paths";
 import {
 	aiProviderCatalogPath,
 	coerceAiProviderCatalog,
@@ -37,7 +39,9 @@ import {
 	publicAiProviderAuthStatus,
 } from "../lib/ai-provider-test";
 import { ApiClient } from "../lib/api-client";
+import { getClawdiDir } from "../lib/config";
 import { PRIVATE_FILE_MODE, writePrivateFileAtomic } from "../lib/private-file";
+import { getEnvIdByAgent } from "../lib/select-adapter";
 import {
 	collectAgentCredentialProfilePayload,
 	materializeAgentCredentialProfilePayload,
@@ -163,6 +167,52 @@ interface AiProviderAuthResolveBackendResponse {
 	payload?: string | null;
 	tool?: string | null;
 	profile?: string | null;
+	credential_revision?: string | null;
+}
+
+interface OAuthMaterializationReceipt {
+	schemaVersion: "clawdi.runtimeOAuthCredential.v1";
+	runtime: "codex";
+	providerId: string;
+	nativeProfileId: "default";
+	credentialRevision: string;
+	state: "seeded" | "adopted" | "revoked";
+}
+
+function readOAuthMaterializationReceipt(path: string): OAuthMaterializationReceipt | null {
+	if (!existsSync(path)) return null;
+	const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<OAuthMaterializationReceipt>;
+	if (
+		parsed.schemaVersion !== "clawdi.runtimeOAuthCredential.v1" ||
+		parsed.runtime !== "codex" ||
+		typeof parsed.providerId !== "string" ||
+		parsed.nativeProfileId !== "default" ||
+		typeof parsed.credentialRevision !== "string" ||
+		!parsed.state ||
+		!["seeded", "adopted", "revoked"].includes(parsed.state)
+	) {
+		throw new Error(`Invalid OAuth materialization receipt: ${path}`);
+	}
+	return parsed as OAuthMaterializationReceipt;
+}
+
+function writeOAuthMaterializationReceipt(
+	path: string,
+	receipt: OAuthMaterializationReceipt,
+): void {
+	writePrivateFileAtomic(path, `${JSON.stringify(receipt, null, 2)}\n`);
+}
+
+function cleanupStaleCodexOAuthMaterializations(currentProviderId: string, authPath: string): void {
+	const receiptDir = join(getClawdiDir(), "oauth-credentials", "codex");
+	if (!existsSync(receiptDir)) return;
+	for (const filename of readdirSync(receiptDir).filter((name) => name.endsWith(".json"))) {
+		const path = join(receiptDir, filename);
+		const receipt = readOAuthMaterializationReceipt(path);
+		if (!receipt || receipt.providerId === currentProviderId) continue;
+		if (receipt.state === "seeded") rmSync(authPath, { force: true });
+		rmSync(path, { force: true });
+	}
 }
 
 interface AiProviderOAuthStartBackendResponse {
@@ -460,13 +510,73 @@ export async function aiProviderMaterializeAuthCommand(
 		);
 	}
 	assertSupportedAgentProfileTool(provider.auth.tool);
+	if (opts.to) {
+		throw new Error("OAuth materialization only supports the canonical Codex auth store.");
+	}
+	const environmentId = getEnvIdByAgent("codex");
+	if (!environmentId) {
+		throw new Error("Codex must be registered before materializing provider OAuth auth.");
+	}
 	const profile = provider.auth.profile;
 	const resolved = await new ApiClient().postJsonBody<AiProviderAuthResolveBackendResponse>(
 		`/v1/ai-providers/${encodeURIComponent(providerId)}/auth/resolve`,
-		{ profile },
+		{ profile, environment_id: environmentId, consumer_runtime: "codex" },
 	);
 	if (!resolved.payload) {
 		throw new Error(`AI Provider ${providerId} auth resolve returned no credential payload.`);
+	}
+	if (!resolved.credential_revision) {
+		throw new Error(`AI Provider ${providerId} auth resolve returned no credential revision.`);
+	}
+	const receiptPath = join(
+		getClawdiDir(),
+		"oauth-credentials",
+		"codex",
+		`${createHash("sha256").update(providerId).digest("hex")}.json`,
+	);
+	const authPath = join(getCodexHome(), "auth.json");
+	if (!opts.dryRun) cleanupStaleCodexOAuthMaterializations(providerId, authPath);
+	const existingReceipt = readOAuthMaterializationReceipt(receiptPath);
+	const nativePresent = codexCredentialPresent(authPath, existingReceipt?.state === "seeded");
+	if (existingReceipt?.credentialRevision === resolved.credential_revision) {
+		if (!opts.dryRun && !nativePresent && existingReceipt.state === "seeded") {
+			writeOAuthMaterializationReceipt(receiptPath, {
+				...existingReceipt,
+				state: "revoked",
+			});
+		} else if (!opts.dryRun && nativePresent && existingReceipt.state === "revoked") {
+			writeOAuthMaterializationReceipt(receiptPath, {
+				...existingReceipt,
+				state: "adopted",
+			});
+		}
+		return;
+	}
+	if (!existingReceipt && nativePresent) {
+		if (!opts.dryRun) {
+			writeOAuthMaterializationReceipt(receiptPath, {
+				schemaVersion: "clawdi.runtimeOAuthCredential.v1",
+				runtime: "codex",
+				providerId,
+				nativeProfileId: "default",
+				credentialRevision: resolved.credential_revision,
+				state: "adopted",
+			});
+		}
+		return;
+	}
+	if (
+		(existingReceipt?.state === "adopted" || existingReceipt?.state === "revoked") &&
+		nativePresent
+	) {
+		if (!opts.dryRun) {
+			writeOAuthMaterializationReceipt(receiptPath, {
+				...existingReceipt,
+				credentialRevision: resolved.credential_revision,
+				state: "adopted",
+			});
+		}
+		return;
 	}
 	await materializeAgentCredentialProfilePayload(
 		resolved.tool ?? provider.auth.tool,
@@ -479,6 +589,24 @@ export async function aiProviderMaterializeAuthCommand(
 			json: opts.json,
 			backup: opts.backup,
 		},
+	);
+	if (!opts.dryRun) {
+		writeOAuthMaterializationReceipt(receiptPath, {
+			schemaVersion: "clawdi.runtimeOAuthCredential.v1",
+			runtime: "codex",
+			providerId,
+			nativeProfileId: "default",
+			credentialRevision: resolved.credential_revision,
+			state: "seeded",
+		});
+	}
+}
+
+function codexCredentialPresent(authPath: string, requireManagedFile: boolean): boolean {
+	if (existsSync(authPath)) return true;
+	if (requireManagedFile) return false;
+	return (
+		spawnSync("codex", ["login", "status"], { env: process.env, stdio: "ignore" }).status === 0
 	);
 }
 

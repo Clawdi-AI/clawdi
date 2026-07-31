@@ -15,6 +15,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
+import { hostedRuntimeProjectionHome } from "./projection-home";
 import { runningAsRoot } from "./runtime-user-command";
 import { isGeneratedRuntimeSystemdFile } from "./systemd-user";
 
@@ -37,6 +38,15 @@ export interface RuntimeLiveSnapshot {
 }
 
 export function runtimeLiveSnapshotPaths(manifest: RuntimeManifest, paths: RuntimePaths): string[] {
+	const projectionHome = hostedRuntimeProjectionHome(manifest, paths);
+	const openClawDatabase = join(
+		projectionHome,
+		".openclaw",
+		"agents",
+		"main",
+		"agent",
+		"openclaw-agent.sqlite",
+	);
 	const result = new Set<string>([
 		paths.managedConfig,
 		paths.syncState,
@@ -45,9 +55,15 @@ export function runtimeLiveSnapshotPaths(manifest: RuntimeManifest, paths: Runti
 		paths.manifestLastGood,
 		paths.managedSecretCacheFile,
 		paths.appliedState,
+		paths.oauthCredentialRoot,
+		join(projectionHome, ".hermes", "auth.json"),
+		openClawDatabase,
+		`${openClawDatabase}-wal`,
+		`${openClawDatabase}-shm`,
 		paths.egressProfileRoot,
 		paths.installInventory,
 		paths.projectionRoot,
+		paths.oauthCredentialRoot,
 		join(paths.instanceRoot, manifest.instanceId),
 		paths.managedSecretFile,
 		paths.daemonAuthToken,

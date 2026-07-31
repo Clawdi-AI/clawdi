@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import secrets
 from datetime import UTC, datetime
 from urllib.parse import urlparse
 from uuid import UUID
@@ -140,10 +141,12 @@ async def upsert_clawdi_managed_provider(
         raise ValueError("api_key cannot be blank")
     existing = (
         await db.execute(
-            select(AiProvider).where(
+            select(AiProvider)
+            .where(
                 AiProvider.owner_user_id == user.id,
                 AiProvider.provider_id == provider_id,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
     provider = existing or AiProvider(
@@ -170,11 +173,13 @@ async def upsert_clawdi_managed_provider(
     ciphertext, nonce = encrypt(api_key)
     payload = (
         await db.execute(
-            select(AiProviderAuthPayload).where(
+            select(AiProviderAuthPayload)
+            .where(
                 AiProviderAuthPayload.owner_user_id == user.id,
                 AiProviderAuthPayload.provider_id == provider_id,
                 AiProviderAuthPayload.auth_profile == MANAGED_AI_PROVIDER_PROFILE,
             )
+            .with_for_update()
         )
     ).scalar_one_or_none()
     if payload is None:
@@ -195,6 +200,7 @@ async def upsert_clawdi_managed_provider(
         payload.encrypted_payload = ciphertext
         payload.nonce = nonce
         payload.payload_metadata = {"runtime_env_name": MANAGED_AI_PROVIDER_RUNTIME_ENV}
+        payload.credential_revision = secrets.token_hex(16)
         payload.archived_at = None
 
     await db.execute(
@@ -205,7 +211,11 @@ async def upsert_clawdi_managed_provider(
             AiProviderAuthPayload.auth_profile != MANAGED_AI_PROVIDER_PROFILE,
             AiProviderAuthPayload.archived_at.is_(None),
         )
-        .values(archived_at=datetime.now(UTC))
+        .values(
+            archived_at=datetime.now(UTC),
+            consumer_environment_id=None,
+            consumer_runtime=None,
+        )
     )
     return provider
 
@@ -238,11 +248,17 @@ async def archive_clawdi_managed_provider(
 ) -> AiProvider | None:
     """Archive managed provider metadata and encrypted auth for one owner."""
 
-    provider = await find_clawdi_managed_provider(
-        db,
-        owner_user_id=owner_user_id,
-        provider_id=provider_id,
-    )
+    provider = (
+        await db.execute(
+            select(AiProvider)
+            .where(
+                AiProvider.owner_user_id == owner_user_id,
+                AiProvider.provider_id == provider_id,
+                AiProvider.archived_at.is_(None),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
     if provider is None:
         return None
     archived_at = datetime.now(UTC)
@@ -254,6 +270,10 @@ async def archive_clawdi_managed_provider(
             AiProviderAuthPayload.provider_id == provider_id,
             AiProviderAuthPayload.archived_at.is_(None),
         )
-        .values(archived_at=archived_at)
+        .values(
+            archived_at=archived_at,
+            consumer_environment_id=None,
+            consumer_runtime=None,
+        )
     )
     return provider
