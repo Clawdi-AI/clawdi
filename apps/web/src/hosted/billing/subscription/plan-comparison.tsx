@@ -143,14 +143,15 @@ export function PlanComparison({
 					</CardHeader>
 					<CardContent className="flex-1">
 						<ul className="space-y-2">
-							<FeatureRow>Managed confidential compute</FeatureRow>
 							{basic ? (
 								<FeatureRow>
-									{basic.vcpu} vCPU · {basic.ram_gb} GB RAM · {basic.disk_size} GB disk
+									Up to {basic.vcpu} vCPU · {basic.ram_gb} GB RAM · {basic.disk_size} GB storage
 								</FeatureRow>
 							) : null}
-							<FeatureRow>One runtime: OpenClaw or Hermes</FeatureRow>
-							<FeatureRow>Bring your own AI keys (BYOK)</FeatureRow>
+							<FeatureRow>
+								Managed confidential compute · one runtime (OpenClaw or Hermes)
+							</FeatureRow>
+							<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
 						</ul>
 					</CardContent>
 					<CardFooter>
@@ -197,14 +198,14 @@ export function PlanComparison({
 						<ul className="space-y-2">
 							{performance ? (
 								<FeatureRow>
-									{performance.vcpu} vCPU · {performance.ram_gb} GB RAM · {performance.disk_size} GB
-									disk
+									Up to {performance.vcpu} vCPU · {performance.ram_gb} GB RAM ·{" "}
+									{performance.disk_size} GB storage
 								</FeatureRow>
 							) : null}
-							<FeatureRow>Managed confidential compute</FeatureRow>
-							<FeatureRow>One runtime: OpenClaw or Hermes</FeatureRow>
-							<FeatureRow>Public ports for agent services</FeatureRow>
-							<FeatureRow>Bring your own AI keys (BYOK)</FeatureRow>
+							<FeatureRow>
+								Managed confidential compute · one runtime (OpenClaw or Hermes)
+							</FeatureRow>
+							<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
 						</ul>
 					</CardContent>
 					<CardFooter>
@@ -242,7 +243,7 @@ export function PlanComparison({
 								model.
 							</FeatureRow>
 							<FeatureRow>Pay from your Wallet</FeatureRow>
-							<FeatureRow>Use your own AI keys (BYOK)</FeatureRow>
+							<FeatureRow>BYOK bypasses Clawdi AI charges</FeatureRow>
 						</ul>
 					</CardContent>
 					<CardFooter>
