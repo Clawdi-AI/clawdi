@@ -41,7 +41,7 @@ export function runtimeUserUid(runtimeUser: string): number {
 	throw new Error(`could not resolve uid for ${runtimeUser}`);
 }
 
-export function runtimeUserCommandEnv(
+function runtimeUserCommandEnv(
 	home: string,
 	options: { egressSystemCaFile?: string } = {},
 ): NodeJS.ProcessEnv {

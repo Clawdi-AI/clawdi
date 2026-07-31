@@ -15,6 +15,7 @@ import {
 import { basename, dirname, join } from "node:path";
 import type { RuntimeManifest } from "./manifest-contract";
 import type { RuntimePaths } from "./paths";
+import { runningAsRoot } from "./runtime-user-command";
 import { isGeneratedRuntimeSystemdFile } from "./systemd-user";
 
 type RuntimeLiveSnapshotNode =
@@ -258,8 +259,4 @@ function restoreRuntimeLiveNode(path: string, node: RuntimeLiveSnapshotNode): vo
 	chmodSync(path, node.mode);
 	for (const [entry, child] of node.entries) restoreRuntimeLiveNode(join(path, entry), child);
 	restoreRuntimeLiveOwnership(path, node.uid, node.gid, false);
-}
-
-function runningAsRoot(): boolean {
-	return typeof process.getuid === "function" && process.getuid() === 0;
 }

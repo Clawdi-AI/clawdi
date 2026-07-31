@@ -28,6 +28,7 @@ import {
 } from "./run-config";
 import {
 	daemonProgramRevision,
+	runtimeImpactRevision,
 	runtimeServiceProgramRevision,
 	runtimeSidecarProgramRevision,
 } from "./runtime-impact-revision";
@@ -50,26 +51,6 @@ import {
 	GENERATED_RUNTIME_SYSTEMD_FILE_HEADER,
 	isGeneratedRuntimeSystemdFile,
 } from "./systemd-user";
-
-function systemdRevisionHash(value: unknown): string {
-	return createHash("sha256")
-		.update(JSON.stringify(canonicalSystemdRevisionValue(value)))
-		.digest("hex")
-		.slice(0, 32);
-}
-
-function canonicalSystemdRevisionValue(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(canonicalSystemdRevisionValue);
-	if (value && typeof value === "object") {
-		const input = value as Record<string, unknown>;
-		return Object.fromEntries(
-			Object.keys(input)
-				.sort()
-				.map((key) => [key, canonicalSystemdRevisionValue(input[key])]),
-		);
-	}
-	return value;
-}
 
 function runtimeCommandPath(name: string, home: string): string | null {
 	if (name === "openclaw") return join(home, ".openclaw", "bin", "openclaw");
@@ -574,7 +555,7 @@ function writeSystemdProgramEnvironment(input: {
 }): { envFile: string; envRevision: string } {
 	return {
 		envFile: writeSystemdEnvironmentFile(input),
-		envRevision: systemdRevisionHash({
+		envRevision: runtimeImpactRevision({
 			systemdEnvironmentFile: "v1",
 			env: input.revisionEnv ?? input.env,
 		}),
@@ -1078,20 +1059,34 @@ function officialRuntimeSystemdPrograms(
 		.map(([, program]) => program);
 }
 
-export function writeRuntimeSystemdState(
-	runtimePrograms: RuntimeSystemdUserProgram[],
-	egressProgram: RuntimeEgressSystemdProgram | null,
-	egressIdentity: RuntimeEgressIdentity | null,
-	manifest: RuntimeManifest,
-	paths: RuntimePaths,
-	workspaceRoot: string,
-	daemonAuthTokenFile: string | null,
-	secretValues: Record<string, string> | undefined,
-	runtimeEnvironment: RuntimeEnvironmentAuthority,
-	providerProjectionRevisions: Partial<Record<string, string | null>>,
-	runtimeRevision: Parameters<typeof runtimeSystemdProgramRevision>[5],
-	commonEnvironment: Record<string, string>,
-): { systemUnits: string[]; userUnits: string[]; egressSidecarActive: boolean } {
+export function writeRuntimeSystemdState(input: {
+	runtimePrograms: RuntimeSystemdUserProgram[];
+	egressProgram: RuntimeEgressSystemdProgram | null;
+	egressIdentity: RuntimeEgressIdentity | null;
+	manifest: RuntimeManifest;
+	paths: RuntimePaths;
+	workspaceRoot: string;
+	daemonAuthTokenFile: string | null;
+	secretValues: Record<string, string> | undefined;
+	runtimeEnvironment: RuntimeEnvironmentAuthority;
+	providerProjectionRevisions: Partial<Record<string, string | null>>;
+	runtimeRevision: Parameters<typeof runtimeSystemdProgramRevision>[5];
+	commonEnvironment: Record<string, string>;
+}): { systemUnits: string[]; userUnits: string[]; egressSidecarActive: boolean } {
+	const {
+		runtimePrograms,
+		egressProgram,
+		egressIdentity,
+		manifest,
+		paths,
+		workspaceRoot,
+		daemonAuthTokenFile,
+		secretValues,
+		runtimeEnvironment,
+		providerProjectionRevisions,
+		runtimeRevision,
+		commonEnvironment,
+	} = input;
 	const runtimeUser = commonEnvironment.CLAWDI_RUNTIME_USER?.trim() || "clawdi";
 	const systemUnits: string[] = [];
 	const shouldRunEgress = egressProgram !== null && runtimePrograms.length > 0;

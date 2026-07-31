@@ -136,7 +136,7 @@ import {
 	runtimeServiceNameSchema,
 	writeRuntimeRunConfig,
 } from "./run-config";
-import { runtimeProgramRevision } from "./runtime-impact-revision";
+import { runtimeImpactRevision, runtimeProgramRevision } from "./runtime-impact-revision";
 import { createRuntimeSecretResolver, type RuntimeSecretResolver } from "./runtime-secret-resolver";
 import {
 	buildRuntimeSystemdUserProgram,
@@ -2013,12 +2013,12 @@ function previewHostedAiProviderProjectionRevision(
 	if (name === "openclaw") {
 		const providerPatch = buildOpenClawHostedProviderPatch(projectionInput, previousProviderIds);
 		if (!projectionInput) {
-			return revisionHash({
+			return runtimeImpactRevision({
 				openClawProviderProjection: "delete",
 				patch: JSON.parse(providerPatch.content) as unknown,
 			});
 		}
-		return revisionHash({
+		return runtimeImpactRevision({
 			openClawProviderProjection: "json-patch",
 			patch: providerPatch.content,
 		});
@@ -2051,7 +2051,7 @@ function applyHostedCodexManagedProviderProjection(
 	return {
 		path: configPath,
 		providerIds: [CODEX_MANAGED_PROVIDER_ID],
-		revision: revisionHash({
+		revision: runtimeImpactRevision({
 			codexManagedProviderProjection: CODEX_MANAGED_PROVIDER_CONFIG_FILE,
 			configContent,
 			codexCli,
@@ -2266,7 +2266,7 @@ function applyHostedHermesAiProviderProjection(
 		return {
 			path: null,
 			providerIds: [],
-			revision: revisionHash({
+			revision: runtimeImpactRevision({
 				hermesProviderProjection: "none",
 				deletedProviderIds,
 			}),
@@ -2295,7 +2295,7 @@ function applyHostedHermesAiProviderProjection(
 	return {
 		path: configPath,
 		providerIds: activeProviderIds,
-		revision: revisionHash({
+		revision: runtimeImpactRevision({
 			hermesProviderProjection: "yaml-merge",
 			patch: patchContent,
 		}),
@@ -3790,26 +3790,6 @@ function daemonAuthTokenRevision(token: string): string {
 	});
 }
 
-function canonicalize(value: unknown): unknown {
-	if (Array.isArray(value)) return value.map(canonicalize);
-	if (value && typeof value === "object") {
-		const input = value as Record<string, unknown>;
-		return Object.fromEntries(
-			Object.keys(input)
-				.sort()
-				.map((key) => [key, canonicalize(input[key])]),
-		);
-	}
-	return value;
-}
-
-function revisionHash(value: unknown): string {
-	return createHash("sha256")
-		.update(JSON.stringify(canonicalize(value)))
-		.digest("hex")
-		.slice(0, 32);
-}
-
 function runtimeProgramRevisionForManifest(
 	manifest: RuntimeManifest,
 	runtime: string,
@@ -4810,9 +4790,9 @@ export function convergeRuntimeManifest(
 		} else {
 			rmSync(mcpProjection, { force: true });
 		}
-		const systemdUnits = writeRuntimeSystemdState(
-			runtimeSystemdUserPrograms,
-			egressSystemdProgram,
+		const systemdUnits = writeRuntimeSystemdState({
+			runtimePrograms: runtimeSystemdUserPrograms,
+			egressProgram: egressSystemdProgram,
 			egressIdentity,
 			manifest,
 			paths,
@@ -4821,9 +4801,9 @@ export function convergeRuntimeManifest(
 			secretValues,
 			runtimeEnvironment,
 			providerProjectionRevisions,
-			runtimeProgramRevisionForManifest,
-			commonSystemdEnvironment,
-		);
+			runtimeRevision: runtimeProgramRevisionForManifest,
+			commonEnvironment: commonSystemdEnvironment,
+		});
 		const committedEgressSidecarSecretRevision = appliedState?.egressSidecarSecretRevision;
 		if (systemdUnits.egressSidecarActive) {
 			desiredEgressSidecarSecretRevision = egressSecretWrite.material.revision;

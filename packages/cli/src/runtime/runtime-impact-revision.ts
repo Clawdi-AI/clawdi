@@ -53,7 +53,7 @@ function canonicalize(value: unknown): unknown {
 	return value;
 }
 
-function revisionHash(value: unknown): string {
+export function runtimeImpactRevision(value: unknown): string {
 	return createHash("sha256")
 		.update(JSON.stringify(canonicalize(value)))
 		.digest("hex")
@@ -66,7 +66,7 @@ export function runtimeProgramRevision(input: RuntimeProgramRevisionInput): stri
 				Object.entries(input.desiredRuntime).filter(([field]) => field !== "services"),
 			)
 		: null;
-	return revisionHash({
+	return runtimeImpactRevision({
 		renderedProjection: input.renderedProjection,
 		runtime,
 		secretValues: input.secretValues,
@@ -74,7 +74,7 @@ export function runtimeProgramRevision(input: RuntimeProgramRevisionInput): stri
 }
 
 export function runtimeServiceProgramRevision(program: RuntimeServiceProgramImpact): string {
-	return revisionHash({
+	return runtimeImpactRevision({
 		runtime: program.runtime,
 		service: program.service,
 		command: program.command,
@@ -87,7 +87,7 @@ export function runtimeServiceProgramRevision(program: RuntimeServiceProgramImpa
 export function daemonProgramRevision(
 	manifest: Pick<RuntimeManifest, "clawdiCli" | "controlPlane" | "liveSync">,
 ): string {
-	return revisionHash({
+	return runtimeImpactRevision({
 		clawdiCli: manifest.clawdiCli ?? null,
 		controlPlane: manifest.controlPlane,
 		liveSync: manifest.liveSync ?? null,
@@ -102,7 +102,7 @@ export function runtimeSidecarProgramRevision(
 	if (egressProgram && !egressIdentity) {
 		throw new Error("runtime sidecar egress revision requires the configured numeric identity");
 	}
-	return revisionHash({
+	return runtimeImpactRevision({
 		runtimeSidecar: "hosted-runtime-sidecar-v4",
 		instanceId: manifest.instanceId,
 		egressProfiles: manifest.egressProfiles ?? null,
